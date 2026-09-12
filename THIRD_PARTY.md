@@ -1,0 +1,13 @@
+# Источники и лицензии
+
+Никаких файлов закрытого Armor Inspector, его WASM или серверных ответов в продуктовую сборку не включено. Игровые модели извлекаются локально из установленного клиентского пакета; распространяемый ZIP их не содержит.
+
+- **TagTools**, Skyth, MIT. Разбор типов/ITEM/packed integers в `mod/local_armor_inspector/havok.py` основан на описанной кодом структуре, адаптирован к секциям WoT 2020 SDK и Python 2.7/3. Код чтения переписан; конвертер/писатель и внешние исполняемые зависимости не используются. [Исходник](https://github.com/blueskythlikesclouds/TagTools/blob/master/TagTools.py). Полная лицензия: `licenses/TagTools.txt`.
+- **Smellyriver TankInspector**, Smellyriver.OSS, MIT, commit `e07c6e49d210fc45f57d76b66372725812036d1e`. Структура packed XML сверена с `IO/XmlDecoding/PackedSection.cs`; `mod/local_armor_inspector/packed_xml.py` реализует чтение на Python. [Репозиторий](https://github.com/smellyriver/tankinspector). Лицензия: `licenses/TankInspector.txt`.
+- **Battle Hits**, Andrii Andrushchyshyn, MIT, commit `b7aec39188466816f0b2560196ad8fff75e31a44`. Использован как контрольный пример перехвата событий и регистрации ModsList. Его интерфейс и двоичный сборщик данных не включены. [Репозиторий](https://github.com/wot-public-mods/battle-hits). Лицензия: `licenses/BattleHits.txt`.
+- **Three.js 0.160.1**, MIT: `web/vendor/three.min.js`. [Релиз](https://github.com/mrdoob/three.js/releases/tag/r160). Лицензия включена в `web/vendor/three.LICENSE`, источник и SHA-256 — в `web/vendor/manifest.json`.
+- **Python 3.14.7** используется локально для разработки и проверок. В поставку 0.2.0 не входит и пользователю не требуется.
+- **OpenWG Python Compiler** используется только для сборки; бинарник не входит в поставку. [openwg.build](https://gitlab.com/openwg/openwg.build), commit `d0704c7dbd062c861582c90a761a7e019af9b60a`; SHA-256 закреплён в `tools/build.py`.
+- **Inno Setup 7.1.0**, Jordan Russell / Martijn Laan, используется для EXE-установщика. [Официальная загрузка](https://jrsoftware.org/isdl.php). Компилятор распакован в portable-режиме только в рабочую папку; в продукт входит штатная установочная оболочка. Лицензия — `licenses/InnoSetup.txt`, URL и SHA-256 официального дистрибутива — `work/installer-dependencies/source.json`.
+
+Сигнатура `Vehicle.showDamageFromShot`, `DamageFromShotDecoder`, `ModelHitTester` и `IBrowserController` сверены с [клиентскими исходниками #935](https://github.com/izeberg/wot-src/tree/6cdd11a8ce3eae78b9a8a95c592523e9d0774a9a/sources/res/scripts) и локальными ресурсами #936. Клиентские исходники не включаются в сборку. Это справочные материалы для совместимости, не публичный стабильный SDK Wargaming.

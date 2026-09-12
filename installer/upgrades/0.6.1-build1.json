@@ -1,0 +1,107 @@
+{
+  "mods\\2.4.0.0\\local.armor_inspector_0.6.1.wotmod": {
+    "sha256": "e8763fce849a8487433da74347e43b11e3e81119cf641f82266ef8eb175f680f",
+    "retainOnUninstall": false,
+    "onlyIfAbsent": false
+  },
+  "mods\\configs\\local.armor_inspector\\Viewer.html": {
+    "sha256": "4aba739207912682dc59afd8432ca8644fa4f46af9ce90d46117d0b91a1e5c92",
+    "retainOnUninstall": true,
+    "onlyIfAbsent": false
+  },
+  "mods\\configs\\local.armor_inspector\\web\\style.css": {
+    "sha256": "c191b4c7561061b3879e8fca283a1c975f3158262e0a5f7c933b42705ec4869f",
+    "retainOnUninstall": true,
+    "onlyIfAbsent": false
+  },
+  "mods\\configs\\local.armor_inspector\\web\\icon.svg": {
+    "sha256": "0f6711c9c6650cfd194b753cbfbb5ffb6f449685be61c4136610e3174af10eb9",
+    "retainOnUninstall": true,
+    "onlyIfAbsent": false
+  },
+  "mods\\configs\\local.armor_inspector\\web\\viewer.js": {
+    "sha256": "c2eade843a17cfe7120e6e63fb1309506ceb9f4f014230460e92f3de50bcd7c3",
+    "retainOnUninstall": true,
+    "onlyIfAbsent": false
+  },
+  "mods\\configs\\local.armor_inspector\\web\\local-data.js": {
+    "sha256": "aa9209d0af6668b6ef12893d378555faed860d9cd04474a65ef72ae9d7abf04a",
+    "retainOnUninstall": true,
+    "onlyIfAbsent": false
+  },
+  "mods\\configs\\local.armor_inspector\\web\\app.js": {
+    "sha256": "9f7c1047c63a54c5d17041f963235137509676fe026d2fa757081a6da7b37a14",
+    "retainOnUninstall": true,
+    "onlyIfAbsent": false
+  },
+  "mods\\configs\\local.armor_inspector\\web\\ballistics.js": {
+    "sha256": "cc5ad810b6c881745526716e591d99eab5dfd0f53c56a7c9d60a194a43ffcabd",
+    "retainOnUninstall": true,
+    "onlyIfAbsent": false
+  },
+  "mods\\configs\\local.armor_inspector\\web\\heatmap-gpu.js": {
+    "sha256": "25e358005ac11f8e29fa345f664ae813e486e4e03b4a10ee6a59728c78345ae0",
+    "retainOnUninstall": true,
+    "onlyIfAbsent": false
+  },
+  "mods\\configs\\local.armor_inspector\\web\\shot-telemetry.js": {
+    "sha256": "c1c68a0a960336d7d1aef560cffd7e64b7469cfa89d3406ce0984d61340380ee",
+    "retainOnUninstall": true,
+    "onlyIfAbsent": false
+  },
+  "mods\\configs\\local.armor_inspector\\web\\shot-context.js": {
+    "sha256": "3218b407bbf0c0ee4951998de28d358f9b6feeebfb25ba357ad96e75e8682350",
+    "retainOnUninstall": true,
+    "onlyIfAbsent": false
+  },
+  "mods\\configs\\local.armor_inspector\\web\\screen-armor.js": {
+    "sha256": "a864d38f90a2bed635c4c9b39d7f8083c70a6d5a10d04f769506f30df5b7a533",
+    "retainOnUninstall": true,
+    "onlyIfAbsent": false
+  },
+  "mods\\configs\\local.armor_inspector\\web\\vendor\\three.min.js": {
+    "sha256": "170c6789f43217c96b3170f4b42fafe135de7f7cd48497a4218f9757ee1d49fa",
+    "retainOnUninstall": true,
+    "onlyIfAbsent": false
+  },
+  "mods\\configs\\local.armor_inspector\\web\\vendor\\three.LICENSE": {
+    "sha256": "852e0e8699169bf9f6fdc6bda3e682d078dcbc738b5d33e74df594721bff271d",
+    "retainOnUninstall": true,
+    "onlyIfAbsent": false
+  },
+  "mods\\configs\\local.armor_inspector\\licenses\\TagTools.txt": {
+    "sha256": "e091e39cf8dcefdcaae5aaa83c2cb0e2e414364cfdce8dc38c9a75be71f4cdda",
+    "retainOnUninstall": true,
+    "onlyIfAbsent": false
+  },
+  "mods\\configs\\local.armor_inspector\\licenses\\BattleHits.txt": {
+    "sha256": "1940da49f77ec814dacb5cdaee901f511552c663c07353a812fed833e44e6eaf",
+    "retainOnUninstall": true,
+    "onlyIfAbsent": false
+  },
+  "mods\\configs\\local.armor_inspector\\web\\icon.ico": {
+    "sha256": "0428217669cadfd6248352c99597c25c073fa1aa002b162fc1faf4b581ba634e",
+    "retainOnUninstall": true,
+    "onlyIfAbsent": false
+  },
+  "mods\\configs\\local.armor_inspector\\README.md": {
+    "sha256": "636ef7917f122d80e836e83537e5a98a9cca305d30530152faec26c59ab769cd",
+    "retainOnUninstall": true,
+    "onlyIfAbsent": false
+  },
+  "mods\\configs\\local.armor_inspector\\THIRD_PARTY.md": {
+    "sha256": "191b3757bb300c28d6a6035fd5721b84b57f9ceff0bf400e7de803dd74f218a3",
+    "retainOnUninstall": true,
+    "onlyIfAbsent": false
+  },
+  "mods\\configs\\local.armor_inspector\\licenses\\InnoSetup.txt": {
+    "sha256": "2e5346868c2a18434489824e11d65c3031620f792fefc415d05f19cd441abf5c",
+    "retainOnUninstall": true,
+    "onlyIfAbsent": false
+  },
+  "mods\\configs\\local.armor_inspector\\data\\index.js": {
+    "sha256": "0cbd4c37d8cc2336a24219c35663202964c54df385ee1a5303a1076a7ca6f49a",
+    "retainOnUninstall": true,
+    "onlyIfAbsent": true
+  }
+}

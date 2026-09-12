@@ -1,0 +1,33 @@
+# Public repository: current source and build files only.
+# Everything else remains local, including agent context and game data.
+/*
+!/.gitignore
+!/.gitattributes
+!/README.md
+!/THIRD_PARTY.md
+!/mod/
+!/web/
+!/licenses/
+!/installer/
+!/tools/
+
+__pycache__/
+*.pyc
+*.log
+.env
+.env.*
+
+/installer/*
+!/installer/ArmorInspector.iss
+!/installer/armor-inspector.ico
+!/installer/upgrades/
+# Upgrade manifests are hashes used by the current installer, not old builds.
+/installer/upgrades/*
+!/installer/upgrades/*.json
+
+/tools/*
+!/tools/build.py
+!/tools/package.py
+!/tools/build_installer.py
+!/tools/fetch_installer_compiler.py
+!/tools/make_installer_icon.ps1
