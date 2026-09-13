@@ -251,6 +251,9 @@ begin
     Result := CompareText(GetSHA256OfFile(Path), '0851438d19b9f81365b0ac0325008c0776021f5a9231415596c4f7c4f8b72dec') = 0;
   if CompareText(ExtractFileName(Path), 'local.armor_inspector_0.6.3.wotmod') = 0 then
     Result := CompareText(GetSHA256OfFile(Path), '56ddc2c5a8b9edf128d697eeed6307bbbe143cbd4021a8665165f3b2ca3a6329') = 0;
+  if CompareText(ExtractFileName(Path), 'local.armor_inspector_0.6.4.wotmod') = 0 then
+    Result := (CompareText(GetSHA256OfFile(Path), '9feafeb7f2cea8a814a67fed021150f141b88cff57b0db2451a8357b1f13579a') = 0) or
+      (CompareText(GetSHA256OfFile(Path), '9dfe7166dd3199c8d89ecb67e33fe22452175a1a7168fa9299b0d775725bb271') = 0);
 end;
 
 #include "generated\checks.iss"
@@ -385,6 +388,7 @@ begin
   BackupLegacyMod('0.6.1');
   BackupLegacyMod('0.6.2');
   BackupLegacyMod('0.6.3');
+  BackupLegacyMod('0.6.4');
   MigrateDesktopShortcut;
 end;
 
