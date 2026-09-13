@@ -20,7 +20,7 @@ from .geometry import extract
 from .armor import ArmorCatalog
 
 LOG = logging.getLogger('local.armor_inspector')
-VERSION = '0.6.8'
+VERSION = '0.6.9'
 KEEP_BATTLES = 5
 RESOURCE = re.compile(r'^vehicles/[A-Za-z0-9_/-]+\.(?:model|havok)\Z')
 IDENTIFIER = re.compile(r'^[-a-zA-Z0-9_]{1,100}\Z')

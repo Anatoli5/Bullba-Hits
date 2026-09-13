@@ -364,8 +364,39 @@ begin
   end;
 end;
 
+procedure BackupViewerFolder(const Source, Dest: String);
+var Find: TFindRec;
+begin
+  if not FindFirst(Source + '*', Find) then Exit;
+  try
+    repeat
+      if (Find.Attributes and FILE_ATTRIBUTE_DIRECTORY) = 0 then begin
+        ForceDirectories(Dest);
+        CopyFile(Source + Find.Name, Dest + Find.Name, False);
+      end;
+    until not FindNext(Find);
+  finally
+    FindClose(Find);
+  end;
+end;
+
+// The viewer files in our folder always belong to a previous build of ours. They are copied to a
+// time-stamped backup before the new ones land; nothing is refused and nothing is lost.
+procedure BackupViewerFiles;
+var Base, Dest: String;
+begin
+  Base := ExpandConstant('{app}\mods\configs\local.armor_inspector\');
+  if not FileExists(Base + 'Viewer.html') then Exit;
+  Dest := Base + 'installer\backups\viewer-' + GetDateTimeString('yyyymmdd-hhnnss', '-', ':') + '\';
+  if not ForceDirectories(Dest) then Exit;
+  CopyFile(Base + 'Viewer.html', Dest + 'Viewer.html', False);
+  BackupViewerFolder(Base + 'web\', Dest + 'web\');
+  BackupViewerFolder(Base + 'web\vendor\', Dest + 'web\vendor\');
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
+  if CurStep = ssInstall then BackupViewerFiles;
   if CurStep <> ssPostInstall then Exit;
   BackupAllLegacyMods;
   MigrateDesktopShortcut;

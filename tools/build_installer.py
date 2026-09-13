@@ -64,7 +64,6 @@ def build(test=False,sign_command=None,require_signature=False):
     seed=generated/'empty-index.js'
     write_data(str(seed),'index',{'application':'local.armor_inspector','version':VERSION,'updatedAt':None,'battles':[]})
     files.append((seed,'mods/configs/local.armor_inspector/data/index.js',True,True))
-    legacy=[json.loads(p.read_text(encoding='utf-8-sig')) for p in sorted((ROOT/'installer/upgrades').glob('*.json'))]
     lines=[]
     checks=['function CheckOwnedFiles(const Folder: String): String;','begin',"  Result := ''; "]
     manifest={}
@@ -74,9 +73,10 @@ def build(test=False,sign_command=None,require_signature=False):
         flags='ignoreversion'+(' uninsneveruninstall' if keep else '')+(' onlyifdoesntexist' if only_new else '')
         lines.append('Source: "'+str(source)+'"; DestDir: "{app}\\'+dest+'"; DestName: "'+name+'"; Flags: '+flags)
         manifest[relative]={'sha256':digest(source),'retainOnUninstall':keep,'onlyIfAbsent':only_new}
-        if not only_new:
-            old_hash='|'.join(sorted({m[relative]['sha256'] for m in legacy if relative in m}))
-            checks.extend(["  Result := CheckUpgradableFile(AddBackslash(Folder) + '"+relative+"', '"+digest(source)+"', '"+old_hash+"');","  if Result <> '' then Exit;"])
+        # Viewer files inside our own folder are replaced (the previous set is backed up by the installer);
+        # only the version-named .wotmod is hash-checked, and a version is never rebuilt under its number.
+        if source==mod:
+            checks.extend(["  Result := CheckUpgradableFile(AddBackslash(Folder) + '"+relative+"', '"+digest(source)+"', '');","  if Result <> '' then Exit;"])
     checks.append('end;')
     (generated/'files.iss').write_text('\n'.join(lines),encoding='utf-8-sig')
     (generated/'checks.iss').write_text('\n'.join(checks),encoding='utf-8-sig')
