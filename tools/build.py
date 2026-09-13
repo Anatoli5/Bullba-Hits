@@ -27,7 +27,9 @@ def build():
         files['res/scripts/client/'+target]=pyc
     for asset in ASSETS:
         source=ROOT/'web/index.html' if asset=='Viewer.html' else ROOT/asset
-        files['res/armor_inspector_viewer/'+asset]=source.read_bytes()
+        data=source.read_bytes()
+        if asset=='Viewer.html': data=data.replace(b'data-version="dev"',('data-version="'+VERSION+'"').encode('utf-8'))
+        files['res/armor_inspector_viewer/'+asset]=data
     dirs=set()
     for file in files:
         dirs.update(p.as_posix()+'/' for p in Path(file).parents if str(p)!='.')

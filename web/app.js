@@ -110,7 +110,7 @@
   }
   function refresh(){
     $('refresh').disabled=true;
-    return ArmorInspectorData.index().then(function(index){if(index.application!=='local.armor_inspector'||!Array.isArray(index.battles))throw new Error('Некорректный список боёв');$('connection').textContent='Локальные файлы · без сервера';var battles=index.battles,prior=$('battles').value;$('battles').replaceChildren();if(!battles.length){current=null;selected=null;++generation;++battleGeneration;if(viewer)viewer.clear();$('battles').appendChild(node('option','Пока нет боёв'));renderHits();message('Новые попадания появятся после боя. Затем нажмите «Обновить».');warnings([]);return;}
+    return ArmorInspectorData.index().then(function(index){var pv=$('app-version').getAttribute('data-version');$('app-version').textContent=(pv!=='dev'?pv:'')+(index.version&&index.version!==pv?' · записи '+index.version:'');if(index.application!=='local.armor_inspector'||!Array.isArray(index.battles))throw new Error('Некорректный список боёв');$('connection').textContent='Локальные файлы · без сервера';var battles=index.battles,prior=$('battles').value;$('battles').replaceChildren();if(!battles.length){current=null;selected=null;++generation;++battleGeneration;if(viewer)viewer.clear();$('battles').appendChild(node('option','Пока нет боёв'));renderHits();message('Новые попадания появятся после боя. Затем нажмите «Обновить».');warnings([]);return;}
       battles.forEach(function(b){var option=node('option',new Date(b.startedAt*1000).toLocaleDateString('ru-RU')+' · '+b.map+' · '+b.hits);option.value=b.id;$('battles').appendChild(option);});var id=battles.some(function(b){return b.id===prior;})?prior:battles[0].id;$('battles').value=id;return loadBattle(id,current&&current.id===id);
     }).catch(function(e){$('connection').textContent='Нет локальных записей';message(e.message);warnings([e.message]);}).then(function(){$('refresh').disabled=false;});
   }
@@ -152,6 +152,7 @@
   function outline(){if(viewer)viewer.setOutline(Number($('outline-brightness').value)/100,Number($('outline-opacity').value)/100);}
   $('outline-brightness').oninput=outline;$('outline-opacity').oninput=outline;if(viewer){viewer.wireframe($('wireframe').checked);outline();}
   if(host.interrupted){$('host-note').hidden=false;$('host-note').textContent='Прошлый сеанс прервался во время действия «'+host.interrupted.action+'» ('+(host.interrupted.host==='game'?'в игре':'в браузере')+', '+new Date(host.interrupted.at).toLocaleString('ru-RU')+'). Сообщите об этом при разборе.';}
+  (function(){var pv=$('app-version').getAttribute('data-version');if(pv!=='dev')$('app-version').textContent=pv;}());
   host.done();
   refresh();
   if(document.modelContext&&document.modelContext.registerTool){try{document.modelContext.registerTool({name:'select_saved_hit',description:'Open an existing recorded hit in the local 3D viewer.',inputSchema:{type:'object',properties:{battleId:{type:'string'},hitId:{type:'string'}},required:['battleId','hitId'],additionalProperties:false},execute:function(input){if(!input||!/^[-a-zA-Z0-9_]{1,100}$/.test(input.battleId)||!/^\d+$/.test(input.hitId))throw new Error('Invalid record identifiers');return loadBattle(input.battleId,true).then(function(){return selectHit(input.hitId);});}});}catch(e){console.warn('WebMCP unavailable',e);}}

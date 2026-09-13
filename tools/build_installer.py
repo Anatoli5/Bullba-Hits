@@ -51,7 +51,9 @@ def build(test=False,sign_command=None,require_signature=False):
         for relative in ASSETS:
             data=z.read('res/armor_inspector_viewer/'+relative)
             source=ROOT/'web/index.html' if relative=='Viewer.html' else ROOT/relative
-            if data!=source.read_bytes(): raise ValueError('Stale viewer payload; run tools/build.py: '+relative)
+            expected=source.read_bytes()
+            if relative=='Viewer.html': expected=expected.replace(b'data-version="dev"',('data-version="'+VERSION+'"').encode('utf-8'))
+            if data!=expected: raise ValueError('Stale viewer payload; run tools/build.py: '+relative)
             target=generated/'payload'/relative
             target.parent.mkdir(parents=True,exist_ok=True)
             target.write_bytes(data)

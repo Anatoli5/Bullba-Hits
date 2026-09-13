@@ -20,7 +20,8 @@ from .geometry import extract
 from .armor import ArmorCatalog
 
 LOG = logging.getLogger('local.armor_inspector')
-VERSION = '0.6.6'
+VERSION = '0.6.7'
+KEEP_BATTLES = 5
 RESOURCE = re.compile(r'^vehicles/[A-Za-z0-9_/-]+\.(?:model|havok)\Z')
 IDENTIFIER = re.compile(r'^[-a-zA-Z0-9_]{1,100}\Z')
 ASSETS = ('Viewer.html', 'web/style.css', 'web/icon.svg', 'web/viewer.js',
@@ -121,6 +122,7 @@ class Exporter(object):
         self.overrides = None
         self.attempts = {}
         self.summaries = {}
+        self.model_refs = {}
         self.current = None
         self.armor = ArmorCatalog(self.game)
 
@@ -238,6 +240,8 @@ class Exporter(object):
                                 part['comparisonVersion'] = match.group(1) if match else 'current client'
                             except Exception as comparison_error: part['comparisonError'] = str(comparison_error)
         write_data(os.path.join(self.folder, 'data', 'battles', battle['id']+'.js'), 'battle:'+battle['id'], result)
+        self.model_refs[battle['id']] = set(part['modelKey'] for hit in result['hits']
+                                            for part in hit.get('target', {}).get('parts', []) if part.get('modelKey'))
         self.summaries[battle['id']] = dict((k, battle.get(k)) for k in ('id', 'startedAt', 'map'))
         self.summaries[battle['id']]['hits'] = len(battle['hits'])
 
@@ -261,7 +265,30 @@ class Exporter(object):
         self.pending_publish = False
         self.last_published = time.time()
 
+    def prune(self):
+        # Storage hygiene: only the newest KEEP_BATTLES battles stay, raw JSONL and derived files alike;
+        # models stay while any kept battle references them. The battle being recorded is never dropped.
+        current = self.current['id'] if self.current else None
+        ordered = sorted(self.summaries.values(), key=lambda b:(b['id'] == current, b.get('startedAt') or 0), reverse=True)
+        for old in ordered[KEEP_BATTLES:]:
+            for path in (os.path.join(self.folder, 'battles', old['id']+'.jsonl'),
+                         os.path.join(self.folder, 'data', 'battles', old['id']+'.js')):
+                try:
+                    if os.path.isfile(path): os.remove(path)
+                except Exception: LOG.exception('Could not remove old battle file: %s', path)
+            self.summaries.pop(old['id'], None)
+            self.model_refs.pop(old['id'], None)
+        referenced = set()
+        for keys in self.model_refs.values(): referenced.update(keys)
+        for path in glob.glob(os.path.join(self.folder, 'data', 'models', '*.js')):
+            key = os.path.basename(path)[:-3]
+            if key in referenced: continue
+            try: os.remove(path)
+            except Exception: LOG.exception('Could not remove unreferenced model: %s', path)
+            self.attempts.pop(key, None)
+
     def write_index(self):
+        self.prune()
         battles = sorted(self.summaries.values(), key=lambda b:b.get('startedAt') or 0, reverse=True)
         write_data(os.path.join(self.folder, 'data', 'index.js'), 'index',
                    {'application':'local.armor_inspector', 'version':VERSION, 'updatedAt':time.time(), 'battles':battles})
