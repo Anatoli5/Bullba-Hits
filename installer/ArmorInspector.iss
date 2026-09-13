@@ -221,39 +221,13 @@ begin
 end;
 
 function IsKnownLegacyMod(const Path: String): Boolean;
+var Name: String;
 begin
-  Result := False;
-  if not FileExists(Path) then Exit;
-  if CompareText(ExtractFileName(Path), 'local.armor_inspector_0.2.0.wotmod') = 0 then
-    Result := CompareText(GetSHA256OfFile(Path), '89540876a8fe6dd5b9d06dba0b448ce840920e97356421bd85ccf86b50c5bcd5') = 0;
-  if CompareText(ExtractFileName(Path), 'local.armor_inspector_0.2.1.wotmod') = 0 then
-    Result := CompareText(GetSHA256OfFile(Path), '4399fbabb60033ccf092cfa104b82bb2da4418812e2214db9b80f5743dbcac2f') = 0;
-  if CompareText(ExtractFileName(Path), 'local.armor_inspector_0.3.0.wotmod') = 0 then
-    Result := CompareText(GetSHA256OfFile(Path), 'edb8dbb26094eeee81b2419a807b9955d464ff52191073338ae6aa098866edb0') = 0;
-  if CompareText(ExtractFileName(Path), 'local.armor_inspector_0.3.1.wotmod') = 0 then
-    Result := CompareText(GetSHA256OfFile(Path), '4ba06f7b5e2a03e11d0b0f8643bd7ef7661d4e86a9cbf97f9ca01a0599da3bd1') = 0;
-  if CompareText(ExtractFileName(Path), 'local.armor_inspector_0.3.2.wotmod') = 0 then
-    Result := CompareText(GetSHA256OfFile(Path), 'fb853c4f3ef2853d4af8511a26a25071d38f1861b54362fe05a044b3455a5791') = 0;
-  if CompareText(ExtractFileName(Path), 'local.armor_inspector_0.4.0.wotmod') = 0 then
-    Result := CompareText(GetSHA256OfFile(Path), '76568fe421459015d4a2bb4edef4975e8227df4226e9eea116cfc9ae774b592c') = 0;
-  if CompareText(ExtractFileName(Path), 'local.armor_inspector_0.5.0.wotmod') = 0 then
-    Result := CompareText(GetSHA256OfFile(Path), '13eb6b242484a90e247b0c59c12e14de5044e1e269da822d72e24d5aa75cc29a') = 0;
-  if CompareText(ExtractFileName(Path), 'local.armor_inspector_0.5.1.wotmod') = 0 then
-    Result := CompareText(GetSHA256OfFile(Path), '83b0a811756b9bbe26bd1b2a6922e1ec14e33e59adb140c2311f62591748973b') = 0;
-  if CompareText(ExtractFileName(Path), 'local.armor_inspector_0.6.0.wotmod') = 0 then
-    Result := CompareText(GetSHA256OfFile(Path), 'b243712e0962a8340353e0966e9c8367d235c5bb9f6e8d674f68a58614a4b4da') = 0;
-  if CompareText(ExtractFileName(Path), 'local.armor_inspector_0.5.2.wotmod') = 0 then
-    Result := CompareText(GetSHA256OfFile(Path), 'e9ff6ad1318fe6377bc91af80427d45d0bf6c1fc89c36e773561c257713768a1') = 0;
-  if CompareText(ExtractFileName(Path), 'local.armor_inspector_0.6.1.wotmod') = 0 then
-    Result := (CompareText(GetSHA256OfFile(Path), 'fe49a5c0d34cc2cf349b6cfc1092590f293b84b2b6d52edc0fbf32a7021a0530') = 0) or
-      (CompareText(GetSHA256OfFile(Path), 'e8763fce849a8487433da74347e43b11e3e81119cf641f82266ef8eb175f680f') = 0);
-  if CompareText(ExtractFileName(Path), 'local.armor_inspector_0.6.2.wotmod') = 0 then
-    Result := CompareText(GetSHA256OfFile(Path), '0851438d19b9f81365b0ac0325008c0776021f5a9231415596c4f7c4f8b72dec') = 0;
-  if CompareText(ExtractFileName(Path), 'local.armor_inspector_0.6.3.wotmod') = 0 then
-    Result := CompareText(GetSHA256OfFile(Path), '56ddc2c5a8b9edf128d697eeed6307bbbe143cbd4021a8665165f3b2ca3a6329') = 0;
-  if CompareText(ExtractFileName(Path), 'local.armor_inspector_0.6.4.wotmod') = 0 then
-    Result := (CompareText(GetSHA256OfFile(Path), '9feafeb7f2cea8a814a67fed021150f141b88cff57b0db2451a8357b1f13579a') = 0) or
-      (CompareText(GetSHA256OfFile(Path), '9dfe7166dd3199c8d89ecb67e33fe22452175a1a7168fa9299b0d775725bb271') = 0);
+  // Every build of our own recorder is named local.armor_inspector_<version>.wotmod.
+  // Any such file is ours, whichever build it is: it is moved to a backup, never refused.
+  Name := Lowercase(ExtractFileName(Path));
+  Result := FileExists(Path) and (Pos('local.armor_inspector_', Name) = 1) and
+    (Copy(Name, Length(Name) - 6, 7) = '.wotmod');
 end;
 
 #include "generated\checks.iss"
@@ -362,33 +336,38 @@ begin
       (CheckOwnedFile(NewPath, '{#ModHash}') <> '') then
     RaiseException('Не удалось подтвердить файлы обновления. Предыдущая версия сохранена.');
   BackupPath := ExpandConstant('{app}\mods\configs\local.armor_inspector\installer\backups\') + Version + '\local.armor_inspector_' + Version + '.wotmod';
+  // A different build of the same version number is kept apart under <version>-<hash8>; nothing is deleted unsaved.
+  if FileExists(BackupPath) and (CompareText(GetSHA256OfFile(BackupPath), GetSHA256OfFile(OldPath)) <> 0) then
+    BackupPath := ExpandConstant('{app}\mods\configs\local.armor_inspector\installer\backups\') + Version + '-' +
+      Copy(GetSHA256OfFile(OldPath), 1, 8) + '\local.armor_inspector_' + Version + '.wotmod';
   if not ForceDirectories(ExtractFileDir(BackupPath)) then
     RaiseException('Не удалось создать папку резервной копии мода.');
   if FileExists(BackupPath) then begin
-    if not IsKnownLegacyMod(BackupPath) then
-      RaiseException('Резервная копия предыдущей версии изменена.');
     if not DeleteFile(OldPath) then RaiseException('Не удалось убрать прежнюю версию мода после обновления.');
   end else if not RenameFile(OldPath, BackupPath) then
     RaiseException('Не удалось переместить прежнюю версию мода в резервную копию.');
 end;
 
+procedure BackupAllLegacyMods;
+var ModPath, Name: String; Find: TFindRec;
+begin
+  ModPath := ExpandConstant('{app}\mods\2.4.0.0\');
+  if not FindFirst(ModPath + 'local.armor_inspector_*.wotmod', Find) then Exit;
+  try
+    repeat
+      Name := Find.Name;
+      if (CompareText(Name, '{#ModName}') <> 0) and IsKnownLegacyMod(ModPath + Name) then
+        BackupLegacyMod(Copy(Name, Length('local.armor_inspector_') + 1, Length(Name) - Length('local.armor_inspector_') - Length('.wotmod')));
+    until not FindNext(Find);
+  finally
+    FindClose(Find);
+  end;
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep <> ssPostInstall then Exit;
-  BackupLegacyMod('0.2.0');
-  BackupLegacyMod('0.2.1');
-  BackupLegacyMod('0.3.0');
-  BackupLegacyMod('0.3.1');
-  BackupLegacyMod('0.3.2');
-  BackupLegacyMod('0.4.0');
-  BackupLegacyMod('0.5.0');
-  BackupLegacyMod('0.5.1');
-  BackupLegacyMod('0.5.2');
-  BackupLegacyMod('0.6.0');
-  BackupLegacyMod('0.6.1');
-  BackupLegacyMod('0.6.2');
-  BackupLegacyMod('0.6.3');
-  BackupLegacyMod('0.6.4');
+  BackupAllLegacyMods;
   MigrateDesktopShortcut;
 end;
 
