@@ -13,7 +13,7 @@ try:
 except ImportError:
     import queue
 
-VERSION = '0.6.28'
+VERSION = '0.6.29'
 VIEWER_PATH = os.path.join('mods', 'configs', 'local.armor_inspector', 'Viewer.html')
 LOG = logging.getLogger('local.armor_inspector')
 PARTS = ('chassis', 'hull', 'turret', 'gun')
@@ -25,6 +25,44 @@ _mods_api = None
 
 def vector(v):
     return [float(v[0]), float(v[1]), float(v[2])]
+
+
+VEHICLE_CLASS_TAGS = ('lightTank', 'mediumTank', 'heavyTank', 'AT-SPG', 'SPG')
+
+
+def vehicle_identity(descr):
+    """Tier, class, role and nation of a VehicleDescriptor, each field independently.
+
+    A missing or renamed client attribute must never cost us the hit, so every
+    field is read on its own and simply left out when it is unavailable.
+    """
+    identity = {}
+    vtype = getattr(descr, 'type', None)
+    if vtype is None:
+        return identity
+    try:
+        identity['level'] = int(vtype.level)
+    except Exception:
+        pass
+    try:
+        for tag in vtype.tags:
+            if tag in VEHICLE_CLASS_TAGS:
+                identity['class'] = str(tag)
+                break
+    except Exception:
+        pass
+    try:
+        from constants import ROLE_TYPE_TO_LABEL
+        label = ROLE_TYPE_TO_LABEL.get(vtype.role)
+        if label and label != 'NotDefined':
+            identity['role'] = str(label)
+    except Exception:
+        pass
+    try:
+        identity['nation'] = str(vtype.name.split(':')[0])
+    except Exception:
+        pass
+    return identity
 
 
 def matrix_columns(matrix, root_inverse):
@@ -169,6 +207,7 @@ class Recorder(object):
             if attacker is not None:
                 record['attacker'] = {'name':attacker.type.shortUserString, 'type':attacker.type.name,
                     'compactDescriptor':base64.b64encode(attacker.makeCompactDescr()).decode('ascii')}
+                record['attacker'].update(vehicle_identity(attacker))
                 try:
                     # Nominal full-aim accuracy of the mounted gun (no crew or equipment): radius grows linearly with range.
                     record['attacker']['gunDispersion'] = float(attacker.gun.shotDispersionAngle)
@@ -197,6 +236,7 @@ class Recorder(object):
             descr = vehicle.typeDescriptor
             record['target'] = {'name':descr.type.shortUserString, 'type':descr.type.name,
                 'compactDescriptor':base64.b64encode(descr.makeCompactDescr()).decode('ascii'), 'parts':[]}
+            record['target'].update(vehicle_identity(descr))
             collisions = vehicle.appearance.collisions
             root = Math.Matrix(collisions.getPartTransform(0))
             world_root = Math.Matrix(root)

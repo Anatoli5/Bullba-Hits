@@ -20,7 +20,7 @@ from .geometry import extract
 from .armor import ArmorCatalog
 
 LOG = logging.getLogger('local.armor_inspector')
-VERSION = '0.6.28'
+VERSION = '0.6.29'
 KEEP_BATTLES = 5
 RESOURCE = re.compile(r'^vehicles/[A-Za-z0-9_/-]+\.(?:model|havok)\Z')
 IDENTIFIER = re.compile(r'^[-a-zA-Z0-9_]{1,100}\Z')
@@ -112,6 +112,57 @@ def read_battle(path):
     return result
 
 
+VEHICLE_CLASS_TAGS = ('lightTank', 'mediumTank', 'heavyTank', 'AT-SPG', 'SPG')
+
+
+def enrich_vehicle(vehicle):
+    """Add tier/class/role/nation to a recorded attacker/target when they are missing.
+
+    Battles written before the recorder learned these fields are re-published on
+    every run, so they pick the data up here. Purely additive and fully guarded:
+    the export must never fail because a vehicle type cannot be resolved.
+    """
+    if not isinstance(vehicle, dict):
+        return
+    type_name = vehicle.get('type')
+    if not type_name:
+        return
+    if vehicle.get('nation') is None:
+        try:
+            vehicle['nation'] = str(type_name.split(':')[0])
+        except Exception:
+            pass
+    if all(vehicle.get(key) is not None for key in ('level', 'class', 'role')):
+        return
+    try:
+        from items import vehicles
+        nation_id, innation_id = vehicles.g_list.getIDsByName(type_name)
+        vtype = vehicles.g_cache.vehicle(nation_id, innation_id)
+    except Exception:
+        return
+    if vehicle.get('level') is None:
+        try:
+            vehicle['level'] = int(vtype.level)
+        except Exception:
+            pass
+    if vehicle.get('class') is None:
+        try:
+            for tag in vtype.tags:
+                if tag in VEHICLE_CLASS_TAGS:
+                    vehicle['class'] = str(tag)
+                    break
+        except Exception:
+            pass
+    if vehicle.get('role') is None:
+        try:
+            from constants import ROLE_TYPE_TO_LABEL
+            label = ROLE_TYPE_TO_LABEL.get(vtype.role)
+            if label and label != 'NotDefined':
+                vehicle['role'] = str(label)
+        except Exception:
+            pass
+
+
 class Exporter(object):
     def __init__(self, game, folder, version, archive=None):
         self.game = os.path.abspath(game)
@@ -188,6 +239,11 @@ class Exporter(object):
         if not IDENTIFIER.match(battle['id']): raise ValueError('Invalid battle id')
         result = copy.deepcopy(battle)
         for hit in result['hits']:
+            for side in ('attacker', 'target'):
+                try:
+                    enrich_vehicle(hit.get(side))
+                except Exception:
+                    LOG.exception('Vehicle identity unavailable; the hit is published as recorded')
             for part in hit.get('target', {}).get('parts', []):
                 try:
                     key, error = self.model(part['resource'], result['clientVersion'])

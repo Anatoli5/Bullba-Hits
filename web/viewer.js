@@ -41,7 +41,7 @@
   Viewer.prototype.resize=function(){var w=this.container.clientWidth,h=this.container.clientHeight;if(!w||!h)return;this.renderer.setSize(w,h,false);this.projection();this.render();};
   // Coalesce input and color updates into one draw at the next browser frame.
   Viewer.prototype.draw=function(){if(this.frameId!==null)return;var self=this;this.frameId=window.requestAnimationFrame(function(){try{if(self.turretPending)self.applyTurret();if(self.fitPending){self.fitPending=false;self.resize();self.fit();}if(self.paintMesh)self.paint();if(self.aimGroup)self.aimGroup.visible=!!document.getElementById('show-aim').checked&&self.recordedShown();self.renderer.render(self.scene,self.camera);self.updateReticles();}finally{self.frameId=null;}});};
-  Viewer.prototype.render=function(){var c=Math.cos(this.pitch);this.camera.position.set(this.target.x+this.distance*c*Math.sin(this.yaw),this.target.y+this.distance*Math.sin(this.pitch),this.target.z+this.distance*c*Math.cos(this.yaw));this.camera.lookAt(this.target);this.camera.updateMatrixWorld();if(this.pan.x||this.pan.y){var m=this.camera.matrixWorld,off=new THREE.Vector3().setFromMatrixColumn(m,0).multiplyScalar(this.pan.x).add(new THREE.Vector3().setFromMatrixColumn(m,1).multiplyScalar(this.pan.y));this.camera.position.add(off);this.camera.updateMatrixWorld();}if(this.autoFrame)this.autoFit();this.draw();if(this.onCamera)this.onCamera({distance:this.distance,zoom:this.camera.zoom,yaw:this.yaw,pitch:this.pitch});};
+  Viewer.prototype.render=function(){var c=Math.cos(this.pitch);this.camera.position.set(this.target.x+this.distance*c*Math.sin(this.yaw),this.target.y+this.distance*Math.sin(this.pitch),this.target.z+this.distance*c*Math.cos(this.yaw));this.camera.near=Math.max(.05,this.distance*.02);this.camera.far=this.distance*4+200;this.projection();this.camera.lookAt(this.target);this.camera.updateMatrixWorld();if(this.pan.x||this.pan.y){var m=this.camera.matrixWorld,off=new THREE.Vector3().setFromMatrixColumn(m,0).multiplyScalar(this.pan.x).add(new THREE.Vector3().setFromMatrixColumn(m,1).multiplyScalar(this.pan.y));this.camera.position.add(off);this.camera.updateMatrixWorld();}if(this.autoFrame)this.autoFit();this.draw();if(this.onCamera)this.onCamera({distance:this.distance,zoom:this.camera.zoom,yaw:this.yaw,pitch:this.pitch});};
   Viewer.prototype.setZoom=function(value){if(!Number.isFinite(value)||value<=0)return;this.camera.zoom=Math.max(.1,Math.min(150,value));if(this.autoFrame)this.frameScale=this.camera.zoom/Math.max(.1,this.fitZoom);this.projection();this.draw();if(this.onCamera)this.onCamera({distance:this.distance,zoom:this.camera.zoom,yaw:this.yaw,pitch:this.pitch});};
   Viewer.prototype.setDistance=function(value){if(!Number.isFinite(value))return;this.distance=Math.max(DISTANCE_MIN,Math.min(DISTANCE_MAX,value));this.render();};
   Viewer.limits={distanceMin:DISTANCE_MIN,distanceMax:DISTANCE_MAX};
@@ -94,7 +94,7 @@
     var geometry=new T.BufferGeometry();geometry.setAttribute('position',new T.Float32BufferAttribute(positions,3));
     if(!this.outline){
       this.outlineDepth=new T.Mesh(geometry,new T.MeshBasicMaterial({colorWrite:false,depthWrite:true,depthTest:true,side:T.DoubleSide}));this.outlineDepth.renderOrder=2.5;
-      this.outline=new T.Mesh(geometry,new T.MeshBasicMaterial({wireframe:true,transparent:true,depthWrite:false,depthTest:true,side:T.DoubleSide,polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-2}));this.outline.renderOrder=3;
+      this.outline=new T.Mesh(geometry,new T.MeshBasicMaterial({wireframe:true,transparent:true,depthWrite:false,depthTest:true,side:T.DoubleSide,polygonOffset:true,polygonOffsetFactor:-1,polygonOffsetUnits:-1}));this.outline.renderOrder=3;
       this.root.add(this.outlineDepth,this.outline);
     }else{this.outline.geometry.dispose();this.outline.geometry=geometry;this.outlineDepth.geometry=geometry;}
     this.applyOutline();
@@ -169,14 +169,36 @@
     return {center:new THREE.Vector2(0,0),zoom:Math.max(.1,Math.min(150,1.72/Math.max(horizontal,vertical,.001)))};
   };
   Viewer.prototype.autoFit=function(){var frame=this.framing();if(!frame)return;this.frameCenter.copy(frame.center);this.fitZoom=frame.zoom;this.camera.zoom=Math.max(.1,Math.min(150,this.fitZoom*this.frameScale));this.projection();};
-  // Fit: keep the distance, pick the zoom at which the hull and turret (their actual vertices, seen from the
-  // current view) sit inside the screen with an 8% margin. The gun is ignored: it may cross the camera freely.
+  // Fit: keep the orbit centre. Project every vertex of the model (tracks, hull, turret, gun, screens — the user's
+  // call once centring worked: a fit of the hull alone left the tracks below the screen and an oscillating turret's
+  // roof, which lives in the gun part, above it), pan the camera so that projection sits in the middle of the usable
+  // screen, then pick the zoom at which it fills that area with an 8% margin. The usable area leaves the top
+  // FIT_TOP_BAND of the viewport free: the "Under the cursor" panel lives there. Rules learned the hard way: (1) the
+  // whole model must be in front of the camera, so a clinch record (5 m) first backs off to twice the model's radius
+  // about the orbit centre (a tank, not a fisheye) — a fit of the visible half drifts further away with every click;
+  // (2) the pan is solved at the depth of the edge vertices themselves, not at the orbit-centre depth: a vertex at a
+  // quarter of that depth moves four times as far per metre of pan.
+  var FIT_TOP_BAND=.24,FIT_MARGIN=.08;
   Viewer.prototype.fit=function(){
-    var tris=(this.engine||{}).triangles||[];if(!tris.length)return;var cam=this.camera,extent=0,v=new THREE.Vector3(),local=new THREE.Vector3();
-    cam.zoom=1;this.frameCenter.set(0,0);this.projection();cam.updateMatrixWorld();
-    for(var i=0;i<tris.length;i++){var t=tris[i];if(t.part!==1&&t.part!==2)continue;
-      for(var k=0;k<3;k++){v.fromArray(k===0?t.a:k===1?t.b:t.c);local.copy(v).applyMatrix4(cam.matrixWorldInverse);if(local.z>-.5)continue;v.project(cam);extent=Math.max(extent,Math.abs(v.x),Math.abs(v.y));}}
-    var zoom=extent>0?Math.max(.1,Math.min(150,.92/extent)):1,f=this.framing();this.frameScale=zoom/Math.max(.1,f?f.zoom:1);this.setZoom(zoom);
+    var tris=(this.engine||{}).triangles||[];if(!tris.length)return;var cam=this.camera,v=new THREE.Vector3(),local=new THREE.Vector3(),tangent=Math.tan(cam.fov*Math.PI/360),radius=0,i,k,t;
+    // Usable area in NDC: full width, height below the top band; both shrunk by the margin.
+    var top=1-2*FIT_TOP_BAND,centreY=(top-1)/2,halfW=1-FIT_MARGIN,halfH=(top+1)/2-FIT_MARGIN,zoom=1;
+    for(i=0;i<tris.length;i++){t=tris[i];for(k=0;k<3;k++)radius=Math.max(radius,v.fromArray(k===0?t.a:k===1?t.b:t.c).distanceTo(this.target));}
+    var minDistance=Math.min(DISTANCE_MAX,radius*2+1);if(this.distance<minDistance){this.distance=minDistance;this.render();}
+    for(var pass=0;pass<6;pass++){
+      cam.zoom=1;this.frameCenter.set(0,0);this.projection();cam.updateMatrixWorld();
+      var minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity,zMinX=1,zMaxX=1,zMinY=1,zMaxY=1;
+      for(i=0;i<tris.length;i++){t=tris[i];
+        for(k=0;k<3;k++){v.fromArray(k===0?t.a:k===1?t.b:t.c);local.copy(v).applyMatrix4(cam.matrixWorldInverse);if(local.z>-.5)continue;var depth=-local.z;v.project(cam);
+          if(v.x<minX){minX=v.x;zMinX=depth;}if(v.x>maxX){maxX=v.x;zMaxX=depth;}if(v.y<minY){minY=v.y;zMinY=depth;}if(v.y>maxY){maxY=v.y;zMaxY=depth;}}}
+      if(minX===Infinity)return;
+      var bw=(maxX-minX)/2,bh=(maxY-minY)/2;zoom=Math.max(.1,Math.min(150,Math.min(bw>0?halfW/bw:150,bh>0?halfH/bh:150)));
+      // Zoom scales NDC about the screen centre, so at zoom 1 the box middle must sit at the usable-area centre divided by the zoom.
+      var cx=(minX+maxX)/2,cy=(minY+maxY)/2-centreY/zoom;if(Math.abs(cx)<.003&&Math.abs(cy)<.003)break;
+      // A camera shift p moves a vertex at depth z by -p/(z·tan·aspect) in NDC x; solve for the two edge vertices' middle landing on target.
+      var kx=tangent*cam.aspect;this.pan.x+=cx*2/(1/(zMinX*kx)+1/(zMaxX*kx));this.pan.y+=cy*2/(1/(zMinY*tangent)+1/(zMaxY*tangent));this.render();
+    }
+    var f=this.framing();this.frameScale=zoom/Math.max(.1,f?f.zoom:1);this.setZoom(zoom);
   };
   // Switching auto-frame on holds the size that is on screen right now: the scale is taken from a fresh framing.
   Viewer.prototype.setAutoFrame=function(value){this.autoFrame=!!value;if(this.autoFrame){var f=this.framing();if(f)this.frameScale=this.camera.zoom/Math.max(.1,f.zoom);}this.render();};

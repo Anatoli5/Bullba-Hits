@@ -8,6 +8,37 @@
   var aimReasons={'no-tracer':'No own tracer','no-endpoint':'Tracer did not match the hit point','ambiguous':'Several tracers — the link is ambiguous','foreign':'Someone else’s shot','no-snapshot':'Reticle snapshot not recorded','stale':'Reticle snapshot is stale'};
   function staleEstimate(){if(analysisKey!==null){$('spread-result').textContent='Conditions changed. Press “Estimate” again.';analysisKey=null;}if(viewer)viewer.hideSpread();}
   function node(tag,text,cls){var e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e;}
+  // Vehicle tile: tier, name, nation flag, class and role. Any field may be missing in
+  // records written before the recorder saved them; missing slots stay empty and keep their size.
+  var tierRomans=['','I','II','III','IV','V','VI','VII','VIII','IX','X','XI'];
+  var classNames={lightTank:'Light tank',mediumTank:'Medium tank',heavyTank:'Heavy tank','AT-SPG':'Tank destroyer',SPG:'SPG'};
+  // WoT class marks: one rhombus LT, two MT, three HT, inverted triangle TD, trapezoid SPG.
+  // Role families share one icon each (the client's own roleExp icons); the class mark tells the families apart.
+  var roleFamilies={role_SPG:'spg',role_HT_assault:'assault',role_HT_break:'break',role_HT_universal:'universal',role_HT_support:'support',
+    role_MT_assault:'assault',role_MT_universal:'universal',role_MT_sniper:'sniper',role_MT_support:'support',
+    role_ATSPG_assault:'assault',role_ATSPG_universal:'universal',role_ATSPG_sniper:'sniper',role_ATSPG_support:'support',
+    role_LT_universal:'universal',role_LT_scout:'scout',role_LT_support:'support'};
+  var roleNames={spg:'SPG',assault:'Assault',break:'Breakthrough',universal:'Universal',support:'Support',sniper:'Sniper',scout:'Scout'};
+  var nationNames={ussr:'USSR',germany:'Germany',usa:'USA',china:'China',france:'France',uk:'UK',
+    japan:'Japan',czech:'Czechoslovakia',sweden:'Sweden',poland:'Poland',italy:'Italy'};
+  function vehicleTile(info){
+    info=info||{};
+    var tile=node('span',undefined,'vehicle-tile'),nation=info.nation||String(info.type||'').split(':')[0];
+    if(nationNames[nation])tile.setAttribute('data-nation',nation);
+    var tier=tierRomans[info.level]||'',cls=classNames[info['class']]?info['class']:null,family=roleFamilies[info.role]||null;
+    tile.appendChild(node('span',info.name||'Unknown vehicle','vt-name'));
+    // Second line: tier, class icon (the client's own outline icon), role icon.
+    var meta=node('span',undefined,'vt-meta');
+    meta.appendChild(node('span',tier,'vt-tier'));
+    var mark=node('span',undefined,'vt-class');
+    if(cls){mark.setAttribute('data-class',cls);mark.title=classNames[cls];}
+    meta.appendChild(mark);
+    var role=node('span',undefined,'vt-role');
+    if(family){role.setAttribute('data-role',family);role.title=roleNames[family]+(cls?' \u00b7 '+classNames[cls].toLowerCase():'');}
+    meta.appendChild(role);tile.appendChild(meta);
+    tile.title=[info.name||'Unknown vehicle',tier?'Tier '+tier:'',nationNames[nation]||'',classNames[cls]||'',family?roleNames[family]:''].filter(Boolean).join(' \u00b7 ');
+    return tile;
+  }
   function message(text){$('scene-message').textContent=text;$('scene-message').hidden=!text;}
   function warnings(lines){$('warnings').textContent=lines.map(function(line){return line==='Additional vehicle parts are not yet rendered'?'Extra parts of this vehicle are not shown and not included in the estimate.':line;}).join(' · ');$('warnings').hidden=!lines.length;}
   function result(hit){if(hit.damage>0)return 'Damage '+hit.damage+' HP';var p=(hit.points||[]).filter(function(p){return p.effect!==undefined;});return p.length?(effects[p[p.length-1].effect]||'Result '+p[p.length-1].effect):'Result not decoded';}
@@ -80,7 +111,7 @@
     var shell=pen?[{kind:'pen',text:'pen '+Math.round(pen)+' mm'+(range?' / '+Math.round(range)+' m':'')}]:[];
     var zero=chanceRgb({chance:0});
     if(r.reason==='ricochet')return {label:'Ricochet',color:zero,groups:prefix.concat([{kind:'armor',text:(r.final?'again, shell lost: ':'')+Math.round(r.nominal)+' mm – '+Math.round(r.angle)+'°'}],shell,extra)};
-    if(r.reason==='screen')return {label:'0%',color:zero,groups:prefix.concat([{kind:'armor',text:'stops at the screen'}],shell,extra)};
+    if(r.reason==='screen')return {label:'0%',color:zero,groups:prefix.concat([{kind:'armor',text:'explodes on the screen (this HE cannot pass screens)'}],shell,extra)};
     if(r.reason==='no-hull')return r.bounce?{label:'0%',color:zero,groups:prefix.concat([{kind:'armor',text:'flies past after the ricochet'}],shell)}:{label:'—',color:'',groups:[{kind:'armor',text:'no main armour on this line'}]};
     if(r.reason==='parameters')return {label:'—',color:'',groups:[{kind:'armor',text:'set penetration and calibre'}]};
     if(r.reason==='armor')return {label:'—',color:'',groups:prefix.concat([{kind:'armor',text:'no armour data for this surface'}])};
@@ -116,8 +147,11 @@
     var container=$('hits');container.replaceChildren();var hits=current?current.hits.filter(function(h){return filter==='all'||h.direction===filter;}):[];var own=current?(function(){var inc=current.hits.find(function(h){return h.direction==='incoming'&&h.target&&h.target.name;}),out=current.hits.find(function(h){return h.direction==='outgoing'&&h.attacker&&h.attacker.name;});return inc?inc.target.name:out?out.attacker.name:null;}()):null;$('hit-count').textContent=current?hits.length+' hits'+(own?' · battle in '+own:''):'';
     if(!hits.length){container.appendChild(node('p',current?'No hits for the chosen filter.':'No records yet. Start the game with the recorder and play a battle. The viewer can stay open.','empty'));return;}
     hits.forEach(function(h){var hasDamage=h.damage>0,b=node('button',undefined,'hit');b.setAttribute('aria-pressed',String(selected===h.id));b.setAttribute('data-direction',h.direction);b.setAttribute('data-result',hasDamage?'damage':'none');b.title=(h.direction==='incoming'?'Incoming from '+((h.attacker||{}).name||'?'):'Outgoing at '+((h.target||{}).name||'?'))+' · '+result(h);
-      var row=node('span',undefined,'hit-row');row.appendChild(node('span',h.direction==='incoming'?'↙':'↗','direction-icon '+h.direction));row.appendChild(node('span',h.direction==='incoming'?((h.attacker||{}).name||'Unknown shooter'):((h.target||{}).name||'Unknown target'),'hit-name'));row.appendChild(node('span',hasDamage?'−'+h.damage:'0','hit-damage'));b.appendChild(row);
-      var sub=node('span',undefined,'hit-row hit-sub');sub.appendChild(node('span',clock(h.receivedAt)));sub.appendChild(node('span',hasDamage?'':result(h)));b.appendChild(sub);
+      b.appendChild(vehicleTile(h.direction==='incoming'?h.attacker:h.target));
+      // Outcome column: damage in the direction colour, or the muted result icon; the full result text stays in the button title.
+      var outcome=node('span',undefined,'hit-outcome');
+      outcome.appendChild(hasDamage?node('span',(h.direction==='incoming'?'\u2199':'\u2197')+h.damage,'hit-damage'):node('span',resultIcon(h).replace(/▰ ?/,''),'hit-result'));
+      outcome.appendChild(node('span',clock(h.receivedAt),'hit-time'));b.appendChild(outcome);
       b.onclick=function(){selectHit(h.id).catch(function(){});};container.appendChild(b);});
   }
   function selectHit(id){
