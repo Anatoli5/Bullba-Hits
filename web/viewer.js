@@ -180,12 +180,13 @@
     return {center:new THREE.Vector2(0,0),zoom:Math.max(.1,Math.min(150,1.72/Math.max(horizontal,vertical,.001)))};
   };
   Viewer.prototype.autoFit=function(){var frame=this.framing();if(!frame)return;this.frameCenter.copy(frame.center);this.fitZoom=frame.zoom;this.camera.zoom=Math.max(.1,Math.min(150,this.fitZoom*this.frameScale));this.projection();};
-  // Fit: keep the distance, pick the zoom at which the whole model (box corners, projected from the current
-  // view) sits inside the screen with an 8% margin. Auto-frame then holds that size across distance changes.
+  // Fit: keep the distance, pick the zoom at which the hull and turret (their actual vertices, seen from the
+  // current view) sit inside the screen with an 8% margin. The gun is ignored: it may cross the camera freely.
   Viewer.prototype.fit=function(){
-    if(!this.bounds)return;var b=this.bounds,cam=this.camera,extent=0,v=new THREE.Vector3(),local=new THREE.Vector3();
+    var tris=(this.engine||{}).triangles||[];if(!tris.length)return;var cam=this.camera,extent=0,v=new THREE.Vector3(),local=new THREE.Vector3();
     cam.zoom=1;this.frameCenter.set(0,0);this.projection();cam.updateMatrixWorld();
-    for(var c=0;c<8;c++){v.set(c&1?b.max.x:b.min.x,c&2?b.max.y:b.min.y,c&4?b.max.z:b.min.z);local.copy(v).applyMatrix4(cam.matrixWorldInverse);if(local.z>-.01)continue;v.project(cam);extent=Math.max(extent,Math.abs(v.x),Math.abs(v.y));}
+    for(var i=0;i<tris.length;i++){var t=tris[i];if(t.part!==1&&t.part!==2)continue;
+      for(var k=0;k<3;k++){v.fromArray(k===0?t.a:k===1?t.b:t.c);local.copy(v).applyMatrix4(cam.matrixWorldInverse);if(local.z>-.5)continue;v.project(cam);extent=Math.max(extent,Math.abs(v.x),Math.abs(v.y));}}
     var zoom=extent>0?Math.max(.1,Math.min(150,.92/extent)):1,f=this.framing();this.frameScale=zoom/Math.max(.1,f?f.zoom:1);this.setZoom(zoom);
   };
   // Plain-camera framing: zoom ×1 and the distance at which the vehicle fills the view (the needed zoom grows
