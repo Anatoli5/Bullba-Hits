@@ -17,7 +17,7 @@
     this.grid = new T.GridHelper(24, 24, 0x4a5d6f, 0x263746); this.scene.add(this.grid);
     this.root = new T.Group(); this.scene.add(this.root);
     this.target = new T.Vector3(0, 1, 0); this.yaw = 0.7; this.pitch = 0.27; this.distance = 50;
-    this.defaults={distance:50,scale:.85};this.pivot='vehicle';this.pinned=null;this.pinGroup=null;this.pinReticles=[];this.centre=null;this.pan=new T.Vector2();this.frameCenter=new T.Vector2();this.fitZoom=1;
+    this.defaults={distance:50,scale:.85};this.pivot='hit';this.pinned=null;this.pinGroup=null;this.pinReticles=[];this.centre=null;this.pan=new T.Vector2();this.frameCenter=new T.Vector2();this.fitZoom=1;
     try{var saved=JSON.parse(window.localStorage.getItem('armor-camera-defaults'));if(saved&&saved.distance>=1&&saved.distance<=1500&&saved.scale>=.1&&saved.scale<=10)this.defaults=saved;}catch(ignore){}
     this.materials = []; this.point = null; this.travel = null;
     this.shell=null;this.heatmap=true;this.palette='classic';this.paintTimer=null;this.paintMesh=null;this.samples=[];this.engine=null;
@@ -168,43 +168,38 @@
     var vertical=2*radius/(distance*tangent),horizontal=vertical/Math.max(.1,camera.aspect);
     return {center:new THREE.Vector2(0,0),zoom:Math.max(.1,Math.min(150,1.72/Math.max(horizontal,vertical,.001)))};
   };
-  Viewer.prototype.autoFit=function(){var frame=this.framing();if(!frame)return;this.frameCenter.copy(frame.center);this.fitZoom=frame.zoom;this.camera.zoom=Math.max(.1,Math.min(150,this.fitZoom*this.frameScale));this.projection();};
-  // Fit: keep the orbit centre. Project every vertex of the model (tracks, hull, turret, gun, screens — the user's
-  // call once centring worked: a fit of the hull alone left the tracks below the screen and an oscillating turret's
-  // roof, which lives in the gun part, above it), pan the camera so that projection sits in the middle of the usable
-  // screen, then pick the zoom at which it fills that area with an 8% margin. The usable area leaves the top
-  // FIT_TOP_BAND of the viewport free: the "Under the cursor" panel lives there. Rules learned the hard way: (1) the
-  // whole model must be in front of the camera, so a clinch record (5 m) first backs off to twice the model's radius
-  // about the orbit centre (a tank, not a fisheye) — a fit of the visible half drifts further away with every click;
-  // (2) the pan is solved at the depth of the edge vertices themselves, not at the orbit-centre depth: a vertex at a
-  // quarter of that depth moves four times as far per metre of pan.
+  Viewer.prototype.autoFit=function(){var frame=this.framing();if(!frame)return;this.fitZoom=frame.zoom;this.camera.zoom=Math.max(.1,Math.min(150,this.fitZoom*this.frameScale));this.projection();};
+  // Fit: the camera stays exactly where it is (on the shell's axis after focus) — the frustum turns towards the
+  // vehicle (a lens shift, `frameCenter`, applied in projection()) and the zoom is picked so that every vertex of the
+  // model (tracks, hull, turret, gun, screens) fills the usable screen with an 8% margin. The usable area leaves the
+  // top FIT_TOP_BAND of the viewport free: the "Under the cursor" panel lives there. A clinch record (5 m) first
+  // backs off along the view line to twice the model's radius about the orbit centre — a fit of the visible half
+  // makes no sense. Earlier versions moved the camera sideways to centre the hull; that took the eye off the shell's
+  // axis, which is the whole point of the recorded view (user, 13.09).
   var FIT_TOP_BAND=.24,FIT_MARGIN=.08;
   Viewer.prototype.fit=function(){
-    var tris=(this.engine||{}).triangles||[];if(!tris.length)return;var cam=this.camera,v=new THREE.Vector3(),local=new THREE.Vector3(),tangent=Math.tan(cam.fov*Math.PI/360),radius=0,i,k,t;
+    var tris=(this.engine||{}).triangles||[];if(!tris.length)return;var cam=this.camera,v=new THREE.Vector3(),local=new THREE.Vector3(),radius=0,i,k,t;
     // Usable area in NDC: full width, height below the top band; both shrunk by the margin.
-    var top=1-2*FIT_TOP_BAND,centreY=(top-1)/2,halfW=1-FIT_MARGIN,halfH=(top+1)/2-FIT_MARGIN,zoom=1;
+    var top=1-2*FIT_TOP_BAND,centreY=(top-1)/2,halfW=1-FIT_MARGIN,halfH=(top+1)/2-FIT_MARGIN;
     for(i=0;i<tris.length;i++){t=tris[i];for(k=0;k<3;k++)radius=Math.max(radius,v.fromArray(k===0?t.a:k===1?t.b:t.c).distanceTo(this.target));}
     var minDistance=Math.min(DISTANCE_MAX,radius*2+1);if(this.distance<minDistance){this.distance=minDistance;this.render();}
-    for(var pass=0;pass<6;pass++){
-      cam.zoom=1;this.frameCenter.set(0,0);this.projection();cam.updateMatrixWorld();
-      var minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity,zMinX=1,zMaxX=1,zMinY=1,zMaxY=1;
-      for(i=0;i<tris.length;i++){t=tris[i];
-        for(k=0;k<3;k++){v.fromArray(k===0?t.a:k===1?t.b:t.c);local.copy(v).applyMatrix4(cam.matrixWorldInverse);if(local.z>-.5)continue;var depth=-local.z;v.project(cam);
-          if(v.x<minX){minX=v.x;zMinX=depth;}if(v.x>maxX){maxX=v.x;zMaxX=depth;}if(v.y<minY){minY=v.y;zMinY=depth;}if(v.y>maxY){maxY=v.y;zMaxY=depth;}}}
-      if(minX===Infinity)return;
-      var bw=(maxX-minX)/2,bh=(maxY-minY)/2;zoom=Math.max(.1,Math.min(150,Math.min(bw>0?halfW/bw:150,bh>0?halfH/bh:150)));
-      // Zoom scales NDC about the screen centre, so at zoom 1 the box middle must sit at the usable-area centre divided by the zoom.
-      var cx=(minX+maxX)/2,cy=(minY+maxY)/2-centreY/zoom;if(Math.abs(cx)<.003&&Math.abs(cy)<.003)break;
-      // A camera shift p moves a vertex at depth z by -p/(z·tan·aspect) in NDC x; solve for the two edge vertices' middle landing on target.
-      var kx=tangent*cam.aspect;this.pan.x+=cx*2/(1/(zMinX*kx)+1/(zMaxX*kx));this.pan.y+=cy*2/(1/(zMinY*tangent)+1/(zMaxY*tangent));this.render();
-    }
+    cam.zoom=1;this.frameCenter.set(0,0);this.projection();cam.updateMatrixWorld();
+    var minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity;
+    for(i=0;i<tris.length;i++){t=tris[i];
+      for(k=0;k<3;k++){v.fromArray(k===0?t.a:k===1?t.b:t.c);local.copy(v).applyMatrix4(cam.matrixWorldInverse);if(local.z>-.5)continue;v.project(cam);
+        minX=Math.min(minX,v.x);maxX=Math.max(maxX,v.x);minY=Math.min(minY,v.y);maxY=Math.max(maxY,v.y);}}
+    if(minX===Infinity)return;
+    var bw=(maxX-minX)/2,bh=(maxY-minY)/2,zoom=Math.max(.1,Math.min(150,Math.min(bw>0?halfW/bw:150,bh>0?halfH/bh:150)));
+    // frameCenter is the zoom-1 NDC point that lands on the screen centre; zoom scales NDC about that centre, so the
+    // box middle must land at the usable-area centre divided by the zoom.
+    this.frameCenter.set((minX+maxX)/2,(minY+maxY)/2-centreY/zoom);
     var f=this.framing();this.frameScale=zoom/Math.max(.1,f?f.zoom:1);this.setZoom(zoom);
   };
   // Switching auto-frame on holds the size that is on screen right now: the scale is taken from a fresh framing.
   Viewer.prototype.setAutoFrame=function(value){this.autoFrame=!!value;if(this.autoFrame){var f=this.framing();if(f)this.frameScale=this.camera.zoom/Math.max(.1,f.zoom);}this.render();};
   Viewer.prototype.setScale=function(value){this.frameScale=Math.max(.1,Math.min(10,value));if(this.autoFrame)this.render();else this.setZoom(this.fitZoom*this.frameScale);};
   Viewer.prototype.setTrackOpacity=function(value){this.trackOpacity=Math.max(.05,Math.min(.85,value));this.updateTrackAppearance();this.draw();};
-  Viewer.prototype.reset=function(){this.pan.set(0,0);if(this.bounds){this.target.copy(this.pivotCentre());this.grid.position.y=this.bounds.min.y-.025;}this.distance=this.defaults.distance;this.yaw=.65;this.pitch=.25;this.fitPending=true;this.render();};
+  Viewer.prototype.reset=function(){this.pan.set(0,0);this.frameCenter.set(0,0);if(this.bounds){this.target.copy(this.pivotCentre());this.grid.position.y=this.bounds.min.y-.025;}this.distance=this.defaults.distance;this.yaw=.65;this.pitch=.25;this.fitPending=true;this.render();};
   // Orbit centre: over the hull's own box (the whole-model box includes the barrel and drifts to the bow),
   // at turret height — in a clinch the camera sits turret to turret, so approaching should tend there.
   Viewer.prototype.vehicleCentre=function(){var hull=new THREE.Box3(),turret=new THREE.Box3(),v=new THREE.Vector3();
@@ -216,8 +211,20 @@
   // Vehicle orbit centre: hull centre in plan, at the shooter's gun height when the record has it (a clinch on flat
   // ground looks the way it does in the game), otherwise at turret height.
   Viewer.prototype.pivotCentre=function(){var c=(this.centre||(this.bounds?this.bounds.getCenter(new THREE.Vector3()):new THREE.Vector3())).clone(),a=this.loadedData&&this.loadedData.hit.attacker;if(a&&a.gunHeight>0&&this.bounds)c.y=this.bounds.min.y+a.gunHeight;return c;};
-  Viewer.prototype.setPivot=function(mode){this.pivot=mode==='hit'&&this.point?'hit':'vehicle';this.pan.set(0,0);this.target.copy(this.pivot==='hit'?this.point:this.pivotCentre());this.render();};
-  Viewer.prototype.focus=function(){if(!this.point)return;this.pan.set(0,0);this.target.copy(this.pivot==='vehicle'?this.pivotCentre():this.point);var v=this.travel.clone().negate().normalize();this.yaw=Math.atan2(v.x,v.z);this.pitch=Math.asin(Math.max(-1,Math.min(1,v.y)));this.distance=Math.max(DISTANCE_MIN,Math.min(DISTANCE_MAX,this.recordedDistance||this.defaults.distance));this.fitPending=true;this.render();};
+  // Orbit centre. Switching it turns the view instead of moving the camera: the camera keeps its place (on the
+  // shell's axis after focus) and only looks at the new centre. Clicking the active centre again returns to the
+  // shooter's viewpoint.
+  Viewer.prototype.setPivot=function(mode){var next=mode==='hit'&&this.point?'hit':'vehicle';
+    if(next===this.pivot){if(this.point)this.focus();else{this.pan.set(0,0);this.frameCenter.set(0,0);this.render();}return;}
+    var eye=this.camera.position.clone();this.pivot=next;this.pan.set(0,0);this.frameCenter.set(0,0);this.target.copy(next==='hit'?this.point:this.pivotCentre());this.lookFrom(eye);this.render();};
+  // Place the camera at a world point without moving it: yaw, pitch and distance are read off the vector to the target.
+  Viewer.prototype.lookFrom=function(eye){var v=eye.clone().sub(this.target),len=v.length();if(len<1e-6)return;v.divideScalar(len);this.yaw=Math.atan2(v.x,v.z);this.pitch=Math.asin(Math.max(-1,Math.min(1,v.y)));this.distance=Math.max(DISTANCE_MIN,Math.min(DISTANCE_MAX,len));};
+  // The recorded view: the camera stands on the shell's axis at the recorded range — where the shooter was — and
+  // looks at the orbit centre. With the hit point as centre that is exactly the shell's line of flight; with the
+  // vehicle centre the camera still stands on the axis and merely turns towards the hull (no parallel shift).
+  Viewer.prototype.focus=function(){if(!this.point)return;this.pan.set(0,0);this.frameCenter.set(0,0);
+    var dir=this.travel.clone().negate().normalize(),range=Math.max(DISTANCE_MIN,Math.min(DISTANCE_MAX,this.recordedDistance||this.defaults.distance));
+    var eye=this.point.clone().addScaledVector(dir,range);this.target.copy(this.pivot==='vehicle'?this.pivotCentre():this.point);this.lookFrom(eye);this.fitPending=true;this.render();};
   Viewer.prototype.configure=function(shell,heatmap,palette){this.shell=shell;this.heatmap=heatmap;this.palette=palette;if(this.pinned)this.refreshPin();this.updateTrackAppearance();this.render();};
   // A pinned point replaces the recorded hit line as the analysed shot until unpinned. It is drawn like a
   // recorded shot: an arrow along the line, a reticle at the point, and a dashed leg where a ricochet goes.
