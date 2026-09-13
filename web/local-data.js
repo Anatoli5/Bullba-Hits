@@ -6,7 +6,7 @@
     if(key==='index')return 'data/index.js';
     if(/^battle:[-a-zA-Z0-9_]{1,100}$/.test(key))return 'data/battles/'+key.slice(7)+'.js';
     if(/^model:[a-f0-9]{64}$/.test(key))return 'data/models/'+key.slice(6)+'.js';
-    throw new Error('Некорректный идентификатор записи');
+    throw new Error('Invalid record identifier');
   }
   function read(key,retryCount){
     if(pending[key])return pending[key].promise;
@@ -14,10 +14,10 @@
     var entry={value:undefined,received:false,retries:retryCount||0}, script=document.createElement('script');
     entry.promise=new Promise(function(resolve,reject){
       function finish(error){clearTimeout(timer);script.remove();delete pending[key];if(error)reject(error);else resolve(entry.value);}
-      var timer=setTimeout(function(){finish(new Error('Не удалось прочитать локальный файл. Нажмите «Обновить».'));},15000);
-      script.onload=function(){finish(entry.received?null:new Error('Файл данных повреждён: '+path));};
+      var timer=setTimeout(function(){finish(new Error('Could not read the local file. Press “Refresh”.'));},15000);
+      script.onload=function(){finish(entry.received?null:new Error('Data file is corrupted: '+path));};
       // A momentary read failure (file being replaced by the recorder, browser hiccup) gets two retries before it is reported.
-      script.onerror=function(){if(entry.retries<2){entry.retries++;clearTimeout(timer);script.remove();delete pending[key];setTimeout(function(){read(key,entry.retries).then(resolve,reject);},400);return;}finish(new Error('Не найден '+path+'. Откройте Viewer.html из папки mods/configs/local.armor_inspector после запуска игры с модом.'));};
+      script.onerror=function(){if(entry.retries<2){entry.retries++;clearTimeout(timer);script.remove();delete pending[key];setTimeout(function(){read(key,entry.retries).then(resolve,reject);},400);return;}finish(new Error('Not found '+path+'. Open Viewer.html from mods/configs/local.armor_inspector after running the game with the mod.'));};
       // A fresh URL avoids reusing a snapshot when the user presses Refresh.
       script.src=path+'?read='+Date.now()+'-'+(++serial);
     });
@@ -37,12 +37,12 @@
   }
   function scene(battle,id){
     var hit=battle.hits.find(function(h){return h.id===id;});
-    if(!hit)return Promise.reject(new Error('Попадание не найдено'));
+    if(!hit)return Promise.reject(new Error('Hit not found'));
     var result={hit:hit,models:{},warnings:(battle.warnings||[]).concat(hit.warnings||[])};
     return Promise.all(((hit.target||{}).parts||[]).map(function(part){
-      if(part.modelError||!part.modelKey||!part.transform){result.warnings.push(part.name+': '+(part.modelError||'Модель или положение части не сохранены'));return;}
+      if(part.modelError||!part.modelKey||!part.transform){result.warnings.push(part.name+': '+(part.modelError||'Model or part position not saved'));return;}
       return model(part.modelKey).then(function(data){
-        if(data.kind!=='client-shot-collision'||!Array.isArray(data.groups))throw new Error('Некорректная модель');
+        if(data.kind!=='client-shot-collision'||!Array.isArray(data.groups))throw new Error('Invalid model');
         result.models[String(part.id)]=data;
       }).catch(function(e){result.warnings.push(part.name+': '+e.message);});
     })).then(function(){return result;});

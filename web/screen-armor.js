@@ -85,10 +85,10 @@ void main(){
  outputColor=vec4(color,1.0);
 }`;
   function Surface(renderer,engine){
-    if(!renderer.capabilities.isWebGL2)throw new Error('нужен WebGL 2');
-    var gl=renderer.getContext();if(!gl.getExtension('EXT_color_buffer_float'))throw new Error('нет цветовых float-текстур');
-    if(renderer.capabilities.maxTextures<COUNT+2)throw new Error('недостаточно текстурных блоков');
-    var ext=gl.getExtension('WEBGL_debug_renderer_info');if(ext&&/swiftshader|llvmpipe|software|basic render/i.test(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)))throw new Error('программный WebGL');
+    if(!renderer.capabilities.isWebGL2)throw new Error('WebGL 2 required');
+    var gl=renderer.getContext();if(!gl.getExtension('EXT_color_buffer_float'))throw new Error('no float colour textures');
+    if(renderer.capabilities.maxTextures<COUNT+2)throw new Error('not enough texture units');
+    var ext=gl.getExtension('WEBGL_debug_renderer_info');if(ext&&/swiftshader|llvmpipe|software|basic render/i.test(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)))throw new Error('software WebGL');
     this.renderer=renderer;this.targets=[];this.key=null;this.width=0;this.height=0;this.materialTexture=null;this.checked=null;
     this.captureScene=new T.Scene();this.captureCamera=new T.PerspectiveCamera();
     this.peelMaterial=new T.RawShaderMaterial({glslVersion:T.GLSL3,vertexShader:vertex,fragmentShader:peel,side:T.DoubleSide,blending:T.NoBlending,toneMapped:false,uniforms:{uPrevious:{value:null},uFirst:{value:true},uPass:{value:0},uMaterials:{value:null},uOrigin:{value:new T.Vector3()},uAnchor:{value:new T.Vector3()},uForward:{value:new T.Vector3()}}});
@@ -103,7 +103,7 @@ void main(){
     this.quad=new T.Mesh(new T.PlaneGeometry(2,2),this.material);this.quad.frustumCulled=false;this.quad.renderOrder=0;
     this.checkTarget=new T.WebGLRenderTarget(CHECK,1,{type:T.FloatType,format:T.RGBAFormat,minFilter:T.NearestFilter,magFilter:T.NearestFilter,depthBuffer:false,stencilBuffer:false});
     this.checkScene=new T.Scene();this.checkCamera=new T.Camera();
-    try{this.update(engine);var error=null,previous=renderer.debug.onShaderError;renderer.debug.onShaderError=function(gl,p,v,f){error=gl.getProgramInfoLog(p)||gl.getShaderInfoLog(f)||'ошибка шейдера';};try{renderer.compile(this.captureScene,this.captureCamera);var scene=new T.Scene();scene.add(this.quad);renderer.compile(scene,this.checkCamera);scene.remove(this.quad);}finally{renderer.debug.onShaderError=previous;}if(error)throw new Error(error);this.quad.visible=false;}catch(e){this.dispose();throw e;}
+    try{this.update(engine);var error=null,previous=renderer.debug.onShaderError;renderer.debug.onShaderError=function(gl,p,v,f){error=gl.getProgramInfoLog(p)||gl.getShaderInfoLog(f)||'shader error';};try{renderer.compile(this.captureScene,this.captureCamera);var scene=new T.Scene();scene.add(this.quad);renderer.compile(scene,this.checkCamera);scene.remove(this.quad);}finally{renderer.debug.onShaderError=previous;}if(error)throw new Error(error);this.quad.visible=false;}catch(e){this.dispose();throw e;}
   }
   Surface.prototype.update=function(engine){
     var keys=Object.create(null),mats=[],rows=[],position=[],normal=[],ids=[];
@@ -111,8 +111,8 @@ void main(){
       if(id===undefined){id=mats.length/8;keys[key]=id;mats.push(a?(a.armor==null?-1:a.armor):-2,a?a.vehicleDamageFactor:0,a&&a.useHitAngle?1:0,a&&a.mayRicochet?1:0,a&&a.collideOnceOnly?1:0,a&&a.checkCaliberForRicochet?1:0,a&&a.checkCaliberForHitAngleNorm?1:0,0);}
       rows.push({t:t,id:id});
     });
-    if(mats.length/8>this.renderer.capabilities.maxTextureSize)throw new Error('слишком много материалов');
-    if(mats.length/8>4000)throw new Error('слишком много материалов для упакованного слоя');
+    if(mats.length/8>this.renderer.capabilities.maxTextureSize)throw new Error('too many materials');
+    if(mats.length/8>4000)throw new Error('too many materials for the packed layer');
     // Stable material ordering resolves coincident surfaces before depth peeling.
     rows.sort(function(a,b){return b.id-a.id;});rows.forEach(function(row){[row.t.a,row.t.b,row.t.c].forEach(function(p){position.push.apply(position,p);normal.push.apply(normal,row.t.normal);ids.push(row.id+1);});});
     var geometry=new T.BufferGeometry();geometry.setAttribute('position',new T.Float32BufferAttribute(position,3));geometry.setAttribute('normal',new T.Float32BufferAttribute(normal,3));geometry.setAttribute('materialId',new T.Float32BufferAttribute(ids,1));this.mesh.geometry.dispose();this.mesh.geometry=geometry;
@@ -137,10 +137,10 @@ void main(){
       this.captureCamera.copy(camera);var distance=camera.position.distanceTo(anchor),span=Math.max(5,this.radius*3);this.captureCamera.near=Math.max(.01,distance-span);this.captureCamera.far=distance+span;this.captureCamera.updateProjectionMatrix();
       var p=this.peelMaterial.uniforms;p.uOrigin.value.copy(camera.position);p.uAnchor.value.copy(anchor);p.uForward.value.copy(anchor).sub(camera.position).normalize();
       var target=renderer.getRenderTarget(),auto=renderer.autoClear,clearColor=renderer.getClearColor(new T.Color()),clearAlpha=renderer.getClearAlpha(),viewport=renderer.getViewport(new T.Vector4()),scissor=renderer.getScissor(new T.Vector4()),scissorTest=renderer.getScissorTest();
-      try{renderer.autoClear=false;renderer.setScissorTest(false);renderer.setClearColor(0,0);for(var i=0;i<=COUNT;i++){p.uFirst.value=i===0;p.uPass.value=i;p.uPrevious.value=this.targets[i===0?COUNT:i-1].texture;for(var j=0;j<COUNT;j++)p['uPeel'+j].value=j<i?this.targets[j].texture:this.blank;renderer.setRenderTarget(this.targets[i]);var gl=renderer.getContext();if(gl.checkFramebufferStatus(gl.FRAMEBUFFER)!==gl.FRAMEBUFFER_COMPLETE)throw new Error('float-буфер '+size.width+'×'+size.height+' недоступен');renderer.clear(true,true,false);renderer.render(this.captureScene,this.captureCamera);}}finally{renderer.setRenderTarget(target);renderer.setViewport(viewport);renderer.setScissor(scissor);renderer.setScissorTest(scissorTest);renderer.setClearColor(clearColor,clearAlpha);renderer.autoClear=auto;}
+      try{renderer.autoClear=false;renderer.setScissorTest(false);renderer.setClearColor(0,0);for(var i=0;i<=COUNT;i++){p.uFirst.value=i===0;p.uPass.value=i;p.uPrevious.value=this.targets[i===0?COUNT:i-1].texture;for(var j=0;j<COUNT;j++)p['uPeel'+j].value=j<i?this.targets[j].texture:this.blank;renderer.setRenderTarget(this.targets[i]);var gl=renderer.getContext();if(gl.checkFramebufferStatus(gl.FRAMEBUFFER)!==gl.FRAMEBUFFER_COMPLETE)throw new Error('float-buffer '+size.width+'×'+size.height+' unavailable');renderer.clear(true,true,false);renderer.render(this.captureScene,this.captureCamera);}}finally{renderer.setRenderTarget(target);renderer.setViewport(viewport);renderer.setScissor(scissor);renderer.setScissorTest(scissorTest);renderer.setClearColor(clearColor,clearAlpha);renderer.autoClear=auto;}
       this.key=key;this.checked=null;
     }
-    this.quad.visible=true;return size.width+' × '+size.height+(size.scale<.999?' ('+Math.round(size.scale*100)+'% окна)':'')+' · до '+COUNT+' слоёв';
+    this.quad.visible=true;return size.width+' × '+size.height+(size.scale<.999?' ('+Math.round(size.scale*100)+'% of the window)':'')+' · up to '+COUNT+' layers';
   };
   // Cross-check: the same pixels are evaluated by the JavaScript law through the same camera rays.
   // Screen-space sampling and ray casting meet at pixel centres, so only a few edge pixels may differ.
@@ -165,7 +165,7 @@ void main(){
       if(!ok)mismatches.push({pixel:n,gpu:gpu,cpu:code(cpu)});}
     var failed=compared>=8&&mismatches.length>Math.max(2,Math.floor(compared*.06));
     this.checked={compared:compared,mismatches:mismatches,shellKey:shellKey,failed:failed,
-      message:failed?'GPU-композиция разошлась с CPU: '+mismatches.length+' из '+compared+' пикселей ('+mismatches.slice(0,3).map(function(m){return m.gpu+'≠'+m.cpu;}).join(', ')+')':null};
+      message:failed?'GPU-composition disagrees with the CPU: '+mismatches.length+' of '+compared+' pixels ('+mismatches.slice(0,3).map(function(m){return m.gpu+'≠'+m.cpu;}).join(', ')+')':null};
     return this.checked;
   };
   Surface.prototype.dispose=function(){if(this.quad){if(this.quad.parent)this.quad.parent.remove(this.quad);this.quad.geometry.dispose();this.material.dispose();}if(this.mesh)this.mesh.geometry.dispose();if(this.peelMaterial)this.peelMaterial.dispose();if(this.materialTexture)this.materialTexture.dispose();this.targets.forEach(function(t){t.dispose();});if(this.checkTarget)this.checkTarget.dispose();if(this.depth)this.depth.dispose();if(this.blank)this.blank.dispose();};

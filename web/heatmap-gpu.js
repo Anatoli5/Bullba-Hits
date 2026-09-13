@@ -4,7 +4,7 @@
   var MAX_HITS=64;
   function textureData(values,maxSize){
     var count=Math.max(1,Math.ceil(values.length/4)),width=Math.min(maxSize,Math.ceil(Math.sqrt(count))),height=Math.ceil(count/width);
-    if(height>maxSize)throw new Error('Модель превышает размер текстуры WebGL');
+    if(height>maxSize)throw new Error('The model exceeds the WebGL texture size');
     var data=new Float32Array(width*height*4);data.set(values);return {data:data,width:width,height:height};
   }
   function pack(engine,samples,maxSize){
@@ -21,7 +21,7 @@
       if(node.tris){
         // Leaves in the CPU tree contain at most ten triangles. Both traversals
         // retain their order, including coincident intersections.
-        if(node.tris.length>15)throw new Error('Неподдерживаемый лист дерева коллизий');
+        if(node.tris.length>15)throw new Error('Unsupported collision tree leaf');
         nodes[offset+7]=(triangles.length/16)*16+node.tris.length;
         node.tris.forEach(function(t){triangles.push(t.a[0],t.a[1],t.a[2],material(t),t.e1[0],t.e1[1],t.e1[2],0,t.e2[0],t.e2[1],t.e2[2],0,t.normal[0],t.normal[1],t.normal[2],0);});
       }else{visit(node.left);visit(node.right);}
@@ -29,7 +29,7 @@
     }
     if(engine.acceleration)visit(engine.acceleration);
     samples.forEach(function(t){centers.push(t.center[0],t.center[1],t.center[2],0);});
-    if(nodeCount>16384||triangles.length/16>65535)throw new Error('Модель превышает лимит GPU-расчёта');
+    if(nodeCount>16384||triangles.length/16>65535)throw new Error('The model exceeds the GPU estimate limit');
     return {nodes:textureData(nodes,maxSize),triangles:textureData(triangles,maxSize),materials:textureData(materials,maxSize),samples:textureData(centers,maxSize),nodeCount:nodeCount,sampleCount:samples.length};
   }
   var vertexShader='precision highp float;\nin vec3 position;\nvoid main(){gl_Position=vec4(position,1.0);}';
@@ -141,9 +141,9 @@ void main(){int index=int(gl_FragCoord.y)*uWidth+int(gl_FragCoord.x);int code=in
       shell:[s.normalization||0,s.ricochetCos==null?-1:s.ricochetCos,s.jetLossPerMeter||0,s.kind==='HIGH_EXPLOSIVE'?1:0],flags:[s.mayRicochet?1:0,s.checkCaliber?1:0,s.shieldPenetration?1:0,valid?1:0]};
   }
   function HeatmapGPU(renderer,engine,samples){
-    if(!renderer.capabilities||!renderer.capabilities.isWebGL2)throw new Error('WebGL 2 недоступен');
+    if(!renderer.capabilities||!renderer.capabilities.isWebGL2)throw new Error('WebGL 2 unavailable');
     var gl=renderer.getContext(),extension=gl.getExtension('WEBGL_debug_renderer_info'),driver=extension?gl.getParameter(extension.UNMASKED_RENDERER_WEBGL):'';
-    if(/swiftshader|llvmpipe|software|basic render/i.test(driver))throw new Error('WebGL использует программный рендерер');
+    if(/swiftshader|llvmpipe|software|basic render/i.test(driver))throw new Error('WebGL uses a software renderer');
     this.renderer=renderer;this.textures=[];this.target=null;this.material=null;this.geometry=null;
     var T=THREE,self=this;
     try{
@@ -155,7 +155,7 @@ void main(){int index=int(gl_FragCoord.y)*uWidth+int(gl_FragCoord.x);int code=in
       this.geometry=new T.PlaneGeometry(2,2);var quad=new T.Mesh(this.geometry,this.material);quad.frustumCulled=false;this.scene=new T.Scene();this.scene.add(quad);this.camera=new T.Camera();
       this.bytes=new Uint8Array(data.samples.width*data.samples.height*4);this.codes=new Uint8Array(samples.length);
       var error=null,previous=renderer.debug.onShaderError;
-      renderer.debug.onShaderError=function(gl,program,vs,fs){error=gl.getProgramInfoLog(program)||gl.getShaderInfoLog(fs)||'Ошибка компиляции GPU';};
+      renderer.debug.onShaderError=function(gl,program,vs,fs){error=gl.getProgramInfoLog(program)||gl.getShaderInfoLog(fs)||'GPU compilation error';};
       try{renderer.compile(this.scene,this.camera);}finally{renderer.debug.onShaderError=previous;}
       if(error)throw new Error(error);
     }catch(e){this.dispose();throw e;}
@@ -179,12 +179,12 @@ void main(){int index=int(gl_FragCoord.y)*uWidth+int(gl_FragCoord.x);int code=in
     this.data=data;
   };
   HeatmapGPU.prototype.compute=function(origin,shell){
-    if(this.renderer.getContext().isContextLost())throw new Error('Графический контекст потерян');
+    if(this.renderer.getContext().isContextLost())throw new Error('Graphics context lost');
     var values=uniforms(origin,shell),u=this.material.uniforms;u.uOrigin.value.fromArray(values.origin);u.uPen.value.fromArray(values.pen);u.uShell.value.fromArray(values.shell);u.uFlags.value.set(values.flags);
     var previous=this.renderer.getRenderTarget();
     this.bytes.fill(0);
     try{this.renderer.setRenderTarget(this.target);this.renderer.render(this.scene,this.camera);this.renderer.readRenderTargetPixels(this.target,0,0,this.data.samples.width,this.data.samples.height,this.bytes);}finally{this.renderer.setRenderTarget(previous);}
-    for(var i=0;i<this.codes.length;i++){if(this.bytes[i*4+3]!==255||this.bytes[i*4]>103)throw new Error('Некорректный результат GPU');this.codes[i]=this.bytes[i*4];}
+    for(var i=0;i<this.codes.length;i++){if(this.bytes[i*4+3]!==255||this.bytes[i*4]>103)throw new Error('Invalid GPU result');this.codes[i]=this.bytes[i*4];}
     return this.codes;
   };
   HeatmapGPU.prototype.dispose=function(){this.textures.forEach(function(t){t.dispose();});this.textures=[];if(this.target)this.target.dispose();if(this.material)this.material.dispose();if(this.geometry)this.geometry.dispose();};

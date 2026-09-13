@@ -45,27 +45,27 @@ OutputBaseFilename=BullbaHits-{#ProductVersion}-Setup
 #endif
 
 [Languages]
-Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
+Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Messages]
-WelcomeLabel1=Установка Bullba Hits
-WelcomeLabel2=Мод записывает попадания, а сохранённая история открывается в обычном браузере.%n%nПоддерживается World of Tanks PC NA 2.4.0.0 #945.%nПеред установкой закройте игру.
-SelectDirLabel3=Выберите папку World of Tanks, в которой находятся version.xml и каталог res.
-SelectDirBrowseLabel=Папка игры:
-FinishedLabelNoIcons=Установка завершена. Мод начнёт записывать попадания после запуска игры.%n%nПросмотрщик доступен через Viewer.html в mods\configs\local.armor_inspector. После боя нажмите «Обновить» в просмотрщике.
-FinishedLabel=Установка завершена. Мод начнёт записывать попадания после запуска игры.%n%nДля просмотра откройте ярлык Bullba Hits. После боя нажмите «Обновить» в просмотрщике.
+WelcomeLabel1=Bullba Hits Setup
+WelcomeLabel2=The mod records hits; the saved history opens in an ordinary browser.%n%nSupports World of Tanks PC NA 2.4.0.0 #945.%nClose the game before installing.
+SelectDirLabel3=Select the World of Tanks folder that contains version.xml and the res directory.
+SelectDirBrowseLabel=Game folder:
+FinishedLabelNoIcons=Installation complete. The mod starts recording hits once the game runs.%n%nThe viewer is Viewer.html in mods\configs\local.armor_inspector. After a battle press “Refresh” in the viewer.
+FinishedLabel=Installation complete. The mod starts recording hits once the game runs.%n%nOpen the Bullba Hits shortcut to view them. After a battle press “Refresh” in the viewer.
 
 [Tasks]
-Name: desktopicon; Description: "Создать ярлык просмотрщика на рабочем столе"; GroupDescription: "Ярлык:"
+Name: desktopicon; Description: "Create a desktop shortcut for the viewer"; GroupDescription: "Shortcut:"
 
 [Files]
 #include "generated\files.iss"
 
 [Icons]
-Name: "{code:GetDesktopDir}\Bullba Hits"; Filename: "{code:GetViewerLauncher}"; Parameters: "{code:GetViewerArguments}"; WorkingDir: "{app}\mods\configs\local.armor_inspector"; IconFilename: "{app}\mods\configs\local.armor_inspector\web\icon.ico"; Comment: "Bullba Hits — локальные попадания"; Tasks: desktopicon
+Name: "{code:GetDesktopDir}\Bullba Hits"; Filename: "{code:GetViewerLauncher}"; Parameters: "{code:GetViewerArguments}"; WorkingDir: "{app}\mods\configs\local.armor_inspector"; IconFilename: "{app}\mods\configs\local.armor_inspector\web\icon.ico"; Comment: "Bullba Hits — local hits"; Tasks: desktopicon
 
 [Run]
-Filename: "{code:GetViewerLauncher}"; Parameters: "{code:GetViewerArguments}"; Description: "Открыть Bullba Hits"; Flags: shellexec postinstall skipifsilent unchecked
+Filename: "{code:GetViewerLauncher}"; Parameters: "{code:GetViewerArguments}"; Description: "Open Bullba Hits"; Flags: shellexec postinstall skipifsilent unchecked
 
 [Code]
 type
@@ -180,9 +180,9 @@ begin
   ExpectedName := 'WorldOfTanks.exe';
 #endif
   if not EnumProcesses(IDs, SizeOf(IDs), Needed) then
-    RaiseException('Не удалось проверить, закрыта ли игра.');
+    RaiseException('Could not check whether the game is closed.');
   if Needed >= SizeOf(IDs) then
-    RaiseException('Не удалось полностью прочитать список процессов.');
+    RaiseException('Could not read the full process list.');
   Count := Needed div 4;
   if Count = 0 then Exit;
   for I := 0 to Count - 1 do begin
@@ -210,7 +210,7 @@ begin
   Result := '';
   if FileExists(Path) then
     if CompareText(GetSHA256OfFile(Path), ExpectedHash) <> 0 then
-      Result := 'В целевой папке уже есть отличающийся файл. Он не будет заменён:' + #13#10 + Path;
+      Result := 'The target folder already contains a different file. It will not be replaced:' + #13#10 + Path;
 end;
 
 function CheckUpgradableFile(const Path, ExpectedHash, LegacyHash: String): String;
@@ -248,7 +248,7 @@ begin
 #endif
     if not FileExists(AddBackslash(Folder) + 'version.xml') or
        not DirExists(AddBackslash(Folder) + 'res\packages') then begin
-      Result := 'Выберите корневую папку World of Tanks: нужны version.xml и res\packages.';
+      Result := 'Select the World of Tanks root folder: version.xml and res\packages.';
       Exit;
     end;
     Doc := CreateOleObject('Msxml2.DOMDocument.6.0');
@@ -256,18 +256,18 @@ begin
     Doc.resolveExternals := False;
     Doc.setProperty('ProhibitDTD', True);
     if not Doc.load(AddBackslash(Folder) + 'version.xml') then begin
-      Result := 'Не удалось прочитать version.xml выбранной игры.';
+      Result := 'Could not read version.xml of the selected game.';
       Exit;
     end;
     VersionText := Trim(Doc.selectSingleNode('/version.xml/version').text);
     if (VersionText <> 'v.2.4.0.0 #945') or
        (Trim(Doc.selectSingleNode('/version.xml/meta/realm').text) <> 'NA') then begin
-      Result := 'Эта alpha-сборка предназначена для WoT PC NA 2.4.0.0 #945.' + #13#10 +
-        'В выбранной папке обнаружена другая версия или регион.';
+      Result := 'This alpha build is for WoT PC NA 2.4.0.0 #945.' + #13#10 +
+        'A different version or region was found in the selected folder.';
       Exit;
     end;
     if GameRunning then begin
-      Result := 'Закройте World of Tanks перед установкой. Установщик не завершает игру автоматически.';
+      Result := 'Close World of Tanks before installing. The installer does not close the game itself.';
       Exit;
     end;
     ModPath := AddBackslash(Folder) + 'mods\2.4.0.0\';
@@ -276,8 +276,8 @@ begin
         repeat
           if (CompareText(Find.Name, '{#ModName}') <> 0) and
              not IsKnownLegacyMod(ModPath + Find.Name) then begin
-            Result := 'Уже установлена другая версия нашего регистратора:' + #13#10 +
-              ModPath + Find.Name + #13#10 + 'Удалите её перед установкой этой сборки.';
+            Result := 'A different version of our recorder is already installed:' + #13#10 +
+              ModPath + Find.Name + #13#10 + 'Remove it before installing this build.';
             Exit;
           end;
         until not FindNext(Find);
@@ -294,11 +294,11 @@ begin
         Shell := CreateOleObject('Shell.Application');
         Shortcut := Shell.NameSpace(GetDesktopDir('')).ParseName('Bullba Hits.lnk').GetLink;
         if not IsOurShortcut(Shortcut, Folder) then
-          Result := 'На рабочем столе уже есть другой ярлык с таким именем. Снимите флажок создания ярлыка или переименуйте существующий.';
+          Result := 'The desktop already has a different shortcut with this name. Untick the shortcut option or rename the existing one.';
       end;
     end;
   except
-    Result := 'Проверка установки не завершена: ' + GetExceptionMessage;
+    Result := 'Installation check did not finish: ' + GetExceptionMessage;
   end;
 end;
 
@@ -321,8 +321,8 @@ end;
 function UpdateReadyMemo(Space, NewLine, MemoUserInfoInfo, MemoDirInfo, MemoTypeInfo,
   MemoComponentsInfo, MemoGroupInfo, MemoTasksInfo: String): String;
 begin
-  Result := 'Папка игры:' + NewLine + Space + WizardDirValue + NewLine + NewLine +
-    'Просмотрщик:' + NewLine + Space + AddBackslash(WizardDirValue) +
+  Result := 'Game folder:' + NewLine + Space + WizardDirValue + NewLine + NewLine +
+    'Viewer:' + NewLine + Space + AddBackslash(WizardDirValue) +
     'mods\configs\local.armor_inspector\Viewer.html' + NewLine + NewLine + MemoTasksInfo;
 end;
 
@@ -334,18 +334,18 @@ begin
   NewPath := ExpandConstant('{app}\mods\2.4.0.0\{#ModName}');
   if not IsKnownLegacyMod(OldPath) or not FileExists(NewPath) or
       (CheckOwnedFile(NewPath, '{#ModHash}') <> '') then
-    RaiseException('Не удалось подтвердить файлы обновления. Предыдущая версия сохранена.');
+    RaiseException('Could not verify the update files. The previous version is kept.');
   BackupPath := ExpandConstant('{app}\mods\configs\local.armor_inspector\installer\backups\') + Version + '\local.armor_inspector_' + Version + '.wotmod';
   // A different build of the same version number is kept apart under <version>-<hash8>; nothing is deleted unsaved.
   if FileExists(BackupPath) and (CompareText(GetSHA256OfFile(BackupPath), GetSHA256OfFile(OldPath)) <> 0) then
     BackupPath := ExpandConstant('{app}\mods\configs\local.armor_inspector\installer\backups\') + Version + '-' +
       Copy(GetSHA256OfFile(OldPath), 1, 8) + '\local.armor_inspector_' + Version + '.wotmod';
   if not ForceDirectories(ExtractFileDir(BackupPath)) then
-    RaiseException('Не удалось создать папку резервной копии мода.');
+    RaiseException('Could not create the mod backup folder.');
   if FileExists(BackupPath) then begin
-    if not DeleteFile(OldPath) then RaiseException('Не удалось убрать прежнюю версию мода после обновления.');
+    if not DeleteFile(OldPath) then RaiseException('Could not remove the previous mod version after the update.');
   end else if not RenameFile(OldPath, BackupPath) then
-    RaiseException('Не удалось переместить прежнюю версию мода в резервную копию.');
+    RaiseException('Could not move the previous mod version to the backup.');
 end;
 
 procedure BackupAllLegacyMods;
@@ -377,7 +377,7 @@ begin
   Result := False;
   try
     if GameRunning then begin
-      SuppressibleMsgBox('Закройте World of Tanks перед удалением мода.', mbError, MB_OK, IDOK);
+      SuppressibleMsgBox('Close World of Tanks before removing the mod.', mbError, MB_OK, IDOK);
       Exit;
     end;
     Error := CheckOwnedFile(ExpandConstant('{app}\mods\2.4.0.0\{#ModName}'), '{#ModHash}');

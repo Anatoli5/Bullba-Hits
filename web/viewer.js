@@ -158,7 +158,7 @@
   };
   Viewer.prototype.addReticle=function(position){
     var element=document.createElement('span');element.className='hit-reticle';element.hidden=true;
-    element.innerHTML='<svg viewBox="0 0 32 32" role="img" aria-label="Место попадания"><path class="reticle-outline" d="M16 1V10M16 22V31M1 16H10M22 16H31"/><path class="reticle-stroke" d="M16 1V10M16 22V31M1 16H10M22 16H31"/></svg>';
+    element.innerHTML='<svg viewBox="0 0 32 32" role="img" aria-label="Hit location"><path class="reticle-outline" d="M16 1V10M16 22V31M1 16H10M22 16H31"/><path class="reticle-stroke" d="M16 1V10M16 22V31M1 16H10M22 16H31"/></svg>';
     this.reticleLayer.appendChild(element);this.reticles.push({position:position.clone(),element:element});
   };
   Viewer.prototype.updateReticles=function(){
@@ -215,35 +215,35 @@
   Viewer.prototype.computeMode=function(mode){if(this.surface)this.surface.dispose();this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.gpuMode=mode==='cpu'?'cpu':'auto';this.resetGPU();this.rebuild();};
   Viewer.prototype.computeResults=function(origin){
     var B=ArmorBallistics,self=this,code=function(r){return r.chance===null?101:r.reason==='no-hull'?102:r.chance;},at=function(i){return code(self.heatEngine.ray(origin,B.sub(self.samples[i].center,origin),self.shell));};
-    if(this.gpuMode==='auto'&&!this.gpuAttempted){this.gpuAttempted=true;try{if(!window.ArmorHeatmapGPU)throw new Error('GPU-модуль недоступен');this.gpu=new ArmorHeatmapGPU(this.renderer,this.heatEngine,this.samples);}catch(e){this.gpuError=e.message;}}
+    if(this.gpuMode==='auto'&&!this.gpuAttempted){this.gpuAttempted=true;try{if(!window.ArmorHeatmapGPU)throw new Error('GPU-module unavailable');this.gpu=new ArmorHeatmapGPU(this.renderer,this.heatEngine,this.samples);}catch(e){this.gpuError=e.message;}}
     if(this.gpu){try{
       var results=this.gpu.compute(origin,this.shell),resolved=0;
       for(var i=0;i<results.length;i++)if(results[i]===103){results[i]=at(i);resolved++;}
       // A small CPU spot check also catches driver/compiler problems. Float32
       // may change a rounded probability by one point; larger differences fail.
       var count=Math.min(16,results.length);
-      for(var k=0;k<count;k++){var n=Math.floor(k*(results.length-1)/Math.max(1,count-1)),expected=at(n),actual=results[n];if(actual!==expected&&!(actual<=100&&expected<=100&&Math.abs(actual-expected)<=1))throw new Error('Результат GPU не прошёл сверку с CPU');}
-      this.backendText='GPU · WebGL 2'+(resolved?' · сложные лучи на CPU':'');return results;
+      for(var k=0;k<count;k++){var n=Math.floor(k*(results.length-1)/Math.max(1,count-1)),expected=at(n),actual=results[n];if(actual!==expected&&!(actual<=100&&expected<=100&&Math.abs(actual-expected)<=1))throw new Error('GPU result failed the CPU cross-check');}
+      this.backendText='GPU · WebGL 2'+(resolved?' · complex rays on CPU':'');return results;
     }catch(e){this.gpuError=e.message;this.gpu.dispose();this.gpu=null;console.warn('Armor heatmap uses CPU:',e.message);}}
     var output=new Uint8Array(this.samples.length);for(var j=0;j<output.length;j++)output[j]=at(j);
-    this.backendText=this.gpuMode==='cpu'?'CPU · выбран вручную':'CPU · '+(this.gpuError||'GPU недоступен');return output;
+    this.backendText=this.gpuMode==='cpu'?'CPU · chosen manually':'CPU · '+(this.gpuError||'GPU unavailable');return output;
   };
   Viewer.prototype.paint=function(){
     if(!this.paintMesh)return;
     var composed=false;if(this.surfaceMode==='blend'&&this.heatmap&&this.gpuMode==='auto'){
-      if(!this.surfaceAttempted){this.surfaceAttempted=true;try{this.surface=new BullbaScreenArmor(this.renderer,this.engine);this.scene.add(this.surface.quad);}catch(e){this.surfaceError=e.message;console.warn('Screen composition unavailable:',e.message);if(window.BullbaHost)window.BullbaHost.mark('Композиция слоёв','unavailable: '+e.message);}}
+      if(!this.surfaceAttempted){this.surfaceAttempted=true;try{this.surface=new BullbaScreenArmor(this.renderer,this.engine);this.scene.add(this.surface.quad);}catch(e){this.surfaceError=e.message;console.warn('Screen composition unavailable:',e.message);if(window.BullbaHost)window.BullbaHost.mark('Layer composition','unavailable: '+e.message);}}
       if(this.surface){try{var size=this.surface.render(this.camera,this.target,this.shell,this.palette,this.trackOpacity,this.quality,this.container.clientWidth,this.container.clientHeight,this.renderer.getPixelRatio());var check=this.surface.verify(this.camera,this.shell);
         // A failed cross-check hides this frame only; the next camera key is verified afresh. Nothing here is sticky.
-        if(check&&check.failed){this.surfaceError=check.message;if(this.surfaceLogged!==check.message){this.surfaceLogged=check.message;console.warn('Screen composition hidden:',check.message);if(window.BullbaHost)window.BullbaHost.mark('Композиция слоёв','mismatch: '+check.message);}}
-        else{composed=true;this.surfaceError=null;if(this.onBackend)this.onBackend('GPU · слои в размер окна · '+size+(check?' · сверка с CPU '+(check.compared-check.mismatches.length)+'/'+check.compared:''));}}
-        catch(e){this.surfaceError=e.message;this.surface.dispose();this.surface=null;console.warn('Screen composition disabled:',e.message);if(window.BullbaHost)window.BullbaHost.mark('Композиция слоёв','error: '+e.message);}}
+        if(check&&check.failed){this.surfaceError=check.message;if(this.surfaceLogged!==check.message){this.surfaceLogged=check.message;console.warn('Screen composition hidden:',check.message);if(window.BullbaHost)window.BullbaHost.mark('Layer composition','mismatch: '+check.message);}}
+        else{composed=true;this.surfaceError=null;if(this.onBackend)this.onBackend('GPU · layers at window size · '+size+(check?' · CPU cross-check '+(check.compared-check.mismatches.length)+'/'+check.compared:''));}}
+        catch(e){this.surfaceError=e.message;this.surface.dispose();this.surface=null;console.warn('Screen composition disabled:',e.message);if(window.BullbaHost)window.BullbaHost.mark('Layer composition','error: '+e.message);}}
     }
     if(this.surface)this.surface.quad.visible=composed;this.paintMesh.visible=!composed;this.trackGroup.visible=!composed&&this.surfaceMode==='blend';if(composed)return;
     if(this.surfaceMode==='blend'&&this.heatmap&&this.gpuMode==='auto'){
       // No sample-based substitute in the mask mode: a neutral model and the reason instead of a coarse picture.
       var neutral=this.paintMesh.geometry.attributes.color.array;for(var q=0;q<neutral.length;q+=3){neutral[q]=baseColors[0][0];neutral[q+1]=baseColors[0][1];neutral[q+2]=baseColors[0][2];}
       this.paintedKey=null;this.paintMesh.geometry.attributes.color.needsUpdate=true;
-      if(this.onBackend)this.onBackend('Расчёт недоступен: '+(this.surfaceError||'GPU-композиция не выполнена'));return;
+      if(this.onBackend)this.onBackend('Estimate unavailable: '+(this.surfaceError||'GPU-composition did not run'));return;
     }
     var B=ArmorBallistics,origin=this.camera.position.toArray(),buffer=this.paintMesh.geometry.attributes.color.array;
     var raysKey=origin.join(',')+'|'+JSON.stringify(this.shell),paintedKey=this.heatmap?raysKey+'|'+this.palette:'parts';
@@ -251,12 +251,12 @@
     if(this.paintedKey===paintedKey)return;
     if(this.heatmap&&this.cachedRaysKey!==raysKey){
       if(!this.cachedResults||this.cachedResults.length!==this.samples.length)this.cachedResults=new Uint8Array(this.samples.length);
-      if(!this.shell){this.cachedResults.fill(101);this.backendText='Расчёт ждёт параметры снаряда';}
+      if(!this.shell){this.cachedResults.fill(101);this.backendText='Waiting for shell parameters';}
       else this.cachedResults=this.computeResults(origin);
       this.cachedRaysKey=raysKey;
     }
     var table=this.heatmap?colorTable(this.palette):null;
-    if(this.onBackend)this.onBackend(this.heatmap?this.backendText:'Части машины · расчёт отключён');
+    if(this.onBackend)this.onBackend(this.heatmap?this.backendText:'Vehicle parts · estimate off');
     for(var n=0;n<this.samples.length;n++){var sample=this.samples[n],module=sample.part===0||(sample.armor&&sample.armor.vehicleDamageFactor<=1e-5);var color=this.heatmap?(this.surfaceMode!=='through'&&module?baseColors[0]:table[this.cachedResults[n]]):baseColors[sample.part%4];for(var j=0;j<3;j++)for(var k=0;k<3;k++)buffer[n*9+j*3+k]=color[k];}
     this.paintedKey=paintedKey;this.paintMesh.geometry.attributes.color.needsUpdate=true;this.draw();
   };
@@ -264,12 +264,12 @@
     if(!this.engine||!this.onInspect)return;var raycaster=this.pointerRay(event),objects=this.paintMesh?[this.paintMesh]:[];if(this.trackGroup&&this.surfaceMode==='blend')objects.push(this.trackMesh);var hits=raycaster.intersectObjects(objects),sample=hits.length?(hits[0].object===this.trackMesh?this.trackTriangles:this.samples)[hits[0].faceIndex]:null,result=this.engine.ray(raycaster.ray.origin.toArray(),raycaster.ray.direction.toArray(),this.shell);if(sample)result.surface={part:sample.part,armor:sample.armor};this.onInspect(result);
   };
   Viewer.prototype.wireframe=function(value){this.showOutline=!!value;this.applyOutline();this.draw();};
-  Viewer.prototype.aimAt=function(event){var ray=this.pointerRay(event).ray,normal=this.target.clone().sub(this.camera.position).normalize(),plane=new THREE.Plane().setFromNormalAndCoplanarPoint(normal,this.target),point=new THREE.Vector3();if(ray.intersectPlane(plane,point)){this.spreadAim=point;this.hideSpread();if(this.onAim)this.onAim('Центр оценки перенесён. Нажмите «Рассчитать».');}};
+  Viewer.prototype.aimAt=function(event){var ray=this.pointerRay(event).ray,normal=this.target.clone().sub(this.camera.position).normalize(),plane=new THREE.Plane().setFromNormalAndCoplanarPoint(normal,this.target),point=new THREE.Vector3();if(ray.intersectPlane(plane,point)){this.spreadAim=point;this.hideSpread();if(this.onAim)this.onAim('Estimate centre moved. Press “Estimate”.');}};
   Viewer.prototype.hideSpread=function(){if(this.spreadCircle){this.scene.remove(this.spreadCircle);this.spreadCircle.geometry.dispose();this.spreadCircle.material.dispose();this.spreadCircle=null;this.draw();}};
   Viewer.prototype.estimateSpread=function(radius100){
     if(this.turretPending)this.applyTurret();
-    if(!this.engine||!this.shell)throw new Error('Сначала укажите снаряд и пробитие.');
-    if(!Number.isFinite(radius100)||radius100<0||radius100>10)throw new Error('Радиус должен быть от 0 до 10 м на 100 м.');
+    if(!this.engine||!this.shell)throw new Error('Pick a shell and penetration first.');
+    if(!Number.isFinite(radius100)||radius100<0||radius100>10)throw new Error('The radius must be between 0 and 10 m at 100 m.');
     var T=THREE,aim=this.spreadAim||this.point||this.target,origin=this.camera.position.clone(),normal=aim.clone().sub(origin).normalize(),up=new T.Vector3(0,1,0);if(Math.abs(up.dot(normal))>.98)up.set(1,0,0);
     var right=new T.Vector3().crossVectors(normal,up).normalize();up.crossVectors(right,normal).normalize();var radius=origin.distanceTo(aim)*radius100/100,points=[],count=1024,sum=0,unknown=0,miss=0,o=origin.toArray();
     for(var i=0;i<count;i++){var r=radius*Math.sqrt(-.5*Math.log(1-(i+.5)/count*(1-Math.exp(-2)))),angle=i*2.399963229728653,point=aim.clone().addScaledVector(right,r*Math.cos(angle)).addScaledVector(up,r*Math.sin(angle)),hit=this.engine.ray(o,point.sub(origin).toArray(),this.shell);if(hit.chance===null)unknown++;else sum+=hit.chance;if(hit.reason==='no-hull')miss++;}

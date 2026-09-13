@@ -73,7 +73,7 @@ def open_in_game(path):
         def check_opened():
             if not shown[0]:
                 LOG.warning('Bullba Hits window did not report opening')
-                SystemMessages.pushMessage(u'Bullba Hits: встроенное окно не загрузилось. Подробности в game.log.', type=SystemMessages.SM_TYPE.Error)
+                SystemMessages.pushMessage(u'Bullba Hits: the in-game window did not load. See game.log.', type=SystemMessages.SM_TYPE.Error)
         # adisp_async returns a callable, not an already running operation.
         operation = browser.load(url=url, title='Bullba Hits', browserID=_browser_id,
                      showActionBtn=False, showCloseBtn=True, showWaiting=True,
@@ -85,4 +85,4 @@ def open_in_game(path):
         BigWorld.callback(20, check_opened)
     except Exception:
         LOG.exception('Bullba Hits in-game window could not be opened')
-        SystemMessages.pushMessage(u'Bullba Hits: встроенное окно недоступно. Локальную историю можно открыть ярлыком Bullba Hits после выхода из игры.', type=SystemMessages.SM_TYPE.Error)
+        SystemMessages.pushMessage(u'Bullba Hits: the in-game window is unavailable. Open the local history with the Bullba Hits shortcut after leaving the game.', type=SystemMessages.SM_TYPE.Error)

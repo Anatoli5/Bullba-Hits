@@ -35,7 +35,7 @@
     var index=selected?choices.findIndex(function(c){return same(c,selected);}):-1;
     return {choices:choices,index:index,kind:kindValues.length===1?kindValues[0]:null,tracer:tracer,command:command,aim:aim,aimSource:chosen?chosen.from:null,aimReason:aimReason,
       range:tracer&&world.length?distance(tracer.origin,world[0]):null,
-      source:index<0?'Снаряд не определён однозначно':kindValues.length?'Тип и калибр из попадания; характеристики орудия из клиента':'Единственный снаряд с этим эффектом в записи'};
+      source:index<0?'Shell not determined unambiguously':kindValues.length?'Type and calibre from the hit; gun data from the client':'The only shell with this effect in the record'};
   }
   root.ArmorShotContext={resolve:resolve};
 }(typeof window==='undefined'?globalThis:window));

@@ -19,7 +19,7 @@
       var self=this,args=arguments;host.mark(action,'start');
       function run(){
         try{fn.apply(self,args);host.mark(action,'done');}
-        catch(e){host.mark(action,'error: '+e.message);if(window.console)console.error('Bullba Hits: '+action,e);var m=document.getElementById('scene-message');if(m){m.textContent='Ошибка при действии «'+action+'»: '+e.message;m.hidden=false;}}
+        catch(e){host.mark(action,'error: '+e.message);if(window.console)console.error('Bullba Hits: '+action,e);var m=document.getElementById('scene-message');if(m){m.textContent='Error during “'+action+'»: '+e.message;m.hidden=false;}}
       }
       if(game)window.setTimeout(run,0);else run();
     };

@@ -1,70 +1,77 @@
 # Bullba Hits
 
-Локальный просмотрщик попаданий и коллизионной брони для **World of Tanks PC NA 2.4.0.0 #945**. Текущая версия — **0.6.1**.
+Local hit recorder and collision-armour viewer for **World of Tanks PC NA 2.4.0.0 #945**.
 
-Регистратор `.wotmod` сохраняет события внутри игры. Просмотрщик — локальная HTML-страница с WebGL: без HTTP-сервера, службы, автозапуска и обязательного подключения к сети. Игровые модели извлекаются на компьютере пользователя из установленного клиента и не входят в репозиторий.
+The `.wotmod` recorder saves events inside the game. The viewer is a local HTML page with WebGL: no HTTP server, no service, no autostart and no mandatory network connection. Vehicle models are extracted on the user's computer from the installed client and are not part of the repository.
 
-## Возможности
+## Download
 
-- История входящих и исходящих попаданий, точка и направление выстрела.
-- Автоматический выбор снаряда по данным попадания; номинальное пробитие, калибр, сравнение боеприпасов.
-- GPU-карта вероятности с учётом ракурса, расстояния и экранов. По умолчанию красный → жёлтый → зелёный.
-- Вращение башни и подъём орудия в сохранённых пределах; независимые расстояние и оптический масштаб.
-- Сохранённые клиентский и серверный круги собственного прицела, автоматическая вероятность по линии попадания и условная оценка с разбросом.
-- Открытие отдельным окном Edge/Chrome с ярлыка и через штатный браузер игры.
+Installers are published on the [Releases](https://github.com/Anatoli5/Bullba-Hits/releases) page. Every release ships `BullbaHits-<version>-Setup.exe`, the bare `local.armor_inspector_<version>.wotmod` for manual installation and a ZIP of the serverless viewer, with SHA-256 for each file.
 
-Перекрестье и сведение противника не восстанавливаются догадками. Пробитие из характеристик не выдаётся за выпавшее RNG. Интегральная оценка разброса использует условный ограниченный Гаусс, а не подтверждённую серверную формулу. Реплеи, взрывной урон и препятствия карты не моделируются. После изменения позы исторические метки скрываются до её возврата.
+The installer is not code-signed. Windows SmartScreen or Smart App Control may warn about it or block the first run; see the signing section below.
 
-## Установка
+## Features
 
-Собранный установщик называется `BullbaHits-0.6.7-Setup.exe` и находится в `dist/` после сборки.
+- History of incoming and outgoing hits with the hit point and shot direction.
+- Automatic shell selection from the hit data; nominal penetration, calibre, ammunition comparison.
+- GPU chance map that accounts for angle, distance and screens, drawn in screen space from depth layers. Red → yellow → green by default.
+- Turret rotation and gun elevation within the recorded limits; independent distance and optical zoom.
+- Saved client and server circles of your own reticle, automatic chance along the hit line and a nominal estimate over the dispersion circle.
+- Opens as a separate Edge/Chrome window from the shortcut and in the game's built-in browser.
 
-1. Закройте игру и запустите установщик.
-2. Выберите корневую папку World of Tanks. Ярлык **Bullba Hits** создаётся по флажку.
-3. Запустите игру с модом. В ангаре доступен пункт Bullba Hits в меню модов.
-4. После боя откройте просмотрщик и нажмите «Обновить». Открытую страницу после обновления приложения перезагрузите через Ctrl+F5.
+The enemy crosshair and aiming are never guessed. Penetration from the shell data is never presented as the rolled RNG. The dispersion estimate uses a nominal clipped Gaussian, not a confirmed server formula. Replays, blast damage and map obstacles are not modelled. After the pose changes, historical marks stay hidden until the recorded pose is restored.
 
-Данные и страница находятся в `<игра>/mods/configs/local.armor_inspector/`. Для переноса истории сохраняйте всю эту папку. Установщик сохраняет записи и известные предыдущие версии нашего мода; другие моды не заменяет. После модпака, очищающего `mods`, может потребоваться повторная установка Bullba Hits.
+## Installation
 
-Выпуск экспериментальный. Сборка, точечные проверки данных и целостность установщика проверены; визуальная приёмка текущего интерфейса и открытие локальной страницы в игровом CEF ещё требуют проверки пользователем. Без необходимых возможностей WebGL предусмотрен упрощённый режим отображения.
+1. Close the game and run the installer.
+2. Select the World of Tanks root folder. The **Bullba Hits** shortcut is created when the box is ticked.
+3. Start the game with the mod. The hangar mod menu has a Bullba Hits entry.
+4. After a battle open the viewer and press "Refresh". If the page was open during an update, reload it with Ctrl+F5.
 
-## Исходники и сборка
+Data and the page live in `<game>/mods/configs/local.armor_inspector/`. To move the history, keep that whole folder. The installer keeps records and moves any previous build of our mod to a backup; other mods are not touched. After a mod pack that wipes `mods`, Bullba Hits may need to be installed again.
 
-- `mod/` — регистратор, экспорт локальных файлов и извлечение геометрии; игровой Python 2.7.
-- `web/` — HTML/CSS/JavaScript, Three.js, CPU-баллистика и GPU-шейдеры.
-- `installer/` — Inno Setup и служебные хеши для безопасного обновления. Манифесты `upgrades/` не являются старыми сборками; они нужны текущему установщику.
-- `tools/` — актуальные инструменты сборки.
+The mod keeps the newest five battles; older raw records, derived files and models no kept battle references are removed on the next game start.
 
-Сборка выполняется на Windows с Python 3. Зависимости инструментов не включены в Git:
+## Sources and build
 
-1. [OpenWG build](https://gitlab.com/openwg/openwg.build), commit `d0704c7dbd062c861582c90a761a7e019af9b60a`. Расположите его дерево в `work/research-options/sources/openwg--openwg.build/`: компилятор ожидается в `bin/windows_amd64/owg_python_compiler/owg_python_compiler.exe`. SHA-256 закреплён в `tools/build.py`.
-2. Полный каталог компилятора **Inno Setup 7.1.0** ожидается в `work/installer-dependencies/inno-7.1.0/`, включая `ISCC.exe`. `tools/fetch_installer_compiler.py` скачивает официальный дистрибутив и сверяет хеш; распаковка каталога компилятора выполняется отдельно. SHA-256 `ISCC.exe` закреплён в инструменте сборки установщика.
-3. Three.js уже включён локально в `web/vendor/` вместе с лицензией и манифестом источника.
+- `mod/` — recorder, local file export and geometry extraction; game-side Python 2.7.
+- `web/` — HTML/CSS/JavaScript, Three.js, CPU ballistics and GPU shaders.
+- `installer/` — Inno Setup script and the hash manifests that make upgrades safe. The `upgrades/` manifests are not old builds; the current installer needs them.
+- `tools/` — build, packaging, installer and release scripts.
 
-Из корня проекта:
+Building runs on Windows with Python 3. Tool dependencies are not in Git:
+
+1. [OpenWG build](https://gitlab.com/openwg/openwg.build), commit `d0704c7dbd062c861582c90a761a7e019af9b60a`. Place its tree in `work/research-options/sources/openwg--openwg.build/`; the compiler is expected at `bin/windows_amd64/owg_python_compiler/owg_python_compiler.exe`. Its SHA-256 is pinned in `tools/build.py`.
+2. The full **Inno Setup 7.1.0** compiler directory is expected in `work/installer-dependencies/inno-7.1.0/`, including `ISCC.exe`. `tools/fetch_installer_compiler.py` downloads the official distribution and verifies its hash; unpacking the compiler directory is a separate step. The SHA-256 of `ISCC.exe` is pinned in the installer build tool.
+3. Three.js is vendored in `web/vendor/` with its licence and source manifest.
+
+From the project root:
 
 ```powershell
 python tools/build.py
 python tools/package.py
 python tools/build_installer.py
+python tools/release_github.py
 ```
 
-Результаты: `.wotmod`, ZIP и EXE в `dist/`. Эти команды не устанавливают мод в игру. Пользователю готового установщика Python и инструменты сборки не нужны.
+Results: `.wotmod`, ZIP and EXE in `dist/`. These commands do not install the mod into the game. The release script tags `v<version>`, creates the GitHub release and uploads the three files. Users of the installer need neither Python nor the build tools.
 
-### Подпись установщика и Smart App Control
+Every build that reaches a user gets its own version number; a version is never rebuilt under an existing number.
 
-Обычная локальная сборка не подписана: Smart App Control может блокировать её, даже если предыдущий выпуск запускался. Успешная компиляция и SHA-256 не заменяют цифровую подпись. Сборщик записывает фактический статус Authenticode в локальный отчёт; успешная сборка не означает проверку запуска под SAC.
+### Signing and Smart App Control
 
-Для выпуска с подписью нужен доверенный RSA-сертификат издателя или сервис подписи. Inno Setup должен подписать не только итоговый EXE, но и временные копии Setup и деинсталлятор: для этого сборщик включает `SignTool` и `SignedUninstaller=yes`. Подпись только готового внешнего EXE после сборки недостаточна для внутренних файлов.
+A plain local build is unsigned: Smart App Control may block it even if the previous release ran. A clean compile and a SHA-256 do not replace a digital signature. The builder records the actual Authenticode status in a local report; a successful build does not mean the run under SAC was verified.
 
-Пример после настройки сертификата в хранилище Windows и установки SignTool (замените два заполнителя своими значениями):
+A signed release needs a trusted RSA publisher certificate or a signing service. Inno Setup must sign not only the final EXE but also the temporary Setup copy and the uninstaller: the builder enables `SignTool` and `SignedUninstaller=yes` for that. Signing only the outer EXE after the build is not enough for the inner files.
+
+Example, after the certificate is in the Windows store and SignTool is installed (replace the two placeholders):
 
 ```powershell
 python tools/build_installer.py --require-signature --sign-command 'signtool.exe sign /sha1 CERTIFICATE_THUMBPRINT /fd SHA256 /tr RFC3161_TIMESTAMP_URL /td SHA256 $f'
 ```
 
-`$f` — подстановка файла самим Inno Setup. Пароли и закрытые ключи в команду или репозиторий не добавлять. Режим с обязательной подписью откажет без команды подписи; после подписанной сборки проверяется доверенная RSA-подпись внешнего EXE. Прохождение всех путей установки/удаления под SAC требует отдельной проверки на целевой системе. Изменение политик Windows, самоподписанный сертификат или подмена номера версии не используются как способ получить доверенный выпуск.
+`$f` is substituted by Inno Setup itself. Never put passwords or private keys into the command or the repository. The mandatory-signature mode refuses to build without a sign command; after a signed build the trusted RSA signature of the outer EXE is verified. Passing every install/uninstall path under SAC needs a separate check on the target system. Changing Windows policies, a self-signed certificate or a swapped version number are not used as a way to obtain a trusted release.
 
-Справка: [Microsoft — подпись для SAC](https://learn.microsoft.com/en-us/windows/apps/develop/smart-app-control/code-signing-for-smart-app-control), [Inno Setup — подпись внутренних файлов](https://jrsoftware.org/ishelp/topic_setup_signeduninstaller.htm).
+References: [Microsoft — code signing for SAC](https://learn.microsoft.com/en-us/windows/apps/develop/smart-app-control/code-signing-for-smart-app-control), [Inno Setup — signing inner files](https://jrsoftware.org/ishelp/topic_setup_signeduninstaller.htm).
 
-Репозиторий содержит текущий код. История разработки, контекст агента, локальные отчёты, бои, игровые ресурсы, старые сборки и рабочие копии исключены из Git. Источники и лицензии сторонних компонентов — в [THIRD_PARTY.md](THIRD_PARTY.md).
+The repository contains the current code. Development history, agent context, local reports, battles, game resources, old builds and working copies are excluded from Git. Third-party sources and licences are listed in [THIRD_PARTY.md](THIRD_PARTY.md).
