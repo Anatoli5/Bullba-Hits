@@ -33,8 +33,10 @@
     var selected=matching.length===1?matching[0]:null;
     if(selected&&!choices.some(function(c){return same(c,selected);}))choices.push(selected);
     var index=selected?choices.findIndex(function(c){return same(c,selected);}):-1;
+    var range=tracer&&Array.isArray(tracer.origin)&&world.length?distance(tracer.origin,world[0]):null,rangeSource='tracer';
+    if(!(Number.isFinite(range)&&range>0)){range=Number.isFinite(hit.rangeAtImpact)&&hit.rangeAtImpact>0?hit.rangeAtImpact:null;rangeSource=range===null?null:'impact';}
     return {choices:choices,index:index,kind:kindValues.length===1?kindValues[0]:null,tracer:tracer,command:command,aim:aim,aimSource:chosen?chosen.from:null,aimReason:aimReason,
-      range:tracer&&world.length?distance(tracer.origin,world[0]):null,
+      range:range,rangeSource:rangeSource,
       source:index<0?'Shell not determined unambiguously':kindValues.length?'Type and calibre from the hit; gun data from the client':'The only shell with this effect in the record'};
   }
   root.ArmorShotContext={resolve:resolve};

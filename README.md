@@ -14,7 +14,7 @@ The installer is not code-signed. Windows SmartScreen or Smart App Control may w
 
 - History of incoming and outgoing hits with the hit point and shot direction.
 - Automatic shell selection from the hit data; nominal penetration, calibre, ammunition comparison.
-- GPU chance map that accounts for angle, distance and screens, drawn in screen space from depth layers. Red → yellow → green by default.
+- GPU chance map that accounts for angle, distance and screens, drawn in screen space from depth layers. Red → yellow → green by default. No CPU heatmap or per-frame CPU/GPU comparison. If GPU composition is unavailable, the model stays neutral and shows the reason.
 - Turret rotation and gun elevation within the recorded limits; independent distance and optical zoom.
 - Saved client and server circles of your own reticle, automatic chance along the hit line and a nominal estimate over the dispersion circle.
 - Opens as a separate Edge/Chrome window from the shortcut and in the game's built-in browser.

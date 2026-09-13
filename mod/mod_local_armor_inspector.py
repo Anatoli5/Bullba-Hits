@@ -13,7 +13,7 @@ try:
 except ImportError:
     import queue
 
-VERSION = '0.6.22'
+VERSION = '0.6.28'
 VIEWER_PATH = os.path.join('mods', 'configs', 'local.armor_inspector', 'Viewer.html')
 LOG = logging.getLogger('local.armor_inspector')
 PARTS = ('chassis', 'hull', 'turret', 'gun')
@@ -169,6 +169,14 @@ class Recorder(object):
             if attacker is not None:
                 record['attacker'] = {'name':attacker.type.shortUserString, 'type':attacker.type.name,
                     'compactDescriptor':base64.b64encode(attacker.makeCompactDescr()).decode('ascii')}
+                try:
+                    # Nominal full-aim accuracy of the mounted gun (no crew or equipment): radius grows linearly with range.
+                    record['attacker']['gunDispersion'] = float(attacker.gun.shotDispersionAngle)
+                    record['attacker']['gun'] = getattr(attacker.gun, 'shortUserString', attacker.gun.name)
+                    # Gun axis height above the vehicle origin: the shooter's viewpoint on flat ground.
+                    record['attacker']['gunHeight'] = float((attacker.hull.turretPositions[0] + attacker.turret.gunPosition).y)
+                except Exception:
+                    pass
         except Exception:
             LOG.exception('Attacker descriptor unavailable; hit is retained')
         try:
