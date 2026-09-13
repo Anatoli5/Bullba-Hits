@@ -1,6 +1,7 @@
 /* Local WebGL scene. Game transforms are serialized by basis vectors, column-major. */
 (function () {
   'use strict';
+  var DISTANCE_MIN=5,DISTANCE_MAX=1000; // metres: no map is wider than ~1 km; closer than 5 m the camera sits inside the hull
   function linear(color){return color.map(function(c){return c<=.04045?c/12.92:Math.pow((c+.055)/1.055,2.4);});}
   var baseColors=[[.38,.46,.54],[.65,.73,.8],[.75,.83,.87],[.55,.65,.72]].map(linear),colorTables={};
   // Screen tint is relative to the selected shell: nominal plate thickness against
@@ -24,20 +25,20 @@
     this.grid = new T.GridHelper(24, 24, 0x4a5d6f, 0x263746); this.scene.add(this.grid);
     this.root = new T.Group(); this.scene.add(this.root);
     this.target = new T.Vector3(0, 1, 0); this.yaw = 0.7; this.pitch = 0.27; this.distance = 50;
-    this.defaults={distance:50,scale:.85};this.pivot='vehicle';this.pinned=null;this.pinMarker=null;this.frameCenter=new T.Vector2();this.fitZoom=1;
+    this.defaults={distance:50,scale:.85};this.pivot='vehicle';this.pinned=null;this.pinGroup=null;this.pinReticles=[];this.centre=null;this.frameCenter=new T.Vector2();this.fitZoom=1;
     try{var saved=JSON.parse(window.localStorage.getItem('armor-camera-defaults'));if(saved&&saved.distance>=1&&saved.distance<=1500&&saved.scale>=.1&&saved.scale<=10)this.defaults=saved;}catch(ignore){}
     this.materials = []; this.point = null; this.travel = null;
     this.shell=null;this.heatmap=true;this.palette='classic';this.paintTimer=null;this.paintMesh=null;this.samples=[];this.engine=null;
     this.frameId=null;this.cachedEngine=null;this.cachedRaysKey=null;this.cachedResults=null;this.paintedKey=null;
     this.gpu=null;this.gpuAttempted=false;this.gpuMode='auto';this.gpuError=null;
     this.quality='auto';this.surfaceMode='blend';this.turretAngle=0;this.turretTimer=null;this.turretPending=false;this.currentArmor=false;
-    this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.heatEngine=null;this.trackOpacity=.4;this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.gunAngle=0;this.autoFrame=true;this.frameScale=this.defaults.scale;this.outline=null;this.outlineDepth=null;this.outlineStyle={brightness:.8,opacity:.6};this.showOutline=false;
+    this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.heatEngine=null;this.trackOpacity=.4;this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.gunAngle=0;this.autoFrame=false;this.frameScale=this.defaults.scale;this.outline=null;this.outlineDepth=null;this.outlineStyle={brightness:.8,opacity:.6};this.showOutline=false;
     var drag = null;
     container.addEventListener('pointerdown', function(e) { if(e.button!==0)return;if(e.altKey){self.aimAt(e);return;}drag={x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY,moved:false,part:self.pickPart(e)}; try{container.setPointerCapture(e.pointerId);}catch(ignore){} container.focus(); });
-    container.addEventListener('pointermove', function(e) { if (!drag){self.inspect(e);return;}if(Math.abs(e.clientX-drag.sx)+Math.abs(e.clientY-drag.sy)>3)drag.moved=true;if(drag.part===3){self.setGun(self.gunAngle+(e.clientY-drag.y)*.16);}else if(drag.part===2){self.setTurret(self.turretAngle-(e.clientX-drag.x)*.5);}else{self.yaw -= (e.clientX-drag.x)*0.008; self.pitch = Math.max(-1.35,Math.min(1.35,self.pitch+(e.clientY-drag.y)*0.008));self.render();}drag.x=e.clientX;drag.y=e.clientY; });
+    container.addEventListener('pointermove', function(e) { if (!drag){self.inspect(e);return;}if(Math.abs(e.clientX-drag.sx)+Math.abs(e.clientY-drag.sy)>3)drag.moved=true;if(!drag.moved)return;if(drag.part===2||drag.part===3){/* turret and gun are one module: left/right turns the turret, up/down moves the gun */var dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(dx)self.setTurret(self.turretAngle-dx*.5);if(dy)self.setGun(self.gunAngle+dy*.16);}else{self.yaw -= (e.clientX-drag.x)*0.008; self.pitch = Math.max(-1.35,Math.min(1.35,self.pitch+(e.clientY-drag.y)*0.008));self.render();}drag.x=e.clientX;drag.y=e.clientY; });
     container.addEventListener('pointerup', function(e) { var d=drag;drag=null;if(d&&!d.moved&&!e.altKey&&e.button===0)self.pinAt(e); });
     container.addEventListener('pointercancel', function() { drag=null; });
-    container.addEventListener('wheel', function(e) {e.preventDefault();var delta=e.deltaY||e.deltaX,amount=Math.max(-200,Math.min(200,delta*(e.deltaMode===1?16:e.deltaMode===2?300:1)));if(e.shiftKey||e.ctrlKey)self.setDistance(Math.max(1,Math.min(1500,self.distance*Math.exp(amount*.002))));else if(self.autoFrame)self.setScale(self.frameScale*Math.exp(-amount*.002));else self.setZoom(self.camera.zoom*Math.exp(-amount*.002));}, {passive:false});
+    container.addEventListener('wheel', function(e) {e.preventDefault();var delta=e.deltaY||e.deltaX,amount=Math.max(-200,Math.min(200,delta*(e.deltaMode===1?16:e.deltaMode===2?300:1)));if(!(e.shiftKey||e.ctrlKey||e.altKey))self.setDistance(self.distance*Math.exp(amount*.002));else if(self.autoFrame)self.setScale(self.frameScale*Math.exp(-amount*.002));else self.setZoom(self.camera.zoom*Math.exp(-amount*.002));}, {passive:false});
     container.addEventListener('keydown',function(e){var used=true;if(e.key==='ArrowLeft')self.yaw-=.1;else if(e.key==='ArrowRight')self.yaw+=.1;else if(e.key==='ArrowUp')self.pitch=Math.min(1.35,self.pitch+.1);else if(e.key==='ArrowDown')self.pitch=Math.max(-1.35,self.pitch-.1);else if(e.key==='+'||e.key==='='){if(e.shiftKey)self.setZoom(self.camera.zoom*1.1);else self.setDistance(Math.max(1,self.distance/1.1));}else if(e.key==='-'){if(e.shiftKey)self.setZoom(self.camera.zoom/1.1);else self.setDistance(Math.min(1500,self.distance*1.1));}else used=false;if(used){e.preventDefault();self.render();}});
     if(this.renderer.domElement.addEventListener)this.renderer.domElement.addEventListener('webglcontextlost',function(e){e.preventDefault();window.dispatchEvent(new Event('armor-context-lost'));});
     window.addEventListener('resize', function(){self.resize();});
@@ -47,12 +48,13 @@
   Viewer.prototype.projection=function(){var w=this.container.clientWidth||1,h=this.container.clientHeight||1,z=this.camera.zoom;this.camera.setViewOffset(w,h,this.frameCenter.x*z*w/2,-this.frameCenter.y*z*h/2,w,h);};
   Viewer.prototype.resize=function(){var w=this.container.clientWidth,h=this.container.clientHeight;if(!w||!h)return;this.renderer.setSize(w,h,false);this.projection();this.render();};
   // Coalesce input and color updates into one draw at the next browser frame.
-  Viewer.prototype.draw=function(){if(this.frameId!==null)return;var self=this;this.frameId=window.requestAnimationFrame(function(){try{if(self.turretPending)self.applyTurret();if(self.paintMesh)self.paint();if(self.aimGroup)self.aimGroup.visible=!!document.getElementById('show-aim').checked&&Math.abs(self.turretAngle)<.001&&Math.abs(self.gunAngle)<.001;self.renderer.render(self.scene,self.camera);self.updateReticles();}finally{self.frameId=null;}});};
+  Viewer.prototype.draw=function(){if(this.frameId!==null)return;var self=this;this.frameId=window.requestAnimationFrame(function(){try{if(self.turretPending)self.applyTurret();if(self.paintMesh)self.paint();if(self.aimGroup)self.aimGroup.visible=!!document.getElementById('show-aim').checked&&self.recordedShown();self.renderer.render(self.scene,self.camera);self.updateReticles();}finally{self.frameId=null;}});};
   Viewer.prototype.render=function(){var c=Math.cos(this.pitch);this.camera.position.set(this.target.x+this.distance*c*Math.sin(this.yaw),this.target.y+this.distance*Math.sin(this.pitch),this.target.z+this.distance*c*Math.cos(this.yaw));this.camera.lookAt(this.target);this.camera.updateMatrixWorld();if(this.autoFrame)this.autoFit();this.draw();if(this.onCamera)this.onCamera({distance:this.distance,zoom:this.camera.zoom,yaw:this.yaw,pitch:this.pitch});};
   Viewer.prototype.setZoom=function(value){if(!Number.isFinite(value)||value<=0)return;this.camera.zoom=Math.max(.1,Math.min(150,value));if(this.autoFrame)this.frameScale=this.camera.zoom/Math.max(.1,this.fitZoom);this.projection();this.draw();if(this.onCamera)this.onCamera({distance:this.distance,zoom:this.camera.zoom,yaw:this.yaw,pitch:this.pitch});};
-  Viewer.prototype.setDistance=function(value){if(!Number.isFinite(value)||value<1||value>1500)return;this.distance=value;this.render();};
+  Viewer.prototype.setDistance=function(value){if(!Number.isFinite(value))return;this.distance=Math.max(DISTANCE_MIN,Math.min(DISTANCE_MAX,value));this.render();};
+  Viewer.limits={distanceMin:DISTANCE_MIN,distanceMax:DISTANCE_MAX};
   Viewer.prototype.saveDefaults=function(){var frame=this.framing();this.defaults={distance:this.distance,scale:Math.max(.1,Math.min(10,this.camera.zoom/(frame?frame.zoom:this.fitZoom)))};try{window.localStorage.setItem('armor-camera-defaults',JSON.stringify(this.defaults));return true;}catch(ignore){return false;}};
-  Viewer.prototype.clear=function(){this.pinned=null;if(this.pinMarker&&this.pinMarker.parent)this.pinMarker.parent.remove(this.pinMarker);if(this.surface)this.surface.dispose();this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.gunAngle=0;this.savedAim=null;this.aimGroup=null;this.reticles=[];this.reticleLayer.replaceChildren();clearTimeout(this.turretTimer);this.turretTimer=null;this.turretPending=false;this.spreadAim=null;this.hideSpread();clearTimeout(this.paintTimer);this.paintTimer=null;window.cancelAnimationFrame(this.frameId);this.frameId=null;this.resetGPU();this.paintMesh=null;this.outline=null;this.outlineDepth=null;this.engine=null;this.heatEngine=null;this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.loadedData=null;this.cachedEngine=null;this.cachedRaysKey=null;this.cachedResults=null;this.paintedKey=null;this.samples=[];var disposed=new Set();this.root.traverse(function(o){if(o.geometry&&!disposed.has(o.geometry)){disposed.add(o.geometry);o.geometry.dispose();}if(o.material){(Array.isArray(o.material)?o.material:[o.material]).forEach(function(m){m.dispose();});}});while(this.root.children.length)this.root.remove(this.root.children[0]);this.materials=[];this.point=null;this.travel=null;this.render();};
+  Viewer.prototype.clear=function(){this.pinned=null;if(this.pinGroup){this.scene.remove(this.pinGroup);this.pinGroup=null;}this.pinReticles=[];if(this.surface)this.surface.dispose();this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.gunAngle=0;this.savedAim=null;this.aimGroup=null;this.reticles=[];this.reticleLayer.replaceChildren();clearTimeout(this.turretTimer);this.turretTimer=null;this.turretPending=false;this.spreadAim=null;this.hideSpread();clearTimeout(this.paintTimer);this.paintTimer=null;window.cancelAnimationFrame(this.frameId);this.frameId=null;this.resetGPU();this.paintMesh=null;this.outline=null;this.outlineDepth=null;this.engine=null;this.heatEngine=null;this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.loadedData=null;this.cachedEngine=null;this.cachedRaysKey=null;this.cachedResults=null;this.paintedKey=null;this.samples=[];var disposed=new Set();this.root.traverse(function(o){if(o.geometry&&!disposed.has(o.geometry)){disposed.add(o.geometry);o.geometry.dispose();}if(o.material){(Array.isArray(o.material)?o.material:[o.material]).forEach(function(m){m.dispose();});}});while(this.root.children.length)this.root.remove(this.root.children[0]);this.materials=[];this.point=null;this.travel=null;this.render();};
   Viewer.prototype.rebuild=function(){
     if(!this.loadedData)return;var T=THREE,self=this;this.samples=[];this.cachedRaysKey=null;this.paintedKey=null;
     // A failed composition is retried on the next rebuild (quality, mode, pose) instead of staying off for good.
@@ -123,7 +125,8 @@
   Viewer.prototype.setTurret=function(degrees){
     if(!this.loadedData)return;var hit=this.loadedData.hit,limits=(hit.target||{}).turretYawLimits,initial=(hit.aim||[])[0],lo=-180,hi=180;
     if(Array.isArray(limits)&&limits.length===2&&Number.isFinite(initial)){lo=Math.max(-180,(limits[0]-initial)*180/Math.PI);hi=Math.min(180,(limits[1]-initial)*180/Math.PI);}
-    this.turretAngle=Math.max(lo,Math.min(hi,degrees));if(this.onTurret)this.onTurret({angle:this.turretAngle,min:lo,max:hi});
+    var limited=Array.isArray(limits)&&limits.length===2&&Number.isFinite(initial);
+    this.turretAngle=limited?Math.max(lo,Math.min(hi,degrees)):((degrees+180)%360+360)%360-180;if(this.onTurret)this.onTurret({angle:this.turretAngle,min:lo,max:hi,limited:limited});
     this.setGun(this.gunAngle);this.turretPending=true;this.draw();
   };
   Viewer.prototype.gunRange=function(){
@@ -144,15 +147,16 @@
     if(gun&&gun.transform){var g=new T.Matrix4().fromArray(gun.transform).premultiply(rotation),gp=new T.Vector3().setFromMatrixPosition(g),ga=new T.Vector3(1,0,0).transformDirection(g);var info=source.hit.target.gunPitchLimits,yaw0=(source.hit.aim||[])[0]||0,yaw=yaw0+this.turretAngle*Math.PI/180;var correction=function(y){y=Math.atan2(Math.sin(y),Math.cos(y));return info?info.hullTurretPitch*(1-2*Math.abs(y)/Math.PI)+info.gunJointPitch:0;};var delta=this.gunAngle*Math.PI/180+correction(yaw0)-correction(yaw);gunRotation=new T.Matrix4().makeTranslation(gp.x,gp.y,gp.z).multiply(new T.Matrix4().makeRotationAxis(ga,delta)).multiply(new T.Matrix4().makeTranslation(-gp.x,-gp.y,-gp.z));}
     var changed=parts.map(function(p){var copy=Object.assign({},p);if((p.id===2||p.id===3)&&p.transform)copy.transform=rotation.clone().multiply(new T.Matrix4().fromArray(p.transform)).toArray();if(p.id===3&&gunRotation&&copy.transform)copy.transform=gunRotation.clone().multiply(new T.Matrix4().fromArray(copy.transform)).toArray();return copy;});
     this.posedData={hit:Object.assign({},source.hit,{target:Object.assign({},source.hit.target,{parts:changed})}),models:source.models};
-    // Recorded hit markers belong to the saved pose, not the exploratory pose.
-    this.root.children.forEach(function(o){if(o!==this.paintMesh&&o!==this.trackGroup&&o!==this.outline&&o!==this.outlineDepth)o.visible=Math.abs(this.turretAngle)<.001&&Math.abs(this.gunAngle)<.001;},this);this.rebuild();
+    this.syncRecorded();this.rebuild();
+    // The pinned line is fixed in the world; the posed vehicle under it gives a new contact and a new result.
+    if(this.pinned){this.refreshPin();if(this.onPin)this.onPin(true);}
   };
   Viewer.prototype.load=function(data){
     this.clear();var T=THREE,self=this;var hit=data.hit, parts=(hit.target||{}).parts||[], transforms={};
     parts.forEach(function(part){if(part.transform)transforms[part.id]=new T.Matrix4().fromArray(part.transform);});
     this.loadedData=data;this.posedData=null;this.turretAngle=0;this.gunAngle=0;this.currentArmor=document.getElementById('armor-version').value==='current';this.rebuild();if(this.onTurret)this.onTurret({angle:0,min:-180,max:180});
     this.root.updateMatrixWorld(true);
-    var box=new T.Box3().setFromObject(this.root);this.bounds=box.isEmpty()?null:box;
+    var box=new T.Box3().setFromObject(this.root);this.bounds=box.isEmpty()?null:box;this.centre=this.vehicleCentre();
     (hit.points||[]).forEach(function(p){if(p.status!=='resolved'||!transforms[p.part]||!p.position||!p.direction)return;var pos=new T.Vector3().fromArray(p.position).applyMatrix4(transforms[p.part]);pos.z*=-1;var direction=new T.Vector3().fromArray(p.direction).transformDirection(transforms[p.part]);direction.z*=-1;var color=0xfaf3cf;self.addReticle(pos);var arrow=new T.ArrowHelper(direction,pos.clone().addScaledVector(direction,-2.3),2.3,color,.12,.045);arrow.line.material.depthTest=false;arrow.cone.material.depthTest=false;arrow.line.material.depthWrite=false;arrow.cone.material.depthWrite=false;arrow.line.material.transparent=true;arrow.cone.material.transparent=true;arrow.line.renderOrder=4;arrow.cone.renderOrder=4;self.root.add(arrow);if(!self.point){self.point=pos.clone();self.travel=direction.clone();}});
     this.reset();if(this.point)this.focus();if(this.onGun)this.onGun({angle:0,known:this.gunRange().known});return !!this.bounds;
   };
@@ -163,29 +167,87 @@
   };
   Viewer.prototype.updateReticles=function(){
     var self=this,w=this.container.clientWidth,h=this.container.clientHeight;
-    this.reticles.forEach(function(marker){var p=marker.position.clone().project(self.camera);marker.element.hidden=(Math.abs(self.turretAngle)>.001||Math.abs(self.gunAngle)>.001)||p.z<-1||p.z>1||Math.abs(p.x)>1||Math.abs(p.y)>1;if(!marker.element.hidden){marker.element.style.left=(p.x+1)*w/2+'px';marker.element.style.top=(1-p.y)*h/2+'px';}});
+    this.reticles.forEach(function(marker){var p=marker.position.clone().project(self.camera);marker.element.hidden=(!marker.pinned&&!self.recordedShown())||p.z<-1||p.z>1||Math.abs(p.x)>1||Math.abs(p.y)>1;if(!marker.element.hidden){marker.element.style.left=(p.x+1)*w/2+'px';marker.element.style.top=(1-p.y)*h/2+'px';}});
   };
   // Fit the actual projected mesh, including off-centre impacts. Only the lens
   // changes: the camera remains on the recorded shot line at the chosen distance.
-  Viewer.prototype.framing=function(){if(!this.engine)return null;var min=new THREE.Vector2(Infinity,Infinity),max=new THREE.Vector2(-Infinity,-Infinity),v=new THREE.Vector3(),camera=this.camera,tangent=Math.tan(camera.fov*Math.PI/360);this.engine.triangles.forEach(function(t){[t.a,t.b,t.c].forEach(function(p){v.fromArray(p).applyMatrix4(camera.matrixWorldInverse);if(v.z>=-camera.near)return;v.x/=(-v.z*tangent*camera.aspect);v.y/=(-v.z*tangent);min.min(v);max.max(v);});});if(!Number.isFinite(min.x))return null;return {center:min.clone().add(max).multiplyScalar(.5),zoom:Math.max(.1,Math.min(150,1.72/Math.max(max.x-min.x,max.y-min.y,.001)))};};
+  // Frame by the bounding sphere seen from the current distance: the same zoom from every angle, so
+  // orbiting never pulses, while a distance change is compensated in the same frame.
+  Viewer.prototype.framing=function(){
+    if(!this.bounds)return null;var camera=this.camera,sphere=this.bounds.getBoundingSphere(new THREE.Sphere()),radius=Math.max(.5,sphere.radius*.7);
+    var distance=Math.max(radius*1.05,camera.position.distanceTo(this.target)),tangent=Math.tan(camera.fov*Math.PI/360);
+    var vertical=2*radius/(distance*tangent),horizontal=vertical/Math.max(.1,camera.aspect);
+    return {center:new THREE.Vector2(0,0),zoom:Math.max(.1,Math.min(150,1.72/Math.max(horizontal,vertical,.001)))};
+  };
   Viewer.prototype.autoFit=function(){var frame=this.framing();if(!frame)return;this.frameCenter.copy(frame.center);this.fitZoom=frame.zoom;this.camera.zoom=Math.max(.1,Math.min(150,this.fitZoom*this.frameScale));this.projection();};
-  Viewer.prototype.fit=function(){this.frameScale=1;this.render();this.autoFit();this.draw();};
-  Viewer.prototype.setAutoFrame=function(value){this.autoFrame=!!value;this.render();};
+  // Fit: keep the distance, pick the zoom at which the whole model (box corners, projected from the current
+  // view) sits inside the screen with an 8% margin. Auto-frame then holds that size across distance changes.
+  Viewer.prototype.fit=function(){
+    if(!this.bounds)return;var b=this.bounds,cam=this.camera,extent=0,v=new THREE.Vector3(),local=new THREE.Vector3();
+    cam.zoom=1;this.frameCenter.set(0,0);this.projection();cam.updateMatrixWorld();
+    for(var c=0;c<8;c++){v.set(c&1?b.max.x:b.min.x,c&2?b.max.y:b.min.y,c&4?b.max.z:b.min.z);local.copy(v).applyMatrix4(cam.matrixWorldInverse);if(local.z>-.01)continue;v.project(cam);extent=Math.max(extent,Math.abs(v.x),Math.abs(v.y));}
+    var zoom=extent>0?Math.max(.1,Math.min(150,.92/extent)):1,f=this.framing();this.frameScale=zoom/Math.max(.1,f?f.zoom:1);this.setZoom(zoom);
+  };
+  // Plain-camera framing: zoom ×1 and the distance at which the vehicle fills the view (the needed zoom grows
+  // linearly with distance, so distance / needed zoom is the distance where zoom ×1 fits).
+  Viewer.prototype.fitByDistance=function(){this.camera.zoom=1;this.fitZoom=1;this.frameScale=1;this.frameCenter.set(0,0);this.projection();this.render();var f=this.framing();if(f)this.setDistance(this.distance/f.zoom);};
+  // Switching auto-frame on holds the size that is on screen right now: the scale is taken from a fresh framing.
+  Viewer.prototype.setAutoFrame=function(value){this.autoFrame=!!value;if(this.autoFrame){var f=this.framing();if(f)this.frameScale=this.camera.zoom/Math.max(.1,f.zoom);}this.render();};
   Viewer.prototype.setScale=function(value){this.frameScale=Math.max(.1,Math.min(10,value));if(this.autoFrame)this.render();else this.setZoom(this.fitZoom*this.frameScale);};
   Viewer.prototype.setTrackOpacity=function(value){this.trackOpacity=Math.max(.05,Math.min(.85,value));this.updateTrackAppearance();this.draw();};
-  Viewer.prototype.reset=function(){if(this.bounds){this.bounds.getCenter(this.target);this.grid.position.y=this.bounds.min.y-.025;}this.distance=this.defaults.distance;this.yaw=.65;this.pitch=.25;this.render();if(!this.autoFrame){this.autoFit();this.draw();}};
+  Viewer.prototype.reset=function(){if(this.bounds){this.target.copy(this.centre||this.bounds.getCenter(new THREE.Vector3()));this.grid.position.y=this.bounds.min.y-.025;}this.distance=this.defaults.distance;this.yaw=.65;this.pitch=.25;if(this.autoFrame){this.render();this.autoFit();}else this.fitByDistance();this.draw();};
+  // Orbit centre: over the hull's own box (the whole-model box includes the barrel and drifts to the bow),
+  // at turret height — in a clinch the camera sits turret to turret, so approaching should tend there.
+  Viewer.prototype.vehicleCentre=function(){var hull=new THREE.Box3(),turret=new THREE.Box3(),v=new THREE.Vector3();
+    ((this.engine||{}).triangles||[]).forEach(function(t){var box=t.part===1?hull:t.part===2?turret:null;if(!box)return;box.expandByPoint(v.fromArray(t.a));box.expandByPoint(v.fromArray(t.b));box.expandByPoint(v.fromArray(t.c));});
+    if(hull.isEmpty())return this.bounds?this.bounds.getCenter(new THREE.Vector3()):new THREE.Vector3();
+    var centre=hull.getCenter(new THREE.Vector3());centre.y=turret.isEmpty()?hull.max.y:turret.getCenter(v).y;return centre;};
   Viewer.prototype.setPivot=function(mode){this.pivot=mode==='vehicle'?'vehicle':'hit';if(this.point)this.focus();else this.reset();};
-  Viewer.prototype.focus=function(){if(!this.point)return;if(this.pivot==='vehicle'&&this.bounds)this.bounds.getCenter(this.target);else this.target.copy(this.point);var v=this.travel.clone().negate().normalize();this.yaw=Math.atan2(v.x,v.z);this.pitch=Math.asin(Math.max(-1,Math.min(1,v.y)));this.distance=this.defaults.distance;this.render();if(!this.autoFrame){this.autoFit();this.draw();}};
-  Viewer.prototype.configure=function(shell,heatmap,palette){this.shell=shell;this.heatmap=heatmap;this.palette=palette;this.updateTrackAppearance();this.render();};
-  // A pinned point replaces the recorded hit line as the analysed shot until unpinned.
+  Viewer.prototype.focus=function(){if(!this.point)return;if(this.pivot==='vehicle'&&this.centre)this.target.copy(this.centre);else this.target.copy(this.point);var v=this.travel.clone().negate().normalize();this.yaw=Math.atan2(v.x,v.z);this.pitch=Math.asin(Math.max(-1,Math.min(1,v.y)));this.distance=this.defaults.distance;if(this.autoFrame){this.render();this.autoFit();}else this.fitByDistance();this.draw();};
+  Viewer.prototype.configure=function(shell,heatmap,palette){this.shell=shell;this.heatmap=heatmap;this.palette=palette;if(this.pinned)this.refreshPin();this.updateTrackAppearance();this.render();};
+  // A pinned point replaces the recorded hit line as the analysed shot until unpinned. It is drawn like a
+  // recorded shot: an arrow along the line, a reticle at the point, and a dashed leg where a ricochet goes.
   Viewer.prototype.pinAt=function(event){
     if(!this.engine)return;var caster=this.pointerRay(event),objects=this.paintMesh?[this.paintMesh]:[];if(this.trackGroup&&this.surfaceMode==='blend')objects.push(this.trackMesh);
-    var hits=caster.intersectObjects(objects);if(!hits.length)return;
-    this.pinned={origin:caster.ray.origin.clone(),direction:caster.ray.direction.clone(),point:hits[0].point.clone()};
-    if(!this.pinMarker){this.pinMarker=new THREE.Mesh(new THREE.SphereGeometry(.05,12,8),new THREE.MeshBasicMaterial({color:0xffffff,depthTest:false}));this.pinMarker.renderOrder=13;}
-    this.pinMarker.position.copy(this.pinned.point);this.scene.add(this.pinMarker);if(this.onPin)this.onPin(true);this.draw();
+    var hits=caster.intersectObjects(objects);if(!hits.length)return;var hit=hits[0],normal=hit.face?hit.face.normal.clone().transformDirection(hit.object.matrixWorld):null;
+    this.pinned={origin:caster.ray.origin.clone(),direction:caster.ray.direction.clone(),point:hit.point.clone(),normal:normal};
+    this.refreshPin();if(this.onPin)this.onPin(true);
   };
-  Viewer.prototype.unpin=function(){this.pinned=null;if(this.pinMarker&&this.pinMarker.parent)this.pinMarker.parent.remove(this.pinMarker);if(this.onPin)this.onPin(false);this.draw();};
+  Viewer.prototype.shotArrow=function(direction,tip,color){
+    var arrow=new THREE.ArrowHelper(direction,tip.clone().addScaledVector(direction,-2.3),2.3,color,.12,.045);
+    [arrow.line.material,arrow.cone.material].forEach(function(m){m.depthTest=false;m.depthWrite=false;m.transparent=true;});arrow.line.renderOrder=4;arrow.cone.renderOrder=4;return arrow;
+  };
+  Viewer.prototype.refreshPin=function(){
+    var self=this,p=this.pinned;
+    if(this.pinGroup){this.scene.remove(this.pinGroup);this.pinGroup=null;}
+    this.pinReticles.forEach(function(r){r.element.remove();});this.reticles=this.reticles.filter(function(r){return !r.pinned;});this.pinReticles=[];
+    this.syncRecorded();
+    if(!p)return;
+    // The line is fixed in the world; the vehicle under it may have been posed since the click, so find the contact again.
+    var caster=new THREE.Raycaster(p.origin,p.direction),objects=this.paintMesh?[this.paintMesh]:[];if(this.trackMesh&&this.surfaceMode==='blend')objects.push(this.trackMesh);
+    var hits=caster.intersectObjects(objects),contact=hits.length?hits[0].point.clone():null;
+    var result=this.shell&&this.engine?this.engine.ray(p.origin.toArray(),p.direction.toArray(),this.shell):null;
+    var group=new THREE.Group(),tip=contact||(result&&result.bounce?new THREE.Vector3().fromArray(result.bounce.point):p.point);
+    group.add(this.shotArrow(p.direction,tip,0x8fd3ff));
+    if(result&&result.bounce){
+      // The flight after the ricochet: dashed leg to the second contact (or 2.3 m into the air) and its own reticle.
+      var b=result.bounce,start=new THREE.Vector3().fromArray(b.point),out=new THREE.Vector3().fromArray(b.direction),end=start.clone().addScaledVector(out,result.distance!==undefined?result.distance:2.3);
+      var leg=new THREE.Line(new THREE.BufferGeometry().setFromPoints([start,end]),new THREE.LineDashedMaterial({color:0xfb8580,dashSize:.12,gapSize:.08,depthTest:false,depthWrite:false,transparent:true}));
+      leg.computeLineDistances();leg.renderOrder=4;group.add(leg);
+      if(result.distance!==undefined)this.pinReticleAt(end,result.reason==='ricochet'?'pinned lost':'pinned second');
+    }
+    this.pinGroup=group;this.scene.add(group);
+    if(contact)this.pinReticleAt(contact,'pinned');
+    this.draw();
+  };
+  Viewer.prototype.pinReticleAt=function(position,classes){
+    this.addReticle(position);var r=this.reticles[this.reticles.length-1];r.pinned=true;classes.split(' ').forEach(function(c){r.element.classList.add(c);});this.pinReticles.push(r);
+  };
+  Viewer.prototype.unpin=function(){this.pinned=null;this.refreshPin();if(this.onPin)this.onPin(false);this.draw();};
+  // Recorded markers (arrows, reticles, aim circles) belong to the saved pose and the saved shot: an explored
+  // pose or a pinned shot replaces them until the user returns.
+  Viewer.prototype.recordedShown=function(){return Math.abs(this.turretAngle)<.001&&Math.abs(this.gunAngle)<.001&&!this.pinned;};
+  Viewer.prototype.syncRecorded=function(){var show=this.recordedShown();this.root.children.forEach(function(o){if(o!==this.paintMesh&&o!==this.trackGroup&&o!==this.outline&&o!==this.outlineDepth)o.visible=show;},this);};
   Viewer.prototype.shotProbability=function(shell){
     if(this.pinned&&this.engine&&shell)return this.engine.ray(this.pinned.origin.toArray(),this.pinned.direction.toArray(),shell);
     if(!this.engine||!this.point||!this.travel||!shell||Math.abs(this.turretAngle)>.001||Math.abs(this.gunAngle)>.001)return null;
@@ -213,7 +275,7 @@
     if(server&&Number.isFinite(server.receivedAt)&&Math.abs(server.receivedAt-client.receivedAt)<.5)ring(server,0xeac36e,true);
     this.showSavedAim(document.getElementById('show-aim').checked);return !!this.savedAim;
   };
-  Viewer.prototype.showSavedAim=function(value){if(this.aimGroup)this.aimGroup.visible=!!value&&Math.abs(this.turretAngle)<.001&&Math.abs(this.gunAngle)<.001;this.draw();};
+  Viewer.prototype.showSavedAim=function(value){if(this.aimGroup)this.aimGroup.visible=!!value&&this.recordedShown();this.draw();};
   Viewer.prototype.savedAimProbability=function(shell){
     if(!this.savedAim||!this.engine||!shell||Math.abs(this.turretAngle)>.001||Math.abs(this.gunAngle)>.001)return null;
     var aim=this.savedAim,count=256,sum=0,unknown=0,origin=aim.origin.toArray();
@@ -224,7 +286,7 @@
   Viewer.prototype.resetGPU=function(){if(this.gpu)this.gpu.dispose();this.gpu=null;this.gpuAttempted=false;this.gpuError=null;};
   Viewer.prototype.computeMode=function(mode){if(this.surface)this.surface.dispose();this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.gpuMode=mode==='cpu'?'cpu':'auto';this.resetGPU();this.rebuild();};
   Viewer.prototype.computeResults=function(origin){
-    var B=ArmorBallistics,self=this,code=function(r){return r.chance===null?101:r.reason==='no-hull'?102:r.chance;},at=function(i){return code(self.heatEngine.ray(origin,B.sub(self.samples[i].center,origin),self.shell));};
+    var B=ArmorBallistics,self=this,code=function(r){return r.chance===null?101:r.reason==='no-hull'?102:r.chance;},first=Object.assign({},self.shell,{ricochetContinue:false}),at=function(i){return code(self.heatEngine.ray(origin,B.sub(self.samples[i].center,origin),first));};
     if(this.gpuMode==='auto'&&!this.gpuAttempted){this.gpuAttempted=true;try{if(!window.ArmorHeatmapGPU)throw new Error('GPU-module unavailable');this.gpu=new ArmorHeatmapGPU(this.renderer,this.heatEngine,this.samples);}catch(e){this.gpuError=e.message;}}
     if(this.gpu){try{
       var results=this.gpu.compute(origin,this.shell),resolved=0;

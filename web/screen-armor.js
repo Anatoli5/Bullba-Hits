@@ -158,9 +158,9 @@ void main(){
     u.uCheck.value=true;this.quad.visible=true;scene.add(this.quad);
     try{renderer.autoClear=true;renderer.setRenderTarget(this.checkTarget);renderer.render(scene,this.checkCamera);renderer.readRenderTargetPixels(this.checkTarget,0,0,CHECK,1,pixels);}
     finally{scene.remove(this.quad);if(parent)parent.add(this.quad);renderer.setRenderTarget(target);renderer.autoClear=auto;u.uCheck.value=false;this.quad.visible=wasVisible;}
-    var origin=camera.position.clone(),compared=0,mismatches=[],code=function(r){return r.chance===null?'unknown':r.reason==='no-hull'?'no-hull':String(r.chance);};
+    var origin=camera.position.clone(),compared=0,mismatches=[],first=Object.assign({},shell,{ricochetContinue:false}),code=function(r){return r.chance===null?'unknown':r.reason==='no-hull'?'no-hull':String(r.chance);};
     for(var n=0;n<CHECK;n++){var g=pixels[n*4];if(g<-2.5)continue;var p=new T.Vector3(uvs[n].x*2-1,uvs[n].y*2-1,.5).unproject(camera),dir=p.sub(origin).normalize();
-      var cpu=this.engine.ray(origin.toArray(),dir.toArray(),shell),gpu=g<-1.5?'no-hull':g<-.5?'unknown':String(Math.round(g*100));compared++;
+      var cpu=this.engine.ray(origin.toArray(),dir.toArray(),first),gpu=g<-1.5?'no-hull':g<-.5?'unknown':String(Math.round(g*100));compared++;
       var ok=gpu===code(cpu)||(!isNaN(Number(gpu))&&cpu.chance!==null&&Math.abs(Number(gpu)-cpu.chance)<=1);
       if(!ok)mismatches.push({pixel:n,gpu:gpu,cpu:code(cpu)});}
     var failed=compared>=8&&mismatches.length>Math.max(2,Math.floor(compared*.06));

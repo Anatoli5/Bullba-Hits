@@ -43,7 +43,7 @@
     var choice=$('shell-choice').value,c=choice.indexOf('saved:')===0?candidates[Number(choice.slice(6))]:null;
     var range=shotContext&&shotContext.range||activeHit&&activeHit.rangeAtImpact||100;
     var shell=shellAt(c,choice,Number($('penetration').value),Number($('caliber').value),range),r=viewer&&viewer.shotProbability(shell),output=$('shot-chance');
-    var pinned=!!(viewer&&viewer.pinned),line=armorLine(r,shell?shell.penetration:null);output.textContent=line.label;output.style.color=line.color;$('shot-details').textContent=line.details?line.details+(pinned?'':' · flight ≈ '+Math.round(range)+' m'):'';
+    var pinned=!!(viewer&&viewer.pinned),line=armorLine(r,shell?shell.penetration:null,range);output.textContent=line.label;output.style.color=line.color;chips($('shot-details'),line);
     output.title=!r?'No parameters or the pose changed':pinned?'Along the pinned line from the current view':'Along the saved line · flight ≈ '+Math.round(range)+' m · nominal penetration '+Math.round(shell.penetration)+' mm';
     var key=JSON.stringify(shell)+'|'+(viewer?viewer.turretAngle+','+viewer.gunAngle:'');
     if(viewer&&(totalKey!==key||totalEngine!==viewer.engine||totalAim!==viewer.savedAim)){
@@ -56,7 +56,7 @@
     var point=(activeHit&&activeHit.points||[]).find(function(p){return p.caliber>0;});
     if(!c){manualPen=$('penetration').value||manualPen;} // manual shell keeps the penetration that was on screen
     $('penetration').value=c?c.penetration100:manualPen;$('caliber').value=c?c.caliber:point?point.caliber:100;
-    $('distance-control').hidden=!c||$('link-distance').checked;$('penetration-label').textContent=c?'Penetration at 100 m, mm':'Penetration at target, mm';$('shot-distance').value=100;updateShell();
+    $('distance-control').hidden=!c||$('link-distance').checked;$('penetration-label').textContent=c?'Penetration at 100 m, mm':'Penetration at target, mm';$('shot-distance').value=shotContext&&shotContext.range?Math.round(shotContext.range):100;updateShell();
   }
   function updateShell(){
     var choice=$('shell-choice').value,c=choice.indexOf('saved:')===0?candidates[Number(choice.slice(6))]:null;
@@ -74,27 +74,33 @@
   }
   function chanceRgb(r){return 'rgb('+ArmorBallistics.color(r,$('palette').value).map(function(v){return Math.round(v*255);}).join(',')+')';}
   // Compact reading of one ballistic result: the chance first, then the numbers that explain it.
-  function armorLine(r,pen){
-    if(!r)return {label:'—',color:'',details:''};
-    var layers=r.layers||[],screens=layers.filter(function(l){return !l.main;}),extra=screens.length?' · +'+screens.map(function(s){return Math.round(s.nominal)+' mm';}).join(' +')+' screen':'';
-    if(r.reason==='ricochet')return {label:'Ricochet',color:chanceRgb({chance:0}),details:Math.round(r.nominal)+' mm @ '+Math.round(r.angle)+'°'+extra};
-    if(r.reason==='screen')return {label:'0%',color:chanceRgb({chance:0}),details:'stops at the screen'+extra};
-    if(r.reason==='no-hull')return {label:'—',color:'',details:'no main armour on this line'};
-    if(r.reason==='parameters')return {label:'—',color:'',details:'set penetration and calibre'};
-    if(r.reason==='armor')return {label:'—',color:'',details:'no armour data for this surface'};
-    if(r.chance===null)return {label:'—',color:'',details:'no estimate for this penetration distribution'};
-    return {label:r.chance+'%',color:chanceRgb(r),details:'eff '+Math.round(r.effective)+' mm · '+Math.round(r.nominal)+' mm @ '+Math.round(r.angle)+'°'+(pen?' · pen '+Math.round(pen)+' mm':'')+extra};
+  // One ballistic result as readable groups: chance, then "effective ← nominal – angle", then "pen / range", then screens.
+  function armorLine(r,pen,range){
+    if(!r)return {label:'—',color:'',groups:[]};
+    var prefix=[];
+    if(r.bounce){var b=r.bounce;pen=b.penetration;prefix.push({kind:'ricochet',text:'ricochet '+Math.round(b.nominal)+' mm – '+Math.round(b.angle)+'°'+(b.loss?' · pen −'+Math.round(b.loss*100)+'%':'')});}
+    var layers=r.layers||[],screens=layers.filter(function(l){return !l.main;}),extra=screens.length?[{kind:'screen',text:'+ '+screens.map(function(s){return Math.round(s.nominal)+' mm';}).join(' + ')+' screen'}]:[];
+    var shell=pen?[{kind:'pen',text:'pen '+Math.round(pen)+' mm'+(range?' / '+Math.round(range)+' m':'')}]:[];
+    var zero=chanceRgb({chance:0});
+    if(r.reason==='ricochet')return {label:'Ricochet',color:zero,groups:prefix.concat([{kind:'armor',text:(r.final?'again, shell lost: ':'')+Math.round(r.nominal)+' mm – '+Math.round(r.angle)+'°'}],shell,extra)};
+    if(r.reason==='screen')return {label:'0%',color:zero,groups:prefix.concat([{kind:'armor',text:'stops at the screen'}],shell,extra)};
+    if(r.reason==='no-hull')return r.bounce?{label:'0%',color:zero,groups:prefix.concat([{kind:'armor',text:'flies past after the ricochet'}],shell)}:{label:'—',color:'',groups:[{kind:'armor',text:'no main armour on this line'}]};
+    if(r.reason==='parameters')return {label:'—',color:'',groups:[{kind:'armor',text:'set penetration and calibre'}]};
+    if(r.reason==='armor')return {label:'—',color:'',groups:prefix.concat([{kind:'armor',text:'no armour data for this surface'}])};
+    if(r.chance===null)return {label:'—',color:'',groups:prefix.concat([{kind:'armor',text:'no estimate for this penetration distribution'}])};
+    return {label:r.chance+'%',color:chanceRgb(r),groups:prefix.concat([{kind:'armor',text:'eff '+Math.round(r.effective)+' mm ← '+Math.round(r.nominal)+' mm – '+Math.round(r.angle)+'°'}],shell,extra)};
   }
+  function chips(container,line){container.replaceChildren();line.groups.forEach(function(g){container.appendChild(node('span',g.text,'chip '+g.kind));});}
   function inspectArmor(r){
-    var line=armorLine(r,viewer&&viewer.shell?viewer.shell.penetration:null),probe=$('armor-probe');probe.replaceChildren();
-    var b=node('b',line.label);b.style.color=line.color;probe.appendChild(b);if(line.details)probe.appendChild(document.createTextNode(' · '+line.details));
+    var line=armorLine(r,viewer&&viewer.shell?viewer.shell.penetration:null,null),probe=$('armor-probe');probe.replaceChildren();
+    var b=node('b',line.label);b.style.color=line.color;probe.appendChild(b);line.groups.forEach(function(g){probe.appendChild(node('span',g.text,'chip '+g.kind));});
   }
   function display(data,reference){
     var hit=data.hit;$('target-name').textContent=(hit.target||{}).name||'Unknown target';$('scene-kind').textContent=reference?'REFERENCE MODEL · NO BATTLE RECORD':'CLIENT COLLISION MODEL';$('result-badge').hidden=!!reference;$('result-badge').textContent=result(hit);
     $('shot-source').textContent='Hit line';$('unpin').hidden=true;prepareShell(hit);var drawn=viewer&&viewer.load(data);if(viewer)requestAnimationFrame(function(){viewer.resize();});message(drawn?'':'Geometry unavailable. The original event is kept.');$('focus-hit').disabled=!(viewer&&viewer.point);warnings(data.warnings||[]);$('details').replaceChildren();
     var aimReady=viewer&&viewer.setShotContext(shotContext);$('show-aim').disabled=!aimReady;$('aim-state').textContent=aimReady?'● client · ◌ server':hit.direction==='incoming'?'Enemy reticle unavailable':aimReasons[shotContext.aimReason]||'No linked snapshot';
     $('aim-toggle').title=aimReady?'The saved client circle is teal; the server one is dashed when received. Linked to the hit by end point and time; the target position is at impact.':'No own reticle is unambiguously linked to this hit: '+(aimReasons[shotContext.aimReason]||'no data')+'.';
-    if(viewer&&shotContext.range)viewer.setDistance(Math.max(1,Math.min(1500,shotContext.range)));shotStats();
+    shotStats();
     resultVisual($('result-badge'),hit);
     if(reference){$('details').appendChild(node('p','The model is extracted from the installed client. There are no invented hits here. Once the recorder is installed, new battles appear in the list on the left.'));return;}
     detail('Direction',hit.direction==='incoming'?'Incoming':'Outgoing',clock(hit.receivedAt));detail('Result',result(hit));
@@ -131,10 +137,17 @@
   // The fallback path is visibly labelled in the scene: its stepped sampling must never pass for the exact composition.
   if(viewer)viewer.onBackend=function(text){$('heatmap-backend').textContent=text;var fallback=!/^GPU · layers/.test(text);$('backend-badge').hidden=!fallback;$('backend-badge').textContent=fallback?text:'';};
   $('heatmap-compute').onchange=host.guard('Estimate',function(){if(viewer)viewer.computeMode(this.value);});
-  if(viewer)viewer.onCamera=function(state){var changed=lastDistance!==state.distance;lastDistance=state.distance;$('camera-distance-value').textContent=Math.round(state.distance)+' m';$('camera-distance-exact').value=state.distance.toFixed(1);$('camera-zoom-exact').value=state.zoom.toFixed(2);$('camera-distance').value=Math.round(Math.log(Math.max(1,state.distance))/Math.log(1500)*1000);var key=[state.distance,state.yaw,state.pitch,viewer.turretAngle,viewer.gunAngle].join(',');if(analysisKey!==null&&analysisKey!==key)staleEstimate();if(changed&&$('link-distance').checked)updateShell();else if(totalEngine!==viewer.engine)shotStats();};
-  $('camera-distance').oninput=function(){if(viewer)viewer.setDistance(Math.max(1,Math.min(1500,Math.pow(1500,Number(this.value)/1000))));};
-  $('unpin').onclick=function(){if(viewer)viewer.unpin();};
-  if(viewer)viewer.onPin=function(on){$('shot-source').textContent=on?'Pinned point':'Hit line';$('unpin').hidden=!on;$('total-chance').textContent=on?'—':$('total-chance').textContent;shotStats();};
+  if(viewer)viewer.onCamera=function(state){var changed=lastDistance!==state.distance;lastDistance=state.distance;if(document.activeElement!==$('camera-distance-field'))$('camera-distance-field').value=Math.round(state.distance);$('camera-distance-exact').value=state.distance.toFixed(1);$('camera-zoom-exact').value=state.zoom.toFixed(2);$('camera-distance').value=Math.round(distanceSlider(state.distance));$('camera-zoom').value=Math.round(Math.max(0,Math.min(1000,Math.log(state.zoom/.1)/Math.log(1000)*1000)));var key=[state.distance,state.yaw,state.pitch,viewer.turretAngle,viewer.gunAngle].join(',');if(analysisKey!==null&&analysisKey!==key)staleEstimate();if(changed&&$('link-distance').checked)updateShell();else if(totalEngine!==viewer.engine)shotStats();};
+  // Logarithmic slider between the viewer's distance limits: fine steps in a clinch, coarse steps far away.
+  var limits=(window.ArmorViewer&&ArmorViewer.limits)||{distanceMin:5,distanceMax:1000},span=Math.log(limits.distanceMax/limits.distanceMin);
+  function distanceSlider(d){return Math.log(Math.max(limits.distanceMin,d)/limits.distanceMin)/span*1000;}
+  ['camera-distance-field','camera-distance-exact'].forEach(function(id){$(id).min=limits.distanceMin;$(id).max=limits.distanceMax;});
+  $('camera-distance').oninput=function(){if(viewer)viewer.setDistance(limits.distanceMin*Math.exp(span*Number(this.value)/1000));};
+  $('camera-distance-field').onchange=function(){if(viewer)viewer.setDistance(Number(this.value)||limits.distanceMin);};
+  $('camera-zoom').oninput=function(){if(viewer)viewer.setZoom(.1*Math.pow(1000,Number(this.value)/1000));}; // ×0.1 … ×100, ×1 at a third
+  $('unpin').onclick=function(){if(!viewer)return;viewer.unpin();viewer.resetPose();};
+  function recordedButton(){if(viewer)$('unpin').hidden=!(viewer.pinned||Math.abs(viewer.turretAngle)>=.1||Math.abs(viewer.gunAngle)>=.1);}
+  if(viewer)viewer.onPin=function(on){$('shot-source').textContent=on?'Pinned point':'Hit line';recordedButton();$('total-chance').textContent=on?'—':$('total-chance').textContent;shotStats();};
   $('auto-frame').onchange=function(){if(viewer)viewer.setAutoFrame(this.checked);};
   $('track-opacity').oninput=function(){if(viewer)viewer.setTrackOpacity(Number(this.value)/100);};
   $('camera-distance-exact').onchange=function(){if(viewer)viewer.setDistance(Number(this.value));};
@@ -143,10 +156,9 @@
   $('heatmap-quality').onchange=host.guard('Detail',function(){if(host.game&&this.value==='high'){this.value=viewer?viewer.quality:'auto';return;}if(viewer)viewer.setQuality(this.value);});
   $('surface-mode').onchange=host.guard('Screens and tracks',function(){$('track-overlay-note').hidden=this.value!=='blend';if(viewer)viewer.setSurfaceMode(this.value);});
   if(viewer)viewer.onQuality=function(count){$('quality-info').textContent=count.toLocaleString('en-GB')+' map points';};
-  function poseChanged(){if(!viewer)return;$('turret-notice').hidden=Math.abs(viewer.turretAngle)<.1&&Math.abs(viewer.gunAngle)<.1;staleEstimate();shotStats();}
+  function poseChanged(){if(!viewer)return;var off=!(Math.abs(viewer.turretAngle)<.1&&Math.abs(viewer.gunAngle)<.1),sign=function(v){return (v>0?'+':'')+Math.round(v)+'°';};$('turret-notice').hidden=!off;if(off)$('turret-notice').textContent='Turret '+sign(viewer.turretAngle)+', gun '+sign(viewer.gunAngle)+' from the recorded pose. Historical hit marks are hidden until it is restored.';recordedButton();staleEstimate();shotStats();}
   if(viewer)viewer.onTurret=poseChanged;
   if(viewer)viewer.onGun=function(state){$('gun-notice').textContent=state.known?'Gun limits come from the client and follow the turret rotation. Saved angles are interpolated.':'This record has no gun limits. Vertical movement is free exploration, not the real tank angles.';poseChanged();};
-  $('reset-turret').onclick=function(){if(viewer)viewer.resetPose();};
   $('fit-camera').onclick=function(){if(viewer)viewer.fit();};
   if(viewer)viewer.onAim=function(text){analysisKey=null;$('spread-result').textContent=text;};
   $('reset-aim').onclick=function(){if(viewer){viewer.spreadAim=null;staleEstimate();}};
@@ -161,7 +173,7 @@
   $('penetration').oninput=function(){if($('shell-choice').value.indexOf('saved:')!==0)manualPen=this.value;updateShell();};
   $('battles').onchange=function(){loadBattle(this.value,false).catch(function(e){warnings([e.message]);});};
   document.querySelectorAll('[data-filter]').forEach(function(b){b.onclick=function(){filter=b.dataset.filter;document.querySelectorAll('[data-filter]').forEach(function(x){x.setAttribute('aria-pressed',String(x===b));});renderHits();};});
-  $('refresh').onclick=refresh;$('reset-camera').onclick=function(){if(viewer)viewer.reset();};$('focus-hit').onclick=function(){if(viewer)viewer.focus();};$('wireframe').onchange=function(){if(viewer)viewer.wireframe(this.checked);};
+  $('refresh').onclick=refresh;$('focus-hit').onclick=function(){if(viewer)viewer.focus();};$('wireframe').onchange=function(){if(viewer)viewer.wireframe(this.checked);};
   window.addEventListener('armor-context-lost',function(){host.mark('WebGL','context-lost');message('The browser lost its WebGL context. Reload the page.');});
   function outline(){if(viewer)viewer.setOutline(Number($('outline-brightness').value)/100,Number($('outline-opacity').value)/100);}
   $('outline-brightness').oninput=outline;$('outline-opacity').oninput=outline;if(viewer){viewer.wireframe($('wireframe').checked);outline();}

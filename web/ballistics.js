@@ -58,7 +58,8 @@
     return {kind:kind,penetration:penetration,caliber:caliber,randomization:.25,randomizationType:'NORMAL',
       normalization:(kind==='ARMOR_PIERCING'?5:kind==='ARMOR_PIERCING_CR'?2:0)*RAD,
       ricochetCos:Math.cos((ap?70:85)*RAD),checkCaliber:ap,mayRicochet:kind!=='HIGH_EXPLOSIVE',
-      jetLossPerMeter:kind==='HOLLOW_CHARGE'?.5:0,shieldPenetration:kind==='HIGH_EXPLOSIVE'};
+      jetLossPerMeter:kind==='HOLLOW_CHARGE'?.5:0,shieldPenetration:kind==='HIGH_EXPLOSIVE',
+      ricochetLoss:ap?.25:0}; // client rule since 9.3: AP and APCR keep 75% of the penetration after a ricochet, HEAT keeps all of it
   }
   function effective(armor,cos,s){
     if(!armor.useHitAngle)return armor.armor;
@@ -82,16 +83,16 @@
       if(!a)return {chance:null,reason:'armor',layers:layers};
       if(a.armor===null||a.armor===undefined)continue;
       var cos=a.useHitAngle?hit.cos:1;
-      if(!jet&&ricochet(a,cos,s))return {chance:0,reason:'ricochet',layers:layers,nominal:a.armor,angle:Math.acos(clamp(cos,0,1))/RAD};
+      if(!jet&&ricochet(a,cos,s))return {chance:0,reason:'ricochet',layers:layers,nominal:a.armor,angle:Math.acos(clamp(cos,0,1))/RAD,distance:hit.distance,hit:hit,final:!!s.ricocheted};
       if(jet)remaining*=Math.max(0,1-Math.max(0,hit.distance-jetStart)*s.jetLossPerMeter);
       var plate=effective(a,cos,s);
       layers.push({part:t.part,material:t.name,nominal:a.armor,effective:plate,angle:Math.acos(clamp(cos,0,1))/RAD,main:a.vehicleDamageFactor>EPS});
       if(a.vehicleDamageFactor>EPS){
         return {chance:chance(remaining,plate,s.penetration,s.randomization,s.randomizationType),reason:'penetration',
-          effective:s.penetration-remaining+plate,nominal:a.armor,angle:layers[layers.length-1].angle,layers:layers};
+          effective:s.penetration-remaining+plate,nominal:a.armor,angle:layers[layers.length-1].angle,layers:layers,distance:hit.distance};
       }
       if(s.kind==='HIGH_EXPLOSIVE'){
-        if(!s.shieldPenetration)return {chance:0,reason:'screen',layers:layers};
+        if(!s.shieldPenetration)return {chance:0,reason:'screen',layers:layers,distance:hit.distance};
         remaining-=plate*3; // Modern HE shield penalty; this view estimates penetration, not blast damage.
       }else remaining-=plate;
       if(a.collideOnceOnly)ignored[key]=true;
@@ -114,7 +115,25 @@
   }
   function fromTriangles(tris){
     var acceleration=tree(tris.slice());
-    return {triangles:tris,acceleration:acceleration,ray:function(o,d,s){if(!s||!(s.penetration>0)||!(s.caliber>0))return evaluate([],s);var hits=[];collisions(acceleration,o,unit(d),hits);hits.sort(function(a,b){return a.distance-b.distance;});return evaluate(hits,s);}};
+    var engine={triangles:tris,acceleration:acceleration};
+    engine.ray=function(o,d,s){
+      if(!s||!(s.penetration>0)||!(s.caliber>0))return evaluate([],s);
+      d=unit(d);var hits=[];collisions(acceleration,o,d,hits);hits.sort(function(a,b){return a.distance-b.distance;});
+      var r=evaluate(hits,s);r.origin=o;r.direction=d;
+      // Client rule since 9.3: after a ricochet the shell flies on along the mirrored direction with the reduced
+      // penetration and may hit the same vehicle again; a second ricochet destroys it. The first-contact picture
+      // (heat map, GPU cross-check) passes ricochetContinue:false and stops here.
+      if(r.reason==='ricochet'&&r.hit&&!s.ricocheted&&s.ricochetContinue!==false&&s.ricochetLoss!==undefined){
+        var h=r.hit,n=h.triangle.normal,k=2*dot(d,n),out=unit([d[0]-k*n[0],d[1]-k*n[1],d[2]-k*n[2]]);
+        var point=[o[0]+d[0]*h.distance,o[1]+d[1]*h.distance,o[2]+d[2]*h.distance];
+        var next=Object.assign({},s,{penetration:s.penetration*(1-s.ricochetLoss),ricocheted:true});
+        var second=engine.ray([point[0]+out[0]*1e-3,point[1]+out[1]*1e-3,point[2]+out[2]*1e-3],out,next);
+        second.bounce={point:point,normal:n,direction:out,nominal:r.nominal,angle:r.angle,penetration:next.penetration,loss:s.ricochetLoss,layers:r.layers};
+        return second;
+      }
+      return r;
+    };
+    return engine;
   }
   function subdivide(t,depth,out,edge,budget){
     edge=edge||.65;budget=budget===undefined?64:budget;
