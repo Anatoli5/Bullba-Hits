@@ -8,15 +8,16 @@
     if(/^model:[a-f0-9]{64}$/.test(key))return 'data/models/'+key.slice(6)+'.js';
     throw new Error('Некорректный идентификатор записи');
   }
-  function read(key){
+  function read(key,retryCount){
     if(pending[key])return pending[key].promise;
     var path;try{path=filename(key);}catch(e){return Promise.reject(e);}
-    var entry={value:undefined,received:false}, script=document.createElement('script');
+    var entry={value:undefined,received:false,retries:retryCount||0}, script=document.createElement('script');
     entry.promise=new Promise(function(resolve,reject){
       function finish(error){clearTimeout(timer);script.remove();delete pending[key];if(error)reject(error);else resolve(entry.value);}
       var timer=setTimeout(function(){finish(new Error('Не удалось прочитать локальный файл. Нажмите «Обновить».'));},15000);
       script.onload=function(){finish(entry.received?null:new Error('Файл данных повреждён: '+path));};
-      script.onerror=function(){finish(new Error('Не найден '+path+'. Откройте Viewer.html из папки mods/configs/local.armor_inspector после запуска игры с модом.'));};
+      // A momentary read failure (file being replaced by the recorder, browser hiccup) gets two retries before it is reported.
+      script.onerror=function(){if(entry.retries<2){entry.retries++;clearTimeout(timer);script.remove();delete pending[key];setTimeout(function(){read(key,entry.retries).then(resolve,reject);},400);return;}finish(new Error('Не найден '+path+'. Откройте Viewer.html из папки mods/configs/local.armor_inspector после запуска игры с модом.'));};
       // A fresh URL avoids reusing a snapshot when the user presses Refresh.
       script.src=path+'?read='+Date.now()+'-'+(++serial);
     });

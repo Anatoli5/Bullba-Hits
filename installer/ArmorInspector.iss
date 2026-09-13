@@ -28,6 +28,12 @@ UninstallFilesDir={app}\mods\configs\local.armor_inspector\installer
 UninstallDisplayIcon={app}\mods\configs\local.armor_inspector\web\icon.ico
 UninstallDisplayName=Bullba Hits
 SetupMutex=LocalArmorInspectorSetup
+#ifdef SignBuild
+; Sign both the outer EXE and the temporary setup/uninstaller executables.
+SignTool=BullbaHitsSign
+SignedUninstaller=yes
+SignToolRunMinimized=yes
+#endif
 #ifdef TestBuild
 CreateUninstallRegKey=no
 UsePreviousAppDir=no
@@ -238,6 +244,13 @@ begin
     Result := CompareText(GetSHA256OfFile(Path), 'b243712e0962a8340353e0966e9c8367d235c5bb9f6e8d674f68a58614a4b4da') = 0;
   if CompareText(ExtractFileName(Path), 'local.armor_inspector_0.5.2.wotmod') = 0 then
     Result := CompareText(GetSHA256OfFile(Path), 'e9ff6ad1318fe6377bc91af80427d45d0bf6c1fc89c36e773561c257713768a1') = 0;
+  if CompareText(ExtractFileName(Path), 'local.armor_inspector_0.6.1.wotmod') = 0 then
+    Result := (CompareText(GetSHA256OfFile(Path), 'fe49a5c0d34cc2cf349b6cfc1092590f293b84b2b6d52edc0fbf32a7021a0530') = 0) or
+      (CompareText(GetSHA256OfFile(Path), 'e8763fce849a8487433da74347e43b11e3e81119cf641f82266ef8eb175f680f') = 0);
+  if CompareText(ExtractFileName(Path), 'local.armor_inspector_0.6.2.wotmod') = 0 then
+    Result := CompareText(GetSHA256OfFile(Path), '0851438d19b9f81365b0ac0325008c0776021f5a9231415596c4f7c4f8b72dec') = 0;
+  if CompareText(ExtractFileName(Path), 'local.armor_inspector_0.6.3.wotmod') = 0 then
+    Result := CompareText(GetSHA256OfFile(Path), '56ddc2c5a8b9edf128d697eeed6307bbbe143cbd4021a8665165f3b2ca3a6329') = 0;
 end;
 
 #include "generated\checks.iss"
@@ -369,6 +382,9 @@ begin
   BackupLegacyMod('0.5.1');
   BackupLegacyMod('0.5.2');
   BackupLegacyMod('0.6.0');
+  BackupLegacyMod('0.6.1');
+  BackupLegacyMod('0.6.2');
+  BackupLegacyMod('0.6.3');
   MigrateDesktopShortcut;
 end;
 

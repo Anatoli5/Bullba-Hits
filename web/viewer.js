@@ -3,7 +3,10 @@
   'use strict';
   function linear(color){return color.map(function(c){return c<=.04045?c/12.92:Math.pow((c+.055)/1.055,2.4);});}
   var baseColors=[[.38,.46,.54],[.65,.73,.8],[.75,.83,.87],[.55,.65,.72]].map(linear),colorTables={};
-  function thicknessColor(mm){var p=Math.max(0,Math.min(1,mm/300)),a=p<.5?[.25,.65,.9]:[.96,.77,.35],b=p<.5?[.96,.77,.35]:[.75,.28,.65],f=p<.5?p*2:p*2-1;return a.map(function(v,i){return v+(b[i]-v)*f;});}
+  // Screen tint is relative to the selected shell: nominal plate thickness against
+  // nominal penetration at the target, HE counting screens threefold. A visual
+  // mask in the probability palette, not the per-pixel chance of the armour behind.
+  function screenColor(mm,shell,palette){var factor=shell.kind==='HIGH_EXPLOSIVE'&&shell.shieldPenetration?3:1,ratio=Math.max(0,Math.min(1,mm*factor/shell.penetration));return colorTable(palette)[Math.round((1-ratio)*100)];}
   function externalLayer(t){return t.part===0||!!(t.armor&&Number.isFinite(t.armor.vehicleDamageFactor)&&t.armor.vehicleDamageFactor<=1e-5);}
   function colorTable(palette){
     if(!colorTables[palette]){var table=[];for(var i=0;i<=100;i++)table.push(linear(ArmorBallistics.color({chance:i},palette)));table.push(linear(ArmorBallistics.color({chance:null},palette)),linear(ArmorBallistics.color({chance:0,reason:'no-hull'},palette)));colorTables[palette]=table;}
@@ -21,20 +24,20 @@
     this.grid = new T.GridHelper(24, 24, 0x4a5d6f, 0x263746); this.scene.add(this.grid);
     this.root = new T.Group(); this.scene.add(this.root);
     this.target = new T.Vector3(0, 1, 0); this.yaw = 0.7; this.pitch = 0.27; this.distance = 50;
-    this.defaults={distance:50,scale:1};this.frameCenter=new T.Vector2();this.fitZoom=1;
+    this.defaults={distance:50,scale:.85};this.pivot='hit';this.frameCenter=new T.Vector2();this.fitZoom=1;
     try{var saved=JSON.parse(window.localStorage.getItem('armor-camera-defaults'));if(saved&&saved.distance>=1&&saved.distance<=1500&&saved.scale>=.1&&saved.scale<=10)this.defaults=saved;}catch(ignore){}
     this.materials = []; this.point = null; this.travel = null;
     this.shell=null;this.heatmap=true;this.palette='classic';this.paintTimer=null;this.paintMesh=null;this.samples=[];this.engine=null;
     this.frameId=null;this.cachedEngine=null;this.cachedRaysKey=null;this.cachedResults=null;this.paintedKey=null;
     this.gpu=null;this.gpuAttempted=false;this.gpuMode='auto';this.gpuError=null;
     this.quality='auto';this.surfaceMode='blend';this.turretAngle=0;this.turretTimer=null;this.turretPending=false;this.currentArmor=false;
-    this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.heatEngine=null;this.trackOpacity=.4;this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.gunAngle=0;this.autoFrame=true;this.frameScale=this.defaults.scale;
+    this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.heatEngine=null;this.trackOpacity=.4;this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.gunAngle=0;this.autoFrame=true;this.frameScale=this.defaults.scale;this.outline=null;this.outlineDepth=null;this.outlineStyle={brightness:.8,opacity:.6};this.showOutline=false;
     var drag = null;
     container.addEventListener('pointerdown', function(e) { if(e.button!==0)return;if(e.altKey){self.aimAt(e);return;}drag={x:e.clientX,y:e.clientY,part:self.pickPart(e)}; container.setPointerCapture(e.pointerId); container.focus(); });
     container.addEventListener('pointermove', function(e) { if (!drag){self.inspect(e);return;}if(drag.part===3){self.setGun(self.gunAngle+(e.clientY-drag.y)*.16);}else if(drag.part===2){self.setTurret(self.turretAngle-(e.clientX-drag.x)*.5);}else{self.yaw -= (e.clientX-drag.x)*0.008; self.pitch = Math.max(-1.35,Math.min(1.35,self.pitch+(e.clientY-drag.y)*0.008));self.render();}drag.x=e.clientX;drag.y=e.clientY; });
     container.addEventListener('pointerup', function() { drag=null; });
     container.addEventListener('pointercancel', function() { drag=null; });
-    container.addEventListener('wheel', function(e) {e.preventDefault();var amount=Math.max(-200,Math.min(200,e.deltaY*(e.deltaMode===1?16:e.deltaMode===2?300:1)));if(e.shiftKey)self.setZoom(self.camera.zoom*Math.exp(-amount*.002));else self.setDistance(Math.max(1,Math.min(1500,self.distance*Math.exp(amount*.002))));}, {passive:false});
+    container.addEventListener('wheel', function(e) {e.preventDefault();var delta=e.deltaY||e.deltaX,amount=Math.max(-200,Math.min(200,delta*(e.deltaMode===1?16:e.deltaMode===2?300:1)));if(e.shiftKey||e.ctrlKey)self.setZoom(self.camera.zoom*Math.exp(-amount*.002));else self.setDistance(Math.max(1,Math.min(1500,self.distance*Math.exp(amount*.002))));}, {passive:false});
     container.addEventListener('keydown',function(e){var used=true;if(e.key==='ArrowLeft')self.yaw-=.1;else if(e.key==='ArrowRight')self.yaw+=.1;else if(e.key==='ArrowUp')self.pitch=Math.min(1.35,self.pitch+.1);else if(e.key==='ArrowDown')self.pitch=Math.max(-1.35,self.pitch-.1);else if(e.key==='+'||e.key==='='){if(e.shiftKey)self.setZoom(self.camera.zoom*1.1);else self.setDistance(Math.max(1,self.distance/1.1));}else if(e.key==='-'){if(e.shiftKey)self.setZoom(self.camera.zoom/1.1);else self.setDistance(Math.min(1500,self.distance*1.1));}else used=false;if(used){e.preventDefault();self.render();}});
     if(this.renderer.domElement.addEventListener)this.renderer.domElement.addEventListener('webglcontextlost',function(e){e.preventDefault();window.dispatchEvent(new Event('armor-context-lost'));});
     window.addEventListener('resize', function(){self.resize();});
@@ -49,20 +52,25 @@
   Viewer.prototype.setZoom=function(value){if(!Number.isFinite(value)||value<=0)return;this.camera.zoom=Math.max(.1,Math.min(150,value));if(this.autoFrame)this.frameScale=this.camera.zoom/Math.max(.1,this.fitZoom);this.projection();this.draw();if(this.onCamera)this.onCamera({distance:this.distance,zoom:this.camera.zoom,yaw:this.yaw,pitch:this.pitch});};
   Viewer.prototype.setDistance=function(value){if(!Number.isFinite(value)||value<1||value>1500)return;this.distance=value;this.render();};
   Viewer.prototype.saveDefaults=function(){var frame=this.framing();this.defaults={distance:this.distance,scale:Math.max(.1,Math.min(10,this.camera.zoom/(frame?frame.zoom:this.fitZoom)))};try{window.localStorage.setItem('armor-camera-defaults',JSON.stringify(this.defaults));return true;}catch(ignore){return false;}};
-  Viewer.prototype.clear=function(){if(this.surface)this.surface.dispose();this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.gunAngle=0;this.savedAim=null;this.aimGroup=null;this.reticles=[];this.reticleLayer.replaceChildren();clearTimeout(this.turretTimer);this.turretTimer=null;this.turretPending=false;this.spreadAim=null;this.hideSpread();clearTimeout(this.paintTimer);this.paintTimer=null;window.cancelAnimationFrame(this.frameId);this.frameId=null;this.resetGPU();this.paintMesh=null;this.engine=null;this.heatEngine=null;this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.loadedData=null;this.cachedEngine=null;this.cachedRaysKey=null;this.cachedResults=null;this.paintedKey=null;this.samples=[];var disposed=new Set();this.root.traverse(function(o){if(o.geometry&&!disposed.has(o.geometry)){disposed.add(o.geometry);o.geometry.dispose();}if(o.material){(Array.isArray(o.material)?o.material:[o.material]).forEach(function(m){m.dispose();});}});while(this.root.children.length)this.root.remove(this.root.children[0]);this.materials=[];this.point=null;this.travel=null;this.render();};
+  Viewer.prototype.clear=function(){if(this.surface)this.surface.dispose();this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.gunAngle=0;this.savedAim=null;this.aimGroup=null;this.reticles=[];this.reticleLayer.replaceChildren();clearTimeout(this.turretTimer);this.turretTimer=null;this.turretPending=false;this.spreadAim=null;this.hideSpread();clearTimeout(this.paintTimer);this.paintTimer=null;window.cancelAnimationFrame(this.frameId);this.frameId=null;this.resetGPU();this.paintMesh=null;this.outline=null;this.outlineDepth=null;this.engine=null;this.heatEngine=null;this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.loadedData=null;this.cachedEngine=null;this.cachedRaysKey=null;this.cachedResults=null;this.paintedKey=null;this.samples=[];var disposed=new Set();this.root.traverse(function(o){if(o.geometry&&!disposed.has(o.geometry)){disposed.add(o.geometry);o.geometry.dispose();}if(o.material){(Array.isArray(o.material)?o.material:[o.material]).forEach(function(m){m.dispose();});}});while(this.root.children.length)this.root.remove(this.root.children[0]);this.materials=[];this.point=null;this.travel=null;this.render();};
   Viewer.prototype.rebuild=function(){
     if(!this.loadedData)return;var T=THREE,self=this;this.samples=[];this.cachedRaysKey=null;this.paintedKey=null;
+    // A failed composition is retried on the next rebuild (quality, mode, pose) instead of staying off for good.
+    if(!this.surface&&this.surfaceAttempted){this.surfaceAttempted=false;this.surfaceRetryReason=this.surfaceError;}
     this.engine=ArmorBallistics.build(this.posedData||this.loadedData,this.currentArmor);
-    this.heatEngine=this.surfaceMode==='blend'?ArmorBallistics.fromTriangles(this.engine.triangles.filter(function(t){return !externalLayer(t);})):this.engine;
+    // One law everywhere: rays cross screens and tracks in every mode. In the mask mode only the main
+    // armour is sampled for the CPU fallback; screens are drawn as the tinted overlay above it.
+    this.heatEngine=this.engine;var sampled=this.surfaceMode==='blend'?this.engine.triangles.filter(function(t){return !externalLayer(t);}):this.engine.triangles;
     this.updateTracks();
     if(this.surface){try{this.surface.update(this.engine);}catch(e){this.surface.dispose();this.surface=null;this.surfaceError=e.message;}}
     var accelerated=this.gpuMode==='auto'&&(this.renderer.capabilities||{}).isWebGL2;
     var edge=this.quality==='low'?.85:this.quality==='high'?.18:this.quality==='medium'?.4:accelerated?.35:.65;
     var total=this.quality==='high'?100000:40000,budget=Math.max(1,Math.floor(total/Math.max(1,this.engine.triangles.length)));
-    this.heatEngine.triangles.forEach(function(t){ArmorBallistics.subdivide(t,0,self.samples,edge,budget);});
+    sampled.forEach(function(t){ArmorBallistics.subdivide(t,0,self.samples,edge,budget);});
     var positions=[],colors=[];this.samples.forEach(function(t){[t.a,t.b,t.c].forEach(function(v){positions.push(v[0],v[1],v[2]);colors.push(.25,.32,.38);});});
     var geom=new T.BufferGeometry();geom.setAttribute('position',new T.Float32BufferAttribute(positions,3));geom.setAttribute('color',new T.Float32BufferAttribute(colors,3).setUsage(T.DynamicDrawUsage));
-    if(this.paintMesh){this.paintMesh.geometry.dispose();this.paintMesh.geometry=geom;}else{var mat=new T.MeshBasicMaterial({vertexColors:true,side:T.DoubleSide,wireframe:document.getElementById('wireframe').checked});this.materials.push(mat);this.paintMesh=new T.Mesh(geom,mat);this.root.add(this.paintMesh);}
+    if(this.paintMesh){this.paintMesh.geometry.dispose();this.paintMesh.geometry=geom;}else{var mat=new T.MeshBasicMaterial({vertexColors:true,side:T.DoubleSide});this.materials.push(mat);this.paintMesh=new T.Mesh(geom,mat);this.root.add(this.paintMesh);}
+    this.updateOutline();
     if(this.gpu){try{this.gpu.update(this.heatEngine,this.samples);}catch(e){this.gpu.dispose();this.gpu=null;this.gpuAttempted=true;this.gpuError=e.message;}}
     if(this.onQuality)this.onQuality(this.samples.length);this.render();
   };
@@ -83,18 +91,31 @@
   };
   Viewer.prototype.updateTrackAppearance=function(){
     if(!this.trackMesh)return;var self=this,attribute=this.trackMesh.geometry.attributes.color,buffer=attribute.array;
-    var colored=this.heatmap&&this.shell&&this.shell.penetration>0,blocked=colorTable(this.palette)[0];
+    var colored=this.heatmap&&this.shell&&this.shell.penetration>0;
     this.trackTriangles.forEach(function(t,i){
       var known=t.armor&&Number.isFinite(t.armor.armor)&&t.armor.armor>=0;
-      // Deliberately nominal thickness: a stable visual mask, not a per-triangle
-      // penetration probability or a second physical ray calculation.
+      // Deliberately nominal thickness against the shell: a stable visual mask,
+      // not a per-triangle penetration probability or a second ray calculation.
       var opacity=self.heatmap?self.trackOpacity:1;
-      var color=known?linear(thicknessColor(t.armor.armor)):baseColors[t.part%4];
+      var color=known&&colored?screenColor(t.armor.armor,self.shell,self.palette):baseColors[t.part%4];
       for(var j=0;j<3;j++){var offset=(i*3+j)*4;for(var k=0;k<3;k++)buffer[offset+k]=color[k];buffer[offset+3]=opacity;}
     });
-    attribute.needsUpdate=true;var wire=document.getElementById('wireframe').checked;
-    this.trackGroup.children.forEach(function(mesh){mesh.material.wireframe=wire;});
+    attribute.needsUpdate=true;
   };
+  // Outline: the collision triangles as lines over the opaque model. A colour-less depth pass of the
+  // same triangles hides the far side in every mode, including the screen-space composition.
+  Viewer.prototype.updateOutline=function(){
+    var T=THREE,positions=[];this.engine.triangles.forEach(function(t){positions.push(t.a[0],t.a[1],t.a[2],t.b[0],t.b[1],t.b[2],t.c[0],t.c[1],t.c[2]);});
+    var geometry=new T.BufferGeometry();geometry.setAttribute('position',new T.Float32BufferAttribute(positions,3));
+    if(!this.outline){
+      this.outlineDepth=new T.Mesh(geometry,new T.MeshBasicMaterial({colorWrite:false,depthWrite:true,depthTest:true,side:T.DoubleSide}));this.outlineDepth.renderOrder=2.5;
+      this.outline=new T.Mesh(geometry,new T.MeshBasicMaterial({wireframe:true,transparent:true,depthWrite:false,depthTest:true,side:T.DoubleSide,polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-2}));this.outline.renderOrder=3;
+      this.root.add(this.outlineDepth,this.outline);
+    }else{this.outline.geometry.dispose();this.outline.geometry=geometry;this.outlineDepth.geometry=geometry;}
+    this.applyOutline();
+  };
+  Viewer.prototype.applyOutline=function(){if(!this.outline)return;var b=this.outlineStyle.brightness;this.outline.material.color.setRGB(b,b,b);this.outline.material.opacity=this.outlineStyle.opacity;this.outline.visible=this.showOutline;this.outlineDepth.visible=this.showOutline;};
+  Viewer.prototype.setOutline=function(brightness,opacity){this.outlineStyle={brightness:Math.max(0,Math.min(1,brightness)),opacity:Math.max(.05,Math.min(1,opacity))};this.applyOutline();this.draw();};
   Viewer.prototype.setQuality=function(value){this.quality=value;this.rebuild();};
   Viewer.prototype.setSurfaceMode=function(value){this.surfaceMode=value;this.rebuild();};
   Viewer.prototype.pointerRay=function(event){var rect=this.container.getBoundingClientRect(),mouse=new THREE.Vector2((event.clientX-rect.left)/rect.width*2-1,-(event.clientY-rect.top)/rect.height*2+1),caster=new THREE.Raycaster();this.camera.updateMatrixWorld();caster.setFromCamera(mouse,this.camera);return caster;};
@@ -124,7 +145,7 @@
     var changed=parts.map(function(p){var copy=Object.assign({},p);if((p.id===2||p.id===3)&&p.transform)copy.transform=rotation.clone().multiply(new T.Matrix4().fromArray(p.transform)).toArray();if(p.id===3&&gunRotation&&copy.transform)copy.transform=gunRotation.clone().multiply(new T.Matrix4().fromArray(copy.transform)).toArray();return copy;});
     this.posedData={hit:Object.assign({},source.hit,{target:Object.assign({},source.hit.target,{parts:changed})}),models:source.models};
     // Recorded hit markers belong to the saved pose, not the exploratory pose.
-    this.root.children.forEach(function(o){if(o!==this.paintMesh&&o!==this.trackGroup)o.visible=Math.abs(this.turretAngle)<.001&&Math.abs(this.gunAngle)<.001;},this);this.rebuild();
+    this.root.children.forEach(function(o){if(o!==this.paintMesh&&o!==this.trackGroup&&o!==this.outline&&o!==this.outlineDepth)o.visible=Math.abs(this.turretAngle)<.001&&Math.abs(this.gunAngle)<.001;},this);this.rebuild();
   };
   Viewer.prototype.load=function(data){
     this.clear();var T=THREE,self=this;var hit=data.hit, parts=(hit.target||{}).parts||[], transforms={};
@@ -137,7 +158,7 @@
   };
   Viewer.prototype.addReticle=function(position){
     var element=document.createElement('span');element.className='hit-reticle';element.hidden=true;
-    element.innerHTML='<svg viewBox="0 0 32 32" role="img" aria-label="Место попадания"><path class="reticle-outline" d="M16 3V11M16 21V29M3 16H11M21 16H29"/><path class="reticle-stroke" d="M16 3V11M16 21V29M3 16H11M21 16H29"/></svg>';
+    element.innerHTML='<svg viewBox="0 0 32 32" role="img" aria-label="Место попадания"><path class="reticle-outline" d="M16 1V10M16 22V31M1 16H10M22 16H31"/><path class="reticle-stroke" d="M16 1V10M16 22V31M1 16H10M22 16H31"/></svg>';
     this.reticleLayer.appendChild(element);this.reticles.push({position:position.clone(),element:element});
   };
   Viewer.prototype.updateReticles=function(){
@@ -153,7 +174,8 @@
   Viewer.prototype.setScale=function(value){this.frameScale=Math.max(.1,Math.min(10,value));if(this.autoFrame)this.render();else this.setZoom(this.fitZoom*this.frameScale);};
   Viewer.prototype.setTrackOpacity=function(value){this.trackOpacity=Math.max(.05,Math.min(.85,value));this.updateTrackAppearance();this.draw();};
   Viewer.prototype.reset=function(){if(this.bounds){this.bounds.getCenter(this.target);this.grid.position.y=this.bounds.min.y-.025;}this.distance=this.defaults.distance;this.yaw=.65;this.pitch=.25;this.render();if(!this.autoFrame){this.autoFit();this.draw();}};
-  Viewer.prototype.focus=function(){if(!this.point)return;this.target.copy(this.point);var v=this.travel.clone().negate().normalize();this.yaw=Math.atan2(v.x,v.z);this.pitch=Math.asin(Math.max(-1,Math.min(1,v.y)));this.distance=this.defaults.distance;this.render();if(!this.autoFrame){this.autoFit();this.draw();}};
+  Viewer.prototype.setPivot=function(mode){this.pivot=mode==='vehicle'?'vehicle':'hit';if(this.point)this.focus();else this.reset();};
+  Viewer.prototype.focus=function(){if(!this.point)return;if(this.pivot==='vehicle'&&this.bounds)this.bounds.getCenter(this.target);else this.target.copy(this.point);var v=this.travel.clone().negate().normalize();this.yaw=Math.atan2(v.x,v.z);this.pitch=Math.asin(Math.max(-1,Math.min(1,v.y)));this.distance=this.defaults.distance;this.render();if(!this.autoFrame){this.autoFit();this.draw();}};
   Viewer.prototype.configure=function(shell,heatmap,palette){this.shell=shell;this.heatmap=heatmap;this.palette=palette;this.updateTrackAppearance();this.render();};
   Viewer.prototype.shotProbability=function(shell){
     if(!this.engine||!this.point||!this.travel||!shell||Math.abs(this.turretAngle)>.001||Math.abs(this.gunAngle)>.001)return null;
@@ -209,10 +231,20 @@
   Viewer.prototype.paint=function(){
     if(!this.paintMesh)return;
     var composed=false;if(this.surfaceMode==='blend'&&this.heatmap&&this.gpuMode==='auto'){
-      if(!this.surfaceAttempted){this.surfaceAttempted=true;try{this.surface=new BullbaScreenArmor(this.renderer,this.engine);this.scene.add(this.surface.quad,this.surface.wire);}catch(e){this.surfaceError=e.message;}}
-      if(this.surface){try{var size=this.surface.render(this.camera,this.target,this.shell,this.palette,this.trackOpacity,this.quality,this.container.clientWidth,this.container.clientHeight);this.surface.wire.visible=document.getElementById('wireframe').checked;composed=true;if(this.onBackend)this.onBackend('GPU · композиция слоёв · '+size);}catch(e){this.surfaceError=e.message;this.surface.dispose();this.surface=null;}}
+      if(!this.surfaceAttempted){this.surfaceAttempted=true;try{this.surface=new BullbaScreenArmor(this.renderer,this.engine);this.scene.add(this.surface.quad);}catch(e){this.surfaceError=e.message;console.warn('Screen composition unavailable:',e.message);if(window.BullbaHost)window.BullbaHost.mark('Композиция слоёв','unavailable: '+e.message);}}
+      if(this.surface){try{var size=this.surface.render(this.camera,this.target,this.shell,this.palette,this.trackOpacity,this.quality,this.container.clientWidth,this.container.clientHeight,this.renderer.getPixelRatio());var check=this.surface.verify(this.camera,this.shell);
+        // A failed cross-check hides this frame only; the next camera key is verified afresh. Nothing here is sticky.
+        if(check&&check.failed){this.surfaceError=check.message;if(this.surfaceLogged!==check.message){this.surfaceLogged=check.message;console.warn('Screen composition hidden:',check.message);if(window.BullbaHost)window.BullbaHost.mark('Композиция слоёв','mismatch: '+check.message);}}
+        else{composed=true;this.surfaceError=null;if(this.onBackend)this.onBackend('GPU · слои в размер окна · '+size+(check?' · сверка с CPU '+(check.compared-check.mismatches.length)+'/'+check.compared:''));}}
+        catch(e){this.surfaceError=e.message;this.surface.dispose();this.surface=null;console.warn('Screen composition disabled:',e.message);if(window.BullbaHost)window.BullbaHost.mark('Композиция слоёв','error: '+e.message);}}
     }
-    if(this.surface){this.surface.quad.visible=composed;this.surface.wire.visible=composed&&document.getElementById('wireframe').checked;}this.paintMesh.visible=!composed;this.trackGroup.visible=!composed&&this.surfaceMode==='blend';if(composed)return;
+    if(this.surface)this.surface.quad.visible=composed;this.paintMesh.visible=!composed;this.trackGroup.visible=!composed&&this.surfaceMode==='blend';if(composed)return;
+    if(this.surfaceMode==='blend'&&this.heatmap&&this.gpuMode==='auto'){
+      // No sample-based substitute in the mask mode: a neutral model and the reason instead of a coarse picture.
+      var neutral=this.paintMesh.geometry.attributes.color.array;for(var q=0;q<neutral.length;q+=3){neutral[q]=baseColors[0][0];neutral[q+1]=baseColors[0][1];neutral[q+2]=baseColors[0][2];}
+      this.paintedKey=null;this.paintMesh.geometry.attributes.color.needsUpdate=true;
+      if(this.onBackend)this.onBackend('Расчёт недоступен: '+(this.surfaceError||'GPU-композиция не выполнена'));return;
+    }
     var B=ArmorBallistics,origin=this.camera.position.toArray(),buffer=this.paintMesh.geometry.attributes.color.array;
     var raysKey=origin.join(',')+'|'+JSON.stringify(this.shell),paintedKey=this.heatmap?raysKey+'|'+this.palette:'parts';
     if(this.cachedEngine!==this.engine){this.cachedEngine=this.engine;this.cachedRaysKey=null;this.paintedKey=null;}
@@ -224,14 +256,14 @@
       this.cachedRaysKey=raysKey;
     }
     var table=this.heatmap?colorTable(this.palette):null;
-    if(this.onBackend)this.onBackend(this.heatmap?this.backendText+(this.surfaceMode==='blend'?' · экраны: упрощённое наложение'+(this.surfaceError?' ('+this.surfaceError+')':''):''):'Части машины · расчёт отключён');
+    if(this.onBackend)this.onBackend(this.heatmap?this.backendText:'Части машины · расчёт отключён');
     for(var n=0;n<this.samples.length;n++){var sample=this.samples[n],module=sample.part===0||(sample.armor&&sample.armor.vehicleDamageFactor<=1e-5);var color=this.heatmap?(this.surfaceMode!=='through'&&module?baseColors[0]:table[this.cachedResults[n]]):baseColors[sample.part%4];for(var j=0;j<3;j++)for(var k=0;k<3;k++)buffer[n*9+j*3+k]=color[k];}
     this.paintedKey=paintedKey;this.paintMesh.geometry.attributes.color.needsUpdate=true;this.draw();
   };
   Viewer.prototype.inspect=function(event){
     if(!this.engine||!this.onInspect)return;var raycaster=this.pointerRay(event),objects=this.paintMesh?[this.paintMesh]:[];if(this.trackGroup&&this.surfaceMode==='blend')objects.push(this.trackMesh);var hits=raycaster.intersectObjects(objects),sample=hits.length?(hits[0].object===this.trackMesh?this.trackTriangles:this.samples)[hits[0].faceIndex]:null,result=this.engine.ray(raycaster.ray.origin.toArray(),raycaster.ray.direction.toArray(),this.shell);if(sample)result.surface={part:sample.part,armor:sample.armor};this.onInspect(result);
   };
-  Viewer.prototype.wireframe=function(value){this.materials.forEach(function(m){m.wireframe=value;});this.updateTrackAppearance();this.render();};
+  Viewer.prototype.wireframe=function(value){this.showOutline=!!value;this.applyOutline();this.draw();};
   Viewer.prototype.aimAt=function(event){var ray=this.pointerRay(event).ray,normal=this.target.clone().sub(this.camera.position).normalize(),plane=new THREE.Plane().setFromNormalAndCoplanarPoint(normal,this.target),point=new THREE.Vector3();if(ray.intersectPlane(plane,point)){this.spreadAim=point;this.hideSpread();if(this.onAim)this.onAim('Центр оценки перенесён. Нажмите «Рассчитать».');}};
   Viewer.prototype.hideSpread=function(){if(this.spreadCircle){this.scene.remove(this.spreadCircle);this.spreadCircle.geometry.dispose();this.spreadCircle.material.dispose();this.spreadCircle=null;this.draw();}};
   Viewer.prototype.estimateSpread=function(radius100){

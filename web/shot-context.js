@@ -13,8 +13,19 @@
     // Damage callback lacks shotId. Accept only one endpoint close in BOTH space
     // and time; do not associate an arbitrary newest tracer during a burst.
     var matches=possible.filter(function(t){return events.some(function(e){return e.tracerId===t.id&&e.position&&Math.abs(e.receivedAt-hit.receivedAt)<=.1&&world.some(function(p){return distance(e.position,p)<=.75;});});});
-    var tracer=matches.length===1?matches[0]:null,command=tracer&&tracer.own?events.find(function(e){return e.event==='command'&&e.id===tracer.possibleCommandId;}):null;
-    var aim=command&&command.aim||tracer&&tracer.own&&tracer.aimAtTracer||null;
+    // A salvo fires several own tracers from one command; the second shell has no command of its own.
+    function commandOf(t){if(!t||!t.own)return null;var own=events.find(function(e){return e.event==='command'&&e.id===t.possibleCommandId;});if(own)return own;
+      var before=events.filter(function(e){return e.event==='command'&&e.shooterId===t.shooterId&&e.receivedAt<=t.receivedAt&&t.receivedAt-e.receivedAt<=1.5;});return before.length?before[before.length-1]:null;}
+    var sameCommand=matches.length>1&&matches.every(function(t){return t.own;})&&matches.every(function(t){var c=commandOf(t);return c&&c===commandOf(matches[0]);});
+    var tracer=matches.length===1?matches[0]:sameCommand?matches.slice().sort(function(a,b){return b.receivedAt-a.receivedAt;})[0]:null,command=commandOf(tracer);
+    // Each aim snapshot is judged against the receipt time of its own source:
+    // a stale or incomplete command snapshot must not hide a usable aimAtTracer.
+    function usable(aim,stamp,window){var m=aim&&aim.clientMarker;return !!(m&&m.diameter>0&&m.position&&m.direction&&Number.isFinite(m.receivedAt)&&Number.isFinite(stamp)&&Math.abs(stamp-m.receivedAt)<=window);}
+    var sources=[];if(command&&command.aim)sources.push({aim:command.aim,from:'command',stamp:command.receivedAt,window:.5});if(tracer&&tracer.own&&tracer.aimAtTracer)sources.push({aim:tracer.aimAtTracer,from:'tracer',stamp:tracer.receivedAt,window:.5});
+    // The salvo's second shell leaves up to ~1.5 s after the command; its snapshot is the aim at the first shell.
+    if(command&&command.aim&&tracer)sources.push({aim:command.aim,from:'salvo',stamp:tracer.receivedAt,window:1.5});
+    var chosen=sources.find(function(s){return usable(s.aim,s.stamp,s.window);})||null,aim=chosen?chosen.aim:null;
+    var aimReason=aim?null:!possible.length?'no-tracer':!matches.length?'no-endpoint':!tracer?'ambiguous':!tracer.own?'foreign':!sources.length?'no-snapshot':'stale';
     var kindValues=Array.from(new Set(points.map(function(p){return p.shellKind||kinds[p.shellType];}).filter(Boolean)));
     var recorded=(hit.shellCandidates||[]).slice(),choices=(hit.availableShells||recorded).slice();
     var matching=recorded.filter(function(c){return (kindValues.length===0||kindValues.length===1&&c.kind===kindValues[0])&&points.every(function(p){return !(p.caliber>0)||Math.abs(c.caliber-p.caliber)<.1;});});
@@ -22,9 +33,7 @@
     var selected=matching.length===1?matching[0]:null;
     if(selected&&!choices.some(function(c){return same(c,selected);}))choices.push(selected);
     var index=selected?choices.findIndex(function(c){return same(c,selected);}):-1;
-    var marker=aim&&aim.clientMarker,stamp=command?command.receivedAt:tracer&&tracer.receivedAt;
-    if(!marker||!(marker.diameter>0)||!marker.position||!marker.direction||!Number.isFinite(marker.receivedAt)||Math.abs(stamp-marker.receivedAt)>.5)aim=null;
-    return {choices:choices,index:index,kind:kindValues.length===1?kindValues[0]:null,tracer:tracer,command:command,aim:aim,
+    return {choices:choices,index:index,kind:kindValues.length===1?kindValues[0]:null,tracer:tracer,command:command,aim:aim,aimSource:chosen?chosen.from:null,aimReason:aimReason,
       range:tracer&&world.length?distance(tracer.origin,world[0]):null,
       source:index<0?'Снаряд не определён однозначно':kindValues.length?'Тип и калибр из попадания; характеристики орудия из клиента':'Единственный снаряд с этим эффектом в записи'};
   }

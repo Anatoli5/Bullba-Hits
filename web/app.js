@@ -3,6 +3,9 @@
   var $=function(id){return document.getElementById(id);},viewer=null,current=null,selected=null,filter='all',generation=0,battleGeneration=0;
   var effects={0:'Пробитие без урона',1:'Промежуточный рикошет',2:'Рикошет',3:'Непробитие',4:'Пробитие',5:'Критическое попадание',6:'Пробитие с повреждением модуля'};
   var shellNames={ARMOR_PIERCING:'ББ',ARMOR_PIERCING_CR:'БП',HOLLOW_CHARGE:'КС',HIGH_EXPLOSIVE:'ОФ'},candidates=[],activeHit=null,shotContext=null,manualPen='',lastDistance=null,analysisKey=null;
+  // web/host.js: game-host flag, breadcrumb-guarded heavy handlers. Absent in isolated tests.
+  var host=window.BullbaHost||{game:false,interrupted:null,guard:function(action,fn){return fn;},done:function(){}};
+  var aimReasons={'no-tracer':'Нет своего трассера','no-endpoint':'Трассер не совпал с точкой попадания','ambiguous':'Несколько трассеров — связь неоднозначна','foreign':'Чужой выстрел','no-snapshot':'Снимок прицела не записан','stale':'Снимок прицела устарел'};
   function staleEstimate(){if(analysisKey!==null){$('spread-result').textContent='Условия изменились. Нажмите «Рассчитать» ещё раз.';analysisKey=null;}if(viewer)viewer.hideSpread();}
   function node(tag,text,cls){var e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e;}
   function message(text){$('scene-message').textContent=text;$('scene-message').hidden=!text;}
@@ -21,7 +24,7 @@
     var parts=(hit.target||{}).parts||[],hasRecorded=parts.every(function(p){return !!p.armor;}),comparison=parts.find(function(p){return p.comparisonArmor;});
     var armorChoice=$('armor-version');armorChoice.replaceChildren();var original=node('option',hasRecorded?'Версия боя':'Версия боя — нет данных');original.value='recorded';armorChoice.appendChild(original);
     if(comparison){var currentArmor=node('option','Текущая '+comparison.comparisonVersion);currentArmor.value='current';armorChoice.appendChild(currentArmor);}
-    armorChoice.value=hasRecorded||!comparison?'recorded':'current';
+    armorChoice.value=hasRecorded||!comparison?'recorded':'current';armorChoice.parentElement.hidden=armorChoice.options.length<2; // one version: nothing to choose
     candidates.forEach(function(c,i){var o=node('option',(shellNames[c.kind]||c.kind)+' · '+c.name);o.value='saved:'+i;choice.appendChild(o);});
     Object.keys(shellNames).forEach(function(kind){var o=node('option',shellNames[kind]+' — ручной расчёт');o.value=kind;choice.appendChild(o);});
     if(candidates.length>1){var uncertain=node('option','Выберите снаряд — несколько совпадений');uncertain.value='';choice.insertBefore(uncertain,choice.firstChild);}
@@ -51,6 +54,7 @@
   function selectShell(){
     var index=$('shell-choice').value,c=index.indexOf('saved:')===0?candidates[Number(index.slice(6))]:null;
     var point=(activeHit&&activeHit.points||[]).find(function(p){return p.caliber>0;});
+    if(!c){manualPen=$('penetration').value||manualPen;} // manual shell keeps the penetration that was on screen
     $('penetration').value=c?c.penetration100:manualPen;$('caliber').value=c?c.caliber:point?point.caliber:100;
     $('distance-control').hidden=!c||$('link-distance').checked;$('penetration-label').textContent=c?'Пробитие на 100 м, мм':'Пробитие у цели, мм';$('shot-distance').value=100;updateShell();
   }
@@ -63,7 +67,7 @@
     $('shell-source').textContent=!choice?'Выберите боеприпас':!valid?'Нет пробития в записи':(actual?'● Из попадания':c?'◇ Сравнение':'◇ Вручную')+' · '+Math.round(shell.penetration)+' мм у цели · ±'+Math.round(shell.randomization*100)+'%';
     $('shell-source').title=(shotContext?shotContext.source:'')+' · Номинальное пробитие, не выпавшее RNG. Цвет модели учитывает расстояние просмотра; показатель попадания — сохранённую линию и дистанцию. ОФ: только пробитие, без урона взрывом.';
     document.querySelectorAll('[data-shell]').forEach(function(b){b.setAttribute('aria-pressed',String(b.dataset.shell===choice));});
-    var chanceMode=$('armor-mode').value==='chance';$('legend-gradient').classList.toggle('classic',$('palette').value==='classic');$('armor-legend').hidden=!chanceMode||!valid;$('parameters-notice').hidden=!chanceMode||valid;
+    var chanceMode=$('armor-mode').value==='chance';$('legend-gradient').classList.toggle('classic',$('palette').value==='classic');$('track-overlay-note').classList.toggle('classic',$('palette').value==='classic');$('armor-legend').hidden=!chanceMode||!valid;$('parameters-notice').hidden=!chanceMode||valid;
     $('penetration').setAttribute('aria-invalid',String(chanceMode&&!(penetration>0&&penetration<=3000)));$('caliber').setAttribute('aria-invalid',String(chanceMode&&!(caliber>0&&caliber<=1000)));
     $('armor-probe').textContent='';
     $('distance-control').hidden=!c||$('link-distance').checked;staleEstimate();if(viewer)viewer.configure(shell,$('armor-mode').value==='chance',$('palette').value);shotStats();
@@ -76,8 +80,8 @@
   function display(data,reference){
     var hit=data.hit;$('target-name').textContent=(hit.target||{}).name||'Цель неизвестна';$('scene-kind').textContent=reference?'КОНТРОЛЬНАЯ МОДЕЛЬ · БЕЗ ЗАПИСИ БОЯ':'КОЛЛИЗИОННАЯ МОДЕЛЬ КЛИЕНТА';$('result-badge').hidden=!!reference;$('result-badge').textContent=result(hit);
     prepareShell(hit);var drawn=viewer&&viewer.load(data);if(viewer)requestAnimationFrame(function(){viewer.resize();});message(drawn?'':'Геометрия недоступна. Исходное событие сохранено.');$('focus-hit').disabled=!(viewer&&viewer.point);warnings(data.warnings||[]);$('details').replaceChildren();
-    var aimReady=viewer&&viewer.setShotContext(shotContext);$('show-aim').disabled=!aimReady;$('aim-state').textContent=aimReady?'● клиент · ◌ сервер':hit.direction==='incoming'?'Прицел противника недоступен':'Нет связанного снимка';
-    $('aim-toggle').title=aimReady?'Сохранённый клиентский круг — бирюзовый; серверный — пунктир, если получен. Связь с попаданием по конечной точке и времени; положение цели — при попадании.':'Для этого попадания нет однозначно связанного собственного прицела.';
+    var aimReady=viewer&&viewer.setShotContext(shotContext);$('show-aim').disabled=!aimReady;$('aim-state').textContent=aimReady?'● клиент · ◌ сервер':hit.direction==='incoming'?'Прицел противника недоступен':aimReasons[shotContext.aimReason]||'Нет связанного снимка';
+    $('aim-toggle').title=aimReady?'Сохранённый клиентский круг — бирюзовый; серверный — пунктир, если получен. Связь с попаданием по конечной точке и времени; положение цели — при попадании.':'Для этого попадания нет однозначно связанного собственного прицела: '+(aimReasons[shotContext.aimReason]||'нет данных')+'.';
     if(viewer&&shotContext.range)viewer.setDistance(Math.max(1,Math.min(1500,shotContext.range)));shotStats();
     resultVisual($('result-badge'),hit);
     if(reference){$('details').appendChild(node('p','Модель извлечена из установленного клиента. Здесь нет вымышленных попаданий. После установки регистратора новые бои появятся в списке слева.'));return;}
@@ -88,9 +92,12 @@
     if(hit.rangeAtImpact!=null)detail('До атакующего при попадании',hit.rangeAtImpact.toFixed(1)+' м','Положение при получении попадания; не измеренная длина полёта.');
   }
   function renderHits(){
-    var container=$('hits');container.replaceChildren();var hits=current?current.hits.filter(function(h){return filter==='all'||h.direction===filter;}):[];$('hit-count').textContent=current?hits.length+' попаданий':'';
+    var container=$('hits');container.replaceChildren();var hits=current?current.hits.filter(function(h){return filter==='all'||h.direction===filter;}):[];var own=current?(function(){var inc=current.hits.find(function(h){return h.direction==='incoming'&&h.target&&h.target.name;}),out=current.hits.find(function(h){return h.direction==='outgoing'&&h.attacker&&h.attacker.name;});return inc?inc.target.name:out?out.attacker.name:null;}()):null;$('hit-count').textContent=current?hits.length+' попаданий'+(own?' · бой на '+own:''):'';
     if(!hits.length){container.appendChild(node('p',current?'Нет попаданий для выбранного фильтра.':'Пока нет записей. Запустите игру с регистратором и сыграйте бой. Просмотрщик можно оставить открытым.','empty'));return;}
-    hits.forEach(function(h){var b=node('button',undefined,'hit');b.setAttribute('aria-pressed',String(selected===h.id));b.title=(h.direction==='incoming'?'Входящее':'Исходящее')+' · '+result(h);var top=node('span',undefined,'hit-top');top.appendChild(node('span',h.direction==='incoming'?'↙':'↗','direction-icon '+h.direction));top.appendChild(node('span',clock(h.receivedAt)));b.appendChild(top);b.appendChild(node('span',(h.target||{}).name||'Цель неизвестна','hit-name'));var bottom=node('span',undefined,'hit-bottom');resultVisual(bottom,h);b.appendChild(bottom);b.onclick=function(){selectHit(h.id).catch(function(){});};container.appendChild(b);});
+    hits.forEach(function(h){var hasDamage=h.damage>0,b=node('button',undefined,'hit');b.setAttribute('aria-pressed',String(selected===h.id));b.setAttribute('data-direction',h.direction);b.setAttribute('data-result',hasDamage?'damage':'none');b.title=(h.direction==='incoming'?'Входящее от '+((h.attacker||{}).name||'?'):'Исходящее по '+((h.target||{}).name||'?'))+' · '+result(h);
+      var row=node('span',undefined,'hit-row');row.appendChild(node('span',h.direction==='incoming'?'↙':'↗','direction-icon '+h.direction));row.appendChild(node('span',h.direction==='incoming'?((h.attacker||{}).name||'Стрелявший неизвестен'):((h.target||{}).name||'Цель неизвестна'),'hit-name'));row.appendChild(node('span',hasDamage?'−'+h.damage:'0','hit-damage'));b.appendChild(row);
+      var sub=node('span',undefined,'hit-row hit-sub');sub.appendChild(node('span',clock(h.receivedAt)));sub.appendChild(node('span',hasDamage?'':result(h)));b.appendChild(sub);
+      b.onclick=function(){selectHit(h.id).catch(function(){});};container.appendChild(b);});
   }
   function selectHit(id){
     if(!current||!current.hits.some(function(h){return h.id===id;}))return Promise.reject(new Error('Попадание не найдено'));
@@ -109,8 +116,9 @@
   }
   try{viewer=new ArmorViewer($('viewport'));}catch(e){message('WebGL недоступен: '+e.message);}
   if(viewer)viewer.onInspect=inspectArmor;
-  if(viewer)viewer.onBackend=function(text){$('heatmap-backend').textContent=text;};
-  $('heatmap-compute').onchange=function(){if(viewer)viewer.computeMode(this.value);};
+  // The fallback path is visibly labelled in the scene: its stepped sampling must never pass for the exact composition.
+  if(viewer)viewer.onBackend=function(text){$('heatmap-backend').textContent=text;var fallback=!/^GPU · слои/.test(text);$('backend-badge').hidden=!fallback;$('backend-badge').textContent=fallback?text:'';};
+  $('heatmap-compute').onchange=host.guard('Расчёт',function(){if(viewer)viewer.computeMode(this.value);});
   if(viewer)viewer.onCamera=function(state){var changed=lastDistance!==state.distance;lastDistance=state.distance;$('camera-distance-value').textContent=Math.round(state.distance)+' м';$('camera-distance-exact').value=state.distance.toFixed(1);$('camera-zoom-exact').value=state.zoom.toFixed(2);$('camera-zoom').value=Math.max(0,Math.min(1000,500+Math.log(state.zoom/Math.max(.1,viewer.fitZoom))/Math.log(10)*500));var key=[state.distance,state.yaw,state.pitch,viewer.turretAngle,viewer.gunAngle].join(',');if(analysisKey!==null&&analysisKey!==key)staleEstimate();if(changed&&$('link-distance').checked)updateShell();else if(totalEngine!==viewer.engine)shotStats();};
   $('camera-zoom').oninput=function(){if(viewer)viewer.setScale(Math.pow(10,(Number(this.value)-500)/500));};
   $('auto-frame').onchange=function(){if(viewer)viewer.setAutoFrame(this.checked);};
@@ -118,8 +126,8 @@
   $('camera-distance-exact').onchange=function(){if(viewer)viewer.setDistance(Number(this.value));};
   $('camera-zoom-exact').onchange=function(){if(viewer)viewer.setZoom(Number(this.value));};
   $('link-distance').onchange=updateShell;
-  $('heatmap-quality').onchange=function(){if(viewer)viewer.setQuality(this.value);};
-  $('surface-mode').onchange=function(){$('track-overlay-note').hidden=this.value!=='blend';if(viewer)viewer.setSurfaceMode(this.value);};
+  $('heatmap-quality').onchange=host.guard('Детализация',function(){if(host.game&&this.value==='high'){this.value=viewer?viewer.quality:'auto';return;}if(viewer)viewer.setQuality(this.value);});
+  $('surface-mode').onchange=host.guard('Экраны и гусеницы',function(){$('track-overlay-note').hidden=this.value!=='blend';if(viewer)viewer.setSurfaceMode(this.value);});
   if(viewer)viewer.onQuality=function(count){$('quality-info').textContent=count.toLocaleString('ru-RU')+' точек карты';};
   function poseChanged(){if(!viewer)return;$('turret-notice').hidden=Math.abs(viewer.turretAngle)<.1&&Math.abs(viewer.gunAngle)<.1;staleEstimate();shotStats();}
   if(viewer)viewer.onTurret=poseChanged;
@@ -133,13 +141,18 @@
   $('save-camera').onclick=function(){if(viewer)$('camera-help').textContent=viewer.saveDefaults()?'Стартовый вид сохранён для следующих попаданий и открытий.':'Вид запомнен до закрытия страницы: браузер запретил локальное сохранение.';};
   $('shell-choice').onchange=selectShell;
   $('show-aim').onchange=function(){if(viewer)viewer.showSavedAim(this.checked);};
-  $('armor-version').onchange=function(){if(viewer)viewer.armorVersion(this.value==='current');updateShell();};
+  $('armor-version').onchange=host.guard('Версия брони',function(){if(viewer)viewer.armorVersion(this.value==='current');updateShell();});
+  $('pivot-mode').onchange=function(){if(viewer)viewer.setPivot(this.value);};
   ['caliber','shot-distance','palette','armor-mode'].forEach(function(id){$(id).onchange=updateShell;});
   $('penetration').oninput=function(){if($('shell-choice').value.indexOf('saved:')!==0)manualPen=this.value;updateShell();};
   $('battles').onchange=function(){loadBattle(this.value,false).catch(function(e){warnings([e.message]);});};
   document.querySelectorAll('[data-filter]').forEach(function(b){b.onclick=function(){filter=b.dataset.filter;document.querySelectorAll('[data-filter]').forEach(function(x){x.setAttribute('aria-pressed',String(x===b));});renderHits();};});
   $('refresh').onclick=refresh;$('reset-camera').onclick=function(){if(viewer)viewer.reset();};$('focus-hit').onclick=function(){if(viewer)viewer.focus();};$('wireframe').onchange=function(){if(viewer)viewer.wireframe(this.checked);};
-  window.addEventListener('armor-context-lost',function(){message('Браузер потерял WebGL-контекст. Обновите страницу.');});
+  window.addEventListener('armor-context-lost',function(){host.mark('WebGL','context-lost');message('Браузер потерял WebGL-контекст. Обновите страницу.');});
+  function outline(){if(viewer)viewer.setOutline(Number($('outline-brightness').value)/100,Number($('outline-opacity').value)/100);}
+  $('outline-brightness').oninput=outline;$('outline-opacity').oninput=outline;if(viewer){viewer.wireframe($('wireframe').checked);outline();}
+  if(host.interrupted){$('host-note').hidden=false;$('host-note').textContent='Прошлый сеанс прервался во время действия «'+host.interrupted.action+'» ('+(host.interrupted.host==='game'?'в игре':'в браузере')+', '+new Date(host.interrupted.at).toLocaleString('ru-RU')+'). Сообщите об этом при разборе.';}
+  host.done();
   refresh();
   if(document.modelContext&&document.modelContext.registerTool){try{document.modelContext.registerTool({name:'select_saved_hit',description:'Open an existing recorded hit in the local 3D viewer.',inputSchema:{type:'object',properties:{battleId:{type:'string'},hitId:{type:'string'}},required:['battleId','hitId'],additionalProperties:false},execute:function(input){if(!input||!/^[-a-zA-Z0-9_]{1,100}$/.test(input.battleId)||!/^\d+$/.test(input.hitId))throw new Error('Invalid record identifiers');return loadBattle(input.battleId,true).then(function(){return selectHit(input.hitId);});}});}catch(e){console.warn('WebMCP unavailable',e);}}
 }());

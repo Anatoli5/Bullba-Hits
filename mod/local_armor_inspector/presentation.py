@@ -48,10 +48,20 @@ def open_in_game(path):
         url = 'file:' + pathname2url(os.path.abspath(path))
         if url.startswith('file:///') is False:
             url = 'file:///' + pathname2url(os.path.abspath(path)).lstrip('/')
+        # The page limits heavy settings only when it knows it runs inside the
+        # game's offscreen CEF; the fragment is never sent or rewritten.
+        url += '#host=game'
         browser = dependency.instance(IBrowserController)
         width, height = GUI.screenResolution()
+        try:
+            import BigWorld as _bw
+            client_w, client_h = _bw.screenSize()
+            LOG.info('Bullba Hits window sizing: GUI %sx%s, client %sx%s', width, height, client_w, client_h)
+            width, height = min(width, int(client_w)), min(height, int(client_h))
+        except Exception:
+            LOG.info('Bullba Hits window sizing: GUI %sx%s (client size unavailable)', width, height)
         global _browser_id
-        LOG.info('Opening Bullba Hits in-game window')
+        LOG.info('Opening Bullba Hits in-game window: %s', url)
         def loaded(browser_id):
             global _browser_id
             _browser_id = browser_id
