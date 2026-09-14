@@ -169,30 +169,28 @@
     return {center:new THREE.Vector2(0,0),zoom:Math.max(.1,Math.min(150,1.72/Math.max(horizontal,vertical,.001)))};
   };
   Viewer.prototype.autoFit=function(){var frame=this.framing();if(!frame)return;this.fitZoom=frame.zoom;this.camera.zoom=Math.max(.1,Math.min(150,this.fitZoom*this.frameScale));this.projection();};
-  // Fit: the camera stays exactly where it is (on the shell's axis after focus) — the frustum turns towards the
-  // vehicle (a lens shift, `frameCenter`, applied in projection()) and the zoom is picked so that every vertex of the
-  // model (tracks, hull, turret, gun, screens) fills the usable screen with an 8% margin. The usable area leaves the
-  // top FIT_TOP_BAND of the viewport free: the "Under the cursor" panel lives there. A clinch record (5 m) first
-  // backs off along the view line to twice the model's radius about the orbit centre — a fit of the visible half
-  // makes no sense. Earlier versions moved the camera sideways to centre the hull; that took the eye off the shell's
-  // axis, which is the whole point of the recorded view (user, 13.09).
-  var FIT_TOP_BAND=.24,FIT_MARGIN=.08;
+  // Fit: the orbit centre stays in the middle of the screen (a shifted rotation centre feels wrong — user, 13.09)
+  // and the camera stays where it is, so Fit only picks the zoom. Two boxes are projected at zoom 1: the main
+  // armour (materials with vehicleDamageFactor > 0: hull, turret, an oscillating turret's upper half) and everything
+  // (tracks, gun barrel, screens, surveying devices). The main box gets the FIT_MARGIN; the whole model merely has to
+  // stay on screen — a barrel or a screen that already pushed the zoom out earns no extra margin. The top
+  // FIT_TOP_BAND of the viewport is kept free for the "Under the cursor" panel. A clinch record (5 m) first backs
+  // off along the view line to twice the model's radius about the orbit centre.
+  var FIT_TOP_BAND=.2,FIT_MARGIN=.08;
   Viewer.prototype.fit=function(){
     var tris=(this.engine||{}).triangles||[];if(!tris.length)return;var cam=this.camera,v=new THREE.Vector3(),local=new THREE.Vector3(),radius=0,i,k,t;
-    // Usable area in NDC: full width, height below the top band; both shrunk by the margin.
-    var top=1-2*FIT_TOP_BAND,centreY=(top-1)/2,halfW=1-FIT_MARGIN,halfH=(top+1)/2-FIT_MARGIN;
     for(i=0;i<tris.length;i++){t=tris[i];for(k=0;k<3;k++)radius=Math.max(radius,v.fromArray(k===0?t.a:k===1?t.b:t.c).distanceTo(this.target));}
     var minDistance=Math.min(DISTANCE_MAX,radius*2+1);if(this.distance<minDistance){this.distance=minDistance;this.render();}
     cam.zoom=1;this.frameCenter.set(0,0);this.projection();cam.updateMatrixWorld();
-    var minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity;
-    for(i=0;i<tris.length;i++){t=tris[i];
-      for(k=0;k<3;k++){v.fromArray(k===0?t.a:k===1?t.b:t.c);local.copy(v).applyMatrix4(cam.matrixWorldInverse);if(local.z>-.5)continue;v.project(cam);
-        minX=Math.min(minX,v.x);maxX=Math.max(maxX,v.x);minY=Math.min(minY,v.y);maxY=Math.max(maxY,v.y);}}
-    if(minX===Infinity)return;
-    var bw=(maxX-minX)/2,bh=(maxY-minY)/2,zoom=Math.max(.1,Math.min(150,Math.min(bw>0?halfW/bw:150,bh>0?halfH/bh:150)));
-    // frameCenter is the zoom-1 NDC point that lands on the screen centre; zoom scales NDC about that centre, so the
-    // box middle must land at the usable-area centre divided by the zoom.
-    this.frameCenter.set((minX+maxX)/2,(minY+maxY)/2-centreY/zoom);
+    var all=[Infinity,-Infinity,Infinity,-Infinity],main=[Infinity,-Infinity,Infinity,-Infinity];
+    function grow(box,x,y){if(x<box[0])box[0]=x;if(x>box[1])box[1]=x;if(y<box[2])box[2]=y;if(y>box[3])box[3]=y;}
+    for(i=0;i<tris.length;i++){t=tris[i];var isMain=!!(t.armor&&t.armor.vehicleDamageFactor>0);
+      for(k=0;k<3;k++){v.fromArray(k===0?t.a:k===1?t.b:t.c);local.copy(v).applyMatrix4(cam.matrixWorldInverse);if(local.z>-.5)continue;v.project(cam);grow(all,v.x,v.y);if(isMain)grow(main,v.x,v.y);}}
+    if(all[0]===Infinity)return;if(main[0]===Infinity)main=all;
+    // Largest zoom at which a box (centred on the orbit centre) stays inside the usable area with the given margin.
+    var top=1-2*FIT_TOP_BAND;
+    function limit(box,margin){var z=150,w=Math.max(-box[0],box[1]);if(w>0)z=Math.min(z,(1-margin)/w);if(box[2]<0)z=Math.min(z,(1-margin)/-box[2]);if(box[3]>0)z=Math.min(z,(top-margin)/box[3]);return z;}
+    var zoom=Math.max(.1,Math.min(150,Math.min(limit(main,FIT_MARGIN),limit(all,0))));
     var f=this.framing();this.frameScale=zoom/Math.max(.1,f?f.zoom:1);this.setZoom(zoom);
   };
   // Switching auto-frame on holds the size that is on screen right now: the scale is taken from a fresh framing.
