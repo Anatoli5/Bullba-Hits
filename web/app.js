@@ -350,15 +350,39 @@
   // Verdict log (user, 14.09): one console line per recorded contact point - the server's result as a fact next to our
   // estimate along the drawn line. The game writes the page's console into game.log; tools/verdicts_from_log.py
   // tabulates the lines. Once per hit and shell, never on camera moves.
+  var verdictLines=0,verdictQueue=[],verdictDone={},verdictTimer=null,verdictBusy=false;
+  function verdictLine(battleId,hit,v,shell,mode){var r=v.result||{},chance=r.chance;
+    var ours=r.reason==='ricochet'?'ricochet':chance===null||chance===undefined?(r.reason||'none'):(chance>=50?'pen':'no-pen')+'_'+chance+'%';
+    console.info('Bullba Hits verdict: battle='+battleId+' hit='+hit.id+' point='+v.index+' part='+(partNames[v.part]||v.part)+' server='+String(effects[v.effect]||v.effect).replace(/ /g,'_')+' ours='+ours+' angle='+(r.angle!=null?Math.round(r.angle):'-')+' eff='+(r.effective!=null?Math.round(r.effective):'-')+' pen='+Math.round(shell.penetration)+' shell='+shell.kind+' dir='+v.source+' chordDev='+(v.chordDev==null?'-':(v.chordDev*180/Math.PI).toFixed(1))+' mode='+mode);
+    verdictLines++;verdictStatus();}
+  // The displayed hit, with whatever shell is on screen: logged once per hit and shell, never on camera moves.
   function logVerdicts(shell){
     if(!viewer||!shell||!activeHit||activeHit.synthetic||!current||!window.console)return;
     var key=current.id+'/'+activeHit.id+'|'+JSON.stringify(shell);if(key===verdictKey)return;
     // Before load() the previous hit's points would be logged under the new id: wait for the points of this hit.
     var verdicts=viewer.pointVerdicts(shell);if(!verdicts.length||viewer.loadedData.hit!==activeHit)return;verdictKey=key;
-    verdicts.forEach(function(v){var r=v.result||{},chance=r.chance;
-      var ours=r.reason==='ricochet'?'ricochet':chance===null||chance===undefined?(r.reason||'none'):(chance>=50?'pen':'no-pen')+'_'+chance+'%';
-      console.info('Bullba Hits verdict: battle='+current.id+' hit='+activeHit.id+' point='+v.index+' part='+(partNames[v.part]||v.part)+' server='+String(effects[v.effect]||v.effect).replace(/ /g,'_')+' ours='+ours+' angle='+(r.angle!=null?Math.round(r.angle):'-')+' eff='+(r.effective!=null?Math.round(r.effective):'-')+' pen='+Math.round(shell.penetration)+' shell='+shell.kind+' dir='+v.source+' chordDev='+(v.chordDev==null?'-':(v.chordDev*180/Math.PI).toFixed(1)));});
+    verdicts.forEach(function(v){verdictLine(current.id,activeHit,v,shell,'view');});
   }
+  // Every hit of a loaded battle, automatically (user, 14.09: the more data the better the analysis): the hit's own
+  // shell, its models from the cache, a throwaway ballistics engine, one hit every 150 ms so the page stays responsive.
+  // Nothing is displayed and nothing is sent anywhere - the lines go to the console, in the game to game.log.
+  function queueVerdicts(battle){
+    (battle.hits||[]).forEach(function(h){var key=battle.id+'/'+h.id;if(verdictDone[key]||!(h.points||[]).some(function(p){return p.status==='resolved';}))return;verdictDone[key]=true;verdictQueue.push({battle:battle,hit:h});});
+    verdictStatus();if(!verdictTimer)verdictTimer=setTimeout(drainVerdicts,150);
+  }
+  function drainVerdicts(){
+    verdictTimer=null;if(verdictBusy||!verdictQueue.length||!window.ArmorViewer||!window.ArmorBallistics)return;verdictBusy=true;
+    var job=verdictQueue.shift(),battle=job.battle,hit=job.hit;
+    ArmorInspectorData.sceneFor(battle,hit).then(function(data){
+      var context=ArmorShotContext.resolve(hit,battle.shotEvents||[]),c=context.index>=0?context.choices[context.index]:context.choices[0]||null;
+      var range=context.range>0?context.range:hit.rangeAtImpact>0?hit.rangeAtImpact:100,shell=c?shellAt(c,c.kind,c.penetration100,c.caliber,range):null;
+      if(!shell)return;var engine=ArmorBallistics.build(data,false),pts=ArmorViewer.points(hit);
+      ArmorViewer.verdicts(engine,pts,shell).forEach(function(v){verdictLine(battle.id,hit,v,shell,context.index>=0?'auto':'auto-shell-guess');});
+    }).catch(function(e){if(window.console)console.warn('Bullba Hits verdict: hit '+hit.id+' skipped: '+e.message);})
+      .then(function(){verdictBusy=false;verdictStatus();if(verdictQueue.length)verdictTimer=setTimeout(drainVerdicts,150);});
+  }
+  // Header line: the verdict log is on, with the count so far; the (i) explains what it is for.
+  function verdictStatus(){var e=$('connection');if(!e)return;e.textContent='Verdict log \u00b7 '+verdictLines+' points'+(verdictQueue.length?' \u00b7 checking '+verdictQueue.length+' more':'');}
   function shotStats(){
     var choice=$('shell-choice').value,c=choice.indexOf('saved:')===0?candidates[Number(choice.slice(6))]:null;
     var range=viewer?viewer.distance:100;
@@ -517,14 +541,14 @@
   }
   function loadBattle(id,keep){
     var request=++battleGeneration;if(!current||current.id!==id)++generation;
-    return ArmorInspectorData.battle(id).then(function(b){if(request!==battleGeneration)return;current=b;ArmorShotTelemetry.load(b.shotEvents||[]);var existing=keep&&selected&&b.hits.some(function(h){return h.id===selected;});if(!existing)selected=null;renderHits();if(b.hits.length)return selectHit(existing?selected:b.hits[0].id);if(viewer)viewer.clear();sceneTiles(null,false);message('No hits recorded in this battle yet. Shot details are available below.');});
+    return ArmorInspectorData.battle(id).then(function(b){if(request!==battleGeneration)return;current=b;ArmorShotTelemetry.load(b.shotEvents||[]);queueVerdicts(b);var existing=keep&&selected&&b.hits.some(function(h){return h.id===selected;});if(!existing)selected=null;renderHits();if(b.hits.length)return selectHit(existing?selected:b.hits[0].id);if(viewer)viewer.clear();sceneTiles(null,false);message('No hits recorded in this battle yet. Shot details are available below.');});
   }
   // The battle list keeps itself fresh: the index file is re-read every few seconds (a local file, cheap) and the
   // battle is reloaded only when the exporter has written a newer index; the chosen battle and hit are kept.
   var indexStamp=null,polling=false;
   function refresh(){
     if(polling)return Promise.resolve();polling=true;
-    return ArmorInspectorData.index().then(function(index){var pv=$('app-version').getAttribute('data-version');$('app-version').textContent=[pv!=='dev'?pv:'',index.version&&index.version!==pv?'records '+index.version:''].filter(Boolean).join(' \u00b7 ');if(index.application!=='local.armor_inspector'||!Array.isArray(index.battles))throw new Error('Invalid battle list');$('connection').textContent='Local files \u00b7 no server';
+    return ArmorInspectorData.index().then(function(index){var pv=$('app-version').getAttribute('data-version');$('app-version').textContent=[pv!=='dev'?pv:'',index.version&&index.version!==pv?'records '+index.version:''].filter(Boolean).join(' \u00b7 ');if(index.application!=='local.armor_inspector'||!Array.isArray(index.battles))throw new Error('Invalid battle list');verdictStatus();
       var stamp=String(index.updatedAt||'')+':'+index.battles.map(function(b){return b.id+'/'+b.hits;}).join(',');if(stamp===indexStamp)return;indexStamp=stamp;
       var battles=index.battles,prior=$('battles').value;$('battles').replaceChildren();
       if(!battles.length){current=null;selected=null;++battleGeneration;$('battles').appendChild(node('option','No battles yet'));

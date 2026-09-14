@@ -140,7 +140,7 @@
     this.loadedData=data;this.posedData=null;this.turretAngle=0;this.gunAngle=0;this.rebuild();if(this.onTurret)this.onTurret({angle:0,min:-180,max:180});
     this.root.updateMatrixWorld(true);
     var box=new T.Box3().setFromObject(this.root);this.bounds=box.isEmpty()?null:box;this.centre=this.vehicleCentre();
-    var pts=[];(hit.points||[]).forEach(function(p){if(p.status!=='resolved'||!transforms[p.part]||!p.position||!p.direction)return;var pos=new T.Vector3().fromArray(p.position).applyMatrix4(transforms[p.part]);pos.z*=-1;var direction=new T.Vector3().fromArray(p.direction).transformDirection(transforms[p.part]).normalize();direction.z*=-1;pts.push({pos:pos,dir:direction,effect:p.effect,part:p.part,source:'segment',chordDev:null});self.addReticle(pos);});
+    var pts=Viewer.points(hit);pts.forEach(function(p){self.addReticle(p.pos);});
     this.shotPoints=pts;this.drawTracers(pts);if(pts.length){this.point=pts[0].pos.clone();this.travel=pts[0].line.clone();}
     if(this.bounds)this.grid.position.y=this.bounds.min.y-.025;if(this.point)this.focus();else this.reset();if(this.onGun)this.onGun({angle:0,known:this.gunRange().known});return !!this.bounds;
   };
@@ -273,22 +273,36 @@
   // chain: the next stretch leaves exactly from the ricochet point, dashed when it disagrees with the recorded
   // direction. The first tracer arrives from afar along the first stretch's direction. Single points: as before.
   var CHORD_TOLERANCE=5*Math.PI/180,ARROW_LENGTH=2.3,TRACER=0xa8dfff;
-  Viewer.prototype.drawTracers=function(pts){
-    var self=this;pts.forEach(function(p){p.line=p.dir.clone();});
+  // The resolved contact points of a hit in the viewer's frame (part transforms applied, z mirrored), as plain data.
+  Viewer.points=function(hit){
+    var T=THREE,transforms={};((hit&&hit.target||{}).parts||[]).forEach(function(part){if(part.transform)transforms[part.id]=new T.Matrix4().fromArray(part.transform);});
+    var pts=[];((hit&&hit.points)||[]).forEach(function(p){if(p.status!=='resolved'||!transforms[p.part]||!p.position||!p.direction)return;var pos=new T.Vector3().fromArray(p.position).applyMatrix4(transforms[p.part]);pos.z*=-1;var direction=new T.Vector3().fromArray(p.direction).transformDirection(transforms[p.part]).normalize();direction.z*=-1;pts.push({pos:pos,dir:direction,effect:p.effect,part:p.part,source:'segment',chordDev:null,line:direction.clone(),stretch:null});});
+    return Viewer.chain(pts);
+  };
+  // The chain rule, as data: every point gets `line` (the direction drawn through it), `source` (chord / segment /
+  // chord-unchecked), `chordDev` (radians) and `stretch` ({from,to,dashed} or null for a first point).
+  Viewer.chain=function(pts){
+    var ricochet=function(q){return q.effect===1||q.effect===2;};
     for(var i=0;i<pts.length;i++){
-      var p=pts[i],prev=i?pts[i-1]:null,ricochet=function(q){return q.effect===1||q.effect===2;};
+      var p=pts[i],prev=i?pts[i-1]:null;p.line=p.dir.clone();p.stretch=null;
       if(!prev){
         var next=pts[1],chord0=next&&!ricochet(p)?next.pos.clone().sub(p.pos):null;
         if(chord0&&chord0.length()>=.05){var c0=chord0.normalize(),a0=c0.angleTo(p.dir),a1=c0.angleTo(next.dir);p.chordDev=Math.max(a0,a1);if(a0<=CHORD_TOLERANCE&&a1<=CHORD_TOLERANCE){p.line=c0;p.source='chord';}}
-        this.root.add(this.shotSegment(p.pos.clone().addScaledVector(p.line,-ARROW_LENGTH),p.pos,TRACER,false));continue;
+        continue;
       }
       var chord=p.pos.clone().sub(prev.pos),span=chord.length();
       if(span<.05)continue; // the same contact twice (a second verdict at one point): nothing between them
       var c=chord.normalize(),dev=c.angleTo(p.dir),devPrev=ricochet(prev)?0:c.angleTo(prev.dir);p.chordDev=Math.max(dev,devPrev);
       var agrees=dev<=CHORD_TOLERANCE&&devPrev<=CHORD_TOLERANCE;
-      if(agrees||ricochet(prev)){p.line=c;p.source=agrees?'chord':'chord-unchecked';this.root.add(this.shotSegment(prev.pos,p.pos,TRACER,!agrees));}
-      else this.root.add(this.shotSegment(p.pos.clone().addScaledVector(p.dir,-span),p.pos,TRACER,true));
+      if(agrees||ricochet(prev)){p.line=c;p.source=agrees?'chord':'chord-unchecked';p.stretch={from:prev.pos.clone(),to:p.pos.clone(),dashed:!agrees};}
+      else p.stretch={from:p.pos.clone().addScaledVector(p.dir,-span),to:p.pos.clone(),dashed:true};
     }
+    return pts;
+  };
+  Viewer.prototype.drawTracers=function(pts){
+    for(var i=0;i<pts.length;i++){var p=pts[i];
+      if(!i)this.root.add(this.shotSegment(p.pos.clone().addScaledVector(p.line,-ARROW_LENGTH),p.pos,TRACER,false));
+      else if(p.stretch)this.root.add(this.shotSegment(p.stretch.from,p.stretch.to,TRACER,p.stretch.dashed));}
   };
   // One tracer stretch from one point to another, the head at the end; dashed marks an approximate stretch.
   Viewer.prototype.shotSegment=function(from,to,color,dashed){
@@ -303,13 +317,14 @@
   // Our verdict at every recorded contact point along the drawn line, for the verdict log (server fact vs our
   // estimate). After a ricochet the ray starts at the ricochet point; otherwise it comes from afar, so screens and
   // the gun in front of the point count as the server counted them.
-  Viewer.prototype.pointVerdicts=function(shell){
-    if(!this.engine||!shell||!this.shotPoints)return [];var self=this,span=this.bounds?this.bounds.getSize(new THREE.Vector3()).length():20;
-    return this.shotPoints.map(function(p,i){var prev=i?self.shotPoints[i-1]:null,afterRicochet=prev&&(prev.effect===1||prev.effect===2);
-      var origin=afterRicochet?prev.pos.clone().addScaledVector(p.line,.02):p.pos.clone().addScaledVector(p.line,-span*2-2);
-      var result=null;try{result=self.engine.ray(origin.toArray(),p.line.toArray(),shell);}catch(e){result=null;}
+  Viewer.verdicts=function(engine,pts,shell){
+    if(!engine||!shell||!pts)return [];
+    return pts.map(function(p,i){var prev=i?pts[i-1]:null,afterRicochet=prev&&(prev.effect===1||prev.effect===2);
+      var origin=afterRicochet?prev.pos.clone().addScaledVector(p.line,.02):p.pos.clone().addScaledVector(p.line,-60);
+      var result=null;try{result=engine.ray(origin.toArray(),p.line.toArray(),shell);}catch(e){result=null;}
       return {index:i,part:p.part,effect:p.effect,source:p.source,chordDev:p.chordDev,result:result};});
   };
+  Viewer.prototype.pointVerdicts=function(shell){return Viewer.verdicts(this.engine,this.shotPoints,shell);};
   Viewer.prototype.shotArrow=function(direction,tip,color){
     var length=2.3,head=.12,arrow=new THREE.ArrowHelper(direction,tip.clone().addScaledVector(direction,-length),length,color,head,.045);
     var body=new THREE.Mesh(new THREE.CylinderGeometry(.006,.006,length-head,8),new THREE.MeshBasicMaterial({color:color,transparent:true,opacity:.9,depthTest:false,depthWrite:false}));

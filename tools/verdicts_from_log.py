@@ -30,7 +30,8 @@ def parse(path):
                 continue
             stamp = line[1:24] if line.startswith('[') else ''
             fields['at'] = stamp
-            # The last line for a point wins: the same hit is re-logged when the shell changes.
+            # The last line for a point and shell wins: the same hit is re-logged when the shell changes or the
+            # hit is opened again; 'mode' says whether the line came from the automatic pass or from viewing.
             rows[(fields['battle'], fields['hit'], fields['point'], fields.get('shell', ''))] = fields
     return list(rows.values())
 
@@ -40,6 +41,12 @@ def classify(row):
     expected = 'pen' if server in PEN else 'ricochet' if server in RICOCHET else 'no-pen' if server in NOPEN else None
     if expected is None:
         return 'unknown-server-effect'
+    # A pass-through of the tracks or the gun ("penetration without damage" on the chassis or gun part) is not a
+    # verdict on the main armour; the next point of the same hit carries that verdict.
+    if server == 'Penetration_without_damage' and row.get('part') in ('chassis', 'gun'):
+        return 'pass-through'
+    if row.get('angle', '-') == '-' and not ours.startswith('ricochet'):
+        return 'no-main-armour'
     mine = 'ricochet' if ours == 'ricochet' else 'pen' if ours.startswith('pen_') else 'no-pen' if ours.startswith('no-pen_') else 'none'
     if mine == 'none':
         return 'no-estimate'
@@ -57,8 +64,8 @@ def main(argv):
         print('No verdict lines in ' + path)
         return 1
     counts = Counter(classify(r) for r in rows)
-    print('Verdict lines: %d (unique battle/hit/point/shell)' % len(rows))
-    for key in ('agree', 'coin-flip', 'DISAGREE', 'no-estimate', 'unknown-server-effect'):
+    print('Verdict lines: %d (unique battle/hit/point/shell; modes %s)' % (len(rows), dict(Counter(r.get('mode', '?') for r in rows))))
+    for key in ('agree', 'coin-flip', 'DISAGREE', 'pass-through', 'no-main-armour', 'no-estimate', 'unknown-server-effect'):
         if counts.get(key):
             print('  %-22s %d' % (key, counts[key]))
     bad = [r for r in rows if classify(r) == 'DISAGREE']
