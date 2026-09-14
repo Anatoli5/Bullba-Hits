@@ -14,11 +14,11 @@
     var entry={value:undefined,received:false,retries:retryCount||0}, script=document.createElement('script');
     entry.promise=new Promise(function(resolve,reject){
       function finish(error){clearTimeout(timer);script.remove();delete pending[key];if(error)reject(error);else resolve(entry.value);}
-      var timer=setTimeout(function(){finish(new Error('Could not read the local file. Press “Refresh”.'));},15000);
+      var timer=setTimeout(function(){finish(new Error('Could not read the local file.'));},15000);
       script.onload=function(){finish(entry.received?null:new Error('Data file is corrupted: '+path));};
       // A momentary read failure (file being replaced by the recorder, browser hiccup) gets two retries before it is reported.
       script.onerror=function(){if(entry.retries<2){entry.retries++;clearTimeout(timer);script.remove();delete pending[key];setTimeout(function(){read(key,entry.retries).then(resolve,reject);},400);return;}finish(new Error('Not found '+path+'. Open Viewer.html from mods/configs/local.armor_inspector after running the game with the mod.'));};
-      // A fresh URL avoids reusing a snapshot when the user presses Refresh.
+      // A fresh URL avoids reusing a snapshot between polls.
       script.src=path+'?read='+Date.now()+'-'+(++serial);
     });
     pending[key]=entry;document.head.appendChild(script);return entry.promise;

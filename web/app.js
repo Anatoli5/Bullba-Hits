@@ -149,9 +149,12 @@
     hits.forEach(function(h){var hasDamage=h.damage>0,b=node('button',undefined,'hit');b.setAttribute('aria-pressed',String(selected===h.id));b.setAttribute('data-direction',h.direction);b.setAttribute('data-result',hasDamage?'damage':'none');b.title=(h.direction==='incoming'?'Incoming from '+((h.attacker||{}).name||'?'):'Outgoing at '+((h.target||{}).name||'?'))+' · '+result(h);
       b.appendChild(vehicleTile(h.direction==='incoming'?h.attacker:h.target));
       // Outcome column: damage in the direction colour, or the muted result icon; the full result text stays in the button title.
-      var outcome=node('span',undefined,'hit-outcome');
-      outcome.appendChild(hasDamage?node('span',(h.direction==='incoming'?'\u2199':'\u2197')+h.damage,'hit-damage'):node('span',resultIcon(h).replace(/▰ ?/,''),'hit-result'));
-      outcome.appendChild(node('span',clock(h.receivedAt),'hit-time'));b.appendChild(outcome);
+      // Outcome widget: direction arrow in the top-left corner, the figure (damage, or the no-damage result icon)
+      // in the top-right, the time underneath - the arrow never glues to the figure.
+      var outcome=node('span',undefined,'hit-outcome'),line=node('span',undefined,'outcome-line');
+      line.appendChild(node('span',h.direction==='incoming'?'\u2199':'\u2197','outcome-dir'));
+      line.appendChild(hasDamage?node('span',String(h.damage),'hit-damage'):node('span',resultIcon(h).replace(/▰ ?/,''),'hit-result'));
+      outcome.appendChild(line);outcome.appendChild(node('span',clock(h.receivedAt),'hit-time'));b.appendChild(outcome);
       b.onclick=function(){selectHit(h.id).catch(function(){});};container.appendChild(b);});
   }
   function selectHit(id){
@@ -163,11 +166,16 @@
     var request=++battleGeneration;if(!current||current.id!==id)++generation;
     return ArmorInspectorData.battle(id).then(function(b){if(request!==battleGeneration)return;current=b;ArmorShotTelemetry.load(b.shotEvents||[]);var existing=keep&&selected&&b.hits.some(function(h){return h.id===selected;});if(!existing)selected=null;renderHits();if(b.hits.length)return selectHit(existing?selected:b.hits[0].id);if(viewer)viewer.clear();message('No hits recorded in this battle yet. Shot details are available below.');});
   }
+  // The battle list keeps itself fresh: the index file is re-read every few seconds (a local file, cheap) and the
+  // battle is reloaded only when the exporter has written a newer index; the chosen battle and hit are kept.
+  var indexStamp=null,polling=false;
   function refresh(){
-    $('refresh').disabled=true;
-    return ArmorInspectorData.index().then(function(index){var pv=$('app-version').getAttribute('data-version');$('app-version').textContent=[pv!=='dev'?pv:'',index.version&&index.version!==pv?'records '+index.version:''].filter(Boolean).join(' · ');if(index.application!=='local.armor_inspector'||!Array.isArray(index.battles))throw new Error('Invalid battle list');$('connection').textContent='Local files · no server';var battles=index.battles,prior=$('battles').value;$('battles').replaceChildren();if(!battles.length){current=null;selected=null;++generation;++battleGeneration;if(viewer)viewer.clear();$('battles').appendChild(node('option','No battles yet'));renderHits();message('New hits appear after a battle. Then press “Refresh”.');warnings([]);return;}
-      battles.forEach(function(b){var option=node('option',new Date(b.startedAt*1000).toLocaleDateString('en-GB')+' · '+b.map+' · '+b.hits);option.value=b.id;$('battles').appendChild(option);});var id=battles.some(function(b){return b.id===prior;})?prior:battles[0].id;$('battles').value=id;return loadBattle(id,current&&current.id===id);
-    }).catch(function(e){$('connection').textContent='No local records';message(e.message);warnings([e.message]);}).then(function(){$('refresh').disabled=false;});
+    if(polling)return Promise.resolve();polling=true;
+    return ArmorInspectorData.index().then(function(index){var pv=$('app-version').getAttribute('data-version');$('app-version').textContent=[pv!=='dev'?pv:'',index.version&&index.version!==pv?'records '+index.version:''].filter(Boolean).join(' \u00b7 ');if(index.application!=='local.armor_inspector'||!Array.isArray(index.battles))throw new Error('Invalid battle list');$('connection').textContent='Local files \u00b7 no server';
+      var stamp=String(index.updatedAt||'')+':'+index.battles.map(function(b){return b.id+'/'+b.hits;}).join(',');if(stamp===indexStamp)return;indexStamp=stamp;
+      var battles=index.battles,prior=$('battles').value;$('battles').replaceChildren();if(!battles.length){current=null;selected=null;++generation;++battleGeneration;if(viewer)viewer.clear();$('battles').appendChild(node('option','No battles yet'));renderHits();message('New hits appear here after a battle.');warnings([]);return;}
+      battles.forEach(function(b){var option=node('option',new Date(b.startedAt*1000).toLocaleDateString('en-GB')+' \u00b7 '+b.map+' \u00b7 '+b.hits);option.value=b.id;$('battles').appendChild(option);});var id=battles.some(function(b){return b.id===prior;})?prior:battles[0].id;$('battles').value=id;return loadBattle(id,current&&current.id===id);
+    }).catch(function(e){$('connection').textContent='No local records';if(!current){message(e.message);warnings([e.message]);}}).then(function(){polling=false;});
   }
   try{viewer=new ArmorViewer($('viewport'));}catch(e){message('WebGL unavailable: '+e.message);}
   if(viewer)viewer.onInspect=inspectArmor;
@@ -207,13 +215,13 @@
   $('penetration').oninput=function(){if($('shell-choice').value.indexOf('saved:')!==0)manualPen=this.value;updateShell();};
   $('battles').onchange=function(){loadBattle(this.value,false).catch(function(e){warnings([e.message]);});};
   document.querySelectorAll('[data-filter]').forEach(function(b){b.onclick=function(){filter=b.dataset.filter;document.querySelectorAll('[data-filter]').forEach(function(x){x.setAttribute('aria-pressed',String(x===b));});renderHits();};});
-  $('refresh').onclick=refresh;$('wireframe').onchange=function(){if(viewer)viewer.wireframe(this.checked);};
+  $('wireframe').onchange=function(){if(viewer)viewer.wireframe(this.checked);};
   window.addEventListener('armor-context-lost',function(){host.mark('WebGL','context-lost');message('The browser lost its WebGL context. Reload the page.');});
   function outline(){if(viewer)viewer.setOutline(Number($('outline-brightness').value)/100,Number($('outline-opacity').value)/100);}
   $('outline-brightness').oninput=outline;$('outline-opacity').oninput=outline;if(viewer){viewer.wireframe($('wireframe').checked);outline();}
   if(host.interrupted){$('host-note').hidden=false;$('host-note').textContent='The previous session was interrupted during “'+host.interrupted.action+'» ('+(host.interrupted.host==='game'?'in the game':'in the browser')+', '+new Date(host.interrupted.at).toLocaleString('en-GB')+'). Mention this when reporting.';}
   (function(){var pv=$('app-version').getAttribute('data-version');if(pv!=='dev')$('app-version').textContent=pv;}());
   host.done();
-  refresh();
+  refresh();window.setInterval(refresh,5000);
   if(document.modelContext&&document.modelContext.registerTool){try{document.modelContext.registerTool({name:'select_saved_hit',description:'Open an existing recorded hit in the local 3D viewer.',inputSchema:{type:'object',properties:{battleId:{type:'string'},hitId:{type:'string'}},required:['battleId','hitId'],additionalProperties:false},execute:function(input){if(!input||!/^[-a-zA-Z0-9_]{1,100}$/.test(input.battleId)||!/^\d+$/.test(input.hitId))throw new Error('Invalid record identifiers');return loadBattle(input.battleId,true).then(function(){return selectHit(input.hitId);});}});}catch(e){console.warn('WebMCP unavailable',e);}}
 }());
