@@ -13,7 +13,7 @@ try:
 except ImportError:
     import queue
 
-VERSION = '0.6.33'
+VERSION = '0.6.34'
 VIEWER_PATH = os.path.join('mods', 'configs', 'local.armor_inspector', 'Viewer.html')
 LOG = logging.getLogger('local.armor_inspector')
 PARTS = ('chassis', 'hull', 'turret', 'gun')
@@ -74,6 +74,37 @@ def matrix_columns(matrix, root_inverse):
     columns.extend(vector(root_inverse.applyPoint(matrix.applyPoint((0, 0, 0)))))
     columns.append(1.0)
     return columns
+
+
+def translation_columns(point):
+    """The same column-major layout as matrix_columns, for a pure translation.
+
+    Three axis columns, each with a trailing 0.0, then the offset with a trailing
+    1.0. Used where there is no live entity to read a part transform from.
+    """
+    columns = []
+    for axis in ((1, 0, 0), (0, 1, 0), (0, 0, 1)):
+        columns.extend([float(axis[0]), float(axis[1]), float(axis[2])])
+        columns.append(0.0)
+    columns.extend(vector(point))
+    columns.append(1.0)
+    return columns
+
+
+def rest_transforms(descr):
+    """Collision-part transforms of a vehicle descriptor in its rest pose.
+
+    A hit records the target's parts from the live entity; the shooter has no
+    entity here, only his descriptor, so his parts are stacked the way the client
+    itself stacks them (vehicles.py VehicleDescr.__updateAttributes): the chassis
+    is the frame, the hull sits at chassis.hullPosition, the turret on the hull at
+    hull.turretPositions[0], the gun in the turret at turret.gunPosition. No
+    rotation: the collision models are authored in that pose. Order follows PARTS.
+    """
+    hull = descr.chassis.hullPosition
+    turret = hull + descr.hull.turretPositions[0]
+    gun = turret + descr.turret.gunPosition
+    return [translation_columns(offset) for offset in ((0.0, 0.0, 0.0), hull, turret, gun)]
 
 
 class Writer(object):
@@ -212,10 +243,42 @@ class Recorder(object):
                     # Nominal full-aim accuracy of the mounted gun (no crew or equipment): radius grows linearly with range.
                     record['attacker']['gunDispersion'] = float(attacker.gun.shotDispersionAngle)
                     record['attacker']['gun'] = getattr(attacker.gun, 'shortUserString', attacker.gun.name)
-                    # Gun axis height above the vehicle origin: the shooter's viewpoint on flat ground.
-                    record['attacker']['gunHeight'] = float((attacker.hull.turretPositions[0] + attacker.turret.gunPosition).y)
+                    # Gun axis height above the ground (the chassis origin): the shooter's viewpoint on flat ground.
+                    # The client's own sum (vehicles.py VehicleDescr.__updateAttributes): chassis.hullPosition +
+                    # hull.turretPositions[0] + turret.gunPosition. Records before 0.6.34 lacked the chassis term and
+                    # carry no 'gunHeightFrom'; the exporter recomputes them from the compact descriptor.
+                    record['attacker']['gunHeight'] = float((attacker.chassis.hullPosition + attacker.hull.turretPositions[0] + attacker.turret.gunPosition).y)
+                    record['attacker']['gunHeightFrom'] = 'ground'
                 except Exception:
                     pass
+                try:
+                    # The shooter's own collision parts (0.6.34), so the viewer can swap the roles and
+                    # draw his armour. There is no live entity for him here, only the descriptor, so the
+                    # parts take the rest pose in the chassis frame instead of a recorded transform.
+                    from local_armor_inspector.armor import live_materials
+                    transforms = rest_transforms(attacker)
+                    parts = []
+                    for idx, name in enumerate(PARTS):
+                        component = getattr(attacker, name, None)
+                        part = {'id':idx, 'name':name}
+                        try:
+                            part['armor'] = live_materials(component)
+                            part['armorSource'] = 'live vehicle descriptor'
+                        except Exception:
+                            # The export worker may recover stock metadata for this version.
+                            pass
+                        try:
+                            part['resource'] = component.hitTesterManager.activeHitTester.bspModelName
+                            part['transform'] = transforms[idx]
+                        except Exception:
+                            part['error'] = 'Part model or transform unavailable'
+                            record['warnings'].append('Shooter part unavailable: '+name)
+                        parts.append(part)
+                    record['attacker']['parts'] = parts
+                    record['attacker']['partsFrom'] = 'rest pose'
+                except Exception:
+                    record['warnings'].append('Shooter collision parts unavailable')
+                    LOG.exception('Shooter collision parts unavailable; hit is retained')
         except Exception:
             LOG.exception('Attacker descriptor unavailable; hit is retained')
         try:

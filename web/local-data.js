@@ -35,8 +35,9 @@
     if(!models[key])models[key]=read('model:'+key).catch(function(e){delete models[key];throw e;});
     return models[key];
   }
-  function scene(battle,id){
-    var hit=battle.hits.find(function(h){return h.id===id;});
+  // Models for the target of one hit. The hit need not be in the battle's list: the shooter/model swap
+  // builds a synthetic hit whose target is the recorded attacker, and its parts load exactly the same way.
+  function sceneFor(battle,hit){
     if(!hit)return Promise.reject(new Error('Hit not found'));
     var result={hit:hit,models:{},warnings:(battle.warnings||[]).concat(hit.warnings||[])};
     return Promise.all(((hit.target||{}).parts||[]).map(function(part){
@@ -47,5 +48,8 @@
       }).catch(function(e){result.warnings.push(part.name+': '+e.message);});
     })).then(function(){return result;});
   }
-  window.ArmorInspectorData={receive:receive,index:function(){return read('index');},battle:function(id){return read('battle:'+id);},scene:scene};
+  function scene(battle,id){
+    return sceneFor(battle,(battle.hits||[]).find(function(h){return h.id===id;}));
+  }
+  window.ArmorInspectorData={receive:receive,index:function(){return read('index');},battle:function(id){return read('battle:'+id);},scene:scene,sceneFor:sceneFor};
 }());

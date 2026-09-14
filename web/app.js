@@ -43,21 +43,22 @@
   function warnings(lines){$('warnings').textContent=lines.map(function(line){return line==='Additional vehicle parts are not yet rendered'?'Extra parts of this vehicle are not shown and not included in the estimate.':line;}).join(' · ');$('warnings').hidden=!lines.length;}
   function result(hit){if(hit.damage>0)return 'Damage '+hit.damage+' HP';var p=(hit.points||[]).filter(function(p){return p.effect!==undefined;});return p.length?(effects[p[p.length-1].effect]||'Result '+p[p.length-1].effect):'Result not decoded';}
   function resultIcon(hit){if(hit.damage>0)return '▰ −'+hit.damage;var p=(hit.points||[]).filter(function(p){return p.effect!==undefined;}),effect=p.length?p[p.length-1].effect:null;return effect===2||effect===1?'↪':effect===3?'▰ ×':effect===4?'▰ ✓':effect===5||effect===6?'⚙':effect===0?'▰ 0':'—';}
-  function resultVisual(container,hit){
-    container.replaceChildren();container.classList.add('result-visual');container.title=result(hit);
-    var symbol=node('span');symbol.innerHTML='<svg class="damage-icon" viewBox="0 0 28 20" aria-hidden="true"><path d="M5 11h17l3 3-2 3H5l-3-3ZM9 10V6h9l3 4M18 7h8M7 14h13"/></svg>';
-    container.appendChild(symbol);container.appendChild(node('span',resultIcon(hit).replace(/▰ ?/,'')));
-  }
   function clock(seconds){if(!Number.isFinite(seconds))return '—';var d=new Date(seconds*1000);return d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'});}
   function detail(label,value,small){var e=node('div');e.appendChild(node('div',label,'detail-label'));e.appendChild(node('div',String(value),'detail-value'));if(small)e.appendChild(node('div',small,'detail-small'));$('details').appendChild(e);}
   function prepareShell(hit){
+    // A swapped view has no shot and therefore no shells: keep the shell that is on screen - type,
+    // penetration and calibre - instead of falling back to the empty manual defaults.
+    var keep=null;
+    if(hit&&hit.synthetic){var was=$('shell-choice').value,c0=was.indexOf('saved:')===0?candidates[Number(was.slice(6))]:null;
+      keep={kind:c0?c0.kind:was||'ARMOR_PIERCING',penetration:$('penetration').value,caliber:$('caliber').value};}
     activeHit=hit;shotContext=ArmorShotContext.resolve(hit,current&&current.shotEvents||[]);candidates=shotContext.choices;var choice=$('shell-choice');choice.replaceChildren();
     candidates.forEach(function(c,i){var o=node('option',(shellNames[c.kind]||c.kind)+' · '+c.name);o.value='saved:'+i;choice.appendChild(o);});
     Object.keys(shellNames).forEach(function(kind){var o=node('option',shellNames[kind]+' — manual');o.value=kind;choice.appendChild(o);});
     if(candidates.length>1){var uncertain=node('option','Pick a shell — several matches');uncertain.value='';choice.insertBefore(uncertain,choice.firstChild);}
     choice.value=shotContext.index>=0?'saved:'+shotContext.index:candidates.length?'':shotContext.kind||'ARMOR_PIERCING';
     $('shell-quick').replaceChildren();candidates.forEach(function(c,i){var actual=i===shotContext.index,b=node('button',(actual?'● ':'')+(shellNames[c.kind]||c.kind)+' '+Math.round(c.penetration100),'shell-chip');b.dataset.shell='saved:'+i;b.title=c.name+' · '+c.caliber+' mm · '+(actual?'Type from the hit':'Compare with this shell');b.onclick=function(){choice.value='saved:'+i;selectShell();};$('shell-quick').appendChild(b);});
-    selectShell();
+    if(keep){choice.value=keep.kind;manualPen=keep.penetration;$('penetration').value=keep.penetration;$('caliber').value=keep.caliber;$('penetration-label').textContent='Penetration at target, mm';updateShell();}
+    else selectShell();
   }
   function shellAt(c,choice,penetration,caliber,distance){
     if(!choice||!(penetration>0)||penetration>3000||!(caliber>0)||caliber>1000)return null;
@@ -126,17 +127,52 @@
     var range=viewer?viewer.distance:100;
     fillPanel('probe',armorLine(r,viewer&&viewer.shell?viewer.shell.penetration:null,range));
   }
+  // Heading: which battle this is - date and start time, the map, and the vehicle the player was in.
+  function battleStamp(seconds){if(!Number.isFinite(seconds))return '';var d=new Date(seconds*1000);return d.toLocaleDateString('en-GB')+' \u00b7 '+d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});}
+  // The player's own vehicle: the target of any incoming hit, or the attacker of any outgoing one.
+  function ownVehicle(){if(!current)return null;var inc=current.hits.find(function(h){return h.direction==='incoming'&&h.target&&h.target.name;});if(inc)return inc.target;var out=current.hits.find(function(h){return h.direction==='outgoing'&&h.attacker&&h.attacker.name;});return out?out.attacker:null;}
+  function renderHeading(){
+    var stamp=current?battleStamp(current.startedAt):'',own=ownVehicle();
+    $('scene-kind').textContent='BATTLE'+(stamp?' \u00b7 '+stamp:'');
+    $('battle-map').textContent=current?(current.map||'Unknown map'):'Pick a hit';
+    var slot=$('heading-vehicle');slot.replaceChildren();if(own)slot.appendChild(vehicleTile(own));
+    return own;
+  }
+  // Two overlays inside the scene: the vehicle whose collision model is drawn stays centred over it, the
+  // shooter sits underneath. Clicking the shooter swaps the two roles - his collision model is drawn and
+  // the vehicle that was drawn becomes the shooter. The swapped view carries no recorded shot (no hit
+  // line, no reticle): an inspector without a shot. Clicking again returns to the recorded hit.
+  var swapped=null,NO_SHOOTER_MODEL='No collision model of this vehicle recorded yet (recorded from 0.6.34 on; older battles are completed by the exporter on the next game start)';
+  function shallow(value){var copy={};if(value)Object.keys(value).forEach(function(k){copy[k]=value[k];});return copy;}
+  function swapReady(hit){return !!(hit&&hit.attacker&&(hit.attacker.parts||[]).some(function(p){return p.modelKey;}));}
+  // The swapped view as a hit the scene loader and the viewer understand: the recorded shooter becomes the
+  // target (his parts carry the models), the recorded target becomes the shooter. No points, so no hit line,
+  // no reticle and no shells - the vehicle now on screen never fired in this record.
+  function swapHit(hit){
+    var attacker=shallow(hit.target);delete attacker.parts;
+    return {id:hit.id+':swap',synthetic:true,base:hit.id,direction:hit.direction==='incoming'?'outgoing':'incoming',
+      attacker:attacker,target:shallow(hit.attacker),points:[],rawHitPoints:[],warnings:[],
+      shellCandidates:[],availableShells:[],receivedAt:hit.receivedAt,rangeAtImpact:hit.rangeAtImpact};
+  }
+  function sceneTiles(hit,reference){
+    var target=hit&&hit.target||null,attacker=hit&&hit.attacker||null,button=$('shooter-tile');
+    $('model-caption').textContent=reference?'Reference model':'Collision model';
+    $('model-tile').hidden=!target;$('model-tile-body').replaceChildren();if(target)$('model-tile-body').appendChild(vehicleTile(target));
+    button.hidden=!attacker;$('shooter-tile-body').replaceChildren();if(attacker)$('shooter-tile-body').appendChild(vehicleTile(attacker));
+    var back=!!(hit&&hit.synthetic),ready=swapReady(hit);button.disabled=!(back||ready);
+    button.title=back?'Back to the recorded hit and its shot line':ready?'Show this vehicle\u2019s collision model \u00b7 the roles swap, the recorded shot is not carried over':NO_SHOOTER_MODEL;
+  }
   function display(data,reference){
-    var hit=data.hit;$('target-name').textContent=(hit.target||{}).name||'Unknown target';$('scene-kind').textContent=reference?'REFERENCE MODEL · NO BATTLE RECORD':'CLIENT COLLISION MODEL';$('result-badge').hidden=!!reference;$('result-badge').textContent=result(hit);
-    $('shot-source').textContent='Hit line';$('unpin').hidden=true;prepareShell(hit);var drawn=viewer&&viewer.load(data,shotContext);message(drawn?'':'Geometry unavailable. The original event is kept.');pivotButtons();warnings(data.warnings||[]);$('details').replaceChildren();
+    var hit=data.hit;swapped=hit.synthetic?hit:null;sceneTiles(hit,reference);
+    $('shot-source').textContent=hit.synthetic?'No recorded shot':'Hit line';$('unpin').hidden=true;prepareShell(hit);var drawn=viewer&&viewer.load(data,shotContext);message(drawn?'':'Geometry unavailable. The original event is kept.');pivotButtons();warnings(data.warnings||[]);$('details').replaceChildren();
     var aimReady=viewer&&viewer.setShotContext(shotContext),estimate=!aimReady&&viewer?viewer.setAimEstimate(shotContext):null;$('show-aim').disabled=!(aimReady||estimate);
     // The reticle block stays small: what the circles mean and where this one came from lives in the ⓘ tooltip.
     var status=aimReady?'This hit: ● solid green — the client reticle at the shot, ◌ dashed gold — the server reticle.':estimate?'This hit: ◌ dashed blue — nominal full-aim estimate of the '+(estimate.gun||'mounted gun')+': '+(estimate.dispersion*100).toFixed(2)+' m at 100 m × '+Math.round(estimate.range)+' m ('+(estimate.source==='tracer'?'tracer range':'approximate range at impact')+') = ⌀ '+(estimate.radius*2).toFixed(2)+' m. Without crew or equipment, centred on the hit line; not the recorded reticle and not used in the figure.':'This hit: no reticle — '+(hit.direction==='incoming'?'enemy reticle unavailable':(aimReasons[shotContext.aimReason]||'no linked snapshot').toLowerCase())+'.';
     $('aim-metric').title='Reticle circles on the model. '+status+' Nominal chance over the saved circle: Gaussian, σ = radius/2; 256 rays, misses = 0. Server formula not confirmed; no map obstacles, target motion or blast damage.';
     $('aim-toggle').title=aimReady?'The saved client circle is teal; the server one is dashed when received. Linked to the hit by end point and time; the target position is at impact.':'No own reticle is unambiguously linked to this hit: '+(aimReasons[shotContext.aimReason]||'no data')+'.';
     shotStats();
-    resultVisual($('result-badge'),hit);
     if(reference){$('details').appendChild(node('p','The model is extracted from the installed client. There are no invented hits here. Once the recorder is installed, new battles appear in the list on the left.'));return;}
+    if(hit.synthetic){$('details').appendChild(node('p','The shooter\u2019s collision model, swapped in from the hit at '+clock(hit.receivedAt)+'. Nothing was fired at this vehicle in the record, so there is no hit line, no reticle and no shell of its own. Click the tile below the model to go back to the recorded hit.'));return;}
     detail('Direction',hit.direction==='incoming'?'Incoming':'Outgoing',clock(hit.receivedAt));detail('Result',result(hit));
     var points=hit.points||[],point=points.find(function(p){return p.status==='resolved';});
     detail('Point on the model',point?['Chassis','Hull','Turret','Gun'][point.part]:'Not restored',point?'Per the client collision handler':'Segment kept for diagnostics');
@@ -144,7 +180,7 @@
     if(hit.rangeAtImpact!=null)detail('To the attacker at impact',hit.rangeAtImpact.toFixed(1)+' m','Position when the hit was received; not a measured flight length.');
   }
   function renderHits(){
-    var container=$('hits');container.replaceChildren();var hits=current?current.hits.filter(function(h){return filter==='all'||h.direction===filter;}):[];var own=current?(function(){var inc=current.hits.find(function(h){return h.direction==='incoming'&&h.target&&h.target.name;}),out=current.hits.find(function(h){return h.direction==='outgoing'&&h.attacker&&h.attacker.name;});return inc?inc.target.name:out?out.attacker.name:null;}()):null;$('hit-count').textContent=current?hits.length+' hits'+(own?' · battle in '+own:''):'';
+    var container=$('hits');container.replaceChildren();var hits=current?current.hits.filter(function(h){return filter==='all'||h.direction===filter;}):[];var own=renderHeading();$('hit-count').textContent=current?hits.length+' hits'+(own?' · battle in '+own.name:''):'';
     if(!hits.length){container.appendChild(node('p',current?'No hits for the chosen filter.':'No records yet. Start the game with the recorder and play a battle. The viewer can stay open.','empty'));return;}
     hits.forEach(function(h){var hasDamage=h.damage>0,b=node('button',undefined,'hit');b.setAttribute('aria-pressed',String(selected===h.id));b.setAttribute('data-direction',h.direction);b.setAttribute('data-result',hasDamage?'damage':'none');b.title=(h.direction==='incoming'?'Incoming from '+((h.attacker||{}).name||'?'):'Outgoing at '+((h.target||{}).name||'?'))+' · '+result(h);
       b.appendChild(vehicleTile(h.direction==='incoming'?h.attacker:h.target));
@@ -164,7 +200,7 @@
   }
   function loadBattle(id,keep){
     var request=++battleGeneration;if(!current||current.id!==id)++generation;
-    return ArmorInspectorData.battle(id).then(function(b){if(request!==battleGeneration)return;current=b;ArmorShotTelemetry.load(b.shotEvents||[]);var existing=keep&&selected&&b.hits.some(function(h){return h.id===selected;});if(!existing)selected=null;renderHits();if(b.hits.length)return selectHit(existing?selected:b.hits[0].id);if(viewer)viewer.clear();message('No hits recorded in this battle yet. Shot details are available below.');});
+    return ArmorInspectorData.battle(id).then(function(b){if(request!==battleGeneration)return;current=b;ArmorShotTelemetry.load(b.shotEvents||[]);var existing=keep&&selected&&b.hits.some(function(h){return h.id===selected;});if(!existing)selected=null;renderHits();if(b.hits.length)return selectHit(existing?selected:b.hits[0].id);if(viewer)viewer.clear();sceneTiles(null,false);message('No hits recorded in this battle yet. Shot details are available below.');});
   }
   // The battle list keeps itself fresh: the index file is re-read every few seconds (a local file, cheap) and the
   // battle is reloaded only when the exporter has written a newer index; the chosen battle and hit are kept.
@@ -173,7 +209,7 @@
     if(polling)return Promise.resolve();polling=true;
     return ArmorInspectorData.index().then(function(index){var pv=$('app-version').getAttribute('data-version');$('app-version').textContent=[pv!=='dev'?pv:'',index.version&&index.version!==pv?'records '+index.version:''].filter(Boolean).join(' \u00b7 ');if(index.application!=='local.armor_inspector'||!Array.isArray(index.battles))throw new Error('Invalid battle list');$('connection').textContent='Local files \u00b7 no server';
       var stamp=String(index.updatedAt||'')+':'+index.battles.map(function(b){return b.id+'/'+b.hits;}).join(',');if(stamp===indexStamp)return;indexStamp=stamp;
-      var battles=index.battles,prior=$('battles').value;$('battles').replaceChildren();if(!battles.length){current=null;selected=null;++generation;++battleGeneration;if(viewer)viewer.clear();$('battles').appendChild(node('option','No battles yet'));renderHits();message('New hits appear here after a battle.');warnings([]);return;}
+      var battles=index.battles,prior=$('battles').value;$('battles').replaceChildren();if(!battles.length){current=null;selected=null;++generation;++battleGeneration;if(viewer)viewer.clear();sceneTiles(null,false);$('battles').appendChild(node('option','No battles yet'));renderHits();message('New hits appear here after a battle.');warnings([]);return;}
       battles.forEach(function(b){var option=node('option',new Date(b.startedAt*1000).toLocaleDateString('en-GB')+' \u00b7 '+b.map+' \u00b7 '+b.hits);option.value=b.id;$('battles').appendChild(option);});var id=battles.some(function(b){return b.id===prior;})?prior:battles[0].id;$('battles').value=id;return loadBattle(id,current&&current.id===id);
     }).catch(function(e){$('connection').textContent='No local records';if(!current){message(e.message);warnings([e.message]);}}).then(function(){polling=false;});
   }
@@ -181,9 +217,9 @@
   if(viewer)viewer.onInspect=inspectArmor;
   // Keep a visible reason when the GPU chance map cannot be drawn.
   if(viewer)viewer.onBackend=function(text){$('heatmap-backend').textContent=text;var unavailable=/^Estimate unavailable:/.test(text);$('backend-badge').hidden=!unavailable;$('backend-badge').textContent=unavailable?text:'';};
-  if(viewer)viewer.onCamera=function(state){var changed=lastDistance!==state.distance;lastDistance=state.distance;if(document.activeElement!==$('camera-distance-field'))$('camera-distance-field').value=Math.round(state.distance);if(document.activeElement!==$('camera-zoom-field'))$('camera-zoom-field').value=state.zoom.toFixed(2);$('camera-distance').value=Math.round(distanceSlider(state.distance));$('camera-zoom').value=Math.round(Math.max(0,Math.min(1000,Math.log(state.zoom/.1)/Math.log(1000)*1000)));var key=[state.distance,state.yaw,state.pitch,viewer.turretAngle,viewer.gunAngle].join(',');if(analysisKey!==null&&analysisKey!==key)staleEstimate();if(changed)updateShell();else if(totalEngine!==viewer.engine)shotStats();};
+  if(viewer)viewer.onCamera=function(state){var changed=lastDistance!==state.distance;lastDistance=state.distance;if(document.activeElement!==$('camera-distance-field'))$('camera-distance-field').value=Math.round(state.distance);if(document.activeElement!==$('camera-zoom-field'))$('camera-zoom-field').value=state.zoom.toFixed(2);$('camera-distance').value=Math.round(distanceSlider(state.distance));$('camera-zoom').value=Math.round(Math.max(0,Math.min(1000,Math.log(state.zoom/.1)/Math.log(1000)*1000)));var hr=viewer.heightRange(),hy=viewer.target.y;$('pivot-height').max=Math.max(1,Math.round((hr[1]-hr[0])*100));$('pivot-height').value=Math.round((hy-hr[0])*100);$('pivot-height-field').min=hr[0].toFixed(2);$('pivot-height-field').max=hr[1].toFixed(2);if(document.activeElement!==$('pivot-height-field'))$('pivot-height-field').value=hy.toFixed(2);var key=[state.distance,state.yaw,state.pitch,viewer.turretAngle,viewer.gunAngle].join(',');if(analysisKey!==null&&analysisKey!==key)staleEstimate();if(changed)updateShell();else if(totalEngine!==viewer.engine)shotStats();};
   // Logarithmic slider between the viewer's distance limits: fine steps in a clinch, coarse steps far away.
-  var limits=(window.ArmorViewer&&ArmorViewer.limits)||{distanceMin:5,distanceMax:1000},span=Math.log(limits.distanceMax/limits.distanceMin);
+  var limits=(window.ArmorViewer&&ArmorViewer.limits)||{distanceMin:3,distanceMax:1000},span=Math.log(limits.distanceMax/limits.distanceMin);
   function distanceSlider(d){return Math.log(Math.max(limits.distanceMin,d)/limits.distanceMin)/span*1000;}
   $('camera-distance-field').min=limits.distanceMin;$('camera-distance-field').max=limits.distanceMax;
   $('camera-distance').oninput=function(){if(viewer)viewer.setDistance(limits.distanceMin*Math.exp(span*Number(this.value)/1000));};
@@ -191,10 +227,12 @@
   $('camera-zoom').oninput=function(){if(viewer)viewer.setZoom(.1*Math.pow(1000,Number(this.value)/1000));}; // ×0.1 … ×100, ×1 at a third
   $('unpin').onclick=function(){if(!viewer)return;viewer.unpin();viewer.resetPose();};
   function recordedButton(){if(viewer)$('unpin').hidden=!(viewer.pinned||Math.abs(viewer.turretAngle)>=.1||Math.abs(viewer.gunAngle)>=.1);}
-  if(viewer)viewer.onPin=function(on){$('shot-source').textContent=on?'Pinned point':'Hit line';recordedButton();$('total-chance').textContent=on?'—':$('total-chance').textContent;shotStats();};
+  if(viewer)viewer.onPin=function(on){$('shot-source').textContent=on?'Pinned point':activeHit&&activeHit.synthetic?'No recorded shot':'Hit line';recordedButton();$('total-chance').textContent=on?'—':$('total-chance').textContent;shotStats();};
   $('auto-frame').onchange=function(){if(viewer)viewer.setAutoFrame(this.checked);};
   $('track-opacity').oninput=function(){if(viewer)viewer.setTrackOpacity(Number(this.value)/100);};
   $('camera-zoom-field').onchange=function(){if(viewer)viewer.setZoom(Number(this.value));};
+  $('pivot-height').oninput=function(){if(viewer){var r=viewer.heightRange();viewer.setPivotHeight(r[0]+Number(this.value)/100);}};
+  $('pivot-height-field').onchange=function(){if(viewer)viewer.setPivotHeight(Number(this.value));};
   $('heatmap-quality').onchange=host.guard('Detail',function(){if(host.game&&this.value==='high'){this.value=viewer?viewer.quality:'auto';return;}if(viewer)viewer.setQuality(this.value);});
   // One line under the scene: the explored pose (when it differs) and the gun's vertical limits at the current turret angle.
   function poseChanged(){if(!viewer)return;var off=!(Math.abs(viewer.turretAngle)<.1&&Math.abs(viewer.gunAngle)<.1),sign=function(v){return (v>0?'+':'')+Math.round(v)+'°';},g=viewer.gunRange();$('turret-notice').hidden=!off;if(off)$('turret-notice').textContent='Turret '+sign(viewer.turretAngle)+', gun '+sign(viewer.gunAngle)+' from the recorded pose (hit marks hidden)';$('gun-limits').textContent=g.known?'Gun '+sign(g.min)+' … '+sign(g.max)+' at this turret angle':'Gun limits not recorded';recordedButton();staleEstimate();shotStats();}
@@ -203,6 +241,15 @@
   if(viewer)viewer.onTurret=poseChanged;
   if(viewer)viewer.onGun=poseChanged;
   $('fit-camera').onclick=function(){if(viewer)viewer.fit();};
+  // The shooter tile swaps the roles; on a swapped view it goes back to the recorded hit. The list
+  // selection stays on the recorded hit either way - the swap is a view of it, not another hit.
+  $('shooter-tile').onclick=function(){
+    if(swapped)return void selectHit(swapped.base).catch(function(){});
+    var hit=activeHit;if(!hit||hit.synthetic||!swapReady(hit)||!current)return;
+    var synthetic=swapHit(hit),token=++generation;message('Preparing the model\u2026');if(viewer)viewer.clear();
+    ArmorInspectorData.sceneFor(current,synthetic).then(function(data){if(token!==generation)return;display(data,false);})
+      .catch(function(e){if(token===generation){message(e.message);warnings([e.message]);}});
+  };
   if(viewer)viewer.onAim=function(text){analysisKey=null;$('spread-result').textContent=text;};
   $('reset-aim').onclick=function(){if(viewer){viewer.spreadAim=null;staleEstimate();}};
   $('spread-radius').oninput=staleEstimate;

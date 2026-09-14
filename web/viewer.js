@@ -1,7 +1,7 @@
 /* Local WebGL scene. Game transforms are serialized by basis vectors, column-major. */
 (function () {
   'use strict';
-  var DISTANCE_MIN=5,DISTANCE_MAX=1000; // metres: no map is wider than ~1 km; closer than 5 m the camera sits inside the hull
+  var DISTANCE_MIN=3,DISTANCE_MAX=1000; // metres: no map is wider than ~1 km; closer than 5 m the camera sits inside the hull
   function linear(color){return color.map(function(c){return c<=.04045?c/12.92:Math.pow((c+.055)/1.055,2.4);});}
   var baseColors=[[.38,.46,.54],[.65,.73,.8],[.75,.83,.87],[.55,.65,.72]].map(linear);
   function externalLayer(t){return t.part===0||!!(t.armor&&Number.isFinite(t.armor.vehicleDamageFactor)&&t.armor.vehicleDamageFactor<=1e-5);}
@@ -17,18 +17,18 @@
     this.grid = new T.GridHelper(24, 24, 0x4a5d6f, 0x263746); this.scene.add(this.grid);
     this.root = new T.Group(); this.scene.add(this.root);
     this.target = new T.Vector3(0, 1, 0); this.yaw = 0.7; this.pitch = 0.27; this.distance = 50;
-    this.defaults={distance:50,scale:.85};this.pivot='vehicle';this.pinned=null;this.pinGroup=null;this.pinReticles=[];this.centre=null;this.pan=new T.Vector2();this.frameCenter=new T.Vector2();this.fitZoom=1;
+    this.defaults={distance:50,scale:.85};this.pivot='vehicle';this.pivotHeight=null;this.pinned=null;this.pinGroup=null;this.pinReticles=[];this.centre=null;this.pan=new T.Vector2();this.frameCenter=new T.Vector2();this.fitZoom=1;
     try{var saved=JSON.parse(window.localStorage.getItem('armor-camera-defaults'));if(saved&&saved.distance>=1&&saved.distance<=1500&&saved.scale>=.1&&saved.scale<=10)this.defaults=saved;}catch(ignore){}
     this.materials = []; this.point = null; this.travel = null;
     this.shell=null;this.heatmap=true;this.palette='classic';this.paintTimer=null;this.paintMesh=null;this.samples=[];this.engine=null;
-    this.frameId=null;this.fitPending=false;this.recordedDistance=null;this.estimateAim=null;this.paintedKey=null;
+    this.frameId=null;this.fitPending=false;this.recordedDistance=null;this.estimateAim=null;this.paintedKey=null;this.distanceSet=false;
     this.quality='auto';this.turretAngle=0;this.turretTimer=null;this.turretPending=false;
     this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.trackOpacity=.4;this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.gunAngle=0;this.autoFrame=false;this.frameScale=this.defaults.scale;this.outline=null;this.outlineDepth=null;this.outlineStyle={brightness:.8,opacity:.6};this.showOutline=false;
     var drag = null;
     container.addEventListener('contextmenu', function(e) { e.preventDefault(); });
-    container.addEventListener('pointerdown', function(e) { if(e.button===2){drag={pan:true,x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY,moved:false};try{container.setPointerCapture(e.pointerId);}catch(ignore){}return;}if(e.button!==0)return;if(e.altKey){self.aimAt(e);return;}drag={x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY,moved:false,part:self.pickPart(e)}; try{container.setPointerCapture(e.pointerId);}catch(ignore){} container.focus(); });
+    container.addEventListener('pointerdown', function(e) { /* The scene tiles are controls of their own: capturing the pointer here would retarget the click to #viewport and the shooter tile would never fire. */ if(e.target&&e.target.closest&&e.target.closest('.viewport-tile'))return; /* pan: right button, or Ctrl + left button (the in-game browser swallows the right button) */ if(e.button===2||(e.button===0&&e.ctrlKey)){drag={pan:true,x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY,moved:false};try{container.setPointerCapture(e.pointerId);}catch(ignore){}return;}if(e.button!==0)return;if(e.altKey){self.aimAt(e);return;}drag={x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY,moved:false,part:self.pickPart(e)}; try{container.setPointerCapture(e.pointerId);}catch(ignore){} container.focus(); });
     container.addEventListener('pointermove', function(e) { if (!drag){self.inspect(e);return;}if(Math.abs(e.clientX-drag.sx)+Math.abs(e.clientY-drag.sy)>3)drag.moved=true;if(!drag.moved)return;if(drag.pan){self.panBy(e.clientX-drag.x,e.clientY-drag.y);drag.x=e.clientX;drag.y=e.clientY;return;}if(drag.part===2||drag.part===3){/* turret and gun are one module: left/right turns the turret, up/down moves the gun */var dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(dx)self.setTurret(self.turretAngle-dx*.5);if(dy)self.setGun(self.gunAngle+dy*.16);}else{self.yaw -= (e.clientX-drag.x)*0.008; self.pitch = Math.max(-1.35,Math.min(1.35,self.pitch+(e.clientY-drag.y)*0.008));self.render();}drag.x=e.clientX;drag.y=e.clientY; });
-    container.addEventListener('pointerup', function(e) { var d=drag;drag=null;if(d&&!d.moved&&!e.altKey&&e.button===0)self.pinAt(e); });
+    container.addEventListener('pointerup', function(e) { var d=drag;drag=null;if(d&&!d.moved&&!e.altKey&&!e.ctrlKey&&e.button===0)self.pinAt(e); });
     container.addEventListener('pointercancel', function() { drag=null; });
     container.addEventListener('wheel', function(e) {e.preventDefault();var delta=e.deltaY||e.deltaX,amount=Math.max(-200,Math.min(200,delta*(e.deltaMode===1?16:e.deltaMode===2?300:1)));if(!(e.shiftKey||e.ctrlKey||e.altKey))self.setDistance(self.distance*Math.exp(amount*.002));else if(self.autoFrame)self.setScale(self.frameScale*Math.exp(-amount*.002));else self.setZoom(self.camera.zoom*Math.exp(-amount*.002));}, {passive:false});
     container.addEventListener('keydown',function(e){var used=true;if(e.key==='ArrowLeft')self.yaw-=.1;else if(e.key==='ArrowRight')self.yaw+=.1;else if(e.key==='ArrowUp')self.pitch=Math.min(1.35,self.pitch+.1);else if(e.key==='ArrowDown')self.pitch=Math.max(-1.35,self.pitch-.1);else if(e.key==='+'||e.key==='='){if(e.shiftKey)self.setZoom(self.camera.zoom*1.1);else self.setDistance(Math.max(1,self.distance/1.1));}else if(e.key==='-'){if(e.shiftKey)self.setZoom(self.camera.zoom/1.1);else self.setDistance(Math.min(1500,self.distance*1.1));}else used=false;if(used){e.preventDefault();self.render();}});
@@ -140,7 +140,7 @@
     this.loadedData=data;this.posedData=null;this.turretAngle=0;this.gunAngle=0;this.rebuild();if(this.onTurret)this.onTurret({angle:0,min:-180,max:180});
     this.root.updateMatrixWorld(true);
     var box=new T.Box3().setFromObject(this.root);this.bounds=box.isEmpty()?null:box;this.centre=this.vehicleCentre();
-    (hit.points||[]).forEach(function(p){if(p.status!=='resolved'||!transforms[p.part]||!p.position||!p.direction)return;var pos=new T.Vector3().fromArray(p.position).applyMatrix4(transforms[p.part]);pos.z*=-1;var direction=new T.Vector3().fromArray(p.direction).transformDirection(transforms[p.part]);direction.z*=-1;var color=0x79cfff;self.addReticle(pos);var arrow=new T.ArrowHelper(direction,pos.clone().addScaledVector(direction,-2.3),2.3,color,.06,.018);arrow.line.material.depthTest=false;arrow.cone.material.depthTest=false;arrow.line.material.depthWrite=false;arrow.cone.material.depthWrite=false;arrow.line.material.transparent=true;arrow.cone.material.transparent=true;arrow.line.renderOrder=4;arrow.cone.renderOrder=4;arrow.line.frustumCulled=false;arrow.cone.frustumCulled=false;self.root.add(arrow);if(!self.point){self.point=pos.clone();self.travel=direction.clone();}});
+    (hit.points||[]).forEach(function(p){if(p.status!=='resolved'||!transforms[p.part]||!p.position||!p.direction)return;var pos=new T.Vector3().fromArray(p.position).applyMatrix4(transforms[p.part]);pos.z*=-1;var direction=new T.Vector3().fromArray(p.direction).transformDirection(transforms[p.part]);direction.z*=-1;self.addReticle(pos);self.root.add(self.shotArrow(direction,pos,0xa8dfff));if(!self.point){self.point=pos.clone();self.travel=direction.clone();}});
     if(this.bounds)this.grid.position.y=this.bounds.min.y-.025;if(this.point)this.focus();else this.reset();if(this.onGun)this.onGun({angle:0,known:this.gunRange().known});return !!this.bounds;
   };
   Viewer.prototype.addReticle=function(position){
@@ -174,9 +174,10 @@
   // armour (materials with vehicleDamageFactor > 0: hull, turret, an oscillating turret's upper half) and everything
   // (tracks, gun barrel, screens, surveying devices). The main box gets the FIT_MARGIN; the whole model merely has to
   // stay on screen — a barrel or a screen that already pushed the zoom out earns no extra margin. The top
-  // FIT_TOP_BAND of the viewport is kept free for the "Under the cursor" panel. A clinch record (5 m) first backs
-  // off along the view line to twice the model's radius about the orbit centre.
-  var FIT_TOP_BAND=.2,FIT_MARGIN=.08;
+  // FIT_TOP_BAND of the viewport is kept free for the "Under the cursor" panel and the model tile, FIT_BOTTOM_BAND
+  // at the foot for the shooter tile. A clinch record (5 m) first backs off along the view line to twice the
+  // model's radius about the orbit centre.
+  var FIT_TOP_BAND=.2,FIT_BOTTOM_BAND=.12,FIT_MARGIN=.08;
   Viewer.prototype.fit=function(){
     var tris=(this.engine||{}).triangles||[];if(!tris.length)return;var cam=this.camera,v=new THREE.Vector3(),local=new THREE.Vector3(),radius=0,i,k,t;
     for(i=0;i<tris.length;i++){t=tris[i];for(k=0;k<3;k++)radius=Math.max(radius,v.fromArray(k===0?t.a:k===1?t.b:t.c).distanceTo(this.target));}
@@ -187,17 +188,26 @@
     for(i=0;i<tris.length;i++){t=tris[i];var isMain=!!(t.armor&&t.armor.vehicleDamageFactor>0);
       for(k=0;k<3;k++){v.fromArray(k===0?t.a:k===1?t.b:t.c);local.copy(v).applyMatrix4(cam.matrixWorldInverse);if(local.z>-.5)continue;v.project(cam);grow(all,v.x,v.y);if(isMain)grow(main,v.x,v.y);}}
     if(all[0]===Infinity)return;if(main[0]===Infinity)main=all;
-    // Largest zoom at which a box (centred on the orbit centre) stays inside the usable area with the given margin.
-    var top=1-2*FIT_TOP_BAND;
-    function limit(box,margin){var z=150,w=Math.max(-box[0],box[1]);if(w>0)z=Math.min(z,(1-margin)/w);if(box[2]<0)z=Math.min(z,(1-margin)/-box[2]);if(box[3]>0)z=Math.min(z,(top-margin)/box[3]);return z;}
+    // Horizontally the orbit centre stays on the screen's vertical axis. Vertically the view is shifted so that the
+    // middle of the main armour's height sits mid-way in the usable band (user, 13.09): the orbit centre then lands
+    // above or below the screen centre by however much it is above or below the vehicle's middle, and the tank sits
+    // between the tiles whatever height the centre was given. The shift is a lens shift (frameCenter) in zoom-1 NDC.
+    var top=1-2*FIT_TOP_BAND,bottom=1-2*FIT_BOTTOM_BAND,centreY=(top-bottom)/2,halfUsable=(top+bottom)/2,midY=(main[2]+main[3])/2;
+    // Largest zoom at which a box stays inside the usable area with the given margin, measured from the pivot axis
+    // horizontally and from the main armour's middle vertically.
+    function limit(box,margin){var z=150,w=Math.max(-box[0],box[1]),h=Math.max(midY-box[2],box[3]-midY);if(w>0)z=Math.min(z,(1-margin)/w);if(h>0)z=Math.min(z,(halfUsable-margin)/h);return z;}
     var zoom=Math.max(.1,Math.min(150,Math.min(limit(main,FIT_MARGIN),limit(all,0))));
+    this.frameCenter.set(0,midY-centreY/zoom);
     var f=this.framing();this.frameScale=zoom/Math.max(.1,f?f.zoom:1);this.setZoom(zoom);
   };
   // Switching auto-frame on holds the size that is on screen right now: the scale is taken from a fresh framing.
   Viewer.prototype.setAutoFrame=function(value){this.autoFrame=!!value;if(this.autoFrame){var f=this.framing();if(f)this.frameScale=this.camera.zoom/Math.max(.1,f.zoom);}this.render();};
   Viewer.prototype.setScale=function(value){this.frameScale=Math.max(.1,Math.min(10,value));if(this.autoFrame)this.render();else this.setZoom(this.fitZoom*this.frameScale);};
   Viewer.prototype.setTrackOpacity=function(value){this.trackOpacity=Math.max(.05,Math.min(.85,value));this.updateTrackAppearance();this.draw();};
-  Viewer.prototype.reset=function(){this.pan.set(0,0);this.frameCenter.set(0,0);if(this.bounds){this.target.copy(this.pivotCentre());this.grid.position.y=this.bounds.min.y-.025;}this.distance=this.defaults.distance;this.yaw=.65;this.pitch=.25;this.fitPending=true;this.render();};
+  // Reset is the path for a hit without a point on the model (the shooter/model swap: an inspector
+  // without a shot). A distance a loaded hit already chose is kept - jumping back to the default
+  // distance on a swap would move the camera for no reason; only the first load starts from it.
+  Viewer.prototype.reset=function(){this.pan.set(0,0);this.frameCenter.set(0,0);if(this.bounds){this.target.copy(this.pivotCentre());this.grid.position.y=this.bounds.min.y-.025;}if(!this.distanceSet)this.distance=this.defaults.distance;this.yaw=.65;this.pitch=.25;this.fitPending=true;this.render();};
   // Orbit centre: over the hull's own box (the whole-model box includes the barrel and drifts to the bow),
   // at turret height — in a clinch the camera sits turret to turret, so approaching should tend there.
   Viewer.prototype.vehicleCentre=function(){var hull=new THREE.Box3(),turret=new THREE.Box3(),v=new THREE.Vector3();
@@ -208,21 +218,29 @@
   Viewer.prototype.panBy=function(dx,dy){var mpp=2*this.distance*Math.tan(this.camera.fov*Math.PI/360)/(Math.max(1,this.container.clientHeight)*this.camera.zoom);this.pan.x-=dx*mpp;this.pan.y+=dy*mpp;this.render();};
   // Vehicle orbit centre: hull centre in plan, at the shooter's gun height when the record has it (a clinch on flat
   // ground looks the way it does in the game), otherwise at turret height.
-  Viewer.prototype.pivotCentre=function(){var c=(this.centre||(this.bounds?this.bounds.getCenter(new THREE.Vector3()):new THREE.Vector3())).clone(),a=this.loadedData&&this.loadedData.hit.attacker;if(a&&a.gunHeight>0&&this.bounds)c.y=this.bounds.min.y+a.gunHeight;return c;};
+  // Orbit-centre height: the shooter's gun axis above the ground (the model's y=0 is the chassis origin), when the
+  // record carries the ground-based figure; older records (gun height without the hull's height on the chassis,
+  // about a metre too low) fall back to the turret centre until the exporter has recomputed them.
+  Viewer.prototype.pivotCentre=function(){var c=(this.centre||(this.bounds?this.bounds.getCenter(new THREE.Vector3()):new THREE.Vector3())).clone(),a=this.loadedData&&this.loadedData.hit.attacker;if(a&&a.gunHeightFrom==='ground'&&a.gunHeight>0)c.y=a.gunHeight;return c;};
   // Orbit centre. Switching it turns the view instead of moving the camera: the camera keeps its place (on the
   // shell's axis after focus) and only looks at the new centre. Clicking the active centre again returns to the
   // shooter's viewpoint.
-  Viewer.prototype.setPivot=function(mode){var next=mode==='hit'&&this.point?'hit':'vehicle';
+  Viewer.prototype.setPivot=function(mode){var next=mode==='hit'&&this.point?'hit':'vehicle';this.pivotHeight=null;
     if(next===this.pivot){if(this.point)this.focus();else{this.pan.set(0,0);this.frameCenter.set(0,0);this.render();}return;}
     var eye=this.camera.position.clone();this.pivot=next;this.pan.set(0,0);this.frameCenter.set(0,0);this.target.copy(next==='hit'?this.point:this.pivotCentre());this.lookFrom(eye);this.render();};
   // Place the camera at a world point without moving it: yaw, pitch and distance are read off the vector to the target.
+  // Orbit-centre height set by hand (the Height slider): the centre moves straight up or down within the model's
+  // height and the camera follows it, so the view slides along the vehicle — a pan for the in-game browser, where
+  // the right button is unavailable. Cleared whenever the centre is chosen anew.
+  Viewer.prototype.heightRange=function(){var b=this.bounds;return b?[b.min.y,b.max.y]:[0,4];};
+  Viewer.prototype.setPivotHeight=function(y){if(!Number.isFinite(y))return;var r=this.heightRange();this.pivotHeight=Math.max(r[0],Math.min(r[1],y));this.target.y=this.pivotHeight;this.render();};
   Viewer.prototype.lookFrom=function(eye){var v=eye.clone().sub(this.target),len=v.length();if(len<1e-6)return;v.divideScalar(len);this.yaw=Math.atan2(v.x,v.z);this.pitch=Math.asin(Math.max(-1,Math.min(1,v.y)));this.distance=Math.max(DISTANCE_MIN,Math.min(DISTANCE_MAX,len));};
   // The recorded view: the camera stands on the shell's axis at the recorded range — where the shooter was — and
   // looks at the orbit centre. With the hit point as centre that is exactly the shell's line of flight; with the
   // vehicle centre the camera still stands on the axis and merely turns towards the hull (no parallel shift).
-  Viewer.prototype.focus=function(){if(!this.point)return;this.pan.set(0,0);this.frameCenter.set(0,0);
+  Viewer.prototype.focus=function(){if(!this.point)return;this.pan.set(0,0);this.frameCenter.set(0,0);this.pivotHeight=null;
     var dir=this.travel.clone().negate().normalize(),range=Math.max(DISTANCE_MIN,Math.min(DISTANCE_MAX,this.recordedDistance||this.defaults.distance));
-    var eye=this.point.clone().addScaledVector(dir,range);this.target.copy(this.pivot==='vehicle'?this.pivotCentre():this.point);this.lookFrom(eye);this.fitPending=true;this.render();};
+    var eye=this.point.clone().addScaledVector(dir,range);this.target.copy(this.pivot==='vehicle'?this.pivotCentre():this.point);this.lookFrom(eye);this.distanceSet=true;this.fitPending=true;this.render();};
   Viewer.prototype.configure=function(shell,heatmap,palette){this.shell=shell;this.heatmap=heatmap;this.palette=palette;if(this.pinned)this.refreshPin();this.updateTrackAppearance();this.render();};
   // A pinned point replaces the recorded hit line as the analysed shot until unpinned. It is drawn like a
   // recorded shot: an arrow along the line, a reticle at the point, and a dashed leg where a ricochet goes.
@@ -232,9 +250,14 @@
     this.pinned={origin:caster.ray.origin.clone(),direction:caster.ray.direction.clone(),point:hit.point.clone(),normal:normal};
     this.refreshPin();if(this.onPin)this.onPin(true);
   };
+  // Tracer: a 2.3 m arrow ending at the hit point. A WebGL line is always one pixel wide, so the line is backed by a
+  // thin cylinder (6 mm radius: a pixel or two at a Fit zoom, a visible dot end-on) — the user could barely find the
+  // one-pixel tracer when looking along it. Brighter than the reticle, which is a large thin cross and reads fine.
   Viewer.prototype.shotArrow=function(direction,tip,color){
-    var arrow=new THREE.ArrowHelper(direction,tip.clone().addScaledVector(direction,-2.3),2.3,color,.12,.045);
-    [arrow.line.material,arrow.cone.material].forEach(function(m){m.depthTest=false;m.depthWrite=false;m.transparent=true;});arrow.line.renderOrder=4;arrow.cone.renderOrder=4;arrow.line.frustumCulled=false;arrow.cone.frustumCulled=false;return arrow;
+    var length=2.3,head=.12,arrow=new THREE.ArrowHelper(direction,tip.clone().addScaledVector(direction,-length),length,color,head,.045);
+    var body=new THREE.Mesh(new THREE.CylinderGeometry(.006,.006,length-head,8),new THREE.MeshBasicMaterial({color:color,transparent:true,opacity:.9,depthTest:false,depthWrite:false}));
+    body.position.set(0,(length-head)/2,0);body.renderOrder=4;body.frustumCulled=false;arrow.add(body);
+    [arrow.line.material,arrow.cone.material].forEach(function(m){m.depthTest=false;m.depthWrite=false;m.transparent=true;m.opacity=1;});arrow.line.renderOrder=4;arrow.cone.renderOrder=4;arrow.line.frustumCulled=false;arrow.cone.frustumCulled=false;return arrow;
   };
   Viewer.prototype.refreshPin=function(){
     var self=this,p=this.pinned;
@@ -247,7 +270,7 @@
     var hits=caster.intersectObjects(objects),contact=hits.length?hits[0].point.clone():null;
     var result=this.shell&&this.engine?this.engine.ray(p.origin.toArray(),p.direction.toArray(),this.shell):null;
     var group=new THREE.Group(),tip=contact||(result&&result.bounce?new THREE.Vector3().fromArray(result.bounce.point):p.point);
-    group.add(this.shotArrow(p.direction,tip,0x8fd3ff));
+    group.add(this.shotArrow(p.direction,tip,0x9fdcff));
     if(result&&result.bounce){
       // The flight after the ricochet: dashed leg to the second contact (or 2.3 m into the air) and its own reticle.
       var b=result.bounce,start=new THREE.Vector3().fromArray(b.point),out=new THREE.Vector3().fromArray(b.direction),end=start.clone().addScaledVector(out,result.distance!==undefined?result.distance:2.3);

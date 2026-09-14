@@ -20,7 +20,7 @@ from .geometry import extract
 from .armor import ArmorCatalog
 
 LOG = logging.getLogger('local.armor_inspector')
-VERSION = '0.6.33'
+VERSION = '0.6.34'
 KEEP_BATTLES = 5
 RESOURCE = re.compile(r'^vehicles/[A-Za-z0-9_/-]+\.(?:model|havok)\Z')
 IDENTIFIER = re.compile(r'^[-a-zA-Z0-9_]{1,100}\Z')
@@ -132,6 +132,7 @@ def enrich_vehicle(vehicle):
             vehicle['nation'] = str(type_name.split(':')[0])
         except Exception:
             pass
+    fix_gun_height(vehicle)
     if all(vehicle.get(key) is not None for key in ('level', 'class', 'role')):
         return
     try:
@@ -161,6 +162,103 @@ def enrich_vehicle(vehicle):
                 vehicle['role'] = str(label)
         except Exception:
             pass
+
+
+def fix_gun_height(vehicle):
+    """Recompute 'gunHeight' from the ground for records made before 0.6.34.
+
+    Those records summed the turret and gun positions but not the hull's height
+    on the chassis, so the orbit centre sat about a metre too low. The compact
+    descriptor of the shooter is recorded, so the exact mounted turret and gun
+    are known. Guarded like everything else here.
+    """
+    if vehicle.get('gunHeightFrom') == 'ground' or not vehicle.get('compactDescriptor'):
+        return
+    try:
+        descr = vehicle_descr(vehicle['compactDescriptor'])
+        vehicle['gunHeight'] = float((descr.chassis.hullPosition + descr.hull.turretPositions[0] + descr.turret.gunPosition).y)
+        vehicle['gunHeightFrom'] = 'ground'
+    except Exception:
+        pass
+
+
+PARTS = ('chassis', 'hull', 'turret', 'gun')
+
+
+def translation_columns(offset):
+    """The column-major layout the recorder's matrix_columns writes, without rotation.
+
+    Three axis columns, each with a trailing 0.0, then the offset with a trailing 1.0.
+    """
+    return [1.0, 0.0, 0.0, 0.0,
+            0.0, 1.0, 0.0, 0.0,
+            0.0, 0.0, 1.0, 0.0,
+            float(offset[0]), float(offset[1]), float(offset[2]), 1.0]
+
+
+def vehicle_descr(compact_descriptor):
+    """The client's own VehicleDescr for a recorded base64 compact descriptor.
+
+    Publishing runs inside the game (the exporter is imported by the mod), so
+    items.vehicles is available; outside it this raises, and every caller is guarded.
+    """
+    import base64
+    from items import vehicles
+    return vehicles.VehicleDescr(compactDescr=base64.b64decode(compact_descriptor))
+
+
+def parts_from_descr(descr, armor_source='client descriptor rebuilt from the record'):
+    """A vehicle descriptor in, its four collision parts out - no battle record involved.
+
+    The parts are placed in the rest pose in the chassis frame, the way the client
+    itself stacks them (vehicles.py VehicleDescr.__updateAttributes) and the way the
+    recorder now writes the shooter's parts: chassis at the origin, hull at
+    chassis.hullPosition, turret at hull.turretPositions[0] above it, gun at
+    turret.gunPosition above that, no rotation.
+
+    Kept as a function of a descriptor alone on purpose: the planned vehicle browser
+    (any vehicle of the client, picked by tier / nation / class / role) needs parts for
+    a descriptor that never took part in a battle, and this is the whole of what it
+    needs. Failures are per part, like the recorder's.
+    """
+    from .armor import live_materials
+    hull = descr.chassis.hullPosition
+    turret = hull + descr.hull.turretPositions[0]
+    gun = turret + descr.turret.gunPosition
+    offsets = ((0.0, 0.0, 0.0), hull, turret, gun)
+    parts = []
+    for idx, name in enumerate(PARTS):
+        component = getattr(descr, name, None)
+        part = {'id':idx, 'name':name}
+        try:
+            part['armor'] = live_materials(component)
+            part['armorSource'] = armor_source
+        except Exception:
+            pass
+        try:
+            part['resource'] = component.hitTesterManager.activeHitTester.bspModelName
+            part['transform'] = translation_columns(offsets[idx])
+        except Exception:
+            part['error'] = 'Part model or transform unavailable'
+        parts.append(part)
+    return parts
+
+
+def synthesize_parts(vehicle):
+    """Add the collision parts of a shooter recorded before 0.6.34.
+
+    Only targets had parts then: nothing of the attacker was needed beyond his name
+    and gun. His compact descriptor is recorded, so the exact mounted chassis, hull,
+    turret and gun are known. Guarded like everything else here: an old record whose
+    parts cannot be rebuilt simply keeps none, and the viewer leaves the swap disabled.
+    """
+    if not isinstance(vehicle, dict) or vehicle.get('parts') or not vehicle.get('compactDescriptor'):
+        return
+    try:
+        vehicle['parts'] = parts_from_descr(vehicle_descr(vehicle['compactDescriptor']))
+        vehicle['partsFrom'] = 'rest pose'
+    except Exception:
+        LOG.exception('Shooter collision parts could not be rebuilt; the hit is published as recorded')
 
 
 class Exporter(object):
@@ -235,6 +333,67 @@ class Exporter(object):
             LOG.warning('Model export unavailable: %s: %s', resource, exc)
         return key, self.attempts[key]
 
+    def publish_parts(self, result, hit, side):
+        """Collision models and armour tables for one side's parts.
+
+        The same work for the hit's target and for its shooter: the model is
+        extracted from the client packages once per resource, the armour table is
+        cached per client version, vehicle and resource - so the cache identity has
+        to follow the vehicle whose parts these are, not always the target.
+        """
+        vehicle = hit.get(side) or {}
+        for part in vehicle.get('parts', []):
+            try:
+                key, error = self.model(part['resource'], result['clientVersion'])
+                part['modelKey'] = key
+                if error: part['modelError'] = error
+            except Exception as exc: part['modelError'] = str(exc)
+            if 'armor' not in part:
+                try:
+                    identity = '\n'.join((canonical(result['clientVersion']), vehicle['type'],
+                        vehicle.get('compactDescriptor', ''), part['resource']))
+                    key = hashlib.sha256(identity.encode('utf-8')).hexdigest()
+                    cache = os.path.join(self.folder, 'data', 'armor', key+'.json')
+                    if os.path.isfile(cache):
+                        with open(cache, 'rb') as stream: part['armor'] = json.loads(stream.read(1024*1024).decode('ascii'))
+                    else:
+                        if canonical(result['clientVersion']) != self.version:
+                            raise ValueError('Armor metadata was not saved for the old client version')
+                        part['armor'] = self.armor.materials(vehicle['type'], part['resource'])
+                        atomic_write(cache, json.dumps(part['armor'], ensure_ascii=True, allow_nan=False).encode('ascii'))
+                    part['armorSource'] = 'version-matched client XML (cached)'
+                except Exception as exc:
+                    part['armorError'] = str(exc)
+                    # A separate, visibly labelled comparison is allowed only
+                    # when today's mesh is byte-identical to the saved mesh.
+                    if canonical(result['clientVersion']) != self.version and not part.get('modelError'):
+                        try:
+                            if self.packages is None: self._index_resources()
+                            havok = part['resource'].rsplit('.', 1)[0]+'.havok'
+                            if havok in self.overrides or part['resource'] in self.overrides:
+                                raise ValueError('Current collision model is overridden')
+                            for override_root in glob.glob(os.path.join(self.game, 'res_mods', '*')):
+                                if any(os.path.isfile(os.path.join(override_root, r)) for r in (havok, part['resource'])):
+                                    raise ValueError('Current collision model is overridden')
+                            current_key, error = self.model(part['resource'], self.version)
+                            if error: raise ValueError(error)
+                            meshes = []
+                            for model_id in (part['modelKey'], current_key):
+                                with open(os.path.join(self.folder, 'data', 'models', model_id+'.js'), 'rb') as stream:
+                                    payload = stream.read(32*1024*1024).decode('ascii')
+                                meshes.append(json.loads(payload[len('ArmorInspectorData.receive('):-3])[1])
+                            if meshes[0]['sha256'] != meshes[1]['sha256']:
+                                raise ValueError('Current geometry differs from this battle')
+                            with zipfile.ZipFile(self.packages[havok]) as resource_zip:
+                                if resource_zip.getinfo(havok).file_size > 32*1024*1024: raise ValueError('Model too large')
+                                current_hash = hashlib.sha256(resource_zip.read(havok)).hexdigest()
+                            if current_hash != meshes[0]['sha256']:
+                                raise ValueError('Current geometry differs from the cached mesh')
+                            part['comparisonArmor'] = self.armor.materials(vehicle['type'], part['resource'])
+                            match = re.search(r'<version>\s*(.*?)\s*</version>', self.version)
+                            part['comparisonVersion'] = match.group(1) if match else 'current client'
+                        except Exception as comparison_error: part['comparisonError'] = str(comparison_error)
+
     def publish(self, battle):
         if not IDENTIFIER.match(battle['id']): raise ValueError('Invalid battle id')
         result = copy.deepcopy(battle)
@@ -244,60 +403,15 @@ class Exporter(object):
                     enrich_vehicle(hit.get(side))
                 except Exception:
                     LOG.exception('Vehicle identity unavailable; the hit is published as recorded')
-            for part in hit.get('target', {}).get('parts', []):
-                try:
-                    key, error = self.model(part['resource'], result['clientVersion'])
-                    part['modelKey'] = key
-                    if error: part['modelError'] = error
-                except Exception as exc: part['modelError'] = str(exc)
-                if 'armor' not in part:
-                    try:
-                        identity = '\n'.join((canonical(result['clientVersion']), hit['target']['type'],
-                            hit['target'].get('compactDescriptor', ''), part['resource']))
-                        key = hashlib.sha256(identity.encode('utf-8')).hexdigest()
-                        cache = os.path.join(self.folder, 'data', 'armor', key+'.json')
-                        if os.path.isfile(cache):
-                            with open(cache, 'rb') as stream: part['armor'] = json.loads(stream.read(1024*1024).decode('ascii'))
-                        else:
-                            if canonical(result['clientVersion']) != self.version:
-                                raise ValueError('Armor metadata was not saved for the old client version')
-                            part['armor'] = self.armor.materials(hit['target']['type'], part['resource'])
-                            atomic_write(cache, json.dumps(part['armor'], ensure_ascii=True, allow_nan=False).encode('ascii'))
-                        part['armorSource'] = 'version-matched client XML (cached)'
-                    except Exception as exc:
-                        part['armorError'] = str(exc)
-                        # A separate, visibly labelled comparison is allowed only
-                        # when today's mesh is byte-identical to the saved mesh.
-                        if canonical(result['clientVersion']) != self.version and not part.get('modelError'):
-                            try:
-                                if self.packages is None: self._index_resources()
-                                havok = part['resource'].rsplit('.', 1)[0]+'.havok'
-                                if havok in self.overrides or part['resource'] in self.overrides:
-                                    raise ValueError('Current collision model is overridden')
-                                for override_root in glob.glob(os.path.join(self.game, 'res_mods', '*')):
-                                    if any(os.path.isfile(os.path.join(override_root, r)) for r in (havok, part['resource'])):
-                                        raise ValueError('Current collision model is overridden')
-                                current_key, error = self.model(part['resource'], self.version)
-                                if error: raise ValueError(error)
-                                meshes = []
-                                for model_id in (part['modelKey'], current_key):
-                                    with open(os.path.join(self.folder, 'data', 'models', model_id+'.js'), 'rb') as stream:
-                                        payload = stream.read(32*1024*1024).decode('ascii')
-                                    meshes.append(json.loads(payload[len('ArmorInspectorData.receive('):-3])[1])
-                                if meshes[0]['sha256'] != meshes[1]['sha256']:
-                                    raise ValueError('Current geometry differs from this battle')
-                                with zipfile.ZipFile(self.packages[havok]) as resource_zip:
-                                    if resource_zip.getinfo(havok).file_size > 32*1024*1024: raise ValueError('Model too large')
-                                    current_hash = hashlib.sha256(resource_zip.read(havok)).hexdigest()
-                                if current_hash != meshes[0]['sha256']:
-                                    raise ValueError('Current geometry differs from the cached mesh')
-                                part['comparisonArmor'] = self.armor.materials(hit['target']['type'], part['resource'])
-                                match = re.search(r'<version>\s*(.*?)\s*</version>', self.version)
-                                part['comparisonVersion'] = match.group(1) if match else 'current client'
-                            except Exception as comparison_error: part['comparisonError'] = str(comparison_error)
+            # Records written before 0.6.34 carry no parts for the shooter; rebuild them here.
+            synthesize_parts(hit.get('attacker'))
+            for side in ('target', 'attacker'):
+                self.publish_parts(result, hit, side)
         write_data(os.path.join(self.folder, 'data', 'battles', battle['id']+'.js'), 'battle:'+battle['id'], result)
+        # The shooter's models count as referenced too, or prune() would delete them as unused.
         self.model_refs[battle['id']] = set(part['modelKey'] for hit in result['hits']
-                                            for part in hit.get('target', {}).get('parts', []) if part.get('modelKey'))
+                                            for side in ('target', 'attacker')
+                                            for part in (hit.get(side) or {}).get('parts', []) if part.get('modelKey'))
         self.summaries[battle['id']] = dict((k, battle.get(k)) for k in ('id', 'startedAt', 'map'))
         self.summaries[battle['id']]['hits'] = len(battle['hits'])
 
