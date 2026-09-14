@@ -85,6 +85,8 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 #battles-pane[hidden],#vehicles-pane[hidden]{display:none}
 
 /* Filters: rows of toggle pills, multi-select inside a row, nothing pressed = no restriction. */
+/* Informational block: a plain panel, no border (borders mark clickable things). */
+.vehicle-help{margin:6px 0 2px;padding:7px 9px;border-radius:6px;background:rgba(255,255,255,.05);color:var(--muted);font-size:11px;line-height:1.45;}
 .vehicle-filters{display:flex;flex-direction:column;gap:9px;margin:14px 0 2px}
 .vehicle-search{width:100%;background:#0c151f;border:1px solid #35475a;border-radius:5px;color:inherit;padding:6px 10px;min-height:32px;font-size:14px}
 .vehicle-search:focus-visible{outline:2px solid var(--gold);outline-offset:2px}

@@ -4,7 +4,8 @@
   var effects={0:'Penetration without damage',1:'Intermediate ricochet',2:'Ricochet',3:'No penetration',4:'Penetration',5:'Critical hit',6:'Penetration with module damage'};
   var shellNames={ARMOR_PIERCING:'AP',ARMOR_PIERCING_CR:'APCR',HOLLOW_CHARGE:'HEAT',HIGH_EXPLOSIVE:'HE'},candidates=[],activeHit=null,shotContext=null,manualPen='',lastDistance=null,analysisKey=null;
   // web/host.js: game-host flag, breadcrumb-guarded heavy handlers. Absent in isolated tests.
-  var host=window.BullbaHost||{game:false,interrupted:null,guard:function(action,fn){return fn;},done:function(){}};
+  var host=window.BullbaHost||{game:false,interrupted:null,guard:function(action,fn){return fn;},done:function(){},
+    canSend:function(){return false;},send:function(){return Promise.reject(new Error('No channel to the mod'));}};
   function fragment(){return host.params?host.params():{};}
   var aimReasons={'no-tracer':'No own tracer','no-endpoint':'Tracer did not match the hit point','ambiguous':'Several tracers — the link is ambiguous','foreign':'Someone else’s shot','no-snapshot':'Reticle snapshot not recorded','stale':'Reticle snapshot is stale'};
   function staleEstimate(){if(analysisKey!==null){$('spread-result').textContent='Conditions changed. Press “Estimate” again.';analysisKey=null;}if(viewer)viewer.hideSpread();}
@@ -50,9 +51,11 @@
   var FLAG_KEYS=['premium','collector','special','exported'];
   var FLAG_NAMES={premium:'Premium',collector:'Collector',special:'Special',exported:'Exported'};
   var FLAG_TITLES={premium:'Premium vehicles only',collector:'Collector vehicles only',special:'Special (reward) vehicles only',exported:'Only vehicles whose collision model is already exported'};
-  var SOURCE_TAG={hangar:'from the hangar',battle:'from a battle',catalogue:'from the catalogue'};
-  var SOURCE_TEXT={hangar:'the hangar',battle:'a battle',catalogue:'the catalogue'};
+  var SOURCE_TAG={hangar:'from the hangar',battle:'from a battle',catalogue:'from the catalogue',picker:'from this list'};
+  var SOURCE_TEXT={hangar:'the hangar',battle:'a battle',catalogue:'the catalogue',picker:'this list'};
   var NO_VEHICLE_MODEL='No collision model of this vehicle yet. Select it in the hangar, meet it in a battle, or right-click it in the hangar and pick Bullba Hits.';
+  var EXPORT_TIMEOUT='The model did not arrive in 30 s. See game.log.';
+  var VEHICLE_HELP='Models are exported by the mod while the game runs: the vehicle selected in the hangar, every vehicle of a battle you played, or any vehicle via right-click \u2192 Bullba Hits in the hangar. A full export of the whole client can be switched on in settings.json (exportAllVehicles).';
   var sidebarMode='battles',battlesDirty=false;
   var catalogue=null,catalogueStamp=null,catalogueError=null,cataloguePending=false;
   var vehicleFilters={tier:[],nation:[],'class':[],role:[],flag:[],text:''};
@@ -96,7 +99,8 @@
       var mark=node('span',undefined,'vt-class');mark.setAttribute('data-class',c);return {value:c,label:classNames[c],mark:mark};})));
     box.appendChild(filterRow('role','Role',Object.keys(roleNames).map(function(f){
       var mark=node('span',undefined,'vt-role');mark.setAttribute('data-role',f);return {value:f,label:roleNames[f],mark:mark};})));
-    box.appendChild(filterRow('flag','Flags',FLAG_KEYS.map(function(f){return {value:f,label:FLAG_NAMES[f],title:FLAG_TITLES[f]};})));
+    var flags=host.game?FLAG_KEYS:FLAG_KEYS.filter(function(f){return f!=='exported';});
+    box.appendChild(filterRow('flag','Flags',flags.map(function(f){return {value:f,label:FLAG_NAMES[f],title:FLAG_TITLES[f]};})));
   }
   function syncFilters(){
     document.querySelectorAll('#vehicle-filters [data-row]').forEach(function(b){
@@ -120,9 +124,15 @@
   // One DOM node per row, up to about a thousand of them: the list is rebuilt only when the set of rows, the
   // roles or the export marks actually change, so the five-second poll of the catalogue costs nothing.
   function renderVehicles(force){
-    var list=$('vehicles'),all=(catalogue&&catalogue.vehicles)||[],shown=all.filter(vehicleMatches);
+    var list=$('vehicles'),all=(catalogue&&catalogue.vehicles)||[];
+    // In the game the mod is running, so every catalogue row is offered and an unexported one exports on
+    // click. In the browser nothing can be exported, so only the rows that already have a model are listed
+    // and a short note under the count says how models get there.
+    if(!host.game)all=all.filter(function(v){return v.exported;});
+    var shown=all.filter(vehicleMatches);
     var exported=0;shown.forEach(function(v){if(v.exported)exported++;});
-    $('vehicle-count').textContent=catalogue?shown.length+' vehicles \u00b7 '+exported+' with models':(catalogueError||'Reading the vehicle list\u2026');
+    $('vehicle-count').textContent=catalogue?(host.game?shown.length+' vehicles \u00b7 '+exported+' with models':shown.length+' vehicles with models'):(catalogueError||'Reading the vehicle list\u2026');
+    var help=$('vehicle-help');help.textContent=host.game?'':VEHICLE_HELP;help.hidden=host.game;
     var ids=shown.map(function(v){return v.id;}).join(','),marks=shown.map(function(v){return v.exported?'1':'0';}).join('');
     var roles=(modelVehicle?modelVehicle.id:'')+'/'+(shooterVehicle?shooterVehicle.id:'');
     if(!force&&ids===listIds&&roles===listRoles){
@@ -173,9 +183,19 @@
   }
 
   // ---- picking a vehicle -------------------------------------------------
+  // In the game the mod is right here: a row without a model is a request, not a dead end. The export runs
+  // on the mod's own thread, so the page waits for data/vehicles/<id>.js exactly as the '#vehicle=' fragment
+  // does - 'Exporting the model…', a retry every 2 s for up to 30 s.
   function chooseVehicle(v){
-    if(!v.exported)return void message(NO_VEHICLE_MODEL);
-    pickVehicle(v.id,activeRole).catch(function(e){message(e.message);warnings([e.message]);});
+    if(!v.exported&&!host.game)return void message(NO_VEHICLE_MODEL);
+    var waiting=!v.exported,options=waiting?{deadline:Date.now()+30000,waiting:'Exporting the model\u2026'}:{};
+    if(waiting)requestExport(v);
+    pickVehicle(v.id,activeRole,options).catch(function(e){
+      var text=waiting?EXPORT_TIMEOUT:e.message;message(text);warnings([text]);});
+  }
+  function requestExport(v){
+    host.send('bullba_hits',{action:'exportVehicle',vehicleType:String(v.type||'')}).catch(function(e){
+      if(window.console)console.warn('Bullba Hits export request failed: '+e.message);});
   }
   // The export of a vehicle may still be running when the in-game window opens: retry until the deadline.
   function readVehicle(id,deadline){
@@ -326,12 +346,25 @@
     if(c){['normalization','ricochetCos','jetLossPerMeter','randomization','randomizationType','shieldPenetration'].forEach(function(k){if(c[k]!==undefined)shell[k]=c[k];});var fraction=Math.max(0,Math.min(1,(distance-100)/400));if(c.penetration500>0&&c.penetration100>0)shell.penetration=penetration*(1+fraction*(c.penetration500/c.penetration100-1));}
     return shell;
   }
-  var totalTimer=null,totalKey=null,totalEngine=null,totalAim=null;
+  var totalTimer=null,totalKey=null,totalEngine=null,totalAim=null,verdictKey=null,partNames=['chassis','hull','turret','gun'];
+  // Verdict log (user, 14.09): one console line per recorded contact point - the server's result as a fact next to our
+  // estimate along the drawn line. The game writes the page's console into game.log; tools/verdicts_from_log.py
+  // tabulates the lines. Once per hit and shell, never on camera moves.
+  function logVerdicts(shell){
+    if(!viewer||!shell||!activeHit||activeHit.synthetic||!current||!window.console)return;
+    var key=current.id+'/'+activeHit.id+'|'+JSON.stringify(shell);if(key===verdictKey)return;
+    // Before load() the previous hit's points would be logged under the new id: wait for the points of this hit.
+    var verdicts=viewer.pointVerdicts(shell);if(!verdicts.length||viewer.loadedData.hit!==activeHit)return;verdictKey=key;
+    verdicts.forEach(function(v){var r=v.result||{},chance=r.chance;
+      var ours=r.reason==='ricochet'?'ricochet':chance===null||chance===undefined?(r.reason||'none'):(chance>=50?'pen':'no-pen')+'_'+chance+'%';
+      console.info('Bullba Hits verdict: battle='+current.id+' hit='+activeHit.id+' point='+v.index+' part='+(partNames[v.part]||v.part)+' server='+String(effects[v.effect]||v.effect).replace(/ /g,'_')+' ours='+ours+' angle='+(r.angle!=null?Math.round(r.angle):'-')+' eff='+(r.effective!=null?Math.round(r.effective):'-')+' pen='+Math.round(shell.penetration)+' shell='+shell.kind+' dir='+v.source+' chordDev='+(v.chordDev==null?'-':(v.chordDev*180/Math.PI).toFixed(1)));});
+  }
   function shotStats(){
     var choice=$('shell-choice').value,c=choice.indexOf('saved:')===0?candidates[Number(choice.slice(6))]:null;
     var range=viewer?viewer.distance:100;
     var shell=shellAt(c,choice,Number($('penetration').value),Number($('caliber').value),range),r=viewer&&viewer.shotProbability(shell),output=$('shot-chance');
     var pinned=!!(viewer&&viewer.pinned),line=armorLine(r,shell?shell.penetration:null,range);fillPanel('shot',line);
+    logVerdicts(shell);
     output.title=!r?'No parameters or the pose changed':pinned?'Along the pinned line from the current view':'Along the saved line · flight ≈ '+Math.round(range)+' m · nominal penetration '+Math.round(shell.penetration)+' mm';
     var key=JSON.stringify(shell)+'|'+(viewer?viewer.turretAngle+','+viewer.gunAngle:'');
     if(viewer&&(totalKey!==key||totalEngine!==viewer.engine||totalAim!==viewer.savedAim)){
@@ -439,8 +472,14 @@
     var hit=data.hit;swapped=hit.synthetic&&!hit.vehicle?hit:null;sceneTiles(hit,reference);
     $('shot-source').textContent=hit.synthetic?'No recorded shot':'Hit line';$('unpin').hidden=true;prepareShell(hit);var drawn=viewer&&viewer.load(data,shotContext);message(drawn?'':'Geometry unavailable. The original event is kept.');pivotButtons();warnings(data.warnings||[]);$('details').replaceChildren();
     var aimReady=viewer&&viewer.setShotContext(shotContext),estimate=!aimReady&&viewer?viewer.setAimEstimate(shotContext):null;$('show-aim').disabled=!(aimReady||estimate);
+    // Why there is no circle, in full: no resolved impact point to centre on, no gun dispersion in the record,
+    // no range, or no own reticle linked to this hit (every incoming hit by design - the enemy's is not recorded).
+    var reason=aimReady?'saved reticle':estimate?'nominal estimate':!(viewer&&viewer.point&&viewer.travel)?'no resolved impact point':!(hit.attacker&&hit.attacker.gunDispersion>0)?'no gun dispersion in the record':!(shotContext.range>0||hit.rangeAtImpact>0)?'no range for this hit':hit.direction==='incoming'?'enemy reticle unavailable':(aimReasons[shotContext.aimReason]||'no linked snapshot').toLowerCase();
     // The reticle block stays small: what the circles mean and where this one came from lives in the ⓘ tooltip.
-    var status=aimReady?'This hit: ● solid green — the client reticle at the shot, ◌ dashed gold — the server reticle.':estimate?'This hit: ◌ dashed blue — nominal full-aim estimate of the '+(estimate.gun||'mounted gun')+': '+(estimate.dispersion*100).toFixed(2)+' m at 100 m × '+Math.round(estimate.range)+' m ('+(estimate.source==='tracer'?'tracer range':'approximate range at impact')+') = ⌀ '+(estimate.radius*2).toFixed(2)+' m. Without crew or equipment, centred on the hit line; not the recorded reticle and not used in the figure.':'This hit: no reticle — '+(hit.direction==='incoming'?'enemy reticle unavailable':(aimReasons[shotContext.aimReason]||'no linked snapshot').toLowerCase())+'.';
+    var status=aimReady?'This hit: ● solid green — the client reticle at the shot, ◌ dashed gold — the server reticle, both slid along the shot line to the impact point.':estimate?'This hit: ◌ dashed blue — nominal full-aim estimate of the '+(estimate.gun||'mounted gun')+': '+(estimate.dispersion*100).toFixed(2)+' m at 100 m × '+Math.round(estimate.range)+' m ('+(estimate.source==='tracer'?'tracer range':'approximate range at impact')+') = ⌀ '+(estimate.radius*2).toFixed(2)+' m. Without crew or equipment, centred on the hit line; not the recorded reticle and not used in the figure.':'This hit: no reticle — '+reason+'.';
+    // One line per hit in the page console; the game writes page console lines into game.log, so an in-game
+    // report about missing rings can be read there instead of guessed at.
+    if(window.console)console.info('Bullba Hits aim: hit '+hit.id+' '+hit.direction+' saved='+!!aimReady+' estimate='+!!estimate+' reason='+reason);
     $('aim-metric').title='Reticle circles on the model. '+status+' Nominal chance over the saved circle: Gaussian, σ = radius/2; 256 rays, misses = 0. Server formula not confirmed; no map obstacles, target motion or blast damage.';
     $('aim-toggle').title=aimReady?'The saved client circle is teal; the server one is dashed when received. Linked to the hit by end point and time; the target position is at impact.':'No own reticle is unambiguously linked to this hit: '+(aimReasons[shotContext.aimReason]||'no data')+'.';
     shotStats();

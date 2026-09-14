@@ -13,7 +13,7 @@ try:
 except ImportError:
     import queue
 
-VERSION = '0.6.35'
+VERSION = '0.6.36'
 VIEWER_PATH = os.path.join('mods', 'configs', 'local.armor_inspector', 'Viewer.html')
 LOG = logging.getLogger('local.armor_inspector')
 PARTS = ('chassis', 'hull', 'turret', 'gun')
@@ -555,6 +555,44 @@ def open_viewer():
         LOG.exception('Could not open local HTML viewer')
 
 
+def picker_descriptor(type_name):
+    """The configuration to export for a vehicle picked in the page's list.
+
+    The player's own hangar configuration when the vehicle is in the inventory -
+    items.makeIntCompactDescrByID('vehicle', nationID, innationID) builds the int
+    compact descriptor, IItemsCache.items.getItemByCD returns the gui Vehicle and
+    its .descriptor is FittingItem._descriptor, a VehicleDescr - otherwise the top
+    configuration of the catalogue, exactly as the optional bulk export uses it.
+    """
+    from local_armor_inspector.exporter import top_descriptor
+    try:
+        from items import vehicles as client_vehicles, makeIntCompactDescrByID
+        from helpers import dependency
+        from skeletons.gui.shared import IItemsCache
+        nation_id, innation_id = client_vehicles.g_list.getIDsByName(type_name)
+        item = dependency.instance(IItemsCache).items.getItemByCD(
+            makeIntCompactDescrByID('vehicle', nation_id, innation_id))
+        if item is not None and getattr(item, 'isInInventory', False):
+            descr = item.descriptor
+            if descr is not None:
+                return descr
+    except Exception:
+        LOG.exception('Hangar configuration of %s unavailable; the top configuration is exported', type_name)
+    return top_descriptor(type_name)
+
+
+def export_picked_vehicle(type_name):
+    """The page asked for a vehicle it has no model of. Game thread: the request only.
+
+    The export thread does the rest, exactly as the hangar and battle hooks do; the
+    page polls data/vehicles/<id>.js and gives up after 30 s.
+    """
+    if _recorder is None:
+        LOG.warning('Bullba Hits: no recorder, %s cannot be exported', type_name)
+        return
+    _recorder.request_vehicle(picker_descriptor(type_name), 'picker')
+
+
 def show_vehicle(handler):
     """The context-menu entry: export this vehicle and open the viewer on it.
 
@@ -657,6 +695,10 @@ def init():
         try: _context_menu = install_context_menu()
         except Exception: LOG.exception('Hangar context menu unavailable; hit recording continues')
         try:
+            from local_armor_inspector import presentation
+            presentation.set_export_request(export_picked_vehicle)
+        except Exception: LOG.exception('Page export command unavailable; hit recording continues')
+        try:
             from gui.modsListApi import g_modsListApi
             _mods_api = g_modsListApi
             _mods_api.addModification(id='local.armor_inspector', name='Bullba Hits',
@@ -671,6 +713,10 @@ def init():
 
 def fini():
     global _recorder, _events, _context_menu
+    try:
+        from local_armor_inspector import presentation
+        presentation.set_export_request(None)
+    except Exception: LOG.exception('Page export command cleanup failed')
     remove_context_menu(_context_menu)
     _context_menu = None
     if _events is not None:

@@ -32,6 +32,27 @@
       if(game)window.setTimeout(run,0);else run();
     };
   };
+  // ---- page -> mod ------------------------------------------------------
+  // The game's CEF registers the message-router functions window.jsHostQuery /
+  // window.jsHostQueryCancel (the names are literals in cef_browser_process.exe,
+  // beside browser_process\cef_handler.cpp). The request string reaches
+  // WebBrowser.onJsHostQuery, then the client's own w2c WebCommandHandler, which
+  // looks the command name up among the handlers the mod passed to
+  // BrowserController.load(handlers=[...]). Outside the game the function does not
+  // exist, so host.canSend() is false and nothing is attempted.
+  var sendId=0;
+  host.canSend=function(){return !!(game&&typeof window.jsHostQuery==='function');};
+  host.send=function(command,params){
+    return new Promise(function(resolve,reject){
+      if(!host.canSend())return void reject(new Error('The game browser offers no jsHostQuery channel'));
+      var payload;
+      try{payload=JSON.stringify({command:command,params:params||{},web_id:'bullba-'+(++sendId)});}catch(e){return void reject(e);}
+      try{window.jsHostQuery({request:payload,persistent:false,
+        onSuccess:function(response){resolve(response);},
+        onFailure:function(code,text){reject(new Error('jsHostQuery failed ('+code+'): '+text));}});}
+      catch(e){reject(e);}
+    });
+  };
   window.BullbaHost=host;
   // The game's CEF renders offscreen; a native <select> popup is a separate
   // window it may not support. An ordinary DOM list replaces the popup while the

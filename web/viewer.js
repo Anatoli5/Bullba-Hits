@@ -40,13 +40,13 @@
   Viewer.prototype.projection=function(){var w=this.container.clientWidth||1,h=this.container.clientHeight||1,z=this.camera.zoom;this.camera.setViewOffset(w,h,this.frameCenter.x*z*w/2,-this.frameCenter.y*z*h/2,w,h);};
   Viewer.prototype.resize=function(){var w=this.container.clientWidth,h=this.container.clientHeight;if(!w||!h)return;this.renderer.setSize(w,h,false);this.projection();this.render();};
   // Coalesce input and color updates into one draw at the next browser frame.
-  Viewer.prototype.draw=function(){if(this.frameId!==null)return;var self=this;this.frameId=window.requestAnimationFrame(function(){try{if(self.turretPending)self.applyTurret();if(self.fitPending){self.fitPending=false;self.resize();self.fit();}if(self.paintMesh)self.paint();if(self.aimGroup)self.aimGroup.visible=!!document.getElementById('show-aim').checked&&self.recordedShown();self.renderer.render(self.scene,self.camera);self.updateReticles();}finally{self.frameId=null;}});};
+  Viewer.prototype.draw=function(){if(this.frameId!==null)return;var self=this;this.frameId=window.requestAnimationFrame(function(){try{if(self.turretPending)self.applyTurret();if(self.fitPending){self.fitPending=false;self.resize();self.fit();}if(self.paintMesh)self.paint();if(self.aimGroup)self.aimGroup.visible=!!document.getElementById('show-aim').checked;self.renderer.render(self.scene,self.camera);self.updateReticles();}finally{self.frameId=null;}});};
   Viewer.prototype.render=function(){var c=Math.cos(this.pitch);this.camera.position.set(this.target.x+this.distance*c*Math.sin(this.yaw),this.target.y+this.distance*Math.sin(this.pitch),this.target.z+this.distance*c*Math.cos(this.yaw));this.camera.near=Math.max(.05,this.distance*.02);this.camera.far=this.distance*4+200;this.projection();this.camera.lookAt(this.target);this.camera.updateMatrixWorld();if(this.pan.x||this.pan.y){var m=this.camera.matrixWorld,off=new THREE.Vector3().setFromMatrixColumn(m,0).multiplyScalar(this.pan.x).add(new THREE.Vector3().setFromMatrixColumn(m,1).multiplyScalar(this.pan.y));this.camera.position.add(off);this.camera.updateMatrixWorld();}if(this.autoFrame)this.autoFit();this.draw();if(this.onCamera)this.onCamera({distance:this.distance,zoom:this.camera.zoom,yaw:this.yaw,pitch:this.pitch});};
   Viewer.prototype.setZoom=function(value){if(!Number.isFinite(value)||value<=0)return;this.camera.zoom=Math.max(.1,Math.min(150,value));if(this.autoFrame)this.frameScale=this.camera.zoom/Math.max(.1,this.fitZoom);this.projection();this.draw();if(this.onCamera)this.onCamera({distance:this.distance,zoom:this.camera.zoom,yaw:this.yaw,pitch:this.pitch});};
   Viewer.prototype.setDistance=function(value){if(!Number.isFinite(value))return;this.distance=Math.max(DISTANCE_MIN,Math.min(DISTANCE_MAX,value));this.render();};
   Viewer.limits={distanceMin:DISTANCE_MIN,distanceMax:DISTANCE_MAX};
   Viewer.prototype.saveDefaults=function(){var frame=this.framing();this.defaults={distance:this.distance,scale:Math.max(.1,Math.min(10,this.camera.zoom/(frame?frame.zoom:this.fitZoom)))};try{window.localStorage.setItem('armor-camera-defaults',JSON.stringify(this.defaults));return true;}catch(ignore){return false;}};
-  Viewer.prototype.clear=function(){this.fitPending=false;this.recordedDistance=null;this.pinned=null;if(this.pinGroup){this.scene.remove(this.pinGroup);this.pinGroup=null;}this.pinReticles=[];if(this.surface)this.surface.dispose();this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.gunAngle=0;this.savedAim=null;this.aimGroup=null;this.reticles=[];this.reticleLayer.replaceChildren();clearTimeout(this.turretTimer);this.turretTimer=null;this.turretPending=false;this.spreadAim=null;this.hideSpread();clearTimeout(this.paintTimer);this.paintTimer=null;window.cancelAnimationFrame(this.frameId);this.frameId=null;this.paintMesh=null;this.outline=null;this.outlineDepth=null;this.engine=null;this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.loadedData=null;this.paintedKey=null;this.samples=[];var disposed=new Set();this.root.traverse(function(o){if(o.geometry&&!disposed.has(o.geometry)){disposed.add(o.geometry);o.geometry.dispose();}if(o.material){(Array.isArray(o.material)?o.material:[o.material]).forEach(function(m){m.dispose();});}});while(this.root.children.length)this.root.remove(this.root.children[0]);this.materials=[];this.point=null;this.travel=null;this.render();};
+  Viewer.prototype.clear=function(){this.fitPending=false;this.shotPoints=null;this.recordedDistance=null;this.pinned=null;if(this.pinGroup){this.scene.remove(this.pinGroup);this.pinGroup=null;}this.pinReticles=[];if(this.surface)this.surface.dispose();this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.gunAngle=0;this.savedAim=null;this.aimGroup=null;this.reticles=[];this.reticleLayer.replaceChildren();clearTimeout(this.turretTimer);this.turretTimer=null;this.turretPending=false;this.spreadAim=null;this.hideSpread();clearTimeout(this.paintTimer);this.paintTimer=null;window.cancelAnimationFrame(this.frameId);this.frameId=null;this.paintMesh=null;this.outline=null;this.outlineDepth=null;this.engine=null;this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.loadedData=null;this.paintedKey=null;this.samples=[];var disposed=new Set();this.root.traverse(function(o){if(o.geometry&&!disposed.has(o.geometry)){disposed.add(o.geometry);o.geometry.dispose();}if(o.material){(Array.isArray(o.material)?o.material:[o.material]).forEach(function(m){m.dispose();});}});while(this.root.children.length)this.root.remove(this.root.children[0]);this.materials=[];this.point=null;this.travel=null;this.render();};
   Viewer.prototype.rebuild=function(){
     if(!this.loadedData)return;var T=THREE,self=this;this.samples=[];this.paintedKey=null;
     // A failed composition is retried on the next rebuild (pose or model) instead of staying off for good.
@@ -140,7 +140,8 @@
     this.loadedData=data;this.posedData=null;this.turretAngle=0;this.gunAngle=0;this.rebuild();if(this.onTurret)this.onTurret({angle:0,min:-180,max:180});
     this.root.updateMatrixWorld(true);
     var box=new T.Box3().setFromObject(this.root);this.bounds=box.isEmpty()?null:box;this.centre=this.vehicleCentre();
-    (hit.points||[]).forEach(function(p){if(p.status!=='resolved'||!transforms[p.part]||!p.position||!p.direction)return;var pos=new T.Vector3().fromArray(p.position).applyMatrix4(transforms[p.part]);pos.z*=-1;var direction=new T.Vector3().fromArray(p.direction).transformDirection(transforms[p.part]);direction.z*=-1;self.addReticle(pos);self.root.add(self.shotArrow(direction,pos,0xa8dfff));if(!self.point){self.point=pos.clone();self.travel=direction.clone();}});
+    var pts=[];(hit.points||[]).forEach(function(p){if(p.status!=='resolved'||!transforms[p.part]||!p.position||!p.direction)return;var pos=new T.Vector3().fromArray(p.position).applyMatrix4(transforms[p.part]);pos.z*=-1;var direction=new T.Vector3().fromArray(p.direction).transformDirection(transforms[p.part]).normalize();direction.z*=-1;pts.push({pos:pos,dir:direction,effect:p.effect,part:p.part,source:'segment',chordDev:null});self.addReticle(pos);});
+    this.shotPoints=pts;this.drawTracers(pts);if(pts.length){this.point=pts[0].pos.clone();this.travel=pts[0].line.clone();}
     if(this.bounds)this.grid.position.y=this.bounds.min.y-.025;if(this.point)this.focus();else this.reset();if(this.onGun)this.onGun({angle:0,known:this.gunRange().known});return !!this.bounds;
   };
   Viewer.prototype.addReticle=function(position){
@@ -207,7 +208,7 @@
   // Reset is the path for a hit without a point on the model (the shooter/model swap: an inspector
   // without a shot). A distance a loaded hit already chose is kept - jumping back to the default
   // distance on a swap would move the camera for no reason; only the first load starts from it.
-  Viewer.prototype.reset=function(){this.pan.set(0,0);this.frameCenter.set(0,0);if(this.bounds){this.target.copy(this.pivotCentre());this.grid.position.y=this.bounds.min.y-.025;}if(!this.distanceSet)this.distance=this.defaults.distance;this.yaw=.65-Math.PI/2;/* default view: the nose towards the viewer and to the right (user, 14.09) */this.pitch=.25;this.fitPending=true;this.render();};
+  Viewer.prototype.reset=function(){this.pan.set(0,0);this.frameCenter.set(0,0);if(this.bounds){this.target.copy(this.pivotCentre());this.grid.position.y=this.bounds.min.y-.025;}if(!this.distanceSet)this.distance=this.defaults.distance;this.yaw=.65+Math.PI/2;/* default view: the nose towards the viewer and to the right (user, 14.09). The models face -z here: checked by the barrel's extent, not by eye */this.pitch=.25;this.fitPending=true;this.render();};
   // Orbit centre: over the hull's own box (the whole-model box includes the barrel and drifts to the bow),
   // at turret height — in a clinch the camera sits turret to turret, so approaching should tend there.
   Viewer.prototype.vehicleCentre=function(){var hull=new THREE.Box3(),turret=new THREE.Box3(),v=new THREE.Vector3();
@@ -263,6 +264,52 @@
   // Tracer: a 2.3 m arrow ending at the hit point. A WebGL line is always one pixel wide, so the line is backed by a
   // thin cylinder (6 mm radius: a pixel or two at a Fit zoom, a visible dot end-on) — the user could barely find the
   // one-pixel tracer when looking along it. Brighter than the reticle, which is a large thin cross and reads fine.
+  // Tracers as one chain through the recorded contact points (user, 14.09). The points are exact - the client
+  // re-collides the server's segment with the model - while each point's own direction is the server's 8-byte
+  // segment (start on a 1/255 grid of the part's box, end in 1 cm steps) and wanders by a degree or two, up to
+  // ten. So a stretch between two points follows the chord, checked against both recorded directions; when the
+  // chord disagrees with both by more than CHORD_TOLERANCE the suspect is the point (the client's nearest-point
+  // fallback), and the stretch is drawn along the recorded direction, dashed. A ricochet (effect 1 or 2) ends a
+  // chain: the next stretch leaves exactly from the ricochet point, dashed when it disagrees with the recorded
+  // direction. The first tracer arrives from afar along the first stretch's direction. Single points: as before.
+  var CHORD_TOLERANCE=5*Math.PI/180,ARROW_LENGTH=2.3,TRACER=0xa8dfff;
+  Viewer.prototype.drawTracers=function(pts){
+    var self=this;pts.forEach(function(p){p.line=p.dir.clone();});
+    for(var i=0;i<pts.length;i++){
+      var p=pts[i],prev=i?pts[i-1]:null,ricochet=function(q){return q.effect===1||q.effect===2;};
+      if(!prev){
+        var next=pts[1],chord0=next&&!ricochet(p)?next.pos.clone().sub(p.pos):null;
+        if(chord0&&chord0.length()>=.05){var c0=chord0.normalize(),a0=c0.angleTo(p.dir),a1=c0.angleTo(next.dir);p.chordDev=Math.max(a0,a1);if(a0<=CHORD_TOLERANCE&&a1<=CHORD_TOLERANCE){p.line=c0;p.source='chord';}}
+        this.root.add(this.shotSegment(p.pos.clone().addScaledVector(p.line,-ARROW_LENGTH),p.pos,TRACER,false));continue;
+      }
+      var chord=p.pos.clone().sub(prev.pos),span=chord.length();
+      if(span<.05)continue; // the same contact twice (a second verdict at one point): nothing between them
+      var c=chord.normalize(),dev=c.angleTo(p.dir),devPrev=ricochet(prev)?0:c.angleTo(prev.dir);p.chordDev=Math.max(dev,devPrev);
+      var agrees=dev<=CHORD_TOLERANCE&&devPrev<=CHORD_TOLERANCE;
+      if(agrees||ricochet(prev)){p.line=c;p.source=agrees?'chord':'chord-unchecked';this.root.add(this.shotSegment(prev.pos,p.pos,TRACER,!agrees));}
+      else this.root.add(this.shotSegment(p.pos.clone().addScaledVector(p.dir,-span),p.pos,TRACER,true));
+    }
+  };
+  // One tracer stretch from one point to another, the head at the end; dashed marks an approximate stretch.
+  Viewer.prototype.shotSegment=function(from,to,color,dashed){
+    var T=THREE,group=new T.Group(),dir=to.clone().sub(from),length=dir.length();if(length<1e-4)return group;dir.normalize();
+    var head=Math.min(.12,length*.4),arrow=new T.ArrowHelper(dir,from,length,color,head,.045);group.add(arrow);
+    [arrow.line.material,arrow.cone.material].forEach(function(m){m.depthTest=false;m.depthWrite=false;m.transparent=true;m.opacity=1;});
+    arrow.line.renderOrder=4;arrow.cone.renderOrder=4;arrow.line.frustumCulled=false;arrow.cone.frustumCulled=false;
+    if(dashed){arrow.line.visible=false;var line=new T.Line(new T.BufferGeometry().setFromPoints([from.clone(),to.clone().addScaledVector(dir,-head)]),new T.LineDashedMaterial({color:color,dashSize:.08,gapSize:.05,transparent:true,opacity:1,depthTest:false,depthWrite:false}));line.computeLineDistances();line.renderOrder=4;line.frustumCulled=false;group.add(line);}
+    else{var body=new T.Mesh(new T.CylinderGeometry(.006,.006,length-head,8),new T.MeshBasicMaterial({color:color,transparent:true,opacity:.9,depthTest:false,depthWrite:false}));body.position.set(0,(length-head)/2,0);body.renderOrder=4;body.frustumCulled=false;arrow.add(body);}
+    return group;
+  };
+  // Our verdict at every recorded contact point along the drawn line, for the verdict log (server fact vs our
+  // estimate). After a ricochet the ray starts at the ricochet point; otherwise it comes from afar, so screens and
+  // the gun in front of the point count as the server counted them.
+  Viewer.prototype.pointVerdicts=function(shell){
+    if(!this.engine||!shell||!this.shotPoints)return [];var self=this,span=this.bounds?this.bounds.getSize(new THREE.Vector3()).length():20;
+    return this.shotPoints.map(function(p,i){var prev=i?self.shotPoints[i-1]:null,afterRicochet=prev&&(prev.effect===1||prev.effect===2);
+      var origin=afterRicochet?prev.pos.clone().addScaledVector(p.line,.02):p.pos.clone().addScaledVector(p.line,-span*2-2);
+      var result=null;try{result=self.engine.ray(origin.toArray(),p.line.toArray(),shell);}catch(e){result=null;}
+      return {index:i,part:p.part,effect:p.effect,source:p.source,chordDev:p.chordDev,result:result};});
+  };
   Viewer.prototype.shotArrow=function(direction,tip,color){
     var length=2.3,head=.12,arrow=new THREE.ArrowHelper(direction,tip.clone().addScaledVector(direction,-length),length,color,head,.045);
     var body=new THREE.Mesh(new THREE.CylinderGeometry(.006,.006,length-head,8),new THREE.MeshBasicMaterial({color:color,transparent:true,opacity:.9,depthTest:false,depthWrite:false}));
@@ -299,7 +346,7 @@
   // Recorded markers (arrows, reticles, aim circles) belong to the saved pose and the saved shot: an explored
   // pose or a pinned shot replaces them until the user returns.
   Viewer.prototype.recordedShown=function(){return Math.abs(this.turretAngle)<.001&&Math.abs(this.gunAngle)<.001&&!this.pinned;};
-  Viewer.prototype.syncRecorded=function(){var show=this.recordedShown();this.root.children.forEach(function(o){if(o!==this.paintMesh&&o!==this.trackGroup&&o!==this.outline&&o!==this.outlineDepth)o.visible=show;},this);};
+  Viewer.prototype.syncRecorded=function(){var show=this.recordedShown();this.root.children.forEach(function(o){if(o!==this.paintMesh&&o!==this.trackGroup&&o!==this.outline&&o!==this.outlineDepth&&o!==this.aimGroup)o.visible=show;},this);};
   Viewer.prototype.shotProbability=function(shell){
     if(this.pinned&&this.engine&&shell)return this.engine.ray(this.pinned.origin.toArray(),this.pinned.direction.toArray(),shell);
     if(!this.engine||!this.point||!this.travel||!shell||Math.abs(this.turretAngle)>.001||Math.abs(this.gunAngle)>.001)return null;
@@ -313,14 +360,33 @@
     var inverse=new T.Matrix4().fromArray(target.worldTransform).invert();
     function pos(p){var v=new T.Vector3().fromArray(p).applyMatrix4(inverse);v.z*=-1;return v;}
     function dir(p){var v=new T.Vector3().fromArray(p).transformDirection(inverse);v.z*=-1;return v;}
+    // The recorded marker sits wherever the client put it on the aim ray, short of or past the armour it was
+    // aimed at: 0.02-0.49 m along the ray on the stage battle, up to metres on the records measured on 14.09.
+    // Drawn there with depthTest off, the hoop reads as "floating away from the tank". The reticle is a solid
+    // angle out of the muzzle, so the honest place to draw it is where the shell met the armour: slide the
+    // centre along the ray from tracer.origin through marker.position onto the plane through the impact point
+    // perpendicular to that ray, and scale the radius by the same distance ratio (the circle grows linearly
+    // with distance): r' = r · |origin→plane| / |origin→marker|. The cone is unchanged, so savedAim keeps the
+    // moved centre and radius with the unchanged origin and savedAimProbability still fans its rays over the
+    // identical solid angle. Without a tracer origin the marker is drawn exactly as recorded.
     function ring(marker,color,dashed){
       if(!marker||!marker.position||!marker.direction||!(marker.diameter>0))return;
-      var center=pos(marker.position),normal=dir(marker.direction),up=new T.Vector3(0,1,0);if(Math.abs(up.dot(normal))>.98)up.set(1,0,0);
-      var right=new T.Vector3().crossVectors(normal,up).normalize();up.crossVectors(right,normal).normalize();var radius=marker.diameter/2,points=[];
+      var center=pos(marker.position),normal=dir(marker.direction),radius=marker.diameter/2;
+      var origin=context.tracer&&Array.isArray(context.tracer.origin)?pos(context.tracer.origin):null;
+      if(origin&&self.point){
+        var ray=center.clone().sub(origin),span=ray.length();
+        if(span>1e-6){
+          ray.divideScalar(span);
+          var depth=self.point.clone().sub(origin).dot(ray);
+          if(depth>1e-6){center=origin.clone().addScaledVector(ray,depth);radius*=depth/span;normal=ray;}
+        }
+      }
+      var up=new T.Vector3(0,1,0);if(Math.abs(up.dot(normal))>.98)up.set(1,0,0);
+      var right=new T.Vector3().crossVectors(normal,up).normalize();up.crossVectors(right,normal).normalize();var points=[];
       for(var i=0;i<=96;i++){var a=i/96*Math.PI*2;points.push(center.clone().addScaledVector(right,radius*Math.cos(a)).addScaledVector(up,radius*Math.sin(a)));}
       var options={color:color,depthTest:false,depthWrite:false,transparent:true,opacity:.85},material=dashed?new T.LineDashedMaterial(Object.assign(options,{dashSize:radius*.1,gapSize:radius*.07})):new T.LineBasicMaterial(options);
       var line=new T.Line(new T.BufferGeometry().setFromPoints(points),material);if(dashed)line.computeLineDistances();line.renderOrder=12;line.frustumCulled=false;self.aimGroup.add(line);
-      if(!dashed){var size=Math.max(.025,Math.min(.12,radius*.12)),cross=[center.clone().addScaledVector(right,-size),center.clone().addScaledVector(right,size),center.clone().addScaledVector(up,-size),center.clone().addScaledVector(up,size)];var mark=new T.LineSegments(new T.BufferGeometry().setFromPoints(cross),new T.LineBasicMaterial(options));mark.renderOrder=12;self.aimGroup.add(mark);self.savedAim={center:center,normal:normal,right:right,up:up,radius:radius,origin:pos(context.tracer.origin)};}
+      if(!dashed){var size=Math.max(.025,Math.min(.12,radius*.12)),cross=[center.clone().addScaledVector(right,-size),center.clone().addScaledVector(right,size),center.clone().addScaledVector(up,-size),center.clone().addScaledVector(up,size)];var mark=new T.LineSegments(new T.BufferGeometry().setFromPoints(cross),new T.LineBasicMaterial(options));mark.renderOrder=12;self.aimGroup.add(mark);self.savedAim={center:center,normal:normal,right:right,up:up,radius:radius,origin:origin};}
     }
     ring(context.aim.clientMarker,0x68d7be,false);
     var server=context.aim.serverMarker,client=context.aim.clientMarker;
@@ -341,9 +407,12 @@
     this.estimateAim={radius:radius,range:range,dispersion:attacker.gunDispersion,gun:attacker.gun||null,source:context&&context.rangeSource||'impact'};
     this.showSavedAim(document.getElementById('show-aim').checked);return this.estimateAim;
   };
-  Viewer.prototype.showSavedAim=function(value){if(this.aimGroup)this.aimGroup.visible=!!value&&this.recordedShown();this.draw();};
+  // The rings depend only on the shot line (muzzle, impact point, dispersion) and live in the root frame,
+  // so turning the turret or the gun does not move them and must not hide them: only the checkbox does.
+  // The hit marks and arrows keep their pose rule in syncRecorded.
+  Viewer.prototype.showSavedAim=function(value){if(this.aimGroup)this.aimGroup.visible=!!value;this.draw();};
   Viewer.prototype.savedAimProbability=function(shell){
-    if(!this.savedAim||!this.engine||!shell||Math.abs(this.turretAngle)>.001||Math.abs(this.gunAngle)>.001)return null;
+    if(!this.savedAim||!this.savedAim.origin||!this.engine||!shell||Math.abs(this.turretAngle)>.001||Math.abs(this.gunAngle)>.001)return null;
     var aim=this.savedAim,count=256,sum=0,unknown=0,origin=aim.origin.toArray();
     for(var i=0;i<count;i++){var r=aim.radius*Math.sqrt(-.5*Math.log(1-(i+.5)/count*(1-Math.exp(-2)))),angle=i*2.399963229728653,p=aim.center.clone().addScaledVector(aim.right,r*Math.cos(angle)).addScaledVector(aim.up,r*Math.sin(angle)),hit=this.engine.ray(origin,p.sub(aim.origin).toArray(),shell);if(hit.chance===null)unknown++;else sum+=hit.chance;}
     return {low:sum/count,high:(sum+unknown*100)/count,unknown:unknown};

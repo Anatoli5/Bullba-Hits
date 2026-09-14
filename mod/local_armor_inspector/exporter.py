@@ -20,7 +20,7 @@ from .geometry import extract
 from .armor import ArmorCatalog
 
 LOG = logging.getLogger('local.armor_inspector')
-VERSION = '0.6.35'
+VERSION = '0.6.36'
 RESOURCE = re.compile(r'^vehicles/[A-Za-z0-9_/-]+\.(?:model|havok)\Z')
 IDENTIFIER = re.compile(r'^[-a-zA-Z0-9_]{1,100}\Z')
 ASSETS = ('Viewer.html', 'web/style.css', 'web/icon.svg', 'web/viewer.js',
@@ -142,6 +142,7 @@ def enrich_vehicle(vehicle):
         except Exception:
             pass
     fix_gun_height(vehicle)
+    fix_gun_dispersion(vehicle)
     if all(vehicle.get(key) is not None for key in ('level', 'class', 'role')):
         return
     try:
@@ -187,6 +188,29 @@ def fix_gun_height(vehicle):
         descr = vehicle_descr(vehicle['compactDescriptor'])
         vehicle['gunHeight'] = float((descr.chassis.hullPosition + descr.hull.turretPositions[0] + descr.turret.gunPosition).y)
         vehicle['gunHeightFrom'] = 'ground'
+    except Exception:
+        pass
+
+
+def fix_gun_dispersion(vehicle):
+    """Recompute 'gunDispersion' for records made before 0.6.29 did not save it.
+
+    The viewer draws the nominal full-aim circle of every hit without a recorded
+    reticle from this number, so an old battle would show no estimate ring at all.
+    The mounted gun is known exactly from the compact descriptor, and the client's
+    own gun.shotDispersionAngle is the same value the recorder writes today.
+    Guarded like fix_gun_height next to it.
+    """
+    existing = vehicle.get('gunDispersion')
+    if isinstance(existing, (int, float)) and existing > 0:
+        return
+    if not vehicle.get('compactDescriptor'):
+        return
+    try:
+        descr = vehicle_descr(vehicle['compactDescriptor'])
+        dispersion = float(descr.gun.shotDispersionAngle)
+        if dispersion > 0:
+            vehicle['gunDispersion'] = dispersion
     except Exception:
         pass
 
