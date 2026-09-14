@@ -51,6 +51,9 @@
   var FLAG_KEYS=['premium','collector','special','exported'];
   var FLAG_NAMES={premium:'Premium',collector:'Collector',special:'Special',exported:'Exported'};
   var FLAG_TITLES={premium:'Premium vehicles only',collector:'Collector vehicles only',special:'Special (reward) vehicles only',exported:'Only vehicles whose collision model is already exported'};
+  // Flags the client itself draws an icon for (the files are named in style.css). "Exported" is our own
+  // idea, not the client's, so that pill keeps its word.
+  var FLAG_ICONS={premium:true,collector:true,special:true};
   var SOURCE_TAG={hangar:'from the hangar',battle:'from a battle',catalogue:'from the catalogue',picker:'from this list'};
   var SOURCE_TEXT={hangar:'the hangar',battle:'a battle',catalogue:'the catalogue',picker:'this list'};
   var NO_VEHICLE_MODEL='No collision model of this vehicle yet. Select it in the hangar, meet it in a battle, or right-click it in the hangar and pick Bullba Hits.';
@@ -73,6 +76,11 @@
     if(at<0)list.push(value);else list.splice(at,1);
     button.setAttribute('aria-pressed',String(at<0));storeSidebar();renderVehicles();
   }
+  // Nation and flag marks: the client's own icons, embedded in style.css exactly like .vt-class/.vt-role.
+  function nationMark(nation){var m=node('span',undefined,'vt-nation');m.setAttribute('data-nation',nation);return m;}
+  function flagMark(flag){var m=node('span',undefined,'vt-flag');m.setAttribute('data-flag',flag);return m;}
+  // A pill with a mark shows the icon and carries the name in its title; a pill without one shows the word
+  // (Tier is Roman numerals, "Exported" has no client icon).
   function filterRow(row,title,items){
     var wrap=node('div',undefined,'filter-row');wrap.appendChild(node('span',title,'filter-label'));
     var pills=node('span',undefined,'filter-pills');pills.setAttribute('role','group');pills.setAttribute('aria-label',title);
@@ -94,13 +102,15 @@
     box.appendChild(search);
     var tiers=[],i;for(i=1;i<=11;i++)tiers.push({value:String(i),label:tierRomans[i],title:'Tier '+tierRomans[i]});
     box.appendChild(filterRow('tier','Tier',tiers));
-    box.appendChild(filterRow('nation','Nation',Object.keys(nationNames).map(function(n){return {value:n,label:nationNames[n]};})));
+    box.appendChild(filterRow('nation','Nation',Object.keys(nationNames).map(function(n){
+      return {value:n,label:nationNames[n],mark:nationMark(n)};})));
     box.appendChild(filterRow('class','Class',CLASS_ORDER.map(function(c){
       var mark=node('span',undefined,'vt-class');mark.setAttribute('data-class',c);return {value:c,label:classNames[c],mark:mark};})));
     box.appendChild(filterRow('role','Role',Object.keys(roleNames).map(function(f){
       var mark=node('span',undefined,'vt-role');mark.setAttribute('data-role',f);return {value:f,label:roleNames[f],mark:mark};})));
     var flags=host.game?FLAG_KEYS:FLAG_KEYS.filter(function(f){return f!=='exported';});
-    box.appendChild(filterRow('flag','Flags',flags.map(function(f){return {value:f,label:FLAG_NAMES[f],title:FLAG_TITLES[f]};})));
+    box.appendChild(filterRow('flag','Flags',flags.map(function(f){
+      return {value:f,label:FLAG_NAMES[f],title:FLAG_TITLES[f],mark:FLAG_ICONS[f]?flagMark(f):null};})));
   }
   function syncFilters(){
     document.querySelectorAll('#vehicle-filters [data-row]').forEach(function(b){
@@ -307,8 +317,8 @@
       if(typeof saved.filters.text==='string')vehicleFilters.text=saved.filters.text;
     }
     syncFilters();
-    if(fragment().vehicle)return;                  // the fragment decides the mode itself
-    if(saved&&saved.mode==='vehicles')setMode('vehicles');
+    // The page always opens on the battles and their hits (user, 14.09: a newcomer must not think the viewer is
+    // empty); only a fragment naming a vehicle opens the Vehicles mode. The filters are remembered, the mode is not.
   }
   document.querySelectorAll('#sidebar-mode [data-mode]').forEach(function(b){
     b.onclick=host.guard('Side panel mode',function(){setMode(b.getAttribute('data-mode'));});});
