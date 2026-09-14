@@ -207,7 +207,7 @@
   // Reset is the path for a hit without a point on the model (the shooter/model swap: an inspector
   // without a shot). A distance a loaded hit already chose is kept - jumping back to the default
   // distance on a swap would move the camera for no reason; only the first load starts from it.
-  Viewer.prototype.reset=function(){this.pan.set(0,0);this.frameCenter.set(0,0);if(this.bounds){this.target.copy(this.pivotCentre());this.grid.position.y=this.bounds.min.y-.025;}if(!this.distanceSet)this.distance=this.defaults.distance;this.yaw=.65;this.pitch=.25;this.fitPending=true;this.render();};
+  Viewer.prototype.reset=function(){this.pan.set(0,0);this.frameCenter.set(0,0);if(this.bounds){this.target.copy(this.pivotCentre());this.grid.position.y=this.bounds.min.y-.025;}if(!this.distanceSet)this.distance=this.defaults.distance;this.yaw=.65-Math.PI/2;/* default view: the nose towards the viewer and to the right (user, 14.09) */this.pitch=.25;this.fitPending=true;this.render();};
   // Orbit centre: over the hull's own box (the whole-model box includes the barrel and drifts to the bow),
   // at turret height — in a clinch the camera sits turret to turret, so approaching should tend there.
   Viewer.prototype.vehicleCentre=function(){var hull=new THREE.Box3(),turret=new THREE.Box3(),v=new THREE.Vector3();
@@ -241,6 +241,16 @@
   Viewer.prototype.focus=function(){if(!this.point)return;this.pan.set(0,0);this.frameCenter.set(0,0);this.pivotHeight=null;
     var dir=this.travel.clone().negate().normalize(),range=Math.max(DISTANCE_MIN,Math.min(DISTANCE_MAX,this.recordedDistance||this.defaults.distance));
     var eye=this.point.clone().addScaledVector(dir,range);this.target.copy(this.pivot==='vehicle'?this.pivotCentre():this.point);this.lookFrom(eye);this.distanceSet=true;this.fitPending=true;this.render();};
+  // The vehicle browser can change the shooter alone: the collision model on screen and the orbit centre
+  // stay as they are, so the camera must not move either. load() always re-frames (reset() sets fitPending,
+  // the next frame runs fit()), so the state is read before the reload and put back straight after it -
+  // still inside the same task, before the pending animation frame fires, so no fit is ever seen.
+  Viewer.prototype.cameraState=function(){return {yaw:this.yaw,pitch:this.pitch,distance:this.distance,zoom:this.camera.zoom,
+    target:this.target.clone(),pan:this.pan.clone(),frameCenter:this.frameCenter.clone(),frameScale:this.frameScale,pivotHeight:this.pivotHeight};};
+  Viewer.prototype.restoreCamera=function(state){
+    if(!state)return;this.yaw=state.yaw;this.pitch=state.pitch;this.distance=state.distance;this.target.copy(state.target);
+    this.pan.copy(state.pan);this.frameCenter.copy(state.frameCenter);this.frameScale=state.frameScale;this.pivotHeight=state.pivotHeight;
+    this.fitPending=false;this.camera.zoom=Math.max(.1,Math.min(150,state.zoom));this.projection();this.render();};
   Viewer.prototype.configure=function(shell,heatmap,palette){this.shell=shell;this.heatmap=heatmap;this.palette=palette;if(this.pinned)this.refreshPin();this.updateTrackAppearance();this.render();};
   // A pinned point replaces the recorded hit line as the analysed shot until unpinned. It is drawn like a
   // recorded shot: an arrow along the line, a reticle at the point, and a dashed leg where a ricochet goes.

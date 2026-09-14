@@ -13,14 +13,18 @@ try:
 except ImportError:
     import queue
 
-VERSION = '0.6.34'
+VERSION = '0.6.35'
 VIEWER_PATH = os.path.join('mods', 'configs', 'local.armor_inspector', 'Viewer.html')
 LOG = logging.getLogger('local.armor_inspector')
 PARTS = ('chassis', 'hull', 'turret', 'gun')
+CONTEXT_MENU_OPTION = 'bullbaHits'
+CONTEXT_MENU_LABEL = 'Bullba Hits'
 _recorder = None
 _original = None
 _wrapper = None
 _mods_api = None
+_events = None
+_context_menu = None
 
 
 def vector(v):
@@ -132,6 +136,18 @@ class Writer(object):
             self.dropped += 1
             LOG.error('Record queue full; dropped=%s', self.dropped)
 
+    def put_vehicle(self, request):
+        """Ask the export thread for a vehicle export. Game thread, never blocking.
+
+        The request is a handful of strings; rebuilding the descriptor, reading the
+        client packages and collecting the armour tables all happen on the export
+        thread. A full queue drops the request - the raw log keeps the earlier ones
+        and the hangar will ask again.
+        """
+        if self.exporter is None: return
+        try: self.export_queue.put_nowait(('vehicle', request))
+        except queue.Full: LOG.error('Vehicle export queue full; request dropped')
+
     def run(self):
         while not self.stopping.is_set() or not self.queue.empty():
             try: name, record = self.queue.get(timeout=0.1)
@@ -158,10 +174,13 @@ class Writer(object):
             try: name, record = self.export_queue.get(timeout=0.1)
             except queue.Empty:
                 try:
-                    if hasattr(self.exporter, 'flush'): self.exporter.flush()
+                    if hasattr(self.exporter, 'idle'): self.exporter.idle()
+                    elif hasattr(self.exporter, 'flush'): self.exporter.flush()
                 except Exception: LOG.exception('Deferred export failed; raw events are retained')
                 continue
-            try: self.exporter.record(name, record)
+            try:
+                if name == 'vehicle': self.exporter.export_vehicle(record)
+                else: self.exporter.record(name, record)
             except Exception: LOG.exception('HTML export failed; raw record is saved')
             finally: self.export_queue.task_done()
 
@@ -170,6 +189,144 @@ class Writer(object):
         self.thread.join(2.0)
         if self.thread.is_alive(): LOG.warning('Writer still draining at shutdown')
         if self.export_thread is not None: self.export_thread.join(0.25)
+
+
+def vehicle_request(descr, source):
+    """The tiny request a game-thread hook hands to the export thread."""
+    request = {'schema':1, 'type':'vehicle', 'source':source,
+               'vehicleType':str(descr.type.name), 'requestedAt':time.time(),
+               'compactDescriptor':base64.b64encode(descr.makeCompactDescr()).decode('ascii')}
+    try: request['name'] = descr.type.shortUserString
+    except Exception: pass
+    try: request['identity'] = vehicle_identity(descr)
+    except Exception: pass
+    return request
+
+
+class VehicleEvents(object):
+    """Hangar and battle hooks that ask for a vehicle export.
+
+    Client names confirmed in the installed bytecode of 2.4.0.0:
+    CurrentVehicle.g_currentVehicle is a _CurrentVehicle whose onChanged is an
+    Event, isPresent() is 'self.item is not None' and item returns the gui Vehicle
+    (whose descriptor is FittingItem._descriptor, a VehicleDescr);
+    PlayerEvents.g_playerEvents has onAvatarBecomePlayer / onAvatarBecomeNonPlayer;
+    ClientArena creates onNewVehicleListReceived and onVehicleAdded and stores
+    info['vehicleType'] = self.getVehicleType(info, info.pop('compDescr')), which
+    returns vehicles.VehicleDescr(compactDescr=...).
+
+    Everything here is optional: any failure logs and leaves hit recording alone.
+    """
+
+    def __init__(self, recorder):
+        self.recorder = recorder
+        self.hangar = None
+        self.events = None
+        self.arena = None
+        self.attempts = 0
+        # Roster descriptors seen during the battle, exported only after it: the
+        # export thread shares the interpreter lock with the game, and thirty
+        # vehicles' worth of package reads at battle start would show as stutter.
+        self.roster = {}
+
+    def install(self):
+        try:
+            from CurrentVehicle import g_currentVehicle
+            self.hangar = g_currentVehicle
+            g_currentVehicle.onChanged += self.on_hangar_vehicle
+            self.on_hangar_vehicle()
+        except Exception: LOG.exception('Hangar vehicle export unavailable; hit recording continues')
+        try:
+            from PlayerEvents import g_playerEvents
+            g_playerEvents.onAvatarBecomePlayer += self.on_avatar_become_player
+            g_playerEvents.onAvatarBecomeNonPlayer += self.on_avatar_become_non_player
+            self.events = g_playerEvents
+        except Exception: LOG.exception('Battle vehicle export unavailable; hit recording continues')
+
+    def close(self):
+        self.detach_arena()
+        self.roster = {}
+        try:
+            if self.hangar is not None: self.hangar.onChanged -= self.on_hangar_vehicle
+        except Exception: LOG.exception('Hangar hook cleanup failed')
+        try:
+            if self.events is not None:
+                self.events.onAvatarBecomePlayer -= self.on_avatar_become_player
+                self.events.onAvatarBecomeNonPlayer -= self.on_avatar_become_non_player
+        except Exception: LOG.exception('Battle hook cleanup failed')
+        self.hangar, self.events = None, None
+
+    def on_hangar_vehicle(self, *args):
+        """The vehicle selected in the hangar, on every change. Duplicates are dropped."""
+        try:
+            if self.hangar is None or not self.hangar.isPresent(): return
+            vehicle = self.hangar.item
+            if vehicle is None: return
+            self.recorder.request_vehicle(vehicle.descriptor, 'hangar')
+        except Exception: LOG.exception('Hangar vehicle export request failed')
+
+    def on_avatar_become_player(self, *args):
+        self.attempts = 0
+        self.attach_arena()
+
+    def attach_arena(self):
+        """Subscribe to the arena roster; the arena appears slightly after the avatar."""
+        try:
+            import BigWorld
+            arena = getattr(BigWorld.player(), 'arena', None)
+            if arena is None:
+                self.attempts += 1
+                if self.attempts <= 5: BigWorld.callback(1.0, self.attach_arena)
+                return
+            if arena is self.arena: return
+            self.detach_arena()
+            arena.onNewVehicleListReceived += self.on_vehicle_list
+            arena.onVehicleAdded += self.on_vehicle_added
+            self.arena = arena
+            self.on_vehicle_list()
+        except Exception: LOG.exception('Arena vehicle export hooks unavailable')
+
+    def detach_arena(self):
+        try:
+            if self.arena is not None:
+                self.arena.onNewVehicleListReceived -= self.on_vehicle_list
+                self.arena.onVehicleAdded -= self.on_vehicle_added
+        except Exception: LOG.exception('Arena hook cleanup failed')
+        self.arena = None
+
+    def on_avatar_become_non_player(self, *args):
+        self.detach_arena()
+        self.flush_roster()
+
+    def note_roster_vehicle(self, descr):
+        """Remember a roster vehicle for export after the battle; the game thread does nothing else."""
+        if descr is None: return
+        try:
+            key = str(descr.type.name)
+            if key not in self.roster: self.roster[key] = descr
+        except Exception: LOG.exception('Roster vehicle could not be noted')
+
+    def flush_roster(self):
+        """Queue the battle's vehicles for export now that the battle is over."""
+        pending, self.roster = self.roster, {}
+        for descr in pending.values():
+            try: self.recorder.request_vehicle(descr, 'battle')
+            except Exception: LOG.exception('Battle vehicle export request failed')
+
+    def on_vehicle_list(self, *args):
+        """Every vehicle of the roster - the opponents' exact configurations."""
+        try:
+            if self.arena is None: return
+            for info in list(getattr(self.arena, 'vehicles', {}).values()):
+                self.note_roster_vehicle((info or {}).get('vehicleType'))
+        except Exception: LOG.exception('Battle roster unavailable for vehicle export')
+
+    def on_vehicle_added(self, vehicle_id, *args):
+        try:
+            if self.arena is None: return
+            info = getattr(self.arena, 'vehicles', {}).get(vehicle_id) or {}
+            self.note_roster_vehicle(info.get('vehicleType'))
+        except Exception: LOG.exception('Battle vehicle export request failed')
 
 
 class Recorder(object):
@@ -192,8 +349,27 @@ class Recorder(object):
                 exporter = Exporter(os.getcwd(), os.path.dirname(os.path.abspath(folder)), self.version)
             except Exception: LOG.exception('HTML exporter unavailable; raw recording continues')
         self.writer = Writer(folder, exporter)
+        self.last_vehicle = None
         from local_armor_inspector.telemetry import ShotTelemetry
         self.telemetry = ShotTelemetry(self)
+
+    def request_vehicle(self, descr, source):
+        """Queue one vehicle export, skipping the request we just queued.
+
+        The hangar fires its change event often and a roster repeats itself, so the
+        same type with the same compact descriptor twice in a row is dropped here;
+        the exporter drops the rest by comparing the descriptor hash of the file it
+        already wrote.
+        """
+        try:
+            if descr is None: return
+            request = vehicle_request(descr, source)
+            key = (request['vehicleType'], request['compactDescriptor'])
+            if key == self.last_vehicle: return
+            self.last_vehicle = key
+            self.writer.put_vehicle(request)
+        except Exception:
+            LOG.exception('Vehicle export request failed; hit recording continues')
 
     def ensure_battle(self, player):
         arena = getattr(player, 'arena', None)
@@ -379,8 +555,86 @@ def open_viewer():
         LOG.exception('Could not open local HTML viewer')
 
 
+def show_vehicle(handler):
+    """The context-menu entry: export this vehicle and open the viewer on it.
+
+    The handler is a VehicleContextMenuHandler; _initFlashValues stored the
+    inventory id and the vehicle's intCD on it (self.vehInvID / self.vehCD), and
+    getVehCD()/getVehInvID() return them.
+    """
+    from local_armor_inspector.exporter import vehicle_id
+    from local_armor_inspector.presentation import open_in_game
+    from helpers import dependency
+    from skeletons.gui.shared import IItemsCache
+    items = dependency.instance(IItemsCache).items
+    vehicle = None
+    try:
+        vehicle = items.getItemByCD(handler.getVehCD())
+    except Exception:
+        LOG.exception('Vehicle of the context menu could not be read by compact descriptor')
+    if vehicle is None:
+        vehicle = items.getVehicle(handler.getVehInvID())
+    descr = vehicle.descriptor
+    if _recorder is not None:
+        _recorder.request_vehicle(descr, 'hangar')
+    open_in_game(VIEWER_PATH, 'host=game&vehicle=' + vehicle_id(descr.type.name))
+
+
+def install_context_menu():
+    """Append one entry to the hangar vehicle context menu.
+
+    hangar/__init__.py getContextMenuHandlers() registers
+    CONTEXT_MENU_HANDLER_TYPE.VEHICLE ('vehicle') -> VehicleContextMenuHandler, and
+    ContextMenuManager.requestOptions builds that class and sends
+    handler.getOptions(ctx) -> _generateOptions(ctx) to Flash, then routes the
+    click back through handler.onOptionSelect(optionId). Wrapping those two class
+    methods is therefore all an option needs; AbstractContextMenuHandler._makeItem
+    builds the option dict (id, label, iconType, initData, submenu, linkage).
+
+    Idempotent: a reloaded module finds its own marker and leaves the class alone.
+    """
+    from gui.Scaleform.daapi.view.lobby.hangar.hangar_cm_handlers import VehicleContextMenuHandler
+    generate, select = VehicleContextMenuHandler._generateOptions, VehicleContextMenuHandler.onOptionSelect
+    if getattr(generate, 'bullba_hits', False): return None
+
+    def bullba_generate_options(handler, ctx=None):
+        options = generate(handler, ctx)
+        try:
+            options = list(options or [])
+            options.append(VehicleContextMenuHandler._makeItem(CONTEXT_MENU_OPTION, CONTEXT_MENU_LABEL))
+        except Exception:
+            LOG.exception('Bullba Hits context menu entry unavailable; the menu is unchanged')
+        return options
+
+    def bullba_option_select(handler, optionId):
+        if optionId != CONTEXT_MENU_OPTION:
+            return select(handler, optionId)
+        try:
+            show_vehicle(handler)
+        except Exception:
+            LOG.exception('Bullba Hits could not open the selected vehicle')
+        return None
+
+    bullba_generate_options.bullba_hits = True
+    bullba_option_select.bullba_hits = True
+    VehicleContextMenuHandler._generateOptions = bullba_generate_options
+    VehicleContextMenuHandler.onOptionSelect = bullba_option_select
+    return (VehicleContextMenuHandler, generate, select)
+
+
+def remove_context_menu(installed):
+    if not installed: return
+    handler_class, generate, select = installed
+    try:
+        if getattr(handler_class._generateOptions, 'bullba_hits', False):
+            handler_class._generateOptions = generate
+        if getattr(handler_class.onOptionSelect, 'bullba_hits', False):
+            handler_class.onOptionSelect = select
+    except Exception: LOG.exception('Context menu cleanup failed')
+
+
 def init():
-    global _recorder, _original, _wrapper, _mods_api
+    global _recorder, _original, _wrapper, _mods_api, _events, _context_menu
     if _recorder is not None: return
     try:
         from Vehicle import Vehicle
@@ -397,6 +651,12 @@ def init():
         try: _recorder.telemetry.install()
         except Exception: LOG.exception('Aim telemetry hooks unavailable; hit recording continues')
         try:
+            _events = VehicleEvents(_recorder)
+            _events.install()
+        except Exception: LOG.exception('Vehicle export hooks unavailable; hit recording continues')
+        try: _context_menu = install_context_menu()
+        except Exception: LOG.exception('Hangar context menu unavailable; hit recording continues')
+        try:
             from gui.modsListApi import g_modsListApi
             _mods_api = g_modsListApi
             _mods_api.addModification(id='local.armor_inspector', name='Bullba Hits',
@@ -410,7 +670,12 @@ def init():
 
 
 def fini():
-    global _recorder
+    global _recorder, _events, _context_menu
+    remove_context_menu(_context_menu)
+    _context_menu = None
+    if _events is not None:
+        _events.close()
+        _events = None
     if _recorder is not None:
         _recorder.enabled = False
         _recorder.telemetry.close()

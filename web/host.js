@@ -10,6 +10,14 @@
   var host={game:game,interrupted:previous&&previous.stage==='start'?previous:null};
   host.mark=function(action,stage){write({action:action,stage:stage,at:Date.now(),host:game?'game':'browser',agent:String(window.navigator.userAgent||'').slice(0,160),href:String(window.location.href).slice(-80)});};
   host.done=function(){write(null);};
+  // The fragment carries key=value pairs joined by '&': '#host=game&vehicle=germany-G42_Maus'.
+  // Values are percent-decoded; a malformed escape is kept raw instead of throwing.
+  host.params=function(){
+    var out={};String(window.location.hash||'').replace(/^#/,'').split('&').forEach(function(pair){
+      if(!pair)return;var i=pair.indexOf('='),k=i<0?pair:pair.slice(0,i),v=i<0?'':pair.slice(i+1);
+      try{out[decodeURIComponent(k)]=decodeURIComponent(v);}catch(e){out[k]=v;}
+    });return out;
+  };
   // The breadcrumb names the last risky action if the browser dies before it
   // finishes. In the game the work is deferred one tick so the list closes and
   // the frame is presented before the heavy synchronous rebuild starts.

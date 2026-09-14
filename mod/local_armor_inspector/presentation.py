@@ -36,7 +36,18 @@ def gun_limits(descr):
     return _limits[key]
 
 
-def open_in_game(path):
+def open_in_game(path, fragment='host=game'):
+    """Open the local viewer in the game's own browser window.
+
+    The fragment is the page's only input: 'host=game' alone for the ModsList
+    button, 'host=game&vehicle=<id>' for one vehicle of the browser. It is never
+    sent anywhere - the client keeps it on the file URL.
+
+    Loading again with the browser id we already have re-navigates that window
+    instead of failing: BrowserController.load logs 'CTRL: Re-navigating an
+    existing browser' and calls browser.navigate(url) when the id is already in
+    its __browsers map.
+    """
     from gui import SystemMessages
     try:
         from helpers import dependency
@@ -50,7 +61,7 @@ def open_in_game(path):
             url = 'file:///' + pathname2url(os.path.abspath(path)).lstrip('/')
         # The page limits heavy settings only when it knows it runs inside the
         # game's offscreen CEF; the fragment is never sent or rewritten.
-        url += '#host=game'
+        url += '#' + fragment
         browser = dependency.instance(IBrowserController)
         width, height = GUI.screenResolution()
         try:

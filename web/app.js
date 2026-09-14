@@ -5,6 +5,7 @@
   var shellNames={ARMOR_PIERCING:'AP',ARMOR_PIERCING_CR:'APCR',HOLLOW_CHARGE:'HEAT',HIGH_EXPLOSIVE:'HE'},candidates=[],activeHit=null,shotContext=null,manualPen='',lastDistance=null,analysisKey=null;
   // web/host.js: game-host flag, breadcrumb-guarded heavy handlers. Absent in isolated tests.
   var host=window.BullbaHost||{game:false,interrupted:null,guard:function(action,fn){return fn;},done:function(){}};
+  function fragment(){return host.params?host.params():{};}
   var aimReasons={'no-tracer':'No own tracer','no-endpoint':'Tracer did not match the hit point','ambiguous':'Several tracers — the link is ambiguous','foreign':'Someone else’s shot','no-snapshot':'Reticle snapshot not recorded','stale':'Reticle snapshot is stale'};
   function staleEstimate(){if(analysisKey!==null){$('spread-result').textContent='Conditions changed. Press “Estimate” again.';analysisKey=null;}if(viewer)viewer.hideSpread();}
   function node(tag,text,cls){var e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e;}
@@ -39,6 +40,260 @@
     tile.title=[info.name||'Unknown vehicle',tier?'Tier '+tier:'',nationNames[nation]||'',classNames[cls]||'',family?roleNames[family]:''].filter(Boolean).join(' \u00b7 ');
     return tile;
   }
+  // ============================ Vehicles mode =============================
+  // The side panel works in two modes. “Battles” is the recorded history, unchanged to the pixel.
+  // “Vehicles” is the client's own catalogue: filter pills at the top, every vehicle of the client below,
+  // grouped by class. A click on a row fills one of the two roles - the collision model drawn in the scene,
+  // or the shooter whose shells are offered - and the role is chosen by clicking the matching scene tile.
+  var SIDEBAR_KEY='bullba-sidebar',VEHICLE_ID=/^[-a-zA-Z0-9_]{1,100}$/;
+  var CLASS_ORDER=['lightTank','mediumTank','heavyTank','AT-SPG','SPG'];
+  var FLAG_KEYS=['premium','collector','special','exported'];
+  var FLAG_NAMES={premium:'Premium',collector:'Collector',special:'Special',exported:'Exported'};
+  var FLAG_TITLES={premium:'Premium vehicles only',collector:'Collector vehicles only',special:'Special (reward) vehicles only',exported:'Only vehicles whose collision model is already exported'};
+  var SOURCE_TAG={hangar:'from the hangar',battle:'from a battle',catalogue:'from the catalogue'};
+  var SOURCE_TEXT={hangar:'the hangar',battle:'a battle',catalogue:'the catalogue'};
+  var NO_VEHICLE_MODEL='No collision model of this vehicle yet. Select it in the hangar, meet it in a battle, or right-click it in the hangar and pick Bullba Hits.';
+  var sidebarMode='battles',battlesDirty=false;
+  var catalogue=null,catalogueStamp=null,catalogueError=null,cataloguePending=false;
+  var vehicleFilters={tier:[],nation:[],'class':[],role:[],flag:[],text:''};
+  var modelVehicle=null,shooterVehicle=null,shooterPicked=false,activeRole='model';
+  var vehicleScene=null,vehicleGeneration=0,vehicleCache=Object.create(null),vehicleOrder=[];
+  var listIds=null,listMarks=null,listRoles=null,lastFragment=null;
+
+  // The game's CEF may refuse storage; the mode and the filters are a convenience, never a requirement.
+  function storedSidebar(){try{return JSON.parse(window.localStorage.getItem(SIDEBAR_KEY));}catch(e){return null;}}
+  function storeSidebar(){try{window.localStorage.setItem(SIDEBAR_KEY,JSON.stringify({mode:sidebarMode,filters:vehicleFilters}));}catch(e){}}
+
+  // ---- filters -----------------------------------------------------------
+  function toggleFilter(row,value,button){
+    var list=vehicleFilters[row],at=list.indexOf(value);
+    if(at<0)list.push(value);else list.splice(at,1);
+    button.setAttribute('aria-pressed',String(at<0));storeSidebar();renderVehicles();
+  }
+  function filterRow(row,title,items){
+    var wrap=node('div',undefined,'filter-row');wrap.appendChild(node('span',title,'filter-label'));
+    var pills=node('span',undefined,'filter-pills');pills.setAttribute('role','group');pills.setAttribute('aria-label',title);
+    items.forEach(function(item){
+      var b=node('button',undefined,'filter-pill');b.type='button';
+      b.setAttribute('data-row',row);b.setAttribute('data-value',item.value);b.setAttribute('aria-pressed','false');
+      if(item.mark){b.appendChild(item.mark);b.setAttribute('aria-label',item.label);}else b.textContent=item.label;
+      b.title=item.title||item.label;
+      b.onclick=function(){toggleFilter(row,item.value,b);};
+      pills.appendChild(b);
+    });
+    wrap.appendChild(pills);return wrap;
+  }
+  function buildFilters(){
+    var box=$('vehicle-filters');box.replaceChildren();
+    var search=document.createElement('input');search.id='vehicle-search';search.type='search';search.className='vehicle-search';
+    search.placeholder='Find\u2026';search.setAttribute('aria-label','Find a vehicle by name');search.autocomplete='off';
+    search.oninput=function(){vehicleFilters.text=this.value;storeSidebar();renderVehicles();};
+    box.appendChild(search);
+    var tiers=[],i;for(i=1;i<=11;i++)tiers.push({value:String(i),label:tierRomans[i],title:'Tier '+tierRomans[i]});
+    box.appendChild(filterRow('tier','Tier',tiers));
+    box.appendChild(filterRow('nation','Nation',Object.keys(nationNames).map(function(n){return {value:n,label:nationNames[n]};})));
+    box.appendChild(filterRow('class','Class',CLASS_ORDER.map(function(c){
+      var mark=node('span',undefined,'vt-class');mark.setAttribute('data-class',c);return {value:c,label:classNames[c],mark:mark};})));
+    box.appendChild(filterRow('role','Role',Object.keys(roleNames).map(function(f){
+      var mark=node('span',undefined,'vt-role');mark.setAttribute('data-role',f);return {value:f,label:roleNames[f],mark:mark};})));
+    box.appendChild(filterRow('flag','Flags',FLAG_KEYS.map(function(f){return {value:f,label:FLAG_NAMES[f],title:FLAG_TITLES[f]};})));
+  }
+  function syncFilters(){
+    document.querySelectorAll('#vehicle-filters [data-row]').forEach(function(b){
+      var list=vehicleFilters[b.getAttribute('data-row')]||[];
+      b.setAttribute('aria-pressed',String(list.indexOf(b.getAttribute('data-value'))>=0));});
+    var search=$('vehicle-search');if(search)search.value=vehicleFilters.text;
+  }
+  function vehicleMatches(v){
+    var f=vehicleFilters,i;
+    if(f.tier.length&&f.tier.indexOf(String(v.level))<0)return false;
+    if(f.nation.length&&f.nation.indexOf(v.nation)<0)return false;
+    if(f['class'].length&&f['class'].indexOf(v['class'])<0)return false;
+    if(f.role.length&&f.role.indexOf(roleFamilies[v.role]||'')<0)return false;
+    for(i=0;i<f.flag.length;i++)if(!v[f.flag[i]])return false;
+    var text=String(f.text||'').trim().toLowerCase();
+    if(text&&String(v.name||'').toLowerCase().indexOf(text)<0)return false;
+    return true;
+  }
+
+  // ---- the list ----------------------------------------------------------
+  // One DOM node per row, up to about a thousand of them: the list is rebuilt only when the set of rows, the
+  // roles or the export marks actually change, so the five-second poll of the catalogue costs nothing.
+  function renderVehicles(force){
+    var list=$('vehicles'),all=(catalogue&&catalogue.vehicles)||[],shown=all.filter(vehicleMatches);
+    var exported=0;shown.forEach(function(v){if(v.exported)exported++;});
+    $('vehicle-count').textContent=catalogue?shown.length+' vehicles \u00b7 '+exported+' with models':(catalogueError||'Reading the vehicle list\u2026');
+    var ids=shown.map(function(v){return v.id;}).join(','),marks=shown.map(function(v){return v.exported?'1':'0';}).join('');
+    var roles=(modelVehicle?modelVehicle.id:'')+'/'+(shooterVehicle?shooterVehicle.id:'');
+    if(!force&&ids===listIds&&roles===listRoles){
+      if(marks!==listMarks){listMarks=marks;shown.forEach(function(v){
+        var row=list.querySelector('[data-vehicle="'+v.id+'"]');if(row)row.setAttribute('data-exported',String(!!v.exported));});}
+      return;
+    }
+    listIds=ids;listMarks=marks;listRoles=roles;
+    var top=list.scrollTop;list.replaceChildren();
+    if(!shown.length){list.appendChild(node('p',catalogue?'No vehicles match the filters.':(catalogueError||'Reading the vehicle list\u2026'),'empty'));return;}
+    CLASS_ORDER.forEach(function(cls){
+      var group=shown.filter(function(v){return v['class']===cls;});
+      if(!group.length)return;
+      group.sort(function(a,b){return (b.level||0)-(a.level||0)||String(a.name||'').localeCompare(String(b.name||''));});
+      list.appendChild(node('div',String(classNames[cls]).toUpperCase(),'vehicle-group'));
+      group.forEach(function(v){
+        var b=node('button',undefined,'vehicle-row');b.type='button';
+        b.setAttribute('data-vehicle',v.id);b.setAttribute('data-exported',String(!!v.exported));
+        b.setAttribute('aria-pressed',String(!!modelVehicle&&modelVehicle.id===v.id));
+        if(shooterVehicle&&shooterVehicle.id===v.id)b.setAttribute('data-role','shooter');
+        b.appendChild(vehicleTile(v));
+        b.title=(v.name||'Unknown vehicle')+(v.exported?' \u00b7 model exported '+(SOURCE_TAG[v.source]||''):' \u00b7 no collision model yet');
+        b.onclick=function(){chooseVehicle(v);};
+        list.appendChild(b);
+      });
+    });
+    list.scrollTop=top;
+  }
+  function catalogueRow(id){
+    var rows=(catalogue&&catalogue.vehicles)||[],i;
+    for(i=0;i<rows.length;i++)if(rows[i].id===id)return rows[i];
+    return null;
+  }
+  function loadCatalogue(){
+    if(cataloguePending)return Promise.resolve();cataloguePending=true;
+    return ArmorInspectorData.vehicles().then(function(data){
+      if(!data||!Array.isArray(data.vehicles))throw new Error('Invalid vehicle list');
+      catalogueError=null;
+      var stamp=String(data.updatedAt||'')+':'+data.vehicles.length;
+      if(stamp===catalogueStamp&&catalogue)return;
+      catalogueStamp=stamp;
+      catalogue={updatedAt:data.updatedAt,vehicles:data.vehicles.filter(function(v){return v&&VEHICLE_ID.test(String(v.id||''));})};
+      if(sidebarMode==='vehicles')renderVehicles();
+    }).catch(function(){
+      catalogueError='No vehicle list yet. Run the game once with the mod: the catalogue is written at export setup.';
+      if(!catalogue&&sidebarMode==='vehicles')renderVehicles(true);
+    }).then(function(){cataloguePending=false;});
+  }
+
+  // ---- picking a vehicle -------------------------------------------------
+  function chooseVehicle(v){
+    if(!v.exported)return void message(NO_VEHICLE_MODEL);
+    pickVehicle(v.id,activeRole).catch(function(e){message(e.message);warnings([e.message]);});
+  }
+  // The export of a vehicle may still be running when the in-game window opens: retry until the deadline.
+  function readVehicle(id,deadline){
+    if(!VEHICLE_ID.test(String(id)))return Promise.reject(new Error('Invalid vehicle identifier'));
+    var row=catalogueRow(id),key=id+'@'+(row?row.exportedAt:'');
+    if(vehicleCache[key])return Promise.resolve(vehicleCache[key]);
+    return ArmorInspectorData.vehicle(id).then(function(record){
+      if(!record||record.id!==id||!Array.isArray(record.parts))throw new Error('This file is not a collision-model export of '+id+'.');
+      vehicleCache[key]=record;vehicleOrder.push(key);
+      while(vehicleOrder.length>8)delete vehicleCache[vehicleOrder.shift()];
+      return record;
+    },function(e){
+      if(!deadline||Date.now()>=deadline)throw e;
+      message('Exporting the model\u2026');
+      return new Promise(function(resolve){window.setTimeout(resolve,2000);}).then(function(){return readVehicle(id,deadline);});
+    });
+  }
+  // A browsed vehicle as a hit the scene loader and the viewer already understand: the model is the target
+  // (its parts carry the collision models), the shooter is the attacker without parts, and the shooter's own
+  // shells are the available ones. No points, so no hit line and no reticle - an inspector without a shot.
+  function vehicleHit(model,shooter){
+    var target=shallow(model),attacker=shallow(shooter);
+    ['shells','warnings','schema'].forEach(function(k){delete target[k];});
+    ['parts','shells','warnings','schema','gunPitchLimits','turretYawLimits'].forEach(function(k){delete attacker[k];});
+    // partsFrom is the rest pose, so the recorded turret yaw and gun pitch are both zero: that is the zero
+    // the viewer measures turretYawLimits and gunPitchLimits from, and the Turret/Gun readout needs it.
+    return {id:'vehicle:'+model.id+'/'+shooter.id,synthetic:true,vehicle:true,direction:'outgoing',aim:[0,0],
+      target:target,attacker:attacker,points:[],rawHitPoints:[],warnings:(model.warnings||[]).slice(),
+      shellCandidates:[],availableShells:(shooter.shells||[]).slice(),shellStatus:'vehicle browser',receivedAt:model.exportedAt};
+  }
+  function showVehicleScene(keepCamera){
+    if(!modelVehicle)return Promise.resolve(null);
+    var hit=vehicleHit(modelVehicle,shooterVehicle||modelVehicle);
+    var camera=keepCamera&&viewer&&viewer.cameraState?viewer.cameraState():null,token=++generation;
+    message('Preparing the model\u2026');if(viewer)viewer.clear();
+    return ArmorInspectorData.sceneFor({warnings:[]},hit).then(function(data){
+      if(token!==generation)return null;
+      vehicleScene=data;display(data,false);
+      if(camera&&viewer)viewer.restoreCamera(camera);
+      renderVehicleHeading();renderVehicles(true);
+      return data;
+    }).catch(function(e){if(token===generation){message(e.message);warnings([e.message]);}throw e;});
+  }
+  // Changing the model is an ordinary load (camera as for any new hit). Changing the shooter alone leaves the
+  // model and the orbit centre where they are, so the camera is taken before the reload and put back after it.
+  function pickVehicle(id,role,options){
+    role=role==='shooter'?'shooter':'model';options=options||{};
+    var token=++vehicleGeneration;
+    message(options.waiting||'Preparing the model\u2026');
+    return readVehicle(id,options.deadline).then(function(record){
+      if(token!==vehicleGeneration)return null;
+      var keepCamera=false;
+      if(role==='shooter'){
+        if(modelVehicle)keepCamera=true;else modelVehicle=record;
+        shooterVehicle=record;shooterPicked=true;
+      }else{
+        modelVehicle=record;
+        if(!shooterPicked||!shooterVehicle)shooterVehicle=record;
+      }
+      return showVehicleScene(keepCamera);
+    });
+  }
+  function renderVehicleHeading(){
+    var v=modelVehicle,date=v&&Number.isFinite(v.exportedAt)?new Date(v.exportedAt*1000).toLocaleDateString('en-GB'):'';
+    var tag=v?SOURCE_TAG[v.source]||'':'';
+    $('scene-kind').textContent='VEHICLE'+(tag?' \u00b7 '+tag:'')+(date?' \u00b7 '+date:'');
+    $('battle-map').textContent=v?(v.name||'Unknown vehicle'):'Pick a vehicle';
+    var slot=$('heading-vehicle');slot.replaceChildren();if(v)slot.appendChild(vehicleTile(v));
+  }
+
+  // ---- the mode switch ---------------------------------------------------
+  function setMode(mode){
+    mode=mode==='vehicles'?'vehicles':'battles';
+    var changed=mode!==sidebarMode;sidebarMode=mode;
+    document.querySelectorAll('#sidebar-mode [data-mode]').forEach(function(b){b.setAttribute('aria-pressed',String(b.getAttribute('data-mode')===mode));});
+    $('battles-pane').hidden=mode!=='battles';$('vehicles-pane').hidden=mode!=='vehicles';
+    storeSidebar();
+    if(mode==='vehicles'){
+      loadCatalogue();
+      if(!changed)return Promise.resolve();
+      if(vehicleScene&&modelVehicle){display(vehicleScene,false);renderVehicleHeading();renderVehicles(true);return Promise.resolve();}
+      if(modelVehicle)return showVehicleScene(false).catch(function(){});
+      ++generation;if(viewer)viewer.clear();sceneTiles(null,false);renderVehicleHeading();renderVehicles(true);
+      message('Pick a vehicle from the list.');warnings([]);
+      return Promise.resolve();
+    }
+    ++vehicleGeneration;
+    if(!changed)return Promise.resolve();
+    if(battlesDirty||!current){battlesDirty=false;indexStamp=null;return refresh();}
+    renderHits();
+    if(selected)return selectHit(selected).catch(function(){});
+    return loadBattle(current.id,true).catch(function(){});
+  }
+  // #host=game&vehicle=<id>: open the Vehicles mode on that vehicle. The game window may also be navigated to a
+  // new fragment while it is open, so the same path serves 'hashchange'.
+  function applyFragment(initial){
+    var id=String(fragment().vehicle||'');
+    if(!id||!VEHICLE_ID.test(id)){if(!initial)lastFragment=null;return;}
+    if(!initial&&id===lastFragment)return;
+    lastFragment=id;loadCatalogue();setMode('vehicles');shooterPicked=false;
+    pickVehicle(id,'model',{deadline:Date.now()+30000,waiting:'Exporting the model\u2026'})
+      .catch(function(){message('The model of this vehicle was not exported. See game.log.');});
+  }
+  function restoreSidebar(){
+    buildFilters();
+    var saved=storedSidebar();
+    if(saved&&saved.filters){
+      ['tier','nation','class','role','flag'].forEach(function(k){if(Array.isArray(saved.filters[k]))vehicleFilters[k]=saved.filters[k].filter(function(v){return typeof v==='string';});});
+      if(typeof saved.filters.text==='string')vehicleFilters.text=saved.filters.text;
+    }
+    syncFilters();
+    if(fragment().vehicle)return;                  // the fragment decides the mode itself
+    if(saved&&saved.mode==='vehicles')setMode('vehicles');
+  }
+  document.querySelectorAll('#sidebar-mode [data-mode]').forEach(function(b){
+    b.onclick=host.guard('Side panel mode',function(){setMode(b.getAttribute('data-mode'));});});
+  $('model-tile').onclick=function(){if(sidebarMode!=='vehicles')return;activeRole='model';roleTiles();};
+  // ========================== end of Vehicles mode =========================
   function message(text){$('scene-message').textContent=text;$('scene-message').hidden=!text;}
   function warnings(lines){$('warnings').textContent=lines.map(function(line){return line==='Additional vehicle parts are not yet rendered'?'Extra parts of this vehicle are not shown and not included in the estimate.':line;}).join(' · ');$('warnings').hidden=!lines.length;}
   function result(hit){if(hit.damage>0)return 'Damage '+hit.damage+' HP';var p=(hit.points||[]).filter(function(p){return p.effect!==undefined;});return p.length?(effects[p[p.length-1].effect]||'Result '+p[p.length-1].effect):'Result not decoded';}
@@ -49,13 +304,18 @@
     // A swapped view has no shot and therefore no shells: keep the shell that is on screen - type,
     // penetration and calibre - instead of falling back to the empty manual defaults.
     var keep=null;
-    if(hit&&hit.synthetic){var was=$('shell-choice').value,c0=was.indexOf('saved:')===0?candidates[Number(was.slice(6))]:null;
+    if(hit&&hit.synthetic&&!hit.vehicle){var was=$('shell-choice').value,c0=was.indexOf('saved:')===0?candidates[Number(was.slice(6))]:null;
       keep={kind:c0?c0.kind:was||'ARMOR_PIERCING',penetration:$('penetration').value,caliber:$('caliber').value};}
-    activeHit=hit;shotContext=ArmorShotContext.resolve(hit,current&&current.shotEvents||[]);candidates=shotContext.choices;var choice=$('shell-choice');choice.replaceChildren();
+    activeHit=hit;shotContext=ArmorShotContext.resolve(hit,hit&&hit.vehicle?[]:(current&&current.shotEvents||[]));candidates=shotContext.choices;var choice=$('shell-choice');choice.replaceChildren();
     candidates.forEach(function(c,i){var o=node('option',(shellNames[c.kind]||c.kind)+' · '+c.name);o.value='saved:'+i;choice.appendChild(o);});
     Object.keys(shellNames).forEach(function(kind){var o=node('option',shellNames[kind]+' — manual');o.value=kind;choice.appendChild(o);});
-    if(candidates.length>1){var uncertain=node('option','Pick a shell — several matches');uncertain.value='';choice.insertBefore(uncertain,choice.firstChild);}
+    if(candidates.length>1&&!(hit&&hit.vehicle)){var uncertain=node('option','Pick a shell — several matches');uncertain.value='';choice.insertBefore(uncertain,choice.firstChild);}
     choice.value=shotContext.index>=0?'saved:'+shotContext.index:candidates.length?'':shotContext.kind||'ARMOR_PIERCING';
+    // A browsed vehicle has no hit to identify a shell, so resolve() leaves the index at -1. The shooter's own
+    // list is nevertheless the right set of choices: preselect the first AP-like shell so the model is coloured
+    // the moment a vehicle is picked, instead of “pick a shell”.
+    if(hit&&hit.vehicle&&candidates.length){var first=candidates.findIndex(function(c){return c.kind==='ARMOR_PIERCING';});
+      if(first<0)first=candidates.findIndex(function(c){return c.kind==='ARMOR_PIERCING_CR';});if(first<0)first=0;choice.value='saved:'+first;}
     $('shell-quick').replaceChildren();candidates.forEach(function(c,i){var actual=i===shotContext.index,b=node('button',(actual?'● ':'')+(shellNames[c.kind]||c.kind)+' '+Math.round(c.penetration100),'shell-chip');b.dataset.shell='saved:'+i;b.title=c.name+' · '+c.caliber+' mm · '+(actual?'Type from the hit':'Compare with this shell');b.onclick=function(){choice.value='saved:'+i;selectShell();};$('shell-quick').appendChild(b);});
     if(keep){choice.value=keep.kind;manualPen=keep.penetration;$('penetration').value=keep.penetration;$('caliber').value=keep.caliber;$('penetration-label').textContent='Penetration at target, mm';updateShell();}
     else selectShell();
@@ -92,7 +352,8 @@
     var distance=viewer?viewer.distance:100,shell=shellAt(c,choice,penetration,caliber,distance);
     var edited=c&&(penetration!==c.penetration100||caliber!==c.caliber);
     var actual=shotContext&&choice==='saved:'+shotContext.index&&!edited;
-    $('shell-source').textContent=!choice?'Pick a shell':!valid?'No penetration in the record':(actual?'● From the hit':c?'◇ Comparison':'◇ Manual')+' · '+Math.round(shell.penetration)+' mm at target · ±'+Math.round(shell.randomization*100)+'%';
+    var browsing=!!(activeHit&&activeHit.vehicle);
+    $('shell-source').textContent=!choice?'Pick a shell':!valid?'No penetration in the record':(actual?'● From the hit':c?(browsing?'● Shooter’s shell':'◇ Comparison'):'◇ Manual')+' · '+Math.round(shell.penetration)+' mm at target · ±'+Math.round(shell.randomization*100)+'%';
     $('shell-source').title=(shotContext?shotContext.source:'')+' · Nominal penetration at the current distance, not the rolled RNG. HE: penetration only, no blast damage.';
     document.querySelectorAll('[data-shell]').forEach(function(b){b.setAttribute('aria-pressed',String(b.dataset.shell===choice));});
     var kind=c?c.kind:choice;document.querySelectorAll('#shell-types [data-kind]').forEach(function(b){b.setAttribute('aria-pressed',String(b.dataset.kind===kind));});
@@ -133,6 +394,7 @@
   function ownVehicle(){if(!current)return null;var inc=current.hits.find(function(h){return h.direction==='incoming'&&h.target&&h.target.name;});if(inc)return inc.target;var out=current.hits.find(function(h){return h.direction==='outgoing'&&h.attacker&&h.attacker.name;});return out?out.attacker:null;}
   function renderHeading(){
     var stamp=current?battleStamp(current.startedAt):'',own=ownVehicle();
+    if(sidebarMode!=='battles')return own; // the Vehicles mode writes its own heading
     $('scene-kind').textContent='BATTLE'+(stamp?' \u00b7 '+stamp:'');
     $('battle-map').textContent=current?(current.map||'Unknown map'):'Pick a hit';
     var slot=$('heading-vehicle');slot.replaceChildren();if(own)slot.appendChild(vehicleTile(own));
@@ -155,15 +417,26 @@
       shellCandidates:[],availableShells:[],receivedAt:hit.receivedAt,rangeAtImpact:hit.rangeAtImpact};
   }
   function sceneTiles(hit,reference){
-    var target=hit&&hit.target||null,attacker=hit&&hit.attacker||null,button=$('shooter-tile');
+    var target=hit&&hit.target||null,attacker=hit&&hit.attacker||null,button=$('shooter-tile'),model=$('model-tile');
     $('model-caption').textContent=reference?'Reference model':'Collision model';
-    $('model-tile').hidden=!target;$('model-tile-body').replaceChildren();if(target)$('model-tile-body').appendChild(vehicleTile(target));
+    model.hidden=!target;$('model-tile-body').replaceChildren();if(target)$('model-tile-body').appendChild(vehicleTile(target));
     button.hidden=!attacker;$('shooter-tile-body').replaceChildren();if(attacker)$('shooter-tile-body').appendChild(vehicleTile(attacker));
+    // In Vehicles mode both tiles are controls: the one pressed last is the role the next list click fills.
+    if(sidebarMode==='vehicles'){
+      model.disabled=false;button.disabled=false;
+      model.title='Pick the vehicle to show from the list';button.title='Pick the shooter from the list';
+      roleTiles();return;
+    }
+    model.disabled=true;model.removeAttribute('aria-pressed');button.removeAttribute('aria-pressed');model.title='';
     var back=!!(hit&&hit.synthetic),ready=swapReady(hit);button.disabled=!(back||ready);
     button.title=back?'Back to the recorded hit and its shot line':ready?'Show this vehicle\u2019s collision model \u00b7 the roles swap, the recorded shot is not carried over':NO_SHOOTER_MODEL;
   }
+  function roleTiles(){
+    $('model-tile').setAttribute('aria-pressed',String(activeRole!=='shooter'));
+    $('shooter-tile').setAttribute('aria-pressed',String(activeRole==='shooter'));
+  }
   function display(data,reference){
-    var hit=data.hit;swapped=hit.synthetic?hit:null;sceneTiles(hit,reference);
+    var hit=data.hit;swapped=hit.synthetic&&!hit.vehicle?hit:null;sceneTiles(hit,reference);
     $('shot-source').textContent=hit.synthetic?'No recorded shot':'Hit line';$('unpin').hidden=true;prepareShell(hit);var drawn=viewer&&viewer.load(data,shotContext);message(drawn?'':'Geometry unavailable. The original event is kept.');pivotButtons();warnings(data.warnings||[]);$('details').replaceChildren();
     var aimReady=viewer&&viewer.setShotContext(shotContext),estimate=!aimReady&&viewer?viewer.setAimEstimate(shotContext):null;$('show-aim').disabled=!(aimReady||estimate);
     // The reticle block stays small: what the circles mean and where this one came from lives in the ⓘ tooltip.
@@ -172,6 +445,11 @@
     $('aim-toggle').title=aimReady?'The saved client circle is teal; the server one is dashed when received. Linked to the hit by end point and time; the target position is at impact.':'No own reticle is unambiguously linked to this hit: '+(aimReasons[shotContext.aimReason]||'no data')+'.';
     shotStats();
     if(reference){$('details').appendChild(node('p','The model is extracted from the installed client. There are no invented hits here. Once the recorder is installed, new battles appear in the list on the left.'));return;}
+    if(hit.vehicle){
+      var mv=hit.target||{},sv=hit.attacker||{},when=Number.isFinite(hit.receivedAt)?new Date(hit.receivedAt*1000).toLocaleDateString('en-GB'):'an unknown date';
+      $('details').appendChild(node('p','Client collision model of '+(mv.name||'this vehicle')+', exported from '+(SOURCE_TEXT[mv.source]||'the client')+' on '+when+', rest pose. Shooter: '+(sv.name||'\u2014')+', '+(sv.gun||'gun not recorded')+'. Nothing was fired here: pin a point on the armour to read a line, or Alt + click to estimate a reticle.'));
+      return;
+    }
     if(hit.synthetic){$('details').appendChild(node('p','The shooter\u2019s collision model, swapped in from the hit at '+clock(hit.receivedAt)+'. Nothing was fired at this vehicle in the record, so there is no hit line, no reticle and no shell of its own. Click the tile below the model to go back to the recorded hit.'));return;}
     detail('Direction',hit.direction==='incoming'?'Incoming':'Outgoing',clock(hit.receivedAt));detail('Result',result(hit));
     var points=hit.points||[],point=points.find(function(p){return p.status==='resolved';});
@@ -209,9 +487,16 @@
     if(polling)return Promise.resolve();polling=true;
     return ArmorInspectorData.index().then(function(index){var pv=$('app-version').getAttribute('data-version');$('app-version').textContent=[pv!=='dev'?pv:'',index.version&&index.version!==pv?'records '+index.version:''].filter(Boolean).join(' \u00b7 ');if(index.application!=='local.armor_inspector'||!Array.isArray(index.battles))throw new Error('Invalid battle list');$('connection').textContent='Local files \u00b7 no server';
       var stamp=String(index.updatedAt||'')+':'+index.battles.map(function(b){return b.id+'/'+b.hits;}).join(',');if(stamp===indexStamp)return;indexStamp=stamp;
-      var battles=index.battles,prior=$('battles').value;$('battles').replaceChildren();if(!battles.length){current=null;selected=null;++generation;++battleGeneration;if(viewer)viewer.clear();sceneTiles(null,false);$('battles').appendChild(node('option','No battles yet'));renderHits();message('New hits appear here after a battle.');warnings([]);return;}
-      battles.forEach(function(b){var option=node('option',new Date(b.startedAt*1000).toLocaleDateString('en-GB')+' \u00b7 '+b.map+' \u00b7 '+b.hits);option.value=b.id;$('battles').appendChild(option);});var id=battles.some(function(b){return b.id===prior;})?prior:battles[0].id;$('battles').value=id;return loadBattle(id,current&&current.id===id);
-    }).catch(function(e){$('connection').textContent='No local records';if(!current){message(e.message);warnings([e.message]);}}).then(function(){polling=false;});
+      var battles=index.battles,prior=$('battles').value;$('battles').replaceChildren();
+      if(!battles.length){current=null;selected=null;++battleGeneration;$('battles').appendChild(node('option','No battles yet'));
+        if(sidebarMode!=='battles'){battlesDirty=true;return;}
+        ++generation;if(viewer)viewer.clear();sceneTiles(null,false);renderHits();message('New hits appear here after a battle.');warnings([]);return;}
+      battles.forEach(function(b){var option=node('option',new Date(b.startedAt*1000).toLocaleDateString('en-GB')+' \u00b7 '+b.map+' \u00b7 '+b.hits);option.value=b.id;$('battles').appendChild(option);});var id=battles.some(function(b){return b.id===prior;})?prior:battles[0].id;$('battles').value=id;
+      // The battle list stays fresh while the Vehicles mode is on screen, but the scene there belongs to a
+      // vehicle: the reload waits for the switch back.
+      if(sidebarMode!=='battles'){battlesDirty=true;return;}
+      return loadBattle(id,current&&current.id===id);
+    }).catch(function(e){$('connection').textContent='No local records';if(!current&&sidebarMode==='battles'){message(e.message);warnings([e.message]);}}).then(function(){polling=false;});
   }
   try{viewer=new ArmorViewer($('viewport'));}catch(e){message('WebGL unavailable: '+e.message);}
   if(viewer)viewer.onInspect=inspectArmor;
@@ -244,6 +529,7 @@
   // The shooter tile swaps the roles; on a swapped view it goes back to the recorded hit. The list
   // selection stays on the recorded hit either way - the swap is a view of it, not another hit.
   $('shooter-tile').onclick=function(){
+    if(sidebarMode==='vehicles'){activeRole='shooter';roleTiles();return;}
     if(swapped)return void selectHit(swapped.base).catch(function(){});
     var hit=activeHit;if(!hit||hit.synthetic||!swapReady(hit)||!current)return;
     var synthetic=swapHit(hit),token=++generation;message('Preparing the model\u2026');if(viewer)viewer.clear();
@@ -269,6 +555,10 @@
   if(host.interrupted){$('host-note').hidden=false;$('host-note').textContent='The previous session was interrupted during “'+host.interrupted.action+'» ('+(host.interrupted.host==='game'?'in the game':'in the browser')+', '+new Date(host.interrupted.at).toLocaleString('en-GB')+'). Mention this when reporting.';}
   (function(){var pv=$('app-version').getAttribute('data-version');if(pv!=='dev')$('app-version').textContent=pv;}());
   host.done();
-  refresh();window.setInterval(refresh,5000);
+  // The catalogue is read once at start when the fragment names a vehicle, whatever the remembered mode is.
+  restoreSidebar();
+  refresh();applyFragment(true);
+  window.addEventListener('hashchange',function(){applyFragment(false);});
+  window.setInterval(function(){refresh();if(sidebarMode==='vehicles')loadCatalogue();},5000);
   if(document.modelContext&&document.modelContext.registerTool){try{document.modelContext.registerTool({name:'select_saved_hit',description:'Open an existing recorded hit in the local 3D viewer.',inputSchema:{type:'object',properties:{battleId:{type:'string'},hitId:{type:'string'}},required:['battleId','hitId'],additionalProperties:false},execute:function(input){if(!input||!/^[-a-zA-Z0-9_]{1,100}$/.test(input.battleId)||!/^\d+$/.test(input.hitId))throw new Error('Invalid record identifiers');return loadBattle(input.battleId,true).then(function(){return selectHit(input.hitId);});}});}catch(e){console.warn('WebMCP unavailable',e);}}
 }());

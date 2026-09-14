@@ -6,6 +6,9 @@
     if(key==='index')return 'data/index.js';
     if(/^battle:[-a-zA-Z0-9_]{1,100}$/.test(key))return 'data/battles/'+key.slice(7)+'.js';
     if(/^model:[a-f0-9]{64}$/.test(key))return 'data/models/'+key.slice(6)+'.js';
+    // The vehicle browser: one catalogue of every client vehicle, and one file per exported vehicle.
+    if(key==='vehicles')return 'data/vehicles.js';
+    if(/^vehicle:[-a-zA-Z0-9_]{1,100}$/.test(key))return 'data/vehicles/'+key.slice(8)+'.js';
     throw new Error('Invalid record identifier');
   }
   function read(key,retryCount){
@@ -51,5 +54,5 @@
   function scene(battle,id){
     return sceneFor(battle,(battle.hits||[]).find(function(h){return h.id===id;}));
   }
-  window.ArmorInspectorData={receive:receive,index:function(){return read('index');},battle:function(id){return read('battle:'+id);},scene:scene,sceneFor:sceneFor};
+  window.ArmorInspectorData={receive:receive,index:function(){return read('index');},battle:function(id){return read('battle:'+id);},vehicles:function(){return read('vehicles');},vehicle:function(id){return read('vehicle:'+id);},scene:scene,sceneFor:sceneFor};
 }());
