@@ -598,6 +598,10 @@
   (function(){var select=$('bounce-mode'),stored=null;try{stored=window.localStorage.getItem('bullba-bounce-mode');}catch(e){}
     if(stored==='always'||stored==='idle')select.value=stored;if(viewer)viewer.setBounceMode(select.value);
     select.onchange=function(){if(viewer)viewer.setBounceMode(this.value);try{window.localStorage.setItem('bullba-bounce-mode',this.value);}catch(e){}};})();
+  // Hatch spacing of the bounced-leg zones: remembered per browser; the value is shown so it can be quoted.
+  (function(){var input=$('hatch-spacing'),out=$('hatch-spacing-value'),stored=NaN;try{stored=Number(window.localStorage.getItem('bullba-hatch'));}catch(e){}
+    if(stored>=4&&stored<=24)input.value=stored;var apply=function(){out.textContent=input.value+' px';if(viewer)viewer.setHatchSpacing(input.value);};apply();
+    input.oninput=function(){apply();try{window.localStorage.setItem('bullba-hatch',input.value);}catch(e){}};})();
   $('heatmap-quality').onchange=host.guard('Detail',function(){if(host.game&&this.value==='high'){this.value=viewer?viewer.quality:'auto';return;}if(viewer)viewer.setQuality(this.value);});
   // One line under the scene: the explored pose (when it differs) and the gun's vertical limits at the current turret angle.
   function poseChanged(){if(!viewer)return;var off=!(Math.abs(viewer.turretAngle)<.1&&Math.abs(viewer.gunAngle)<.1),sign=function(v){return (v>0?'+':'')+Math.round(v)+'°';},g=viewer.gunRange();$('turret-notice').hidden=!off;if(off)$('turret-notice').textContent='Turret '+sign(viewer.turretAngle)+', gun '+sign(viewer.gunAngle)+' from the recorded pose (hit marks hidden)';$('gun-limits').textContent=g.known?'Gun '+sign(g.min)+' … '+sign(g.max)+' at this turret angle':'Gun limits not recorded';recordedButton();staleEstimate();shotStats();}

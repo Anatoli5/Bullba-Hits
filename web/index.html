@@ -13,7 +13,8 @@
 <label>Chance palette<select id="palette"><option value="classic">Red — green</option><option value="accessible">Purple — teal</option></select></label>
 
 <label>Detail<select id="heatmap-quality"><option value="auto">Auto · layers up to 1600 px</option><option value="low">Faster · half window</option><option value="medium">Normal · up to 1200 px</option><option value="high">Sharper edges · full resolution</option></select></label>
-<label title="The hatched zones show where a ricocheting shell still penetrates on its second contact. Tracing them costs GPU time on every frame; the lighter mode draws them only once the camera has stopped.">Ricochet trace<select id="bounce-mode"><option value="idle">After the camera stops · lighter</option><option value="always">Always · live while rotating</option></select></label>
+<label title="The hatched zones show where a ricocheting shell still penetrates on its second contact. Tracing them costs GPU time on every frame; the lighter mode draws them only once the camera has stopped.">Ricochet trace<select id="bounce-mode"><option value="always">Always · live while rotating</option><option value="idle">After the camera stops · lighter</option></select></label>
+<label title="Spacing of the thin lines drawn over the zones where a ricocheting shell still penetrates on its second contact; the fill is the chance of that second contact.">Hatch spacing<span class="hatch-row"><input type="range" id="hatch-spacing" min="4" max="24" step="1" value="8"><output id="hatch-spacing-value">8 px</output></span></label>
 
 </div>
 <div id="track-overlay-note" class="track-overlay-note"><span>Screens and tracks are drawn as neutral grey over the armour; the slider sets the share of one screen, and every further screen on the line of sight adds its own share. The armour colour beneath is the penetration chance with the screens included (HE: threefold).</span></div>

@@ -73,15 +73,17 @@ float bounceLeg(vec3 origin,vec3 direction,float nominal){
   vec3 n=dot(ray,face)>0.0?-face:face;
   vec3 mirrored=normalize(ray-2.0*dot(ray,n)*n);
   float after=bounceLeg(spot+mirrored*.001,mirrored,uPen.x*(1.0-uRicochetLoss));
-  // A bounced shell that still penetrates keeps its own chance but is hatched, so it never reads as a direct hit.
-  if(after>=0.0&&mod(gl_FragCoord.x+gl_FragCoord.y,9.0)<4.0)color=palette(after);
+  // A bounced shell that still penetrates is painted in its own chance colour, crossed by thin 45-degree lines in
+  // the ricochet colour so the zone never reads as a direct hit. uHatch = (line spacing, line width) in device
+  // pixels; the line edge is smoothed over one pixel so the pattern survives the game's window scaling without moire.
+  if(after>=0.0){float d=mod(gl_FragCoord.x+gl_FragCoord.y,uHatch.x),gap=min(d,uHatch.x-d)*.70710678;float line=1.0-smoothstep(uHatch.y*.5-.5,uHatch.y*.5+.5,gap);color=mix(palette(after),color,line);}
  }`:'';
     return `precision highp float; precision highp int; precision highp usampler2D; precision highp isampler2D;
 ${declarations}
 uniform highp sampler2D uMaterials; uniform vec4 uPen; uniform vec4 uShell; uniform ivec4 uFlags;
 uniform bool uClassic; uniform float uOpacity;
 uniform vec3 uOrigin; uniform vec3 uAnchor; uniform vec3 uForward;
-uniform mat4 uCameraWorld; uniform mat4 uInvProjection; uniform float uRicochetLoss; uniform int uBounce;
+uniform mat4 uCameraWorld; uniform mat4 uInvProjection; uniform float uRicochetLoss; uniform int uBounce; uniform vec2 uHatch;
 ${traversal}
 in vec2 vUV; out vec4 outputColor;
 const float EPS=.00001;
@@ -190,7 +192,7 @@ void main(){
     if(this.quad){if(this.quad.parent)this.quad.parent.remove(this.quad);this.quad.geometry.dispose();this.material.dispose();}
     var uniforms={uMaterials:{value:this.materialTexture},uPen:{value:new T.Vector4()},uShell:{value:new T.Vector4()},uFlags:{value:new Int32Array(4)},uClassic:{value:false},uOpacity:{value:.35},
       uOrigin:{value:new T.Vector3()},uAnchor:{value:new T.Vector3()},uForward:{value:new T.Vector3()},
-      uCameraWorld:{value:new T.Matrix4()},uInvProjection:{value:new T.Matrix4()},uRicochetLoss:{value:0},uBounce:{value:1}};
+      uCameraWorld:{value:new T.Matrix4()},uInvProjection:{value:new T.Matrix4()},uRicochetLoss:{value:0},uBounce:{value:1},uHatch:{value:new T.Vector2(8,1)}};
     for(var i=0;i<=COUNT;i++)uniforms['uLayer'+i]={value:this.targets[i].texture};
     if(this.bounce){var lib=root.MeshBVHLib;if(!this.bvhStruct){this.bvhStruct=new lib.MeshBVHUniformStruct();this.faceMaterial=new lib.FloatVertexAttributeTexture();}
       uniforms.uBVH={value:this.bvhStruct};uniforms.uFaceMaterial={value:this.faceMaterial};}
@@ -250,6 +252,7 @@ void main(){
     if(this.width!==size.width||this.height!==size.height){this.width=size.width;this.height=size.height;this.targets.forEach(function(t){t.setSize(size.width,size.height);});this.key=null;}
     var s=shell||{},u=this.material.uniforms;u.uPen.value.set(s.penetration||0,s.caliber||0,s.randomization||0,!s.randomizationType||s.randomizationType==='NORMAL'?1:0);u.uShell.value.set(s.normalization||0,s.ricochetCos==null?-1:s.ricochetCos,s.jetLossPerMeter||0,s.kind==='HIGH_EXPLOSIVE'?1:0);u.uFlags.value.set([s.mayRicochet?1:0,s.checkCaliber?1:0,s.shieldPenetration?1:0,s.penetration>0&&s.caliber>0?1:0]);u.uClassic.value=palette==='classic';u.uOpacity.value=opacity;
     u.uRicochetLoss.value=s.ricochetLoss||0;
+    var pr=Math.max(1,pixelRatio||1);u.uHatch.value.set(Math.max(2,this.hatch||8)*pr,pr); // hatch spacing in CSS px, lines one CSS px wide
     var key=camera.matrixWorld.elements.join(',')+'|'+camera.projectionMatrix.elements.join(','),now=Date.now();
     if(key!==this.key)this.movedAt=now;
     var settled=bounceMode==='always'||!(now-(this.movedAt||0)<SETTLE);
