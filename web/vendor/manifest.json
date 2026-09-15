@@ -1,5 +1,16 @@
 {
-  "version": "0.160.1",
-  "url": "https://cdn.jsdelivr.net/npm/three@0.160.1/build/three.min.js",
-  "sha256": "170c6789f43217c96b3170f4b42fafe135de7f7cd48497a4218f9757ee1d49fa"
+  "three": {
+    "version": "0.160.1",
+    "url": "https://cdn.jsdelivr.net/npm/three@0.160.1/build/three.min.js",
+    "sha256": "170c6789f43217c96b3170f4b42fafe135de7f7cd48497a4218f9757ee1d49fa",
+    "file": "three.min.js",
+    "license": "three.LICENSE"
+  },
+  "three-mesh-bvh": {
+    "version": "0.8.3",
+    "url": "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.8.3/build/index.umd.cjs",
+    "sha256": "1c8158b50c1178908bbfe27eedf9ec3fefa53767497ef08b8f0044cc95a4a0ef",
+    "file": "three-mesh-bvh.umd.js",
+    "license": "three-mesh-bvh.LICENSE"
+  }
 }

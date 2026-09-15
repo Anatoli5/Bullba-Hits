@@ -13,6 +13,7 @@
 <label>Chance palette<select id="palette"><option value="classic">Red — green</option><option value="accessible">Purple — teal</option></select></label>
 
 <label>Detail<select id="heatmap-quality"><option value="auto">Auto · layers up to 1600 px</option><option value="low">Faster · half window</option><option value="medium">Normal · up to 1200 px</option><option value="high">Sharper edges · full resolution</option></select></label>
+<label title="The hatched zones show where a ricocheting shell still penetrates on its second contact. Tracing them costs GPU time on every frame; the lighter mode draws them only once the camera has stopped.">Ricochet trace<select id="bounce-mode"><option value="idle">After the camera stops · lighter</option><option value="always">Always · live while rotating</option></select></label>
 
 </div>
 <div id="track-overlay-note" class="track-overlay-note"><span>Screens and tracks are drawn as neutral grey over the armour; the slider sets the share of one screen, and every further screen on the line of sight adds its own share. The armour colour beneath is the penetration chance with the screens included (HE: threefold).</span></div>
@@ -31,5 +32,5 @@
 <details class="extra-controls" hidden><summary>Hit details</summary><div id="details" class="details"><p>Pick a battle and a hit in the list on the left.</p></div></details><div id="warnings" class="warnings" hidden role="status"></div>
 </section></main>
 <script>if(!Element.prototype.replaceChildren){Element.prototype.replaceChildren=function(){while(this.firstChild)this.removeChild(this.firstChild);for(var i=0;i<arguments.length;i++)this.appendChild(typeof arguments[i]==='string'?document.createTextNode(arguments[i]):arguments[i]);};}</script>
-<script src="web/host.js"></script><script src="web/vendor/three.min.js"></script><script src="web/ballistics.js"></script><script src="web/screen-armor.js"></script><script src="web/viewer.js"></script><script src="web/shot-telemetry.js"></script><script src="web/shot-context.js"></script><script src="web/local-data.js"></script><script src="web/app.js"></script>
+<script src="web/host.js"></script><script src="web/vendor/three.min.js"></script><script src="web/vendor/three-mesh-bvh.umd.js"></script><script src="web/ballistics.js"></script><script src="web/screen-armor.js"></script><script src="web/viewer.js"></script><script src="web/shot-telemetry.js"></script><script src="web/shot-context.js"></script><script src="web/local-data.js"></script><script src="web/app.js"></script>
 </body></html>
