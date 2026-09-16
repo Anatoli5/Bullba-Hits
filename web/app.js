@@ -622,7 +622,10 @@
     select.onchange=function(){row[3](this.value);try{window.localStorage.setItem(row[1],this.value);}catch(e){}};});
   $('heatmap-quality').onchange=host.guard('Detail',function(){if(host.game&&this.value==='high'){this.value=viewer?viewer.quality:'auto';return;}if(viewer)viewer.setQuality(this.value);});
   // One line under the scene: the explored pose (when it differs) and the gun's vertical limits at the current turret angle.
-  function poseChanged(){if(!viewer)return;var off=!(Math.abs(viewer.turretAngle)<.1&&Math.abs(viewer.gunAngle)<.1),sign=function(v){return (v>0?'+':'')+Math.round(v)+'°';},g=viewer.gunRange();$('turret-notice').hidden=!off;if(off)$('turret-notice').textContent='Turret '+sign(viewer.turretAngle)+', gun '+sign(viewer.gunAngle)+' from the recorded pose (hit marks hidden)';$('gun-limits').textContent=g.known?'Gun '+sign(g.min)+' … '+sign(g.max)+' at this turret angle':'Gun limits not recorded';recordedButton();staleEstimate();shotStats();}
+  // Gun readouts: up positive, down negative (the client's pitch is the other way round). The shortcut line is
+  // hidden in the game's browser: right drag, Ctrl + drag and Ctrl + wheel do not work there.
+  if(host.game)document.querySelector('.scene-help').hidden=true;
+  function poseChanged(){if(!viewer)return;var off=!(Math.abs(viewer.turretAngle)<.1&&Math.abs(viewer.gunAngle)<.1),sign=function(v){return (v>0?'+':'')+Math.round(v)+'°';},g=viewer.gunRange();$('turret-notice').hidden=!off;if(off)$('turret-notice').textContent='Turret '+sign(viewer.turretAngle)+', gun '+sign(-viewer.gunAngle)+' from the recorded pose (hit marks hidden)';$('gun-limits').textContent=g.known?'Gun '+sign(-g.max)+' … '+sign(-g.min)+' at this turret angle':'Gun limits not recorded';recordedButton();staleEstimate();shotStats();}
   function pivotButtons(){if(!viewer)return;$('pivot-hit').disabled=!viewer.point;$('pivot-vehicle').setAttribute('aria-pressed',String(viewer.pivot!=='hit'));$('pivot-hit').setAttribute('aria-pressed',String(viewer.pivot==='hit'));}
   $('pivot-vehicle').onclick=function(){if(viewer)viewer.setPivot('vehicle');pivotButtons();};$('pivot-hit').onclick=function(){if(viewer)viewer.setPivot('hit');pivotButtons();};
   if(viewer)viewer.onTurret=poseChanged;
