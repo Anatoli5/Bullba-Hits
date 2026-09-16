@@ -431,7 +431,7 @@
     $('probe-chance').textContent='—';$('probe-chance').style.color='';$('probe-pen').replaceChildren();$('probe-extra').replaceChildren();$('probe-details').replaceChildren(node('span','Hover over the armour','placeholder'));
     staleEstimate();if(viewer)viewer.configure(shell,$('armor-mode').value==='chance',$('palette').value);shotStats();
   }
-  var ricochetTint=1; // the Ricochet tint slider, 0..1.5; the panels' ricochet colours follow the map
+  var ricochetTint=.5; // the Ricochet tint row of Settings, 0 (off)..1.5; the panels' ricochet colours follow the map
   function chanceRgb(r){return 'rgb('+ArmorBallistics.color(r,$('palette').value,ricochetTint).map(function(v){return Math.round(v*255);}).join(',')+')';}
   // Compact reading of one ballistic result: the chance first, then the numbers that explain it.
   // One ballistic result as readable groups: chance, then "effective ← nominal – angle", then "pen / range", then screens.
@@ -599,18 +599,22 @@
   (function(){var select=$('bounce-mode'),stored=null;try{stored=window.localStorage.getItem('bullba-bounce-mode');}catch(e){}
     if(stored==='always'||stored==='idle')select.value=stored;if(viewer)viewer.setBounceMode(select.value);
     select.onchange=function(){if(viewer)viewer.setBounceMode(this.value);try{window.localStorage.setItem('bullba-bounce-mode',this.value);}catch(e){}};})();
-  // Which mark fills the bounced-leg zones under their outline: remembered per browser, like the trace mode.
-  (function(){var select=$('mark-style'),stored=null;try{stored=window.localStorage.getItem('bullba-mark');}catch(e){}
-    if(stored==='dots'||stored==='tint')select.value=stored;if(viewer)viewer.setMarkStyle(select.value);
-    select.onchange=function(){if(viewer)viewer.setMarkStyle(this.value);try{window.localStorage.setItem('bullba-mark',this.value);}catch(e){}};})();
-  // Ricochet tint: one slider for every ricochet colour, remembered per browser.
-  (function(){var input=$('ricochet-tint'),out=$('ricochet-tint-value'),stored=NaN;try{stored=Number(window.localStorage.getItem('bullba-tint'));}catch(e){}
-    if(stored>=0&&stored<=150)input.value=stored;var apply=function(){ricochetTint=Number(input.value)/100;out.textContent=input.value+' %';if(viewer)viewer.setTint(ricochetTint);};apply();
-    input.oninput=function(){apply();try{window.localStorage.setItem('bullba-tint',input.value);}catch(e){}updateShell();};})();
-  // Mark spacing of the bounced-leg zones: remembered per browser; the value is shown so it can be quoted.
-  (function(){var input=$('hatch-spacing'),out=$('hatch-spacing-value'),stored=NaN;try{stored=Number(window.localStorage.getItem('bullba-hatch'));}catch(e){}
-    if(stored>=3&&stored<=24)input.value=stored;var apply=function(){out.textContent=input.value+' px';if(viewer)viewer.setHatchSpacing(input.value);};apply();
-    input.oninput=function(){apply();try{window.localStorage.setItem('bullba-hatch',input.value);}catch(e){}};})();
+  // Ricochet tint: a checkbox and a slider, remembered per browser. Unticked means no blue at all; the slider keeps
+  // its value for the next time the tint is switched on. The panels' ricochet labels follow (updateShell).
+  (function(){var on=$('ricochet-tint-on'),input=$('ricochet-tint'),out=$('ricochet-tint-value'),row=input.parentNode,stored=NaN,storedOn=null;
+    try{var raw=window.localStorage.getItem('bullba-tint');stored=raw===null?NaN:Number(raw);storedOn=window.localStorage.getItem('bullba-tint-on');}catch(e){}
+    if(stored>=0&&stored<=150)input.value=stored;if(storedOn==='on'||storedOn==='off')on.checked=storedOn==='on';
+    var apply=function(){ricochetTint=on.checked?Number(input.value)/100:0;out.textContent=input.value+' %';row.classList.toggle('off',!on.checked);if(viewer)viewer.setTint(ricochetTint);};apply();
+    input.oninput=function(){apply();try{window.localStorage.setItem('bullba-tint',input.value);}catch(e){}updateShell();};
+    on.onchange=function(){apply();try{window.localStorage.setItem('bullba-tint-on',on.checked?'on':'off');}catch(e){}updateShell();};})();
+  // Ricochet dots: a checkbox and the spacing slider, remembered per browser; a 'Tint + dots' choice made before 0.7.3
+  // carries over as the checkbox.
+  (function(){var on=$('ricochet-dots-on'),input=$('ricochet-dots'),out=$('ricochet-dots-value'),row=input.parentNode,stored=NaN,storedOn=null;
+    try{var ls=window.localStorage,raw=ls.getItem('bullba-dots-spacing')||ls.getItem('bullba-hatch');stored=raw===null?NaN:Number(raw);storedOn=ls.getItem('bullba-dots')||(ls.getItem('bullba-mark')==='dots'?'on':null);}catch(e){}
+    if(stored>=3&&stored<=24)input.value=stored;if(storedOn==='on'||storedOn==='off')on.checked=storedOn==='on';
+    var apply=function(){out.textContent=input.value+' px';row.classList.toggle('off',!on.checked);if(viewer)viewer.setDots(on.checked,input.value);};apply();
+    input.oninput=function(){apply();try{window.localStorage.setItem('bullba-dots-spacing',input.value);}catch(e){}};
+    on.onchange=function(){apply();try{window.localStorage.setItem('bullba-dots',on.checked?'on':'off');}catch(e){}};})();
   // Part seams and the zone outline: remembered per browser.
   [['part-edges','bullba-edges','on',function(v){if(viewer)viewer.setPartEdges(v==='on');}],['zone-outline','bullba-outline','off',function(v){if(viewer)viewer.setZoneOutline(v==='on');}]].forEach(function(row){
     var select=$(row[0]),stored=null;try{stored=window.localStorage.getItem(row[1]);}catch(e){}

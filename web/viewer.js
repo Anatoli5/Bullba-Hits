@@ -5,8 +5,6 @@
   function linear(color){return color.map(function(c){return c<=.04045?c/12.92:Math.pow((c+.055)/1.055,2.4);});}
   var baseColors=[[.38,.46,.54],[.65,.73,.8],[.75,.83,.87],[.55,.65,.72]].map(linear);
   function externalLayer(t){return t.part===0||!!(t.armor&&Number.isFinite(t.armor.vehicleDamageFactor)&&t.armor.vehicleDamageFactor<=1e-5);}
-  // Marks of the bounced-leg zones on the GPU map: the shader's uMark values.
-  var MARK_STYLES={dots:0,tint:2};
   function Viewer(container) {
     var self = this, T = THREE;
     this.container = container;
@@ -24,7 +22,7 @@
     this.materials = []; this.point = null; this.travel = null;
     this.shell=null;this.heatmap=true;this.palette='classic';this.paintTimer=null;this.paintMesh=null;this.samples=[];this.engine=null;
     this.frameId=null;this.fitPending=false;this.recordedDistance=null;this.estimateAim=null;this.paintedKey=null;this.distanceSet=false;
-    this.quality='auto';this.bounceMode='always';this.bounceTimer=null;this.hatchSpacing=5;this.markStyle='tint';this.tint=1;this.partEdges=true;this.zoneOutline=false;this.turretAngle=0;this.turretTimer=null;this.turretPending=false;
+    this.quality='auto';this.bounceMode='always';this.bounceTimer=null;this.dots=false;this.dotSpacing=5;this.tint=.5;this.partEdges=true;this.zoneOutline=false;this.turretAngle=0;this.turretTimer=null;this.turretPending=false;
     this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.trackOpacity=.4;this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.gunAngle=0;this.autoFrame=false;this.frameScale=this.defaults.scale;this.outline=null;this.outlineDepth=null;this.outlineStyle={brightness:.8,opacity:.6};this.showOutline=false;
     var drag = null;
     container.addEventListener('contextmenu', function(e) { e.preventDefault(); });
@@ -110,11 +108,12 @@
   Viewer.prototype.setOutline=function(brightness,opacity){this.outlineStyle={brightness:Math.max(0,Math.min(1,brightness)),opacity:Math.max(.05,Math.min(1,opacity))};this.applyOutline();this.draw();};
   Viewer.prototype.setQuality=function(value){this.quality=value;if(!this.surface)this.surfaceAttempted=false;this.draw();};
   Viewer.prototype.setBounceMode=function(value){this.bounceMode=value==='idle'?'idle':'always';this.draw();};
-  Viewer.prototype.setHatchSpacing=function(value){this.hatchSpacing=Math.max(2,Math.min(40,Number(value)||5));this.draw();};
-  Viewer.prototype.setMarkStyle=function(value){this.markStyle=MARK_STYLES[value]===undefined?'tint':value;this.draw();}
+  // Ricochet dots over the zones where the bounced shell still penetrates: on/off and their spacing in CSS px.
+  Viewer.prototype.setDots=function(enabled,spacing){this.dots=!!enabled;if(spacing!==undefined)this.dotSpacing=Math.max(2,Math.min(40,Number(spacing)||5));this.draw();};
   Viewer.prototype.setPartEdges=function(value){this.partEdges=!!value;this.draw();};
   Viewer.prototype.setZoneOutline=function(value){this.zoneOutline=!!value;this.draw();}
-  Viewer.prototype.setTint=function(value){var v=Number(value);this.tint=Math.max(0,Math.min(1.5,isFinite(v)?v:1));this.draw();};
+  // Blue tint of every ricochet colour, 0 (off) .. 1.5; the Ricochet tint row of Settings.
+  Viewer.prototype.setTint=function(value){var v=Number(value);this.tint=Math.max(0,Math.min(1.5,isFinite(v)?v:.5));this.draw();};
   Viewer.prototype.pointerRay=function(event){var rect=this.container.getBoundingClientRect(),mouse=new THREE.Vector2((event.clientX-rect.left)/rect.width*2-1,-(event.clientY-rect.top)/rect.height*2+1),caster=new THREE.Raycaster();this.camera.updateMatrixWorld();caster.setFromCamera(mouse,this.camera);return caster;};
   Viewer.prototype.pickPart=function(event){if(event.shiftKey||!this.paintMesh)return 1;var objects=[this.paintMesh];if(this.trackGroup)objects.push(this.trackMesh);var hits=this.pointerRay(event).intersectObjects(objects);if(!hits.length)return false;var sample=(hits[0].object===this.trackMesh?this.trackTriangles:this.samples)[hits[0].faceIndex];return sample?sample.part:1;};
   Viewer.prototype.setTurret=function(degrees){
@@ -451,7 +450,7 @@
     if(this.heatmap){
       if(!this.surfaceAttempted){this.surfaceAttempted=true;try{this.surface=new BullbaScreenArmor(this.renderer,this.engine);this.scene.add(this.surface.quad);}catch(e){this.surfaceError=e.message;console.warn('Screen composition unavailable:',e.message);if(window.BullbaHost)window.BullbaHost.mark('Layer composition','unavailable: '+e.message);}}
       if(this.surface){try{
-        this.surface.hatch=this.hatchSpacing;this.surface.mark=MARK_STYLES[this.markStyle];this.surface.edges=this.partEdges;this.surface.outline=this.zoneOutline;this.surface.tint=this.tint;var size=this.surface.render(this.camera,this.target,this.shell,this.palette,this.trackOpacity,this.quality,this.container.clientWidth,this.container.clientHeight,this.renderer.getPixelRatio(),this.bounceMode);
+        this.surface.hatch=this.dotSpacing;this.surface.dots=this.dots;this.surface.edges=this.partEdges;this.surface.outline=this.zoneOutline;this.surface.tint=this.tint;var size=this.surface.render(this.camera,this.target,this.shell,this.palette,this.trackOpacity,this.quality,this.container.clientWidth,this.container.clientHeight,this.renderer.getPixelRatio(),this.bounceMode);
         composed=true;this.surfaceError=null;
         // The hatched layer is due once the camera has stood still: one redraw later, not a loop.
         if(this.surface.bouncePending&&this.bounceTimer===null){var self=this;this.bounceTimer=setTimeout(function(){self.bounceTimer=null;self.draw();},160);}

@@ -131,4 +131,4 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 .vehicle-row[data-role=shooter]{box-shadow:inset -3px 0 0 var(--mint)}
 /* Header verdict-log line: the (i) mark next to the count, the explanation is the title of the line. */
 .connection .info-mark{margin-left:6px;color:var(--muted);cursor:help}
-.hatch-row{display:flex;align-items:center;gap:8px}.hatch-row output{min-width:3.5em;font-variant-numeric:tabular-nums}
+.hatch-row{display:flex;align-items:center;gap:8px}.hatch-row output{min-width:3.5em;font-variant-numeric:tabular-nums}.hatch-row input[type=checkbox]{flex:none;width:16px;height:16px;margin:0}.hatch-row input[type=range]{flex:1;min-width:0}.hatch-row.off input[type=range],.hatch-row.off output{opacity:.45}

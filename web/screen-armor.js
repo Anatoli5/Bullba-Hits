@@ -97,7 +97,7 @@ vec3 pixelRay(vec2 uv){vec4 eye=uInvProjection*vec4(uv*2.0-1.0,-1.0,1.0);return 
 float erfApprox(float x){float s=x<0.0?-1.0:1.0;x=abs(x);float t=1.0/(1.0+.3275911*x);return s*(1.0-(((((1.061405429*t-1.453152027)*t)+1.421413741)*t-.284496736)*t+.254829592)*t*exp(-x*x));}
 float probability(float remaining,float plate,float nominal){float margin=(remaining-plate)/max(EPS,nominal);if(uPen.z<=EPS)return margin>=0.0?1.0:0.0;if(uPen.w<.5)return -1.0;return clamp(.5*(1.0+erfApprox(margin/uPen.z/.33/sqrt(2.0))),0.0,1.0);}
 vec3 palette(float p){vec3 lo=uClassic?vec3(.90,.20,.18):vec3(.63,.18,.55),mid=uClassic?vec3(.97,.79,.22):vec3(.95,.75,.31),hi=uClassic?vec3(.20,.79,.35):vec3(.20,.84,.76);return p<.5?mix(lo,mid,p*2.0):mix(mid,hi,p*2.0-1.0);}
-// Blue tint of every ricochet history, uTint from the slider (0 none, 1 default, up to 1.5): red turns crimson,
+// Blue tint of every ricochet history, uTint from the slider (0 none or unticked, 0.5 default, up to 1.5): red turns crimson,
 // green turns teal. The ricochet colour itself is the tinted 0 % end of the palette.
 vec3 blued(vec3 c){return clamp(mix(c,vec3(c.r*.8,c.g*.95,max(c.b,.55)),uTint),0.0,1.0);}
 vec3 ricochetColor(){return blued(palette(0.0));}
@@ -173,16 +173,16 @@ void main(){
  outputColor.a+=idCode;
 }`;
   }
-  /* Pass two. The composite lands in a float target; this shader reads it back texel for texel and draws the
-     ricochet mark over the zone: a one-pixel outline along its boundary and a light pattern inside (dots by
-     default, 45-degree lines as the alternative), both in the ricochet colour over the chance-colour fill.
-     uHatch = (dot or line pitch, pixel ratio) in drawing-buffer pixels; uMark: 0 = dots, 1 = lines. */
+  /* Pass two. The composite lands in a float target; this shader reads it back texel for texel and draws over
+     the zone where the bounced shell still penetrates: the blue tint of its chance colour (uTint, 0 = off), a
+     staggered grid of one-pixel dots in the ricochet colour (uDots; uHatch = (pitch, pixel ratio) in
+     drawing-buffer pixels), an optional one-pixel outline (uOutline), and the seams between parts (uEdges). */
   function markSource(){
     return `precision highp float; precision highp int;
-uniform highp sampler2D uResult; uniform bool uClassic; uniform vec2 uHatch; uniform int uMark; uniform bool uEdges; uniform bool uOutline; uniform float uTint;
+uniform highp sampler2D uResult; uniform bool uClassic; uniform vec2 uHatch; uniform bool uDots; uniform bool uEdges; uniform bool uOutline; uniform float uTint;
 out vec4 outputColor;
 vec3 palette(float p){vec3 lo=uClassic?vec3(.90,.20,.18):vec3(.63,.18,.55),mid=uClassic?vec3(.97,.79,.22):vec3(.95,.75,.31),hi=uClassic?vec3(.20,.79,.35):vec3(.20,.84,.76);return p<.5?mix(lo,mid,p*2.0):mix(mid,hi,p*2.0-1.0);}
-// Blue tint of every ricochet history, uTint from the slider (0 none, 1 default, up to 1.5): red turns crimson,
+// Blue tint of every ricochet history, uTint from the slider (0 none or unticked, 0.5 default, up to 1.5): red turns crimson,
 // green turns teal. The ricochet colour itself is the tinted 0 % end of the palette.
 vec3 blued(vec3 c){return clamp(mix(c,vec3(c.r*.8,c.g*.95,max(c.b,.55)),uTint),0.0,1.0);}
 vec3 ricochetColor(){return blued(palette(0.0));}
@@ -201,10 +201,10 @@ void main(){
    // Marks in whole device pixels at a whole-pixel pitch. A fractional pitch (5 CSS px at a 1.25 ratio = 6.25 px)
    // beats against the pixel grid: dots land between pixels every few columns and the field comes out banded,
    // which is what the user saw as clusters of lines. One pixel per mark at ratio 1, two at ratio 2.
-   // The zone takes its chance colour with the blue tint; the dots mode adds a staggered grid of ricochet-coloured
+   // The zone takes its chance colour with the blue tint; the dots add a staggered grid of ricochet-coloured
    // pixels on top, pitch and size in whole device pixels (a fractional pitch bands against the pixel grid).
    color=blued(color);
-   if(uMark==0){int pitch=max(2,int(uHatch.x+.5)),size=max(1,int(uHatch.y+.5));int row=p.y/pitch,sx=(p.x+(row%2)*(pitch/2))%pitch,sy=p.y%pitch;if(sx<size&&sy<size)color=ricochet;}
+   if(uDots){int pitch=max(2,int(uHatch.x+.5)),size=max(1,int(uHatch.y+.5));int row=p.y/pitch,sx=(p.x+(row%2)*(pitch/2))%pitch,sy=p.y%pitch;if(sx<size&&sy<size)color=ricochet;}
   }
  }
  // A seam between two parts or armour groups, drawn on the side with the higher id so it stays one pixel wide.
@@ -250,7 +250,7 @@ void main(){
     if(this.compositeQuad){this.compositeScene.remove(this.compositeQuad);this.compositeQuad.geometry.dispose();this.material.dispose();}
     var uniforms={uMaterials:{value:this.materialTexture},uPen:{value:new T.Vector4()},uShell:{value:new T.Vector4()},uFlags:{value:new Int32Array(4)},uClassic:{value:false},uOpacity:{value:.35},
       uOrigin:{value:new T.Vector3()},uAnchor:{value:new T.Vector3()},uForward:{value:new T.Vector3()},
-      uCameraWorld:{value:new T.Matrix4()},uInvProjection:{value:new T.Matrix4()},uRicochetLoss:{value:0},uBounce:{value:1},uTint:{value:1}};
+      uCameraWorld:{value:new T.Matrix4()},uInvProjection:{value:new T.Matrix4()},uRicochetLoss:{value:0},uBounce:{value:1},uTint:{value:.5}};
     for(var i=0;i<=COUNT;i++)uniforms['uLayer'+i]={value:this.targets[i].texture};
     if(this.bounce){var lib=root.MeshBVHLib;if(!this.bvhStruct){this.bvhStruct=new lib.MeshBVHUniformStruct();this.faceMaterial=new lib.FloatVertexAttributeTexture();}
       uniforms.uBVH={value:this.bvhStruct};uniforms.uFaceMaterial={value:this.faceMaterial};}
@@ -259,7 +259,7 @@ void main(){
     if(!this.compositeScene)this.compositeScene=new T.Scene();
     this.compositeQuad=new T.Mesh(new T.PlaneGeometry(2,2),this.material);this.compositeQuad.frustumCulled=false;this.compositeScene.add(this.compositeQuad);
     // Pass two is the quad the viewer keeps in its scene: the blending, depth state and order of the old composite.
-    this.markMaterial=new T.RawShaderMaterial({glslVersion:T.GLSL3,vertexShader:quadVertex,fragmentShader:markSource(),uniforms:{uResult:{value:null},uClassic:{value:false},uHatch:{value:new T.Vector2(5,1)},uMark:{value:0},uEdges:{value:true},uOutline:{value:false},uTint:{value:1}},transparent:true,depthWrite:false,depthTest:false,toneMapped:false});
+    this.markMaterial=new T.RawShaderMaterial({glslVersion:T.GLSL3,vertexShader:quadVertex,fragmentShader:markSource(),uniforms:{uResult:{value:null},uClassic:{value:false},uHatch:{value:new T.Vector2(5,1)},uDots:{value:false},uEdges:{value:true},uOutline:{value:false},uTint:{value:.5}},transparent:true,depthWrite:false,depthTest:false,toneMapped:false});
     this.quad=new T.Mesh(new T.PlaneGeometry(2,2),this.markMaterial);this.quad.frustumCulled=false;this.quad.renderOrder=0;
   };
   // Pass one on its own: the whole composition into a float target the size of the drawing buffer, so the mark
@@ -333,8 +333,8 @@ void main(){
     if(this.width!==size.width||this.height!==size.height){this.width=size.width;this.height=size.height;this.targets.forEach(function(t){t.setSize(size.width,size.height);});this.key=null;}
     var s=shell||{},u=this.material.uniforms;u.uPen.value.set(s.penetration||0,s.caliber||0,s.randomization||0,!s.randomizationType||s.randomizationType==='NORMAL'?1:0);u.uShell.value.set(s.normalization||0,s.ricochetCos==null?-1:s.ricochetCos,s.jetLossPerMeter||0,s.kind==='HIGH_EXPLOSIVE'?1:0);u.uFlags.value.set([s.mayRicochet?1:0,s.checkCaliber?1:0,s.shieldPenetration?1:0,s.penetration>0&&s.caliber>0?1:0]);u.uClassic.value=palette==='classic';u.uOpacity.value=opacity;
     u.uRicochetLoss.value=s.ricochetLoss||0;
-    var pr=Math.max(1,pixelRatio||1),m=this.markMaterial.uniforms;m.uHatch.value.set(Math.max(2,this.hatch||5)*pr,pr); // mark pitch in CSS px, dots and lines one CSS px across
-    m.uMark.value=this.mark|0;m.uEdges.value=this.edges!==false;m.uOutline.value=!!this.outline;var tint=this.tint===undefined?1:this.tint;m.uTint.value=tint;u.uTint.value=tint;m.uClassic.value=u.uClassic.value;
+    var pr=Math.max(1,pixelRatio||1),m=this.markMaterial.uniforms;m.uHatch.value.set(Math.max(2,this.hatch||5)*pr,pr); // dot pitch in CSS px, one CSS px per dot
+    m.uDots.value=!!this.dots;m.uEdges.value=this.edges!==false;m.uOutline.value=!!this.outline;var tint=this.tint===undefined?.5:this.tint;m.uTint.value=tint;u.uTint.value=tint;m.uClassic.value=u.uClassic.value;
     var key=camera.matrixWorld.elements.join(',')+'|'+camera.projectionMatrix.elements.join(','),now=Date.now();
     if(key!==this.key)this.movedAt=now;
     var settled=bounceMode==='always'||!(now-(this.movedAt||0)<SETTLE);

@@ -147,9 +147,9 @@
   function color(result,palette,tint){
     if(result.chance===null)return [.34,.42,.49];
     // Ricochet history (a ricochet, or a fly-past after one): the 0 % colour with blue mixed in by 'tint'
-    // (0 none, 1 default), the same rule as the GPU map's blued().
+    // (0 none, 0.5 default, up to 1.5), the same rule as the GPU map's blued().
     if(result.reason==='ricochet'||(result.reason==='no-hull'&&result.bounce)){
-      var lo=(palettes[palette]||palettes.accessible)[0],k=tint===undefined?1:tint,to=[lo[0]*.8,lo[1]*.95,Math.max(lo[2],.55)];
+      var lo=(palettes[palette]||palettes.accessible)[0],k=tint===undefined?.5:tint,to=[lo[0]*.8,lo[1]*.95,Math.max(lo[2],.55)];
       return lo.map(function(v,i){return clamp(v+(to[i]-v)*k,0,1);});
     }
     if(result.reason==='no-hull')return [.21,.27,.33];
