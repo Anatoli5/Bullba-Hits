@@ -34,6 +34,11 @@ def write_page():
     # Cache-busting stamps on the local scripts and stylesheets: browsers keep old JS across refreshes otherwise.
     html = re.sub(r'(src="web/[^"]+)"', r'\1?s=' + stamp + '"', html)
     html = re.sub(r'(href="web/[^"]+)"', r'\1?s=' + stamp + '"', html)
+    # The header and the tab title name the preview build, so a stale tab is told apart from a fresh one:
+    # "preview 15.09 20:14 · records 0.7.1" (the records version is the installed mod's data, not the page).
+    label = 'preview ' + time.strftime('%d.%m %H:%M')
+    html = html.replace('data-version="dev"', 'data-version="' + label + '"', 1)
+    html = html.replace('<title>Bullba Hits</title>', '<title>Bullba Hits · ' + label + '</title>', 1)
     with io.open(os.path.join(PREVIEW, 'Viewer.html'), 'w', encoding='utf-8', newline='') as stream:
         stream.write(html)
 

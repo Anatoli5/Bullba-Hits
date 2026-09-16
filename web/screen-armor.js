@@ -37,6 +37,8 @@ void main(){
  vec3 face=normalize(vNormal);
  outputLayer=vec4(d,vMaterial+abs(dot(ray,face))*.5,octEncode(face));
 }`;
+  // Both full-screen passes draw with an identity camera; three needs an object, not a matrix.
+  var quadCamera=null;function quadView(){return quadCamera||(quadCamera=new T.Camera());}
   var quadVertex=`precision highp float; in vec3 position; out vec2 vUV;
 void main(){vUV=position.xy*.5+.5;gl_Position=vec4(position.xy,0.0,1.0);}`;
   var declarations=Array.from({length:COUNT+1},function(_,i){return 'uniform highp sampler2D uLayer'+i+';';}).join('\n');
@@ -72,18 +74,18 @@ float bounceLeg(vec3 origin,vec3 direction,float nominal){
  if(bounced&&uBounce!=0){
   vec3 n=dot(ray,face)>0.0?-face:face;
   vec3 mirrored=normalize(ray-2.0*dot(ray,n)*n);
-  float after=bounceLeg(spot+mirrored*.001,mirrored,uPen.x*(1.0-uRicochetLoss));
-  // A bounced shell that still penetrates is painted in its own chance colour, crossed by thin 45-degree lines in
-  // the ricochet colour so the zone never reads as a direct hit. uHatch = (line spacing, line width) in device
-  // pixels; the line edge is smoothed over one pixel so the pattern survives the game's window scaling without moire.
-  if(after>=0.0){float d=mod(gl_FragCoord.x+gl_FragCoord.y,uHatch.x),gap=min(d,uHatch.x-d)*.70710678;float line=1.0-smoothstep(uHatch.y*.5-.5,uHatch.y*.5+.5,gap);color=mix(palette(after),color,line);}
+  float after=bounceLeg(spot+n*.002+mirrored*.001,mirrored,uPen.x*(1.0-uRicochetLoss));
+  // A bounced shell that still penetrates is painted in its own chance colour and the pixel is flagged for the
+  // mark pass. The flag rides in alpha because this composite goes into a float target with blending off; a
+  // single pass could never draw the zone's contour, which needs to know whether the neighbour is in the zone.
+  if(after>=0.0){color=palette(after);zone=true;}
  }`:'';
     return `precision highp float; precision highp int; precision highp usampler2D; precision highp isampler2D;
 ${declarations}
 uniform highp sampler2D uMaterials; uniform vec4 uPen; uniform vec4 uShell; uniform ivec4 uFlags;
 uniform bool uClassic; uniform float uOpacity;
 uniform vec3 uOrigin; uniform vec3 uAnchor; uniform vec3 uForward;
-uniform mat4 uCameraWorld; uniform mat4 uInvProjection; uniform float uRicochetLoss; uniform int uBounce; uniform vec2 uHatch;
+uniform mat4 uCameraWorld; uniform mat4 uInvProjection; uniform float uRicochetLoss; uniform int uBounce; uniform float uTint;
 ${traversal}
 in vec2 vUV; out vec4 outputColor;
 const float EPS=.00001;
@@ -95,6 +97,10 @@ vec3 pixelRay(vec2 uv){vec4 eye=uInvProjection*vec4(uv*2.0-1.0,-1.0,1.0);return 
 float erfApprox(float x){float s=x<0.0?-1.0:1.0;x=abs(x);float t=1.0/(1.0+.3275911*x);return s*(1.0-(((((1.061405429*t-1.453152027)*t)+1.421413741)*t-.284496736)*t+.254829592)*t*exp(-x*x));}
 float probability(float remaining,float plate,float nominal){float margin=(remaining-plate)/max(EPS,nominal);if(uPen.z<=EPS)return margin>=0.0?1.0:0.0;if(uPen.w<.5)return -1.0;return clamp(.5*(1.0+erfApprox(margin/uPen.z/.33/sqrt(2.0))),0.0,1.0);}
 vec3 palette(float p){vec3 lo=uClassic?vec3(.90,.20,.18):vec3(.63,.18,.55),mid=uClassic?vec3(.97,.79,.22):vec3(.95,.75,.31),hi=uClassic?vec3(.20,.79,.35):vec3(.20,.84,.76);return p<.5?mix(lo,mid,p*2.0):mix(mid,hi,p*2.0-1.0);}
+// Blue tint of every ricochet history, uTint from the slider (0 none, 1 default, up to 1.5): red turns crimson,
+// green turns teal. The ricochet colour itself is the tinted 0 % end of the palette.
+vec3 blued(vec3 c){return clamp(mix(c,vec3(c.r*.8,c.g*.95,max(c.b,.55)),uTint),0.0,1.0);}
+vec3 ricochetColor(){return blued(palette(0.0));}
 // What a ballistic walk carries from one contact to the next. GLSL has no function pointers, so the two
 // drivers below (layers, BVH) call one shared step function with this state.
 struct Walk{float remaining;float nominal;float jetStart;bool jet;int screens;};
@@ -143,19 +149,70 @@ float evaluate(vec2 uv,vec3 ray,out vec4 front,out bool screen,out int screens,o
  return result;
 }${bounceLeg}
 void main(){
- vec4 front;bool screen;int screens;bool bounced;vec3 spot,face;
- vec3 ray=pixelRay(vUV);
+ vec4 front;bool screen;int screens;bool bounced;vec3 spot,face;bool zone=false;
+ vec2 texel=1.0/vec2(textureSize(uLayer0,0));vec3 ray=pixelRay((floor(vUV/texel)+.5)*texel); // the peeled texel's own ray, so the contact point sits on the plate even when layers are smaller than the window
  float result=evaluate(vUV,ray,front,screen,screens,bounced,spot,face);
  // Every screen layer on the ray adds its own share of grey: two screens read darker than one.
  float share=1.0-pow(1.0-uOpacity,float(max(1,screens)));
  if(result<-2.5){outputColor=vec4(0.0);return;}
+ // The front material's id (part and armour group) rides in alpha as 4*(id+1): the mark pass draws a seam where
+ // neighbouring pixels carry different ids. Float target, no blending, so the integer survives intact.
+ float idCode=4.0*floor(layer(0,vUV).y);
  // Screens overlay as neutral grey: a probability-looking tint on top of the armour result misled readers.
  vec3 tint=vec3(.45,.50,.55);
  // Screen with nothing behind it: nothing to penetrate, so a neutral translucent grey instead of a probability-looking tint.
- if(result<-1.5){outputColor=screen?vec4(.45,.50,.55,1.0-pow(1.0-uOpacity*.6,float(max(1,screens)))):vec4(.21,.27,.33,1.0);return;}
- vec3 color=result<0.0?vec3(.34,.42,.49):palette(result);${bounceMain}
+ if(result<-1.5){outputColor=screen?vec4(.45,.50,.55,1.0-pow(1.0-uOpacity*.6,float(max(1,screens)))):vec4(.21,.27,.33,1.0);outputColor.a+=idCode;return;}
+ vec3 color=result<0.0?vec3(.34,.42,.49):palette(result);
+ // Any ricochet history - a plain ricochet, a second ricochet, a fly-past after the bounce - takes the ricochet colour.
+ if(bounced)color=ricochetColor();${bounceMain}
  if(screen)color=mix(color,tint,share);
  outputColor=vec4(color,1.0);
+ // The zone flag, encoded in alpha: >= 2 means "a bounced shell penetrates here". The mark pass takes it back
+ // off, so translucency is untouched - only fully opaque pixels ever reach this line.
+ if(zone)outputColor.a+=2.0;
+ outputColor.a+=idCode;
+}`;
+  }
+  /* Pass two. The composite lands in a float target; this shader reads it back texel for texel and draws the
+     ricochet mark over the zone: a one-pixel outline along its boundary and a light pattern inside (dots by
+     default, 45-degree lines as the alternative), both in the ricochet colour over the chance-colour fill.
+     uHatch = (dot or line pitch, pixel ratio) in drawing-buffer pixels; uMark: 0 = dots, 1 = lines. */
+  function markSource(){
+    return `precision highp float; precision highp int;
+uniform highp sampler2D uResult; uniform bool uClassic; uniform vec2 uHatch; uniform int uMark; uniform bool uEdges; uniform bool uOutline; uniform float uTint;
+out vec4 outputColor;
+vec3 palette(float p){vec3 lo=uClassic?vec3(.90,.20,.18):vec3(.63,.18,.55),mid=uClassic?vec3(.97,.79,.22):vec3(.95,.75,.31),hi=uClassic?vec3(.20,.79,.35):vec3(.20,.84,.76);return p<.5?mix(lo,mid,p*2.0):mix(mid,hi,p*2.0-1.0);}
+// Blue tint of every ricochet history, uTint from the slider (0 none, 1 default, up to 1.5): red turns crimson,
+// green turns teal. The ricochet colour itself is the tinted 0 % end of the palette.
+vec3 blued(vec3 c){return clamp(mix(c,vec3(c.r*.8,c.g*.95,max(c.b,.55)),uTint),0.0,1.0);}
+vec3 ricochetColor(){return blued(palette(0.0));}
+bool inZone(ivec2 p,ivec2 limit){float a=texelFetch(uResult,clamp(p,ivec2(0),limit),0).a;return a-4.0*floor(a/4.0)>=2.0;}
+int idAt(ivec2 p,ivec2 limit){return int(floor(texelFetch(uResult,clamp(p,ivec2(0),limit),0).a/4.0))-1;}
+void main(){
+ ivec2 p=ivec2(gl_FragCoord.xy),limit=textureSize(uResult,0)-ivec2(1);
+ vec4 src=texelFetch(uResult,p,0);
+ int id=int(floor(src.a/4.0))-1;float rest=src.a-4.0*floor(src.a/4.0);bool zone=rest>=2.0;
+ vec3 color=src.rgb;float alpha=zone?rest-2.0:rest;bool outlined=false;
+ if(zone){
+  vec3 ricochet=ricochetColor();
+  // The outline: a zone pixel with a neighbour outside the zone. One drawing-buffer pixel wide, never scaled.
+  if(uOutline&&(!inZone(p+ivec2(1,0),limit)||!inZone(p-ivec2(1,0),limit)||!inZone(p+ivec2(0,1),limit)||!inZone(p-ivec2(0,1),limit))){color=ricochet;outlined=true;}
+  else{
+   // Marks in whole device pixels at a whole-pixel pitch. A fractional pitch (5 CSS px at a 1.25 ratio = 6.25 px)
+   // beats against the pixel grid: dots land between pixels every few columns and the field comes out banded,
+   // which is what the user saw as clusters of lines. One pixel per mark at ratio 1, two at ratio 2.
+   // The zone takes its chance colour with the blue tint; the dots mode adds a staggered grid of ricochet-coloured
+   // pixels on top, pitch and size in whole device pixels (a fractional pitch bands against the pixel grid).
+   color=blued(color);
+   if(uMark==0){int pitch=max(2,int(uHatch.x+.5)),size=max(1,int(uHatch.y+.5));int row=p.y/pitch,sx=(p.x+(row%2)*(pitch/2))%pitch,sy=p.y%pitch;if(sx<size&&sy<size)color=ricochet;}
+  }
+ }
+ // A seam between two parts or armour groups, drawn on the side with the higher id so it stays one pixel wide.
+ // The silhouette against the background (neighbour id -1) is left alone. The wireframe cannot show these seams:
+ // collision parts overlap, so no triangle edge runs where one part's surface meets another's.
+ if(uEdges&&id>=0&&!outlined){int n0=idAt(p+ivec2(1,0),limit),n1=idAt(p-ivec2(1,0),limit),n2=idAt(p+ivec2(0,1),limit),n3=idAt(p-ivec2(0,1),limit);
+  if((n0>=0&&n0<id)||(n1>=0&&n1<id)||(n2>=0&&n2<id)||(n3>=0&&n3<id))color=mix(color,vec3(.05,.07,.09),.6);}
+ outputColor=vec4(color,alpha);
 }`;
   }
   function Surface(renderer,engine){
@@ -163,7 +220,7 @@ void main(){
     var gl=renderer.getContext();if(!gl.getExtension('EXT_color_buffer_float'))throw new Error('no float colour textures');
     if(renderer.capabilities.maxTextures<COUNT+2)throw new Error('not enough texture units');
     var ext=gl.getExtension('WEBGL_debug_renderer_info');if(ext&&/swiftshader|llvmpipe|software|basic render/i.test(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)))throw new Error('software WebGL');
-    this.renderer=renderer;this.targets=[];this.key=null;this.width=0;this.height=0;this.materialTexture=null;
+    this.renderer=renderer;this.targets=[];this.key=null;this.width=0;this.height=0;this.materialTexture=null;this.result=null;this.compositeScene=null;this.compositeQuad=null;
     // The bounced leg needs three-mesh-bvh and five more texture units (four for the BVH, one for the
     // material per vertex). Without them the map keeps working exactly as before, with a reason to show.
     var lib=root.MeshBVHLib;this.bvh=null;this.bvhStruct=null;this.faceMaterial=null;this.bounce=false;this.bounceReason='library not loaded';
@@ -187,17 +244,39 @@ void main(){
     }
     this.quad.visible=false;
   }
-  // The full-screen composition quad and its program. Built once, or twice if the bounced leg is dropped.
+  // Both full-screen quads and their programs. Built once, or twice if the bounced leg is dropped.
   Surface.prototype.compose=function(){
-    if(this.quad){if(this.quad.parent)this.quad.parent.remove(this.quad);this.quad.geometry.dispose();this.material.dispose();}
+    if(this.quad){if(this.quad.parent)this.quad.parent.remove(this.quad);this.quad.geometry.dispose();this.markMaterial.dispose();}
+    if(this.compositeQuad){this.compositeScene.remove(this.compositeQuad);this.compositeQuad.geometry.dispose();this.material.dispose();}
     var uniforms={uMaterials:{value:this.materialTexture},uPen:{value:new T.Vector4()},uShell:{value:new T.Vector4()},uFlags:{value:new Int32Array(4)},uClassic:{value:false},uOpacity:{value:.35},
       uOrigin:{value:new T.Vector3()},uAnchor:{value:new T.Vector3()},uForward:{value:new T.Vector3()},
-      uCameraWorld:{value:new T.Matrix4()},uInvProjection:{value:new T.Matrix4()},uRicochetLoss:{value:0},uBounce:{value:1},uHatch:{value:new T.Vector2(8,1)}};
+      uCameraWorld:{value:new T.Matrix4()},uInvProjection:{value:new T.Matrix4()},uRicochetLoss:{value:0},uBounce:{value:1},uTint:{value:1}};
     for(var i=0;i<=COUNT;i++)uniforms['uLayer'+i]={value:this.targets[i].texture};
     if(this.bounce){var lib=root.MeshBVHLib;if(!this.bvhStruct){this.bvhStruct=new lib.MeshBVHUniformStruct();this.faceMaterial=new lib.FloatVertexAttributeTexture();}
       uniforms.uBVH={value:this.bvhStruct};uniforms.uFaceMaterial={value:this.faceMaterial};}
-    this.material=new T.RawShaderMaterial({glslVersion:T.GLSL3,vertexShader:quadVertex,fragmentShader:compositeSource(this.bounce),uniforms:uniforms,transparent:true,depthWrite:false,depthTest:false,toneMapped:false});
-    this.quad=new T.Mesh(new T.PlaneGeometry(2,2),this.material);this.quad.frustumCulled=false;this.quad.renderOrder=0;
+    // Pass one draws into this.result with blending off, so it is neither transparent nor depth-tested.
+    this.material=new T.RawShaderMaterial({glslVersion:T.GLSL3,vertexShader:quadVertex,fragmentShader:compositeSource(this.bounce),uniforms:uniforms,blending:T.NoBlending,depthWrite:false,depthTest:false,toneMapped:false});
+    if(!this.compositeScene)this.compositeScene=new T.Scene();
+    this.compositeQuad=new T.Mesh(new T.PlaneGeometry(2,2),this.material);this.compositeQuad.frustumCulled=false;this.compositeScene.add(this.compositeQuad);
+    // Pass two is the quad the viewer keeps in its scene: the blending, depth state and order of the old composite.
+    this.markMaterial=new T.RawShaderMaterial({glslVersion:T.GLSL3,vertexShader:quadVertex,fragmentShader:markSource(),uniforms:{uResult:{value:null},uClassic:{value:false},uHatch:{value:new T.Vector2(5,1)},uMark:{value:0},uEdges:{value:true},uOutline:{value:false},uTint:{value:1}},transparent:true,depthWrite:false,depthTest:false,toneMapped:false});
+    this.quad=new T.Mesh(new T.PlaneGeometry(2,2),this.markMaterial);this.quad.frustumCulled=false;this.quad.renderOrder=0;
+  };
+  // Pass one on its own: the whole composition into a float target the size of the drawing buffer, so the mark
+  // pass can look at a pixel's neighbours. Same state discipline as the peel loop - the renderer is left as found.
+  Surface.prototype.composite=function(){
+    var renderer=this.renderer,buffer=renderer.getDrawingBufferSize(new T.Vector2());
+    var w=Math.max(1,buffer.x),h=Math.max(1,buffer.y);
+    var fresh=false;
+    if(!this.result){this.result=new T.WebGLRenderTarget(w,h,{type:T.FloatType,format:T.RGBAFormat,minFilter:T.NearestFilter,magFilter:T.NearestFilter,depthBuffer:false,stencilBuffer:false});this.result.texture.generateMipmaps=false;fresh=true;}
+    else if(this.result.width!==w||this.result.height!==h){this.result.setSize(w,h);fresh=true;}
+    var target=renderer.getRenderTarget(),auto=renderer.autoClear,clearColor=renderer.getClearColor(new T.Color()),clearAlpha=renderer.getClearAlpha(),viewport=renderer.getViewport(new T.Vector4()),scissor=renderer.getScissor(new T.Vector4()),scissorTest=renderer.getScissorTest();
+    try{renderer.autoClear=false;renderer.setScissorTest(false);renderer.setClearColor(0,0);renderer.setRenderTarget(this.result);
+      // Checked when the target is made or resized, not on every draw: the query costs about 0.2 ms of CPU.
+      var gl=renderer.getContext();if(fresh&&gl.checkFramebufferStatus(gl.FRAMEBUFFER)!==gl.FRAMEBUFFER_COMPLETE)throw new Error('composition buffer '+w+'×'+h+' unavailable');
+      renderer.clear(true,false,false);renderer.render(this.compositeScene,quadView());}
+    finally{renderer.setRenderTarget(target);renderer.setViewport(viewport);renderer.setScissor(scissor);renderer.setScissorTest(scissorTest);renderer.setClearColor(clearColor,clearAlpha);renderer.autoClear=auto;}
+    this.markMaterial.uniforms.uResult.value=this.result.texture;
   };
   Surface.prototype.compile=function(){
     var renderer=this.renderer,error=null,previous=renderer.debug.onShaderError,target=renderer.getRenderTarget();
@@ -206,8 +285,10 @@ void main(){
     // throw-away 1x1 target: otherwise a broken composition would surface later, outside the fallback.
     var probe=new T.WebGLRenderTarget(1,1),scene=new T.Scene(),parent=this.quad.parent,visible=this.quad.visible;
     this.quad.visible=true;scene.add(this.quad);
-    try{renderer.compile(this.captureScene,this.captureCamera);renderer.compile(scene,new T.Camera());renderer.setRenderTarget(probe);renderer.render(scene,new T.Camera());}
-    finally{renderer.setRenderTarget(target);renderer.debug.onShaderError=previous;scene.remove(this.quad);if(parent)parent.add(this.quad);this.quad.visible=visible;probe.dispose();}
+    var bound=this.markMaterial.uniforms.uResult.value;if(!bound)this.markMaterial.uniforms.uResult.value=this.blank;
+    try{renderer.compile(this.captureScene,this.captureCamera);renderer.compile(this.compositeScene,quadView());renderer.compile(scene,quadView());
+      renderer.setRenderTarget(probe);renderer.render(this.compositeScene,quadView());renderer.render(scene,quadView());}
+    finally{renderer.setRenderTarget(target);renderer.debug.onShaderError=previous;scene.remove(this.quad);if(parent)parent.add(this.quad);this.quad.visible=visible;if(!bound)this.markMaterial.uniforms.uResult.value=null;probe.dispose();}
     if(error)throw new Error(error);
   };
   Surface.prototype.update=function(engine){
@@ -252,7 +333,8 @@ void main(){
     if(this.width!==size.width||this.height!==size.height){this.width=size.width;this.height=size.height;this.targets.forEach(function(t){t.setSize(size.width,size.height);});this.key=null;}
     var s=shell||{},u=this.material.uniforms;u.uPen.value.set(s.penetration||0,s.caliber||0,s.randomization||0,!s.randomizationType||s.randomizationType==='NORMAL'?1:0);u.uShell.value.set(s.normalization||0,s.ricochetCos==null?-1:s.ricochetCos,s.jetLossPerMeter||0,s.kind==='HIGH_EXPLOSIVE'?1:0);u.uFlags.value.set([s.mayRicochet?1:0,s.checkCaliber?1:0,s.shieldPenetration?1:0,s.penetration>0&&s.caliber>0?1:0]);u.uClassic.value=palette==='classic';u.uOpacity.value=opacity;
     u.uRicochetLoss.value=s.ricochetLoss||0;
-    var pr=Math.max(1,pixelRatio||1);u.uHatch.value.set(Math.max(2,this.hatch||8)*pr,pr); // hatch spacing in CSS px, lines one CSS px wide
+    var pr=Math.max(1,pixelRatio||1),m=this.markMaterial.uniforms;m.uHatch.value.set(Math.max(2,this.hatch||5)*pr,pr); // mark pitch in CSS px, dots and lines one CSS px across
+    m.uMark.value=this.mark|0;m.uEdges.value=this.edges!==false;m.uOutline.value=!!this.outline;var tint=this.tint===undefined?1:this.tint;m.uTint.value=tint;u.uTint.value=tint;m.uClassic.value=u.uClassic.value;
     var key=camera.matrixWorld.elements.join(',')+'|'+camera.projectionMatrix.elements.join(','),now=Date.now();
     if(key!==this.key)this.movedAt=now;
     var settled=bounceMode==='always'||!(now-(this.movedAt||0)<SETTLE);
@@ -267,6 +349,7 @@ void main(){
       try{renderer.autoClear=false;renderer.setScissorTest(false);renderer.setClearColor(0,0);for(var i=0;i<=COUNT;i++){p.uFirst.value=i===0;p.uPass.value=i;p.uPrevious.value=this.targets[i===0?COUNT:i-1].texture;for(var j=0;j<COUNT;j++)p['uPeel'+j].value=j<i?this.targets[j].texture:this.blank;renderer.setRenderTarget(this.targets[i]);var gl=renderer.getContext();if(gl.checkFramebufferStatus(gl.FRAMEBUFFER)!==gl.FRAMEBUFFER_COMPLETE)throw new Error('float-buffer '+size.width+'×'+size.height+' unavailable');renderer.clear(true,true,false);renderer.render(this.captureScene,this.captureCamera);}}finally{renderer.setRenderTarget(target);renderer.setViewport(viewport);renderer.setScissor(scissor);renderer.setScissorTest(scissorTest);renderer.setClearColor(clearColor,clearAlpha);renderer.autoClear=auto;}
       this.key=key;
     }
+    this.composite();
     this.quad.visible=true;return size.width+' × '+size.height+(size.scale<.999?' ('+Math.round(size.scale*100)+'% of the window)':'')+' · up to '+COUNT+' layers'+(this.bounce?(bounceMode==='always'?' · bounce traced':' · bounce traced after the camera stops'):' · bounce off: '+this.bounceReason);
   };
   /* TEST ONLY. Renders the composition into a temporary float target and returns the listed pixels as
@@ -278,12 +361,13 @@ void main(){
     var scene=new T.Scene(),parent=this.quad.parent,visible=this.quad.visible,previous=renderer.getRenderTarget();
     this.quad.visible=true;scene.add(this.quad);
     try{
-      renderer.setRenderTarget(target);renderer.render(scene,new T.Camera());
+      this.composite(); // both passes, so the samples carry the outline and the pattern
+      renderer.setRenderTarget(target);renderer.render(scene,quadView());
       var data=new Float32Array(size.x*size.y*4);renderer.readRenderTargetPixels(target,0,0,size.x,size.y,data);
       return pixels.map(function(p){var x=Math.min(size.x-1,Math.max(0,Math.round(p[0]))),y=Math.min(size.y-1,Math.max(0,size.y-1-Math.round(p[1]))),i=(y*size.x+x)*4;
         return [data[i],data[i+1],data[i+2],data[i+3]];});
     }finally{renderer.setRenderTarget(previous);scene.remove(this.quad);if(parent)parent.add(this.quad);this.quad.visible=visible;target.dispose();}
   };
-  Surface.prototype.dispose=function(){if(this.quad){if(this.quad.parent)this.quad.parent.remove(this.quad);this.quad.geometry.dispose();this.material.dispose();}if(this.mesh)this.mesh.geometry.dispose();if(this.peelMaterial)this.peelMaterial.dispose();if(this.materialTexture)this.materialTexture.dispose();if(this.bvhStruct)this.bvhStruct.dispose();if(this.faceMaterial)this.faceMaterial.dispose();this.bvh=null;this.targets.forEach(function(t){t.dispose();});if(this.depth)this.depth.dispose();if(this.blank)this.blank.dispose();};
+  Surface.prototype.dispose=function(){if(this.quad){if(this.quad.parent)this.quad.parent.remove(this.quad);this.quad.geometry.dispose();}if(this.markMaterial)this.markMaterial.dispose();if(this.compositeQuad)this.compositeQuad.geometry.dispose();if(this.material)this.material.dispose();if(this.result)this.result.dispose();if(this.mesh)this.mesh.geometry.dispose();if(this.peelMaterial)this.peelMaterial.dispose();if(this.materialTexture)this.materialTexture.dispose();if(this.bvhStruct)this.bvhStruct.dispose();if(this.faceMaterial)this.faceMaterial.dispose();this.bvh=null;this.targets.forEach(function(t){t.dispose();});if(this.depth)this.depth.dispose();if(this.blank)this.blank.dispose();};
   root.BullbaScreenArmor=Surface;
 }(window));

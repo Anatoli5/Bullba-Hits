@@ -431,7 +431,8 @@
     $('probe-chance').textContent='—';$('probe-chance').style.color='';$('probe-pen').replaceChildren();$('probe-extra').replaceChildren();$('probe-details').replaceChildren(node('span','Hover over the armour','placeholder'));
     staleEstimate();if(viewer)viewer.configure(shell,$('armor-mode').value==='chance',$('palette').value);shotStats();
   }
-  function chanceRgb(r){return 'rgb('+ArmorBallistics.color(r,$('palette').value).map(function(v){return Math.round(v*255);}).join(',')+')';}
+  var ricochetTint=1; // the Ricochet tint slider, 0..1.5; the panels' ricochet colours follow the map
+  function chanceRgb(r){return 'rgb('+ArmorBallistics.color(r,$('palette').value,ricochetTint).map(function(v){return Math.round(v*255);}).join(',')+')';}
   // Compact reading of one ballistic result: the chance first, then the numbers that explain it.
   // One ballistic result as readable groups: chance, then "effective ← nominal – angle", then "pen / range", then screens.
   function armorLine(r,pen,range){
@@ -440,10 +441,10 @@
     if(r.bounce){var b=r.bounce;pen=b.penetration;prefix.push({kind:'ricochet',text:'ricochet '+Math.round(b.nominal)+' mm – '+Math.round(b.angle)+'°'+(b.loss?' · pen −'+Math.round(b.loss*100)+'%':'')});}
     var layers=r.layers||[],screens=layers.filter(function(l){return !l.main;}),extra=screens.length?[{kind:'screen',text:'+ '+screens.map(function(s){return Math.round(s.nominal)+' mm';}).join(' + ')+' screen'}]:[];
     var shell=pen?[{kind:'pen',text:'pen '+Math.round(pen)+' mm'+(range?' / '+Math.round(range)+' m':'')}]:[];
-    var zero=chanceRgb({chance:0});
-    if(r.reason==='ricochet')return {label:'Ricochet',color:zero,groups:prefix.concat([{kind:'armor',text:(r.final?'again, shell lost: ':'')+Math.round(r.nominal)+' mm – '+Math.round(r.angle)+'°'}],shell,extra)};
+    var zero=chanceRgb({chance:0}),bounced=chanceRgb({chance:0,reason:'ricochet'});
+    if(r.reason==='ricochet')return {label:'Ricochet',color:bounced,groups:prefix.concat([{kind:'armor',text:(r.final?'again, shell lost: ':'')+Math.round(r.nominal)+' mm – '+Math.round(r.angle)+'°'}],shell,extra)};
     if(r.reason==='screen')return {label:'0%',color:zero,groups:prefix.concat([{kind:'armor',text:'explodes on the screen (this HE cannot pass screens)'}],shell,extra)};
-    if(r.reason==='no-hull')return r.bounce?{label:'0%',color:zero,groups:prefix.concat([{kind:'armor',text:'flies past after the ricochet'}],shell)}:{label:'—',color:'',groups:[{kind:'armor',text:'no main armour on this line'}]};
+    if(r.reason==='no-hull')return r.bounce?{label:'0%',color:bounced,groups:prefix.concat([{kind:'armor',text:'flies past after the ricochet'}],shell)}:{label:'—',color:'',groups:[{kind:'armor',text:'no main armour on this line'}]};
     if(r.reason==='parameters')return {label:'—',color:'',groups:[{kind:'armor',text:'set penetration and calibre'}]};
     if(r.reason==='armor')return {label:'—',color:'',groups:prefix.concat([{kind:'armor',text:'no armour data for this surface'}])};
     if(r.chance===null)return {label:'—',color:'',groups:prefix.concat([{kind:'armor',text:'no estimate for this penetration distribution'}])};
@@ -598,10 +599,23 @@
   (function(){var select=$('bounce-mode'),stored=null;try{stored=window.localStorage.getItem('bullba-bounce-mode');}catch(e){}
     if(stored==='always'||stored==='idle')select.value=stored;if(viewer)viewer.setBounceMode(select.value);
     select.onchange=function(){if(viewer)viewer.setBounceMode(this.value);try{window.localStorage.setItem('bullba-bounce-mode',this.value);}catch(e){}};})();
-  // Hatch spacing of the bounced-leg zones: remembered per browser; the value is shown so it can be quoted.
+  // Which mark fills the bounced-leg zones under their outline: remembered per browser, like the trace mode.
+  (function(){var select=$('mark-style'),stored=null;try{stored=window.localStorage.getItem('bullba-mark');}catch(e){}
+    if(stored==='dots'||stored==='tint')select.value=stored;if(viewer)viewer.setMarkStyle(select.value);
+    select.onchange=function(){if(viewer)viewer.setMarkStyle(this.value);try{window.localStorage.setItem('bullba-mark',this.value);}catch(e){}};})();
+  // Ricochet tint: one slider for every ricochet colour, remembered per browser.
+  (function(){var input=$('ricochet-tint'),out=$('ricochet-tint-value'),stored=NaN;try{stored=Number(window.localStorage.getItem('bullba-tint'));}catch(e){}
+    if(stored>=0&&stored<=150)input.value=stored;var apply=function(){ricochetTint=Number(input.value)/100;out.textContent=input.value+' %';if(viewer)viewer.setTint(ricochetTint);};apply();
+    input.oninput=function(){apply();try{window.localStorage.setItem('bullba-tint',input.value);}catch(e){}updateShell();};})();
+  // Mark spacing of the bounced-leg zones: remembered per browser; the value is shown so it can be quoted.
   (function(){var input=$('hatch-spacing'),out=$('hatch-spacing-value'),stored=NaN;try{stored=Number(window.localStorage.getItem('bullba-hatch'));}catch(e){}
-    if(stored>=4&&stored<=24)input.value=stored;var apply=function(){out.textContent=input.value+' px';if(viewer)viewer.setHatchSpacing(input.value);};apply();
+    if(stored>=3&&stored<=24)input.value=stored;var apply=function(){out.textContent=input.value+' px';if(viewer)viewer.setHatchSpacing(input.value);};apply();
     input.oninput=function(){apply();try{window.localStorage.setItem('bullba-hatch',input.value);}catch(e){}};})();
+  // Part seams and the zone outline: remembered per browser.
+  [['part-edges','bullba-edges','on',function(v){if(viewer)viewer.setPartEdges(v==='on');}],['zone-outline','bullba-outline','off',function(v){if(viewer)viewer.setZoneOutline(v==='on');}]].forEach(function(row){
+    var select=$(row[0]),stored=null;try{stored=window.localStorage.getItem(row[1]);}catch(e){}
+    if(stored==='on'||stored==='off')select.value=stored;else select.value=row[2];row[3](select.value);
+    select.onchange=function(){row[3](this.value);try{window.localStorage.setItem(row[1],this.value);}catch(e){}};});
   $('heatmap-quality').onchange=host.guard('Detail',function(){if(host.game&&this.value==='high'){this.value=viewer?viewer.quality:'auto';return;}if(viewer)viewer.setQuality(this.value);});
   // One line under the scene: the explored pose (when it differs) and the gun's vertical limits at the current turret angle.
   function poseChanged(){if(!viewer)return;var off=!(Math.abs(viewer.turretAngle)<.1&&Math.abs(viewer.gunAngle)<.1),sign=function(v){return (v>0?'+':'')+Math.round(v)+'°';},g=viewer.gunRange();$('turret-notice').hidden=!off;if(off)$('turret-notice').textContent='Turret '+sign(viewer.turretAngle)+', gun '+sign(viewer.gunAngle)+' from the recorded pose (hit marks hidden)';$('gun-limits').textContent=g.known?'Gun '+sign(g.min)+' … '+sign(g.max)+' at this turret angle':'Gun limits not recorded';recordedButton();staleEstimate();shotStats();}

@@ -144,8 +144,14 @@
     subdivide(triangle(a,mid,c,t.part,t.name,t.armor),depth+1,out,edge,Math.floor(budget/2));subdivide(triangle(mid,b,c,t.part,t.name,t.armor),depth+1,out,edge,Math.ceil(budget/2));
   }
   var palettes={accessible:[[.63,.18,.55],[.95,.75,.31],[.20,.84,.76]],classic:[[.90,.20,.18],[.97,.79,.22],[.20,.79,.35]]};
-  function color(result,palette){
+  function color(result,palette,tint){
     if(result.chance===null)return [.34,.42,.49];
+    // Ricochet history (a ricochet, or a fly-past after one): the 0 % colour with blue mixed in by 'tint'
+    // (0 none, 1 default), the same rule as the GPU map's blued().
+    if(result.reason==='ricochet'||(result.reason==='no-hull'&&result.bounce)){
+      var lo=(palettes[palette]||palettes.accessible)[0],k=tint===undefined?1:tint,to=[lo[0]*.8,lo[1]*.95,Math.max(lo[2],.55)];
+      return lo.map(function(v,i){return clamp(v+(to[i]-v)*k,0,1);});
+    }
     if(result.reason==='no-hull')return [.21,.27,.33];
     var stops=palettes[palette]||palettes.accessible,p=clamp(result.chance/100,0,1)*2,i=Math.min(1,Math.floor(p)),f=p-i;
     return stops[i].map(function(v,k){return v+(stops[i+1][k]-v)*f;});
