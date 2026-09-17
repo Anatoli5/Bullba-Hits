@@ -3,6 +3,10 @@
   var $=function(id){return document.getElementById(id);},viewer=null,current=null,selected=null,filter='all',generation=0,battleGeneration=0;
   var effects={0:'Penetration without damage',1:'Intermediate ricochet',2:'Ricochet',3:'No penetration',4:'Penetration',5:'Critical hit',6:'Penetration with module damage'};
   var shellNames={ARMOR_PIERCING:'AP',ARMOR_PIERCING_CR:'APCR',HOLLOW_CHARGE:'HEAT',HIGH_EXPLOSIVE:'HE'},candidates=[],activeHit=null,shotContext=null,manualPen='',lastDistance=null,analysisKey=null;
+  // Fingerprint of the hit record the scene was built from, so an index bump that changed nothing does not
+  // rebuild it. Set by selectHit, cleared by display() so that every other scene (a browsed vehicle, a
+  // swapped shooter) counts as “not the recorded hit”.
+  var currentHitKey=null;
   // web/host.js: game-host flag, breadcrumb-guarded heavy handlers. Absent in isolated tests.
   var host=window.BullbaHost||{game:false,interrupted:null,guard:function(action,fn){return fn;},done:function(){},
     canSend:function(){return false;},send:function(){return Promise.reject(new Error('No channel to the mod'));}};
@@ -381,7 +385,10 @@
     verdictStatus();if(!verdictTimer)verdictTimer=setTimeout(drainVerdicts,150);
   }
   function drainVerdicts(){
-    verdictTimer=null;if(verdictBusy||!verdictQueue.length||!window.ArmorViewer||!window.ArmorBallistics)return;verdictBusy=true;
+    verdictTimer=null;if(verdictBusy||!verdictQueue.length||!window.ArmorViewer||!window.ArmorBallistics)return;
+    // The diagnostics wait while the user is working: a hidden page or a drag gets the frame, not a BVH build.
+    if(document.hidden||(viewer&&viewer.dragging)){verdictTimer=setTimeout(drainVerdicts,150);return;}
+    verdictBusy=true;
     var job=verdictQueue.shift(),battle=job.battle,hit=job.hit;
     ArmorInspectorData.sceneFor(battle,hit).then(function(data){
       var context=ArmorShotContext.resolve(hit,battle.shotEvents||[]),c=context.index>=0?context.choices[context.index]:context.choices[0]||null;
@@ -506,7 +513,7 @@
     $('shooter-tile').setAttribute('aria-pressed',String(activeRole==='shooter'));
   }
   function display(data,reference){
-    var hit=data.hit;swapped=hit.synthetic&&!hit.vehicle?hit:null;sceneTiles(hit,reference);
+    currentHitKey=null;var hit=data.hit;swapped=hit.synthetic&&!hit.vehicle?hit:null;sceneTiles(hit,reference);
     $('shot-source').textContent=hit.synthetic?'No recorded shot':'Hit line';$('unpin').hidden=true;prepareShell(hit);var drawn=viewer&&viewer.load(data,shotContext);message(drawn?'':'Geometry unavailable. The original event is kept.');pivotButtons();warnings(data.warnings||[]);$('details').replaceChildren();
     var aimReady=viewer&&viewer.setShotContext(shotContext),estimate=!aimReady&&viewer?viewer.setAimEstimate(shotContext):null;$('show-aim').disabled=!(aimReady||estimate);
     $('total-chance').textContent=estimate?'\u2300 '+(estimate.radius*2).toFixed(2)+' m':'—';
@@ -551,11 +558,39 @@
   function selectHit(id){
     if(!current||!current.hits.some(function(h){return h.id===id;}))return Promise.reject(new Error('Hit not found'));
     selected=id;renderHits();var token=++generation;message('Preparing the model…');if(viewer)viewer.clear();
-    return ArmorInspectorData.scene(current,id).then(function(data){if(token!==generation)return;display(data,false);return {battleId:current.id,hitId:id};}).catch(function(e){if(token===generation){message(e.message);warnings([e.message]);}throw e;});
+    return ArmorInspectorData.scene(current,id).then(function(data){if(token!==generation)return;display(data,false);currentHitKey=hitFingerprint(current.hits.find(function(h){return h.id===id;}));return {battleId:current.id,hitId:id};}).catch(function(e){if(token===generation){message(e.message);warnings([e.message]);}throw e;});
+  }
+  // The exporter bumps one shared index timestamp on every publish, so a shot in another battle used to reload
+  // this battle, re-select the same hit and rebuild the scene from scratch - losing the camera, the pinned line
+  // and the explored pose. A fingerprint of the selected hit's own record decides instead. It is a subset, not
+  // JSON of the whole hit: one hit carries the full armour descriptor of every part, about 128 KB, and
+  // stringifying that on each poll would be exactly the kind of work this removes. Hits are immutable once
+  // written except for enrichment, and every enriched field (points, models, shells, attacker, warnings) is in
+  // the key.
+  function hitFingerprint(hit){
+    if(!hit)return null;
+    var parts=((hit.target||{}).parts||[]).map(function(p){return [p.id,p.name,p.modelKey,p.armorSource,p.resource,(p.transform||[]).join(' ')].join('~');}).join(';');
+    var attacker=hit.attacker||{},target=hit.target||{};
+    return [hit.id,hit.receivedAt,hit.damage,hit.direction,hit.rangeAtImpact,hit.shellStatus,hit.effectsIndex,hit.shellVelocity,
+      JSON.stringify(hit.points||[]),JSON.stringify(hit.rawHitPoints||[]),JSON.stringify(hit.aim||[]),
+      (hit.warnings||[]).join('|'),(hit.shellCandidates||[]).length,(hit.availableShells||[]).length,
+      target.name,attacker.name,attacker.gun,attacker.gunDispersion,attacker.gunHeight,attacker.gunHeightFrom,parts].join('\u0001');
   }
   function loadBattle(id,keep){
     var request=++battleGeneration;if(!current||current.id!==id)++generation;
-    return ArmorInspectorData.battle(id).then(function(b){if(request!==battleGeneration)return;current=b;ArmorShotTelemetry.load(b.shotEvents||[]);queueVerdicts(b);var existing=keep&&selected&&b.hits.some(function(h){return h.id===selected;});if(!existing)selected=null;renderHits();if(b.hits.length)return selectHit(existing?selected:b.hits[0].id);if(viewer)viewer.clear();sceneTiles(null,false);message('No hits recorded in this battle yet. Shot details are available below.');});
+    return ArmorInspectorData.battle(id).then(function(b){
+      if(request!==battleGeneration)return;
+      var sameBattle=!!current&&current.id===b.id,kept=keep&&selected?b.hits.find(function(h){return h.id===selected;}):null;
+      var unchanged=!!kept&&sameBattle&&currentHitKey!==null&&hitFingerprint(kept)===currentHitKey;
+      current=b;ArmorShotTelemetry.load(b.shotEvents||[]);queueVerdicts(b);
+      var existing=keep&&selected&&b.hits.some(function(h){return h.id===selected;});
+      if(!existing)selected=null;
+      renderHits();
+      // The selected shot is untouched: the list, the shot events and the verdict queue are refreshed, the scene is not.
+      if(unchanged)return;
+      if(b.hits.length)return selectHit(existing?selected:b.hits[0].id);
+      if(viewer)viewer.clear();sceneTiles(null,false);message('No hits recorded in this battle yet. Shot details are available below.');
+    });
   }
   // The battle list keeps itself fresh: the index file is re-read every few seconds (a local file, cheap) and the
   // battle is reloaded only when the exporter has written a newer index; the chosen battle and hit are kept.
@@ -654,7 +689,10 @@
   $('battles').onchange=function(){loadBattle(this.value,false).catch(function(e){warnings([e.message]);});};
   document.querySelectorAll('[data-filter]').forEach(function(b){b.onclick=function(){filter=b.dataset.filter;document.querySelectorAll('[data-filter]').forEach(function(x){x.setAttribute('aria-pressed',String(x===b));});renderHits();};});
   $('wireframe').onchange=function(){if(viewer)viewer.wireframe(this.checked);};
-  window.addEventListener('armor-context-lost',function(){host.mark('WebGL','context-lost');message('The browser lost its WebGL context. Reload the page.');});
+  var CONTEXT_LOST='The browser lost its WebGL context. Reload the page.';
+  window.addEventListener('armor-context-lost',function(){if(host.mark)host.mark('WebGL','context-lost');message(CONTEXT_LOST);});
+  // The context came back and the viewer has redrawn: take the reload notice away again, leave any other message.
+  window.addEventListener('armor-context-restored',function(){if(host.mark)host.mark('WebGL','context-restored');if($('scene-message').textContent===CONTEXT_LOST)message('');});
   function outline(){if(viewer)viewer.setOutline(Number($('outline-brightness').value)/100,Number($('outline-opacity').value)/100);}
   $('outline-brightness').oninput=outline;$('outline-opacity').oninput=outline;if(viewer){viewer.wireframe($('wireframe').checked);outline();}
   if(host.interrupted){$('host-note').hidden=false;$('host-note').textContent='The previous session was interrupted during “'+host.interrupted.action+'» ('+(host.interrupted.host==='game'?'in the game':'in the browser')+', '+new Date(host.interrupted.at).toLocaleString('en-GB')+'). Mention this when reporting.';}

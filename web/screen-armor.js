@@ -220,7 +220,7 @@ void main(){
     var gl=renderer.getContext();if(!gl.getExtension('EXT_color_buffer_float'))throw new Error('no float colour textures');
     if(renderer.capabilities.maxTextures<COUNT+2)throw new Error('not enough texture units');
     var ext=gl.getExtension('WEBGL_debug_renderer_info');if(ext&&/swiftshader|llvmpipe|software|basic render/i.test(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)))throw new Error('software WebGL');
-    this.renderer=renderer;this.targets=[];this.key=null;this.width=0;this.height=0;this.materialTexture=null;this.result=null;this.compositeScene=null;this.compositeQuad=null;
+    this.renderer=renderer;this.targets=[];this.key=null;this.width=0;this.height=0;this.materialTexture=null;this.result=null;this.compositeScene=null;this.compositeQuad=null;this.checkPending=false;
     // The bounced leg needs three-mesh-bvh and five more texture units (four for the BVH, one for the
     // material per vertex). Without them the map keeps working exactly as before, with a reason to show.
     var lib=root.MeshBVHLib;this.bvh=null;this.bvhStruct=null;this.faceMaterial=null;this.bounce=false;this.bounceReason='library not loaded';
@@ -234,16 +234,37 @@ void main(){
     this.blank=new T.DataTexture(new Float32Array(4),1,1,T.RGBAFormat,T.FloatType);this.blank.needsUpdate=true;
     this.depth=new T.DepthTexture(1,1);this.depth.format=T.DepthFormat;this.depth.type=T.UnsignedIntType;
     for(var i=0;i<=COUNT;i++){var target=new T.WebGLRenderTarget(1,1,{type:T.FloatType,format:T.RGBAFormat,minFilter:T.NearestFilter,magFilter:T.NearestFilter,depthBuffer:true,stencilBuffer:false,depthTexture:this.depth});target.texture.generateMipmaps=false;this.targets.push(target);if(i<COUNT)this.peelMaterial.uniforms['uPeel'+i]={value:this.blank};}
-    try{this.compose();this.update(engine);this.compile();}
+    try{this.checkTargets();this.compose();this.update(engine);this.compile();}
     catch(e){
       // A driver that will not take the traversal must not cost the direct map: rebuild it without the leg.
       if(!this.bounce){this.dispose();throw e;}
       this.bounce=false;this.bounceReason=String(e.message||e).replace(/\s+/g,' ').slice(0,90);
       console.warn('Bounced leg disabled:',this.bounceReason);
-      try{this.compose();this.update(engine);this.compile();}catch(again){this.dispose();throw again;}
+      try{this.checkTargets();this.compose();this.update(engine);this.compile();}catch(again){this.dispose();throw again;}
     }
     this.quad.visible=false;
   }
+  // Framebuffer completeness is asked once per allocation - creation, a size change, a context restore - and
+  // never per pass: the query can synchronise CPU and GPU, and the peel loop used to run nine of them on every
+  // frame the camera moved. Checking needs the target bound, so the renderer is left exactly as it was found.
+  Surface.prototype.checkTargets=function(){
+    var renderer=this.renderer,gl=renderer.getContext(),bad=null;
+    var target=renderer.getRenderTarget(),viewport=renderer.getViewport(new T.Vector4()),scissor=renderer.getScissor(new T.Vector4()),scissorTest=renderer.getScissorTest();
+    try{for(var i=0;i<this.targets.length;i++){renderer.setRenderTarget(this.targets[i]);if(gl.checkFramebufferStatus(gl.FRAMEBUFFER)!==gl.FRAMEBUFFER_COMPLETE){bad=this.targets[i];break;}}}
+    finally{renderer.setRenderTarget(target);renderer.setViewport(viewport);renderer.setScissor(scissor);renderer.setScissorTest(scissorTest);}
+    this.checkPending=false;
+    if(bad)throw new Error('float-buffer '+bad.width+'×'+bad.height+' unavailable');
+  };
+  // After a WebGL context restore the layers on the GPU are gone while the camera key that declares them valid
+  // still matches, so the key is dropped and the next render() peels again. three re-uploads its own textures,
+  // geometries and render targets by itself (the BVH struct holds plain DataTextures whose CPU-side data is
+  // kept, so updateFrom does not have to run again); the composition result is released so that composite()
+  // allocates it anew and takes the framebuffer check that goes with a fresh target.
+  Surface.prototype.invalidate=function(){
+    this.key=null;this.movedAt=0;this.checkPending=true;
+    if(this.result){this.result.dispose();this.result=null;}
+    if(this.markMaterial)this.markMaterial.uniforms.uResult.value=null;
+  };
   // Both full-screen quads and their programs. Built once, or twice if the bounced leg is dropped.
   Surface.prototype.compose=function(){
     if(this.quad){if(this.quad.parent)this.quad.parent.remove(this.quad);this.quad.geometry.dispose();this.markMaterial.dispose();}
@@ -330,7 +351,8 @@ void main(){
   var SETTLE=150;
   Surface.prototype.render=function(camera,anchor,shell,palette,opacity,quality,width,height,pixelRatio,bounceMode){
     var renderer=this.renderer,size=this.size(quality,width,height,pixelRatio);
-    if(this.width!==size.width||this.height!==size.height){this.width=size.width;this.height=size.height;this.targets.forEach(function(t){t.setSize(size.width,size.height);});this.key=null;}
+    if(this.width!==size.width||this.height!==size.height){this.width=size.width;this.height=size.height;this.targets.forEach(function(t){t.setSize(size.width,size.height);});this.key=null;this.checkPending=true;}
+    if(this.checkPending)this.checkTargets();
     var s=shell||{},u=this.material.uniforms;u.uPen.value.set(s.penetration||0,s.caliber||0,s.randomization||0,!s.randomizationType||s.randomizationType==='NORMAL'?1:0);u.uShell.value.set(s.normalization||0,s.ricochetCos==null?-1:s.ricochetCos,s.jetLossPerMeter||0,s.kind==='HIGH_EXPLOSIVE'?1:0);u.uFlags.value.set([s.mayRicochet?1:0,s.checkCaliber?1:0,s.shieldPenetration?1:0,s.penetration>0&&s.caliber>0?1:0]);u.uClassic.value=palette==='classic';u.uOpacity.value=opacity;
     u.uRicochetLoss.value=s.ricochetLoss||0;
     var pr=Math.max(1,pixelRatio||1),m=this.markMaterial.uniforms;m.uHatch.value.set(Math.max(2,this.hatch||5)*pr,pr); // dot pitch in CSS px, one CSS px per dot
@@ -346,7 +368,7 @@ void main(){
       u.uOrigin.value.copy(p.uOrigin.value);u.uAnchor.value.copy(p.uAnchor.value);u.uForward.value.copy(p.uForward.value);
       u.uCameraWorld.value.copy(camera.matrixWorld);u.uInvProjection.value.copy(camera.projectionMatrix).invert();
       var target=renderer.getRenderTarget(),auto=renderer.autoClear,clearColor=renderer.getClearColor(new T.Color()),clearAlpha=renderer.getClearAlpha(),viewport=renderer.getViewport(new T.Vector4()),scissor=renderer.getScissor(new T.Vector4()),scissorTest=renderer.getScissorTest();
-      try{renderer.autoClear=false;renderer.setScissorTest(false);renderer.setClearColor(0,0);for(var i=0;i<=COUNT;i++){p.uFirst.value=i===0;p.uPass.value=i;p.uPrevious.value=this.targets[i===0?COUNT:i-1].texture;for(var j=0;j<COUNT;j++)p['uPeel'+j].value=j<i?this.targets[j].texture:this.blank;renderer.setRenderTarget(this.targets[i]);var gl=renderer.getContext();if(gl.checkFramebufferStatus(gl.FRAMEBUFFER)!==gl.FRAMEBUFFER_COMPLETE)throw new Error('float-buffer '+size.width+'×'+size.height+' unavailable');renderer.clear(true,true,false);renderer.render(this.captureScene,this.captureCamera);}}finally{renderer.setRenderTarget(target);renderer.setViewport(viewport);renderer.setScissor(scissor);renderer.setScissorTest(scissorTest);renderer.setClearColor(clearColor,clearAlpha);renderer.autoClear=auto;}
+      try{renderer.autoClear=false;renderer.setScissorTest(false);renderer.setClearColor(0,0);for(var i=0;i<=COUNT;i++){p.uFirst.value=i===0;p.uPass.value=i;p.uPrevious.value=this.targets[i===0?COUNT:i-1].texture;for(var j=0;j<COUNT;j++)p['uPeel'+j].value=j<i?this.targets[j].texture:this.blank;renderer.setRenderTarget(this.targets[i]);renderer.clear(true,true,false);renderer.render(this.captureScene,this.captureCamera);}}finally{renderer.setRenderTarget(target);renderer.setViewport(viewport);renderer.setScissor(scissor);renderer.setScissorTest(scissorTest);renderer.setClearColor(clearColor,clearAlpha);renderer.autoClear=auto;}
       this.key=key;
     }
     this.composite();

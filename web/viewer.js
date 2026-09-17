@@ -22,31 +22,50 @@
     this.materials = []; this.point = null; this.travel = null;
     this.shell=null;this.heatmap=true;this.palette='classic';this.paintTimer=null;this.paintMesh=null;this.samples=[];this.engine=null;
     this.frameId=null;this.fitPending=false;this.recordedDistance=null;this.estimateAim=null;this.paintedKey=null;this.distanceSet=false;
+    this.contextLost=false;this.dragging=false;this.hoverId=null;this.hoverEvent=null;this.inspectKey=null;
     this.quality='auto';this.bounceMode='always';this.bounceTimer=null;this.dots=false;this.dotSpacing=5;this.tint=.5;this.partEdges=true;this.zoneOutline=false;this.turretAngle=0;this.turretTimer=null;this.turretPending=false;
     this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.trackOpacity=.4;this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.gunAngle=0;this.autoFrame=false;this.frameScale=this.defaults.scale;this.outline=null;this.outlineDepth=null;this.outlineStyle={brightness:.8,opacity:.6};this.showOutline=false;
     var drag = null;
     container.addEventListener('contextmenu', function(e) { e.preventDefault(); });
-    container.addEventListener('pointerdown', function(e) { /* The scene tiles are controls of their own: capturing the pointer here would retarget the click to #viewport and the shooter tile would never fire. */ if(e.target&&e.target.closest&&e.target.closest('.viewport-tile'))return; /* pan: right button, or Ctrl + left button (the in-game browser swallows the right button) */ if(e.button===2||(e.button===0&&e.ctrlKey)){drag={pan:true,x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY,moved:false};try{container.setPointerCapture(e.pointerId);}catch(ignore){}return;}if(e.button!==0)return;if(e.altKey){self.aimAt(e);return;}drag={x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY,moved:false,part:self.pickPart(e)}; try{container.setPointerCapture(e.pointerId);}catch(ignore){} container.focus(); });
-    container.addEventListener('pointermove', function(e) { if (!drag){self.inspect(e);return;}if(Math.abs(e.clientX-drag.sx)+Math.abs(e.clientY-drag.sy)>3)drag.moved=true;if(!drag.moved)return;if(drag.pan){self.panBy(e.clientX-drag.x,e.clientY-drag.y);drag.x=e.clientX;drag.y=e.clientY;return;}if(drag.part===2||drag.part===3){/* turret and gun are one module: left/right turns the turret, up/down moves the gun */var dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(dx)self.setTurret(self.turretAngle-dx*.5);if(dy)self.setGun(self.gunAngle+dy*.16);}else{self.yaw -= (e.clientX-drag.x)*0.008; self.pitch = Math.max(-1.35,Math.min(1.35,self.pitch+(e.clientY-drag.y)*0.008));self.render();}drag.x=e.clientX;drag.y=e.clientY; });
-    container.addEventListener('pointerup', function(e) { var d=drag;drag=null;if(d&&!d.moved&&!e.altKey&&!e.ctrlKey&&e.button===0)self.pinAt(e); });
-    container.addEventListener('pointercancel', function() { drag=null; });
+    container.addEventListener('pointerdown', function(e) { /* The scene tiles are controls of their own: capturing the pointer here would retarget the click to #viewport and the shooter tile would never fire. */ if(e.target&&e.target.closest&&e.target.closest('.viewport-tile'))return; /* pan: right button, or Ctrl + left button (the in-game browser swallows the right button) */ if(e.button===2||(e.button===0&&e.ctrlKey)){drag={pan:true,x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY,moved:false};self.dragging=true;try{container.setPointerCapture(e.pointerId);}catch(ignore){}return;}if(e.button!==0)return;if(e.altKey){self.aimAt(e);return;}drag={x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY,moved:false,part:self.pickPart(e)};self.dragging=true; try{container.setPointerCapture(e.pointerId);}catch(ignore){} container.focus(); });
+    container.addEventListener('pointermove', function(e) { if (!drag){self.hover(e);return;}if(Math.abs(e.clientX-drag.sx)+Math.abs(e.clientY-drag.sy)>3)drag.moved=true;if(!drag.moved)return;if(drag.pan){self.panBy(e.clientX-drag.x,e.clientY-drag.y);drag.x=e.clientX;drag.y=e.clientY;return;}if(drag.part===2||drag.part===3){/* turret and gun are one module: left/right turns the turret, up/down moves the gun */var dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(dx)self.setTurret(self.turretAngle-dx*.5);if(dy)self.setGun(self.gunAngle+dy*.16);}else{self.yaw -= (e.clientX-drag.x)*0.008; self.pitch = Math.max(-1.35,Math.min(1.35,self.pitch+(e.clientY-drag.y)*0.008));self.render();}drag.x=e.clientX;drag.y=e.clientY; });
+    container.addEventListener('pointerup', function(e) { var d=drag;drag=null;self.dragging=false;if(d&&!d.moved&&!e.altKey&&!e.ctrlKey&&e.button===0)self.pinAt(e); });
+    container.addEventListener('pointercancel', function() { drag=null;self.dragging=false;self.cancelHover(); });
     container.addEventListener('wheel', function(e) {e.preventDefault();var delta=e.deltaY||e.deltaX,amount=Math.max(-200,Math.min(200,delta*(e.deltaMode===1?16:e.deltaMode===2?300:1)));if(!(e.shiftKey||e.ctrlKey||e.altKey))self.setDistance(self.distance*Math.exp(amount*.002));else if(self.autoFrame)self.setScale(self.frameScale*Math.exp(-amount*.002));else self.setZoom(self.camera.zoom*Math.exp(-amount*.002));}, {passive:false});
     container.addEventListener('keydown',function(e){var used=true;if(e.key==='ArrowLeft')self.yaw-=.1;else if(e.key==='ArrowRight')self.yaw+=.1;else if(e.key==='ArrowUp')self.pitch=Math.min(1.35,self.pitch+.1);else if(e.key==='ArrowDown')self.pitch=Math.max(-1.35,self.pitch-.1);else if(e.key==='+'||e.key==='='){if(e.shiftKey)self.setZoom(self.camera.zoom*1.1);else self.setDistance(Math.max(1,self.distance/1.1));}else if(e.key==='-'){if(e.shiftKey)self.setZoom(self.camera.zoom/1.1);else self.setDistance(Math.min(1500,self.distance*1.1));}else used=false;if(used){e.preventDefault();self.render();}});
-    if(this.renderer.domElement.addEventListener)this.renderer.domElement.addEventListener('webglcontextlost',function(e){e.preventDefault();window.dispatchEvent(new Event('armor-context-lost'));});
+    // A lost context stops the frame loop: three ignores render() while the context is gone, but a pending
+    // frame of ours would still walk the whole paint path. Restoring clears the flag and redraws once.
+    if(this.renderer.domElement.addEventListener){
+      this.renderer.domElement.addEventListener('webglcontextlost',function(e){e.preventDefault();self.contextLost=true;window.cancelAnimationFrame(self.frameId);self.frameId=null;self.cancelHover();window.dispatchEvent(new Event('armor-context-lost'));});
+      this.renderer.domElement.addEventListener('webglcontextrestored',function(){self.restoreContext();});
+    }
+    // Returning to the page asks for one frame and nothing else: no rebuild, no re-creation.
+    document.addEventListener('visibilitychange',function(){if(!document.hidden)self.draw();});
     window.addEventListener('resize', function(){self.resize();});
     if(window.ResizeObserver){this.resizeObserver=new ResizeObserver(function(){self.resize();});this.resizeObserver.observe(container);}
     this.resize();
   }
   Viewer.prototype.projection=function(){var w=this.container.clientWidth||1,h=this.container.clientHeight||1,z=this.camera.zoom;this.camera.setViewOffset(w,h,this.frameCenter.x*z*w/2,-this.frameCenter.y*z*h/2,w,h);};
   Viewer.prototype.resize=function(){var w=this.container.clientWidth,h=this.container.clientHeight;if(!w||!h)return;this.renderer.setSize(w,h,false);this.projection();this.render();};
+  // A restored context: three rebuilds its own property cache and re-uploads textures, geometries and render
+  // targets by itself. What it cannot know is that our depth layers, valid by a camera key kept in JS, hold
+  // GPU-only content that is now gone - so the composition is told to peel again and to re-check its
+  // framebuffers once - and that the page owes one full frame with the current camera, pose, pin and settings.
+  Viewer.prototype.restoreContext=function(){
+    this.contextLost=false;this.paintedKey=null;this.inspectKey=null;
+    if(this.surface){try{this.surface.invalidate();}catch(e){this.surfaceError=e.message;this.surface.dispose();this.surface=null;}}
+    if(!this.surface)this.surfaceAttempted=false;
+    this.resize();this.draw();
+    window.dispatchEvent(new Event('armor-context-restored'));
+  };
   // Coalesce input and color updates into one draw at the next browser frame.
-  Viewer.prototype.draw=function(){if(this.frameId!==null)return;var self=this;this.frameId=window.requestAnimationFrame(function(){try{if(self.turretPending)self.applyTurret();if(self.fitPending){self.fitPending=false;self.resize();self.fit();}if(self.paintMesh)self.paint();if(self.aimGroup)self.aimGroup.visible=!!document.getElementById('show-aim').checked;self.renderer.render(self.scene,self.camera);self.updateReticles();}finally{self.frameId=null;}});};
+  Viewer.prototype.draw=function(){if(this.contextLost||this.frameId!==null)return;var self=this;this.frameId=window.requestAnimationFrame(function(){try{if(self.turretPending)self.applyTurret();if(self.fitPending){self.fitPending=false;self.resize();self.fit();}if(self.paintMesh)self.paint();if(self.aimGroup)self.aimGroup.visible=!!document.getElementById('show-aim').checked;self.renderer.render(self.scene,self.camera);self.updateReticles();}finally{self.frameId=null;}});};
   Viewer.prototype.render=function(){var c=Math.cos(this.pitch);this.camera.position.set(this.target.x+this.distance*c*Math.sin(this.yaw),this.target.y+this.distance*Math.sin(this.pitch),this.target.z+this.distance*c*Math.cos(this.yaw));this.camera.near=Math.max(.05,this.distance*.02);this.camera.far=this.distance*4+200;this.projection();this.camera.lookAt(this.target);this.camera.updateMatrixWorld();if(this.pan.x||this.pan.y){var m=this.camera.matrixWorld,off=new THREE.Vector3().setFromMatrixColumn(m,0).multiplyScalar(this.pan.x).add(new THREE.Vector3().setFromMatrixColumn(m,1).multiplyScalar(this.pan.y));this.camera.position.add(off);this.camera.updateMatrixWorld();}if(this.autoFrame)this.autoFit();this.draw();if(this.onCamera)this.onCamera({distance:this.distance,zoom:this.camera.zoom,yaw:this.yaw,pitch:this.pitch});};
   Viewer.prototype.setZoom=function(value){if(!Number.isFinite(value)||value<=0)return;this.camera.zoom=Math.max(.1,Math.min(150,value));if(this.autoFrame)this.frameScale=this.camera.zoom/Math.max(.1,this.fitZoom);this.projection();this.draw();if(this.onCamera)this.onCamera({distance:this.distance,zoom:this.camera.zoom,yaw:this.yaw,pitch:this.pitch});};
   Viewer.prototype.setDistance=function(value){if(!Number.isFinite(value))return;this.distance=Math.max(DISTANCE_MIN,Math.min(DISTANCE_MAX,value));this.render();};
   Viewer.limits={distanceMin:DISTANCE_MIN,distanceMax:DISTANCE_MAX};
   Viewer.prototype.saveDefaults=function(){var frame=this.framing();this.defaults={distance:this.distance,scale:Math.max(.1,Math.min(10,this.camera.zoom/(frame?frame.zoom:this.fitZoom)))};try{window.localStorage.setItem('armor-camera-defaults',JSON.stringify(this.defaults));return true;}catch(ignore){return false;}};
-  Viewer.prototype.clear=function(){this.fitPending=false;this.shotPoints=null;this.recordedDistance=null;this.pinned=null;if(this.pinGroup){this.scene.remove(this.pinGroup);this.pinGroup=null;}this.pinReticles=[];if(this.surface)this.surface.dispose();this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.gunAngle=0;this.savedAim=null;this.aimGroup=null;this.reticles=[];this.reticleLayer.replaceChildren();clearTimeout(this.turretTimer);this.turretTimer=null;this.turretPending=false;this.spreadAim=null;this.hideSpread();clearTimeout(this.paintTimer);this.paintTimer=null;window.cancelAnimationFrame(this.frameId);this.frameId=null;this.paintMesh=null;this.outline=null;this.outlineDepth=null;this.engine=null;this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.loadedData=null;this.paintedKey=null;this.samples=[];var disposed=new Set();this.root.traverse(function(o){if(o.geometry&&!disposed.has(o.geometry)){disposed.add(o.geometry);o.geometry.dispose();}if(o.material){(Array.isArray(o.material)?o.material:[o.material]).forEach(function(m){m.dispose();});}});while(this.root.children.length)this.root.remove(this.root.children[0]);this.materials=[];this.point=null;this.travel=null;this.render();};
+  Viewer.prototype.clear=function(){this.fitPending=false;this.shotPoints=null;this.recordedDistance=null;this.pinned=null;this.disposePin();this.pinReticles=[];if(this.surface)this.surface.dispose();this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.gunAngle=0;this.savedAim=null;this.aimGroup=null;this.reticles=[];this.reticleLayer.replaceChildren();clearTimeout(this.turretTimer);this.turretTimer=null;this.turretPending=false;this.spreadAim=null;this.hideSpread();clearTimeout(this.paintTimer);this.paintTimer=null;window.cancelAnimationFrame(this.frameId);this.frameId=null;this.cancelHover();this.inspectKey=null;this.paintMesh=null;this.outline=null;this.outlineDepth=null;this.engine=null;this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.loadedData=null;this.paintedKey=null;this.samples=[];var disposed=new Set();this.root.traverse(function(o){var shared=!!(o.parent&&o.parent.type==='ArrowHelper'&&(o===o.parent.line||o===o.parent.cone));if(o.geometry&&!shared&&!disposed.has(o.geometry)){disposed.add(o.geometry);o.geometry.dispose();}if(o.material){(Array.isArray(o.material)?o.material:[o.material]).forEach(function(m){m.dispose();});}});while(this.root.children.length)this.root.remove(this.root.children[0]);this.materials=[];this.point=null;this.travel=null;this.render();};
   Viewer.prototype.rebuild=function(){
     if(!this.loadedData)return;var T=THREE,self=this;this.samples=[];this.paintedKey=null;
     // A failed composition is retried on the next rebuild (pose or model) instead of staying off for good.
@@ -264,7 +283,7 @@
     if(!state)return;this.yaw=state.yaw;this.pitch=state.pitch;this.distance=state.distance;this.target.copy(state.target);
     this.pan.copy(state.pan);this.frameCenter.copy(state.frameCenter);this.frameScale=state.frameScale;this.pivotHeight=state.pivotHeight;
     this.fitPending=false;this.camera.zoom=Math.max(.1,Math.min(150,state.zoom));this.projection();this.render();};
-  Viewer.prototype.configure=function(shell,heatmap,palette){this.shell=shell;this.heatmap=heatmap;this.palette=palette;if(this.pinned)this.refreshPin();this.updateTrackAppearance();this.render();};
+  Viewer.prototype.configure=function(shell,heatmap,palette){this.shell=shell;this.heatmap=heatmap;this.palette=palette;this.inspectKey=null;if(this.pinned)this.refreshPin();this.updateTrackAppearance();this.render();};
   // A pinned point replaces the recorded hit line as the analysed shot until unpinned. It is drawn like a
   // recorded shot: an arrow along the line, a reticle at the point, and a dashed leg where a ricochet goes.
   Viewer.prototype.pinAt=function(event){
@@ -341,11 +360,22 @@
     var length=2.3,head=.12,arrow=new THREE.ArrowHelper(direction,tip.clone().addScaledVector(direction,-length),length,color,head,.045);
     var body=new THREE.Mesh(new THREE.CylinderGeometry(.006,.006,length-head,8),new THREE.MeshBasicMaterial({color:color,transparent:true,opacity:.9,depthTest:false,depthWrite:false}));
     body.position.set(0,(length-head)/2,0);body.renderOrder=4;body.frustumCulled=false;arrow.add(body);
-    [arrow.line.material,arrow.cone.material].forEach(function(m){m.depthTest=false;m.depthWrite=false;m.transparent=true;m.opacity=1;});arrow.line.renderOrder=4;arrow.cone.renderOrder=4;arrow.line.frustumCulled=false;arrow.cone.frustumCulled=false;return arrow;
+    [arrow.line.material,arrow.cone.material].forEach(function(m){m.depthTest=false;m.depthWrite=false;m.transparent=true;m.opacity=1;});arrow.line.renderOrder=4;arrow.cone.renderOrder=4;arrow.line.frustumCulled=false;arrow.cone.frustumCulled=false;
+    Viewer.own(arrow,[body.geometry,body.material,arrow.line.material,arrow.cone.material]);return arrow;
+  };
+  // The pinned line owns exactly what was made for it. ArrowHelper shares one line geometry and one cone
+  // geometry between every instance (module-level in three 0.160.1, created on the first arrow), and its own
+  // dispose() would free those for every other arrow too; only the two materials it makes per instance are
+  // ours. Each owner records its list here and disposePin() frees exactly that list when the group is dropped.
+  Viewer.own=function(object,resources){var owned=object.userData.ownedResources||(object.userData.ownedResources=[]);resources.forEach(function(r){if(r)owned.push(r);});return object;};
+  Viewer.prototype.disposePin=function(){
+    var group=this.pinGroup;if(!group)return;this.scene.remove(group);
+    group.traverse(function(o){var owned=o.userData&&o.userData.ownedResources;if(!owned)return;owned.forEach(function(r){if(r&&r.dispose)r.dispose();});o.userData.ownedResources=null;});
+    this.pinGroup=null;
   };
   Viewer.prototype.refreshPin=function(){
     var self=this,p=this.pinned;
-    if(this.pinGroup){this.scene.remove(this.pinGroup);this.pinGroup=null;}
+    this.disposePin();
     this.pinReticles.forEach(function(r){r.element.remove();});this.reticles=this.reticles.filter(function(r){return !r.pinned;});this.pinReticles=[];
     this.syncRecorded();
     if(!p)return;
@@ -359,7 +389,7 @@
       // The flight after the ricochet: dashed leg to the second contact (or 2.3 m into the air) and its own reticle.
       var b=result.bounce,start=new THREE.Vector3().fromArray(b.point),out=new THREE.Vector3().fromArray(b.direction),end=start.clone().addScaledVector(out,result.distance!==undefined?result.distance:2.3);
       var leg=new THREE.Line(new THREE.BufferGeometry().setFromPoints([start,end]),new THREE.LineDashedMaterial({color:0xfb8580,dashSize:.12,gapSize:.08,depthTest:false,depthWrite:false,transparent:true}));
-      leg.computeLineDistances();leg.renderOrder=4;leg.frustumCulled=false;group.add(leg);
+      leg.computeLineDistances();leg.renderOrder=4;leg.frustumCulled=false;group.add(leg);Viewer.own(leg,[leg.geometry,leg.material]);
       if(result.distance!==undefined)this.pinReticleAt(end,result.reason==='ricochet'?'pinned lost':'pinned second');
     }
     this.pinGroup=group;this.scene.add(group);
@@ -470,8 +500,24 @@
     }
     this.paintedKey=key;this.paintMesh.geometry.attributes.color.needsUpdate=true;
   };
+  // Hovering is coalesced to one reading per animation frame: a pointermove burst used to cost a Three.js
+  // raycast plus a ballistic ray each, and only the last event of the burst is still under the cursor.
+  Viewer.prototype.hover=function(event){
+    var self=this;this.hoverEvent=event;if(this.hoverId!==null)return;
+    this.hoverId=window.requestAnimationFrame(function(){self.hoverId=null;var last=self.hoverEvent;self.hoverEvent=null;if(last)self.inspect(last);});
+  };
+  Viewer.prototype.cancelHover=function(){if(this.hoverId!==null)window.cancelAnimationFrame(this.hoverId);this.hoverId=null;this.hoverEvent=null;};
+  // Everything the “Under the cursor” panel prints, as one short string: an unchanged reading is not redrawn.
+  Viewer.readingKey=function(result,sample){
+    var r=result||{},b=r.bounce,round=function(v){return v===undefined||v===null?'-':Math.round(v);};
+    return [sample?sample.part:'-',sample?sample.name||'':'',r.reason||'',r.chance===null||r.chance===undefined?'-':r.chance,
+      round(r.nominal),round(r.effective),round(r.angle),r.final?'f':'',
+      b?[round(b.nominal),round(b.angle),round(b.penetration),round((b.loss||0)*100)].join('/'):'-',
+      (r.layers||[]).map(function(l){return (l.main?'m':'s')+round(l.nominal)+'@'+round(l.angle);}).join('+')].join('|');
+  };
   Viewer.prototype.inspect=function(event){
-    if(!this.engine||!this.onInspect)return;var raycaster=this.pointerRay(event),objects=this.paintMesh?[this.paintMesh]:[];if(this.trackGroup)objects.push(this.trackMesh);var hits=raycaster.intersectObjects(objects),sample=hits.length?(hits[0].object===this.trackMesh?this.trackTriangles:this.samples)[hits[0].faceIndex]:null,result=this.engine.ray(raycaster.ray.origin.toArray(),raycaster.ray.direction.toArray(),this.shell);if(sample)result.surface={part:sample.part,armor:sample.armor};this.onInspect(result);
+    if(!this.engine||!this.onInspect)return;var raycaster=this.pointerRay(event),objects=this.paintMesh?[this.paintMesh]:[];if(this.trackGroup)objects.push(this.trackMesh);var hits=raycaster.intersectObjects(objects),sample=hits.length?(hits[0].object===this.trackMesh?this.trackTriangles:this.samples)[hits[0].faceIndex]:null,result=this.engine.ray(raycaster.ray.origin.toArray(),raycaster.ray.direction.toArray(),this.shell);if(sample)result.surface={part:sample.part,armor:sample.armor};
+    var key=Viewer.readingKey(result,sample);if(key===this.inspectKey)return;this.inspectKey=key;this.onInspect(result);
   };
   Viewer.prototype.wireframe=function(value){this.showOutline=!!value;this.applyOutline();this.draw();};
   Viewer.prototype.aimAt=function(event){var ray=this.pointerRay(event).ray,normal=this.target.clone().sub(this.camera.position).normalize(),plane=new THREE.Plane().setFromNormalAndCoplanarPoint(normal,this.target),point=new THREE.Vector3();if(ray.intersectPlane(plane,point)){this.spreadAim=point;this.hideSpread();if(this.onAim)this.onAim('Estimate centre moved. Press “Estimate”.');}};
