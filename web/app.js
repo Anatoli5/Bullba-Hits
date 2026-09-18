@@ -612,8 +612,18 @@
   }
   try{viewer=new ArmorViewer($('viewport'));}catch(e){message('WebGL unavailable: '+e.message);}
   if(viewer)viewer.onInspect=inspectArmor;
+  // The viewer's real frame rate next to the composition's own report: in the game the browser's frame pump
+  // decides it, and it is neither 60 nor what a desktop browser shows. Refreshed at most once a second, and
+  // left out entirely when there is no fresh sample - a stale figure would be worse than none.
+  var backendText='',frameText='',frameAt=0,backendShown=null;
+  function backendLine(){var line=backendText+frameText;if(line===backendShown)return;backendShown=line;$('heatmap-backend').textContent=line;}
+  function frameBadge(){
+    var now=Date.now();
+    if(now-frameAt>=1000){frameAt=now;var rate=viewer&&viewer.frameRate?viewer.frameRate():null;frameText=rate?' · ~'+Math.round(rate.fps)+' fps':'';}
+    backendLine();
+  }
   // Keep a visible reason when the GPU chance map cannot be drawn.
-  if(viewer)viewer.onBackend=function(text){$('heatmap-backend').textContent=text;var unavailable=/^Estimate unavailable:/.test(text);$('backend-badge').hidden=!unavailable;$('backend-badge').textContent=unavailable?text:'';};
+  if(viewer)viewer.onBackend=function(text){backendText=text;frameBadge();var unavailable=/^Estimate unavailable:/.test(text);$('backend-badge').hidden=!unavailable;$('backend-badge').textContent=unavailable?text:'';};
   if(viewer)viewer.onCamera=function(state){var changed=lastDistance!==state.distance;lastDistance=state.distance;if(document.activeElement!==$('camera-distance-field'))$('camera-distance-field').value=Math.round(state.distance);if(document.activeElement!==$('camera-zoom-field'))$('camera-zoom-field').value=state.zoom.toFixed(2);$('camera-distance').value=Math.round(distanceSlider(state.distance));$('camera-zoom').value=Math.round(Math.max(0,Math.min(1000,Math.log(state.zoom/.1)/Math.log(1000)*1000)));var hr=viewer.heightRange(),hy=viewer.target.y;$('pivot-height').max=Math.max(1,Math.round((hr[1]-hr[0])*100));$('pivot-height').value=Math.round((hy-hr[0])*100);$('pivot-height-field').min=hr[0].toFixed(2);$('pivot-height-field').max=hr[1].toFixed(2);if(document.activeElement!==$('pivot-height-field'))$('pivot-height-field').value=hy.toFixed(2);var key=[state.distance,state.yaw,state.pitch,viewer.turretAngle,viewer.gunAngle].join(',');if(analysisKey!==null&&analysisKey!==key)staleEstimate();if(changed)updateShell();else if(totalEngine!==viewer.engine)shotStats();};
   // Logarithmic slider between the viewer's distance limits: fine steps in a clinch, coarse steps far away.
   var limits=(window.ArmorViewer&&ArmorViewer.limits)||{distanceMin:3,distanceMax:1000},span=Math.log(limits.distanceMax/limits.distanceMin);
@@ -702,6 +712,8 @@
   restoreSidebar();
   refresh();applyFragment(true);
   window.addEventListener('hashchange',function(){applyFragment(false);});
-  window.setInterval(function(){refresh();if(sidebarMode==='vehicles')loadCatalogue();},5000);
+  // The same poll watches the viewer's frame loop: a frame that the host never delivered is dropped here, and
+  // the frame-rate figure is refreshed (or cleared) even when nothing is being drawn.
+  window.setInterval(function(){if(viewer){if(viewer.kick)viewer.kick();frameBadge();}refresh();if(sidebarMode==='vehicles')loadCatalogue();},5000);
   if(document.modelContext&&document.modelContext.registerTool){try{document.modelContext.registerTool({name:'select_saved_hit',description:'Open an existing recorded hit in the local 3D viewer.',inputSchema:{type:'object',properties:{battleId:{type:'string'},hitId:{type:'string'}},required:['battleId','hitId'],additionalProperties:false},execute:function(input){if(!input||!/^[-a-zA-Z0-9_]{1,100}$/.test(input.battleId)||!/^\d+$/.test(input.hitId))throw new Error('Invalid record identifiers');return loadBattle(input.battleId,true).then(function(){return selectHit(input.hitId);});}});}catch(e){console.warn('WebMCP unavailable',e);}}
 }());

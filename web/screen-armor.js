@@ -221,6 +221,13 @@ void main(){
     if(renderer.capabilities.maxTextures<COUNT+2)throw new Error('not enough texture units');
     var ext=gl.getExtension('WEBGL_debug_renderer_info');if(ext&&/swiftshader|llvmpipe|software|basic render/i.test(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)))throw new Error('software WebGL');
     this.renderer=renderer;this.targets=[];this.key=null;this.width=0;this.height=0;this.materialTexture=null;this.result=null;this.compositeScene=null;this.compositeQuad=null;this.checkPending=false;
+    // Saved renderer state and the drawing-buffer size: one instance each, so a frame allocates nothing here.
+    // The camera is compared element by element against these 32 doubles instead of two joined strings (~500
+    // characters of garbage per frame, drawn or not). Float64: the matrices are doubles, and a float32 copy
+    // would differ from every original and report a move on every frame.
+    this.viewportSave=new T.Vector4();this.scissorSave=new T.Vector4();this.colorSave=new T.Color();this.bufferSize=new T.Vector2();this.cameraCache=new Float64Array(32);
+    // The peel geometry as update() built it, so a turret drag can pose it in place (Viewer.previewPose).
+    this.poseRuns=null;this.basePosition=null;this.baseNormal=null;
     // The bounced leg needs three-mesh-bvh and five more texture units (four for the BVH, one for the
     // material per vertex). Without them the map keeps working exactly as before, with a reason to show.
     var lib=root.MeshBVHLib;this.bvh=null;this.bvhStruct=null;this.faceMaterial=null;this.bounce=false;this.bounceReason='library not loaded';
@@ -249,22 +256,15 @@ void main(){
   // frame the camera moved. Checking needs the target bound, so the renderer is left exactly as it was found.
   Surface.prototype.checkTargets=function(){
     var renderer=this.renderer,gl=renderer.getContext(),bad=null;
-    var target=renderer.getRenderTarget(),viewport=renderer.getViewport(new T.Vector4()),scissor=renderer.getScissor(new T.Vector4()),scissorTest=renderer.getScissorTest();
+    var target=renderer.getRenderTarget(),viewport=renderer.getViewport(this.viewportSave),scissor=renderer.getScissor(this.scissorSave),scissorTest=renderer.getScissorTest();
     try{for(var i=0;i<this.targets.length;i++){renderer.setRenderTarget(this.targets[i]);if(gl.checkFramebufferStatus(gl.FRAMEBUFFER)!==gl.FRAMEBUFFER_COMPLETE){bad=this.targets[i];break;}}}
     finally{renderer.setRenderTarget(target);renderer.setViewport(viewport);renderer.setScissor(scissor);renderer.setScissorTest(scissorTest);}
     this.checkPending=false;
     if(bad)throw new Error('float-buffer '+bad.width+'×'+bad.height+' unavailable');
   };
-  // After a WebGL context restore the layers on the GPU are gone while the camera key that declares them valid
-  // still matches, so the key is dropped and the next render() peels again. three re-uploads its own textures,
-  // geometries and render targets by itself (the BVH struct holds plain DataTextures whose CPU-side data is
-  // kept, so updateFrom does not have to run again); the composition result is released so that composite()
-  // allocates it anew and takes the framebuffer check that goes with a fresh target.
-  Surface.prototype.invalidate=function(){
-    this.key=null;this.movedAt=0;this.checkPending=true;
-    if(this.result){this.result.dispose();this.result=null;}
-    if(this.markMaterial)this.markMaterial.uniforms.uResult.value=null;
-  };
+  // A context restore is not repaired in place any more: the constructor asked the driver once for float colour
+  // buffers, texture units and a traversal it would accept, and a restored context may answer differently. The
+  // viewer disposes the instance and builds a fresh one (Viewer.restoreContext).
   // Both full-screen quads and their programs. Built once, or twice if the bounced leg is dropped.
   Surface.prototype.compose=function(){
     if(this.quad){if(this.quad.parent)this.quad.parent.remove(this.quad);this.quad.geometry.dispose();this.markMaterial.dispose();}
@@ -286,12 +286,12 @@ void main(){
   // Pass one on its own: the whole composition into a float target the size of the drawing buffer, so the mark
   // pass can look at a pixel's neighbours. Same state discipline as the peel loop - the renderer is left as found.
   Surface.prototype.composite=function(){
-    var renderer=this.renderer,buffer=renderer.getDrawingBufferSize(new T.Vector2());
+    var renderer=this.renderer,buffer=renderer.getDrawingBufferSize(this.bufferSize);
     var w=Math.max(1,buffer.x),h=Math.max(1,buffer.y);
     var fresh=false;
     if(!this.result){this.result=new T.WebGLRenderTarget(w,h,{type:T.FloatType,format:T.RGBAFormat,minFilter:T.NearestFilter,magFilter:T.NearestFilter,depthBuffer:false,stencilBuffer:false});this.result.texture.generateMipmaps=false;fresh=true;}
     else if(this.result.width!==w||this.result.height!==h){this.result.setSize(w,h);fresh=true;}
-    var target=renderer.getRenderTarget(),auto=renderer.autoClear,clearColor=renderer.getClearColor(new T.Color()),clearAlpha=renderer.getClearAlpha(),viewport=renderer.getViewport(new T.Vector4()),scissor=renderer.getScissor(new T.Vector4()),scissorTest=renderer.getScissorTest();
+    var target=renderer.getRenderTarget(),auto=renderer.autoClear,clearColor=renderer.getClearColor(this.colorSave),clearAlpha=renderer.getClearAlpha(),viewport=renderer.getViewport(this.viewportSave),scissor=renderer.getScissor(this.scissorSave),scissorTest=renderer.getScissorTest();
     try{renderer.autoClear=false;renderer.setScissorTest(false);renderer.setClearColor(0,0);renderer.setRenderTarget(this.result);
       // Checked when the target is made or resized, not on every draw: the query costs about 0.2 ms of CPU.
       var gl=renderer.getContext();if(fresh&&gl.checkFramebufferStatus(gl.FRAMEBUFFER)!==gl.FRAMEBUFFER_COMPLETE)throw new Error('composition buffer '+w+'×'+h+' unavailable');
@@ -322,10 +322,39 @@ void main(){
     if(mats.length/8>4000)throw new Error('too many materials for the packed layer');
     // Stable material ordering resolves coincident surfaces before depth peeling.
     rows.sort(function(a,b){return b.id-a.id;});rows.forEach(function(row){[row.t.a,row.t.b,row.t.c].forEach(function(p){position.push.apply(position,p);normal.push.apply(normal,row.t.normal);ids.push(row.id+1);});});
+    // Vertex runs by collision part, with the vertices as they are now: pose() re-transforms them in place while
+    // a turret drag lasts, so the layers follow the turret without this whole method running again.
+    var runs=[],last=null;
+    rows.forEach(function(row,i){var part=row.t.part;if(last&&last.part===part)last.end=(i+1)*9;else{last={part:part,start:i*9,end:(i+1)*9};runs.push(last);}});
+    this.poseRuns=runs;this.basePosition=new Float32Array(position);this.baseNormal=new Float32Array(normal);
     var geometry=new T.BufferGeometry();geometry.setAttribute('position',new T.Float32BufferAttribute(position,3));geometry.setAttribute('normal',new T.Float32BufferAttribute(normal,3));geometry.setAttribute('materialId',new T.Float32BufferAttribute(ids,1));this.mesh.geometry.dispose();this.mesh.geometry=geometry;
     if(this.materialTexture)this.materialTexture.dispose();this.materialTexture=new T.DataTexture(new Float32Array(mats.length?mats:8),2,Math.max(1,mats.length/8),T.RGBAFormat,T.FloatType);this.materialTexture.minFilter=this.materialTexture.magFilter=T.NearestFilter;this.materialTexture.generateMipmaps=false;this.materialTexture.needsUpdate=true;this.material.uniforms.uMaterials.value=this.materialTexture;this.peelMaterial.uniforms.uMaterials.value=this.materialTexture;
     geometry.computeBoundingSphere();geometry.computeBoundingBox();this.radius=geometry.boundingSphere?geometry.boundingSphere.radius:10;this.key=null;
     if(this.bounce){try{this.updateBounds(geometry);}catch(e){this.bounce=false;this.bounceReason='bvh: '+(e.message||e);console.warn('Bounced leg disabled:',this.bounceReason);}}
+  };
+  // A display-only pose: the peeled geometry is re-transformed from the base update() kept, by one rigid matrix
+  // per moved part, and the layers are declared stale so the next render() peels the new pose. The material
+  // table, the ids and the row order are untouched, and the BVH is deliberately left where it was - the bounced
+  // leg is off while the layers are stale, and rebuilding it is the very cost this avoids. update() puts the
+  // BVH and everything else back in step at the end of the drag.
+  Surface.prototype.pose=function(delta){
+    if(!this.poseRuns||!this.mesh||!this.mesh.geometry)return false;
+    var geometry=this.mesh.geometry,position=geometry.getAttribute('position'),normals=geometry.getAttribute('normal');
+    if(!position||!normals||!this.basePosition||position.array.length!==this.basePosition.length)return false;
+    var out=position.array,outNormal=normals.array,base=this.basePosition,baseNormal=this.baseNormal,touched=false;
+    this.poseRuns.forEach(function(run){
+      var matrix=delta[run.part];if(!matrix)return;var e=matrix.elements,i;
+      for(i=run.start;i<run.end;i+=3){
+        var x=base[i],y=base[i+1],z=base[i+2];
+        out[i]=e[0]*x+e[4]*y+e[8]*z+e[12];out[i+1]=e[1]*x+e[5]*y+e[9]*z+e[13];out[i+2]=e[2]*x+e[6]*y+e[10]*z+e[14];
+        var nx=baseNormal[i],ny=baseNormal[i+1],nz=baseNormal[i+2];
+        outNormal[i]=e[0]*nx+e[4]*ny+e[8]*nz;outNormal[i+1]=e[1]*nx+e[5]*ny+e[9]*nz;outNormal[i+2]=e[2]*nx+e[6]*ny+e[10]*nz;
+      }
+      touched=true;
+    });
+    if(!touched)return false;
+    position.needsUpdate=true;normals.needsUpdate=true;this.key=null;
+    return true;
   };
   // A GPU BVH over the same peel geometry. It gets its own index so the peel keeps its draw order;
   // the position attribute is shared, so nothing is duplicated on the CPU.
@@ -349,27 +378,39 @@ void main(){
   // still for SETTLE ms - the caller redraws when bouncePending says the layer is still due. A lighter mode for
   // weaker GPUs: the direct map stays live, the hatched layer catches up after the rotation.
   var SETTLE=150;
+  // Monotonic: Date.now() can step backwards when the system clock is corrected after a resume, and the settle
+  // comparison below would then never be satisfied again - a full-screen composition every 160 ms while idle.
+  function clock(){return root.performance&&root.performance.now?root.performance.now():Date.now();}
+  // Has the camera moved since the layers were peeled? Compared element by element; the cache is refreshed
+  // whenever it has, so the next frame compares against what is on screen.
+  Surface.prototype.cameraMoved=function(camera){
+    var cache=this.cameraCache,world=camera.matrixWorld.elements,projection=camera.projectionMatrix.elements,moved=false,i;
+    for(i=0;i<16;i++)if(cache[i]!==world[i]||cache[i+16]!==projection[i]){moved=true;break;}
+    if(moved)for(i=0;i<16;i++){cache[i]=world[i];cache[i+16]=projection[i];}
+    return moved;
+  };
   Surface.prototype.render=function(camera,anchor,shell,palette,opacity,quality,width,height,pixelRatio,bounceMode){
     var renderer=this.renderer,size=this.size(quality,width,height,pixelRatio);
     if(this.width!==size.width||this.height!==size.height){this.width=size.width;this.height=size.height;this.targets.forEach(function(t){t.setSize(size.width,size.height);});this.key=null;this.checkPending=true;}
     if(this.checkPending)this.checkTargets();
-    var s=shell||{},u=this.material.uniforms;u.uPen.value.set(s.penetration||0,s.caliber||0,s.randomization||0,!s.randomizationType||s.randomizationType==='NORMAL'?1:0);u.uShell.value.set(s.normalization||0,s.ricochetCos==null?-1:s.ricochetCos,s.jetLossPerMeter||0,s.kind==='HIGH_EXPLOSIVE'?1:0);u.uFlags.value.set([s.mayRicochet?1:0,s.checkCaliber?1:0,s.shieldPenetration?1:0,s.penetration>0&&s.caliber>0?1:0]);u.uClassic.value=palette==='classic';u.uOpacity.value=opacity;
+    var s=shell||{},u=this.material.uniforms;u.uPen.value.set(s.penetration||0,s.caliber||0,s.randomization||0,!s.randomizationType||s.randomizationType==='NORMAL'?1:0);u.uShell.value.set(s.normalization||0,s.ricochetCos==null?-1:s.ricochetCos,s.jetLossPerMeter||0,s.kind==='HIGH_EXPLOSIVE'?1:0);var flags=u.uFlags.value;flags[0]=s.mayRicochet?1:0;flags[1]=s.checkCaliber?1:0;flags[2]=s.shieldPenetration?1:0;flags[3]=s.penetration>0&&s.caliber>0?1:0;u.uClassic.value=palette==='classic';u.uOpacity.value=opacity;
     u.uRicochetLoss.value=s.ricochetLoss||0;
     var pr=Math.max(1,pixelRatio||1),m=this.markMaterial.uniforms;m.uHatch.value.set(Math.max(2,this.hatch||5)*pr,pr); // dot pitch in CSS px, one CSS px per dot
     m.uDots.value=!!this.dots;m.uEdges.value=this.edges!==false;m.uOutline.value=!!this.outline;var tint=this.tint===undefined?.5:this.tint;m.uTint.value=tint;u.uTint.value=tint;m.uClassic.value=u.uClassic.value;
-    var key=camera.matrixWorld.elements.join(',')+'|'+camera.projectionMatrix.elements.join(','),now=Date.now();
-    if(key!==this.key)this.movedAt=now;
-    var settled=bounceMode==='always'||!(now-(this.movedAt||0)<SETTLE);
+    // Stale: the camera has moved, or the layers were dropped (a new pose, a new size, a new model).
+    var stale=this.cameraMoved(camera)||this.key===null,now=clock();
+    if(stale)this.movedAt=now;
+    var settled=bounceMode==='always'||!(Math.max(0,now-(this.movedAt||0))<SETTLE);
     u.uBounce.value=this.bounce&&settled?1:0;this.bouncePending=this.bounce&&!settled;
-    if(key!==this.key){
+    if(stale){
       this.captureCamera.copy(camera);var distance=camera.position.distanceTo(anchor),span=Math.max(5,this.radius*3);this.captureCamera.near=Math.max(.01,distance-span);this.captureCamera.far=distance+span;this.captureCamera.updateProjectionMatrix();
       var p=this.peelMaterial.uniforms;p.uOrigin.value.copy(camera.position);p.uAnchor.value.copy(anchor);p.uForward.value.copy(anchor).sub(camera.position).normalize();
       // The composite rebuilds the contact point in exactly the frame the layers were peeled in.
       u.uOrigin.value.copy(p.uOrigin.value);u.uAnchor.value.copy(p.uAnchor.value);u.uForward.value.copy(p.uForward.value);
       u.uCameraWorld.value.copy(camera.matrixWorld);u.uInvProjection.value.copy(camera.projectionMatrix).invert();
-      var target=renderer.getRenderTarget(),auto=renderer.autoClear,clearColor=renderer.getClearColor(new T.Color()),clearAlpha=renderer.getClearAlpha(),viewport=renderer.getViewport(new T.Vector4()),scissor=renderer.getScissor(new T.Vector4()),scissorTest=renderer.getScissorTest();
+      var target=renderer.getRenderTarget(),auto=renderer.autoClear,clearColor=renderer.getClearColor(this.colorSave),clearAlpha=renderer.getClearAlpha(),viewport=renderer.getViewport(this.viewportSave),scissor=renderer.getScissor(this.scissorSave),scissorTest=renderer.getScissorTest();
       try{renderer.autoClear=false;renderer.setScissorTest(false);renderer.setClearColor(0,0);for(var i=0;i<=COUNT;i++){p.uFirst.value=i===0;p.uPass.value=i;p.uPrevious.value=this.targets[i===0?COUNT:i-1].texture;for(var j=0;j<COUNT;j++)p['uPeel'+j].value=j<i?this.targets[j].texture:this.blank;renderer.setRenderTarget(this.targets[i]);renderer.clear(true,true,false);renderer.render(this.captureScene,this.captureCamera);}}finally{renderer.setRenderTarget(target);renderer.setViewport(viewport);renderer.setScissor(scissor);renderer.setScissorTest(scissorTest);renderer.setClearColor(clearColor,clearAlpha);renderer.autoClear=auto;}
-      this.key=key;
+      this.key=1;
     }
     this.composite();
     this.quad.visible=true;return size.width+' × '+size.height+(size.scale<.999?' ('+Math.round(size.scale*100)+'% of the window)':'')+' · up to '+COUNT+' layers'+(this.bounce?(bounceMode==='always'?' · bounce traced':' · bounce traced after the camera stops'):' · bounce off: '+this.bounceReason);
