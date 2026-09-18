@@ -619,7 +619,7 @@
     if(this.heatmap){
       if(!this.surfaceAttempted){this.surfaceAttempted=true;try{this.surface=new BullbaScreenArmor(this.renderer,this.engine);this.scene.add(this.surface.quad);}catch(e){this.surfaceError=e.message;console.warn('Screen composition unavailable:',e.message);if(window.BullbaHost)window.BullbaHost.mark('Layer composition','unavailable: '+e.message);}}
       if(this.surface){try{
-        this.surface.hatch=this.dotSpacing;this.surface.dots=this.dots;this.surface.edges=this.partEdges;this.surface.outline=this.zoneOutline;this.surface.tint=this.tint;/* A drag peels at half resolution and without the GPU ricochet trace; the settle redraw and pointerup bring both back. */var size=this.surface.render(this.camera,this.target,this.shell,this.palette,this.trackOpacity,this.dragging?'low':this.quality,this.viewWidth,this.viewHeight,this.renderer.getPixelRatio(),this.dragging?'idle':this.bounceMode);
+        this.surface.hatch=this.dotSpacing;this.surface.dots=this.dots;this.surface.edges=this.partEdges;this.surface.outline=this.zoneOutline;this.surface.tint=this.tint;/* The user's Detail and Ricochet trace settings hold during a drag too: 'Always' means live while rotating (0.7.4 lowered both while dragging; reverted on his feedback). */var size=this.surface.render(this.camera,this.target,this.shell,this.palette,this.trackOpacity,this.quality,this.viewWidth,this.viewHeight,this.renderer.getPixelRatio(),this.bounceMode);
         composed=true;this.surfaceError=null;
         // The hatched layer is due once the camera has stood still: one redraw later, not a loop.
         if(this.surface.bouncePending&&this.bounceTimer===null){var self=this;this.bounceTimer=setTimeout(function(){self.bounceTimer=null;self.draw();},160);}
