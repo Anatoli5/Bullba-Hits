@@ -282,7 +282,7 @@
 
   // ---- the mode switch ---------------------------------------------------
   function setMode(mode){
-    scheduleToolbar();
+    scheduleLayout();
     mode=mode==='vehicles'?'vehicles':'battles';
     var changed=mode!==sidebarMode;sidebarMode=mode;
     document.querySelectorAll('#sidebar-mode [data-mode]').forEach(function(b){b.setAttribute('aria-pressed',String(b.getAttribute('data-mode')===mode));});
@@ -354,6 +354,8 @@
     $('shell-quick').replaceChildren();candidates.forEach(function(c,i){var actual=i===shotContext.index,b=node('button',(actual?'● ':'')+(shellNames[c.kind]||c.kind)+' '+Math.round(c.penetration100),'shell-chip');b.dataset.shell='saved:'+i;b.title=c.name+' · '+c.caliber+' mm · '+(actual?'Type from the hit':'Compare with this shell');b.onclick=function(){choice.value='saved:'+i;selectShell();};$('shell-quick').appendChild(b);});
     if(keep){choice.value=keep.kind;manualPen=keep.penetration;$('penetration').value=keep.penetration;$('caliber').value=keep.caliber;penLabel(false);updateShell();}
     else selectShell();
+    // The shooter's chips just changed, so the shell block wants a different width: re-measure the heading.
+    scheduleLayout();
   }
   function shellAt(c,choice,penetration,caliber,distance){
     if(!choice||!(penetration>0)||penetration>3000||!(caliber>0)||caliber>1000)return null;
@@ -440,12 +442,12 @@
     $('parameters-notice').textContent=!choice?'Pick a shell — the record holds more than one match.':!valid?'No penetration in the record — enter the penetration and calibre to colour the model.':'Pick a shell or enter penetration and calibre to colour the model.';
     document.querySelectorAll('[data-shell]').forEach(function(b){b.setAttribute('aria-pressed',String(b.dataset.shell===choice));});
     var kind=c?c.kind:choice;document.querySelectorAll('#shell-types [data-kind]').forEach(function(b){b.setAttribute('aria-pressed',String(b.dataset.kind===kind));});
-    var chanceMode=$('armor-mode').value==='chance';$('legend-gradient').classList.toggle('classic',$('palette').value==='classic');$('track-overlay-note').classList.toggle('classic',$('palette').value==='classic');var hideLegend=!chanceMode||!valid;$('armor-legend').hidden=hideLegend;if(legendHidden!==hideLegend){legendHidden=hideLegend;scheduleToolbar();}$('parameters-notice').hidden=!chanceMode||valid;
+    var chanceMode=$('armor-mode').value==='chance';$('legend-gradient').classList.toggle('classic',$('palette').value==='classic');$('track-overlay-note').classList.toggle('classic',$('palette').value==='classic');$('armor-legend').hidden=!chanceMode||!valid;$('parameters-notice').hidden=!chanceMode||valid;
     $('penetration').setAttribute('aria-invalid',String(chanceMode&&!(penetration>0&&penetration<=3000)));$('caliber').setAttribute('aria-invalid',String(chanceMode&&!(caliber>0&&caliber<=1000)));
     $('probe-chance').textContent='—';$('probe-chance').style.color='';$('probe-pen').replaceChildren();$('probe-extra').replaceChildren();$('probe-details').replaceChildren(node('span','Hover over the armour','placeholder'));
     staleEstimate();if(viewer)viewer.configure(shell,$('armor-mode').value==='chance',$('palette').value);shotStats();
   }
-  var shellGroup=document.querySelector('.shell-fields'),legendHidden=null;
+  var shellGroup=document.querySelector('.shell-fields');
   var ricochetTint=.5; // the Ricochet tint row of Settings, 0 (off)..1.5; the panels' ricochet colours follow the map
   function chanceRgb(r){return 'rgb('+ArmorBallistics.color(r,$('palette').value,ricochetTint).map(function(v){return Math.round(v*255);}).join(',')+')';}
   // Compact reading of one ballistic result: the chance first, then the numbers that explain it.
@@ -713,6 +715,28 @@
   window.addEventListener('armor-context-restored',function(){if(host.mark)host.mark('WebGL','context-restored');if($('scene-message').textContent===CONTEXT_LOST)message('');});
   function outline(){if(viewer)viewer.setOutline(Number($('outline-brightness').value)/100,Number($('outline-opacity').value)/100);}
   $('outline-brightness').oninput=outline;$('outline-opacity').oninput=outline;if(viewer){viewer.wireframe($('wireframe').checked);outline();}
+  // Heading overflow (18.09 round 2): the battle tile, the shell block and Settings share one grid row while the
+  // three fit; when they do not, .stacked drops the whole shell block to a full-width second row and Settings
+  // keeps the top right. natural() reads the width a block WANTS — position:absolute plus width:max-content, so
+  // a block that is wrapping right now still reports its one-row width — and nothing is painted in between.
+  var heading=document.querySelector('.scene-heading'),headingBattle=document.querySelector('.heading-battle');
+  var settingsMenu=document.querySelector('.scene-heading .settings-menu');
+  function natural(el){
+    if(!el)return 0;
+    var s=el.style,pos=s.position,w=s.width,vis=s.visibility,wrap=s.flexWrap;
+    s.position='absolute';s.visibility='hidden';s.width='max-content';s.flexWrap='nowrap';
+    var out=el.offsetWidth;
+    s.position=pos;s.width=w;s.visibility=vis;s.flexWrap=wrap;
+    return out;
+  }
+  function layoutHeading(){
+    if(!heading||!shellGroup||!heading.clientWidth)return;
+    var style=window.getComputedStyle(heading),gap=parseFloat(style.columnGap)||0;
+    var room=heading.clientWidth-(parseFloat(style.paddingLeft)||0)-(parseFloat(style.paddingRight)||0);
+    heading.classList.remove('stacked');
+    var need=natural(headingBattle)+natural(shellGroup)+(settingsMenu?settingsMenu.offsetWidth:0)+gap*2;
+    heading.classList.toggle('stacked',need>room);
+  }
   // Toolbar overflow (18.09): the row never wraps. Each group carries data-tb — its keep priority, 1 kept
   // longest — and layoutToolbar() hands the highest numbers to the “More” popover until the rest fit on one
   // line, taking them back when the window widens. insertBefore moves the nodes themselves, so every id and
@@ -737,11 +761,13 @@
     moreBox.hidden=false;var budget=room-moreBox.offsetWidth-gap;
     for(var i=live.length-1;i>=0&&total>budget;i--){total-=(tbWidth[live[i].getAttribute('data-tb')]||0)+gap;popover.insertBefore(live[i],popover.firstChild);}
   }
-  function scheduleToolbar(){if(tbFrame||!toolbar)return;tbFrame=window.requestAnimationFrame(function(){tbFrame=0;layoutToolbar();});}
-  window.addEventListener('resize',scheduleToolbar);
+  // One rAF debounce for both rows: the heading is measured first, because stacking it changes nothing the
+  // toolbar measures but a toolbar fold must not race the heading's own reflow.
+  function scheduleLayout(){if(tbFrame)return;tbFrame=window.requestAnimationFrame(function(){tbFrame=0;layoutHeading();layoutToolbar();});}
+  window.addEventListener('resize',scheduleLayout);
   // Closing on a click outside is written out here: the settings menu has no such handler to reuse.
   document.addEventListener('click',function(e){if(moreBox&&moreBox.open&&!moreBox.contains(e.target))moreBox.open=false;});
-  layoutToolbar();
+  layoutHeading();layoutToolbar();
   if(host.interrupted){$('host-note').hidden=false;$('host-note').textContent='The previous session was interrupted during “'+host.interrupted.action+'» ('+(host.interrupted.host==='game'?'in the game':'in the browser')+', '+new Date(host.interrupted.at).toLocaleString('en-GB')+'). Mention this when reporting.';}
   (function(){var pv=$('app-version').getAttribute('data-version');if(pv!=='dev')$('app-version').textContent=pv;}());
   host.done();

@@ -180,14 +180,13 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 .scene-toolbar>.scale-control{margin-left:0}
 .scene-toolbar button{min-height:30px;padding:4px 9px}
 .scene-toolbar .wheel-hint{display:none}
-.scene-toolbar .scale-control input[type=range]{width:78px}
+.scene-toolbar .scale-control input[type=range]{width:64px}
 .scene-toolbar .scale-control,.scene-toolbar .outline-control{white-space:nowrap}
 .reticle-group{display:flex;align-items:center;gap:8px}
 .scene-toolbar .aim-toggle{padding:4px 8px}
 .aim-metric{display:flex;align-items:center;gap:5px;font-size:13px}
 .aim-metric output{font-size:14px;color:#e5edf5;padding:3px 6px;font-variant-numeric:tabular-nums;white-space:nowrap}
 .aim-metric .info-mark{color:var(--muted);cursor:help}
-.scene-toolbar #armor-legend{margin-left:0;font-size:12px}
 .scene-toolbar #pose-info{margin-left:auto;width:230px;min-width:0;padding:0;font-size:12px;color:var(--muted);text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .toolbar-more{position:relative}
 .toolbar-more[hidden]{display:none}
@@ -205,3 +204,25 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 .extra-strip>.extra-controls{padding:0;border-top:0;background:transparent}
 .extra-strip>.extra-controls[open]{flex:1 0 100%;order:1;max-height:320px;overflow:auto}
 @media(max-width:900px){.scene-heading{padding:8px 12px}.extra-strip{padding:6px 12px}}
+
+/* 18.09 round 2 (user: group the controls, give every block a place, fold the least important first).
+   The heading is a grid, not a wrapping flex row: Settings can no longer be the one thing that wraps and land
+   alone on a second line. Row 1 is battle tile | shell block | Settings while the three fit; layoutHeading() in
+   web/app.js measures them and adds .stacked when they do not, and then the WHOLE shell block drops to a
+   full-width second row while the tile and Settings keep row 1. */
+.scene-heading{display:grid;grid-template-columns:auto minmax(0,1fr) auto;grid-template-areas:"battle shell settings";align-items:center}
+.scene-heading.stacked{grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"battle settings" "shell shell"}
+.scene-heading>.heading-battle{grid-area:battle;min-width:0}
+.scene-heading>.shell-fields{grid-area:shell;min-width:0}
+.scene-heading>.settings-menu{grid-area:settings;justify-self:end}
+/* Inside the shell block the three sub-blocks wrap one at a time: the fields row stays on the first line, the
+   type pills drop under it first and the gun's chips second. flex order, not DOM order - every id and every
+   listener stays where app.js put it. #shell-choice is hidden today; should it ever show, it keeps the fields. */
+.shell-fields>.fields-row,.shell-fields>#shell-choice{order:1}
+.shell-fields>.shell-quick{order:2}
+.shell-fields>#shell-types{order:3}
+
+/* The chance legend reads the picture, so it lives on the picture: top right of the scene, below the band the
+   collision-model tile occupies, click-through like the other overlays. app.js still hides it outside chance
+   mode and with invalid parameters. */
+.scene-legend{position:absolute;right:14px;top:68px;z-index:6;padding:5px 10px;border-radius:6px;background:rgba(23,35,48,.15);text-shadow:0 1px 2px rgba(0,0,0,.7);white-space:nowrap;pointer-events:none}
