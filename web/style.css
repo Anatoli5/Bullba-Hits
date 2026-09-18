@@ -132,3 +132,8 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 /* Header verdict-log line: the (i) mark next to the count, the explanation is the title of the line. */
 .connection .info-mark{margin-left:6px;color:var(--muted);cursor:help}
 .hatch-row{display:flex;align-items:center;gap:8px}.hatch-row output{min-width:3.5em;font-variant-numeric:tabular-nums}.hatch-row input[type=checkbox]{flex:none;width:16px;height:16px;margin:0}.hatch-row input[type=range]{flex:1;min-width:0}.hatch-row.off input[type=range],.hatch-row.off output{opacity:.45}
+/* Medium windows (a 1366x768 or 1600x900 browser): the blocks around the scene shrink so the scene keeps the height.
+   At 1366x768 the viewport had 300 of 700 px: the heading 80, the shell fields 115, a wrapped toolbar 87 and the
+   two-line shortcut help 41 took the rest (user, 18.09: the picture is the point, the panels are secondary). */
+@media(max-height:900px){.scene-heading{padding:8px 22px 6px}h1{font-size:19px;margin-top:2px}.eyebrow{font-size:11px}.armor-controls{padding:5px 22px;gap:8px}.armor-controls label{gap:3px}.armor-controls input,.armor-controls select{min-height:32px;padding:5px 8px}.armor-caption{padding:3px 22px}.shot-dashboard{padding:4px 22px}.scene-toolbar{padding:4px 16px;gap:6px}.scene-toolbar button{min-height:28px;padding:4px 8px}.scale-control input{width:80px}.camera-controls input[type=range]{width:110px}.scene-help:not(.pose-info){display:none}#viewport{min-height:260px}}
+@media(max-width:1500px){main{grid-template-columns:260px minmax(0,1fr)}}
