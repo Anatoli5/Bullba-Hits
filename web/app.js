@@ -611,6 +611,7 @@
     }).catch(function(e){$('connection').textContent='No local records';if(!current&&sidebarMode==='battles'){message(e.message);warnings([e.message]);}}).then(function(){polling=false;});
   }
   try{viewer=new ArmorViewer($('viewport'));}catch(e){message('WebGL unavailable: '+e.message);}
+  if(viewer)viewer.setAutoFrame($('auto-frame').checked); // on by default (user, 18.09)
   if(viewer)viewer.onInspect=inspectArmor;
   // The viewer's real frame rate next to the composition's own report: in the game the browser's frame pump
   // decides it, and it is neither 60 nor what a desktop browser shows. Refreshed at most once a second, and
