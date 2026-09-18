@@ -65,7 +65,11 @@
     if(window.ResizeObserver){this.resizeObserver=new ResizeObserver(function(){self.resize();});this.resizeObserver.observe(container);}
     this.resize();
   }
-  Viewer.prototype.projection=function(){var w=this.viewWidth||1,h=this.viewHeight||1,z=this.camera.zoom;this.camera.setViewOffset(w,h,this.frameCenter.x*z*w/2,-this.frameCenter.y*z*h/2,w,h);};
+  // Lens shift: frameCenter.x is the vehicle's middle above the orbit centre as (zoom-1 NDC x metres), so its
+  // on-screen position at the current distance is x/distance*zoom; frameCenter.y is where that middle must sit
+  // (NDC). Scaling the whole shift by the zoom, as before 0.7.6, drove the model up the screen under Auto frame:
+  // the zoom grows with the distance there while the screen-anchored part must not (user, 18.09).
+  Viewer.prototype.projection=function(){var w=this.viewWidth||1,h=this.viewHeight||1,z=this.camera.zoom,mid=this.frameCenter.x/Math.max(.001,this.distance);this.camera.setViewOffset(w,h,0,-(mid*z-this.frameCenter.y)*h/2,w,h);};
   // The only place that reads the container's layout: clientWidth/Height and getBoundingClientRect() force a
   // style recalculation, which used to happen several times per frame in paint(), the reticles and every hover.
   Viewer.prototype.resize=function(){var w=this.container.clientWidth,h=this.container.clientHeight;if(!w||!h)return;this.renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2));this.viewWidth=w;this.viewHeight=h;this.viewRect=this.container.getBoundingClientRect();this.renderer.setSize(w,h,false);this.projection();this.render();};
@@ -360,13 +364,15 @@
     // Horizontally the orbit centre stays on the screen's vertical axis. Vertically the view is shifted so that the
     // middle of the main armour's height sits mid-way in the usable band (user, 13.09): the orbit centre then lands
     // above or below the screen centre by however much it is above or below the vehicle's middle, and the tank sits
-    // between the tiles whatever height the centre was given. The shift is a lens shift (frameCenter) in zoom-1 NDC.
+    // between the tiles whatever height the centre was given. The shift is a lens shift: frameCenter.x keeps the
+    // middle's zoom-1 NDC height times the distance (so it follows the model when the distance changes),
+    // frameCenter.y the NDC height the middle must land on; projection() combines them at the current zoom.
     var top=1-2*FIT_TOP_BAND,bottom=1-2*FIT_BOTTOM_BAND,centreY=(top-bottom)/2,halfUsable=(top+bottom)/2,midY=(main[2]+main[3])/2;
     // Largest zoom at which a box stays inside the usable area with the given margin, measured from the pivot axis
     // horizontally and from the main armour's middle vertically.
     function limit(box,margin){var z=150,w=Math.max(-box[0],box[1]),h=Math.max(midY-box[2],box[3]-midY);if(w>0)z=Math.min(z,(1-margin)/w);if(h>0)z=Math.min(z,(halfUsable-margin)/h);return z;}
     var zoom=Math.max(.1,Math.min(150,Math.min(limit(main,FIT_MARGIN),limit(all,0))));
-    this.frameCenter.set(0,midY-centreY/zoom);
+    this.frameCenter.set(midY*this.distance,centreY);
     var f=this.framing();this.frameScale=zoom/Math.max(.1,f?f.zoom:1);this.setZoom(zoom);
   };
   // Switching auto-frame on holds the size that is on screen right now: the scale is taken from a fresh framing.
