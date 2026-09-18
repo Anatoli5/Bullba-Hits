@@ -282,6 +282,7 @@
 
   // ---- the mode switch ---------------------------------------------------
   function setMode(mode){
+    scheduleToolbar();
     mode=mode==='vehicles'?'vehicles':'battles';
     var changed=mode!==sidebarMode;sidebarMode=mode;
     document.querySelectorAll('#sidebar-mode [data-mode]').forEach(function(b){b.setAttribute('aria-pressed',String(b.getAttribute('data-mode')===mode));});
@@ -351,7 +352,7 @@
     if(hit&&hit.vehicle&&candidates.length){var first=candidates.findIndex(function(c){return c.kind==='ARMOR_PIERCING';});
       if(first<0)first=candidates.findIndex(function(c){return c.kind==='ARMOR_PIERCING_CR';});if(first<0)first=0;choice.value='saved:'+first;}
     $('shell-quick').replaceChildren();candidates.forEach(function(c,i){var actual=i===shotContext.index,b=node('button',(actual?'● ':'')+(shellNames[c.kind]||c.kind)+' '+Math.round(c.penetration100),'shell-chip');b.dataset.shell='saved:'+i;b.title=c.name+' · '+c.caliber+' mm · '+(actual?'Type from the hit':'Compare with this shell');b.onclick=function(){choice.value='saved:'+i;selectShell();};$('shell-quick').appendChild(b);});
-    if(keep){choice.value=keep.kind;manualPen=keep.penetration;$('penetration').value=keep.penetration;$('caliber').value=keep.caliber;$('penetration-label').textContent='Penetration at target, mm';updateShell();}
+    if(keep){choice.value=keep.kind;manualPen=keep.penetration;$('penetration').value=keep.penetration;$('caliber').value=keep.caliber;penLabel(false);updateShell();}
     else selectShell();
   }
   function shellAt(c,choice,penetration,caliber,distance){
@@ -415,12 +416,14 @@
       if(viewer.savedAim&&shell)totalTimer=setTimeout(function(){var v=viewer.savedAimProbability(shell);$('total-chance').textContent=v?'≈ '+(v.unknown?v.low.toFixed(0)+'–'+v.high.toFixed(0):v.low.toFixed(0))+'%':'—';},100);
     }
   }
+  // The heading row has no space for the full wording: the label reads “Pen.” and the sentence lives in its title.
+  function penLabel(at100){var e=$('penetration-label');e.textContent='Pen.';e.title=at100?'Penetration at 100 m, mm':'Penetration at target, mm';}
   function selectShell(){
     var index=$('shell-choice').value,c=index.indexOf('saved:')===0?candidates[Number(index.slice(6))]:null;
     var point=(activeHit&&activeHit.points||[]).find(function(p){return p.caliber>0;});
     if(!c){manualPen=$('penetration').value||manualPen;} // manual shell keeps the penetration that was on screen
     $('penetration').value=c?c.penetration100:manualPen;$('caliber').value=c?c.caliber:point?point.caliber:100;
-    $('penetration-label').textContent=c?'Penetration at 100 m, mm':'Penetration at target, mm';updateShell();
+    penLabel(!!c);updateShell();
   }
   function updateShell(){
     var choice=$('shell-choice').value,c=choice.indexOf('saved:')===0?candidates[Number(choice.slice(6))]:null;
@@ -429,15 +432,20 @@
     var edited=c&&(penetration!==c.penetration100||caliber!==c.caliber);
     var actual=shotContext&&choice==='saved:'+shotContext.index&&!edited;
     var browsing=!!(activeHit&&activeHit.vehicle);
-    $('shell-source').textContent=!choice?'Pick a shell':!valid?'No penetration in the record':(actual?'● From the hit':c?(browsing?'● Shooter’s shell':'◇ Comparison'):'◇ Manual')+' · '+Math.round(shell.penetration)+' mm at target · ±'+Math.round(shell.randomization*100)+'%';
-    $('shell-source').title=(shotContext?shotContext.source:'')+' · Nominal penetration at the current distance, not the rolled RNG. HE: penetration only, no blast damage.';
+    // The caption band under the fields is gone (user, 18.09: the line read as noise). Its sentence is now the
+    // title of the shell group, and the two states that are a warning keep their words in #parameters-notice.
+    var source=!choice?'Pick a shell':!valid?'No penetration in the record':(actual?'● From the hit':c?(browsing?'● Shooter’s shell':'◇ Comparison'):'◇ Manual')+' · '+Math.round(shell.penetration)+' mm at target · ±'+Math.round(shell.randomization*100)+'%';
+    var sourceTitle=source+' · '+(shotContext?shotContext.source:'')+' · Nominal penetration at the current distance, not the rolled RNG. HE: penetration only, no blast damage.';
+    $('shell-choice').title=sourceTitle;if(shellGroup)shellGroup.title=sourceTitle;
+    $('parameters-notice').textContent=!choice?'Pick a shell — the record holds more than one match.':!valid?'No penetration in the record — enter the penetration and calibre to colour the model.':'Pick a shell or enter penetration and calibre to colour the model.';
     document.querySelectorAll('[data-shell]').forEach(function(b){b.setAttribute('aria-pressed',String(b.dataset.shell===choice));});
     var kind=c?c.kind:choice;document.querySelectorAll('#shell-types [data-kind]').forEach(function(b){b.setAttribute('aria-pressed',String(b.dataset.kind===kind));});
-    var chanceMode=$('armor-mode').value==='chance';$('legend-gradient').classList.toggle('classic',$('palette').value==='classic');$('track-overlay-note').classList.toggle('classic',$('palette').value==='classic');$('armor-legend').hidden=!chanceMode||!valid;$('parameters-notice').hidden=!chanceMode||valid;
+    var chanceMode=$('armor-mode').value==='chance';$('legend-gradient').classList.toggle('classic',$('palette').value==='classic');$('track-overlay-note').classList.toggle('classic',$('palette').value==='classic');var hideLegend=!chanceMode||!valid;$('armor-legend').hidden=hideLegend;if(legendHidden!==hideLegend){legendHidden=hideLegend;scheduleToolbar();}$('parameters-notice').hidden=!chanceMode||valid;
     $('penetration').setAttribute('aria-invalid',String(chanceMode&&!(penetration>0&&penetration<=3000)));$('caliber').setAttribute('aria-invalid',String(chanceMode&&!(caliber>0&&caliber<=1000)));
     $('probe-chance').textContent='—';$('probe-chance').style.color='';$('probe-pen').replaceChildren();$('probe-extra').replaceChildren();$('probe-details').replaceChildren(node('span','Hover over the armour','placeholder'));
     staleEstimate();if(viewer)viewer.configure(shell,$('armor-mode').value==='chance',$('palette').value);shotStats();
   }
+  var shellGroup=document.querySelector('.shell-fields'),legendHidden=null;
   var ricochetTint=.5; // the Ricochet tint row of Settings, 0 (off)..1.5; the panels' ricochet colours follow the map
   function chanceRgb(r){return 'rgb('+ArmorBallistics.color(r,$('palette').value,ricochetTint).map(function(v){return Math.round(v*255);}).join(',')+')';}
   // Compact reading of one ballistic result: the chance first, then the numbers that explain it.
@@ -514,7 +522,7 @@
   }
   function display(data,reference){
     currentHitKey=null;var hit=data.hit;swapped=hit.synthetic&&!hit.vehicle?hit:null;sceneTiles(hit,reference);
-    $('shot-source').textContent=hit.synthetic?'No recorded shot':'Hit line';$('unpin').hidden=true;prepareShell(hit);var drawn=viewer&&viewer.load(data,shotContext);message(drawn?'':'Geometry unavailable. The original event is kept.');pivotButtons();warnings(data.warnings||[]);$('details').replaceChildren();
+    $('shot-source').textContent=hit.synthetic?'No recorded shot':'Hit line';prepareShell(hit);var drawn=viewer&&viewer.load(data,shotContext);message(drawn?'':'Geometry unavailable. The original event is kept.');pivotButtons();warnings(data.warnings||[]);$('details').replaceChildren();
     var aimReady=viewer&&viewer.setShotContext(shotContext),estimate=!aimReady&&viewer?viewer.setAimEstimate(shotContext):null;$('show-aim').disabled=!(aimReady||estimate);
     $('total-chance').textContent=estimate?'\u2300 '+(estimate.radius*2).toFixed(2)+' m':'—';
     // Why there is no circle, in full: no resolved impact point to centre on, no gun dispersion in the record,
@@ -633,9 +641,9 @@
   $('camera-distance').oninput=function(){if(viewer)viewer.setDistance(limits.distanceMin*Math.exp(span*Number(this.value)/1000));};
   $('camera-distance-field').onchange=function(){if(viewer)viewer.setDistance(Number(this.value)||limits.distanceMin);};
   $('camera-zoom').oninput=function(){if(viewer)viewer.setZoom(.1*Math.pow(1000,Number(this.value)/1000));}; // ×0.1 … ×100, ×1 at a third
-  $('unpin').onclick=function(){if(!viewer)return;viewer.unpin();viewer.resetPose();};
-  function recordedButton(){if(viewer)$('unpin').hidden=!(viewer.pinned||Math.abs(viewer.turretAngle)>=.1||Math.abs(viewer.gunAngle)>=.1);}
-  if(viewer)viewer.onPin=function(on){$('shot-source').textContent=on?'Pinned point':activeHit&&activeHit.synthetic?'No recorded shot':'Hit line';recordedButton();$('total-chance').textContent=on?'—':$('total-chance').textContent;shotStats();};
+  // No “back to the recorded shot” button any more (user, 18.09): clicking the hit in the list again
+  // re-runs selectHit, which clears the viewer and rebuilds the scene, so the pin and the pose reset with it.
+  if(viewer)viewer.onPin=function(on){$('shot-source').textContent=on?'Pinned point':activeHit&&activeHit.synthetic?'No recorded shot':'Hit line';$('total-chance').textContent=on?'—':$('total-chance').textContent;shotStats();};
   $('auto-frame').onchange=function(){if(viewer)viewer.setAutoFrame(this.checked);};
   $('track-opacity').oninput=function(){if(viewer)viewer.setTrackOpacity(Number(this.value)/100);};
   $('camera-zoom-field').onchange=function(){if(viewer)viewer.setZoom(Number(this.value));};
@@ -667,11 +675,10 @@
     if(stored==='on'||stored==='off')select.value=stored;else select.value=row[2];row[3](select.value);
     select.onchange=function(){row[3](this.value);try{window.localStorage.setItem(row[1],this.value);}catch(e){}};});
   $('heatmap-quality').onchange=host.guard('Detail',function(){if(host.game&&this.value==='high'){this.value=viewer?viewer.quality:'auto';return;}if(viewer)viewer.setQuality(this.value);});
-  // One line under the scene: the explored pose (when it differs) and the gun's vertical limits at the current turret angle.
-  // Gun readouts: up positive, down negative (the client's pitch is the other way round). The shortcut line is
-  // hidden in the game's browser: right drag, Ctrl + drag and Ctrl + wheel do not work there.
-  if(host.game)document.querySelector('.scene-help').hidden=true;
-  function poseChanged(){if(!viewer)return;var off=!(Math.abs(viewer.turretAngle)<.1&&Math.abs(viewer.gunAngle)<.1),sign=function(v){return (v>0?'+':'')+Math.round(v)+'°';},g=viewer.gunRange();$('turret-notice').hidden=!off;if(off)$('turret-notice').textContent='Turret '+sign(viewer.turretAngle)+', gun '+sign(-viewer.gunAngle)+' from the recorded pose (hit marks hidden)';$('gun-limits').textContent=g.known?'Gun '+sign(-g.max)+' … '+sign(-g.min)+' at this turret angle':'Gun limits not recorded';recordedButton();staleEstimate();shotStats();}
+  // Last item of the toolbar row: the explored pose (when it differs) and the gun's vertical limits at the
+  // current turret angle. Gun readouts: up positive, down negative (the client's pitch is the other way round).
+  // The shortcut list that used to sit under the scene is gone; #viewport keeps the same text as its aria-label.
+  function poseChanged(){if(!viewer)return;var off=!(Math.abs(viewer.turretAngle)<.1&&Math.abs(viewer.gunAngle)<.1),sign=function(v){return (v>0?'+':'')+Math.round(v)+'°';},g=viewer.gunRange();$('turret-notice').hidden=!off;if(off)$('turret-notice').textContent='Turret '+sign(viewer.turretAngle)+', gun '+sign(-viewer.gunAngle)+' from the recorded pose (hit marks hidden)';$('gun-limits').textContent=g.known?'Gun '+sign(-g.max)+' … '+sign(-g.min)+' at this turret angle':'Gun limits not recorded';staleEstimate();shotStats();}
   function pivotButtons(){if(!viewer)return;$('pivot-hit').disabled=!viewer.point;$('pivot-vehicle').setAttribute('aria-pressed',String(viewer.pivot!=='hit'));$('pivot-hit').setAttribute('aria-pressed',String(viewer.pivot==='hit'));}
   $('pivot-vehicle').onclick=function(){if(viewer)viewer.setPivot('vehicle');pivotButtons();};$('pivot-hit').onclick=function(){if(viewer)viewer.setPivot('hit');pivotButtons();};
   if(viewer)viewer.onTurret=poseChanged;
@@ -706,6 +713,35 @@
   window.addEventListener('armor-context-restored',function(){if(host.mark)host.mark('WebGL','context-restored');if($('scene-message').textContent===CONTEXT_LOST)message('');});
   function outline(){if(viewer)viewer.setOutline(Number($('outline-brightness').value)/100,Number($('outline-opacity').value)/100);}
   $('outline-brightness').oninput=outline;$('outline-opacity').oninput=outline;if(viewer){viewer.wireframe($('wireframe').checked);outline();}
+  // Toolbar overflow (18.09): the row never wraps. Each group carries data-tb — its keep priority, 1 kept
+  // longest — and layoutToolbar() hands the highest numbers to the “More” popover until the rest fit on one
+  // line, taking them back when the window widens. insertBefore moves the nodes themselves, so every id and
+  // every listener inside a group survives the move.
+  var toolbar=document.querySelector('.scene-toolbar'),moreBox=document.querySelector('.toolbar-more');
+  var popover=moreBox?moreBox.querySelector('.toolbar-popover'):null,tbWidth={},tbFrame=0;
+  var tbGroups=toolbar?[].slice.call(toolbar.querySelectorAll('[data-tb]')):[];
+  var tbRank=function(g){return Number(g.getAttribute('data-tb'));};tbGroups.sort(function(a,b){return tbRank(a)-tbRank(b);});
+  function tbRow(g){var rank=tbRank(g),before=null;
+    tbGroups.forEach(function(o){if(!before&&o.parentNode===toolbar&&tbRank(o)>rank)before=o;});
+    toolbar.insertBefore(g,before||moreBox);}
+  function layoutToolbar(){
+    if(!toolbar||!moreBox||!popover||!toolbar.clientWidth)return;
+    tbGroups.forEach(function(g){if(g.parentNode!==toolbar)tbRow(g);});
+    moreBox.hidden=true;moreBox.open=false;
+    var style=window.getComputedStyle(toolbar),gap=parseFloat(style.columnGap)||0;
+    var room=toolbar.clientWidth-(parseFloat(style.paddingLeft)||0)-(parseFloat(style.paddingRight)||0);
+    var live=tbGroups.filter(function(g){return !g.hidden;}),total=0;
+    // A group's width is measured in the row and remembered: a group that is in the popover measures 0.
+    live.forEach(function(g,i){var key=g.getAttribute('data-tb'),w=g.offsetWidth;if(w)tbWidth[key]=w;total+=(tbWidth[key]||0)+(i?gap:0);});
+    if(total<=room)return;
+    moreBox.hidden=false;var budget=room-moreBox.offsetWidth-gap;
+    for(var i=live.length-1;i>=0&&total>budget;i--){total-=(tbWidth[live[i].getAttribute('data-tb')]||0)+gap;popover.insertBefore(live[i],popover.firstChild);}
+  }
+  function scheduleToolbar(){if(tbFrame||!toolbar)return;tbFrame=window.requestAnimationFrame(function(){tbFrame=0;layoutToolbar();});}
+  window.addEventListener('resize',scheduleToolbar);
+  // Closing on a click outside is written out here: the settings menu has no such handler to reuse.
+  document.addEventListener('click',function(e){if(moreBox&&moreBox.open&&!moreBox.contains(e.target))moreBox.open=false;});
+  layoutToolbar();
   if(host.interrupted){$('host-note').hidden=false;$('host-note').textContent='The previous session was interrupted during “'+host.interrupted.action+'» ('+(host.interrupted.host==='game'?'in the game':'in the browser')+', '+new Date(host.interrupted.at).toLocaleString('en-GB')+'). Mention this when reporting.';}
   (function(){var pv=$('app-version').getAttribute('data-version');if(pv!=='dev')$('app-version').textContent=pv;}());
   host.done();

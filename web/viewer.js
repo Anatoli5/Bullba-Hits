@@ -359,9 +359,10 @@
   // (tracks, gun barrel, screens, surveying devices). The main box gets the FIT_MARGIN; the whole model merely has to
   // stay on screen — a barrel or a screen that already pushed the zoom out earns no extra margin. The top
   // FIT_TOP_BAND of the viewport is kept free for the "Under the cursor" panel and the model tile, FIT_BOTTOM_BAND
-  // at the foot for the shooter tile. A clinch record (5 m) first backs off along the view line to twice the
-  // model's radius about the orbit centre.
-  var FIT_TOP_BAND=.2,FIT_BOTTOM_BAND=.12,FIT_MARGIN=.08;
+  // at the foot for the shooter tile. Since 18.09 the "Hit line" panel is stacked under "Under the cursor" in that
+  // same top-left column: measured at 1366x768 the two tiles reach 33.9 % of the viewport height, so the band is .35.
+  // A clinch record (5 m) first backs off along the view line to twice the model's radius about the orbit centre.
+  var FIT_TOP_BAND=.35,FIT_BOTTOM_BAND=.12,FIT_MARGIN=.08;
   Viewer.prototype.fit=function(){this.dropTargets();
     var tris=(this.engine||{}).triangles||[];if(!tris.length)return;var cam=this.camera,v=new THREE.Vector3(),local=new THREE.Vector3(),radius=0,i,k,t;
     for(i=0;i<tris.length;i++){t=tris[i];for(k=0;k<3;k++)radius=Math.max(radius,v.fromArray(k===0?t.a:k===1?t.b:t.c).distanceTo(this.target));}
