@@ -18,6 +18,10 @@ script. Versions are listed newest first. Client: World of Tanks PC NA 2.4.0.1 #
   not a confirmed server formula, and the tooltips say so; SPG (legacy) HE shows "splash not modelled".
 - The recorder saves the shell's damage fields (alpha, spall damage, mechanics, randomisation, radii) and the
   target's spall-liner factor; older records have no damage data and keep showing the chance.
+- Target modifiers next to the Collision model tile (Expected damage view, modern HE): spall liner (none / ×1.5 /
+  improved ×1.6), the field modification "Spalling resistance" (×0.85 / default / ×1.15) and the driver's Reliable
+  Placement (+15 % at 100 %, a reading of the client data). They start from the recorded liner factor and are kept
+  per vehicle type for the session; inline when there is room, one "Modifiers ▾" button otherwise.
 - Vehicles mode: the filter rows fold under one "Filters" caption (closed by default, count of active pills), so the
   list has room on a 768 px screen; no filter means every vehicle. Switching Battles ↔ Vehicles no longer resets
   the scene: the hit stays on screen, its vehicles become the model and shooter of the list.
