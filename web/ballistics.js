@@ -74,7 +74,7 @@
   }
   function evaluate(hits,s){
     if(!s||!(s.penetration>0)||!(s.caliber>0))return {chance:null,reason:'parameters',layers:[]};
-    var remaining=s.penetration,ignored={},layers=[],jet=false,jetStart=0,seen={};
+    var remaining=s.penetration,ignored={},layers=[],jet=false,jetStart=0,jetRate=0,seen={};
     for(var i=0;i<hits.length;i++){
       var hit=hits[i],t=hit.triangle,a=t.armor,key=t.part+':'+t.name;
       if(seen[key]!==undefined&&Math.abs(hit.distance-seen[key])<EPS)continue;
@@ -84,7 +84,10 @@
       if(a.armor===null||a.armor===undefined)continue;
       var cos=a.useHitAngle?hit.cos:1;
       if(!jet&&ricochet(a,cos,s))return {chance:0,reason:'ricochet',layers:layers,nominal:a.armor,angle:Math.acos(clamp(cos,0,1))/RAD,distance:hit.distance,hit:hit,final:!!s.ricocheted};
-      if(jet)remaining*=Math.max(0,1-Math.max(0,hit.distance-jetStart)*s.jetLossPerMeter);
+      // HEAT after the first screen: the jet loses a fixed share of the penetration it had behind that screen per
+      // metre flown (client: 0.5/m), linearly along the whole way to the armour. A later screen only subtracts its own
+      // plate; it never restarts the decay (user, 19.09: a second screen in the same gap used to raise the chance).
+      if(jet)remaining=Math.max(0,remaining-jetRate*Math.max(0,hit.distance-jetStart));
       var plate=effective(a,cos,s);
       layers.push({part:t.part,material:t.name,nominal:a.armor,effective:plate,angle:Math.acos(clamp(cos,0,1))/RAD,main:a.vehicleDamageFactor>EPS});
       if(a.vehicleDamageFactor>EPS){
@@ -97,7 +100,7 @@
       }else remaining-=plate;
       if(a.collideOnceOnly)ignored[key]=true;
       jet=s.jetLossPerMeter>0;
-      if(jet)jetStart=hit.distance+a.armor*.001;
+      if(jet){jetStart=hit.distance+a.armor*.001;if(!jetRate)jetRate=remaining*s.jetLossPerMeter;}
     }
     return {chance:0,reason:'no-hull',layers:layers};
   }
