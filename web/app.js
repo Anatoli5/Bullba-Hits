@@ -298,9 +298,9 @@
     var changed=mode!==sidebarMode;sidebarMode=mode;
     document.querySelectorAll('#sidebar-mode [data-mode]').forEach(function(b){b.setAttribute('aria-pressed',String(b.getAttribute('data-mode')===mode));});
     $('battles-pane').hidden=mode!=='battles';$('vehicles-pane').hidden=mode!=='vehicles';
-    // The heading carries the battle picker in the Battles mode and a plain vehicle name in the other:
-    // one of the two is on screen at a time, both keep their ids and their listeners.
-    $('battles').hidden=mode!=='battles';$('battle-map').hidden=mode==='battles';
+    // One heading tile in both modes: in Battles it is the battle picker, in Vehicles the same slot carries
+    // the vehicle name (renderVehicleHeading) with no caret and nothing to open.
+    $('battle-pick').disabled=mode!=='battles';if(mode!=='battles')openBattleList(false);
     storeSidebar();
     if(mode==='vehicles'){
       loadCatalogue();
@@ -354,7 +354,7 @@
   }
   document.querySelectorAll('#sidebar-mode [data-mode]').forEach(function(b){
     b.onclick=host.guard('Side panel mode',function(){setMode(b.getAttribute('data-mode'));});});
-  $('model-tile').onclick=function(){if(sidebarMode!=='vehicles')return;activeRole='model';roleTiles();};
+  $('model-tile').onclick=function(){chooseRole('model');};
   // ========================== end of Vehicles mode =========================
   // ================= collision models that are still coming =================
   // Since 0.7.11 the exporter publishes a hit the moment it is recorded and
@@ -408,19 +408,20 @@
   function detail(label,value,small){var e=node('div');e.appendChild(node('div',label,'detail-label'));e.appendChild(node('div',String(value),'detail-value'));if(small)e.appendChild(node('div',small,'detail-small'));$('details').appendChild(e);}
   function prepareShell(hit){
     // A swapped view has no shot and therefore no shells: keep the shell that is on screen - type,
-    // penetration and calibre - instead of falling back to the empty manual defaults.
-    var keep=null;
-    if(hit&&hit.synthetic&&!hit.vehicle){var was=$('shell-choice').value,c0=was.indexOf('saved:')===0?candidates[Number(was.slice(6))]:null;
+    // penetration and calibre - instead of falling back to the empty manual defaults. A browsed vehicle and a
+    // shooter picked from the roster do carry a gun of their own, so they take their own shells instead.
+    var browsing=!!(hit&&(hit.vehicle||hit.chosenShooter)),keep=null;
+    if(hit&&hit.synthetic&&!browsing){var was=$('shell-choice').value,c0=was.indexOf('saved:')===0?candidates[Number(was.slice(6))]:null;
       keep={kind:c0?c0.kind:was||'ARMOR_PIERCING',penetration:$('penetration').value,caliber:$('caliber').value};}
     activeHit=hit;shotContext=ArmorShotContext.resolve(hit,hit&&hit.vehicle?[]:(current&&current.shotEvents||[]));candidates=shotContext.choices;var choice=$('shell-choice');choice.replaceChildren();
     candidates.forEach(function(c,i){var o=node('option',(shellNames[c.kind]||c.kind)+' · '+c.name+(c.gunInstallation>0?' · ability gun':''));o.value='saved:'+i;choice.appendChild(o);});
     Object.keys(shellNames).forEach(function(kind){var o=node('option',shellNames[kind]+' — manual');o.value=kind;choice.appendChild(o);});
-    if(candidates.length>1&&!(hit&&hit.vehicle)){var uncertain=node('option','Pick a shell — several matches');uncertain.value='';choice.insertBefore(uncertain,choice.firstChild);}
+    if(candidates.length>1&&!browsing){var uncertain=node('option','Pick a shell — several matches');uncertain.value='';choice.insertBefore(uncertain,choice.firstChild);}
     choice.value=shotContext.index>=0?'saved:'+shotContext.index:candidates.length?'':shotContext.kind||'ARMOR_PIERCING';
     // A browsed vehicle has no hit to identify a shell, so resolve() leaves the index at -1. The shooter's own
     // list is nevertheless the right set of choices: preselect the first AP-like shell so the model is coloured
     // the moment a vehicle is picked, instead of “pick a shell”.
-    if(hit&&hit.vehicle&&candidates.length){var first=candidates.findIndex(function(c){return c.kind==='ARMOR_PIERCING';});
+    if(browsing&&candidates.length){var first=candidates.findIndex(function(c){return c.kind==='ARMOR_PIERCING';});
       if(first<0)first=candidates.findIndex(function(c){return c.kind==='ARMOR_PIERCING_CR';});if(first<0)first=0;choice.value='saved:'+first;}
     $('shell-quick').replaceChildren();candidates.forEach(function(c,i){var actual=i===shotContext.index,b=node('button',(actual?'● ':'')+(shellNames[c.kind]||c.kind)+' '+Math.round(c.penetration100)+(c.gunInstallation>0?' ✦':''),'shell-chip');b.dataset.shell='saved:'+i;b.title=c.name+' · '+c.caliber+' mm · '+(c.gunInstallation>0?'ability gun'+(c.gun?' '+c.gun:'')+' · ':'')+(actual?'Type from the hit':'Compare with this shell');b.onclick=function(){choice.value='saved:'+i;selectShell();};$('shell-quick').appendChild(b);});
     syncTargetMods(hit);
@@ -604,7 +605,7 @@
     var distance=viewer?viewer.distance:100,shell=shellAt(c,choice,penetration,caliber,distance);
     var edited=c&&(penetration!==c.penetration100||caliber!==c.caliber);
     var actual=shotContext&&choice==='saved:'+shotContext.index&&!edited;
-    var browsing=!!(activeHit&&activeHit.vehicle);
+    var browsing=!!(activeHit&&(activeHit.vehicle||activeHit.chosenShooter));
     // The caption band under the fields is gone (user, 18.09: the line read as noise). Its sentence is now the
     // title of the shell group, and the two states that are a warning keep their words in #parameters-notice.
     var source=!choice?'Pick a shell':!valid?'No penetration in the record':(actual?'● From the hit':c?(browsing?'● Shooter’s shell':'◇ Comparison'):'◇ Manual')+' · '+Math.round(shell.penetration)+' mm at target · ±'+Math.round(shell.randomization*100)+'%';
@@ -682,6 +683,72 @@
   }
   // Heading: which battle this is - date and start time, the map, and the vehicle the player was in.
   function battleStamp(seconds){if(!Number.isFinite(seconds))return '';var d=new Date(seconds*1000);return d.toLocaleDateString('en-GB')+' \u00b7 '+d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});}
+  // ====================== The battle picker in the heading ======================
+  // The heading tile IS the battle list again (user, 19.09): the map as the title, the player's vehicle tile
+  // next to it, a caret at the end. #battles stays the state holder and is hidden - refresh() fills its
+  // options and sets its value, $('battles').onchange loads the battle - and the tile only mirrors it: a row
+  // sets the value and dispatches 'change', so every path downstream is the one the native select took.
+  // The rows carry index.battles[i].vehicle, written by the exporter since 19.09; an index written before it
+  // has none and such a row shows the map alone. The heading tile itself keeps the vehicle renderHeading()
+  // reads from the hits, which covers those older indexes too.
+  var battleSummaries=[];
+  function battleSummary(id){var i;for(i=0;i<battleSummaries.length;i++)if(battleSummaries[i].id===id)return battleSummaries[i];return null;}
+  // Secondary in a row: day and month without the year, then the start time. No hit count (user, 19.09).
+  function battleWhen(seconds){
+    if(!Number.isFinite(seconds))return '';
+    var d=new Date(seconds*1000),pad=function(n){return (n<10?'0':'')+n;};
+    return pad(d.getDate())+'.'+pad(d.getMonth()+1)+' \u00b7 '+d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
+  }
+  function renderBattleList(){
+    var list=$('battle-list'),id=$('battles').value;list.replaceChildren();
+    if(!battleSummaries.length){list.appendChild(node('p','No battles yet.','empty'));return;}
+    battleSummaries.forEach(function(b){
+      var o=node('button',undefined,'battle-option');o.type='button';o.setAttribute('role','option');
+      o.setAttribute('data-id',b.id);o.setAttribute('aria-selected',String(b.id===id));
+      o.appendChild(node('span',b.map||'Unknown map','battle-option-map'));
+      var slot=node('span',undefined,'battle-option-vehicle');if(b.vehicle)slot.appendChild(vehicleTile(b.vehicle));
+      o.appendChild(slot);o.appendChild(node('span',battleWhen(b.startedAt),'battle-option-when'));
+      o.title=[b.map||'Unknown map',b.vehicle&&b.vehicle.name,battleWhen(b.startedAt)].filter(Boolean).join(' \u00b7 ');
+      o.onclick=function(){pickBattle(b.id);};
+      list.appendChild(o);
+    });
+  }
+  // The tile's title text and the selected row, from whatever #battles currently holds. In the Vehicles mode
+  // the same slot carries the vehicle name (renderVehicleHeading), so it is left alone there.
+  function syncBattlePick(){
+    var id=$('battles').value,row=battleSummary(id);
+    if(sidebarMode==='battles')$('battle-map').textContent=row?(row.map||'Unknown map'):(current&&current.map)||(battleSummaries.length?'Pick a battle':'No battles yet');
+    [].forEach.call($('battle-list').querySelectorAll('[role=option]'),function(o){o.setAttribute('aria-selected',String(o.getAttribute('data-id')===id));});
+  }
+  function openBattleList(open){
+    var list=$('battle-list'),button=$('battle-pick');
+    if(open&&button.disabled)open=false;
+    list.hidden=!open;button.setAttribute('aria-expanded',String(open));
+    if(!open)return;
+    var row=list.querySelector('[aria-selected=true]')||list.querySelector('[role=option]');
+    if(row)row.focus();
+  }
+  function pickBattle(id){
+    openBattleList(false);$('battle-pick').focus();
+    var picker=$('battles');
+    // The battle already open: a native select fires no change for its own option either.
+    if(!id||picker.value===id)return;
+    picker.value=id;syncBattlePick();picker.dispatchEvent(new Event('change'));
+  }
+  $('battle-pick').onclick=function(){openBattleList($('battle-list').hidden);};
+  // Arrows walk the rows, Enter picks (the row is a button), Escape and Tab hand the focus back to the tile.
+  // Closing on a click elsewhere is the page's one popover handler, at the bottom of this file.
+  document.querySelector('.heading-pick').addEventListener('keydown',function(e){
+    if(e.key==='Escape'||e.key==='Esc'||e.key==='Tab'){
+      if($('battle-list').hidden)return;
+      if(e.key!=='Tab')e.preventDefault();
+      openBattleList(false);$('battle-pick').focus();return;}
+    var rows=[].slice.call($('battle-list').querySelectorAll('[role=option]'));
+    if(!rows.length||$('battle-list').hidden)return;
+    var at=rows.indexOf(document.activeElement),step=e.key==='ArrowDown'?1:e.key==='ArrowUp'?-1:0;
+    if(step){e.preventDefault();rows[Math.max(0,Math.min(rows.length-1,at+step))].focus();return;}
+    if(e.key==='Home'||e.key==='End'){e.preventDefault();rows[e.key==='Home'?0:rows.length-1].focus();}
+  });
   // ====================== The vehicle the battle is read from ======================
   // The recorder writes every hit the client showed, not only the player's own, and a roster of the battle's
   // vehicles. The picker chooses whose seat the list is read from: his hits and the hits on him - any vehicle
@@ -735,14 +802,17 @@
     if(own!=null)allies.unshift(rosterRow(own)||{id:own,name:(ownVehicle()||{}).name||'My vehicle',player:''});
     return {allies:allies,enemies:enemies};
   }
-  function pickerRow(row,side,star,focus){
+  function pickerRow(row,side,star,focus,shooter){
     var b=node('button',undefined,'picker-row');b.type='button';
     b.setAttribute('data-id',String(row.id));b.setAttribute('data-side',side);
     b.setAttribute('aria-pressed',String(row.id===focus));
+    if(shooter)b.setAttribute('data-role','shooter');
     b.appendChild(node('span',row.name||'Unknown vehicle','picker-vehicle'));
     b.appendChild(node('span',row.player||'','picker-player'));
-    b.title=[row.name||'Unknown vehicle',row.player,side==='ally'?'Ally':'Enemy'].filter(Boolean).join(' · ');
-    b.onclick=function(){chooseFocus(row.id);};
+    b.title=[row.name||'Unknown vehicle',row.player,side==='ally'?'Ally':'Enemy',shooter?'in the shooter role':''].filter(Boolean).join(' · ');
+    // The roster serves whichever scene tile is the active role: the model tile reads the battle from this
+    // vehicle, the shooter tile puts his gun against the model already on screen.
+    b.onclick=function(){if(activeRole==='shooter')pickShooter(row);else chooseFocus(row.id);};
     return b;
   }
   // The control itself: a <details>, because a native <option> can neither push the nickname to the right edge
@@ -756,13 +826,16 @@
     // A focus the roster no longer carries (another battle, a rewritten roster) falls back to the player.
     if(!chosen&&focusVehicle!=null){focusVehicle=null;focus=own;chosen=rows.find(function(r){return r.id===own;});}
     if(!chosen)chosen={id:own,name:(ownVehicle()||{}).name||'My vehicle',player:''};
-    var stamp=(current?current.id:'')+'|'+focus+'|'+rows.map(function(r){return r.id+':'+(r.name||'')+':'+(r.player||'')+':'+(r.team==null?'':r.team);}).join(',');
+    var shooter=shooterId();
+    var stamp=(current?current.id:'')+'|'+focus+'|'+shooter+'|'+activeRole+'|'+rows.map(function(r){return r.id+':'+(r.name||'')+':'+(r.player||'')+':'+(r.team==null?'':r.team);}).join(',');
     if(stamp!==focusStamp){
       focusStamp=stamp;list.replaceChildren();
+      // The same rows serve both scene tiles, so the popover says out loud which role a click fills.
+      list.appendChild(node('div',activeRole==='shooter'?'A click picks the SHOOTER: his gun against the model on screen':'A click picks whose seat the battle is read from','picker-note'));
       [['ALLIES','ally',groups.allies],['ENEMIES','enemy',groups.enemies]].forEach(function(group){
         if(!group[2].length)return;
         list.appendChild(node('div',group[0],'picker-group eyebrow'));
-        group[2].forEach(function(r){list.appendChild(pickerRow(r,group[1],group[1]==='ally'&&r.id===own&&free,focus));});
+        group[2].forEach(function(r){list.appendChild(pickerRow(r,group[1],group[1]==='ally'&&r.id===own&&free,focus,r.id===shooter));});
       });
     }
     $('focus-vehicle').textContent=chosen.name||'Unknown vehicle';
@@ -836,6 +909,59 @@
     if(first)return void selectHit(first.id).catch(function(){});
     showFocusEmpty();
   }
+  // ===================== A roster vehicle in the shooter role =====================
+  // The shooter tile is a role control in the Battles mode too (user, 19.09): a roster row then puts that
+  // vehicle's gun against the model already on screen. It is the very synthetic hit the vehicle browser and
+  // the swap build - no hit point, no shot line, no reticle - and his shells come from a hit he fired in this
+  // battle, or from his own exported record when the battle holds none of his shots. Neither: nothing moves.
+  var NO_GUN_DATA='No data for this vehicle’s gun yet';
+  // Who is in the shooter role, as the roster knows him: the attacker of the recorded hit on screen, or the
+  // vehicle a roster row was picked for. A swapped view and a browsed vehicle carry no id and mark nobody.
+  function shooterId(){var h=activeHit;return h&&h.attackerId!=null?h.attackerId:null;}
+  function recordedShooter(id){
+    var hits=(current&&current.hits)||[],i,h;
+    for(i=0;i<hits.length;i++){h=hits[i];
+      if(h.attackerId===id&&h.attacker&&h.attacker.name)return {vehicle:h.attacker,shells:(h.availableShells||h.shellCandidates||[]).slice()};}
+    return null;
+  }
+  function catalogueShooter(type){
+    if(!type)return Promise.reject(new Error(NO_GUN_DATA));
+    return (catalogue?Promise.resolve():loadCatalogue()).then(function(){
+      var entry=((catalogue&&catalogue.vehicles)||[]).find(function(v){return String(v.type||'')===type;});
+      if(!entry)throw new Error(NO_GUN_DATA);
+      return readVehicle(entry.id,0);
+    }).then(function(record){return {vehicle:record,shells:(record.shells||[]).slice()};});
+  }
+  function shooterHit(model,shooter,shells,id,base,aim){
+    var target=shallow(model),attacker=shallow(shooter);
+    ['shells','warnings','schema'].forEach(function(k){delete target[k];});
+    ['parts','shells','warnings','schema','gunPitchLimits','turretYawLimits'].forEach(function(k){delete attacker[k];});
+    var hit={id:'shooter:'+id+'/'+(target.type||''),synthetic:true,chosenShooter:true,direction:'incoming',attackerId:id,
+      target:target,attacker:attacker,points:[],rawHitPoints:[],warnings:[],
+      shellCandidates:[],availableShells:(shells||[]).slice(),shellStatus:'chosen shooter',receivedAt:model.exportedAt};
+    if(base)hit.base=base; // a recorded hit to go back to, so the ⇅ button keeps its way home
+    if(aim)hit.aim=aim.slice(); // the model keeps the pose it was recorded in: the same target, the same hit
+    return hit;
+  }
+  // Only the shooter changes, so the camera and the orbit centre stay where they are, as a shooter picked in
+  // the Vehicles mode does. A vehicle whose gun is nowhere in the record says so and leaves the scene alone.
+  function pickShooter(row){
+    $('vehicle-focus').open=false;
+    var hit=activeHit,model=hit&&hit.target;
+    if(!model||!(model.parts||[]).length)return void message('No collision model on screen to shoot at: pick a hit or a vehicle first.');
+    var known=recordedShooter(row.id),base=hit.synthetic?hit.base||null:hit.id,aim=hit.synthetic?null:hit.aim;
+    var camera=viewer&&viewer.cameraState?viewer.cameraState():null,token=++generation;
+    (known?Promise.resolve(known):catalogueShooter(row.type?String(row.type):'')).then(function(found){
+      if(token!==generation)return null;
+      message('Preparing the model…');
+      var synthetic=shooterHit(model,found.vehicle,found.shells,row.id,base,aim);
+      return ArmorInspectorData.sceneFor(current||{warnings:[]},synthetic).then(function(data){
+        if(token!==generation)return null;
+        display(data,false);if(camera&&viewer)viewer.restoreCamera(camera);renderHits();
+        return data;
+      });
+    }).catch(function(){if(token===generation){message(NO_GUN_DATA);warnings([NO_GUN_DATA]);}});
+  }
   function renderHeading(){
     var stamp=current?battleStamp(current.startedAt):'',own=ownVehicle();
     if(sidebarMode!=='battles')return own; // the Vehicles mode writes its own heading
@@ -845,14 +971,16 @@
     // the WebMCP tool), and never sets a value the list does not carry - that would blank the heading.
     var picker=$('battles');
     if(current&&picker.value!==current.id&&[].some.call(picker.options,function(o){return o.value===current.id;}))picker.value=current.id;
+    syncBattlePick();
     var slot=$('heading-vehicle');slot.replaceChildren();if(own)slot.appendChild(vehicleTile(own));
     return own;
   }
   // Two overlays inside the scene: the vehicle whose collision model is drawn stays centred over it, the
-  // shooter sits underneath. Clicking the shooter swaps the two roles - his collision model is drawn and
-  // the vehicle that was drawn becomes the shooter. The swapped view carries no recorded shot (no hit
-  // line, no reticle): an inspector without a shot. Clicking again returns to the recorded hit.
-  var swapped=null,NO_SHOOTER_MODEL='No collision model of this vehicle recorded yet (recorded from 0.6.34 on; older battles are completed by the exporter on the next game start)';
+  // shooter sits underneath. Each tile picks its role (chooseRole); the ⇅ button next to the shooter swaps
+  // the two - his collision model is drawn and the vehicle that was drawn becomes the shooter. The swapped
+  // view carries no recorded shot (no hit line, no reticle): an inspector without a shot. The same button
+  // then takes it back to the recorded hit.
+  var swapped=null;
   function shallow(value){var copy={};if(value)Object.keys(value).forEach(function(k){copy[k]=value[k];});return copy;}
   function swapReady(hit){return !!(hit&&hit.attacker&&(hit.attacker.parts||[]).some(function(p){return p.modelKey;}));}
   // The swapped view as a hit the scene loader and the viewer understand: the recorded shooter becomes the
@@ -872,22 +1000,44 @@
     $('model-caption').textContent=reference?'Reference model':'Collision model';
     model.hidden=!target;$('model-tile-body').replaceChildren();if(target)$('model-tile-body').appendChild(vehicleTile(target));
     button.hidden=!attacker;$('shooter-tile-body').replaceChildren();if(attacker)$('shooter-tile-body').appendChild(vehicleTile(attacker));
-    // In Vehicles mode both tiles are controls: the one pressed last is the role the next list click fills.
-    if(sidebarMode==='vehicles'){
-      model.disabled=false;button.disabled=false;
-      model.title='Pick the vehicle to show from the list';button.title='Pick the shooter from the list';
-      roleTiles();return;
-    }
-    model.disabled=true;model.removeAttribute('aria-pressed');button.removeAttribute('aria-pressed');model.title='';
-    // A focused vehicle without hits is shown against his own gun: there is no other role to swap to, so the
-    // tile is a label. A swapped shooter goes back to the recorded hit; a recorded hit offers the swap.
-    var solo=!!(hit&&hit.vehicle),back=!!(hit&&hit.synthetic&&!solo),ready=swapReady(hit);
-    button.disabled=solo||!(back||ready);
-    button.title=solo?'This vehicle\u2019s own gun \u00b7 no shot was recorded against him here':back?'Back to the recorded hit and its shot line':ready?'Show this vehicle\u2019s collision model \u00b7 the roles swap, the recorded shot is not carried over':NO_SHOOTER_MODEL;
+    // Both tiles are role controls in both modes (user, 19.09): the one pressed last is the role the next
+    // click in the side panel fills - a catalogue row in Vehicles, a roster row in Battles. The swap that
+    // used to sit on the shooter tile has a button of its own next to it.
+    model.disabled=false;button.disabled=false;
+    model.title=roleHint('model');button.title=roleHint('shooter');
+    swapTile(hit);roleTiles();
+  }
+  // What a click in the side panel will do for this tile, in the mode the panel is in.
+  function roleHint(role){
+    if(sidebarMode==='vehicles')return role==='shooter'?'The shooter \u00b7 pick him in the vehicle list':'The collision model on screen \u00b7 pick it in the vehicle list';
+    return role==='shooter'?'The shooter \u00b7 pick him in the roster above the hit list: his gun against the model on screen, without a shot line'
+      :'The collision model on screen \u00b7 pick the vehicle in the roster above the hit list: his hits and the hits on him';
   }
   function roleTiles(){
     $('model-tile').setAttribute('aria-pressed',String(activeRole!=='shooter'));
     $('shooter-tile').setAttribute('aria-pressed',String(activeRole==='shooter'));
+  }
+  // The tile click only chooses the role; the side panel then shows which vehicle is in it - the catalogue
+  // row scrolled into view, or the roster picker opened on the row that holds it.
+  function chooseRole(role){
+    activeRole=role==='shooter'?'shooter':'model';roleTiles();
+    if(sidebarMode==='vehicles'){
+      var v=activeRole==='shooter'?shooterVehicle:modelVehicle,row=v?$('vehicles').querySelector('[data-vehicle="'+v.id+'"]'):null;
+      if(row&&row.scrollIntoView)row.scrollIntoView({block:'nearest'});
+      return;
+    }
+    renderFocus();
+    var box=$('vehicle-focus');if(box.classList.contains('is-locked'))return;
+    box.open=true;
+    var marked=$('focus-list').querySelector(activeRole==='shooter'?'[data-role=shooter]':'[aria-pressed=true]');
+    if(marked&&marked.scrollIntoView)marked.scrollIntoView({block:'nearest'});
+  }
+  // The swap is a button of its own since 19.09 and is offered only where it can do something: a recorded hit
+  // whose shooter has a collision model, or a view already swapped, which it takes back to the recorded hit.
+  function swapTile(hit){
+    var b=$('swap-roles'),back=!!(hit&&hit.synthetic&&!hit.vehicle&&hit.base);
+    b.hidden=!(sidebarMode==='battles'&&!!current&&(back||(!!hit&&!hit.synthetic&&swapReady(hit))));
+    b.title=back?'Back to the recorded hit and its shot line':'Swap the model and the shooter';
   }
   function display(data,reference){
     currentHitKey=null;var hit=data.hit;swapped=hit.synthetic&&!hit.vehicle?hit:null;sceneTiles(hit,reference);
@@ -921,7 +1071,11 @@
       $('details').appendChild(node('p','Client collision model of '+(mv.name||'this vehicle')+', exported from '+(SOURCE_TEXT[mv.source]||'the client')+' on '+when+', rest pose. Shooter: '+(sv.name||'\u2014')+', '+(sv.gun||'gun not recorded')+'. Nothing was fired here: pin a point on the armour to read a line, or Alt + click to estimate a reticle.'));
       return;
     }
-    if(hit.synthetic){$('details').appendChild(node('p','The shooter\u2019s collision model, swapped in from the hit at '+clock(hit.receivedAt)+'. Nothing was fired at this vehicle in the record, so there is no hit line, no reticle and no shell of its own. Click the tile below the model to go back to the recorded hit.'));return;}
+    if(hit.chosenShooter){
+      var shooter=hit.attacker||{},under=hit.target||{};
+      $('details').appendChild(node('p',(shooter.name||'This vehicle')+'\u2019s gun against '+(under.name||'the model on screen')+': '+(shooter.gun||'gun not recorded')+'. Nothing was fired between these two in the record, so there is no hit line and no reticle - the shells are his, the armour is the model already loaded. Pin a point to read a line, or pick a hit in the list to go back to a recorded shot.'));
+      return;}
+    if(hit.synthetic){$('details').appendChild(node('p','The shooter\u2019s collision model, swapped in from the hit at '+clock(hit.receivedAt)+'. Nothing was fired at this vehicle in the record, so there is no hit line, no reticle and no shell of its own. The \u21c5 button next to the shooter tile goes back to the recorded hit.'));return;}
     detail('Direction',view==='incoming'?'Incoming':view==='outgoing'?'Outgoing':'Not this vehicle',clock(hit.receivedAt));detail('Result',result(hit));
     var points=hit.points||[],point=points.find(function(p){return p.status==='resolved';});
     detail('Point on the model',point?['Chassis','Hull','Turret','Gun'][point.part]:'Not restored',point?'Per the client collision handler':'Segment kept for diagnostics');
@@ -1003,10 +1157,13 @@
     return ArmorInspectorData.index().then(function(index){var pv=$('app-version').getAttribute('data-version');recordsVersion=index.version||'';$('app-version').textContent=[pv!=='dev'?pv:'',index.version&&index.version!==pv?'records '+index.version:''].filter(Boolean).join(' \u00b7 ');if(index.application!=='local.armor_inspector'||!Array.isArray(index.battles))throw new Error('Invalid battle list');verdictStatus();
       var stamp=String(index.updatedAt||'')+':'+index.battles.map(function(b){return b.id+'/'+b.hits;}).join(',');if(stamp===indexStamp)return;indexStamp=stamp;
       var battles=index.battles,prior=$('battles').value;$('battles').replaceChildren();
+      battleSummaries=battles.slice();
       if(!battles.length){current=null;selected=null;++battleGeneration;$('battles').appendChild(node('option','No battles yet'));
+        renderBattleList();syncBattlePick();
         if(sidebarMode!=='battles'){battlesDirty=true;return;}
         ++generation;if(viewer)viewer.clear();sceneTiles(null,false);renderHits();message('New hits appear here after a battle.');warnings([]);return;}
       battles.forEach(function(b){var option=node('option',new Date(b.startedAt*1000).toLocaleDateString('en-GB')+' \u00b7 '+b.map+' \u00b7 '+b.hits);option.value=b.id;$('battles').appendChild(option);});var id=battles.some(function(b){return b.id===prior;})?prior:battles[0].id;$('battles').value=id;
+      renderBattleList();syncBattlePick();
       // The battle list stays fresh while the Vehicles mode is on screen, but the scene there belongs to a
       // vehicle: the reload waits for the switch back.
       if(sidebarMode!=='battles'){battlesDirty=true;return;}
@@ -1101,11 +1258,12 @@
     vp.addEventListener('pointerdown',sendBusy,true);
     vp.addEventListener('pointermove',function(e){if(e.buttons||(viewer&&viewer.dragging))sendBusy();},true);
   }());
-  // The shooter tile swaps the roles; on a swapped view it goes back to the recorded hit. The list
-  // selection stays on the recorded hit either way - the swap is a view of it, not another hit.
-  $('shooter-tile').onclick=function(){
-    if(sidebarMode==='vehicles'){activeRole='shooter';roleTiles();return;}
-    if(swapped)return void selectHit(swapped.base).catch(function(){});
+  // The two tiles only pick the role the side panel fills. The ⇅ button next to the shooter swaps the roles;
+  // on a swapped view it goes back to the recorded hit. The list selection stays on the recorded hit either
+  // way - the swap is a view of it, not another hit.
+  $('shooter-tile').onclick=function(){chooseRole('shooter');};
+  $('swap-roles').onclick=function(){
+    if(swapped){if(swapped.base)selectHit(swapped.base).catch(function(){});return;}
     var hit=activeHit;if(!hit||hit.synthetic||!swapReady(hit)||!current)return;
     var synthetic=swapHit(hit),token=++generation;message('Preparing the model\u2026');if(viewer)viewer.clear();
     ArmorInspectorData.sceneFor(current,synthetic).then(function(data){if(token!==generation)return;display(data,false);})
@@ -1283,9 +1441,11 @@
   function scheduleLayout(){if(tbFrame)return;tbFrame=window.requestAnimationFrame(function(){tbFrame=0;layoutHeading();layoutToolbar();layoutMods();});}
   window.addEventListener('resize',scheduleLayout);
   // Closing on a click outside is written out here: the settings menu has no such handler to reuse. Every
-  // popover of the page is a .toolbar-more <details>, the toolbar's own and the modifier groups' alike, so one
-  // handler closes them all.
-  document.addEventListener('click',function(e){document.querySelectorAll('.toolbar-more[open]').forEach(function(d){if(!d.contains(e.target))d.open=false;});});
+  // popover of the page is a .toolbar-more <details>, the toolbar's own and the modifier groups' alike, and
+  // the battle list of the heading tile rides on the same handler rather than bringing a third mechanism.
+  document.addEventListener('click',function(e){document.querySelectorAll('.toolbar-more[open]').forEach(function(d){if(!d.contains(e.target))d.open=false;});
+    var pick=document.querySelector('.heading-pick');
+    if(pick&&!$('battle-list').hidden&&!pick.contains(e.target))openBattleList(false);});
   layoutHeading();layoutToolbar();layoutMods();
   if(host.interrupted){$('host-note').hidden=false;$('host-note').textContent='The previous session was interrupted during “'+host.interrupted.action+'» ('+(host.interrupted.host==='game'?'in the game':'in the browser')+', '+new Date(host.interrupted.at).toLocaleString('en-GB')+'). Mention this when reporting.';}
   (function(){var pv=$('app-version').getAttribute('data-version');if(pv!=='dev')$('app-version').textContent=pv;}());
