@@ -4,6 +4,11 @@ Every build that reaches a user gets its own number and its own section here. Th
 taken from the section of the version being published; a release without its section is refused by the release
 script. Versions are listed newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
+## Unreleased
+
+- The Taschenratte ability shell shows its expected damage as a lower bound (≥, penetration only) with the chip
+  "non-pen unknown": it does deal damage without piercing, but no law fits the recorded shots.
+
 ## 0.7.13 (2026-09-19)
 
 - Release assets: two files instead of three. The installer comes first; the archive

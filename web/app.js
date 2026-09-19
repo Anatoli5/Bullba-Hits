@@ -782,14 +782,16 @@
   // from the same quantity the map is drawn with. Set by updateShell, read everywhere the numbers are written.
   var damageView=false;
   function chanceRgb(r){return 'rgb('+ArmorBallistics.color(r,$('palette').value,ricochetTint,damageView?'damage':'chance').map(function(v){return Math.round(v*255);}).join(',')+')';}
-  function damageHp(r){return Math.round(r.expected)+' HP';}
+  // A shell whose non-penetration damage has no model (the Taschenratte ability shell) shows the penetration part
+  // alone as a lower bound, never as the expectation: the recorded shots of that shell do deal damage without piercing.
+  function damageHp(r){return (r.damageLaw==='special-unknown'?'≥ ':'')+Math.round(r.expected)+' HP';}
   // What the expected damage is made of, for the panel under the number: the penetration chance it came from,
   // and the non-penetration damage of the ratio law with the three figures behind it. Legacy HE (SPG) says
   // instead that its splash is not modelled - there is no client-side rule for it to show.
   function damageGroups(r){
     var s=viewer&&viewer.shell;if(!s)return [];
     if(r.damageLaw==='legacy-unknown')return [{kind:'damage',text:'splash not modelled'}];
-    if(r.damageLaw==='special-unknown')return [{kind:'damage',text:'non-pen not modelled',title:'This shell has its own spall absorption rule; the recorded shots of the Reddit study fit no law we can check.'}];
+    if(r.damageLaw==='special-unknown')return [{kind:'damage',text:'non-pen unknown',title:'This shell has its own spall absorption rule and does deal damage without piercing; no law fits the recorded shots, so the number is a lower bound (penetration only).'}];
     if(r.damageLaw!=='ratio'||!(r.nonPen>0)||r.chance===null||r.chance===undefined)return [];
     var liner=s.liner>0?s.liner:1,pass=r.screenPass===undefined||r.screenPass===null?1:r.screenPass;
     var groups=[{kind:'damage',text:'pen '+Math.round(r.chance)+' %'},
