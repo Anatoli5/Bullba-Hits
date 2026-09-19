@@ -75,14 +75,17 @@
     return !armor.checkCaliberForRicochet||!s.checkCaliber||armor.armor*3>=s.caliber;
   }
   // Non-penetration damage of one shot, HP. Modern HE spalls into the hull behind a plate it did not pierce:
-  // D_np = spallDamage · min(1, 0.05·α/(T·C)), T the plate's nominal armour, C the target's spall-liner factor.
+  // D_np = spallDamage · min(1, 0.1·spallDamage/(T·C)), T the plate's nominal armour, C the target's spall-liner factor.
+  // The spall penetration is taken from the spall damage, not the displayed alpha: for regular HE (spallDamage = α/2)
+  // that is the Reddit author's 0.05·α, and it also reproduces his ARES series (α 160, spallDamage 160, 20 mm:
+  // 126 HP measured, 128 predicted, 64 with 0.05·α) - outputs/he-law-check-2026-09-19.md.
   // A reconstruction of the server's rule from the client's own armorSpalls data (outputs/he-damage-findings.md),
   // NOT a confirmed formula, and the ±25% damage roll is not in it. Legacy HE (SPG) has no client-side splash
   // model at all, so it stays at 0 and says so; AP/APCR/HEAT take nonPiercingArmorDamage, 0 on every shell today.
   function nonPenetration(s,nominal){
     if(s.kind!=='HIGH_EXPLOSIVE')return {damage:s.nonPiercingArmorDamage>0?s.nonPiercingArmorDamage:0,law:'none'};
     if(s.mechanics!=='MODERN'||!(s.spallDamage>0))return {damage:0,law:'legacy-unknown'};
-    return {damage:s.spallDamage*Math.min(1,.05*s.alpha/Math.max(EPS,nominal*(s.liner>0?s.liner:1))),law:'ratio'};
+    return {damage:s.spallDamage*Math.min(1,.1*s.spallDamage/Math.max(EPS,nominal*(s.liner>0?s.liner:1))),law:'ratio'};
   }
   // E = p·α + (1−p)·D_np on main armour; 0 where the shell never reaches it (ricochet, screen, fly-past).
   function withDamage(r,s){

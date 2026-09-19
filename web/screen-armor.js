@@ -402,11 +402,11 @@ void main(){
     var s=shell||{},u=this.material.uniforms;u.uPen.value.set(s.penetration||0,s.caliber||0,s.randomization||0,!s.randomizationType||s.randomizationType==='NORMAL'?1:0);u.uShell.value.set(s.normalization||0,s.ricochetCos==null?-1:s.ricochetCos,s.jetLossPerMeter||0,s.kind==='HIGH_EXPLOSIVE'?1:0);var flags=u.uFlags.value;flags[0]=s.mayRicochet?1:0;flags[1]=s.checkCaliber?1:0;flags[2]=s.shieldPenetration?1:0;flags[3]=s.penetration>0&&s.caliber>0?1:0;u.uClassic.value=palette==='classic';u.uOpacity.value=opacity;
     u.uRicochetLoss.value=s.ricochetLoss||0;
     // Damage mode, and only with an alpha in the record: the non-penetration base is the spall damage of modern
-    // HE (nonPiercingArmorDamage for AP/APCR/HEAT, 0 for legacy HE), the spall penetration 0.05·α / liner. Off
+    // HE (nonPiercingArmorDamage for AP/APCR/HEAT, 0 for legacy HE), the spall penetration 0.1·spallDamage / liner (= 0.05·α for regular HE). Off
     // it, or without an alpha, uDamage.x is 0 and the map is the plain penetration chance.
     var modern=s.kind==='HIGH_EXPLOSIVE'&&s.mechanics==='MODERN'&&s.spallDamage>0;
     var base=s.kind==='HIGH_EXPLOSIVE'?(modern?s.spallDamage:0):(s.nonPiercingArmorDamage>0?s.nonPiercingArmorDamage:0);
-    u.uDamage.value.set(mode==='damage'&&s.alpha>0?1:0,s.alpha||0,base,modern?.05*s.alpha/(s.liner>0?s.liner:1):1e9);
+    u.uDamage.value.set(mode==='damage'&&s.alpha>0?1:0,s.alpha||0,base,modern?.1*s.spallDamage/(s.liner>0?s.liner:1):1e9);
     var pr=Math.max(1,pixelRatio||1),m=this.markMaterial.uniforms;m.uHatch.value.set(Math.max(2,this.hatch||5)*pr,pr); // dot pitch in CSS px, one CSS px per dot
     m.uDots.value=!!this.dots;m.uEdges.value=this.edges!==false;m.uOutline.value=!!this.outline;var tint=this.tint===undefined?.5:this.tint;m.uTint.value=tint;u.uTint.value=tint;m.uClassic.value=u.uClassic.value;
     // Stale: the camera has moved, or the layers were dropped (a new pose, a new size, a new model).

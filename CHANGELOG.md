@@ -14,7 +14,7 @@ script. Versions are listed newest first. Client: World of Tanks PC NA 2.4.0.1 #
 - Display: **Expected damage** — the armour is coloured by what one shot is worth, `chance × alpha +
   (1 − chance) × non-penetration damage`, as a share of alpha on the same palette; the panels, the reticle tile
   and the Hit line show HP. For AP/APCR/HEAT the picture equals the chance map. For modern HE the
-  non-penetration damage is a reconstruction (ratio law: spall damage × min(1, 0.05 × alpha / (plate × liner))),
+  non-penetration damage is a reconstruction (ratio law: spall damage × min(1, 0.1 × spall damage / (plate × liner)), checked against the 200 recorded shots of the Reddit study),
   not a confirmed server formula, and the tooltips say so; SPG (legacy) HE shows "splash not modelled".
 - The recorder saves the shell's damage fields (alpha, spall damage, mechanics, randomisation, radii) and the
   target's spall-liner factor; older records have no damage data and keep showing the chance.
