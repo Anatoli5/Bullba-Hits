@@ -13,7 +13,7 @@ try:
 except ImportError:
     import queue
 
-VERSION = '0.7.5'
+VERSION = '0.7.6'
 VIEWER_PATH = os.path.join('mods', 'configs', 'local.armor_inspector', 'Viewer.html')
 LOG = logging.getLogger('local.armor_inspector')
 PARTS = ('chassis', 'hull', 'turret', 'gun')
@@ -206,7 +206,7 @@ def vehicle_request(descr, source):
 class VehicleEvents(object):
     """Hangar and battle hooks that ask for a vehicle export.
 
-    Client names confirmed in the installed bytecode of 2.4.0.0:
+    Client names confirmed in the installed bytecode of 2.4.0.0 and again in 2.4.0.1 (identical):
     CurrentVehicle.g_currentVehicle is a _CurrentVehicle whose onChanged is an
     Event, isPresent() is 'self.item is not None' and item returns the gui Vehicle
     (whose descriptor is FittingItem._descriptor, a VehicleDescr);

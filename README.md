@@ -1,6 +1,6 @@
 # Bullba Hits
 
-Local hit recorder and collision-armour viewer for **World of Tanks PC NA 2.4.0.0 #945**.
+Local hit recorder and collision-armour viewer for **World of Tanks PC NA 2.4.0.1 #950**.
 
 The `.wotmod` recorder saves events inside the game. The viewer is a local HTML page with WebGL: no HTTP server, no service, no autostart and no mandatory network connection. Vehicle models are extracted on the user's computer from the installed client and are not part of the repository.
 

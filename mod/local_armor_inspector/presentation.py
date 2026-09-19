@@ -67,7 +67,7 @@ def _handle_web_command(command, ctx):
 def web_handlers():
     """The client's own page -> Python channel, registered for our window only.
 
-    Every link of the chain was read in the installed 2.4.0.0 bytecode/binaries:
+    Every link of the chain was read in the installed 2.4.0.0 bytecode/binaries (unchanged in 2.4.0.1):
       * cef_browser_process.exe registers the CEF message-router JS functions
         'jsHostQuery' / 'jsHostQueryCancel' (both strings sit next to
         browser_process\\cef_handler.cpp and "Failed to handle jsHostQuery

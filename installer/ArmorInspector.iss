@@ -49,7 +49,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Messages]
 WelcomeLabel1=Bullba Hits Setup
-WelcomeLabel2=The mod records hits; the saved history opens in an ordinary browser.%n%nSupports World of Tanks PC NA 2.4.0.0 #945.%nClose the game before installing.
+WelcomeLabel2=The mod records hits; the saved history opens in an ordinary browser.%n%nSupports World of Tanks PC NA 2.4.0.1 #950.%nClose the game before installing.
 SelectDirLabel3=Select the World of Tanks folder that contains version.xml and the res directory.
 SelectDirBrowseLabel=Game folder:
 FinishedLabelNoIcons=Installation complete. The mod starts recording hits once the game runs.%n%nThe viewer is Viewer.html in mods\configs\local.armor_inspector. After a battle press “Refresh” in the viewer.
@@ -260,9 +260,9 @@ begin
       Exit;
     end;
     VersionText := Trim(Doc.selectSingleNode('/version.xml/version').text);
-    if (VersionText <> 'v.2.4.0.0 #945') or
+    if (VersionText <> 'v.2.4.0.1 #950') or
        (Trim(Doc.selectSingleNode('/version.xml/meta/realm').text) <> 'NA') then begin
-      Result := 'This alpha build is for WoT PC NA 2.4.0.0 #945.' + #13#10 +
+      Result := 'This alpha build is for WoT PC NA 2.4.0.1 #950.' + #13#10 +
         'A different version or region was found in the selected folder.';
       Exit;
     end;
@@ -270,7 +270,7 @@ begin
       Result := 'Close World of Tanks before installing. The installer does not close the game itself.';
       Exit;
     end;
-    ModPath := AddBackslash(Folder) + 'mods\2.4.0.0\';
+    ModPath := AddBackslash(Folder) + 'mods\2.4.0.1\';
     if FindFirst(ModPath + 'local.armor_inspector*.wotmod', Find) then begin
       try
         repeat
@@ -326,12 +326,12 @@ begin
     'mods\configs\local.armor_inspector\Viewer.html' + NewLine + NewLine + MemoTasksInfo;
 end;
 
-procedure BackupLegacyMod(const Version: String);
+procedure BackupLegacyMod(const ModsFolder, Version: String);
 var OldPath, BackupPath, NewPath: String;
 begin
-  OldPath := ExpandConstant('{app}\mods\2.4.0.0\local.armor_inspector_') + Version + '.wotmod';
+  OldPath := ExpandConstant('{app}\mods\') + ModsFolder + '\local.armor_inspector_' + Version + '.wotmod';
   if not FileExists(OldPath) then Exit;
-  NewPath := ExpandConstant('{app}\mods\2.4.0.0\{#ModName}');
+  NewPath := ExpandConstant('{app}\mods\2.4.0.1\{#ModName}');
   if not IsKnownLegacyMod(OldPath) or not FileExists(NewPath) or
       (CheckOwnedFile(NewPath, '{#ModHash}') <> '') then
     RaiseException('Could not verify the update files. The previous version is kept.');
@@ -348,20 +348,28 @@ begin
     RaiseException('Could not move the previous mod version to the backup.');
 end;
 
-procedure BackupAllLegacyMods;
+procedure BackupLegacyModsIn(const ModsFolder: String);
 var ModPath, Name: String; Find: TFindRec;
 begin
-  ModPath := ExpandConstant('{app}\mods\2.4.0.0\');
+  ModPath := ExpandConstant('{app}\mods\') + ModsFolder + '\';
   if not FindFirst(ModPath + 'local.armor_inspector_*.wotmod', Find) then Exit;
   try
     repeat
       Name := Find.Name;
       if (CompareText(Name, '{#ModName}') <> 0) and IsKnownLegacyMod(ModPath + Name) then
-        BackupLegacyMod(Copy(Name, Length('local.armor_inspector_') + 1, Length(Name) - Length('local.armor_inspector_') - Length('.wotmod')));
+        BackupLegacyMod(ModsFolder, Copy(Name, Length('local.armor_inspector_') + 1, Length(Name) - Length('local.armor_inspector_') - Length('.wotmod')));
     until not FindNext(Find);
   finally
     FindClose(Find);
   end;
+end;
+
+// The current client folder first, then the previous client's folder (2.4.0.0): a build left there by the
+// 2.4.0.0 installer is ours and goes to the same backups, so the game folder keeps one recorder.
+procedure BackupAllLegacyMods;
+begin
+  BackupLegacyModsIn('2.4.0.1');
+  BackupLegacyModsIn('2.4.0.0');
 end;
 
 procedure BackupViewerFolder(const Source, Dest: String);
@@ -411,7 +419,7 @@ begin
       SuppressibleMsgBox('Close World of Tanks before removing the mod.', mbError, MB_OK, IDOK);
       Exit;
     end;
-    Error := CheckOwnedFile(ExpandConstant('{app}\mods\2.4.0.0\{#ModName}'), '{#ModHash}');
+    Error := CheckOwnedFile(ExpandConstant('{app}\mods\2.4.0.1\{#ModName}'), '{#ModHash}');
     if Error <> '' then begin
       SuppressibleMsgBox(Error, mbError, MB_OK, IDOK);
       Exit;
