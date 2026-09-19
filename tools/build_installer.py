@@ -64,7 +64,7 @@ def build(test=False,sign_command=None,require_signature=False):
             target.write_bytes(data)
             files.append((target,'mods/configs/local.armor_inspector/'+relative,True,False))
     files.extend((ROOT/source,'mods/configs/local.armor_inspector/'+dest,True,False) for source,dest in (
-        ('installer/armor-inspector.ico','web/icon.ico'),('README.md','README.md'),
+        ('installer/armor-inspector.ico','web/icon.ico'),('README.md','README.md'),('CHANGELOG.md','CHANGELOG.md'),
         ('THIRD_PARTY.md','THIRD_PARTY.md'),('licenses/InnoSetup.txt','licenses/InnoSetup.txt'),
         ('licenses/ModsList.txt','licenses/ModsList.txt'),('licenses/OpenWGGameface.txt','licenses/OpenWGGameface.txt')))
     seed=generated/'empty-index.js'

@@ -6,7 +6,7 @@ The `.wotmod` recorder saves events inside the game. The viewer is a local HTML 
 
 ## Download
 
-Installers are published on the [Releases](https://github.com/Anatoli5/Bullba-Hits/releases) page. Every release ships `BullbaHits-<version>-Setup.exe`, the bare `local.armor_inspector_<version>.wotmod` for manual installation and a ZIP of the serverless viewer, with SHA-256 for each file.
+Installers are published on the [Releases](https://github.com/Anatoli5/Bullba-Hits/releases) page. Every release ships two files: `BullbaHits-<version>-Setup.exe`, the installer, and `BullbaHits-<version>-Sources-and-manual-install.zip` with the `.wotmod` files for a manual install, the mod sources, README and licences. The release notes carry the SHA-256 of each file and the version's section of [CHANGELOG.md](CHANGELOG.md).
 
 The installer is not code-signed. Windows SmartScreen or Smart App Control may warn about it or block the first run; see the signing section below.
 

@@ -16,7 +16,7 @@ def package():
     name='BullbaHits-'+VERSION+'-Sources-and-manual-install'
     dest=ROOT/'dist'/name
     dest.mkdir(parents=True,exist_ok=True)
-    sources=[ROOT/n for n in ('README.md','THIRD_PARTY.md')]
+    sources=[ROOT/n for n in ('README.md','CHANGELOG.md','THIRD_PARTY.md')]
     sources.extend((ROOT/'licenses').glob('*'))
     sources.extend((ROOT/'mod').rglob('*.py'))
     sources.append(ROOT/'dist'/('local.armor_inspector_'+VERSION+'.wotmod'))
