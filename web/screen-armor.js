@@ -7,6 +7,20 @@
 (function(root){
   'use strict';
   var COUNT=8,T=root.THREE;
+  /* Soft lighting (optional, off by default). It is a display feature and nothing else: a second, smoothed
+     VISUAL normal per vertex record, used by one extra pass and by no part of the ballistics. The physical
+     normal below stays exactly what it is - one flat vector per triangle, the plane of the face - because the
+     angle of incidence, the normalization, the overmatch, the ricochet, the bounced leg and the BVH all read
+     it. Averaging that one would change the law; averaging a separate one only changes the picture.
+     SMOOTH_ANGLE is the crease angle: two neighbouring faces of one material share a corner normal only when
+     their planes are closer than this. 35 deg is the starting figure of the design note - a visual setting to
+     tune, not a rule of the game. It also rejects the two sides of a thin sheet by itself (their planes are
+     ~180 deg apart). LIGHT_MIN..LIGHT_MAX is the brightness multiplier the composite applies: deliberately
+     narrow, so a shaded non-penetration can never read as a penetration.
+     WELD is the coordinate tolerance, in metres, at which two records of one corner count as the same corner.
+     VISUAL_MAX caps the builder: past it the visual normal stays the physical one and the model simply looks
+     the way it does today, instead of the page stalling on a model nobody has yet seen. */
+  var SMOOTH_ANGLE=35,SMOOTH_COS=Math.cos(SMOOTH_ANGLE*Math.PI/180),LIGHT_MIN=.8,LIGHT_MAX=1,WELD=1e-4,VISUAL_MAX=1500000;
   var vertex=`precision highp float;
 in vec3 position; in vec3 normal; in float materialId;
 uniform mat4 projectionMatrix; uniform mat4 modelViewMatrix;
@@ -37,14 +51,65 @@ void main(){
  vec3 face=normalize(vNormal);
  outputLayer=vec4(d,vMaterial+abs(dot(ray,face))*.5,octEncode(face));
 }`;
+  /* The lighting pass, drawn only while Soft lighting is on. One draw of the main armour with the smoothed
+     visual normal into a one-channel map of the brightness the composite multiplies the armour colour by.
+     It takes no layer, no BVH and no material law - only the nearest visible main-armour surface and one
+     light - and it writes nothing the ballistics ever reads back. */
+  var lightVertex=`precision highp float;
+in vec3 position; in vec3 normal; in vec3 visualNormal; in float materialId;
+uniform mat4 projectionMatrix; uniform mat4 modelViewMatrix;
+out vec3 vPosition; out vec3 vVisual; flat out vec3 vFace; flat out float vMaterial;
+// The peel geometry is already in world coordinates and the mesh carries no transform of its own, so there is
+// no normal matrix to build here: pose() has already turned both normals with the part, and they reach this
+// stage in the very frame the CPU computes the light direction in. vVisual is interpolated (that is the whole
+// point); vFace stays flat, exactly as it is in the peel.
+void main(){vPosition=position;vVisual=visualNormal;vFace=normal;vMaterial=materialId;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}`;
+  var lightFragment=`precision highp float; precision highp int;
+uniform highp sampler2D uMaterials; uniform vec3 uOrigin; uniform vec3 uLight;
+in vec3 vPosition; in vec3 vVisual; flat in vec3 vFace; flat in float vMaterial;
+out vec4 outputLight;
+void main(){
+ vec4 a=texelFetch(uMaterials,ivec2(0,int(floor(vMaterial))-1),0);
+ // Main armour only, by the material semantics the composite already uses (vehicleDamageFactor > 0), never by
+ // part names: screens, tracks and devices keep the colour and the translucency they have today. A 0 mm device
+ // (armour recorded as null, -1 in the table) is walked straight through by contact() and must not paint a
+ // patch of light in front of the plate behind it; an unknown thickness (-2) is armour and stays. The discard
+ // also drops the depth write, so a screen in front never shades the armour under it - the light on that
+ // pixel belongs to the armour, which is what the composite colours there.
+ if(a.y<=.00001||(a.x<0.0&&a.x>-1.5))discard;
+ // Which way the plate faces is decided by the PHYSICAL normal against the view ray - the peel's own test -
+ // because the winding of a collision model is not dependable; the smoothed normal is turned with it.
+ vec3 ray=normalize(vPosition-uOrigin);
+ // length() before the divide: the builder leaves a degenerate face the physical normal, which ballistics.js
+ // reports as (0,0,0), and normalize() of that is a NaN this map must never store. Such a face has no area
+ // and rasterizes nothing, but the fallback - a surface turned straight at the camera - keeps the shader total.
+ float span=length(vVisual);
+ vec3 n=span>1e-6?vVisual/span*(dot(vFace,ray)>0.0?-1.0:1.0):-ray;
+ // A wrapped (half-Lambert) term rather than max(0, N.L): the light sits beside the camera, so a hard
+ // terminator would only show up as a flat band along the silhouette, while the wrapped one grades the whole
+ // visible surface. What is stored is the 0..1 shade; the composite maps it into LIGHT_MIN..LIGHT_MAX, so all
+ // 256 levels of the byte fall inside that narrow range and the gradient does not band.
+ outputLight=vec4(clamp(.5+.5*dot(n,uLight),0.0,1.0),0.0,0.0,1.0);
+}`;
   // Both full-screen passes draw with an identity camera; three needs an object, not a matrix.
   var quadCamera=null;function quadView(){return quadCamera||(quadCamera=new T.Camera());}
   var quadVertex=`precision highp float; in vec3 position; out vec2 vUV;
 void main(){vUV=position.xy*.5+.5;gl_Position=vec4(position.xy,0.0,1.0);}`;
   var declarations=Array.from({length:COUNT+1},function(_,i){return 'uniform highp sampler2D uLayer'+i+';';}).join('\n');
   var fetches=Array.from({length:COUNT+1},function(_,i){return 'if(index=='+i+')return texture(uLayer'+i+',uv);';}).join('\n');
-  // The composite carries the bounced leg only when three-mesh-bvh is on the page and the units allow it.
-  function compositeSource(bounce){
+  // The composite carries the bounced leg only when three-mesh-bvh is on the page and the units allow it, and
+  // the light lookup only while Soft lighting is on - with the switch off the program is the one it was before
+  // the feature existed, down to the texture unit it does not ask for.
+  function compositeSource(bounce,lit){
+    var lightUniforms=lit?'uniform highp sampler2D uLightMap; uniform vec2 uLightRange;\n':'';
+    // The armour colour only, and before the screen grey and before the mark pass: the screens keep their own
+    // tint and translucency, the seams, the dots and the zone outline are drawn over it in their own colours,
+    // and the background, the wireframe and the page's own overlays are never touched. The map is cleared to
+    // 1.0 - the top of the range, a neutral multiplier - so wherever the light pass drew nothing (outside the
+    // silhouette, a screen with no armour behind it) the colour comes through unchanged. The pixel's own
+    // alpha, which carries the front material id and the zone flag, is not touched either.
+    var lightApply=lit?`
+ color*=uLightRange.x+(uLightRange.y-uLightRange.x)*texture(uLightMap,vUV).r;`:'';
     var lib=root.MeshBVHLib;
     var traversal=bounce?lib.shaderStructs+lib.shaderIntersectFunction+'\nuniform BVH uBVH; uniform highp sampler2D uFaceMaterial;\n':'';
     var bounceLeg=bounce?`
@@ -88,7 +153,7 @@ uniform vec3 uOrigin; uniform vec3 uAnchor; uniform vec3 uForward;
 uniform mat4 uCameraWorld; uniform mat4 uInvProjection; uniform float uRicochetLoss; uniform int uBounce; uniform float uTint;
 // Expected damage instead of the chance: (on 0/1, alpha, non-penetration base HP, spall penetration mm).
 uniform vec4 uDamage; // ASCII only in here: this text is compiled as GLSL source
-${traversal}
+${lightUniforms}${traversal}
 in vec2 vUV; out vec4 outputColor;
 const float EPS=.00001;
 vec4 layer(int index,vec2 uv){${fetches}return vec4(0.0);}
@@ -171,7 +236,7 @@ void main(){
  if(result<-1.5){outputColor=screen?vec4(.45,.50,.55,1.0-pow(1.0-uOpacity*.6,float(max(1,screens)))):vec4(.21,.27,.33,1.0);outputColor.a+=idCode;return;}
  vec3 color=result<0.0?vec3(.34,.42,.49):palette(result);
  // Any ricochet history - a plain ricochet, a second ricochet, a fly-past after the bounce - takes the ricochet colour.
- if(bounced)color=ricochetColor();${bounceMain}
+ if(bounced)color=ricochetColor();${bounceMain}${lightApply}
  if(screen)color=mix(color,tint,share);
  outputColor=vec4(color,1.0);
  // The zone flag, encoded in alpha: >= 2 means "a bounced shell penetrates here". The mark pass takes it back
@@ -235,6 +300,12 @@ void main(){
     this.viewportSave=new T.Vector4();this.scissorSave=new T.Vector4();this.colorSave=new T.Color();this.bufferSize=new T.Vector2();this.cameraCache=new Float64Array(32);
     // The peel geometry as update() built it, so a turret drag can pose it in place (Viewer.previewPose).
     this.poseRuns=null;this.basePosition=null;this.baseNormal=null;
+    // Soft lighting. `lighting` is what was asked for, `lit` what actually runs (they differ only when the
+    // driver declines, and lightingReason then says why); baseVisual is the smoothed normal in the same part
+    // space as baseNormal, built lazily and only while the light is on. Everything here is null or false
+    // until setLighting() turns it on, so the default costs no memory, no pass and no shader branch.
+    this.lighting=false;this.lit=false;this.lightFailed=false;this.lightingReason='';this.baseVisual=null;
+    this.lightTarget=null;this.lightMaterial=null;this.lightMesh=null;this.lightScene=null;
     // The bounced leg needs three-mesh-bvh and five more texture units (four for the BVH, one for the
     // material per vertex). Without them the map keeps working exactly as before, with a reason to show.
     var lib=root.MeshBVHLib;this.bvh=null;this.bvhStruct=null;this.faceMaterial=null;this.bounce=false;this.bounceReason='library not loaded';
@@ -246,6 +317,10 @@ void main(){
     this.mesh=new T.Mesh(new T.BufferGeometry(),this.peelMaterial);this.mesh.frustumCulled=false;this.captureScene.add(this.mesh);
     // One depth attachment serves every layer: peeling needs it only within a pass.
     this.blank=new T.DataTexture(new Float32Array(4),1,1,T.RGBAFormat,T.FloatType);this.blank.needsUpdate=true;
+    // A 1x1 white texture the lit composite falls back to: its red channel is 1.0, the top of the range, so
+    // binding it multiplies the armour colour by exactly 1 and the picture is the unlit one. That is what the
+    // lit program reads before the first pass has run and after a light pass the driver refused.
+    this.neutral=new T.DataTexture(new Uint8Array([255,255,255,255]),1,1,T.RGBAFormat,T.UnsignedByteType);this.neutral.needsUpdate=true;
     this.depth=new T.DepthTexture(1,1);this.depth.format=T.DepthFormat;this.depth.type=T.UnsignedIntType;
     for(var i=0;i<=COUNT;i++){var target=new T.WebGLRenderTarget(1,1,{type:T.FloatType,format:T.RGBAFormat,minFilter:T.NearestFilter,magFilter:T.NearestFilter,depthBuffer:true,stencilBuffer:false,depthTexture:this.depth});target.texture.generateMipmaps=false;this.targets.push(target);if(i<COUNT)this.peelMaterial.uniforms['uPeel'+i]={value:this.blank};}
     try{this.checkTargets();this.compose();this.update(engine);this.compile();}
@@ -272,9 +347,13 @@ void main(){
   // A context restore is not repaired in place any more: the constructor asked the driver once for float colour
   // buffers, texture units and a traversal it would accept, and a restored context may answer differently. The
   // viewer disposes the instance and builds a fresh one (Viewer.restoreContext).
-  // Both full-screen quads and their programs. Built once, or twice if the bounced leg is dropped.
+  // Both full-screen quads and their programs. Built once, or again if the bounced leg is dropped or the
+  // Soft lighting switch is moved - the composite is compiled with or without the light lookup, so the quad
+  // is replaced while it already hangs in the viewer's scene. Its parent and its visibility are therefore
+  // carried over to the new quad: losing them would take the whole map off the screen.
   Surface.prototype.compose=function(){
-    if(this.quad){if(this.quad.parent)this.quad.parent.remove(this.quad);this.quad.geometry.dispose();this.markMaterial.dispose();}
+    var parent=null,visible=false;
+    if(this.quad){parent=this.quad.parent;visible=this.quad.visible;if(parent)parent.remove(this.quad);this.quad.geometry.dispose();this.markMaterial.dispose();}
     if(this.compositeQuad){this.compositeScene.remove(this.compositeQuad);this.compositeQuad.geometry.dispose();this.material.dispose();}
     var uniforms={uMaterials:{value:this.materialTexture},uPen:{value:new T.Vector4()},uShell:{value:new T.Vector4()},uFlags:{value:new Int32Array(4)},uClassic:{value:false},uOpacity:{value:.35},
       uOrigin:{value:new T.Vector3()},uAnchor:{value:new T.Vector3()},uForward:{value:new T.Vector3()},
@@ -282,13 +361,15 @@ void main(){
     for(var i=0;i<=COUNT;i++)uniforms['uLayer'+i]={value:this.targets[i].texture};
     if(this.bounce){var lib=root.MeshBVHLib;if(!this.bvhStruct){this.bvhStruct=new lib.MeshBVHUniformStruct();this.faceMaterial=new lib.FloatVertexAttributeTexture();}
       uniforms.uBVH={value:this.bvhStruct};uniforms.uFaceMaterial={value:this.faceMaterial};}
+    if(this.lit){uniforms.uLightMap={value:this.lightTarget?this.lightTarget.texture:this.neutral};uniforms.uLightRange={value:new T.Vector2(LIGHT_MIN,LIGHT_MAX)};}
     // Pass one draws into this.result with blending off, so it is neither transparent nor depth-tested.
-    this.material=new T.RawShaderMaterial({glslVersion:T.GLSL3,vertexShader:quadVertex,fragmentShader:compositeSource(this.bounce),uniforms:uniforms,blending:T.NoBlending,depthWrite:false,depthTest:false,toneMapped:false});
+    this.material=new T.RawShaderMaterial({glslVersion:T.GLSL3,vertexShader:quadVertex,fragmentShader:compositeSource(this.bounce,this.lit),uniforms:uniforms,blending:T.NoBlending,depthWrite:false,depthTest:false,toneMapped:false});
     if(!this.compositeScene)this.compositeScene=new T.Scene();
     this.compositeQuad=new T.Mesh(new T.PlaneGeometry(2,2),this.material);this.compositeQuad.frustumCulled=false;this.compositeScene.add(this.compositeQuad);
     // Pass two is the quad the viewer keeps in its scene: the blending, depth state and order of the old composite.
     this.markMaterial=new T.RawShaderMaterial({glslVersion:T.GLSL3,vertexShader:quadVertex,fragmentShader:markSource(),uniforms:{uResult:{value:null},uClassic:{value:false},uHatch:{value:new T.Vector2(5,1)},uDots:{value:false},uEdges:{value:true},uOutline:{value:false},uTint:{value:.5}},transparent:true,depthWrite:false,depthTest:false,toneMapped:false});
     this.quad=new T.Mesh(new T.PlaneGeometry(2,2),this.markMaterial);this.quad.frustumCulled=false;this.quad.renderOrder=0;
+    this.quad.visible=visible;if(parent)parent.add(this.quad);
   };
   // Pass one on its own: the whole composition into a float target the size of the drawing buffer, so the mark
   // pass can look at a pixel's neighbours. Same state discipline as the peel loop - the renderer is left as found.
@@ -315,6 +396,9 @@ void main(){
     this.quad.visible=true;scene.add(this.quad);
     var bound=this.markMaterial.uniforms.uResult.value;if(!bound)this.markMaterial.uniforms.uResult.value=this.blank;
     try{renderer.compile(this.captureScene,this.captureCamera);renderer.compile(this.compositeScene,quadView());renderer.compile(scene,quadView());
+      // The lighting program is linked here too, so a driver that will not take it says so while setLighting
+      // can still fall back, instead of half-way through a frame.
+      if(this.lit&&this.lightScene)renderer.compile(this.lightScene,this.captureCamera);
       renderer.setRenderTarget(probe);renderer.render(this.compositeScene,quadView());renderer.render(scene,quadView());}
     finally{renderer.setRenderTarget(target);renderer.debug.onShaderError=previous;scene.remove(this.quad);if(parent)parent.add(this.quad);this.quad.visible=visible;if(!bound)this.markMaterial.uniforms.uResult.value=null;probe.dispose();}
     if(error)throw new Error(error);
@@ -337,7 +421,99 @@ void main(){
     var geometry=new T.BufferGeometry();geometry.setAttribute('position',new T.Float32BufferAttribute(position,3));geometry.setAttribute('normal',new T.Float32BufferAttribute(normal,3));geometry.setAttribute('materialId',new T.Float32BufferAttribute(ids,1));this.mesh.geometry.dispose();this.mesh.geometry=geometry;
     if(this.materialTexture)this.materialTexture.dispose();this.materialTexture=new T.DataTexture(new Float32Array(mats.length?mats:8),2,Math.max(1,mats.length/8),T.RGBAFormat,T.FloatType);this.materialTexture.minFilter=this.materialTexture.magFilter=T.NearestFilter;this.materialTexture.generateMipmaps=false;this.materialTexture.needsUpdate=true;this.material.uniforms.uMaterials.value=this.materialTexture;this.peelMaterial.uniforms.uMaterials.value=this.materialTexture;
     geometry.computeBoundingSphere();geometry.computeBoundingBox();this.radius=geometry.boundingSphere?geometry.boundingSphere.radius:10;this.key=null;
+    // The smoothed visual attribute belongs to this geometry and goes with it. It is rebuilt here, where the
+    // vertices are the ones the last full pose left, and only while the light is on; `normal` above is
+    // untouched and stays the one physical normal per triangle that the whole ballistic path reads.
+    this.baseVisual=null;if(this.lit)this.ensureVisual();
     if(this.bounce){try{this.updateBounds(geometry);}catch(e){this.bounce=false;this.bounceReason='bvh: '+(e.message||e);console.warn('Bounced leg disabled:',this.bounceReason);}}
+  };
+  /* The visual normal, and nothing but the visual normal. Faces are joined by a shared EDGE - two shared
+     corners - never by a single shared coordinate, and only inside one material id. That id is `part:name`
+     in update(), so an edge can never join two collision parts, two armour groups, a screen to the hull or
+     two coincident surfaces of different parts; the corners are welded per material id, which is why the
+     edge key below needs no part or material of its own. Within one material a crease keeps its edge: two
+     faces are smoothed together only when the angle between their physical planes is below SMOOTH_ANGLE,
+     which also leaves the two sides of a thin sheet apart (~180 deg) and keeps every real plate joint sharp.
+     Lookup is bounded - one pass over the corners, one over the edges, one over the corners again - and
+     never compares a triangle with every other. Corner normals are weighted by the angle at the corner, so a
+     long sliver cannot outvote a fat triangle at the corner they share, and a sum that cancels to nothing
+     falls back to the face's own normal, so the result can never be NaN.
+     position: 9 floats per triangle. normal: the same physical normal in all three corners of a face.
+     ids: one material id per vertex record. Returns one Float32Array of the same length as position. */
+  Surface.visualNormals=function(position,normal,ids){
+    var faces=Math.floor(position.length/9),out=new Float32Array(position.length),i,f,c;
+    for(i=0;i<position.length;i++)out[i]=normal[i]; // the safe answer everywhere until a group overwrites it
+    if(!faces||faces*3>VISUAL_MAX)return out;
+    // 1. Weld the corners, per material id, on a quantised coordinate. Two records that quantise either side
+    // of a cell boundary simply stay apart, and that edge keeps the faceting it has today - a cosmetic miss,
+    // never a change of geometry or of a number.
+    var corners=faces*3,vertexOf=new Int32Array(corners),welded=new Map(),count=0;
+    for(i=0;i<corners;i++){
+      var key=ids[i]+':'+Math.round(position[i*3]/WELD)+','+Math.round(position[i*3+1]/WELD)+','+Math.round(position[i*3+2]/WELD);
+      var found=welded.get(key);if(found===undefined){found=count++;welded.set(key,found);}
+      vertexOf[i]=found;
+    }
+    welded.clear();
+    // 2. Smoothing groups: faces joined across every edge that is not a crease, held in a union-find over
+    // face indices. A non-manifold edge (three or more faces, as coincident plates produce) keeps the first
+    // face it saw and tests the others against that one: still one comparison per edge, never all pairs.
+    var parent=new Int32Array(faces);for(f=0;f<faces;f++)parent[f]=f;
+    var root=function(x){while(parent[x]!==x){parent[x]=parent[parent[x]];x=parent[x];}return x;};
+    var edges=new Map();
+    for(f=0;f<faces;f++){
+      for(c=0;c<3;c++){
+        var va=vertexOf[f*3+c],vb=vertexOf[f*3+(c+1)%3];
+        if(va===vb)continue; // a degenerate edge joins nothing
+        var other=edges.get(va<vb?va*corners+vb:vb*corners+va);
+        if(other===undefined){edges.set(va<vb?va*corners+vb:vb*corners+va,f);continue;}
+        var n=f*9,o=other*9;
+        if(normal[n]*normal[o]+normal[n+1]*normal[o+1]+normal[n+2]*normal[o+2]>=SMOOTH_COS){
+          var ra=root(f),rb=root(other);if(ra!==rb)parent[rb]=ra;
+        }
+      }
+    }
+    edges.clear();
+    // 3. Sum the face normals per (welded corner, smoothing group). The group is in the key, so two groups
+    // that meet at one position keep their own normals and the crease between them stays sharp.
+    var slotOf=new Map(),sx=[],sy=[],sz=[];
+    for(f=0;f<faces;f++){
+      var group=root(f),base=f*9;
+      for(c=0;c<3;c++){
+        var k=vertexOf[f*3+c]*faces+group,slot=slotOf.get(k);
+        if(slot===undefined){slot=sx.length;slotOf.set(k,slot);sx.push(0);sy.push(0);sz.push(0);}
+        var w=Surface.cornerAngle(position,base,c);
+        sx[slot]+=normal[base]*w;sy[slot]+=normal[base+1]*w;sz[slot]+=normal[base+2]*w;
+      }
+    }
+    // 4. Normalize into the output, leaving the physical normal wherever the sum came out degenerate.
+    for(f=0;f<faces;f++){
+      var g=root(f),b=f*9;
+      for(c=0;c<3;c++){
+        var s=slotOf.get(vertexOf[f*3+c]*faces+g),x=sx[s],y=sy[s],z=sz[s],len=Math.sqrt(x*x+y*y+z*z);
+        if(len>1e-6){var at=b+c*3;out[at]=x/len;out[at+1]=y/len;out[at+2]=z/len;}
+      }
+    }
+    return out;
+  };
+  // The angle at corner c of the face that starts at `base`, used as the weight of that face's normal there.
+  Surface.cornerAngle=function(p,base,c){
+    var a=base+c*3,b=base+(c+1)%3*3,d=base+(c+2)%3*3;
+    var ux=p[b]-p[a],uy=p[b+1]-p[a+1],uz=p[b+2]-p[a+2],vx=p[d]-p[a],vy=p[d+1]-p[a+1],vz=p[d+2]-p[a+2];
+    var lu=Math.sqrt(ux*ux+uy*uy+uz*uz),lv=Math.sqrt(vx*vx+vy*vy+vz*vz);
+    if(!(lu>0&&lv>0))return 0;
+    var cos=(ux*vx+uy*vy+uz*vz)/(lu*lv);
+    return Math.acos(cos<-1?-1:cos>1?1:cos);
+  };
+  // Built once per geometry, in the part space update() left it in, and only while the light is on. The
+  // attribute starts as a copy of the base: pose() writes the turned direction into the attribute and leaves
+  // the base where it is, exactly as it does for the physical normal.
+  Surface.prototype.ensureVisual=function(){
+    if(this.baseVisual)return this.baseVisual;
+    var geometry=this.mesh&&this.mesh.geometry,materialId=geometry&&geometry.getAttribute('materialId');
+    if(!geometry||!materialId||!this.basePosition||!this.baseNormal)return null;
+    this.baseVisual=Surface.visualNormals(this.basePosition,this.baseNormal,materialId.array);
+    geometry.setAttribute('visualNormal',new T.Float32BufferAttribute(new Float32Array(this.baseVisual),3));
+    return this.baseVisual;
   };
   // A display-only pose: the peeled geometry is re-transformed from the base update() kept, by one rigid matrix
   // per moved part, and the layers are declared stale so the next render() peels the new pose. The material
@@ -348,6 +524,11 @@ void main(){
     if(!this.poseRuns||!this.mesh||!this.mesh.geometry)return false;
     var geometry=this.mesh.geometry,position=geometry.getAttribute('position'),normals=geometry.getAttribute('normal');
     if(!position||!normals||!this.basePosition||position.array.length!==this.basePosition.length)return false;
+    // The visual normal rides along when it exists (Soft lighting on): the delta is a rotation conjugated by
+    // the z mirror, so its linear part is orthonormal and carries a direction correctly - there is no scale
+    // here and so no normal matrix to build, which is the same reason the physical normal above needs none.
+    var visual=geometry.getAttribute('visualNormal'),baseVisual=this.baseVisual;
+    var outVisual=visual&&baseVisual&&visual.array.length===baseVisual.length?visual.array:null;
     var out=position.array,outNormal=normals.array,base=this.basePosition,baseNormal=this.baseNormal,touched=false;
     this.poseRuns.forEach(function(run){
       var matrix=delta[run.part];if(!matrix)return;var e=matrix.elements,i;
@@ -356,11 +537,13 @@ void main(){
         out[i]=e[0]*x+e[4]*y+e[8]*z+e[12];out[i+1]=e[1]*x+e[5]*y+e[9]*z+e[13];out[i+2]=e[2]*x+e[6]*y+e[10]*z+e[14];
         var nx=baseNormal[i],ny=baseNormal[i+1],nz=baseNormal[i+2];
         outNormal[i]=e[0]*nx+e[4]*ny+e[8]*nz;outNormal[i+1]=e[1]*nx+e[5]*ny+e[9]*nz;outNormal[i+2]=e[2]*nx+e[6]*ny+e[10]*nz;
+        if(outVisual){var vx=baseVisual[i],vy=baseVisual[i+1],vz=baseVisual[i+2];
+          outVisual[i]=e[0]*vx+e[4]*vy+e[8]*vz;outVisual[i+1]=e[1]*vx+e[5]*vy+e[9]*vz;outVisual[i+2]=e[2]*vx+e[6]*vy+e[10]*vz;}
       }
       touched=true;
     });
     if(!touched)return false;
-    position.needsUpdate=true;normals.needsUpdate=true;this.key=null;
+    position.needsUpdate=true;normals.needsUpdate=true;if(outVisual)visual.needsUpdate=true;this.key=null;
     return true;
   };
   // A GPU BVH over the same peel geometry. It gets its own index so the peel keeps its draw order;
@@ -372,12 +555,117 @@ void main(){
     this.bvhStruct.updateFrom(this.bvh);
     this.faceMaterial.updateFrom(geometry.getAttribute('materialId'));
   };
+  /* The Soft lighting switch. Off - the default - the composite is compiled without the light lookup, no
+     visual normal is built, no buffer is allocated and no pass runs: the picture is the one from before this
+     feature, down to the texture unit the program does not ask for. On, the composite is recompiled with the
+     lookup and the next render peels the light map together with the layers. Returns the effective state,
+     which differs from the request only when the driver declines; lightingReason then says why. */
+  Surface.prototype.setLighting=function(enabled){
+    var want=!!enabled;this.lighting=want;
+    var reason=want?this.lightingBlocked():'';
+    var lit=want&&!reason;
+    this.lightingReason=reason;
+    if(lit===this.lit){if(!lit)this.releaseLight();return this.lit;}
+    this.lit=lit;this.lightFailed=false;
+    if(lit){this.buildLight();this.ensureVisual();}
+    try{this.compose();this.compile();}
+    catch(e){
+      // A driver that will not take the lit composite must not cost the map: back to the plain program, the
+      // same fallback the constructor makes for the bounced leg.
+      this.lit=false;this.lightingReason=String(e.message||e).replace(/\s+/g,' ').slice(0,90);
+      console.warn('Soft lighting disabled:',this.lightingReason);
+      this.compose();this.compile();
+    }
+    if(!this.lit)this.releaseLight();
+    this.key=null; // the light map is peeled with the layers, so the next render redoes both
+    return this.lit;
+  };
+  // One more sampler in the composite than the map needs on its own. WebGL 2 guarantees sixteen image units,
+  // so this only ever fires on a driver that already reports fewer than the peel itself asks for - and then
+  // the cosmetic light is what gives way, never the bounced leg.
+  Surface.prototype.lightingBlocked=function(){
+    var units=this.renderer.capabilities.maxTextures,need=COUNT+(this.bounce?8:3);
+    return units<need?'only '+units+' texture units':'';
+  };
+  // Off again: the map, the attribute and the CPU copy go, which is where the memory actually is. The
+  // material and its one-mesh scene are kept - a program and three uniforms - so a switch back is a recompile
+  // of the composite and nothing else.
+  Surface.prototype.releaseLight=function(){
+    if(this.lightTarget){this.lightTarget.dispose();this.lightTarget=null;}
+    this.baseVisual=null;
+    var geometry=this.mesh&&this.mesh.geometry;
+    if(geometry&&geometry.getAttribute('visualNormal'))geometry.deleteAttribute('visualNormal');
+  };
+  Surface.prototype.buildLight=function(){
+    if(this.lightMaterial)return;
+    this.lightMaterial=new T.RawShaderMaterial({glslVersion:T.GLSL3,vertexShader:lightVertex,fragmentShader:lightFragment,side:T.DoubleSide,blending:T.NoBlending,toneMapped:false,
+      uniforms:{uMaterials:{value:this.materialTexture},uOrigin:{value:new T.Vector3()},uLight:{value:new T.Vector3(0,1,0)}}});
+    this.lightMesh=new T.Mesh(this.mesh.geometry,this.lightMaterial);this.lightMesh.frustumCulled=false;
+    this.lightScene=new T.Scene();this.lightScene.add(this.lightMesh);
+  };
+  // Its own colour buffer and its own depth: the peel's depth texture is shared by all nine layers and is
+  // never written here. One channel is the cheap form and every WebGL 2 context must accept R8 as a colour
+  // attachment, but the pass checks rather than assumes and falls back to RGBA8; the composite reads .r
+  // either way, so the picture is identical.
+  Surface.prototype.lightBuffer=function(w,h,format){
+    var target=new T.WebGLRenderTarget(w,h,{type:T.UnsignedByteType,format:format,minFilter:T.NearestFilter,magFilter:T.NearestFilter,depthBuffer:true,stencilBuffer:false});
+    target.texture.generateMipmaps=false;return target;
+  };
+  /* The extra pass: the same camera, the same pose and the same texel grid as the layers, so the composite
+     reads the light of the very texel it reads the layer of - nearest filtering on both, no halo at the
+     silhouette. Depth-tested among the main armour alone, which makes the lit surface the nearest main-armour
+     surface: the same one the layer walk paints, and the one under a screen when a screen is in front.
+     Drawn only when the layers are stale, i.e. never per frame while the camera stands still, and nothing is
+     ever read back to the CPU. */
+  Surface.prototype.lightPass=function(camera){
+    if(this.lightFailed)return false;
+    var renderer=this.renderer,w=this.width,h=this.height;
+    this.buildLight();
+    if(!this.ensureVisual())return false;
+    this.lightMesh.geometry=this.mesh.geometry; // update() may have replaced it since the last pass
+    var u=this.lightMaterial.uniforms;u.uMaterials.value=this.materialTexture;u.uOrigin.value.copy(camera.position);
+    // One diffuse light a little above and beside the camera: the +z, +y and +x columns of the camera's world
+    // matrix, so the shading turns with the view and nothing the user is looking at is ever left unlit.
+    // Direction only - no position, no attenuation, no specular, no shadow - and the ambient floor is the
+    // bottom of the range the composite maps the shade into.
+    var m=camera.matrixWorld.elements;
+    u.uLight.value.set(m[8]+.30*m[0]+.45*m[4],m[9]+.30*m[1]+.45*m[5],m[10]+.30*m[2]+.45*m[6]).normalize();
+    var fresh=false;
+    if(this.lightTarget&&(this.lightTarget.width!==w||this.lightTarget.height!==h)){this.lightTarget.setSize(w,h);fresh=true;}
+    if(!this.lightTarget){this.lightTarget=this.lightBuffer(w,h,T.RedFormat);fresh=true;}
+    var target=renderer.getRenderTarget(),auto=renderer.autoClear,clearColor=renderer.getClearColor(this.colorSave),clearAlpha=renderer.getClearAlpha(),viewport=renderer.getViewport(this.viewportSave),scissor=renderer.getScissor(this.scissorSave),scissorTest=renderer.getScissorTest();
+    try{
+      renderer.autoClear=false;renderer.setScissorTest(false);
+      // Cleared to white: an untouched pixel reads 1.0, the top of the range, which is the neutral multiplier.
+      renderer.setClearColor(0xffffff,1);renderer.setRenderTarget(this.lightTarget);
+      // Asked once per allocation, exactly as the layers and the composition buffer ask it, never per frame.
+      var gl=renderer.getContext();
+      if(fresh&&gl.checkFramebufferStatus(gl.FRAMEBUFFER)!==gl.FRAMEBUFFER_COMPLETE){
+        if(this.lightTarget.texture.format===T.RedFormat){this.lightTarget.dispose();this.lightTarget=this.lightBuffer(w,h,T.RGBAFormat);renderer.setRenderTarget(this.lightTarget);}
+        if(gl.checkFramebufferStatus(gl.FRAMEBUFFER)!==gl.FRAMEBUFFER_COMPLETE)throw new Error('light buffer '+w+'×'+h+' unavailable');
+      }
+      renderer.clear(true,true,false);renderer.render(this.lightScene,this.captureCamera);
+    }
+    catch(e){
+      // A refused pass leaves the lit composite in place and binds the neutral texture instead, so the map is
+      // simply the unlit one for the rest of this instance's life and the reason reaches the status line.
+      this.lightFailed=true;this.lightingReason=String(e.message||e).replace(/\s+/g,' ').slice(0,90);
+      console.warn('Soft lighting disabled:',this.lightingReason);this.releaseLight();
+    }
+    finally{renderer.setRenderTarget(target);renderer.setViewport(viewport);renderer.setScissor(scissor);renderer.setScissorTest(scissorTest);renderer.setClearColor(clearColor,clearAlpha);renderer.autoClear=auto;}
+    return !this.lightFailed;
+  };
   // Layer resolution: the window itself unless the quality setting or a memory budget says otherwise.
   Surface.prototype.size=function(quality,width,height,pixelRatio){
     var pr=Math.max(1,pixelRatio||1),w=Math.max(1,Math.round(width*pr)),h=Math.max(1,Math.round(height*pr)),longest=Math.max(w,h);
     var limit=quality==='low'?Math.max(512,Math.round(longest/2)):quality==='medium'?1200:quality==='high'?Infinity:1600;
     var caps=this.renderer.capabilities,scale=Math.min(1,limit/longest,caps.maxTextureSize/longest);
-    var budget=320*1024*1024,bytes=function(s){return w*s*h*s*((COUNT+1)*16+4);};
+    // (COUNT+1) float layers of 16 bytes each plus the 4-byte depth they share, and, while Soft lighting is
+    // on, its own buffer as well: one byte of colour and a 24-bit depth three allocates as a 32-bit
+    // renderbuffer. Counted rather than only noted, so the light shrinks the layers along with everything
+    // else on a very large window instead of quietly overrunning the budget. At 1920x1080 both figures are
+    // under it (307 MB against 317 MB), so moving the switch changes no resolution there.
+    var budget=320*1024*1024,extra=this.lit?5:0,bytes=function(s){return w*s*h*s*((COUNT+1)*16+4+extra);};
     while(bytes(scale)>budget&&scale>.2)scale*=.9;
     return {width:Math.max(1,Math.round(w*scale)),height:Math.max(1,Math.round(h*scale)),scale:scale,bytes:bytes(scale)};
   };
@@ -423,10 +711,17 @@ void main(){
       u.uCameraWorld.value.copy(camera.matrixWorld);u.uInvProjection.value.copy(camera.projectionMatrix).invert();
       var target=renderer.getRenderTarget(),auto=renderer.autoClear,clearColor=renderer.getClearColor(this.colorSave),clearAlpha=renderer.getClearAlpha(),viewport=renderer.getViewport(this.viewportSave),scissor=renderer.getScissor(this.scissorSave),scissorTest=renderer.getScissorTest();
       try{renderer.autoClear=false;renderer.setScissorTest(false);renderer.setClearColor(0,0);for(var i=0;i<=COUNT;i++){p.uFirst.value=i===0;p.uPass.value=i;p.uPrevious.value=this.targets[i===0?COUNT:i-1].texture;for(var j=0;j<COUNT;j++)p['uPeel'+j].value=j<i?this.targets[j].texture:this.blank;renderer.setRenderTarget(this.targets[i]);renderer.clear(true,true,false);renderer.render(this.captureScene,this.captureCamera);}}finally{renderer.setRenderTarget(target);renderer.setViewport(viewport);renderer.setScissor(scissor);renderer.setScissorTest(scissorTest);renderer.setClearColor(clearColor,clearAlpha);renderer.autoClear=auto;}
+      // The light map depends on exactly what the layers depend on - the camera and the pose - so it is peeled
+      // with them and left alone on every frame that reuses them.
+      if(this.lit)this.lightPass(camera);
       this.key=1;
     }
+    // The bound texture is re-read every frame: the target is created on the first pass, may be rebuilt once
+    // as RGBA8, and is dropped again when the switch goes off or a pass is refused.
+    if(this.lit)u.uLightMap.value=this.lightTarget&&!this.lightFailed?this.lightTarget.texture:this.neutral;
     this.composite();
-    this.quad.visible=true;return size.width+' × '+size.height+(size.scale<.999?' ('+Math.round(size.scale*100)+'% of the window)':'')+' · up to '+COUNT+' layers'+(this.bounce?(bounceMode==='always'?' · bounce traced':' · bounce traced after the camera stops'):' · bounce off: '+this.bounceReason);
+    var light=this.lit&&!this.lightFailed?' · soft lighting':this.lighting?' · soft lighting off: '+(this.lightingReason||'unavailable'):'';
+    this.quad.visible=true;return size.width+' × '+size.height+(size.scale<.999?' ('+Math.round(size.scale*100)+'% of the window)':'')+' · up to '+COUNT+' layers'+(this.bounce?(bounceMode==='always'?' · bounce traced':' · bounce traced after the camera stops'):' · bounce off: '+this.bounceReason)+light;
   };
   /* TEST ONLY. Renders the composition into a temporary float target and returns the listed pixels as
      [r,g,b,a]. Product code never calls it: 0.6.23 removed every synchronous GPU→CPU read from the viewer.
@@ -444,6 +739,9 @@ void main(){
         return [data[i],data[i+1],data[i+2],data[i+3]];});
     }finally{renderer.setRenderTarget(previous);scene.remove(this.quad);if(parent)parent.add(this.quad);this.quad.visible=visible;target.dispose();}
   };
-  Surface.prototype.dispose=function(){if(this.quad){if(this.quad.parent)this.quad.parent.remove(this.quad);this.quad.geometry.dispose();}if(this.markMaterial)this.markMaterial.dispose();if(this.compositeQuad)this.compositeQuad.geometry.dispose();if(this.material)this.material.dispose();if(this.result)this.result.dispose();if(this.mesh)this.mesh.geometry.dispose();if(this.peelMaterial)this.peelMaterial.dispose();if(this.materialTexture)this.materialTexture.dispose();if(this.bvhStruct)this.bvhStruct.dispose();if(this.faceMaterial)this.faceMaterial.dispose();this.bvh=null;this.targets.forEach(function(t){t.dispose();});if(this.depth)this.depth.dispose();if(this.blank)this.blank.dispose();};
+  Surface.prototype.dispose=function(){if(this.quad){if(this.quad.parent)this.quad.parent.remove(this.quad);this.quad.geometry.dispose();}if(this.markMaterial)this.markMaterial.dispose();if(this.compositeQuad)this.compositeQuad.geometry.dispose();if(this.material)this.material.dispose();if(this.result)this.result.dispose();if(this.mesh)this.mesh.geometry.dispose();if(this.peelMaterial)this.peelMaterial.dispose();if(this.materialTexture)this.materialTexture.dispose();if(this.bvhStruct)this.bvhStruct.dispose();if(this.faceMaterial)this.faceMaterial.dispose();this.bvh=null;this.targets.forEach(function(t){t.dispose();});if(this.depth)this.depth.dispose();if(this.blank)this.blank.dispose();
+    // Soft lighting goes with the instance. The light mesh shares the peel geometry, already disposed above.
+    if(this.lightTarget)this.lightTarget.dispose();if(this.lightMaterial)this.lightMaterial.dispose();if(this.neutral)this.neutral.dispose();
+    this.lightTarget=null;this.lightMesh=null;this.lightScene=null;this.baseVisual=null;};
   root.BullbaScreenArmor=Surface;
 }(window));

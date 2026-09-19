@@ -38,7 +38,7 @@
     // Layout read once per resize instead of once per frame, and the geometry of the drawn pose.
     this.viewWidth=0;this.viewHeight=0;this.viewRect=null;this.poseGeometries=null;this.poseBuilt=null;this.poseStale=false;this.poseAt=0;
     this.quality='auto';this.bounceMode='always';this.bounceTimer=null;this.dots=true;this.dotSpacing=3;this.tint=.5;this.partEdges=true;this.zoneOutline=false;this.turretAngle=0;this.turretTimer=null;this.turretPending=false;
-    this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.trackOpacity=.12;this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.gunAngle=0;this.autoFrame=true;this.frameScale=this.defaults.scale;this.outline=null;this.outlineDepth=null;this.outlineStyle={brightness:.8,opacity:.06};this.showOutline=false;
+    this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.trackOpacity=.12;this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.lighting=false;this.gunAngle=0;this.autoFrame=true;this.frameScale=this.defaults.scale;this.outline=null;this.outlineDepth=null;this.outlineStyle={brightness:.8,opacity:.06};this.showOutline=false;
     var drag = null;
     container.addEventListener('contextmenu', function(e) { e.preventDefault(); });
     container.addEventListener('pointerdown', function(e) { /* The scene tiles and the modifier groups beside them are controls of their own: capturing the pointer here would retarget the click to #viewport and the shooter tile would never fire. Leaving the drag unstarted also keeps the pointerup below from pinning a point under the control. */ if(e.target&&e.target.closest&&e.target.closest('.viewport-tile,.mod-slot,.swap-roles'))return; /* pan: right button, or Ctrl + left button (the in-game browser swallows the right button) */ if(e.button===2||(e.button===0&&e.ctrlKey)){drag={pan:true,x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY,moved:false};self.dragging=true;try{container.setPointerCapture(e.pointerId);}catch(ignore){}return;}if(e.button!==0)return;if(e.altKey){self.aimAt(e);return;}drag={x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY,moved:false,part:self.pickPart(e)};self.dragging=true; try{container.setPointerCapture(e.pointerId);}catch(ignore){} container.focus(); });
@@ -236,6 +236,23 @@
   Viewer.prototype.setOutline=function(brightness,opacity){this.outlineStyle={brightness:Math.max(0,Math.min(1,brightness)),opacity:Math.max(.05,Math.min(1,opacity))};this.applyOutline();this.draw();};
   Viewer.prototype.setQuality=function(value){this.quality=value;if(!this.surface)this.surfaceAttempted=false;this.draw();};
   Viewer.prototype.setBounceMode=function(value){this.bounceMode=value==='idle'?'idle':'always';this.draw();};
+  // Soft lighting: the one Settings checkbox. A smoothed visual normal per vertex lights the main armour in
+  // one extra pass, so a rounded turret reads as rounded instead of as a field of triangles, while the plate
+  // joints stay sharp. It changes brightness and nothing else - the palette, the numbers, the zones, the
+  // material choice and the ricochet law are untouched, and the composition never lights the screens, the
+  // tracks, the wireframe, the seams or the background.
+  // The contract for the page: setLighting(boolean), default off; `viewer.lighting` reads back exactly what
+  // was last asked for, so a stored setting can be written from it, and off is the previous picture with no
+  // extra pass, buffer or attribute. Whether the driver actually granted it is reported in the backend line,
+  // not here - a device that declines must not silently rewrite the user's setting.
+  Viewer.prototype.setLighting=function(value){
+    this.lighting=!!value;
+    // The visual normals are built from the geometry of the last full rebuild, so a pose that is only drawn
+    // is committed first; otherwise the light would follow the pre-drag turret until the drag settled.
+    this.commitPose();
+    if(this.surface&&this.surface.setLighting){try{this.surface.setLighting(this.lighting);}catch(e){this.surfaceError=e.message;console.warn('Soft lighting unavailable:',e.message);}}
+    this.draw();
+  };
   // Ricochet dots over the zones where the bounced shell still penetrates: on/off and their spacing in CSS px.
   Viewer.prototype.setDots=function(enabled,spacing){this.dots=!!enabled;if(spacing!==undefined)this.dotSpacing=Math.max(2,Math.min(40,Number(spacing)||5));this.draw();};
   Viewer.prototype.setPartEdges=function(value){this.partEdges=!!value;this.draw();};
@@ -650,7 +667,11 @@
     if(!this.paintMesh)return;
     var composed=false;
     if(this.heatmap){
-      if(!this.surfaceAttempted){this.surfaceAttempted=true;try{this.surface=new BullbaScreenArmor(this.renderer,this.engine);this.scene.add(this.surface.quad);}catch(e){this.surfaceError=e.message;console.warn('Screen composition unavailable:',e.message);if(window.BullbaHost)window.BullbaHost.mark('Layer composition','unavailable: '+e.message);}}
+      if(!this.surfaceAttempted){this.surfaceAttempted=true;try{this.surface=new BullbaScreenArmor(this.renderer,this.engine);this.scene.add(this.surface.quad);
+        // A fresh composition starts unlit, so the switch is re-applied here - the one path every new
+        // instance goes through: the first paint, a new model, a quality change and a restored context.
+        // Caught on its own: a cosmetic light the driver will not give must never read as a map that failed.
+        if(this.lighting){try{this.surface.setLighting(true);}catch(light){console.warn('Soft lighting unavailable:',light.message);}}}catch(e){this.surfaceError=e.message;console.warn('Screen composition unavailable:',e.message);if(window.BullbaHost)window.BullbaHost.mark('Layer composition','unavailable: '+e.message);}}
       if(this.surface){try{
         this.surface.hatch=this.dotSpacing;this.surface.dots=this.dots;this.surface.edges=this.partEdges;this.surface.outline=this.zoneOutline;this.surface.tint=this.tint;/* The user's Detail and Ricochet trace settings hold during a drag too: 'Always' means live while rotating (0.7.4 lowered both while dragging; reverted on his feedback). */var size=this.surface.render(this.camera,this.target,this.shell,this.palette,this.trackOpacity,this.quality,this.viewWidth,this.viewHeight,this.renderer.getPixelRatio(),this.bounceMode,this.mapMode);
         composed=true;this.surfaceError=null;
