@@ -54,7 +54,7 @@ python tools/build_installer.py
 python tools/release_github.py
 ```
 
-Results: `.wotmod`, ZIP and EXE in `dist/`. These commands do not install the mod into the game. The release script tags `v<version>`, creates the GitHub release and uploads the three files. Users of the installer need neither Python nor the build tools.
+Results: `.wotmod`, ZIP and EXE in `dist/`. These commands do not install the mod into the game. The release script tags `v<version>`, creates the GitHub release and uploads the two files, with the version's changelog section as the notes. Users of the installer need neither Python nor the build tools.
 
 Every build that reaches a user gets its own version number; a version is never rebuilt under an existing number.
 
