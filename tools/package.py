@@ -13,7 +13,7 @@ import third_party
 
 
 def package():
-    name='BullbaHits-'+VERSION+'-serverless'
+    name='BullbaHits-'+VERSION+'-Sources-and-manual-install'
     dest=ROOT/'dist'/name
     dest.mkdir(parents=True,exist_ok=True)
     sources=[ROOT/n for n in ('README.md','THIRD_PARTY.md')]
