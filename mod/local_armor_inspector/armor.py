@@ -38,11 +38,48 @@ def shot_candidates(descriptor, effects_index=None):
     return result
 
 
+def number(value, default=0.0):
+    """A float out of a client attribute; anything unexpected (None, a missing slot) reads as the default."""
+    try: return float(value)
+    except Exception: return default
+
+
+def pair(value):
+    """(near, far) of a damage pair, as floats. A single value counts for both, anything else is zero."""
+    try: return [float(value[0]), float(value[1])]
+    except Exception: return [number(value), number(value)]
+
+
+def damage_parameters(shell, shell_type):
+    """Damage fields of a shell, for the page's expected-damage map. Never raises: every field is a
+    getattr with a default, and an absent one stays None so the page can tell "no data" from zero.
+    'spallDamage' is armorSpalls.armorDamage[0] of modern HE (the client's own maxDamage), the
+    non-penetration base of the ratio law; 'mechanics' of HE without the attribute is LEGACY (SPG shells)."""
+    armor = pair(getattr(shell, 'armorDamage', None))
+    mechanics = getattr(shell_type, 'mechanics', None)
+    if mechanics is None and getattr(shell, 'kind', None) == 'HIGH_EXPLOSIVE': mechanics = 'LEGACY'
+    spalls = getattr(shell_type, 'armorSpalls', None)
+    spall_damage = spall_radius = None
+    if spalls is not None and getattr(spalls, 'isActive', False):
+        spall_damage = pair(getattr(spalls, 'armorDamage', None))[0]
+        spall_radius = number(getattr(spalls, 'radius', 0))
+    top = getattr(shell_type, 'maxDamage', None)
+    return {'alpha':armor[0], 'alphaFar':armor[1],
+        'deviceDamage':pair(getattr(shell, 'deviceDamage', None))[0],
+        'damageRandomization':number(getattr(shell, 'damageRandomization', 0)),
+        'damageRandomizationType':getattr(shell, 'damageRandomizationType', None),
+        'mechanics':mechanics, 'maxDamage':None if top is None else number(top),
+        'explosionRadius':number(getattr(shell_type, 'explosionRadius', 0)),
+        'spallDamage':spall_damage, 'spallRadius':spall_radius,
+        'nonPiercingArmorDamage':number(getattr(shell_type, 'nonPiercingArmorDamage', 0))}
+
+
 def shot_parameters(shot, source):
         from constants import SHELL_TYPES_INDICES
         shell = shot.shell
         shell_type = shell.type
-        return {'name':getattr(shell, 'userString', shell.name), 'kind':shell.kind,
+        damage = damage_parameters(shell, shell_type)
+        damage.update({'name':getattr(shell, 'userString', shell.name), 'kind':shell.kind,
             'typeIndex':int(SHELL_TYPES_INDICES[shell.kind]),
             'caliber':float(shell.caliber), 'penetration100':float(shot.piercingPower[0]),
             'penetration500':float(shot.piercingPower[1]),
@@ -54,7 +91,8 @@ def shot_parameters(shot, source):
             'shieldPenetration':bool(getattr(shell_type, 'shieldPenetration', False)),
             'speed':float(getattr(shot, 'speed', 0)), 'gravity':float(getattr(shot, 'gravity', 0)),
             'maxDistance':float(getattr(shot, 'maxDistance', 0)), 'effectsIndex':int(shell.effectsIndex),
-            'source':source}
+            'source':source})
+        return damage
 
 
 class ArmorCatalog(object):

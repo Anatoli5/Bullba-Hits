@@ -86,6 +86,8 @@ uniform highp sampler2D uMaterials; uniform vec4 uPen; uniform vec4 uShell; unif
 uniform bool uClassic; uniform float uOpacity;
 uniform vec3 uOrigin; uniform vec3 uAnchor; uniform vec3 uForward;
 uniform mat4 uCameraWorld; uniform mat4 uInvProjection; uniform float uRicochetLoss; uniform int uBounce; uniform float uTint;
+// Expected damage instead of the chance: (on 0/1, alpha, non-penetration base HP, spall penetration mm).
+uniform vec4 uDamage; // ASCII only in here: this text is compiled as GLSL source
 ${traversal}
 in vec2 vUV; out vec4 outputColor;
 const float EPS=.00001;
@@ -117,7 +119,11 @@ int contact(int id,float cosine,float along,inout Walk w,out float result){
  if(w.jet)w.remaining=max(0.0,w.remaining-w.jetRate*max(0.0,along-w.jetStart));
  float n=uShell.x;if(flags.z>.5&&a.x>EPS&&uPen.y>a.x*2.0)n*=1.4*uPen.y/(a.x*2.0);
  float plate=a.x;if(a.z>.5)plate/=max(EPS,cos(max(0.0,acos(clamp(cosine,0.0,1.0))-n)));
- if(a.y>EPS){result=probability(w.remaining,plate,w.nominal);return 1;}
+ // Main armour. In damage mode the chance becomes the expected damage as a share of alpha, so the palette is
+ // unchanged: E = p*alpha + (1-p)*base*min(1, spallPen/T), T the plate's nominal armour (ArmorBallistics.withDamage).
+ if(a.y>EPS){result=probability(w.remaining,plate,w.nominal);
+  if(uDamage.x>.5&&result>=0.0){float np=uDamage.z*min(1.0,uDamage.w/max(EPS,a.x));result=(result*uDamage.y+(1.0-result)*np)/max(EPS,uDamage.y);}
+  return 1;}
  if(a.x>EPS)w.screens++;
  if(uShell.w>.5){if(uFlags.z==0){result=0.0;return 1;}w.remaining-=plate*3.0;}else w.remaining-=plate;
  w.jet=uShell.z>0.0;if(w.jet){w.jetStart=along+a.x*.001;if(w.jetRate==0.0)w.jetRate=w.remaining*uShell.z;}
@@ -271,7 +277,7 @@ void main(){
     if(this.compositeQuad){this.compositeScene.remove(this.compositeQuad);this.compositeQuad.geometry.dispose();this.material.dispose();}
     var uniforms={uMaterials:{value:this.materialTexture},uPen:{value:new T.Vector4()},uShell:{value:new T.Vector4()},uFlags:{value:new Int32Array(4)},uClassic:{value:false},uOpacity:{value:.35},
       uOrigin:{value:new T.Vector3()},uAnchor:{value:new T.Vector3()},uForward:{value:new T.Vector3()},
-      uCameraWorld:{value:new T.Matrix4()},uInvProjection:{value:new T.Matrix4()},uRicochetLoss:{value:0},uBounce:{value:1},uTint:{value:.5}};
+      uCameraWorld:{value:new T.Matrix4()},uInvProjection:{value:new T.Matrix4()},uRicochetLoss:{value:0},uBounce:{value:1},uTint:{value:.5},uDamage:{value:new T.Vector4()}};
     for(var i=0;i<=COUNT;i++)uniforms['uLayer'+i]={value:this.targets[i].texture};
     if(this.bounce){var lib=root.MeshBVHLib;if(!this.bvhStruct){this.bvhStruct=new lib.MeshBVHUniformStruct();this.faceMaterial=new lib.FloatVertexAttributeTexture();}
       uniforms.uBVH={value:this.bvhStruct};uniforms.uFaceMaterial={value:this.faceMaterial};}
@@ -389,12 +395,18 @@ void main(){
     if(moved)for(i=0;i<16;i++){cache[i]=world[i];cache[i+16]=projection[i];}
     return moved;
   };
-  Surface.prototype.render=function(camera,anchor,shell,palette,opacity,quality,width,height,pixelRatio,bounceMode){
+  Surface.prototype.render=function(camera,anchor,shell,palette,opacity,quality,width,height,pixelRatio,bounceMode,mode){
     var renderer=this.renderer,size=this.size(quality,width,height,pixelRatio);
     if(this.width!==size.width||this.height!==size.height){this.width=size.width;this.height=size.height;this.targets.forEach(function(t){t.setSize(size.width,size.height);});this.key=null;this.checkPending=true;}
     if(this.checkPending)this.checkTargets();
     var s=shell||{},u=this.material.uniforms;u.uPen.value.set(s.penetration||0,s.caliber||0,s.randomization||0,!s.randomizationType||s.randomizationType==='NORMAL'?1:0);u.uShell.value.set(s.normalization||0,s.ricochetCos==null?-1:s.ricochetCos,s.jetLossPerMeter||0,s.kind==='HIGH_EXPLOSIVE'?1:0);var flags=u.uFlags.value;flags[0]=s.mayRicochet?1:0;flags[1]=s.checkCaliber?1:0;flags[2]=s.shieldPenetration?1:0;flags[3]=s.penetration>0&&s.caliber>0?1:0;u.uClassic.value=palette==='classic';u.uOpacity.value=opacity;
     u.uRicochetLoss.value=s.ricochetLoss||0;
+    // Damage mode, and only with an alpha in the record: the non-penetration base is the spall damage of modern
+    // HE (nonPiercingArmorDamage for AP/APCR/HEAT, 0 for legacy HE), the spall penetration 0.05·α / liner. Off
+    // it, or without an alpha, uDamage.x is 0 and the map is the plain penetration chance.
+    var modern=s.kind==='HIGH_EXPLOSIVE'&&s.mechanics==='MODERN'&&s.spallDamage>0;
+    var base=s.kind==='HIGH_EXPLOSIVE'?(modern?s.spallDamage:0):(s.nonPiercingArmorDamage>0?s.nonPiercingArmorDamage:0);
+    u.uDamage.value.set(mode==='damage'&&s.alpha>0?1:0,s.alpha||0,base,modern?.05*s.alpha/(s.liner>0?s.liner:1):1e9);
     var pr=Math.max(1,pixelRatio||1),m=this.markMaterial.uniforms;m.uHatch.value.set(Math.max(2,this.hatch||5)*pr,pr); // dot pitch in CSS px, one CSS px per dot
     m.uDots.value=!!this.dots;m.uEdges.value=this.edges!==false;m.uOutline.value=!!this.outline;var tint=this.tint===undefined?.5:this.tint;m.uTint.value=tint;u.uTint.value=tint;m.uClassic.value=u.uClassic.value;
     // Stale: the camera has moved, or the layers were dropped (a new pose, a new size, a new model).

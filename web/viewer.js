@@ -450,7 +450,9 @@
     if(!state)return;this.setOrbit(state.yaw,state.pitch);this.distance=state.distance;this.target.copy(state.target);
     this.dropTargets();this.pan.copy(state.pan);this.frameCenter.copy(state.frameCenter);this.frameScale=state.frameScale;this.pivotHeight=state.pivotHeight;
     this.fitPending=false;this.camera.zoom=Math.max(.1,Math.min(150,state.zoom));this.projection();this.render();};
-  Viewer.prototype.configure=function(shell,heatmap,palette){this.shell=shell;this.heatmap=heatmap;this.palette=palette;this.inspectKey=null;if(this.pinned)this.refreshPin();this.updateTrackAppearance();this.render();};
+  // 'mode' is the Display setting: 'chance' or 'damage' (expected damage per shot). Both colour the armour on
+  // the same palette, so 'heatmap' stays the single "is the map on" flag.
+  Viewer.prototype.configure=function(shell,heatmap,palette,mode){this.shell=shell;this.heatmap=heatmap;this.palette=palette;this.mapMode=mode==='damage'?'damage':'chance';this.inspectKey=null;if(this.pinned)this.refreshPin();this.updateTrackAppearance();this.render();};
   // A pinned point replaces the recorded hit line as the analysed shot until unpinned. It is drawn like a
   // recorded shot: an arrow along the line, a reticle at the point, and a dashed leg where a ricochet goes.
   Viewer.prototype.pinAt=function(event){
@@ -639,9 +641,10 @@
   Viewer.prototype.showSavedAim=function(value){if(this.aimGroup)this.aimGroup.visible=!!value;this.draw();};
   Viewer.prototype.savedAimProbability=function(shell){
     if(!this.savedAim||!this.savedAim.origin||!this.engine||!shell||Math.abs(this.turretAngle)>.001||Math.abs(this.gunAngle)>.001)return null;
-    var aim=this.savedAim,count=256,sum=0,unknown=0,origin=aim.origin.toArray();
-    for(var i=0;i<count;i++){var r=aim.radius*Math.sqrt(-.5*Math.log(1-(i+.5)/count*(1-Math.exp(-2)))),angle=i*2.399963229728653,p=aim.center.clone().addScaledVector(aim.right,r*Math.cos(angle)).addScaledVector(aim.up,r*Math.sin(angle)),hit=this.engine.ray(origin,p.sub(aim.origin).toArray(),shell);if(hit.chance===null)unknown++;else sum+=hit.chance;}
-    return {low:sum/count,high:(sum+unknown*100)/count,unknown:unknown};
+    var aim=this.savedAim,count=256,sum=0,unknown=0,dmg=0,origin=aim.origin.toArray();
+    for(var i=0;i<count;i++){var r=aim.radius*Math.sqrt(-.5*Math.log(1-(i+.5)/count*(1-Math.exp(-2)))),angle=i*2.399963229728653,p=aim.center.clone().addScaledVector(aim.right,r*Math.cos(angle)).addScaledVector(aim.up,r*Math.sin(angle)),hit=this.engine.ray(origin,p.sub(aim.origin).toArray(),shell);if(hit.chance===null)unknown++;else sum+=hit.chance;if(hit.expected>0)dmg+=hit.expected;}
+    // 'damage' is the mean expected damage over the circle, HP: a miss is 0 HP exactly as it is 0 %.
+    return {low:sum/count,high:(sum+unknown*100)/count,unknown:unknown,damage:dmg/count,damageHigh:(dmg+unknown*(shell.alpha||0))/count};
   };
   Viewer.prototype.paint=function(){
     if(!this.paintMesh)return;
@@ -649,7 +652,7 @@
     if(this.heatmap){
       if(!this.surfaceAttempted){this.surfaceAttempted=true;try{this.surface=new BullbaScreenArmor(this.renderer,this.engine);this.scene.add(this.surface.quad);}catch(e){this.surfaceError=e.message;console.warn('Screen composition unavailable:',e.message);if(window.BullbaHost)window.BullbaHost.mark('Layer composition','unavailable: '+e.message);}}
       if(this.surface){try{
-        this.surface.hatch=this.dotSpacing;this.surface.dots=this.dots;this.surface.edges=this.partEdges;this.surface.outline=this.zoneOutline;this.surface.tint=this.tint;/* The user's Detail and Ricochet trace settings hold during a drag too: 'Always' means live while rotating (0.7.4 lowered both while dragging; reverted on his feedback). */var size=this.surface.render(this.camera,this.target,this.shell,this.palette,this.trackOpacity,this.quality,this.viewWidth,this.viewHeight,this.renderer.getPixelRatio(),this.bounceMode);
+        this.surface.hatch=this.dotSpacing;this.surface.dots=this.dots;this.surface.edges=this.partEdges;this.surface.outline=this.zoneOutline;this.surface.tint=this.tint;/* The user's Detail and Ricochet trace settings hold during a drag too: 'Always' means live while rotating (0.7.4 lowered both while dragging; reverted on his feedback). */var size=this.surface.render(this.camera,this.target,this.shell,this.palette,this.trackOpacity,this.quality,this.viewWidth,this.viewHeight,this.renderer.getPixelRatio(),this.bounceMode,this.mapMode);
         composed=true;this.surfaceError=null;
         // The hatched layer is due once the camera has stood still: one redraw later, not a loop.
         if(this.surface.bouncePending&&this.bounceTimer===null){var self=this;this.bounceTimer=setTimeout(function(){self.bounceTimer=null;self.draw();},160);}
@@ -696,11 +699,12 @@
     if(!this.engine||!this.shell)throw new Error('Pick a shell and penetration first.');
     if(!Number.isFinite(radius100)||radius100<0||radius100>10)throw new Error('The radius must be between 0 and 10 m at 100 m.');
     var T=THREE,aim=this.spreadAim||this.point||this.target,origin=this.camera.position.clone(),normal=aim.clone().sub(origin).normalize(),up=new T.Vector3(0,1,0);if(Math.abs(up.dot(normal))>.98)up.set(1,0,0);
-    var right=new T.Vector3().crossVectors(normal,up).normalize();up.crossVectors(right,normal).normalize();var radius=origin.distanceTo(aim)*radius100/100,points=[],count=1024,sum=0,unknown=0,miss=0,o=origin.toArray();
-    for(var i=0;i<count;i++){var r=radius*Math.sqrt(-.5*Math.log(1-(i+.5)/count*(1-Math.exp(-2)))),angle=i*2.399963229728653,point=aim.clone().addScaledVector(right,r*Math.cos(angle)).addScaledVector(up,r*Math.sin(angle)),hit=this.engine.ray(o,point.sub(origin).toArray(),this.shell);if(hit.chance===null)unknown++;else sum+=hit.chance;if(hit.reason==='no-hull')miss++;}
+    var right=new T.Vector3().crossVectors(normal,up).normalize();up.crossVectors(right,normal).normalize();var radius=origin.distanceTo(aim)*radius100/100,points=[],count=1024,sum=0,unknown=0,miss=0,dmg=0,o=origin.toArray();
+    for(var i=0;i<count;i++){var r=radius*Math.sqrt(-.5*Math.log(1-(i+.5)/count*(1-Math.exp(-2)))),angle=i*2.399963229728653,point=aim.clone().addScaledVector(right,r*Math.cos(angle)).addScaledVector(up,r*Math.sin(angle)),hit=this.engine.ray(o,point.sub(origin).toArray(),this.shell);if(hit.chance===null)unknown++;else sum+=hit.chance;if(hit.expected>0)dmg+=hit.expected;if(hit.reason==='no-hull')miss++;}
     for(var j=0;j<96;j++){var a=j/96*Math.PI*2;points.push(aim.clone().addScaledVector(right,radius*Math.cos(a)).addScaledVector(up,radius*Math.sin(a)));}
     this.hideSpread();this.spreadCircle=new T.LineLoop(new T.BufferGeometry().setFromPoints(points),new T.LineBasicMaterial({color:0xf1d18b,depthTest:false}));this.spreadCircle.renderOrder=10;this.scene.add(this.spreadCircle);this.draw();
-    return {low:sum/count,high:(sum+unknown*100)/count,unknown:unknown,miss:miss/count*100,samples:count};
+    return {low:sum/count,high:(sum+unknown*100)/count,unknown:unknown,miss:miss/count*100,samples:count,
+      damage:dmg/count,damageHigh:(dmg+unknown*((this.shell||{}).alpha||0))/count};
   };
   window.ArmorViewer=Viewer;
 }());

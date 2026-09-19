@@ -1122,6 +1122,11 @@ class Exporter(object):
             record['shells'] = []
             record['warnings'].append('Shell parameters unavailable')
         try:
+            # The same spall-liner factor a hit's target carries, for the page's expected-damage map.
+            record['linerFactor'] = float(descr.miscAttrs.get('antifragmentationLiningFactor', 1.0))
+        except Exception:
+            pass
+        try:
             record['parts'] = parts_from_descr(descr, 'client vehicle descriptor')
             record['partsFrom'] = 'rest pose'
             self.publish_vehicle_parts(record['parts'], record, self.version, extract=True)

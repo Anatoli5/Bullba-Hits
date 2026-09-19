@@ -568,6 +568,12 @@ class Recorder(object):
             record['target'] = {'name':descr.type.shortUserString, 'type':descr.type.name,
                 'compactDescriptor':base64.b64encode(descr.makeCompactDescr()).decode('ascii'), 'parts':[]}
             record['target'].update(vehicle_identity(descr))
+            try:
+                # Spall-liner factor of the target: 1.0 without a liner, higher with one. The page divides the
+                # non-penetration HE damage by it; a client without the attribute simply leaves the field out.
+                record['target']['linerFactor'] = float(descr.miscAttrs.get('antifragmentationLiningFactor', 1.0))
+            except Exception:
+                pass
             collisions = vehicle.appearance.collisions
             root = Math.Matrix(collisions.getPartTransform(0))
             world_root = Math.Matrix(root)

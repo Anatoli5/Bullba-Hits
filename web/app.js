@@ -401,10 +401,15 @@
     // The shooter's chips just changed, so the shell block wants a different width: re-measure the heading.
     scheduleLayout();
   }
-  function shellAt(c,choice,penetration,caliber,distance){
+  // The spall-liner factor of the vehicle under fire: the hit's target, or the browsed vehicle's own record.
+  // Records written before 0.7.13 carry none, and without one the law reads the target as unlined (1.0).
+  function linerFactor(hit){var t=(hit||activeHit||{}).target;return t&&t.linerFactor>0?t.linerFactor:1;}
+  function shellAt(c,choice,penetration,caliber,distance,hit){
     if(!choice||!(penetration>0)||penetration>3000||!(caliber>0)||caliber>1000)return null;
     var shell=ArmorBallistics.shell(c?c.kind:choice,penetration,caliber);
-    if(c){['normalization','ricochetCos','jetLossPerMeter','randomization','randomizationType','shieldPenetration'].forEach(function(k){if(c[k]!==undefined)shell[k]=c[k];});var fraction=Math.max(0,Math.min(1,(distance-100)/400));if(c.penetration500>0&&c.penetration100>0)shell.penetration=penetration*(1+fraction*(c.penetration500/c.penetration100-1));}
+    shell.liner=linerFactor(hit);
+    if(c){['normalization','ricochetCos','jetLossPerMeter','randomization','randomizationType','shieldPenetration',
+      'alpha','spallDamage','mechanics','nonPiercingArmorDamage'].forEach(function(k){if(c[k]!==undefined)shell[k]=c[k];});var fraction=Math.max(0,Math.min(1,(distance-100)/400));if(c.penetration500>0&&c.penetration100>0)shell.penetration=penetration*(1+fraction*(c.penetration500/c.penetration100-1));}
     return shell;
   }
   var totalTimer=null,totalKey=null,totalEngine=null,totalAim=null,verdictKey=null,partNames=['chassis','hull','turret','gun'];
@@ -414,8 +419,22 @@
   var verdictLines=0,verdictQueue=[],verdictDone={},verdictTimer=null,verdictBusy=false;
   function verdictLine(battleId,hit,v,shell,mode){var r=v.result||{},chance=r.chance;
     var ours=r.reason==='ricochet'?'ricochet':chance===null||chance===undefined?(r.reason||'none'):(chance>=50?'pen':'no-pen')+'_'+chance+'%';
-    console.info('Bullba Hits verdict: battle='+battleId+' hit='+hit.id+' point='+v.index+' part='+(partNames[v.part]||v.part)+' server='+String(effects[v.effect]||v.effect).replace(/ /g,'_')+' ours='+ours+' angle='+(r.angle!=null?Math.round(r.angle):'-')+' eff='+(r.effective!=null?Math.round(r.effective):'-')+' pen='+Math.round(shell.penetration)+' shell='+shell.kind+' dir='+v.source+' chordDev='+(v.chordDev==null?'-':(v.chordDev*180/Math.PI).toFixed(1))+' mode='+mode);
+    console.info('Bullba Hits verdict: battle='+battleId+' hit='+hit.id+' point='+v.index+' part='+(partNames[v.part]||v.part)+' server='+String(effects[v.effect]||v.effect).replace(/ /g,'_')+' ours='+ours+' angle='+(r.angle!=null?Math.round(r.angle):'-')+' eff='+(r.effective!=null?Math.round(r.effective):'-')+' pen='+Math.round(shell.penetration)+' shell='+shell.kind+' dir='+v.source+' chordDev='+(v.chordDev==null?'-':(v.chordDev*180/Math.PI).toFixed(1))+' mode='+mode+damageColumns(hit,r,shell));
     verdictLines++;verdictStatus();}
+  // HE damage columns of the log line: the server's damage for this hit next to both candidate laws for the
+  // non-penetration part - the ratio law the page draws and the linear legacy shape (k = 1.1), which is written
+  // here only so recorded hits can decide between them later. Nothing else in the page reads nonPenLin.
+  function damageColumns(hit,r,shell){
+    if(shell.kind!=='HIGH_EXPLOSIVE'||!(shell.alpha>0))return '';
+    var plate=r.reason==='penetration'&&r.nominal>0?r.nominal:null,liner=shell.liner>0?shell.liner:1;
+    var p=r.chance===null||r.chance===undefined?null:r.chance/100;
+    var ratio=plate?ArmorBallistics.nonPenetration(shell,plate).damage:0;
+    var lin=plate?Math.max(0,(shell.spallDamage>0?shell.spallDamage:0)-1.1*plate*liner):0;
+    var expected=function(np){return p===null?'-':Math.round(p*shell.alpha+(1-p)*np);};
+    return ' dmg='+(hit.damage>0?hit.damage:'-')+' alpha='+Math.round(shell.alpha)+' plate='+(plate?Math.round(plate):'-')+
+      ' liner='+liner.toFixed(2)+' nonPenRatio='+Math.round(ratio)+' nonPenLin='+Math.round(lin)+
+      ' expRatio='+expected(ratio)+' expLin='+expected(lin)+' law='+(r.damageLaw||'ratio');
+  }
   // The displayed hit, with whatever shell is on screen: logged once per hit and shell, never on camera moves.
   function logVerdicts(shell){
     if(!viewer||!shell||!activeHit||activeHit.synthetic||!current||!window.console)return;
@@ -439,7 +458,7 @@
     var job=verdictQueue.shift(),battle=job.battle,hit=job.hit;
     ArmorInspectorData.sceneFor(battle,hit).then(function(data){
       var context=ArmorShotContext.resolve(hit,battle.shotEvents||[]),c=context.index>=0?context.choices[context.index]:context.choices[0]||null;
-      var range=context.range>0?context.range:hit.rangeAtImpact>0?hit.rangeAtImpact:100,shell=c?shellAt(c,c.kind,c.penetration100,c.caliber,range):null;
+      var range=context.range>0?context.range:hit.rangeAtImpact>0?hit.rangeAtImpact:100,shell=c?shellAt(c,c.kind,c.penetration100,c.caliber,range,hit):null;
       if(!shell)return;var engine=ArmorBallistics.build(data,false),pts=ArmorViewer.points(hit);
       ArmorViewer.verdicts(engine,pts,shell).forEach(function(v){verdictLine(battle.id,hit,v,shell,context.index>=0?'auto':'auto-shell-guess');});
     }).catch(function(e){if(window.console)console.warn('Bullba Hits verdict: hit '+hit.id+' skipped: '+e.message);})
@@ -453,14 +472,27 @@
     var shell=shellAt(c,choice,Number($('penetration').value),Number($('caliber').value),range),r=viewer&&viewer.shotProbability(shell),output=$('shot-chance');
     var pinned=!!(viewer&&viewer.pinned),line=armorLine(r,shell?shell.penetration:null,range);fillPanel('shot',line);
     logVerdicts(shell);
+    // The tile's own tooltip says what its number is before it says where the line comes from.
+    $('shot-panel').title=damageView?'Expected damage per shot along the saved hit line: the penetration chance times alpha, plus the reconstructed non-penetration damage for the rest.\n\nThe record holds what the shot did; this is the expectation it had, not the rolled RNG.':shotPanelTitle;
+    aimTitle();
     output.title=!r?'No parameters or the pose changed':pinned?'Along the pinned line from the current view':'Along the saved line · flight ≈ '+Math.round(range)+' m · nominal penetration '+Math.round(shell.penetration)+' mm';
     var key=JSON.stringify(shell)+'|'+(viewer?viewer.turretAngle+','+viewer.gunAngle:'');
     if(viewer&&(totalKey!==key||totalEngine!==viewer.engine||totalAim!==viewer.savedAim)){
       totalKey=key;totalEngine=viewer.engine;totalAim=viewer.savedAim;clearTimeout(totalTimer);
       // No saved circle: the nominal ring's diameter, so a 10 cm ring at short range reads as present, not missing.
       $('total-chance').textContent=!viewer.savedAim&&viewer.estimateAim?'\u2300 '+(viewer.estimateAim.radius*2).toFixed(2)+' m':'—';
-      if(viewer.savedAim&&shell)totalTimer=setTimeout(function(){var v=viewer.savedAimProbability(shell);$('total-chance').textContent=v?'≈ '+(v.unknown?v.low.toFixed(0)+'–'+v.high.toFixed(0):v.low.toFixed(0))+'%':'—';},100);
+      // In damage mode the tile reads in HP: the mean expected damage over the circle, misses counted as 0.
+      if(viewer.savedAim&&shell)totalTimer=setTimeout(function(){var v=viewer.savedAimProbability(shell);
+        $('total-chance').textContent=!v?'—':damageView?'≈ '+(v.unknown?Math.round(v.damage)+'–'+Math.round(v.damageHigh):Math.round(v.damage))+' HP':'≈ '+(v.unknown?v.low.toFixed(0)+'–'+v.high.toFixed(0):v.low.toFixed(0))+'%';},100);
     }
+  }
+  // The reticle tile's tooltip: what its number means first, then which circles this hit has and how the figure
+  // is sampled. The status half is written once per hit by display(); the mode half changes with the Display
+  // setting, so the whole title is rebuilt from both.
+  var aimStatus='',shotPanelTitle=$('shot-panel').title;
+  function aimTitle(){
+    $('aim-metric').title=(damageView?'Expected damage per shot from this reticle, HP: a random shot inside the saved circle, the mean of penetration damage and the reconstructed non-penetration damage.':'Chance to penetrate from this reticle: a random shot inside the saved circle that both hits and penetrates. Nominal penetration, no RNG.')+
+      ' Reticle circles on the model. '+aimStatus+' Over the saved circle: Gaussian, σ = radius/2; 256 rays, misses = 0. Server formula not confirmed'+(damageView?'; the non-penetration part is a reconstruction (ratio law). No map obstacles, target motion or splash onto other parts.':'; no map obstacles, target motion or blast damage.');
   }
   // The heading row has no space for the full wording: the label reads “Pen.” and the sentence lives in its title.
   function penLabel(at100){var e=$('penetration-label');e.textContent='Pen.';e.title=at100?'Penetration at 100 m, mm':'Penetration at target, mm';}
@@ -481,37 +513,64 @@
     // The caption band under the fields is gone (user, 18.09: the line read as noise). Its sentence is now the
     // title of the shell group, and the two states that are a warning keep their words in #parameters-notice.
     var source=!choice?'Pick a shell':!valid?'No penetration in the record':(actual?'● From the hit':c?(browsing?'● Shooter’s shell':'◇ Comparison'):'◇ Manual')+' · '+Math.round(shell.penetration)+' mm at target · ±'+Math.round(shell.randomization*100)+'%';
-    var sourceTitle=source+' · '+(shotContext?shotContext.source:'')+' · Nominal penetration at the current distance, not the rolled RNG. HE: penetration only, no blast damage.';
+    // Damage mode says out loud that the non-penetration part is a reconstruction; without an alpha in the
+    // record the old sentence stands, because then nothing but the penetration is drawn anyway.
+    var damageNote=(c?c.kind:choice)==='HIGH_EXPLOSIVE'&&shell&&shell.alpha>0?'HE non-penetration damage: reconstruction (ratio law), not a confirmed server formula.':'HE: penetration only, no blast damage.';
+    var sourceTitle=source+' · '+(shotContext?shotContext.source:'')+' · Nominal penetration at the current distance, not the rolled RNG. '+damageNote;
     $('shell-choice').title=sourceTitle;if(shellGroup)shellGroup.title=sourceTitle;
-    $('parameters-notice').textContent=!choice?'Pick a shell — the record holds more than one match.':!valid?'No penetration in the record — enter the penetration and calibre to colour the model.':'Pick a shell or enter penetration and calibre to colour the model.';
     document.querySelectorAll('[data-shell]').forEach(function(b){b.setAttribute('aria-pressed',String(b.dataset.shell===choice));});
     var kind=c?c.kind:choice;document.querySelectorAll('#shell-types [data-kind]').forEach(function(b){b.setAttribute('aria-pressed',String(b.dataset.kind===kind));});
-    var chanceMode=$('armor-mode').value==='chance';$('legend-gradient').classList.toggle('classic',$('palette').value==='classic');$('track-overlay-note').classList.toggle('classic',$('palette').value==='classic');$('armor-legend').hidden=!chanceMode||!valid;$('parameters-notice').hidden=!chanceMode||valid;
-    $('penetration').setAttribute('aria-invalid',String(chanceMode&&!(penetration>0&&penetration<=3000)));$('caliber').setAttribute('aria-invalid',String(chanceMode&&!(caliber>0&&caliber<=1000)));
+    // 'chance' and 'damage' both colour the armour on the same palette and share every check below; only the
+    // labels differ. A record without an alpha cannot be coloured by damage: the page falls back to the chance
+    // and says so where the missing-parameter notice already is.
+    var mode=$('armor-mode').value,mapMode=mode!=='parts';
+    damageView=mode==='damage'&&!!(shell&&shell.alpha>0);
+    var noAlpha=mode==='damage'&&valid&&!damageView;
+    $('parameters-notice').textContent=noAlpha?'No damage data in this record — showing penetration chance':!choice?'Pick a shell — the record holds more than one match.':!valid?'No penetration in the record — enter the penetration and calibre to colour the model.':'Pick a shell or enter penetration and calibre to colour the model.';
+    $('legend-gradient').classList.toggle('classic',$('palette').value==='classic');$('track-overlay-note').classList.toggle('classic',$('palette').value==='classic');$('armor-legend').hidden=!mapMode||!valid;$('parameters-notice').hidden=!mapMode||(valid&&!noAlpha);
+    var caption=$('legend-caption');caption.hidden=!damageView;caption.textContent=damageView?'Expected damage per shot, % of α (α = '+Math.round(shell.alpha)+' HP)':'';
+    caption.title=damageView?'Non-penetration damage of HE is a reconstruction (ratio law), not a confirmed server formula':'';
+    $('penetration').setAttribute('aria-invalid',String(mapMode&&!(penetration>0&&penetration<=3000)));$('caliber').setAttribute('aria-invalid',String(mapMode&&!(caliber>0&&caliber<=1000)));
     $('probe-chance').textContent='—';$('probe-chance').style.color='';$('probe-pen').replaceChildren();$('probe-extra').replaceChildren();$('probe-details').replaceChildren(node('span','Hover over the armour','placeholder'));
-    staleEstimate();if(viewer)viewer.configure(shell,$('armor-mode').value==='chance',$('palette').value);shotStats();
+    staleEstimate();if(viewer)viewer.configure(shell,mapMode,$('palette').value,mode);shotStats();
   }
   var shellGroup=document.querySelector('.shell-fields');
   var ricochetTint=.5; // the Ricochet tint row of Settings, 0 (off)..1.5; the panels' ricochet colours follow the map
-  function chanceRgb(r){return 'rgb('+ArmorBallistics.color(r,$('palette').value,ricochetTint).map(function(v){return Math.round(v*255);}).join(',')+')';}
+  // Display = Expected damage, with a shell that carries an alpha: the panels read in HP and take their colours
+  // from the same quantity the map is drawn with. Set by updateShell, read everywhere the numbers are written.
+  var damageView=false;
+  function chanceRgb(r){return 'rgb('+ArmorBallistics.color(r,$('palette').value,ricochetTint,damageView?'damage':'chance').map(function(v){return Math.round(v*255);}).join(',')+')';}
+  function damageHp(r){return Math.round(r.expected)+' HP';}
+  // What the expected damage is made of, for the panel under the number: the penetration chance it came from,
+  // and the non-penetration damage of the ratio law with the three figures behind it. Legacy HE (SPG) says
+  // instead that its splash is not modelled - there is no client-side rule for it to show.
+  function damageGroups(r){
+    var s=viewer&&viewer.shell;if(!s)return [];
+    if(r.damageLaw==='legacy-unknown')return [{kind:'damage',text:'splash not modelled'}];
+    if(r.damageLaw!=='ratio'||!(r.nonPen>0)||r.chance===null||r.chance===undefined)return [];
+    var liner=s.liner>0?s.liner:1;
+    return [{kind:'damage',text:'pen '+Math.round(r.chance)+' %'},
+      {kind:'damage',text:'non-pen '+Math.round(r.nonPen)+' HP',
+       title:'spall '+Math.round(s.spallDamage||0)+' HP · plate '+Math.round(r.nominal)+' mm · liner ×'+liner.toFixed(1)}];
+  }
   // Compact reading of one ballistic result: the chance first, then the numbers that explain it.
   // One ballistic result as readable groups: chance, then "effective ← nominal – angle", then "pen / range", then screens.
   function armorLine(r,pen,range){
     if(!r)return {label:'—',color:'',groups:[]};
-    var prefix=[];
+    var prefix=[],hp=damageView&&r.expected!==null&&r.expected!==undefined;
     if(r.bounce){var b=r.bounce;pen=b.penetration;prefix.push({kind:'ricochet',text:'ricochet '+Math.round(b.nominal)+' mm – '+Math.round(b.angle)+'°'+(b.loss?' · pen −'+Math.round(b.loss*100)+'%':'')});}
     var layers=r.layers||[],screens=layers.filter(function(l){return !l.main;}),extra=screens.length?[{kind:'screen',text:'+ '+screens.map(function(s){return Math.round(s.nominal)+' mm';}).join(' + ')+' screen'}]:[];
     var shell=pen?[{kind:'pen',text:'pen '+Math.round(pen)+' mm'+(range?' / '+Math.round(range)+' m':'')}]:[];
-    var zero=chanceRgb({chance:0}),bounced=chanceRgb({chance:0,reason:'ricochet'});
+    var zero=chanceRgb({chance:0,expectedShare:0}),bounced=chanceRgb({chance:0,expectedShare:0,reason:'ricochet'});
     if(r.reason==='ricochet')return {label:'Ricochet',color:bounced,groups:prefix.concat([{kind:'armor',text:(r.final?'again, shell lost: ':'')+Math.round(r.nominal)+' mm – '+Math.round(r.angle)+'°'}],shell,extra)};
-    if(r.reason==='screen')return {label:'0%',color:zero,groups:prefix.concat([{kind:'armor',text:'explodes on the screen (this HE cannot pass screens)'}],shell,extra)};
-    if(r.reason==='no-hull')return r.bounce?{label:'0%',color:bounced,groups:prefix.concat([{kind:'armor',text:'flies past after the ricochet'}],shell)}:{label:'—',color:'',groups:[{kind:'armor',text:'no main armour on this line'}]};
+    if(r.reason==='screen')return {label:hp?'0 HP':'0%',color:zero,groups:prefix.concat([{kind:'armor',text:'explodes on the screen (this HE cannot pass screens)'}],shell,extra)};
+    if(r.reason==='no-hull')return r.bounce?{label:hp?'0 HP':'0%',color:bounced,groups:prefix.concat([{kind:'armor',text:'flies past after the ricochet'}],shell)}:{label:'—',color:'',groups:[{kind:'armor',text:'no main armour on this line'}]};
     if(r.reason==='parameters')return {label:'—',color:'',groups:[{kind:'armor',text:'set penetration and calibre'}]};
     if(r.reason==='armor')return {label:'—',color:'',groups:prefix.concat([{kind:'armor',text:'no armour data for this surface'}])};
     if(r.chance===null)return {label:'—',color:'',groups:prefix.concat([{kind:'armor',text:'no estimate for this penetration distribution'}])};
-    return {label:r.chance+'%',color:chanceRgb(r),groups:prefix.concat([{kind:'armor',text:'eff '+Math.round(r.effective)+' mm ← '+Math.round(r.nominal)+' mm – '+Math.round(r.angle)+'°'}],shell,extra)};
+    return {label:hp?damageHp(r):r.chance+'%',color:chanceRgb(r),groups:prefix.concat([{kind:'armor',text:'eff '+Math.round(r.effective)+' mm ← '+Math.round(r.nominal)+' mm – '+Math.round(r.angle)+'°'}],hp?damageGroups(r):[],shell,extra)};
   }
-  function chips(container,line){container.replaceChildren();line.groups.forEach(function(g){container.appendChild(node('span',g.text,'chip '+g.kind));});}
+  function chips(container,line){container.replaceChildren();line.groups.forEach(function(g){var chip=node('span',g.text,'chip '+g.kind);if(g.title)chip.title=g.title;container.appendChild(chip);});}
   // Fill an info panel: the penetration chip sits in the title row, the chance and the armour chips below it.
   function fillPanel(prefix,line){var by=function(k){return line.groups.filter(function(g){return (g.kind==='screen')===(k==='screen')&&(k==='screen'||(g.kind==='pen')===(k==='pen'));});};
     var chance=$(prefix+'-chance');chance.textContent=line.label;chance.style.color=line.color;chips($(prefix+'-pen'),{groups:by('pen')});chips($(prefix+'-details'),{groups:by('rest')});chips($(prefix+'-extra'),{groups:by('screen')});}
@@ -751,7 +810,7 @@
     // One line per hit in the page console; the game writes page console lines into game.log, so an in-game
     // report about missing rings can be read there instead of guessed at.
     if(window.console)console.info('Bullba Hits aim: hit '+hit.id+' '+(view||'other')+' saved='+!!aimReady+' estimate='+!!estimate+' reason='+reason);
-    $('aim-metric').title='Reticle circles on the model. '+status+' Nominal chance over the saved circle: Gaussian, σ = radius/2; 256 rays, misses = 0. Server formula not confirmed; no map obstacles, target motion or blast damage.';
+    aimStatus=status;aimTitle();
     $('aim-toggle').title=aimReady?'The saved client circle is teal; the server one is dashed when received. Linked to the hit by end point and time; the target position is at impact.':'No own reticle is unambiguously linked to this hit: '+(aimReasons[shotContext.aimReason]||'no data')+'.';
     shotStats();
     if(reference){$('details').appendChild(node('p','The model is extracted from the installed client. There are no invented hits here. Once the recorder is installed, new battles appear in the list on the left.'));return;}
@@ -953,7 +1012,7 @@
   if(viewer)viewer.onAim=function(text){analysisKey=null;$('spread-result').textContent=text;};
   $('reset-aim').onclick=function(){if(viewer){viewer.spreadAim=null;staleEstimate();}};
   $('spread-radius').oninput=staleEstimate;
-  $('estimate-spread').onclick=function(){if(!viewer)return;try{var result=viewer.estimateSpread(Number($('spread-radius').value));analysisKey=[viewer.distance,viewer.yaw,viewer.pitch,viewer.turretAngle,viewer.gunAngle].join(',');$('spread-result').textContent='Nominal total chance: '+(result.unknown?result.low.toFixed(1)+'–'+result.high.toFixed(1):result.low.toFixed(1))+'% · outside the main armour '+result.miss.toFixed(1)+'% · '+result.samples+' rays.'+(result.unknown?' A range because armour data is missing.':'')+' For the chosen dispersion model, without map obstacles or blast damage.';}catch(e){$('spread-result').textContent=e.message;}};
+  $('estimate-spread').onclick=function(){if(!viewer)return;try{var result=viewer.estimateSpread(Number($('spread-radius').value));analysisKey=[viewer.distance,viewer.yaw,viewer.pitch,viewer.turretAngle,viewer.gunAngle].join(',');$('spread-result').textContent=(damageView?'Nominal expected damage: '+(result.unknown?Math.round(result.damage)+'–'+Math.round(result.damageHigh):Math.round(result.damage))+' HP':'Nominal total chance: '+(result.unknown?result.low.toFixed(1)+'–'+result.high.toFixed(1):result.low.toFixed(1))+'%')+' · outside the main armour '+result.miss.toFixed(1)+'% · '+result.samples+' rays.'+(result.unknown?' A range because armour data is missing.':'')+(damageView?' For the chosen dispersion model; the non-penetration damage is a reconstruction, without map obstacles or splash onto other parts.':' For the chosen dispersion model, without map obstacles or blast damage.');}catch(e){$('spread-result').textContent=e.message;}};
   $('shell-choice').onchange=selectShell;
   $('show-aim').onchange=function(){if(viewer)viewer.showSavedAim(this.checked);};
   ['caliber','palette','armor-mode'].forEach(function(id){$(id).onchange=updateShell;});

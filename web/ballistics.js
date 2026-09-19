@@ -59,6 +59,8 @@
       normalization:(kind==='ARMOR_PIERCING'?5:kind==='ARMOR_PIERCING_CR'?2:0)*RAD,
       ricochetCos:Math.cos((ap?70:85)*RAD),checkCaliber:ap,mayRicochet:kind!=='HIGH_EXPLOSIVE',
       jetLossPerMeter:kind==='HOLLOW_CHARGE'?.5:0,shieldPenetration:kind==='HIGH_EXPLOSIVE',
+      // No record behind a manual shell, so no damage data: the map falls back to the chance everywhere.
+      alpha:null,spallDamage:null,mechanics:null,nonPiercingArmorDamage:0,liner:1,
       ricochetLoss:ap?.25:0}; // client rule since 9.3: AP and APCR keep 75% of the penetration after a ricochet, HEAT keeps all of it
   }
   function effective(armor,cos,s){
@@ -72,7 +74,28 @@
     if(!s.mayRicochet||!armor.mayRicochet||armor.armor<=EPS||cos>s.ricochetCos+1e-12)return false;
     return !armor.checkCaliberForRicochet||!s.checkCaliber||armor.armor*3>=s.caliber;
   }
-  function evaluate(hits,s){
+  // Non-penetration damage of one shot, HP. Modern HE spalls into the hull behind a plate it did not pierce:
+  // D_np = spallDamage · min(1, 0.05·α/(T·C)), T the plate's nominal armour, C the target's spall-liner factor.
+  // A reconstruction of the server's rule from the client's own armorSpalls data (outputs/he-damage-findings.md),
+  // NOT a confirmed formula, and the ±25% damage roll is not in it. Legacy HE (SPG) has no client-side splash
+  // model at all, so it stays at 0 and says so; AP/APCR/HEAT take nonPiercingArmorDamage, 0 on every shell today.
+  function nonPenetration(s,nominal){
+    if(s.kind!=='HIGH_EXPLOSIVE')return {damage:s.nonPiercingArmorDamage>0?s.nonPiercingArmorDamage:0,law:'none'};
+    if(s.mechanics!=='MODERN'||!(s.spallDamage>0))return {damage:0,law:'legacy-unknown'};
+    return {damage:s.spallDamage*Math.min(1,.05*s.alpha/Math.max(EPS,nominal*(s.liner>0?s.liner:1))),law:'ratio'};
+  }
+  // E = p·α + (1−p)·D_np on main armour; 0 where the shell never reaches it (ricochet, screen, fly-past).
+  function withDamage(r,s){
+    if(r.reason==='penetration'){
+      var np=nonPenetration(s,r.nominal),p=r.chance===null||r.chance===undefined?null:clamp(r.chance/100,0,1);
+      r.alpha=s.alpha;r.nonPen=np.damage;r.damageLaw=np.law;
+      r.expected=p===null?null:p*s.alpha+(1-p)*np.damage;
+      r.expectedShare=r.expected===null?null:clamp(r.expected/s.alpha,0,1);
+    }else if(r.reason==='ricochet'||r.reason==='screen'||r.reason==='no-hull'){r.expected=0;r.expectedShare=0;}
+    return r;
+  }
+  function evaluate(hits,s){var r=walk(hits,s);return s&&s.alpha>0?withDamage(r,s):r;}
+  function walk(hits,s){
     if(!s||!(s.penetration>0)||!(s.caliber>0))return {chance:null,reason:'parameters',layers:[]};
     var remaining=s.penetration,ignored={},layers=[],jet=false,jetStart=0,jetRate=0,seen={};
     for(var i=0;i<hits.length;i++){
@@ -147,8 +170,15 @@
     subdivide(triangle(a,mid,c,t.part,t.name,t.armor),depth+1,out,edge,Math.floor(budget/2));subdivide(triangle(mid,b,c,t.part,t.name,t.armor),depth+1,out,edge,Math.ceil(budget/2));
   }
   var palettes={accessible:[[.63,.18,.55],[.95,.75,.31],[.20,.84,.76]],classic:[[.90,.20,.18],[.97,.79,.22],[.20,.79,.35]]};
-  function color(result,palette,tint){
-    if(result.chance===null)return [.34,.42,.49];
+  // The 0…1 quantity a result is coloured by: the penetration chance, or - in damage mode, and only when the
+  // shell carries an alpha - the expected damage as a share of it. null means "no estimate": neutral grey.
+  function value(result,mode){
+    if(mode==='damage')return result.expectedShare===null||result.expectedShare===undefined?null:clamp(result.expectedShare,0,1);
+    return result.chance===null||result.chance===undefined?null:clamp(result.chance/100,0,1);
+  }
+  function color(result,palette,tint,mode){
+    var share=value(result,mode);
+    if(share===null)return [.34,.42,.49];
     // Ricochet history (a ricochet, or a fly-past after one): the 0 % colour with blue mixed in by 'tint'
     // (0 none, 0.5 default, up to 1.5), the same rule as the GPU map's blued().
     if(result.reason==='ricochet'||(result.reason==='no-hull'&&result.bounce)){
@@ -156,8 +186,8 @@
       return lo.map(function(v,i){return clamp(v+(to[i]-v)*k,0,1);});
     }
     if(result.reason==='no-hull')return [.21,.27,.33];
-    var stops=palettes[palette]||palettes.accessible,p=clamp(result.chance/100,0,1)*2,i=Math.min(1,Math.floor(p)),f=p-i;
+    var stops=palettes[palette]||palettes.accessible,p=share*2,i=Math.min(1,Math.floor(p)),f=p-i;
     return stops[i].map(function(v,k){return v+(stops[i+1][k]-v)*f;});
   }
-  root.ArmorBallistics={build:build,fromTriangles:fromTriangles,triangle:triangle,subdivide:subdivide,evaluate:evaluate,shell:shell,chance:chance,effective:effective,ricochet:ricochet,color:color,transform:transform,unit:unit,sub:sub};
+  root.ArmorBallistics={build:build,fromTriangles:fromTriangles,triangle:triangle,subdivide:subdivide,evaluate:evaluate,shell:shell,chance:chance,effective:effective,ricochet:ricochet,color:color,value:value,nonPenetration:nonPenetration,transform:transform,unit:unit,sub:sub};
 }(typeof window==='undefined'?globalThis:window));
