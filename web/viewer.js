@@ -423,7 +423,10 @@
   // shooter's viewpoint.
   Viewer.prototype.setPivot=function(mode){var next=mode==='hit'&&this.point?'hit':'vehicle';this.pivotHeight=null;
     if(next===this.pivot){if(this.point)this.focus();else{this.pan.set(0,0);this.frameCenter.set(0,0);this.render();}return;}
-    var eye=this.camera.position.clone();this.pivot=next;this.pan.set(0,0);this.frameCenter.set(0,0);this.target.copy(next==='hit'?this.point:this.pivotCentre());this.lookFrom(eye);this.render();};
+    // The camera keeps its eye and turns to the new centre; then the same Fit a hit click ends with, so the
+    // vehicle is framed the same way whichever point it orbits (user, 19.09: with the hit as centre the model
+    // sat wherever the hit point put it).
+    var eye=this.camera.position.clone();this.pivot=next;this.pan.set(0,0);this.frameCenter.set(0,0);this.target.copy(next==='hit'?this.point:this.pivotCentre());this.lookFrom(eye);this.fit();};
   // Place the camera at a world point without moving it: yaw, pitch and distance are read off the vector to the target.
   // Orbit-centre height set by hand (the Height slider): the centre moves straight up or down within the model's
   // height and the camera follows it, so the view slides along the vehicle — a pan for the in-game browser, where
