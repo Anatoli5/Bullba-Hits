@@ -62,37 +62,80 @@
   var SOURCE_TEXT={hangar:'the hangar',battle:'a battle',catalogue:'the catalogue',picker:'this list'};
   var NO_VEHICLE_MODEL='No collision model of this vehicle yet. Select it in the hangar, meet it in a battle, or right-click it in the hangar and pick Bullba Hits.';
   var EXPORT_TIMEOUT='The model did not arrive in 30 s. See game.log.';
-  var VEHICLE_HELP='Models are exported by the mod while the game runs: the vehicle selected in the hangar, every vehicle of a battle you played, or any vehicle via right-click \u2192 Bullba Hits in the hangar. A full export of the whole client can be switched on in settings.json (exportAllVehicles).';
+  // The help of the pane, as the gold badge's popover shows it: three headings, a few lines each. It used to
+  // be a paragraph under the count and a two-line foot under the list; both are gone (user, 19.09: the pane
+  // is a list, not a leaflet).
+  var VEHICLE_INFO=[
+    ['What is listed',['Every vehicle your client knows, grouped by class.',
+      'With a battle open, \u201cThis battle\u201d lists its roster instead: allies and enemies.',
+      'A row without a collision model is dimmed.']],
+    ['How models get here',['The mod exports the vehicle you select in the hangar.',
+      'Every vehicle of a battle you play is exported after it.',
+      'While the game runs, a row clicked here exports on the spot.']],
+    ['In the browser',['Only vehicles whose model is already exported can be drawn.',
+      'Play a battle, or open this page from the game, to get more of them.']]];
   var sidebarMode='battles',battlesDirty=false;
   var catalogue=null,catalogueStamp=null,catalogueError=null,cataloguePending=false;
-  var vehicleFilters={tier:[],nation:[],'class':[],role:[],flag:[],text:''},filtersOpen=false;
+  var vehicleFilters={tier:[],nation:[],'class':[],role:[],flag:[],text:''},vehicleScope='battle';
   var modelVehicle=null,shooterVehicle=null,shooterPicked=false,activeRole='model';
   var vehicleScene=null,vehicleGeneration=0,vehicleCache=Object.create(null),vehicleOrder=[];
   var listIds=null,listMarks=null,listRoles=null,lastFragment=null;
 
   // The game's CEF may refuse storage; the mode and the filters are a convenience, never a requirement.
   function storedSidebar(){try{return JSON.parse(window.localStorage.getItem(SIDEBAR_KEY));}catch(e){return null;}}
-  function storeSidebar(){try{window.localStorage.setItem(SIDEBAR_KEY,JSON.stringify({mode:sidebarMode,filters:vehicleFilters,filtersOpen:filtersOpen}));}catch(e){}}
+  function storeSidebar(){try{window.localStorage.setItem(SIDEBAR_KEY,JSON.stringify({mode:sidebarMode,filters:vehicleFilters,scope:vehicleScope}));}catch(e){}}
 
   // ---- filters -----------------------------------------------------------
+  // No filter means every vehicle is listed - a filter only takes rows away (user, 19.09: an empty filter
+  // used to read as an empty list). The filters belong to the catalogue, so touching one while the list shows
+  // a battle's roster means "the whole catalogue, narrowed": the scope follows the click.
   function toggleFilter(row,value,button){
     var list=vehicleFilters[row],at=list.indexOf(value);
     if(at<0)list.push(value);else list.splice(at,1);
-    button.setAttribute('aria-pressed',String(at<0));storeSidebar();filterSummary();renderVehicles();
+    button.setAttribute('aria-pressed',String(at<0));leaveBattleScope();storeSidebar();filterSummary();renderVehicles();
   }
-  // The fold's caption: how many pills are pressed. No filter means every vehicle is listed - a filter only
-  // takes rows away (user, 19.09: an empty filter used to read as an empty list).
+  function leaveBattleScope(){if(vehicleScope==='battle')vehicleScope='all';}
+  // The caret's badge at the right end of the Class row: how many of the secondary pills (Role, Flags) are
+  // pressed. They are out of sight in its popover, so the badge is the only sign that they narrow the list.
   function filterSummary(){
-    var s=$('filter-summary');if(!s)return;var f=vehicleFilters,n=f.tier.length+f.nation.length+f['class'].length+f.role.length+f.flag.length;
-    s.textContent=n?'Filters \u00b7 '+n:'Filters';
+    var fold=$('filter-more');if(!fold)return;
+    var n=vehicleFilters.role.length+vehicleFilters.flag.length,mark=fold.querySelector('.filter-count');
+    if(mark)mark.textContent=n?String(n):'';
+    fold.setAttribute('data-on',String(n>0));
+    fold.querySelector('summary').title=(n?n+' of them are pressed. ':'')+'Role and Flags';
+  }
+  // The search is a magnifier at the right end of the Tier row: a click puts the input where the row's label
+  // is, Escape or an empty blur puts the label back. A text that stays shows as a chip on the count line and
+  // keeps the magnifier gold, so a narrowed list is never a silent one.
+  function searchBox(open,focus){
+    var input=$('vehicle-search'),toggle=$('vehicle-search-toggle');if(!input||!toggle)return;
+    var label=input.parentNode.querySelector('.filter-label');
+    input.hidden=!open;if(label)label.hidden=open;
+    toggle.setAttribute('aria-expanded',String(!!open));
+    if(open&&focus)input.focus();
+  }
+  function searchText(value){
+    vehicleFilters.text=value;
+    if(value)leaveBattleScope();
+    storeSidebar();renderVehicles();
+  }
+  function filterChip(){
+    var text=String(vehicleFilters.text||'').trim(),chip=$('vehicle-text-chip'),toggle=$('vehicle-search-toggle');
+    if(chip){chip.hidden=!text;chip.textContent=text?'\u201c'+text+'\u201d \u00d7':'';}
+    if(toggle)toggle.setAttribute('data-on',String(!!text));
   }
   // Nation and flag marks: the client's own icons, embedded in style.css exactly like .vt-class/.vt-role.
   function nationMark(nation){var m=node('span',undefined,'vt-nation');m.setAttribute('data-nation',nation);return m;}
   function flagMark(flag){var m=node('span',undefined,'vt-flag');m.setAttribute('data-flag',flag);return m;}
   // A pill with a mark shows the icon and carries the name in its title; a pill without one shows the word
   // (Tier is Roman numerals, "Exported" has no client icon).
-  function filterRow(row,title,items){
-    var wrap=node('div',undefined,'filter-row');wrap.appendChild(node('span',title,'filter-label'));
+  // The head line of a row carries the label and, at its right end, whatever tool belongs to that row: the
+  // magnifier on Tier, the caret of the secondary filters on Class. Neither costs a row of its own.
+  function filterRow(row,title,items,tools){
+    var wrap=node('div',undefined,'filter-row'),head=node('div',undefined,'filter-head');
+    head.appendChild(node('span',title,'filter-label'));
+    (tools||[]).forEach(function(t){head.appendChild(t);});
+    wrap.appendChild(head);
     var pills=node('span',undefined,'filter-pills');pills.setAttribute('role','group');pills.setAttribute('aria-label',title);
     items.forEach(function(item){
       var b=node('button',undefined,'filter-pill');b.type='button';
@@ -104,36 +147,61 @@
     });
     wrap.appendChild(pills);return wrap;
   }
+  function searchTools(){
+    var input=document.createElement('input');input.id='vehicle-search';input.type='search';input.className='vehicle-search';
+    input.placeholder='Find\u2026';input.setAttribute('aria-label','Find a vehicle by name');input.autocomplete='off';input.hidden=true;
+    input.oninput=function(){searchText(this.value);};
+    input.onkeydown=function(e){if(e.key==='Escape'||e.key==='Esc'){this.value='';searchText('');searchBox(false,false);}};
+    input.onblur=function(){if(!this.value)searchBox(false,false);};
+    var toggle=node('button','\ud83d\udd0d','filter-tool');toggle.type='button';toggle.id='vehicle-search-toggle';
+    toggle.setAttribute('aria-label','Find a vehicle by name');toggle.setAttribute('aria-expanded','false');
+    toggle.title='Find a vehicle by name';
+    toggle.onclick=function(){searchBox(input.hidden,true);};
+    return [input,toggle];
+  }
+  // Role and Flags are the rows nobody opens twice a session: they sit in a popover of the kind the toolbar's
+  // "More" and the modifier groups use, so the page keeps its one popover mechanism and its one closing
+  // handler. The caret that opens it is at the right end of the Class row, not on a row of its own.
+  function secondaryFilters(){
+    var fold=node('details',undefined,'toolbar-more filter-more');fold.id='filter-more';
+    var summary=node('summary','\u25be');summary.appendChild(node('span','','filter-count'));
+    summary.setAttribute('aria-label','More filters: role and flags');
+    fold.appendChild(summary);
+    var pop=node('div',undefined,'toolbar-popover');fold.appendChild(pop);
+    pop.appendChild(filterRow('role','Role',Object.keys(roleNames).map(function(f){
+      var mark=node('span',undefined,'vt-role');mark.setAttribute('data-role',f);return {value:f,label:roleNames[f],mark:mark};})));
+    var flags=host.game?FLAG_KEYS:FLAG_KEYS.filter(function(f){return f!=='exported';});
+    pop.appendChild(filterRow('flag','Flags',flags.map(function(f){
+      return {value:f,label:FLAG_NAMES[f],title:FLAG_TITLES[f],mark:FLAG_ICONS[f]?flagMark(f):null};})));
+    return fold;
+  }
   function buildFilters(){
     var box=$('vehicle-filters');box.replaceChildren();
-    var search=document.createElement('input');search.id='vehicle-search';search.type='search';search.className='vehicle-search';
-    search.placeholder='Find\u2026';search.setAttribute('aria-label','Find a vehicle by name');search.autocomplete='off';
-    search.oninput=function(){vehicleFilters.text=this.value;storeSidebar();renderVehicles();};
-    box.appendChild(search);
-    // The five pill rows fold under one caption: open, they take most of a 768 px column and the list below
-    // had no room left. Closed by default; the state is remembered with the filters.
-    var fold=node('details',undefined,'filter-box');fold.id='filter-box';fold.open=filtersOpen;
-    var summary=node('summary',undefined,'filter-label');summary.id='filter-summary';fold.appendChild(summary);
-    fold.ontoggle=function(){filtersOpen=fold.open;storeSidebar();scheduleLayout();};
-    var host_=box;box=fold;host_.appendChild(fold);
+    // Tier, Nation and Class stay on screen: the fold that hid all five (19.09, earlier today) hid exactly
+    // the filters that are used. The column is wide enough for Nation in two rows of six.
     var tiers=[],i;for(i=1;i<=11;i++)tiers.push({value:String(i),label:tierRomans[i],title:'Tier '+tierRomans[i]});
-    box.appendChild(filterRow('tier','Tier',tiers));
+    box.appendChild(filterRow('tier','Tier',tiers,searchTools()));
     box.appendChild(filterRow('nation','Nation',Object.keys(nationNames).map(function(n){
       return {value:n,label:nationNames[n],mark:nationMark(n)};})));
     box.appendChild(filterRow('class','Class',CLASS_ORDER.map(function(c){
-      var mark=node('span',undefined,'vt-class');mark.setAttribute('data-class',c);return {value:c,label:classNames[c],mark:mark};})));
-    box.appendChild(filterRow('role','Role',Object.keys(roleNames).map(function(f){
-      var mark=node('span',undefined,'vt-role');mark.setAttribute('data-role',f);return {value:f,label:roleNames[f],mark:mark};})));
-    var flags=host.game?FLAG_KEYS:FLAG_KEYS.filter(function(f){return f!=='exported';});
-    box.appendChild(filterRow('flag','Flags',flags.map(function(f){
-      return {value:f,label:FLAG_NAMES[f],title:FLAG_TITLES[f],mark:FLAG_ICONS[f]?flagMark(f):null};})));
+      var mark=node('span',undefined,'vt-class');mark.setAttribute('data-class',c);return {value:c,label:classNames[c],mark:mark};}),[secondaryFilters()]));
+  }
+  // The gold badge's popover: the help the pane used to print under the count and under the list.
+  function buildInfo(){
+    var box=document.querySelector('#vehicle-info-box .toolbar-popover');if(!box)return;
+    box.replaceChildren();
+    VEHICLE_INFO.forEach(function(part){
+      var section=node('div');section.appendChild(node('b',part[0]));
+      var lines=node('ul');part[1].forEach(function(line){lines.appendChild(node('li',line));});
+      section.appendChild(lines);box.appendChild(section);
+    });
   }
   function syncFilters(){
     document.querySelectorAll('#vehicle-filters [data-row]').forEach(function(b){
       var list=vehicleFilters[b.getAttribute('data-row')]||[];
       b.setAttribute('aria-pressed',String(list.indexOf(b.getAttribute('data-value'))>=0));});
     var search=$('vehicle-search');if(search)search.value=vehicleFilters.text;
-    var fold=$('filter-box');if(fold)fold.open=filtersOpen;filterSummary();
+    searchBox(false,false);filterSummary();filterChip();syncScope();
   }
   function vehicleMatches(v){
     var f=vehicleFilters,i;
@@ -148,43 +216,110 @@
   }
 
   // ---- the list ----------------------------------------------------------
-  // One DOM node per row, up to about a thousand of them: the list is rebuilt only when the set of rows, the
-  // roles or the export marks actually change, so the five-second poll of the catalogue costs nothing.
-  function renderVehicles(force){
-    var list=$('vehicles'),all=(catalogue&&catalogue.vehicles)||[];
+  // Two scopes (user, 19.09). "This battle" lists the roster of the battle on screen in the two groups the
+  // roster picker uses, so a scene tile is filled from the vehicles that actually fought; "All vehicles" is
+  // the client's catalogue grouped by class and narrowed by the filters. Without a roster there is nothing
+  // to scope to: the control is hidden and the catalogue is the only list.
+  function scopeReady(){return !!current&&rosterRows().length>0;}
+  function activeScope(){return scopeReady()&&vehicleScope==='battle'?'battle':'all';}
+  function syncScope(){
+    var box=$('vehicle-scope');if(!box)return;
+    box.hidden=!scopeReady();
+    var scope=activeScope();
+    box.querySelectorAll('[data-scope]').forEach(function(b){b.setAttribute('aria-pressed',String(b.getAttribute('data-scope')===scope));});
+  }
+  function catalogueByType(type){
+    var rows=(catalogue&&catalogue.vehicles)||[],i;
+    for(i=0;i<rows.length;i++)if(rows[i].type===type)return rows[i];
+    return null;
+  }
+  // The file id the exporter gives a vehicle type (mod/local_armor_inspector/exporter.py vehicle_id): the
+  // first colon becomes a dash, anything outside [-A-Za-z0-9_] an underscore. It is needed for a roster
+  // vehicle the catalogue does not carry - in the game a click on it is an export request like any other
+  // unexported row, in the browser it is the usual dimmed row with the usual note.
+  function typeId(type){return String(type||'').replace(':','-').replace(/[^-A-Za-z0-9_]/g,'_');}
+  // What this battle recorded about a vehicle type: its hit descriptor carries the tier, class, role and
+  // nation the catalogue would have given.
+  function recordedVehicle(type){
+    var hits=(current&&current.hits)||[],i,h;
+    for(i=0;i<hits.length;i++){h=hits[i];
+      if(h.target&&h.target.type===type)return h.target;
+      if(h.attacker&&h.attacker.type===type)return h.attacker;}
+    return null;
+  }
+  function rosterVehicle(row){
+    var known=catalogueByType(row.type);if(known)return known;
+    var d=recordedVehicle(row.type)||{};
+    return {id:typeId(row.type),type:row.type,name:row.name||d.name||'Unknown vehicle',level:d.level,'class':d['class'],
+      role:d.role,nation:d.nation,premium:false,collector:false,special:false,exported:false,exportedAt:null,source:null};
+  }
+  // A group is [caption, rows]; a row is the catalogue entry plus the side it fought on. The nickname of the
+  // player is not repeated here (user, 19.09): the list is about vehicles, the roster picker about seats.
+  function rosterGroups(){
+    var groups=pickerList(),out=[];
+    [['ALLIES','ally',groups.allies],['ENEMIES','enemy',groups.enemies]].forEach(function(group){
+      if(!group[2].length)return;
+      out.push([group[0],group[2].map(function(r){return {v:rosterVehicle(r),side:group[1]};})]);
+    });
+    return out;
+  }
+  function catalogueGroups(){
+    var all=(catalogue&&catalogue.vehicles)||[];
     // In the game the mod is running, so every catalogue row is offered and an unexported one exports on
-    // click. In the browser nothing can be exported, so only the rows that already have a model are listed
-    // and a short note under the count says how models get there.
+    // click. In the browser nothing can be exported, so only the rows that already have a model are listed.
     if(!host.game)all=all.filter(function(v){return v.exported;});
-    var shown=all.filter(vehicleMatches);
-    var exported=0;shown.forEach(function(v){if(v.exported)exported++;});
-    $('vehicle-count').textContent=catalogue?(host.game?shown.length+' vehicles \u00b7 '+exported+' with models':shown.length+' vehicles with models'):(catalogueError||'Reading the vehicle list\u2026');
-    var help=$('vehicle-help');help.textContent=host.game?'':VEHICLE_HELP;help.hidden=host.game;
-    var ids=shown.map(function(v){return v.id;}).join(','),marks=shown.map(function(v){return v.exported?'1':'0';}).join('');
-    var roles=(modelVehicle?modelVehicle.id:'')+'/'+(shooterVehicle?shooterVehicle.id:'');
-    if(!force&&ids===listIds&&roles===listRoles){
-      if(marks!==listMarks){listMarks=marks;shown.forEach(function(v){
-        var row=list.querySelector('[data-vehicle="'+v.id+'"]');if(row)row.setAttribute('data-exported',String(!!v.exported));});}
-      return;
-    }
-    listIds=ids;listMarks=marks;listRoles=roles;
-    var top=list.scrollTop;list.replaceChildren();
-    if(!shown.length){list.appendChild(node('p',catalogue?'No vehicles match the filters.':(catalogueError||'Reading the vehicle list\u2026'),'empty'));return;}
+    var shown=all.filter(vehicleMatches),out=[];
     CLASS_ORDER.forEach(function(cls){
       var group=shown.filter(function(v){return v['class']===cls;});
       if(!group.length)return;
       group.sort(function(a,b){return (b.level||0)-(a.level||0)||String(a.name||'').localeCompare(String(b.name||''));});
-      list.appendChild(node('div',String(classNames[cls]).toUpperCase(),'vehicle-group'));
-      group.forEach(function(v){
-        var b=node('button',undefined,'vehicle-row');b.type='button';
-        b.setAttribute('data-vehicle',v.id);b.setAttribute('data-exported',String(!!v.exported));
-        b.setAttribute('aria-pressed',String(!!modelVehicle&&modelVehicle.id===v.id));
-        if(shooterVehicle&&shooterVehicle.id===v.id)b.setAttribute('data-role','shooter');
-        b.appendChild(vehicleTile(v));
-        b.title=(v.name||'Unknown vehicle')+(v.exported?' \u00b7 model exported '+(SOURCE_TAG[v.source]||''):' \u00b7 no collision model yet');
-        b.onclick=function(){chooseVehicle(v);};
-        list.appendChild(b);
-      });
+      out.push([String(classNames[cls]).toUpperCase(),group.map(function(v){return {v:v,side:null};})]);
+    });
+    return out;
+  }
+  // One row, both scopes: the team stripe of the roster picker when the battle supplies a side, and the gold
+  // mark on the vehicle that fills the role a tile click is waiting for.
+  function vehicleRow(item){
+    var v=item.v,b=node('button',undefined,'vehicle-row');b.type='button';
+    var isModel=!!modelVehicle&&modelVehicle.id===v.id,isShooter=!!shooterVehicle&&shooterVehicle.id===v.id;
+    b.setAttribute('data-vehicle',v.id);b.setAttribute('data-exported',String(!!v.exported));
+    b.setAttribute('aria-pressed',String(isModel));
+    if(item.side)b.setAttribute('data-side',item.side);
+    if(isShooter)b.setAttribute('data-role','shooter');
+    if(activeRole==='shooter'?isShooter:isModel)b.setAttribute('data-active','true');
+    b.appendChild(vehicleTile(v));
+    b.title=[v.name||'Unknown vehicle',item.side==='ally'?'Ally':item.side==='enemy'?'Enemy':'',
+      v.exported?'model exported '+(SOURCE_TAG[v.source]||''):'no collision model yet'].filter(Boolean).join(' \u00b7 ');
+    b.onclick=function(){chooseVehicle(v);};
+    return b;
+  }
+  // One DOM node per row, up to about a thousand of them: the list is rebuilt only when the set of rows, the
+  // roles or the export marks actually change, so the five-second poll of the catalogue costs nothing.
+  function renderVehicles(force){
+    var list=$('vehicles'),scope=activeScope();
+    syncScope();
+    var groups=scope==='battle'?rosterGroups():catalogueGroups(),shown=[];
+    groups.forEach(function(group){shown=shown.concat(group[1]);});
+    var exported=0;shown.forEach(function(item){if(item.v.exported)exported++;});
+    // One line under the filters: how many of the listed vehicles have a model, and how many are listed at
+    // all when that is a different figure. The help that used to stand here is behind the badge beside it.
+    $('vehicle-count').textContent=catalogue||scope==='battle'
+      ?(exported===shown.length?shown.length+' with models':exported+' with models \u00b7 '+shown.length+' total')
+      :(catalogueError||'Reading the vehicle list\u2026');
+    filterChip();
+    var ids=shown.map(function(item){return item.v.id;}).join(','),marks=shown.map(function(item){return item.v.exported?'1':'0';}).join('');
+    var roles=(modelVehicle?modelVehicle.id:'')+'/'+(shooterVehicle?shooterVehicle.id:'')+'/'+activeRole+'/'+scope;
+    if(!force&&ids===listIds&&roles===listRoles){
+      if(marks!==listMarks){listMarks=marks;shown.forEach(function(item){
+        var row=list.querySelector('[data-vehicle="'+item.v.id+'"]');if(row)row.setAttribute('data-exported',String(!!item.v.exported));});}
+      return;
+    }
+    listIds=ids;listMarks=marks;listRoles=roles;
+    var top=list.scrollTop;list.replaceChildren();
+    if(!shown.length){list.appendChild(node('p',scope==='battle'?'No vehicles in this battle.':catalogue?'No vehicles match the filters.':(catalogueError||'Reading the vehicle list\u2026'),'empty'));return;}
+    groups.forEach(function(group){
+      list.appendChild(node('div',group[0],'vehicle-group'));
+      group[1].forEach(function(item){list.appendChild(vehicleRow(item));});
     });
     list.scrollTop=top;
   }
@@ -252,6 +387,10 @@
   }
   function showVehicleScene(keepCamera){
     if(!modelVehicle)return Promise.resolve(null);
+    // adoptHitVehicles() hands over catalogue rows, and a catalogue row carries no collision parts: the
+    // target of the scene must be the vehicle's own export, or the viewer is given an empty model. One step
+    // only - readVehicle() rejects anything without parts.
+    if(!modelVehicle.parts)return readVehicle(modelVehicle.id).then(function(record){modelVehicle=record;return showVehicleScene(false);});
     var hit=vehicleHit(modelVehicle,shooterVehicle||modelVehicle);
     var camera=keepCamera&&viewer&&viewer.cameraState?viewer.cameraState():null,token=++generation;
     message('Preparing the model\u2026');if(viewer)viewer.clear();
@@ -341,19 +480,25 @@
       .catch(function(){message('The model of this vehicle was not exported. See game.log.');});
   }
   function restoreSidebar(){
-    buildFilters();
+    buildFilters();buildInfo();
     var saved=storedSidebar();
     if(saved&&saved.filters){
       ['tier','nation','class','role','flag'].forEach(function(k){if(Array.isArray(saved.filters[k]))vehicleFilters[k]=saved.filters[k].filter(function(v){return typeof v==='string';});});
       if(typeof saved.filters.text==='string')vehicleFilters.text=saved.filters.text;
-      filtersOpen=saved.filtersOpen===true;
     }
+    // 'filtersOpen' of an older state is ignored: the fold it belonged to is gone.
+    if(saved&&(saved.scope==='battle'||saved.scope==='all'))vehicleScope=saved.scope;
     syncFilters();
     // The page always opens on the battles and their hits (user, 14.09: a newcomer must not think the viewer is
     // empty); only a fragment naming a vehicle opens the Vehicles mode. The filters are remembered, the mode is not.
   }
   document.querySelectorAll('#sidebar-mode [data-mode]').forEach(function(b){
     b.onclick=host.guard('Side panel mode',function(){setMode(b.getAttribute('data-mode'));});});
+  // Picking "This battle" again clears nothing: the filters stay where they are, they simply do not apply
+  // to a roster.
+  document.querySelectorAll('#vehicle-scope [data-scope]').forEach(function(b){
+    b.onclick=function(){vehicleScope=b.getAttribute('data-scope')==='battle'?'battle':'all';storeSidebar();renderVehicles();};});
+  $('vehicle-text-chip').onclick=function(){var input=$('vehicle-search');if(input)input.value='';searchText('');searchBox(false,false);};
   $('model-tile').onclick=function(){chooseRole('model');};
   // ========================== end of Vehicles mode =========================
   // ================= collision models that are still coming =================
@@ -1007,30 +1152,30 @@
     model.title=roleHint('model');button.title=roleHint('shooter');
     swapTile(hit);roleTiles();
   }
-  // What a click in the side panel will do for this tile, in the mode the panel is in.
+  // What a click on this tile does: it opens the vehicle list on the vehicle that is in this role, in either
+  // mode, and the next row clicked there fills it.
   function roleHint(role){
-    if(sidebarMode==='vehicles')return role==='shooter'?'The shooter \u00b7 pick him in the vehicle list':'The collision model on screen \u00b7 pick it in the vehicle list';
-    return role==='shooter'?'The shooter \u00b7 pick him in the roster above the hit list: his gun against the model on screen, without a shot line'
-      :'The collision model on screen \u00b7 pick the vehicle in the roster above the hit list: his hits and the hits on him';
+    return role==='shooter'?'The shooter \u00b7 click to pick him in the vehicle list: his gun against the model on screen'
+      :'The collision model on screen \u00b7 click to pick it in the vehicle list';
   }
   function roleTiles(){
     $('model-tile').setAttribute('aria-pressed',String(activeRole!=='shooter'));
     $('shooter-tile').setAttribute('aria-pressed',String(activeRole==='shooter'));
   }
-  // The tile click only chooses the role; the side panel then shows which vehicle is in it - the catalogue
-  // row scrolled into view, or the roster picker opened on the row that holds it.
+  // The tile click chooses the role and opens the Vehicles panel on it (user, 19.09). The scene stays where
+  // it is - setMode keeps the hit that is on screen and hands its two vehicles to the list - and the row that
+  // holds the chosen role is marked and scrolled into view, in either scope. The roster picker of the Battles
+  // mode is never opened from a tile: the page's own closing handler shut it on the very same click.
   function chooseRole(role){
     activeRole=role==='shooter'?'shooter':'model';roleTiles();
-    if(sidebarMode==='vehicles'){
-      var v=activeRole==='shooter'?shooterVehicle:modelVehicle,row=v?$('vehicles').querySelector('[data-vehicle="'+v.id+'"]'):null;
-      if(row&&row.scrollIntoView)row.scrollIntoView({block:'nearest'});
-      return;
-    }
-    renderFocus();
-    var box=$('vehicle-focus');if(box.classList.contains('is-locked'))return;
-    box.open=true;
-    var marked=$('focus-list').querySelector(activeRole==='shooter'?'[data-role=shooter]':'[aria-pressed=true]');
-    if(marked&&marked.scrollIntoView)marked.scrollIntoView({block:'nearest'});
+    var ready=sidebarMode==='vehicles'?Promise.resolve():setMode('vehicles');
+    ready.then(showActiveRole,showActiveRole);
+  }
+  function showActiveRole(){
+    renderVehicles();
+    var v=activeRole==='shooter'?shooterVehicle:modelVehicle;
+    var row=v?$('vehicles').querySelector('[data-vehicle="'+v.id+'"]'):null;
+    if(row&&row.scrollIntoView)row.scrollIntoView({block:'nearest'});
   }
   // The swap is a button of its own since 19.09 and is offered only where it can do something: a recorded hit
   // whose shooter has a collision model, or a view already swapped, which it takes back to the recorded hit.
@@ -1402,7 +1547,7 @@
   // longest — and layoutToolbar() hands the highest numbers to the “More” popover until the rest fit on one
   // line, taking them back when the window widens. insertBefore moves the nodes themselves, so every id and
   // every listener inside a group survives the move.
-  var toolbar=document.querySelector('.scene-toolbar'),moreBox=document.querySelector('.toolbar-more');
+  var toolbar=document.querySelector('.scene-toolbar'),moreBox=document.querySelector('.scene-toolbar > .toolbar-more');
   var popover=moreBox?moreBox.querySelector('.toolbar-popover'):null,tbWidth={},tbFrame=0;
   var tbGroups=toolbar?[].slice.call(toolbar.querySelectorAll('[data-tb]')):[];
   var tbRank=function(g){return Number(g.getAttribute('data-tb'));};tbGroups.sort(function(a,b){return tbRank(a)-tbRank(b);});
