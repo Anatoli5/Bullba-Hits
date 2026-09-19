@@ -287,6 +287,9 @@
     var changed=mode!==sidebarMode;sidebarMode=mode;
     document.querySelectorAll('#sidebar-mode [data-mode]').forEach(function(b){b.setAttribute('aria-pressed',String(b.getAttribute('data-mode')===mode));});
     $('battles-pane').hidden=mode!=='battles';$('vehicles-pane').hidden=mode!=='vehicles';
+    // The heading carries the battle picker in the Battles mode and a plain vehicle name in the other:
+    // one of the two is on screen at a time, both keep their ids and their listeners.
+    $('battles').hidden=mode!=='battles';$('battle-map').hidden=mode==='battles';
     storeSidebar();
     if(mode==='vehicles'){
       loadCatalogue();
@@ -532,7 +535,11 @@
     var stamp=current?battleStamp(current.startedAt):'',own=ownVehicle();
     if(sidebarMode!=='battles')return own; // the Vehicles mode writes its own heading
     $('scene-kind').textContent='BATTLE'+(stamp?' \u00b7 '+stamp:'');
-    $('battle-map').textContent=current?(current.map||'Unknown map'):'Pick a hit';
+    // The battle name IS the picker now. refresh() and $('battles').onchange already leave it on the
+    // open battle; this only catches the paths that reach loadBattle() another way (the mode switch,
+    // the WebMCP tool), and never sets a value the list does not carry - that would blank the heading.
+    var picker=$('battles');
+    if(current&&picker.value!==current.id&&[].some.call(picker.options,function(o){return o.value===current.id;}))picker.value=current.id;
     var slot=$('heading-vehicle');slot.replaceChildren();if(own)slot.appendChild(vehicleTile(own));
     return own;
   }
@@ -553,6 +560,9 @@
       shellCandidates:[],availableShells:[],receivedAt:hit.receivedAt,rangeAtImpact:hit.rangeAtImpact};
   }
   function sceneTiles(hit,reference){
+    // The pose tile belongs to the model on screen: it goes as soon as there is none, and poseChanged()
+    // brings it back with the figures of the next one.
+    if(!hit)$('pose-info').hidden=true;
     var target=hit&&hit.target||null,attacker=hit&&hit.attacker||null,button=$('shooter-tile'),model=$('model-tile');
     $('model-caption').textContent=reference?'Reference model':'Collision model';
     model.hidden=!target;$('model-tile-body').replaceChildren();if(target)$('model-tile-body').appendChild(vehicleTile(target));
@@ -727,10 +737,33 @@
   $('part-edges').onchange=function(){if(viewer)viewer.setPartEdges(this.value==='on');};
   $('zone-outline').onchange=function(){if(viewer)viewer.setZoneOutline(this.value==='on');};
   $('heatmap-quality').onchange=host.guard('Detail',function(){if(host.game&&this.value==='high'){this.value=viewer?viewer.quality:'auto';return;}if(viewer)viewer.setQuality(this.value);});
-  // Last item of the toolbar row: the explored pose (when it differs) and the gun's vertical limits at the
-  // current turret angle. Gun readouts: up positive, down negative (the client's pitch is the other way round).
-  // The shortcut list that used to sit under the scene is gone; #viewport keeps the same text as its aria-label.
-  function poseChanged(){if(!viewer)return;var off=!(Math.abs(viewer.turretAngle)<.1&&Math.abs(viewer.gunAngle)<.1),sign=function(v){return (v>0?'+':'')+Math.round(v)+'°';},g=viewer.gunRange();$('turret-notice').hidden=!off;if(off)$('turret-notice').textContent='Turret '+sign(viewer.turretAngle)+', gun '+sign(-viewer.gunAngle)+' from the recorded pose (hit marks hidden)';$('gun-limits').textContent=g.known?'Gun '+sign(-g.max)+' … '+sign(-g.min)+' at this turret angle':'Gun limits not recorded';staleEstimate();shotStats();}
+  // The pose tile at the bottom right of the scene: where the turret and the gun POINT, not how far they have
+  // been dragged (user, 18.09: a turret that was turned at the hit was read as 0°). The viewer keeps the pose as
+  // a delta from the record - everything else depends on that - so the figures here are the recorded pose plus
+  // the delta: hit.aim = [turret yaw, gun pitch] in radians at the hit, yaw 0 = hull forward, pitch positive =
+  // down, which is why the gun is printed with the sign flipped (up positive). The limits come from
+  // gunRangeAbsolute(), the same samples without the recorded pitch subtracted. A record with no hit.aim - an
+  // old battle, a vehicle opened without a shot - has nothing absolute to add to and keeps the delta wording.
+  // Gun readouts: up positive, down negative. #viewport keeps the drag hints in its aria-label.
+  function poseChanged(){
+    if(!viewer)return;
+    var loaded=!!viewer.loadedData;$('pose-info').hidden=!loaded;if(!loaded)return;
+    var hit=viewer.loadedData.hit||{},aim=hit.aim||[],absolute=Number.isFinite(aim[0])&&Number.isFinite(aim[1]);
+    var off=!(Math.abs(viewer.turretAngle)<.1&&Math.abs(viewer.gunAngle)<.1),DEG=180/Math.PI;
+    var sign=function(v){return (v>0?'+':'')+Math.round(v)+'°';},wrap=function(v){return ((v+180)%360+360)%360-180;};
+    var g=viewer.gunRangeAbsolute(),turret,gun;
+    if(absolute){
+      var yawLimits=(hit.target||{}).turretYawLimits,limited=Array.isArray(yawLimits)&&yawLimits.length===2;
+      turret='Turret '+sign(wrap(aim[0]*DEG+viewer.turretAngle))+(limited?' · limits '+sign(yawLimits[0]*DEG)+' … '+sign(yawLimits[1]*DEG):'');
+      gun='Gun '+sign(-(aim[1]*DEG+viewer.gunAngle))+(g.known?' · '+sign(-g.max)+' … '+sign(-g.min):' · limits not recorded');
+    }else{
+      turret='Turret '+sign(viewer.turretAngle)+' from the recorded pose';
+      gun='Gun '+sign(-viewer.gunAngle)+' from the recorded pose';
+    }
+    $('pose-turret').textContent=turret;$('pose-gun').textContent=gun;
+    $('pose-note').textContent=off?'Hit marks hidden until the recorded pose returns':'';$('pose-note').hidden=!off;
+    staleEstimate();shotStats();
+  }
   function pivotButtons(){if(!viewer)return;$('pivot-hit').disabled=!viewer.point;$('pivot-vehicle').setAttribute('aria-pressed',String(viewer.pivot!=='hit'));$('pivot-hit').setAttribute('aria-pressed',String(viewer.pivot==='hit'));}
   $('pivot-vehicle').onclick=function(){if(viewer)viewer.setPivot('vehicle');pivotButtons();};$('pivot-hit').onclick=function(){if(viewer)viewer.setPivot('hit');pivotButtons();};
   if(viewer)viewer.onTurret=poseChanged;

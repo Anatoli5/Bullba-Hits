@@ -37,8 +37,8 @@
     this.targetYaw=this.yaw;this.targetPitch=this.pitch;this.orbitId=null;this.pendingPan=null;this.targetDistance=null;this.targetScale=null;this.targetZoom=null; // wheel targets, null = nothing pending
     // Layout read once per resize instead of once per frame, and the geometry of the drawn pose.
     this.viewWidth=0;this.viewHeight=0;this.viewRect=null;this.poseGeometries=null;this.poseBuilt=null;this.poseStale=false;this.poseAt=0;
-    this.quality='auto';this.bounceMode='always';this.bounceTimer=null;this.dots=false;this.dotSpacing=5;this.tint=.5;this.partEdges=true;this.zoneOutline=false;this.turretAngle=0;this.turretTimer=null;this.turretPending=false;
-    this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.trackOpacity=.4;this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.gunAngle=0;this.autoFrame=true;this.frameScale=this.defaults.scale;this.outline=null;this.outlineDepth=null;this.outlineStyle={brightness:.8,opacity:.6};this.showOutline=false;
+    this.quality='auto';this.bounceMode='always';this.bounceTimer=null;this.dots=true;this.dotSpacing=3;this.tint=.5;this.partEdges=true;this.zoneOutline=false;this.turretAngle=0;this.turretTimer=null;this.turretPending=false;
+    this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.trackOpacity=.06;this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.gunAngle=0;this.autoFrame=true;this.frameScale=this.defaults.scale;this.outline=null;this.outlineDepth=null;this.outlineStyle={brightness:.8,opacity:.06};this.showOutline=false;
     var drag = null;
     container.addEventListener('contextmenu', function(e) { e.preventDefault(); });
     container.addEventListener('pointerdown', function(e) { /* The scene tiles are controls of their own: capturing the pointer here would retarget the click to #viewport and the shooter tile would never fire. */ if(e.target&&e.target.closest&&e.target.closest('.viewport-tile'))return; /* pan: right button, or Ctrl + left button (the in-game browser swallows the right button) */ if(e.button===2||(e.button===0&&e.ctrlKey)){drag={pan:true,x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY,moved:false};self.dragging=true;try{container.setPointerCapture(e.pointerId);}catch(ignore){}return;}if(e.button!==0)return;if(e.altKey){self.aimAt(e);return;}drag={x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY,moved:false,part:self.pickPart(e)};self.dragging=true; try{container.setPointerCapture(e.pointerId);}catch(ignore){} container.focus(); });
@@ -251,14 +251,20 @@
     this.turretAngle=limited?Math.max(lo,Math.min(hi,degrees)):((degrees+180)%360+360)%360-180;if(this.onTurret)this.onTurret({angle:this.turretAngle,min:lo,max:hi,limited:limited});
     this.setGun(this.gunAngle);this.markPose();
   };
-  Viewer.prototype.gunRange=function(){
+  // The pose the viewer holds is a delta from the recorded one, so gunRange() reports the vertical limits in
+  // that same delta - setGun() clamps against them. gunRangeAbsolute() is the very same interpolation with the
+  // recorded pitch left in: the gun's own range at this turret angle, which is what the scene tile prints.
+  // Both are the one function, so a change to the sample lookup cannot drift between them.
+  Viewer.prototype.gunSpan=function(absolute){
     var hit=this.loadedData&&this.loadedData.hit,info=hit&&(hit.target||{}).gunPitchLimits,initial=hit&&(hit.aim||[])[1];
     if(!info||!Array.isArray(info.samples)||!Number.isFinite(initial))return {min:-45,max:45,known:false};
     var yaw=((hit.aim||[])[0]||0)+this.turretAngle*Math.PI/180;yaw=Math.atan2(Math.sin(yaw),Math.cos(yaw));var rows=info.samples,a=rows[0],b=rows[rows.length-1];
     for(var i=1;i<rows.length;i++)if(rows[i][0]>=yaw){a=rows[i-1];b=rows[i];break;}
-    var f=Math.max(0,Math.min(1,(yaw-a[0])/Math.max(1e-9,b[0]-a[0])));
-    return {min:(a[1]+(b[1]-a[1])*f-initial)*180/Math.PI,max:(a[2]+(b[2]-a[2])*f-initial)*180/Math.PI,known:true};
+    var f=Math.max(0,Math.min(1,(yaw-a[0])/Math.max(1e-9,b[0]-a[0]))),base=absolute?0:initial;
+    return {min:(a[1]+(b[1]-a[1])*f-base)*180/Math.PI,max:(a[2]+(b[2]-a[2])*f-base)*180/Math.PI,known:true};
   };
+  Viewer.prototype.gunRange=function(){return this.gunSpan(false);};
+  Viewer.prototype.gunRangeAbsolute=function(){return this.gunSpan(true);};
   Viewer.prototype.setGun=function(degrees){if(!this.loadedData)return;var limits=this.gunRange();this.gunAngle=Math.max(limits.min,Math.min(limits.max,degrees));this.markPose();if(this.onGun)this.onGun({angle:this.gunAngle,known:limits.known});};
   Viewer.prototype.resetPose=function(){this.turretAngle=0;this.gunAngle=0;this.setTurret(0);};
   // A pose change asks for a frame and starts the settle timer: while the drag lasts the frame only re-transforms
