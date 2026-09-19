@@ -60,7 +60,7 @@
       ricochetCos:Math.cos((ap?70:85)*RAD),checkCaliber:ap,mayRicochet:kind!=='HIGH_EXPLOSIVE',
       jetLossPerMeter:kind==='HOLLOW_CHARGE'?.5:0,shieldPenetration:kind==='HIGH_EXPLOSIVE',
       // No record behind a manual shell, so no damage data: the map falls back to the chance everywhere.
-      alpha:null,spallDamage:null,mechanics:null,nonPiercingArmorDamage:0,liner:1,
+      alpha:null,spallDamage:null,spallAbsorption:null,mechanics:null,nonPiercingArmorDamage:0,liner:1,
       ricochetLoss:ap?.25:0}; // client rule since 9.3: AP and APCR keep 75% of the penetration after a ricochet, HEAT keeps all of it
   }
   function effective(armor,cos,s){
@@ -85,6 +85,9 @@
   function nonPenetration(s,nominal){
     if(s.kind!=='HIGH_EXPLOSIVE')return {damage:s.nonPiercingArmorDamage>0?s.nonPiercingArmorDamage:0,law:'none'};
     if(s.mechanics!=='MODERN'||!(s.spallDamage>0))return {damage:0,law:'legacy-unknown'};
+    // armorSpalls/damageAbsorption (one shell in the client, the Taschenratte ability gun): the recorded series of
+    // the Reddit study fit neither law (45 HP measured on 200 mm, 11 by the ratio law), so it stays unmodelled.
+    if(s.spallAbsorption!==null&&s.spallAbsorption!==undefined)return {damage:0,law:'special-unknown'};
     return {damage:s.spallDamage*Math.min(1,.1*s.spallDamage/Math.max(EPS,nominal*(s.liner>0?s.liner:1))),law:'ratio'};
   }
   // E = p·α + (1−p)·D_np on main armour; 0 where the shell never reaches it (ricochet, screen, fly-past).

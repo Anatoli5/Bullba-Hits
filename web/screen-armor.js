@@ -404,7 +404,7 @@ void main(){
     // Damage mode, and only with an alpha in the record: the non-penetration base is the spall damage of modern
     // HE (nonPiercingArmorDamage for AP/APCR/HEAT, 0 for legacy HE), the spall penetration 0.1·spallDamage / liner (= 0.05·α for regular HE). Off
     // it, or without an alpha, uDamage.x is 0 and the map is the plain penetration chance.
-    var modern=s.kind==='HIGH_EXPLOSIVE'&&s.mechanics==='MODERN'&&s.spallDamage>0;
+    var modern=s.kind==='HIGH_EXPLOSIVE'&&s.mechanics==='MODERN'&&s.spallDamage>0&&(s.spallAbsorption===null||s.spallAbsorption===undefined); // the special absorption shell is not modelled (ballistics.js)
     var base=s.kind==='HIGH_EXPLOSIVE'?(modern?s.spallDamage:0):(s.nonPiercingArmorDamage>0?s.nonPiercingArmorDamage:0);
     u.uDamage.value.set(mode==='damage'&&s.alpha>0?1:0,s.alpha||0,base,modern?.1*s.spallDamage/(s.liner>0?s.liner:1):1e9);
     var pr=Math.max(1,pixelRatio||1),m=this.markMaterial.uniforms;m.uHatch.value.set(Math.max(2,this.hatch||5)*pr,pr); // dot pitch in CSS px, one CSS px per dot

@@ -551,12 +551,14 @@ class Recorder(object):
             LOG.exception('Attacker descriptor unavailable; hit is retained')
         try:
             from local_armor_inspector.armor import shot_candidates
-            if attacker is not None and gunInstallationIndex == 0:
-                record['shellCandidates'] = shot_candidates(attacker, effectsIndex)
+            # The shell comes from the gun that fired: slot 0 is the main gun, slot 1 the secondary (ability)
+            # gun of a vehicle that has one. The full list offers every gun's shells for comparison.
+            if attacker is not None:
+                record['shellCandidates'] = shot_candidates(attacker, effectsIndex, gunInstallationIndex)
                 record['availableShells'] = shot_candidates(attacker)
                 record['shellStatus'] = 'matched' if record['shellCandidates'] else 'no matching shell effects'
             else:
-                record['shellStatus'] = 'additional gun unsupported' if gunInstallationIndex != 0 else 'attacker descriptor unavailable'
+                record['shellStatus'] = 'attacker descriptor unavailable'
         except Exception:
             record['shellStatus'] = 'shell parameter extraction failed'
             LOG.exception('Shell parameters unavailable; hit is retained')

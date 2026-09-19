@@ -29,12 +29,30 @@ def live_materials(component):
     return result
 
 
-def shot_candidates(descriptor, effects_index=None):
+def gun_installations(descriptor):
+    """[(installation index, gun)] of the vehicle: the main gun and, on a vehicle with a secondary (ability)
+    gun, its slot 1 - the client's VehicleDescriptor.gunInstallations (GunInstallationSlot.installationIndex,
+    .gun). A client without the attribute gives the main gun alone."""
+    slots = []
+    for slot in getattr(descriptor, 'gunInstallations', None) or []:
+        gun = getattr(slot, 'gun', None)
+        if gun is not None: slots.append((int(getattr(slot, 'installationIndex', len(slots))), gun))
+    return slots or [(0, descriptor.gun)]
+
+
+def shot_candidates(descriptor, effects_index=None, installation=None):
+    """Shells of the vehicle's guns; 'installation' narrows the list to one gun slot (the hit's
+    gunInstallationIndex), None lists every gun. Each shell carries its slot and gun name."""
     result = []
-    for shot in descriptor.gun.shots:
-        if effects_index is not None and shot.shell.effectsIndex != effects_index: continue
-        if shot.shell.kind not in ('ARMOR_PIERCING', 'ARMOR_PIERCING_CR', 'HOLLOW_CHARGE', 'HIGH_EXPLOSIVE'): continue
-        result.append(shot_parameters(shot, 'attacker descriptor gun shots' if effects_index is None else 'attacker descriptor matched by effectsIndex'))
+    for index, gun in gun_installations(descriptor):
+        if installation is not None and index != installation: continue
+        for shot in gun.shots:
+            if effects_index is not None and shot.shell.effectsIndex != effects_index: continue
+            if shot.shell.kind not in ('ARMOR_PIERCING', 'ARMOR_PIERCING_CR', 'HOLLOW_CHARGE', 'HIGH_EXPLOSIVE'): continue
+            shell = shot_parameters(shot, 'attacker descriptor gun shots' if effects_index is None else 'attacker descriptor matched by effectsIndex')
+            shell['gunInstallation'] = index
+            shell['gun'] = getattr(gun, 'shortUserString', None) or getattr(gun, 'name', None)
+            result.append(shell)
     return result
 
 
@@ -59,10 +77,13 @@ def damage_parameters(shell, shell_type):
     mechanics = getattr(shell_type, 'mechanics', None)
     if mechanics is None and getattr(shell, 'kind', None) == 'HIGH_EXPLOSIVE': mechanics = 'LEGACY'
     spalls = getattr(shell_type, 'armorSpalls', None)
-    spall_damage = spall_radius = None
+    spall_damage = spall_radius = spall_absorption = None
     if spalls is not None and getattr(spalls, 'isActive', False):
         spall_damage = pair(getattr(spalls, 'armorDamage', None))[0]
         spall_radius = number(getattr(spalls, 'radius', 0))
+        # armorSpalls/damageAbsorption, set on one shell in the whole client (the Taschenratte ability gun):
+        # its non-penetration damage follows no law we can check, so the page leaves it unmodelled.
+        spall_absorption = getattr(spalls, 'damageAbsorptionType', None)
     top = getattr(shell_type, 'maxDamage', None)
     return {'alpha':armor[0], 'alphaFar':armor[1],
         'deviceDamage':pair(getattr(shell, 'deviceDamage', None))[0],
@@ -71,6 +92,7 @@ def damage_parameters(shell, shell_type):
         'mechanics':mechanics, 'maxDamage':None if top is None else number(top),
         'explosionRadius':number(getattr(shell_type, 'explosionRadius', 0)),
         'spallDamage':spall_damage, 'spallRadius':spall_radius,
+        'spallAbsorption':None if spall_absorption is None else int(spall_absorption),
         'nonPiercingArmorDamage':number(getattr(shell_type, 'nonPiercingArmorDamage', 0))}
 
 
