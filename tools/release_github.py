@@ -1,4 +1,4 @@
-"""Publish the built installer as a GitHub release: tag v<VERSION> on HEAD, attach Setup.exe, .wotmod and the serverless ZIP.
+"""Publish the built installer as a GitHub release: tag v<VERSION> on HEAD, attach Setup.exe and the sources/manual-install ZIP.
 
 Uses the user's Git Credential Manager token like tools/publish_github.py; the token never reaches stdout.
 """
@@ -60,13 +60,16 @@ tag = 'v' + VERSION
 head = git('rev-parse', 'HEAD')
 if git('status', '--porcelain', '--', 'mod', 'web', 'installer/ArmorInspector.iss'):
     raise RuntimeError('Uncommitted changes in mod/, web/ or the installer script; commit before releasing')
-assets = [ROOT / 'dist' / ('BullbaHits-' + VERSION + '-Setup.exe'), ROOT / 'dist' / ('local.armor_inspector_' + VERSION + '.wotmod'),
-          ROOT / 'dist' / ('BullbaHits-' + VERSION + '-serverless.zip')]
-for asset in assets:
+# Two files, named so that GitHub's alphabetical asset list shows the installer first ("Setup" < "Sources").
+# The bare .wotmod is inside the ZIP; it is not attached on its own any more (user, 19.09: a pile of files nobody
+# can explain).
+assets = [ROOT / 'dist' / ('BullbaHits-' + VERSION + '-Setup.exe'), ROOT / 'dist' / ('BullbaHits-' + VERSION + '-Sources-and-manual-install.zip')]
+wotmod = ROOT / 'dist' / ('local.armor_inspector_' + VERSION + '.wotmod')
+for asset in assets + [wotmod]:
     if not asset.is_file():
         raise RuntimeError('Missing build artifact: ' + asset.name)
 report = json.loads((ROOT / 'dist' / 'build.json').read_text(encoding='utf-8'))
-if digest(assets[1]) != report['sha256']:
+if digest(wotmod) != report['sha256']:
     raise RuntimeError('dist/*.wotmod does not match dist/build.json; rebuild first')
 
 repo = '/repos/' + OWNER + '/' + NAME
@@ -74,10 +77,12 @@ if api(repo + '/git/ref/tags/' + tag, missing=True) is None:
     api(repo + '/git/refs', 'POST', {'ref': 'refs/tags/' + tag, 'sha': head})
 if api(repo + '/releases/tags/' + tag, missing=True) is not None:
     raise RuntimeError('Release ' + tag + ' already exists; bump the version instead of replacing a published build')
-notes = ['Bullba Hits ' + VERSION + ' — WoT PC NA 2.4.0.1 #950.', '',
-         'Install: download `' + assets[0].name + '` and run it with the game closed. Manual install: unpack `' + assets[2].name + '` and put every `.wotmod` from its `mod` folder into `mods\\2.4.0.1\\` (ours plus the ModsList panel and OpenWG Gameface; skip the ones you already have).', '',
+notes = ['Bullba Hits ' + VERSION + u' \u2014 WoT PC NA 2.4.0.1 #950.', '',
+         '**' + assets[0].name + u'** \u2014 the installer. Close the game, run it, point it at the World of Tanks folder. It installs the mod and the hangar mods panel (ModsList + OpenWG Gameface, only if you do not have them), keeps your recorded battles and moves the previous build to a backup.', '',
+         '**' + assets[1].name + u'** \u2014 everything else in one archive: the same `.wotmod` files for a manual install (put every `.wotmod` from its `mod` folder into `mods\\2.4.0.1\\`, skip the ones you already have), the mod sources, README and the licences of the third-party parts.', '',
          'SHA-256:']
 notes += ['- `' + a.name + '`: `' + digest(a) + '`' for a in assets]
+notes += ['- `' + wotmod.name + '` (inside the archive): `' + report['sha256'] + '`']
 release = api(repo + '/releases', 'POST', {'tag_name': tag, 'target_commitish': head, 'name': 'Bullba Hits ' + VERSION, 'body': '\n'.join(notes), 'draft': False, 'prerelease': False})
 upload_base = release['upload_url'].split('{')[0]
 for asset in assets:
