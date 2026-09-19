@@ -537,7 +537,7 @@
     var b=node('button',undefined,'picker-row');b.type='button';
     b.setAttribute('data-id',String(row.id));b.setAttribute('data-side',side);
     b.setAttribute('aria-pressed',String(row.id===focus));
-    b.appendChild(node('span',(star?'★ ':'')+(row.name||'Unknown vehicle'),'picker-vehicle'));
+    b.appendChild(node('span',row.name||'Unknown vehicle','picker-vehicle'));
     b.appendChild(node('span',row.player||'','picker-player'));
     b.title=[row.name||'Unknown vehicle',row.player,side==='ally'?'Ally':'Enemy'].filter(Boolean).join(' · ');
     b.onclick=function(){chooseFocus(row.id);};
@@ -563,7 +563,7 @@
         group[2].forEach(function(r){list.appendChild(pickerRow(r,group[1],group[1]==='ally'&&r.id===own&&free,focus));});
       });
     }
-    $('focus-vehicle').textContent=(own!=null&&chosen.id===own&&free?'★ ':'')+(chosen.name||'Unknown vehicle');
+    $('focus-vehicle').textContent=chosen.name||'Unknown vehicle';
     $('focus-player').textContent=chosen.player||'';
     box.setAttribute('data-side',(own!=null&&chosen.id===own)||isAlly(chosen)?'ally':'enemy');
     box.classList.toggle('is-locked',!free);
