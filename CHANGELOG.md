@@ -4,7 +4,7 @@ Every build that reaches a user gets its own number and its own section here. Th
 taken from the section of the version being published; a release without its section is refused by the release
 script. Versions are listed newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
-## Unreleased
+## 0.7.13 (2026-09-19)
 
 - Release assets: two files instead of three. The installer comes first; the archive
   `BullbaHits-<version>-Sources-and-manual-install.zip` holds the `.wotmod` files for a manual install, the
@@ -29,6 +29,9 @@ script. Versions are listed newest first. Client: World of Tanks PC NA 2.4.0.1 #
   improved ×1.6), the field modification "Spalling resistance" (×0.85 / default / ×1.15) and the driver's Reliable
   Placement (+15 % at 100 %, a reading of the client data). They start from the recorded liner factor and are kept
   per vehicle type for the session; inline when there is room, one "Modifiers ▾" button otherwise.
+- Settings → Scene → **Soft lighting** (on by default; untick it to compare): a soft light over the main armour with smoothed visual
+  normals, so round shapes read as round under the colours while plate joints stay sharp. One extra draw per
+  redraw, about 10 MB of video memory; nothing in the physics, the chances or the marks changes. Off = the plain map.
 - Vehicles panel is the one vehicle chooser: a click on the Collision model or Shooter tile opens it, scoped to
   the current battle (ALLIES / ENEMIES with team stripes, vehicles only), with an "All vehicles" scope for the
   whole catalogue; any filter switches to it. Tier, Nation and Class stay visible; Role and Flags sit behind a

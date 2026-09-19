@@ -1317,7 +1317,7 @@
   }
   try{viewer=new ArmorViewer($('viewport'));}catch(e){message('WebGL unavailable: '+e.message);}
   if(viewer)viewer.setAutoFrame($('auto-frame').checked); // on by default (user, 18.09)
-  if(viewer)viewer.setLighting($('soft-lighting').checked); // off by default: the user compares the frame rate himself (19.09)
+  if(viewer)viewer.setLighting($('soft-lighting').checked); // on by default (user, 19.09); the checkbox is the switch
   if(viewer)viewer.onInspect=inspectArmor;
   // The viewer's real frame rate next to the composition's own report: in the game the browser's frame pump
   // decides it, and it is neither 60 nor what a desktop browser shows. Refreshed at most once a second, and
