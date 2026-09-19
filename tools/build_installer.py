@@ -46,7 +46,7 @@ def build(test=False,sign_command=None,require_signature=False):
     mod=ROOT/'dist'/('local.armor_inspector_'+VERSION+'.wotmod')
     report=json.loads((ROOT/'dist/build.json').read_text())
     if digest(mod)!=report['sha256']: raise ValueError('Mod differs from validated build')
-    files=[(mod,'mods/2.4.0.0/'+mod.name,False,False)]
+    files=[(mod,'mods/2.4.0.1/'+mod.name,False,False)]
     with zipfile.ZipFile(mod) as z:
         for relative in ASSETS:
             data=z.read('res/armor_inspector_viewer/'+relative)
