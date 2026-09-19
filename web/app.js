@@ -402,7 +402,7 @@
       .then(function(){verdictBusy=false;verdictStatus();if(verdictQueue.length)verdictTimer=setTimeout(drainVerdicts,150);});
   }
   // Header line: the verdict log is on, with the count so far; the (i) explains what it is for.
-  function verdictStatus(){var e=$('connection');if(!e)return;e.textContent='Verdict log \u00b7 '+verdictLines+' points'+(verdictQueue.length?' \u00b7 checking '+verdictQueue.length+' more':'');}
+  function verdictStatus(){var e=$('connection');if(!e)return;e.textContent='Statistics log \u00b7 '+verdictLines+' points'+(verdictQueue.length?' \u00b7 checking '+verdictQueue.length+' more':'');}
   function shotStats(){
     var choice=$('shell-choice').value,c=choice.indexOf('saved:')===0?candidates[Number(choice.slice(6))]:null;
     var range=viewer?viewer.distance:100;
