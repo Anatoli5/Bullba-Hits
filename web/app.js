@@ -482,18 +482,39 @@
   function battleStamp(seconds){if(!Number.isFinite(seconds))return '';var d=new Date(seconds*1000);return d.toLocaleDateString('en-GB')+' \u00b7 '+d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});}
   // ====================== The vehicle the battle is read from ======================
   // The recorder writes every hit the client showed, not only the player's own, and a roster of the battle's
-  // vehicles. The dropdown picks whose seat the list is read from: his hits and the hits on him. 'direction'
-  // in the record stays relative to the player, so the page reads the direction of the focused vehicle
-  // instead (viewDirection). Battles recorded before this carry no roster and no vehicle ids: the focus is
-  // then the player's own vehicle and the stored 'direction' is used, which is exactly the old behaviour.
-  var focusVehicle=null,focusStamp=null;
+  // vehicles. The picker chooses whose seat the list is read from: his hits and the hits on him - any vehicle
+  // of either team, since an enemy's hits and the hits on him read exactly the same way (his aim is never
+  // recorded, so his outgoing hits carry no reticle, as an incoming one does). 'direction' in the record stays
+  // relative to the player, so the page reads the direction of the focused vehicle instead (viewDirection).
+  // Battles recorded before this carry no roster and no vehicle ids: the focus is then the player's own
+  // vehicle and the stored 'direction' is used, which is exactly the old behaviour.
+  var focusVehicle=null,focusStamp=null,focusNote='',focusScene=null,focusSceneKey=null;
   function rosterRows(){
     if(!current||!Array.isArray(current.roster))return [];
-    return current.roster.filter(function(r){return r&&r.id!=null&&r.team===current.playerTeam;});
+    return current.roster.filter(function(r){return r&&r.id!=null;});
   }
   function rosterRow(id){return id==null?null:(rosterRows().find(function(r){return r.id===id;})||null);}
-  function focusId(){var own=current?current.playerVehicleId:null;return focusVehicle!=null?focusVehicle:(own==null?null:own);}
-  function focusIsPlayer(){var f=focusId();return !current||f==null||f===current.playerVehicleId;}
+  // The player's own vehicle id. The header's figure is not trusted on its own: an arena list that reached the
+  // recorder before the client knew its own vehicle used to stamp playerVehicleId 0 into the header (fixed in
+  // the recorder; records written earlier keep the 0), and 0 is no vehicle - it matches no hit, so the whole
+  // page reads an empty battle. A positive id the roster confirms is taken as it is; otherwise it comes from
+  // the hits, whose stored 'direction' is relative to the player: the attacker of the first outgoing hit, or
+  // the target of the first incoming one.
+  function playerId(){
+    if(!current)return null;
+    var own=current.playerVehicleId,rows=rosterRows(),hits=current.hits||[],i,h;
+    if(Number.isFinite(own)&&own>0&&(!rows.length||rows.some(function(r){return r.id===own;})))return own;
+    for(i=0;i<hits.length;i++){h=hits[i];if(h.direction==='outgoing'&&h.attackerId!=null)return h.attackerId;}
+    for(i=0;i<hits.length;i++){h=hits[i];if(h.direction==='incoming'&&h.targetId!=null)return h.targetId;}
+    return null;
+  }
+  // The player's team, which splits the picker in two: his own roster row first, the header's figure after it
+  // (it is written in the same record as the roster, so it is missing exactly when the roster is).
+  function playerTeam(){var row=rosterRow(playerId());return row&&row.team!=null?row.team:(current&&current.playerTeam!=null?current.playerTeam:null);}
+  // Unknown teams count as allies: a roster row without a team is no reason to paint a vehicle red.
+  function isAlly(row){var team=playerTeam();return team==null||row.team==null||row.team===team;}
+  function focusId(){var own=playerId();return focusVehicle!=null?focusVehicle:own;}
+  function focusIsPlayer(){var f=focusId();return !current||f==null||f===playerId();}
   // The direction of a hit as the focused vehicle sees it; null - the hit does not involve him and is not shown.
   // A synthetic hit (a browsed vehicle, a swapped shooter) carries no ids and keeps its own direction.
   function viewDirection(h){
@@ -502,26 +523,56 @@
     if(focus==null||h.attackerId==null||h.targetId==null)return h.direction||null;
     return h.attackerId===focus?'outgoing':h.targetId===focus?'incoming':null;
   }
-  function focusLabel(row){return [row.name||'Unknown vehicle',row.player].filter(Boolean).join(' · ');}
-  // The options: the focused team's roster, the player's own vehicle first. Without a roster, or without an
-  // ally besides the player, the single option is his own vehicle and the control is disabled.
-  function renderFocus(){
-    var select=$('vehicle-focus'),own=current?current.playerVehicleId:null,rows=rosterRows();
-    var allies=rows.filter(function(r){return r.id!==own;}).sort(function(a,b){
-      return String(a.name||'').localeCompare(String(b.name||''))||String(a.player||'').localeCompare(String(b.player||''));});
-    var mine=rows.find(function(r){return r.id===own;})||{id:own,name:(ownVehicle()||{}).name||'My vehicle'};
-    var list=allies.length?[mine].concat(allies):[{id:own,name:mine.name}];
-    var stamp=(current?current.id:'')+'|'+list.map(function(r){return r.id+':'+(r.name||'')+':'+(r.player||'');}).join(',');
-    if(stamp!==focusStamp){
-      focusStamp=stamp;select.replaceChildren();
-      list.forEach(function(r){var o=node('option',(allies.length&&r.id===own?'★ ':'')+focusLabel(r));o.value=r.id==null?'':String(r.id);select.appendChild(o);});
-    }
-    select.disabled=!allies.length;
-    var wanted=focusId();select.value=wanted==null?'':String(wanted);
-    if(select.selectedIndex<0){focusVehicle=null;select.value=own==null?'':String(own);}
+  // The rows of the picker: the whole roster in two groups, the player first among the allies, the rest of
+  // each group by vehicle name and then nickname.
+  function pickerList(){
+    var own=playerId(),allies=[],enemies=[];
+    var byName=function(a,b){return String(a.name||'').localeCompare(String(b.name||''))||String(a.player||'').localeCompare(String(b.player||''));};
+    rosterRows().forEach(function(r){if(r.id!==own)(isAlly(r)?allies:enemies).push(r);});
+    allies.sort(byName);enemies.sort(byName);
+    if(own!=null)allies.unshift(rosterRow(own)||{id:own,name:(ownVehicle()||{}).name||'My vehicle',player:''});
+    return {allies:allies,enemies:enemies};
   }
-  // The focused vehicle: the target of any hit on it, or the attacker of any hit by it. An ally who is in the
-  // roster but in no hit has no recorded descriptor - his roster row carries the name.
+  function pickerRow(row,side,star,focus){
+    var b=node('button',undefined,'picker-row');b.type='button';
+    b.setAttribute('data-id',String(row.id));b.setAttribute('data-side',side);
+    b.setAttribute('aria-pressed',String(row.id===focus));
+    b.appendChild(node('span',(star?'★ ':'')+(row.name||'Unknown vehicle'),'picker-vehicle'));
+    b.appendChild(node('span',row.player||'','picker-player'));
+    b.title=[row.name||'Unknown vehicle',row.player,side==='ally'?'Ally':'Enemy'].filter(Boolean).join(' · ');
+    b.onclick=function(){chooseFocus(row.id);};
+    return b;
+  }
+  // The control itself: a <details>, because a native <option> can neither push the nickname to the right edge
+  // nor carry the team colour. The summary is the row in focus, the popover the two groups. Without a roster
+  // (every battle recorded before 0.7.9) there is nothing to pick: the summary shows the player's vehicle as
+  // read from the hits and the control stays shut, exactly as the disabled select did.
+  function renderFocus(){
+    var box=$('vehicle-focus'),list=$('focus-list'),own=playerId(),focus=focusId(),groups=pickerList();
+    var rows=groups.allies.concat(groups.enemies),free=rows.length>1;
+    var chosen=rows.find(function(r){return r.id===focus;});
+    // A focus the roster no longer carries (another battle, a rewritten roster) falls back to the player.
+    if(!chosen&&focusVehicle!=null){focusVehicle=null;focus=own;chosen=rows.find(function(r){return r.id===own;});}
+    if(!chosen)chosen={id:own,name:(ownVehicle()||{}).name||'My vehicle',player:''};
+    var stamp=(current?current.id:'')+'|'+focus+'|'+rows.map(function(r){return r.id+':'+(r.name||'')+':'+(r.player||'')+':'+(r.team==null?'':r.team);}).join(',');
+    if(stamp!==focusStamp){
+      focusStamp=stamp;list.replaceChildren();
+      [['ALLIES','ally',groups.allies],['ENEMIES','enemy',groups.enemies]].forEach(function(group){
+        if(!group[2].length)return;
+        list.appendChild(node('div',group[0],'picker-group eyebrow'));
+        group[2].forEach(function(r){list.appendChild(pickerRow(r,group[1],group[1]==='ally'&&r.id===own&&free,focus));});
+      });
+    }
+    $('focus-vehicle').textContent=(own!=null&&chosen.id===own&&free?'★ ':'')+(chosen.name||'Unknown vehicle');
+    $('focus-player').textContent=chosen.player||'';
+    box.setAttribute('data-side',(own!=null&&chosen.id===own)||isAlly(chosen)?'ally':'enemy');
+    box.classList.toggle('is-locked',!free);
+    box.querySelector('summary').setAttribute('aria-disabled',String(!free));
+    if(!free)box.open=false;
+  }
+  // The focused vehicle: the target of any hit on it, or the attacker of any hit by it - his own hits and
+  // nothing else, never another battle, the catalogue or the vehicle last browsed. A vehicle that is in the
+  // roster but in no hit has no recorded descriptor: his roster row carries the name.
   function ownVehicle(){
     if(!current)return null;
     var inc=current.hits.find(function(h){return viewDirection(h)==='incoming'&&h.target&&h.target.name;});
@@ -530,6 +581,58 @@
     if(out)return out.attacker;
     var row=rosterRow(focusId());
     return row&&row.name?{name:row.name,type:row.type}:null;
+  }
+  function focusName(){var own=ownVehicle();return (own&&own.name)||'this vehicle';}
+  // A focused vehicle with no hits in this battle: his own collision model instead of an empty scene, with
+  // himself as the shooter, so the chance map is his armour against his own gun. It is the very same synthetic
+  // hit the Vehicles mode builds, read through the same loader - no hit point, no reticle, no shot line. The
+  // heading stays the battle's; the hit list says in one muted line what is on screen. A vehicle the exporter
+  // has not written yet (no catalogue row, no data file) leaves the scene cleared with the reason.
+  function showFocusEmpty(){
+    var id=focusId(),row=rosterRow(id),name=focusName(),base='No hits for '+name+' in this battle';
+    var key=(current?current.id:'')+'/'+id;
+    // Already on screen: an index bump that changed nothing must not reload the model and reset the camera.
+    if(focusSceneKey===key&&focusScene&&activeHit&&activeHit.id===focusScene.hit.id){renderHits();return Promise.resolve();}
+    var token=++generation;
+    focusScene=null;focusSceneKey=null;focusNote='';
+    if(viewer)viewer.clear();sceneTiles(null,false);warnings([]);$('details').replaceChildren();
+    var type=row&&row.type?String(row.type):'';
+    function fallback(reason){
+      if(token!==generation)return;
+      focusScene=null;focusSceneKey=null;focusNote='';
+      if(viewer)viewer.clear();sceneTiles(null,false);message(reason);renderHits();
+    }
+    // No roster row, so no vehicle type to look up: the old battles' own wording, unchanged.
+    if(!type){fallback(current&&current.hits.length?'No hits of this vehicle in the record. Shot details are available below.':'No hits recorded in this battle yet. Shot details are available below.');return Promise.resolve();}
+    message('Preparing the model…');renderHits();
+    // The catalogue may be half-read when a poll is running; one more read settles it before the row is missed.
+    return (catalogue?Promise.resolve():loadCatalogue().then(function(){return catalogue?null:loadCatalogue();})).then(function(){
+      var entry=((catalogue&&catalogue.vehicles)||[]).find(function(v){return String(v.type||'')===type;});
+      if(!entry)throw new Error('not in the catalogue');
+      return readVehicle(entry.id,0);
+    }).then(function(record){
+      if(token!==generation)return;
+      var hit=vehicleHit(record,record);
+      return ArmorInspectorData.sceneFor({warnings:[]},hit).then(function(data){
+        if(token!==generation)return;
+        focusScene=data;focusSceneKey=key;focusNote=base+' · model shown with its own gun';
+        display(data,false);renderHits();
+      });
+    }).catch(function(){fallback(base+' · model not exported yet');});
+  }
+  // Another seat in the same battle: the list is rebuilt around that vehicle and a hit of his is opened at
+  // once - a pick never leaves the scene empty (user, 19.09). With no hits at all his model is shown instead.
+  function chooseFocus(id){
+    var box=$('vehicle-focus');box.open=false;
+    var wanted=!current||id==null||id===playerId()?null:id;
+    if(wanted===focusVehicle)return; // the row already in focus: the camera and the open hit stay
+    focusVehicle=wanted;
+    selected=null;currentHitKey=null;++generation;swapped=null;focusScene=null;focusSceneKey=null;focusNote='';
+    if(viewer)viewer.clear();sceneTiles(null,false);warnings([]);$('details').replaceChildren();
+    renderHits();
+    var first=current?current.hits.find(function(h){return !!viewDirection(h);}):null;
+    if(first)return void selectHit(first.id).catch(function(){});
+    showFocusEmpty();
   }
   function renderHeading(){
     var stamp=current?battleStamp(current.startedAt):'',own=ownVehicle();
@@ -574,8 +677,11 @@
       roleTiles();return;
     }
     model.disabled=true;model.removeAttribute('aria-pressed');button.removeAttribute('aria-pressed');model.title='';
-    var back=!!(hit&&hit.synthetic),ready=swapReady(hit);button.disabled=!(back||ready);
-    button.title=back?'Back to the recorded hit and its shot line':ready?'Show this vehicle\u2019s collision model \u00b7 the roles swap, the recorded shot is not carried over':NO_SHOOTER_MODEL;
+    // A focused vehicle without hits is shown against his own gun: there is no other role to swap to, so the
+    // tile is a label. A swapped shooter goes back to the recorded hit; a recorded hit offers the swap.
+    var solo=!!(hit&&hit.vehicle),back=!!(hit&&hit.synthetic&&!solo),ready=swapReady(hit);
+    button.disabled=solo||!(back||ready);
+    button.title=solo?'This vehicle\u2019s own gun \u00b7 no shot was recorded against him here':back?'Back to the recorded hit and its shot line':ready?'Show this vehicle\u2019s collision model \u00b7 the roles swap, the recorded shot is not carried over':NO_SHOOTER_MODEL;
   }
   function roleTiles(){
     $('model-tile').setAttribute('aria-pressed',String(activeRole!=='shooter'));
@@ -618,7 +724,12 @@
   function renderHits(){
     renderFocus();
     var container=$('hits');container.replaceChildren();var hits=current?current.hits.filter(function(h){var d=viewDirection(h);return !!d&&(filter==='all'||d===filter);}):[];var own=renderHeading();$('hit-count').textContent=current?hits.length+' hits'+(own?' · battle in '+own.name:''):'';
-    if(!hits.length){container.appendChild(node('p',current?'No hits for the chosen filter.':'No records yet. Start the game with the recorder and play a battle. The viewer can stay open.','empty'));return;}
+    // The empty list says which emptiness it is: no records at all, a filter that hides them, or a focused
+    // vehicle this battle never recorded a hit for - and then whether his own model is the scene on screen.
+    if(!hits.length){
+      var any=!!current&&current.hits.some(function(h){return !!viewDirection(h);});
+      container.appendChild(node('p',!current?'No records yet. Start the game with the recorder and play a battle. The viewer can stay open.':any?'No hits for the chosen filter.':focusNote||'No hits for '+focusName()+' in this battle','empty'));
+      return;}
     hits.forEach(function(h){var hasDamage=h.damage>0,view=viewDirection(h),b=node('button',undefined,'hit');b.setAttribute('aria-pressed',String(selected===h.id));b.setAttribute('data-direction',view);b.setAttribute('data-result',hasDamage?'damage':'none');b.title=(view==='incoming'?'Incoming from '+((h.attacker||{}).name||'?'):'Outgoing at '+((h.target||{}).name||'?'))+' · '+result(h);
       b.appendChild(vehicleTile(view==='incoming'?h.attacker:h.target));
       // Outcome column: damage in the direction colour, or the muted result icon; the full result text stays in the button title.
@@ -657,8 +768,9 @@
       if(request!==battleGeneration)return;
       var sameBattle=!!current&&current.id===b.id,kept=keep&&selected?b.hits.find(function(h){return h.id===selected;}):null;
       var unchanged=!!kept&&sameBattle&&currentHitKey!==null&&hitFingerprint(kept)===currentHitKey;
-      // Another battle is read from its own player's seat again.
-      if(!sameBattle){focusVehicle=null;focusStamp=null;}
+      // Another battle is read from its own player's seat again, and the model of a vehicle without hits in
+      // the battle that is being left goes with it.
+      if(!sameBattle){focusVehicle=null;focusStamp=null;focusScene=null;focusSceneKey=null;focusNote='';}
       current=b;ArmorShotTelemetry.load(b.shotEvents||[]);queueVerdicts(b);
       var existing=keep&&selected&&b.hits.some(function(h){return h.id===selected;});
       if(!existing)selected=null;
@@ -669,7 +781,9 @@
       // holds the hits between two other vehicles, and those are not on the list.
       var first=b.hits.find(function(h){return !!viewDirection(h);});
       if(existing||first)return selectHit(existing?selected:first.id);
-      if(viewer)viewer.clear();sceneTiles(null,false);message(b.hits.length?'No hits of this vehicle in the record. Shot details are available below.':'No hits recorded in this battle yet. Shot details are available below.');
+      // No hit of the focused vehicle in this record: his own collision model takes the place of the empty
+      // scene, and only a vehicle the exporter never wrote falls back to a message.
+      return showFocusEmpty();
     });
   }
   // The battle list keeps itself fresh: the index file is re-read every few seconds (a local file, cheap) and the
@@ -790,15 +904,15 @@
   document.querySelectorAll('#shell-types [data-kind]').forEach(function(b){b.onclick=function(){$('shell-choice').value=b.dataset.kind;selectShell();};});
   $('penetration').oninput=function(){if($('shell-choice').value.indexOf('saved:')!==0)manualPen=this.value;updateShell();};
   $('battles').onchange=function(){loadBattle(this.value,false).catch(function(e){warnings([e.message]);});};
-  // Another seat in the same battle: the list is rebuilt around that vehicle and the chosen hit is dropped,
-  // exactly as it is when the battle changes - the hit that was open may not even be on the new list.
-  $('vehicle-focus').onchange=function(){
-    var value=this.value===''?null:Number(this.value);
-    focusVehicle=!current||value===null||value===current.playerVehicleId||!Number.isFinite(value)?null:value;
-    selected=null;currentHitKey=null;++generation;swapped=null;
-    if(viewer)viewer.clear();sceneTiles(null,false);warnings([]);$('details').replaceChildren();
-    renderHits();message('Pick a hit from the list.');
-  };
+  // The picker's own handlers. A row click is the change handler (chooseFocus); the rest is what a <details>
+  // does not give: no disabled state, so a locked control refuses to open; Escape closes it and hands the
+  // focus back to the summary; a click anywhere else closes it, the same pattern the toolbar's More uses.
+  (function(){
+    var box=$('vehicle-focus'),summary=box.querySelector('summary');
+    summary.addEventListener('click',function(e){if(box.classList.contains('is-locked'))e.preventDefault();});
+    box.addEventListener('keydown',function(e){if((e.key==='Escape'||e.key==='Esc')&&box.open){box.open=false;summary.focus();}});
+    document.addEventListener('click',function(e){if(box.open&&!box.contains(e.target))box.open=false;});
+  }());
   document.querySelectorAll('[data-filter]').forEach(function(b){b.onclick=function(){filter=b.dataset.filter;document.querySelectorAll('[data-filter]').forEach(function(x){x.setAttribute('aria-pressed',String(x===b));});renderHits();};});
   $('wireframe').onchange=function(){if(viewer)viewer.wireframe(this.checked);};
   var CONTEXT_LOST='The browser lost its WebGL context. Reload the page.';

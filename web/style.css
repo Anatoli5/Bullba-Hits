@@ -84,6 +84,28 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 #battles-pane,#vehicles-pane{display:flex;flex-direction:column;min-height:0;flex:1}
 #battles-pane[hidden],#vehicles-pane[hidden]{display:none}
 
+/* Vehicle picker: whose seat the battle is read from. A native <option> can neither push the nickname to the
+   right edge nor take the team colour, so the control is a <details> — the summary is the row in focus, the
+   popover the two groups. Team colours are the ones the hit list already uses: mint for the player's side,
+   red for the other. The popover is panelled like the toolbar's "More" and lifted over the scene. */
+.vehicle-picker{position:relative;z-index:12;margin:14px 0 10px}
+.vehicle-picker>summary{display:flex;align-items:center;gap:10px;min-height:38px;padding:7px 11px;border:1px solid #35475a;border-left:3px solid var(--mint);border-radius:5px;background:#172330;cursor:pointer;list-style:none}
+.vehicle-picker>summary::-webkit-details-marker{display:none}
+.vehicle-picker>summary::after{content:'▾';color:var(--muted)}
+.vehicle-picker[open]>summary::after{content:'▴'}
+.vehicle-picker>summary:focus-visible{outline:2px solid var(--gold);outline-offset:3px}
+.vehicle-picker[data-side=enemy]>summary{border-left-color:var(--red)}
+.vehicle-picker.is-locked>summary{cursor:default;opacity:.55}
+.vehicle-picker.is-locked>summary::after{content:''}
+.picker-vehicle{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.picker-player{flex:0 1 auto;min-width:0;max-width:55%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right;color:var(--muted)}
+.picker-list{position:absolute;left:0;top:calc(100% + 6px);z-index:12;min-width:100%;width:max-content;max-width:min(380px,calc(100vw - 36px));max-height:60vh;overflow:auto;display:flex;flex-direction:column;gap:3px;padding:12px;border-radius:8px;background:#15212e;box-shadow:0 15px 50px #0009}
+.picker-group{margin:8px 0 3px;padding:0 2px}
+.picker-group:first-child{margin-top:0}
+.picker-row{display:flex;justify-content:space-between;align-items:center;gap:12px;width:100%;text-align:left;min-height:32px;padding:5px 9px;font-size:14px;border:1px solid #293849;border-left:3px solid var(--mint);border-radius:4px;background:#172330}
+.picker-row[data-side=enemy]{border-left-color:var(--red)}
+.picker-row[aria-pressed=true]{border-color:var(--gold);background:#302d25;box-shadow:inset 3px 0 var(--gold)}
+
 /* Filters: rows of toggle pills, multi-select inside a row, nothing pressed = no restriction. */
 /* Informational block: a plain panel, no border (borders mark clickable things). */
 .vehicle-help{margin:6px 0 2px;padding:7px 9px;border-radius:6px;background:rgba(255,255,255,.05);color:var(--muted);font-size:11px;line-height:1.45;}

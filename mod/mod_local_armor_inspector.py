@@ -387,8 +387,12 @@ class Recorder(object):
         seat. Game thread: dictionary reads only, no package access.
         """
         if not self.enabled or arena is None: return
-        if not self.ensure_battle(player): return
         player_id = getattr(player, 'playerVehicleID', None)
+        # The first arena list can arrive before the client knows its own vehicle (playerVehicleID 0, Tundra
+        # 18.09): a roster without the player is worthless and would also stamp 0 into the battle header, so it
+        # waits - the next list change or the first recorded hit writes it.
+        if not player_id or not getattr(arena, 'vehicles', None): return
+        if not self.ensure_battle(player): return
         vehicles, player_team = [], None
         for vehicle_id, info in list(getattr(arena, 'vehicles', {}).items()):
             try:
@@ -402,6 +406,7 @@ class Recorder(object):
             except Exception: LOG.exception('Roster vehicle could not be listed')
         self.writer.put(self.file, {'schema':1, 'type':'roster', 'receivedAt':time.time(),
             'playerVehicleId':player_id, 'playerTeam':player_team, 'vehicles':vehicles})
+        self.roster_known = True
 
     def ensure_battle(self, player):
         arena = getattr(player, 'arena', None)
@@ -417,6 +422,7 @@ class Recorder(object):
             self.battle = battle_id
             self.seq = 0
             self.file = filename
+            self.roster_known = False
         return True
 
     def capture(self, vehicle, attackerID, hitPoints, effectsIndex, prefabEffIndex,
@@ -432,6 +438,9 @@ class Recorder(object):
         if arena is None: return
         if getattr(player, 'isObserver', lambda: False)(): return
         if not self.ensure_battle(player): return
+        if not getattr(self, 'roster_known', False):
+            try: self.note_roster(arena, player)
+            except Exception: LOG.exception('Battle roster record failed')
         # Every hit the client shows is recorded (0.7.9), not only the player's own: the viewer picks the
         # vehicle to look at. 'direction' stays relative to the player for older pages; 'other' is a hit
         # between two vehicles that are not his.

@@ -120,7 +120,10 @@ def read_battle(path):
         warnings.extend(recovery.get('warnings', []))
     result = dict(header)
     result.update({'id':os.path.basename(path)[:-6], 'hits':hits, 'shotEvents':shot_events, 'warnings':warnings})
-    if roster is not None: result.update({'roster':roster.get('vehicles') or [], 'playerTeam':roster.get('playerTeam')})
+    if roster is not None:
+        result.update({'roster':roster.get('vehicles') or [], 'playerTeam':roster.get('playerTeam')})
+        # The header may hold 0 when the battle record was opened before the client knew its vehicle.
+        if roster.get('playerVehicleId'): result['playerVehicleId'] = roster['playerVehicleId']
     return result
 
 
@@ -671,6 +674,7 @@ class Exporter(object):
             self.current.update({'id':name, 'hits':[], 'shotEvents':[], 'warnings':[]})
         elif self.current is not None and self.current['id'] == name and record['type'] == 'roster':
             self.current.update({'roster':record.get('vehicles') or [], 'playerTeam':record.get('playerTeam')})
+            if record.get('playerVehicleId'): self.current['playerVehicleId'] = record['playerVehicleId']
         elif self.current is not None and self.current['id'] == name:
             self.current.setdefault('shotEvents' if record['type'] == 'shot' else 'hits', []).append(record)
         else:
