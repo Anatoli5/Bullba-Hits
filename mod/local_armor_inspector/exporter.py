@@ -81,7 +81,7 @@ def read_data_file(path):
 
 
 def read_battle(path):
-    header, hits, warnings, shot_events = None, [], [], []
+    header, hits, warnings, shot_events, roster = None, [], [], [], None
     with open(path, 'rb') as stream:
         for number in range(20001):
             line = stream.readline(2*1024*1024+1)
@@ -95,6 +95,7 @@ def read_battle(path):
                 if row.get('type') == 'battle' and header is None: header = row
                 elif row.get('type') == 'hit': hits.append(row)
                 elif row.get('type') == 'shot': shot_events.append(row)
+                elif row.get('type') == 'roster': roster = row
                 else: raise ValueError('Unexpected record')
             except (ValueError, AttributeError): warnings.append('Unreadable record at line '+str(number+1))
     if header is None:
@@ -119,6 +120,7 @@ def read_battle(path):
         warnings.extend(recovery.get('warnings', []))
     result = dict(header)
     result.update({'id':os.path.basename(path)[:-6], 'hits':hits, 'shotEvents':shot_events, 'warnings':warnings})
+    if roster is not None: result.update({'roster':roster.get('vehicles') or [], 'playerTeam':roster.get('playerTeam')})
     return result
 
 
@@ -667,6 +669,8 @@ class Exporter(object):
             self.flush(force=True)
             self.current = dict(record)
             self.current.update({'id':name, 'hits':[], 'shotEvents':[], 'warnings':[]})
+        elif self.current is not None and self.current['id'] == name and record['type'] == 'roster':
+            self.current.update({'roster':record.get('vehicles') or [], 'playerTeam':record.get('playerTeam')})
         elif self.current is not None and self.current['id'] == name:
             self.current.setdefault('shotEvents' if record['type'] == 'shot' else 'hits', []).append(record)
         else:

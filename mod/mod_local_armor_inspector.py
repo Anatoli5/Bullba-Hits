@@ -319,6 +319,7 @@ class VehicleEvents(object):
             if self.arena is None: return
             for info in list(getattr(self.arena, 'vehicles', {}).values()):
                 self.note_roster_vehicle((info or {}).get('vehicleType'))
+            self.write_roster()
         except Exception: LOG.exception('Battle roster unavailable for vehicle export')
 
     def on_vehicle_added(self, vehicle_id, *args):
@@ -326,7 +327,14 @@ class VehicleEvents(object):
             if self.arena is None: return
             info = getattr(self.arena, 'vehicles', {}).get(vehicle_id) or {}
             self.note_roster_vehicle(info.get('vehicleType'))
+            self.write_roster()
         except Exception: LOG.exception('Battle vehicle export request failed')
+
+    def write_roster(self):
+        try:
+            import BigWorld
+            self.recorder.note_roster(self.arena, BigWorld.player())
+        except Exception: LOG.exception('Battle roster record failed')
 
 
 class Recorder(object):
@@ -371,6 +379,30 @@ class Recorder(object):
         except Exception:
             LOG.exception('Vehicle export request failed; hit recording continues')
 
+    def note_roster(self, arena, player):
+        """The battle's roster as one record: id, player, vehicle and team of every vehicle known so far.
+
+        Written whole each time the arena list changes (a few hundred bytes); the exporter keeps the
+        last one. The viewer lists the allies from it so that the hits can be read from any ally's
+        seat. Game thread: dictionary reads only, no package access.
+        """
+        if not self.enabled or arena is None: return
+        if not self.ensure_battle(player): return
+        player_id = getattr(player, 'playerVehicleID', None)
+        vehicles, player_team = [], None
+        for vehicle_id, info in list(getattr(arena, 'vehicles', {}).items()):
+            try:
+                descr = (info or {}).get('vehicleType')
+                row = {'id':vehicle_id, 'player':info.get('name'), 'team':info.get('team')}
+                if descr is not None:
+                    row['name'] = descr.type.shortUserString
+                    row['type'] = descr.type.name
+                vehicles.append(row)
+                if vehicle_id == player_id: player_team = info.get('team')
+            except Exception: LOG.exception('Roster vehicle could not be listed')
+        self.writer.put(self.file, {'schema':1, 'type':'roster', 'receivedAt':time.time(),
+            'playerVehicleId':player_id, 'playerTeam':player_team, 'vehicles':vehicles})
+
     def ensure_battle(self, player):
         arena = getattr(player, 'arena', None)
         if arena is None: return False
@@ -397,12 +429,16 @@ class Recorder(object):
         player = self.bw.player()
         arena = getattr(player, 'arena', None)
         player_id = getattr(player, 'playerVehicleID', None)
-        if arena is None or player_id not in (vehicle.id, attackerID): return
+        if arena is None: return
         if getattr(player, 'isObserver', lambda: False)(): return
         if not self.ensure_battle(player): return
+        # Every hit the client shows is recorded (0.7.9), not only the player's own: the viewer picks the
+        # vehicle to look at. 'direction' stays relative to the player for older pages; 'other' is a hit
+        # between two vehicles that are not his.
         self.seq += 1
         record = {'schema':1, 'type':'hit', 'id':str(self.seq), 'receivedAt':time.time(),
-            'gameTime':float(self.bw.serverTime()), 'direction':'outgoing' if attackerID==player_id else 'incoming',
+            'gameTime':float(self.bw.serverTime()),
+            'direction':'outgoing' if attackerID==player_id else 'incoming' if vehicle.id==player_id else 'other',
             'attackerId':attackerID, 'targetId':vehicle.id, 'damage':damage,
             'damageFactor':damageFactor, 'effectsIndex':effectsIndex,
             'prefabEffectsIndex':prefabEffIndex, 'lastMaterialIsShield':bool(lastMaterialIsShield),

@@ -477,8 +477,57 @@
   }
   // Heading: which battle this is - date and start time, the map, and the vehicle the player was in.
   function battleStamp(seconds){if(!Number.isFinite(seconds))return '';var d=new Date(seconds*1000);return d.toLocaleDateString('en-GB')+' \u00b7 '+d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});}
-  // The player's own vehicle: the target of any incoming hit, or the attacker of any outgoing one.
-  function ownVehicle(){if(!current)return null;var inc=current.hits.find(function(h){return h.direction==='incoming'&&h.target&&h.target.name;});if(inc)return inc.target;var out=current.hits.find(function(h){return h.direction==='outgoing'&&h.attacker&&h.attacker.name;});return out?out.attacker:null;}
+  // ====================== The vehicle the battle is read from ======================
+  // The recorder writes every hit the client showed, not only the player's own, and a roster of the battle's
+  // vehicles. The dropdown picks whose seat the list is read from: his hits and the hits on him. 'direction'
+  // in the record stays relative to the player, so the page reads the direction of the focused vehicle
+  // instead (viewDirection). Battles recorded before this carry no roster and no vehicle ids: the focus is
+  // then the player's own vehicle and the stored 'direction' is used, which is exactly the old behaviour.
+  var focusVehicle=null,focusStamp=null;
+  function rosterRows(){
+    if(!current||!Array.isArray(current.roster))return [];
+    return current.roster.filter(function(r){return r&&r.id!=null&&r.team===current.playerTeam;});
+  }
+  function rosterRow(id){return id==null?null:(rosterRows().find(function(r){return r.id===id;})||null);}
+  function focusId(){var own=current?current.playerVehicleId:null;return focusVehicle!=null?focusVehicle:(own==null?null:own);}
+  function focusIsPlayer(){var f=focusId();return !current||f==null||f===current.playerVehicleId;}
+  // The direction of a hit as the focused vehicle sees it; null - the hit does not involve him and is not shown.
+  // A synthetic hit (a browsed vehicle, a swapped shooter) carries no ids and keeps its own direction.
+  function viewDirection(h){
+    if(!h)return null;
+    var focus=focusId();
+    if(focus==null||h.attackerId==null||h.targetId==null)return h.direction||null;
+    return h.attackerId===focus?'outgoing':h.targetId===focus?'incoming':null;
+  }
+  function focusLabel(row){return [row.name||'Unknown vehicle',row.player].filter(Boolean).join(' · ');}
+  // The options: the focused team's roster, the player's own vehicle first. Without a roster, or without an
+  // ally besides the player, the single option is his own vehicle and the control is disabled.
+  function renderFocus(){
+    var select=$('vehicle-focus'),own=current?current.playerVehicleId:null,rows=rosterRows();
+    var allies=rows.filter(function(r){return r.id!==own;}).sort(function(a,b){
+      return String(a.name||'').localeCompare(String(b.name||''))||String(a.player||'').localeCompare(String(b.player||''));});
+    var mine=rows.find(function(r){return r.id===own;})||{id:own,name:(ownVehicle()||{}).name||'My vehicle'};
+    var list=allies.length?[mine].concat(allies):[{id:own,name:mine.name}];
+    var stamp=(current?current.id:'')+'|'+list.map(function(r){return r.id+':'+(r.name||'')+':'+(r.player||'');}).join(',');
+    if(stamp!==focusStamp){
+      focusStamp=stamp;select.replaceChildren();
+      list.forEach(function(r){var o=node('option',(allies.length&&r.id===own?'★ ':'')+focusLabel(r));o.value=r.id==null?'':String(r.id);select.appendChild(o);});
+    }
+    select.disabled=!allies.length;
+    var wanted=focusId();select.value=wanted==null?'':String(wanted);
+    if(select.selectedIndex<0){focusVehicle=null;select.value=own==null?'':String(own);}
+  }
+  // The focused vehicle: the target of any hit on it, or the attacker of any hit by it. An ally who is in the
+  // roster but in no hit has no recorded descriptor - his roster row carries the name.
+  function ownVehicle(){
+    if(!current)return null;
+    var inc=current.hits.find(function(h){return viewDirection(h)==='incoming'&&h.target&&h.target.name;});
+    if(inc)return inc.target;
+    var out=current.hits.find(function(h){return viewDirection(h)==='outgoing'&&h.attacker&&h.attacker.name;});
+    if(out)return out.attacker;
+    var row=rosterRow(focusId());
+    return row&&row.name?{name:row.name,type:row.type}:null;
+  }
   function renderHeading(){
     var stamp=current?battleStamp(current.startedAt):'',own=ownVehicle();
     if(sidebarMode!=='battles')return own; // the Vehicles mode writes its own heading
@@ -499,7 +548,7 @@
   // no reticle and no shells - the vehicle now on screen never fired in this record.
   function swapHit(hit){
     var attacker=shallow(hit.target);delete attacker.parts;
-    return {id:hit.id+':swap',synthetic:true,base:hit.id,direction:hit.direction==='incoming'?'outgoing':'incoming',
+    return {id:hit.id+':swap',synthetic:true,base:hit.id,direction:viewDirection(hit)==='incoming'?'outgoing':'incoming',
       attacker:attacker,target:shallow(hit.attacker),points:[],rawHitPoints:[],warnings:[],
       shellCandidates:[],availableShells:[],receivedAt:hit.receivedAt,rangeAtImpact:hit.rangeAtImpact};
   }
@@ -525,16 +574,21 @@
   function display(data,reference){
     currentHitKey=null;var hit=data.hit;swapped=hit.synthetic&&!hit.vehicle?hit:null;sceneTiles(hit,reference);
     $('shot-source').textContent=hit.synthetic?'No recorded shot':'Hit line';prepareShell(hit);var drawn=viewer&&viewer.load(data,shotContext);message(drawn?'':'Geometry unavailable. The original event is kept.');pivotButtons();warnings(data.warnings||[]);$('details').replaceChildren();
-    var aimReady=viewer&&viewer.setShotContext(shotContext),estimate=!aimReady&&viewer?viewer.setAimEstimate(shotContext):null;$('show-aim').disabled=!(aimReady||estimate);
+    // The saved reticle exists only for the player's own shots: with an ally in focus his gun has no
+    // telemetry at all, so his outgoing hit reads exactly like an incoming one does today - no recorded
+    // circle, the nominal estimate if the record allows one. setShotContext(null) still builds the (empty)
+    // aim group the estimate is drawn into.
+    var view=viewDirection(hit),ownShot=focusIsPlayer()&&view==='outgoing';
+    var aimReady=viewer&&viewer.setShotContext(ownShot?shotContext:null),estimate=!aimReady&&viewer?viewer.setAimEstimate(shotContext):null;$('show-aim').disabled=!(aimReady||estimate);
     $('total-chance').textContent=estimate?'\u2300 '+(estimate.radius*2).toFixed(2)+' m':'—';
     // Why there is no circle, in full: no resolved impact point to centre on, no gun dispersion in the record,
     // no range, or no own reticle linked to this hit (every incoming hit by design - the enemy's is not recorded).
-    var reason=aimReady?'saved reticle':estimate?'nominal estimate':!(viewer&&viewer.point&&viewer.travel)?'no resolved impact point':!(hit.attacker&&hit.attacker.gunDispersion>0)?'no gun dispersion in the record':!(shotContext.range>0||hit.rangeAtImpact>0)?'no range for this hit':hit.direction==='incoming'?'enemy reticle unavailable':(aimReasons[shotContext.aimReason]||'no linked snapshot').toLowerCase();
+    var reason=aimReady?'saved reticle':estimate?'nominal estimate':!(viewer&&viewer.point&&viewer.travel)?'no resolved impact point':!(hit.attacker&&hit.attacker.gunDispersion>0)?'no gun dispersion in the record':!(shotContext.range>0||hit.rangeAtImpact>0)?'no range for this hit':!ownShot?'enemy reticle unavailable':(aimReasons[shotContext.aimReason]||'no linked snapshot').toLowerCase();
     // The reticle block stays small: what the circles mean and where this one came from lives in the ⓘ tooltip.
     var status=aimReady?'This hit: ● solid green — the client reticle at the shot, ◌ dashed gold — the server reticle, both slid along the shot line to the impact point.':estimate?'This hit: ◌ dashed blue — nominal full-aim estimate of the '+(estimate.gun||'mounted gun')+': '+(estimate.dispersion*100).toFixed(2)+' m at 100 m × '+Math.round(estimate.range)+' m ('+(estimate.source==='tracer'?'tracer range':'approximate range at impact')+') = ⌀ '+(estimate.radius*2).toFixed(2)+' m. Without crew or equipment, centred on the hit line; not the recorded reticle and not used in the figure.':'This hit: no reticle — '+reason+'.';
     // One line per hit in the page console; the game writes page console lines into game.log, so an in-game
     // report about missing rings can be read there instead of guessed at.
-    if(window.console)console.info('Bullba Hits aim: hit '+hit.id+' '+hit.direction+' saved='+!!aimReady+' estimate='+!!estimate+' reason='+reason);
+    if(window.console)console.info('Bullba Hits aim: hit '+hit.id+' '+(view||'other')+' saved='+!!aimReady+' estimate='+!!estimate+' reason='+reason);
     $('aim-metric').title='Reticle circles on the model. '+status+' Nominal chance over the saved circle: Gaussian, σ = radius/2; 256 rays, misses = 0. Server formula not confirmed; no map obstacles, target motion or blast damage.';
     $('aim-toggle').title=aimReady?'The saved client circle is teal; the server one is dashed when received. Linked to the hit by end point and time; the target position is at impact.':'No own reticle is unambiguously linked to this hit: '+(aimReasons[shotContext.aimReason]||'no data')+'.';
     shotStats();
@@ -545,22 +599,23 @@
       return;
     }
     if(hit.synthetic){$('details').appendChild(node('p','The shooter\u2019s collision model, swapped in from the hit at '+clock(hit.receivedAt)+'. Nothing was fired at this vehicle in the record, so there is no hit line, no reticle and no shell of its own. Click the tile below the model to go back to the recorded hit.'));return;}
-    detail('Direction',hit.direction==='incoming'?'Incoming':'Outgoing',clock(hit.receivedAt));detail('Result',result(hit));
+    detail('Direction',view==='incoming'?'Incoming':view==='outgoing'?'Outgoing':'Not this vehicle',clock(hit.receivedAt));detail('Result',result(hit));
     var points=hit.points||[],point=points.find(function(p){return p.status==='resolved';});
     detail('Point on the model',point?['Chassis','Hull','Turret','Gun'][point.part]:'Not restored',point?'Per the client collision handler':'Segment kept for diagnostics');
     detail('Calibre',point&&point.caliber?point.caliber+' mm':'No data',points.length+' points in the event');
     if(hit.rangeAtImpact!=null)detail('To the attacker at impact',hit.rangeAtImpact.toFixed(1)+' m','Position when the hit was received; not a measured flight length.');
   }
   function renderHits(){
-    var container=$('hits');container.replaceChildren();var hits=current?current.hits.filter(function(h){return filter==='all'||h.direction===filter;}):[];var own=renderHeading();$('hit-count').textContent=current?hits.length+' hits'+(own?' · battle in '+own.name:''):'';
+    renderFocus();
+    var container=$('hits');container.replaceChildren();var hits=current?current.hits.filter(function(h){var d=viewDirection(h);return !!d&&(filter==='all'||d===filter);}):[];var own=renderHeading();$('hit-count').textContent=current?hits.length+' hits'+(own?' · battle in '+own.name:''):'';
     if(!hits.length){container.appendChild(node('p',current?'No hits for the chosen filter.':'No records yet. Start the game with the recorder and play a battle. The viewer can stay open.','empty'));return;}
-    hits.forEach(function(h){var hasDamage=h.damage>0,b=node('button',undefined,'hit');b.setAttribute('aria-pressed',String(selected===h.id));b.setAttribute('data-direction',h.direction);b.setAttribute('data-result',hasDamage?'damage':'none');b.title=(h.direction==='incoming'?'Incoming from '+((h.attacker||{}).name||'?'):'Outgoing at '+((h.target||{}).name||'?'))+' · '+result(h);
-      b.appendChild(vehicleTile(h.direction==='incoming'?h.attacker:h.target));
+    hits.forEach(function(h){var hasDamage=h.damage>0,view=viewDirection(h),b=node('button',undefined,'hit');b.setAttribute('aria-pressed',String(selected===h.id));b.setAttribute('data-direction',view);b.setAttribute('data-result',hasDamage?'damage':'none');b.title=(view==='incoming'?'Incoming from '+((h.attacker||{}).name||'?'):'Outgoing at '+((h.target||{}).name||'?'))+' · '+result(h);
+      b.appendChild(vehicleTile(view==='incoming'?h.attacker:h.target));
       // Outcome column: damage in the direction colour, or the muted result icon; the full result text stays in the button title.
       // Outcome widget: direction arrow in the top-left corner, the figure (damage, or the no-damage result icon)
       // in the top-right, the time underneath - the arrow never glues to the figure.
       var outcome=node('span',undefined,'hit-outcome'),line=node('span',undefined,'outcome-line');
-      line.appendChild(node('span',h.direction==='incoming'?'\u2199':'\u2197','outcome-dir'));
+      line.appendChild(node('span',view==='incoming'?'\u2199':'\u2197','outcome-dir'));
       line.appendChild(hasDamage?node('span',String(h.damage),'hit-damage'):node('span',resultIcon(h).replace(/▰ ?/,''),'hit-result'));
       outcome.appendChild(line);outcome.appendChild(node('span',clock(h.receivedAt),'hit-time'));b.appendChild(outcome);
       b.onclick=function(){selectHit(h.id).catch(function(){});};container.appendChild(b);});
@@ -581,7 +636,7 @@
     if(!hit)return null;
     var parts=((hit.target||{}).parts||[]).map(function(p){return [p.id,p.name,p.modelKey,p.armorSource,p.resource,(p.transform||[]).join(' ')].join('~');}).join(';');
     var attacker=hit.attacker||{},target=hit.target||{};
-    return [hit.id,hit.receivedAt,hit.damage,hit.direction,hit.rangeAtImpact,hit.shellStatus,hit.effectsIndex,hit.shellVelocity,
+    return [hit.id,hit.receivedAt,hit.damage,viewDirection(hit),hit.rangeAtImpact,hit.shellStatus,hit.effectsIndex,hit.shellVelocity,
       JSON.stringify(hit.points||[]),JSON.stringify(hit.rawHitPoints||[]),JSON.stringify(hit.aim||[]),
       (hit.warnings||[]).join('|'),(hit.shellCandidates||[]).length,(hit.availableShells||[]).length,
       target.name,attacker.name,attacker.gun,attacker.gunDispersion,attacker.gunHeight,attacker.gunHeightFrom,parts].join('\u0001');
@@ -592,14 +647,19 @@
       if(request!==battleGeneration)return;
       var sameBattle=!!current&&current.id===b.id,kept=keep&&selected?b.hits.find(function(h){return h.id===selected;}):null;
       var unchanged=!!kept&&sameBattle&&currentHitKey!==null&&hitFingerprint(kept)===currentHitKey;
+      // Another battle is read from its own player's seat again.
+      if(!sameBattle){focusVehicle=null;focusStamp=null;}
       current=b;ArmorShotTelemetry.load(b.shotEvents||[]);queueVerdicts(b);
       var existing=keep&&selected&&b.hits.some(function(h){return h.id===selected;});
       if(!existing)selected=null;
       renderHits();
       // The selected shot is untouched: the list, the shot events and the verdict queue are refreshed, the scene is not.
       if(unchanged)return;
-      if(b.hits.length)return selectHit(existing?selected:b.hits[0].id);
-      if(viewer)viewer.clear();sceneTiles(null,false);message('No hits recorded in this battle yet. Shot details are available below.');
+      // The first hit of the list, which is the first hit the focused vehicle took part in: a record also
+      // holds the hits between two other vehicles, and those are not on the list.
+      var first=b.hits.find(function(h){return !!viewDirection(h);});
+      if(existing||first)return selectHit(existing?selected:first.id);
+      if(viewer)viewer.clear();sceneTiles(null,false);message(b.hits.length?'No hits of this vehicle in the record. Shot details are available below.':'No hits recorded in this battle yet. Shot details are available below.');
     });
   }
   // The battle list keeps itself fresh: the index file is re-read every few seconds (a local file, cheap) and the
@@ -697,6 +757,15 @@
   document.querySelectorAll('#shell-types [data-kind]').forEach(function(b){b.onclick=function(){$('shell-choice').value=b.dataset.kind;selectShell();};});
   $('penetration').oninput=function(){if($('shell-choice').value.indexOf('saved:')!==0)manualPen=this.value;updateShell();};
   $('battles').onchange=function(){loadBattle(this.value,false).catch(function(e){warnings([e.message]);});};
+  // Another seat in the same battle: the list is rebuilt around that vehicle and the chosen hit is dropped,
+  // exactly as it is when the battle changes - the hit that was open may not even be on the new list.
+  $('vehicle-focus').onchange=function(){
+    var value=this.value===''?null:Number(this.value);
+    focusVehicle=!current||value===null||value===current.playerVehicleId||!Number.isFinite(value)?null:value;
+    selected=null;currentHitKey=null;++generation;swapped=null;
+    if(viewer)viewer.clear();sceneTiles(null,false);warnings([]);$('details').replaceChildren();
+    renderHits();message('Pick a hit from the list.');
+  };
   document.querySelectorAll('[data-filter]').forEach(function(b){b.onclick=function(){filter=b.dataset.filter;document.querySelectorAll('[data-filter]').forEach(function(x){x.setAttribute('aria-pressed',String(x===b));});renderHits();};});
   $('wireframe').onchange=function(){if(viewer)viewer.wireframe(this.checked);};
   var CONTEXT_LOST='The browser lost its WebGL context. Reload the page.';
