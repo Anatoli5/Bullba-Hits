@@ -1183,7 +1183,9 @@
   // whose shooter has a collision model, or a view already swapped, which it takes back to the recorded hit.
   function swapTile(hit){
     var b=$('swap-roles'),back=!!(hit&&hit.synthetic&&!hit.vehicle&&hit.base);
-    b.hidden=!(sidebarMode==='battles'&&!!current&&(back||(!!hit&&!hit.synthetic&&swapReady(hit))));
+    // Vehicles mode: two different browsed vehicles simply change places (user, 19.09: the button must work there too).
+    var browsed=sidebarMode==='vehicles'&&!!(hit&&hit.vehicle)&&!!modelVehicle&&!!shooterVehicle&&shooterVehicle.id!==modelVehicle.id;
+    b.hidden=!(browsed||(sidebarMode==='battles'&&!!current&&(back||(!!hit&&!hit.synthetic&&swapReady(hit)))));
     b.title=back?'Back to the recorded hit and its shot line':'Swap the model and the shooter';
   }
   function display(data,reference){
@@ -1411,6 +1413,7 @@
   // way - the swap is a view of it, not another hit.
   $('shooter-tile').onclick=function(){chooseRole('shooter');};
   $('swap-roles').onclick=function(){
+    if(sidebarMode==='vehicles'){if(!modelVehicle||!shooterVehicle)return;var m=modelVehicle;modelVehicle=shooterVehicle;shooterVehicle=m;shooterPicked=true;showVehicleScene(false).catch(function(){});return;}
     if(swapped){if(swapped.base)selectHit(swapped.base).catch(function(){});return;}
     var hit=activeHit;if(!hit||hit.synthetic||!swapReady(hit)||!current)return;
     var synthetic=swapHit(hit),token=++generation;message('Preparing the model\u2026');if(viewer)viewer.clear();

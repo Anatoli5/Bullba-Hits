@@ -6,6 +6,7 @@ script. Versions are listed newest first. Client: World of Tanks PC NA 2.4.0.1 #
 
 ## Unreleased
 
+- The ⇅ swap button works in the Vehicles panel too: the two browsed vehicles change places.
 - The Taschenratte ability shell shows its expected damage as a lower bound (≥, penetration only) with the chip
   "non-pen unknown": it does deal damage without piercing, but no law fits the recorded shots.
 
