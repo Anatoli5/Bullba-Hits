@@ -18,6 +18,7 @@ script. Versions are listed newest first. Client: World of Tanks PC NA 2.4.0.1 #
   not a confirmed server formula, and the tooltips say so; SPG (legacy) HE shows "splash not modelled".
 - The recorder saves the shell's damage fields (alpha, spall damage, mechanics, randomisation, radii) and the
   target's spall-liner factor; older records have no damage data and keep showing the chance.
+- The legend is two rows: the colour bar with 0 / 50 / 100 % laid under it.
 - Expected damage is the default Display (Reset to defaults or a fresh browser); Penetration chance stays one click away.
 - Hits from a secondary (ability) gun carry that gun's shell, and the shell list of a vehicle includes every gun's shells;
   ability-gun shells are marked ✦. The Taschenratte's 8 cm ability shell keeps its own absorption rule and shows
