@@ -65,6 +65,9 @@ def main(argv):
         return 1
     counts = Counter(classify(r) for r in rows)
     print('Verdict lines: %d (unique battle/hit/point/shell; modes %s)' % (len(rows), dict(Counter(r.get('mode', '?') for r in rows))))
+    # Every line is stamped with the page build (v=) and the records build (rec=) that produced our estimate; the
+    # server's fact never changes, our estimate does with every release, so old lines are compared per version.
+    print('Page versions: %s; records versions: %s' % (dict(Counter(r.get('v', '?') for r in rows)), dict(Counter(r.get('rec', '?') for r in rows))))
     for key in ('agree', 'coin-flip', 'DISAGREE', 'pass-through', 'no-main-armour', 'no-estimate', 'unknown-server-effect'):
         if counts.get(key):
             print('  %-22s %d' % (key, counts[key]))
@@ -78,6 +81,18 @@ def main(argv):
         print('%-10s %-4s %-3s %-8s %-30s %-16s %-6s %-6s %-14s %s' % ('battle', 'hit', 'pt', 'part', 'server', 'ours', 'angle', 'pen', 'dir', 'chordDev'))
         for r in bad:
             print('%-10s %-4s %-3s %-8s %-30s %-16s %-6s %-6s %-14s %s' % (r['battle'][:10], r['hit'], r['point'], r.get('part', ''), r.get('server', ''), r.get('ours', ''), r.get('angle', ''), r.get('pen', ''), r.get('dir', ''), r.get('chordDev', '')))
+    # HE non-penetrations with the server's damage: how far each candidate law lands from the fact, per page version.
+    he = [r for r in rows if r.get('dmg', '-') != '-' and r.get('ours', '').startswith('no-pen') and r.get('expRatio', '-') != '-']
+    if he:
+        print('')
+        print('HE non-penetrations with server damage: %d' % len(he))
+        for version in sorted(set(r.get('v', '?') for r in he)):
+            group = [r for r in he if r.get('v', '?') == version]
+            ratio = [abs(float(r['dmg']) - float(r['expRatio'])) for r in group]
+            linear = [abs(float(r['dmg']) - float(r['expLin'])) for r in group if r.get('expLin', '-') != '-']
+            print('  %-10s n=%-3d mean |server - ratio| = %5.1f HP   mean |server - linear| = %5.1f HP' % (
+                version, len(group), sum(ratio) / len(ratio), (sum(linear) / len(linear)) if linear else float('nan')))
+        print('  (one shot carries a +-25%% damage roll: only the means over many hits say which law is closer)')
     if '--rows' in argv:
         print('')
         for r in sorted(rows, key=lambda r: (r['battle'], int(r['hit']), int(r['point']))):

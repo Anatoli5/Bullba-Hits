@@ -25,7 +25,8 @@ script. Versions are listed newest first. Client: World of Tanks PC NA 2.4.0.1 #
 - HE behind a screen: a shell that does not get through the screen explodes there and deals nothing, so the
   non-penetration damage counts only for the rolls that pass the screen but not the hull (chip "through screen N %").
 - Statistics log: HE lines carry the server damage and the prediction of both candidate laws, to pick the law
-  from recorded hits.
+  from recorded hits. Every line is stamped with the page build and the records build that made the estimate
+  (`v=`, `rec=`); the log tool summarises per version.
 
 ## 0.7.12 (2026-09-19)
 
