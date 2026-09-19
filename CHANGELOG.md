@@ -17,7 +17,8 @@ script. Versions are listed newest first. Client: World of Tanks PC NA 2.4.0.1 #
   non-penetration damage is a reconstruction (ratio law: spall damage × min(1, 0.1 × spall damage / (plate × liner)), checked against the 200 recorded shots of the Reddit study),
   not a confirmed server formula, and the tooltips say so; SPG (legacy) HE shows "splash not modelled".
 - The recorder saves the shell's damage fields (alpha, spall damage, mechanics, randomisation, radii) and the
-  target's spall-liner factor; older records have no damage data and keep showing the chance.
+  target's spall-liner factor. Older battles get the same fields on the next game start, rebuilt from the recorded
+  vehicle descriptors (client data, not a guess).
 - Target modifiers next to the Collision model tile (Expected damage view, modern HE): spall liner (none / ×1.5 /
   improved ×1.6), the field modification "Spalling resistance" (×0.85 / default / ×1.15) and the driver's Reliable
   Placement (+15 % at 100 %, a reading of the client data). They start from the recorded liner factor and are kept

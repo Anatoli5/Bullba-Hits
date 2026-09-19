@@ -154,6 +154,53 @@ def read_battle(path):
 VEHICLE_CLASS_TAGS = ('lightTank', 'mediumTank', 'heavyTank', 'AT-SPG', 'SPG')
 
 
+def fix_shells(hit):
+    """Shell damage fields and the target's liner factor for hits recorded before 0.7.13.
+
+    The expected-damage view needs alpha, the spall damage and the mechanics of the
+    shell, and the target's spall-liner factor. Both compact descriptors are in the
+    record, so the same client lookups the recorder makes today rebuild them exactly;
+    nothing is guessed. A hit whose shells already carry 'alpha' is left alone.
+    Guarded like the fixes above: a failure leaves the record as it was.
+    """
+    attacker, target = hit.get('attacker') or {}, hit.get('target') or {}
+    shells = hit.get('availableShells') or hit.get('shellCandidates') or []
+    if attacker.get('compactDescriptor') and not (shells and all('alpha' in s for s in shells)):
+        try:
+            from .armor import shot_candidates
+            descr = vehicle_descr(attacker['compactDescriptor'])
+            slot = hit.get('gunInstallationIndex') or 0
+            candidates = shot_candidates(descr, hit.get('effectsIndex'), slot)
+            hit['availableShells'] = shot_candidates(descr)
+            if candidates:
+                hit['shellCandidates'] = candidates
+                hit['shellStatus'] = 'matched'
+        except Exception:
+            pass
+    if target.get('compactDescriptor') and target.get('linerFactor') is None:
+        try:
+            descr = vehicle_descr(target['compactDescriptor'])
+            target['linerFactor'] = float(descr.miscAttrs.get('antifragmentationLiningFactor', 1.0))
+        except Exception:
+            pass
+
+
+def player_vehicle(battle):
+    """The player's vehicle of a battle for the battle picker: the target of his incoming hits, the attacker
+    of his outgoing ones, else his roster row. Only display fields, never the descriptor."""
+    keys = ('name', 'type', 'level', 'class', 'role', 'nation')
+    for hit in battle.get('hits') or []:
+        side = {'incoming':'target', 'outgoing':'attacker'}.get(hit.get('direction'))
+        vehicle = hit.get(side) if side else None
+        if isinstance(vehicle, dict) and vehicle.get('name'):
+            return dict((k, vehicle.get(k)) for k in keys if vehicle.get(k) is not None)
+    own = battle.get('playerVehicleId')
+    for row in battle.get('roster') or []:
+        if own and row.get('id') == own and row.get('name'):
+            return dict((k, row.get(k)) for k in keys if row.get(k) is not None)
+    return None
+
+
 def enrich_vehicle(vehicle):
     """Add tier/class/role/nation to a recorded attacker/target when they are missing.
 
@@ -736,6 +783,7 @@ class Exporter(object):
                     LOG.exception('Vehicle identity unavailable; the hit is published as recorded')
             # Records written before 0.6.34 carry no parts for the shooter; rebuild them here.
             synthesize_parts(hit.get('attacker'))
+            fix_shells(hit)
             # The player's own hits are what he opens first, so their models are
             # extracted first; a hit between two other vehicles waits behind them.
             priority = JOB_PLAYER if hit.get('direction') in ('incoming', 'outgoing') else JOB_OTHER
@@ -752,6 +800,10 @@ class Exporter(object):
         self.model_refs[battle['id']] = references
         self.summaries[battle['id']] = dict((k, battle.get(k)) for k in ('id', 'startedAt', 'map'))
         self.summaries[battle['id']]['hits'] = len(battle['hits'])
+        try:
+            self.summaries[battle['id']]['vehicle'] = player_vehicle(result)
+        except Exception:
+            self.summaries[battle['id']]['vehicle'] = None
 
     def record(self, name, record):
         if record['type'] == 'battle':
