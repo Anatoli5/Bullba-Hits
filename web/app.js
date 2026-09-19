@@ -647,35 +647,25 @@
   // re-runs selectHit, which clears the viewer and rebuilds the scene, so the pin and the pose reset with it.
   if(viewer)viewer.onPin=function(on){$('shot-source').textContent=on?'Pinned point':activeHit&&activeHit.synthetic?'No recorded shot':'Hit line';$('total-chance').textContent=on?'—':$('total-chance').textContent;shotStats();};
   $('auto-frame').onchange=function(){if(viewer)viewer.setAutoFrame(this.checked);};
-  $('track-opacity').oninput=function(){if(viewer)viewer.setTrackOpacity(Number(this.value)/100);};
+  $('track-opacity').oninput=function(){if(viewer)viewer.setTrackOpacity(Number(this.value)/100);$('track-opacity-value').textContent=this.value+' %';};
   $('camera-zoom-field').onchange=function(){if(viewer)viewer.setZoom(Number(this.value));};
   $('pivot-height').oninput=function(){if(viewer){var r=viewer.heightRange();viewer.setPivotHeight(r[0]+Number(this.value)/100);}};
   $('pivot-height-field').onchange=function(){if(viewer)viewer.setPivotHeight(Number(this.value));};
-  // Ricochet trace mode: remembered per browser, so a choice made for a weaker GPU survives the next battle.
-  (function(){var select=$('bounce-mode'),stored=null;try{stored=window.localStorage.getItem('bullba-bounce-mode');}catch(e){}
-    if(stored==='always'||stored==='idle')select.value=stored;if(viewer)viewer.setBounceMode(select.value);
-    select.onchange=function(){if(viewer)viewer.setBounceMode(this.value);try{window.localStorage.setItem('bullba-bounce-mode',this.value);}catch(e){}};})();
-  // Ricochet tint: a checkbox and a slider, remembered per browser. Unticked means no blue at all; the slider keeps
-  // its value for the next time the tint is switched on. The panels' ricochet labels follow (updateShell).
-  (function(){var on=$('ricochet-tint-on'),input=$('ricochet-tint'),out=$('ricochet-tint-value'),row=input.parentNode,stored=NaN,storedOn=null;
-    try{var raw=window.localStorage.getItem('bullba-tint');stored=raw===null?NaN:Number(raw);storedOn=window.localStorage.getItem('bullba-tint-on');}catch(e){}
-    if(stored>=0&&stored<=150)input.value=stored;if(storedOn==='on'||storedOn==='off')on.checked=storedOn==='on';
-    var apply=function(){ricochetTint=on.checked?Number(input.value)/100:0;out.textContent=input.value+' %';row.classList.toggle('off',!on.checked);if(viewer)viewer.setTint(ricochetTint);};apply();
-    input.oninput=function(){apply();try{window.localStorage.setItem('bullba-tint',input.value);}catch(e){}updateShell();};
-    on.onchange=function(){apply();try{window.localStorage.setItem('bullba-tint-on',on.checked?'on':'off');}catch(e){}updateShell();};})();
-  // Ricochet dots: a checkbox and the spacing slider, remembered per browser; a 'Tint + dots' choice made before 0.7.3
-  // carries over as the checkbox.
-  (function(){var on=$('ricochet-dots-on'),input=$('ricochet-dots'),out=$('ricochet-dots-value'),row=input.parentNode,stored=NaN,storedOn=null;
-    try{var ls=window.localStorage,raw=ls.getItem('bullba-dots-spacing')||ls.getItem('bullba-hatch');stored=raw===null?NaN:Number(raw);storedOn=ls.getItem('bullba-dots')||(ls.getItem('bullba-mark')==='dots'?'on':null);}catch(e){}
-    if(stored>=3&&stored<=24)input.value=stored;if(storedOn==='on'||storedOn==='off')on.checked=storedOn==='on';
-    var apply=function(){out.textContent=input.value+' px';row.classList.toggle('off',!on.checked);if(viewer)viewer.setDots(on.checked,input.value);};apply();
-    input.oninput=function(){apply();try{window.localStorage.setItem('bullba-dots-spacing',input.value);}catch(e){}};
-    on.onchange=function(){apply();try{window.localStorage.setItem('bullba-dots',on.checked?'on':'off');}catch(e){}};})();
-  // Part seams and the zone outline: remembered per browser.
-  [['part-edges','bullba-edges','on',function(v){if(viewer)viewer.setPartEdges(v==='on');}],['zone-outline','bullba-outline','off',function(v){if(viewer)viewer.setZoneOutline(v==='on');}]].forEach(function(row){
-    var select=$(row[0]),stored=null;try{stored=window.localStorage.getItem(row[1]);}catch(e){}
-    if(stored==='on'||stored==='off')select.value=stored;else select.value=row[2];row[3](select.value);
-    select.onchange=function(){row[3](this.value);try{window.localStorage.setItem(row[1],this.value);}catch(e){}};});
+  // Ricochet trace mode: a choice made for a weaker GPU survives the next battle (restoreSettings below).
+  $('bounce-mode').onchange=function(){if(viewer)viewer.setBounceMode(this.value);};
+  // Ricochet tint: a checkbox and a slider. Unticked means no blue at all; the slider keeps its value for the
+  // next time the tint is switched on. The panels' ricochet labels follow (updateShell).
+  (function(){var on=$('ricochet-tint-on'),input=$('ricochet-tint'),out=$('ricochet-tint-value'),row=input.parentNode;
+    var apply=function(){ricochetTint=on.checked?Number(input.value)/100:0;out.textContent=input.value+' %';row.classList.toggle('off',!on.checked);if(viewer)viewer.setTint(ricochetTint);};
+    input.oninput=function(){apply();updateShell();};
+    on.onchange=function(){apply();updateShell();};})();
+  // Ricochet dots: a checkbox and the spacing slider.
+  (function(){var on=$('ricochet-dots-on'),input=$('ricochet-dots'),out=$('ricochet-dots-value'),row=input.parentNode;
+    var apply=function(){out.textContent=input.value+' px';row.classList.toggle('off',!on.checked);if(viewer)viewer.setDots(on.checked,input.value);};
+    input.oninput=apply;on.onchange=apply;})();
+  // Part seams and the zone outline.
+  $('part-edges').onchange=function(){if(viewer)viewer.setPartEdges(this.value==='on');};
+  $('zone-outline').onchange=function(){if(viewer)viewer.setZoneOutline(this.value==='on');};
   $('heatmap-quality').onchange=host.guard('Detail',function(){if(host.game&&this.value==='high'){this.value=viewer?viewer.quality:'auto';return;}if(viewer)viewer.setQuality(this.value);});
   // Last item of the toolbar row: the explored pose (when it differs) and the gun's vertical limits at the
   // current turret angle. Gun readouts: up positive, down negative (the client's pitch is the other way round).
@@ -713,8 +703,84 @@
   window.addEventListener('armor-context-lost',function(){if(host.mark)host.mark('WebGL','context-lost');message(CONTEXT_LOST);});
   // The context came back and the viewer has redrawn: take the reload notice away again, leave any other message.
   window.addEventListener('armor-context-restored',function(){if(host.mark)host.mark('WebGL','context-restored');if($('scene-message').textContent===CONTEXT_LOST)message('');});
-  function outline(){if(viewer)viewer.setOutline(Number($('outline-brightness').value)/100,Number($('outline-opacity').value)/100);}
-  $('outline-brightness').oninput=outline;$('outline-opacity').oninput=outline;if(viewer){viewer.wireframe($('wireframe').checked);outline();}
+  function outline(){if(viewer)viewer.setOutline(Number($('outline-brightness').value)/100,Number($('outline-opacity').value)/100);
+    $('outline-brightness-value').textContent=$('outline-brightness').value+' %';$('outline-opacity-value').textContent=$('outline-opacity').value+' %';}
+  $('outline-brightness').oninput=outline;$('outline-opacity').oninput=outline;
+  // ------------------------------ Settings --------------------------------
+  // Every control of the Settings menu is remembered in one localStorage object, so nothing resets on the next
+  // launch; the per-control keys of 0.7.x are folded into it once and removed. Storage may be refused (the
+  // game's CEF, a private window, a full quota): every read and write is guarded and the page works without it.
+  // The stored value is applied to the control and then the control's OWN handler runs - the viewer is
+  // configured by the same code path a click would take, never by a second copy of it.
+  var SETTINGS_KEY='bullba-settings';
+  var SETTINGS_LEGACY=[['bullba-bounce-mode','bounce-mode',String],['bullba-tint','ricochet-tint',String],
+    ['bullba-tint-on','ricochet-tint-on',legacyFlag],['bullba-dots-spacing','ricochet-dots',String],
+    ['bullba-dots','ricochet-dots-on',legacyFlag],['bullba-edges','part-edges',String],['bullba-outline','zone-outline',String]];
+  function legacyFlag(v){return v==='on'||v==='1'||v==='true';}
+  var settingsBox=document.querySelector('.settings-menu .settings-content');
+  var settingControls=settingsBox?[].slice.call(settingsBox.querySelectorAll('input[id],select[id]')):[];
+  var settingDefaults={};
+  function settingValue(el){return el.type==='checkbox'?el.checked:el.value;}
+  // The default is what the HTML carries: defaultChecked, defaultValue, the option marked selected (or the first).
+  function settingDefault(el){
+    if(el.type==='checkbox')return el.defaultChecked;
+    if(el.tagName==='SELECT'){var picked=el.querySelector('option[selected]');return picked?picked.value:el.options.length?el.options[0].value:'';}
+    return el.defaultValue;
+  }
+  // A stored value is taken only when it still fits the control: an option that exists, a number inside
+  // min..max, a real boolean. Anything else falls back to the default.
+  function settingValid(el,v){
+    if(el.type==='checkbox')return typeof v==='boolean';
+    if(typeof v!=='string'&&typeof v!=='number')return false;
+    var text=String(v);
+    if(el.tagName==='SELECT')return [].some.call(el.options,function(o){return o.value===text;});
+    if(el.type==='range'||el.type==='number'){var n=Number(text);
+      if(!isFinite(text===''?NaN:n))return false;
+      return n>=(el.min===''?-Infinity:Number(el.min))&&n<=(el.max===''?Infinity:Number(el.max));}
+    return true;
+  }
+  function settingSet(el,v){if(el.type==='checkbox')el.checked=!!v;else el.value=String(v);}
+  function settingRun(el){var fn=(el.type==='range'&&el.oninput)||el.onchange||el.oninput;if(fn)fn.call(el);}
+  function settingsStored(){
+    var raw=null;try{raw=window.localStorage.getItem(SETTINGS_KEY);}catch(e){}
+    if(raw===null||raw===undefined)return null;
+    try{var box=JSON.parse(raw);if(box&&box.values&&typeof box.values==='object')return box.values;}catch(e){}
+    return null;
+  }
+  // The keys of 0.7.x, read once and dropped.
+  function settingsLegacy(){
+    var values=null;
+    SETTINGS_LEGACY.forEach(function(row){
+      var raw=null;try{raw=window.localStorage.getItem(row[0]);}catch(e){}
+      if(raw===null||raw===undefined)return;
+      (values=values||{})[row[1]]=row[2](raw);
+      try{window.localStorage.removeItem(row[0]);}catch(e){}
+    });
+    return values;
+  }
+  function persistSettings(){
+    var values={};settingControls.forEach(function(el){values[el.id]=settingValue(el);});
+    try{window.localStorage.setItem(SETTINGS_KEY,JSON.stringify({v:1,values:values}));}catch(e){}
+  }
+  function restoreSettings(){
+    var stored=settingsStored(),migrated=false;
+    if(!stored){stored=settingsLegacy();migrated=!!stored;}
+    settingControls.forEach(function(el){
+      settingDefaults[el.id]=settingDefault(el);
+      if(stored&&Object.prototype.hasOwnProperty.call(stored,el.id)&&settingValid(el,stored[el.id]))settingSet(el,stored[el.id]);
+      settingRun(el);
+      // One shared listener per control instead of a save inside every handler; a programmatic change below
+      // fires no event, so a restore and a reset never write anything back.
+      el.addEventListener('change',persistSettings);
+      if(el.type==='range')el.addEventListener('input',persistSettings);
+    });
+    if(migrated)persistSettings();
+  }
+  $('reset-settings').onclick=function(){
+    settingControls.forEach(function(el){settingSet(el,settingDefaults[el.id]);settingRun(el);});
+    try{window.localStorage.removeItem(SETTINGS_KEY);}catch(e){}
+  };
+  restoreSettings();
   // Heading overflow (18.09 round 2): the battle tile, the shell block and Settings share one grid row while the
   // three fit; when they do not, .stacked drops the whole shell block to a full-width second row and Settings
   // keeps the top right. natural() reads the width a block WANTS — position:absolute plus width:max-content, so

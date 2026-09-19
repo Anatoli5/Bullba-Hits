@@ -226,3 +226,14 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
    collision-model tile occupies, click-through like the other overlays. app.js still hides it outside chance
    mode and with invalid parameters. */
 .scene-legend{position:absolute;right:14px;top:68px;z-index:6;padding:5px 10px;border-radius:6px;background:rgba(23,35,48,.15);text-shadow:0 1px 2px rgba(0,0,0,.7);white-space:nowrap;pointer-events:none}
+
+/* 18.09 settings (user: the grid and the opacities are settings, not things you touch while reading a shot).
+   The four scene decorations sit in their own group of the menu, in the same two-column grid as the rest, and
+   one button at the bottom puts every setting in the menu back to the value the HTML carries. */
+.settings-group{margin:18px 0 10px;font-size:11px;letter-spacing:1.5px;color:var(--muted);font-weight:600}
+.settings-actions{display:flex;justify-content:flex-end;margin-top:16px}
+.settings-actions button{font-size:13px;min-height:34px;padding:7px 11px}
+/* Four more rows and the button made the menu taller than the window at 1366x768: the panel opens 56 px under
+   the heading, so its own limit is the window minus that offset - the last row stays on screen and the panel
+   scrolls inside itself instead. */
+.settings-content{max-height:calc(100vh - 140px)}

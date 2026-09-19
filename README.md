@@ -25,7 +25,7 @@ The enemy crosshair and aiming are never guessed. Penetration from the shell dat
 
 1. Close the game and run the installer.
 2. Select the World of Tanks root folder. The **Bullba Hits** shortcut is created when the box is ticked.
-3. Start the game with the mod. The hangar mods panel (top left) has a Bullba Hits entry; right-click on a vehicle and Ctrl + Alt + B open it as well. The panel is the open-source ModsList with OpenWG Gameface: the installer adds them only when the game folder has no copy, and a modpack's own copy is left alone. Manual install from the ZIP: put every `.wotmod` from its `mod` folder into `mods\2.4.0.1\`.
+3. Start the game with the mod. The hangar mods panel (top left) has a Bullba Hits entry; right-click on a vehicle opens it as well. The panel is the open-source ModsList with OpenWG Gameface: the installer adds them only when the game folder has no copy, and a modpack's own copy is left alone. Manual install from the ZIP: put every `.wotmod` from its `mod` folder into `mods\2.4.0.1\`.
 4. After a battle open the viewer; new battles appear on their own. If the page was open during an update, reload it with Ctrl+F5.
 
 Data and the page live in `<game>/mods/configs/local.armor_inspector/`. To move the history, keep that whole folder. The installer keeps records and moves any previous build of our mod to a backup; other mods are not touched. After a mod pack that wipes `mods`, Bullba Hits may need to be installed again.
