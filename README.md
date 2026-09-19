@@ -30,7 +30,7 @@ The enemy crosshair and aiming are never guessed. Penetration from the shell dat
 
 Data and the page live in `<game>/mods/configs/local.armor_inspector/`. To move the history, keep that whole folder. The installer keeps records and moves any previous build of our mod to a backup; other mods are not touched. After a mod pack that wipes `mods`, Bullba Hits may need to be installed again.
 
-The mod keeps the newest five battles; older raw records, derived files and models no kept battle references are removed on the next game start.
+The mod keeps every recorded battle. A collision model is removed only when no battle and no exported vehicle references it any more.
 
 ## Sources and build
 

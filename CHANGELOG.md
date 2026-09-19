@@ -10,6 +10,7 @@ script. Versions are listed newest first. Client: World of Tanks PC NA 2.4.0.1 #
   `BullbaHits-<version>-Sources-and-manual-install.zip` holds the `.wotmod` files for a manual install, the
   sources, README and licences. Each file is described in the release notes.
 - This changelog, shipped with the mod and used for the release notes.
+- README: the mod keeps every recorded battle; the text still described the old five-battle limit.
 
 ## 0.7.12 (2026-09-19)
 
