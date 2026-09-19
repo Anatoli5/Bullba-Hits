@@ -34,3 +34,4 @@ __pycache__/
 !/tools/release_github.py
 !/tools/verdicts_from_log.py
 !/tools/preview.py
+!/tools/third_party.py

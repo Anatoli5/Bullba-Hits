@@ -75,7 +75,7 @@ if api(repo + '/git/ref/tags/' + tag, missing=True) is None:
 if api(repo + '/releases/tags/' + tag, missing=True) is not None:
     raise RuntimeError('Release ' + tag + ' already exists; bump the version instead of replacing a published build')
 notes = ['Bullba Hits ' + VERSION + ' — WoT PC NA 2.4.0.1 #950.', '',
-         'Install: download `' + assets[0].name + '` and run it with the game closed. Manual install: put `' + assets[1].name + '` into `mods\\2.4.0.1\\`.', '',
+         'Install: download `' + assets[0].name + '` and run it with the game closed. Manual install: unpack `' + assets[2].name + '` and put every `.wotmod` from its `mod` folder into `mods\\2.4.0.1\\` (ours plus the ModsList panel and OpenWG Gameface; skip the ones you already have).', '',
          'SHA-256:']
 notes += ['- `' + a.name + '`: `' + digest(a) + '`' for a in assets]
 release = api(repo + '/releases', 'POST', {'tag_name': tag, 'target_commitish': head, 'name': 'Bullba Hits ' + VERSION, 'body': '\n'.join(notes), 'draft': False, 'prerelease': False})

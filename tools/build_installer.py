@@ -11,6 +11,8 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parent.parent
 sys.path.insert(0,str(ROOT/'mod'))
 from local_armor_inspector.exporter import ASSETS, VERSION, write_data
+sys.path.insert(0,str(ROOT/'tools'))
+import third_party
 
 
 def digest(path): return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -47,6 +49,9 @@ def build(test=False,sign_command=None,require_signature=False):
     report=json.loads((ROOT/'dist/build.json').read_text())
     if digest(mod)!=report['sha256']: raise ValueError('Mod differs from validated build')
     files=[(mod,'mods/2.4.0.1/'+mod.name,False,False)]
+    # The hangar panel (ModsList + OpenWG Gameface): copied only when absent, kept on uninstall, never hash-checked
+    # afterwards - a modpack may bring its own build of the same package.
+    files.extend((path,'mods/2.4.0.1/'+path.name,True,True) for path in third_party.collect())
     with zipfile.ZipFile(mod) as z:
         for relative in ASSETS:
             data=z.read('res/armor_inspector_viewer/'+relative)
@@ -60,7 +65,8 @@ def build(test=False,sign_command=None,require_signature=False):
             files.append((target,'mods/configs/local.armor_inspector/'+relative,True,False))
     files.extend((ROOT/source,'mods/configs/local.armor_inspector/'+dest,True,False) for source,dest in (
         ('installer/armor-inspector.ico','web/icon.ico'),('README.md','README.md'),
-        ('THIRD_PARTY.md','THIRD_PARTY.md'),('licenses/InnoSetup.txt','licenses/InnoSetup.txt')))
+        ('THIRD_PARTY.md','THIRD_PARTY.md'),('licenses/InnoSetup.txt','licenses/InnoSetup.txt'),
+        ('licenses/ModsList.txt','licenses/ModsList.txt'),('licenses/OpenWGGameface.txt','licenses/OpenWGGameface.txt')))
     seed=generated/'empty-index.js'
     write_data(str(seed),'index',{'application':'local.armor_inspector','version':VERSION,'updatedAt':None,'battles':[]})
     files.append((seed,'mods/configs/local.armor_inspector/data/index.js',True,True))

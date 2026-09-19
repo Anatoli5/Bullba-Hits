@@ -8,6 +8,8 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parent.parent
 sys.path.insert(0,str(ROOT/'mod'))
 from local_armor_inspector.exporter import VERSION
+sys.path.insert(0,str(ROOT/'tools'))
+import third_party
 
 
 def package():
@@ -18,6 +20,7 @@ def package():
     sources.extend((ROOT/'licenses').glob('*'))
     sources.extend((ROOT/'mod').rglob('*.py'))
     sources.append(ROOT/'dist'/('local.armor_inspector_'+VERSION+'.wotmod'))
+    sources.extend(third_party.collect())  # the hangar panel packages, see THIRD_PARTY.md
     files=[]
     for src in sources:
         rel=Path('mod')/src.name if src.suffix=='.wotmod' else src.relative_to(ROOT)
