@@ -396,6 +396,7 @@
     if(hit&&hit.vehicle&&candidates.length){var first=candidates.findIndex(function(c){return c.kind==='ARMOR_PIERCING';});
       if(first<0)first=candidates.findIndex(function(c){return c.kind==='ARMOR_PIERCING_CR';});if(first<0)first=0;choice.value='saved:'+first;}
     $('shell-quick').replaceChildren();candidates.forEach(function(c,i){var actual=i===shotContext.index,b=node('button',(actual?'● ':'')+(shellNames[c.kind]||c.kind)+' '+Math.round(c.penetration100)+(c.gunInstallation>0?' ✦':''),'shell-chip');b.dataset.shell='saved:'+i;b.title=c.name+' · '+c.caliber+' mm · '+(c.gunInstallation>0?'ability gun'+(c.gun?' '+c.gun:'')+' · ':'')+(actual?'Type from the hit':'Compare with this shell');b.onclick=function(){choice.value='saved:'+i;selectShell();};$('shell-quick').appendChild(b);});
+    syncTargetMods(hit);
     if(keep){choice.value=keep.kind;manualPen=keep.penetration;$('penetration').value=keep.penetration;$('caliber').value=keep.caliber;penLabel(false);updateShell();}
     else selectShell();
     // The shooter's chips just changed, so the shell block wants a different width: re-measure the heading.
@@ -404,10 +405,71 @@
   // The spall-liner factor of the vehicle under fire: the hit's target, or the browsed vehicle's own record.
   // Records written before 0.7.13 carry none, and without one the law reads the target as unlined (1.0).
   function linerFactor(hit){var t=(hit||activeHit||{}).target;return t&&t.linerFactor>0?t.linerFactor:1;}
+  // Target modifiers (19.09): three things of the client multiply miscAttrs/antifragmentationLiningFactor and
+  // the record cannot tell them apart - the mounted spall liner, the field modification “Spalling resistance”
+  // and the driver's Reliable Placement. C = liner x field x (1 + 0.15 x skill), and the non-penetration
+  // damage of HE divides by C. The recorded factor certainly carries the liner, may carry the field
+  // modification and never carries the crew skill, so it only sets the switches' starting position. The
+  // choice is kept per vehicle type for the session: the next hit on the same vehicle keeps what the user
+  // set, a new vehicle starts from its own record. Nothing is written to localStorage in this version.
+  var targetMods=null,modsState={},modsType='',modsRecorded=0;
+  function modsDefaults(rec){return {liner:rec>=1.55?'1.6':rec>=1.4?'1.5':'1',fieldmod:'1',skill:'0'};}
+  function modsFactor(v){var f=Number(v.liner)*Number(v.fieldmod)*(1+.15*Number(v.skill));return f>0?f:1;}
+  // Every shell is built for the vehicle it is fired at: the displayed target follows the switches, any other
+  // vehicle of the automatic verdict pass keeps the factor its own record carries.
+  function targetFactor(hit){
+    var t=(hit||activeHit||{}).target,type=t&&t.type?String(t.type):'',state=type?modsState[type]:null;
+    return state?modsFactor(state):linerFactor(hit);
+  }
+  function buildTargetMods(){
+    var slot=$('target-mods-slot');
+    if(!slot||!window.ModifierGroup)return;
+    targetMods=ModifierGroup.create({id:'target-mods',title:'Target',host:slot,
+      summary:function(v){var out=['liner ×'+Number(v.liner).toFixed(1)];
+        if(Number(v.fieldmod)!==1)out.push('field ×'+Number(v.fieldmod).toFixed(2));
+        if(v.skill==='1')out.push('driver +15 %');return out.join(' · ');},
+      options:[
+        {id:'liner',label:'Liner',kind:'choice',value:'1',
+         title:'Spall liner (optional device): none ×1.0, mounted ×1.5, the same liner in the bonus slot ×1.6. The light, medium, heavy and superheavy variants all carry the same factor (optional_devices.xml, antifragmentationLining tiers 1–4).',
+         choices:[{value:'1',label:'None',title:'No spall liner · ×1.0'},
+           {value:'1.5',label:'Liner ×1.5',title:'Spall liner in an ordinary slot · ×1.5'},
+           {value:'1.6',label:'Improved ×1.6',title:'The same liner in the bonus slot (improved) · ×1.6'}]},
+        {id:'fieldmod',label:'Field mod.',kind:'choice',value:'1',
+         title:'Field modification “Spalling resistance”, HT assault / HT universal / LT roles (post_progression/field_modifications.xml). It is one side of a pair — the other side takes speed instead — and no other role has it.',
+         choices:[{value:'0.85',label:'−',title:'The other side of the pair · ×0.85'},
+           {value:'1',label:'default',title:'No such field modification · ×1.00'},
+           {value:'1.15',label:'+',title:'Spalling resistance · ×1.15'}]},
+        {id:'skill',label:'Driver skill',kind:'toggle',value:'0',
+         title:'Driver skill “Reliable Placement”: +15 % at 100 % skill (tankmen.xml driver_reliablePlacement → perks.xml id 304, antifragmentationLining 0.0015 per point). The per-point scaling is a reading of the client XML, not a verified rule.',
+         choices:[{value:'0',label:'Off',title:'Not trained · ×1.00'},
+           {value:'1',label:'+15 %',title:'Trained to 100 % · ×1.15 · the scaling is read from the client XML, not verified'}]}],
+      onChange:function(){if(modsType)modsState[modsType]=targetMods.values();updateShell();}});
+  }
+  // A new vehicle on screen: its own remembered switches, or fresh ones read from the factor of its record.
+  function syncTargetMods(hit){
+    if(!targetMods)return;
+    var t=hit&&hit.target||null,type=t&&t.type?String(t.type):'';
+    modsType=type;modsRecorded=t&&t.linerFactor>0?t.linerFactor:0;
+    if(type&&!modsState[type])modsState[type]=modsDefaults(modsRecorded);
+    targetMods.setDefaults(modsState[type]||modsDefaults(0));
+    targetMods.element.title='What this vehicle has fitted against spalling: C = liner × field modification × (1 + 0.15 × driver skill). The non-penetration damage of HE divides by C. '+
+      (modsRecorded>0?'recorded ×'+modsRecorded.toFixed(2)+' — the factor the client’s descriptor carried here: it holds the mounted liner, may hold the field modification, never the crew skill.':'This record carries no factor — the switches start unlined.')+
+      ' Kept per vehicle type until the page is reloaded.';
+  }
+  // The switches have something to change only while a model is on screen and the map is drawn in damage: in
+  // chance mode the factor is a no-op, so they leave with the damage caption instead of sitting dead.
+  function modsVisible(){
+    var slot=$('target-mods-slot');
+    if(!slot||!targetMods)return;
+    var show=!!(damageView&&modsType&&!$('model-tile').hidden);
+    if(slot.hidden===!show)return;
+    slot.hidden=!show;if(!show)targetMods.close();
+    layoutMods(); // placed in the same task it appears in, so it is never painted at the unpositioned corner
+  }
   function shellAt(c,choice,penetration,caliber,distance,hit){
     if(!choice||!(penetration>0)||penetration>3000||!(caliber>0)||caliber>1000)return null;
     var shell=ArmorBallistics.shell(c?c.kind:choice,penetration,caliber);
-    shell.liner=linerFactor(hit);
+    shell.liner=targetFactor(hit);
     if(c){['normalization','ricochetCos','jetLossPerMeter','randomization','randomizationType','shieldPenetration',
       'alpha','spallDamage','mechanics','nonPiercingArmorDamage'].forEach(function(k){if(c[k]!==undefined)shell[k]=c[k];});var fraction=Math.max(0,Math.min(1,(distance-100)/400));if(c.penetration500>0&&c.penetration100>0)shell.penetration=penetration*(1+fraction*(c.penetration500/c.penetration100-1));}
     return shell;
@@ -427,12 +489,15 @@
   function damageColumns(hit,r,shell){
     if(shell.kind!=='HIGH_EXPLOSIVE'||!(shell.alpha>0))return '';
     var plate=r.reason==='penetration'&&r.nominal>0?r.nominal:null,liner=shell.liner>0?shell.liner:1;
+    // liner= is the factor the numbers were computed with (the switches of the Target group); linerRec= is what
+    // the record carried, so a line is still readable when the user has moved the switches by hand.
+    var rec=hit&&hit.target&&hit.target.linerFactor>0?hit.target.linerFactor:0;
     var p=r.chance===null||r.chance===undefined?null:r.chance/100;
     var ratio=plate?ArmorBallistics.nonPenetration(shell,plate).damage:0;
     var lin=plate?Math.max(0,(shell.spallDamage>0?shell.spallDamage:0)-1.1*plate*liner):0;
     var expected=function(np){return p===null?'-':Math.round(p*shell.alpha+(1-p)*np);};
     return ' dmg='+(hit.damage>0?hit.damage:'-')+' alpha='+Math.round(shell.alpha)+' plate='+(plate?Math.round(plate):'-')+
-      ' liner='+liner.toFixed(2)+' nonPenRatio='+Math.round(ratio)+' nonPenLin='+Math.round(lin)+
+      ' liner='+liner.toFixed(2)+' linerRec='+(rec>0?rec.toFixed(2):'-')+' nonPenRatio='+Math.round(ratio)+' nonPenLin='+Math.round(lin)+
       ' expRatio='+expected(ratio)+' expLin='+expected(lin)+' law='+(r.damageLaw||'ratio');
   }
   // The displayed hit, with whatever shell is on screen: logged once per hit and shell, never on camera moves.
@@ -532,6 +597,7 @@
     caption.title=damageView?'Non-penetration damage of HE is a reconstruction (ratio law), not a confirmed server formula':'';
     $('penetration').setAttribute('aria-invalid',String(mapMode&&!(penetration>0&&penetration<=3000)));$('caliber').setAttribute('aria-invalid',String(mapMode&&!(caliber>0&&caliber<=1000)));
     $('probe-chance').textContent='—';$('probe-chance').style.color='';$('probe-pen').replaceChildren();$('probe-extra').replaceChildren();$('probe-details').replaceChildren(node('span','Hover over the armour','placeholder'));
+    modsVisible();
     staleEstimate();if(viewer)viewer.configure(shell,mapMode,$('palette').value,mode);shotStats();
   }
   var shellGroup=document.querySelector('.shell-fields');
@@ -552,7 +618,8 @@
     var liner=s.liner>0?s.liner:1,pass=r.screenPass===undefined||r.screenPass===null?1:r.screenPass;
     var groups=[{kind:'damage',text:'pen '+Math.round(r.chance)+' %'},
       {kind:'damage',text:'non-pen '+Math.round(r.nonPen)+' HP',
-       title:'spall '+Math.round(s.spallDamage||0)+' HP · plate '+Math.round(r.nominal)+' mm · liner ×'+liner.toFixed(1)}];
+       // Two decimals: the liner is no longer one device factor but the product of the Target switches (1.725).
+       title:'spall '+Math.round(s.spallDamage||0)+' HP · plate '+Math.round(r.nominal)+' mm · liner ×'+liner.toFixed(2)}];
     // A screen on the way: the chance the shell gets through it at all; below it the shell explodes on the screen
     // and deals nothing, so the non-penetration damage only counts in the gap between passing and piercing.
     if(pass<.995)groups.push({kind:'damage',text:'through screen '+Math.round(pass*100)+' %',title:'Chance to pass the screen(s); stopped there, the shell deals no damage at all'});
@@ -1117,6 +1184,9 @@
     settingControls.forEach(function(el){settingSet(el,settingDefaults[el.id]);settingRun(el);});
     try{window.localStorage.removeItem(SETTINGS_KEY);}catch(e){}
   };
+  // The Target group is built before the settings are restored: restoring the Display setting already runs
+  // updateShell(), which asks the group whether it belongs on screen.
+  buildTargetMods();
   restoreSettings();
   // Heading overflow (18.09 round 2): the battle tile, the shell block and Settings share one grid row while the
   // three fit; when they do not, .stacked drops the whole shell block to a full-width second row and Settings
@@ -1164,13 +1234,29 @@
     moreBox.hidden=false;var budget=room-moreBox.offsetWidth-gap;
     for(var i=live.length-1;i>=0&&total>budget;i--){total-=(tbWidth[live[i].getAttribute('data-tb')]||0)+gap;popover.insertBefore(live[i],popover.firstChild);}
   }
-  // One rAF debounce for both rows: the heading is measured first, because stacking it changes nothing the
+  // Target modifiers over the scene: the group shares the top band with the Collision model tile and is given
+  // the room to the right of it, up to the edge of the viewport. Neither tile is ever narrowed for it - when
+  // its inline block does not fit, the group folds into its own “Modifiers” button instead. Measured in the
+  // same frame as the two rows above, never per frame.
+  function layoutMods(){
+    var slot=$('target-mods-slot'),box=$('viewport'),tile=$('model-tile');
+    if(!targetMods||!slot||slot.hidden||!box||!box.clientWidth)return;
+    // The tile is centred with a transform, which offsetLeft does not see: its painted right edge comes from
+    // the rectangles, measured against the viewport's own.
+    var edge=14,gap=12,left=edge;
+    if(!tile.hidden){var box0=box.getBoundingClientRect(),t0=tile.getBoundingClientRect();left=Math.max(edge,t0.right-box0.left+gap);}
+    slot.style.left=left+'px';
+    targetMods.fit(box.clientWidth-edge-left);
+  }
+  // One rAF debounce for all three: the heading is measured first, because stacking it changes nothing the
   // toolbar measures but a toolbar fold must not race the heading's own reflow.
-  function scheduleLayout(){if(tbFrame)return;tbFrame=window.requestAnimationFrame(function(){tbFrame=0;layoutHeading();layoutToolbar();});}
+  function scheduleLayout(){if(tbFrame)return;tbFrame=window.requestAnimationFrame(function(){tbFrame=0;layoutHeading();layoutToolbar();layoutMods();});}
   window.addEventListener('resize',scheduleLayout);
-  // Closing on a click outside is written out here: the settings menu has no such handler to reuse.
-  document.addEventListener('click',function(e){if(moreBox&&moreBox.open&&!moreBox.contains(e.target))moreBox.open=false;});
-  layoutHeading();layoutToolbar();
+  // Closing on a click outside is written out here: the settings menu has no such handler to reuse. Every
+  // popover of the page is a .toolbar-more <details>, the toolbar's own and the modifier groups' alike, so one
+  // handler closes them all.
+  document.addEventListener('click',function(e){document.querySelectorAll('.toolbar-more[open]').forEach(function(d){if(!d.contains(e.target))d.open=false;});});
+  layoutHeading();layoutToolbar();layoutMods();
   if(host.interrupted){$('host-note').hidden=false;$('host-note').textContent='The previous session was interrupted during “'+host.interrupted.action+'» ('+(host.interrupted.host==='game'?'in the game':'in the browser')+', '+new Date(host.interrupted.at).toLocaleString('en-GB')+'). Mention this when reporting.';}
   (function(){var pv=$('app-version').getAttribute('data-version');if(pv!=='dev')$('app-version').textContent=pv;}());
   host.done();
