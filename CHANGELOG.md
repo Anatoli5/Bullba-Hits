@@ -29,9 +29,12 @@ script. Versions are listed newest first. Client: World of Tanks PC NA 2.4.0.1 #
   improved ×1.6), the field modification "Spalling resistance" (×0.85 / default / ×1.15) and the driver's Reliable
   Placement (+15 % at 100 %, a reading of the client data). They start from the recorded liner factor and are kept
   per vehicle type for the session; inline when there is room, one "Modifiers ▾" button otherwise.
-- Vehicles mode: the filter rows fold under one "Filters" caption (closed by default, count of active pills), so the
-  list has room on a 768 px screen; no filter means every vehicle. Switching Battles ↔ Vehicles no longer resets
-  the scene: the hit stays on screen, its vehicles become the model and shooter of the list.
+- Vehicles panel is the one vehicle chooser: a click on the Collision model or Shooter tile opens it, scoped to
+  the current battle (ALLIES / ENEMIES with team stripes, vehicles only), with an "All vehicles" scope for the
+  whole catalogue; any filter switches to it. Tier, Nation and Class stay visible; Role and Flags sit behind a
+  caret at the end of the Class row, the search behind a magnifier at the end of the Tier row. One count line
+  with a yellow info badge that opens a short formatted help. The side column is 300 px so the nations fit in
+  two rows. Switching Battles ↔ Vehicles no longer resets the scene.
 - The legend is two rows: the colour bar with 0 / 50 / 100 % laid under it.
 - Expected damage is the default Display (Reset to defaults or a fresh browser); Penetration chance stays one click away.
 - Hits from a secondary (ability) gun carry that gun's shell, and the shell list of a vehicle includes every gun's shells;
