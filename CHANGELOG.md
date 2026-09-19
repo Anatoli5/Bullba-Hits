@@ -22,6 +22,8 @@ script. Versions are listed newest first. Client: World of Tanks PC NA 2.4.0.1 #
 - Hits from a secondary (ability) gun carry that gun's shell, and the shell list of a vehicle includes every gun's shells;
   ability-gun shells are marked ✦. The Taschenratte's 8 cm ability shell keeps its own absorption rule and shows
   "non-pen not modelled" instead of a guessed number.
+- HE behind a screen: a shell that does not get through the screen explodes there and deals nothing, so the
+  non-penetration damage counts only for the rolls that pass the screen but not the hull (chip "through screen N %").
 - Statistics log: HE lines carry the server damage and the prediction of both candidate laws, to pick the law
   from recorded hits.
 

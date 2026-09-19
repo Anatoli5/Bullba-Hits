@@ -51,7 +51,7 @@ void main(){vUV=position.xy*.5+.5;gl_Position=vec4(position.xy,0.0,1.0);}`;
 // The leg after a ricochet: the same law walked along the mirrored ray with the reduced penetration.
 // -4 = a second ricochet (the shell is lost), -2 = flies past, -1 = unknown, 0..1 = chance on main armour.
 float bounceLeg(vec3 origin,vec3 direction,float nominal){
- Walk w;w.remaining=nominal;w.nominal=nominal;w.jetStart=0.0;w.jetRate=0.0;w.jet=false;w.screens=0;
+ Walk w;w.remaining=nominal;w.nominal=nominal;w.jetStart=0.0;w.jetRate=0.0;w.jet=false;w.screens=0;w.gate=1.0;
  int ignored[${COUNT}];int ignoredCount=0;
  vec3 from=origin;float travelled=0.0,seen=-1.0;int last=-1;
  for(int i=0;i<${COUNT};i++){
@@ -105,7 +105,7 @@ vec3 blued(vec3 c){return clamp(mix(c,vec3(c.r*.8,c.g*.95,max(c.b,.55)),uTint),0
 vec3 ricochetColor(){return blued(palette(0.0));}
 // What a ballistic walk carries from one contact to the next. GLSL has no function pointers, so the two
 // drivers below (layers, BVH) call one shared step function with this state.
-struct Walk{float remaining;float nominal;float jetStart;float jetRate;bool jet;int screens;};
+struct Walk{float remaining;float nominal;float jetStart;float jetRate;bool jet;int screens;float gate;};
 // One contact, same law as ArmorBallistics.evaluate: 0 = not counted, 1 = finished (result set),
 // 2 = ricochet, 3 = passed through and the caller must remember this collide-once material.
 // The list of materials already met stays a plain local array in each driver: an array inside an
@@ -120,12 +120,13 @@ int contact(int id,float cosine,float along,inout Walk w,out float result){
  float n=uShell.x;if(flags.z>.5&&a.x>EPS&&uPen.y>a.x*2.0)n*=1.4*uPen.y/(a.x*2.0);
  float plate=a.x;if(a.z>.5)plate/=max(EPS,cos(max(0.0,acos(clamp(cosine,0.0,1.0))-n)));
  // Main armour. In damage mode the chance becomes the expected damage as a share of alpha, so the palette is
- // unchanged: E = p*alpha + (1-p)*base*min(1, spallPen/T), T the plate's nominal armour (ArmorBallistics.withDamage).
+ // unchanged: E = p*alpha + max(0, gate-p)*base*min(1, spallPen/T), T the plate's nominal armour, gate the chance to
+ // pass every screen on the way (one roll for the shot; a shell stopped by a screen deals nothing) - ArmorBallistics.withDamage.
  if(a.y>EPS){result=probability(w.remaining,plate,w.nominal);
-  if(uDamage.x>.5&&result>=0.0){float np=uDamage.z*min(1.0,uDamage.w/max(EPS,a.x));result=(result*uDamage.y+(1.0-result)*np)/max(EPS,uDamage.y);}
+  if(uDamage.x>.5&&result>=0.0){float np=uDamage.z*min(1.0,uDamage.w/max(EPS,a.x));result=(result*uDamage.y+max(0.0,w.gate-result)*np)/max(EPS,uDamage.y);}
   return 1;}
  if(a.x>EPS)w.screens++;
- if(uShell.w>.5){if(uFlags.z==0){result=0.0;return 1;}w.remaining-=plate*3.0;}else w.remaining-=plate;
+ if(uShell.w>.5){if(uFlags.z==0){result=0.0;return 1;}float through=probability(w.remaining,plate,w.nominal);if(through>=0.0)w.gate=min(w.gate,through);w.remaining-=plate*3.0;}else w.remaining-=plate;
  w.jet=uShell.z>0.0;if(w.jet){w.jetStart=along+a.x*.001;if(w.jetRate==0.0)w.jetRate=w.remaining*uShell.z;}
  return flags.x>.5?3:0;
 }
@@ -136,7 +137,7 @@ float evaluate(vec2 uv,vec3 ray,out vec4 front,out bool screen,out int screens,o
  if(first.y<.5)return -3.0;
  front=material(int(floor(first.y))-1,0);screen=front.y<=EPS;
  if(uFlags.w==0){return -1.0;}
- Walk w;w.remaining=uPen.x;w.nominal=uPen.x;w.jetStart=0.0;w.jetRate=0.0;w.jet=false;w.screens=0;
+ Walk w;w.remaining=uPen.x;w.nominal=uPen.x;w.jetStart=0.0;w.jetRate=0.0;w.jet=false;w.screens=0;w.gate=1.0;
  int ignored[${COUNT}];int ignoredCount=0;
  float result=-2.0;bool finished=false;
  for(int i=0;i<${COUNT};i++){

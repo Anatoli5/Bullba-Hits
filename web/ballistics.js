@@ -95,7 +95,13 @@
     if(r.reason==='penetration'){
       var np=nonPenetration(s,r.nominal),p=r.chance===null||r.chance===undefined?null:clamp(r.chance/100,0,1);
       r.alpha=s.alpha;r.nonPen=np.damage;r.damageLaw=np.law;
-      r.expected=p===null?null:p*s.alpha+(1-p)*np.damage;
+      // One penetration roll serves the whole shot: the shell passes a screen when the roll beats the screen's own
+      // plate, pierces the hull when the roll less 3x the screens beats the main plate. Non-penetration damage needs
+      // the first without the second, so its weight is P(pass every screen) - p, not 1 - p. A shell stopped by a
+      // screen explodes there and deals nothing (client reticle __shotResultModernHE, WG 1.13: "will not cause any
+      // damage at all"), which is why a gun mantlet screen so often eats a whole HE shell.
+      var pass=r.screenPass===undefined||r.screenPass===null?1:r.screenPass;
+      r.expected=p===null?null:p*s.alpha+Math.max(0,pass-p)*np.damage;
       r.expectedShare=r.expected===null?null:clamp(r.expected/s.alpha,0,1);
     }else if(r.reason==='ricochet'||r.reason==='screen'||r.reason==='no-hull'){r.expected=0;r.expectedShare=0;}
     return r;
@@ -103,7 +109,7 @@
   function evaluate(hits,s){var r=walk(hits,s);return s&&s.alpha>0?withDamage(r,s):r;}
   function walk(hits,s){
     if(!s||!(s.penetration>0)||!(s.caliber>0))return {chance:null,reason:'parameters',layers:[]};
-    var remaining=s.penetration,ignored={},layers=[],jet=false,jetStart=0,jetRate=0,seen={};
+    var remaining=s.penetration,ignored={},layers=[],jet=false,jetStart=0,jetRate=0,seen={},screenPass=1;
     for(var i=0;i<hits.length;i++){
       var hit=hits[i],t=hit.triangle,a=t.armor,key=t.part+':'+t.name;
       if(seen[key]!==undefined&&Math.abs(hit.distance-seen[key])<EPS)continue;
@@ -121,17 +127,21 @@
       layers.push({part:t.part,material:t.name,nominal:a.armor,effective:plate,angle:Math.acos(clamp(cos,0,1))/RAD,main:a.vehicleDamageFactor>EPS});
       if(a.vehicleDamageFactor>EPS){
         return {chance:chance(remaining,plate,s.penetration,s.randomization,s.randomizationType),reason:'penetration',
-          effective:s.penetration-remaining+plate,nominal:a.armor,angle:layers[layers.length-1].angle,layers:layers,distance:hit.distance};
+          effective:s.penetration-remaining+plate,nominal:a.armor,angle:layers[layers.length-1].angle,layers:layers,distance:hit.distance,screenPass:screenPass};
       }
       if(s.kind==='HIGH_EXPLOSIVE'){
         if(!s.shieldPenetration)return {chance:0,reason:'screen',layers:layers,distance:hit.distance};
-        remaining-=plate*3; // Modern HE shield penalty; this view estimates penetration, not blast damage.
+        // Chance that the shell gets through this screen at all (its own plate against the penetration left); the
+        // thresholds of successive screens nest, so the smallest chance is the chance to pass them all.
+        var through=chance(remaining,plate,s.penetration,s.randomization,s.randomizationType);
+        if(through!==null)screenPass=Math.min(screenPass,through/100);
+        remaining-=plate*3; // Modern HE shield penalty
       }else remaining-=plate;
       if(a.collideOnceOnly)ignored[key]=true;
       jet=s.jetLossPerMeter>0;
       if(jet){jetStart=hit.distance+a.armor*.001;if(!jetRate)jetRate=remaining*s.jetLossPerMeter;}
     }
-    return {chance:0,reason:'no-hull',layers:layers};
+    return {chance:0,reason:'no-hull',layers:layers,screenPass:screenPass};
   }
   function build(data,useCurrent){
     var tris=[];

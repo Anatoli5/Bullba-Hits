@@ -549,10 +549,14 @@
     if(r.damageLaw==='legacy-unknown')return [{kind:'damage',text:'splash not modelled'}];
     if(r.damageLaw==='special-unknown')return [{kind:'damage',text:'non-pen not modelled',title:'This shell has its own spall absorption rule; the recorded shots of the Reddit study fit no law we can check.'}];
     if(r.damageLaw!=='ratio'||!(r.nonPen>0)||r.chance===null||r.chance===undefined)return [];
-    var liner=s.liner>0?s.liner:1;
-    return [{kind:'damage',text:'pen '+Math.round(r.chance)+' %'},
+    var liner=s.liner>0?s.liner:1,pass=r.screenPass===undefined||r.screenPass===null?1:r.screenPass;
+    var groups=[{kind:'damage',text:'pen '+Math.round(r.chance)+' %'},
       {kind:'damage',text:'non-pen '+Math.round(r.nonPen)+' HP',
        title:'spall '+Math.round(s.spallDamage||0)+' HP · plate '+Math.round(r.nominal)+' mm · liner ×'+liner.toFixed(1)}];
+    // A screen on the way: the chance the shell gets through it at all; below it the shell explodes on the screen
+    // and deals nothing, so the non-penetration damage only counts in the gap between passing and piercing.
+    if(pass<.995)groups.push({kind:'damage',text:'through screen '+Math.round(pass*100)+' %',title:'Chance to pass the screen(s); stopped there, the shell deals no damage at all'});
+    return groups;
   }
   // Compact reading of one ballistic result: the chance first, then the numbers that explain it.
   // One ballistic result as readable groups: chance, then "effective ← nominal – angle", then "pen / range", then screens.
