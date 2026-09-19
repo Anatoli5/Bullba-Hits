@@ -1317,6 +1317,7 @@
   }
   try{viewer=new ArmorViewer($('viewport'));}catch(e){message('WebGL unavailable: '+e.message);}
   if(viewer)viewer.setAutoFrame($('auto-frame').checked); // on by default (user, 18.09)
+  if(viewer)viewer.setLighting($('soft-lighting').checked); // off by default: the user compares the frame rate himself (19.09)
   if(viewer)viewer.onInspect=inspectArmor;
   // The viewer's real frame rate next to the composition's own report: in the game the browser's frame pump
   // decides it, and it is neither 60 nor what a desktop browser shows. Refreshed at most once a second, and
@@ -1436,6 +1437,7 @@
   }());
   document.querySelectorAll('[data-filter]').forEach(function(b){b.onclick=function(){filter=b.dataset.filter;document.querySelectorAll('[data-filter]').forEach(function(x){x.setAttribute('aria-pressed',String(x===b));});renderHits();};});
   $('wireframe').onchange=function(){if(viewer)viewer.wireframe(this.checked);};
+  $('soft-lighting').onchange=function(){if(viewer)viewer.setLighting(this.checked);};
   var CONTEXT_LOST='The browser lost its WebGL context. Reload the page.';
   window.addEventListener('armor-context-lost',function(){if(host.mark)host.mark('WebGL','context-lost');message(CONTEXT_LOST);});
   // The context came back and the viewer has redrawn: take the reload notice away again, leave any other message.
