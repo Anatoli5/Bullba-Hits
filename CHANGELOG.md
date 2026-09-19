@@ -19,6 +19,12 @@ script. Versions are listed newest first. Client: World of Tanks PC NA 2.4.0.1 #
 - The recorder saves the shell's damage fields (alpha, spall damage, mechanics, randomisation, radii) and the
   target's spall-liner factor. Older battles get the same fields on the next game start, rebuilt from the recorded
   vehicle descriptors (client data, not a guess).
+- The battle picker is the heading tile again: map name and your vehicle, a caret at the end opens the list; each
+  row shows the map and the vehicle, with day and time in small print, no hit count.
+- Both scene tiles choose a vehicle in both side-panel modes: click Collision model or Shooter, then pick from
+  the battle roster (Battles) or the catalogue (Vehicles); the side panel highlights the vehicle in that role.
+  A shooter picked from the roster is shown against the model with his gun and no shot line. The role swap is
+  its own ⇅ button next to the Shooter tile.
 - Target modifiers next to the Collision model tile (Expected damage view, modern HE): spall liner (none / ×1.5 /
   improved ×1.6), the field modification "Spalling resistance" (×0.85 / default / ×1.15) and the driver's Reliable
   Placement (+15 % at 100 %, a reading of the client data). They start from the recorded liner factor and are kept
