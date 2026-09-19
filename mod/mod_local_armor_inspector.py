@@ -13,18 +13,21 @@ try:
 except ImportError:
     import queue
 
-VERSION = '0.7.6'
+VERSION = '0.7.7'
 VIEWER_PATH = os.path.join('mods', 'configs', 'local.armor_inspector', 'Viewer.html')
 LOG = logging.getLogger('local.armor_inspector')
 PARTS = ('chassis', 'hull', 'turret', 'gun')
 CONTEXT_MENU_OPTION = 'bullbaHits'
 CONTEXT_MENU_LABEL = 'Bullba Hits'
+HOTKEY_LABEL = 'Ctrl + Alt + B'
 _recorder = None
 _original = None
 _wrapper = None
 _mods_api = None
 _events = None
 _context_menu = None
+_hotkey = None
+_hint = None
 
 
 def vector(v):
@@ -555,6 +558,77 @@ def open_viewer():
         LOG.exception('Could not open local HTML viewer')
 
 
+def in_lobby():
+    """True in the hangar: the player entity is a PlayerAccount there and a PlayerAvatar in battle."""
+    try:
+        import BigWorld
+        from Account import PlayerAccount
+        return isinstance(BigWorld.player(), PlayerAccount)
+    except Exception:
+        return False
+
+
+def install_hotkey():
+    """Ctrl + Alt + B in the hangar opens the saved hits without any mods-list panel.
+
+    game.handleKeyEvent(event) is the client's single key entry point (the engine
+    calls it for every key event; hotkey mods wrap it the same way). The event is
+    BigWorld.KeyEvent: key, isKeyDown(), isRepeatedEvent(), isCtrlDown(),
+    isAltDown(), isShiftDown() - all read in the installed 2.4.0.1 bytecode of
+    scripts/client/game.pyc; Keys.KEY_B is the engine key code. Every other key,
+    and this one in battle, goes on to the game untouched.
+    Idempotent: a reloaded module finds its own marker and leaves game alone.
+    """
+    import game
+    import Keys
+    original = game.handleKeyEvent
+    if getattr(original, 'bullba_hits', False):
+        return original
+    def bullba_key(event):
+        try:
+            if (event.key == Keys.KEY_B and event.isKeyDown() and not event.isRepeatedEvent()
+                    and event.isCtrlDown() and event.isAltDown() and not event.isShiftDown() and in_lobby()):
+                open_viewer()
+                return True
+        except Exception:
+            LOG.exception('Bullba Hits hotkey failed; the key goes on to the game')
+        return original(event)
+    bullba_key.bullba_hits = True
+    bullba_key.original = original
+    game.handleKeyEvent = bullba_key
+    return bullba_key
+
+
+def remove_hotkey(handler):
+    if handler is None:
+        return
+    try:
+        import game
+        if game.handleKeyEvent is handler:
+            game.handleKeyEvent = handler.original
+    except Exception:
+        LOG.exception('Hotkey cleanup failed')
+
+
+def install_hint():
+    """Without a mods-list panel the player has no button to find: say once, at the first hangar, how to open the hits."""
+    from PlayerEvents import g_playerEvents
+    shown = []
+    def hint():
+        if shown:
+            return
+        shown.append(True)
+        try:
+            from gui import SystemMessages
+            SystemMessages.pushMessage(u'Bullba Hits: press ' + HOTKEY_LABEL + u' in the hangar, or right-click a vehicle, to open the saved hits.',
+                                       type=SystemMessages.SM_TYPE.Information)
+        except Exception:
+            LOG.exception('Bullba Hits hint could not be shown')
+    g_playerEvents.onAccountShowGUI += hint
+    hint.remove = lambda: g_playerEvents.onAccountShowGUI.__isub__(hint)
+    return hint
+
+
 def picker_descriptor(type_name):
     """The configuration to export for a vehicle picked in the page's list.
 
@@ -698,13 +772,19 @@ def init():
             from local_armor_inspector import presentation
             presentation.set_export_request(export_picked_vehicle)
         except Exception: LOG.exception('Page export command unavailable; hit recording continues')
+        try: _hotkey = install_hotkey()
+        except Exception: LOG.exception('Hotkey unavailable; hit recording continues')
         try:
             from gui.modsListApi import g_modsListApi
             _mods_api = g_modsListApi
             _mods_api.addModification(id='local.armor_inspector', name='Bullba Hits',
-                description='Saved hits in an in-game window. Local files, no server.', enabled=True,
+                description='Saved hits in an in-game window (' + HOTKEY_LABEL + ' in the hangar). Local files, no server.', enabled=True,
                 icon='gui/maps/bullba_hits/modsListApi.png', login=False, lobby=True, callback=open_viewer)
-        except Exception: LOG.exception('ModsList menu unavailable; open '+VIEWER_PATH)
+        except Exception:
+            # No mods-list panel (a standalone install): the hotkey and the context menu remain; tell the player once.
+            LOG.info('ModsList panel not installed; ' + HOTKEY_LABEL + ' or the vehicle context menu opens ' + VIEWER_PATH)
+            try: _hint = install_hint()
+            except Exception: LOG.exception('Hint unavailable; hit recording continues')
         LOG.info('Armor Inspector %s ready', VERSION)
     except Exception:
         LOG.exception('Armor Inspector initialization failed')
@@ -712,13 +792,19 @@ def init():
 
 
 def fini():
-    global _recorder, _events, _context_menu
+    global _recorder, _events, _context_menu, _hotkey, _hint
     try:
         from local_armor_inspector import presentation
         presentation.set_export_request(None)
     except Exception: LOG.exception('Page export command cleanup failed')
     remove_context_menu(_context_menu)
     _context_menu = None
+    remove_hotkey(_hotkey)
+    _hotkey = None
+    if _hint is not None:
+        try: _hint.remove()
+        except Exception: LOG.exception('Hint cleanup failed')
+        _hint = None
     if _events is not None:
         _events.close()
         _events = None
