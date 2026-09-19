@@ -20,7 +20,7 @@ from .geometry import extract
 from .armor import ArmorCatalog
 
 LOG = logging.getLogger('local.armor_inspector')
-VERSION = '0.7.10'
+VERSION = '0.7.11'
 RESOURCE = re.compile(r'^vehicles/[A-Za-z0-9_/-]+\.(?:model|havok)\Z')
 IDENTIFIER = re.compile(r'^[-a-zA-Z0-9_]{1,100}\Z')
 ASSETS = ('Viewer.html', 'web/style.css', 'web/icon.svg', 'web/viewer.js',
@@ -29,8 +29,32 @@ ASSETS = ('Viewer.html', 'web/style.css', 'web/icon.svg', 'web/viewer.js',
           'web/vendor/three-mesh-bvh.LICENSE', 'licenses/TagTools.txt', 'licenses/BattleHits.txt')
 
 
+# Deferred work (0.7.11). Publishing a hit never reads a client package any more:
+# the battle file is written at once and the collision models follow as jobs, one
+# per idle tick, never during a battle and never while the page is being used.
+PENDING = 'pending'
+PACE = 0.3
+JOB_PAGE, JOB_PLAYER, JOB_OTHER, JOB_BULK = 0, 1, 2, 3
+# Where a vehicle request came from decides its turn: the page is waiting for the
+# one it asked for, the hangar vehicle is the player's own, a roster or the
+# optional catalogue export is background work.
+VEHICLE_PRIORITY = {'picker':JOB_PAGE, 'hangar':JOB_PLAYER, 'battle':JOB_BULK, 'catalogue':JOB_BULK}
+
+
 def canonical(version):
     return version.lstrip(u'\ufeff').replace('\r\n', '\n')
+
+
+def job_key(kind, payload):
+    """Identity of one queued job: a model is its resource, a vehicle its type.
+
+    Two hits of the same vehicle want the same four models, and the hangar repeats
+    its own vehicle: the queue holds one job per resource and per type, and a
+    second request only raises the priority of the one already in it.
+    """
+    if kind == 'model':
+        return ('model', payload[0])
+    return ('vehicle', str((payload or {}).get('vehicleType') or ''))
 
 
 def model_key(resource, version):
@@ -514,6 +538,20 @@ class Exporter(object):
         self.bulk = []
         self.catalogue_dirty = False
         self.catalogue_written = 0
+        # The one queue of deferred work: [priority, order, kind, payload], lowest
+        # priority number first, ties by order. Touched by the export thread only;
+        # the game thread asks for a change of priority through the record queue.
+        self.jobs = []
+        self.job_index = {}
+        self.job_seq = 0
+        self.job_types = {}
+        self.waiting = {}
+        self.republish = set()
+        self.republished = {}
+        self.last_job = 0
+        # The Recorder, when the mod is running: in_battle and busy_until say when
+        # a job may run. Outside the game it stays None and everything may run.
+        self.recorder = None
 
     def setup(self):
         archive = self.archive
@@ -551,6 +589,28 @@ class Exporter(object):
                 self.overrides.update(n[4:] for n in z.namelist() if n.startswith('res/vehicles/'))
 
     def model(self, resource, version):
+        """The cache-or-extract call of every explicit request.
+
+        Publishing no longer uses it (0.7.11): a recorded hit must not wait for the
+        client packages, so publish_vehicle_parts asks model_cached and queues a job.
+        An exported vehicle IS the request, so it still extracts right here.
+        """
+        return self.model_extract(resource, version)
+
+    def model_cached(self, resource, version):
+        """What is known about a model without reading a single package.
+
+        (key, None) when the file is already written, (key, reason) when the
+        extraction was tried and failed, (key, PENDING) when nothing was tried yet.
+        """
+        key = model_key(resource, version)
+        if key in self.attempts: return key, self.attempts[key]
+        if os.path.isfile(os.path.join(self.folder, 'data', 'models', key+'.js')):
+            self.attempts[key] = None
+            return key, None
+        return key, PENDING
+
+    def model_extract(self, resource, version):
         key = model_key(resource, version)
         path = os.path.join(self.folder, 'data', 'models', key+'.js')
         if key in self.attempts: return key, self.attempts[key]
@@ -580,25 +640,40 @@ class Exporter(object):
             LOG.warning('Model export unavailable: %s: %s', resource, exc)
         return key, self.attempts[key]
 
-    def publish_parts(self, result, hit, side):
+    def publish_parts(self, result, hit, side, battle_id=None, priority=JOB_OTHER, pending=None):
         """Collision models and armour tables for one side of a recorded hit."""
         vehicle = hit.get(side) or {}
-        self.publish_vehicle_parts(vehicle.get('parts', []), vehicle, result['clientVersion'])
+        self.publish_vehicle_parts(vehicle.get('parts', []), vehicle, result['clientVersion'],
+                                   battle_id, priority, pending)
 
-    def publish_vehicle_parts(self, parts, vehicle, client_version):
+    def publish_vehicle_parts(self, parts, vehicle, client_version,
+                              battle_id=None, priority=JOB_OTHER, pending=None, extract=False):
         """Collision models and armour tables for the parts of one vehicle.
 
         The same work for a hit's target, for its shooter and for a vehicle record
-        of the browser: the model is extracted from the client packages once per
-        resource, the armour table is cached per client version, vehicle and
+        of the browser: the armour table is cached per client version, vehicle and
         resource - so the cache identity has to follow the vehicle whose parts
         these are, not always the target.
+
+        The model itself is only looked up here (0.7.11). A part whose model is not
+        on disk yet carries no 'modelKey' at all and 'modelPending': the page shows
+        it as on its way instead of missing, and a job extracts it later. An
+        exported vehicle passes extract=True: that record IS the request, and the
+        page waits for the file itself.
         """
         for part in parts:
             try:
-                key, error = self.model(part['resource'], client_version)
-                part['modelKey'] = key
-                if error: part['modelError'] = error
+                if extract:
+                    key, error = self.model_extract(part['resource'], client_version)
+                else:
+                    key, error = self.model_cached(part['resource'], client_version)
+                if error == PENDING:
+                    part['modelPending'] = True
+                    self.queue_model(part['resource'], client_version, key, vehicle, battle_id, priority)
+                    if pending is not None: pending.add(key)
+                else:
+                    part['modelKey'] = key
+                    if error: part['modelError'] = error
             except Exception as exc: part['modelError'] = str(exc)
             if 'armor' not in part:
                 try:
@@ -618,7 +693,10 @@ class Exporter(object):
                     part['armorError'] = str(exc)
                     # A separate, visibly labelled comparison is allowed only
                     # when today's mesh is byte-identical to the saved mesh.
-                    if canonical(client_version) != self.version and not part.get('modelError'):
+                    # A pending model has not been read yet, so there is nothing to
+                    # compare with; the republish after the job does this instead.
+                    if (canonical(client_version) != self.version and not part.get('modelError')
+                            and not part.get('modelPending')):
                         try:
                             if self.packages is None: self._index_resources()
                             havok = part['resource'].rsplit('.', 1)[0]+'.havok'
@@ -649,6 +727,7 @@ class Exporter(object):
     def publish(self, battle):
         if not IDENTIFIER.match(battle['id']): raise ValueError('Invalid battle id')
         result = copy.deepcopy(battle)
+        pending = set()
         for hit in result['hits']:
             for side in ('attacker', 'target'):
                 try:
@@ -657,13 +736,20 @@ class Exporter(object):
                     LOG.exception('Vehicle identity unavailable; the hit is published as recorded')
             # Records written before 0.6.34 carry no parts for the shooter; rebuild them here.
             synthesize_parts(hit.get('attacker'))
+            # The player's own hits are what he opens first, so their models are
+            # extracted first; a hit between two other vehicles waits behind them.
+            priority = JOB_PLAYER if hit.get('direction') in ('incoming', 'outgoing') else JOB_OTHER
             for side in ('target', 'attacker'):
-                self.publish_parts(result, hit, side)
+                self.publish_parts(result, hit, side, battle['id'], priority, pending)
         write_data(os.path.join(self.folder, 'data', 'battles', battle['id']+'.js'), 'battle:'+battle['id'], result)
         # The shooter's models count as referenced too, or prune() would delete them as unused.
-        self.model_refs[battle['id']] = set(part['modelKey'] for hit in result['hits']
-                                            for side in ('target', 'attacker')
-                                            for part in (hit.get(side) or {}).get('parts', []) if part.get('modelKey'))
+        # A model this battle is still waiting for counts the same way, or prune() would
+        # delete it between the job that writes it and the republish that names it.
+        references = set(part['modelKey'] for hit in result['hits']
+                         for side in ('target', 'attacker')
+                         for part in (hit.get(side) or {}).get('parts', []) if part.get('modelKey'))
+        references.update(pending)
+        self.model_refs[battle['id']] = references
         self.summaries[battle['id']] = dict((k, battle.get(k)) for k in ('id', 'startedAt', 'map'))
         self.summaries[battle['id']]['hits'] = len(battle['hits'])
 
@@ -693,12 +779,175 @@ class Exporter(object):
     def idle(self):
         """Called when nothing is waiting to be recorded, and only then.
 
-        The deferred catalogue and the optional bulk export live here so that a
-        recorded hit is never queued behind a vehicle.
+        One piece of deferred work per call - a battle whose models have arrived,
+        the catalogue, or one job of the queue - so that a recorded hit is never
+        behind more than a single unit of it. The run loop comes back here every
+        0.1 s while the record queue is empty.
         """
         self.flush()
+        if self.drain_republish(): return
         if self.catalogue_dirty: self.write_catalogue()
-        self.drain_bulk()
+        self.run_job()
+
+    # --------------------------------------------------------------------- jobs
+    # Extraction is what makes the hangar stutter: 0.12-0.37 s of the interpreter
+    # lock per collision model on Python 3, two to three times that in the client's
+    # 2.7, and up to four models per vehicle. So it never happens while publishing,
+    # never during a battle, never while the user is dragging the page, and at most
+    # one model every PACE seconds otherwise.
+
+    def queue_job(self, priority, kind, payload):
+        """Queue one unit of deferred work, or raise the priority of the queued one."""
+        key = job_key(kind, payload)
+        job = self.job_index.get(key)
+        if job is not None:
+            if priority < job[0]: job[0] = priority
+            return job
+        self.job_seq += 1
+        job = [priority, self.job_seq, kind, payload]
+        self.jobs.append(job)
+        self.job_index[key] = job
+        return job
+
+    def queue_model(self, resource, version, key, vehicle, battle_id, priority):
+        """One collision model, and who is waiting for it.
+
+        'waiting' is what turns a finished job back into a published battle, and
+        'job_types' is how the page can name a vehicle type and have its models
+        moved to the front - a model job itself knows only a resource path.
+        """
+        self.queue_job(priority, 'model', (resource, version))
+        if battle_id: self.waiting.setdefault(key, set()).add(battle_id)
+        try:
+            type_name = (vehicle or {}).get('type')
+            if type_name:
+                if len(self.job_types) > 8192: self.job_types = {}
+                self.job_types.setdefault(resource, set()).add(str(type_name))
+        except Exception:
+            pass
+
+    def best_job(self):
+        best = 0
+        for index in range(1, len(self.jobs)):
+            if (self.jobs[index][0], self.jobs[index][1]) < (self.jobs[best][0], self.jobs[best][1]):
+                best = index
+        return best
+
+    def take_job(self, index):
+        job = self.jobs.pop(index)
+        self.job_index.pop(job_key(job[2], job[3]), None)
+        return job
+
+    def jobs_allowed(self):
+        """Never in a battle, never while the page is being used.
+
+        Both flags belong to the Recorder: the game thread writes them, this thread
+        reads them. Without a recorder (the offline rebuild, a test) work may run.
+        """
+        recorder = self.recorder
+        if recorder is None: return True
+        try:
+            if getattr(recorder, 'in_battle', False): return False
+            return time.time() >= float(getattr(recorder, 'busy_until', 0) or 0)
+        except Exception:
+            return True
+
+    def run_job(self):
+        """One job per call, the lowest priority number first."""
+        if not self.jobs or not self.jobs_allowed(): return False
+        index = self.best_job()
+        # What the page is waiting for runs at once; everything else keeps PACE
+        # seconds between two extractions, which halves the load on the hangar.
+        if self.jobs[index][0] > JOB_PAGE and time.time()-self.last_job < PACE: return False
+        job = self.take_job(index)
+        try:
+            if job[2] == 'model': self.run_model_job(job[3])
+            else: self.run_vehicle_job(job[3])
+        except Exception:
+            LOG.exception('Deferred %s job failed; the rest of the queue continues', job[2])
+        self.last_job = time.time()
+        return True
+
+    def run_model_job(self, payload):
+        """Extract one collision model and mark the battles that were waiting for it.
+
+        A failure marks them too: the part then carries the reason instead of the
+        pending flag, so the page stops waiting for something that will not come.
+        """
+        key, error = self.model_extract(payload[0], payload[1])
+        self.republish.update(self.waiting.pop(key, ()))
+
+    def run_vehicle_job(self, request):
+        """One vehicle record, exported exactly as before - only its turn has changed.
+
+        A request of the optional bulk export carries the type alone; its top
+        configuration is built here, on this thread, as drain_bulk always did.
+        """
+        type_name = str((request or {}).get('vehicleType') or '')
+        if request.get('bulk'):
+            try: self.bulk.remove(type_name)
+            except ValueError: pass
+            if not request.get('compactDescriptor'):
+                import base64
+                request = dict(request)
+                request['compactDescriptor'] = base64.b64encode(
+                    top_descriptor(type_name).makeCompactDescr()).decode('ascii')
+        self.export_vehicle(request)
+
+    def request_vehicle_export(self, request):
+        """The export thread's entry point for a vehicle asked for by the game.
+
+        The work is unchanged; it simply waits in the one queue now, so a model the
+        page is looking at goes first and the pace between two extractions holds.
+        """
+        source = str((request or {}).get('source') or '')
+        self.queue_job(VEHICLE_PRIORITY.get(source, JOB_OTHER), 'vehicle', request)
+
+    def prioritise(self, types):
+        """The page opened a hit: whatever it needs is moved to the front.
+
+        Client vehicle type names, at most eight. A model job knows only its
+        resource, so it is matched through the vehicles whose parts asked for it.
+        """
+        wanted = set()
+        for name in list(types or [])[:8]:
+            if name: wanted.add(str(name))
+        if not wanted: return 0
+        moved = 0
+        for job in self.jobs:
+            if job[0] == JOB_PAGE: continue
+            if job[2] == 'vehicle':
+                match = str((job[3] or {}).get('vehicleType') or '') in wanted
+            else:
+                match = bool(self.job_types.get(job[3][0], ()) and self.job_types[job[3][0]] & wanted)
+            if match:
+                job[0] = JOB_PAGE
+                moved += 1
+        if moved: LOG.info('Page asked for %s deferred job(s) first', moved)
+        return moved
+
+    def drain_republish(self):
+        """Rewrite one battle whose models have arrived; at most one per second each.
+
+        Several models finishing in a row are therefore batched into one rewrite,
+        and the index stamp tells the page to read the battle again.
+        """
+        if not self.republish: return False
+        now = time.time()
+        for battle_id in sorted(self.republish):
+            if now-self.republished.get(battle_id, 0) < 1: continue
+            self.republish.discard(battle_id)
+            self.republished[battle_id] = now
+            try:
+                if self.current is not None and self.current.get('id') == battle_id:
+                    self.publish(self.current)
+                else:
+                    self.publish(read_battle(os.path.join(self.folder, 'battles', battle_id+'.jsonl')))
+                self.write_index()
+            except Exception:
+                LOG.exception('Could not republish a battle after a model job: %s', battle_id)
+            return True
+        return False
 
     def prune(self):
         # Storage hygiene without a battle cap: every recorded battle is kept, raw JSONL and
@@ -875,7 +1124,7 @@ class Exporter(object):
         try:
             record['parts'] = parts_from_descr(descr, 'client vehicle descriptor')
             record['partsFrom'] = 'rest pose'
-            self.publish_vehicle_parts(record['parts'], record, self.version)
+            self.publish_vehicle_parts(record['parts'], record, self.version, extract=True)
         except Exception:
             record['parts'] = []
             record['warnings'].append('Collision parts unavailable')
@@ -950,24 +1199,31 @@ class Exporter(object):
         """settings.json exportAllVehicles: every catalogue vehicle in its top configuration.
 
         A one-time bulk export of hundreds of megabytes, so it is off by default and
-        drained one vehicle per idle tick - a recorded hit always goes first.
+        queued at the lowest priority - a recorded hit's model always goes first.
         """
         try:
             self.bulk = [entry['type'] for entry in self.catalogue_rows() if not entry.get('exported')]
+            for type_name in self.bulk:
+                self.queue_job(JOB_BULK, 'vehicle', {'schema':1, 'type':'vehicle', 'vehicleType':type_name,
+                                                     'source':'catalogue', 'bulk':True, 'requestedAt':time.time()})
             LOG.info('Bulk vehicle export queued: %s vehicles', len(self.bulk))
         except Exception:
             self.bulk = []
             LOG.exception('Bulk vehicle export could not be queued')
 
     def drain_bulk(self):
-        """One queued catalogue vehicle per call; failures drop that vehicle only."""
-        if not self.bulk: return
-        type_name = self.bulk.pop(0)
-        try:
-            import base64
-            descr = top_descriptor(type_name)
-            self.export_vehicle({'schema':1, 'type':'vehicle', 'vehicleType':type_name,
-                                 'compactDescriptor':base64.b64encode(descr.makeCompactDescr()).decode('ascii'),
-                                 'source':'catalogue', 'requestedAt':time.time()})
-        except Exception:
-            LOG.exception('Bulk vehicle export failed: %s', type_name)
+        """One queued catalogue vehicle; failures drop that vehicle only.
+
+        The bulk export is no longer a queue of its own (0.7.11): its vehicles wait
+        in self.jobs with everything else, and idle() drains them through run_job().
+        This stays the entry point for running exactly one of them.
+        """
+        for index in range(len(self.jobs)):
+            job = self.jobs[index]
+            if job[2] != 'vehicle' or not (job[3] or {}).get('bulk'): continue
+            self.take_job(index)
+            try:
+                self.run_vehicle_job(job[3])
+            except Exception:
+                LOG.exception('Bulk vehicle export failed: %s', (job[3] or {}).get('vehicleType'))
+            return

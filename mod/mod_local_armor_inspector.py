@@ -13,12 +13,16 @@ try:
 except ImportError:
     import queue
 
-VERSION = '0.7.10'
+VERSION = '0.7.11'
 VIEWER_PATH = os.path.join('mods', 'configs', 'local.armor_inspector', 'Viewer.html')
 LOG = logging.getLogger('local.armor_inspector')
 PARTS = ('chassis', 'hull', 'turret', 'gun')
 CONTEXT_MENU_OPTION = 'bullbaHits'
 CONTEXT_MENU_LABEL = 'Bullba Hits'
+# How long one 'busy' message from the page holds the deferred work back. The page
+# repeats it at most once a second while the user drags or zooms, so two seconds
+# covers the gap between two messages and expires on its own afterwards.
+BUSY_SECONDS = 2.0
 _recorder = None
 _original = None
 _wrapper = None
@@ -136,6 +140,17 @@ class Writer(object):
             self.dropped += 1
             LOG.error('Record queue full; dropped=%s', self.dropped)
 
+    def put_export(self, name, payload):
+        """One message for the export thread. Game thread, never blocking.
+
+        The same queue the records travel in, so the export thread has a single
+        place to read from and no lock of its own: a message is handled in its
+        turn, ahead of the deferred work but behind the records already waiting.
+        """
+        if self.exporter is None: return
+        try: self.export_queue.put_nowait((name, payload))
+        except queue.Full: LOG.error('Export queue full; %s message dropped', name)
+
     def put_vehicle(self, request):
         """Ask the export thread for a vehicle export. Game thread, never blocking.
 
@@ -144,9 +159,7 @@ class Writer(object):
         thread. A full queue drops the request - the raw log keeps the earlier ones
         and the hangar will ask again.
         """
-        if self.exporter is None: return
-        try: self.export_queue.put_nowait(('vehicle', request))
-        except queue.Full: LOG.error('Vehicle export queue full; request dropped')
+        self.put_export('vehicle', request)
 
     def run(self):
         while not self.stopping.is_set() or not self.queue.empty():
@@ -179,7 +192,10 @@ class Writer(object):
                 except Exception: LOG.exception('Deferred export failed; raw events are retained')
                 continue
             try:
-                if name == 'vehicle': self.exporter.export_vehicle(record)
+                # 'vehicle' and 'prioritise' are messages, not battle records: a battle
+                # file is named '<arenaUniqueID>-<session>' and can be neither.
+                if name == 'vehicle': self.exporter.request_vehicle_export(record)
+                elif name == 'prioritise': self.exporter.prioritise(record)
                 else: self.exporter.record(name, record)
             except Exception: LOG.exception('HTML export failed; raw record is saved')
             finally: self.export_queue.task_done()
@@ -266,6 +282,11 @@ class VehicleEvents(object):
         except Exception: LOG.exception('Hangar vehicle export request failed')
 
     def on_avatar_become_player(self, *args):
+        # The export thread extracts nothing while this is set: a collision model
+        # costs a few tenths of a second of the interpreter lock, which is stutter
+        # in a battle. The hits themselves are written and published throughout.
+        try: self.recorder.in_battle = True
+        except Exception: LOG.exception('Battle state could not be noted')
         self.attempts = 0
         self.attach_arena()
 
@@ -295,6 +316,8 @@ class VehicleEvents(object):
         self.arena = None
 
     def on_avatar_become_non_player(self, *args):
+        try: self.recorder.in_battle = False
+        except Exception: LOG.exception('Battle state could not be noted')
         self.detach_arena()
         self.flush_roster()
 
@@ -345,6 +368,11 @@ class Recorder(object):
         self.seq = 0
         self.session = uuid.uuid4().hex[:12]
         self.enabled = True
+        # Two flags the export thread reads before it runs deferred work (0.7.11):
+        # no collision model is extracted during a battle, and none while the page
+        # says the user is working in it. Written here, on the game thread, only.
+        self.in_battle = False
+        self.busy_until = 0.0
         self.version = 'unknown'
         try:
             with open('version.xml', 'rb') as stream:
@@ -355,6 +383,7 @@ class Recorder(object):
             try:
                 from local_armor_inspector.exporter import Exporter
                 exporter = Exporter(os.getcwd(), os.path.dirname(os.path.abspath(folder)), self.version)
+                exporter.recorder = self
             except Exception: LOG.exception('HTML exporter unavailable; raw recording continues')
         self.writer = Writer(folder, exporter)
         self.last_vehicle = None
@@ -378,6 +407,24 @@ class Recorder(object):
             self.writer.put_vehicle(request)
         except Exception:
             LOG.exception('Vehicle export request failed; hit recording continues')
+
+    def note_busy(self, seconds=BUSY_SECONDS):
+        """The page is being used right now: hold the deferred work back.
+
+        One float written by the game thread and read by the export thread, so the
+        page can drag and zoom without an extraction taking the interpreter lock
+        under it. It expires by itself - a page that stops asking is not busy.
+        """
+        self.busy_until = time.time()+float(seconds)
+
+    def prioritise(self, types):
+        """The page opened a hit: its vehicles' models go before everything else.
+
+        Sent through the export queue instead of touching the queue of jobs from
+        here: that list belongs to the export thread.
+        """
+        names = [str(name) for name in list(types or [])[:8] if name]
+        if names: self.writer.put_export('prioritise', names)
 
     def note_roster(self, arena, player):
         """The battle's roster as one record: id, player, vehicle and team of every vehicle known so far.
@@ -638,6 +685,18 @@ def export_picked_vehicle(type_name):
     _recorder.request_vehicle(picker_descriptor(type_name), 'picker')
 
 
+def page_busy():
+    """The page reports that the user is dragging or zooming. Game thread, a float."""
+    if _recorder is None: return
+    _recorder.note_busy()
+
+
+def page_prioritise(types):
+    """The page opened a hit whose collision models are not extracted yet."""
+    if _recorder is None: return
+    _recorder.prioritise(types)
+
+
 def show_vehicle(handler):
     """The context-menu entry: export this vehicle and open the viewer on it.
 
@@ -742,6 +801,8 @@ def init():
         try:
             from local_armor_inspector import presentation
             presentation.set_export_request(export_picked_vehicle)
+            presentation.set_busy_request(page_busy)
+            presentation.set_prioritise_request(page_prioritise)
         except Exception: LOG.exception('Page export command unavailable; hit recording continues')
         try:
             from gui.modsListApi import g_modsListApi
@@ -763,6 +824,8 @@ def fini():
     try:
         from local_armor_inspector import presentation
         presentation.set_export_request(None)
+        presentation.set_busy_request(None)
+        presentation.set_prioritise_request(None)
     except Exception: LOG.exception('Page export command cleanup failed')
     remove_context_menu(_context_menu)
     _context_menu = None

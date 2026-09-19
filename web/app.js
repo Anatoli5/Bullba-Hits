@@ -207,10 +207,7 @@
     pickVehicle(v.id,activeRole,options).catch(function(e){
       var text=waiting?EXPORT_TIMEOUT:e.message;message(text);warnings([text]);});
   }
-  function requestExport(v){
-    host.send('bullba_hits',{action:'exportVehicle',vehicleType:String(v.type||'')}).catch(function(e){
-      if(window.console)console.warn('Bullba Hits export request failed: '+e.message);});
-  }
+  function requestExport(v){sendCommand('exportVehicle',{vehicleType:String(v.type||'')});}
   // The export of a vehicle may still be running when the in-game window opens: retry until the deadline.
   function readVehicle(id,deadline){
     if(!VEHICLE_ID.test(String(id)))return Promise.reject(new Error('Invalid vehicle identifier'));
@@ -332,7 +329,51 @@
     b.onclick=host.guard('Side panel mode',function(){setMode(b.getAttribute('data-mode'));});});
   $('model-tile').onclick=function(){if(sidebarMode!=='vehicles')return;activeRole='model';roleTiles();};
   // ========================== end of Vehicles mode =========================
-  function message(text){$('scene-message').textContent=text;$('scene-message').hidden=!text;}
+  // ================= collision models that are still coming =================
+  // Since 0.7.11 the exporter publishes a hit the moment it is recorded and
+  // extracts the collision models afterwards, one at a time, never during a
+  // battle. A part with 'modelPending' is therefore not missing, it is on its
+  // way: the page shows a spinner instead of a warning, asks the mod to put this
+  // hit's vehicles at the front of its queue, and reads the index every 2 s
+  // instead of 5 until the models land (the exporter rewrites the battle and
+  // bumps the index stamp, and hitFingerprint then rebuilds the scene).
+  var EXTRACTING='Extracting the collision model…',modelsPending=false,prioritisedHit=null;
+  function partsOf(vehicle){return (vehicle&&vehicle.parts)||[];}
+  function pendingParts(hit){
+    var target=partsOf(hit&&hit.target).some(function(p){return p.modelPending;});
+    var attacker=partsOf(hit&&hit.attacker).some(function(p){return p.modelPending;});
+    return {target:target,attacker:attacker,any:target||attacker};
+  }
+  // local-data.js turns a part without a modelKey into a warning. A pending part is
+  // no fault of the record, so its line is dropped here and the spinner says it.
+  function pendingWarnings(lines,hit){
+    var dropped={};
+    partsOf(hit&&hit.target).forEach(function(p){if(p.modelPending)dropped[p.name+': Model or part position not saved']=true;});
+    return lines.filter(function(line){return !dropped[line];});
+  }
+  // One page -> mod command, fire and forget. Outside the game there is no channel
+  // and nothing is attempted; the external browser simply waits for the files.
+  function sendCommand(action,params){
+    if(!host.canSend())return;
+    var payload={action:action};
+    if(params)Object.keys(params).forEach(function(k){payload[k]=params[k];});
+    host.send('bullba_hits',payload).catch(function(e){
+      if(window.console)console.warn('Bullba Hits '+action+' command failed: '+e.message);});
+  }
+  // The mod holds its extractions back while the user is working in the page: one
+  // message a second is enough for the two-second window on the mod's side.
+  var busySentAt=0;
+  function sendBusy(){var now=Date.now();if(now-busySentAt<1000)return;busySentAt=now;sendCommand('busy',null);}
+  function noteModelsPending(hit,pend){
+    var key=(current?current.id:'')+'/'+(hit?hit.id:'');
+    if(pend.any&&key!==prioritisedHit){
+      prioritisedHit=key;
+      var types=[(hit.target||{}).type,(hit.attacker||{}).type].filter(Boolean).slice(0,8);
+      if(types.length)sendCommand('prioritise',{vehicleTypes:types});
+    }else if(!pend.any&&key===prioritisedHit)prioritisedHit=null;
+    if(pend.any!==modelsPending){modelsPending=pend.any;schedulePoll();}
+  }
+  function message(text,spinner){var e=$('scene-message');e.textContent=text;e.hidden=!text;e.classList.toggle('busy',!!(text&&spinner));}
   function warnings(lines){$('warnings').textContent=lines.map(function(line){return line==='Additional vehicle parts are not yet rendered'?'Extra parts of this vehicle are not shown and not included in the estimate.':line;}).join(' · ');$('warnings').hidden=!lines.length;}
   function result(hit){if(hit.damage>0)return 'Damage '+hit.damage+' HP';var p=(hit.points||[]).filter(function(p){return p.effect!==undefined;});return p.length?(effects[p[p.length-1].effect]||'Result '+p[p.length-1].effect):'Result not decoded';}
   function resultIcon(hit){if(hit.damage>0)return '▰ −'+hit.damage;var p=(hit.points||[]).filter(function(p){return p.effect!==undefined;}),effect=p.length?p[p.length-1].effect:null;return effect===2||effect===1?'↪':effect===3?'▰ ×':effect===4?'▰ ✓':effect===5||effect===6?'⚙':effect===0?'▰ 0':'—';}
@@ -689,7 +730,12 @@
   }
   function display(data,reference){
     currentHitKey=null;var hit=data.hit;swapped=hit.synthetic&&!hit.vehicle?hit:null;sceneTiles(hit,reference);
-    $('shot-source').textContent=hit.synthetic?'No recorded shot':'Hit line';prepareShell(hit);var drawn=viewer&&viewer.load(data,shotContext);message(drawn?'':'Geometry unavailable. The original event is kept.');pivotButtons();warnings(data.warnings||[]);$('details').replaceChildren();
+    var pend=pendingParts(hit);noteModelsPending(hit,pend);
+    $('shot-source').textContent=hit.synthetic?'No recorded shot':'Hit line';prepareShell(hit);var drawn=viewer&&viewer.load(data,shotContext);
+    // A part on its way is not a missing model: the spinner outranks both the empty
+    // message and the “geometry unavailable” one, which belongs to a broken record.
+    if(pend.target)message(EXTRACTING,true);else message(drawn?'':'Geometry unavailable. The original event is kept.');
+    pivotButtons();warnings(pendingWarnings(data.warnings||[],hit));$('details').replaceChildren();
     // The saved reticle exists only for the player's own shots: with an ally in focus his gun has no
     // telemetry at all, so his outgoing hit reads exactly like an incoming one does today - no recorded
     // circle, the nominal estimate if the record allows one. setShotContext(null) still builds the (empty)
@@ -752,10 +798,12 @@
   // JSON of the whole hit: one hit carries the full armour descriptor of every part, about 128 KB, and
   // stringifying that on each poll would be exactly the kind of work this removes. Hits are immutable once
   // written except for enrichment, and every enriched field (points, models, shells, attacker, warnings) is in
-  // the key.
+  // the key. The shooter's parts are in it too (0.7.11): his models arrive after the hit is published, and both
+  // the swap tile and the spinner read them, so their arrival has to count as a change.
   function hitFingerprint(hit){
     if(!hit)return null;
-    var parts=((hit.target||{}).parts||[]).map(function(p){return [p.id,p.name,p.modelKey,p.armorSource,p.resource,(p.transform||[]).join(' ')].join('~');}).join(';');
+    var stamp=function(p){return [p.id,p.name,p.modelKey,p.modelPending,p.modelError,p.armorSource,p.resource,(p.transform||[]).join(' ')].join('~');};
+    var parts=((hit.target||{}).parts||[]).map(stamp).join(';')+'/'+((hit.attacker||{}).parts||[]).map(stamp).join(';');
     var attacker=hit.attacker||{},target=hit.target||{};
     return [hit.id,hit.receivedAt,hit.damage,viewDirection(hit),hit.rangeAtImpact,hit.shellStatus,hit.effectsIndex,hit.shellVelocity,
       JSON.stringify(hit.points||[]),JSON.stringify(hit.rawHitPoints||[]),JSON.stringify(hit.aim||[]),
@@ -788,7 +836,7 @@
   }
   // The battle list keeps itself fresh: the index file is re-read every few seconds (a local file, cheap) and the
   // battle is reloaded only when the exporter has written a newer index; the chosen battle and hit are kept.
-  var indexStamp=null,polling=false;
+  var indexStamp=null,polling=false,pollTimer=null;
   function refresh(){
     if(polling)return Promise.resolve();polling=true;
     return ArmorInspectorData.index().then(function(index){var pv=$('app-version').getAttribute('data-version');$('app-version').textContent=[pv!=='dev'?pv:'',index.version&&index.version!==pv?'records '+index.version:''].filter(Boolean).join(' \u00b7 ');if(index.application!=='local.armor_inspector'||!Array.isArray(index.battles))throw new Error('Invalid battle list');verdictStatus();
@@ -883,6 +931,15 @@
   if(viewer)viewer.onTurret=poseChanged;
   if(viewer)viewer.onGun=poseChanged;
   $('fit-camera').onclick=function(){if(viewer)viewer.fit();};
+  // Dragging and wheeling the scene tell the mod that the page is being used, so no
+  // collision model is extracted under the user's hand. Listeners of their own, in
+  // the capture phase: the viewer's handlers keep doing exactly what they did.
+  (function(){
+    var vp=$('viewport');if(!vp)return;
+    vp.addEventListener('wheel',sendBusy,{passive:true});
+    vp.addEventListener('pointerdown',sendBusy,true);
+    vp.addEventListener('pointermove',function(e){if(e.buttons||(viewer&&viewer.dragging))sendBusy();},true);
+  }());
   // The shooter tile swaps the roles; on a swapped view it goes back to the recorded hit. The list
   // selection stays on the recorded hit either way - the swap is a view of it, not another hit.
   $('shooter-tile').onclick=function(){
@@ -1058,7 +1115,16 @@
   refresh();applyFragment(true);
   window.addEventListener('hashchange',function(){applyFragment(false);});
   // The same poll watches the viewer's frame loop: a frame that the host never delivered is dropped here, and
-  // the frame-rate figure is refreshed (or cleared) even when nothing is being drawn.
-  window.setInterval(function(){if(viewer){if(viewer.kick)viewer.kick();frameBadge();}refresh();if(sidebarMode==='vehicles')loadCatalogue();},5000);
+  // the frame-rate figure is refreshed (or cleared) even when nothing is being drawn. It is a chain of
+  // timeouts rather than one interval because the period changes: 2 s while a collision model is still being
+  // extracted (noteModelsPending reschedules it), 5 s otherwise.
+  function pollTick(){
+    pollTimer=null;
+    if(viewer){if(viewer.kick)viewer.kick();frameBadge();}
+    refresh();if(sidebarMode==='vehicles')loadCatalogue();
+    schedulePoll();
+  }
+  function schedulePoll(){if(pollTimer)window.clearTimeout(pollTimer);pollTimer=window.setTimeout(pollTick,modelsPending?2000:5000);}
+  schedulePoll();
   if(document.modelContext&&document.modelContext.registerTool){try{document.modelContext.registerTool({name:'select_saved_hit',description:'Open an existing recorded hit in the local 3D viewer.',inputSchema:{type:'object',properties:{battleId:{type:'string'},hitId:{type:'string'}},required:['battleId','hitId'],additionalProperties:false},execute:function(input){if(!input||!/^[-a-zA-Z0-9_]{1,100}$/.test(input.battleId)||!/^\d+$/.test(input.hitId))throw new Error('Invalid record identifiers');return loadBattle(input.battleId,true).then(function(){return selectHit(input.hitId);});}});}catch(e){console.warn('WebMCP unavailable',e);}}
 }());

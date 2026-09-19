@@ -11,6 +11,9 @@ _limits = {}
 _browser_id = None
 WEB_COMMAND = 'bullba_hits'
 _export_request = None
+_busy_request = None
+_prioritise_request = None
+_warned = set()
 
 
 def gun_limits(descr):
@@ -44,10 +47,56 @@ def set_export_request(handler):
     _export_request = handler
 
 
+def set_busy_request(handler):
+    """The page reports that the user is working in it, so the mod holds its work back."""
+    global _busy_request
+    _busy_request = handler
+
+
+def set_prioritise_request(handler):
+    """The page names the vehicle types whose collision models it is waiting for."""
+    global _prioritise_request
+    _prioritise_request = handler
+
+
+def _warn_once(key, message, *args):
+    """A page command that keeps failing must not fill game.log line by line.
+
+    'busy' arrives once a second while the user drags the scene, so a warning for
+    every one of them would be noise, not a diagnosis.
+    """
+    if key in _warned:
+        return
+    _warned.add(key)
+    LOG.warning(message, *args)
+
+
 def _handle_web_command(command, ctx):
-    """One w2c command from the page, on the game thread. Only the request is done here."""
+    """One w2c command from the page, on the game thread. Only the request is done here.
+
+    Three fire-and-forget actions: 'exportVehicle' asks for one vehicle type,
+    'busy' says the user is dragging or zooming the page right now, and
+    'prioritise' names the vehicle types whose collision models the page is
+    waiting for. None of them may cost the game thread more than a flag.
+    """
     try:
         action = getattr(command, 'action', None)
+        if action == 'busy':
+            if _busy_request is None:
+                _warn_once('busy', 'Bullba Hits page command: the recorder is not running')
+                return
+            _busy_request()
+            return
+        if action == 'prioritise':
+            types = getattr(command, 'vehicleTypes', None)
+            if not isinstance(types, (list, tuple)) or not types:
+                _warn_once('prioritise-empty', 'Bullba Hits page command: no vehicle types in %r', types)
+                return
+            if _prioritise_request is None:
+                _warn_once('prioritise', 'Bullba Hits page command: the recorder is not running')
+                return
+            _prioritise_request([str(name) for name in list(types)[:8] if name])
+            return
         if action != 'exportVehicle':
             LOG.warning('Bullba Hits page command: unknown action %r', action)
             return
@@ -101,6 +150,10 @@ def web_handlers():
         class BullbaHitsSchema(W2CSchema):
             action = Field(required=True, type=basestring)
             vehicleType = Field(type=basestring)
+            # 'prioritise' carries a short list of client vehicle type names. The
+            # client's own WebCommandSchema declares a dict field the same way, so
+            # a JSON array is an ordinary field type here, not a special case.
+            vehicleTypes = Field(type=list)
         return [createCommandHandler(WEB_COMMAND, BullbaHitsSchema, _handle_web_command, None)]
     except Exception:
         LOG.exception('Bullba Hits page command could not be registered')
