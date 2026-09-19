@@ -65,20 +65,26 @@
   var VEHICLE_HELP='Models are exported by the mod while the game runs: the vehicle selected in the hangar, every vehicle of a battle you played, or any vehicle via right-click \u2192 Bullba Hits in the hangar. A full export of the whole client can be switched on in settings.json (exportAllVehicles).';
   var sidebarMode='battles',battlesDirty=false;
   var catalogue=null,catalogueStamp=null,catalogueError=null,cataloguePending=false;
-  var vehicleFilters={tier:[],nation:[],'class':[],role:[],flag:[],text:''};
+  var vehicleFilters={tier:[],nation:[],'class':[],role:[],flag:[],text:''},filtersOpen=false;
   var modelVehicle=null,shooterVehicle=null,shooterPicked=false,activeRole='model';
   var vehicleScene=null,vehicleGeneration=0,vehicleCache=Object.create(null),vehicleOrder=[];
   var listIds=null,listMarks=null,listRoles=null,lastFragment=null;
 
   // The game's CEF may refuse storage; the mode and the filters are a convenience, never a requirement.
   function storedSidebar(){try{return JSON.parse(window.localStorage.getItem(SIDEBAR_KEY));}catch(e){return null;}}
-  function storeSidebar(){try{window.localStorage.setItem(SIDEBAR_KEY,JSON.stringify({mode:sidebarMode,filters:vehicleFilters}));}catch(e){}}
+  function storeSidebar(){try{window.localStorage.setItem(SIDEBAR_KEY,JSON.stringify({mode:sidebarMode,filters:vehicleFilters,filtersOpen:filtersOpen}));}catch(e){}}
 
   // ---- filters -----------------------------------------------------------
   function toggleFilter(row,value,button){
     var list=vehicleFilters[row],at=list.indexOf(value);
     if(at<0)list.push(value);else list.splice(at,1);
-    button.setAttribute('aria-pressed',String(at<0));storeSidebar();renderVehicles();
+    button.setAttribute('aria-pressed',String(at<0));storeSidebar();filterSummary();renderVehicles();
+  }
+  // The fold's caption: how many pills are pressed. No filter means every vehicle is listed - a filter only
+  // takes rows away (user, 19.09: an empty filter used to read as an empty list).
+  function filterSummary(){
+    var s=$('filter-summary');if(!s)return;var f=vehicleFilters,n=f.tier.length+f.nation.length+f['class'].length+f.role.length+f.flag.length;
+    s.textContent=n?'Filters \u00b7 '+n:'Filters';
   }
   // Nation and flag marks: the client's own icons, embedded in style.css exactly like .vt-class/.vt-role.
   function nationMark(nation){var m=node('span',undefined,'vt-nation');m.setAttribute('data-nation',nation);return m;}
@@ -104,6 +110,12 @@
     search.placeholder='Find\u2026';search.setAttribute('aria-label','Find a vehicle by name');search.autocomplete='off';
     search.oninput=function(){vehicleFilters.text=this.value;storeSidebar();renderVehicles();};
     box.appendChild(search);
+    // The five pill rows fold under one caption: open, they take most of a 768 px column and the list below
+    // had no room left. Closed by default; the state is remembered with the filters.
+    var fold=node('details',undefined,'filter-box');fold.id='filter-box';fold.open=filtersOpen;
+    var summary=node('summary',undefined,'filter-label');summary.id='filter-summary';fold.appendChild(summary);
+    fold.ontoggle=function(){filtersOpen=fold.open;storeSidebar();scheduleLayout();};
+    var host_=box;box=fold;host_.appendChild(fold);
     var tiers=[],i;for(i=1;i<=11;i++)tiers.push({value:String(i),label:tierRomans[i],title:'Tier '+tierRomans[i]});
     box.appendChild(filterRow('tier','Tier',tiers));
     box.appendChild(filterRow('nation','Nation',Object.keys(nationNames).map(function(n){
@@ -121,6 +133,7 @@
       var list=vehicleFilters[b.getAttribute('data-row')]||[];
       b.setAttribute('aria-pressed',String(list.indexOf(b.getAttribute('data-value'))>=0));});
     var search=$('vehicle-search');if(search)search.value=vehicleFilters.text;
+    var fold=$('filter-box');if(fold)fold.open=filtersOpen;filterSummary();
   }
   function vehicleMatches(v){
     var f=vehicleFilters,i;
@@ -189,7 +202,7 @@
       if(stamp===catalogueStamp&&catalogue)return;
       catalogueStamp=stamp;
       catalogue={updatedAt:data.updatedAt,vehicles:data.vehicles.filter(function(v){return v&&VEHICLE_ID.test(String(v.id||''));})};
-      if(sidebarMode==='vehicles')renderVehicles();
+      if(sidebarMode==='vehicles'){adoptHitVehicles();renderVehicles();}
     }).catch(function(){
       catalogueError='No vehicle list yet. Run the game once with the mod: the catalogue is written at export setup.';
       if(!catalogue&&sidebarMode==='vehicles')renderVehicles(true);
@@ -270,7 +283,8 @@
     });
   }
   function renderVehicleHeading(){
-    var v=modelVehicle,date=v&&Number.isFinite(v.exportedAt)?new Date(v.exportedAt*1000).toLocaleDateString('en-GB'):'';
+    // Without a browsed vehicle the heading names the hit's target that is still on screen.
+    var v=modelVehicle||(activeHit&&!activeHit.vehicle?activeHit.target:null),date=v&&Number.isFinite(v.exportedAt)?new Date(v.exportedAt*1000).toLocaleDateString('en-GB'):'';
     var tag=v?SOURCE_TAG[v.source]||'':'';
     $('scene-kind').textContent='VEHICLE'+(tag?' \u00b7 '+tag:'')+(date?' \u00b7 '+date:'');
     $('battle-map').textContent=v?(v.name||'Unknown vehicle'):'Pick a vehicle';
@@ -291,6 +305,9 @@
     if(mode==='vehicles'){
       loadCatalogue();
       if(!changed)return Promise.resolve();
+      // A recorded hit on screen stays there (user, 19.09: switching the side panel must not reset the scene).
+      // Its two tiles become the role controls, the list adopts its vehicles as the current model and shooter.
+      if(activeHit&&!activeHit.vehicle){adoptHitVehicles();sceneTiles(activeHit,false);renderVehicleHeading();renderVehicles(true);return Promise.resolve();}
       if(vehicleScene&&modelVehicle){display(vehicleScene,false);renderVehicleHeading();renderVehicles(true);return Promise.resolve();}
       if(modelVehicle)return showVehicleScene(false).catch(function(){});
       ++generation;if(viewer)viewer.clear();sceneTiles(null,false);renderVehicleHeading();renderVehicles(true);
@@ -300,9 +317,18 @@
     ++vehicleGeneration;
     if(!changed)return Promise.resolve();
     if(battlesDirty||!current){battlesDirty=false;indexStamp=null;return refresh();}
-    renderHits();
-    if(selected)return selectHit(selected).catch(function(){});
-    return loadBattle(current.id,true).catch(function(){});
+    // Back to the battles: the scene stays as it is - the hit that was on screen, or the browsed vehicle until
+    // a hit is clicked. Nothing is reloaded.
+    renderHits();sceneTiles(activeHit,false);
+    return Promise.resolve();
+  }
+  // The catalogue rows of the hit's target and attacker (matched by the client's vehicle type name), so the
+  // Vehicles list highlights them and a click on a row replaces one of them.
+  function adoptHitVehicles(){
+    var rows=(catalogue&&catalogue.vehicles)||[],hit=activeHit;if(!hit||hit.vehicle||!rows.length)return;
+    function byType(v){var type=v&&v.type;if(!type)return null;var i;for(i=0;i<rows.length;i++)if(rows[i].type===type)return rows[i];return null;}
+    var model=byType(hit.target),shooter=byType(hit.attacker);
+    if(model)modelVehicle=model;if(shooter)shooterVehicle=shooter;
   }
   // #host=game&vehicle=<id>: open the Vehicles mode on that vehicle. The game window may also be navigated to a
   // new fragment while it is open, so the same path serves 'hashchange'.
@@ -320,6 +346,7 @@
     if(saved&&saved.filters){
       ['tier','nation','class','role','flag'].forEach(function(k){if(Array.isArray(saved.filters[k]))vehicleFilters[k]=saved.filters[k].filter(function(v){return typeof v==='string';});});
       if(typeof saved.filters.text==='string')vehicleFilters.text=saved.filters.text;
+      filtersOpen=saved.filtersOpen===true;
     }
     syncFilters();
     // The page always opens on the battles and their hits (user, 14.09: a newcomer must not think the viewer is
@@ -461,7 +488,10 @@
   function modsVisible(){
     var slot=$('target-mods-slot');
     if(!slot||!targetMods)return;
-    var show=!!(damageView&&modsType&&!$('model-tile').hidden);
+    // ...and only for a shell whose non-penetration damage the factor divides: modern HE. For AP/APCR/HEAT the
+    // switches would change nothing on screen.
+    var s=viewer&&viewer.shell,he=!!(s&&s.kind==='HIGH_EXPLOSIVE'&&s.spallDamage>0);
+    var show=!!(damageView&&he&&modsType&&!$('model-tile').hidden);
     if(slot.hidden===!show)return;
     slot.hidden=!show;if(!show)targetMods.close();
     layoutMods(); // placed in the same task it appears in, so it is never painted at the unpositioned corner

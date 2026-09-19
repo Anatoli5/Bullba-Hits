@@ -132,6 +132,11 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 .vehicle-filters{display:flex;flex-direction:column;gap:9px;margin:14px 0 2px}
 .vehicle-search{width:100%;background:#0c151f;border:1px solid #35475a;border-radius:5px;color:inherit;padding:6px 10px;min-height:32px;font-size:14px}
 .vehicle-search:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+.filter-box{display:flex;flex-direction:column;gap:9px}
+.filter-box>summary{cursor:pointer;list-style:none;user-select:none}
+.filter-box>summary::-webkit-details-marker{display:none}
+.filter-box>summary::before{content:'\25B8';display:inline-block;width:12px;font-size:10px}
+.filter-box[open]>summary::before{content:'\25BE'}
 .filter-row{display:flex;flex-direction:column;gap:5px}
 .filter-label{font-size:11px;letter-spacing:1.4px;color:var(--muted);font-weight:600;text-transform:uppercase}
 .filter-pills{display:flex;flex-wrap:wrap;gap:4px}
