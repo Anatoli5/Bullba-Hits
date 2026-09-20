@@ -1187,6 +1187,11 @@
     // so the hold is excluded here or the shooter would freeze for the whole burst.
     if (viewer.dragging && !viewer.aimHold) { aimClock = 0; startAimLoop(); return; }
     var now = aimSeconds(), dt = aimClock ? now - aimClock : 0; aimClock = now;
+    // The first frame after the loop slept (settled and caught) has no time span: chasing the cursor over a
+    // zero-length step would ask the turret for its full speed and bloom the ring as if it had fired (user,
+    // 20.09: 'a shot without a shot, exactly when it had settled and I moved the mouse'). Count that frame
+    // as one nominal frame instead.
+    if (!dt) dt = 1 / 60;   // one nominal frame, never a zero step
     var mods = aimModifiers();
     aimMove = ArmorBallistics.moveStep(aimMove, aimKeys, a, mods, dt);
     var chase = ArmorBallistics.turretChase(viewer.aimGap(), aimMove.hullTurn, a, mods, dt);
