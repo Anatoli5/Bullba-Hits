@@ -1132,6 +1132,10 @@
   // composition: only the circle's line and the text of the corner readout are redrawn.
   var aimOn = false, aimKeys = {}, aimFrame = 0, aimClock = 0, aimMove = null, aimNow = null;
   var aimReload = null, aimClip = 0, aimClipSize = 1, aimShot = null, aimLastState = null;
+  // The live figure of the aiming ring (user, 20.09: 'see the percentage in the circle all the time'). A
+  // full integral is 1024 rays - tens of milliseconds - so while anything moves it is a coarse 256-ray one
+  // at most every 120 ms, and the fine one runs once when the shooter, the turret and the cursor rest.
+  var aimEst = null, aimEstAt = 0, aimEstFine = false;
   // The pointer: aimDown says the button is down on a shot (not on a drag), aimBurst that the press has
   // grown into a held burst, aimClipDry that the clip ran out and nothing more fires until the release.
   var aimDown = false, aimBurst = false, aimHoldTimer = 0, aimClipDry = false;
@@ -1196,7 +1200,7 @@
     paintAim(state);
     var reloading = aimReloadLeft() > 0;
     if (aimHeld() || !aimMove.resting || reloading || !chase.caught || (aimBurst && aimDown && !aimClipDry) || (aimNow && !aimNow.settled)) startAimLoop();
-    else { aimClock = 0; if (reloadJustFinished()) paintAim(state); }
+    else { aimClock = 0; if (reloadJustFinished()) paintAim(state); if (!aimEstFine) { estimateLive(true); paintHud(); } }
   }
   // The reload is over: drop it so the ring is drawn whole again.
   function reloadJustFinished() {
@@ -1212,7 +1216,16 @@
     // The reload first: it decides how much of the ring the redraw below draws.
     if (viewer.setAimReload) viewer.setAimReload(aimReloadPart());
     viewer.setLiveAim(aimNow.radius100);   // the live ring never stops aiming (user, 20.09)
+    estimateLive(false);
     paintHud();
+  }
+  function estimateLive(fine) {
+    var shell = viewer && viewer.shell, now = aimSeconds();
+    if (!shell || !viewer.liveRadius100) { aimEst = null; return; }
+    if (!fine && aimEstAt && now - aimEstAt < 0.12) return;
+    var r = viewer.liveAimProbability(shell, fine ? 1024 : 256);
+    aimEst = r ? {chance: Math.round(r.low), damage: damagePct(r.damage)} : null;
+    aimEstAt = now; aimEstFine = !!fine;
   }
   // The readout in the corner of the scene: the last shot's chance as the big number, under it the
   // expected damage share and the shell's alpha, and the gold badge with the help. Nothing else
@@ -1220,8 +1233,11 @@
   function paintHud() {
     var hud = $('aim-hud');
     if (!hud || hud.hidden) return;
-    $('aim-hud-chance').textContent = aimShot ? aimShot.chance : '—';
-    $('aim-hud-damage').textContent = aimShot ? aimShot.damage : '';
+    // The big number is the LIVE ring; the last shot keeps its own line underneath.
+    var shell = viewer && viewer.shell, alpha = shell && shell.alpha > 0 ? Math.round(shell.alpha) : 0;
+    $('aim-hud-chance').textContent = aimEst ? aimEst.chance + ' %' : '—';
+    $('aim-hud-damage').textContent = aimEst ? aimEst.damage + ' %' + (alpha ? ' · ' + alpha : '') : '';
+    var shot = $('aim-hud-shot'); if (shot) shot.textContent = aimShot ? 'shot ' + aimShot.chance + ' · ' + aimShot.damage : '';
   }
   // One shot (user's decision, 19.09: no Alt - it may never reach the page inside the game). The tracer
   // goes exactly down the middle of the LIVE circle, where the gun points: the random offset a real shot

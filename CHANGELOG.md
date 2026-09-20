@@ -8,7 +8,9 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
   bottom strip with the sliders is gone.
 - A tap is one shot; holding the button fires on the gun's cooldown until you let go, and a clip stops
   when it is empty. Moving the mouse aims a burst instead of stopping it, and a new press fires at once.
-- The last shot leaves its own solid circle and tracer on the model; the aiming circle never stops aiming.
+- The bottom-right corner shows the chance and the expected damage of the aiming circle live (a coarse figure
+  while anything moves, the exact one at rest); the last shot leaves its own solid circle and tracer on the
+  model and its figures on a line underneath.
 - The bottom-right corner reads the chance to damage of that shot, and under it the expected damage as a
   share of alpha with the shell's alpha in HP — "30 % · 410". An ⓘ beside it explains the whole mode.
 - The aiming circle is the reload indicator, as in the game: it is drawn from nothing and fills clockwise
