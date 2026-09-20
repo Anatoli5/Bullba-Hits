@@ -4,6 +4,7 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 
 ## Unreleased
 
+- Info panels: the "pen NNN mm / NNN m" chip moves from the title row to its own line under the chance, right above the effective armour line.
 - On a narrow page the pose tile steps up above the shooter row instead of sitting under the speed tile.
 - Battle tile in the heading: framed like the other clickable tiles instead of a dashed underline.
 - Battle list: rows are tall enough for the vehicle tile.

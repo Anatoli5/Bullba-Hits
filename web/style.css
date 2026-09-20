@@ -45,7 +45,10 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 .info-panel .placeholder{color:var(--muted)}.info-extra{grid-column:2;min-height:20px}/* The chip rows of the Hit line panel keep their height with no chip in them: it sits above #viewport, and a shot-less swapped view must not resize the scene. */#shot-pen{min-height:20px}
 /* The damage chips carry the two halves of the expected damage; a shade of their own so they do not read as armour figures. */
 .chip.damage{background:#26303f;color:#cfe0f2}
-.hover-panel{pointer-events:none;background:rgba(23,35,48,.15);text-shadow:0 1px 2px rgba(0,0,0,.7)}/* The hover panel is a column (user, 13.09): the title with the pen chip, the chance, then the details under them. */#armor-probe{grid-template-columns:auto auto;grid-template-rows:auto auto auto auto auto;column-gap:10px}#armor-probe .info-title{grid-row:1;grid-column:1}#armor-probe #probe-pen{grid-row:1;grid-column:2}#armor-probe .info-chance{grid-row:2;grid-column:1/3;align-self:center}#armor-probe #probe-details{grid-row:3;grid-column:1/3}#armor-probe .info-extra{grid-row:4;grid-column:1/3}
+.hover-panel{pointer-events:none;background:rgba(23,35,48,.15);text-shadow:0 1px 2px rgba(0,0,0,.7)}/* The hover panel is a column (user, 13.09): the title, the chance, then the details under them. The pen chip
+   (penetration at the range) is a row of its own right under the chance, above the effective armour line - the
+   two read alike and belong together (user, 20.09). */
+#armor-probe{grid-template-columns:auto auto;grid-template-rows:auto auto auto auto auto auto;column-gap:10px}#armor-probe .info-title{grid-row:1;grid-column:1/3}#armor-probe #probe-pen{grid-row:3;grid-column:1/3}#armor-probe .info-chance{grid-row:2;grid-column:1/3;align-self:center}#armor-probe #probe-details{grid-row:4;grid-column:1/3}#armor-probe .info-extra{grid-row:5;grid-column:1/3}
 
 
 /* Vehicle tile: tier | name | class+role, with the nation flag faded into the right side.
@@ -331,17 +334,17 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 .viewport-tiles #shot-pen,.viewport-tiles .info-extra{min-height:0}
 .viewport-tiles .info-chance{font-size:20px}
 #shot-panel{pointer-events:auto}
-#shot-panel{grid-template-columns:auto auto;grid-template-rows:auto auto auto auto auto;column-gap:10px}
-#shot-panel .info-title{grid-row:1;grid-column:1}
-#shot-panel #shot-pen{grid-row:1;grid-column:2}
+#shot-panel{grid-template-columns:auto auto;grid-template-rows:auto auto auto auto auto auto;column-gap:10px}
+#shot-panel .info-title{grid-row:1;grid-column:1/3}
+#shot-panel #shot-pen{grid-row:3;grid-column:1/3}
 #shot-panel .info-chance{grid-row:2;grid-column:1/3;align-self:center}
-#shot-panel #shot-details{grid-row:3;grid-column:1/3}
-#shot-panel .info-extra{grid-row:4;grid-column:1/3}
+#shot-panel #shot-details{grid-row:4;grid-column:1/3}
+#shot-panel .info-extra{grid-row:5;grid-column:1/3}
 /* The figure of the aiming circle, one line per panel in the colour of the ring it belongs to (user,
    20.09): cyan for the live ring under the cursor, magenta on the hit-line panel for whichever standing
    ring is on the model there - the recorded reticle of the hit, its nominal estimate, or the ring an
    emulated shot left behind. */
-#shot-panel #shot-circle,#armor-probe #probe-circle{grid-row:5;grid-column:1/3}
+#shot-panel #shot-circle,#armor-probe #probe-circle{grid-row:6;grid-column:1/3}
 .aim-circle{font-size:13px;font-weight:600;font-variant-numeric:tabular-nums;color:var(--aim-live);pointer-events:auto;cursor:help}
 .aim-circle.shot{color:var(--aim-shot)}
 .aim-circle[hidden]{display:none}
