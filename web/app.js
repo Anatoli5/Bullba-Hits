@@ -1520,7 +1520,7 @@
     var live = !!(a && modelled && viewer && aimOn);
     $('aim-config').hidden = !live;
     if (!live) { $('aim-config').open = false; aimPickerSlot = -1; }
-    tile.hidden = !live;
+    tile.hidden = !live; scheduleLayout();
     // The gun panel rides with the mode, exactly as the speed tile and Config do: its reload figures are
     // the emulation's own state, and the heading shell list carries the shells when the mode is off.
     $('aim-gun').hidden = !live;
@@ -2324,7 +2324,7 @@
   // Gun readouts: up positive, down negative. #viewport keeps the drag hints in its aria-label.
   function poseChanged(){
     if(!viewer)return;
-    var loaded=!!viewer.loadedData;$('pose-info').hidden=!loaded;if(!loaded)return;
+    var loaded=!!viewer.loadedData;$('pose-info').hidden=!loaded;scheduleLayout();if(!loaded)return;
     var hit=viewer.loadedData.hit||{},aim=hit.aim||[],absolute=Number.isFinite(aim[0])&&Number.isFinite(aim[1]);
     var off=!(Math.abs(viewer.turretAngle)<.1&&Math.abs(viewer.gunAngle)<.1),DEG=180/Math.PI;
     var sign=function(v){return (v>0?'+':'')+Math.round(v)+'°';},wrap=function(v){return ((v+180)%360+360)%360-180;};
@@ -2577,7 +2577,17 @@
   }
   // One rAF debounce for all three: the heading is measured first, because stacking it changes nothing the
   // toolbar measures but a toolbar fold must not race the heading's own reflow.
-  function scheduleLayout(){if(tbFrame)return;tbFrame=window.requestAnimationFrame(function(){tbFrame=0;layoutHeading();layoutToolbar();layoutMods();});}
+  // The pose tile sits in the bottom-left corner and the shooter row is centred on the same bottom line; on a
+  // narrow page the row's left end (the speed tile) would ride over it, so the pose tile then steps up above
+  // the row instead of overlapping (user, 20.09). Measured, not guessed: the row's width depends on what it shows.
+  function layoutPose(){
+    var pose=$('pose-info'),row=document.querySelector('.shooter-row');if(!pose||pose.hidden)return;
+    pose.style.bottom='';
+    if(!row||!row.offsetWidth)return;
+    var p=pose.getBoundingClientRect(),r=row.getBoundingClientRect();
+    if(p.right+10>r.left&&p.bottom>r.top&&p.top<r.bottom)pose.style.bottom=(r.height+20)+'px';
+  }
+  function scheduleLayout(){if(tbFrame)return;tbFrame=window.requestAnimationFrame(function(){tbFrame=0;layoutHeading();layoutToolbar();layoutMods();layoutPose();});}
   window.addEventListener('resize',scheduleLayout);
   // Closing on a click outside is written out here: the settings menu has no such handler to reuse. Every
   // popover of the page is a .toolbar-more <details>, the toolbar's own and the modifier groups' alike, and
@@ -2585,7 +2595,7 @@
   document.addEventListener('click',function(e){document.querySelectorAll('.toolbar-more[open]').forEach(function(d){if(!d.contains(e.target))d.open=false;});
     var pick=document.querySelector('.heading-pick');
     if(pick&&!$('battle-list').hidden&&!pick.contains(e.target))openBattleList(false);});
-  layoutHeading();layoutToolbar();layoutMods();
+  layoutHeading();layoutToolbar();layoutMods();layoutPose();
   if(host.interrupted){$('host-note').hidden=false;$('host-note').textContent='The previous session was interrupted during “'+host.interrupted.action+'» ('+(host.interrupted.host==='game'?'in the game':'in the browser')+', '+new Date(host.interrupted.at).toLocaleString('en-GB')+'). Mention this when reporting.';}
   (function(){var pv=$('app-version').getAttribute('data-version');if(pv!=='dev')$('app-version').textContent=pv;}());
   host.done();

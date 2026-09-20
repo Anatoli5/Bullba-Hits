@@ -4,6 +4,7 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 
 ## Unreleased
 
+- On a narrow page the pose tile steps up above the shooter row instead of sitting under the speed tile.
 - Battle tile in the heading: framed like the other clickable tiles instead of a dashed underline.
 - Battle list: rows are tall enough for the vehicle tile.
 - Aim emulation is on by default and is switched in Settings → Scene ("Aim emulation"); the bottom strip
