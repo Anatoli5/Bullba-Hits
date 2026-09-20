@@ -6,10 +6,13 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 
 - Aim emulation moved next to the Shooter tile: an "Aim emulation" switch and a "Configuration" button; the
   bottom strip with the sliders is gone.
-- A click fixes the shot: the circle freezes, the chance and the expected damage stand in the bottom-right
-  corner with an ⓘ; the next click releases it. No shot while the gun is reloading.
-- The circle is drawn over the model now, cyan, dashed while aiming, amber while the gun reloads and solid once a shot fixes it; the mouse
-  pointer becomes a crosshair (cross or dot, Settings → Scene).
+- A click is one shot; holding the button fires on the gun's cooldown until you let go, and a clip stops
+  when it is empty. A new press always fires at once.
+- The last shot leaves its own solid circle and tracer on the model, with the chance and the expected
+  damage in the bottom-right corner with an ⓘ; the aiming circle never stops aiming.
+- The reload fills an amber arc on the aiming circle, as in the game.
+- The circle is drawn over the model now, cyan and dashed; the mouse pointer becomes a crosshair
+  (cross or dot, Settings → Scene).
 - Configuration: three equipment slots with the game's own icons, each in its standard, improved, trophy or
   upgraded-trophy variant, plus the three perks. Icons are unpacked from your client on the next game start.
 - With the emulation on, the recorded reticles and tracers make way for the emulated shot; with it off they are

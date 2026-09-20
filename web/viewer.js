@@ -14,12 +14,12 @@
   // emulated shot alone (user, 20.09), so nothing recorded competes with the circle and its tracer.
   var aimEmulation=false;
   function aimShown(){return !aimEmulation;}
-  // The emulated circle: cyan so it reads over the red-green heat map (yellow is lost in it), dashed
-  // while the shot is still being aimed and solid and brighter once a shot has fixed it.
+  // The emulated circle: cyan so it reads over the red-green heat map (yellow is lost in it). TWO rings
+  // (user, 20.09): the LIVE one is dashed and never stops aiming, and the one the last shot left behind
+  // is solid and brighter. The reload is an amber arc filling clockwise over the live ring, as in the
+  // game, instead of recolouring the ring itself.
   var AIM_LIVE={color:0x5ee0ff,dashed:true,opacity:.95},AIM_FIXED={color:0xbdf4ff,dashed:false,opacity:1},
-    // Reloading: the same dashed ring in amber, so the user sees at the circle itself why a click does not fire
-    // (user, 20.09: the corner countdown alone read as 'the tracer will not move').
-    AIM_RELOAD={color:0xffb454,dashed:true,opacity:.95};
+    AIM_ARC={color:0xffb454,dashed:false,opacity:1};
   function linear(color){return color.map(function(c){return c<=.04045?c/12.92:Math.pow((c+.055)/1.055,2.4);});}
   var baseColors=[[.38,.46,.54],[.65,.73,.8],[.75,.83,.87],[.55,.65,.72]].map(linear);
   function externalLayer(t){return t.part===0||!!(t.armor&&Number.isFinite(t.armor.vehicleDamageFactor)&&t.armor.vehicleDamageFactor<=1e-5);}
@@ -45,10 +45,11 @@
     // liveAimPoint the centre it was last drawn at, liveAim the drawn circle the integral samples.
     // aimCursorPoint is where the cursor points, liveAimPoint where the GUN points: with the turret
     // emulation on they are the same only once the turret has caught up (see chaseAim).
-    // aimFixed: a shot has frozen the circle where it stood. The model underneath keeps running (the
-    // recoil, the settling, the reload) but nothing moves or resizes the drawn circle until the next
-    // click releases it, which is the two-state machine the user asked for on 20.09.
-    this.liveRadius100=null;this.liveAimPoint=null;this.aimCursorPoint=null;this.liveAim=null;this.aimChase=false;this.aimFixed=false;this.aimReloading=false;this.aimProfileName=ArmorBallistics.aimProfileDefault;
+    // The live ring is NEVER frozen (user, 20.09): a shot leaves a second, solid ring behind it
+    // (aimShotCircle) and the live one goes on aiming. aimReloadPart is how much of the reload has run,
+    // 0..1, drawn as the amber arc; aimHold says the pointer is down on a shot, not on a drag.
+    this.liveRadius100=null;this.liveAimPoint=null;this.aimCursorPoint=null;this.liveAim=null;this.aimChase=false;this.aimProfileName=ArmorBallistics.aimProfileDefault;
+    this.aimShotCircle=null;this.aimArc=null;this.aimReloadPart=0;this.aimHold=false;
     this.frameAt=0;this.frameTimes=[]; // when the pending frame was asked for, and the cadence of the frames that ran
     this.contextLost=false;this.dragging=false;this.hoverId=null;this.hoverEvent=null;this.inspectKey=null;
     // The camera is driven by its own frame loop: pointer and key events only move the target.
@@ -59,14 +60,20 @@
     this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.trackOpacity=.12;this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.lighting=false;this.gunAngle=0;this.autoFrame=true;this.frameScale=this.defaults.scale;this.outline=null;this.outlineDepth=null;this.outlineStyle={brightness:.8,opacity:.06};this.showOutline=false;
     var drag = null;
     container.addEventListener('contextmenu', function(e) { e.preventDefault(); });
-    container.addEventListener('pointerdown', function(e) { /* The scene tiles and the modifier groups beside them are controls of their own: capturing the pointer here would retarget the click to #viewport and the shooter tile would never fire. Leaving the drag unstarted also keeps the pointerup below from pinning a point under the control. */ if(e.target&&e.target.closest&&e.target.closest('.viewport-tile,.mod-slot,.swap-roles,.aim-switch,#aim-config'))return; /* pan: right button, or Ctrl + left button (the in-game browser swallows the right button) */ if(e.button===2||(e.button===0&&e.ctrlKey)){drag={pan:true,x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY,moved:false};self.dragging=true;try{container.setPointerCapture(e.pointerId);}catch(ignore){}return;}if(e.button!==0)return;if(e.altKey){self.aimAt(e);return;}drag={x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY,moved:false,part:self.pickPart(e)};self.dragging=true; try{container.setPointerCapture(e.pointerId);}catch(ignore){} container.focus(); });
-    container.addEventListener('pointermove', function(e) { if (!drag){self.hover(e);return;}if(Math.abs(e.clientX-drag.sx)+Math.abs(e.clientY-drag.sy)>3)drag.moved=true;if(!drag.moved)return;if(drag.pan){/* the pan is accumulated and applied once in the camera's own frame loop, not per event */var p=self.pendingPan||(self.pendingPan={x:0,y:0});p.x+=e.clientX-drag.x;p.y+=e.clientY-drag.y;drag.x=e.clientX;drag.y=e.clientY;self.startOrbit();return;}if(drag.part===2||drag.part===3){/* turret and gun are one module: left/right turns the turret, up/down moves the gun */var dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(dx)self.setTurret(self.turretAngle-dx*.5);if(dy)self.setGun(self.gunAngle+dy*.16);}else{self.orbitTo(self.targetYaw-(e.clientX-drag.x)*0.008,self.targetPitch+(e.clientY-drag.y)*0.008);}drag.x=e.clientX;drag.y=e.clientY; });
+    container.addEventListener('pointerdown', function(e) { /* The scene tiles and the modifier groups beside them are controls of their own: capturing the pointer here would retarget the click to #viewport and the shooter tile would never fire. Leaving the drag unstarted also keeps the pointerup below from pinning a point under the control. */ if(e.target&&e.target.closest&&e.target.closest('.viewport-tile,.mod-slot,.swap-roles,.aim-switch,#aim-config'))return; /* pan: right button, or Ctrl + left button (the in-game browser swallows the right button) */ if(e.button===2||(e.button===0&&e.ctrlKey)){drag={pan:true,x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY,moved:false};self.dragging=true;try{container.setPointerCapture(e.pointerId);}catch(ignore){}return;}if(e.button!==0)return;if(e.altKey){self.aimAt(e);return;}drag={x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY,moved:false,part:self.pickPart(e)};self.dragging=true; try{container.setPointerCapture(e.pointerId);}catch(ignore){} container.focus();
+      /* Hold to fire (user, 20.09): the press itself never shoots. The page starts a hold timer and decides -
+         a short press is one shot on release, a long one a burst on the gun's cooldown - and a drag past the
+         threshold below cancels the whole thing. aimHold marks the press as a shot so the emulation is not
+         paused for it the way a real drag is. */
+      if(self.onShotDown&&self.onShotDown(e))self.aimHold=true; });
+    container.addEventListener('pointermove', function(e) { if (!drag){self.hover(e);return;}if(Math.abs(e.clientX-drag.sx)+Math.abs(e.clientY-drag.sy)>3)drag.moved=true;if(!drag.moved)return;if(self.aimHold){self.aimHold=false;if(self.onShotCancel)self.onShotCancel();}if(drag.pan){/* the pan is accumulated and applied once in the camera's own frame loop, not per event */var p=self.pendingPan||(self.pendingPan={x:0,y:0});p.x+=e.clientX-drag.x;p.y+=e.clientY-drag.y;drag.x=e.clientX;drag.y=e.clientY;self.startOrbit();return;}if(drag.part===2||drag.part===3){/* turret and gun are one module: left/right turns the turret, up/down moves the gun */var dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(dx)self.setTurret(self.turretAngle-dx*.5);if(dy)self.setGun(self.gunAngle+dy*.16);}else{self.orbitTo(self.targetYaw-(e.clientX-drag.x)*0.008,self.targetPitch+(e.clientY-drag.y)*0.008);}drag.x=e.clientX;drag.y=e.clientY; });
     // The end of a drag: the pose the drag only previewed is rebuilt in full, and one frame is asked for so the
     // map comes back at full quality with the ricochet trace (paint() draws a drag at half resolution).
-    // A click without a drag: with the aim emulation on it is a shot (onShot fires it and says it has
-    // handled the click), otherwise it pins the point under the cursor as it always did.
-    container.addEventListener('pointerup', function(e) { var d=drag;drag=null;self.dragging=false;self.commitPose();self.draw();if(d&&!d.moved&&!e.altKey&&!e.ctrlKey&&e.button===0){if(self.onShot&&self.onShot(e))return;self.pinAt(e);} });
-    container.addEventListener('pointercancel', function() { drag=null;self.dragging=false;self.cancelHover();self.commitPose();self.draw(); });
+    // The end of a press: a press the emulation claimed is handed back to it (a tap fires one shot, a
+    // hold has been firing all along and simply stops), anything else pins the point under the cursor
+    // as it always did.
+    container.addEventListener('pointerup', function(e) { var d=drag,hold=self.aimHold;drag=null;self.aimHold=false;self.dragging=false;self.commitPose();self.draw();if(hold&&self.onShotUp){self.onShotUp(e);return;}if(d&&!d.moved&&!e.altKey&&!e.ctrlKey&&e.button===0)self.pinAt(e); });
+    container.addEventListener('pointercancel', function() { drag=null;self.dragging=false;if(self.aimHold){self.aimHold=false;if(self.onShotCancel)self.onShotCancel();}self.cancelHover();self.commitPose();self.draw(); });
     container.addEventListener('wheel', function(e) {e.preventDefault();var delta=e.deltaY||e.deltaX,amount=Math.max(-200,Math.min(200,delta*(e.deltaMode===1?16:e.deltaMode===2?300:1)));if(!(e.shiftKey||e.ctrlKey||e.altKey))self.distanceTo((self.targetDistance!==null?self.targetDistance:self.distance)*Math.exp(amount*.002));else if(self.autoFrame)self.scaleTo((self.targetScale!==null?self.targetScale:self.frameScale)*Math.exp(-amount*.002));else self.zoomTo((self.targetZoom!==null?self.targetZoom:self.camera.zoom)*Math.exp(-amount*.002));}, {passive:false});
     container.addEventListener('keydown',function(e){var used=true,orbit=true;if(e.key==='ArrowLeft')self.orbitTo(self.targetYaw-.1,self.targetPitch);else if(e.key==='ArrowRight')self.orbitTo(self.targetYaw+.1,self.targetPitch);else if(e.key==='ArrowUp')self.orbitTo(self.targetYaw,self.targetPitch+.1);else if(e.key==='ArrowDown')self.orbitTo(self.targetYaw,self.targetPitch-.1);else{orbit=false;if(e.key==='+'||e.key==='='){if(e.shiftKey)self.setZoom(self.camera.zoom*1.1);else self.setDistance(Math.max(1,self.distance/1.1));}else if(e.key==='-'){if(e.shiftKey)self.setZoom(self.camera.zoom/1.1);else self.setDistance(Math.min(1500,self.distance*1.1));}else used=false;}if(used){e.preventDefault();if(!orbit)self.render();}});
     // A lost context stops the frame loop: three ignores render() while the context is gone, but a pending
@@ -160,7 +167,7 @@
   Viewer.prototype.setDistance=function(value){if(!Number.isFinite(value))return;this.targetDistance=null;this.distance=Math.max(DISTANCE_MIN,Math.min(DISTANCE_MAX,value));this.render();};
   Viewer.limits={distanceMin:DISTANCE_MIN,distanceMax:DISTANCE_MAX};
   Viewer.prototype.saveDefaults=function(){var frame=this.framing();this.defaults={distance:this.distance,scale:Math.max(.1,Math.min(10,this.camera.zoom/(frame?frame.zoom:this.fitZoom)))};try{window.localStorage.setItem('armor-camera-defaults',JSON.stringify(this.defaults));return true;}catch(ignore){return false;}};
-  Viewer.prototype.clear=function(){this.dropTargets();this.fitPending=false;this.shotPoints=null;this.recordedDistance=null;this.pinned=null;this.disposePin();this.pinReticles=[];if(this.surface)this.surface.dispose();this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.gunAngle=0;this.savedAim=null;this.aimGroup=null;this.reticles=[];this.reticleLayer.replaceChildren();clearTimeout(this.turretTimer);this.turretTimer=null;this.turretPending=false;this.poseGeometries=null;this.poseBuilt=null;this.poseStale=false;this.spreadAim=null;this.hideSpread();clearTimeout(this.paintTimer);this.paintTimer=null;window.cancelAnimationFrame(this.frameId);this.frameId=null;this.cancelHover();this.cancelOrbit();this.pendingPan=null;this.inspectKey=null;this.paintMesh=null;this.outline=null;this.outlineDepth=null;this.engine=null;this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.loadedData=null;this.paintedKey=null;this.samples=[];var disposed=new Set();this.root.traverse(function(o){var shared=!!(o.parent&&o.parent.type==='ArrowHelper'&&(o===o.parent.line||o===o.parent.cone));if(o.geometry&&!shared&&!disposed.has(o.geometry)){disposed.add(o.geometry);o.geometry.dispose();}if(o.material){(Array.isArray(o.material)?o.material:[o.material]).forEach(function(m){m.dispose();});}});while(this.root.children.length)this.root.remove(this.root.children[0]);this.materials=[];this.point=null;this.travel=null;this.render();};
+  Viewer.prototype.clear=function(){this.dropTargets();this.clearAimShot();this.fitPending=false;this.shotPoints=null;this.recordedDistance=null;this.pinned=null;this.disposePin();this.pinReticles=[];if(this.surface)this.surface.dispose();this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.gunAngle=0;this.savedAim=null;this.aimGroup=null;this.reticles=[];this.reticleLayer.replaceChildren();clearTimeout(this.turretTimer);this.turretTimer=null;this.turretPending=false;this.poseGeometries=null;this.poseBuilt=null;this.poseStale=false;this.spreadAim=null;this.hideSpread();clearTimeout(this.paintTimer);this.paintTimer=null;window.cancelAnimationFrame(this.frameId);this.frameId=null;this.cancelHover();this.cancelOrbit();this.pendingPan=null;this.inspectKey=null;this.paintMesh=null;this.outline=null;this.outlineDepth=null;this.engine=null;this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.loadedData=null;this.paintedKey=null;this.samples=[];var disposed=new Set();this.root.traverse(function(o){var shared=!!(o.parent&&o.parent.type==='ArrowHelper'&&(o===o.parent.line||o===o.parent.cone));if(o.geometry&&!shared&&!disposed.has(o.geometry)){disposed.add(o.geometry);o.geometry.dispose();}if(o.material){(Array.isArray(o.material)?o.material:[o.material]).forEach(function(m){m.dispose();});}});while(this.root.children.length)this.root.remove(this.root.children[0]);this.materials=[];this.point=null;this.travel=null;this.render();};
   Viewer.prototype.rebuild=function(){
     if(!this.loadedData)return;var T=THREE,self=this;this.samples=[];this.paintedKey=null;
     // A failed composition is retried on the next rebuild (pose or model) instead of staying off for good.
@@ -781,17 +788,25 @@
   // model appeared to occlude the circle. Transparent, depth off and a renderOrder above the recorded
   // rings (12) and the tracers (4) puts it last of all, on top of everything.
   // `style` is {color, dashed, opacity}; without one the circle is the gold manual estimate of 0.7.13.
-  Viewer.prototype.drawCircle=function(center,right,up,radius,style){
-    var T=THREE,points=[],s=style||{};
+  // `from`/`to` in radians cut an arc out of it (the reload); the full circle is the default.
+  function aimLine(center,right,up,radius,style,from,to){
+    var T=THREE,points=[],s=style||{},a0=from===undefined?0:from,a1=to===undefined?Math.PI*2:to;
     // 97 points, the last on top of the first: a closed T.Line rather than a LineLoop, because
     // computeLineDistances() has no distance for a LineLoop's closing segment and the dashes break there.
-    for(var j=0;j<=96;j++){var a=j/96*Math.PI*2;points.push(center.clone().addScaledVector(right,radius*Math.cos(a)).addScaledVector(up,radius*Math.sin(a)));}
+    var steps=Math.max(2,Math.round(96*Math.abs(a1-a0)/(Math.PI*2)));
+    for(var j=0;j<=steps;j++){var a=a0+(a1-a0)*j/steps;points.push(center.clone().addScaledVector(right,radius*Math.cos(a)).addScaledVector(up,radius*Math.sin(a)));}
     var options={color:s.color===undefined?0xf1d18b:s.color,transparent:true,opacity:s.opacity>0?s.opacity:1,depthTest:false,depthWrite:false};
     var material=s.dashed?new T.LineDashedMaterial(Object.assign(options,{dashSize:radius*.09,gapSize:radius*.06})):new T.LineBasicMaterial(options);
+    var line=new T.Line(new T.BufferGeometry().setFromPoints(points),material);
+    if(s.dashed)line.computeLineDistances();
+    line.frustumCulled=false;
+    return line;
+  }
+  function dropLine(scene,line){if(!line)return;scene.remove(line);line.geometry.dispose();line.material.dispose();}
+  Viewer.prototype.drawCircle=function(center,right,up,radius,style){
     this.hideSpread();
-    this.spreadCircle=new T.Line(new T.BufferGeometry().setFromPoints(points),material);
-    if(s.dashed)this.spreadCircle.computeLineDistances();
-    this.spreadCircle.renderOrder=14;this.spreadCircle.frustumCulled=false;this.scene.add(this.spreadCircle);this.draw();
+    this.spreadCircle=aimLine(center,right,up,radius,style);
+    this.spreadCircle.renderOrder=14;this.scene.add(this.spreadCircle);this.draw();
   };
   Viewer.prototype.estimateSpread=function(radius100){
     this.commitPose(); // the rays are cast against the engine, so a pose that is only drawn must be built first
@@ -810,18 +825,36 @@
   // camera - the page's shooter viewpoint - so the circle stands on the plane through the aimed point,
   // across that ray, and grows with the distance flown exactly as it does in the game.
   Viewer.prototype.setLiveAim=function(radius100){
-    // A shot has frozen the circle: the state under it goes on changing, the drawn circle does not.
-    if(this.aimFixed&&this.liveRadius100)return;
     var value=Number.isFinite(radius100)&&radius100>0&&radius100<=50?radius100:null;
     this.liveRadius100=value;
     if(value===null){this.liveAim=null;this.hideSpread();return;}
     this.drawLiveAim();
   };
-  Viewer.prototype.clearLiveAim=function(){this.liveRadius100=null;this.liveAimPoint=null;this.aimCursorPoint=null;this.liveAim=null;this.aimFixed=false;this.aimReloading=false;this.hideSpread();};
-  // The two states of the emulated shot. Fixing keeps the circle exactly where and as wide as it was;
-  // releasing hands it back to the cursor and to the running state, which the caller redraws at once.
-  Viewer.prototype.setAimFixed=function(on){this.aimFixed=!!on;this.drawLiveAim();};
-  Viewer.prototype.setAimReloading=function(on){on=!!on;if(on===this.aimReloading)return;this.aimReloading=on;this.drawLiveAim();};
+  Viewer.prototype.clearLiveAim=function(){this.liveRadius100=null;this.liveAimPoint=null;this.aimCursorPoint=null;this.liveAim=null;this.clearAimShot();this.hideSpread();};
+  // The ring the LAST SHOT left behind (user, 20.09): a copy of the live ring frozen where and as wide
+  // as it was, solid and brighter, standing next to its own tracer until the next shot replaces it. The
+  // live ring is untouched by this and goes on aiming.
+  Viewer.prototype.setAimShot=function(){
+    var aim=this.liveAim;
+    if(!aim)return false;
+    dropLine(this.scene,this.aimShotCircle);
+    this.aimShotCircle=aimLine(aim.center,aim.right,aim.up,aim.radius,AIM_FIXED);
+    this.aimShotCircle.renderOrder=15;this.scene.add(this.aimShotCircle);this.draw();
+    return true;
+  };
+  Viewer.prototype.clearAimShot=function(){
+    this.aimReloadPart=0;
+    if(this.aimShotCircle||this.aimArc){dropLine(this.scene,this.aimShotCircle);dropLine(this.scene,this.aimArc);this.aimShotCircle=null;this.aimArc=null;this.draw();}
+  };
+  // How much of the reload (or of the clip interval) has run, 0..1. Drawn as the amber arc over the live
+  // ring by drawLiveAim, so the arc follows the ring as the gun keeps aiming; 0 takes the arc away.
+  Viewer.prototype.setAimReload=function(part){
+    var p=Number(part);
+    p=p>0?Math.min(1,p):0;
+    if(p===this.aimReloadPart)return;
+    this.aimReloadPart=p;
+    this.drawReloadArc();   // the arc alone: the ring itself is not rebuilt for a reload step
+  };
   // The emulation as a whole. With it on, everything RECORDED leaves the scene (user, 20.09): the saved
   // reticle circles and the nominal estimate ring (the aim group), the recorded tracers and hit marks
   // (root children, through recordedShown) and their HTML reticles. Only the emulated circle and the
@@ -829,7 +862,7 @@
   Viewer.prototype.setAimEmulation=function(on){
     aimEmulation=!!on;
     this.aimChase=!!on;
-    if(!on)this.aimFixed=false;
+    if(!on){this.aimHold=false;this.clearAimShot();}
     if(this.aimGroup)this.aimGroup.visible=aimShown();
     this.syncRecorded();
     this.draw();
@@ -846,8 +879,21 @@
     var origin=this.camera.position.clone(),range=origin.distanceTo(center),frame=circleFrame(origin,center);
     var radius=range*this.liveRadius100/100;
     this.liveAim={center:center.clone(),right:frame.right,up:frame.up,radius:radius,origin:origin,range:range};
-    this.drawCircle(center,frame.right,frame.up,radius,this.aimFixed?AIM_FIXED:this.aimReloading?AIM_RELOAD:AIM_LIVE);
+    this.drawCircle(center,frame.right,frame.up,radius,AIM_LIVE);
+    this.drawReloadArc();
     return this.liveAim;
+  };
+  // The reload as the game draws it: an arc over the live ring, filling clockwise from the top over the
+  // reload time. `right` is screen-right and `up` screen-up in the circle's frame (right x up points back
+  // at the camera), so clockwise from the top runs from +pi/2 DOWNWARDS. One line rebuilt per frame.
+  Viewer.prototype.drawReloadArc=function(){
+    var had=!!this.aimArc;
+    dropLine(this.scene,this.aimArc);this.aimArc=null;
+    var aim=this.liveAim,part=this.aimReloadPart;
+    if(!aim||!(part>0)){if(had)this.draw();return;}
+    var top=Math.PI/2;
+    this.aimArc=aimLine(aim.center,aim.right,aim.up,aim.radius,AIM_ARC,top,top-Math.PI*2*Math.min(1,part));
+    this.aimArc.renderOrder=16;this.scene.add(this.aimArc);this.draw();
   };
   // Called from inspect() with the raycast it already did, so a pointer move costs no second cast. Without a
   // surface under the cursor the circle rests on the plane through the orbit centre, as aimAt() does.
@@ -860,9 +906,6 @@
     else{var plane=new T.Plane().setFromNormalAndCoplanarPoint(this.target.clone().sub(this.camera.position).normalize(),this.target),p=new T.Vector3();if(caster.ray.intersectPlane(plane,p))point=p;}
     if(!point)return null;
     this.aimCursorPoint=point;
-    // A fixed circle still follows the cursor with its EYES: the gun stays put, but where the cursor
-    // is has to be known, so that releasing the shot resumes the chase from the right gap.
-    if(this.aimFixed)return this.liveAim;
     if(!this.aimChase||!this.liveAimPoint)this.liveAimPoint=point.clone();
     return this.drawLiveAim();
   };
@@ -871,7 +914,7 @@
   // through; the distance to them plays no part in it.
   Viewer.prototype.aimGap=function(){
     var gun=this.spreadAim||this.liveAimPoint,cursor=this.aimCursorPoint;
-    if(!gun||!cursor||this.spreadAim||this.aimFixed)return 0; // a pinned or fixed centre is not chasing anything
+    if(!gun||!cursor||this.spreadAim)return 0; // a pinned centre is not chasing anything
     var eye=this.camera.position,a=gun.clone().sub(eye),b=cursor.clone().sub(eye);
     if(a.lengthSq()<1e-12||b.lengthSq()<1e-12)return 0;
     return a.normalize().angleTo(b.normalize());
@@ -882,7 +925,7 @@
   // cursor snaps exactly onto it, so a turret that has caught up reads identically to stage 1.
   Viewer.prototype.chaseAim=function(step){
     var T=THREE,gun=this.liveAimPoint,cursor=this.aimCursorPoint;
-    if(!gun||!cursor||this.spreadAim||this.aimFixed)return false;
+    if(!gun||!cursor||this.spreadAim)return false;
     var eye=this.camera.position.clone(),a=gun.clone().sub(eye),range=a.length(),b=cursor.clone().sub(eye);
     if(range<1e-6||b.lengthSq()<1e-12)return false;
     a.divideScalar(range);b.normalize();

@@ -1050,9 +1050,10 @@
       'Circle radius by the client’s own formula from the speed, the hull and turret rotation and the recoil.',
       'Equipment, perks and the fully trained crew come from Configuration beside the Shooter tile.',
       'How fast the vehicle gets going is our own linear approximation — the client has no such formula.']],
-    ['Reload', [
-      'A click fires only when the gun is loaded; while it reloads the click does nothing and the countdown runs here.',
-      'Clip guns fire at the clip interval and take the full reload after the last round.']]];
+    ['Firing', [
+      'A short click is one shot; holding the button fires on the gun’s own cooldown until you let go.',
+      'The reload fills an amber arc on the aiming circle and paces a held burst; a new press fires at once.',
+      'Clip guns fire at the clip interval and stop when the clip is empty — the clip reload is not emulated.']]];
   function buildAimInfo() {
     var box = document.querySelector('#aim-hud-info .toolbar-popover');
     if (!box) return;
@@ -1138,8 +1139,12 @@
   // reload running - and stops itself as soon as everything is at rest. It never touches the GPU
   // composition: only the circle's line and the text of the corner readout are redrawn.
   var aimOn = false, aimKeys = {}, aimFrame = 0, aimClock = 0, aimMove = null, aimNow = null;
-  var aimFixed = false, aimReload = null, aimClip = 0, aimShot = null, aimShotCount = 0, aimLastState = null;
+  var aimReload = null, aimClip = 0, aimClipSize = 1, aimShot = null, aimShotCount = 0, aimLastState = null;
+  // The pointer: aimDown says the button is down on a shot (not on a drag), aimBurst that the press has
+  // grown into a held burst, aimClipDry that the clip ran out and nothing more fires until the release.
+  var aimDown = false, aimBurst = false, aimHoldTimer = 0, aimClipDry = false;
   var aimLive = false, aimCursor = '';
+  var AIM_HOLD_MS = 250; // a press longer than this is a burst, a shorter one a single shot (user, 20.09)
   var AIM_KEYS = {KeyW: 'forward', KeyS: 'back', KeyA: 'left', KeyD: 'right'};
   // The game's CEF and a non-Latin keyboard layout both have to work, so the physical key is preferred
   // and the typed character is the fallback for a browser without KeyboardEvent.code.
@@ -1151,6 +1156,16 @@
   function aimHeld() { return !!(aimKeys.forward || aimKeys.back || aimKeys.left || aimKeys.right); }
   function aimSeconds() { return (window.performance && performance.now ? performance.now() : Date.now()) / 1000; }
   function aimReloadLeft() { return aimReload ? Math.max(0, aimReload.until - aimSeconds()) : 0; }
+  // How much of the running reload (or clip interval) is behind us, 0..1 - the fill of the arc on the ring.
+  function aimReloadPart() {
+    if (!aimReload || !(aimReload.until > aimReload.at)) return 0;
+    var part = (aimSeconds() - aimReload.at) / (aimReload.until - aimReload.at);
+    return part > 0 ? Math.min(1, part) : 0;
+  }
+  function aimClipRounds() {
+    var rl = ArmorBallistics.reloadSeconds(aimBlockData(), aimModifiers());
+    return rl && rl.shots > 1 && rl.interval > 0 ? rl.shots : 1;
+  }
   function startAimLoop() {
     if (aimFrame || !aimOn) return;
     aimFrame = window.requestAnimationFrame(aimTick);
@@ -1168,7 +1183,9 @@
     // left alone. The keys themselves are still tracked, or a key released during the drag would stay
     // down for ever; dropping the clock makes the first frame after the drag a zero-length one, so
     // everything resumes from exactly the state it was paused in.
-    if (viewer.dragging) { aimClock = 0; startAimLoop(); return; }
+    // A pointer held for a burst keeps the viewer's `dragging` flag up although nothing is being dragged,
+    // so the hold is excluded here or the shooter would freeze for the whole burst.
+    if (viewer.dragging && !viewer.aimHold) { aimClock = 0; startAimLoop(); return; }
     var now = aimSeconds(), dt = aimClock ? now - aimClock : 0; aimClock = now;
     var mods = aimModifiers();
     aimMove = ArmorBallistics.moveStep(aimMove, aimKeys, a, mods, dt);
@@ -1176,12 +1193,16 @@
     if (chase.step > 0) viewer.chaseAim(chase.step);
     var state = {speed: aimMove.speed, hullTurn: aimMove.hullTurn, turretTurn: chase.turretTurn};
     aimNow = ArmorBallistics.aimStep(aimNow, state, a, mods, dt);
+    // The next shot of a held burst, the moment the cooldown is over. The recoil of the shot just fired is
+    // already in `aimNow`, so a gun that cannot settle between two rounds fires the second one wider -
+    // which is the whole point of the feature for autoloaders.
+    if (aimBurst && aimDown && !aimClipDry && aimReloadLeft() <= 0) fireShot();
     paintAim(state);
     var reloading = aimReloadLeft() > 0;
-    if (aimHeld() || !aimMove.resting || reloading || !chase.caught || (aimNow && !aimNow.settled)) startAimLoop();
+    if (aimHeld() || !aimMove.resting || reloading || !chase.caught || (aimBurst && aimDown && !aimClipDry) || (aimNow && !aimNow.settled)) startAimLoop();
     else { aimClock = 0; if (reloadJustFinished()) paintAim(state); }
   }
-  // The reload is over: drop it so the readout stops counting and the next click is allowed.
+  // The reload is over: drop it so the readout stops counting and the arc leaves the ring.
   function reloadJustFinished() {
     if (!aimReload || aimReloadLeft() > 0) return false;
     aimReload = null; return true;
@@ -1192,7 +1213,9 @@
     var a = aimBlockData();
     if (!a || !viewer || !aimNow) return;
     aimLastState = state;
-    viewer.setLiveAim(aimNow.radius100);   // ignored while a shot holds the circle fixed
+    // The reload first, so the one redraw of the ring below carries the arc with it.
+    if (viewer.setAimReload) viewer.setAimReload(aimReloadPart());
+    viewer.setLiveAim(aimNow.radius100);   // the live ring never stops aiming (user, 20.09)
     paintHud();
   }
   // The readout in the corner of the scene: the last shot's figures, the reload underneath, and the
@@ -1201,62 +1224,99 @@
     var hud = $('aim-hud');
     if (!hud || hud.hidden) return;
     var left = aimReloadLeft();
-    if (viewer && viewer.setAimReloading) viewer.setAimReloading(left > 0 && !aimFixed);
-    $('aim-hud-cap').textContent = aimShot ? 'Shot ' + aimShot.number : 'No shot yet';
+    // While the button is down the count of the clip rides on the caption, so a burst can be followed
+    // round by round; once it is let go only the last shot's number stays (user, 20.09: no log).
+    $('aim-hud-cap').textContent = !aimShot ? 'No shot yet'
+      : 'Shot ' + aimShot.number + (aimDown && aimClipSize > 1 ? ' · clip ' + aimClip + '/' + aimClipSize : '');
     $('aim-hud-chance').textContent = aimShot ? aimShot.chance : '—';
     $('aim-hud-damage').textContent = aimShot ? aimShot.damage : '';
-    $('aim-hud-state').textContent = left > 0 ? 'Reloading ' + left.toFixed(1) + ' s'
-      : aimFixed ? 'Shot fixed · click to aim again'
-      : aimShot ? 'Loaded · click to shoot' : 'W A S D drive · click to shoot';
+    $('aim-hud-state').textContent = aimClipDry ? (aimClipSize > 1 ? 'Clip empty · let go to reload' : 'Let go to fire again')
+      : left > 0 ? 'Reloading ' + left.toFixed(1) + ' s'
+      : aimShot ? 'Ready · click or hold to fire' : 'W A S D drive · click or hold to fire';
   }
-  // A click in the scene (user's decision, 19.09: no Alt - it may never reach the page inside the game).
-  // Two states and nothing else (20.09): aiming, then a click FIXES the shot, then a click releases it.
-  // The tracer goes exactly down the middle of the circle, where the gun points: the random offset a
-  // real shot gets is the server's, and this page shows the odds, not a rolled die. What the circle was
-  // worth at that instant is integrated there and then with 1024 rays and stands in the corner readout.
+  // One shot (user's decision, 19.09: no Alt - it may never reach the page inside the game). The tracer
+  // goes exactly down the middle of the LIVE circle, where the gun points: the random offset a real shot
+  // gets is the server's, and this page shows the odds, not a rolled die. What the circle was worth at
+  // that instant is integrated there and then with 1024 rays and stands in the corner readout, and a copy
+  // of the circle stays on the model beside the tracer until the next shot replaces it (user, 20.09).
+  // The live circle itself is never frozen: it goes on aiming through the shot and past it.
+  // Whether the gun MAY fire is decided by the caller, not here.
   function fireShot() {
     var a = aimBlockData();
     if (!aimLive || !a || !viewer || !viewer.liveRadius100) return false;
-    if (aimFixed) { releaseShot(); return true; }
-    var left = aimReloadLeft();
-    if (left > 0) { paintHud(); startAimLoop(); return true; }
     var centre = viewer.spreadAim || viewer.liveAimPoint;
     if (!centre) return false;
     var mods = aimModifiers(), shell = viewer.shell;
     var chance = shell ? viewer.liveAimProbability(shell, 1024) : null;
     viewer.pinAtPoint(centre);
+    if (viewer.setAimShot) viewer.setAimShot();   // the ring left behind, drawn before the recoil widens the live one
     aimShot = {number: ++aimShotCount,
       chance: !chance ? '—' : Math.round(chance.low) + ' %',
       damage: !chance ? '' : damagePct(chance.damage) + ' % of alpha'};
-    // The circle freezes where it stood; the MODEL under it goes on running, so the recoil enters the
-    // factor for this very instant and the exponential restarts from it. Releasing the shot therefore
-    // shows the circle as it is by then, not as it was when the shot left.
-    aimFixed = true;
-    viewer.setAimFixed(true);
+    // The recoil enters the factor for this very instant and the exponential restarts from it, so the
+    // next round of a held burst leaves a wider circle unless the gun had time to settle.
     var state = aimLastState || aimState();
     aimNow = ArmorBallistics.aimShot(aimNow, state, a, mods);
+    // The cooldown to the next round of the same hold. OVERHEATING GUNS (ARES and the like) are out of
+    // scope: their heat/cooling rule is not in the record and not modelled here.
     var rl = ArmorBallistics.reloadSeconds(a, mods), now = aimSeconds();
-    if (rl) {
-      if (aimClip > 1 && rl.shots > 1 && rl.interval > 0) { aimClip--; aimReload = {until: now + rl.interval, clip: true}; }
-      else { aimClip = rl.shots; aimReload = {until: now + rl.reload, clip: false}; }
-    }
-    paintHud();
-    startAimLoop();
+    aimClipDry = false;
+    // No reload in the record: the cooldown is unknown, so a hold fires once and waits for the release
+    // instead of emptying a magazine at the frame rate.
+    if (!rl) { aimReload = null; aimClipDry = true; }
+    else if (aimClipSize > 1) {
+      aimClip = Math.max(0, aimClip - 1);
+      // An empty clip simply stops the burst: the clip reload is NOT emulated (user, 20.09 - it would
+      // only annoy), letting go and pressing again starts from a full clip.
+      if (aimClip > 0) aimReload = {at: now, until: now + rl.interval, clip: true};
+      else { aimClipDry = true; aimReload = null; }
+    } else aimReload = {at: now, until: now + rl.reload, clip: false};
     return true;
   }
-  function releaseShot() {
-    aimFixed = false;
-    if (viewer) { viewer.setAimFixed(false); if (aimNow) viewer.setLiveAim(aimNow.radius100); }
-    paintHud();
+  // --- The pointer: a tap is one shot, a hold is a burst on the gun's own cooldown (user, 20.09) ------
+  // pointerdown only arms the press - it may still become an orbit or turret drag, and a drag never
+  // shoots. Claiming the press here is what tells the viewer this is not a drag.
+  function beginShot() {
+    if (!aimLive || !aimBlockData() || !viewer || !viewer.liveRadius100) return false;
+    cancelHoldTimer();
+    aimDown = true; aimBurst = false; aimClipDry = false;
+    // A fresh press is never blocked by a running reload and starts with a full clip: the reload paces
+    // the shots INSIDE one hold and nothing else.
+    aimClipSize = aimClipRounds(); aimClip = aimClipSize;
+    aimHoldTimer = window.setTimeout(holdFire, AIM_HOLD_MS);
+    return true;
+  }
+  // Held long enough without moving: the burst starts with its first shot at this instant.
+  function holdFire() {
+    aimHoldTimer = 0;
+    if (!aimDown) return;
+    aimBurst = true;
+    if (fireShot()) paintAim(aimLastState || aimState());
     startAimLoop();
   }
+  // Let go. A short press fires its single shot here; a burst has been firing all along and just stops,
+  // leaving the ring and the figures of the LAST shot on screen.
+  function endShot() {
+    cancelHoldTimer();
+    if (!aimDown) return;
+    var single = !aimBurst;
+    aimDown = false; aimBurst = false; aimClipDry = false;
+    if (single && fireShot()) paintAim(aimLastState || aimState());
+    else paintHud();
+    startAimLoop();
+  }
+  // The press turned into an orbit, turret or gun drag: no shot at all, and the emulation pauses as
+  // it did before.
+  function cancelShot() { cancelHoldTimer(); aimDown = false; aimBurst = false; aimClipDry = false; paintHud(); }
+  function cancelHoldTimer() { if (aimHoldTimer) window.clearTimeout(aimHoldTimer); aimHoldTimer = 0; }
   // Everything the emulation holds, back to a standing, loaded, fully aimed shooter.
   function resetAimRun() {
+    cancelHoldTimer();
     aimKeys = {}; aimMove = null; aimNow = null; aimReload = null;
-    aimFixed = false; aimShot = null; aimShotCount = 0; aimLastState = null;
-    if (viewer) viewer.setAimFixed(false);
-    var rl = ArmorBallistics.reloadSeconds(aimBlockData(), aimModifiers());
-    aimClip = rl ? rl.shots : 1;
+    aimDown = false; aimBurst = false; aimClipDry = false;
+    aimShot = null; aimShotCount = 0; aimLastState = null;
+    if (viewer) { viewer.aimHold = false; if (viewer.clearAimShot) viewer.clearAimShot(); }
+    aimClipSize = aimClipRounds(); aimClip = aimClipSize;
   }
   // The switch itself. Off means off: no frame loop, no key handlers, no live circle, no crosshair, and
   // everything recorded is back on the model.
@@ -1327,7 +1387,7 @@
       return;
     }
     if (!aimNow) {
-      aimClip = (ArmorBallistics.reloadSeconds(a, aimModifiers()) || {shots: 1}).shots;
+      aimClipSize = aimClipRounds(); aimClip = aimClipSize;
       aimNow = ArmorBallistics.aimStep(null, aimState(), a, aimModifiers(), 0);
     }
     if (!aimNow) { viewer.clearLiveAim(); return; }
@@ -2136,8 +2196,10 @@
   // goes back to following the cursor.
   $('reset-aim').onclick=function(){if(viewer){viewer.spreadAim=null;staleEstimate();if(viewer.liveRadius100)viewer.drawLiveAim();}};
   $('spread-radius').oninput=staleEstimate;
-  // A click in the scene is a shot while the emulation is on; with it off the viewer pins a point as before.
-  if(viewer)viewer.onShot=function(){return fireShot();};
+  // The press in the scene while the emulation is on: armed on pointerdown, fired on release (a tap) or on
+  // the gun's cooldown (a hold), dropped when the press turns into a drag. With the emulation off none of
+  // it claims the press and the viewer pins a point as before.
+  if(viewer){viewer.onShotDown=function(){return beginShot();};viewer.onShotUp=function(){endShot();};viewer.onShotCancel=function(){cancelShot();};}
   // The cursor moved, so the turret has somewhere to go: the loop decides for itself whether anything
   // is actually left to do and stops again straight away when there is not.
   if(viewer)viewer.onAimMove=function(){if(aimOn)startAimLoop();};
