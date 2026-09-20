@@ -14,6 +14,7 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
   upgraded-trophy variant, plus the three perks. Icons are unpacked from your client on the next game start.
 - With the emulation on, the recorded reticles and tracers make way for the emulated shot; with it off they are
   always shown (the ◎ toggle is gone).
+- A point pinned elsewhere on the model hides the recorded aim circles: they belong to the recorded shot.
 
 ## 0.7.14 (2026-09-19)
 

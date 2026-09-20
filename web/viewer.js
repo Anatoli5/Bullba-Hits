@@ -56,7 +56,7 @@
     this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.trackOpacity=.12;this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.lighting=false;this.gunAngle=0;this.autoFrame=true;this.frameScale=this.defaults.scale;this.outline=null;this.outlineDepth=null;this.outlineStyle={brightness:.8,opacity:.06};this.showOutline=false;
     var drag = null;
     container.addEventListener('contextmenu', function(e) { e.preventDefault(); });
-    container.addEventListener('pointerdown', function(e) { /* The scene tiles and the modifier groups beside them are controls of their own: capturing the pointer here would retarget the click to #viewport and the shooter tile would never fire. Leaving the drag unstarted also keeps the pointerup below from pinning a point under the control. */ if(e.target&&e.target.closest&&e.target.closest('.viewport-tile,.mod-slot,.swap-roles'))return; /* pan: right button, or Ctrl + left button (the in-game browser swallows the right button) */ if(e.button===2||(e.button===0&&e.ctrlKey)){drag={pan:true,x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY,moved:false};self.dragging=true;try{container.setPointerCapture(e.pointerId);}catch(ignore){}return;}if(e.button!==0)return;if(e.altKey){self.aimAt(e);return;}drag={x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY,moved:false,part:self.pickPart(e)};self.dragging=true; try{container.setPointerCapture(e.pointerId);}catch(ignore){} container.focus(); });
+    container.addEventListener('pointerdown', function(e) { /* The scene tiles and the modifier groups beside them are controls of their own: capturing the pointer here would retarget the click to #viewport and the shooter tile would never fire. Leaving the drag unstarted also keeps the pointerup below from pinning a point under the control. */ if(e.target&&e.target.closest&&e.target.closest('.viewport-tile,.mod-slot,.swap-roles,.aim-switch,#aim-config'))return; /* pan: right button, or Ctrl + left button (the in-game browser swallows the right button) */ if(e.button===2||(e.button===0&&e.ctrlKey)){drag={pan:true,x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY,moved:false};self.dragging=true;try{container.setPointerCapture(e.pointerId);}catch(ignore){}return;}if(e.button!==0)return;if(e.altKey){self.aimAt(e);return;}drag={x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY,moved:false,part:self.pickPart(e)};self.dragging=true; try{container.setPointerCapture(e.pointerId);}catch(ignore){} container.focus(); });
     container.addEventListener('pointermove', function(e) { if (!drag){self.hover(e);return;}if(Math.abs(e.clientX-drag.sx)+Math.abs(e.clientY-drag.sy)>3)drag.moved=true;if(!drag.moved)return;if(drag.pan){/* the pan is accumulated and applied once in the camera's own frame loop, not per event */var p=self.pendingPan||(self.pendingPan={x:0,y:0});p.x+=e.clientX-drag.x;p.y+=e.clientY-drag.y;drag.x=e.clientX;drag.y=e.clientY;self.startOrbit();return;}if(drag.part===2||drag.part===3){/* turret and gun are one module: left/right turns the turret, up/down moves the gun */var dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(dx)self.setTurret(self.turretAngle-dx*.5);if(dy)self.setGun(self.gunAngle+dy*.16);}else{self.orbitTo(self.targetYaw-(e.clientX-drag.x)*0.008,self.targetPitch+(e.clientY-drag.y)*0.008);}drag.x=e.clientX;drag.y=e.clientY; });
     // The end of a drag: the pose the drag only previewed is rebuilt in full, and one frame is asked for so the
     // map comes back at full quality with the ricochet trace (paint() draws a drag at half resolution).
@@ -497,7 +497,9 @@
     if(!this.engine)return;var caster=this.pointerRay(event),objects=this.paintMesh?[this.paintMesh]:[];if(this.trackGroup)objects.push(this.trackMesh);
     var hits=caster.intersectObjects(objects);if(!hits.length)return;var hit=hits[0],normal=hit.face?hit.face.normal.clone().transformDirection(hit.object.matrixWorld):null;
     this.pinned={origin:caster.ray.origin.clone(),direction:caster.ray.direction.clone(),point:hit.point.clone(),normal:normal};
-    this.refreshPin();if(this.onPin)this.onPin(true);
+    // The recorded aim circles belong to the recorded shot line: a tracer pinned elsewhere is another shot, so
+    // they leave with the recorded tracer and come back when the pin is dropped (user, 20.09).
+    this.refreshPin();this.showSavedAim(false);if(this.onPin)this.onPin(true);
   };
   // Tracer: a 2.3 m arrow ending at the hit point. A WebGL line is always one pixel wide, so the line is backed by a
   // thin cylinder (6 mm radius: a pixel or two at a Fit zoom, a visible dot end-on) — the user could barely find the
@@ -606,7 +608,7 @@
   Viewer.prototype.pinReticleAt=function(position,classes){
     this.addReticle(position);var r=this.reticles[this.reticles.length-1];r.pinned=true;classes.split(' ').forEach(function(c){r.element.classList.add(c);});this.pinReticles.push(r);
   };
-  Viewer.prototype.unpin=function(){this.pinned=null;this.refreshPin();if(this.onPin)this.onPin(false);this.draw();};
+  Viewer.prototype.unpin=function(){this.pinned=null;this.refreshPin();this.showSavedAim(aimShown());if(this.onPin)this.onPin(false);this.draw();};
   // Recorded markers (arrows, reticles, aim circles) belong to the saved pose and the saved shot: an explored
   // pose or a pinned shot replaces them until the user returns.
   Viewer.prototype.recordedShown=function(){return aimShown()&&Math.abs(this.turretAngle)<.001&&Math.abs(this.gunAngle)<.001&&!this.pinned;};
