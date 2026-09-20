@@ -911,16 +911,15 @@
   // .toolbar-popover, closed by the document click handler like every other one. It hangs under the
   // Shooter tile, so it opens upward.
   var aimConfigControls = {}, aimNameMode = '', aimPickerSlot = -1;
-  // The icons are the CLIENT'S OWN and are never shipped with the mod (user, 20.09): the exporter
-  // unpacks them out of the installed client into <data>/icons on a game start, exactly as it does
-  // with the collision models. Before that first start the file is simply missing, and the tile falls
-  // back to a short text label instead of showing a broken image.
+  // The icons ship with the page in web/icons (user, 20.09: interface art belongs to the page, a fresh
+  // install must look right before the first game start). A missing file still falls back to a short
+  // text label instead of a broken image.
   function aimIcon(name, label) {
     var box = node('span', undefined, 'aim-icon');
     var img = node('img');
     img.alt = ''; img.setAttribute('aria-hidden', 'true'); img.draggable = false;
     img.onerror = function () { this.remove(); box.appendChild(node('span', label, 'aim-icon-text')); };
-    img.src = 'data/icons/' + name + '.png';
+    img.src = 'web/icons/' + name + '.png';
     box.appendChild(img);
     return box;
   }
@@ -1318,8 +1317,7 @@
   // reticle shows it. The shells are the very list the heading's shell chips are built from, and an
   // icon click goes through the SAME selectShell() a chip does, so the two are never out of step: the
   // pressed state of both is set in updateShell(), which marks every [data-shell] control on the page.
-  // The icon files are the CLIENT'S OWN, unpacked by the mod into <data>/icons on a game start and
-  // never shipped with it; before that first start aimIcon() falls back to a short text badge.
+  // The icon files ship with the page (web/icons); a missing one falls back to a short text badge.
   // The client names the icon after the shell type, and modern HE has one of its own; the record
   // carries no gold/premium flag, so a premium shell shows the base icon of its kind.
   function shellIconName(c) {

@@ -4,6 +4,8 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 
 ## Unreleased
 
+- Target modifiers beside the Collision model tile (spall liner, field modification, driver skill) are back: the script was missing from the package since 0.7.12.
+- Equipment, perk and shell icons ship with the page; nothing is unpacked from the client on a game start any more.
 - Info panels: the "flies past after the ricochet" chip is gone; the ricochet chip and 0 % say it.
 
 ## 0.7.15 (2026-09-20)
