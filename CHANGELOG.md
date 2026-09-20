@@ -22,8 +22,8 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
   ring on the hit-line panel above it — "Circle 25 %", the expected damage of a shot inside that circle as
   a share of the shell's alpha. The hit-line figure is the recorded reticle's (or the nominal ring's) until
   you fire, and your own shot's afterwards. The corner readout is gone.
-- The aiming circle is the reload indicator, as in the game: it is drawn from nothing and fills clockwise
-  while the gun reloads, so a whole circle means a loaded gun.
+- While you hold the button the aiming circle is the reload indicator, as in the game: it is drawn from
+  nothing and fills clockwise while the gun reloads. Let go and the ring is whole again; only the recoil stays.
 - Settings → Scene: "Impact mark opacity" (10–100 %, 50 % by default) dims the cross at the impact point,
   which covered the armour when seen from the shooter's seat.
 - The ⓘ help badge is a gold glyph instead of a gold disc in the Vehicles panel, and the colour legend has

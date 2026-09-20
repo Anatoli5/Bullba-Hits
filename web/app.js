@@ -1377,6 +1377,10 @@
     aimDown = false; aimBurst = false; aimClipDry = false;
     if (single && fireShot()) paintAim(aimLastState || aimState());
     else paintCircleLines();
+    // The reload is shown only while the button is held and the gun fires on its cooldown; a released
+    // button leaves a whole ring - the recoil bloom stays, the fill does not (user, 20.09).
+    aimReload = null;
+    paintAim(aimLastState || aimState());
     startAimLoop();
   }
   // The pointer moved past the drag threshold. Before the first round that is an orbit, turret or gun
