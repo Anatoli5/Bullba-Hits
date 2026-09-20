@@ -191,11 +191,16 @@
     var brake=seconds(mods&&mods.brakeSeconds,MOVE.brake),turn=seconds(mods&&mods.turnSeconds,MOVE.turn);
     var speed=Number(s.speed)||0,hullTurn=Number(s.hullTurn)||0;
     var target=k.forward&&!k.back?forward:k.back&&!k.forward?-back:0;
+    // BRAKING IS A PHASE OF ITS OWN, as in the game (user, 20.09): while the key pulls against the
+    // way the vehicle is going - S with a forward speed, W with a reverse one - the step only brakes,
+    // and it stops AT ZERO. The acceleration the other way starts from a standstill on the next step,
+    // at its own rate, instead of the brake rate carrying the speed straight through zero.
+    var goal=target!==0&&speed*target<0?0:target;
     // Pushing the speed further from zero in the direction it already has is acceleration; anything
-    // else - releasing the key, or reversing through zero - is the brake.
-    var rising=target!==0&&speed*target>=0&&Math.abs(target)>Math.abs(speed);
-    var rate=rising?(target>0?forward/accel:back/accelBack):Math.max(forward,back)/brake;
-    speed=approach(speed,target,Math.max(0,rate)*step);
+    // else - releasing the key, or braking towards zero - is the brake.
+    var rising=goal!==0&&speed*goal>=0&&Math.abs(goal)>Math.abs(speed);
+    var rate=rising?(goal>0?forward/accel:back/accelBack):Math.max(forward,back)/brake;
+    speed=approach(speed,goal,Math.max(0,rate)*step);
     var hullTarget=k.left&&!k.right?-hullMax:k.right&&!k.left?hullMax:0;
     hullTurn=approach(hullTurn,hullTarget,(hullMax>0?hullMax/turn:0)*step);
     return {speed:speed,hullTurn:hullTurn,forward:forward,back:back,hullMax:hullMax,
@@ -208,13 +213,20 @@
   // left chases the cursor - which is why turretTurn is never below |hullTurn| while A or D is held,
   // and why a fast hull rotation can make the gun fall behind the cursor altogether. `gap` is the
   // angle between where the gun points and where the cursor points, in radians.
-  function turretChase(gap,hullTurn,aim,mods,dt){
+  function turretChase(gap,hullTurn,aim,mods,dt,swung){
     var m=aimMods(mods),limit=(aim&&aim.turretRotationSpeed>0?aim.turretRotationSpeed:0)*m.turretSpeed;
     var step=Math.max(1e-4,Math.min(.25,Number(dt)||0)),hull=Math.abs(Number(hullTurn)||0);
     var want=Math.max(0,Number(gap)||0)/step;
     // No turret speed in the record: the gun is simply where the cursor is, and the formula sees the
     // hull's own rotation only. Better than pretending the turret cannot move at all.
     if(!(limit>0))return {rate:want,turretTurn:hull,step:Math.max(0,Number(gap)||0),caught:true};
+    // `swung`: the caller has ALREADY carried the aim point around with the hull (stage 6, user 20.09),
+    // so the gap handed in contains the hull's own turn. The whole relative budget is then free to close
+    // it, and the relative turret speed - the one the dispersion formula asks for - is exactly the rate
+    // the gun is pulled back at. Holding the aim against a turning hull therefore still costs |hullTurn|
+    // of the budget and leaves limit - |hullTurn| to gain on the cursor, as it did before; counting the
+    // hull twice would instead push the ring away faster than the turret could ever fetch it back.
+    if(swung){var rel=Math.min(want,limit);return {rate:rel,turretTurn:rel,step:rel*step,caught:rel>=want-1e-9};}
     var budget=Math.max(0,limit-hull),rate=Math.min(want,budget);
     return {rate:rate,turretTurn:Math.min(limit,hull+rate),step:rate*step,caught:rate>=want-1e-9};
   }

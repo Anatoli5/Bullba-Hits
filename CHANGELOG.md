@@ -8,20 +8,23 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
   bottom strip with the sliders is gone.
 - A tap is one shot; holding the button fires on the gun's cooldown until you let go, and a clip stops
   when it is empty. Moving the mouse aims a burst instead of stopping it, and a new press fires at once.
-- The bottom-right corner shows the chance to damage of the aiming circle live (coarse while anything moves,
-  exact at rest) and under it the expected damage as a share of alpha with the shell's alpha in HP —
-  "30 % · 410"; an ⓘ beside it explains the mode. The last shot leaves its own solid circle and tracer on the
-  model and its figures on a line underneath.
+- W A S D drive from the moment the mode is on, wherever the focus is. S brakes a forward run to a stop
+  before it reverses and W does the same the other way; A and D turn the hull, which carries the gun with
+  it, and the turret chases the crosshair back with what speed it has left. A small tile left of the
+  Shooter tile shows the speed in km/h with a W A S D hint.
+- Each aiming circle prints one figure on an info panel: the live cyan ring on "Under the cursor", the last
+  shot's magenta ring on the pinned-shot panel above it — "Circle 25 %", the expected damage of a shot
+  inside the circle as a share of the shell's alpha. The corner readout is gone.
 - The aiming circle is the reload indicator, as in the game: it is drawn from nothing and fills clockwise
   while the gun reloads, so a whole circle means a loaded gun.
-- The ⓘ help badge is a gold glyph instead of a gold disc, here and in the Vehicles panel, and the colour
-  legend is the bar with its title again — the shell's alpha is printed in the corner readout only.
+- The ⓘ help badge is a gold glyph instead of a gold disc in the Vehicles panel, and the colour legend has
+  been taken off the scene.
 - The circle is drawn over the model now, cyan and dashed; the mouse pointer becomes a crosshair
   (cross or dot, Settings → Scene).
 - Configuration: three equipment slots with the game's own icons, each in its standard, improved, trophy or
   upgraded-trophy variant, plus the three perks. Icons are unpacked from your client on the next game start.
-- With the emulation on, the recorded reticles and tracers make way for the emulated shot; with it off they are
-  always shown (the ◎ toggle is gone).
+- The battle's own reticles and tracers stay on screen when the mode goes on and make way for your FIRST
+  shot; switching the mode off brings them back (the ◎ toggle is gone).
 - A point pinned elsewhere on the model hides the recorded aim circles: they belong to the recorded shot.
 - `tools/verdicts_offline.cjs`: the Statistics log pass runs over the exported records outside the game, so the
   page's estimate can be checked against the server's result without the game client open.

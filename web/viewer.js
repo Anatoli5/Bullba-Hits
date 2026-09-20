@@ -10,16 +10,16 @@
   // to leave the settle comparisons below permanently unsatisfied.
   function clock(){return window.performance&&window.performance.now?window.performance.now():Date.now();}
   // Whether the RECORDED markers belong on screen. There is no checkbox any more (0.7.15): the recorded
-  // circles are always shown, except while the aim emulation is running - then the scene belongs to the
-  // emulated shot alone (user, 20.09), so nothing recorded competes with the circle and its tracer.
-  var aimEmulation=false;
-  function aimShown(){return !aimEmulation;}
-  // The emulated circle: cyan so it reads over the red-green heat map (yellow is lost in it). TWO rings
-  // (user, 20.09): the LIVE one is dashed and never stops aiming, and the one the last shot left behind
-  // is solid and brighter. The reload IS the live ring (user, 20.09): while the gun reloads the ring is
-  // drawn only as far as the reload has run, so a whole ring means a loaded gun. No second line, no
-  // colour of its own.
-  var AIM_LIVE={color:0x5ee0ff,dashed:true,opacity:.95},AIM_FIXED={color:0xbdf4ff,dashed:false,opacity:1};
+  // circles are always shown, and switching the emulation on no longer takes them away (user, 20.09).
+  // They make way for the USER'S FIRST SHOT - the same rule as pinning a point on a hit - and come back
+  // when the mode goes off or the emulated shot is dropped.
+  var aimFired=false;
+  function aimShown(){return !aimFired;}
+  // The emulated circles: the LIVE one is cyan so it reads over the red-green heat map (yellow is lost
+  // in it), dashed, and never stops aiming; the one the LAST SHOT left behind is solid MAGENTA (user,
+  // 20.09), the colour every figure of that shot is printed in. The reload IS the live ring: while the
+  // gun reloads the ring is drawn only as far as the reload has run, so a whole ring means a loaded gun.
+  var AIM_LIVE={color:0x5ee0ff,dashed:true,opacity:.95},AIM_FIXED={color:0xff5ad6,dashed:false,opacity:1};
   function linear(color){return color.map(function(c){return c<=.04045?c/12.92:Math.pow((c+.055)/1.055,2.4);});}
   var baseColors=[[.38,.46,.54],[.65,.73,.8],[.75,.83,.87],[.55,.65,.72]].map(linear);
   function externalLayer(t){return t.part===0||!!(t.armor&&Number.isFinite(t.armor.vehicleDamageFactor)&&t.armor.vehicleDamageFactor<=1e-5);}
@@ -50,7 +50,9 @@
     // 0..1, and it is how much of the live ring is drawn; null = loaded, the whole ring. aimHold says
     // the pointer is down on a shot, not on a drag.
     this.liveRadius100=null;this.liveAimPoint=null;this.aimCursorPoint=null;this.liveAim=null;this.aimChase=false;this.aimProfileName=ArmorBallistics.aimProfileDefault;
-    this.aimShotCircle=null;this.aimReloadPart=null;this.aimHold=false;
+    // aimPinned: the pinned line on screen is the emulated shot's own, so dropping that shot releases it
+    // and the recorded tracer and reticles come back.
+    this.aimShotCircle=null;this.aimReloadPart=null;this.aimHold=false;this.aimPinned=false;
     this.frameAt=0;this.frameTimes=[]; // when the pending frame was asked for, and the cadence of the frames that ran
     this.contextLost=false;this.dragging=false;this.hoverId=null;this.hoverEvent=null;this.inspectKey=null;
     // The camera is driven by its own frame loop: pointer and key events only move the target.
@@ -61,7 +63,7 @@
     this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.trackOpacity=.12;this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.lighting=false;this.gunAngle=0;this.autoFrame=true;this.frameScale=this.defaults.scale;this.outline=null;this.outlineDepth=null;this.outlineStyle={brightness:.8,opacity:.06};this.showOutline=false;
     var drag = null;
     container.addEventListener('contextmenu', function(e) { e.preventDefault(); });
-    container.addEventListener('pointerdown', function(e) { /* The scene tiles and the modifier groups beside them are controls of their own: capturing the pointer here would retarget the click to #viewport and the shooter tile would never fire. Leaving the drag unstarted also keeps the pointerup below from pinning a point under the control. */ if(e.target&&e.target.closest&&e.target.closest('.viewport-tile,.mod-slot,.swap-roles,.aim-switch,#aim-config'))return; /* pan: right button, or Ctrl + left button (the in-game browser swallows the right button) */ if(e.button===2||(e.button===0&&e.ctrlKey)){drag={pan:true,x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY,moved:false};self.dragging=true;try{container.setPointerCapture(e.pointerId);}catch(ignore){}return;}if(e.button!==0)return;if(e.altKey){self.aimAt(e);return;}drag={x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY,moved:false,part:self.pickPart(e)};self.dragging=true; try{container.setPointerCapture(e.pointerId);}catch(ignore){} container.focus();
+    container.addEventListener('pointerdown', function(e) { /* The scene tiles and the modifier groups beside them are controls of their own: capturing the pointer here would retarget the click to #viewport and the shooter tile would never fire. Leaving the drag unstarted also keeps the pointerup below from pinning a point under the control. */ if(e.target&&e.target.closest&&e.target.closest('.viewport-tile,.mod-slot,.swap-roles,.aim-switch,.aim-drive,#aim-config'))return; /* pan: right button, or Ctrl + left button (the in-game browser swallows the right button) */ if(e.button===2||(e.button===0&&e.ctrlKey)){drag={pan:true,x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY,moved:false};self.dragging=true;try{container.setPointerCapture(e.pointerId);}catch(ignore){}return;}if(e.button!==0)return;if(e.altKey){self.aimAt(e);return;}drag={x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY,moved:false,part:self.pickPart(e)};self.dragging=true; try{container.setPointerCapture(e.pointerId);}catch(ignore){} container.focus();
       /* Hold to fire (user, 20.09): the press itself never shoots. The page starts a hold timer and decides -
          a short press is one shot on release, a long one a burst on the gun's cooldown - and a drag past the
          threshold below cancels the whole thing. aimHold marks the press as a shot so the emulation is not
@@ -839,22 +841,32 @@
   };
   Viewer.prototype.clearLiveAim=function(){this.liveRadius100=null;this.liveAimPoint=null;this.aimCursorPoint=null;this.liveAim=null;this.clearAimShot();this.hideSpread();};
   // The ring the LAST SHOT left behind (user, 20.09): a copy of the live ring frozen where and as wide
-  // as it was, solid and brighter, standing next to its own tracer until the next shot replaces it. The
-  // live ring is untouched by this and goes on aiming.
+  // as it was, solid and magenta, standing next to its own tracer until the next shot replaces it. The
+  // live ring is untouched by this and goes on aiming. This is also the moment everything RECORDED
+  // leaves the scene (user, 20.09): until the first shot the battle's own reticles and tracers stay.
   Viewer.prototype.setAimShot=function(){
     var aim=this.liveAim;
     if(!aim)return false;
+    aimFired=true;
+    if(this.aimGroup)this.aimGroup.visible=false;
+    this.syncRecorded();
     dropLine(this.scene,this.aimShotCircle);
     this.aimShotCircle=aimLine(aim.center,aim.right,aim.up,aim.radius,AIM_FIXED);
     this.aimShotCircle.renderOrder=15;this.scene.add(this.aimShotCircle);this.draw();
     return true;
   };
+  // The emulated shot is dropped: its ring goes, and with it the reason the recorded markers were
+  // hidden. The pinned line it left behind is released too (it is the shot's own), so the battle's
+  // tracer and reticles are back exactly as they were before the first shot.
   Viewer.prototype.clearAimShot=function(){
-    var had=!!this.aimShotCircle,reloading=this.aimReloadPart!==null;
-    this.aimReloadPart=null;
+    var had=!!this.aimShotCircle,reloading=this.aimReloadPart!==null,fired=aimFired;
+    this.aimReloadPart=null;aimFired=false;
     if(had){dropLine(this.scene,this.aimShotCircle);this.aimShotCircle=null;}
+    var released=false;
+    if(this.aimPinned){this.aimPinned=false;if(this.pinned){this.unpin();released=true;}}
+    if(fired&&!released){if(this.aimGroup)this.aimGroup.visible=aimShown();this.syncRecorded();}
     if(reloading&&this.liveRadius100)this.drawLiveAim();   // the ring is whole again
-    else if(had)this.draw();
+    else if(had||fired)this.draw();
   };
   // How much of the reload (or of the clip interval) has run, 0..1, which is how much of the live ring is
   // drawn; null (or nothing) means the gun is loaded and the ring is whole. Stored only: the page calls
@@ -863,14 +875,14 @@
     var p=Number(part);
     this.aimReloadPart=part===null||part===undefined||!(p>=0)?null:Math.min(1,p);
   };
-  // The emulation as a whole. With it on, everything RECORDED leaves the scene (user, 20.09): the saved
-  // reticle circles and the nominal estimate ring (the aim group), the recorded tracers and hit marks
-  // (root children, through recordedShown) and their HTML reticles. Only the emulated circle and the
-  // tracer of its own shot stay. Off, all of it comes back untouched.
+  // The emulation as a whole. Switching it on leaves the battle's own reticles and tracers where they
+  // are (user, 20.09): they make way for the USER'S FIRST SHOT and for nothing else, and clearAimShot
+  // below brings them back - on the way in as on the way out, so a mode switched off and on again shows
+  // the recorded shot until the next round leaves.
   Viewer.prototype.setAimEmulation=function(on){
-    aimEmulation=!!on;
     this.aimChase=!!on;
-    if(!on){this.aimHold=false;this.clearAimShot();}
+    if(!on)this.aimHold=false;
+    this.clearAimShot();
     if(this.aimGroup)this.aimGroup.visible=aimShown();
     this.syncRecorded();
     this.draw();
@@ -943,6 +955,24 @@
     this.drawLiveAim();
     return true;
   };
+  // The HULL carries the gun with it (user, 20.09): A and D turn a virtual hull heading, and the gun,
+  // sitting on that hull, swings around the SHOOTER (the camera position) about the world up axis by
+  // the same angle. The cursor stays where it is, so the gap opens and chaseAim() pulls the turret back
+  // towards the crosshair with whatever of its speed the hull rotation left it. A POSITIVE angle is a
+  // turn to the right, which about +Y (three.js is right-handed and the scene is Y-up) is a negative
+  // rotation. A pinned centre is not being aimed at all, so it is left alone.
+  Viewer.prototype.turnAim=function(angle){
+    var T=THREE,gun=this.liveAimPoint,a=Number(angle)||0;
+    if(!gun||!a||this.spreadAim||!this.liveRadius100)return false;
+    var eye=this.camera.position.clone(),dir=gun.clone().sub(eye),range=dir.length();
+    if(range<1e-6)return false;
+    dir.divideScalar(range).applyQuaternion(new T.Quaternion().setFromAxisAngle(new T.Vector3(0,1,0),-a));
+    var objects=this.paintMesh?[this.paintMesh]:[];if(this.trackMesh)objects.push(this.trackMesh);
+    var hits=objects.length?new T.Raycaster(eye,dir).intersectObjects(objects):[];
+    this.liveAimPoint=hits.length?hits[0].point.clone():eye.clone().addScaledVector(dir,range);
+    this.drawLiveAim();
+    return true;
+  };
   // A shot: pin the line the gun is actually pointing along, not the one under the cursor. Same record
   // as a click on the armour (pinAt), so the "Pinned point" panel reads the shot exactly as before.
   Viewer.prototype.pinAtPoint=function(point){
@@ -954,6 +984,7 @@
     var hits=new T.Raycaster(origin,direction).intersectObjects(objects),hit=hits.length?hits[0]:null;
     var normal=hit&&hit.face?hit.face.normal.clone().transformDirection(hit.object.matrixWorld):null;
     this.pinned={origin:origin,direction:direction,point:hit?hit.point.clone():point.clone(),normal:normal};
+    this.aimPinned=true;   // this pin belongs to the emulated shot: dropping the shot releases it
     this.refreshPin();if(this.onPin)this.onPin(true);
     return true;
   };

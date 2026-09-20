@@ -1033,32 +1033,8 @@
     paintAimConfig();
   }
   function aimRow(grid, label, control) { grid.appendChild(node('span', label)); grid.appendChild(control); }
-  // The gold badge beside the corner readout, the same component the Vehicles panel uses. One heading and
-  // a handful of bullets, not an essay (user, 20.09): what the two figures are, how a shot is made, what
-  // the keys and the mouse do, and what Configuration changes.
-  var AIM_HELP = [
-    ['The emulated shot', [
-      'The big figure is the chance to damage over the circle of the last shot: 1024 rays fanned over it, a miss counts as 0.',
-      'The line under it is the expected damage of the same rays as a share of the shell’s alpha, then the alpha itself in HP.',
-      'A tap fires one round; holding the button fires a burst on the gun’s own cooldown until you let go.',
-      'A clip fires at the clip interval and stops when it is empty — let go and press again for a full clip.',
-      'While the gun reloads the aiming circle is drawn only as far as the reload has come; a whole circle means ready.',
-      'W A S D drive the shooter, the mouse aims: the turret chases the cursor at its own rotation speed, burst or no burst.',
-      'Driving, turning and the recoil of every round blow the circle up; standing still lets it settle again.',
-      'Configuration beside the Shooter tile sets the equipment, the perks and the crew, which change the circle, the aiming time and the reload.',
-      'Nominal penetration, no rolled RNG, no map obstacles and no target motion.']]];
-  function buildAimInfo() {
-    var box = document.querySelector('#aim-hud-info .toolbar-popover');
-    if (!box) return;
-    box.replaceChildren();
-    AIM_HELP.forEach(function (part) {
-      var section = node('div');
-      section.appendChild(node('b', part[0]));
-      var lines = node('ul');
-      part[1].forEach(function (line) { lines.appendChild(node('li', line)); });
-      section.appendChild(lines); box.appendChild(section);
-    });
-  }
+  // The corner readout and its ⓘ popover are gone (user, 20.09): the mode's one-line explanation is the
+  // switch's own tooltip, and the figures of the two rings live on the two info panels.
   function paintAimConfig() {
     var preset = aimConfigControls.preset;
     if (!preset) return;
@@ -1129,9 +1105,13 @@
   // speed and a click is a shot. A frame loop runs only while something is actually changing - a key
   // held, the vehicle still rolling, the circle still settling, the turret still catching up, a
   // reload running - and stops itself as soon as everything is at rest. It never touches the GPU
-  // composition: only the circle's line and the text of the corner readout are redrawn.
+  // composition: only the circle's line and the figures on the two info panels are redrawn.
   var aimOn = false, aimKeys = {}, aimFrame = 0, aimClock = 0, aimMove = null, aimNow = null;
   var aimReload = null, aimClip = 0, aimClipSize = 1, aimShot = null, aimLastState = null;
+  // The virtual hull heading, in radians, kept for this session only (user, 20.09): A and D turn it,
+  // the gun goes with it and the turret chases back to the crosshair. Reset whenever the run is reset.
+  var aimHeading = 0;
+  var KMH_TO_MS = 0.27778;   // component_constants.KMH_TO_MS of the client; the record holds m/s
   // The live figure of the aiming ring (user, 20.09: 'see the percentage in the circle all the time'). A
   // full integral is 1024 rays - tens of milliseconds - so while anything moves it is a coarse 256-ray one
   // at most every 120 ms, and the fine one runs once when the shooter, the turret and the cursor rest.
@@ -1194,7 +1174,16 @@
     if (!dt) dt = 1 / 60;   // one nominal frame, never a zero step
     var mods = aimModifiers();
     aimMove = ArmorBallistics.moveStep(aimMove, aimKeys, a, mods, dt);
-    var chase = ArmorBallistics.turretChase(viewer.aimGap(), aimMove.hullTurn, a, mods, dt);
+    // The hull turns first and TAKES THE GUN WITH IT (user, 20.09): the aim point swings around the
+    // shooter by hullTurn·dt, opening a gap to the crosshair, and the turret below spends what the hull
+    // left it on closing that gap again. So holding A with the cursor still drags the ring sideways and
+    // the turret pulls it back.
+    var swung = false;
+    if (aimMove.hullTurn) {
+      aimHeading += aimMove.hullTurn * dt;
+      swung = !!(viewer.turnAim && viewer.turnAim(aimMove.hullTurn * dt));
+    }
+    var chase = ArmorBallistics.turretChase(viewer.aimGap(), aimMove.hullTurn, a, mods, dt, swung);
     if (chase.step > 0) viewer.chaseAim(chase.step);
     var state = {speed: aimMove.speed, hullTurn: aimMove.hullTurn, turretTurn: chase.turretTurn};
     aimNow = ArmorBallistics.aimStep(aimNow, state, a, mods, dt);
@@ -1205,14 +1194,14 @@
     paintAim(state);
     var reloading = aimReloadLeft() > 0;
     if (aimHeld() || !aimMove.resting || reloading || !chase.caught || (aimBurst && aimDown && !aimClipDry) || (aimNow && !aimNow.settled)) startAimLoop();
-    else { aimClock = 0; if (reloadJustFinished()) paintAim(state); if (!aimEstFine) { estimateLive(true); paintHud(); } }
+    else { aimClock = 0; if (reloadJustFinished()) paintAim(state); if (!aimEstFine) { estimateLive(true); paintCircleLines(); } }
   }
   // The reload is over: drop it so the ring is drawn whole again.
   function reloadJustFinished() {
     if (!aimReload || aimReloadLeft() > 0) return false;
     aimReload = null; return true;
   }
-  // The circle and the corner readout for one state. No ray is cast here - the only integral this mode
+  // The circle, the speed tile and the panel figures for one state. No ray is cast here - the only integral this mode
   // runs is the one a shot asks for.
   function paintAim(state) {
     var a = aimBlockData();
@@ -1221,34 +1210,50 @@
     // The reload first: it decides how much of the ring the redraw below draws.
     if (viewer.setAimReload) viewer.setAimReload(aimReloadPart());
     viewer.setLiveAim(aimNow.radius100);   // the live ring never stops aiming (user, 20.09)
+    paintDrive(state);
     estimateLive(false);
-    paintHud();
+    paintCircleLines();
   }
+  // What one shot inside the LIVE ring is worth: ONE figure (user, 20.09), the expected damage over the
+  // circle as a share of the shell's alpha, misses counted as 0. `alpha` says whether the shell has one
+  // at all - without it the share means nothing and the line prints a dash instead of a false zero.
   function estimateLive(fine) {
     var shell = viewer && viewer.shell, now = aimSeconds();
     if (!shell || !viewer.liveRadius100) { aimEst = null; return; }
     if (!fine && aimEstAt && now - aimEstAt < 0.12) return;
     var r = viewer.liveAimProbability(shell, fine ? 1024 : 256);
-    aimEst = r ? {chance: Math.round(r.low), damage: damagePct(r.damage)} : null;
+    aimEst = r ? {damage: damagePct(r.damage), alpha: shell.alpha > 0} : null;
     aimEstAt = now; aimEstFine = !!fine;
   }
-  // The readout in the corner of the scene: the last shot's chance as the big number, under it the
-  // expected damage share and the shell's alpha, and the gold badge with the help. Nothing else
-  // (user, 20.09): no shot counter, no clip line and nothing about the reload - the ring says that.
-  function paintHud() {
-    var hud = $('aim-hud');
-    if (!hud || hud.hidden) return;
-    // The big number is the LIVE ring; the last shot keeps its own line underneath.
-    var shell = viewer && viewer.shell, alpha = shell && shell.alpha > 0 ? Math.round(shell.alpha) : 0;
-    $('aim-hud-chance').textContent = aimEst ? aimEst.chance + ' %' : '—';
-    $('aim-hud-damage').textContent = aimEst ? aimEst.damage + ' %' + (alpha ? ' · ' + alpha : '') : '';
-    var shot = $('aim-hud-shot'); if (shot) shot.textContent = aimShot ? 'shot ' + aimShot.chance + ' · ' + aimShot.damage : '';
+  function circleText(figure) { return 'Circle ' + (figure && figure.alpha ? figure.damage + ' %' : '—'); }
+  var CIRCLE_TITLE = 'Expected damage of a shot inside the aiming circle, as a share of the shell’s alpha';
+  // The two rings write one line each, in the colour of the ring they belong to (user, 20.09): the live
+  // cyan one into the "Under the cursor" panel, the magenta ring of the last shot into the pinned-shot
+  // panel above it. There is no corner readout any more, and no figure is printed twice.
+  function circleLine(id, text) {
+    var e = $(id);
+    if (!e) return;
+    e.textContent = text || '';
+    e.hidden = !text;
+    e.title = text ? CIRCLE_TITLE : '';
+  }
+  function paintCircleLines() {
+    circleLine('probe-circle', aimLive && aimEst ? circleText(aimEst) : '');
+    circleLine('shot-circle', aimLive && aimShot ? circleText(aimShot) : '');
+  }
+  // The small tile left of the Shooter tile: how fast the shooter is going right now, signed - forward
+  // positive, reverse negative - with the W A S D glyph beside it as the hint that the keys are live.
+  function paintDrive(state) {
+    var e = $('aim-speed');
+    if (!e) return;
+    var ms = state && Number.isFinite(state.speed) ? state.speed : 0;
+    e.textContent = Math.round(ms / KMH_TO_MS) + ' km/h';
   }
   // One shot (user's decision, 19.09: no Alt - it may never reach the page inside the game). The tracer
   // goes exactly down the middle of the LIVE circle, where the gun points: the random offset a real shot
   // gets is the server's, and this page shows the odds, not a rolled die. What the circle was worth at
-  // that instant is integrated there and then with 1024 rays and stands in the corner readout, and a copy
-  // of the circle stays on the model beside the tracer until the next shot replaces it (user, 20.09).
+  // that instant is integrated there and then with 1024 rays and stands on the pinned-shot panel, and a
+  // copy of the circle stays on the model beside the tracer until the next shot replaces it (user, 20.09).
   // The live circle itself is never frozen: it goes on aiming through the shot and past it.
   // Whether the gun MAY fire is decided by the caller, not here.
   function fireShot() {
@@ -1260,11 +1265,9 @@
     var chance = shell ? viewer.liveAimProbability(shell, 1024) : null;
     viewer.pinAtPoint(centre);
     if (viewer.setAimShot) viewer.setAimShot();   // the ring left behind, drawn before the recoil widens the live one
-    // One line under the big number (user, 20.09): the expected damage as a share of the shell's alpha,
-    // then the alpha itself in HP as a bare figure, so "30 % · 410" reads as both at once.
-    var alpha = shell && shell.alpha > 0 ? Math.round(shell.alpha) : 0;
-    aimShot = {chance: !chance ? '—' : Math.round(chance.low) + ' %',
-      damage: !chance ? '' : damagePct(chance.damage) + ' %' + (alpha ? ' · ' + alpha : '')};
+    // The shot's own figure, on the pinned-shot panel and in the colour of its ring (user, 20.09): the
+    // same single number the live ring prints - the expected damage over the circle, share of alpha.
+    aimShot = chance ? {damage: damagePct(chance.damage), alpha: !!(shell && shell.alpha > 0)} : null;
     // The recoil enters the factor for this very instant and the exponential restarts from it, so the
     // next round of a held burst leaves a wider circle unless the gun had time to settle.
     var state = aimLastState || aimState();
@@ -1314,7 +1317,7 @@
     var single = !aimBurst;
     aimDown = false; aimBurst = false; aimClipDry = false;
     if (single && fireShot()) paintAim(aimLastState || aimState());
-    else paintHud();
+    else paintCircleLines();
     startAimLoop();
   }
   // The pointer moved past the drag threshold. Before the first round that is an orbit, turret or gun
@@ -1323,7 +1326,7 @@
   // so this refuses with false and the viewer keeps the press instead of handing it to the drag.
   function cancelShot() {
     if (aimDown && aimBurst) return false;
-    cancelHoldTimer(); aimDown = false; aimBurst = false; aimClipDry = false; paintHud();
+    cancelHoldTimer(); aimDown = false; aimBurst = false; aimClipDry = false; paintCircleLines();
     return true;
   }
   function cancelHoldTimer() { if (aimHoldTimer) window.clearTimeout(aimHoldTimer); aimHoldTimer = 0; }
@@ -1332,33 +1335,45 @@
     cancelHoldTimer();
     aimKeys = {}; aimMove = null; aimNow = null; aimReload = null;
     aimDown = false; aimBurst = false; aimClipDry = false;
-    aimShot = null; aimLastState = null;
+    aimShot = null; aimLastState = null; aimHeading = 0;
     if (viewer) { viewer.aimHold = false; if (viewer.clearAimShot) viewer.clearAimShot(); }
     aimClipSize = aimClipRounds(); aimClip = aimClipSize;
   }
   // The switch itself. Off means off: no frame loop, no key handlers, no live circle, no crosshair, and
   // everything recorded is back on the model.
+  // The keys are listened for on the DOCUMENT while the mode is on (user, 20.09): W A S D have to drive
+  // from the moment the switch goes on, and the viewport only gets them once it has been clicked. They
+  // are dropped again the moment the mode goes off, so nothing of this mode listens while it is off.
   function setAimEmulation(on) {
     on = !!on;
     if (on === aimOn) { updateAim(); return; }
     aimOn = on;
-    var box = $('viewport');
-    if (on) { box.addEventListener('keydown', aimKeyDown); box.addEventListener('keyup', aimKeyUp); window.addEventListener('blur', aimRelease); }
-    else { box.removeEventListener('keydown', aimKeyDown); box.removeEventListener('keyup', aimKeyUp); window.removeEventListener('blur', aimRelease); stopAimLoop(); }
+    if (on) { document.addEventListener('keydown', aimKeyDown); document.addEventListener('keyup', aimKeyUp); window.addEventListener('blur', aimRelease); }
+    else { document.removeEventListener('keydown', aimKeyDown); document.removeEventListener('keyup', aimKeyUp); window.removeEventListener('blur', aimRelease); stopAimLoop(); }
     resetAimRun();
     updateAim();
+  }
+  // Typed text is text, never driving: a key going into a field, a list box or anything editable is
+  // left to that control. Everything else on the page is fair game while the mode is on.
+  function aimTyping(e) {
+    var t = e && e.target;
+    if (!t) return false;
+    if (t.isContentEditable) return true;
+    var tag = String(t.tagName || '').toUpperCase();
+    return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
   }
   // W A S D only. Every other key - the arrows that orbit, +/- that zoom - is left to the viewer's own
   // handler, so the emulation adds keys instead of taking any away.
   function aimKeyDown(e) {
-    if (e.ctrlKey || e.altKey || e.metaKey) return;
+    if (e.ctrlKey || e.altKey || e.metaKey || aimTyping(e)) return;
     var name = aimKeyName(e);
-    if (!name || !aimBlockData()) return;
+    if (!name || !aimLive || !aimBlockData()) return;
     e.preventDefault();
     if (aimKeys[name]) return;
     aimKeys[name] = true; startAimLoop();
   }
   function aimKeyUp(e) {
+    if (aimTyping(e)) return;
     var name = aimKeyName(e);
     if (!name) return;
     e.preventDefault();
@@ -1377,16 +1392,16 @@
     if (want) box.classList.add(want);
     aimCursor = want;
   }
-  // One pass over everything the mode owns: what is on screen, the circle in the scene and the corner
-  // readout. Cheap - no ray is cast here.
+  // One pass over everything the mode owns: what is on screen, the circle in the scene and the figures
+  // on the two info panels. Cheap - no ray is cast here.
   function updateAim() {
-    var hud = $('aim-hud'); if (!hud) return;
+    var sw = $('aim-switch'); if (!sw) return;
     var a = aimBlockData(), mode = $('armor-mode').value, modelled = mode !== 'parts' && !$('model-tile').hidden;
     var live = !!(a && modelled && viewer && aimOn);
-    $('aim-switch').hidden = !modelled;
+    sw.hidden = !modelled;
     $('aim-config').hidden = !live;
     if (!live) { $('aim-config').open = false; aimPickerSlot = -1; }
-    hud.hidden = !live;
+    $('aim-drive').hidden = !live;
     // The manual estimate of 0.7.13 is the fallback and nothing more: it appears exactly when the user
     // asked for the emulation and this record cannot give it.
     var fallback = !!(modelled && aimOn && !a), wasHidden = $('aim-block').hidden;
@@ -1402,6 +1417,7 @@
     if (!live) {
       if (viewer) viewer.clearLiveAim();
       stopAimLoop();
+      paintCircleLines();   // both panel lines go with the mode
       return;
     }
     if (!aimNow) {
@@ -1539,11 +1555,9 @@
     damageView=mode==='damage'&&!!(shell&&shell.alpha>0);
     var noAlpha=mode==='damage'&&valid&&!damageView;
     $('parameters-notice').textContent=noAlpha?'No damage data in this record — showing penetration chance':!choice?'Pick a shell — the record holds more than one match.':!valid?'No penetration in the record — enter the penetration and calibre to colour the model.':'Pick a shell or enter penetration and calibre to colour the model.';
-    $('legend-gradient').classList.toggle('classic',$('palette').value==='classic');$('track-overlay-note').classList.toggle('classic',$('palette').value==='classic');$('armor-legend').hidden=!mapMode||!valid;$('parameters-notice').hidden=!mapMode||(valid&&!noAlpha);
-    // The legend is the colour bar with its title and nothing else (user, 20.09): the shell's alpha in HP
-    // is printed once, on the corner readout of the emulated shot.
-    var caption=$('legend-caption');caption.hidden=!damageView;caption.textContent=damageView?'Expected damage per shot, % of α':'';
-    caption.title=damageView?'Non-penetration damage of HE is a reconstruction (ratio law), not a confirmed server formula':'';
+    // The colour legend is gone from the scene (user, 20.09): the corner it stood in is free, and the
+    // colours are read off the panels, which print the figure itself.
+    $('track-overlay-note').classList.toggle('classic',$('palette').value==='classic');$('parameters-notice').hidden=!mapMode||(valid&&!noAlpha);
     $('penetration').setAttribute('aria-invalid',String(mapMode&&!(penetration>0&&penetration<=3000)));$('caliber').setAttribute('aria-invalid',String(mapMode&&!(caliber>0&&caliber<=1000)));
     $('probe-chance').textContent='—';$('probe-chance').style.color='';$('probe-pen').replaceChildren();$('probe-extra').replaceChildren();$('probe-details').replaceChildren(node('span','Hover over the armour','placeholder'));
     modsVisible();
@@ -1561,7 +1575,7 @@
   function chanceRgb(r){return 'rgb('+ArmorBallistics.color(r,$('palette').value,ricochetTint,damageView?'damage':'chance').map(function(v){return Math.round(v*255);}).join(',')+')';}
   // Expected damage is read as a share of the shell's own alpha, never in HP (user, 19.09): "50 %" says at a
   // glance how much of what this shell can do a shot at this point is worth, and the same number compares two
-  // guns whose alphas differ. The alpha itself is printed once, on the corner readout of the emulated shot.
+  // guns whose alphas differ. The alpha in HP is not printed on the scene at all (user, 20.09).
   // A shell whose non-penetration damage has no model (the Taschenratte ability shell) shows the penetration part
   // alone as a lower bound, never as the expectation: the recorded shots of that shell do deal damage without piercing.
   function damageShare(r){
@@ -2342,7 +2356,6 @@
   // updateShell(), which asks the group whether it belongs on screen.
   buildTargetMods();
   buildAimConfig();
-  buildAimInfo();
   restoreSettings();
   // The stored presets are in place now, so the shooter on screen can be given his own again. The
   // emulation switch is not a Settings control, so it is restored from the same stored object by hand.
