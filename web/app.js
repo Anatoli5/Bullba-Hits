@@ -1201,6 +1201,7 @@
     var hud = $('aim-hud');
     if (!hud || hud.hidden) return;
     var left = aimReloadLeft();
+    if (viewer && viewer.setAimReloading) viewer.setAimReloading(left > 0 && !aimFixed);
     $('aim-hud-cap').textContent = aimShot ? 'Shot ' + aimShot.number : 'No shot yet';
     $('aim-hud-chance').textContent = aimShot ? aimShot.chance : '—';
     $('aim-hud-damage').textContent = aimShot ? aimShot.damage : '';

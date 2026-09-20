@@ -16,7 +16,10 @@
   function aimShown(){return !aimEmulation;}
   // The emulated circle: cyan so it reads over the red-green heat map (yellow is lost in it), dashed
   // while the shot is still being aimed and solid and brighter once a shot has fixed it.
-  var AIM_LIVE={color:0x5ee0ff,dashed:true,opacity:.95},AIM_FIXED={color:0xbdf4ff,dashed:false,opacity:1};
+  var AIM_LIVE={color:0x5ee0ff,dashed:true,opacity:.95},AIM_FIXED={color:0xbdf4ff,dashed:false,opacity:1},
+    // Reloading: the same dashed ring in amber, so the user sees at the circle itself why a click does not fire
+    // (user, 20.09: the corner countdown alone read as 'the tracer will not move').
+    AIM_RELOAD={color:0xffb454,dashed:true,opacity:.95};
   function linear(color){return color.map(function(c){return c<=.04045?c/12.92:Math.pow((c+.055)/1.055,2.4);});}
   var baseColors=[[.38,.46,.54],[.65,.73,.8],[.75,.83,.87],[.55,.65,.72]].map(linear);
   function externalLayer(t){return t.part===0||!!(t.armor&&Number.isFinite(t.armor.vehicleDamageFactor)&&t.armor.vehicleDamageFactor<=1e-5);}
@@ -45,7 +48,7 @@
     // aimFixed: a shot has frozen the circle where it stood. The model underneath keeps running (the
     // recoil, the settling, the reload) but nothing moves or resizes the drawn circle until the next
     // click releases it, which is the two-state machine the user asked for on 20.09.
-    this.liveRadius100=null;this.liveAimPoint=null;this.aimCursorPoint=null;this.liveAim=null;this.aimChase=false;this.aimFixed=false;this.aimProfileName=ArmorBallistics.aimProfileDefault;
+    this.liveRadius100=null;this.liveAimPoint=null;this.aimCursorPoint=null;this.liveAim=null;this.aimChase=false;this.aimFixed=false;this.aimReloading=false;this.aimProfileName=ArmorBallistics.aimProfileDefault;
     this.frameAt=0;this.frameTimes=[]; // when the pending frame was asked for, and the cadence of the frames that ran
     this.contextLost=false;this.dragging=false;this.hoverId=null;this.hoverEvent=null;this.inspectKey=null;
     // The camera is driven by its own frame loop: pointer and key events only move the target.
@@ -814,10 +817,11 @@
     if(value===null){this.liveAim=null;this.hideSpread();return;}
     this.drawLiveAim();
   };
-  Viewer.prototype.clearLiveAim=function(){this.liveRadius100=null;this.liveAimPoint=null;this.aimCursorPoint=null;this.liveAim=null;this.aimFixed=false;this.hideSpread();};
+  Viewer.prototype.clearLiveAim=function(){this.liveRadius100=null;this.liveAimPoint=null;this.aimCursorPoint=null;this.liveAim=null;this.aimFixed=false;this.aimReloading=false;this.hideSpread();};
   // The two states of the emulated shot. Fixing keeps the circle exactly where and as wide as it was;
   // releasing hands it back to the cursor and to the running state, which the caller redraws at once.
   Viewer.prototype.setAimFixed=function(on){this.aimFixed=!!on;this.drawLiveAim();};
+  Viewer.prototype.setAimReloading=function(on){on=!!on;if(on===this.aimReloading)return;this.aimReloading=on;this.drawLiveAim();};
   // The emulation as a whole. With it on, everything RECORDED leaves the scene (user, 20.09): the saved
   // reticle circles and the nominal estimate ring (the aim group), the recorded tracers and hit marks
   // (root children, through recordedShown) and their HTML reticles. Only the emulated circle and the
@@ -842,7 +846,7 @@
     var origin=this.camera.position.clone(),range=origin.distanceTo(center),frame=circleFrame(origin,center);
     var radius=range*this.liveRadius100/100;
     this.liveAim={center:center.clone(),right:frame.right,up:frame.up,radius:radius,origin:origin,range:range};
-    this.drawCircle(center,frame.right,frame.up,radius,this.aimFixed?AIM_FIXED:AIM_LIVE);
+    this.drawCircle(center,frame.right,frame.up,radius,this.aimFixed?AIM_FIXED:this.aimReloading?AIM_RELOAD:AIM_LIVE);
     return this.liveAim;
   };
   // Called from inspect() with the raycast it already did, so a pointer move costs no second cast. Without a

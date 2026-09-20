@@ -8,7 +8,7 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
   bottom strip with the sliders is gone.
 - A click fixes the shot: the circle freezes, the chance and the expected damage stand in the bottom-right
   corner with an ⓘ; the next click releases it. No shot while the gun is reloading.
-- The circle is drawn over the model now, cyan, dashed while aiming and solid once a shot fixes it; the mouse
+- The circle is drawn over the model now, cyan, dashed while aiming, amber while the gun reloads and solid once a shot fixes it; the mouse
   pointer becomes a crosshair (cross or dot, Settings → Scene).
 - Configuration: three equipment slots with the game's own icons, each in its standard, improved, trophy or
   upgraded-trophy variant, plus the three perks. Icons are unpacked from your client on the next game start.
