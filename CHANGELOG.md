@@ -6,17 +6,26 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 
 - Aim emulation moved next to the Shooter tile: an "Aim emulation" switch and a "Config" button; the
   bottom strip with the sliders is gone.
+- Settings moved from the scene heading up into the header row: the "Statistics log" status first, the
+  Settings button in the corner. The swap button now sits beside the Shooter tile, and the speed tile
+  stands clear of it at the other end of the row.
 - A tap is one shot; holding the button fires on the gun's cooldown until you let go, and a clip stops
   when it is empty. Moving the mouse aims a burst instead of stopping it, and a new press fires at once.
 - W A S D drive from the moment the mode is on, wherever the focus is. S brakes a forward run to a stop
   before it reverses and W does the same the other way; A and D turn the hull, which carries the gun with
-  it, and the turret chases the crosshair back with what speed it has left. A small tile left of the
-  Shooter tile shows the speed in km/h with a W A S D hint.
-- Each aiming circle prints one figure on an info panel: the live cyan ring on "Under the cursor", the last
-  shot's magenta ring on the pinned-shot panel above it — "Circle 25 %", the expected damage of a shot
-  inside the circle as a share of the shell's alpha. The corner readout is gone.
+  it, and the turret chases the crosshair back with what speed it has left. The speed tile shows the km/h
+  beside a W-over-A-S-D key glyph that lights the keys you hold, and an arc that shows which way the hull
+  is coming round and how fast.
+- Every aiming circle that stands still is magenta — the recorded client and server reticles, the nominal
+  full-aim ring and the ring your last shot left — and only the live ring is cyan.
+- Each circle prints one figure on an info panel: the live cyan ring on "Under the cursor", the magenta
+  ring on the hit-line panel above it — "Circle 25 %", the expected damage of a shot inside that circle as
+  a share of the shell's alpha. The hit-line figure is the recorded reticle's (or the nominal ring's) until
+  you fire, and your own shot's afterwards. The corner readout is gone.
 - The aiming circle is the reload indicator, as in the game: it is drawn from nothing and fills clockwise
   while the gun reloads, so a whole circle means a loaded gun.
+- Settings → Scene: "Impact mark opacity" (10–100 %, 50 % by default) dims the cross at the impact point,
+  which covered the armour when seen from the shooter's seat.
 - The ⓘ help badge is a gold glyph instead of a gold disc in the Vehicles panel, and the colour legend has
   been taken off the scene.
 - The circle is drawn over the model now, cyan and dashed; the mouse pointer becomes a crosshair

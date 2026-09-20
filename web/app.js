@@ -1116,6 +1116,11 @@
   // full integral is 1024 rays - tens of milliseconds - so while anything moves it is a coarse 256-ray one
   // at most every 120 ms, and the fine one runs once when the shooter, the turret and the cursor rest.
   var aimEst = null, aimEstAt = 0, aimEstFine = false;
+  // The figure of the STANDING ring of the hit on screen - the recorded reticle, or the nominal estimate
+  // when the hit has no reticle of its own (user, 20.09). Computed in shotStats(), where the saved circle
+  // is sampled anyway for the reticle tile, and printed on the hit-line panel whenever that ring is the
+  // one on the model: an emulated shot replaces the ring and the line together.
+  var aimRecorded = null;
   // The pointer: aimDown says the button is down on a shot (not on a drag), aimBurst that the press has
   // grown into a held burst, aimClipDry that the clip ran out and nothing more fires until the release.
   var aimDown = false, aimBurst = false, aimHoldTimer = 0, aimClipDry = false;
@@ -1151,8 +1156,11 @@
     aimFrame = window.requestAnimationFrame(aimTick);
   }
   function stopAimLoop() { if (aimFrame) window.cancelAnimationFrame(aimFrame); aimFrame = 0; aimClock = 0; }
+  // `hullMax` rides along for the turn indicator only: it is the hull's top rotation speed with this
+  // build, which is what the arc's length is measured against. The ballistics read speed/hullTurn/turretTurn.
   function aimState() {
-    return {speed: aimMove ? aimMove.speed : 0, hullTurn: aimMove ? aimMove.hullTurn : 0, turretTurn: 0};
+    return {speed: aimMove ? aimMove.speed : 0, hullTurn: aimMove ? aimMove.hullTurn : 0,
+            hullMax: aimMove ? aimMove.hullMax : 0, turretTurn: 0};
   }
   function aimTick() {
     aimFrame = 0;
@@ -1185,7 +1193,7 @@
     }
     var chase = ArmorBallistics.turretChase(viewer.aimGap(), aimMove.hullTurn, a, mods, dt, swung);
     if (chase.step > 0) viewer.chaseAim(chase.step);
-    var state = {speed: aimMove.speed, hullTurn: aimMove.hullTurn, turretTurn: chase.turretTurn};
+    var state = {speed: aimMove.speed, hullTurn: aimMove.hullTurn, hullMax: aimMove.hullMax, turretTurn: chase.turretTurn};
     aimNow = ArmorBallistics.aimStep(aimNow, state, a, mods, dt);
     // The next shot of a held burst, the moment the cooldown is over. The recoil of the shot just fired is
     // already in `aimNow`, so a gun that cannot settle between two rounds fires the second one wider -
@@ -1226,28 +1234,79 @@
     aimEstAt = now; aimEstFine = !!fine;
   }
   function circleText(figure) { return 'Circle ' + (figure && figure.alpha ? figure.damage + ' %' : '—'); }
-  var CIRCLE_TITLE = 'Expected damage of a shot inside the aiming circle, as a share of the shell’s alpha';
-  // The two rings write one line each, in the colour of the ring they belong to (user, 20.09): the live
-  // cyan one into the "Under the cursor" panel, the magenta ring of the last shot into the pinned-shot
-  // panel above it. There is no corner readout any more, and no figure is printed twice.
-  function circleLine(id, text) {
+  var SHARE = ', as a share of the shell’s alpha';
+  var CIRCLE_TITLES = {
+    live: 'Expected damage of a shot inside the live aiming circle' + SHARE,
+    shot: 'Expected damage of the shot inside the magenta ring it left on the model' + SHARE,
+    // The recorded reticle: the circle the shooter's own client had at the instant of the shot, slid
+    // along the shot line onto the impact point - the ring drawn solid magenta on the model.
+    saved: 'Expected damage of a shot inside the recorded aiming circle of this hit — the shooter’s client reticle, slid along the shot line to the impact point' + SHARE,
+    // No recorded reticle: the dashed magenta ring is the nominal full-aim estimate, and the figure is
+    // an estimate with it. Said on the line itself, so the number is never read as a recorded one.
+    estimate: 'This hit has no recorded reticle: the figure is for the nominal full-aim circle drawn on the hit line (gun accuracy × range, no crew or equipment). Expected damage of a shot inside it' + SHARE
+  };
+  // One line per ring, in the colour of the ring it belongs to (user, 20.09): the live cyan one into the
+  // "Under the cursor" panel, the STANDING magenta ring into the hit-line panel above it. That ring is
+  // the recorded reticle of the hit (or its nominal estimate) until the user fires, and the ring of his
+  // own last shot afterwards - which is exactly what has replaced it on the model. No figure twice.
+  function circleLine(id, figure, kind) {
     var e = $(id);
     if (!e) return;
-    e.textContent = text || '';
+    var text = figure ? circleText(figure) : '';
+    e.textContent = text;
     e.hidden = !text;
-    e.title = text ? CIRCLE_TITLE : '';
+    e.title = text ? CIRCLE_TITLES[kind] || CIRCLE_TITLES.live : '';
   }
   function paintCircleLines() {
-    circleLine('probe-circle', aimLive && aimEst ? circleText(aimEst) : '');
-    circleLine('shot-circle', aimLive && aimShot ? circleText(aimShot) : '');
+    circleLine('probe-circle', aimLive ? aimEst : null, 'live');
+    var fired = aimLive && aimShot;
+    circleLine('shot-circle', fired ? aimShot : aimRecorded, fired ? 'shot' : aimRecorded ? aimRecorded.kind : 'saved');
   }
-  // The small tile left of the Shooter tile: how fast the shooter is going right now, signed - forward
-  // positive, reverse negative - with the W A S D glyph beside it as the hint that the keys are live.
+  // The small tile at the left end of the shooter row: how fast the shooter is going right now, signed -
+  // forward positive, reverse negative - the arc of the hull turn, and the W A S D glyph, which lights
+  // the caps that are actually held so the keys read as live.
   function paintDrive(state) {
     var e = $('aim-speed');
     if (!e) return;
     var ms = state && Number.isFinite(state.speed) ? state.speed : 0;
     e.textContent = Math.round(ms / KMH_TO_MS) + ' km/h';
+    ['forward', 'left', 'back', 'right'].forEach(function (name) {
+      var cap = $('aim-key-' + name);
+      if (!cap) return;
+      if (aimKeys[name]) cap.setAttribute('data-down', '1'); else cap.removeAttribute('data-down');
+    });
+    paintTurn(state);
+  }
+  // The hull turn as a compact arc with an arrowhead (user, 20.09): clockwise for D, counter-clockwise
+  // for A, and the longer the arc the faster the hull is coming round - nothing at all when it stands,
+  // up to 270° at the hull's top rotation speed. SVG y points down, so a growing angle runs clockwise on
+  // screen and the sweep flag is 1 for the D direction.
+  var TURN_R = 8, TURN_C = 12, TURN_MAX = 270;
+  function turnPoint(deg, radius) {
+    var a = deg * Math.PI / 180;
+    return [TURN_C + radius * Math.cos(a), TURN_C + radius * Math.sin(a)];
+  }
+  function paintTurn(state) {
+    var box = $('aim-turn'), arc = $('aim-turn-arc'), head = $('aim-turn-head');
+    if (!box || !arc || !head) return;
+    var rate = state && Number.isFinite(state.hullTurn) ? state.hullTurn : 0;
+    var max = state && state.hullMax > 0 ? state.hullMax : 0;
+    var span = max > 0 ? Math.min(1, Math.abs(rate) / max) * TURN_MAX : 0;
+    if (!(span > 1)) { box.hidden = true; arc.setAttribute('d', ''); head.setAttribute('d', ''); return; }
+    var sign = rate > 0 ? 1 : -1, a0 = -90, a1 = a0 + sign * span;
+    var p0 = turnPoint(a0, TURN_R), p1 = turnPoint(a1, TURN_R), r = a1 * Math.PI / 180;
+    // The arrowhead sits at the far end, pointing the way the hull is coming round: `t` is the tangent
+    // there, `n` the radius, and the head is a triangle two units to either side of the line.
+    var tx = -Math.sin(r) * sign, ty = Math.cos(r) * sign, nx = Math.cos(r), ny = Math.sin(r);
+    var tip = [p1[0] + tx * 3.6, p1[1] + ty * 3.6];
+    var b1 = [p1[0] - tx * 1.2 + nx * 2.4, p1[1] - ty * 1.2 + ny * 2.4];
+    var b2 = [p1[0] - tx * 1.2 - nx * 2.4, p1[1] - ty * 1.2 - ny * 2.4];
+    var fix = function (v) { return v.toFixed(2); };
+    arc.setAttribute('d', 'M' + fix(p0[0]) + ' ' + fix(p0[1]) + 'A' + TURN_R + ' ' + TURN_R + ' 0 ' +
+      (span > 180 ? 1 : 0) + ' ' + (sign > 0 ? 1 : 0) + ' ' + fix(p1[0]) + ' ' + fix(p1[1]));
+    head.setAttribute('d', 'M' + fix(tip[0]) + ' ' + fix(tip[1]) + 'L' + fix(b1[0]) + ' ' + fix(b1[1]) +
+      'L' + fix(b2[0]) + ' ' + fix(b2[1]) + 'Z');
+    box.hidden = false;
   }
   // One shot (user's decision, 19.09: no Alt - it may never reach the page inside the game). The tracer
   // goes exactly down the middle of the LIVE circle, where the gun points: the random offset a real shot
@@ -1417,7 +1476,8 @@
     if (!live) {
       if (viewer) viewer.clearLiveAim();
       stopAimLoop();
-      paintCircleLines();   // both panel lines go with the mode
+      paintCircleLines();   // the live line goes with the mode; the hit-line panel returns to the recorded ring
+      paintDrive(aimState());   // a tile put away with a key still lit or the turn arc drawn would come back wrong
       return;
     }
     if (!aimNow) {
@@ -1435,7 +1495,7 @@
       'alpha','spallDamage','mechanics','nonPiercingArmorDamage'].forEach(function(k){if(c[k]!==undefined)shell[k]=c[k];});var fraction=Math.max(0,Math.min(1,(distance-100)/400));if(c.penetration500>0&&c.penetration100>0)shell.penetration=penetration*(1+fraction*(c.penetration500/c.penetration100-1));}
     return shell;
   }
-  var totalTimer=null,totalKey=null,totalEngine=null,totalAim=null,verdictKey=null,partNames=['chassis','hull','turret','gun'];
+  var totalTimer=null,totalKey=null,totalEngine=null,totalAim=null,totalEstimate=null,verdictKey=null,partNames=['chassis','hull','turret','gun'];
   // Verdict log (user, 14.09): one console line per recorded contact point - the server's result as a fact next to our
   // estimate along the drawn line. The game writes the page's console into game.log; tools/verdicts_from_log.py
   // tabulates the lines. Once per hit and shell, never on camera moves.
@@ -1502,16 +1562,30 @@
     $('shot-panel').title=damageView?'Expected damage per shot along the saved hit line, as a share of the shell’s alpha: the penetration chance times alpha, plus the reconstructed non-penetration damage for the rest, divided by alpha.\n\nThe record holds what the shot did; this is the expectation it had, not the rolled RNG.':shotPanelTitle;
     aimTitle();
     output.title=!r?'No parameters or the pose changed':pinned?'Along the pinned line from the current view':'Along the saved line · flight ≈ '+Math.round(range)+' m · nominal penetration '+Math.round(shell.penetration)+' mm';
-    var key=JSON.stringify(shell)+'|'+(viewer?viewer.turretAngle+','+viewer.gunAngle:'');
-    if(viewer&&(totalKey!==key||totalEngine!==viewer.engine||totalAim!==viewer.savedAim)){
-      totalKey=key;totalEngine=viewer.engine;totalAim=viewer.savedAim;clearTimeout(totalTimer);
+    // The ring on screen is part of the key: a pinned point and the user's first emulated shot both take
+    // the recorded rings away, and the line that describes them has to go with them.
+    var ringShown=!!(viewer&&viewer.savedAimShown&&viewer.savedAimShown());
+    var key=JSON.stringify(shell)+'|'+(viewer?viewer.turretAngle+','+viewer.gunAngle:'')+'|'+ringShown;
+    if(viewer&&(totalKey!==key||totalEngine!==viewer.engine||totalAim!==viewer.savedAim||totalEstimate!==viewer.estimateAim)){
+      totalKey=key;totalEngine=viewer.engine;totalAim=viewer.savedAim;totalEstimate=viewer.estimateAim;window.clearTimeout(totalTimer);
       // No saved circle: the emulated circle's own figure while it is on screen, else the nominal ring's
       // diameter, so a 10 cm ring at short range reads as present, not missing.
       $('total-chance').textContent=!viewer.savedAim&&viewer.estimateAim?'\u2300 '+(viewer.estimateAim.radius*2).toFixed(2)+' m':'—';
+      // The Circle line of the hit-line panel is rebuilt with it and stays away until the integral below
+      // has a figure: a stale percentage under a new shell or a new pose would be a lie.
+      aimRecorded=null;paintCircleLines();
       // In damage mode the tile reads as a share of alpha: the mean expected damage over the circle, misses
-      // counted as 0, divided by what one shot of this shell can do.
-      if(viewer.savedAim&&shell)totalTimer=setTimeout(function(){var v=viewer.savedAimProbability(shell);
-        $('total-chance').textContent=!v?'—':damageView?'≈ '+(v.unknown?damagePct(v.damage)+'–'+damagePct(v.damageHigh):damagePct(v.damage))+' %':'≈ '+(v.unknown?v.low.toFixed(0)+'–'+v.high.toFixed(0):v.low.toFixed(0))+'%';},100);
+      // counted as 0, divided by what one shot of this shell can do. The same pass feeds the Circle line
+      // of the recorded ring (user, 20.09), so the rays are cast once for both.
+      // The reticle tile keeps its own number whether the ring is on screen or not - it is about the saved
+      // circle, not about what is drawn - so only the panel LINE waits for the ring to be visible.
+      if(viewer.savedAim&&shell)totalTimer=window.setTimeout(function(){var v=viewer.savedAimProbability(shell);
+        $('total-chance').textContent=!v?'—':damageView?'≈ '+(v.unknown?damagePct(v.damage)+'–'+damagePct(v.damageHigh):damagePct(v.damage))+' %':'≈ '+(v.unknown?v.low.toFixed(0)+'–'+v.high.toFixed(0):v.low.toFixed(0))+'%';
+        aimRecorded=v&&ringShown?{damage:damagePct(v.damage,shell),alpha:shell.alpha>0,kind:'saved'}:null;paintCircleLines();},100);
+      // A hit with no reticle of its own: the dashed nominal ring is the one on the model, so the line
+      // is printed for THAT ring and its tooltip says the figure is an estimate with it.
+      else if(viewer.estimateAim&&shell&&ringShown)totalTimer=window.setTimeout(function(){var v=viewer.estimateAimProbability(shell);
+        aimRecorded=v?{damage:damagePct(v.damage,shell),alpha:shell.alpha>0,kind:'estimate'}:null;paintCircleLines();},100);
     }
   }
   // The reticle tile's tooltip: what its number means first, then which circles this hit has and how the figure
@@ -1571,7 +1645,9 @@
   // Mean expected damage over a circle, in HP, read as a share of the current shell's alpha. The samplers
   // in viewer.js still work in HP - that is what a ray returns and what the Statistics log compares with the
   // server - and only the display divides by alpha.
-  function damagePct(hp){var s=viewer&&viewer.shell;return Math.round(s&&s.alpha>0?Math.max(0,Math.min(100,100*hp/s.alpha)):0);}
+  // Expected damage as a share of alpha. The shell is the one on screen unless a caller hands in the very
+  // shell the figure was sampled with (the hit-line panel builds its own at the recorded range).
+  function damagePct(hp,shell){var s=shell||(viewer&&viewer.shell);return Math.round(s&&s.alpha>0?Math.max(0,Math.min(100,100*hp/s.alpha)):0);}
   function chanceRgb(r){return 'rgb('+ArmorBallistics.color(r,$('palette').value,ricochetTint,damageView?'damage':'chance').map(function(v){return Math.round(v*255);}).join(',')+')';}
   // Expected damage is read as a share of the shell's own alpha, never in HP (user, 19.09): "50 %" says at a
   // glance how much of what this shell can do a shot at this point is worth, and the same number compares two
@@ -2010,7 +2086,7 @@
     // no range, or no own reticle linked to this hit (every incoming hit by design - the enemy's is not recorded).
     var reason=aimReady?'saved reticle':estimate?'nominal estimate':!(viewer&&viewer.point&&viewer.travel)?'no resolved impact point':!(hit.attacker&&hit.attacker.gunDispersion>0)?'no gun dispersion in the record':!(shotContext.range>0||hit.rangeAtImpact>0)?'no range for this hit':!ownShot?'enemy reticle unavailable':(aimReasons[shotContext.aimReason]||'no linked snapshot').toLowerCase();
     // The reticle block stays small: what the circles mean and where this one came from lives in the ⓘ tooltip.
-    var status=aimReady?'This hit: ● solid green — the client reticle at the shot, ◌ dashed gold — the server reticle, both slid along the shot line to the impact point.':estimate?'This hit: ◌ dashed blue — nominal full-aim estimate of the '+(estimate.gun||'mounted gun')+': '+(estimate.dispersion*100).toFixed(2)+' m at 100 m × '+Math.round(estimate.range)+' m ('+(estimate.source==='tracer'?'tracer range':'approximate range at impact')+') = ⌀ '+(estimate.radius*2).toFixed(2)+' m. Without crew or equipment, centred on the hit line; not the recorded reticle and not used in the figure.':'This hit: no reticle — '+reason+'.';
+    var status=aimReady?'This hit: ● solid magenta — the client reticle at the shot, ◌ dashed magenta — the server reticle, both slid along the shot line to the impact point. Every standing ring is magenta; only the live emulation ring is cyan.':estimate?'This hit: ◌ dashed magenta — nominal full-aim estimate of the '+(estimate.gun||'mounted gun')+': '+(estimate.dispersion*100).toFixed(2)+' m at 100 m × '+Math.round(estimate.range)+' m ('+(estimate.source==='tracer'?'tracer range':'approximate range at impact')+') = ⌀ '+(estimate.radius*2).toFixed(2)+' m. Without crew or equipment, centred on the hit line; not the recorded reticle and not used in the figure.':'This hit: no reticle — '+reason+'.';
     // One line per hit in the page console; the game writes page console lines into game.log, so an in-game
     // report about missing rings can be read there instead of guessed at.
     if(window.console)console.info('Bullba Hits aim: hit '+hit.id+' '+(view||'other')+' saved='+!!aimReady+' estimate='+!!estimate+' reason='+reason);
@@ -2152,6 +2228,9 @@
   if(viewer)viewer.onPin=function(on){$('shot-source').textContent=on?'Pinned point':activeHit&&activeHit.synthetic?'No recorded shot':'Hit line';$('total-chance').textContent=on?'—':$('total-chance').textContent;shotStats();};
   $('auto-frame').onchange=function(){if(viewer)viewer.setAutoFrame(this.checked);};
   $('track-opacity').oninput=function(){if(viewer)viewer.setTrackOpacity(Number(this.value)/100);$('track-opacity-value').textContent=this.value+' %';};
+  // The cross at the impact point only (user, 20.09). Stored and restored with every other setting in the
+  // menu, so this one line is the whole wiring.
+  $('impact-opacity').oninput=function(){if(viewer)viewer.setImpactOpacity(Number(this.value)/100);$('impact-opacity-value').textContent=this.value+' %';};
   $('camera-zoom-field').onchange=function(){if(viewer)viewer.setZoom(Number(this.value));};
   $('pivot-height').oninput=function(){if(viewer){var r=viewer.heightRange();viewer.setPivotHeight(r[0]+Number(this.value)/100);}};
   $('pivot-height-field').onchange=function(){if(viewer)viewer.setPivotHeight(Number(this.value));};
@@ -2362,12 +2441,13 @@
   syncShooterMods(activeHit);
   if(aimStore.on){$('aim-on').checked=true;setAimEmulation(true);}
   aimConfigChanged();
-  // Heading overflow (18.09 round 2): the battle tile, the shell block and Settings share one grid row while the
-  // three fit; when they do not, .stacked drops the whole shell block to a full-width second row and Settings
-  // keeps the top right. natural() reads the width a block WANTS — position:absolute plus width:max-content, so
-  // a block that is wrapping right now still reports its one-row width — and nothing is painted in between.
+  // Heading overflow (18.09 round 2): the battle tile and the shell block share one grid row while the two fit;
+  // when they do not, .stacked drops the whole shell block to a full-width second row. natural() reads the width
+  // a block WANTS — position:absolute plus width:max-content, so a block that is wrapping right now still
+  // reports its one-row width — and nothing is painted in between.
+  // 20.09: Settings has moved to the header row, so it is no longer measured here (nor in layoutToolbar, which
+  // never carried it): the heading is two blocks and one gap.
   var heading=document.querySelector('.scene-heading'),headingBattle=document.querySelector('.heading-battle');
-  var settingsMenu=document.querySelector('.scene-heading .settings-menu');
   function natural(el){
     if(!el)return 0;
     var s=el.style,pos=s.position,w=s.width,vis=s.visibility,wrap=s.flexWrap;
@@ -2381,7 +2461,7 @@
     var style=window.getComputedStyle(heading),gap=parseFloat(style.columnGap)||0;
     var room=heading.clientWidth-(parseFloat(style.paddingLeft)||0)-(parseFloat(style.paddingRight)||0);
     heading.classList.remove('stacked');
-    var need=natural(headingBattle)+natural(shellGroup)+(settingsMenu?settingsMenu.offsetWidth:0)+gap*2;
+    var need=natural(headingBattle)+natural(shellGroup)+gap;
     heading.classList.toggle('stacked',need>room);
   }
   // Toolbar overflow (18.09): the row never wraps. Each group carries data-tb — its keep priority, 1 kept

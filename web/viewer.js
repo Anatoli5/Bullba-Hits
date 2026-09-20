@@ -15,11 +15,15 @@
   // when the mode goes off or the emulated shot is dropped.
   var aimFired=false;
   function aimShown(){return !aimFired;}
-  // The emulated circles: the LIVE one is cyan so it reads over the red-green heat map (yellow is lost
-  // in it), dashed, and never stops aiming; the one the LAST SHOT left behind is solid MAGENTA (user,
-  // 20.09), the colour every figure of that shot is printed in. The reload IS the live ring: while the
-  // gun reloads the ring is drawn only as far as the reload has run, so a whole ring means a loaded gun.
-  var AIM_LIVE={color:0x5ee0ff,dashed:true,opacity:.95},AIM_FIXED={color:0xff5ad6,dashed:false,opacity:1};
+  // ONE COLOUR RULE FOR EVERY RING (user, 20.09). A ring that STANDS STILL is MAGENTA: the recorded
+  // client reticle (solid), the recorded server reticle (dashed), the nominal full-aim estimate of a hit
+  // (dashed) and the ring an emulated shot leaves behind (solid). The LIVE emulation ring is the only
+  // one that moves, so it is the only cyan one - and cyan reads over the red-green heat map, where
+  // yellow is lost. The line style is what tells the magenta rings apart, not the colour.
+  // The reload IS the live ring: while the gun reloads the ring is drawn only as far as the reload has
+  // run, so a whole ring means a loaded gun.
+  var AIM_RING=0xff5ad6;
+  var AIM_LIVE={color:0x5ee0ff,dashed:true,opacity:.95},AIM_FIXED={color:AIM_RING,dashed:false,opacity:1};
   function linear(color){return color.map(function(c){return c<=.04045?c/12.92:Math.pow((c+.055)/1.055,2.4);});}
   var baseColors=[[.38,.46,.54],[.65,.73,.8],[.75,.83,.87],[.55,.65,.72]].map(linear);
   function externalLayer(t){return t.part===0||!!(t.armor&&Number.isFinite(t.armor.vehicleDamageFactor)&&t.armor.vehicleDamageFactor<=1e-5);}
@@ -32,6 +36,7 @@
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     container.appendChild(this.renderer.domElement);
     this.reticles=[];this.reticleLayer=document.createElement('div');this.reticleLayer.className='hit-reticle-layer';container.appendChild(this.reticleLayer);
+    this.impactOpacity=.5;this.setImpactOpacity(.5);   // the default of the Settings slider, applied before the first cross exists
     this.grid = new T.GridHelper(24, 24, 0x4a5d6f, 0x263746); this.scene.add(this.grid);
     this.root = new T.Group(); this.scene.add(this.root);
     this.target = new T.Vector3(0, 1, 0); this.yaw = 0.7; this.pitch = 0.27; this.distance = 50;
@@ -395,6 +400,15 @@
     element.innerHTML='<svg viewBox="0 0 96 96" role="img" aria-label="Hit location"><title>Hit location</title><path class="reticle-stroke" d="M48 3V34M48 62V93M3 48H34M62 48H93"/></svg>';
     this.reticleLayer.appendChild(element);this.reticles.push({position:position.clone(),element:element});
   };
+  // How strongly the cross at an impact point is drawn (user, 20.09): from the shooter's seat the tracer is
+  // a dot and a full-strength cross around it covers the armour it stands on. One custom property on the
+  // layer, which every cross inherits - the ones already on screen and the ones added later - so nothing
+  // else changes: not the tracer, not the rings, not the crosshair cursor.
+  Viewer.prototype.setImpactOpacity=function(value){
+    var v=Number(value);
+    this.impactOpacity=isFinite(v)?Math.max(.1,Math.min(1,v)):.5;
+    if(this.reticleLayer)this.reticleLayer.style.setProperty('--impact-opacity',String(this.impactOpacity));
+  };
   // Reticle size follows the vehicle on screen (a fifth of its projected diameter), never below 80 px nor above 300 px.
   Viewer.prototype.reticleSize=function(){
     if(!this.bounds)return 120;var sphere=this.bounds.getBoundingSphere(new THREE.Sphere()),depth=Math.max(1,this.camera.position.distanceTo(sphere.center));
@@ -675,9 +689,11 @@
       var line=new T.Line(new T.BufferGeometry().setFromPoints(points),material);if(dashed)line.computeLineDistances();line.renderOrder=12;line.frustumCulled=false;self.aimGroup.add(line);
       if(!dashed){var size=Math.max(.025,Math.min(.12,radius*.12)),cross=[center.clone().addScaledVector(right,-size),center.clone().addScaledVector(right,size),center.clone().addScaledVector(up,-size),center.clone().addScaledVector(up,size)];var mark=new T.LineSegments(new T.BufferGeometry().setFromPoints(cross),new T.LineBasicMaterial(options));mark.renderOrder=12;self.aimGroup.add(mark);self.savedAim={center:center,normal:normal,right:right,up:up,radius:radius,origin:origin};}
     }
-    ring(context.aim.clientMarker,0x68d7be,false);
+    // Both recorded reticles stand still, so both are magenta (user, 20.09); solid is the client's,
+    // dashed the server's.
+    ring(context.aim.clientMarker,AIM_RING,false);
     var server=context.aim.serverMarker,client=context.aim.clientMarker;
-    if(server&&Number.isFinite(server.receivedAt)&&Math.abs(server.receivedAt-client.receivedAt)<.5)ring(server,0xeac36e,true);
+    if(server&&Number.isFinite(server.receivedAt)&&Math.abs(server.receivedAt-client.receivedAt)<.5)ring(server,AIM_RING,true);
     this.showSavedAim(aimShown());return !!this.savedAim;
   };
   // Without a recorded reticle (every incoming hit, own hits without a snapshot) draw the nominal full-aim circle:
@@ -689,19 +705,34 @@
     var radius=attacker.gunDispersion*range,normal=this.travel.clone().normalize(),up=new T.Vector3(0,1,0);if(Math.abs(up.dot(normal))>.98)up.set(1,0,0);
     var right=new T.Vector3().crossVectors(normal,up).normalize();up.crossVectors(right,normal).normalize();var points=[];
     for(var i=0;i<=96;i++){var a=i/96*Math.PI*2;points.push(this.point.clone().addScaledVector(right,radius*Math.cos(a)).addScaledVector(up,radius*Math.sin(a)));}
-    var line=new T.Line(new T.BufferGeometry().setFromPoints(points),new T.LineDashedMaterial({color:0x79cfff,depthTest:false,depthWrite:false,transparent:true,opacity:.75,dashSize:radius*.12,gapSize:radius*.08}));
+    var line=new T.Line(new T.BufferGeometry().setFromPoints(points),new T.LineDashedMaterial({color:AIM_RING,depthTest:false,depthWrite:false,transparent:true,opacity:.75,dashSize:radius*.12,gapSize:radius*.08}));
     line.computeLineDistances();line.renderOrder=12;line.frustumCulled=false;this.aimGroup.add(line);
-    this.estimateAim={radius:radius,range:range,dispersion:attacker.gunDispersion,gun:attacker.gun||null,source:context&&context.rangeSource||'impact'};
+    // The frame is kept so the ring can be sampled like any other (estimateAimProbability): the shooter
+    // stands `range` back along the line of flight, which is where the cone this circle is the base of
+    // starts. Geometry only - the estimate still never enters the figures of the recorded shot.
+    this.estimateAim={radius:radius,range:range,dispersion:attacker.gunDispersion,gun:attacker.gun||null,source:context&&context.rangeSource||'impact',
+      center:this.point.clone(),right:right,up:up,origin:this.point.clone().addScaledVector(normal,-range)};
     this.showSavedAim(aimShown());return this.estimateAim;
   };
   // The rings depend only on the shot line (muzzle, impact point, dispersion) and live in the root frame,
   // so turning the turret or the gun does not move them and must not hide them: only the checkbox does.
   // The hit marks and arrows keep their pose rule in syncRecorded.
   Viewer.prototype.showSavedAim=function(value){if(this.aimGroup)this.aimGroup.visible=!!value;this.draw();};
+  // Whether the recorded rings are on screen at this moment. A pinned point and the user's first emulated
+  // shot both take them away, and the page prints a figure only for a ring the user can actually see.
+  Viewer.prototype.savedAimShown=function(){return !!(this.aimGroup&&this.aimGroup.visible);};
   Viewer.prototype.savedAimProbability=function(shell){
     if(!this.savedAim||!this.savedAim.origin||!this.engine||!shell||Math.abs(this.turretAngle)>.001||Math.abs(this.gunAngle)>.001)return null;
     // 'damage' is the mean expected damage over the circle, HP: a miss is 0 HP exactly as it is 0 %.
     var aim=this.savedAim;
+    return sampleCircle(this.engine,shell,aim.origin,aim.center,aim.right,aim.up,aim.radius,256,this.aimQuantile());
+  };
+  // The same integral over the NOMINAL ring of a hit that has no recorded reticle (user, 20.09: the
+  // circle figure belongs to every ring on screen). It is an estimate of the circle, so the figure is an
+  // estimate too - the panel line says so - and it is still kept out of the reticle tile's own number.
+  Viewer.prototype.estimateAimProbability=function(shell){
+    var aim=this.estimateAim;
+    if(!aim||!aim.origin||!this.engine||!shell||Math.abs(this.turretAngle)>.001||Math.abs(this.gunAngle)>.001)return null;
     return sampleCircle(this.engine,shell,aim.origin,aim.center,aim.right,aim.up,aim.radius,256,this.aimQuantile());
   };
   Viewer.prototype.paint=function(){

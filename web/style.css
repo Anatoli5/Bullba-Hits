@@ -301,8 +301,6 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 .scene-heading .eyebrow{font-size:11px}
 .heading-battle{flex:0 1 auto}
 .heading-line{min-height:0;gap:14px}
-.scene-heading .settings-menu{margin-left:auto}
-.settings-content{top:56px}
 .shell-fields{display:flex;align-items:center;flex-wrap:wrap;gap:10px;min-width:0}
 .shell-fields .fields-row{align-items:center;gap:10px}
 .shell-fields .fields-row label{display:flex;flex-direction:row;align-items:center;gap:6px;font-size:13px;color:var(--muted);white-space:nowrap}
@@ -327,7 +325,9 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 #shot-panel #shot-details{grid-row:3;grid-column:1/3}
 #shot-panel .info-extra{grid-row:4;grid-column:1/3}
 /* The figure of the aiming circle, one line per panel in the colour of the ring it belongs to (user,
-   20.09): cyan for the live ring under the cursor, magenta for the ring the last shot left behind. */
+   20.09): cyan for the live ring under the cursor, magenta on the hit-line panel for whichever standing
+   ring is on the model there - the recorded reticle of the hit, its nominal estimate, or the ring an
+   emulated shot left behind. */
 #shot-panel #shot-circle,#armor-probe #probe-circle{grid-row:5;grid-column:1/3}
 .aim-circle{font-size:13px;font-weight:600;font-variant-numeric:tabular-nums;color:var(--aim-live);pointer-events:auto;cursor:help}
 .aim-circle.shot{color:var(--aim-shot)}
@@ -364,22 +364,21 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 @media(max-width:900px){.scene-heading{padding:8px 12px}.extra-strip{padding:6px 12px}}
 
 /* 18.09 round 2 (user: group the controls, give every block a place, fold the least important first).
-   The heading is a grid, not a wrapping flex row: Settings can no longer be the one thing that wraps and land
-   alone on a second line. Row 1 is battle tile | shell block | Settings while the three fit; layoutHeading() in
-   web/app.js measures them and adds .stacked when they do not, and then the WHOLE shell block drops to a
-   full-width second row while the tile and Settings keep row 1. */
-.scene-heading{display:grid;grid-template-columns:auto minmax(0,1fr) auto;grid-template-areas:"battle shell settings";align-items:center}
-.scene-heading.stacked{grid-template-columns:auto minmax(0,1fr) auto;grid-template-areas:"battle fields settings" "chips types .";row-gap:6px}
+   The heading is a grid, not a wrapping flex row. Row 1 is battle tile | shell block; layoutHeading() in
+   web/app.js measures them and adds .stacked when they do not fit, and then the WHOLE shell block drops to a
+   full-width second row while the tile keeps row 1.
+   20.09: Settings has left this row for the header (see below), so the grid is two columns wide. */
+.scene-heading{display:grid;grid-template-columns:auto minmax(0,1fr);grid-template-areas:"battle shell";align-items:center}
+.scene-heading.stacked{grid-template-columns:auto minmax(0,1fr);grid-template-areas:"battle fields" "chips types";row-gap:6px}
 .scene-heading.stacked>.shell-fields{display:contents}
 .scene-heading.stacked .shell-quick{grid-area:chips}
 .scene-heading.stacked .fields-row{grid-area:fields}
 .scene-heading.stacked #shell-types{grid-area:types}
 .scene-heading>.heading-battle{grid-area:battle;min-width:0}
 .scene-heading>.shell-fields{grid-area:shell;min-width:0}
-.scene-heading>.settings-menu{grid-area:settings;justify-self:end}
 /* Stacked (user 18.09): the shell block dissolves into the grid (display:contents) so its three parts take
-   their own cells - the gun's shells under the battle tile, the type switch under the fields - two rows, five
-   items, Settings alone at the top right. Every id and listener stays where app.js put it. */
+   their own cells - the gun's shells under the battle tile, the type switch under the fields - two rows, four
+   items. Every id and listener stays where app.js put it. */
 
 /* 18.09 settings (user: the grid and the opacities are settings, not things you touch while reading a shot).
    The four scene decorations sit in their own group of the menu, in the same two-column grid as the rest, and
@@ -400,13 +399,27 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 .pose-tile[hidden]{display:none}
 .pose-tile>span{display:block}
 .pose-tile>span[hidden],.pose-tile>span:empty{display:none}
-/* The speed readout, left of the Shooter tile (user, 20.09): what the shooter is doing right now and the
-   W A S D glyph that says the keys are live. Same translucent panel as the other scene overlays. */
-.aim-drive{display:flex;flex-direction:column;align-items:center;gap:3px;flex-shrink:0;padding:5px 9px;border-radius:5px;background:rgba(23,35,48,.55);color:#e5edf5;font-size:13px;line-height:1.1;white-space:nowrap}
+/* The speed readout at the left end of the shooter row (user, 20.09): what the shooter is doing right
+   now, the turn arc and the key glyph, side by side. The margin keeps it clear of the swap button, which
+   belongs to the two vehicle tiles and not to this tile. Same translucent panel as the other overlays. */
+.aim-drive{display:flex;flex-direction:row;align-items:center;gap:9px;flex-shrink:0;margin-right:26px;padding:5px 10px;border-radius:5px;background:rgba(23,35,48,.55);color:#e5edf5;font-size:13px;line-height:1.1;white-space:nowrap}
 .aim-drive[hidden]{display:none}
 .aim-drive b{font-weight:600;font-variant-numeric:tabular-nums}
-.aim-keys{display:flex;gap:2px}
-.aim-keys>span{min-width:13px;padding:1px 2px;border:1px solid #47596c;border-radius:3px;font-size:9px;line-height:1.2;text-align:center;color:var(--muted)}
+/* Hull rotation: a small arc with an arrowhead, clockwise for D and counter-clockwise for A, as long as
+   the turn rate is fast (up to 270° at the hull's top rotation speed). Drawn by the frame loop. */
+.aim-turn{width:18px;height:18px;flex:0 0 auto;overflow:visible}
+.aim-turn[hidden]{display:none}
+.aim-turn-arc{fill:none;stroke:var(--gold);stroke-width:2;stroke-linecap:round}
+.aim-turn-head{fill:var(--gold);stroke:none}
+/* The glyph is shaped like the keys themselves (user, 20.09): W over A S D, and a cap lights up while
+   its key is held. */
+.aim-keys{display:grid;grid-template-columns:repeat(3,15px);grid-template-rows:repeat(2,14px);gap:2px}
+.aim-keys>span{display:flex;align-items:center;justify-content:center;padding:0;border:1px solid #47596c;border-radius:3px;font-size:9px;line-height:1;text-align:center;color:var(--muted)}
+.aim-keys>span:nth-child(1){grid-column:2;grid-row:1}
+.aim-keys>span:nth-child(2){grid-column:1;grid-row:2}
+.aim-keys>span:nth-child(3){grid-column:2;grid-row:2}
+.aim-keys>span:nth-child(4){grid-column:3;grid-row:2}
+.aim-keys>span[data-down]{border-color:var(--gold);background:rgba(234,195,110,.22);color:#f3e2bc}
 /* The pointer over the scene while the emulation is on. Two shapes, chosen in Settings → Scene; the
    hotspot is the centre of the 32 px image and `crosshair` is the fallback if the image is refused. */
 #viewport.aim-cross{cursor:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Cg fill='none' stroke='%23000' stroke-opacity='.6' stroke-width='3.5' stroke-linecap='round'%3E%3Cpath d='M16 3v8M16 21v8M3 16h8M21 16h8'/%3E%3C/g%3E%3Cg fill='none' stroke='%235ee0ff' stroke-width='1.6' stroke-linecap='round'%3E%3Cpath d='M16 3v8M16 21v8M3 16h8M21 16h8'/%3E%3C/g%3E%3Ccircle cx='16' cy='16' r='1.1' fill='%235ee0ff'/%3E%3C/svg%3E") 16 16,crosshair}
@@ -424,3 +437,18 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
    Only the message that asks for it spins - .scene-message without .busy is exactly what it was. */
 .scene-message.busy::before{content:"";flex:0 0 auto;width:18px;height:18px;margin-right:10px;border-radius:50%;border:2px solid #35475a;border-top-color:var(--gold);animation:bullba-spin 1s linear infinite}
 @keyframes bullba-spin{to{transform:rotate(360deg)}}
+
+/* 20.09 (user): Settings moved out of the crowded scene heading into the HEADER row, beside the
+   "Statistics log" status and in the corner - the status first, Settings rightmost. The brand's own
+   margin-right:auto already pushes both to the right edge, so the menu drops the margin-left:auto it
+   needed in the heading, or the two would be pulled apart. The header keeps its height.
+   The popover is anchored to the button itself instead of to a fixed offset from the top of the page:
+   the more specific selector wins over every earlier top/right rule, including those in the media
+   queries, so the panel opens under Settings whatever the window is. Its mechanics are unchanged. */
+header>.settings-menu{margin-left:0;position:relative}
+header>.settings-menu>.settings-content{top:calc(100% + 8px);right:0;max-height:calc(100dvh - 110px)}
+
+/* 20.09 (user): the cross at an impact point is a large thin cross, and from the shooter's seat - where the
+   tracer is a single dot - it reads too heavy over the armour. Settings -> Scene sets how strongly it is
+   drawn; viewer.js writes the variable on the layer and every cross inherits it. Nothing else is dimmed. */
+.hit-reticle{opacity:var(--impact-opacity,.5)}
