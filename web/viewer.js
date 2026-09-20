@@ -9,8 +9,14 @@
   // A monotonic clock. Date.now() steps backwards when the system clock is corrected after a resume, which used
   // to leave the settle comparisons below permanently unsatisfied.
   function clock(){return window.performance&&window.performance.now?window.performance.now():Date.now();}
-  // The reticle-circle checkbox; absent in isolated tests, where the circles simply stay hidden.
-  function aimShown(){var box=document.getElementById('show-aim');return !!(box&&box.checked);}
+  // Whether the RECORDED markers belong on screen. There is no checkbox any more (0.7.15): the recorded
+  // circles are always shown, except while the aim emulation is running - then the scene belongs to the
+  // emulated shot alone (user, 20.09), so nothing recorded competes with the circle and its tracer.
+  var aimEmulation=false;
+  function aimShown(){return !aimEmulation;}
+  // The emulated circle: cyan so it reads over the red-green heat map (yellow is lost in it), dashed
+  // while the shot is still being aimed and solid and brighter once a shot has fixed it.
+  var AIM_LIVE={color:0x5ee0ff,dashed:true,opacity:.95},AIM_FIXED={color:0xbdf4ff,dashed:false,opacity:1};
   function linear(color){return color.map(function(c){return c<=.04045?c/12.92:Math.pow((c+.055)/1.055,2.4);});}
   var baseColors=[[.38,.46,.54],[.65,.73,.8],[.75,.83,.87],[.55,.65,.72]].map(linear);
   function externalLayer(t){return t.part===0||!!(t.armor&&Number.isFinite(t.armor.vehicleDamageFactor)&&t.armor.vehicleDamageFactor<=1e-5);}
@@ -36,7 +42,10 @@
     // liveAimPoint the centre it was last drawn at, liveAim the drawn circle the integral samples.
     // aimCursorPoint is where the cursor points, liveAimPoint where the GUN points: with the turret
     // emulation on they are the same only once the turret has caught up (see chaseAim).
-    this.liveRadius100=null;this.liveAimPoint=null;this.aimCursorPoint=null;this.liveAim=null;this.aimChase=false;this.aimProfileName=ArmorBallistics.aimProfileDefault;
+    // aimFixed: a shot has frozen the circle where it stood. The model underneath keeps running (the
+    // recoil, the settling, the reload) but nothing moves or resizes the drawn circle until the next
+    // click releases it, which is the two-state machine the user asked for on 20.09.
+    this.liveRadius100=null;this.liveAimPoint=null;this.aimCursorPoint=null;this.liveAim=null;this.aimChase=false;this.aimFixed=false;this.aimProfileName=ArmorBallistics.aimProfileDefault;
     this.frameAt=0;this.frameTimes=[]; // when the pending frame was asked for, and the cadence of the frames that ran
     this.contextLost=false;this.dragging=false;this.hoverId=null;this.hoverEvent=null;this.inspectKey=null;
     // The camera is driven by its own frame loop: pointer and key events only move the target.
@@ -356,6 +365,10 @@
     var box=new T.Box3().setFromObject(this.root);this.bounds=box.isEmpty()?null:box;this.centre=this.vehicleCentre();
     var pts=Viewer.points(hit);pts.forEach(function(p){self.addReticle(p.pos);});
     this.shotPoints=pts;this.drawTracers(pts);if(pts.length){this.point=pts[0].pos.clone();this.travel=pts[0].line.clone();}
+    // The tracers and marks of this hit have just been added to the root: with the aim emulation running
+    // they must not be on screen at all, so the recorded rule is applied to them here and not only when
+    // the pose or the pin changes.
+    this.syncRecorded();
     if(this.bounds)this.grid.position.y=this.bounds.min.y-.025;if(this.point)this.focus();else this.reset();if(this.onGun)this.onGun({angle:0,known:this.gunRange().known});return !!this.bounds;
   };
   Viewer.prototype.addReticle=function(position){
@@ -596,7 +609,7 @@
   Viewer.prototype.unpin=function(){this.pinned=null;this.refreshPin();if(this.onPin)this.onPin(false);this.draw();};
   // Recorded markers (arrows, reticles, aim circles) belong to the saved pose and the saved shot: an explored
   // pose or a pinned shot replaces them until the user returns.
-  Viewer.prototype.recordedShown=function(){return Math.abs(this.turretAngle)<.001&&Math.abs(this.gunAngle)<.001&&!this.pinned;};
+  Viewer.prototype.recordedShown=function(){return aimShown()&&Math.abs(this.turretAngle)<.001&&Math.abs(this.gunAngle)<.001&&!this.pinned;};
   Viewer.prototype.syncRecorded=function(){var show=this.recordedShown();this.root.children.forEach(function(o){if(o!==this.paintMesh&&o!==this.trackGroup&&o!==this.outline&&o!==this.outlineDepth&&o!==this.aimGroup)o.visible=show;},this);};
   Viewer.prototype.shotProbability=function(shell){
     if(this.pinned&&this.engine&&shell)return this.engine.ray(this.pinned.origin.toArray(),this.pinned.direction.toArray(),shell);
@@ -757,12 +770,23 @@
     var right=new T.Vector3().crossVectors(normal,up).normalize();up.crossVectors(right,normal).normalize();
     return {normal:normal,right:right,up:up};
   }
-  Viewer.prototype.drawCircle=function(center,right,up,radius,color){
-    var T=THREE,points=[];
-    for(var j=0;j<96;j++){var a=j/96*Math.PI*2;points.push(center.clone().addScaledVector(right,radius*Math.cos(a)).addScaledVector(up,radius*Math.sin(a)));}
+  // One dispersion circle in the scene. It must always be READABLE OVER THE MODEL (user, 20.09): an
+  // opaque line with depthTest off is still drawn in three's opaque pass, which runs BEFORE the
+  // heat map's own full-screen quad (transparent, renderOrder 0) - so the quad painted over it and the
+  // model appeared to occlude the circle. Transparent, depth off and a renderOrder above the recorded
+  // rings (12) and the tracers (4) puts it last of all, on top of everything.
+  // `style` is {color, dashed, opacity}; without one the circle is the gold manual estimate of 0.7.13.
+  Viewer.prototype.drawCircle=function(center,right,up,radius,style){
+    var T=THREE,points=[],s=style||{};
+    // 97 points, the last on top of the first: a closed T.Line rather than a LineLoop, because
+    // computeLineDistances() has no distance for a LineLoop's closing segment and the dashes break there.
+    for(var j=0;j<=96;j++){var a=j/96*Math.PI*2;points.push(center.clone().addScaledVector(right,radius*Math.cos(a)).addScaledVector(up,radius*Math.sin(a)));}
+    var options={color:s.color===undefined?0xf1d18b:s.color,transparent:true,opacity:s.opacity>0?s.opacity:1,depthTest:false,depthWrite:false};
+    var material=s.dashed?new T.LineDashedMaterial(Object.assign(options,{dashSize:radius*.09,gapSize:radius*.06})):new T.LineBasicMaterial(options);
     this.hideSpread();
-    this.spreadCircle=new T.LineLoop(new T.BufferGeometry().setFromPoints(points),new T.LineBasicMaterial({color:color===undefined?0xf1d18b:color,depthTest:false}));
-    this.spreadCircle.renderOrder=10;this.scene.add(this.spreadCircle);this.draw();
+    this.spreadCircle=new T.Line(new T.BufferGeometry().setFromPoints(points),material);
+    if(s.dashed)this.spreadCircle.computeLineDistances();
+    this.spreadCircle.renderOrder=14;this.spreadCircle.frustumCulled=false;this.scene.add(this.spreadCircle);this.draw();
   };
   Viewer.prototype.estimateSpread=function(radius100){
     this.commitPose(); // the rays are cast against the engine, so a pose that is only drawn must be built first
@@ -781,12 +805,29 @@
   // camera - the page's shooter viewpoint - so the circle stands on the plane through the aimed point,
   // across that ray, and grows with the distance flown exactly as it does in the game.
   Viewer.prototype.setLiveAim=function(radius100){
+    // A shot has frozen the circle: the state under it goes on changing, the drawn circle does not.
+    if(this.aimFixed&&this.liveRadius100)return;
     var value=Number.isFinite(radius100)&&radius100>0&&radius100<=50?radius100:null;
     this.liveRadius100=value;
     if(value===null){this.liveAim=null;this.hideSpread();return;}
     this.drawLiveAim();
   };
-  Viewer.prototype.clearLiveAim=function(){this.liveRadius100=null;this.liveAimPoint=null;this.aimCursorPoint=null;this.liveAim=null;this.hideSpread();};
+  Viewer.prototype.clearLiveAim=function(){this.liveRadius100=null;this.liveAimPoint=null;this.aimCursorPoint=null;this.liveAim=null;this.aimFixed=false;this.hideSpread();};
+  // The two states of the emulated shot. Fixing keeps the circle exactly where and as wide as it was;
+  // releasing hands it back to the cursor and to the running state, which the caller redraws at once.
+  Viewer.prototype.setAimFixed=function(on){this.aimFixed=!!on;this.drawLiveAim();};
+  // The emulation as a whole. With it on, everything RECORDED leaves the scene (user, 20.09): the saved
+  // reticle circles and the nominal estimate ring (the aim group), the recorded tracers and hit marks
+  // (root children, through recordedShown) and their HTML reticles. Only the emulated circle and the
+  // tracer of its own shot stay. Off, all of it comes back untouched.
+  Viewer.prototype.setAimEmulation=function(on){
+    aimEmulation=!!on;
+    this.aimChase=!!on;
+    if(!on)this.aimFixed=false;
+    if(this.aimGroup)this.aimGroup.visible=aimShown();
+    this.syncRecorded();
+    this.draw();
+  };
   // Which radial distribution the samplers fan their rays over. A name the page does not know falls
   // back to the Gaussian, so a stored setting from a later build can never break the figures.
   Viewer.prototype.setAimProfile=function(name){this.aimProfileName=ArmorBallistics.aimProfile(name).id;};
@@ -799,7 +840,7 @@
     var origin=this.camera.position.clone(),range=origin.distanceTo(center),frame=circleFrame(origin,center);
     var radius=range*this.liveRadius100/100;
     this.liveAim={center:center.clone(),right:frame.right,up:frame.up,radius:radius,origin:origin,range:range};
-    this.drawCircle(center,frame.right,frame.up,radius);
+    this.drawCircle(center,frame.right,frame.up,radius,this.aimFixed?AIM_FIXED:AIM_LIVE);
     return this.liveAim;
   };
   // Called from inspect() with the raycast it already did, so a pointer move costs no second cast. Without a
@@ -813,6 +854,9 @@
     else{var plane=new T.Plane().setFromNormalAndCoplanarPoint(this.target.clone().sub(this.camera.position).normalize(),this.target),p=new T.Vector3();if(caster.ray.intersectPlane(plane,p))point=p;}
     if(!point)return null;
     this.aimCursorPoint=point;
+    // A fixed circle still follows the cursor with its EYES: the gun stays put, but where the cursor
+    // is has to be known, so that releasing the shot resumes the chase from the right gap.
+    if(this.aimFixed)return this.liveAim;
     if(!this.aimChase||!this.liveAimPoint)this.liveAimPoint=point.clone();
     return this.drawLiveAim();
   };
@@ -821,7 +865,7 @@
   // through; the distance to them plays no part in it.
   Viewer.prototype.aimGap=function(){
     var gun=this.spreadAim||this.liveAimPoint,cursor=this.aimCursorPoint;
-    if(!gun||!cursor||this.spreadAim)return 0; // a pinned centre is not chasing anything
+    if(!gun||!cursor||this.spreadAim||this.aimFixed)return 0; // a pinned or fixed centre is not chasing anything
     var eye=this.camera.position,a=gun.clone().sub(eye),b=cursor.clone().sub(eye);
     if(a.lengthSq()<1e-12||b.lengthSq()<1e-12)return 0;
     return a.normalize().angleTo(b.normalize());
@@ -832,7 +876,7 @@
   // cursor snaps exactly onto it, so a turret that has caught up reads identically to stage 1.
   Viewer.prototype.chaseAim=function(step){
     var T=THREE,gun=this.liveAimPoint,cursor=this.aimCursorPoint;
-    if(!gun||!cursor||this.spreadAim)return false;
+    if(!gun||!cursor||this.spreadAim||this.aimFixed)return false;
     var eye=this.camera.position.clone(),a=gun.clone().sub(eye),range=a.length(),b=cursor.clone().sub(eye);
     if(range<1e-6||b.lengthSq()<1e-12)return false;
     a.divideScalar(range);b.normalize();

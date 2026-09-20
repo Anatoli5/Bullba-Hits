@@ -40,6 +40,28 @@ JOB_PAGE, JOB_PLAYER, JOB_OTHER, JOB_BULK = 0, 1, 2, 3
 # optional catalogue export is background work.
 VEHICLE_PRIORITY = {'picker':JOB_PAGE, 'hangar':JOB_PLAYER, 'battle':JOB_BULK, 'catalogue':JOB_BULK}
 
+# The equipment and perk icons of the aim configuration. They are WG's own art and are never shipped
+# with the mod (user, 20.09), exactly as the collision models are not: the page reads them out of
+# <data>/icons, which is filled here from the installed client's gui packages (plain zip files) on a
+# game start. Until that first start the files are absent and the page falls back to a text label.
+#
+# Verified by listing gui-part1..4.pkg of client 2.4.0.1 (20.09.2026): every entry below exists, the
+# artefact icons are 48x48 and the perk icons 80x80. The delux / bounty / trophy variants have NO icon
+# of their own - their XML entries point at the same base <icon> (deluxRammer -> rammer,
+# deluxAimingStabilizer -> aimingStabilizer, ...) and the client marks them with a frame overlay
+# instead, so the page marks the variant with a coloured frame of its own.
+ICONS = (
+    ('aimingStabilizer.png',   'gui/maps/icons/artefact/aimingStabilizer.png'),
+    ('enhancedAimDrives.png',  'gui/maps/icons/artefact/enhancedAimDrives.png'),
+    ('improvedVentilation.png','gui/maps/icons/artefact/improvedVentilation.png'),
+    ('rammer.png',             'gui/maps/icons/artefact/rammer.png'),
+    ('empty_slot.png',         'gui/maps/icons/artefact/empty_slot.png'),
+    ('brotherhood.png',        'gui/maps/icons/tankmen/skills/80x80/brotherhood.png'),
+    ('gunner_smoothTurret.png','gui/maps/icons/tankmen/skills/80x80/gunner_smoothTurret.png'),
+    ('driver_smoothDriving.png','gui/maps/icons/tankmen/skills/80x80/driver_smoothDriving.png'),
+)
+ICON_LIMIT = 2 * 1024 * 1024  # a UI icon is a few kilobytes; anything larger is not one of ours
+
 
 def canonical(version):
     return version.lstrip(u'\ufeff').replace('\r\n', '\n')
@@ -779,6 +801,7 @@ class Exporter(object):
             for name in ASSETS:
                 atomic_write(os.path.join(self.folder, *name.split('/')), z.read('res/armor_inspector_viewer/'+name))
         self.load_settings()
+        self.export_icons()
         self.load_vehicles()
         # Rebuild derived records after an interrupted game. Raw JSONL is untouched.
         # Every battle is republished, so one unreadable file must not stop the rest.
@@ -793,6 +816,44 @@ class Exporter(object):
         self.write_index()
         if self.settings.get('exportAllVehicles'):
             self.queue_catalogue_exports()
+
+    def export_icons(self):
+        """Unpack the aim configuration's icons from the client's gui packages.
+
+        One pass at setup, never during a battle: a file already written is left
+        alone, so this costs nothing but a directory listing on every later start.
+        Every step is guarded - a missing package, a renamed entry or a read-only
+        folder must leave the recorder running and only cost the page its icons,
+        which it already falls back from.
+        """
+        folder = os.path.join(self.folder, 'data', 'icons')
+        missing = [row for row in ICONS if not os.path.isfile(os.path.join(folder, row[0]))]
+        if not missing: return 0
+        written = 0
+        try:
+            packages = sorted(glob.glob(os.path.join(self.game, 'res', 'packages', 'gui-part*.pkg')))
+        except Exception:
+            LOG.exception('Could not list the client gui packages; the page keeps its text labels')
+            return 0
+        wanted = dict((entry, name) for name, entry in missing)
+        for path in packages:
+            if not wanted: break
+            try:
+                with zipfile.ZipFile(path) as package:
+                    for entry in [e for e in list(wanted) if e in package.namelist()]:
+                        name = wanted.pop(entry)
+                        info = package.getinfo(entry)
+                        if info.file_size <= 0 or info.file_size > ICON_LIMIT:
+                            LOG.warning('Icon %s has an unexpected size (%s bytes); skipped', entry, info.file_size)
+                            continue
+                        atomic_write(os.path.join(folder, name), package.read(entry))
+                        written += 1
+            except Exception:
+                LOG.exception('Could not read icons from %s', os.path.basename(path))
+        if wanted:
+            LOG.warning('Icons not found in the client packages: %s', ', '.join(sorted(wanted)))
+        if written: LOG.info('Unpacked %d interface icon(s) into data/icons', written)
+        return written
 
     def _index_resources(self):
         self.packages, self.overrides = {}, set()
@@ -1175,6 +1236,8 @@ class Exporter(object):
         # derived file alike. A collision model is removed only when no battle and no exported
         # vehicle references it any more; vehicle records hold their keys under 'vehicle:<id>',
         # which no battle id can collide with (IDENTIFIER has no colon).
+        # Only data/models is swept: data/icons holds the interface icons unpacked once at setup
+        # and nothing here may delete them.
         referenced = set()
         for keys in self.model_refs.values(): referenced.update(keys)
         for path in glob.glob(os.path.join(self.folder, 'data', 'models', '*.js')):
