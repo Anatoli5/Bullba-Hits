@@ -91,16 +91,24 @@ if digest(wotmod) != report['sha256']:
     raise RuntimeError('dist/*.wotmod does not match dist/build.json; rebuild first')
 
 repo = '/repos/' + OWNER + '/' + NAME
-if api(repo + '/git/ref/tags/' + tag, missing=True) is None:
-    api(repo + '/git/refs', 'POST', {'ref': 'refs/tags/' + tag, 'sha': head})
-if api(repo + '/releases/tags/' + tag, missing=True) is not None:
-    raise RuntimeError('Release ' + tag + ' already exists; bump the version instead of replacing a published build')
 notes = ['Bullba Hits ' + VERSION + u' \u2014 WoT PC NA 2.4.0.1 #950.', '', changelog, '', '### Files', '',
-         '**' + assets[0].name + u'** \u2014 the installer. Close the game, run it, point it at the World of Tanks folder. It installs the mod and the hangar mods panel (ModsList + OpenWG Gameface, only if you do not have them), keeps your recorded battles and moves the previous build to a backup.', '',
-         '**' + assets[1].name + u'** \u2014 everything else in one archive: the same `.wotmod` files for a manual install (put every `.wotmod` from its `mod` folder into `mods\\2.4.0.1\\`, skip the ones you already have), the mod sources, README and the licences of the third-party parts.', '',
+         '**' + assets[0].name + u'** \u2014 the installer. Works alongside other mod packs: used with Aslain\'s, others are expected to work. Keeps your recorded battles.', '',
+         '**' + assets[1].name + u'** \u2014 the `.wotmod` files for a manual install (copy them into `mods\\2.4.0.1\\`), the sources, README and licences.', '',
          'SHA-256:']
 notes += ['- `' + a.name + '`: `' + digest(a) + '`' for a in assets]
 notes += ['- `' + wotmod.name + '` (inside the archive): `' + report['sha256'] + '`']
+if api(repo + '/git/ref/tags/' + tag, missing=True) is None:
+    api(repo + '/git/refs', 'POST', {'ref': 'refs/tags/' + tag, 'sha': head})
+existing = api(repo + '/releases/tags/' + tag, missing=True)
+if '--notes' in sys.argv:
+    # Rewrite the notes of the published release from the current CHANGELOG section; assets and tag stay.
+    if existing is None:
+        raise RuntimeError('Release ' + tag + ' does not exist; nothing to update')
+    api(existing['url'], 'PATCH', {'body': '\n'.join(notes)})
+    print(json.dumps({'tag': tag, 'url': existing['html_url'], 'notes': 'updated'}, ensure_ascii=False, indent=2))
+    sys.exit(0)
+if existing is not None:
+    raise RuntimeError('Release ' + tag + ' already exists; bump the version instead of replacing a published build')
 release = api(repo + '/releases', 'POST', {'tag_name': tag, 'target_commitish': head, 'name': 'Bullba Hits ' + VERSION, 'body': '\n'.join(notes), 'draft': False, 'prerelease': False})
 upload_base = release['upload_url'].split('{')[0]
 for asset in assets:
