@@ -36,3 +36,4 @@ __pycache__/
 !/tools/verdicts_from_log.py
 !/tools/preview.py
 !/tools/third_party.py
+!/tools/shot_spread_from_records.py
