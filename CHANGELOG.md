@@ -4,7 +4,7 @@ Every build that reaches a user gets its own number and its own section here. Th
 taken from the section of the version being published; a release without its section is refused by the release
 script. Versions are listed newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
-## Unreleased
+## 0.7.14 (2026-09-19)
 
 - **Aim emulation — take the shooter's seat.** Switch it on in Settings → Scene (or in the block under the
   scene; it is off by default) and drive the shooter yourself: **W A S D** move the vehicle, the turret
