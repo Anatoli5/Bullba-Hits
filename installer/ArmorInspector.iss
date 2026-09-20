@@ -28,6 +28,15 @@ UninstallFilesDir={app}\mods\configs\local.armor_inspector\installer
 UninstallDisplayIcon={app}\mods\configs\local.armor_inspector\web\icon.ico
 UninstallDisplayName=Bullba Hits
 SetupMutex=LocalArmorInspectorSetup
+; The stub used to carry no version resource at all (found 20.09): an unsigned EXE with an empty
+; FileVersion is the weakest possible case for Windows reputation checks. This does not replace a
+; signature, but the file now describes itself.
+VersionInfoVersion={#ProductVersion}
+VersionInfoProductVersion={#ProductVersion}
+VersionInfoProductName=Bullba Hits
+VersionInfoDescription=Bullba Hits Setup
+VersionInfoCompany=Bullba Hits
+VersionInfoOriginalFileName=BullbaHits-{#ProductVersion}-Setup.exe
 #ifdef SignBuild
 ; Sign both the outer EXE and the temporary setup/uninstaller executables.
 SignTool=BullbaHitsSign

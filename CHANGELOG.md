@@ -2,7 +2,7 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
-## Unreleased
+## 0.7.16 (2026-09-20)
 
 - The crosshair shape picked in Settings now shows over the model; the canvas kept the plain cross.
 - The circle figure of an emulated shot no longer stays on the panel of the next hit, where it hid that hit's own figure.
@@ -15,9 +15,6 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 - Target modifiers beside the Collision model tile (spall liner, field modification, driver skill) are back: the script was missing from the package since 0.7.12.
 - Equipment, perk and shell icons ship with the page; nothing is unpacked from the client on a game start any more.
 - Info panels: the "flies past after the ricochet" chip is gone; the ricochet chip and 0 % say it.
-
-## 0.7.15 (2026-09-20)
-
 - Info panels: the shell's alpha in HP stands beside the chance figure ("62 % / 390").
 - Info panels: the "pen NNN mm / NNN m" chip moves from the title row to its own line under the chance, right above the effective armour line.
 - On a narrow page the pose tile steps up above the shooter row instead of sitting under the speed tile.

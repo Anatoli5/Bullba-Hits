@@ -20,7 +20,7 @@ from .geometry import extract
 from .armor import ArmorCatalog
 
 LOG = logging.getLogger('local.armor_inspector')
-VERSION = '0.7.15'
+VERSION = '0.7.16'
 RESOURCE = re.compile(r'^vehicles/[A-Za-z0-9_/-]+\.(?:model|havok)\Z')
 IDENTIFIER = re.compile(r'^[-a-zA-Z0-9_]{1,100}\Z')
 # The interface icons of the aim configuration (equipment, perks, shells) ship with the page in web/icons
