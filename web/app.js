@@ -1620,7 +1620,7 @@
     var choice=$('shell-choice').value,c=choice.indexOf('saved:')===0?candidates[Number(choice.slice(6))]:null;
     var range=viewer?viewer.distance:100;
     var shell=shellAt(c,choice,Number($('penetration').value),Number($('caliber').value),range),r=viewer&&viewer.shotProbability(shell),output=$('shot-chance');
-    var pinned=!!(viewer&&viewer.pinned),line=armorLine(r,shell?shell.penetration:null,range);fillPanel('shot',line);
+    var pinned=!!(viewer&&viewer.pinned),line=armorLine(r,shell?shell.penetration:null,range);fillPanel('shot',line,shell&&shell.alpha);
     logVerdicts(shell);
     // The tile's own tooltip says what its number is before it says where the line comes from.
     $('shot-panel').title=damageView?'Expected damage per shot along the saved hit line, as a share of the shell’s alpha: the penetration chance times alpha, plus the reconstructed non-penetration damage for the rest, divided by alpha.\n\nThe record holds what the shot did; this is the expectation it had, not the rolled RNG.':shotPanelTitle;
@@ -1715,7 +1715,7 @@
   function chanceRgb(r){return 'rgb('+ArmorBallistics.color(r,$('palette').value,ricochetTint,damageView?'damage':'chance').map(function(v){return Math.round(v*255);}).join(',')+')';}
   // Expected damage is read as a share of the shell's own alpha, never in HP (user, 19.09): "50 %" says at a
   // glance how much of what this shell can do a shot at this point is worth, and the same number compares two
-  // guns whose alphas differ. The alpha in HP is not printed on the scene at all (user, 20.09).
+  // guns whose alphas differ. The alpha in HP appears once per panel, muted, beside the chance (user, 20.09).
   // A shell whose non-penetration damage has no model (the Taschenratte ability shell) shows the penetration part
   // alone as a lower bound, never as the expectation: the recorded shots of that shell do deal damage without piercing.
   function damageShare(r){
@@ -1762,11 +1762,14 @@
   }
   function chips(container,line){container.replaceChildren();line.groups.forEach(function(g){var chip=node('span',g.text,'chip '+g.kind);if(g.title)chip.title=g.title;container.appendChild(chip);});}
   // Fill an info panel: the title, the chance, then the penetration chip on a row of its own above the armour chips.
-  function fillPanel(prefix,line){var by=function(k){return line.groups.filter(function(g){return (g.kind==='screen')===(k==='screen')&&(k==='screen'||(g.kind==='pen')===(k==='pen'));});};
-    var chance=$(prefix+'-chance');chance.textContent=line.label;chance.style.color=line.color;chips($(prefix+'-pen'),{groups:by('pen')});chips($(prefix+'-details'),{groups:by('rest')});chips($(prefix+'-extra'),{groups:by('screen')});}
+  // The shell's alpha rides on the chance line as a muted "/ 390 alpha" (user, 20.09): the line has the room, and
+  // the share figures around it are read against that number.
+  function fillPanel(prefix,line,alpha){var by=function(k){return line.groups.filter(function(g){return (g.kind==='screen')===(k==='screen')&&(k==='screen'||(g.kind==='pen')===(k==='pen'));});};
+    var chance=$(prefix+'-chance');chance.replaceChildren(document.createTextNode(line.label));chance.style.color=line.color;
+    if(alpha>0){var a=node('span','/ '+Math.round(alpha)+' alpha','info-alpha');a.title='The shell’s alpha damage, HP';chance.appendChild(a);}chips($(prefix+'-pen'),{groups:by('pen')});chips($(prefix+'-details'),{groups:by('rest')});chips($(prefix+'-extra'),{groups:by('screen')});}
   function inspectArmor(r){
     var range=viewer?viewer.distance:100;
-    fillPanel('probe',armorLine(r,viewer&&viewer.shell?viewer.shell.penetration:null,range));
+    fillPanel('probe',armorLine(r,viewer&&viewer.shell?viewer.shell.penetration:null,range),viewer&&viewer.shell&&viewer.shell.alpha);
   }
   // Heading: which battle this is - date and start time, the map, and the vehicle the player was in.
   function battleStamp(seconds){if(!Number.isFinite(seconds))return '';var d=new Date(seconds*1000);return d.toLocaleDateString('en-GB')+' \u00b7 '+d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});}
