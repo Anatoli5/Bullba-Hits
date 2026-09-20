@@ -74,7 +74,7 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 /* The list under the tile: map, the player's vehicle tile, and the start day and time kept secondary. */
 .battle-list{position:absolute;left:0;top:calc(100% + 8px);z-index:14;min-width:100%;width:max-content;max-width:min(430px,calc(100vw - 40px));max-height:min(60vh,420px);overflow:auto;display:flex;flex-direction:column;gap:3px;padding:12px;border-radius:8px;background:#15212e;box-shadow:0 15px 50px #0009}
 .battle-list[hidden]{display:none}
-.battle-option{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:14px;width:100%;text-align:left;min-height:34px;padding:3px 10px;font-size:15px;border:1px solid #293849;border-radius:4px;background:#172330}
+.battle-option{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:14px;width:100%;text-align:left;min-height:48px;padding:3px 10px;font-size:15px;border:1px solid #293849;border-radius:4px;background:#172330}
 .battle-option[aria-selected=true]{border-color:var(--gold);background:#302d25;box-shadow:inset 3px 0 var(--gold)}
 .battle-option-map{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .battle-option-vehicle{display:flex;align-items:center;min-width:0}
@@ -93,7 +93,7 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 #model-tile{top:12px}
 /* The swap left the shooter tile for a button of its own (19.09): the tile picks the role now. The two share
    one row so the button keeps to the left of the tile, and the row takes over the tile's own placing. */
-.shooter-row{position:absolute;left:50%;bottom:12px;transform:translateX(-50%);z-index:7;display:flex;align-items:center;gap:8px;max-width:calc(100% - 24px)}
+.shooter-row{position:absolute;left:50%;bottom:12px;transform:translateX(-50%);z-index:7;display:flex;flex-wrap:nowrap;align-items:center;gap:8px;max-width:calc(100% - 24px)}
 .shooter-row>#shooter-tile{position:static;transform:none;max-width:100%}
 .swap-roles{flex:0 0 auto;min-height:0;padding:6px 10px;font-size:16px;line-height:1;border:1px solid rgba(157,174,191,.55);border-radius:6px;background:rgba(23,35,48,.15);color:inherit;text-shadow:0 1px 2px rgba(0,0,0,.7)}
 .swap-roles:hover{border-color:#c9d3dd;background:rgba(38,55,73,.45)}
@@ -127,11 +127,23 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 
 /* Aim emulation. The switch and "Configuration" sit beside the Shooter tile, at the bottom of the
    scene; the popover therefore opens upward. Same <details> + .toolbar-popover as every other popover. */
-/* Two lines, "Aim" over "emulation", with the checkbox on the first one (user, 20.09): the row beside
-   the Shooter tile is short of width and the label was the widest thing in it. */
-.aim-switch{display:flex;align-items:flex-start;gap:7px;flex-shrink:0;padding:6px 10px;border:1px solid #35475a;border-radius:5px;background:rgba(23,35,48,.55);color:#e5edf5;font-size:13px;line-height:1.2;white-space:nowrap;cursor:pointer}
-.aim-switch[hidden]{display:none}
-.aim-switch input{accent-color:var(--gold);margin-top:1px}
+/* The gun panel stands where the mode's switch used to, between the Shooter tile and Config (user,
+   20.09): the shells of this gun as the client's own icons, then the load state. Same translucent
+   panel as the other overlays of the row, and it never wraps - the row has to stay one line. */
+.aim-gun{display:flex;align-items:center;gap:10px;flex:0 0 auto;flex-wrap:nowrap;padding:4px 9px;border-radius:5px;background:rgba(23,35,48,.55);color:#e5edf5;font-size:13px;line-height:1.1;white-space:nowrap}
+.aim-gun[hidden]{display:none}
+.aim-gun-shells{display:flex;align-items:center;gap:5px}
+.aim-gun-shells[hidden]{display:none}
+.aim-shell{position:relative;display:flex;align-items:center;justify-content:center;width:30px;height:30px;min-height:0;flex:0 0 auto;padding:2px;border:1px solid #35475a;border-radius:4px;background:#0c151f;cursor:pointer}
+.aim-shell:hover{border-color:#6f8399}
+.aim-shell[aria-pressed=true]{border-color:var(--gold);background:#302b23}
+.aim-shell:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+.aim-shell-mark{position:absolute;top:-3px;right:-2px;font-size:9px;line-height:1;color:var(--gold);text-shadow:0 1px 2px #000}
+.aim-gun-load{display:flex;align-items:baseline;gap:6px}
+.aim-gun-load b{font-weight:600;font-variant-numeric:tabular-nums}
+.aim-gun-load b[data-running="1"]{color:var(--gold)}
+.aim-gun-clip{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+.aim-gun-clip[hidden]{display:none}
 /* “Configuration ▾” beside the Shooter tile: its popover opens upward, over the scene. */
 .aim-config{flex-shrink:0}
 .aim-config>summary{padding:6px 10px}

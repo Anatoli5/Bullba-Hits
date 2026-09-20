@@ -4,8 +4,13 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 
 ## Unreleased
 
-- Aim emulation moved next to the Shooter tile: an "Aim emulation" switch and a "Config" button; the
-  bottom strip with the sliders is gone.
+- Battle list: rows are tall enough for the vehicle tile.
+- Aim emulation is on by default and is switched in Settings → Scene ("Aim emulation"); the bottom strip
+  with the sliders is gone and the "Config" button sits next to the Shooter tile.
+- A gun panel beside the Shooter tile: the shooter's shells as the client's own icons — click one to pick
+  it for the whole page, in step with the shell list in the heading — and, like the in-game reticle, the
+  reload counting down with the rounds left in the clip while you hold the button, the gun's reload time
+  and clip size at rest. The shell icons come out of your client on a game start.
 - Settings moved from the scene heading up into the header row: the "Statistics log" status first, the
   Settings button in the corner. The swap button now sits beside the Shooter tile, and the speed tile
   stands clear of it at the other end of the row.

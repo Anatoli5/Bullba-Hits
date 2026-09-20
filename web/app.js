@@ -578,6 +578,7 @@
     if(browsing&&candidates.length){var first=candidates.findIndex(function(c){return c.kind==='ARMOR_PIERCING';});
       if(first<0)first=candidates.findIndex(function(c){return c.kind==='ARMOR_PIERCING_CR';});if(first<0)first=0;choice.value='saved:'+first;}
     $('shell-quick').replaceChildren();candidates.forEach(function(c,i){var actual=i===shotContext.index,b=node('button',(actual?'● ':'')+(shellNames[c.kind]||c.kind)+' '+Math.round(c.penetration100)+(c.gunInstallation>0?' ✦':''),'shell-chip');b.dataset.shell='saved:'+i;b.title=c.name+' · '+c.caliber+' mm · '+(c.gunInstallation>0?'ability gun'+(c.gun?' '+c.gun:'')+' · ':'')+(actual?'Type from the hit':'Compare with this shell');b.onclick=function(){choice.value='saved:'+i;selectShell();};$('shell-quick').appendChild(b);});
+    paintGunShells();
     syncTargetMods(hit);syncShooterMods(hit);
     if(keep){choice.value=keep.kind;manualPen=keep.penetration;$('penetration').value=keep.penetration;$('caliber').value=keep.caliber;penLabel(false);updateShell();}
     else selectShell();
@@ -739,7 +740,10 @@
   // window): everything here works without it and the presets then live for the session only.
   // Version 2 is the slot model; a version 1 store (the switch values of 0.7.14) is dropped, because
   // its fields say nothing about which slot held what.
-  var aimStore = {presets: {}, chosen: {}, on: false};
+  // 20.09: the mode itself is no longer in here. It became an ordinary Settings -> Scene checkbox,
+  // ticked by default, so the settings machinery stores it with every other control; a store written
+  // before that carries an `on` field, which is simply ignored.
+  var aimStore = {presets: {}, chosen: {}};
   var shooterConfig = aimValues(null), shooterPreset = AIM_BUILT_IN[0].name;
   // A slot value the controls do not offer, and the same kind twice, are both dropped here rather than
   // anywhere else: a preset from storage, a built-in one and a click all come through this door.
@@ -777,7 +781,7 @@
   // refused, so a corrupted or hand-edited store can never put the page in a state it cannot show.
   function adoptAimStore(box) {
     if (!box || typeof box !== 'object') return;
-    aimStore = {presets: {}, chosen: {}, on: box.on === true};
+    aimStore = {presets: {}, chosen: {}};
     if (Number(box.v) !== 2) return; // 0.7.14 presets held switch values, not slots: nothing to carry over
     var presets = {}, chosen = {}, count = 0;
     if (box.presets && typeof box.presets === 'object') Object.keys(box.presets).forEach(function (key) {
@@ -791,7 +795,7 @@
     });
     aimStore.presets = presets; aimStore.chosen = chosen;
   }
-  function aimStored() { return {v: 2, on: aimOn, presets: aimStore.presets, chosen: aimStore.chosen}; }
+  function aimStored() { return {v: 2, presets: aimStore.presets, chosen: aimStore.chosen}; }
   // Crew factor, from the client's own crew code (items/VehicleDescrCrew.pyc, items/utils.pyc):
   //   nonCommanderLevelIncrease = common + (commanderLevel + common) / tankmen.COMMANDER_ADDITION_RATIO (10)
   //   efficiency = (gunnerLevel + nonCommanderLevelIncrease) / tankmen.MAX_SKILL_LEVEL (100)
@@ -1219,6 +1223,7 @@
     if (viewer.setAimReload) viewer.setAimReload(aimReloadPart());
     viewer.setLiveAim(aimNow.radius100);   // the live ring never stops aiming (user, 20.09)
     paintDrive(state);
+    paintGunLoad();   // the countdown of a held burst, per frame
     estimateLive(false);
     paintCircleLines();
   }
@@ -1307,6 +1312,58 @@
     head.setAttribute('d', 'M' + fix(tip[0]) + ' ' + fix(tip[1]) + 'L' + fix(b1[0]) + ' ' + fix(b1[1]) +
       'L' + fix(b2[0]) + ' ' + fix(b2[1]) + 'Z');
     box.hidden = false;
+  }
+  // --- The gun panel beside the Shooter tile (user, 20.09) ---------------------------------------
+  // The shooter's own shells as the client's own icons, and the gun's load state the way the in-game
+  // reticle shows it. The shells are the very list the heading's shell chips are built from, and an
+  // icon click goes through the SAME selectShell() a chip does, so the two are never out of step: the
+  // pressed state of both is set in updateShell(), which marks every [data-shell] control on the page.
+  // The icon files are the CLIENT'S OWN, unpacked by the mod into <data>/icons on a game start and
+  // never shipped with it; before that first start aimIcon() falls back to a short text badge.
+  // The client names the icon after the shell type, and modern HE has one of its own; the record
+  // carries no gold/premium flag, so a premium shell shows the base icon of its kind.
+  function shellIconName(c) {
+    if (!c || !c.kind) return '';
+    return c.kind === 'HIGH_EXPLOSIVE' && c.mechanics === 'MODERN' ? 'HIGH_EXPLOSIVE_MODERN' : c.kind;
+  }
+  function shellIconTitle(c) {
+    var out = [c.name, shellNames[c.kind] || c.kind, Math.round(c.penetration100) + ' mm'];
+    if (c.alpha > 0) out.push(Math.round(c.alpha) + ' HP');
+    if (c.gunInstallation > 0) out.push('ability gun' + (c.gun ? ' ' + c.gun : ''));
+    return out.join(' · ');
+  }
+  function paintGunShells() {
+    var box = $('aim-gun-shells');
+    if (!box) return;
+    box.replaceChildren();
+    candidates.forEach(function (c, i) {
+      var b = node('button', undefined, 'aim-shell');
+      b.type = 'button';
+      b.dataset.shell = 'saved:' + i;
+      b.setAttribute('aria-pressed', String($('shell-choice').value === 'saved:' + i));
+      b.title = shellIconTitle(c);
+      b.appendChild(aimIcon(shellIconName(c), shellNames[c.kind] || c.kind));
+      // The ability-gun mark of the heading list, so one glance matches the other.
+      if (c.gunInstallation > 0) b.appendChild(node('span', '✦', 'aim-shell-mark'));
+      b.onclick = function () { $('shell-choice').value = 'saved:' + i; selectShell(); };
+      box.appendChild(b);
+    });
+    box.hidden = !candidates.length;
+  }
+  // The load state, small and iconic, no prose: while a burst is held the countdown to the next round
+  // (and the rounds left of a clip), otherwise the gun's own reload time and clip size. A record with
+  // no reload at all says so with a dash - the cooldown is unknown, and the emulation fires once.
+  function paintGunLoad() {
+    var time = $('aim-gun-reload'), clip = $('aim-gun-clip');
+    if (!time || !clip) return;
+    var rl = ArmorBallistics.reloadSeconds(aimBlockData(), aimModifiers());
+    if (!rl) { time.textContent = '—'; clip.textContent = ''; clip.hidden = true; return; }
+    var left = aimReloadLeft(), running = left > 0;
+    time.textContent = (running ? left : rl.reload).toFixed(1) + ' s';
+    time.setAttribute('data-running', running ? '1' : '0');
+    var rounds = running && aimClipSize > 1 ? aimClip + '/' + aimClipSize : rl.shots > 1 ? String(rl.shots) : '';
+    clip.textContent = rounds;
+    clip.hidden = !rounds;
   }
   // One shot (user's decision, 19.09: no Alt - it may never reach the page inside the game). The tracer
   // goes exactly down the middle of the LIVE circle, where the gun points: the random offset a real shot
@@ -1458,13 +1515,16 @@
   // One pass over everything the mode owns: what is on screen, the circle in the scene and the figures
   // on the two info panels. Cheap - no ray is cast here.
   function updateAim() {
-    var sw = $('aim-switch'); if (!sw) return;
+    var tile = $('aim-drive'); if (!tile) return;
     var a = aimBlockData(), mode = $('armor-mode').value, modelled = mode !== 'parts' && !$('model-tile').hidden;
     var live = !!(a && modelled && viewer && aimOn);
-    sw.hidden = !modelled;
     $('aim-config').hidden = !live;
     if (!live) { $('aim-config').open = false; aimPickerSlot = -1; }
-    $('aim-drive').hidden = !live;
+    tile.hidden = !live;
+    // The gun panel rides with the mode, exactly as the speed tile and Config do: its reload figures are
+    // the emulation's own state, and the heading shell list carries the shells when the mode is off.
+    $('aim-gun').hidden = !live;
+    paintGunLoad();
     // The manual estimate of 0.7.13 is the fallback and nothing more: it appears exactly when the user
     // asked for the emulation and this record cannot give it.
     var fallback = !!(modelled && aimOn && !a), wasHidden = $('aim-block').hidden;
@@ -2320,10 +2380,10 @@
   // The cursor moved, so the turret has somewhere to go: the loop decides for itself whether anything
   // is actually left to do and stops again straight away when there is not.
   if(viewer)viewer.onAimMove=function(){if(aimOn)startAimLoop();};
-  // The switch sits beside the Shooter tile and nowhere else (user, 20.09). It is not a control of the
-  // Settings menu, so its state rides with the presets in the page's own settings object and is written
-  // by hand here - a programmatic change fires no event.
-  $('aim-on').onchange=function(){setAimEmulation(this.checked);persistSettings();};
+  // The mode is ON by default and its switch is an ordinary Settings -> Scene checkbox (user, 20.09):
+  // the settings machinery restores it, runs this handler and persists it like every other control, so
+  // nothing here writes to storage by hand.
+  $('aim-on').onchange=function(){setAimEmulation(this.checked);};
   // The crosshair shape is a Settings control, so the settings machinery stores it; this only re-applies
   // the class while the mode is on.
   $('crosshair-style').onchange=function(){aimCursorClass();};
@@ -2440,10 +2500,9 @@
   buildTargetMods();
   buildAimConfig();
   restoreSettings();
-  // The stored presets are in place now, so the shooter on screen can be given his own again. The
-  // emulation switch is not a Settings control, so it is restored from the same stored object by hand.
+  // The stored presets are in place now, so the shooter on screen can be given his own again. The mode
+  // itself needs no line here any more: restoreSettings() has already run the checkbox's own handler.
   syncShooterMods(activeHit);
-  if(aimStore.on){$('aim-on').checked=true;setAimEmulation(true);}
   aimConfigChanged();
   // Heading overflow (18.09 round 2): the battle tile and the shell block share one grid row while the two fit;
   // when they do not, .stacked drops the whole shell block to a full-width second row. natural() reads the width

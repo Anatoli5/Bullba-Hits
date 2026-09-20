@@ -59,6 +59,23 @@ ICONS = (
     ('brotherhood.png',        'gui/maps/icons/tankmen/skills/80x80/brotherhood.png'),
     ('gunner_smoothTurret.png','gui/maps/icons/tankmen/skills/80x80/gunner_smoothTurret.png'),
     ('driver_smoothDriving.png','gui/maps/icons/tankmen/skills/80x80/driver_smoothDriving.png'),
+    # Shell icons of the gun panel beside the Shooter tile (user, 20.09). Verified by listing
+    # gui-part1..4.pkg of client 2.4.0.1 (20.09.2026): gui/maps/icons/shell/ holds five sizes -
+    # small 55x55, x64x64 64x64, medium 80x80, big 180x135, large 360x270 - and nothing near 24-32 px,
+    # so the smallest square one is taken and the page draws it at ~26 px.
+    # The client names the icon after the shell type; modern HE has one of its own, and each type has a
+    # premium (gold) twin. The page maps its four kinds (plus modern HE) onto the base names: the shell
+    # record carries no gold flag, so the premium files are unpacked for the page to use once one does.
+    ('ARMOR_PIERCING.png',            'gui/maps/icons/shell/small/ARMOR_PIERCING.png'),
+    ('ARMOR_PIERCING_PREMIUM.png',    'gui/maps/icons/shell/small/ARMOR_PIERCING_PREMIUM.png'),
+    ('ARMOR_PIERCING_CR.png',         'gui/maps/icons/shell/small/ARMOR_PIERCING_CR.png'),
+    ('ARMOR_PIERCING_CR_PREMIUM.png', 'gui/maps/icons/shell/small/ARMOR_PIERCING_CR_PREMIUM.png'),
+    ('HOLLOW_CHARGE.png',             'gui/maps/icons/shell/small/HOLLOW_CHARGE.png'),
+    ('HOLLOW_CHARGE_PREMIUM.png',     'gui/maps/icons/shell/small/HOLLOW_CHARGE_PREMIUM.png'),
+    ('HIGH_EXPLOSIVE.png',            'gui/maps/icons/shell/small/HIGH_EXPLOSIVE.png'),
+    ('HIGH_EXPLOSIVE_PREMIUM.png',    'gui/maps/icons/shell/small/HIGH_EXPLOSIVE_PREMIUM.png'),
+    ('HIGH_EXPLOSIVE_MODERN.png',     'gui/maps/icons/shell/small/HIGH_EXPLOSIVE_MODERN.png'),
+    ('HIGH_EXPLOSIVE_MODERN_PREMIUM.png','gui/maps/icons/shell/small/HIGH_EXPLOSIVE_MODERN_PREMIUM.png'),
 )
 ICON_LIMIT = 2 * 1024 * 1024  # a UI icon is a few kilobytes; anything larger is not one of ours
 
