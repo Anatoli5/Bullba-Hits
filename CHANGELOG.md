@@ -2,9 +2,9 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
-## Unreleased
+## 0.7.15 (2026-09-20)
 
-- Info panels: the shell's alpha in HP stands beside the chance figure ("62 % / 390 alpha").
+- Info panels: the shell's alpha in HP stands beside the chance figure ("62 % / 390").
 - Info panels: the "pen NNN mm / NNN m" chip moves from the title row to its own line under the chance, right above the effective armour line.
 - On a narrow page the pose tile steps up above the shooter row instead of sitting under the speed tile.
 - Battle tile in the heading: framed like the other clickable tiles instead of a dashed underline.

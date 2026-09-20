@@ -1766,7 +1766,7 @@
   // the share figures around it are read against that number.
   function fillPanel(prefix,line,alpha){var by=function(k){return line.groups.filter(function(g){return (g.kind==='screen')===(k==='screen')&&(k==='screen'||(g.kind==='pen')===(k==='pen'));});};
     var chance=$(prefix+'-chance');chance.replaceChildren(document.createTextNode(line.label));chance.style.color=line.color;
-    if(alpha>0){var a=node('span','/ '+Math.round(alpha)+' alpha','info-alpha');a.title='The shell’s alpha damage, HP';chance.appendChild(a);}chips($(prefix+'-pen'),{groups:by('pen')});chips($(prefix+'-details'),{groups:by('rest')});chips($(prefix+'-extra'),{groups:by('screen')});}
+    if(alpha>0){var a=node('span','/ '+Math.round(alpha),'info-alpha');a.title='The shell’s alpha damage, HP';chance.appendChild(a);}chips($(prefix+'-pen'),{groups:by('pen')});chips($(prefix+'-details'),{groups:by('rest')});chips($(prefix+'-extra'),{groups:by('screen')});}
   function inspectArmor(r){
     var range=viewer?viewer.distance:100;
     fillPanel('probe',armorLine(r,viewer&&viewer.shell?viewer.shell.penetration:null,range),viewer&&viewer.shell&&viewer.shell.alpha);
