@@ -4,13 +4,17 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 
 ## Unreleased
 
-- Aim emulation moved next to the Shooter tile: an "Aim emulation" switch and a "Configuration" button; the
+- Aim emulation moved next to the Shooter tile: an "Aim emulation" switch and a "Config" button; the
   bottom strip with the sliders is gone.
-- A click is one shot; holding the button fires on the gun's cooldown until you let go, and a clip stops
-  when it is empty. A new press always fires at once.
-- The last shot leaves its own solid circle and tracer on the model, with the chance and the expected
-  damage in the bottom-right corner with an ⓘ; the aiming circle never stops aiming.
-- The reload fills an amber arc on the aiming circle, as in the game.
+- A tap is one shot; holding the button fires on the gun's cooldown until you let go, and a clip stops
+  when it is empty. Moving the mouse aims a burst instead of stopping it, and a new press fires at once.
+- The last shot leaves its own solid circle and tracer on the model; the aiming circle never stops aiming.
+- The bottom-right corner reads the chance to damage of that shot, and under it the expected damage as a
+  share of alpha with the shell's alpha in HP — "30 % · 410". An ⓘ beside it explains the whole mode.
+- The aiming circle is the reload indicator, as in the game: it is drawn from nothing and fills clockwise
+  while the gun reloads, so a whole circle means a loaded gun.
+- The ⓘ help badge is a gold glyph instead of a gold disc, here and in the Vehicles panel, and the colour
+  legend is the bar with its title again — the shell's alpha is printed in the corner readout only.
 - The circle is drawn over the model now, cyan and dashed; the mouse pointer becomes a crosshair
   (cross or dot, Settings → Scene).
 - Configuration: three equipment slots with the game's own icons, each in its standard, improved, trophy or

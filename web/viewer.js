@@ -16,10 +16,10 @@
   function aimShown(){return !aimEmulation;}
   // The emulated circle: cyan so it reads over the red-green heat map (yellow is lost in it). TWO rings
   // (user, 20.09): the LIVE one is dashed and never stops aiming, and the one the last shot left behind
-  // is solid and brighter. The reload is an amber arc filling clockwise over the live ring, as in the
-  // game, instead of recolouring the ring itself.
-  var AIM_LIVE={color:0x5ee0ff,dashed:true,opacity:.95},AIM_FIXED={color:0xbdf4ff,dashed:false,opacity:1},
-    AIM_ARC={color:0xffb454,dashed:false,opacity:1};
+  // is solid and brighter. The reload IS the live ring (user, 20.09): while the gun reloads the ring is
+  // drawn only as far as the reload has run, so a whole ring means a loaded gun. No second line, no
+  // colour of its own.
+  var AIM_LIVE={color:0x5ee0ff,dashed:true,opacity:.95},AIM_FIXED={color:0xbdf4ff,dashed:false,opacity:1};
   function linear(color){return color.map(function(c){return c<=.04045?c/12.92:Math.pow((c+.055)/1.055,2.4);});}
   var baseColors=[[.38,.46,.54],[.65,.73,.8],[.75,.83,.87],[.55,.65,.72]].map(linear);
   function externalLayer(t){return t.part===0||!!(t.armor&&Number.isFinite(t.armor.vehicleDamageFactor)&&t.armor.vehicleDamageFactor<=1e-5);}
@@ -47,9 +47,10 @@
     // emulation on they are the same only once the turret has caught up (see chaseAim).
     // The live ring is NEVER frozen (user, 20.09): a shot leaves a second, solid ring behind it
     // (aimShotCircle) and the live one goes on aiming. aimReloadPart is how much of the reload has run,
-    // 0..1, drawn as the amber arc; aimHold says the pointer is down on a shot, not on a drag.
+    // 0..1, and it is how much of the live ring is drawn; null = loaded, the whole ring. aimHold says
+    // the pointer is down on a shot, not on a drag.
     this.liveRadius100=null;this.liveAimPoint=null;this.aimCursorPoint=null;this.liveAim=null;this.aimChase=false;this.aimProfileName=ArmorBallistics.aimProfileDefault;
-    this.aimShotCircle=null;this.aimArc=null;this.aimReloadPart=0;this.aimHold=false;
+    this.aimShotCircle=null;this.aimReloadPart=null;this.aimHold=false;
     this.frameAt=0;this.frameTimes=[]; // when the pending frame was asked for, and the cadence of the frames that ran
     this.contextLost=false;this.dragging=false;this.hoverId=null;this.hoverEvent=null;this.inspectKey=null;
     // The camera is driven by its own frame loop: pointer and key events only move the target.
@@ -66,14 +67,20 @@
          threshold below cancels the whole thing. aimHold marks the press as a shot so the emulation is not
          paused for it the way a real drag is. */
       if(self.onShotDown&&self.onShotDown(e))self.aimHold=true; });
-    container.addEventListener('pointermove', function(e) { if (!drag){self.hover(e);return;}if(Math.abs(e.clientX-drag.sx)+Math.abs(e.clientY-drag.sy)>3)drag.moved=true;if(!drag.moved)return;if(self.aimHold){self.aimHold=false;if(self.onShotCancel)self.onShotCancel();}if(drag.pan){/* the pan is accumulated and applied once in the camera's own frame loop, not per event */var p=self.pendingPan||(self.pendingPan={x:0,y:0});p.x+=e.clientX-drag.x;p.y+=e.clientY-drag.y;drag.x=e.clientX;drag.y=e.clientY;self.startOrbit();return;}if(drag.part===2||drag.part===3){/* turret and gun are one module: left/right turns the turret, up/down moves the gun */var dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(dx)self.setTurret(self.turretAngle-dx*.5);if(dy)self.setGun(self.gunAngle+dy*.16);}else{self.orbitTo(self.targetYaw-(e.clientX-drag.x)*0.008,self.targetPitch+(e.clientY-drag.y)*0.008);}drag.x=e.clientX;drag.y=e.clientY; });
+    /* A move past the threshold is a drag - unless the press has already grown into a burst (user, 20.09):
+       once the first round is away, moving the mouse AIMS the burst (the turret chases the cursor) and only
+       the release stops it. onShotCancel says which it is: false = the burst goes on, so the press is never
+       handed to the orbit or the turret drag and the pointer goes back to plain hovering. */
+    container.addEventListener('pointermove', function(e) { if (!drag){self.hover(e);return;}if(Math.abs(e.clientX-drag.sx)+Math.abs(e.clientY-drag.sy)>3)drag.moved=true;if(!drag.moved)return;if(self.aimHold){if(self.onShotCancel&&self.onShotCancel()===false){drag=null;self.dragging=false;self.hover(e);return;}self.aimHold=false;}if(drag.pan){/* the pan is accumulated and applied once in the camera's own frame loop, not per event */var p=self.pendingPan||(self.pendingPan={x:0,y:0});p.x+=e.clientX-drag.x;p.y+=e.clientY-drag.y;drag.x=e.clientX;drag.y=e.clientY;self.startOrbit();return;}if(drag.part===2||drag.part===3){/* turret and gun are one module: left/right turns the turret, up/down moves the gun */var dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(dx)self.setTurret(self.turretAngle-dx*.5);if(dy)self.setGun(self.gunAngle+dy*.16);}else{self.orbitTo(self.targetYaw-(e.clientX-drag.x)*0.008,self.targetPitch+(e.clientY-drag.y)*0.008);}drag.x=e.clientX;drag.y=e.clientY; });
     // The end of a drag: the pose the drag only previewed is rebuilt in full, and one frame is asked for so the
     // map comes back at full quality with the ricochet trace (paint() draws a drag at half resolution).
     // The end of a press: a press the emulation claimed is handed back to it (a tap fires one shot, a
     // hold has been firing all along and simply stops), anything else pins the point under the cursor
     // as it always did.
     container.addEventListener('pointerup', function(e) { var d=drag,hold=self.aimHold;drag=null;self.aimHold=false;self.dragging=false;self.commitPose();self.draw();if(hold&&self.onShotUp){self.onShotUp(e);return;}if(d&&!d.moved&&!e.altKey&&!e.ctrlKey&&e.button===0)self.pinAt(e); });
-    container.addEventListener('pointercancel', function() { drag=null;self.dragging=false;if(self.aimHold){self.aimHold=false;if(self.onShotCancel)self.onShotCancel();}self.cancelHover();self.commitPose();self.draw(); });
+    /* A pointer that is taken away never sends its pointerup, so a burst has to be ENDED here, not
+       cancelled: onShotCancel refuses a running burst (false) and the release path stops it instead. */
+    container.addEventListener('pointercancel', function() { drag=null;self.dragging=false;if(self.aimHold){self.aimHold=false;if(self.onShotCancel&&self.onShotCancel()===false&&self.onShotUp)self.onShotUp();}self.cancelHover();self.commitPose();self.draw(); });
     container.addEventListener('wheel', function(e) {e.preventDefault();var delta=e.deltaY||e.deltaX,amount=Math.max(-200,Math.min(200,delta*(e.deltaMode===1?16:e.deltaMode===2?300:1)));if(!(e.shiftKey||e.ctrlKey||e.altKey))self.distanceTo((self.targetDistance!==null?self.targetDistance:self.distance)*Math.exp(amount*.002));else if(self.autoFrame)self.scaleTo((self.targetScale!==null?self.targetScale:self.frameScale)*Math.exp(-amount*.002));else self.zoomTo((self.targetZoom!==null?self.targetZoom:self.camera.zoom)*Math.exp(-amount*.002));}, {passive:false});
     container.addEventListener('keydown',function(e){var used=true,orbit=true;if(e.key==='ArrowLeft')self.orbitTo(self.targetYaw-.1,self.targetPitch);else if(e.key==='ArrowRight')self.orbitTo(self.targetYaw+.1,self.targetPitch);else if(e.key==='ArrowUp')self.orbitTo(self.targetYaw,self.targetPitch+.1);else if(e.key==='ArrowDown')self.orbitTo(self.targetYaw,self.targetPitch-.1);else{orbit=false;if(e.key==='+'||e.key==='='){if(e.shiftKey)self.setZoom(self.camera.zoom*1.1);else self.setDistance(Math.max(1,self.distance/1.1));}else if(e.key==='-'){if(e.shiftKey)self.setZoom(self.camera.zoom/1.1);else self.setDistance(Math.min(1500,self.distance*1.1));}else used=false;}if(used){e.preventDefault();if(!orbit)self.render();}});
     // A lost context stops the frame loop: three ignores render() while the context is gone, but a pending
@@ -803,9 +810,9 @@
     return line;
   }
   function dropLine(scene,line){if(!line)return;scene.remove(line);line.geometry.dispose();line.material.dispose();}
-  Viewer.prototype.drawCircle=function(center,right,up,radius,style){
+  Viewer.prototype.drawCircle=function(center,right,up,radius,style,from,to){
     this.hideSpread();
-    this.spreadCircle=aimLine(center,right,up,radius,style);
+    this.spreadCircle=aimLine(center,right,up,radius,style,from,to);
     this.spreadCircle.renderOrder=14;this.scene.add(this.spreadCircle);this.draw();
   };
   Viewer.prototype.estimateSpread=function(radius100){
@@ -843,17 +850,18 @@
     return true;
   };
   Viewer.prototype.clearAimShot=function(){
-    this.aimReloadPart=0;
-    if(this.aimShotCircle||this.aimArc){dropLine(this.scene,this.aimShotCircle);dropLine(this.scene,this.aimArc);this.aimShotCircle=null;this.aimArc=null;this.draw();}
+    var had=!!this.aimShotCircle,reloading=this.aimReloadPart!==null;
+    this.aimReloadPart=null;
+    if(had){dropLine(this.scene,this.aimShotCircle);this.aimShotCircle=null;}
+    if(reloading&&this.liveRadius100)this.drawLiveAim();   // the ring is whole again
+    else if(had)this.draw();
   };
-  // How much of the reload (or of the clip interval) has run, 0..1. Drawn as the amber arc over the live
-  // ring by drawLiveAim, so the arc follows the ring as the gun keeps aiming; 0 takes the arc away.
+  // How much of the reload (or of the clip interval) has run, 0..1, which is how much of the live ring is
+  // drawn; null (or nothing) means the gun is loaded and the ring is whole. Stored only: the page calls
+  // this immediately before setLiveAim on every frame of the emulation, and that draws the ring once.
   Viewer.prototype.setAimReload=function(part){
     var p=Number(part);
-    p=p>0?Math.min(1,p):0;
-    if(p===this.aimReloadPart)return;
-    this.aimReloadPart=p;
-    this.drawReloadArc();   // the arc alone: the ring itself is not rebuilt for a reload step
+    this.aimReloadPart=part===null||part===undefined||!(p>=0)?null:Math.min(1,p);
   };
   // The emulation as a whole. With it on, everything RECORDED leaves the scene (user, 20.09): the saved
   // reticle circles and the nominal estimate ring (the aim group), the recorded tracers and hit marks
@@ -879,21 +887,16 @@
     var origin=this.camera.position.clone(),range=origin.distanceTo(center),frame=circleFrame(origin,center);
     var radius=range*this.liveRadius100/100;
     this.liveAim={center:center.clone(),right:frame.right,up:frame.up,radius:radius,origin:origin,range:range};
-    this.drawCircle(center,frame.right,frame.up,radius,AIM_LIVE);
-    this.drawReloadArc();
+    // The reload as the game draws it, on the ring itself (user, 20.09): while it runs the ring is only
+    // drawn as far as it has come, filling clockwise from the top, so at half the reload half the ring is
+    // there and a whole ring means the gun is ready. `right` is screen-right and `up` screen-up in the
+    // circle's frame (right x up points back at the camera), so clockwise from the top runs from +pi/2
+    // DOWNWARDS. The geometry of `liveAim` above is the WHOLE circle either way: the integral of a shot
+    // fans over the circle the gun would fire into, not over the part of it that is drawn.
+    var part=this.aimReloadPart,top=Math.PI/2;
+    if(part===null)this.drawCircle(center,frame.right,frame.up,radius,AIM_LIVE);
+    else this.drawCircle(center,frame.right,frame.up,radius,AIM_LIVE,top,top-Math.PI*2*part);
     return this.liveAim;
-  };
-  // The reload as the game draws it: an arc over the live ring, filling clockwise from the top over the
-  // reload time. `right` is screen-right and `up` screen-up in the circle's frame (right x up points back
-  // at the camera), so clockwise from the top runs from +pi/2 DOWNWARDS. One line rebuilt per frame.
-  Viewer.prototype.drawReloadArc=function(){
-    var had=!!this.aimArc;
-    dropLine(this.scene,this.aimArc);this.aimArc=null;
-    var aim=this.liveAim,part=this.aimReloadPart;
-    if(!aim||!(part>0)){if(had)this.draw();return;}
-    var top=Math.PI/2;
-    this.aimArc=aimLine(aim.center,aim.right,aim.up,aim.radius,AIM_ARC,top,top-Math.PI*2*Math.min(1,part));
-    this.aimArc.renderOrder=16;this.scene.add(this.aimArc);this.draw();
   };
   // Called from inspect() with the raycast it already did, so a pointer move costs no second cast. Without a
   // surface under the cursor the circle rests on the plane through the orbit centre, as aimAt() does.
