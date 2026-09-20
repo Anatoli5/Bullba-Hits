@@ -6,6 +6,18 @@ script. Versions are listed newest first. Client: World of Tanks PC NA 2.4.0.1 #
 
 ## Unreleased
 
+- **Aim emulation.** The shooter's dispersion circle follows the cursor over the model with the radius the
+  game itself would give him: gun accuracy and aiming time, the dispersion the hull speed, the hull turn,
+  the turret turn and the recoil of the previous shot add, and the settling after everything stops. A strip
+  under the scene sets that state, a group of switches next to the Shooter tile sets his crew, vertical
+  stabiliser, gun laying drive, Snap Shot and Smooth Ride, and the chance to damage and the expected damage
+  are integrated over the circle when the cursor rests. Alt + click pins the circle. Battles and vehicles
+  recorded before this version pick the aiming parameters up on the next game start; until then the manual
+  radius of the old estimate stands.
+- Expected damage is now shown as a share of the shell's alpha everywhere (panel under the cursor, Hit line,
+  reticle tile, the chips and the circle), instead of HP: “50 %” instead of “275 HP”, so the number reads on
+  the same scale as the colours of the model and compares two guns of different alpha. The alpha in HP is
+  printed next to the legend and in the aim strip.
 - `tools/verdicts_from_log.py` reads several inputs, saves a snapshot of the Statistics log lines (`--save DIR`),
   filters by page build (`--version`), lists HE lines with the server's damage (`--he-rows`) and groups the
   disagreements by pattern (part, server effect, our class).

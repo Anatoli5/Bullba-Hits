@@ -520,6 +520,17 @@ class Recorder(object):
                 except Exception:
                     pass
                 try:
+                    # Aiming parameters of the shooter (gun, turret and chassis dispersion
+                    # factors, aiming time, rotation and top speeds): the page recomputes the
+                    # client's own dispersion circle for a state the user picks. Exactly the
+                    # block the exporter writes for a catalogue vehicle, so a hit and a browsed
+                    # vehicle carry the same fields; older records get it from its backfill.
+                    from local_armor_inspector.exporter import aim_block
+                    block = aim_block(attacker)
+                    if block: record['attacker']['aim'] = block
+                except Exception:
+                    record['warnings'].append('Shooter aim parameters unavailable')
+                try:
                     # The shooter's own collision parts (0.6.34), so the viewer can swap the roles and
                     # draw his armour. There is no live entity for him here, only the descriptor, so the
                     # parts take the rest pose in the chassis frame instead of a recorded transform.

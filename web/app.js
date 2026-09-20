@@ -569,7 +569,7 @@
     if(browsing&&candidates.length){var first=candidates.findIndex(function(c){return c.kind==='ARMOR_PIERCING';});
       if(first<0)first=candidates.findIndex(function(c){return c.kind==='ARMOR_PIERCING_CR';});if(first<0)first=0;choice.value='saved:'+first;}
     $('shell-quick').replaceChildren();candidates.forEach(function(c,i){var actual=i===shotContext.index,b=node('button',(actual?'● ':'')+(shellNames[c.kind]||c.kind)+' '+Math.round(c.penetration100)+(c.gunInstallation>0?' ✦':''),'shell-chip');b.dataset.shell='saved:'+i;b.title=c.name+' · '+c.caliber+' mm · '+(c.gunInstallation>0?'ability gun'+(c.gun?' '+c.gun:'')+' · ':'')+(actual?'Type from the hit':'Compare with this shell');b.onclick=function(){choice.value='saved:'+i;selectShell();};$('shell-quick').appendChild(b);});
-    syncTargetMods(hit);
+    syncTargetMods(hit);syncShooterMods(hit);syncAimRanges();
     if(keep){choice.value=keep.kind;manualPen=keep.penetration;$('penetration').value=keep.penetration;$('caliber').value=keep.caliber;penLabel(false);updateShell();}
     else selectShell();
     // The shooter's chips just changed, so the shell block wants a different width: re-measure the heading.
@@ -641,6 +641,198 @@
     if(slot.hidden===!show)return;
     slot.hidden=!show;if(!show)targetMods.close();
     layoutMods(); // placed in the same task it appears in, so it is never painted at the unpositioned corner
+  }
+  // --- Aim emulation -----------------------------------------------------------------------------------
+  // The shooter's own dispersion circle: radius by the client's formula (ArmorBallistics.aimFactor) from the
+  // 'aim' block the record carries, the state the user sets on the strip below the scene and the modifiers
+  // he picks next to the Shooter tile. The circle follows the cursor over the model, and when the cursor
+  // rests the chance and the expected damage are integrated over it.
+  //
+  // Only the multipliers live here; where each one belongs in the formula is decided in ballistics.js. Every
+  // number below was read out of the installed client's own data and is quoted with its source, because the
+  // page must never invent an equipment bonus. An option whose number could not be found is left out.
+  var KMH_TO_MS = 0.27778;  // component_constants.KMH_TO_MS of the client, used for both directions
+  var DEG = Math.PI / 180;
+  var shooterMods = null, shooterModsState = {}, shooterType = '';
+  var aimRestTimer = null, aimRestFine = false, aimLiveText = '';
+  // Gunner factor of a crew, from the client's own crew code (items/VehicleDescrCrew.pyc, items/utils.pyc):
+  //   nonCommanderLevelIncrease = common + (commanderLevel + common) / tankmen.COMMANDER_ADDITION_RATIO (10)
+  //   efficiency = (gunnerLevel + nonCommanderLevelIncrease) / tankmen.MAX_SKILL_LEVEL (100)
+  //   f = 0.57 + 0.43 * efficiency                                            (_processSkills)
+  //   the gunner then sets shot dispersion x 1/f, aiming time x 1/f, turret speed x f  (_updateGunnerFactors)
+  // 'common' is Brothers in Arms (tankmen.xml brotherhood/crewLevelIncrease = 5 at full skill) plus Improved
+  // Ventilation (optional_devices.xml improvedVentilation, miscAttrs/crewLevelIncrease + 5).
+  // Assumed: a full crew, everyone alive, nobody serving two roles (crewRolesFactor = 1).
+  // Note that "100 %" is not 1.0 - a living commander always lifts the others by a tenth of his level - so a
+  // real 100 % crew already aims about 4 % tighter than the bare descriptor the record carries.
+  function crewFactor(level, common) {
+    var nonCommander = common + (level + common) / 10;
+    return 0.57 + 0.43 * (level + nonCommander) / 100;
+  }
+  var CREW = {'75': crewFactor(75, 0), '100': crewFactor(100, 0),
+              'bia': crewFactor(100, 5), 'vents': crewFactor(100, 10)};
+  function crewOf(values) { return CREW[values && values.crew] || CREW['100']; }
+  // The multipliers of the shooter group, each named after the client attribute it multiplies.
+  function aimModifiers() {
+    var v = shooterMods ? shooterMods.values() : {}, f = crewOf(v);
+    return {mult: 1 / f,                                    // multShotDispersionFactor: full-aim accuracy
+            additive: Number(v.stabiliser || 1) || 1,       // additiveShotDispersionFactor: the stabiliser
+            movement: v.smooth === '1' ? 0.96 : 1,          // chassis/shotDispersionFactors/movement
+            rotation: 1,                                    // nothing offered for it yet (see the report)
+            turret: v.snap === '1' ? 0.925 : 1,             // gun/shotDispersionFactors/turretRotation
+            aimingTime: (Number(v.aimdrive || 1) || 1) / f, // gunAimingTimeFactor and the gunner
+            turretSpeed: f, hullSpeed: 1};                  // miscAttrs/turretRotationSpeed
+  }
+  function buildShooterMods() {
+    var slot = $('shooter-mods-slot');
+    if (!slot || !window.ModifierGroup) return;
+    shooterMods = ModifierGroup.create({id: 'shooter-mods', title: 'Shooter', host: slot,
+      // Short by design: collapsed, the whole group is as wide as this line, and the bottom band has to hold
+      // it next to the Shooter tile on a 1366 px screen. The default crew says nothing at all.
+      summary: function (v) {
+        var out = [];
+        if (v.crew === '75') out.push('crew 75 %');
+        else if (v.crew === 'bia') out.push('BiA');
+        else if (v.crew === 'vents') out.push('BiA + vents');
+        if (Number(v.stabiliser) !== 1) out.push('stab \u00d7' + Number(v.stabiliser).toFixed(2));
+        if (Number(v.aimdrive) !== 1) out.push('drive \u00d7' + Number(v.aimdrive).toFixed(2));
+        if (v.snap === '1') out.push('snap');
+        if (v.smooth === '1') out.push('smooth');
+        return out.join(' \u00b7 ');
+      },
+      options: [
+        {id: 'crew', label: 'Crew', kind: 'choice', value: '100',
+         title: 'Gunner efficiency. f = 0.57 + 0.43 \u00d7 (level + commander bonus + skills) / 100; the circle scales by 1/f and the aiming time with it (client items/VehicleDescrCrew.pyc). A living commander always adds a tenth of his level, so even a plain 100 % crew aims tighter than the bare vehicle the record carries. Brothers in Arms at 100 % adds 5 levels (tankmen.xml), Improved Ventilation another 5 (optional_devices.xml).',
+         choices: [{value: '75', label: '75 %', title: 'Everyone at 75 % \u00b7 circle \u00d7' + (1 / CREW['75']).toFixed(3)},
+           {value: '100', label: '100 %', title: 'Everyone at 100 % \u00b7 circle \u00d7' + (1 / CREW['100']).toFixed(3)},
+           {value: 'bia', label: '+ BiA', title: '100 % with Brothers in Arms \u00b7 circle \u00d7' + (1 / CREW['bia']).toFixed(3)},
+           {value: 'vents', label: '+ vents', title: '100 % with Brothers in Arms and Improved Ventilation \u00b7 circle \u00d7' + (1 / CREW['vents']).toFixed(3)}]},
+        {id: 'stabiliser', label: 'Stabiliser', kind: 'choice', value: '1',
+         title: 'Vertical stabiliser: it multiplies miscAttrs/additiveShotDispersionFactor, which scales everything the movement of the vehicle adds and leaves the full-aim circle alone (optional_devices.xml, aimingStabilizer tiers and the bounty deluxAimingStabilizer).',
+         choices: [{value: '1', label: 'None', title: 'No stabiliser \u00b7 \u00d71.00'},
+           {value: '0.8', label: '\u00d70.80', title: 'Vertical stabiliser in an ordinary slot \u00b7 \u00d70.80'},
+           {value: '0.77', label: '\u00d70.77', title: 'The same stabiliser in the bonus slot \u00b7 \u00d70.77'},
+           {value: '0.725', label: '\u00d70.725', title: 'Bounty / improved stabiliser \u00b7 \u00d70.725'}]},
+        {id: 'aimdrive', label: 'Laying drive', kind: 'choice', value: '1',
+         title: 'Enhanced gun laying drive: it multiplies miscAttrs/gunAimingTimeFactor, so the circle settles faster but is no smaller when fully aimed (optional_devices.xml, enhancedAimDrives tiers and the bounty deluxEnhancedAimDrives).',
+         choices: [{value: '1', label: 'None', title: 'No laying drive \u00b7 \u00d71.00'},
+           {value: '0.909', label: '\u00d70.909', title: 'Laying drive in an ordinary slot \u00b7 aiming time \u00d70.909'},
+           {value: '0.897', label: '\u00d70.897', title: 'The same drive in the bonus slot \u00b7 aiming time \u00d70.897'},
+           {value: '0.881', label: '\u00d70.881', title: 'Bounty / improved drive \u00b7 aiming time \u00d70.881'}]},
+        {id: 'snap', label: 'Snap Shot', kind: 'toggle', value: '0',
+         title: 'Gunner perk Snap Shot: \u00d70.925 on the gun\u2019s turretRotation dispersion factor at 100 % (tankmen.xml gunner_smoothTurret \u2192 perks.xml id 201, turretAimingDispersion \u22120.00075 per level).',
+         choices: [{value: '0', label: 'Off', title: 'Not trained \u00b7 \u00d71.00'},
+           {value: '1', label: '\u00d70.925', title: 'Trained to 100 % \u00b7 turret rotation factor \u00d70.925'}]},
+        {id: 'smooth', label: 'Smooth Ride', kind: 'toggle', value: '0',
+         title: 'Driver perk Smooth Ride: \u00d70.96 on the chassis movement dispersion factor at 100 % (tankmen.xml driver_smoothDriving \u2192 perks.xml id 302, movingAimingDispersion \u22120.0004 per level). It touches driving only, never hull rotation.',
+         choices: [{value: '0', label: 'Off', title: 'Not trained \u00b7 \u00d71.00'},
+           {value: '1', label: '\u00d70.96', title: 'Trained to 100 % \u00b7 movement factor \u00d70.96'}]}],
+      // A switch changes the collapsed summary, so the group's own width changes with it: re-measure the
+      // bands in the next frame, exactly as a resize does.
+      onChange: function () { if (shooterType) shooterModsState[shooterType] = shooterMods.values(); syncAimRanges(); updateAim(); scheduleLayout(); }});
+  }
+  // A new shooter on screen keeps his own switches for the session, exactly as the target group does.
+  function syncShooterMods(hit) {
+    if (!shooterMods) return;
+    var a = hit && hit.attacker || null, type = a && a.type ? String(a.type) : '';
+    shooterType = type;
+    if (type && !shooterModsState[type]) shooterModsState[type] = shooterMods.values();
+    if (type) shooterMods.setDefaults(shooterModsState[type]);
+    shooterMods.element.title = 'What this shooter has fitted and how well his crew is trained. It changes the dispersion circle only; the record cannot know any of it, so the switches start empty with a 100 % crew.';
+  }
+  function shooterModsVisible(on) {
+    var slot = $('shooter-mods-slot');
+    if (!slot || !shooterMods) return;
+    if (slot.hidden === !on) return;
+    slot.hidden = !on; if (!on) shooterMods.close();
+    layoutMods();
+  }
+  function aimBlock() {
+    var a = activeHit && activeHit.attacker && activeHit.attacker.aim;
+    return a && a.dispersion > 0 ? a : null;
+  }
+  // The sliders speak the units the player reads in the garage: km/h and degrees per second. Their ends come
+  // from the shooter's own record - top speed, hull and turret rotation speed - so a slider can never ask for
+  // a state the vehicle cannot reach. The turret end follows the rotation modifiers, the settling end three
+  // aiming times, which is where the exponential has practically arrived.
+  function syncAimRanges() {
+    var a = aimBlock(); if (!a) return;
+    var m = aimModifiers();
+    function cap(id, max) { var e = $(id); e.max = (max > 0 ? max : 1).toFixed(1); if (Number(e.value) > Number(e.max)) e.value = e.max; }
+    cap('aim-speed', a.speedForward > 0 ? a.speedForward / KMH_TO_MS : 0);
+    cap('aim-hull', a.hullRotationSpeed > 0 ? a.hullRotationSpeed / DEG : 0);
+    cap('aim-turret', a.turretRotationSpeed > 0 ? a.turretRotationSpeed * m.turretSpeed / DEG : 0);
+    cap('aim-settled', 3 * (a.aimingTime > 0 ? a.aimingTime : 2) * (a.aimingTimeFactor > 0 ? a.aimingTimeFactor : 1) * m.aimingTime);
+  }
+  function aimState() {
+    return {speed: Number($('aim-speed').value) * KMH_TO_MS,
+            hullTurn: Number($('aim-hull').value) * DEG,
+            turretTurn: Number($('aim-turret').value) * DEG,
+            afterShot: $('aim-after-shot').checked,
+            settledFor: Number($('aim-settled').value)};
+  }
+  function aimStateLabels() {
+    $('aim-speed-value').textContent = Number($('aim-speed').value).toFixed(0) + ' km/h';
+    $('aim-hull-value').textContent = Number($('aim-hull').value).toFixed(0) + '\u00b0/s';
+    $('aim-turret-value').textContent = Number($('aim-turret').value).toFixed(0) + '\u00b0/s';
+    $('aim-settled-value').textContent = Number($('aim-settled').value).toFixed(1) + ' s';
+  }
+  // One pass over the whole block: what is on screen, the circle in the scene and the readout line. Cheap -
+  // no ray is cast here, the integral waits for the cursor to rest.
+  function updateAim() {
+    var block = $('aim-block'); if (!block) return;
+    var a = aimBlock(), mode = $('armor-mode').value, modelled = mode !== 'parts' && !$('model-tile').hidden;
+    var on = !!(a && modelled && viewer);
+    block.hidden = !modelled;
+    $('aim-state').hidden = !on; $('aim-readout').hidden = !on; $('aim-manual').hidden = on;
+    shooterModsVisible(on);
+    if (!on) {
+      if (viewer) viewer.clearLiveAim();
+      aimLiveText = '';
+      // Only the reason the emulation is unavailable is written here; the manual estimate keeps its own
+      // messages ("Conditions changed", the result of the last press) untouched.
+      if (modelled && !a) $('spread-result').textContent = 'This shooter\u2019s record carries no aiming parameters, so the circle cannot be computed. Old battles get them on the next game start; until then the manual radius above stands.';
+      return;
+    }
+    aimStateLabels();
+    var r = ArmorBallistics.aimFactor(a, aimState(), aimModifiers());
+    if (!r) { $('aim-readout').textContent = ''; viewer.clearLiveAim(); return; }
+    var range = viewer.distance > 0 ? viewer.distance : 100, shell = viewer.shell;
+    var seconds = r.aimingTime > 0 ? r.aimingTime.toFixed(1) + ' s' : 'not recorded';
+    $('aim-readout').textContent = 'Circle ' + r.radius100.toFixed(2) + ' m at 100 m (\u00d7' + r.factor.toFixed(2) + ')'
+      + ' \u2192 ' + (r.radius100 * range / 100).toFixed(2) + ' m at ' + Math.round(range) + ' m'
+      + ' \u00b7 full aim ' + (a.dispersion * 100 * r.rest).toFixed(2) + ' m \u00b7 aiming time ' + seconds
+      + (shell && shell.alpha > 0 ? ' \u00b7 alpha ' + Math.round(shell.alpha) + ' HP' : '');
+    viewer.setLiveAim(r.radius100);
+    scheduleAimIntegral();
+  }
+  // The integral waits for the cursor to rest (~120 ms), runs at 256 rays and refines to 1024 if it is still
+  // resting a quarter of a second later: moving the cursor must stay smooth, and a resting cursor deserves
+  // the better figure.
+  function scheduleAimIntegral() {
+    window.clearTimeout(aimRestTimer); aimRestFine = false;
+    aimRestTimer = window.setTimeout(runAimIntegral, 120);
+  }
+  function runAimIntegral() {
+    if (!viewer || !viewer.liveRadius100) return;
+    var shell = viewer.shell, v = shell ? viewer.liveAimProbability(shell, aimRestFine ? 1024 : 256) : null;
+    if (!v) {
+      aimLiveText = '';
+      $('spread-result').textContent = !shell ? 'Pick a shell and penetration first.'
+        : 'Move the cursor over the model to place the circle, or Alt + click to pin it.';
+    } else {
+      // Expected damage is a share of the shell's alpha, never HP (user, 19.09): the circle's figure reads on
+      // the same scale as the colours of the model and as the panels.
+      var headline = damageView
+        ? 'Expected damage ' + (v.unknown ? damagePct(v.damage) + '\u2013' + damagePct(v.damageHigh) : damagePct(v.damage)) + ' % of alpha'
+        : 'Chance to damage ' + (v.unknown ? v.low.toFixed(1) + '\u2013' + v.high.toFixed(1) : v.low.toFixed(1)) + ' %';
+      $('spread-result').textContent = headline + ' \u00b7 outside the main armour ' + v.miss.toFixed(1) + ' % \u00b7 '
+        + v.samples + ' rays' + (v.unknown ? ' \u00b7 a range because armour data is missing' : '')
+        + '. Nominal model over the circle, no map obstacles and no target motion.';
+      aimLiveText = '\u2248 ' + (damageView ? damagePct(v.damage) : Math.round(v.low)) + ' %';
+      if (!viewer.savedAim) $('total-chance').textContent = aimLiveText;
+    }
+    if (!aimRestFine) { aimRestFine = true; aimRestTimer = window.setTimeout(runAimIntegral, 250); }
   }
   function shellAt(c,choice,penetration,caliber,distance,hit){
     if(!choice||!(penetration>0)||penetration>3000||!(caliber>0)||caliber>1000)return null;
@@ -714,17 +906,19 @@
     var pinned=!!(viewer&&viewer.pinned),line=armorLine(r,shell?shell.penetration:null,range);fillPanel('shot',line);
     logVerdicts(shell);
     // The tile's own tooltip says what its number is before it says where the line comes from.
-    $('shot-panel').title=damageView?'Expected damage per shot along the saved hit line: the penetration chance times alpha, plus the reconstructed non-penetration damage for the rest.\n\nThe record holds what the shot did; this is the expectation it had, not the rolled RNG.':shotPanelTitle;
+    $('shot-panel').title=damageView?'Expected damage per shot along the saved hit line, as a share of the shell’s alpha: the penetration chance times alpha, plus the reconstructed non-penetration damage for the rest, divided by alpha.\n\nThe record holds what the shot did; this is the expectation it had, not the rolled RNG.':shotPanelTitle;
     aimTitle();
     output.title=!r?'No parameters or the pose changed':pinned?'Along the pinned line from the current view':'Along the saved line · flight ≈ '+Math.round(range)+' m · nominal penetration '+Math.round(shell.penetration)+' mm';
     var key=JSON.stringify(shell)+'|'+(viewer?viewer.turretAngle+','+viewer.gunAngle:'');
     if(viewer&&(totalKey!==key||totalEngine!==viewer.engine||totalAim!==viewer.savedAim)){
       totalKey=key;totalEngine=viewer.engine;totalAim=viewer.savedAim;clearTimeout(totalTimer);
-      // No saved circle: the nominal ring's diameter, so a 10 cm ring at short range reads as present, not missing.
-      $('total-chance').textContent=!viewer.savedAim&&viewer.estimateAim?'\u2300 '+(viewer.estimateAim.radius*2).toFixed(2)+' m':'—';
-      // In damage mode the tile reads in HP: the mean expected damage over the circle, misses counted as 0.
+      // No saved circle: the emulated circle's own figure while it is on screen, else the nominal ring's
+      // diameter, so a 10 cm ring at short range reads as present, not missing.
+      $('total-chance').textContent=!viewer.savedAim&&aimLiveText?aimLiveText:!viewer.savedAim&&viewer.estimateAim?'\u2300 '+(viewer.estimateAim.radius*2).toFixed(2)+' m':'—';
+      // In damage mode the tile reads as a share of alpha: the mean expected damage over the circle, misses
+      // counted as 0, divided by what one shot of this shell can do.
       if(viewer.savedAim&&shell)totalTimer=setTimeout(function(){var v=viewer.savedAimProbability(shell);
-        $('total-chance').textContent=!v?'—':damageView?'≈ '+(v.unknown?Math.round(v.damage)+'–'+Math.round(v.damageHigh):Math.round(v.damage))+' HP':'≈ '+(v.unknown?v.low.toFixed(0)+'–'+v.high.toFixed(0):v.low.toFixed(0))+'%';},100);
+        $('total-chance').textContent=!v?'—':damageView?'≈ '+(v.unknown?damagePct(v.damage)+'–'+damagePct(v.damageHigh):damagePct(v.damage))+' %':'≈ '+(v.unknown?v.low.toFixed(0)+'–'+v.high.toFixed(0):v.low.toFixed(0))+'%';},100);
     }
   }
   // The reticle tile's tooltip: what its number means first, then which circles this hit has and how the figure
@@ -732,7 +926,7 @@
   // setting, so the whole title is rebuilt from both.
   var aimStatus='',shotPanelTitle=$('shot-panel').title;
   function aimTitle(){
-    $('aim-metric').title=(damageView?'Expected damage per shot from this reticle, HP: a random shot inside the saved circle, the mean of penetration damage and the reconstructed non-penetration damage.':'Chance to penetrate from this reticle: a random shot inside the saved circle that both hits and penetrates. Nominal penetration, no RNG.')+
+    $('aim-metric').title=(damageView?'Expected damage per shot from this reticle, as a share of the shell’s alpha: a random shot inside the saved circle, the mean of penetration damage and the reconstructed non-penetration damage.':'Chance to penetrate from this reticle: a random shot inside the saved circle that both hits and penetrates. Nominal penetration, no RNG.')+
       ' Reticle circles on the model. '+aimStatus+' Over the saved circle: Gaussian, σ = radius/2; 256 rays, misses = 0. Server formula not confirmed'+(damageView?'; the non-penetration part is a reconstruction (ratio law). No map obstacles, target motion or splash onto other parts.':'; no map obstacles, target motion or blast damage.');
   }
   // The heading row has no space for the full wording: the label reads “Pen.” and the sentence lives in its title.
@@ -774,17 +968,28 @@
     $('penetration').setAttribute('aria-invalid',String(mapMode&&!(penetration>0&&penetration<=3000)));$('caliber').setAttribute('aria-invalid',String(mapMode&&!(caliber>0&&caliber<=1000)));
     $('probe-chance').textContent='—';$('probe-chance').style.color='';$('probe-pen').replaceChildren();$('probe-extra').replaceChildren();$('probe-details').replaceChildren(node('span','Hover over the armour','placeholder'));
     modsVisible();
-    staleEstimate();if(viewer)viewer.configure(shell,mapMode,$('palette').value,mode);shotStats();
+    staleEstimate();if(viewer)viewer.configure(shell,mapMode,$('palette').value,mode);shotStats();updateAim();
   }
   var shellGroup=document.querySelector('.shell-fields');
   var ricochetTint=.5; // the Ricochet tint row of Settings, 0 (off)..1.5; the panels' ricochet colours follow the map
   // Display = Expected damage, with a shell that carries an alpha: the panels read in HP and take their colours
   // from the same quantity the map is drawn with. Set by updateShell, read everywhere the numbers are written.
   var damageView=false;
+  // Mean expected damage over a circle, in HP, read as a share of the current shell's alpha. The samplers
+  // in viewer.js still work in HP - that is what a ray returns and what the Statistics log compares with the
+  // server - and only the display divides by alpha.
+  function damagePct(hp){var s=viewer&&viewer.shell;return Math.round(s&&s.alpha>0?Math.max(0,Math.min(100,100*hp/s.alpha)):0);}
   function chanceRgb(r){return 'rgb('+ArmorBallistics.color(r,$('palette').value,ricochetTint,damageView?'damage':'chance').map(function(v){return Math.round(v*255);}).join(',')+')';}
+  // Expected damage is read as a share of the shell's own alpha, never in HP (user, 19.09): "50 %" says at a
+  // glance how much of what this shell can do a shot at this point is worth, and the same number compares two
+  // guns whose alphas differ. The alpha itself is printed once, in the legend caption and in the aim strip.
   // A shell whose non-penetration damage has no model (the Taschenratte ability shell) shows the penetration part
   // alone as a lower bound, never as the expectation: the recorded shots of that shell do deal damage without piercing.
-  function damageHp(r){return (r.damageLaw==='special-unknown'?'≥ ':'')+Math.round(r.expected)+' HP';}
+  function damageShare(r){
+    var s=viewer&&viewer.shell,share=r.expectedShare;
+    if(share===null||share===undefined)share=s&&s.alpha>0?r.expected/s.alpha:0;
+    return (r.damageLaw==='special-unknown'?'≥ ':'')+Math.round(Math.max(0,Math.min(1,share))*100)+' %';
+  }
   // What the expected damage is made of, for the panel under the number: the penetration chance it came from,
   // and the non-penetration damage of the ratio law with the three figures behind it. Legacy HE (SPG) says
   // instead that its splash is not modelled - there is no client-side rule for it to show.
@@ -795,9 +1000,11 @@
     if(r.damageLaw!=='ratio'||!(r.nonPen>0)||r.chance===null||r.chance===undefined)return [];
     var liner=s.liner>0?s.liner:1,pass=r.screenPass===undefined||r.screenPass===null?1:r.screenPass;
     var groups=[{kind:'damage',text:'pen '+Math.round(r.chance)+' %'},
-      {kind:'damage',text:'non-pen '+Math.round(r.nonPen)+' HP',
+      // The non-penetration part is a share of alpha too, so the two numbers of the expectation read on one
+      // scale: "pen 40 % · non-pen 5 %" adds up to the 43 % above it without a unit change in the middle.
+      {kind:'damage',text:'non-pen '+Math.round(s.alpha>0?100*r.nonPen/s.alpha:0)+' %',
        // Two decimals: the liner is no longer one device factor but the product of the Target switches (1.725).
-       title:'spall '+Math.round(s.spallDamage||0)+' HP · plate '+Math.round(r.nominal)+' mm · liner ×'+liner.toFixed(2)}];
+       title:'Damage without piercing, as a share of alpha: '+Math.round(r.nonPen)+' HP of '+Math.round(s.alpha||0)+' HP · spall '+Math.round(s.spallDamage||0)+' HP · plate '+Math.round(r.nominal)+' mm · liner ×'+liner.toFixed(2)}];
     // A screen on the way: the chance the shell gets through it at all; below it the shell explodes on the screen
     // and deals nothing, so the non-penetration damage only counts in the gap between passing and piercing.
     if(pass<.995)groups.push({kind:'damage',text:'through screen '+Math.round(pass*100)+' %',title:'Chance to pass the screen(s); stopped there, the shell deals no damage at all'});
@@ -813,12 +1020,12 @@
     var shell=pen?[{kind:'pen',text:'pen '+Math.round(pen)+' mm'+(range?' / '+Math.round(range)+' m':'')}]:[];
     var zero=chanceRgb({chance:0,expectedShare:0}),bounced=chanceRgb({chance:0,expectedShare:0,reason:'ricochet'});
     if(r.reason==='ricochet')return {label:'Ricochet',color:bounced,groups:prefix.concat([{kind:'armor',text:(r.final?'again, shell lost: ':'')+Math.round(r.nominal)+' mm – '+Math.round(r.angle)+'°'}],shell,extra)};
-    if(r.reason==='screen')return {label:hp?'0 HP':'0%',color:zero,groups:prefix.concat([{kind:'armor',text:'explodes on the screen (this HE cannot pass screens)'}],shell,extra)};
-    if(r.reason==='no-hull')return r.bounce?{label:hp?'0 HP':'0%',color:bounced,groups:prefix.concat([{kind:'armor',text:'flies past after the ricochet'}],shell)}:{label:'—',color:'',groups:[{kind:'armor',text:'no main armour on this line'}]};
+    if(r.reason==='screen')return {label:hp?'0 %':'0%',color:zero,groups:prefix.concat([{kind:'armor',text:'explodes on the screen (this HE cannot pass screens)'}],shell,extra)};
+    if(r.reason==='no-hull')return r.bounce?{label:hp?'0 %':'0%',color:bounced,groups:prefix.concat([{kind:'armor',text:'flies past after the ricochet'}],shell)}:{label:'—',color:'',groups:[{kind:'armor',text:'no main armour on this line'}]};
     if(r.reason==='parameters')return {label:'—',color:'',groups:[{kind:'armor',text:'set penetration and calibre'}]};
     if(r.reason==='armor')return {label:'—',color:'',groups:prefix.concat([{kind:'armor',text:'no armour data for this surface'}])};
     if(r.chance===null)return {label:'—',color:'',groups:prefix.concat([{kind:'armor',text:'no estimate for this penetration distribution'}])};
-    return {label:hp?damageHp(r):r.chance+'%',color:chanceRgb(r),groups:prefix.concat([{kind:'armor',text:'eff '+Math.round(r.effective)+' mm ← '+Math.round(r.nominal)+' mm – '+Math.round(r.angle)+'°'}],hp?damageGroups(r):[],shell,extra)};
+    return {label:hp?damageShare(r):r.chance+'%',color:chanceRgb(r),groups:prefix.concat([{kind:'armor',text:'eff '+Math.round(r.effective)+' mm ← '+Math.round(r.nominal)+' mm – '+Math.round(r.angle)+'°'}],hp?damageGroups(r):[],shell,extra)};
   }
   function chips(container,line){container.replaceChildren();line.groups.forEach(function(g){var chip=node('span',g.text,'chip '+g.kind);if(g.title)chip.title=g.title;container.appendChild(chip);});}
   // Fill an info panel: the penetration chip sits in the title row, the chance and the armour chips below it.
@@ -1189,7 +1396,10 @@
     b.title=back?'Back to the recorded hit and its shot line':'Swap the model and the shooter';
   }
   function display(data,reference){
-    currentHitKey=null;var hit=data.hit;swapped=hit.synthetic&&!hit.vehicle?hit:null;sceneTiles(hit,reference);
+    // The emulated circle of the previous hit goes first: prepareShell() below rebuilds it for the new
+    // shooter, and clearing it afterwards would throw that away.
+    currentHitKey=null;aimLiveText='';if(viewer)viewer.clearLiveAim();
+    var hit=data.hit;swapped=hit.synthetic&&!hit.vehicle?hit:null;sceneTiles(hit,reference);
     var pend=pendingParts(hit);noteModelsPending(hit,pend);
     $('shot-source').textContent=hit.synthetic?'No recorded shot':'Hit line';prepareShell(hit);var drawn=viewer&&viewer.load(data,shotContext);
     // A part on its way is not a missing model: the spinner outranks both the empty
@@ -1213,7 +1423,7 @@
     if(window.console)console.info('Bullba Hits aim: hit '+hit.id+' '+(view||'other')+' saved='+!!aimReady+' estimate='+!!estimate+' reason='+reason);
     aimStatus=status;aimTitle();
     $('aim-toggle').title=aimReady?'The saved client circle is teal; the server one is dashed when received. Linked to the hit by end point and time; the target position is at impact.':'No own reticle is unambiguously linked to this hit: '+(aimReasons[shotContext.aimReason]||'no data')+'.';
-    shotStats();
+    shotStats();updateAim();
     if(reference){$('details').appendChild(node('p','The model is extracted from the installed client. There are no invented hits here. Once the recorder is installed, new battles appear in the list on the left.'));return;}
     if(hit.vehicle){
       var mv=hit.target||{},sv=hit.attacker||{},when=Number.isFinite(hit.receivedAt)?new Date(hit.receivedAt*1000).toLocaleDateString('en-GB'):'an unknown date';
@@ -1335,7 +1545,9 @@
   }
   // Keep a visible reason when the GPU chance map cannot be drawn.
   if(viewer)viewer.onBackend=function(text){backendText=text;frameBadge();var unavailable=/^Estimate unavailable:/.test(text);$('backend-badge').hidden=!unavailable;$('backend-badge').textContent=unavailable?text:'';};
-  if(viewer)viewer.onCamera=function(state){var changed=lastDistance!==state.distance;lastDistance=state.distance;if(document.activeElement!==$('camera-distance-field'))$('camera-distance-field').value=Math.round(state.distance);if(document.activeElement!==$('camera-zoom-field'))$('camera-zoom-field').value=state.zoom.toFixed(2);$('camera-distance').value=Math.round(distanceSlider(state.distance));$('camera-zoom').value=Math.round(Math.max(0,Math.min(1000,Math.log(state.zoom/.1)/Math.log(1000)*1000)));var hr=viewer.heightRange(),hy=viewer.target.y;$('pivot-height').max=Math.max(1,Math.round((hr[1]-hr[0])*100));$('pivot-height').value=Math.round((hy-hr[0])*100);$('pivot-height-field').min=hr[0].toFixed(2);$('pivot-height-field').max=hr[1].toFixed(2);if(document.activeElement!==$('pivot-height-field'))$('pivot-height-field').value=hy.toFixed(2);var key=[state.distance,state.yaw,state.pitch,viewer.turretAngle,viewer.gunAngle].join(',');if(analysisKey!==null&&analysisKey!==key)staleEstimate();if(changed)updateShell();else if(totalEngine!==viewer.engine)shotStats();};
+  if(viewer)viewer.onCamera=function(state){var changed=lastDistance!==state.distance;lastDistance=state.distance;if(document.activeElement!==$('camera-distance-field'))$('camera-distance-field').value=Math.round(state.distance);if(document.activeElement!==$('camera-zoom-field'))$('camera-zoom-field').value=state.zoom.toFixed(2);$('camera-distance').value=Math.round(distanceSlider(state.distance));$('camera-zoom').value=Math.round(Math.max(0,Math.min(1000,Math.log(state.zoom/.1)/Math.log(1000)*1000)));var hr=viewer.heightRange(),hy=viewer.target.y;$('pivot-height').max=Math.max(1,Math.round((hr[1]-hr[0])*100));$('pivot-height').value=Math.round((hy-hr[0])*100);$('pivot-height-field').min=hr[0].toFixed(2);$('pivot-height-field').max=hr[1].toFixed(2);if(document.activeElement!==$('pivot-height-field'))$('pivot-height-field').value=hy.toFixed(2);var key=[state.distance,state.yaw,state.pitch,viewer.turretAngle,viewer.gunAngle].join(',');if(analysisKey!==null&&analysisKey!==key)staleEstimate();if(changed)updateShell();else if(totalEngine!==viewer.engine)shotStats();// The circle stands across the line from the camera to the aimed point, so a camera that moved needs it
+    // redrawn; only the geometry is rebuilt here, the integral still waits for the cursor to rest.
+    if(viewer.liveRadius100){viewer.drawLiveAim();scheduleAimIntegral();}};
   // Logarithmic slider between the viewer's distance limits: fine steps in a clinch, coarse steps far away.
   var limits=(window.ArmorViewer&&ArmorViewer.limits)||{distanceMin:3,distanceMax:1000},span=Math.log(limits.distanceMax/limits.distanceMin);
   function distanceSlider(d){return Math.log(Math.max(limits.distanceMin,d)/limits.distanceMin)/span*1000;}
@@ -1393,6 +1605,7 @@
     $('pose-turret').textContent=turret;$('pose-gun').textContent=gun;
     $('pose-note').textContent=off?'Hit marks hidden until the recorded pose returns':'';$('pose-note').hidden=!off;
     staleEstimate();shotStats();
+    if(viewer.liveRadius100){viewer.drawLiveAim();scheduleAimIntegral();}
   }
   function pivotButtons(){if(!viewer)return;$('pivot-hit').disabled=!viewer.point;$('pivot-vehicle').setAttribute('aria-pressed',String(viewer.pivot!=='hit'));$('pivot-hit').setAttribute('aria-pressed',String(viewer.pivot==='hit'));}
   $('pivot-vehicle').onclick=function(){if(viewer)viewer.setPivot('vehicle');pivotButtons();};$('pivot-hit').onclick=function(){if(viewer)viewer.setPivot('hit');pivotButtons();};
@@ -1421,9 +1634,19 @@
       .catch(function(e){if(token===generation){message(e.message);warnings([e.message]);}});
   };
   if(viewer)viewer.onAim=function(text){analysisKey=null;$('spread-result').textContent=text;};
-  $('reset-aim').onclick=function(){if(viewer){viewer.spreadAim=null;staleEstimate();}};
+  // Releasing the pinned centre: the manual estimate goes stale as before, the emulated circle simply
+  // goes back to following the cursor.
+  $('reset-aim').onclick=function(){if(viewer){viewer.spreadAim=null;staleEstimate();if(viewer.liveRadius100){viewer.drawLiveAim();scheduleAimIntegral();}}};
   $('spread-radius').oninput=staleEstimate;
-  $('estimate-spread').onclick=function(){if(!viewer)return;try{var result=viewer.estimateSpread(Number($('spread-radius').value));analysisKey=[viewer.distance,viewer.yaw,viewer.pitch,viewer.turretAngle,viewer.gunAngle].join(',');$('spread-result').textContent=(damageView?'Nominal expected damage: '+(result.unknown?Math.round(result.damage)+'–'+Math.round(result.damageHigh):Math.round(result.damage))+' HP':'Nominal total chance: '+(result.unknown?result.low.toFixed(1)+'–'+result.high.toFixed(1):result.low.toFixed(1))+'%')+' · outside the main armour '+result.miss.toFixed(1)+'% · '+result.samples+' rays.'+(result.unknown?' A range because armour data is missing.':'')+(damageView?' For the chosen dispersion model; the non-penetration damage is a reconstruction, without map obstacles or splash onto other parts.':' For the chosen dispersion model, without map obstacles or blast damage.');}catch(e){$('spread-result').textContent=e.message;}};
+  // The shooter's state: every slider recomputes the circle at once (no ray is cast here) and the
+  // integral waits for the cursor to rest, so dragging a slider stays smooth.
+  ['aim-speed','aim-hull','aim-turret','aim-settled'].forEach(function(id){$(id).oninput=updateAim;});
+  $('aim-after-shot').onchange=updateAim;
+  $('aim-still').onclick=function(){['aim-speed','aim-hull','aim-turret','aim-settled'].forEach(function(id){$(id).value=0;});$('aim-after-shot').checked=false;updateAim();};
+  if(viewer)viewer.onAimMove=function(){scheduleAimIntegral();};
+  // The manual estimate, for a shooter whose record carries no aiming parameters. Expected damage is a
+  // share of the shell's alpha here too, so the two paths read the same way.
+  $('estimate-spread').onclick=function(){if(!viewer)return;try{var result=viewer.estimateSpread(Number($('spread-radius').value));analysisKey=[viewer.distance,viewer.yaw,viewer.pitch,viewer.turretAngle,viewer.gunAngle].join(',');$('spread-result').textContent=(damageView?'Nominal expected damage: '+(result.unknown?damagePct(result.damage)+'–'+damagePct(result.damageHigh):damagePct(result.damage))+' % of alpha':'Nominal total chance: '+(result.unknown?result.low.toFixed(1)+'–'+result.high.toFixed(1):result.low.toFixed(1))+'%')+' · outside the main armour '+result.miss.toFixed(1)+'% · '+result.samples+' rays.'+(result.unknown?' A range because armour data is missing.':'')+(damageView?' For the chosen dispersion model; the non-penetration damage is a reconstruction, without map obstacles or splash onto other parts.':' For the chosen dispersion model, without map obstacles or blast damage.');}catch(e){$('spread-result').textContent=e.message;}};
   $('shell-choice').onchange=selectShell;
   $('show-aim').onchange=function(){if(viewer)viewer.showSavedAim(this.checked);};
   ['caliber','palette','armor-mode'].forEach(function(id){$(id).onchange=updateShell;});
@@ -1527,6 +1750,7 @@
   // The Target group is built before the settings are restored: restoring the Display setting already runs
   // updateShell(), which asks the group whether it belongs on screen.
   buildTargetMods();
+  buildShooterMods();
   restoreSettings();
   // Heading overflow (18.09 round 2): the battle tile, the shell block and Settings share one grid row while the
   // three fit; when they do not, .stacked drops the whole shell block to a full-width second row and Settings
@@ -1578,15 +1802,26 @@
   // the room to the right of it, up to the edge of the viewport. Neither tile is ever narrowed for it - when
   // its inline block does not fit, the group folds into its own “Modifiers” button instead. Measured in the
   // same frame as the two rows above, never per frame.
-  function layoutMods(){
-    var slot=$('target-mods-slot'),box=$('viewport'),tile=$('model-tile');
-    if(!targetMods||!slot||slot.hidden||!box||!box.clientWidth)return;
+  // The shooter's group does the same in the bottom band, beside the Shooter tile, so each group sits with
+  // the vehicle it describes.
+  function placeMods(group,slot,tile){
+    var box=$('viewport');
+    if(!group||!slot||slot.hidden||!box||!box.clientWidth)return;
     // The tile is centred with a transform, which offsetLeft does not see: its painted right edge comes from
     // the rectangles, measured against the viewport's own.
     var edge=14,gap=12,left=edge;
-    if(!tile.hidden){var box0=box.getBoundingClientRect(),t0=tile.getBoundingClientRect();left=Math.max(edge,t0.right-box0.left+gap);}
+    if(tile&&tile.getBoundingClientRect().width>0){var box0=box.getBoundingClientRect(),t0=tile.getBoundingClientRect();left=Math.max(edge,t0.right-box0.left+gap);}
     slot.style.left=left+'px';
-    targetMods.fit(box.clientWidth-edge-left);
+    group.fit(box.clientWidth-edge-left);
+    // Collapsed, a group is exactly as wide as its own summary button, which fit() cannot shrink. When even
+    // that does not fit beside the tile it is pulled back to the edge of the viewport instead of being
+    // painted past it - overlapping the tile is the lesser evil, and only the bottom band ever gets there.
+    var width=slot.getBoundingClientRect().width;
+    if(left+width>box.clientWidth-edge)slot.style.left=Math.max(edge,box.clientWidth-edge-width)+'px';
+  }
+  function layoutMods(){
+    placeMods(targetMods,$('target-mods-slot'),$('model-tile').hidden?null:$('model-tile'));
+    placeMods(shooterMods,$('shooter-mods-slot'),document.querySelector('.shooter-row'));
   }
   // One rAF debounce for all three: the heading is measured first, because stacking it changes nothing the
   // toolbar measures but a toolbar fold must not race the heading's own reflow.

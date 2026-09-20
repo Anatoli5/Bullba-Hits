@@ -53,6 +53,55 @@
     if(type&&type!=='NORMAL')return null;
     return Math.round(clamp(.5*(1+erf(margin/randomization/.33/Math.sqrt(2)))*100,0,100));
   }
+  // --- Aim emulation -------------------------------------------------------------------------
+  // The shooter's dispersion circle, by the client's own formula. Source: the saved client source
+  // of this branch, Avatar.getOwnVehicleShotDispersionAngle (see outputs/aim-emulation-findings-2026-09-19.md);
+  // the field names and units of `aim` come from the installed client's scripts/common/items/vehicles.pyc
+  // and are written by the recorder (mod/local_armor_inspector/exporter.py aim_block).
+  //
+  //   ideal = mult · sqrt(1 + additive² · ((v·cm)² + (ω·cr)² + (ωt·ct)² + (after a shot ? cs² : 0)))
+  //   aiming(t) = max(idealNow, start · exp(−t / aimingTime))
+  //   circle radius at range R = dispersion · factor · R
+  //
+  // Everything the crew, the equipment, the perks and the field modification do sits in `mods`, and
+  // each multiplier is applied exactly where the client applies it: the full-aim accuracy on mult,
+  // the stabiliser on additive, a perk on the single dispersion factor it names, the laying drive on
+  // the aiming time. The client's dual accuracy and auto-shoot guns are separate mechanics and are
+  // not modelled here.
+  //
+  // Stage 1 reads `state` as "the vehicle was in this state, then everything stopped settledFor
+  // seconds ago": the factor decays from the ideal factor of that state towards the resting one
+  // (mult, i.e. standing still, turret still, no shot). settledFor = 0 means the shot is taken in
+  // the state itself. Stage 2 is meant to drive the state from WASD and a turret chasing the cursor.
+  var NO_MODS={mult:1,additive:1,movement:1,rotation:1,turret:1,aimingTime:1,turretSpeed:1,hullSpeed:1};
+  function aimMods(mods){
+    var out={},keys=Object.keys(NO_MODS);
+    for(var i=0;i<keys.length;i++){
+      var v=mods?Number(mods[keys[i]]):NaN;
+      out[keys[i]]=isFinite(v)&&v>0?v:NO_MODS[keys[i]];
+    }
+    return out;
+  }
+  function aimFactor(aim,state,mods){
+    if(!aim||!(aim.dispersion>0))return null;
+    var m=aimMods(mods),s=state||{};
+    var mult=(aim.multFactor>0?aim.multFactor:1)*m.mult;
+    var additive=(aim.additiveFactor>0?aim.additiveFactor:1)*m.additive;
+    var cm=(aim.movementFactor>0?aim.movementFactor:0)*m.movement;
+    var cr=(aim.rotationFactor>0?aim.rotationFactor:0)*m.rotation;
+    var ct=(aim.turretRotationFactor>0?aim.turretRotationFactor:0)*m.turret;
+    var cs=aim.afterShotFactor>0?aim.afterShotFactor:0;
+    var v=Math.abs(Number(s.speed)||0),w=Math.abs(Number(s.hullTurn)||0),wt=Math.abs(Number(s.turretTurn)||0);
+    var sum=(v*cm)*(v*cm)+(w*cr)*(w*cr)+(wt*ct)*(wt*ct)+(s.afterShot?cs*cs:0);
+    var ideal=mult*Math.sqrt(1+additive*additive*sum);
+    // The laying drive and the field modification scale the aiming time through miscAttrs; the
+    // descriptor's own gunAimingTimeFactor is already in the record and is kept.
+    var aimingTime=(aim.aimingTime>0?aim.aimingTime:0)*(aim.aimingTimeFactor>0?aim.aimingTimeFactor:1)*m.aimingTime;
+    // The resting factor is the same formula with the state at zero, which leaves exactly mult.
+    var rest=mult,settled=Math.max(0,Number(s.settledFor)||0),factor=ideal;
+    if(settled>0)factor=aimingTime>0?Math.max(rest,ideal*Math.exp(-settled/aimingTime)):rest;
+    return {ideal:ideal,rest:rest,factor:factor,aimingTime:aimingTime,radius100:aim.dispersion*factor*100};
+  }
   function shell(kind,penetration,caliber){
     var ap=kind==='ARMOR_PIERCING'||kind==='ARMOR_PIERCING_CR';
     return {kind:kind,penetration:penetration,caliber:caliber,randomization:.25,randomizationType:'NORMAL',
@@ -205,5 +254,5 @@
     var stops=palettes[palette]||palettes.accessible,p=share*2,i=Math.min(1,Math.floor(p)),f=p-i;
     return stops[i].map(function(v,k){return v+(stops[i+1][k]-v)*f;});
   }
-  root.ArmorBallistics={build:build,fromTriangles:fromTriangles,triangle:triangle,subdivide:subdivide,evaluate:evaluate,shell:shell,chance:chance,effective:effective,ricochet:ricochet,color:color,value:value,nonPenetration:nonPenetration,transform:transform,unit:unit,sub:sub};
+  root.ArmorBallistics={build:build,fromTriangles:fromTriangles,triangle:triangle,subdivide:subdivide,evaluate:evaluate,shell:shell,chance:chance,effective:effective,ricochet:ricochet,color:color,value:value,nonPenetration:nonPenetration,transform:transform,unit:unit,sub:sub,aimFactor:aimFactor};
 }(typeof window==='undefined'?globalThis:window));

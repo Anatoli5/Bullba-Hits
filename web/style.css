@@ -122,6 +122,23 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
    the top of it. Stacked there, the options get a column of their own instead of one long line. */
 .mods-more .toolbar-popover{left:0;right:auto;top:calc(100% + 6px);bottom:auto;min-width:210px}
 .mods-more .toolbar-popover .mod-body{flex-direction:column;align-items:flex-start;gap:12px}
+/* The shooter's group lives in the bottom band, beside the Shooter tile, so its popover opens upwards
+   instead of downwards - the only difference between the two slots. */
+.mod-slot-bottom{top:auto;bottom:12px}
+.mod-slot-bottom .mods-more .toolbar-popover{top:auto;bottom:calc(100% + 6px)}
+
+/* Aim emulation strip: the shooter's state under the scene. The sliders wrap instead of scrolling, so
+   the block survives a 1366 px window, and the readouts have a fixed width so a moving number does not
+   shuffle the row it sits in. */
+.aim-state{display:flex;align-items:center;flex-wrap:wrap;gap:10px 18px;margin:12px 0}
+.aim-state[hidden]{display:none}
+.aim-state label{display:flex;align-items:center;gap:8px;color:var(--muted);white-space:nowrap}
+.aim-state input[type=range]{width:130px;min-height:28px;padding:0;accent-color:var(--gold);cursor:pointer}
+.aim-state output{min-width:64px;color:#e5edf5;font-variant-numeric:tabular-nums}
+.aim-state .aim-check{gap:6px;color:#e5edf5}
+#aim-readout{margin-top:4px;line-height:1.6;color:#e5edf5;font-variant-numeric:tabular-nums}
+#aim-readout[hidden],#aim-manual[hidden]{display:none}
+@media(max-width:1400px){.aim-state input[type=range]{width:104px}}
 
 
 /* Side panel in two modes. Only one pane is on screen, and the pane - not the aside - is the scrolling box, so

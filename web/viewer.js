@@ -31,6 +31,10 @@
     this.materials = []; this.point = null; this.travel = null;
     this.shell=null;this.heatmap=true;this.palette='classic';this.paintTimer=null;this.paintMesh=null;this.samples=[];this.engine=null;
     this.frameId=null;this.fitPending=false;this.recordedDistance=null;this.estimateAim=null;this.paintedKey=null;this.distanceSet=false;
+    // Aim emulation: the circle that follows the cursor. liveRadius100 is the radius at 100 m the page
+    // computes from the shooter's state (null = the feature is off and the manual estimate stands),
+    // liveAimPoint the centre it was last drawn at, liveAim the drawn circle the integral samples.
+    this.liveRadius100=null;this.liveAimPoint=null;this.liveAim=null;
     this.frameAt=0;this.frameTimes=[]; // when the pending frame was asked for, and the cadence of the frames that ran
     this.contextLost=false;this.dragging=false;this.hoverId=null;this.hoverEvent=null;this.inspectKey=null;
     // The camera is driven by its own frame loop: pointer and key events only move the target.
@@ -658,10 +662,9 @@
   Viewer.prototype.showSavedAim=function(value){if(this.aimGroup)this.aimGroup.visible=!!value;this.draw();};
   Viewer.prototype.savedAimProbability=function(shell){
     if(!this.savedAim||!this.savedAim.origin||!this.engine||!shell||Math.abs(this.turretAngle)>.001||Math.abs(this.gunAngle)>.001)return null;
-    var aim=this.savedAim,count=256,sum=0,unknown=0,dmg=0,origin=aim.origin.toArray();
-    for(var i=0;i<count;i++){var r=aim.radius*Math.sqrt(-.5*Math.log(1-(i+.5)/count*(1-Math.exp(-2)))),angle=i*2.399963229728653,p=aim.center.clone().addScaledVector(aim.right,r*Math.cos(angle)).addScaledVector(aim.up,r*Math.sin(angle)),hit=this.engine.ray(origin,p.sub(aim.origin).toArray(),shell);if(hit.chance===null)unknown++;else sum+=hit.chance;if(hit.expected>0)dmg+=hit.expected;}
     // 'damage' is the mean expected damage over the circle, HP: a miss is 0 HP exactly as it is 0 %.
-    return {low:sum/count,high:(sum+unknown*100)/count,unknown:unknown,damage:dmg/count,damageHigh:(dmg+unknown*(shell.alpha||0))/count};
+    var aim=this.savedAim;
+    return sampleCircle(this.engine,shell,aim.origin,aim.center,aim.right,aim.up,aim.radius,256);
   };
   Viewer.prototype.paint=function(){
     if(!this.paintMesh)return;
@@ -710,22 +713,101 @@
   };
   Viewer.prototype.inspect=function(event){
     if(!this.engine||!this.onInspect)return;var raycaster=this.pointerRay(event),objects=this.paintMesh?[this.paintMesh]:[];if(this.trackGroup)objects.push(this.trackMesh);var hits=raycaster.intersectObjects(objects),sample=hits.length?(hits[0].object===this.trackMesh?this.trackTriangles:this.samples)[hits[0].faceIndex]:null,result=this.engine.ray(raycaster.ray.origin.toArray(),raycaster.ray.direction.toArray(),this.shell);if(sample)result.surface={part:sample.part,armor:sample.armor};
+    // The emulated circle follows every pointer move, including one that leaves the reading below unchanged,
+    // so it is moved before that early return - and it reuses this raycast instead of casting its own.
+    if(this.liveRadius100){var moved=this.aimAtPointer(raycaster,hits);if(this.onAimMove)this.onAimMove(moved);}
     var key=Viewer.readingKey(result,sample);if(key===this.inspectKey)return;this.inspectKey=key;this.onInspect(result);
   };
   Viewer.prototype.wireframe=function(value){this.showOutline=!!value;this.applyOutline();this.draw();};
-  Viewer.prototype.aimAt=function(event){var ray=this.pointerRay(event).ray,normal=this.target.clone().sub(this.camera.position).normalize(),plane=new THREE.Plane().setFromNormalAndCoplanarPoint(normal,this.target),point=new THREE.Vector3();if(ray.intersectPlane(plane,point)){this.spreadAim=point;this.hideSpread();if(this.onAim)this.onAim('Estimate centre moved. Press “Estimate”.');}};
+  // Alt + click pins the circle's centre. With the emulation on the circle simply stays there and keeps
+  // following the state; with it off the manual estimate waits for the button, as before.
+  Viewer.prototype.aimAt=function(event){var ray=this.pointerRay(event).ray,normal=this.target.clone().sub(this.camera.position).normalize(),plane=new THREE.Plane().setFromNormalAndCoplanarPoint(normal,this.target),point=new THREE.Vector3();if(ray.intersectPlane(plane,point)){this.spreadAim=point;this.hideSpread();
+    if(this.liveRadius100){var pinned=this.drawLiveAim();if(this.onAimMove)this.onAimMove(pinned);if(this.onAim)this.onAim('Circle pinned here. It keeps following the shooter’s state; “Centre on the hit” releases it.');}
+    else if(this.onAim)this.onAim('Estimate centre moved. Press “Estimate”.');}};
   Viewer.prototype.hideSpread=function(){if(this.spreadCircle){this.scene.remove(this.spreadCircle);this.spreadCircle.geometry.dispose();this.spreadCircle.material.dispose();this.spreadCircle=null;this.draw();}};
+  // The sampling model of a dispersion circle, in one place: 'count' rays fanned over the circle as a 2D
+  // Gaussian with sigma = radius/2, clipped to the circle (a sunflower spiral, so the same count always
+  // gives the same points), a miss counting as 0 % and 0 HP. This is an assumption, NOT a confirmed WoT
+  // server distribution, and the page says so next to every figure it feeds. Used by the button estimate,
+  // by the saved client reticle and by the emulated circle alike, so all three read the same way.
+  function sampleCircle(engine,shell,origin,center,right,up,radius,count){
+    var sum=0,unknown=0,miss=0,dmg=0,o=origin.toArray();
+    for(var i=0;i<count;i++){
+      var r=radius*Math.sqrt(-.5*Math.log(1-(i+.5)/count*(1-Math.exp(-2)))),angle=i*2.399963229728653;
+      var point=center.clone().addScaledVector(right,r*Math.cos(angle)).addScaledVector(up,r*Math.sin(angle));
+      var hit=engine.ray(o,point.sub(origin).toArray(),shell);
+      if(hit.chance===null)unknown++;else sum+=hit.chance;
+      if(hit.expected>0)dmg+=hit.expected;
+      if(hit.reason==='no-hull')miss++;
+    }
+    return {low:sum/count,high:(sum+unknown*100)/count,unknown:unknown,miss:miss/count*100,samples:count,
+      damage:dmg/count,damageHigh:(dmg+unknown*((shell||{}).alpha||0))/count};
+  }
+  // The frame a circle standing across a shot line is drawn in: the line itself is the normal, the other two
+  // axes are any pair perpendicular to it.
+  function circleFrame(origin,center){
+    var T=THREE,normal=center.clone().sub(origin).normalize(),up=new T.Vector3(0,1,0);
+    if(Math.abs(up.dot(normal))>.98)up.set(1,0,0);
+    var right=new T.Vector3().crossVectors(normal,up).normalize();up.crossVectors(right,normal).normalize();
+    return {normal:normal,right:right,up:up};
+  }
+  Viewer.prototype.drawCircle=function(center,right,up,radius,color){
+    var T=THREE,points=[];
+    for(var j=0;j<96;j++){var a=j/96*Math.PI*2;points.push(center.clone().addScaledVector(right,radius*Math.cos(a)).addScaledVector(up,radius*Math.sin(a)));}
+    this.hideSpread();
+    this.spreadCircle=new T.LineLoop(new T.BufferGeometry().setFromPoints(points),new T.LineBasicMaterial({color:color===undefined?0xf1d18b:color,depthTest:false}));
+    this.spreadCircle.renderOrder=10;this.scene.add(this.spreadCircle);this.draw();
+  };
   Viewer.prototype.estimateSpread=function(radius100){
     this.commitPose(); // the rays are cast against the engine, so a pose that is only drawn must be built first
     if(!this.engine||!this.shell)throw new Error('Pick a shell and penetration first.');
     if(!Number.isFinite(radius100)||radius100<0||radius100>10)throw new Error('The radius must be between 0 and 10 m at 100 m.');
-    var T=THREE,aim=this.spreadAim||this.point||this.target,origin=this.camera.position.clone(),normal=aim.clone().sub(origin).normalize(),up=new T.Vector3(0,1,0);if(Math.abs(up.dot(normal))>.98)up.set(1,0,0);
-    var right=new T.Vector3().crossVectors(normal,up).normalize();up.crossVectors(right,normal).normalize();var radius=origin.distanceTo(aim)*radius100/100,points=[],count=1024,sum=0,unknown=0,miss=0,dmg=0,o=origin.toArray();
-    for(var i=0;i<count;i++){var r=radius*Math.sqrt(-.5*Math.log(1-(i+.5)/count*(1-Math.exp(-2)))),angle=i*2.399963229728653,point=aim.clone().addScaledVector(right,r*Math.cos(angle)).addScaledVector(up,r*Math.sin(angle)),hit=this.engine.ray(o,point.sub(origin).toArray(),this.shell);if(hit.chance===null)unknown++;else sum+=hit.chance;if(hit.expected>0)dmg+=hit.expected;if(hit.reason==='no-hull')miss++;}
-    for(var j=0;j<96;j++){var a=j/96*Math.PI*2;points.push(aim.clone().addScaledVector(right,radius*Math.cos(a)).addScaledVector(up,radius*Math.sin(a)));}
-    this.hideSpread();this.spreadCircle=new T.LineLoop(new T.BufferGeometry().setFromPoints(points),new T.LineBasicMaterial({color:0xf1d18b,depthTest:false}));this.spreadCircle.renderOrder=10;this.scene.add(this.spreadCircle);this.draw();
-    return {low:sum/count,high:(sum+unknown*100)/count,unknown:unknown,miss:miss/count*100,samples:count,
-      damage:dmg/count,damageHigh:(dmg+unknown*((this.shell||{}).alpha||0))/count};
+    var aim=this.spreadAim||this.point||this.target,origin=this.camera.position.clone(),frame=circleFrame(origin,aim);
+    var radius=origin.distanceTo(aim)*radius100/100;
+    var result=sampleCircle(this.engine,this.shell,origin,aim,frame.right,frame.up,radius,1024);
+    this.drawCircle(aim,frame.right,frame.up,radius);
+    return result;
+  };
+  // --- Aim emulation (0.7.14) ------------------------------------------------------------------------
+  // The shooter's own dispersion circle, following the cursor over the model like the game reticle. The
+  // radius comes from the page (ArmorBallistics.aimFactor over the recorded 'aim' block, the shooter's
+  // state and his modifiers) as a radius at 100 m; here it only becomes geometry. The shot leaves the
+  // camera - the page's shooter viewpoint - so the circle stands on the plane through the aimed point,
+  // across that ray, and grows with the distance flown exactly as it does in the game.
+  Viewer.prototype.setLiveAim=function(radius100){
+    var value=Number.isFinite(radius100)&&radius100>0&&radius100<=50?radius100:null;
+    this.liveRadius100=value;
+    if(value===null){this.liveAim=null;this.hideSpread();return;}
+    this.drawLiveAim();
+  };
+  Viewer.prototype.clearLiveAim=function(){this.liveRadius100=null;this.liveAimPoint=null;this.liveAim=null;this.hideSpread();};
+  // A pinned centre (Alt + click, or "Centre on the hit") outranks the cursor: the circle then stays where
+  // the user put it and only its radius follows the state, which is what the Estimate button needs too.
+  Viewer.prototype.drawLiveAim=function(){
+    var center=this.spreadAim||this.liveAimPoint;
+    if(!this.liveRadius100||!center){this.liveAim=null;return null;}
+    var origin=this.camera.position.clone(),range=origin.distanceTo(center),frame=circleFrame(origin,center);
+    var radius=range*this.liveRadius100/100;
+    this.liveAim={center:center.clone(),right:frame.right,up:frame.up,radius:radius,origin:origin,range:range};
+    this.drawCircle(center,frame.right,frame.up,radius);
+    return this.liveAim;
+  };
+  // Called from inspect() with the raycast it already did, so a pointer move costs no second cast. Without a
+  // surface under the cursor the circle rests on the plane through the orbit centre, as aimAt() does.
+  Viewer.prototype.aimAtPointer=function(caster,hits){
+    if(!this.liveRadius100)return null;
+    var T=THREE,point=null;
+    if(hits&&hits.length)point=hits[0].point.clone();
+    else{var plane=new T.Plane().setFromNormalAndCoplanarPoint(this.target.clone().sub(this.camera.position).normalize(),this.target),p=new T.Vector3();if(caster.ray.intersectPlane(plane,p))point=p;}
+    if(!point)return null;
+    this.liveAimPoint=point;
+    return this.drawLiveAim();
+  };
+  Viewer.prototype.liveAimProbability=function(shell,count){
+    var aim=this.liveAim;
+    if(!aim||!this.engine||!shell)return null;
+    this.commitPose();
+    return sampleCircle(this.engine,shell,aim.origin,aim.center,aim.right,aim.up,aim.radius,count>0?count:256);
   };
   window.ArmorViewer=Viewer;
 }());

@@ -220,6 +220,7 @@ def enrich_vehicle(vehicle):
             pass
     fix_gun_height(vehicle)
     fix_gun_dispersion(vehicle)
+    fix_aim(vehicle)
     if all(vehicle.get(key) is not None for key in ('level', 'class', 'role')):
         return
     try:
@@ -290,6 +291,117 @@ def fix_gun_dispersion(vehicle):
             vehicle['gunDispersion'] = dispersion
     except Exception:
         pass
+
+
+def positive(value):
+    """True for a finite number above zero. Written out because a record read back from
+    disk may carry None or a string where a number is expected, and Python 2 compares
+    those without complaining."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0
+
+
+def speed_limits(descr):
+    """(forward, backward) top speed of the vehicle in m/s.
+
+    The client reads speedLimits/forward|backward from the vehicle XML in km/h and stores
+    them multiplied by component_constants.KMH_TO_MS on VehicleType.speedLimits; the
+    descriptor's 'physics' dict carries that very tuple, but only on the apps that compute
+    the arena parameters, so the type is the fallback (vehicles.pyc, VehicleType.__init__
+    and VehicleDescriptor.__updateAttributes of client 2.4.0.1).
+    """
+    physics = getattr(descr, 'physics', None)
+    limits = physics.get('speedLimits') if isinstance(physics, dict) else None
+    if limits is None:
+        limits = descr.type.speedLimits
+    return float(limits[0]), float(limits[1])
+
+
+def aim_block(descr):
+    """Everything the client's own dispersion formula needs about a shooter, in client units.
+
+    Avatar.getOwnVehicleShotDispersionAngle turns the state of the vehicle into a factor on
+    gun.shotDispersionAngle:
+        ideal = multShotDispersionFactor * sqrt(1 + additiveShotDispersionFactor**2 * (
+                    (speed * chassisMovement)**2 + (hullTurn * chassisRotation)**2
+                  + (turretTurn * gunTurretRotation)**2 + (afterShot and afterShot**2 or 0)))
+    and lets the factor settle towards it as exp(-t / gun.aimingTime). The fields below are
+    exactly its inputs, so the page can recompute the circle for a state the user chooses:
+
+      dispersion            rad        gun.shotDispersionAngle (full-aim radius per metre of range)
+      aimingTime            s          gun.aimingTime
+      turretRotationFactor  per rad/s  gun.shotDispersionFactors['turretRotation']
+      afterShotFactor       -          gun.shotDispersionFactors['afterShot']
+      movementFactor        per m/s    chassis.shotDispersionFactors[0] (a two-item tuple, not a dict)
+      rotationFactor        per rad/s  chassis.shotDispersionFactors[1]
+      turretRotationSpeed   rad/s      turret.rotationSpeed
+      hullRotationSpeed     rad/s      chassis.rotationSpeed
+      speedForward/Backward m/s        speed_limits(descr)
+      multFactor            -          miscAttrs['multShotDispersionFactor']
+      additiveFactor        -          miscAttrs['additiveShotDispersionFactor']
+      aimingTimeFactor      -          miscAttrs['gunAimingTimeFactor']
+
+    The names and the unit conversions were read out of the installed client's own
+    scripts/common/items/vehicles.pyc (_readGun, _readGunShotDispersionFactors, _readChassis,
+    _readTurret, VehicleType.__init__, VehicleDescriptor.__updateAttributes), not from memory.
+
+    The last three are the crew-and-equipment factors. A descriptor rebuilt from a compact
+    descriptor has neither crew nor optional devices, so they come out at 1.0 - the bare
+    vehicle, on top of which the page applies the crew and the equipment the user picks.
+    Every field is read on its own and a field the client does not give is simply left out
+    and named in 'unavailable', the same contract the telemetry snapshot uses: this must
+    never raise inside the recorder.
+    """
+    aim = {'unavailable': []}
+
+    def take(name, action):
+        try:
+            aim[name] = action()
+        except Exception:
+            aim['unavailable'].append(name)
+
+    take('dispersion', lambda: float(descr.gun.shotDispersionAngle))
+    take('aimingTime', lambda: float(descr.gun.aimingTime))
+    take('turretRotationFactor', lambda: float(descr.gun.shotDispersionFactors['turretRotation']))
+    take('afterShotFactor', lambda: float(descr.gun.shotDispersionFactors['afterShot']))
+    take('movementFactor', lambda: float(descr.chassis.shotDispersionFactors[0]))
+    take('rotationFactor', lambda: float(descr.chassis.shotDispersionFactors[1]))
+    take('turretRotationSpeed', lambda: float(descr.turret.rotationSpeed))
+    take('hullRotationSpeed', lambda: float(descr.chassis.rotationSpeed))
+    take('speedForward', lambda: speed_limits(descr)[0])
+    take('speedBackward', lambda: speed_limits(descr)[1])
+    take('multFactor', lambda: float(descr.miscAttrs['multShotDispersionFactor']))
+    take('additiveFactor', lambda: float(descr.miscAttrs['additiveShotDispersionFactor']))
+    take('aimingTimeFactor', lambda: float(descr.miscAttrs['gunAimingTimeFactor']))
+    if not aim['unavailable']:
+        del aim['unavailable']
+    # Without the angle itself there is no circle to draw, so an empty block is no block.
+    return aim if positive(aim.get('dispersion')) else None
+
+
+def fix_aim(vehicle):
+    """Fill the 'aim' block of a record written before the recorder knew it.
+
+    The twin of fix_gun_dispersion next to it, and for the same reason: the mounted gun,
+    turret and chassis are known exactly from the recorded compact descriptor, so an old
+    battle or an old exported vehicle can draw the dispersion circle without being fired
+    at again. Returns True when it filled something, so a caller that owns a file on disk
+    can rewrite it. Guarded like its neighbours.
+    """
+    if not isinstance(vehicle, dict):
+        return False
+    existing = vehicle.get('aim')
+    if isinstance(existing, dict) and positive(existing.get('dispersion')):
+        return False
+    if not vehicle.get('compactDescriptor'):
+        return False
+    try:
+        block = aim_block(vehicle_descr(vehicle['compactDescriptor']))
+    except Exception:
+        return False
+    if not block:
+        return False
+    vehicle['aim'] = block
+    return True
 
 
 PARTS = ('chassis', 'hull', 'turret', 'gun')
@@ -1055,7 +1167,15 @@ class Exporter(object):
         """
         for path in sorted(glob.glob(os.path.join(self.folder, 'data', 'vehicles', '*.js'))):
             try:
-                self.remember_vehicle(read_data_file(path))
+                record = read_data_file(path)
+                # A vehicle exported before the aim block existed gets it here, from its own
+                # compact descriptor. Re-exporting it instead would re-extract every collision
+                # model of the catalogue on the first start after the update, for one small
+                # dictionary; the rest of the record is already current.
+                identifier = record.get('id')
+                if fix_aim(record) and identifier and IDENTIFIER.match(identifier):
+                    write_data(path, 'vehicle:'+identifier, record)
+                self.remember_vehicle(record)
             except Exception:
                 LOG.exception('Could not read an exported vehicle: %s', os.path.basename(path))
 
@@ -1151,6 +1271,13 @@ class Exporter(object):
             record['gunDispersion'] = float(descr.gun.shotDispersionAngle)
         except Exception:
             record['warnings'].append('Gun parameters unavailable')
+        try:
+            # Everything the page's dispersion circle needs about this vehicle as a shooter.
+            block = aim_block(descr)
+            if block: record['aim'] = block
+            else: record['warnings'].append('Aim parameters unavailable')
+        except Exception:
+            record['warnings'].append('Aim parameters unavailable')
         try:
             # The client's own sum (vehicles.py VehicleDescr.__updateAttributes), the same
             # one the recorder writes for a shooter: the gun axis above flat ground.
