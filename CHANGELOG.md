@@ -18,6 +18,8 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 - With the emulation on, the recorded reticles and tracers make way for the emulated shot; with it off they are
   always shown (the ◎ toggle is gone).
 - A point pinned elsewhere on the model hides the recorded aim circles: they belong to the recorded shot.
+- `tools/verdicts_offline.cjs`: the Statistics log pass runs over the exported records outside the game, so the
+  page's estimate can be checked against the server's result without the game client open.
 
 ## 0.7.14 (2026-09-19)
 

@@ -34,6 +34,7 @@ __pycache__/
 !/tools/make_installer_icon.ps1
 !/tools/release_github.py
 !/tools/verdicts_from_log.py
+!/tools/verdicts_offline.cjs
 !/tools/preview.py
 !/tools/third_party.py
 !/tools/shot_spread_from_records.py
