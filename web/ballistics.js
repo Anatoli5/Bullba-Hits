@@ -69,11 +69,12 @@
   // the aiming time. The client's dual accuracy and auto-shoot guns are separate mechanics and are
   // not modelled here.
   //
-  // Stage 1 reads `state` as "the vehicle was in this state, then everything stopped settledFor
-  // seconds ago": the factor decays from the ideal factor of that state towards the resting one
-  // (mult, i.e. standing still, turret still, no shot). settledFor = 0 means the shot is taken in
-  // the state itself. Stage 2 is meant to drive the state from WASD and a turret chasing the cursor.
-  var NO_MODS={mult:1,additive:1,movement:1,rotation:1,turret:1,aimingTime:1,turretSpeed:1,hullSpeed:1};
+  // aimFactor() answers a question about one state: "the vehicle was in this state, then everything
+  // stopped settledFor seconds ago". The factor decays from the ideal factor of that state towards
+  // the resting one (mult, i.e. standing still, turret still, no shot); settledFor = 0 means the
+  // shot is taken in the state itself. That is what the manual sliders ask and it stays as it was.
+  // aimStep() below is the same formula integrated over real time instead, for the WASD emulation.
+  var NO_MODS={mult:1,additive:1,movement:1,rotation:1,turret:1,aimingTime:1,turretSpeed:1,hullSpeed:1,reload:1};
   function aimMods(mods){
     var out={},keys=Object.keys(NO_MODS);
     for(var i=0;i<keys.length;i++){
@@ -102,6 +103,166 @@
     if(settled>0)factor=aimingTime>0?Math.max(rest,ideal*Math.exp(-settled/aimingTime)):rest;
     return {ideal:ideal,rest:rest,factor:factor,aimingTime:aimingTime,radius100:aim.dispersion*factor*100};
   }
+  // --- Aim emulation in real time (stage 2) -----------------------------------------------------
+  // Everything below is driven frame by frame instead of being asked about a single state, so the
+  // page can put the player behind the gun: W A S D move the vehicle, the turret chases the cursor,
+  // a click is a shot and the gun has to reload before the next one.
+  //
+  // CLIENT RULE, not ours: the factor itself. Avatar.getOwnVehicleShotDispersionAngle keeps
+  //   aiming(t) = max(idealNow, start · exp(−(t − t0) / aimingTime))
+  // and lets the factor fall towards the ideal factor of the current state, while a RISE is
+  // instant: the moment the ideal factor climbs above the decaying one (the vehicle sets off, the
+  // turret starts turning, the gun fires) the client restarts the exponential from there. aimStep()
+  // is exactly that rule with the time advanced by dt, written as a pure step so nothing but the
+  // caller holds state.
+  function idealOf(aim,state,mods,afterShot){
+    // settledFor is deliberately dropped: the settling is what this step function integrates.
+    var s=state||{};
+    return aimFactor(aim,{speed:s.speed,hullTurn:s.hullTurn,turretTurn:s.turretTurn,afterShot:!!afterShot},mods);
+  }
+  function aimReading(aim,factor,ideal,start,elapsed,aimingTime){
+    return {factor:factor,ideal:ideal,start:start,elapsed:elapsed,aimingTime:aimingTime,
+      radius100:aim.dispersion*factor*100,settled:!(factor>ideal*(1+1e-9))};
+  }
+  // prev is the previous reading (null on the first frame), dt the seconds since it. A dt bigger
+  // than a quarter of a second is clamped: a tab that was away for a minute must not settle the
+  // circle "for free", and the caller cannot know how long the browser withheld the frame.
+  function aimStep(prev,state,aim,mods,dt){
+    var now=idealOf(aim,state,mods,false);
+    if(!now)return null;
+    var step=Math.max(0,Math.min(.25,Number(dt)||0)),at=now.aimingTime;
+    var start=prev&&prev.start>0?prev.start:0,elapsed=prev&&prev.elapsed>=0?prev.elapsed+step:0;
+    var decayed=start>0&&at>0?start*Math.exp(-elapsed/at):0;
+    // The ideal factor caught up with the decaying one (or there is nothing to decay from): the
+    // client's instant rise, which also covers the very first frame.
+    if(!(decayed>now.ideal))return aimReading(aim,now.ideal,now.ideal,now.ideal,0,at);
+    return aimReading(aim,decayed,now.ideal,start,elapsed,at);
+  }
+  // A shot. CLIENT RULE: the recoil enters the very same formula as one more term under the square
+  // root (gun.shotDispersionFactors['afterShot']), so the ideal factor AT THE INSTANT OF THE SHOT
+  // is computed with that term and the exponential restarts from it - or from the current factor
+  // when the circle was still wider than that, because the client never shrinks the circle instantly.
+  function aimShot(prev,state,aim,mods){
+    var bloom=idealOf(aim,state,mods,true),after=idealOf(aim,state,mods,false);
+    if(!bloom||!after)return prev||null;
+    var current=prev&&prev.factor>0?prev.factor:after.ideal;
+    var start=Math.max(current,bloom.ideal);
+    return aimReading(aim,start,after.ideal,start,0,bloom.aimingTime);
+  }
+  // Reload. CLIENT RULE, items/utils.pyc getReloadTime:
+  //   reload = gun.reloadTime · miscAttrs['gunReloadTimeFactor'] · max(factors['gun/reloadTime'], 0)
+  //            + factors['gun/extraReloadTime']
+  // factors['gun/reloadTime'] is 1 / f of the LOADER - VehicleDescrCrew._updateLoaderFactors writes
+  // exactly `factors['gun/reloadTime'] = 1.0 / a.factor`, and a.factor comes out of the same
+  // _processSkills law the gunner uses, f = 0.57 + 0.43 · efficiency. The rammer lives in
+  // gunReloadTimeFactor. The record carries reloadTimeFactor as the descriptor gave it, and a
+  // descriptor rebuilt from a compact descriptor has no equipment at all, so it is 1.0 there: the
+  // page multiplies the rammer and the crew in `mods.reload` and nothing is applied twice. The
+  // extra reload term is a battle-time effect (a consumable, a damaged gun) and is not modelled.
+  // Clip guns: `shots` rounds inside the magazine at `interval` seconds apart, then the full reload.
+  function reloadSeconds(aim,mods){
+    if(!aim||!(aim.reloadTime>0))return null;
+    var m=aimMods(mods),clip=aim.clip,burst=aim.burst;
+    var shots=clip&&clip.length>1&&clip[0]>1?Math.floor(clip[0]):1;
+    return {reload:aim.reloadTime*(aim.reloadTimeFactor>0?aim.reloadTimeFactor:1)*m.reload,
+      shots:shots,interval:shots>1&&clip[1]>0?clip[1]:0,
+      burst:burst&&burst.length>1&&burst[0]>1?{count:Math.floor(burst[0]),interval:burst[1]>0?burst[1]:0,sync:!!burst[2]}:null};
+  }
+  // Movement. OUR APPROXIMATION, and there is no client formula behind any of it: the real vehicle
+  // accelerates by engine power against weight, terrain resistance and the gearbox, which the record
+  // does not carry and which the dispersion circle does not need - only |v| and |ω| enter the
+  // client's formula. So the speed ramps LINEARLY to the vehicle's own top speed over accelSeconds
+  // (default 5 s forward, 3 s backward, both configurable), brakes to a stop over brakeSeconds
+  // (default 2 s), and the hull turn ramps to the chassis rotation speed over half a second. The
+  // limits themselves - speedForward/speedBackward and hullRotationSpeed - are the client's own.
+  var MOVE={accel:5,accelBack:3,brake:2,turn:.5};
+  function seconds(value,fallback){var v=Number(value);return isFinite(v)&&v>0?v:fallback;}
+  function approach(value,target,most){
+    if(value<target)return Math.min(target,value+most);
+    if(value>target)return Math.max(target,value-most);
+    return target;
+  }
+  function moveStep(prev,keys,aim,mods,dt){
+    var k=keys||{},s=prev||{},m=aimMods(mods),a=aim||{};
+    var step=Math.max(0,Math.min(.25,Number(dt)||0));
+    var forward=a.speedForward>0?a.speedForward:0,back=a.speedBackward>0?a.speedBackward:0;
+    var hullMax=(a.hullRotationSpeed>0?a.hullRotationSpeed:0)*m.hullSpeed;
+    var accel=seconds(mods&&mods.accelSeconds,MOVE.accel),accelBack=seconds(mods&&mods.accelBackSeconds,MOVE.accelBack);
+    var brake=seconds(mods&&mods.brakeSeconds,MOVE.brake),turn=seconds(mods&&mods.turnSeconds,MOVE.turn);
+    var speed=Number(s.speed)||0,hullTurn=Number(s.hullTurn)||0;
+    var target=k.forward&&!k.back?forward:k.back&&!k.forward?-back:0;
+    // Pushing the speed further from zero in the direction it already has is acceleration; anything
+    // else - releasing the key, or reversing through zero - is the brake.
+    var rising=target!==0&&speed*target>=0&&Math.abs(target)>Math.abs(speed);
+    var rate=rising?(target>0?forward/accel:back/accelBack):Math.max(forward,back)/brake;
+    speed=approach(speed,target,Math.max(0,rate)*step);
+    var hullTarget=k.left&&!k.right?-hullMax:k.right&&!k.left?hullMax:0;
+    hullTurn=approach(hullTurn,hullTarget,(hullMax>0?hullMax/turn:0)*step);
+    return {speed:speed,hullTurn:hullTurn,forward:forward,back:back,hullMax:hullMax,
+      resting:Math.abs(speed)<1e-3&&Math.abs(hullTurn)<1e-4&&target===0&&hullTarget===0};
+  }
+  // The turret chasing the cursor. CLIENT RULE: turret.rotationSpeed is the turret's speed RELATIVE
+  // TO THE HULL, and the gunner's crew factor scales it (VehicleDescrCrew._updateGunnerFactors sets
+  // factors['turret/rotationSpeed'] = f). OUR APPROXIMATION is what the turret spends that speed on:
+  // while the hull turns, holding the aim already costs |hullTurn| of the budget, so only what is
+  // left chases the cursor - which is why turretTurn is never below |hullTurn| while A or D is held,
+  // and why a fast hull rotation can make the gun fall behind the cursor altogether. `gap` is the
+  // angle between where the gun points and where the cursor points, in radians.
+  function turretChase(gap,hullTurn,aim,mods,dt){
+    var m=aimMods(mods),limit=(aim&&aim.turretRotationSpeed>0?aim.turretRotationSpeed:0)*m.turretSpeed;
+    var step=Math.max(1e-4,Math.min(.25,Number(dt)||0)),hull=Math.abs(Number(hullTurn)||0);
+    var want=Math.max(0,Number(gap)||0)/step;
+    // No turret speed in the record: the gun is simply where the cursor is, and the formula sees the
+    // hull's own rotation only. Better than pretending the turret cannot move at all.
+    if(!(limit>0))return {rate:want,turretTurn:hull,step:Math.max(0,Number(gap)||0),caught:true};
+    var budget=Math.max(0,limit-hull),rate=Math.min(want,budget);
+    return {rate:rate,turretTurn:Math.min(limit,hull+rate),step:rate*step,caught:rate>=want-1e-9};
+  }
+  // --- Where a shot lands inside the circle -----------------------------------------------------
+  // A profile is one radial CDF, inverted: quantile(u) is r/R for a uniform u in [0,1). The circle
+  // sampler fans its rays over the quantiles of whichever profile is chosen, so the shape of the
+  // distribution is a setting and not something buried in the sampler.
+  //
+  // NEITHER profile is a confirmed server law - the server's own sampler is not published and is not
+  // in the client - and the page says so wherever it prints a figure.
+  var AIM_PROFILES={},DEFAULT_PROFILE='empirical-post96';
+  // The measured table of Overlord_Prime ("Ultimate Gun Mechanics", Post-0.9.6 Shot Distribution
+  // Probability Table, 380k+ shots): the share of shots in each ring of 0.1 R. It is the author's own
+  // measurement, not datamined server code, and it was taken on 9.6.
+  //
+  // It is the default because it was checked against the user's OWN recorded shots (19.09.2026, 72
+  // usable own tracers including misses over 11 battles, bootstrapped by battle): the measured share
+  // inside half the radius is 0.68-0.70, the table gives 0.689 - inside that interval - and the old
+  // Gaussian gives 0.455, outside it. The scale of the distribution against the circle this page
+  // draws came out compatible with 1 (1.04, [0.87; 1.26]), so the table is used directly on the drawn
+  // radius; the "1.71x" figure that circulates for the drawn reticle is not supported by those shots.
+  // 72 shots cannot settle the shape of the tail, so the author's undecided 0.1 % edge mass is folded
+  // into the last ring rather than declared a probability atom on the boundary.
+  var POST96=[9.9,16.1,16.1,14.6,12.2,9.9,7.3,5.6,4.4,3.9];
+  var POST96_CDF=(function(){var out=[0],sum=0;POST96.forEach(function(m){sum+=m;out.push(sum);});
+    return out.map(function(v){return v/sum;});}());
+  AIM_PROFILES[DEFAULT_PROFILE]={id:DEFAULT_PROFILE,label:'Empirical table (Overlord_Prime, post-9.6)',
+    note:'Empirical table (Overlord_Prime, post-9.6, 380k shots), used at scale 1 on the drawn circle after a check against 72 of your own recorded shots. Still not a confirmed server formula.',
+    rings:POST96.slice(),cdf:POST96_CDF.slice(),
+    // Inside a ring the radius is interpolated linearly, which assumes a constant radial density
+    // there; a table in steps of 0.1 R cannot say what happens inside one ring, least of all the
+    // central one, so the very middle of the circle must not be read as an exact figure.
+    quantile:function(u){
+      var x=Math.max(0,Math.min(1-1e-12,u)),n=POST96_CDF.length-1;
+      for(var i=0;i<n;i++){
+        var lo=POST96_CDF[i],hi=POST96_CDF[i+1];
+        if(x<hi||i===n-1){var mass=hi-lo;return (i+(mass>0?(x-lo)/mass:0))/n;}
+      }
+      return 1;
+    }};
+  // The page's own assumption up to 0.7.13: a 2D isotropic Gaussian with sigma = R/2, conditioned on
+  // landing inside the disc, F(t) = (1 − exp(−2t²)) / (1 − exp(−2)). Kept so the old figures can be
+  // reproduced, but the same 72 shots put it outside the measured interval: it puts far too little
+  // weight in the middle of the circle.
+  AIM_PROFILES['gauss-r2']={id:'gauss-r2',label:'Previous model (σ = radius / 2)',
+    note:'The page’s model up to 0.7.13: a 2D Gaussian clipped to the circle. It does not match the measured shots - it holds 45 % inside half the radius where they show 68-70 %.',
+    quantile:function(u){return Math.sqrt(-.5*Math.log(1-Math.max(0,Math.min(1-1e-12,u))*(1-Math.exp(-2))));}};
+  function aimProfile(name){return AIM_PROFILES[name]||AIM_PROFILES[DEFAULT_PROFILE];}
   function shell(kind,penetration,caliber){
     var ap=kind==='ARMOR_PIERCING'||kind==='ARMOR_PIERCING_CR';
     return {kind:kind,penetration:penetration,caliber:caliber,randomization:.25,randomizationType:'NORMAL',
@@ -254,5 +415,7 @@
     var stops=palettes[palette]||palettes.accessible,p=share*2,i=Math.min(1,Math.floor(p)),f=p-i;
     return stops[i].map(function(v,k){return v+(stops[i+1][k]-v)*f;});
   }
-  root.ArmorBallistics={build:build,fromTriangles:fromTriangles,triangle:triangle,subdivide:subdivide,evaluate:evaluate,shell:shell,chance:chance,effective:effective,ricochet:ricochet,color:color,value:value,nonPenetration:nonPenetration,transform:transform,unit:unit,sub:sub,aimFactor:aimFactor};
+  root.ArmorBallistics={build:build,fromTriangles:fromTriangles,triangle:triangle,subdivide:subdivide,evaluate:evaluate,shell:shell,chance:chance,effective:effective,ricochet:ricochet,color:color,value:value,nonPenetration:nonPenetration,transform:transform,unit:unit,sub:sub,aimFactor:aimFactor,
+    aimStep:aimStep,aimShot:aimShot,reloadSeconds:reloadSeconds,moveStep:moveStep,turretChase:turretChase,
+    aimProfiles:AIM_PROFILES,aimProfile:aimProfile,aimProfileDefault:DEFAULT_PROFILE,moveDefaults:MOVE};
 }(typeof window==='undefined'?globalThis:window));

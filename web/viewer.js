@@ -34,7 +34,9 @@
     // Aim emulation: the circle that follows the cursor. liveRadius100 is the radius at 100 m the page
     // computes from the shooter's state (null = the feature is off and the manual estimate stands),
     // liveAimPoint the centre it was last drawn at, liveAim the drawn circle the integral samples.
-    this.liveRadius100=null;this.liveAimPoint=null;this.liveAim=null;
+    // aimCursorPoint is where the cursor points, liveAimPoint where the GUN points: with the turret
+    // emulation on they are the same only once the turret has caught up (see chaseAim).
+    this.liveRadius100=null;this.liveAimPoint=null;this.aimCursorPoint=null;this.liveAim=null;this.aimChase=false;this.aimProfileName=ArmorBallistics.aimProfileDefault;
     this.frameAt=0;this.frameTimes=[]; // when the pending frame was asked for, and the cadence of the frames that ran
     this.contextLost=false;this.dragging=false;this.hoverId=null;this.hoverEvent=null;this.inspectKey=null;
     // The camera is driven by its own frame loop: pointer and key events only move the target.
@@ -49,7 +51,9 @@
     container.addEventListener('pointermove', function(e) { if (!drag){self.hover(e);return;}if(Math.abs(e.clientX-drag.sx)+Math.abs(e.clientY-drag.sy)>3)drag.moved=true;if(!drag.moved)return;if(drag.pan){/* the pan is accumulated and applied once in the camera's own frame loop, not per event */var p=self.pendingPan||(self.pendingPan={x:0,y:0});p.x+=e.clientX-drag.x;p.y+=e.clientY-drag.y;drag.x=e.clientX;drag.y=e.clientY;self.startOrbit();return;}if(drag.part===2||drag.part===3){/* turret and gun are one module: left/right turns the turret, up/down moves the gun */var dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(dx)self.setTurret(self.turretAngle-dx*.5);if(dy)self.setGun(self.gunAngle+dy*.16);}else{self.orbitTo(self.targetYaw-(e.clientX-drag.x)*0.008,self.targetPitch+(e.clientY-drag.y)*0.008);}drag.x=e.clientX;drag.y=e.clientY; });
     // The end of a drag: the pose the drag only previewed is rebuilt in full, and one frame is asked for so the
     // map comes back at full quality with the ricochet trace (paint() draws a drag at half resolution).
-    container.addEventListener('pointerup', function(e) { var d=drag;drag=null;self.dragging=false;self.commitPose();self.draw();if(d&&!d.moved&&!e.altKey&&!e.ctrlKey&&e.button===0)self.pinAt(e); });
+    // A click without a drag: with the aim emulation on it is a shot (onShot fires it and says it has
+    // handled the click), otherwise it pins the point under the cursor as it always did.
+    container.addEventListener('pointerup', function(e) { var d=drag;drag=null;self.dragging=false;self.commitPose();self.draw();if(d&&!d.moved&&!e.altKey&&!e.ctrlKey&&e.button===0){if(self.onShot&&self.onShot(e))return;self.pinAt(e);} });
     container.addEventListener('pointercancel', function() { drag=null;self.dragging=false;self.cancelHover();self.commitPose();self.draw(); });
     container.addEventListener('wheel', function(e) {e.preventDefault();var delta=e.deltaY||e.deltaX,amount=Math.max(-200,Math.min(200,delta*(e.deltaMode===1?16:e.deltaMode===2?300:1)));if(!(e.shiftKey||e.ctrlKey||e.altKey))self.distanceTo((self.targetDistance!==null?self.targetDistance:self.distance)*Math.exp(amount*.002));else if(self.autoFrame)self.scaleTo((self.targetScale!==null?self.targetScale:self.frameScale)*Math.exp(-amount*.002));else self.zoomTo((self.targetZoom!==null?self.targetZoom:self.camera.zoom)*Math.exp(-amount*.002));}, {passive:false});
     container.addEventListener('keydown',function(e){var used=true,orbit=true;if(e.key==='ArrowLeft')self.orbitTo(self.targetYaw-.1,self.targetPitch);else if(e.key==='ArrowRight')self.orbitTo(self.targetYaw+.1,self.targetPitch);else if(e.key==='ArrowUp')self.orbitTo(self.targetYaw,self.targetPitch+.1);else if(e.key==='ArrowDown')self.orbitTo(self.targetYaw,self.targetPitch-.1);else{orbit=false;if(e.key==='+'||e.key==='='){if(e.shiftKey)self.setZoom(self.camera.zoom*1.1);else self.setDistance(Math.max(1,self.distance/1.1));}else if(e.key==='-'){if(e.shiftKey)self.setZoom(self.camera.zoom/1.1);else self.setDistance(Math.min(1500,self.distance*1.1));}else used=false;}if(used){e.preventDefault();if(!orbit)self.render();}});
@@ -664,7 +668,7 @@
     if(!this.savedAim||!this.savedAim.origin||!this.engine||!shell||Math.abs(this.turretAngle)>.001||Math.abs(this.gunAngle)>.001)return null;
     // 'damage' is the mean expected damage over the circle, HP: a miss is 0 HP exactly as it is 0 %.
     var aim=this.savedAim;
-    return sampleCircle(this.engine,shell,aim.origin,aim.center,aim.right,aim.up,aim.radius,256);
+    return sampleCircle(this.engine,shell,aim.origin,aim.center,aim.right,aim.up,aim.radius,256,this.aimQuantile());
   };
   Viewer.prototype.paint=function(){
     if(!this.paintMesh)return;
@@ -725,15 +729,17 @@
     if(this.liveRadius100){var pinned=this.drawLiveAim();if(this.onAimMove)this.onAimMove(pinned);if(this.onAim)this.onAim('Circle pinned here. It keeps following the shooter’s state; “Centre on the hit” releases it.');}
     else if(this.onAim)this.onAim('Estimate centre moved. Press “Estimate”.');}};
   Viewer.prototype.hideSpread=function(){if(this.spreadCircle){this.scene.remove(this.spreadCircle);this.spreadCircle.geometry.dispose();this.spreadCircle.material.dispose();this.spreadCircle=null;this.draw();}};
-  // The sampling model of a dispersion circle, in one place: 'count' rays fanned over the circle as a 2D
-  // Gaussian with sigma = radius/2, clipped to the circle (a sunflower spiral, so the same count always
-  // gives the same points), a miss counting as 0 % and 0 HP. This is an assumption, NOT a confirmed WoT
-  // server distribution, and the page says so next to every figure it feeds. Used by the button estimate,
-  // by the saved client reticle and by the emulated circle alike, so all three read the same way.
-  function sampleCircle(engine,shell,origin,center,right,up,radius,count){
+  // The sampling model of a dispersion circle, in one place: 'count' rays fanned over the circle at the
+  // quantiles of the chosen radial distribution (a sunflower spiral, so the same count always gives the
+  // same points), a miss counting as 0 % and 0 HP. The distribution itself is a setting - the page's own
+  // Gaussian with sigma = radius/2, or the empirical post-9.6 table - and NEITHER is a confirmed WoT
+  // server distribution; the page says so next to every figure it feeds. Used by the button estimate, by
+  // the saved client reticle and by the emulated circle alike, so all three read the same way.
+  function sampleCircle(engine,shell,origin,center,right,up,radius,count,quantile){
     var sum=0,unknown=0,miss=0,dmg=0,o=origin.toArray();
+    var q=typeof quantile==='function'?quantile:ArmorBallistics.aimProfile().quantile;
     for(var i=0;i<count;i++){
-      var r=radius*Math.sqrt(-.5*Math.log(1-(i+.5)/count*(1-Math.exp(-2)))),angle=i*2.399963229728653;
+      var r=radius*q((i+.5)/count),angle=i*2.399963229728653;
       var point=center.clone().addScaledVector(right,r*Math.cos(angle)).addScaledVector(up,r*Math.sin(angle));
       var hit=engine.ray(o,point.sub(origin).toArray(),shell);
       if(hit.chance===null)unknown++;else sum+=hit.chance;
@@ -764,7 +770,7 @@
     if(!Number.isFinite(radius100)||radius100<0||radius100>10)throw new Error('The radius must be between 0 and 10 m at 100 m.');
     var aim=this.spreadAim||this.point||this.target,origin=this.camera.position.clone(),frame=circleFrame(origin,aim);
     var radius=origin.distanceTo(aim)*radius100/100;
-    var result=sampleCircle(this.engine,this.shell,origin,aim,frame.right,frame.up,radius,1024);
+    var result=sampleCircle(this.engine,this.shell,origin,aim,frame.right,frame.up,radius,1024,this.aimQuantile());
     this.drawCircle(aim,frame.right,frame.up,radius);
     return result;
   };
@@ -780,7 +786,11 @@
     if(value===null){this.liveAim=null;this.hideSpread();return;}
     this.drawLiveAim();
   };
-  Viewer.prototype.clearLiveAim=function(){this.liveRadius100=null;this.liveAimPoint=null;this.liveAim=null;this.hideSpread();};
+  Viewer.prototype.clearLiveAim=function(){this.liveRadius100=null;this.liveAimPoint=null;this.aimCursorPoint=null;this.liveAim=null;this.hideSpread();};
+  // Which radial distribution the samplers fan their rays over. A name the page does not know falls
+  // back to the Gaussian, so a stored setting from a later build can never break the figures.
+  Viewer.prototype.setAimProfile=function(name){this.aimProfileName=ArmorBallistics.aimProfile(name).id;};
+  Viewer.prototype.aimQuantile=function(){return ArmorBallistics.aimProfile(this.aimProfileName).quantile;};
   // A pinned centre (Alt + click, or "Centre on the hit") outranks the cursor: the circle then stays where
   // the user put it and only its radius follows the state, which is what the Estimate button needs too.
   Viewer.prototype.drawLiveAim=function(){
@@ -794,20 +804,68 @@
   };
   // Called from inspect() with the raycast it already did, so a pointer move costs no second cast. Without a
   // surface under the cursor the circle rests on the plane through the orbit centre, as aimAt() does.
+  // With the turret emulation on this only records where the CURSOR is; the gun is moved towards it by
+  // chaseAim() in the frame loop, at the turret's own rotation speed.
   Viewer.prototype.aimAtPointer=function(caster,hits){
     if(!this.liveRadius100)return null;
     var T=THREE,point=null;
     if(hits&&hits.length)point=hits[0].point.clone();
     else{var plane=new T.Plane().setFromNormalAndCoplanarPoint(this.target.clone().sub(this.camera.position).normalize(),this.target),p=new T.Vector3();if(caster.ray.intersectPlane(plane,p))point=p;}
     if(!point)return null;
-    this.liveAimPoint=point;
+    this.aimCursorPoint=point;
+    if(!this.aimChase||!this.liveAimPoint)this.liveAimPoint=point.clone();
     return this.drawLiveAim();
+  };
+  // The angle between where the gun points and where the cursor points, seen from the shooter (the
+  // camera). Both are points in the scene, so the angle is the one the turret actually has to turn
+  // through; the distance to them plays no part in it.
+  Viewer.prototype.aimGap=function(){
+    var gun=this.spreadAim||this.liveAimPoint,cursor=this.aimCursorPoint;
+    if(!gun||!cursor||this.spreadAim)return 0; // a pinned centre is not chasing anything
+    var eye=this.camera.position,a=gun.clone().sub(eye),b=cursor.clone().sub(eye);
+    if(a.lengthSq()<1e-12||b.lengthSq()<1e-12)return 0;
+    return a.normalize().angleTo(b.normalize());
+  };
+  // Turn the gun towards the cursor by at most `step` radians and put the circle where it now points.
+  // The new point is picked off the model along the rotated ray so the circle keeps lying on the armour;
+  // with nothing under that ray it keeps the range it had, which is all the radius needs. Reaching the
+  // cursor snaps exactly onto it, so a turret that has caught up reads identically to stage 1.
+  Viewer.prototype.chaseAim=function(step){
+    var T=THREE,gun=this.liveAimPoint,cursor=this.aimCursorPoint;
+    if(!gun||!cursor||this.spreadAim)return false;
+    var eye=this.camera.position.clone(),a=gun.clone().sub(eye),range=a.length(),b=cursor.clone().sub(eye);
+    if(range<1e-6||b.lengthSq()<1e-12)return false;
+    a.divideScalar(range);b.normalize();
+    var gap=a.angleTo(b);
+    if(!(gap>1e-6)||step>=gap){this.liveAimPoint=cursor.clone();this.drawLiveAim();return gap>1e-6;}
+    var axis=new T.Vector3().crossVectors(a,b);
+    if(axis.lengthSq()<1e-14)return false;
+    var moved=a.clone().applyQuaternion(new T.Quaternion().setFromAxisAngle(axis.normalize(),step));
+    var objects=this.paintMesh?[this.paintMesh]:[];if(this.trackMesh)objects.push(this.trackMesh);
+    var hits=objects.length?new T.Raycaster(eye,moved).intersectObjects(objects):[];
+    this.liveAimPoint=hits.length?hits[0].point.clone():eye.clone().addScaledVector(moved,range);
+    this.drawLiveAim();
+    return true;
+  };
+  // A shot: pin the line the gun is actually pointing along, not the one under the cursor. Same record
+  // as a click on the armour (pinAt), so the "Pinned point" panel reads the shot exactly as before.
+  Viewer.prototype.pinAtPoint=function(point){
+    if(!this.engine||!point)return false;
+    var T=THREE,origin=this.camera.position.clone(),direction=point.clone().sub(origin);
+    if(direction.lengthSq()<1e-12)return false;
+    direction.normalize();
+    var objects=this.paintMesh?[this.paintMesh]:[];if(this.trackGroup)objects.push(this.trackMesh);
+    var hits=new T.Raycaster(origin,direction).intersectObjects(objects),hit=hits.length?hits[0]:null;
+    var normal=hit&&hit.face?hit.face.normal.clone().transformDirection(hit.object.matrixWorld):null;
+    this.pinned={origin:origin,direction:direction,point:hit?hit.point.clone():point.clone(),normal:normal};
+    this.refreshPin();if(this.onPin)this.onPin(true);
+    return true;
   };
   Viewer.prototype.liveAimProbability=function(shell,count){
     var aim=this.liveAim;
     if(!aim||!this.engine||!shell)return null;
     this.commitPose();
-    return sampleCircle(this.engine,shell,aim.origin,aim.center,aim.right,aim.up,aim.radius,count>0?count:256);
+    return sampleCircle(this.engine,shell,aim.origin,aim.center,aim.right,aim.up,aim.radius,count>0?count:256,this.aimQuantile());
   };
   window.ArmorViewer=Viewer;
 }());

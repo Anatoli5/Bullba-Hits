@@ -6,14 +6,33 @@ script. Versions are listed newest first. Client: World of Tanks PC NA 2.4.0.1 #
 
 ## Unreleased
 
-- **Aim emulation.** The shooter's dispersion circle follows the cursor over the model with the radius the
-  game itself would give him: gun accuracy and aiming time, the dispersion the hull speed, the hull turn,
-  the turret turn and the recoil of the previous shot add, and the settling after everything stops. A strip
-  under the scene sets that state, a group of switches next to the Shooter tile sets his crew, vertical
-  stabiliser, gun laying drive, Snap Shot and Smooth Ride, and the chance to damage and the expected damage
-  are integrated over the circle when the cursor rests. Alt + click pins the circle. Battles and vehicles
-  recorded before this version pick the aiming parameters up on the next game start; until then the manual
-  radius of the old estimate stands.
+- **Aim emulation — take the shooter's seat.** Switch it on in Settings → Scene (or in the block under the
+  scene; it is off by default) and drive the shooter yourself: **W A S D** move the vehicle, the turret
+  follows the cursor at its own rotation speed so the gun lags behind a fast flick, and **a click in the
+  scene is a shot** — the tracer goes down the middle of the circle, the recoil blooms it, and the gun
+  reloads before the next one, clip guns firing their magazine first. The radius is the one the game itself
+  would give: gun accuracy and aiming time, the dispersion the hull speed, the hull turn, the turret turn and
+  the recoil add, and the exponential settling after everything stops. The chance to damage and the expected
+  damage are integrated over the circle whenever it comes to rest, each shot's own figure is pinned in a list
+  of the last five, and the sliders of the strip follow the live state (and can still be set by hand while no
+  key is held). Battles and vehicles recorded before this version pick the aiming
+  parameters up on the next game start; until then the manual radius of the old estimate stands.
+- **Shooter configuration with presets.** One "Configuration" popover holds the whole build — Brothers in
+  Arms, Improved Ventilation, Snap Shot, Smooth Ride, the class of the vertical stabiliser, the gun laying
+  drive and the gun rammer, how long the vehicle takes to get going and to stop, and the shot distribution —
+  with four built-in presets (stock, two snipers, a brawler) and your own, saved, renamed and deleted there
+  and remembered per vehicle type. The crew is always the fully trained crew the client computes, the
+  commander's bonus included, because that is what a vehicle in a battle has. The short group beside the
+  Shooter tile now names the active preset.
+- **Where a shot lands inside the circle** is no longer a bare assumption. The page now integrates over the
+  published post-9.6 distribution table (Overlord_Prime, 380k shots), checked against 72 of your own recorded
+  shots including misses: they put 68–70 % of shots inside half the radius, the table gives 68.9 %, and the
+  old Gaussian (σ = half the radius) gives 45.5 %. The scale came out compatible with 1 on the circle the page
+  draws, so the table is used directly. The old model is still selectable in the configuration and labelled
+  as not matching the measured shots. It is a measurement, not a confirmed server formula, and the page says so.
+- The side panel's first mode is called **Hits** (it lists the hits of the recorded battles), and in the
+  Vehicles panel the caret that opens Role and Flags moved onto the row of class pills, so those filters
+  open directly under the pills instead of under the caption above them.
 - Expected damage is now shown as a share of the shell's alpha everywhere (panel under the cursor, Hit line,
   reticle tile, the chips and the circle), instead of HP: “50 %” instead of “275 HP”, so the number reads on
   the same scale as the colours of the model and compares two guns of different alpha. The alpha in HP is

@@ -340,11 +340,34 @@ def aim_block(descr):
       additiveFactor        -          miscAttrs['additiveShotDispersionFactor']
       aimingTimeFactor      -          miscAttrs['gunAimingTimeFactor']
 
+    The rest is the reload, which the page needs to gate an emulated shot (0.7.14 stage 2).
+    utils.getReloadTime of the client computes it as
+
+        reload = gun.reloadTime * miscAttrs['gunReloadTimeFactor']
+                 * max(factors['gun/reloadTime'], 0.0) + factors['gun/extraReloadTime']
+
+    where factors['gun/reloadTime'] is 1 / f of the loader (VehicleDescrCrew._updateLoaderFactors,
+    the same 0.57 + 0.43 * efficiency law the gunner uses) and gunReloadTimeFactor carries the
+    rammer. The record therefore holds the two the descriptor knows and the page multiplies the
+    crew and the rammer on top:
+
+      reloadTime            s          gun.reloadTime
+      clip                  [n, s]     gun.clip - the client's own (count, interval) tuple, where
+                                       interval = 60.0 / <rate> seconds and is 0.0 for count 1
+                                       (vehicles.pyc _readGunClip, component_constants
+                                       DEFAULT_GUN_CLIP = (1, 0.0))
+      burst                 [n, s, b]  gun.burst - (count, interval, syncReloading), read by the
+                                       very same _readGunClip plus burst/syncReloading; written
+                                       only when the gun really bursts, i.e. count > 1
+      reloadTimeFactor      -          miscAttrs['gunReloadTimeFactor']
+
     The names and the unit conversions were read out of the installed client's own
     scripts/common/items/vehicles.pyc (_readGun, _readGunShotDispersionFactors, _readChassis,
-    _readTurret, VehicleType.__init__, VehicleDescriptor.__updateAttributes), not from memory.
+    _readTurret, _readGunClip, _readGunBurst, VehicleType.__init__,
+    VehicleDescriptor.__updateAttributes) and items/utils.pyc (getReloadTime), not from memory.
 
-    The last three are the crew-and-equipment factors. A descriptor rebuilt from a compact
+    multFactor, additiveFactor, aimingTimeFactor and reloadTimeFactor are the crew-and-equipment
+    factors. A descriptor rebuilt from a compact
     descriptor has neither crew nor optional devices, so they come out at 1.0 - the bare
     vehicle, on top of which the page applies the crew and the equipment the user picks.
     Every field is read on its own and a field the client does not give is simply left out
@@ -372,14 +395,32 @@ def aim_block(descr):
     take('multFactor', lambda: float(descr.miscAttrs['multShotDispersionFactor']))
     take('additiveFactor', lambda: float(descr.miscAttrs['additiveShotDispersionFactor']))
     take('aimingTimeFactor', lambda: float(descr.miscAttrs['gunAimingTimeFactor']))
+    take('reloadTime', lambda: float(descr.gun.reloadTime))
+    take('clip', lambda: [int(descr.gun.clip[0]), float(descr.gun.clip[1])])
+    take('reloadTimeFactor', lambda: float(descr.miscAttrs['gunReloadTimeFactor']))
+    # A burst of one is the client's default for every ordinary gun and says nothing, so it is
+    # written only when the gun really fires in bursts. 'unavailable' must not list it either:
+    # the field is absent by decision here, not because the client refused it.
+    try:
+        burst = descr.gun.burst
+        if int(burst[0]) > 1:
+            aim['burst'] = [int(burst[0]), float(burst[1]), bool(burst[2])]
+    except Exception:
+        aim['unavailable'].append('burst')
     if not aim['unavailable']:
         del aim['unavailable']
     # Without the angle itself there is no circle to draw, so an empty block is no block.
     return aim if positive(aim.get('dispersion')) else None
 
 
+# The keys 0.7.14 stage 2 added to aim_block. A block that carries none of them and does not
+# name them in 'unavailable' was written by an older build and is completed, not rebuilt: the
+# fields it already has came from the same descriptor and recomputing them would change nothing.
+AIM_RELOAD_KEYS = ('reloadTime', 'clip', 'reloadTimeFactor')
+
+
 def fix_aim(vehicle):
-    """Fill the 'aim' block of a record written before the recorder knew it.
+    """Fill or complete the 'aim' block of a record written before the recorder knew it.
 
     The twin of fix_gun_dispersion next to it, and for the same reason: the mounted gun,
     turret and chassis are known exactly from the recorded compact descriptor, so an old
@@ -390,7 +431,9 @@ def fix_aim(vehicle):
     if not isinstance(vehicle, dict):
         return False
     existing = vehicle.get('aim')
-    if isinstance(existing, dict) and positive(existing.get('dispersion')):
+    complete = isinstance(existing, dict) and positive(existing.get('dispersion'))
+    known = list(existing.get('unavailable') or []) if complete else []
+    if complete and not [k for k in AIM_RELOAD_KEYS if k not in existing and k not in known]:
         return False
     if not vehicle.get('compactDescriptor'):
         return False
@@ -400,7 +443,21 @@ def fix_aim(vehicle):
         return False
     if not block:
         return False
-    vehicle['aim'] = block
+    if not complete:
+        vehicle['aim'] = block
+        return True
+    # Only the missing keys are copied over: whatever the old block holds stays byte for byte,
+    # so a record is never silently rewritten by a later change to an unrelated field.
+    fresh = list(block.get('unavailable') or [])
+    for key in AIM_RELOAD_KEYS + ('burst',):
+        if key in existing:
+            continue
+        if key in block:
+            existing[key] = block[key]
+        elif key in fresh and key not in known:
+            known.append(key)
+    if known:
+        existing['unavailable'] = known
     return True
 
 

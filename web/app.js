@@ -129,9 +129,11 @@
   function flagMark(flag){var m=node('span',undefined,'vt-flag');m.setAttribute('data-flag',flag);return m;}
   // A pill with a mark shows the icon and carries the name in its title; a pill without one shows the word
   // (Tier is Roman numerals, "Exported" has no client icon).
-  // The head line of a row carries the label and, at its right end, whatever tool belongs to that row: the
-  // magnifier on Tier, the caret of the secondary filters on Class. Neither costs a row of its own.
-  function filterRow(row,title,items,tools){
+  // The head line of a row carries the label and, at its right end, a tool that belongs with the caption:
+  // the magnifier on Tier. `pillTools` instead sits at the end of the row of pills itself - that is where
+  // the caret of the secondary filters belongs (user, 19.09), so Role and Flags open directly under the
+  // class pills and not under the caption above them.
+  function filterRow(row,title,items,tools,pillTools){
     var wrap=node('div',undefined,'filter-row'),head=node('div',undefined,'filter-head');
     head.appendChild(node('span',title,'filter-label'));
     (tools||[]).forEach(function(t){head.appendChild(t);});
@@ -145,7 +147,13 @@
       b.onclick=function(){toggleFilter(row,item.value,b);};
       pills.appendChild(b);
     });
-    wrap.appendChild(pills);return wrap;
+    if((pillTools||[]).length){
+      var line=node('div',undefined,'filter-line');
+      line.appendChild(pills);
+      pillTools.forEach(function(t){line.appendChild(t);});
+      wrap.appendChild(line);
+    }else wrap.appendChild(pills);
+    return wrap;
   }
   function searchTools(){
     var input=document.createElement('input');input.id='vehicle-search';input.type='search';input.className='vehicle-search';
@@ -161,7 +169,8 @@
   }
   // Role and Flags are the rows nobody opens twice a session: they sit in a popover of the kind the toolbar's
   // "More" and the modifier groups use, so the page keeps its one popover mechanism and its one closing
-  // handler. The caret that opens it is at the right end of the Class row, not on a row of its own.
+  // handler. The caret that opens it sits at the end of the row of class pills, so the popover hangs
+  // directly under the pills instead of under the caption above them.
   function secondaryFilters(){
     var fold=node('details',undefined,'toolbar-more filter-more');fold.id='filter-more';
     var summary=node('summary','\u25be');summary.appendChild(node('span','','filter-count'));
@@ -184,7 +193,7 @@
     box.appendChild(filterRow('nation','Nation',Object.keys(nationNames).map(function(n){
       return {value:n,label:nationNames[n],mark:nationMark(n)};})));
     box.appendChild(filterRow('class','Class',CLASS_ORDER.map(function(c){
-      var mark=node('span',undefined,'vt-class');mark.setAttribute('data-class',c);return {value:c,label:classNames[c],mark:mark};}),[secondaryFilters()]));
+      var mark=node('span',undefined,'vt-class');mark.setAttribute('data-class',c);return {value:c,label:classNames[c],mark:mark};}),null,[secondaryFilters()]));
   }
   // The gold badge's popover: the help the pane used to print under the count and under the list.
   function buildInfo(){
@@ -655,90 +664,235 @@
   var DEG = Math.PI / 180;
   var shooterMods = null, shooterModsState = {}, shooterType = '';
   var aimRestTimer = null, aimRestFine = false, aimLiveText = '';
-  // Gunner factor of a crew, from the client's own crew code (items/VehicleDescrCrew.pyc, items/utils.pyc):
+  // --- The shooter's configuration -------------------------------------------------------------
+  // One object holds everything about the shooter - crew, equipment, perks, how quickly he gets
+  // going, and which distribution a shot follows inside the circle. The short group beside the
+  // Shooter tile and the Configuration popover in the strip are two editors of that one object,
+  // not two copies of it, so whichever is touched the other follows.
+  var AIM_FIELDS = ['bia', 'vents', 'stabiliser', 'aimdrive', 'rammer', 'snap', 'smooth', 'profile',
+                    'accel', 'accelBack', 'brake'];
+  var AIM_BASE = {bia: '0', vents: '0', stabiliser: '1', aimdrive: '1', rammer: '1', snap: '0', smooth: '0',
+                  profile: ArmorBallistics.aimProfileDefault,
+                  accel: ArmorBallistics.moveDefaults.accel,
+                  accelBack: ArmorBallistics.moveDefaults.accelBack,
+                  brake: ArmorBallistics.moveDefaults.brake};
+  // The built-in presets are read-only: they are what a player actually fits, so nobody has to
+  // assemble a common build switch by switch every time. Three equipment slots, as in the game.
+  var AIM_BUILT_IN = [
+    {name: 'Stock — no equipment', values: {}},
+    {name: 'Sniper — rammer, stabiliser, vents, BiA',
+     values: {bia: '1', vents: '1', stabiliser: '0.8', rammer: '0.9'}},
+    {name: 'Sniper with laying drive',
+     values: {bia: '1', vents: '1', stabiliser: '0.8', aimdrive: '0.909'}},
+    {name: 'Brawler — rammer, stabiliser, vents, BiA, Snap Shot, Smooth Ride',
+     values: {bia: '1', vents: '1', stabiliser: '0.8', rammer: '0.9', snap: '1', smooth: '1'}}];
+  var AIM_PRESET_LIMIT = 40, AIM_NAME_LIMIT = 48;
+  // User presets and the preset last chosen per shooter type, kept in the page's one settings object
+  // under its own key. Storage may be refused (the game's CEF, a private window): everything here
+  // works without it and the presets then live for the session only.
+  var aimStore = {presets: {}, chosen: {}};
+  var shooterConfig = aimValues(null), shooterPreset = AIM_BUILT_IN[0].name;
+  function aimValues(base) {
+    var out = {};
+    AIM_FIELDS.forEach(function (k) { out[k] = AIM_BASE[k]; });
+    if (base) AIM_FIELDS.forEach(function (k) {
+      if (base[k] !== undefined && base[k] !== null && base[k] !== '') out[k] = base[k];
+    });
+    return out;
+  }
+  function aimSame(a, b) { return AIM_FIELDS.every(function (k) { return String(a[k]) === String(b[k]); }); }
+  function aimBuiltIn(name) {
+    for (var i = 0; i < AIM_BUILT_IN.length; i++) if (AIM_BUILT_IN[i].name === name) return AIM_BUILT_IN[i];
+    return null;
+  }
+  function aimPreset(name) {
+    var built = aimBuiltIn(name);
+    if (built) return aimValues(built.values);
+    return aimStore.presets[name] ? aimValues(aimStore.presets[name]) : null;
+  }
+  function aimUserNames() { return Object.keys(aimStore.presets).sort(); }
+  // A name the user typed and a preset read back from storage are both data, never markup: they only
+  // ever become the text of an <option> or of a list item, and both are length-capped.
+  function aimName(raw) { return String(raw === undefined || raw === null ? '' : raw).trim().slice(0, AIM_NAME_LIMIT); }
+  // What came back from localStorage is checked field by field: an unknown key is dropped, a value the
+  // controls do not offer falls back to the default, and a name that collides with a built-in preset is
+  // refused, so a corrupted or hand-edited store can never put the page in a state it cannot show.
+  function adoptAimStore(box) {
+    if (!box || typeof box !== 'object') return;
+    var presets = {}, chosen = {}, count = 0;
+    if (box.presets && typeof box.presets === 'object') Object.keys(box.presets).forEach(function (key) {
+      var name = aimName(key), row = box.presets[key];
+      if (!name || aimBuiltIn(name) || !row || typeof row !== 'object' || count >= AIM_PRESET_LIMIT) return;
+      presets[name] = aimValues(row); count++;
+    });
+    if (box.chosen && typeof box.chosen === 'object') Object.keys(box.chosen).forEach(function (type) {
+      var name = aimName(box.chosen[type]);
+      if (name && (aimBuiltIn(name) || presets[name])) chosen[String(type).slice(0, 64)] = name;
+    });
+    aimStore = {presets: presets, chosen: chosen};
+  }
+  function aimStored() { return {v: 1, presets: aimStore.presets, chosen: aimStore.chosen}; }
+  // Crew factor, from the client's own crew code (items/VehicleDescrCrew.pyc, items/utils.pyc):
   //   nonCommanderLevelIncrease = common + (commanderLevel + common) / tankmen.COMMANDER_ADDITION_RATIO (10)
   //   efficiency = (gunnerLevel + nonCommanderLevelIncrease) / tankmen.MAX_SKILL_LEVEL (100)
   //   f = 0.57 + 0.43 * efficiency                                            (_processSkills)
-  //   the gunner then sets shot dispersion x 1/f, aiming time x 1/f, turret speed x f  (_updateGunnerFactors)
+  //   the gunner sets shot dispersion x 1/f, aiming time x 1/f, turret speed x f  (_updateGunnerFactors)
+  //   the loader sets factors['gun/reloadTime'] = 1/f                            (_updateLoaderFactors)
   // 'common' is Brothers in Arms (tankmen.xml brotherhood/crewLevelIncrease = 5 at full skill) plus Improved
   // Ventilation (optional_devices.xml improvedVentilation, miscAttrs/crewLevelIncrease + 5).
+  //
+  // THE CREW IS NOT A SETTING (user, 19.09): it is always the fully trained crew the client computes,
+  // commander's bonus included, because that is what a real vehicle in a battle has. That is why the
+  // baseline f is 1.043 and not 1.0 - the bare descriptor the record carries has no crew at all, and no
+  // vehicle is ever in that state. Only what a player really fits is switchable: Brothers in Arms and
+  // Improved Ventilation add their levels on top.
   // Assumed: a full crew, everyone alive, nobody serving two roles (crewRolesFactor = 1).
-  // Note that "100 %" is not 1.0 - a living commander always lifts the others by a tenth of his level - so a
-  // real 100 % crew already aims about 4 % tighter than the bare descriptor the record carries.
   function crewFactor(level, common) {
     var nonCommander = common + (level + common) / 10;
     return 0.57 + 0.43 * (level + nonCommander) / 100;
   }
-  var CREW = {'75': crewFactor(75, 0), '100': crewFactor(100, 0),
-              'bia': crewFactor(100, 5), 'vents': crewFactor(100, 10)};
-  function crewOf(values) { return CREW[values && values.crew] || CREW['100']; }
-  // The multipliers of the shooter group, each named after the client attribute it multiplies.
+  var CREW = {'base': crewFactor(100, 0), 'bia': crewFactor(100, 5), 'vents': crewFactor(100, 10)};
+  function crewOf(values) {
+    var v = values || {};
+    return crewFactor(100, (v.bia === '1' ? 5 : 0) + (v.vents === '1' ? 5 : 0));
+  }
+  // Every equipment number below was read out of the installed client's own decoded XML and is quoted
+  // with its entry; an option whose number could not be found is left out rather than guessed. One list
+  // per switch, shared by the short group beside the tile and by the Configuration popover, so the two
+  // editors can never drift apart.
+  var STAB_TITLE = 'Vertical stabiliser: it multiplies miscAttrs/additiveShotDispersionFactor, which scales everything the movement of the vehicle adds and leaves the full-aim circle alone (optional_devices.xml, aimingStabilizer tiers and the bounty deluxAimingStabilizer).';
+  var STAB_CHOICES = [{value: '1', label: 'None', title: 'No stabiliser · ×1.00'},
+    {value: '0.8', label: '×0.80', title: 'Vertical stabiliser in an ordinary slot · ×0.80 (aimingStabilizer_tier1/tier2, valueByLevel 0.8)'},
+    {value: '0.77', label: '×0.77', title: 'The same stabiliser in the bonus slot · ×0.77 (valueByLevel 0.77)'},
+    {value: '0.725', label: '×0.725', title: 'Bounty / improved stabiliser · ×0.725 (deluxAimingStabilizer)'}];
+  var DRIVE_TITLE = 'Enhanced gun laying drive: it multiplies miscAttrs/gunAimingTimeFactor, so the circle settles faster but is no smaller when fully aimed (optional_devices.xml, enhancedAimDrives tiers and the bounty deluxEnhancedAimDrives).';
+  var DRIVE_CHOICES = [{value: '1', label: 'None', title: 'No laying drive · ×1.00'},
+    {value: '0.909', label: '×0.909', title: 'Laying drive in an ordinary slot · aiming time ×0.909'},
+    {value: '0.897', label: '×0.897', title: 'The same drive in the bonus slot · aiming time ×0.897'},
+    {value: '0.881', label: '×0.881', title: 'Bounty / improved drive · aiming time ×0.881'}];
+  var RAMMER_TITLE = 'Gun rammer: it multiplies miscAttrs/gunReloadTimeFactor, which is exactly what the client’s own utils.getReloadTime multiplies the gun’s reload time by (optional_devices.xml, tankRammer tiers, the trophy rammers and the bounty deluxRammer).';
+  var RAMMER_CHOICES = [{value: '1', label: 'None', title: 'No rammer · ×1.00'},
+    {value: '0.9', label: '×0.90', title: 'Rammer in an ordinary slot · reload ×0.90 (tankRammer_tier1/tier2, valueByLevel 0.9; trophyBasicTankRammer is the same 0.9)'},
+    {value: '0.885', label: '×0.885', title: 'The same rammer in the bonus slot · reload ×0.885 (valueByLevel 0.885)'},
+    {value: '0.875', label: '×0.875', title: 'Upgraded trophy rammer · reload ×0.875 (trophyUpgradedTankRammer)'},
+    {value: '0.865', label: '×0.865', title: 'Bounty / improved rammer · reload ×0.865 (deluxRammer)'}];
+  var SNAP_TITLE = 'Gunner perk Snap Shot: ×0.925 on the gun’s turretRotation dispersion factor at 100 % (tankmen.xml gunner_smoothTurret → perks.xml id 201, turretAimingDispersion −0.00075 per level).';
+  var SMOOTH_TITLE = 'Driver perk Smooth Ride: ×0.96 on the chassis movement dispersion factor at 100 % (tankmen.xml driver_smoothDriving → perks.xml id 302, movingAimingDispersion −0.0004 per level). It touches driving only, never hull rotation.';
+  var BIA_TITLE = 'Brothers in Arms, trained on the whole crew: every crew member counts as 5 levels higher (tankmen.xml brotherhood/crewLevelIncrease = 5 at full skill). The circle and the aiming time scale by 1/f, the reload with them, the turret speed by f, with f = 0.57 + 0.43 × (level + commander bonus + skills) / 100 (client items/VehicleDescrCrew.pyc). The crew itself is always fully trained here, as it is in a battle.';
+  var VENTS_TITLE = 'Improved Ventilation: + 5 crew levels (optional_devices.xml improvedVentilation, miscAttrs/crewLevelIncrease). It works through the same crew factor as Brothers in Arms and takes one of the three equipment slots.';
+  // The multipliers of the shooter's configuration, each named after the client attribute it
+  // multiplies. The crew factor f is used for the loader as well as the gunner: the client computes
+  // both from the same _processSkills law, and the page models one evenly trained crew.
   function aimModifiers() {
-    var v = shooterMods ? shooterMods.values() : {}, f = crewOf(v);
+    var v = shooterConfig, f = crewOf(v), number = function (x, d) { var n = Number(x); return isFinite(n) && n > 0 ? n : d; };
     return {mult: 1 / f,                                    // multShotDispersionFactor: full-aim accuracy
-            additive: Number(v.stabiliser || 1) || 1,       // additiveShotDispersionFactor: the stabiliser
+            additive: number(v.stabiliser, 1),              // additiveShotDispersionFactor: the stabiliser
             movement: v.smooth === '1' ? 0.96 : 1,          // chassis/shotDispersionFactors/movement
             rotation: 1,                                    // nothing offered for it yet (see the report)
             turret: v.snap === '1' ? 0.925 : 1,             // gun/shotDispersionFactors/turretRotation
-            aimingTime: (Number(v.aimdrive || 1) || 1) / f, // gunAimingTimeFactor and the gunner
-            turretSpeed: f, hullSpeed: 1};                  // miscAttrs/turretRotationSpeed
+            aimingTime: number(v.aimdrive, 1) / f,          // gunAimingTimeFactor and the gunner
+            reload: number(v.rammer, 1) / f,                // gunReloadTimeFactor and the loader
+            turretSpeed: f, hullSpeed: 1,                   // miscAttrs/turretRotationSpeed
+            // Our own movement approximation, not the client's: see moveStep in ballistics.js.
+            accelSeconds: number(v.accel, AIM_BASE.accel),
+            accelBackSeconds: number(v.accelBack, AIM_BASE.accelBack),
+            brakeSeconds: number(v.brake, AIM_BASE.brake)};
   }
   function buildShooterMods() {
     var slot = $('shooter-mods-slot');
     if (!slot || !window.ModifierGroup) return;
     shooterMods = ModifierGroup.create({id: 'shooter-mods', title: 'Shooter', host: slot,
       // Short by design: collapsed, the whole group is as wide as this line, and the bottom band has to hold
-      // it next to the Shooter tile on a 1366 px screen. The default crew says nothing at all.
-      summary: function (v) {
-        var out = [];
-        if (v.crew === '75') out.push('crew 75 %');
-        else if (v.crew === 'bia') out.push('BiA');
-        else if (v.crew === 'vents') out.push('BiA + vents');
-        if (Number(v.stabiliser) !== 1) out.push('stab \u00d7' + Number(v.stabiliser).toFixed(2));
-        if (Number(v.aimdrive) !== 1) out.push('drive \u00d7' + Number(v.aimdrive).toFixed(2));
-        if (v.snap === '1') out.push('snap');
-        if (v.smooth === '1') out.push('smooth');
-        return out.join(' \u00b7 ');
-      },
+      // it next to the Shooter tile on a 1366 px screen. It names the active preset and adds only what the
+      // preset does not already say - the full form is the Configuration popover in the strip below.
+      summary: function () { return aimSummary(true); },
       options: [
-        {id: 'crew', label: 'Crew', kind: 'choice', value: '100',
-         title: 'Gunner efficiency. f = 0.57 + 0.43 \u00d7 (level + commander bonus + skills) / 100; the circle scales by 1/f and the aiming time with it (client items/VehicleDescrCrew.pyc). A living commander always adds a tenth of his level, so even a plain 100 % crew aims tighter than the bare vehicle the record carries. Brothers in Arms at 100 % adds 5 levels (tankmen.xml), Improved Ventilation another 5 (optional_devices.xml).',
-         choices: [{value: '75', label: '75 %', title: 'Everyone at 75 % \u00b7 circle \u00d7' + (1 / CREW['75']).toFixed(3)},
-           {value: '100', label: '100 %', title: 'Everyone at 100 % \u00b7 circle \u00d7' + (1 / CREW['100']).toFixed(3)},
-           {value: 'bia', label: '+ BiA', title: '100 % with Brothers in Arms \u00b7 circle \u00d7' + (1 / CREW['bia']).toFixed(3)},
-           {value: 'vents', label: '+ vents', title: '100 % with Brothers in Arms and Improved Ventilation \u00b7 circle \u00d7' + (1 / CREW['vents']).toFixed(3)}]},
-        {id: 'stabiliser', label: 'Stabiliser', kind: 'choice', value: '1',
-         title: 'Vertical stabiliser: it multiplies miscAttrs/additiveShotDispersionFactor, which scales everything the movement of the vehicle adds and leaves the full-aim circle alone (optional_devices.xml, aimingStabilizer tiers and the bounty deluxAimingStabilizer).',
-         choices: [{value: '1', label: 'None', title: 'No stabiliser \u00b7 \u00d71.00'},
-           {value: '0.8', label: '\u00d70.80', title: 'Vertical stabiliser in an ordinary slot \u00b7 \u00d70.80'},
-           {value: '0.77', label: '\u00d70.77', title: 'The same stabiliser in the bonus slot \u00b7 \u00d70.77'},
-           {value: '0.725', label: '\u00d70.725', title: 'Bounty / improved stabiliser \u00b7 \u00d70.725'}]},
-        {id: 'aimdrive', label: 'Laying drive', kind: 'choice', value: '1',
-         title: 'Enhanced gun laying drive: it multiplies miscAttrs/gunAimingTimeFactor, so the circle settles faster but is no smaller when fully aimed (optional_devices.xml, enhancedAimDrives tiers and the bounty deluxEnhancedAimDrives).',
-         choices: [{value: '1', label: 'None', title: 'No laying drive \u00b7 \u00d71.00'},
-           {value: '0.909', label: '\u00d70.909', title: 'Laying drive in an ordinary slot \u00b7 aiming time \u00d70.909'},
-           {value: '0.897', label: '\u00d70.897', title: 'The same drive in the bonus slot \u00b7 aiming time \u00d70.897'},
-           {value: '0.881', label: '\u00d70.881', title: 'Bounty / improved drive \u00b7 aiming time \u00d70.881'}]},
-        {id: 'snap', label: 'Snap Shot', kind: 'toggle', value: '0',
-         title: 'Gunner perk Snap Shot: \u00d70.925 on the gun\u2019s turretRotation dispersion factor at 100 % (tankmen.xml gunner_smoothTurret \u2192 perks.xml id 201, turretAimingDispersion \u22120.00075 per level).',
+        {id: 'bia', label: 'BiA', kind: 'toggle', value: '0', title: BIA_TITLE,
+         choices: [{value: '0', label: 'Off', title: 'Not trained \u00b7 circle \u00d7' + (1 / CREW.base).toFixed(3) + ' on the bare vehicle'},
+           {value: '1', label: 'On', title: 'Brothers in Arms at 100 % \u00b7 circle \u00d7' + (1 / CREW.bia).toFixed(3)}]},
+        {id: 'vents', label: 'Vents', kind: 'toggle', value: '0', title: VENTS_TITLE,
+         choices: [{value: '0', label: 'Off', title: 'No ventilation'},
+           {value: '1', label: 'On', title: 'Improved Ventilation \u00b7 with Brothers in Arms the circle is \u00d7' + (1 / CREW.vents).toFixed(3)}]},
+        {id: 'stabiliser', label: 'Stabiliser', kind: 'choice', value: '1', title: STAB_TITLE, choices: STAB_CHOICES},
+        {id: 'aimdrive', label: 'Laying drive', kind: 'choice', value: '1', title: DRIVE_TITLE, choices: DRIVE_CHOICES},
+        {id: 'rammer', label: 'Rammer', kind: 'choice', value: '1', title: RAMMER_TITLE, choices: RAMMER_CHOICES},
+        {id: 'snap', label: 'Snap Shot', kind: 'toggle', value: '0', title: SNAP_TITLE,
          choices: [{value: '0', label: 'Off', title: 'Not trained \u00b7 \u00d71.00'},
            {value: '1', label: '\u00d70.925', title: 'Trained to 100 % \u00b7 turret rotation factor \u00d70.925'}]},
-        {id: 'smooth', label: 'Smooth Ride', kind: 'toggle', value: '0',
-         title: 'Driver perk Smooth Ride: \u00d70.96 on the chassis movement dispersion factor at 100 % (tankmen.xml driver_smoothDriving \u2192 perks.xml id 302, movingAimingDispersion \u22120.0004 per level). It touches driving only, never hull rotation.',
+        {id: 'smooth', label: 'Smooth Ride', kind: 'toggle', value: '0', title: SMOOTH_TITLE,
          choices: [{value: '0', label: 'Off', title: 'Not trained \u00b7 \u00d71.00'},
            {value: '1', label: '\u00d70.96', title: 'Trained to 100 % \u00b7 movement factor \u00d70.96'}]}],
       // A switch changes the collapsed summary, so the group's own width changes with it: re-measure the
       // bands in the next frame, exactly as a resize does.
-      onChange: function () { if (shooterType) shooterModsState[shooterType] = shooterMods.values(); syncAimRanges(); updateAim(); scheduleLayout(); }});
+      onChange: function (id, value) { shooterConfig[id] = value; aimConfigChanged(); }});
   }
-  // A new shooter on screen keeps his own switches for the session, exactly as the target group does.
+  // One place every edit of the configuration goes through, wherever it came from: the preset label is
+  // re-decided, both editors are repainted, the state is remembered for this shooter and the circle is
+  // recomputed. The group is set silently (setDefaults never calls back), so this cannot recurse.
+  function aimConfigChanged() {
+    shooterPreset = aimPresetMatch();
+    if (shooterType) {
+      shooterModsState[shooterType] = {values: aimValues(shooterConfig), preset: shooterPreset};
+      if (shooterPreset) { aimStore.chosen[shooterType] = shooterPreset; persistSettings(); }
+    }
+    if (shooterMods) shooterMods.setDefaults(shooterConfig);
+    if (viewer) viewer.setAimProfile(shooterConfig.profile);
+    paintAimConfig();
+    // A different build is a different vehicle, not a moment in the life of this one: the running
+    // exponential is dropped and the circle is rebuilt for the new modifiers, so the answer to "what
+    // would a stabiliser do here" is on screen at once instead of waiting for the next frame.
+    aimNow = null;
+    syncAimRanges(); updateAim(); scheduleLayout();
+  }
+  // Which preset the current values are, if any: a preset the user edited becomes "Custom" without
+  // touching the preset it came from.
+  function aimPresetMatch() {
+    var names = AIM_BUILT_IN.map(function (p) { return p.name; }).concat(aimUserNames());
+    for (var i = 0; i < names.length; i++) {
+      var values = aimPreset(names[i]);
+      if (values && aimSame(values, shooterConfig)) return names[i];
+    }
+    return '';
+  }
+  // The one-line summary both editors show. `short` is the form that has to fit beside the Shooter tile.
+  function aimSummary(short) {
+    var v = shooterConfig, out = [];
+    if (v.bia === '1') out.push('BiA');
+    if (v.vents === '1') out.push('vents');
+    if (Number(v.stabiliser) !== 1) out.push('stab ×' + Number(v.stabiliser));
+    if (Number(v.aimdrive) !== 1) out.push('drive ×' + Number(v.aimdrive));
+    if (Number(v.rammer) !== 1) out.push('rammer ×' + Number(v.rammer));
+    if (v.snap === '1') out.push('snap');
+    if (v.smooth === '1') out.push('smooth');
+    var extra = out.join(' · ');
+    if (!shooterPreset) return short ? 'Custom' + (extra ? ' · ' + extra : '') : 'Custom · ' + (extra || 'nothing fitted');
+    // A preset already names what it holds, so only the short label is repeated next to the tile.
+    var label = shooterPreset.split(' — ')[0];
+    return short ? label : shooterPreset + (extra ? ' · ' + extra : '');
+  }
+  // A new shooter on screen keeps his own configuration for the session, exactly as the target group
+  // does; the preset he was last given is remembered across launches, per vehicle type.
   function syncShooterMods(hit) {
-    if (!shooterMods) return;
     var a = hit && hit.attacker || null, type = a && a.type ? String(a.type) : '';
+    // A different shooter is a different gun: the running exponential, the shots fired and the reload
+    // belong to the one that has just left the screen and would otherwise be read as this one's.
+    var changed = type !== shooterType;
     shooterType = type;
-    if (type && !shooterModsState[type]) shooterModsState[type] = shooterMods.values();
-    if (type) shooterMods.setDefaults(shooterModsState[type]);
-    shooterMods.element.title = 'What this shooter has fitted and how well his crew is trained. It changes the dispersion circle only; the record cannot know any of it, so the switches start empty with a 100 % crew.';
+    var kept = type ? shooterModsState[type] : null;
+    if (kept) { shooterConfig = aimValues(kept.values); shooterPreset = kept.preset || aimPresetMatch(); }
+    else {
+      var chosen = type && aimStore.chosen[type] ? aimPreset(aimStore.chosen[type]) : null;
+      shooterConfig = aimValues(chosen);
+      shooterPreset = chosen ? aimStore.chosen[type] : aimPresetMatch();
+      if (type) shooterModsState[type] = {values: aimValues(shooterConfig), preset: shooterPreset};
+    }
+    if (viewer) viewer.setAimProfile(shooterConfig.profile);
+    if (changed) resetAimRun();
+    if (shooterMods) {
+      shooterMods.setDefaults(shooterConfig);
+      shooterMods.element.title = 'What this shooter has fitted and how well his crew is trained. It changes the dispersion circle and the reload only; the record cannot know any of it. The full form, with the presets, is “Configuration” in the strip below the scene.';
+    }
+    paintAimConfig();
   }
   function shooterModsVisible(on) {
     var slot = $('shooter-mods-slot');
@@ -747,14 +901,180 @@
     slot.hidden = !on; if (!on) shooterMods.close();
     layoutMods();
   }
+  // --- The Configuration popover ----------------------------------------------------------------
+  // The long form of the same configuration, on the page's one popover mechanism: a <details> with a
+  // .toolbar-popover, closed by the document click handler like every other one. It sits in the strip
+  // beside the block's own summary rather than inside the block, because the block scrolls and a
+  // popover inside it would be clipped.
+  var aimConfigControls = {}, aimNameMode = '';
+  function aimSelect(id, title, choices) {
+    var select = node('select'); select.id = 'aim-cfg-' + id; select.title = title;
+    choices.forEach(function (c) { var o = node('option', c.label); o.value = c.value; if (c.title) o.title = c.title; select.appendChild(o); });
+    select.onchange = function () { shooterConfig[id] = this.value; aimConfigChanged(); };
+    aimConfigControls[id] = select;
+    return select;
+  }
+  function aimNumber(id, title, min, max) {
+    var input = node('input'); input.type = 'number'; input.id = 'aim-cfg-' + id; input.title = title;
+    input.min = min; input.max = max; input.step = '0.5';
+    // A number the user is still typing must not blank the model: an unusable value simply leaves the
+    // configuration where it was, and the field is put back when the popover is repainted.
+    input.oninput = function () { var n = Number(this.value); if (isFinite(n) && n >= min && n <= max) { shooterConfig[id] = n; aimConfigChanged(); } };
+    aimConfigControls[id] = input;
+    return input;
+  }
+  function aimCheck(id, label, title) {
+    var box = node('label'), input = node('input');
+    input.type = 'checkbox'; input.id = 'aim-cfg-' + id; box.title = title;
+    input.onchange = function () { shooterConfig[id] = this.checked ? '1' : '0'; aimConfigChanged(); };
+    box.appendChild(input); box.appendChild(node('span', label));
+    aimConfigControls[id] = input;
+    return box;
+  }
+  function aimRow(grid, label, control) { grid.appendChild(node('span', label)); grid.appendChild(control); }
+  function buildAimConfig() {
+    var body = $('aim-config-body');
+    if (!body) return;
+    var grid = node('div', undefined, 'aim-config-grid');
+    // Preset first: most of the time it is the only row anybody touches.
+    var preset = node('select'); preset.id = 'aim-cfg-preset';
+    preset.title = 'A whole build in one line. The four built-in ones cannot be changed; save your own with “Save as…”. The preset last used for a vehicle type comes back with it.';
+    preset.onchange = function () {
+      var values = aimPreset(this.value);
+      if (!values) return;
+      shooterConfig = values; shooterPreset = this.value;
+      if (shooterType) aimStore.chosen[shooterType] = this.value;
+      aimConfigChanged(); persistSettings();
+    };
+    aimConfigControls.preset = preset;
+    aimRow(grid, 'Preset', preset);
+    body.appendChild(grid);
+
+    var actions = node('div', undefined, 'aim-config-row');
+    ['save', 'rename', 'delete'].forEach(function (kind) {
+      var b = node('button', kind === 'save' ? 'Save as…' : kind === 'rename' ? 'Rename' : 'Delete');
+      b.type = 'button'; b.id = 'aim-cfg-' + kind;
+      b.onclick = function () { aimPresetAction(kind); };
+      aimConfigControls[kind] = b;
+      actions.appendChild(b);
+    });
+    body.appendChild(actions);
+    // The name is typed here and not in window.prompt: a prompt may never appear inside the game's CEF.
+    var namer = node('div', undefined, 'aim-config-row'); namer.id = 'aim-cfg-namer'; namer.hidden = true;
+    var field = node('input'); field.type = 'text'; field.id = 'aim-cfg-name'; field.maxLength = AIM_NAME_LIMIT;
+    field.placeholder = 'Name of this build';
+    field.onkeydown = function (e) { if (e.key === 'Enter') { e.preventDefault(); aimPresetCommit(); } else if (e.key === 'Escape' || e.key === 'Esc') aimNameBox(''); };
+    var confirm = node('button', 'Save'); confirm.type = 'button'; confirm.onclick = aimPresetCommit;
+    var cancel = node('button', 'Cancel'); cancel.type = 'button'; cancel.onclick = function () { aimNameBox(''); };
+    namer.appendChild(field); namer.appendChild(confirm); namer.appendChild(cancel);
+    aimConfigControls.name = field; aimConfigControls.namer = namer;
+    body.appendChild(namer);
+    var warn = node('p', '', 'aim-config-note warn'); warn.id = 'aim-cfg-warn'; warn.hidden = true;
+    aimConfigControls.warn = warn; body.appendChild(warn);
+
+    body.appendChild(node('div', 'Crew and perks', 'aim-config-head'));
+    var perks = node('div', undefined, 'aim-config-checks');
+    perks.appendChild(aimCheck('bia', 'Brothers in Arms', BIA_TITLE));
+    perks.appendChild(aimCheck('vents', 'Improved Ventilation', VENTS_TITLE));
+    perks.appendChild(aimCheck('snap', 'Snap Shot', SNAP_TITLE));
+    perks.appendChild(aimCheck('smooth', 'Smooth Ride', SMOOTH_TITLE));
+    body.appendChild(perks);
+    body.appendChild(node('p', 'The crew is always the fully trained crew the client computes, the commander’s bonus included — that is what a vehicle in a battle has.', 'aim-config-note'));
+
+    body.appendChild(node('div', 'Equipment', 'aim-config-head'));
+    var kit = node('div', undefined, 'aim-config-grid');
+    aimRow(kit, 'Vertical stabiliser', aimSelect('stabiliser', STAB_TITLE, STAB_CHOICES));
+    aimRow(kit, 'Gun laying drive', aimSelect('aimdrive', DRIVE_TITLE, DRIVE_CHOICES));
+    aimRow(kit, 'Gun rammer', aimSelect('rammer', RAMMER_TITLE, RAMMER_CHOICES));
+    body.appendChild(kit);
+
+    body.appendChild(node('div', 'Driving', 'aim-config-head'));
+    var drive = node('div', undefined, 'aim-config-grid');
+    aimRow(drive, 'To top speed, s', aimNumber('accel', 'How long W takes to reach the vehicle’s own top speed. Our approximation: the speed ramps linearly. The client has no such formula — real acceleration is engine power against weight and terrain — and only the speed itself enters the dispersion formula.', 0.5, 30));
+    aimRow(drive, 'To reverse limit, s', aimNumber('accelBack', 'The same ramp for S, up to the vehicle’s own reverse limit.', 0.5, 30));
+    aimRow(drive, 'To a standstill, s', aimNumber('brake', 'How long the vehicle takes to stop once the key is released. The hull turn always takes half a second to reach the chassis rotation speed.', 0.2, 20));
+    body.appendChild(drive);
+
+    body.appendChild(node('div', 'Where a shot lands in the circle', 'aim-config-head'));
+    var dist = node('div', undefined, 'aim-config-grid');
+    var profiles = Object.keys(ArmorBallistics.aimProfiles).map(function (id) {
+      var p = ArmorBallistics.aimProfiles[id];
+      return {value: id, label: p.label, title: p.note};
+    });
+    aimRow(dist, 'Distribution', aimSelect('profile', 'Which radial distribution the chance over the circle is integrated with. The server’s own sampler is not published and is not in the client, so neither of these is a confirmed formula.', profiles));
+    body.appendChild(dist);
+    var note = node('p', '', 'aim-config-note'); note.id = 'aim-cfg-profile-note';
+    aimConfigControls.profileNote = note; body.appendChild(note);
+  }
+  // Put every control where the configuration says, without firing a single handler.
+  function paintAimConfig() {
+    var preset = aimConfigControls.preset;
+    if (!preset) return;
+    var names = AIM_BUILT_IN.map(function (p) { return p.name; }).concat(aimUserNames());
+    preset.replaceChildren();
+    if (!shooterPreset) { var custom = node('option', 'Custom — not saved'); custom.value = ''; preset.appendChild(custom); }
+    names.forEach(function (name) {
+      var o = node('option', name + (aimBuiltIn(name) ? '' : ' · yours'));
+      o.value = name; preset.appendChild(o);
+    });
+    preset.value = shooterPreset;
+    var mine = !!(shooterPreset && !aimBuiltIn(shooterPreset));
+    aimConfigControls.rename.disabled = !mine;
+    aimConfigControls['delete'].disabled = !mine;
+    ['bia', 'vents', 'snap', 'smooth'].forEach(function (id) { aimConfigControls[id].checked = shooterConfig[id] === '1'; });
+    ['stabiliser', 'aimdrive', 'rammer', 'profile'].forEach(function (id) { aimConfigControls[id].value = String(shooterConfig[id]); });
+    ['accel', 'accelBack', 'brake'].forEach(function (id) {
+      if (document.activeElement !== aimConfigControls[id]) aimConfigControls[id].value = String(shooterConfig[id]);
+    });
+    aimConfigControls.profileNote.textContent = ArmorBallistics.aimProfile(shooterConfig.profile).note;
+    // The button carries the short label; the whole build is its tooltip, so the strip keeps its height
+    // whatever the build is called.
+    $('aim-config-brief').textContent = ' · ' + aimSummary(true);
+    $('aim-config').querySelector('summary').title = 'Everything about this shooter in one place: perks, equipment, how fast he gets going and where a shot lands inside the circle. Now: ' + aimSummary(false) + '.';
+  }
+  function aimNameBox(mode, value) {
+    aimNameMode = mode;
+    aimConfigControls.namer.hidden = !mode;
+    aimConfigControls.warn.hidden = true;
+    if (!mode) return;
+    aimConfigControls.name.value = value || '';
+    aimConfigControls.name.focus(); aimConfigControls.name.select();
+  }
+  function aimWarn(text) { aimConfigControls.warn.textContent = text; aimConfigControls.warn.hidden = !text; }
+  function aimPresetAction(kind) {
+    if (kind === 'save') return aimNameBox('save', shooterPreset && !aimBuiltIn(shooterPreset) ? shooterPreset : '');
+    if (kind === 'rename') return aimNameBox('rename', shooterPreset);
+    if (!shooterPreset || aimBuiltIn(shooterPreset)) return;
+    delete aimStore.presets[shooterPreset];
+    Object.keys(aimStore.chosen).forEach(function (type) { if (aimStore.chosen[type] === shooterPreset) delete aimStore.chosen[type]; });
+    shooterPreset = aimPresetMatch();
+    aimNameBox(''); aimConfigChanged(); persistSettings();
+  }
+  function aimPresetCommit() {
+    var name = aimName(aimConfigControls.name.value);
+    if (!name) return aimWarn('Give the build a name.');
+    if (aimBuiltIn(name)) return aimWarn('That is the name of a built-in preset. Pick another one.');
+    if (aimNameMode === 'rename') {
+      var from = shooterPreset;
+      if (!from || aimBuiltIn(from)) return aimWarn('Only your own presets can be renamed.');
+      if (name !== from && aimStore.presets[name]) return aimWarn('You already have a preset with that name.');
+      delete aimStore.presets[from];
+      Object.keys(aimStore.chosen).forEach(function (type) { if (aimStore.chosen[type] === from) aimStore.chosen[type] = name; });
+    } else if (!aimStore.presets[name] && aimUserNames().length >= AIM_PRESET_LIMIT) {
+      return aimWarn('That is as many presets as the page keeps. Delete one first.');
+    }
+    aimStore.presets[name] = aimValues(shooterConfig);
+    shooterPreset = name;
+    if (shooterType) aimStore.chosen[shooterType] = name;
+    aimNameBox(''); aimConfigChanged(); persistSettings();
+  }
   function aimBlock() {
     var a = activeHit && activeHit.attacker && activeHit.attacker.aim;
     return a && a.dispersion > 0 ? a : null;
   }
   // The sliders speak the units the player reads in the garage: km/h and degrees per second. Their ends come
   // from the shooter's own record - top speed, hull and turret rotation speed - so a slider can never ask for
-  // a state the vehicle cannot reach. The turret end follows the rotation modifiers, the settling end three
-  // aiming times, which is where the exponential has practically arrived.
+  // a state the vehicle cannot reach. The turret end follows the rotation modifiers.
   function syncAimRanges() {
     var a = aimBlock(); if (!a) return;
     var m = aimModifiers();
@@ -762,49 +1082,222 @@
     cap('aim-speed', a.speedForward > 0 ? a.speedForward / KMH_TO_MS : 0);
     cap('aim-hull', a.hullRotationSpeed > 0 ? a.hullRotationSpeed / DEG : 0);
     cap('aim-turret', a.turretRotationSpeed > 0 ? a.turretRotationSpeed * m.turretSpeed / DEG : 0);
-    cap('aim-settled', 3 * (a.aimingTime > 0 ? a.aimingTime : 2) * (a.aimingTimeFactor > 0 ? a.aimingTimeFactor : 1) * m.aimingTime);
   }
-  function aimState() {
+  function sliderState() {
     return {speed: Number($('aim-speed').value) * KMH_TO_MS,
             hullTurn: Number($('aim-hull').value) * DEG,
-            turretTurn: Number($('aim-turret').value) * DEG,
-            afterShot: $('aim-after-shot').checked,
-            settledFor: Number($('aim-settled').value)};
+            turretTurn: Number($('aim-turret').value) * DEG};
   }
-  function aimStateLabels() {
-    $('aim-speed-value').textContent = Number($('aim-speed').value).toFixed(0) + ' km/h';
-    $('aim-hull-value').textContent = Number($('aim-hull').value).toFixed(0) + '\u00b0/s';
-    $('aim-turret-value').textContent = Number($('aim-turret').value).toFixed(0) + '\u00b0/s';
-    $('aim-settled-value').textContent = Number($('aim-settled').value).toFixed(1) + ' s';
+  // The sliders follow the live state, except the one being dragged: writing a slider the user holds would
+  // fight his hand.
+  function aimStateLabels(state) {
+    function put(id, value, text) {
+      var e = $(id);
+      if (document.activeElement !== e) e.value = String(Math.min(Number(e.max), Math.max(0, value)));
+      $(id + '-value').textContent = text;
+    }
+    put('aim-speed', Math.abs(state.speed) / KMH_TO_MS, (state.speed / KMH_TO_MS).toFixed(0) + ' km/h');
+    put('aim-hull', Math.abs(state.hullTurn) / DEG, Math.abs(state.hullTurn / DEG).toFixed(0) + '°/s');
+    put('aim-turret', Math.abs(state.turretTurn) / DEG, Math.abs(state.turretTurn / DEG).toFixed(0) + '°/s');
   }
+  // --- Driving the shooter ----------------------------------------------------------------------
+  // With the emulation on, W A S D move the vehicle, the turret chases the cursor at its own rotation
+  // speed and a click is a shot. A frame loop runs only while something is actually changing - a key
+  // held, the vehicle still rolling, the circle still settling, the turret still catching up, a
+  // reload running - and stops itself as soon as everything is at rest. It never touches the GPU
+  // composition: only the circle's line and the text of the strip are redrawn.
+  var aimOn = false, aimKeys = {}, aimFrame = 0, aimClock = 0, aimMove = null, aimNow = null;
+  var aimManual = true, aimReload = null, aimClip = 0, aimShots = [], aimShotCount = 0, aimLastState = null;
+  var AIM_KEYS = {KeyW: 'forward', KeyS: 'back', KeyA: 'left', KeyD: 'right'};
+  // The game's CEF and a non-Latin keyboard layout both have to work, so the physical key is preferred
+  // and the typed character is the fallback for a browser without KeyboardEvent.code.
+  function aimKeyName(e) {
+    if (e.code && AIM_KEYS[e.code]) return AIM_KEYS[e.code];
+    var k = String(e.key || '').toLowerCase();
+    return k === 'w' ? 'forward' : k === 's' ? 'back' : k === 'a' ? 'left' : k === 'd' ? 'right' : '';
+  }
+  function aimHeld() { return !!(aimKeys.forward || aimKeys.back || aimKeys.left || aimKeys.right); }
+  function aimSeconds() { return (window.performance && performance.now ? performance.now() : Date.now()) / 1000; }
+  function aimReloadLeft() { return aimReload ? Math.max(0, aimReload.until - aimSeconds()) : 0; }
+  function startAimLoop() {
+    if (aimFrame || !aimOn) return;
+    aimFrame = window.requestAnimationFrame(aimTick);
+  }
+  function stopAimLoop() { if (aimFrame) window.cancelAnimationFrame(aimFrame); aimFrame = 0; aimClock = 0; }
+  function aimTick() {
+    aimFrame = 0;
+    var a = aimBlock();
+    if (!aimOn || !a || !viewer || !viewer.liveRadius100) { aimClock = 0; return; }
+    var now = aimSeconds(), dt = aimClock ? now - aimClock : 0; aimClock = now;
+    var mods = aimModifiers(), held = aimHeld();
+    // A key takes the wheel back from a hand-set slider, starting from the state the sliders show, so
+    // nothing jumps.
+    if (held && aimManual) { aimManual = false; aimMove = sliderState(); }
+    if (!aimManual) aimMove = ArmorBallistics.moveStep(aimMove, aimKeys, a, mods, dt);
+    var manual = aimManual ? sliderState() : null;
+    var hull = manual ? manual.hullTurn : aimMove.hullTurn;
+    var chase = ArmorBallistics.turretChase(viewer.aimGap(), hull, a, mods, dt);
+    if (chase.step > 0) viewer.chaseAim(chase.step);
+    // A hand-set turret slider stands until the turret itself has something to do.
+    var state = {speed: manual ? manual.speed : aimMove.speed, hullTurn: hull,
+                 turretTurn: manual && chase.rate <= 0 ? manual.turretTurn : chase.turretTurn};
+    aimNow = ArmorBallistics.aimStep(aimNow, state, a, mods, dt);
+    paintAim(state);
+    var reloading = aimReloadLeft() > 0;
+    var moving = aimManual ? false : !aimMove.resting;
+    if (held || moving || reloading || !chase.caught || (aimNow && !aimNow.settled)) startAimLoop();
+    else { aimClock = 0; if (reloadJustFinished()) paintAim(state); }
+  }
+  // The reload is over: drop it so the readout stops counting and the next click is allowed.
+  function reloadJustFinished() {
+    if (!aimReload || aimReloadLeft() > 0) return false;
+    aimReload = null; return true;
+  }
+  // The circle, the sliders and the readout for one state. No ray is cast here - the integral waits
+  // for everything to come to rest, exactly as it did for the manual sliders.
+  function paintAim(state) {
+    var a = aimBlock();
+    if (!a || !viewer || !aimNow) return;
+    aimLastState = state;
+    aimStateLabels(state);
+    $('aim-settled-value').textContent = aimNow.settled ? 'fully aimed' : 'settling ' + aimNow.elapsed.toFixed(1) + ' s · ×' + aimNow.factor.toFixed(2);
+    viewer.setLiveAim(aimNow.radius100);
+    aimReadout(a, aimNow.factor, aimNow.aimingTime);
+    scheduleAimIntegral();
+  }
+  // One line under the sliders: the circle now, the circle when fully aimed, the aiming time, the
+  // reload, the alpha - and, right after a shot, what that shot's own circle was worth.
+  function aimReadout(a, factor, aimingTime) {
+    var range = viewer.distance > 0 ? viewer.distance : 100, shell = viewer.shell, m = aimModifiers();
+    var radius100 = a.dispersion * factor * 100, rest = m.mult * (a.multFactor > 0 ? a.multFactor : 1);
+    var rl = ArmorBallistics.reloadSeconds(a, m), left = aimReloadLeft();
+    var parts = ['Circle ' + radius100.toFixed(2) + ' m at 100 m (×' + factor.toFixed(2) + ')'
+      + ' → ' + (radius100 * range / 100).toFixed(2) + ' m at ' + Math.round(range) + ' m'];
+    parts.push('full aim ' + (a.dispersion * 100 * rest).toFixed(2) + ' m');
+    parts.push('aiming time ' + (aimingTime > 0 ? aimingTime.toFixed(1) + ' s' : 'not recorded'));
+    if (rl) parts.push(rl.shots > 1
+      ? 'clip ' + rl.shots + ' × ' + rl.interval.toFixed(1) + ' s, reload ' + rl.reload.toFixed(1) + ' s'
+      : 'reload ' + rl.reload.toFixed(1) + ' s');
+    if (shell && shell.alpha > 0) parts.push('alpha ' + Math.round(shell.alpha) + ' HP');
+    var head = aimShots.length ? aimShots[0].headline + (left > 0 ? ' · reloading ' + left.toFixed(1) + ' s' : ' · loaded') + ' — ' : '';
+    $('aim-readout').textContent = head + parts.join(' · ');
+  }
+  // A click in the scene is a shot (user's decision, 19.09: no Alt - it may never reach the page inside
+  // the game). The tracer goes exactly down the middle of the circle, where the gun points: the random
+  // offset a real shot gets is the server's, and this page shows the odds, not a rolled die. What the
+  // circle was worth at that instant is integrated there and then with 1024 rays and pinned in the list.
+  function fireShot() {
+    var a = aimBlock();
+    if (!aimOn || !a || !viewer || !viewer.liveRadius100) return false;
+    var left = aimReloadLeft();
+    if (left > 0) {
+      $('spread-result').textContent = 'Still reloading — ' + left.toFixed(1) + ' s to go.';
+      startAimLoop();
+      return true;
+    }
+    var centre = viewer.spreadAim || viewer.liveAimPoint;
+    if (!centre) return false;
+    var mods = aimModifiers(), shell = viewer.shell;
+    var chance = shell ? viewer.liveAimProbability(shell, 1024) : null;
+    viewer.pinAtPoint(centre);
+    var line = shell ? armorLine(viewer.shotProbability(shell), shell.penetration, viewer.distance) : null;
+    var headline = 'Shot ' + (++aimShotCount) + ' · ' + (!chance ? 'no figure'
+      : damageView ? 'damage ' + damagePct(chance.damage) + ' % of alpha' : 'chance ' + Math.round(chance.low) + ' %');
+    aimShots.unshift({headline: headline, line: line ? line.label : '—',
+                      radius: (aimNow ? aimNow.radius100 : 0) * (viewer.distance > 0 ? viewer.distance : 100) / 100});
+    aimShots = aimShots.slice(0, 5);
+    // The recoil enters the circle for THIS instant - the state the shot was taken in, recoil term
+    // included - and the exponential restarts from it; the gun then has to reload, a round of the clip
+    // excepted.
+    var state = aimLastState || sliderState();
+    aimNow = ArmorBallistics.aimShot(aimNow, state, a, mods);
+    var rl = ArmorBallistics.reloadSeconds(a, mods), now = aimSeconds();
+    if (rl) {
+      if (aimClip > 1 && rl.shots > 1 && rl.interval > 0) { aimClip--; aimReload = {until: now + rl.interval, clip: true}; }
+      else { aimClip = rl.shots; aimReload = {until: now + rl.reload, clip: false}; }
+    }
+    paintShots();
+    paintAim(state);
+    startAimLoop();
+    return true;
+  }
+  function paintShots() {
+    var list = $('aim-shots');
+    if (!list) return;
+    list.hidden = !aimShots.length;
+    list.replaceChildren();
+    aimShots.forEach(function (shot) {
+      var li = node('li');
+      li.appendChild(node('b', shot.headline));
+      li.appendChild(node('span', 'along the line: ' + shot.line + ' · circle ⌀ ' + (shot.radius * 2).toFixed(2) + ' m'));
+      list.appendChild(li);
+    });
+  }
+  // Everything the emulation holds, back to a standing, loaded, fully aimed shooter.
+  function resetAimRun() {
+    aimKeys = {}; aimMove = null; aimNow = null; aimManual = true; aimReload = null;
+    aimShots = []; aimShotCount = 0;
+    var rl = ArmorBallistics.reloadSeconds(aimBlock(), aimModifiers());
+    aimClip = rl ? rl.shots : 1;
+    paintShots();
+  }
+  // The switch itself. Off means off: no frame loop, no key handlers, no live circle - the block falls
+  // back to the manual estimate of 0.7.13, which is why that row is still there.
+  function setAimEmulation(on) {
+    on = !!on;
+    if (on === aimOn) { updateAim(); return; }
+    aimOn = on;
+    var box = $('viewport');
+    if (on) { box.addEventListener('keydown', aimKeyDown); box.addEventListener('keyup', aimKeyUp); window.addEventListener('blur', aimRelease); }
+    else { box.removeEventListener('keydown', aimKeyDown); box.removeEventListener('keyup', aimKeyUp); window.removeEventListener('blur', aimRelease); stopAimLoop(); }
+    if (viewer) viewer.aimChase = on;
+    resetAimRun();
+    updateAim();
+  }
+  // W A S D only. Every other key - the arrows that orbit, +/- that zoom - is left to the viewer's own
+  // handler, so the emulation adds keys instead of taking any away.
+  function aimKeyDown(e) {
+    if (e.ctrlKey || e.altKey || e.metaKey) return;
+    var name = aimKeyName(e);
+    if (!name || !aimBlock()) return;
+    e.preventDefault();
+    if (aimKeys[name]) return;
+    aimKeys[name] = true; startAimLoop();
+  }
+  function aimKeyUp(e) {
+    var name = aimKeyName(e);
+    if (!name) return;
+    e.preventDefault();
+    if (!aimKeys[name]) return;
+    delete aimKeys[name]; startAimLoop();
+  }
+  // A window that lost the focus never sends the keyup, and the vehicle would drive on for ever.
+  function aimRelease() { if (!aimHeld()) return; aimKeys = {}; startAimLoop(); }
   // One pass over the whole block: what is on screen, the circle in the scene and the readout line. Cheap -
   // no ray is cast here, the integral waits for the cursor to rest.
   function updateAim() {
     var block = $('aim-block'); if (!block) return;
     var a = aimBlock(), mode = $('armor-mode').value, modelled = mode !== 'parts' && !$('model-tile').hidden;
-    var on = !!(a && modelled && viewer);
+    var live = !!(a && modelled && viewer && aimOn);
     block.hidden = !modelled;
-    $('aim-state').hidden = !on; $('aim-readout').hidden = !on; $('aim-manual').hidden = on;
-    shooterModsVisible(on);
-    if (!on) {
+    $('aim-state').hidden = !live; $('aim-readout').hidden = !live; $('aim-manual').hidden = live;
+    $('aim-shots').hidden = !live || !aimShots.length;
+    $('aim-config').hidden = !live;
+    if (!live) $('aim-config').open = false;
+    shooterModsVisible(live);
+    if (viewer) viewer.aimChase = live;
+    if (!live) {
       if (viewer) viewer.clearLiveAim();
+      stopAimLoop();
       aimLiveText = '';
       // Only the reason the emulation is unavailable is written here; the manual estimate keeps its own
       // messages ("Conditions changed", the result of the last press) untouched.
-      if (modelled && !a) $('spread-result').textContent = 'This shooter\u2019s record carries no aiming parameters, so the circle cannot be computed. Old battles get them on the next game start; until then the manual radius above stands.';
+      if (modelled && aimOn && !a) $('spread-result').textContent = 'This shooter’s record carries no aiming parameters, so the circle cannot be computed. Old battles get them on the next game start; until then the manual radius above stands.';
       return;
     }
-    aimStateLabels();
-    var r = ArmorBallistics.aimFactor(a, aimState(), aimModifiers());
-    if (!r) { $('aim-readout').textContent = ''; viewer.clearLiveAim(); return; }
-    var range = viewer.distance > 0 ? viewer.distance : 100, shell = viewer.shell;
-    var seconds = r.aimingTime > 0 ? r.aimingTime.toFixed(1) + ' s' : 'not recorded';
-    $('aim-readout').textContent = 'Circle ' + r.radius100.toFixed(2) + ' m at 100 m (\u00d7' + r.factor.toFixed(2) + ')'
-      + ' \u2192 ' + (r.radius100 * range / 100).toFixed(2) + ' m at ' + Math.round(range) + ' m'
-      + ' \u00b7 full aim ' + (a.dispersion * 100 * r.rest).toFixed(2) + ' m \u00b7 aiming time ' + seconds
-      + (shell && shell.alpha > 0 ? ' \u00b7 alpha ' + Math.round(shell.alpha) + ' HP' : '');
-    viewer.setLiveAim(r.radius100);
-    scheduleAimIntegral();
+    if (!aimNow) { aimClip = (ArmorBallistics.reloadSeconds(a, aimModifiers()) || {shots: 1}).shots; aimNow = ArmorBallistics.aimStep(null, sliderState(), a, aimModifiers(), 0); }
+    if (!aimNow) { $('aim-readout').textContent = ''; viewer.clearLiveAim(); return; }
+    paintAim(aimManual ? sliderState() : {speed: aimMove ? aimMove.speed : 0, hullTurn: aimMove ? aimMove.hullTurn : 0, turretTurn: 0});
   }
   // The integral waits for the cursor to rest (~120 ms), runs at 256 rays and refines to 1024 if it is still
   // resting a quarter of a second later: moving the cursor must stay smooth, and a resting cursor deserves
@@ -927,7 +1420,7 @@
   var aimStatus='',shotPanelTitle=$('shot-panel').title;
   function aimTitle(){
     $('aim-metric').title=(damageView?'Expected damage per shot from this reticle, as a share of the shell’s alpha: a random shot inside the saved circle, the mean of penetration damage and the reconstructed non-penetration damage.':'Chance to penetrate from this reticle: a random shot inside the saved circle that both hits and penetrates. Nominal penetration, no RNG.')+
-      ' Reticle circles on the model. '+aimStatus+' Over the saved circle: Gaussian, σ = radius/2; 256 rays, misses = 0. Server formula not confirmed'+(damageView?'; the non-penetration part is a reconstruction (ratio law). No map obstacles, target motion or splash onto other parts.':'; no map obstacles, target motion or blast damage.');
+      ' Reticle circles on the model. '+aimStatus+' Over the saved circle: '+ArmorBallistics.aimProfile(shooterConfig.profile).label+'; 256 rays, misses = 0. Server formula not confirmed'+(damageView?'; the non-penetration part is a reconstruction (ratio law). No map obstacles, target motion or splash onto other parts.':'; no map obstacles, target motion or blast damage.');
   }
   // The heading row has no space for the full wording: the label reads “Pen.” and the sentence lives in its title.
   function penLabel(at100){var e=$('penetration-label');e.textContent='Pen.';e.title=at100?'Penetration at 100 m, mm':'Penetration at target, mm';}
@@ -1638,12 +2131,29 @@
   // goes back to following the cursor.
   $('reset-aim').onclick=function(){if(viewer){viewer.spreadAim=null;staleEstimate();if(viewer.liveRadius100){viewer.drawLiveAim();scheduleAimIntegral();}}};
   $('spread-radius').oninput=staleEstimate;
-  // The shooter's state: every slider recomputes the circle at once (no ray is cast here) and the
-  // integral waits for the cursor to rest, so dragging a slider stays smooth.
-  ['aim-speed','aim-hull','aim-turret','aim-settled'].forEach(function(id){$(id).oninput=updateAim;});
-  $('aim-after-shot').onchange=updateAim;
-  $('aim-still').onclick=function(){['aim-speed','aim-hull','aim-turret','aim-settled'].forEach(function(id){$(id).value=0;});$('aim-after-shot').checked=false;updateAim();};
-  if(viewer)viewer.onAimMove=function(){scheduleAimIntegral();};
+  // The shooter's state: the sliders mirror the live state and take the wheel back the moment the user
+  // drags one with no key held (his decision, 19.09). Each recomputes the circle at once - no ray is cast
+  // here - and the integral waits for the cursor to rest, so dragging a slider stays smooth.
+  ['aim-speed','aim-hull','aim-turret'].forEach(function(id){$(id).oninput=function(){
+    if(!aimHeld()){aimManual=true;aimMove=null;}
+    aimPulse();};});
+  // One step of the model with no time passing: the circle follows a hand-set slider at once, and the
+  // loop is started only if the new state has something to do (the factor has to settle or grow).
+  function aimPulse(){if(!aimOn){updateAim();return;}aimClock=0;aimTick();}
+  $('aim-still').onclick=function(){
+    ['aim-speed','aim-hull','aim-turret'].forEach(function(id){$(id).value=0;});
+    aimKeys={};aimManual=true;aimMove=null;aimNow=null;aimPulse();};
+  // A click in the scene is a shot while the emulation is on; with it off the viewer pins a point as before.
+  if(viewer)viewer.onShot=function(){return fireShot();};
+  // The cursor moved, so the turret has somewhere to go: the loop decides for itself whether anything
+  // is actually left to do and stops again straight away when there is not.
+  if(viewer)viewer.onAimMove=function(){scheduleAimIntegral();if(aimOn)startAimLoop();};
+  // The switch lives in two places - Settings and the block itself - and they are one state. The Settings
+  // checkbox is the one that is stored with every other setting; the block's mirrors it.
+  $('aim-emulation').onchange=function(){$('aim-on').checked=this.checked;setAimEmulation(this.checked);};
+  $('aim-on').onchange=function(){$('aim-emulation').checked=this.checked;
+    // Programmatic changes fire no event, so the stored settings are written by hand here.
+    persistSettings();setAimEmulation(this.checked);};
   // The manual estimate, for a shooter whose record carries no aiming parameters. Expected damage is a
   // share of the shell's alpha here too, so the two paths read the same way.
   $('estimate-spread').onclick=function(){if(!viewer)return;try{var result=viewer.estimateSpread(Number($('spread-radius').value));analysisKey=[viewer.distance,viewer.yaw,viewer.pitch,viewer.turretAngle,viewer.gunAngle].join(',');$('spread-result').textContent=(damageView?'Nominal expected damage: '+(result.unknown?damagePct(result.damage)+'–'+damagePct(result.damageHigh):damagePct(result.damage))+' % of alpha':'Nominal total chance: '+(result.unknown?result.low.toFixed(1)+'–'+result.high.toFixed(1):result.low.toFixed(1))+'%')+' · outside the main armour '+result.miss.toFixed(1)+'% · '+result.samples+' rays.'+(result.unknown?' A range because armour data is missing.':'')+(damageView?' For the chosen dispersion model; the non-penetration damage is a reconstruction, without map obstacles or splash onto other parts.':' For the chosen dispersion model, without map obstacles or blast damage.');}catch(e){$('spread-result').textContent=e.message;}};
@@ -1711,7 +2221,11 @@
   function settingsStored(){
     var raw=null;try{raw=window.localStorage.getItem(SETTINGS_KEY);}catch(e){}
     if(raw===null||raw===undefined)return null;
-    try{var box=JSON.parse(raw);if(box&&box.values&&typeof box.values==='object')return box.values;}catch(e){}
+    try{var box=JSON.parse(raw);
+      // The shooter presets ride in the same object under their own key, so one read and one write serve
+      // the whole page. A stored object that fails the checks in adoptAimStore is simply not adopted.
+      if(box&&box.aim)adoptAimStore(box.aim);
+      if(box&&box.values&&typeof box.values==='object')return box.values;}catch(e){}
     return null;
   }
   // The keys of 0.7.x, read once and dropped.
@@ -1727,7 +2241,7 @@
   }
   function persistSettings(){
     var values={};settingControls.forEach(function(el){values[el.id]=settingValue(el);});
-    try{window.localStorage.setItem(SETTINGS_KEY,JSON.stringify({v:1,values:values}));}catch(e){}
+    try{window.localStorage.setItem(SETTINGS_KEY,JSON.stringify({v:1,values:values,aim:aimStored()}));}catch(e){}
   }
   function restoreSettings(){
     var stored=settingsStored(),migrated=false;
@@ -1746,12 +2260,18 @@
   $('reset-settings').onclick=function(){
     settingControls.forEach(function(el){settingSet(el,settingDefaults[el.id]);settingRun(el);});
     try{window.localStorage.removeItem(SETTINGS_KEY);}catch(e){}
+    // The shooter presets a user saved are his own data, not a setting of this menu, so they are kept.
+    if(aimUserNames().length)persistSettings();
   };
   // The Target group is built before the settings are restored: restoring the Display setting already runs
   // updateShell(), which asks the group whether it belongs on screen.
   buildTargetMods();
   buildShooterMods();
+  buildAimConfig();
   restoreSettings();
+  // The stored presets are in place now, so the shooter on screen can be given his own again.
+  syncShooterMods(activeHit);
+  aimConfigChanged();
   // Heading overflow (18.09 round 2): the battle tile, the shell block and Settings share one grid row while the
   // three fit; when they do not, .stacked drops the whole shell block to a full-width second row and Settings
   // keeps the top right. natural() reads the width a block WANTS — position:absolute plus width:max-content, so

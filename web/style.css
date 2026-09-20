@@ -139,6 +139,29 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 #aim-readout{margin-top:4px;line-height:1.6;color:#e5edf5;font-variant-numeric:tabular-nums}
 #aim-readout[hidden],#aim-manual[hidden]{display:none}
 @media(max-width:1400px){.aim-state input[type=range]{width:104px}}
+/* The switch of the emulation inside the block; the one in Settings is the same state. */
+.aim-switch{display:inline-flex;align-items:center;gap:8px;margin:2px 0 6px;color:#e5edf5;cursor:pointer}
+.aim-state .aim-readonly{display:flex;align-items:center;gap:8px;color:var(--muted);white-space:nowrap}
+/* The last five emulated shots. Short lines, no bullets: the block must not grow past the bottom band. */
+.aim-shots{list-style:none;margin:8px 0 0;padding:0;font-size:13px;line-height:1.55;color:var(--muted);font-variant-numeric:tabular-nums}
+.aim-shots[hidden]{display:none}
+.aim-shots li{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.aim-shots b{color:#e5edf5;font-weight:600;margin-right:6px}
+/* “Configuration ▾” sits in the strip next to the block's own summary, so its popover opens over the
+   page and not inside the block's scroll box. Same <details> + .toolbar-popover as everywhere else. */
+.aim-config{flex-shrink:0}
+.aim-config>summary{padding:7px 11px;max-width:min(340px,40vw);overflow:hidden;text-overflow:ellipsis}
+.aim-config .toolbar-popover{left:0;right:auto;bottom:calc(100% + 6px);min-width:min(520px,calc(100vw - 40px));max-width:min(560px,calc(100vw - 40px));max-height:min(70vh,560px);overflow:auto;gap:10px}
+.aim-config-grid{display:grid;grid-template-columns:auto 1fr;align-items:center;gap:8px 12px;width:100%}
+.aim-config-grid>span{color:var(--muted);font-size:12px}
+.aim-config-grid select,.aim-config-grid input[type=number],.aim-config-grid input[type=text]{width:100%;min-height:30px;box-sizing:border-box;color:inherit;background:#0c151f;border:1px solid #35475a;border-radius:4px;padding:5px 7px;font-size:13px}
+.aim-config-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px;width:100%}
+.aim-config-row button{min-height:30px;padding:5px 10px;font-size:13px}
+.aim-config-head{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-top:2px}
+.aim-config-note{font-size:12px;color:var(--muted);line-height:1.5;margin:0}
+.aim-config-note.warn{color:var(--gold)}
+.aim-config-checks{display:flex;flex-wrap:wrap;gap:6px 16px}
+.aim-config-checks label{display:flex;align-items:center;gap:6px;color:#e5edf5;font-size:13px;white-space:nowrap}
 
 
 /* Side panel in two modes. Only one pane is on screen, and the pane - not the aside - is the scrolling box, so
@@ -197,6 +220,11 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 .filter-more.toolbar-more>summary::after{content:none}
 .filter-more.toolbar-more[data-on=true]>summary{border-color:var(--gold);color:var(--gold);background:#302b23}
 .filter-count:empty{display:none}
+/* A row of pills with its own tool at the end: the pills take the width they need, the caret keeps its
+   own and anchors the popover under the pills. */
+.filter-line{display:flex;align-items:flex-start;gap:6px}
+.filter-line>.filter-pills{flex:1 1 auto;min-width:0}
+.filter-line>.filter-more{flex:0 0 auto}
 /* The secondary popover hangs below its caret, like the modifier groups' own and unlike the toolbar's. */
 .filter-more .toolbar-popover{left:auto;right:0;top:calc(100% + 6px);bottom:auto;min-width:min(270px,calc(100vw - 30px));gap:10px;padding:12px}
 .filter-label{font-size:11px;letter-spacing:1.4px;color:var(--muted);font-weight:600;text-transform:uppercase}
