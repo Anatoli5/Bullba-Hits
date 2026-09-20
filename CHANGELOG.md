@@ -2,6 +2,10 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
+## Unreleased
+
+- Info panels: the "flies past after the ricochet" chip is gone; the ricochet chip and 0 % say it.
+
 ## 0.7.15 (2026-09-20)
 
 - Info panels: the shell's alpha in HP stands beside the chance figure ("62 % / 390").
