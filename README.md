@@ -14,7 +14,7 @@ The installer is not code-signed. Windows SmartScreen or Smart App Control may w
 
 - History of incoming and outgoing hits with the hit point and shot direction.
 - Automatic shell selection from the hit data; nominal penetration, calibre, ammunition comparison.
-- Expected-damage view: chance × alpha plus the non-penetration damage of modern HE (a reconstruction from the client's shell data, labelled as such), in HP.
+- Expected-damage view: chance × alpha plus the non-penetration damage of modern HE (a reconstruction from the client's shell data, labelled as such), as a share of the shell's alpha in %; the alpha itself stands in HP beside the figure.
 - GPU chance map that accounts for angle, distance and screens, drawn in screen space from depth layers. Red → yellow → green by default. No CPU heatmap or per-frame CPU/GPU comparison. If GPU composition is unavailable, the model stays neutral and shows the reason.
 - Turret rotation and gun elevation within the recorded limits; independent distance and optical zoom.
 - Saved client and server circles of your own reticle, automatic chance along the hit line and a nominal estimate over the dispersion circle.
@@ -37,7 +37,7 @@ The mod keeps every recorded battle. A collision model is removed only when no b
 
 - `mod/` — recorder, local file export and geometry extraction; game-side Python 2.7.
 - `web/` — HTML/CSS/JavaScript, Three.js, CPU ballistics and GPU shaders.
-- `installer/` — Inno Setup script and the hash manifests that make upgrades safe. The `upgrades/` manifests are not old builds; the current installer needs them.
+- `installer/` — Inno Setup script and the hash manifests that make upgrades safe. The `upgrades/` manifests are the recorded hashes of released builds, kept unchanged; the installer itself upgrades by file name and does not read them.
 - `tools/` — build, packaging, installer and release scripts.
 
 Building runs on Windows with Python 3. Tool dependencies are not in Git:

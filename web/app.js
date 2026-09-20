@@ -1490,12 +1490,13 @@
     if (aimKeys[name]) return;
     aimKeys[name] = true; startAimLoop();
   }
+  // No typing guard here - it belongs to the keydown. A key let go while the focus has moved into a field
+  // must still be released, or the hull turns for ever and the loop never stops (inspection, 20.09). A key
+  // that was never recorded (because its keydown WAS typing) falls out on the next line, so typing is safe.
   function aimKeyUp(e) {
-    if (aimTyping(e)) return;
     var name = aimKeyName(e);
-    if (!name) return;
+    if (!name || !aimKeys[name]) return;
     e.preventDefault();
-    if (!aimKeys[name]) return;
     delete aimKeys[name]; startAimLoop();
   }
   // A window that lost the focus never sends the keyup, and the vehicle would drive on for ever.
@@ -1554,7 +1555,7 @@
     var shell=ArmorBallistics.shell(c?c.kind:choice,penetration,caliber);
     shell.liner=targetFactor(hit);
     if(c){['normalization','ricochetCos','jetLossPerMeter','randomization','randomizationType','shieldPenetration',
-      'alpha','spallDamage','mechanics','nonPiercingArmorDamage'].forEach(function(k){if(c[k]!==undefined)shell[k]=c[k];});var fraction=Math.max(0,Math.min(1,(distance-100)/400));if(c.penetration500>0&&c.penetration100>0)shell.penetration=penetration*(1+fraction*(c.penetration500/c.penetration100-1));}
+      'alpha','spallDamage','spallAbsorption','mechanics','nonPiercingArmorDamage'].forEach(function(k){if(c[k]!==undefined)shell[k]=c[k];});var fraction=Math.max(0,Math.min(1,(distance-100)/400));if(c.penetration500>0&&c.penetration100>0)shell.penetration=penetration*(1+fraction*(c.penetration500/c.penetration100-1));}
     return shell;
   }
   var totalTimer=null,totalKey=null,totalEngine=null,totalAim=null,totalEstimate=null,verdictKey=null,partNames=['chassis','hull','turret','gun'];
@@ -1627,7 +1628,9 @@
     // The ring on screen is part of the key: a pinned point and the user's first emulated shot both take
     // the recorded rings away, and the line that describes them has to go with them.
     var ringShown=!!(viewer&&viewer.savedAimShown&&viewer.savedAimShown());
-    var key=JSON.stringify(shell)+'|'+(viewer?viewer.turretAngle+','+viewer.gunAngle:'')+'|'+ringShown;
+    // damageView is part of the key: the figure below is formatted as a share of alpha or as a chance, so a
+    // Display switch alone must rebuild it - otherwise the tile keeps the other mode's number (inspection, 20.09).
+    var key=JSON.stringify(shell)+'|'+(viewer?viewer.turretAngle+','+viewer.gunAngle:'')+'|'+ringShown+'|'+damageView;
     if(viewer&&(totalKey!==key||totalEngine!==viewer.engine||totalAim!==viewer.savedAim||totalEstimate!==viewer.estimateAim)){
       totalKey=key;totalEngine=viewer.engine;totalAim=viewer.savedAim;totalEstimate=viewer.estimateAim;window.clearTimeout(totalTimer);
       // No saved circle: the emulated circle's own figure while it is on screen, else the nominal ring's
@@ -1701,7 +1704,7 @@
   }
   var shellGroup=document.querySelector('.shell-fields');
   var ricochetTint=.5; // the Ricochet tint row of Settings, 0 (off)..1.5; the panels' ricochet colours follow the map
-  // Display = Expected damage, with a shell that carries an alpha: the panels read in HP and take their colours
+  // Display = Expected damage, with a shell that carries an alpha: the panels read as a share of alpha and take their colours
   // from the same quantity the map is drawn with. Set by updateShell, read everywhere the numbers are written.
   var damageView=false;
   // Mean expected damage over a circle, in HP, read as a share of the current shell's alpha. The samplers
@@ -2132,7 +2135,9 @@
   function display(data,reference){
     // The emulated circle of the previous hit goes first: prepareShell() below rebuilds it for the new
     // shooter, and clearing it afterwards would throw that away.
-    currentHitKey=null;if(viewer)viewer.clearLiveAim();
+    // aimShot goes with the ring: the figure of a shot fired at the previous hit must not sit on the
+    // panel of the new one, where it also hides that hit's own reticle figure (inspection, 20.09).
+    currentHitKey=null;aimShot=null;if(viewer)viewer.clearLiveAim();
     var hit=data.hit;swapped=hit.synthetic&&!hit.vehicle?hit:null;sceneTiles(hit,reference);
     var pend=pendingParts(hit);noteModelsPending(hit,pend);
     $('shot-source').textContent=hit.synthetic?'No recorded shot':'Hit line';prepareShell(hit);var drawn=viewer&&viewer.load(data,shotContext);

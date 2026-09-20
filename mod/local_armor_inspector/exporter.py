@@ -37,7 +37,10 @@ ICON_FILES = tuple('web/icons/%s.png' % name for name in (
 ASSETS = ('Viewer.html', 'web/style.css', 'web/icon.svg', 'web/viewer.js',
           'web/local-data.js', 'web/host.js', 'web/app.js', 'web/modifiers.js', 'web/ballistics.js', 'web/shot-telemetry.js', 'web/shot-context.js', 'web/screen-armor.js', 'web/vendor/three.min.js',
           'web/vendor/three.LICENSE', 'web/vendor/three-mesh-bvh.umd.js',
-          'web/vendor/three-mesh-bvh.LICENSE', 'licenses/TagTools.txt', 'licenses/BattleHits.txt') + ICON_FILES
+          # THIRD_PARTY.md ships with the page and points at these two: the packed-XML reader's licence and
+          # the vendor manifest with the sources and hashes of three.js / three-mesh-bvh (inspection, 20.09).
+          'web/vendor/three-mesh-bvh.LICENSE', 'web/vendor/manifest.json',
+          'licenses/TagTools.txt', 'licenses/BattleHits.txt', 'licenses/TankInspector.txt') + ICON_FILES
 
 
 # Deferred work (0.7.11). Publishing a hit never reads a client package any more:
@@ -785,8 +788,15 @@ class Exporter(object):
         archive = self.archive
         if archive is None:
             candidates = glob.glob(os.path.join(self.game, 'mods', '*', 'local.armor_inspector_'+VERSION+'.wotmod'))
-            if len(candidates) != 1: raise ValueError('Cannot locate the installed viewer package')
-            archive = candidates[0]
+            # A client update leaves the previous mods/<version> folder behind and the launcher never cleans
+            # it, so the same file can sit in two of them; refusing to choose used to turn the whole export
+            # off for the session (inspection, 20.09). Every candidate carries the same VERSION in its name,
+            # so they are the same build: take the newest client folder and only an empty list is an error.
+            if not candidates: raise ValueError('Cannot locate the installed viewer package')
+            def folder_key(path):
+                name = os.path.basename(os.path.dirname(path))
+                return [int(part) if part.isdigit() else -1 for part in name.split('.')]
+            archive = sorted(candidates, key=folder_key)[-1]
         with zipfile.ZipFile(archive) as z:
             for name in ASSETS:
                 atomic_write(os.path.join(self.folder, *name.split('/')), z.read('res/armor_inspector_viewer/'+name))

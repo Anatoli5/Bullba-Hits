@@ -4,6 +4,14 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 
 ## Unreleased
 
+- The crosshair shape picked in Settings now shows over the model; the canvas kept the plain cross.
+- The circle figure of an emulated shot no longer stays on the panel of the next hit, where it hid that hit's own figure.
+- The reticle tile follows the Display switch again instead of keeping the other mode's number.
+- W A S D no longer sticks when the key is released while a field has the focus.
+- Armour data for vehicles whose type name carries a hyphen (E-100, WZ-111 and 82 more).
+- Recording no longer switches itself off for the session when the same mod file sits in two client folders.
+- The licence of the packed-XML reader and the vendor manifest ship with the page, as the notices promise; the shipped icons are listed in them.
+- Installer and README text brought back in line with the page: no “Refresh” button, expected damage as a share of alpha.
 - Target modifiers beside the Collision model tile (spall liner, field modification, driver skill) are back: the script was missing from the package since 0.7.12.
 - Equipment, perk and shell icons ship with the page; nothing is unpacked from the client on a game start any more.
 - Info panels: the "flies past after the ricochet" chip is gone; the ricochet chip and 0 % say it.

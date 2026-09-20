@@ -135,7 +135,9 @@ class ArmorCatalog(object):
     def materials(self, vehicle_type, resource):
         key = (vehicle_type, resource)
         if key in self.cache: return self.cache[key]
-        if not re.match(r'^[a-z]+:[A-Za-z0-9_]+\Z', vehicle_type): raise ValueError('Invalid vehicle type')
+        # The hyphen is part of real type names (germany:G56_E-100, china:Ch03_WZ-111) and the XML sits at
+        # exactly that path; '.' and '/' stay out, so the guard against path traversal is unchanged.
+        if not re.match(r'^[a-z]+:[A-Za-z0-9_-]+\Z', vehicle_type): raise ValueError('Invalid vehicle type')
         nation, vehicle = vehicle_type.split(':')
         tree = self.xml('scripts/item_defs/vehicles/'+nation+'/'+vehicle+'.xml')
         candidates = [node for node in tree.iter() if node.findtext('hitTester/collisionModelClient') == resource]

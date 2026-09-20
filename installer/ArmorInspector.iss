@@ -52,8 +52,8 @@ WelcomeLabel1=Bullba Hits Setup
 WelcomeLabel2=The mod records hits; the saved history opens in an ordinary browser.%n%nSupports World of Tanks PC NA 2.4.0.1 #950.%nClose the game before installing.
 SelectDirLabel3=Select the World of Tanks folder that contains version.xml and the res directory.
 SelectDirBrowseLabel=Game folder:
-FinishedLabelNoIcons=Installation complete. The mod starts recording hits once the game runs.%n%nThe viewer is Viewer.html in mods\configs\local.armor_inspector. After a battle press “Refresh” in the viewer.
-FinishedLabel=Installation complete. The mod starts recording hits once the game runs.%n%nOpen the Bullba Hits shortcut to view them. After a battle press “Refresh” in the viewer.
+FinishedLabelNoIcons=Installation complete. The mod starts recording hits once the game runs.%n%nThe viewer is Viewer.html in mods\configs\local.armor_inspector. New battles appear in the viewer on their own; it can stay open.
+FinishedLabel=Installation complete. The mod starts recording hits once the game runs.%n%nOpen the Bullba Hits shortcut to view them. New battles appear in the viewer on their own; it can stay open.
 
 [Tasks]
 Name: desktopicon; Description: "Create a desktop shortcut for the viewer"; GroupDescription: "Shortcut:"

@@ -22,7 +22,7 @@ __pycache__/
 !/installer/ArmorInspector.iss
 !/installer/armor-inspector.ico
 !/installer/upgrades/
-# Upgrade manifests are hashes used by the current installer, not old builds.
+# Upgrade manifests are the recorded hashes of released builds, kept for reference; the installer does not read them.
 /installer/upgrades/*
 !/installer/upgrades/*.json
 
