@@ -5,6 +5,9 @@ import glob
 import os
 import re
 import zipfile
+import threading
+from collections import OrderedDict
+from .records import ArmorTable
 from .packed_xml import decode
 
 FLAGS = ('useHitAngle', 'mayRicochet', 'collideOnceOnly', 'checkCaliberForRicochet',
@@ -12,20 +15,49 @@ FLAGS = ('useHitAngle', 'mayRicochet', 'collideOnceOnly', 'checkCaliberForRicoch
 NUMBERS = ('armor', 'vehicleDamageFactor', 'chanceToHitByProjectile')
 
 
+_material_cache = threading.local()
+
+
 def live_materials(component):
+    """Reuse read-only snapshots only while every resolved material value matches.
+
+    A component/boss may change in place: identity alone is not a safe cache key.
+    Re-reading scalar values avoids stale armour while skipping hundreds of dict
+    allocations per hit. The cache is bounded and local to each calling thread.
+    """
     from material_kinds import NAMES_BY_IDS
     from items import vehicles
-    materials = dict(vehicles.g_cache.commonConfig['materials'])
-    materials.update(component.materials)
-    result = {}
-    for kind, material in materials.items():
+    common = vehicles.g_cache.commonConfig['materials']
+    overrides = component.materials
+    kinds = set(common)
+    kinds.update(overrides)
+    rows = []
+    for kind in sorted(kinds):
+        material = overrides[kind] if kind in overrides else common[kind]
         name = NAMES_BY_IDS.get(kind)
         if not name: continue
-        value = dict((key, bool(getattr(material, key))) for key in FLAGS)
-        value.update((key, float(getattr(material, key)) if getattr(material, key, None) is not None else None) for key in NUMBERS)
-        if value['armor'] is not None and value['useArmorHomogenization']:
-            value['armor'] *= float(getattr(component, 'armorHomogenization', 1.0))
+        flags = tuple(bool(getattr(material, key)) for key in FLAGS)
+        numbers = tuple(float(getattr(material, key)) if getattr(material, key, None) is not None else None
+                        for key in NUMBERS)
+        if numbers[0] is not None and flags[-1]:
+            numbers = (numbers[0] * float(getattr(component, 'armorHomogenization', 1.0)),) + numbers[1:]
+        rows.append((name, flags, numbers))
+    signature = tuple(rows)
+    cache = getattr(_material_cache, 'values', None)
+    if cache is None:
+        cache = _material_cache.values = OrderedDict()
+    if signature in cache:
+        value = cache.pop(signature)
+        cache[signature] = value
+        return value
+    result = ArmorTable()
+    for name, flags, numbers in rows:
+        value = dict(zip(FLAGS, flags))
+        value.update(zip(NUMBERS, numbers))
         result[name] = value
+    cache[signature] = result
+    if len(cache) > 128:
+        cache.popitem(last=False)
     return result
 
 

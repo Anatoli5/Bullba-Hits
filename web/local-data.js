@@ -26,10 +26,34 @@
     });
     pending[key]=entry;document.head.appendChild(script);return entry.promise;
   }
+  // Expand only static armour tables. Per-hit poses/ammo stay on their records.
+  // Each battle script is self-contained, including after a recorder restart.
+  function expandBattle(value){
+    if(!value||value.armorTableFormat===undefined)return value;
+    if(value.armorTableFormat!==1)throw new Error('Unsupported battle armor format');
+    var tables=value.armorTables||Object.create(null);
+    (value.hits||[]).forEach(function(hit){
+      ['attacker','target'].forEach(function(side){
+        ((hit[side]||{}).parts||[]).forEach(function(part){
+          if(!Object.prototype.hasOwnProperty.call(part,'armorRef'))return;
+          var ref=part.armorRef;
+          if(typeof ref==='string'&&/^[a-f0-9]{64}$/.test(ref)&&Object.prototype.hasOwnProperty.call(tables,ref)&&tables[ref]&&typeof tables[ref]==='object'&&!Array.isArray(tables[ref])){
+            part.armor=tables[ref];
+          }else{
+            part.armor={};part.armorError='Recorded armor table unavailable';
+            (hit.warnings||(hit.warnings=[])).push('Recorded armor table unavailable: '+(part.name||'?'));
+          }
+          delete part.armorRef;
+        });
+      });
+    });
+    delete value.armorTables;delete value.armorTableFormat;
+    return value;
+  }
   function receive(payload){
     if(!Array.isArray(payload)||payload.length!==2)return;
     var entry=pending[payload[0]];
-    if(entry){entry.value=payload[1];entry.received=true;}
+    if(entry){entry.value=String(payload[0]).indexOf('battle:')===0?expandBattle(payload[1]):payload[1];entry.received=true;}
   }
   function model(key){
     var previous=modelOrder.indexOf(key);if(previous!==-1)modelOrder.splice(previous,1);

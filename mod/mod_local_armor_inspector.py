@@ -13,7 +13,7 @@ try:
 except ImportError:
     import queue
 
-VERSION = '0.7.16'
+VERSION = '0.7.17'
 VIEWER_PATH = os.path.join('mods', 'configs', 'local.armor_inspector', 'Viewer.html')
 LOG = logging.getLogger('local.armor_inspector')
 PARTS = ('chassis', 'hull', 'turret', 'gun')
@@ -124,6 +124,11 @@ class Writer(object):
         self.dropped = 0
         self.failed = 0
         self.stopping = threading.Event()
+        self.export_deadline = None
+        self.raw_done = threading.Event()
+        self.dirty_lock = threading.Lock()
+        self.dirty = {}
+        self.encoders = {}
         self.export_queue = queue.Queue(1024)
         self.export_thread = None
         if exporter is not None:
@@ -143,9 +148,8 @@ class Writer(object):
     def put_export(self, name, payload):
         """One message for the export thread. Game thread, never blocking.
 
-        The same queue the records travel in, so the export thread has a single
-        place to read from and no lock of its own: a message is handled in its
-        turn, ahead of the deferred work but behind the records already waiting.
+        Control messages have a separate bounded queue. Durable battle updates
+        are coalesced byte ranges, so a burst of hits cannot fill this queue.
         """
         if self.exporter is None: return
         try: self.export_queue.put_nowait((name, payload))
@@ -161,21 +165,59 @@ class Writer(object):
         """
         self.put_export('vehicle', request)
 
+    def mark_dirty(self, name, start, end):
+        """Coalesce durable byte ranges without carrying full records twice."""
+        with self.dirty_lock:
+            previous = self.dirty.get(name)
+            if previous is None:
+                self.dirty[name] = (start, end)
+            else:
+                self.dirty[name] = (min(previous[0], start), max(previous[1], end))
+
+    def take_dirty(self):
+        with self.dirty_lock:
+            dirty, self.dirty = self.dirty, {}
+        return dirty
+
+    def has_dirty(self):
+        with self.dirty_lock:
+            return bool(self.dirty)
+
     def run(self):
-        while not self.stopping.is_set() or not self.queue.empty():
-            try: name, record = self.queue.get(timeout=0.1)
-            except queue.Empty: continue
-            try:
-                line = (json.dumps(record, ensure_ascii=True, allow_nan=False, separators=(',', ':'))+'\n').encode('utf-8')
-                with open(os.path.join(self.folder, name+'.jsonl'), 'ab') as stream:
-                    stream.write(line)
-                if self.exporter is not None:
-                    try: self.export_queue.put_nowait((name, record))
-                    except queue.Full: LOG.error('HTML export queue full; raw record saved for recovery on restart')
-            except Exception:
-                self.failed += 1
-                LOG.exception('Could not persist hit; failed=%s', self.failed)
-            finally: self.queue.task_done()
+        try: from local_armor_inspector.records import RecordEncoder
+        except ImportError: from mod.local_armor_inspector.records import RecordEncoder
+        try:
+            while not self.stopping.is_set() or not self.queue.empty():
+                try: name, record = self.queue.get(timeout=0.1)
+                except queue.Empty: continue
+                encoder = self.encoders.setdefault(name, RecordEncoder())
+                try:
+                    encoded = encoder.encode(record)
+                    line = (json.dumps(encoded, ensure_ascii=True, allow_nan=False,
+                                       separators=(',', ':'))+'\n').encode('utf-8')
+                    path = os.path.join(self.folder, name+'.jsonl')
+                    # A failed earlier append may have left a partial tail. End it
+                    # as an unreadable row so this complete record remains recoverable.
+                    if os.path.isfile(path) and os.path.getsize(path):
+                        with open(path, 'rb') as existing:
+                            existing.seek(-1, os.SEEK_END)
+                            partial = existing.read(1) != b'\n'
+                        if partial:
+                            with open(path, 'ab') as stream: stream.write(b'\n')
+                    start = os.path.getsize(path) if os.path.isfile(path) else 0
+                    with open(path, 'ab') as stream:
+                        stream.write(line)
+                        stream.flush()
+                        end = stream.tell()
+                    encoder.commit()
+                    if self.exporter is not None: self.mark_dirty(name, start, end)
+                except Exception:
+                    encoder.rollback()
+                    self.failed += 1
+                    LOG.exception('Could not persist hit; failed=%s', self.failed)
+                finally: self.queue.task_done()
+        finally:
+            self.raw_done.set()
 
     def run_export(self):
         try: self.exporter.setup()
@@ -183,28 +225,48 @@ class Writer(object):
             LOG.exception('HTML export setup failed; raw recording continues')
             self.exporter = None
             return
-        while not self.stopping.is_set():
-            try: name, record = self.export_queue.get(timeout=0.1)
-            except queue.Empty:
+        while True:
+            message = None
+            try: message = self.export_queue.get(timeout=0.05)
+            except queue.Empty: pass
+            if message is not None:
+                name, payload = message
                 try:
-                    if hasattr(self.exporter, 'idle'): self.exporter.idle()
-                    elif hasattr(self.exporter, 'flush'): self.exporter.flush()
-                except Exception: LOG.exception('Deferred export failed; raw events are retained')
-                continue
+                    if name == 'vehicle': self.exporter.request_vehicle_export(payload)
+                    elif name == 'prioritise': self.exporter.prioritise(payload)
+                except Exception: LOG.exception('HTML export command failed')
+                finally: self.export_queue.task_done()
+            dirty = self.take_dirty()
             try:
-                # 'vehicle' and 'prioritise' are messages, not battle records: a battle
-                # file is named '<arenaUniqueID>-<session>' and can be neither.
-                if name == 'vehicle': self.exporter.request_vehicle_export(record)
-                elif name == 'prioritise': self.exporter.prioritise(record)
-                else: self.exporter.record(name, record)
-            except Exception: LOG.exception('HTML export failed; raw record is saved')
-            finally: self.export_queue.task_done()
+                if hasattr(self.exporter, 'record_written'):
+                    for name, bounds in dirty.items():
+                        self.exporter.record_written(name, bounds[0], bounds[1])
+                if hasattr(self.exporter, 'idle'): self.exporter.idle()
+                elif hasattr(self.exporter, 'flush'): self.exporter.flush()
+            except Exception:
+                for name, bounds in dirty.items(): self.mark_dirty(name, bounds[0], bounds[1])
+                LOG.exception('Deferred export failed; raw events are retained')
+            if (self.raw_done.is_set() and self.export_queue.empty() and not self.has_dirty()
+                    and (not hasattr(self.exporter, 'has_pending_records')
+                         or not self.exporter.has_pending_records())):
+                try:
+                    if hasattr(self.exporter, 'finish'): self.exporter.finish()
+                    elif hasattr(self.exporter, 'flush'): self.exporter.flush(force=True)
+                except Exception: LOG.exception('Final HTML export failed; raw events are retained')
+                if (not hasattr(self.exporter, 'has_pending_publish')
+                        or not self.exporter.has_pending_publish()): break
+                if self.export_deadline is not None and time.time() >= self.export_deadline:
+                    LOG.warning('Final HTML publication remains pending; raw events are retained')
+                    break
 
     def close(self):
+        self.export_deadline = time.time() + 2.0
         self.stopping.set()
         self.thread.join(2.0)
         if self.thread.is_alive(): LOG.warning('Writer still draining at shutdown')
-        if self.export_thread is not None: self.export_thread.join(0.25)
+        if self.export_thread is not None:
+            self.export_thread.join(2.0)
+            if self.export_thread.is_alive(): LOG.warning('HTML exporter still draining at shutdown')
 
 
 def vehicle_request(descr, source):

@@ -2,7 +2,10 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
-## Unreleased
+## 0.7.17 (2026-09-21)
+
+- Hit export now coalesces durable log updates, prepares new hits incrementally and retries interrupted publication instead of queueing a full battle rewrite for every hit.
+- Repeated armor material tables are stored once and shared by reference; old battle logs remain readable, and changing vehicle configurations retain their own recorded armor.
 
 - Aim configuration rebuilt around the client's own catalogue: pick a slot, then the real items grouped by family and grade, the way the garage's configurator does it. The invented "variants" std/delux/trophy/trophyUp are gone.
 - The grades are now the garage's own words — Standard, Improved, Bounty, Bounty upgraded, Experimental. "Trophy" is the client's internal word and is never shown.

@@ -18,9 +18,10 @@ import time
 import zipfile
 from .geometry import extract
 from .armor import ArmorCatalog
+from .records import RecordDecoder, pack_battle, unpack_battle
 
 LOG = logging.getLogger('local.armor_inspector')
-VERSION = '0.7.16'
+VERSION = '0.7.17'
 RESOURCE = re.compile(r'^vehicles/[A-Za-z0-9_/-]+\.(?:model|havok)\Z')
 IDENTIFIER = re.compile(r'^[-a-zA-Z0-9_]{1,100}\Z')
 # The interface icons of the aim configuration (equipment, perks, shells) ship with the page in web/icons
@@ -48,6 +49,8 @@ ASSETS = ('Viewer.html', 'web/style.css', 'web/icon.svg', 'web/viewer.js',
 # per idle tick, never during a battle and never while the page is being used.
 PENDING = 'pending'
 PACE = 0.3
+TAIL_RECORD_BUDGET = 64
+TAIL_TIME_BUDGET = 0.02
 JOB_PAGE, JOB_PLAYER, JOB_OTHER, JOB_BULK = 0, 1, 2, 3
 # Where a vehicle request came from decides its turn: the page is waiting for the
 # one it asked for, the hangar vehicle is the player's own, a roster or the
@@ -104,6 +107,8 @@ def atomic_write(path, data):
 
 def write_data(path, key, value):
     # JSON is serialized, never interpolated into executable text unescaped.
+    if str(key).startswith('battle:'):
+        value = pack_battle(value)
     payload = json.dumps([key, value], ensure_ascii=True, allow_nan=False, separators=(',', ':'))
     payload = payload.replace('<', '\\u003c').replace('>', '\\u003e').replace('&', '\\u0026')
     atomic_write(path, ('ArmorInspectorData.receive('+payload+');\n').encode('ascii'))
@@ -116,11 +121,14 @@ def read_data_file(path):
     prefix, suffix = 'ArmorInspectorData.receive(', ');\n'
     if not payload.startswith(prefix) or not payload.endswith(suffix):
         raise ValueError('Not an exported data file')
-    return json.loads(payload[len(prefix):-len(suffix)])[1]
+    key, value = json.loads(payload[len(prefix):-len(suffix)])
+    return unpack_battle(value) if str(key).startswith('battle:') else value
 
 
-def read_battle(path):
+def read_battle(path, return_offset=False, decoder=None):
     header, hits, warnings, shot_events, roster = None, [], [], [], None
+    decoder = decoder or RecordDecoder()
+    offset = 0
     with open(path, 'rb') as stream:
         for number in range(20001):
             line = stream.readline(2*1024*1024+1)
@@ -128,8 +136,9 @@ def read_battle(path):
             if number == 20000 or len(line) > 2*1024*1024:
                 raise ValueError('Battle exceeds export limit')
             if not line.endswith(b'\n'): break
+            offset = stream.tell()
             try:
-                row = json.loads(line.decode('utf-8'))
+                row = decoder.decode(json.loads(line.decode('utf-8')))
                 if row.get('schema') != 1: raise ValueError('Unknown schema')
                 if row.get('type') == 'battle' and header is None: header = row
                 elif row.get('type') == 'hit': hits.append(row)
@@ -163,7 +172,7 @@ def read_battle(path):
         result.update({'roster':roster.get('vehicles') or [], 'playerTeam':roster.get('playerTeam')})
         # The header may hold 0 when the battle record was opened before the client knew its vehicle.
         if roster.get('playerVehicleId'): result['playerVehicleId'] = roster['playerVehicleId']
-    return result
+    return (result, offset) if return_offset else result
 
 
 VEHICLE_CLASS_TAGS = ('lightTank', 'mediumTank', 'heavyTank', 'AT-SPG', 'SPG')
@@ -859,6 +868,19 @@ class Exporter(object):
         self.republish = set()
         self.republished = {}
         self.last_job = 0
+        # Durable JSONL cursors. The writer only raises targets after a complete
+        # line has closed successfully; consumption is bounded on every tick.
+        self.raw_offsets = {}
+        self.raw_targets = {}
+        self.raw_decoders = {}
+        self.raw_oversize = {}
+        # Prepared hits are retained only for the active battle. Each raw hit is
+        # copied/enriched once, then selectively invalidated by its model key.
+        self.prepared_hits = []
+        self.prepared_models = {}
+        self.prepared_identity = None
+        self.publish_failures = 0
+        self.next_publish_retry = 0
         # The Recorder, when the mod is running: in_battle and busy_until say when
         # a job may run. Outside the game it stays None and everything may run.
         self.recorder = None
@@ -885,13 +907,15 @@ class Exporter(object):
         # Every battle is republished, so one unreadable file must not stop the rest.
         for path in sorted(glob.glob(os.path.join(self.folder, 'battles', '*.jsonl'))):
             try:
-                battle = read_battle(path)
+                decoder = RecordDecoder()
+                battle, offset = read_battle(path, return_offset=True, decoder=decoder)
                 if not IDENTIFIER.match(battle['id']): continue
                 self.publish(battle)
+                self.raw_offsets[battle['id']] = offset
             except Exception: LOG.exception('Could not rebuild saved battle: %s', os.path.basename(path))
         self.replay_vehicle_requests()
         self.write_catalogue(force=True)
-        self.write_index()
+        self.write_index(prune=True)
         if self.settings.get('exportAllVehicles'):
             self.queue_catalogue_exports()
 
@@ -979,6 +1003,11 @@ class Exporter(object):
         page waits for the file itself.
         """
         for part in parts:
+            # These fields describe the derived model file, never the raw part.
+            # Re-evaluate them when a completed/failed model job invalidates a hit.
+            part.pop('modelKey', None)
+            part.pop('modelPending', None)
+            part.pop('modelError', None)
             try:
                 if extract:
                     key, error = self.model_extract(part['resource'], client_version)
@@ -1041,24 +1070,69 @@ class Exporter(object):
                             part['comparisonVersion'] = match.group(1) if match else 'current client'
                         except Exception as comparison_error: part['comparisonError'] = str(comparison_error)
 
+    def reset_prepared(self):
+        self.prepared_hits = [None] * len((self.current or {}).get('hits') or [])
+        self.prepared_models = {}
+        self.prepared_identity = None
+
+    def invalidate_model(self, key):
+        """Forget only active hits that mentioned the completed model."""
+        indexes = self.prepared_models.pop(key, set())
+        if not indexes: return
+        for index in indexes:
+            if index < len(self.prepared_hits): self.prepared_hits[index] = None
+        for other in list(self.prepared_models):
+            self.prepared_models[other].difference_update(indexes)
+            if not self.prepared_models[other]: self.prepared_models.pop(other, None)
+
+    def prepare_hit(self, raw, index, battle, track=False):
+        hit = copy.deepcopy(raw)
+        for side in ('attacker', 'target'):
+            try:
+                enrich_vehicle(hit.get(side))
+            except Exception:
+                LOG.exception('Vehicle identity unavailable; the hit is published as recorded')
+        synthesize_parts(hit.get('attacker'))
+        fix_shells(hit)
+        priority = JOB_PLAYER if hit.get('direction') in ('incoming', 'outgoing') else JOB_OTHER
+        pending = set()
+        for side in ('target', 'attacker'):
+            self.publish_parts(battle, hit, side, battle['id'], priority, pending)
+        if track:
+            for side in ('target', 'attacker'):
+                for part in (hit.get(side) or {}).get('parts', []):
+                    try:
+                        key = model_key(part['resource'], battle['clientVersion'])
+                        self.prepared_models.setdefault(key, set()).add(index)
+                    except Exception:
+                        pass
+        return hit
+
     def publish(self, battle):
         if not IDENTIFIER.match(battle['id']): raise ValueError('Invalid battle id')
-        result = copy.deepcopy(battle)
+        active = battle is self.current
+        identity = (battle['id'], canonical(battle.get('clientVersion') or ''), self.version)
+        if active and (self.prepared_identity != identity or
+                       len(self.prepared_hits) != len(battle.get('hits') or [])):
+            self.reset_prepared()
+            self.prepared_identity = identity
+        result = dict(battle)
+        result['hits'] = []
         pending = set()
-        for hit in result['hits']:
-            for side in ('attacker', 'target'):
-                try:
-                    enrich_vehicle(hit.get(side))
-                except Exception:
-                    LOG.exception('Vehicle identity unavailable; the hit is published as recorded')
-            # Records written before 0.6.34 carry no parts for the shooter; rebuild them here.
-            synthesize_parts(hit.get('attacker'))
-            fix_shells(hit)
-            # The player's own hits are what he opens first, so their models are
-            # extracted first; a hit between two other vehicles waits behind them.
-            priority = JOB_PLAYER if hit.get('direction') in ('incoming', 'outgoing') else JOB_OTHER
+        for index, raw in enumerate(battle.get('hits') or []):
+            if active:
+                hit = self.prepared_hits[index]
+                if hit is None:
+                    hit = self.prepare_hit(raw, index, battle, track=True)
+                    self.prepared_hits[index] = hit
+            else:
+                hit = self.prepare_hit(raw, index, battle)
+            result['hits'].append(hit)
             for side in ('target', 'attacker'):
-                self.publish_parts(result, hit, side, battle['id'], priority, pending)
+                for part in (hit.get(side) or {}).get('parts', []):
+                    if part.get('modelPending'):
+                        try: pending.add(model_key(part['resource'], battle['clientVersion']))
+                        except Exception: pass
         write_data(os.path.join(self.folder, 'data', 'battles', battle['id']+'.js'), 'battle:'+battle['id'], result)
         # The shooter's models count as referenced too, or prune() would delete them as unused.
         # A model this battle is still waiting for counts the same way, or prune() would
@@ -1075,41 +1149,167 @@ class Exporter(object):
         except Exception:
             self.summaries[battle['id']]['vehicle'] = None
 
-    def record(self, name, record):
+    def set_current(self, name, battle):
+        if self.current is not None and self.current.get('id') != name:
+            if not self.flush(force=True):
+                raise RuntimeError('Previous battle publication is waiting for retry')
+        self.current = battle
+        self.reset_prepared()
+
+    def apply_record(self, name, record):
+        if record.get('schema') != 1: raise ValueError('Unknown schema')
+        if record.get('type') not in ('battle', 'hit', 'shot', 'roster'):
+            raise ValueError('Unexpected record')
         if record['type'] == 'battle':
-            self.flush(force=True)
-            self.current = dict(record)
-            self.current.update({'id':name, 'hits':[], 'shotEvents':[], 'warnings':[]})
+            battle = dict(record)
+            battle.update({'id':name, 'hits':[], 'shotEvents':[], 'warnings':[]})
+            self.set_current(name, battle)
         elif self.current is not None and self.current['id'] == name and record['type'] == 'roster':
             self.current.update({'roster':record.get('vehicles') or [], 'playerTeam':record.get('playerTeam')})
             if record.get('playerVehicleId'): self.current['playerVehicleId'] = record['playerVehicleId']
         elif self.current is not None and self.current['id'] == name:
-            self.current.setdefault('shotEvents' if record['type'] == 'shot' else 'hits', []).append(record)
+            field = 'shotEvents' if record['type'] == 'shot' else 'hits'
+            self.current.setdefault(field, []).append(record)
+            if field == 'hits': self.prepared_hits.append(None)
         else:
-            self.current = read_battle(os.path.join(self.folder, 'battles', name+'.jsonl'))
+            raise ValueError('Battle header unavailable for '+name)
         self.pending_publish = True
+
+    def record(self, name, record):
+        """Compatibility entry point for offline callers; Writer tails JSONL."""
+        self.apply_record(name, record)
         self.flush(force=record['type'] != 'shot')
 
+    def record_written(self, name, start, end):
+        if not IDENTIFIER.match(name): raise ValueError('Invalid battle id')
+        self.raw_targets[name] = max(int(end), self.raw_targets.get(name, 0))
+
+    def has_pending_records(self):
+        return any(self.raw_targets.get(name, 0) > self.raw_offsets.get(name, 0)
+                   for name in self.raw_targets)
+
+    def activate_tail(self, name):
+        if self.current is not None and self.current.get('id') == name: return True
+        if self.current is not None and not self.flush(force=True): return False
+        path = os.path.join(self.folder, 'battles', name+'.jsonl')
+        if self.raw_offsets.get(name, 0):
+            decoder = RecordDecoder()
+            battle, offset = read_battle(path, return_offset=True, decoder=decoder)
+            self.current = battle
+            self.raw_offsets[name] = offset
+            self.raw_decoders = {name:decoder}
+            self.reset_prepared()
+            self.pending_publish = True
+        else:
+            self.current = None
+            self.raw_decoders = {name:RecordDecoder()}
+        return True
+
+    def consume_records(self, count_budget=TAIL_RECORD_BUDGET,
+                        time_budget=TAIL_TIME_BUDGET, force=False):
+        consumed = 0
+        started = time.time()
+        while consumed < count_budget and (force or time.time()-started < time_budget):
+            names = [name for name in self.raw_targets
+                     if self.raw_targets[name] > self.raw_offsets.get(name, 0)]
+            if not names: break
+            name = sorted(names)[0]
+            if not self.activate_tail(name): break
+            target = self.raw_targets[name]
+            offset = self.raw_offsets.get(name, 0)
+            # activate_tail may have read through the advertised target.
+            if offset >= target: continue
+            path = os.path.join(self.folder, 'battles', name+'.jsonl')
+            with open(path, 'rb') as stream:
+                while (consumed < count_budget and self.raw_offsets.get(name, 0) < target
+                       and (force or time.time()-started < time_budget)):
+                    offset = self.raw_offsets.get(name, 0)
+                    scan = self.raw_oversize.get(name)
+                    stream.seek(scan if scan is not None else offset)
+                    line = stream.readline(2*1024*1024+1)
+                    next_offset = stream.tell()
+                    if scan is not None or (line and not line.endswith(b'\n') and len(line) > 2*1024*1024):
+                        if line.endswith(b'\n'):
+                            self.raw_oversize.pop(name, None)
+                            if self.current is not None and self.current.get('id') == name:
+                                self.current.setdefault('warnings', []).append(
+                                    'Unreadable oversized record at byte '+str(offset))
+                                self.pending_publish = True
+                            self.raw_offsets[name] = next_offset
+                            consumed += 1
+                        elif not line or next_offset >= target:
+                            self.raw_oversize.pop(name, None)
+                            if self.current is not None and self.current.get('id') == name:
+                                self.current.setdefault('warnings', []).append(
+                                    'Unreadable truncated record at byte '+str(offset))
+                                self.pending_publish = True
+                            self.raw_offsets[name] = target
+                            consumed += 1
+                        else:
+                            self.raw_oversize[name] = next_offset
+                        continue
+                    if not line or not line.endswith(b'\n') or next_offset > target:
+                        return consumed
+                    try:
+                        row = self.raw_decoders[name].decode(json.loads(line.decode('utf-8')))
+                        if row.get('schema') != 1: raise ValueError('Unknown schema')
+                        if row.get('type') not in ('battle', 'hit', 'shot', 'roster'):
+                            raise ValueError('Unexpected record')
+                    except (ValueError, AttributeError):
+                        if self.current is not None and self.current.get('id') == name:
+                            self.current.setdefault('warnings', []).append(
+                                'Unreadable record at byte '+str(offset))
+                            self.pending_publish = True
+                        self.raw_offsets[name] = next_offset
+                        consumed += 1
+                        continue
+                    # A battle-switch flush can fail while the output is locked.
+                    # Advance only after the decoded row is fully applied.
+                    self.apply_record(name, row)
+                    self.raw_offsets[name] = next_offset
+                    consumed += 1
+        return consumed
+
     def flush(self, force=False):
-        if not getattr(self, 'pending_publish', False): return
-        if not force and time.time()-getattr(self, 'last_published', 0) < 1: return
-        self.publish(self.current)
-        self.write_index()
+        if not getattr(self, 'pending_publish', False): return True
+        now = time.time()
+        if now < self.next_publish_retry: return False
+        if not force and now-getattr(self, 'last_published', 0) < 1: return False
+        try:
+            self.publish(self.current)
+            self.write_index()
+        except Exception:
+            self.publish_failures += 1
+            self.next_publish_retry = now + min(1.0, 0.1 * (2 ** min(self.publish_failures, 4)))
+            raise
         self.pending_publish = False
+        self.publish_failures = 0
+        self.next_publish_retry = 0
         self.last_published = time.time()
+        return True
 
     def idle(self):
-        """Called when nothing is waiting to be recorded, and only then.
+        """Consume a bounded batch, publish at cadence, then do one deferred job.
 
-        One piece of deferred work per call - a battle whose models have arrived,
-        the catalogue, or one job of the queue - so that a recorded hit is never
-        behind more than a single unit of it. The run loop comes back here every
-        0.1 s while the record queue is empty.
+        Called on every worker tick, including under continuous input. Model
+        extraction still waits until ingestion/publication catches up and the
+        existing in-battle/busy checks allow it.
         """
-        self.flush()
+        self.consume_records()
+        published = self.flush()
+        if getattr(self, 'pending_publish', False) and not published: return
+        if self.has_pending_records(): return
         if self.drain_republish(): return
         if self.catalogue_dirty: self.write_catalogue()
         self.run_job()
+
+    def finish(self):
+        while self.has_pending_records():
+            if not self.consume_records(count_budget=512, time_budget=1.0, force=True): break
+        return self.flush(force=True)
+
+    def has_pending_publish(self):
+        return bool(getattr(self, 'pending_publish', False))
 
     # --------------------------------------------------------------------- jobs
     # Extraction is what makes the hangar stutter: 0.12-0.37 s of the interpreter
@@ -1197,6 +1397,7 @@ class Exporter(object):
         pending flag, so the page stops waiting for something that will not come.
         """
         key, error = self.model_extract(payload[0], payload[1])
+        self.invalidate_model(key)
         self.republish.update(self.waiting.pop(key, ()))
 
     def run_vehicle_job(self, request):
@@ -1258,7 +1459,6 @@ class Exporter(object):
         now = time.time()
         for battle_id in sorted(self.republish):
             if now-self.republished.get(battle_id, 0) < 1: continue
-            self.republish.discard(battle_id)
             self.republished[battle_id] = now
             try:
                 if self.current is not None and self.current.get('id') == battle_id:
@@ -1266,6 +1466,7 @@ class Exporter(object):
                 else:
                     self.publish(read_battle(os.path.join(self.folder, 'battles', battle_id+'.jsonl')))
                 self.write_index()
+                self.republish.discard(battle_id)
             except Exception:
                 LOG.exception('Could not republish a battle after a model job: %s', battle_id)
             return True
@@ -1286,8 +1487,8 @@ class Exporter(object):
             except Exception: LOG.exception('Could not remove unreferenced model: %s', path)
             self.attempts.pop(key, None)
 
-    def write_index(self):
-        self.prune()
+    def write_index(self, prune=False):
+        if prune: self.prune()
         battles = sorted(self.summaries.values(), key=lambda b:b.get('startedAt') or 0, reverse=True)
         write_data(os.path.join(self.folder, 'data', 'index.js'), 'index',
                    {'application':'local.armor_inspector', 'version':VERSION, 'updatedAt':time.time(), 'battles':battles})
