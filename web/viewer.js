@@ -381,7 +381,7 @@
     this.applyTurret();
   };
   Viewer.prototype.load=function(data,context){
-    this.clear();var T=THREE,self=this;var hit=data.hit, parts=(hit.target||{}).parts||[], transforms={};
+    this.clear();if(data.geometryIncomplete){this.bounds=null;this.render();return false;}var T=THREE,self=this;var hit=data.hit, parts=(hit.target||{}).parts||[], transforms={};
     parts.forEach(function(part){if(part.transform)transforms[part.id]=new T.Matrix4().fromArray(part.transform);});
     var range=context&&context.range;this.recordedDistance=Number.isFinite(range)&&range>0?range:Number.isFinite(hit.rangeAtImpact)&&hit.rangeAtImpact>0?hit.rangeAtImpact:null;
     this.loadedData=data;this.posedData=null;this.poseBuilt=null;this.turretAngle=0;this.gunAngle=0;this.rebuild();if(this.onTurret)this.onTurret({angle:0,min:-180,max:180});

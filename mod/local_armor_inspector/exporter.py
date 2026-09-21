@@ -16,13 +16,14 @@ import re
 import sys
 import time
 import zipfile
+import xml.etree.ElementTree as ET
 from .geometry import extract
 from .armor import ArmorCatalog
 from .records import RecordDecoder, pack_battle, unpack_battle
 
 LOG = logging.getLogger('local.armor_inspector')
-VERSION = '0.7.18'
-RESOURCE = re.compile(r'^vehicles/[A-Za-z0-9_/-]+\.(?:model|havok)\Z')
+VERSION = '0.7.19'
+RESOURCE = re.compile(r'^(?:[A-Za-z0-9_-]+/)?vehicles/[A-Za-z0-9_/-]+\.(?:model|havok)\Z')
 IDENTIFIER = re.compile(r'^[-a-zA-Z0-9_]{1,100}\Z')
 # The interface icons of the aim configuration (equipment, perks, shells) ship with the page in web/icons
 # (user, 20.09): they are interface art, not game data, and a fresh install must look right before the
@@ -863,6 +864,7 @@ class Exporter(object):
         self.version = canonical(version)
         self.archive = archive
         self.packages = None
+        self.package_conflicts = set()
         self.overrides = None
         self.attempts = {}
         self.summaries = {}
@@ -937,14 +939,44 @@ class Exporter(object):
             self.queue_catalogue_exports()
 
     def _index_resources(self):
-        self.packages, self.overrides = {}, set()
-        for path in sorted(glob.glob(os.path.join(self.game, 'res', 'packages', 'vehicles*.pkg'))):
-            with zipfile.ZipFile(path) as z:
-                for name in z.namelist():
-                    if '/collision_client/' in name and name.endswith('.havok'): self.packages[name] = path
+        # Event/shared models are mounted outside vehicles*.pkg. Read only ZIP
+        # directories here; decode one selected model later on the idle worker.
+        package_root = os.path.normcase(os.path.abspath(os.path.join(self.game, 'res', 'packages')))
+        manifest = os.path.join(self.game, 'paths.xml')
+        if os.path.isfile(manifest):
+            mounted = ET.parse(manifest).findall('.//Packages/Package')
+            paths = []
+            for node in mounted:
+                path = os.path.abspath(os.path.join(self.game, (node.text or '').strip()))
+                if (os.path.normcase(path).startswith(package_root + os.sep)
+                        and path.lower().endswith('.pkg') and os.path.isfile(path)):
+                    if path not in paths: paths.append(path)
+        else:
+            # Offline fixtures/older layouts without a mounting manifest.
+            paths = sorted(glob.glob(os.path.join(self.game, 'res', 'packages', '*.pkg')))
+        packages, signatures, conflicts, overrides = {}, {}, set(), set()
+        for path in paths:
+            with zipfile.ZipFile(path) as archive:
+                for info in archive.infolist():
+                    name = info.filename
+                    if ('/collision_client/' not in name or not name.endswith('.havok')
+                            or not RESOURCE.match(name) or '..' in name): continue
+                    signature = (info.file_size, info.CRC)
+                    if name in signatures and signatures[name] != signature:
+                        # Do not silently choose a different physical surface by
+                        # guessing archive priority when two resources disagree.
+                        conflicts.add(name)
+                    else:
+                        signatures[name] = signature
+                        packages.setdefault(name, path)
         for path in glob.glob(os.path.join(self.game, 'mods', '*', '*.wotmod')):
-            with zipfile.ZipFile(path) as z:
-                self.overrides.update(n[4:] for n in z.namelist() if n.startswith('res/vehicles/'))
+            with zipfile.ZipFile(path) as archive:
+                for name in archive.namelist():
+                    resource = name[4:] if name.startswith('res/') else ''
+                    if RESOURCE.match(resource) and '..' not in resource:
+                        overrides.add(resource)
+        # Publish the index only after a complete successful scan.
+        self.packages, self.package_conflicts, self.overrides = packages, conflicts, overrides
 
     def model(self, resource, version):
         """The cache-or-extract call of every explicit request.
@@ -980,6 +1012,7 @@ class Exporter(object):
                 raise ValueError('Client version changed; model was not saved before the update')
             name = resource.rsplit('.', 1)[0]+'.havok'
             if self.packages is None: self._index_resources()
+            if name in self.package_conflicts: raise ValueError('Conflicting mounted collision resources')
             if name not in self.packages: raise ValueError('Collision model not found in client')
             if name in self.overrides or resource in self.overrides:
                 raise ValueError('A mod overrides this collision model')

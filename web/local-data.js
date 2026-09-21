@@ -66,14 +66,25 @@
   // builds a synthetic hit whose target is the recorded attacker, and its parts load exactly the same way.
   function sceneFor(battle,hit){
     if(!hit)return Promise.reject(new Error('Hit not found'));
-    var result={hit:hit,models:{},warnings:(battle.warnings||[]).concat(hit.warnings||[])};
-    return Promise.all(((hit.target||{}).parts||[]).map(function(part){
+    var result={hit:hit,models:{},warnings:(battle.warnings||[]).concat(hit.warnings||[])},parts=(hit.target||{}).parts||[];
+    return Promise.all(parts.map(function(part){
       if(part.modelError||!part.modelKey||!part.transform){result.warnings.push(part.name+': '+(part.modelError||'Model or part position not saved'));return;}
       return model(part.modelKey).then(function(data){
-        if(data.kind!=='client-shot-collision'||!Array.isArray(data.groups))throw new Error('Invalid model');
+        if(data.kind!=='client-shot-collision'||!Array.isArray(data.groups)||!data.groups.some(function(g){return Array.isArray(g.indices)&&g.indices.length>=3;}))throw new Error('Invalid or empty model');
         result.models[String(part.id)]=data;
       }).catch(function(e){result.warnings.push(part.name+': '+e.message);});
-    })).then(function(){return result;});
+    })).then(function(){
+      // A gun/track without its hull is not a usable armour scene. Keep the
+      // event, but withhold geometry and calculations until every part is ready.
+      var extra=(hit.warnings||[]).indexOf('Additional vehicle parts are not yet rendered')!==-1;
+      var complete=[0,1,2,3].every(function(id){return parts.some(function(p){return p.id===id;})&&!!result.models[String(id)];})&&parts.every(function(p){return !!result.models[String(p.id)];});
+      if(!complete||extra){
+        result.models={};result.geometryIncomplete=true;
+        result.geometryError=extra?'This vehicle has unsupported collision parts.':'Complete vehicle model unavailable.';
+        result.warnings.push(result.geometryError);
+      }
+      return result;
+    });
   }
   function scene(battle,id){
     return sceneFor(battle,(battle.hits||[]).find(function(h){return h.id===id;}));

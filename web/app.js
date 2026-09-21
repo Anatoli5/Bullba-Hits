@@ -2053,6 +2053,7 @@
     verdictBusy=true;
     var job=verdictQueue.shift(),battle=job.battle,hit=job.hit;
     ArmorInspectorData.sceneFor(battle,hit).then(function(data){
+      if(data.geometryIncomplete)return;
       var context=ArmorShotContext.resolve(hit,battle.shotEvents||[]),c=context.index>=0?context.choices[context.index]:context.choices[0]||null;
       var range=context.range>0?context.range:hit.rangeAtImpact>0?hit.rangeAtImpact:100,shell=c?shellAt(c,c.kind,c.penetration100,c.caliber,range,hit):null;
       if(!shell)return;var engine=ArmorBallistics.build(data,false),pts=ArmorViewer.points(hit);
@@ -2590,7 +2591,7 @@
     $('shot-source').textContent=hit.synthetic?'No recorded shot':'Hit line';prepareShell(hit);var drawn=viewer&&viewer.load(data,shotContext);
     // A part on its way is not a missing model: the spinner outranks both the empty
     // message and the “geometry unavailable” one, which belongs to a broken record.
-    if(pend.target)message(EXTRACTING,true);else message(drawn?'':'Geometry unavailable. The original event is kept.');
+    if(pend.target)message(EXTRACTING,true);else message(drawn?'':data.geometryError||'Geometry unavailable. The original event is kept.');
     pivotButtons();warnings(pendingWarnings(data.warnings||[],hit));$('details').replaceChildren();
     // The saved reticle exists only for the player's own shots: with an ally in focus his gun has no
     // telemetry at all, so his outgoing hit reads exactly like an incoming one does today - no recorded

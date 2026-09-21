@@ -2,7 +2,10 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
-## 0.7.18 (2026-09-21)
+## 0.7.19 (2026-09-21)
+
+- Collision models are resolved from mounted shared and event packages, including Waffentrager vehicles; saved battles can recover their missing parts with the matching client.
+- Incomplete or unsupported collision models show an explicit message instead of isolated parts or misleading armour estimates.
 
 - Hit export now coalesces durable log updates, prepares new hits incrementally and retries interrupted publication instead of queueing a full battle rewrite for every hit.
 - Repeated armor material tables are stored once and shared by reference; old battle logs remain readable, and changing vehicle configurations retain their own recorded armor.
