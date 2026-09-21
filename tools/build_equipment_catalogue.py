@@ -53,17 +53,25 @@ FAMILY_ORDER = ['tankRammer', 'aimingStabilizer', 'enhancedAimDrives', 'improved
                 'improvedRotationMechanism', 'improvedVentilation', 'turbocharger',
                 'modernizedAimDrivesAimingStabilizer', 'modernizedImprovedSightsEnhancedAimDrives',
                 'modernizedTurbochargerRotationMechanism']
-TIER_ORDER = ['standard', 'improved', 'bounty', 'bounty_upgraded', 'experimental']
+TIER_ORDER = ['standard', 'improved', 'bounty', 'experimental']
+# "badge" is the grade mark the client lays over the corner of the device icon, extracted into web/icons
+# from the client's own artefact and demountKit folders (equipmentPlus_overlay,
+# equipmentTrophyUpgraded_overlay, experimental_level_icon_lvl1..3). Every grade of one device shares
+# ONE picture in the client — verified over all 47 gunnery entries, 21.09 — so the badge is the only
+# thing that tells a Bounty rammer from a standard one, and the page copies that instead of captioning
+# its tiles. A standard piece wears no badge at all; the experimental name is a stem, and the page
+# completes it with the level, which is the trailing digit of the entry id.
 TIERS = [
-    {'id': 'standard', 'name': 'Standard', 'note': 'The Class number is the vehicle tier band, not the '
-     'strength: every Class of one device carries the same factors. Only these entries have a category, '
-     'so only these gain the slot bonus.'},
-    {'id': 'improved', 'name': 'Improved', 'note': 'Bought for bonds; each piece carries its own name.'},
-    {'id': 'bounty', 'name': 'Bounty', 'note': 'The client calls these entries “trophy”; the garage never '
-     'does.'},
-    {'id': 'bounty_upgraded', 'name': 'Bounty, upgraded', 'note': 'The same Bounty item after its upgrade.'},
-    {'id': 'experimental', 'name': 'Experimental', 'note': 'Three steps T1→T3, and one piece covers two '
-     'devices at once. No category, so never a slot bonus.'},
+    {'id': 'standard', 'name': 'Standard', 'badge': '', 'note': 'The Class number is the vehicle tier '
+     'band, not the strength: every Class of one device carries the same factors.'},
+    {'id': 'improved', 'name': 'Improved', 'badge': 'grade_improved',
+     'note': 'Bought for bonds; each piece carries its own name.'},
+    {'id': 'bounty', 'name': 'Bounty', 'badge': 'grade_bounty_up', 'note': 'One tile per device, and it is '
+     'the UPGRADED piece (the client’s trophyUpgraded entry): that is the state a Bounty piece ends up '
+     'in, so the page counts it that way and never offers the un-upgraded one. The client calls these '
+     'entries “trophy”; the garage never does. The badge is the upgraded one for the same reason: the art must not promise something other than the numbers.'},
+    {'id': 'experimental', 'name': 'Experimental', 'badge': 'grade_experimental', 'badgeLevel': True,
+     'note': 'Three steps T1→T3, and one piece covers two devices at once.'},
 ]
 # The page's own short names for the inputs of the dispersion maths, keyed by the research file's
 # "pageInput" text. An effect whose input is not in here is not something the page models.
@@ -215,6 +223,13 @@ def device_rows(data):
             'eff': effects,
             'fit': parse_filter(row.get('vehicleFilter')),
         })
+    # One Bounty tile per device, and it is the upgraded one (user, 21.09). A Bounty piece is upgraded
+    # with the same bonds sooner or later, so the un-upgraded trophyBasic entry is a state nobody keeps
+    # a build in; offering both would only split the grade into two tiles that share one badge.
+    rows = [row for row in rows if row['tier'] != 'bounty']
+    for row in rows:
+        if row['tier'] == 'bounty_upgraded':
+            row['tier'] = 'bounty'
     order = dict((name, index) for index, name in enumerate(FAMILY_ORDER))
     tier = dict((name, index) for index, name in enumerate(TIER_ORDER))
     rows.sort(key=lambda r: (order.get(r['family'], 99), tier.get(r['tier'], 99), r['id']))
@@ -230,6 +245,21 @@ def families(rows):
         out.append({'id': row['family'], 'name': FAMILY_NAMES.get(row['family'], row['family']),
                     'icon': row['icon'], 'what': FAMILY_WHAT.get(row['family'], '')})
     return out
+
+
+def skill_rows():
+    """The crew rows with the icon file the page draws them with.
+
+    The crew tiles carry no caption any more, so every row needs art. The client's own perk icon is named
+    after the perk itself (gui/maps/icons/tankmen/skills/big/<id>.png), and all nineteen are in web/icons
+    already — the field is written out rather than assumed by the page, like every other icon here.
+    """
+    rows = []
+    for skill in SKILLS:
+        row = dict(skill)
+        row['icon'] = skill['id']
+        rows.append(row)
+    return rows
 
 
 def directive_rows(data):
@@ -300,8 +330,10 @@ def main():
         '// (%s); do not edit by hand. Every factor below is the client\'s own,' % CLIENT,
         '// read out of optional_devices.xml, tankmen.xml, perks.xml, battle_boosters.xml and',
         '// vehicle_equipments.xml. Where a device has two numbers they are [plain, with the slot bonus]:',
-        '// a standard piece is worth more in a slot whose category it shares, and only standard pieces',
-        '// carry a category at all.',
+        '// the client hands out the second figure when the slot\'s category matches the piece, and only',
+        '// standard pieces carry a category at all. The page always takes the LAST figure (user, 21.09):',
+        '// the difference is a rounding error, and tracking which slot is categorised cost an interface',
+        '// nobody wanted. "cat" and "slotTypes" are the client\'s own data and are kept for the record.',
         '//',
         '// "eff" maps a page input to [operation, value...]: mul multiplies it, add adds to it. The inputs',
         '// are the fields of the recorded aim block, plus crewLevel, which enters through the crew law',
@@ -327,7 +359,7 @@ def main():
     lines.append('    ],')
     lines.append('    roles: %s,' % dump([{'id': r, 'name': ROLE_NAMES[r]} for r in ROLE_ORDER], 4))
     lines.append('    skills: [')
-    for skill in SKILLS:
+    for skill in skill_rows():
         lines.append('      %s,' % dump(skill, 6))
     lines.append('    ],')
     lines.append('    directives: [')

@@ -162,46 +162,39 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 .aim-config-head{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-top:2px}
 .aim-config-note{font-size:12px;color:var(--muted);line-height:1.5;margin:0}
 .aim-config-note.warn{color:var(--gold)}
-/* The slots as icon tiles: the icons are the client's own and the numbers live in the tooltips. The
-   client shares one icon between every grade of a family, so the GRADE is the frame colour - the way the
-   garage marks bond, Bounty and Experimental equipment - and the picker tiles carry their names as text. */
-.aim-slots{display:flex;flex-wrap:wrap;gap:8px;width:100%}
-.aim-tile{display:flex;align-items:center;justify-content:center;width:46px;height:46px;padding:2px;border:2px solid #35475a;border-radius:6px;background:#0c151f;cursor:pointer}
-.aim-tile:hover{border-color:#9daebf}
-.aim-tile:disabled{opacity:.3;cursor:default}
-.aim-tile[aria-pressed=true]{background:#302b23;box-shadow:0 0 0 1px var(--gold) inset}
-.aim-icon{display:flex;align-items:center;justify-content:center;width:100%;height:100%}
+/* Every tile of the configuration is the same thing: the client's own icon at the icon's own size with
+   the client's own grade badge over the corner, and not one word on it (user, 21.09). The words are in
+   the tooltip, which is where the garage keeps them too. The GRADE is also the frame colour, so a tile
+   still reads as Improved, Bounty or Experimental while the badge art is missing. */
+.aim-slots{display:flex;flex-wrap:wrap;gap:6px;width:100%}
+.aim-tile,.aim-pick{position:relative;display:flex;align-items:center;justify-content:center;flex:0 0 auto;width:46px;height:46px;min-height:0;padding:2px;border:2px solid #35475a;border-radius:6px;background:#0c151f;cursor:pointer}
+.aim-tile:hover,.aim-pick:hover{border-color:#9daebf}
+.aim-tile:disabled,.aim-pick:disabled{opacity:.3;cursor:default}
+.aim-tile[aria-pressed=true],.aim-pick[aria-pressed=true]{background:#302b23;box-shadow:0 0 0 1px var(--gold) inset}
+.aim-icon{position:relative;display:flex;align-items:center;justify-content:center;width:100%;height:100%}
 .aim-icon img{width:100%;height:100%;object-fit:contain}
 .aim-icon-text{font-size:11px;color:var(--muted);text-align:center;line-height:1.2}
-/* Grade frames, shared by the slot tiles and the picker tiles. */
+/* The badge hangs over the icon's own corner at about half its size. Nothing here clips it and nothing
+   here moves the icon: it is taken out of the flow and the tile keeps its 46 px. */
+.aim-icon .aim-badge{position:absolute;left:-4px;bottom:-4px;width:52%;height:52%;object-fit:contain;pointer-events:none}
+/* Grade frames, shared by the slot tiles and the picker tiles. [data-tier=plain] - the consumables and
+   the crew - has no grade and keeps the default frame. */
 .aim-tile[data-tier=none],.aim-pick[data-tier=none]{border-style:dashed;border-color:#35475a}
 .aim-tile[data-tier=improved],.aim-pick[data-tier=improved]{border-color:var(--gold)}
 .aim-tile[data-tier=bounty],.aim-pick[data-tier=bounty]{border-color:#b07a4a}
-.aim-tile[data-tier=bounty_upgraded],.aim-pick[data-tier=bounty_upgraded]{border-color:#9d7bd6}
 .aim-tile[data-tier=experimental],.aim-pick[data-tier=experimental]{border-color:#4fa8c4}
-/* The picker, in the shape of the garage's own configurator: a family, what it does, then its grades. */
-.aim-picker{display:flex;flex-direction:column;gap:8px;width:100%}
-.aim-pick-family{font-size:12px;color:var(--muted);line-height:1.45}
-.aim-pick-family b{color:inherit;font-weight:600}
-.aim-pick-row{display:flex;flex-wrap:wrap;gap:6px;width:100%}
-.aim-pick{display:flex;align-items:center;gap:7px;min-height:42px;max-width:100%;padding:4px 9px 4px 5px;border:2px solid #35475a;border-radius:6px;background:#0c151f;cursor:pointer;text-align:left}
-.aim-pick:hover{border-color:#9daebf}
-.aim-pick:disabled{opacity:.35;cursor:default}
-.aim-pick[aria-pressed=true]{background:#302b23;box-shadow:0 0 0 1px var(--gold) inset}
-.aim-pick .aim-icon{flex:0 0 28px;width:28px;height:28px}
-.aim-pick-text{display:flex;flex-direction:column;gap:1px;min-width:0}
-.aim-pick-tier{font-size:10px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}
-.aim-pick-name{font-size:12px;line-height:1.25}
-/* Consumables and crew are plain toggles; a situational perk wears a dashed frame. */
-.aim-chips{display:flex;flex-wrap:wrap;gap:6px;width:100%}
-.aim-chip{min-height:28px;padding:4px 9px;font-size:12px;line-height:1.2;border:1px solid #35475a;border-radius:13px;background:#0c151f;cursor:pointer}
-.aim-chip:hover{border-color:#9daebf;background:#16222f}
-.aim-chip[aria-pressed=true]{background:#302b23;border-color:var(--gold)}
-.aim-chip[data-situational='1']{border-style:dashed}
+/* The picker: four grade groups under a quiet heading, each a dense grid several tiles to the row. */
+.aim-picker{display:flex;flex-direction:column;gap:4px;width:100%}
+.aim-pick-grade{font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin-top:6px}
+.aim-pick-row{display:flex;flex-wrap:wrap;gap:4px;width:100%}
+/* A situational perk holds only while its condition does, and says so by art alone: the tile is dimmed
+   and wears a dot in the corner the badge does not use. Once it is switched on it stops being dim. */
+.aim-pick[data-situational='1']{opacity:.7}
+.aim-pick[data-situational='1'][aria-pressed=true]{opacity:1}
+.aim-pick[data-situational='1']::after{content:'';position:absolute;top:3px;right:3px;width:5px;height:5px;border-radius:50%;background:var(--muted)}
+.aim-chips{display:flex;flex-wrap:wrap;gap:4px;width:100%}
 .aim-role{font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin:8px 0 4px}
 .aim-role:first-child{margin-top:0}
-#aim-cfg-cat-row[hidden]{display:none}
-#aim-cfg-cat{min-height:28px;padding:3px 6px;font-size:12px;color:inherit;background:#0c151f;border:1px solid #35475a;border-radius:4px}
 #aim-cfg-picker[hidden]{display:none}
 
 

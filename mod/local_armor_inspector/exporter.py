@@ -33,6 +33,10 @@ ICON_FILES = tuple('web/icons/%s.png' % name for name in (
     'improvedRotationMechanism', 'improvedSights', 'improvedVentilation', 'modernizedAimDrivesAimingStabilizer',
     'modernizedImprovedSightsEnhancedAimDrives', 'modernizedTurbochargerRotationMechanism', 'qualityFuel', 'rammer',
     'ration', 'turbocharger',
+    # The grade badges the garage lays over a device icon: every grade shares one picture,
+    # so the badge is the only thing that tells them apart (21.09)
+    'grade_bounty_up', 'grade_experimental1', 'grade_experimental2', 'grade_experimental3',
+    'grade_improved',
     # Crew skills and perks
     'brotherhood', 'commander_coordination', 'commander_emergency', 'commander_holdLine',
     'commander_staySharp', 'driver_bulletproof', 'driver_smoothDriving', 'driver_virtuoso',

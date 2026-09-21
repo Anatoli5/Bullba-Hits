@@ -7,14 +7,17 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 - Hit export now coalesces durable log updates, prepares new hits incrementally and retries interrupted publication instead of queueing a full battle rewrite for every hit.
 - Repeated armor material tables are stored once and shared by reference; old battle logs remain readable, and changing vehicle configurations retain their own recorded armor.
 
-- Aim configuration rebuilt around the client's own catalogue: pick a slot, then the real items grouped by family and grade, the way the garage's configurator does it. The invented "variants" std/delux/trophy/trophyUp are gone.
-- The grades are now the garage's own words — Standard, Improved, Bounty, Bounty upgraded, Experimental. "Trophy" is the client's internal word and is never shown.
-- Improved Aiming, the Improved Rotation Mechanism, the Turbocharger and the whole Experimental tier are on the menu at last; 47 devices in ten families instead of four.
-- The slot bonus is only applied where the slot's category really matches the piece, not on every standard device. A record that carries the vehicle's slots decides it; an older record lets you pick the third slot's category and says it is an assumption. Existing standard builds therefore read slightly weaker in the two plain slots.
+- Aim configuration rebuilt around the client's own catalogue: pick a slot, then the client's real items in the garage's own grade groups — Standard, Bounty, Improved, Experimental. The invented "variants" std/delux/trophy/trophyUp are gone.
+- A tile is an icon: the client's own picture with its grade badge in the corner and not a word on it. The name, the grade, every factor and the client entry id are one hover away. Equipment, directive, consumables and crew alike.
+- In the Standard group the Class bands of one device are a single tile — they are the same item for a different vehicle tier, not three rammers.
+- Bounty is one grade and counts as the upgraded piece, which is the state a Bounty piece ends up in.
+- The grades are the garage's own words — Standard, Bounty, Improved, Experimental. "Trophy" is the client's internal word and is never shown.
+- Improved Aiming, the Improved Rotation Mechanism, the Turbocharger and the whole Experimental tier are on the menu at last; 40 devices in ten families instead of four.
+- A standard device always counts at its category-slot value, and the question about the vehicle's slot categories is gone with it: the difference was a fraction of a per cent and it cost a select, a note and a branch.
 - Only the devices this vehicle may actually mount are offered, read from the tags the record carries. Without them everything is offered and a line under the slots says so.
-- Directives: one slot, nine of them, with the factor the client gives for the fitted piece's grade. A directive without its device is offered but shown inactive.
+- Directives: one slot, eight of them, with the factor the client gives for the fitted piece's grade. A directive without its device is offered but shown inactive.
 - Consumables: combat rations (+10 crew levels) and Quality / Excellent Fuel, which also speed the turret up.
-- Crew: all 19 gunnery skills and perks, grouped by role. Situational perks are marked and start off.
+- Crew: all 19 gunnery skills and perks, grouped by role. A situational perk is a dimmed tile with a corner dot and starts off.
 - A turbocharger now raises the speed the emulation accelerates to, which makes the circle bigger — the honest answer. Mag Mastery shortens the interval between the rounds of a clip.
 - Every tile of the configuration carries the client's own icon: the new devices, the crew skills, the directives and the consumables no longer fall back to a short text label.
 - Saved builds from earlier versions are dropped: the old slots named kinds, not the client's items, and could not be carried over.
