@@ -2,7 +2,7 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
-## 0.7.17 (2026-09-21)
+## 0.7.18 (2026-09-21)
 
 - Hit export now coalesces durable log updates, prepares new hits incrementally and retries interrupted publication instead of queueing a full battle rewrite for every hit.
 - Repeated armor material tables are stored once and shared by reference; old battle logs remain readable, and changing vehicle configurations retain their own recorded armor.
@@ -16,6 +16,7 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 - Consumables: combat rations (+10 crew levels) and Quality / Excellent Fuel, which also speed the turret up.
 - Crew: all 19 gunnery skills and perks, grouped by role. Situational perks are marked and start off.
 - A turbocharger now raises the speed the emulation accelerates to, which makes the circle bigger — the honest answer. Mag Mastery shortens the interval between the rounds of a clip.
+- Every tile of the configuration carries the client's own icon: the new devices, the crew skills, the directives and the consumables no longer fall back to a short text label.
 - Saved builds from earlier versions are dropped: the old slots named kinds, not the client's items, and could not be carried over.
 
 ## 0.7.16 (2026-09-20)
