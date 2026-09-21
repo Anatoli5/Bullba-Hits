@@ -35,7 +35,7 @@ ICON_FILES = tuple('web/icons/%s.png' % name for name in (
 # web/modifiers.js is the Target modifier group beside the Collision model tile; the page has loaded it
 # since 0.7.12 but the package never carried it, so the group silently stayed away (found 20.09).
 ASSETS = ('Viewer.html', 'web/style.css', 'web/icon.svg', 'web/viewer.js',
-          'web/local-data.js', 'web/host.js', 'web/app.js', 'web/modifiers.js', 'web/ballistics.js', 'web/shot-telemetry.js', 'web/shot-context.js', 'web/screen-armor.js', 'web/vendor/three.min.js',
+          'web/local-data.js', 'web/host.js', 'web/app.js', 'web/modifiers.js', 'web/equipment.js', 'web/ballistics.js', 'web/shot-telemetry.js', 'web/shot-context.js', 'web/screen-armor.js', 'web/vendor/three.min.js',
           'web/vendor/three.LICENSE', 'web/vendor/three-mesh-bvh.umd.js',
           # THIRD_PARTY.md ships with the page and points at these two: the packed-XML reader's licence and
           # the vendor manifest with the sources and hashes of three.js / three-mesh-bvh (inspection, 20.09).
@@ -236,6 +236,7 @@ def enrich_vehicle(vehicle):
     fix_gun_height(vehicle)
     fix_gun_dispersion(vehicle)
     fix_aim(vehicle)
+    fix_fitment(vehicle)
     if all(vehicle.get(key) is not None for key in ('level', 'class', 'role')):
         return
     try:
@@ -490,6 +491,34 @@ def translation_columns(offset):
             float(offset[0]), float(offset[1]), float(offset[2]), 1.0]
 
 
+def fix_fitment(vehicle):
+    """Add the fitment fields to a record written before the recorder knew them.
+
+    The twin of fix_aim above: what a vehicle may mount does not depend on the battle, so an
+    old record can pick it up from the client's own cache instead of being fired at again.
+    Returns True when it filled something, so a caller that owns a file on disk can rewrite it.
+    """
+    if not isinstance(vehicle, dict):
+        return False
+    if vehicle.get('tags') is not None:
+        return False
+    type_name = vehicle.get('type')
+    if not type_name:
+        return False
+    try:
+        from items import vehicles
+        nation_id, innation_id = vehicles.g_list.getIDsByName(str(type_name))
+        vtype = vehicles.g_cache.vehicle(nation_id, innation_id)
+        tags = tuple(vtype.tags)
+    except Exception:
+        return False
+    block = fitment_block(vtype, tags)
+    if not block:
+        return False
+    vehicle.update(block)
+    return True
+
+
 def vehicle_descr(compact_descriptor):
     """The client's own VehicleDescr for a recorded base64 compact descriptor.
 
@@ -612,6 +641,55 @@ def gun_limits(descr):
     return limits(descr)
 
 
+def fitment_block(vtype, tags):
+    """What this vehicle may mount, in the client's own terms.
+
+    The page's aim configuration needs all of it and can derive none of it:
+
+      tags                 the vehicle's own tag list. The eligibility tags in it
+                           (tankRammer_class1_user, aimingStabilizer_class2_user, ...) are the
+                           client's allow list: a vehicle without them cannot fit that archetype
+                           at all, whatever grade. The class and nation tags feed the devices'
+                           own <vehicleFilter>.
+      supplySlots          the slot types of the vehicle's <supplySlots> (supply_slot_types.xml:
+                           1 carries no category, 2 mobility, 3 stealth, 4 firepower,
+                           5 survivability, 6 a consumable, 7 the directive, 8 a shell). A standard
+                           device is worth its second <valueByLevel> figure only in a slot whose
+                           category it shares, so without this the page cannot tell an honest
+                           circle from an optimistic one.
+      postProgressionTree  which field-modification tree the vehicle has, or '' for none. Role and
+                           tier reproduce it for most vehicles and quietly fail for the rest.
+      eliteByProgression   separates the tier-XI vehicle-skill trees from the role trees.
+
+    Guarded field by field like every other block here: a renamed client attribute costs one
+    field, never the export.
+    """
+    block = {}
+    if tags:
+        block['tags'] = sorted(str(tag) for tag in tags)
+    try:
+        slots = []
+        for slot in vtype.supplySlots:
+            try:
+                slots.append(int(slot))
+            except Exception:
+                slots.append(int(getattr(slot, 'typeID', getattr(slot, 'id', 0))))
+        if slots:
+            block['supplySlots'] = slots
+    except Exception:
+        pass
+    try:
+        tree = getattr(vtype, 'postProgressionTree', None)
+        block['postProgressionTree'] = str(getattr(tree, 'name', tree) or '')
+    except Exception:
+        pass
+    try:
+        block['eliteByProgression'] = bool(vtype.eliteByProgression)
+    except Exception:
+        pass
+    return block
+
+
 def descr_identity(descr):
     """Identity of a VehicleDescr in the shapes of the vehicle contract.
 
@@ -661,6 +739,7 @@ def descr_identity(descr):
     identity['premium'] = VEHICLE_TAG_PREMIUM in tags or VEHICLE_TAG_PREMIUM_IGR in tags
     identity['collector'] = VEHICLE_TAG_COLLECTOR in tags
     identity['special'] = VEHICLE_TAG_SPECIAL in tags
+    identity.update(fitment_block(vtype, tags))
     return identity
 
 
@@ -1248,12 +1327,14 @@ class Exporter(object):
         for path in sorted(glob.glob(os.path.join(self.folder, 'data', 'vehicles', '*.js'))):
             try:
                 record = read_data_file(path)
-                # A vehicle exported before the aim block existed gets it here, from its own
-                # compact descriptor. Re-exporting it instead would re-extract every collision
-                # model of the catalogue on the first start after the update, for one small
-                # dictionary; the rest of the record is already current.
+                # A vehicle exported before the aim block or the fitment fields existed gets them
+                # here, from its own compact descriptor and the client's cache. Re-exporting it
+                # instead would re-extract every collision model of the catalogue on the first
+                # start after the update, for two small dictionaries; the rest is already current.
                 identifier = record.get('id')
-                if fix_aim(record) and identifier and IDENTIFIER.match(identifier):
+                filled = fix_aim(record)
+                filled = fix_fitment(record) or filled
+                if filled and identifier and IDENTIFIER.match(identifier):
                     write_data(path, 'vehicle:'+identifier, record)
                 self.remember_vehicle(record)
             except Exception:

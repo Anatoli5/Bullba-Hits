@@ -38,3 +38,4 @@ __pycache__/
 !/tools/preview.py
 !/tools/third_party.py
 !/tools/shot_spread_from_records.py
+!/tools/build_equipment_catalogue.py
