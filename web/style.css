@@ -162,22 +162,46 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 .aim-config-head{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-top:2px}
 .aim-config-note{font-size:12px;color:var(--muted);line-height:1.5;margin:0}
 .aim-config-note.warn{color:var(--gold)}
-/* Equipment and perks as icon tiles: the icons are the client's own, the numbers live in the tooltips.
-   A variant the client has no separate icon for (there is none for any of them) is marked by the frame
-   colour instead, the way the game marks bond and trophy equipment. */
+/* The slots as icon tiles: the icons are the client's own and the numbers live in the tooltips. The
+   client shares one icon between every grade of a family, so the GRADE is the frame colour - the way the
+   garage marks bond, Bounty and Experimental equipment - and the picker tiles carry their names as text. */
 .aim-slots{display:flex;flex-wrap:wrap;gap:8px;width:100%}
 .aim-tile{display:flex;align-items:center;justify-content:center;width:46px;height:46px;padding:2px;border:2px solid #35475a;border-radius:6px;background:#0c151f;cursor:pointer}
 .aim-tile:hover{border-color:#9daebf}
 .aim-tile:disabled{opacity:.3;cursor:default}
 .aim-tile[aria-pressed=true]{background:#302b23;box-shadow:0 0 0 1px var(--gold) inset}
-.aim-tile[data-variant=none]{border-style:dashed;border-color:#35475a}
-.aim-tile[data-variant=delux]{border-color:var(--gold)}
-.aim-tile[data-variant=trophy]{border-color:#b07a4a}
-.aim-tile[data-variant=trophyUp]{border-color:#9d7bd6}
 .aim-icon{display:flex;align-items:center;justify-content:center;width:100%;height:100%}
 .aim-icon img{width:100%;height:100%;object-fit:contain}
 .aim-icon-text{font-size:11px;color:var(--muted);text-align:center;line-height:1.2}
-.aim-picker{display:grid;grid-template-columns:repeat(5,auto);justify-content:start;gap:6px;width:100%}
+/* Grade frames, shared by the slot tiles and the picker tiles. */
+.aim-tile[data-tier=none],.aim-pick[data-tier=none]{border-style:dashed;border-color:#35475a}
+.aim-tile[data-tier=improved],.aim-pick[data-tier=improved]{border-color:var(--gold)}
+.aim-tile[data-tier=bounty],.aim-pick[data-tier=bounty]{border-color:#b07a4a}
+.aim-tile[data-tier=bounty_upgraded],.aim-pick[data-tier=bounty_upgraded]{border-color:#9d7bd6}
+.aim-tile[data-tier=experimental],.aim-pick[data-tier=experimental]{border-color:#4fa8c4}
+/* The picker, in the shape of the garage's own configurator: a family, what it does, then its grades. */
+.aim-picker{display:flex;flex-direction:column;gap:8px;width:100%}
+.aim-pick-family{font-size:12px;color:var(--muted);line-height:1.45}
+.aim-pick-family b{color:inherit;font-weight:600}
+.aim-pick-row{display:flex;flex-wrap:wrap;gap:6px;width:100%}
+.aim-pick{display:flex;align-items:center;gap:7px;min-height:42px;max-width:100%;padding:4px 9px 4px 5px;border:2px solid #35475a;border-radius:6px;background:#0c151f;cursor:pointer;text-align:left}
+.aim-pick:hover{border-color:#9daebf}
+.aim-pick:disabled{opacity:.35;cursor:default}
+.aim-pick[aria-pressed=true]{background:#302b23;box-shadow:0 0 0 1px var(--gold) inset}
+.aim-pick .aim-icon{flex:0 0 28px;width:28px;height:28px}
+.aim-pick-text{display:flex;flex-direction:column;gap:1px;min-width:0}
+.aim-pick-tier{font-size:10px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}
+.aim-pick-name{font-size:12px;line-height:1.25}
+/* Consumables and crew are plain toggles; a situational perk wears a dashed frame. */
+.aim-chips{display:flex;flex-wrap:wrap;gap:6px;width:100%}
+.aim-chip{min-height:28px;padding:4px 9px;font-size:12px;line-height:1.2;border:1px solid #35475a;border-radius:13px;background:#0c151f;cursor:pointer}
+.aim-chip:hover{border-color:#9daebf;background:#16222f}
+.aim-chip[aria-pressed=true]{background:#302b23;border-color:var(--gold)}
+.aim-chip[data-situational='1']{border-style:dashed}
+.aim-role{font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin:8px 0 4px}
+.aim-role:first-child{margin-top:0}
+#aim-cfg-cat-row[hidden]{display:none}
+#aim-cfg-cat{min-height:28px;padding:3px 6px;font-size:12px;color:inherit;background:#0c151f;border:1px solid #35475a;border-radius:4px}
 #aim-cfg-picker[hidden]{display:none}
 
 

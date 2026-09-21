@@ -74,7 +74,7 @@
   // the resting one (mult, i.e. standing still, turret still, no shot); settledFor = 0 means the
   // shot is taken in the state itself. That is what the manual sliders ask and it stays as it was.
   // aimStep() below is the same formula integrated over real time instead, for the WASD emulation.
-  var NO_MODS={mult:1,additive:1,movement:1,rotation:1,turret:1,aimingTime:1,turretSpeed:1,hullSpeed:1,reload:1};
+  var NO_MODS={mult:1,additive:1,movement:1,rotation:1,turret:1,aimingTime:1,turretSpeed:1,hullSpeed:1,reload:1,clipInterval:1};
   function aimMods(mods){
     var out={},keys=Object.keys(NO_MODS);
     for(var i=0;i<keys.length;i++){
@@ -165,7 +165,9 @@
     var m=aimMods(mods),clip=aim.clip,burst=aim.burst;
     var shots=clip&&clip.length>1&&clip[0]>1?Math.floor(clip[0]):1;
     return {reload:aim.reloadTime*(aim.reloadTimeFactor>0?aim.reloadTimeFactor:1)*m.reload,
-      shots:shots,interval:shots>1&&clip[1]>0?clip[1]:0,
+      // Mag Mastery (tankmen.xml loader_magMastery) shortens the interval between the rounds of a clip
+      // and nothing else; the page reads that interval from here alone, so one factor covers every caller.
+      shots:shots,interval:shots>1&&clip[1]>0?clip[1]*m.clipInterval:0,
       burst:burst&&burst.length>1&&burst[0]>1?{count:Math.floor(burst[0]),interval:burst[1]>0?burst[1]:0,sync:!!burst[2]}:null};
   }
   // Movement. OUR APPROXIMATION, and there is no client formula behind any of it: the real vehicle
@@ -177,6 +179,7 @@
   // limits themselves - speedForward/speedBackward and hullRotationSpeed - are the client's own.
   var MOVE={accel:5,accelBack:3,brake:2,turn:.5};
   function seconds(value,fallback){var v=Number(value);return isFinite(v)&&v>0?v:fallback;}
+  function term(value){var v=Number(value);return isFinite(v)?v:0;}
   function approach(value,target,most){
     if(value<target)return Math.min(target,value+most);
     if(value>target)return Math.max(target,value-most);
@@ -185,7 +188,13 @@
   function moveStep(prev,keys,aim,mods,dt){
     var k=keys||{},s=prev||{},m=aimMods(mods),a=aim||{};
     var step=Math.max(0,Math.min(.25,Number(dt)||0));
-    var forward=a.speedForward>0?a.speedForward:0,back=a.speedBackward>0?a.speedBackward:0;
+    // A turbocharger and the Mobility Improvement System raise the CAP the vehicle accelerates to
+    // (optional_devices.xml forwardMaxSpeedKMHTerm / backwardMaxSpeedKMHTerm), which makes the movement
+    // term BIGGER, not smaller - the honest answer. The page hands the terms in already converted to the
+    // m/s the record uses. A vehicle whose record carries no speed at all gains nothing: 0 means no data,
+    // and a term on top of it would be an invented speed.
+    var forward=a.speedForward>0?Math.max(0,a.speedForward+term(mods&&mods.speedForwardAdd)):0;
+    var back=a.speedBackward>0?Math.max(0,a.speedBackward+term(mods&&mods.speedBackwardAdd)):0;
     var hullMax=(a.hullRotationSpeed>0?a.hullRotationSpeed:0)*m.hullSpeed;
     var accel=seconds(mods&&mods.accelSeconds,MOVE.accel),accelBack=seconds(mods&&mods.accelBackSeconds,MOVE.accelBack);
     var brake=seconds(mods&&mods.brakeSeconds,MOVE.brake),turn=seconds(mods&&mods.turnSeconds,MOVE.turn);

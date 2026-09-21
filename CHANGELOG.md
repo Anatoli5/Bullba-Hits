@@ -2,6 +2,19 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
+## Unreleased
+
+- Aim configuration rebuilt around the client's own catalogue: pick a slot, then the real items grouped by family and grade, the way the garage's configurator does it. The invented "variants" std/delux/trophy/trophyUp are gone.
+- The grades are now the garage's own words — Standard, Improved, Bounty, Bounty upgraded, Experimental. "Trophy" is the client's internal word and is never shown.
+- Improved Aiming, the Improved Rotation Mechanism, the Turbocharger and the whole Experimental tier are on the menu at last; 47 devices in ten families instead of four.
+- The slot bonus is only applied where the slot's category really matches the piece, not on every standard device. A record that carries the vehicle's slots decides it; an older record lets you pick the third slot's category and says it is an assumption. Existing standard builds therefore read slightly weaker in the two plain slots.
+- Only the devices this vehicle may actually mount are offered, read from the tags the record carries. Without them everything is offered and a line under the slots says so.
+- Directives: one slot, nine of them, with the factor the client gives for the fitted piece's grade. A directive without its device is offered but shown inactive.
+- Consumables: combat rations (+10 crew levels) and Quality / Excellent Fuel, which also speed the turret up.
+- Crew: all 19 gunnery skills and perks, grouped by role. Situational perks are marked and start off.
+- A turbocharger now raises the speed the emulation accelerates to, which makes the circle bigger — the honest answer. Mag Mastery shortens the interval between the rounds of a clip.
+- Saved builds from earlier versions are dropped: the old slots named kinds, not the client's items, and could not be carried over.
+
 ## 0.7.16 (2026-09-20)
 
 - The crosshair shape picked in Settings now shows over the model; the canvas kept the plain cross.
