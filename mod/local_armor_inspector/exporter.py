@@ -28,11 +28,24 @@ IDENTIFIER = re.compile(r'^[-a-zA-Z0-9_]{1,100}\Z')
 # (user, 20.09): they are interface art, not game data, and a fresh install must look right before the
 # first game start. Until 0.7.15 they were unpacked from the client's gui packages on a game start.
 ICON_FILES = tuple('web/icons/%s.png' % name for name in (
-    'aimingStabilizer', 'enhancedAimDrives', 'improvedVentilation', 'rammer', 'empty_slot',
-    'brotherhood', 'gunner_smoothTurret', 'driver_smoothDriving',
-    'ARMOR_PIERCING', 'ARMOR_PIERCING_PREMIUM', 'ARMOR_PIERCING_CR', 'ARMOR_PIERCING_CR_PREMIUM',
-    'HOLLOW_CHARGE', 'HOLLOW_CHARGE_PREMIUM', 'HIGH_EXPLOSIVE', 'HIGH_EXPLOSIVE_PREMIUM',
-    'HIGH_EXPLOSIVE_MODERN', 'HIGH_EXPLOSIVE_MODERN_PREMIUM'))
+    # Optional devices, the empty slot and the consumables
+    'aimingStabilizer', 'empty_slot', 'enhancedAimDrives', 'excellentFuel',
+    'improvedRotationMechanism', 'improvedSights', 'improvedVentilation', 'modernizedAimDrivesAimingStabilizer',
+    'modernizedImprovedSightsEnhancedAimDrives', 'modernizedTurbochargerRotationMechanism', 'qualityFuel', 'rammer',
+    'ration', 'turbocharger',
+    # Crew skills and perks
+    'brotherhood', 'commander_coordination', 'commander_emergency', 'commander_holdLine',
+    'commander_staySharp', 'driver_bulletproof', 'driver_smoothDriving', 'driver_virtuoso',
+    'gunner_armorer', 'gunner_focus', 'gunner_loneWolf', 'gunner_quickAiming',
+    'gunner_smoothTurret', 'loader_desperado', 'loader_magMastery', 'loader_melee',
+    'loader_secondChance', 'radioman_expert', 'radioman_sideBySide',
+    # Directives
+    'aimingStabilizerBattleBooster', 'enhancedAimDrivesBattleBooster', 'improvedSightsBattleBooster', 'improvedVentilationBattleBooster',
+    'rammerBattleBooster', 'smoothDrivingBattleBooster', 'smoothTurretBattleBooster', 'virtuosoBattleBooster',
+    # Shell types, for the gun panel
+    'ARMOR_PIERCING', 'ARMOR_PIERCING_CR', 'ARMOR_PIERCING_CR_PREMIUM', 'ARMOR_PIERCING_PREMIUM',
+    'HIGH_EXPLOSIVE', 'HIGH_EXPLOSIVE_MODERN', 'HIGH_EXPLOSIVE_MODERN_PREMIUM', 'HIGH_EXPLOSIVE_PREMIUM',
+    'HOLLOW_CHARGE', 'HOLLOW_CHARGE_PREMIUM'))
 # web/modifiers.js is the Target modifier group beside the Collision model tile; the page has loaded it
 # since 0.7.12 but the package never carried it, so the group silently stayed away (found 20.09).
 ASSETS = ('Viewer.html', 'web/style.css', 'web/icon.svg', 'web/viewer.js',

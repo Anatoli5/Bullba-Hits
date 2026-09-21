@@ -256,16 +256,30 @@ def directive_rows(data):
         skill = row.get('skillName')
         if not levels and not skill:
             continue
-        item = {'id': entry, 'name': row.get('name_en') or entry, 'icon': row.get('icon') or entry}
+        # A directive has its own art in the client, named after the entry; the research file's "icon" is
+        # the device the directive is named for, which would make the two tiles identical on screen.
+        item = {'id': entry, 'name': row.get('name_en') or entry, 'icon': entry,
+                'deviceIcon': row.get('icon') or entry}
         if levels:
             item['levels'] = levels
         if skill and row.get('perkLevelMultiplier'):
             item['skill'] = skill
             item['skillMult'] = float(row['perkLevelMultiplier'])
         out.append(item)
-    # Only the ones that reach the page's own maths: a skill directive counts when the page models that skill
+    # Only the ones that reach the page's own maths: a skill directive counts when the page models that
+    # skill, and an equipment directive when at least one of its levels moves an input the page uses.
+    # enginePower does not qualify — the movement term reads the speed cap, not the power that gets there,
+    # so the Fuel Filter Replacement would sit in the menu changing nothing.
     known = set(s['id'] for s in SKILLS)
-    out = [row for row in out if 'levels' in row or row.get('skill') in known]
+
+    def lands(row):
+        for level in row.get('levels') or ():
+            for name in level['eff']:
+                if name != 'enginePower':
+                    return True
+        return False
+
+    out = [row for row in out if lands(row) or row.get('skill') in known]
     out.sort(key=lambda r: r['name'])
     return out
 
