@@ -1156,8 +1156,11 @@
     // A different build is a different vehicle, not a moment in the life of this one: the running
     // exponential is dropped and the circle is rebuilt for the new modifiers, so the answer to "what
     // would a stabiliser do here" is on screen at once instead of waiting for the next frame.
-    aimNow = null;
-    updateAim(); scheduleLayout();
+    // Its figure goes with it: the 120 ms pace of the coarse estimate is for a ring that moves, not for a
+    // new one, so it is taken at once, and the loop is woken to take the fine one when the ring rests -
+    // a second click inside 120 ms used to leave the figure of the ring before it on the panel.
+    aimNow = null; aimEstAt = 0; aimEstFine = false;
+    updateAim(); startAimLoop(); scheduleLayout();
   }
   // Which preset the current values are, if any: a preset the user edited becomes "Custom" without
   // touching the preset it came from.
@@ -1782,7 +1785,8 @@
       swung = !!(viewer.turnAim && viewer.turnAim(aimMove.hullTurn * dt));
     }
     var chase = ArmorBallistics.turretChase(viewer.aimGap(), aimMove.hullTurn, a, mods, dt, swung);
-    if (chase.step > 0) viewer.chaseAim(chase.step);
+    // `turned`: the gun really moved in this frame (chaseAim says so for anything above a micro-radian).
+    var turned = chase.step > 0 && !!viewer.chaseAim(chase.step);
     var state = {speed: aimMove.speed, hullTurn: aimMove.hullTurn, hullMax: aimMove.hullMax, turretTurn: chase.turretTurn};
     aimNow = ArmorBallistics.aimStep(aimNow, state, a, mods, dt);
     // The next shot of a held burst, the moment the cooldown is over. The recoil of the shot just fired is
@@ -1791,7 +1795,13 @@
     if (aimBurst && aimDown && !aimClipDry && aimReloadLeft() <= 0) fireShot();
     paintAim(state);
     var reloading = aimReloadLeft() > 0;
-    if (aimHeld() || !aimMove.resting || reloading || !chase.caught || (aimBurst && aimDown && !aimClipDry) || (aimNow && !aimNow.settled)) startAimLoop();
+    // A frame in which the turret caught the cursor is not a resting frame, although it reads as one: the
+    // turret's speed of this frame rose the ring INSTANTLY to that state's ideal, and aimStep calls a
+    // factor sitting on its ideal `settled`. Sleeping here left the ring bloomed and its figure stale
+    // until the next mouse move (optimisation plan 21.09, §8.3). So the loop runs on for as long as the
+    // gun moves; the next frame has no turret speed, the ring decays from the bloom, and the fine figure
+    // is taken once, when it is really at rest - the coarse one keeps its 120 ms pace meanwhile.
+    if (aimHeld() || !aimMove.resting || reloading || !chase.caught || turned || (aimBurst && aimDown && !aimClipDry) || (aimNow && !aimNow.settled)) startAimLoop();
     else { aimClock = 0; if (reloadJustFinished()) paintAim(state); if (!aimEstFine) { estimateLive(true); paintCircleLines(); } }
   }
   // The reload is over: drop it so the ring is drawn whole again.
@@ -2118,7 +2128,11 @@
     aimCentred = want;
     viewer.setAimCentre(want, aimCrosshairShape());
     if (!moved || !aimLive) return;
-    // The circle stands somewhere else now: its figure is taken again at once, and finely once at rest.
+    aimRingMoved();
+  }
+  // The circle stands somewhere else now: its figure is taken again at once, and finely once at rest. Run
+  // when the hold starts or ends.
+  function aimRingMoved() {
     aimEstAt = 0; aimEstFine = false;
     paintAim(aimLastState || aimState());
     startAimLoop();
@@ -2754,7 +2768,10 @@
     currentHitKey=null;aimShot=null;if(viewer)viewer.clearLiveAim();
     var hit=data.hit;swapped=hit.synthetic&&!hit.vehicle?hit:null;sceneTiles(hit,reference);
     var pend=pendingParts(hit);noteModelsPending(hit,pend);
-    $('shot-source').textContent=hit.synthetic?'No recorded shot':'Hit line';prepareShell(hit);var drawn=viewer&&viewer.load(data,shotContext);
+    // The roster's shooter mark reads activeHit, which prepareShell() has only just moved to this hit: every
+    // renderHits() before it (selectHit calls one before the scene arrives) still marked the previous
+    // hit's shooter, and nothing repainted the roster after a click (optimisation plan 21.09, §8.4).
+    $('shot-source').textContent=hit.synthetic?'No recorded shot':'Hit line';prepareShell(hit);renderFocus();var drawn=viewer&&viewer.load(data,shotContext);
     // A part on its way is not a missing model: the spinner outranks both the empty
     // message and the “geometry unavailable” one, which belongs to a broken record.
     if(pend.target)message(EXTRACTING,true);else message(drawn?'':data.geometryError||'Geometry unavailable. The original event is kept.');
@@ -3000,6 +3017,11 @@
   // The cursor moved, so the turret has somewhere to go: the loop decides for itself whether anything
   // is actually left to do and stops again straight away when there is not.
   if(viewer)viewer.onAimMove=function(){if(aimOn)startAimLoop();};
+  // The camera came to rest after an orbit while Config holds the aim, and the viewer found the middle of the
+  // target again: the ring stands on another point, so its figure is taken again - the coarse one within its
+  // 120 ms pace, not at once as aimRingMoved does (a wheel glide or a +/- key can settle again soon after), and
+  // the fine one when the woken loop finds everything at rest.
+  if(viewer)viewer.onAimCentre=function(){if(!aimLive||!aimCentred)return;aimEstFine=false;paintAim(aimLastState||aimState());startAimLoop();};
   // The mode is ON by default and its switch is an ordinary Settings -> Scene checkbox (user, 20.09):
   // the settings machinery restores it, runs this handler and persists it like every other control, so
   // nothing here writes to storage by hand.

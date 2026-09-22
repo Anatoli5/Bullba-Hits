@@ -59,8 +59,9 @@
     // and the recorded tracer and reticles come back.
     this.aimShotCircle=null;this.aimReloadPart=null;this.aimHold=false;this.aimPinned=false;
     // aimCentred: the aim held on the model centre while the page's Config popover is open (setAimCentre),
-    // null otherwise; aimMarker the crosshair drawn there, in aimMarkerShape.
-    this.aimCentred=null;this.aimMarker=null;this.aimMarkerShape='cross';
+    // null otherwise; aimMarker the crosshair drawn there, in aimMarkerShape; aimSettleTimer the wait after a
+    // +/- key before the held point is looked for again (settleAimSoon).
+    this.aimCentred=null;this.aimMarker=null;this.aimMarkerShape='cross';this.aimSettleTimer=null;
     this.frameAt=0;this.frameTimes=[]; // when the pending frame was asked for, and the cadence of the frames that ran
     this.contextLost=false;this.dragging=false;this.hoverId=null;this.hoverEvent=null;this.inspectKey=null;
     // The camera is driven by its own frame loop: pointer and key events only move the target.
@@ -86,13 +87,14 @@
     // map comes back at full quality with the ricochet trace (paint() draws a drag at half resolution).
     // The end of a press: a press the emulation claimed is handed back to it (a tap fires one shot, a
     // hold has been firing all along and simply stops), anything else pins the point under the cursor
-    // as it always did.
-    container.addEventListener('pointerup', function(e) { var d=drag,hold=self.aimHold;drag=null;self.aimHold=false;self.dragging=false;self.commitPose();self.draw();if(hold&&self.onShotUp){self.onShotUp(e);return;}if(d&&!d.moved&&!e.altKey&&!e.ctrlKey&&e.button===0)self.pinAt(e); });
+    // as it always did. A drag that moved the camera while the aim is held looks for the middle again now,
+    // once, and not on each frame of it (settleAim).
+    container.addEventListener('pointerup', function(e) { var d=drag,hold=self.aimHold;drag=null;self.aimHold=false;self.dragging=false;self.commitPose();self.draw();if(d&&d.moved)self.settleAim();if(hold&&self.onShotUp){self.onShotUp(e);return;}if(d&&!d.moved&&!e.altKey&&!e.ctrlKey&&e.button===0)self.pinAt(e); });
     /* A pointer that is taken away never sends its pointerup, so a burst has to be ENDED here, not
        cancelled: onShotCancel refuses a running burst (false) and the release path stops it instead. */
-    container.addEventListener('pointercancel', function() { drag=null;self.dragging=false;if(self.aimHold){self.aimHold=false;if(self.onShotCancel&&self.onShotCancel()===false&&self.onShotUp)self.onShotUp();}self.cancelHover();self.commitPose();self.draw(); });
+    container.addEventListener('pointercancel', function() { var d=drag;drag=null;self.dragging=false;if(self.aimHold){self.aimHold=false;if(self.onShotCancel&&self.onShotCancel()===false&&self.onShotUp)self.onShotUp();}self.cancelHover();self.commitPose();self.draw();if(d&&d.moved)self.settleAim(); });
     container.addEventListener('wheel', function(e) {e.preventDefault();var delta=e.deltaY||e.deltaX,amount=Math.max(-200,Math.min(200,delta*(e.deltaMode===1?16:e.deltaMode===2?300:1)));if(!(e.shiftKey||e.ctrlKey||e.altKey))self.distanceTo((self.targetDistance!==null?self.targetDistance:self.distance)*Math.exp(amount*.002));else if(self.autoFrame)self.scaleTo((self.targetScale!==null?self.targetScale:self.frameScale)*Math.exp(-amount*.002));else self.zoomTo((self.targetZoom!==null?self.targetZoom:self.camera.zoom)*Math.exp(-amount*.002));}, {passive:false});
-    container.addEventListener('keydown',function(e){var used=true,orbit=true;if(e.key==='ArrowLeft')self.orbitTo(self.targetYaw-.1,self.targetPitch);else if(e.key==='ArrowRight')self.orbitTo(self.targetYaw+.1,self.targetPitch);else if(e.key==='ArrowUp')self.orbitTo(self.targetYaw,self.targetPitch+.1);else if(e.key==='ArrowDown')self.orbitTo(self.targetYaw,self.targetPitch-.1);else{orbit=false;if(e.key==='+'||e.key==='='){if(e.shiftKey)self.setZoom(self.camera.zoom*1.1);else self.setDistance(Math.max(1,self.distance/1.1));}else if(e.key==='-'){if(e.shiftKey)self.setZoom(self.camera.zoom/1.1);else self.setDistance(Math.min(1500,self.distance*1.1));}else used=false;}if(used){e.preventDefault();if(!orbit)self.render();}});
+    container.addEventListener('keydown',function(e){var used=true,orbit=true;if(e.key==='ArrowLeft')self.orbitTo(self.targetYaw-.1,self.targetPitch);else if(e.key==='ArrowRight')self.orbitTo(self.targetYaw+.1,self.targetPitch);else if(e.key==='ArrowUp')self.orbitTo(self.targetYaw,self.targetPitch+.1);else if(e.key==='ArrowDown')self.orbitTo(self.targetYaw,self.targetPitch-.1);else{orbit=false;if(e.key==='+'||e.key==='='){if(e.shiftKey)self.setZoom(self.camera.zoom*1.1);else self.setDistance(Math.max(1,self.distance/1.1));}else if(e.key==='-'){if(e.shiftKey)self.setZoom(self.camera.zoom/1.1);else self.setDistance(Math.min(1500,self.distance*1.1));}else used=false;}if(used){e.preventDefault();if(!orbit){self.render();if(self.aimCentred)self.settleAimSoon();}}});
     // A lost context stops the frame loop: three ignores render() while the context is gone, but a pending
     // frame of ours would still walk the whole paint path. Restoring clears the flag and redraws once.
     if(this.renderer.domElement.addEventListener){
@@ -177,6 +179,7 @@
       var pan=self.pendingPan;self.pendingPan=null;
       if(pan)self.panBy(pan.x,pan.y);else self.render(); // panBy renders itself
       if(!done||self.pendingPan)self.orbitId=window.requestAnimationFrame(step);
+      else self.settleAim(); // the camera is at rest: the held aim finds the middle again, unless a drag goes on
     };
     this.orbitId=window.requestAnimationFrame(step);
   };
@@ -184,7 +187,7 @@
   Viewer.prototype.setDistance=function(value){if(!Number.isFinite(value))return;this.targetDistance=null;this.distance=Math.max(DISTANCE_MIN,Math.min(DISTANCE_MAX,value));this.render();};
   Viewer.limits={distanceMin:DISTANCE_MIN,distanceMax:DISTANCE_MAX};
   Viewer.prototype.saveDefaults=function(){var frame=this.framing();this.defaults={distance:this.distance,scale:Math.max(.1,Math.min(10,this.camera.zoom/(frame?frame.zoom:this.fitZoom)))};try{window.localStorage.setItem('armor-camera-defaults',JSON.stringify(this.defaults));return true;}catch(ignore){return false;}};
-  Viewer.prototype.clear=function(){this.dropTargets();this.clearLiveAim();this.fitPending=false;this.shotPoints=null;this.recordedDistance=null;this.pinned=null;this.disposePin();this.pinReticles=[];if(this.surface)this.surface.dispose();this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.gunAngle=0;this.savedAim=null;this.aimGroup=null;this.reticles=[];this.reticleLayer.replaceChildren();clearTimeout(this.turretTimer);this.turretTimer=null;this.turretPending=false;this.poseGeometries=null;this.poseBuilt=null;this.poseStale=false;this.spreadAim=null;this.hideSpread();clearTimeout(this.paintTimer);this.paintTimer=null;window.cancelAnimationFrame(this.frameId);this.frameId=null;this.cancelHover();this.cancelOrbit();this.pendingPan=null;this.inspectKey=null;this.paintMesh=null;this.outline=null;this.outlineDepth=null;this.engine=null;this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.loadedData=null;this.paintedKey=null;this.samples=[];var disposed=new Set();this.root.traverse(function(o){var shared=!!(o.parent&&o.parent.type==='ArrowHelper'&&(o===o.parent.line||o===o.parent.cone));if(o.geometry&&!shared&&!disposed.has(o.geometry)){disposed.add(o.geometry);o.geometry.dispose();}if(o.material){(Array.isArray(o.material)?o.material:[o.material]).forEach(function(m){m.dispose();});}});while(this.root.children.length)this.root.remove(this.root.children[0]);this.materials=[];this.point=null;this.travel=null;this.render();};
+  Viewer.prototype.clear=function(){this.dropTargets();this.clearLiveAim();this.fitPending=false;this.shotPoints=null;this.recordedDistance=null;this.pinned=null;this.disposePin();this.pinReticles=[];if(this.surface)this.surface.dispose();this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.gunAngle=0;this.savedAim=null;this.aimGroup=null;this.reticles=[];this.reticleLayer.replaceChildren();clearTimeout(this.turretTimer);this.turretTimer=null;this.turretPending=false;this.poseGeometries=null;this.poseBuilt=null;this.poseStale=false;this.spreadAim=null;this.hideSpread();clearTimeout(this.paintTimer);this.paintTimer=null;window.clearTimeout(this.aimSettleTimer);this.aimSettleTimer=null;window.cancelAnimationFrame(this.frameId);this.frameId=null;this.cancelHover();this.cancelOrbit();this.pendingPan=null;this.inspectKey=null;this.paintMesh=null;this.outline=null;this.outlineDepth=null;this.engine=null;this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.loadedData=null;this.paintedKey=null;this.samples=[];var disposed=new Set();this.root.traverse(function(o){var shared=!!(o.parent&&o.parent.type==='ArrowHelper'&&(o===o.parent.line||o===o.parent.cone));if(o.geometry&&!shared&&!disposed.has(o.geometry)){disposed.add(o.geometry);o.geometry.dispose();}if(o.material){(Array.isArray(o.material)?o.material:[o.material]).forEach(function(m){m.dispose();});}});while(this.root.children.length)this.root.remove(this.root.children[0]);this.materials=[];this.point=null;this.travel=null;this.render();};
   Viewer.prototype.rebuild=function(){
     if(!this.loadedData)return;var T=THREE,self=this;this.samples=[];this.paintedKey=null;
     // A failed composition is retried on the next rebuild (pose or model) instead of staying off for good.
@@ -903,6 +906,33 @@
     var point=this.aimCentrePoint();
     if(point){this.aimCursorPoint=point;this.liveAimPoint=point.clone();}
     return point;
+  };
+  // The held point is found once, when the hold starts, so an orbit (the arrow keys still turn the camera
+  // while the menu has the focus, and the wheel still glides the distance) would leave it on the surface point
+  // of the old view - off the middle, or round the back of the model. When the camera comes to rest the same
+  // raycast runs again (settleAim). The gun goes with the crosshair, as it does when the hold starts, and the
+  // page is told so it can take the ring's figure again (onAimCentre). No ring, no hold to move: between a
+  // clear() and the next model the bounds are the old model's, and setLiveAim centres the new one itself.
+  Viewer.prototype.recentreAim=function(){
+    if(!this.aimCentred||!this.liveRadius100)return false;
+    var was=this.aimCursorPoint,point=this.aimCentrePoint();
+    // The same point: nothing moves, and a gun the hull has swung off it is left to the turret's chase.
+    if(!point||(was&&was.distanceToSquared(point)<1e-12))return false;
+    this.aimCursorPoint=point;this.liveAimPoint=point.clone();
+    this.drawLiveAim();this.updateAimMarker();this.draw();
+    if(this.onAimCentre)this.onAimCentre();
+    return true;
+  };
+  // WHEN the held point is looked for again: at rest, once per move. Never in the middle of a drag - a drag
+  // pauses the emulation, and a pan's loop settles on every frame, so the page would take a new figure of the
+  // ring per frame - the release does it instead; and never while the camera loop still eases (orbitId), which
+  // does it itself when it settles.
+  Viewer.prototype.settleAim=function(){if(this.aimCentred&&!this.dragging&&this.orbitId===null)this.recentreAim();};
+  // The +/- keys set the distance at once and a held key repeats thirty times a second: the held point is
+  // looked for once the key rests, POSE_SETTLE ms after the last step, not on every repeat.
+  Viewer.prototype.settleAimSoon=function(){
+    var self=this;window.clearTimeout(this.aimSettleTimer);
+    this.aimSettleTimer=window.setTimeout(function(){self.aimSettleTimer=null;self.settleAim();},POSE_SETTLE);
   };
   Viewer.prototype.aimCentrePoint=function(){
     if(!this.bounds||!this.camera)return null;
