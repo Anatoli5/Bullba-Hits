@@ -2,7 +2,7 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
-## Unreleased
+## 0.7.24 (2026-09-22)
 
 - Vehicles that fire different shells in their second mode (the Gorilla's low charge and the five German shell switchers) are recorded and computed with that mode's own numbers: the recorder writes both sets of shells, the shooter's siege state at the shot and at the impact, and the page marks a second-mode shell ◐ and says which state it was in.
 - The page no longer claims a shell whose flight the tracer contradicts: when the shot's own speed and gravity fit no shell the shooter carries, it is shown as assumed with that reason instead of as the shell that flew.
