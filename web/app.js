@@ -3770,7 +3770,11 @@
       // The shooter presets ride in the same object under their own key, so one read and one write serve
       // the whole page. A stored object that fails the checks in adoptAimStore is simply not adopted.
       if(box&&box.aim)adoptAimStore(box.aim);
-      if(box&&box.values&&typeof box.values==='object')return box.values;}catch(e){}
+      if(box&&box.values&&typeof box.values==='object'){
+        // v2 (user, 22.09): the impact cross was hard to see at the old default of 50 %, so the default is 90.
+        // A store written before that keeps the user's own choice and only lets the old default through.
+        if(!(box.v>=2)&&String(box.values['impact-opacity'])==='50')delete box.values['impact-opacity'];
+        return box.values;}}catch(e){}
     return null;
   }
   // The keys of 0.7.x, read once and dropped.
@@ -3786,7 +3790,7 @@
   }
   function persistSettings(){
     var values={};settingControls.forEach(function(el){values[el.id]=settingValue(el);});
-    try{window.localStorage.setItem(SETTINGS_KEY,JSON.stringify({v:1,values:values,aim:aimStored()}));}catch(e){}
+    try{window.localStorage.setItem(SETTINGS_KEY,JSON.stringify({v:2,values:values,aim:aimStored()}));}catch(e){}
   }
   function restoreSettings(){
     var stored=settingsStored(),migrated=false;
@@ -3802,6 +3806,48 @@
     });
     if(migrated)persistSettings();
   }
+  // A slider under the cursor takes the wheel and the arrows (user, 22.09): no click to focus it first, and
+  // the step is the slider's own, so 1 % stays 1 % whatever the mouse is set to. Capture phase and
+  // stopPropagation, or the same wheel would zoom the scene and the arrows would walk the camera.
+  (function(){
+    var hovered=null,rolled=0;
+    function under(target){for(var n=target;n;n=n.parentNode)if(n.type==='range')return n.disabled?null:n;return null;}
+    function step(el,dir){
+      var s=Math.abs(Number(el.step))||1,min=el.min===''?0:Number(el.min),max=el.max===''?100:Number(el.max);
+      var was=Number(el.value),now=Math.min(max,Math.max(min,was+dir*s));
+      if(!isFinite(now)||now===was)return;
+      el.value=String(now);
+      // The control's own handler draws the change; the shared 'input'/'change' listeners save it.
+      el.dispatchEvent(new Event('input',{bubbles:true}));
+      el.dispatchEvent(new Event('change',{bubbles:true}));
+    }
+    document.addEventListener('pointerover',function(e){hovered=under(e&&e.target);rolled=0;},true);
+    document.addEventListener('pointerout',function(e){if(hovered&&hovered===under(e&&e.target)){hovered=null;rolled=0;}},true);
+    document.addEventListener('wheel',function(e){
+      var el=under(e&&e.target)||(hovered&&hovered.isConnected!==false?hovered:null);
+      if(!el)return;
+      var d=e.deltaY||e.deltaX||0;
+      if(!d)return;
+      e.preventDefault();e.stopPropagation();
+      // One notch is one step. A trackpad sends many small deltas instead, so they add up to a notch first.
+      if(e.deltaMode!==0||Math.abs(d)>=40){rolled=0;return step(el,d<0?1:-1);}
+      rolled+=d;
+      if(Math.abs(rolled)<100)return;
+      step(el,rolled<0?1:-1);rolled=0;
+    },{capture:true,passive:false});
+    document.addEventListener('keydown',function(e){
+      var el=hovered;
+      if(!el||el.isConnected===false||document.activeElement===el)return;   // focused: the browser steps it itself
+      if(e.ctrlKey||e.metaKey||e.altKey)return;
+      var t=e.target;
+      if(t&&t!==el&&(t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.isContentEditable))return;
+      var dir=e.key==='ArrowUp'||e.key==='ArrowRight'||e.key==='+'||e.key==='='?1:
+        e.key==='ArrowDown'||e.key==='ArrowLeft'||e.key==='-'||e.key==='_'?-1:0;
+      if(!dir)return;
+      e.preventDefault();e.stopPropagation();
+      step(el,dir);
+    },true);
+  }());
   $('reset-settings').onclick=function(){
     settingControls.forEach(function(el){settingSet(el,settingDefaults[el.id]);settingRun(el);});
     try{window.localStorage.removeItem(SETTINGS_KEY);}catch(e){}

@@ -6,6 +6,8 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 
 - Config sub-menus (the equipment and directive pickers, the preset list) open as a panel over the menu, always under the slot or control they belong to, which stays visible and lit while the panel is up. A click beside the panel, its ×, or Esc closes the panel alone; the Config menu stays open.
 - Presets are one control with the list inside it: rename in place by double-click or the pencil, delete by the bin, and a Custom entry per vehicle that holds every change you make by hand, kept across launches — choosing a preset no longer throws your build away, and the built-in and saved presets are never changed by an edit. Choosing a preset keeps Config open, and the arrow keys step through the presets with the aiming circle following.
+- Any slider takes the mouse wheel and the arrow keys while the cursor is over it: one notch or one press is one step, and the scene no longer zooms or turns under your hand.
+- The impact cross is drawn at 90 % by default instead of 50 %, where it was hard to see; a stored 50 % from the old default follows it.
 - Config drops the paragraph under the slots and the "?" on the button; what they said is in the button's tooltip.
 
 ## 0.7.20 (2026-09-22)
