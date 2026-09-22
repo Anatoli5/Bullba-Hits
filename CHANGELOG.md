@@ -2,6 +2,12 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
+## Unreleased
+
+- Config sub-menus (the equipment and directive pickers, the preset list) open as a panel over the menu, always under the slot or control they belong to, which stays visible and lit while the panel is up. A click beside the panel, its ×, or Esc closes the panel alone; the Config menu stays open.
+- Presets are one control with the list inside it: rename in place by double-click or the pencil, delete by the bin, and a Custom entry per vehicle that holds every change you make by hand, kept across launches — choosing a preset no longer throws your build away, and the built-in and saved presets are never changed by an edit. Choosing a preset keeps Config open, and the arrow keys step through the presets with the aiming circle following.
+- Config drops the paragraph under the slots and the "?" on the button; what they said is in the button's tooltip.
+
 ## 0.7.20 (2026-09-22)
 
 - Hit tiles show the damaged modules and injured crew with the client's own icons when the game reports them; any other critical hit gets one crit icon. Names and sources are on hover and in a "Critical damage" row of the hit details. A crit without damage shows 0 instead of ⚙.

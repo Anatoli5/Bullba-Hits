@@ -150,23 +150,58 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 .aim-gun-load b[data-running="1"]{color:var(--gold)}
 .aim-gun-clip{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
 .aim-gun-clip[hidden]{display:none}
-/* “Configuration ▾” beside the Shooter tile: its popover opens upward, over the scene. */
+/* “Configuration ▾” beside the Shooter tile: its popover opens upward, over the scene. Nothing is printed
+   inside the button any more (user, 22.09): a battle whose rules the client data does not give, and a kind of
+   equipment the vehicle's own lock fixes, are said in the button's own tooltip. */
 .aim-config{flex-shrink:0}
 .aim-config>summary{padding:6px 10px}
-/* The mark inside the Config button (S3): '?' - the rules of this battle's mode are not known; the lock
-   sign - the vehicle's own lock keeps a kind of equipment out. Its tooltip says which and why. */
-.aim-mode-mark{display:inline-block;margin-left:6px;min-width:15px;height:15px;padding:0 3px;border-radius:8px;font-size:11px;font-weight:700;line-height:15px;text-align:center;vertical-align:1px;color:#111a24;background:var(--gold);cursor:help}
-.aim-mode-mark[hidden]{display:none}
-.aim-mode-mark[data-kind=forbidden]{background:var(--red)}
-.aim-config .toolbar-popover{left:0;right:auto;bottom:calc(100% + 6px);min-width:min(520px,calc(100vw - 40px));max-width:min(560px,calc(100vw - 40px));max-height:min(70vh,560px);overflow:auto;gap:10px}
+/* The popover holds two things: the sections, which scroll in a box of their own, and the LAYER over them - a
+   light scrim and one sub-panel (a picker, the preset list). The layer keeps its place whatever the sections
+   are scrolled to, which is why they and not the popover are the scrolling box. */
+.aim-config .toolbar-popover{left:0;right:auto;bottom:calc(100% + 6px);min-width:min(520px,calc(100vw - 40px));max-width:min(560px,calc(100vw - 40px));max-height:min(70vh,560px);overflow:hidden;padding:0;gap:0}
+.aim-config .aim-config-main{display:flex;flex-direction:column;align-items:flex-start;gap:10px;flex:1 1 auto;min-height:0;width:100%;padding:14px;overflow:auto;overscroll-behavior:contain}
 .aim-config-grid{display:grid;grid-template-columns:auto 1fr;align-items:center;gap:8px 12px;width:100%}
 .aim-config-grid>span{color:var(--muted);font-size:12px}
-.aim-config-grid select,.aim-config-grid input[type=number],.aim-config-grid input[type=text]{width:100%;min-height:30px;box-sizing:border-box;color:inherit;background:#0c151f;border:1px solid #35475a;border-radius:4px;padding:5px 7px;font-size:13px}
-.aim-config-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px;width:100%}
-.aim-config-row button{min-height:30px;padding:5px 10px;font-size:13px}
 .aim-config-head{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-top:2px}
-.aim-config-note{font-size:12px;color:var(--muted);line-height:1.5;margin:0}
-.aim-config-note.warn{color:var(--gold)}
+/* The preset control: the name of the entry in force, and the same caret the popovers wear. */
+.aim-preset{position:relative;display:block;width:100%;min-height:30px;padding:5px 26px 5px 9px;color:inherit;background:#0c151f;border:1px solid #35475a;border-radius:4px;font-size:13px;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.aim-preset:hover{background:#13202e}
+.aim-preset::after{content:'\25be';position:absolute;right:9px;top:50%;transform:translateY(-50%);color:var(--muted)}
+.aim-preset[aria-expanded=true]::after{content:'\25b4'}
+/* THE LAYER (user, 22.09: “the sub-menu must read as the level above, and the slot it belongs to must be
+   lit”). The scrim only lets the sections recede - it is not a black-out; the element the panel belongs to is
+   lifted out of it and lit in the page's accent colour, and the panel itself is placed under that element by
+   app.js (aimPlaceLayer), never over it. The panel carries no heading: the lit element is the heading. */
+.aim-scrim{position:absolute;top:0;right:0;bottom:0;left:0;z-index:2;border-radius:inherit;background:rgba(12,19,28,.45)}
+.aim-config [data-owner]{position:relative;z-index:3}
+.aim-config [aria-expanded=true]{outline:2px solid var(--gold);outline-offset:2px;box-shadow:0 0 0 5px rgba(234,195,110,.22),0 0 14px rgba(234,195,110,.45)}
+/* The panel itself does not scroll - its content box does (#aim-cfg-picker below). The × is laid out against
+   the panel, so a panel that scrolled would carry it out of its own corner after a line or two. */
+.aim-layer{position:absolute;left:10px;right:10px;z-index:4;display:flex;flex-direction:column;overflow:hidden;padding:10px 34px 10px 10px;border:1px solid #35475a;border-radius:7px;background:#172330;box-shadow:0 12px 32px #000b}
+.aim-scrim[hidden],.aim-layer[hidden]{display:none}
+.aim-layer-close{position:absolute;top:4px;right:4px;width:24px;height:24px;min-height:0;padding:0;border:0;border-radius:4px;background:none;color:var(--muted);font-size:17px;line-height:1}
+.aim-layer-close:hover{background:#263749;color:#e5edf5}
+/* The preset list, inside the panel: a row is its name, and the icons of what can be done with it - nothing
+   else. Custom, the user's own working build, is the first row and wears the save icon; a preset of his own
+   wears the pencil and the bin. The built-in builds are read-only and wear neither. */
+.aim-presets{display:flex;flex-direction:column;gap:2px;width:100%}
+.aim-preset-row{display:flex;align-items:center;gap:2px;width:100%;border-radius:4px}
+.aim-preset-row[data-selected=true]{background:#302b23;box-shadow:0 0 0 1px var(--gold) inset}
+.aim-preset-pick{flex:1 1 auto;min-width:0;min-height:30px;padding:5px 8px;border:0;border-radius:4px;background:none;font-size:13px;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.aim-preset-pick:hover{background:#263749}
+.aim-preset-field{flex:1 1 auto;min-width:0;min-height:30px;box-sizing:border-box;padding:4px 7px;color:inherit;background:#0c151f;border:1px solid #35475a;border-radius:4px;font-size:13px}
+.aim-preset-field[aria-invalid=true]{border-color:var(--red);outline:1px solid var(--red)}
+.aim-preset-act{position:relative;flex:0 0 auto;width:28px;height:28px;min-height:0;padding:0;border:0;border-radius:4px;background:none;color:var(--muted)}
+.aim-preset-act:hover{background:#263749;color:#e5edf5}
+.aim-preset-act[data-act=delete]:hover{color:var(--red)}
+.aim-preset-act[aria-disabled=true]{opacity:.35;cursor:not-allowed}
+.aim-preset-act[aria-disabled=true]:hover{background:none;color:var(--muted)}
+/* The three glyphs are drawn here, as masks over the button's own colour, so they follow the theme and carry
+   no text - the same rule the equipment tiles follow. */
+.aim-preset-act::before{content:'';position:absolute;top:0;right:0;bottom:0;left:0;margin:auto;width:16px;height:16px;background:currentColor;-webkit-mask:var(--glyph) center/16px 16px no-repeat;mask:var(--glyph) center/16px 16px no-repeat}
+.aim-preset-act[data-act=save]{--glyph:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 3h11l3 3v15H5z'/%3E%3Cpath d='M9 3v6h6V3'/%3E%3Cpath d='M8 21v-7h8v7'/%3E%3C/svg%3E")}
+.aim-preset-act[data-act=rename]{--glyph:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 20h4L19 9l-4-4L4 16z'/%3E%3Cpath d='M14 6l4 4'/%3E%3C/svg%3E")}
+.aim-preset-act[data-act=delete]{--glyph:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 7h16'/%3E%3Cpath d='M9 7V4h6v3'/%3E%3Cpath d='M6 7l1 13h10l1-13'/%3E%3Cpath d='M10 11v6M14 11v6'/%3E%3C/svg%3E")}
 /* Every tile of the configuration is the same thing: the client's own icon at the icon's own size with
    the client's own grade badge over the corner, and not one word on it (user, 21.09). The words are in
    the tooltip, which is where the garage keeps them too. The GRADE is also the frame colour, so a tile
@@ -206,6 +241,7 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 .aim-chips{display:flex;flex-wrap:wrap;gap:4px;width:100%}
 .aim-role{font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin:8px 0 4px}
 .aim-role:first-child{margin-top:0}
+#aim-cfg-picker{flex:1 1 auto;min-height:0;width:100%;overflow:auto;overscroll-behavior:contain}
 #aim-cfg-picker[hidden]{display:none}
 
 

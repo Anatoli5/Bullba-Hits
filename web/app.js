@@ -668,7 +668,7 @@
   // number below was read out of the installed client's own data and is quoted with its source, because the
   // page must never invent an equipment bonus. An option whose number could not be found is left out.
   var DEG = Math.PI / 180;
-  var shooterModsState = {}, shooterType = '';
+  var shooterType = '';
   // --- The shooter's configuration -------------------------------------------------------------
   // Laid out the way the garage lays it out (user, 21.09): a SLOT first, then the client's real items
   // grouped BY GRADE - Standard, Bounty, Improved, Experimental - and inside a grade one tile per
@@ -967,7 +967,7 @@
   var shooterPolicy = AIM_OPEN_POLICY;
   function aimForbidden(kind) { return !!(shooterPolicy && shooterPolicy[kind] && shooterPolicy[kind].state === 'forbidden'); }
   var AIM_POLICY_WORDS = {devices: 'Equipment and directive', consumables: 'Consumables', crew: 'Crew skills and perks'};
-  // The words the mark beside Config and the locked tiles carry.
+  // The words the locked tiles carry.
   function aimPolicyLine(kind) {
     var rule = shooterPolicy[kind];
     return AIM_POLICY_WORDS[kind] + ': not offered here - ' + rule.source + '.';
@@ -1122,8 +1122,18 @@
   // Brothers in Arms per crew member (21.09) did NOT change the version: a build that gives it to the
   // whole crew is stored as skills.brotherhood exactly as before, and only a partly trained crew adds a
   // `bia` map beside it - which an older page simply does not read. Nothing saved is dropped.
-  var aimStore = {presets: {}, chosen: {}};
+  // Neither did Custom (user, 22.09): the user's own working build, where every hand edit lands - never in a
+  // preset, so a mis-click cannot damage a saved one. It is kept as `custom`, ONE BUILD PER VEHICLE TYPE, in
+  // the shape of a stored preset, and an older page ignores the key. Per vehicle because a hand build belongs
+  // to the gun it was made for: with one Custom shared by every shooter, an edit made on the next one would
+  // write over it without a word, and the first would come back wearing the second's equipment - the very
+  // loss Custom exists to end. A store without the key (an older page's) starts Custom empty: that page never
+  // kept a hand build, only the name of a preset the build happened to match. A store holding ONE build under
+  // the key gives it to every vehicle whose chosen entry is Custom, so nothing made by hand is lost.
+  var aimStore = {presets: {}, chosen: {}, custom: {}};
+  var AIM_CUSTOM = 'Custom';   // the entry's name, which no preset of the user's may take
   var shooterFit = null;
+  // shooterPreset is the entry in force: Custom, a built-in build or one of the user's presets - always one of them.
   var shooterConfig = aimValues(null), shooterPreset = '';
   // The one door every configuration comes through, wherever it came from - a preset, the store, a
   // click or a built-in build. A device the vehicle cannot mount and a device whose archetype another
@@ -1172,19 +1182,6 @@
     else if (some) out.bia = bia;
     return out;
   }
-  function aimSkillKey(cfg) {
-    return AIM_SKILLS.filter(function (s) { return !!cfg.skills[s.id]; })
-      .map(function (s) { return s.id; }).join(',');
-  }
-  // Who of the crew on screen has Brothers in Arms, as one comparable string.
-  function aimBiaKey(cfg) {
-    return aimCrewKeys(aimCrew()).filter(function (k) { return !!(cfg.bia && cfg.bia[k]); }).join(',');
-  }
-  function aimSame(a, b) {
-    return a.slots.join('|') === b.slots.join('|') && a.directive === b.directive
-      && !!a.food === !!b.food && a.fuel === b.fuel && aimSkillKey(a) === aimSkillKey(b)
-      && aimBiaKey(a) === aimBiaKey(b);
-  }
   // The built-in presets are read-only: they are what a player actually fits, so nobody has to
   // assemble a common build slot by slot every time. They name real items of the client; the Class
   // band is picked for the vehicle on screen by aimResolve. brotherhood: true is Brothers in Arms on
@@ -1208,32 +1205,60 @@
     return null;
   }
   function aimPreset(name) {
+    if (name === AIM_CUSTOM) return aimValues(aimStore.custom[shooterType]);
     var built = aimBuiltIn(name);
     if (built) return aimValues(built.values);
     return aimStore.presets[name] ? aimValues(aimStore.presets[name]) : null;
   }
   function aimUserNames() { return Object.keys(aimStore.presets).sort(); }
+  // Every entry of the preset list, in its order: Custom, the built-in builds, the user's own.
+  function aimEntryNames() {
+    return [AIM_CUSTOM].concat(AIM_BUILT_IN.map(function (p) { return p.name; }), aimUserNames());
+  }
+  // "custom" in any case: a preset of that name would read as the entry itself.
+  function aimReserved(name) { return String(name).toLowerCase() === AIM_CUSTOM.toLowerCase(); }
+  // `base` and the first number `taken` says is free: "Build 1", "Build 2" ...
+  function aimFreeName(base, taken) {
+    for (var n = 1; ; n++) if (!taken(base + ' ' + n)) return base + ' ' + n;
+  }
   // A name the user typed and a preset read back from storage are both data, never markup: they only
-  // ever become the text of an <option> or of a list item, and both are length-capped.
+  // ever become the text of a list row or of a field, and both are length-capped.
   function aimName(raw) { return String(raw === undefined || raw === null ? '' : raw).trim().slice(0, AIM_NAME_LIMIT); }
   // What came back from localStorage is checked field by field: an unknown key is dropped, an item the
   // catalogue does not know falls away, and a name that collides with a built-in preset is refused, so
   // a corrupted or hand-edited store can never put the page in a state it cannot show.
   function adoptAimStore(box) {
     if (!box || typeof box !== 'object') return;
-    aimStore = {presets: {}, chosen: {}};
+    aimStore = {presets: {}, chosen: {}, custom: {}};
     if (Number(box.v) !== 3) return;   // 0.7.15 presets held kinds and variants, not client entries
-    var presets = {}, chosen = {}, count = 0;
+    // A store written before Custom existed has no `custom` key, and in it a preset named "Custom" was the
+    // user's own: it keeps its build under a free name, and the vehicles that had it chosen follow it there.
+    var legacy = !Object.prototype.hasOwnProperty.call(box, 'custom');
+    var presets = {}, chosen = {}, moved = {}, count = 0;
+    function taken(name) { return !!presets[name] || Object.prototype.hasOwnProperty.call(box.presets, name); }
     if (box.presets && typeof box.presets === 'object') Object.keys(box.presets).forEach(function (key) {
       var name = aimName(key), row = box.presets[key];
       if (!name || aimBuiltIn(name) || !row || typeof row !== 'object' || count >= AIM_PRESET_LIMIT) return;
+      if (aimReserved(name)) { var free = aimFreeName('My ' + name, taken); moved[name] = free; name = free; }
       presets[name] = aimStoredPreset(row); count++;
     });
     if (box.chosen && typeof box.chosen === 'object') Object.keys(box.chosen).forEach(function (type) {
       var name = aimName(box.chosen[type]);
-      if (name && (aimBuiltIn(name) || presets[name])) chosen[String(type).slice(0, 64)] = name;
+      if (legacy && moved[name]) name = moved[name];
+      if (name && (name === AIM_CUSTOM || aimBuiltIn(name) || presets[name])) chosen[String(type).slice(0, 64)] = name;
     });
     aimStore.presets = presets; aimStore.chosen = chosen;
+    // Custom is a build per vehicle type. A store that holds ONE build under the key - the first shape of it,
+    // recognised by its own `slots` array - gives that build to every vehicle whose chosen entry is Custom.
+    if (box.custom && typeof box.custom === 'object') {
+      if (Array.isArray(box.custom.slots)) {
+        var one = aimStoredPreset(box.custom);
+        Object.keys(chosen).forEach(function (type) { if (chosen[type] === AIM_CUSTOM) aimStore.custom[type] = one; });
+      } else Object.keys(box.custom).forEach(function (key) {
+        var type = String(key).slice(0, 64), row = box.custom[key];
+        if (type && row && typeof row === 'object') aimStore.custom[type] = aimStoredPreset(row);
+      });
+    }
   }
   // A stored preset, checked field by field and kept in the shape it was SAVED in (S3, 22.09). The load used
   // to run it through aimPresetValues(aimValues(row)), which decides "the whole crew or only some" against
@@ -1267,7 +1292,7 @@
     }
     return out;
   }
-  function aimStored() { return {v: 3, presets: aimStore.presets, chosen: aimStore.chosen}; }
+  function aimStored() { return {v: 3, presets: aimStore.presets, chosen: aimStore.chosen, custom: aimStore.custom}; }
   // --- Reading the configuration ----------------------------------------------------------------
   // Which slot holds a device that occupies `tag`, or -1. Two devices conflict when their `blocks`
   // lists intersect - the client's own <incompatibleTags><installed> rule, and the reason a Vertical
@@ -1395,15 +1420,9 @@
             // term reads the speed cap, not the power that gets there. It is named in the tooltips.
             // The driving ramps are constants in ballistics.js now (user, 20.09: no seconds in the UI).
   }
-  // One place every edit of the configuration goes through, wherever it came from: the preset label is
-  // re-decided, the popover is repainted, the state is remembered for this shooter and the circle is
-  // recomputed.
+  // One place every change of the configuration goes through, wherever it came from - an edit, a preset
+  // chosen, the start: the popover is repainted and the circle is recomputed.
   function aimConfigChanged() {
-    shooterPreset = aimPresetMatch();
-    if (shooterType) {
-      shooterModsState[shooterType] = {values: aimValues(shooterConfig), preset: shooterPreset};
-      if (shooterPreset) { aimStore.chosen[shooterType] = shooterPreset; persistSettings(); }
-    }
     paintAimConfig(true);   // a click inside the open popover: its tiles depend on one another, all are redrawn
     // A different build is a different vehicle, not a moment in the life of this one: the running
     // exponential is dropped and the circle is rebuilt for the new modifiers, so the answer to "what
@@ -1414,15 +1433,24 @@
     aimNow = null; aimEstAt = 0; aimEstFine = false;
     updateAim(); startAimLoop(); scheduleLayout();
   }
-  // Which preset the current values are, if any: a preset the user edited becomes "Custom" without
-  // touching the preset it came from.
-  function aimPresetMatch() {
-    var names = AIM_BUILT_IN.map(function (p) { return p.name; }).concat(aimUserNames());
-    for (var i = 0; i < names.length; i++) {
-      var values = aimPreset(names[i]);
-      if (values && aimSame(values, shooterConfig)) return names[i];
-    }
-    return '';
+  // A hand edit - any tile, chip or slot: it lands in Custom, which becomes the entry in force for this
+  // shooter and is kept at once. The preset it started from is left as it was.
+  function aimEdited() {
+    aimStore.custom[shooterType] = aimPresetValues(shooterConfig);
+    shooterPreset = AIM_CUSTOM;
+    if (shooterType) aimStore.chosen[shooterType] = AIM_CUSTOM;
+    persistSettings();
+    aimConfigChanged();
+  }
+  // An entry of the preset list put in force. Custom is only read here, never written: going to another
+  // preset and back gives the hand build back.
+  function aimChoose(name) {
+    var values = aimPreset(name);
+    if (!values) return;
+    shooterConfig = values; shooterPreset = name;
+    if (shooterType) aimStore.chosen[shooterType] = name;
+    persistSettings();
+    aimConfigChanged();
   }
   // The collapsed button says "Config" and nothing else (user, 20.09): no preset name, no "custom" or
   // "stock" - what is fitted is in the tiles one click away, and in the button's own tooltip.
@@ -1454,8 +1482,10 @@
     if (!dir) return false;
     return dir.skill ? aimSkillMult(dir.skill) > 1 : !!aimDirectiveLevel(dir);
   }
-  // A new shooter on screen keeps his own configuration for the session, exactly as the target group
-  // does; the preset he was last given is remembered across launches, per vehicle type.
+  // A new shooter on screen gets the entry he was last given, remembered across launches per vehicle type
+  // (aimStore.chosen), and the stock build when he has none - or when his preset has been deleted since.
+  // The entry is applied again every time, and Custom is this vehicle's own hand build: what was made by hand
+  // on another shooter stays his, and comes back with him.
   function syncShooterMods(hit) {
     var a = hit && hit.attacker || null, type = a && a.type ? String(a.type) : '';
     // A different shooter is a different gun: the running exponential, the shot fired and the reload
@@ -1468,24 +1498,24 @@
     shooterFit = aimFitment(a);
     shooterPolicy = aimPolicyFor(hit);
     paintAimMechanics();
-    var kept = type ? shooterModsState[type] : null;
-    if (kept) { shooterConfig = aimValues(kept.values); shooterPreset = kept.preset || aimPresetMatch(); }
-    else {
-      var chosen = type && aimStore.chosen[type] ? aimStore.chosen[type] : '';
-      var values = chosen ? aimPreset(chosen) : null;
-      shooterConfig = aimValues(values);
-      shooterPreset = values ? chosen : aimPresetMatch();
-      if (type) shooterModsState[type] = {values: aimValues(shooterConfig), preset: shooterPreset};
-    }
+    var name = type && aimStore.chosen[type] ? aimStore.chosen[type] : '';
+    var values = name ? aimPreset(name) : null;
+    if (!values) { name = AIM_BUILT_IN[0].name; values = aimPreset(name); }
+    shooterConfig = values; shooterPreset = name;
     if (changed) resetAimRun();
     paintAimConfig();
   }
   // --- The Configuration popover ----------------------------------------------------------------
   // The one editor of the configuration, on the page's own popover mechanism: a <details> with a
   // .toolbar-popover, closed by the document click handler like every other one. It hangs under the
-  // Shooter tile, so it opens upward. Four sections in the garage's own order: Equipment, Directive,
-  // Consumables, Crew.
-  var aimConfigControls = {}, aimNameMode = '', aimPickerOpen = '';
+  // Shooter tile, so it opens upward. The preset row, then four sections in the garage's own order:
+  // Equipment, Directive, Consumables, Crew.
+  // SUB-PANELS ARE A LAYER OF THEIR OWN (user, 22.09): the equipment picker, the directive picker and the
+  // preset list open OVER the popover, on a light scrim, and the element they belong to - the slot row, the
+  // preset control - is lifted above the scrim and lit (its aria-expanded, in the stylesheet). No heading:
+  // the lit element says what the panel is for. aimLayer is which one is open: 'slot0'..'slot2',
+  // 'directive', 'presets' or ''.
+  var aimConfigControls = {}, aimLayer = '';
   // The icons ship with the page in web/icons (user, 20.09: interface art belongs to the page, a fresh
   // install must look right before the first game start). A missing file still falls back to a short
   // text label instead of a broken image.
@@ -1561,7 +1591,7 @@
       return aimLockTile(tile, 'devices', 'Slot ' + (index + 1) + '. ');
     }
     tile.setAttribute('data-tier', dev ? dev.tier : 'none');
-    tile.setAttribute('aria-expanded', String(aimPickerOpen === key));
+    tile.setAttribute('aria-expanded', String(aimLayer === key));
     var what = 'Slot ' + (index + 1) + '. ';
     tile.title = dev ? what + aimDeviceTitle(dev) + ' Click to change it, or to take it out.'
                      : what + 'Empty. Click to fit a piece of equipment.';
@@ -1569,12 +1599,16 @@
     tile.appendChild(dev ? aimIcon(dev.icon, aimShort((FAMILY_BY_ID[dev.family] || {}).name || dev.name),
                                    aimDeviceBadge(dev))
                          : aimIcon('empty_slot', '—'));
-    tile.onclick = function (e) { e.stopPropagation(); aimOpenPicker(key); };
+    tile.onclick = function (e) { e.stopPropagation(); aimOpenLayer(key); };
     return tile;
   }
-  function aimOpenPicker(key) {
-    if (aimForbidden('devices')) key = '';   // nothing to pick for a vehicle whose devices the game fixes (S3)
-    aimPickerOpen = aimPickerOpen === key ? '' : key; paintAimConfig(true);
+  // A click on the element a sub-panel belongs to: its panel opens, or closes when it is the one open. A
+  // click on another slot of the lifted row moves the panel - and the light - to that slot.
+  function aimOpenLayer(key) {
+    if (aimForbidden('devices') && key !== 'presets') key = '';   // nothing to pick for a vehicle whose devices the game fixes (S3)
+    var next = aimLayer === key ? '' : key;
+    aimDropLayer(!next); aimLayer = next;
+    paintAimConfig(true);
   }
   // A tile of the picker: the client's own icon with the client's own grade badge over the corner, and
   // not one word (user, 21.09). `art` is {icon, label, badge}: the label is the tile's accessible name,
@@ -1665,8 +1699,8 @@
       if (clash >= 0) shooterConfig.slots[clash] = '';
     }
     shooterConfig.slots[index] = dev ? dev.id : '';
-    aimPickerOpen = '';
-    aimConfigChanged();
+    aimDropLayer(true);   // fitting the slot is the picker's whole job
+    aimEdited();
   }
   // The directive: one slot, in force for the whole battle. An equipment directive without its device
   // is offered but inactive - the client would not apply it either - and says which device it wants.
@@ -1706,12 +1740,12 @@
       return aimLockTile(tile, 'devices', 'The directive slot. ');
     }
     tile.setAttribute('data-tier', dir ? (aimDirectiveActive(dir) ? 'improved' : 'none') : 'none');
-    tile.setAttribute('aria-expanded', String(aimPickerOpen === 'directive'));
+    tile.setAttribute('aria-expanded', String(aimLayer === 'directive'));
     tile.title = dir ? aimDirectiveTitle(dir) + ' Click to change the directive, or to take it out.'
                      : 'The directive slot, empty. Click to fit one.';
     tile.setAttribute('aria-label', 'Directive. ' + (dir ? dir.name : 'Empty'));
     tile.appendChild(dir ? aimIcon(dir.icon, aimShort(dir.name)) : aimIcon('empty_slot', '—'));
-    tile.onclick = function (e) { e.stopPropagation(); aimOpenPicker('directive'); };
+    tile.onclick = function (e) { e.stopPropagation(); aimOpenLayer('directive'); };
     return tile;
   }
   // The directive picker is the same grid of icons, without badges - a directive has no grade, and its
@@ -1734,8 +1768,8 @@
   }
   function aimSetDirective(id) {
     shooterConfig.directive = DIRECTIVE_BY_ID[id] ? id : '';
-    aimPickerOpen = '';
-    aimConfigChanged();
+    aimDropLayer(true);
+    aimEdited();
   }
   // Consumables and crew are the same tile as the equipment (user, 21.09): the client's own icon,
   // pressed or not, and the words in the tooltip. A perk is situational - it holds only while its
@@ -1764,7 +1798,7 @@
       var chip = aimChip(c.icon, c.name, title, on, function () {
         if (c.slot === 'food') shooterConfig.food = !shooterConfig.food;
         else shooterConfig.fuel = shooterConfig.fuel === c.id ? '' : c.id;
-        aimConfigChanged();
+        aimEdited();
       }, false);
       row.appendChild(aimForbidden('consumables') ? aimLockTile(chip, 'consumables', c.name + '. ') : chip);
     });
@@ -1816,7 +1850,7 @@
                    aimBiaTitle(crew, keys, i), !!shooterConfig.bia[key], function () {
       if (shooterConfig.bia[key]) delete shooterConfig.bia[key];
       else shooterConfig.bia[key] = true;
-      aimConfigChanged();
+      aimEdited();
     }, false);
   }
   function aimCrewSection(body) {
@@ -1836,7 +1870,7 @@
         var chip = aimChip(s.icon || s.id, s.name, aimSkillTitle(s), !!shooterConfig.skills[s.id], function () {
           if (shooterConfig.skills[s.id]) delete shooterConfig.skills[s.id];
           else shooterConfig.skills[s.id] = true;
-          aimConfigChanged();
+          aimEdited();
         }, s.kind === 'perk');
         chips.appendChild(locked ? aimLockTile(chip, 'crew', s.name + '. ') : chip);
       });
@@ -1847,63 +1881,58 @@
     var body = $('aim-config-body');
     if (!body) return;
     body.replaceChildren();
-    // Preset first: most of the time it is the only row anybody touches.
+    // The sections scroll in a box of their own, so the layer over them - the scrim and a sub-panel - stays
+    // over the popover wherever they are scrolled to. While a sub-panel is open they do not scroll (the one
+    // wheel handler of the popover, at the foot of this file): the wheel on the lifted row would pull it away
+    // from the panel under it.
+    var main = node('div', undefined, 'aim-config-main');
+    // The second click of a double-click that closed a sub-panel falls on whatever lay under the panel: it is
+    // dropped, so a double-click on a preset or a picker tile never toggles a tile of the menu by accident.
+    main.addEventListener('click', function (e) {
+      if (e.detail > 1 && aimSeconds() - aimShutAt < AIM_DOUBLE_CLICK) { e.stopPropagation(); e.preventDefault(); }
+    }, true);
+    // Preset first: most of the time it is the only row anybody touches. One control that names the entry in
+    // force: a click opens the list (aimPresetList), the arrow keys step through it without opening it.
     var grid = node('div', undefined, 'aim-config-grid');
-    var preset = node('select'); preset.id = 'aim-cfg-preset';
-    preset.title = 'A saved build. Change anything below and the preset becomes “Custom” - the preset itself is left alone.';
-    preset.onchange = function () {
-      var values = aimPreset(this.value);
-      if (!values) return;
-      shooterConfig = values; shooterPreset = this.value;
-      if (shooterType) aimStore.chosen[shooterType] = this.value;
-      aimConfigChanged(); persistSettings();
-    };
-    aimConfigControls.preset = preset;
+    var preset = node('button', undefined, 'aim-preset'); preset.type = 'button'; preset.id = 'aim-cfg-preset';
+    preset.setAttribute('aria-haspopup', 'true');
+    preset.onclick = function () { aimOpenLayer('presets'); };
+    preset.onkeydown = aimPresetKey;
     aimRow(grid, 'Preset', preset);
-    body.appendChild(grid);
-    var actions = node('div', undefined, 'aim-config-row');
-    [['save', 'Save as…'], ['rename', 'Rename'], ['delete', 'Delete']].forEach(function (row) {
-      var kind = row[0], b = node('button', row[1]);
-      b.type = 'button'; b.id = 'aim-cfg-' + kind;
-      b.onclick = function () { aimPresetAction(kind); };
-      aimConfigControls[kind] = b;
-      actions.appendChild(b);
-    });
-    body.appendChild(actions);
-    // The name is typed here, never in window.prompt: the game's CEF may not show one at all.
-    var namer = node('div', undefined, 'aim-config-row'); namer.id = 'aim-cfg-namer'; namer.hidden = true;
-    var field = node('input'); field.type = 'text'; field.id = 'aim-cfg-name'; field.maxLength = AIM_NAME_LIMIT;
-    field.placeholder = 'Name of the build';
-    field.onkeydown = function (e) { if (e.key === 'Enter') { e.preventDefault(); aimPresetCommit(); } else if (e.key === 'Escape' || e.key === 'Esc') aimNameBox(''); };
-    var confirm = node('button', 'Save'); confirm.type = 'button'; confirm.onclick = aimPresetCommit;
-    var cancel = node('button', 'Cancel'); cancel.type = 'button'; cancel.onclick = function () { aimNameBox(''); };
-    namer.appendChild(field); namer.appendChild(confirm); namer.appendChild(cancel);
-    aimConfigControls.name = field; aimConfigControls.namer = namer;
-    body.appendChild(namer);
-    var warn = node('p', '', 'aim-config-note warn'); warn.id = 'aim-cfg-warn'; warn.hidden = true;
-    aimConfigControls.warn = warn; body.appendChild(warn);
+    main.appendChild(grid);
 
-    body.appendChild(node('div', 'Equipment', 'aim-config-head'));
+    main.appendChild(node('div', 'Equipment', 'aim-config-head'));
     var slots = node('div', undefined, 'aim-slots'); slots.id = 'aim-cfg-slots';
-    aimConfigControls.slots = slots; body.appendChild(slots);
-    var fitNote = node('p', '', 'aim-config-note'); fitNote.id = 'aim-cfg-fit'; fitNote.hidden = true;
-    aimConfigControls.fit = fitNote; body.appendChild(fitNote);
-    var picker = node('div'); picker.id = 'aim-cfg-picker'; picker.hidden = true;
-    aimConfigControls.picker = picker; body.appendChild(picker);
+    main.appendChild(slots);
+    // Nothing is written under the slots any more (user, 22.09): what that note said is in the Config
+    // button's tooltip (aimConfigTitle), and a kind the vehicle's lock keeps out says why on its dimmed tiles.
 
-    body.appendChild(node('div', 'Directive', 'aim-config-head'));
+    main.appendChild(node('div', 'Directive', 'aim-config-head'));
     var directive = node('div', undefined, 'aim-slots'); directive.id = 'aim-cfg-directive';
-    aimConfigControls.directive = directive; body.appendChild(directive);
+    main.appendChild(directive);
 
-    body.appendChild(node('div', 'Consumables', 'aim-config-head'));
+    main.appendChild(node('div', 'Consumables', 'aim-config-head'));
     var cons = node('div'); cons.id = 'aim-cfg-consumables';
-    aimConfigControls.consumables = cons; body.appendChild(cons);
+    main.appendChild(cons);
 
-    body.appendChild(node('div', 'Crew', 'aim-config-head'));
+    main.appendChild(node('div', 'Crew', 'aim-config-head'));
     var crew = node('div'); crew.id = 'aim-cfg-crew';
-    aimConfigControls.crew = crew; body.appendChild(crew);
+    main.appendChild(crew);
     // No "Fitted: ..." line under the crew any more (user, 21.09): the tiles above already show what is
     // fitted, and the list lives on in the Config button's own tooltip.
+    body.appendChild(main);
+    // The layer. A click on the scrim closes the sub-panel and nothing else: it is inside the popover.
+    var scrim = node('div', undefined, 'aim-scrim'); scrim.id = 'aim-cfg-scrim'; scrim.hidden = true;
+    scrim.onclick = function () { aimCloseLayer(); };
+    var layer = node('div', undefined, 'aim-layer'); layer.id = 'aim-cfg-layer'; layer.hidden = true;
+    var close = node('button', '×', 'aim-layer-close'); close.type = 'button';
+    close.title = 'Close'; close.setAttribute('aria-label', 'Close');
+    close.onclick = function () { aimCloseLayer(); };
+    var picker = node('div'); picker.id = 'aim-cfg-picker'; picker.hidden = true;
+    layer.appendChild(close); layer.appendChild(picker);
+    body.appendChild(scrim); body.appendChild(layer);
+    aimConfigControls = {body: body, main: main, preset: preset, slots: slots, directive: directive,
+                         consumables: cons, crew: crew, scrim: scrim, layer: layer, picker: picker};
     paintAimConfig();
   }
   function aimRow(grid, label, control) { grid.appendChild(node('span', label)); grid.appendChild(control); }
@@ -1915,81 +1944,283 @@
   // had open. The button's tooltip lists what is fitted and is on screen either way, so it is always written.
   var aimConfigDirty = false;
   function paintAimConfig(force) {
-    var preset = aimConfigControls.preset;
-    if (!preset) return;
-    $('aim-config').querySelector('summary').title = 'This shooter’s equipment, directive, consumables and crew, with presets. Now: ' + aimLongSummary() + '.';
-    paintAimModeMark();
+    var c = aimConfigControls;
+    if (!c.preset) return;
+    $('aim-config').querySelector('summary').title = aimConfigTitle();
     if (!force && !$('aim-config').open) { aimConfigDirty = true; return; }
     aimConfigDirty = false;
-    var names = AIM_BUILT_IN.map(function (p) { return p.name; }).concat(aimUserNames());
-    preset.replaceChildren();
-    if (!shooterPreset) { var custom = node('option', 'Custom'); custom.value = ''; preset.appendChild(custom); }
-    names.forEach(function (name) {
-      var o = node('option', name + (aimBuiltIn(name) ? '' : ' · yours'));
-      o.value = name; preset.appendChild(o);
+    if (aimForbidden('devices') && aimLayer !== 'presets') aimDropLayer();   // a picker left open on the previous shooter goes (S3)
+    c.preset.textContent = shooterPreset;
+    c.preset.title = aimEntryTitle(shooterPreset) + ' Click for the list; the arrow keys step through it.';
+    c.preset.setAttribute('aria-expanded', String(aimLayer === 'presets'));
+    c.slots.replaceChildren();
+    AIM_SLOTS.forEach(function (i) { c.slots.appendChild(aimSlotTile(i)); });
+    c.directive.replaceChildren();
+    c.directive.appendChild(aimDirectiveTile());
+    c.consumables.replaceChildren();
+    c.consumables.appendChild(aimConsumableChips());
+    c.crew.replaceChildren();
+    aimCrewSection(c.crew);
+    aimPaintLayer();
+  }
+  // The layer's own state beside aimLayer: the name of a preset being renamed in place ({from, draft, error})
+  // and its field, the timer that closes the preset list after a click on a preset of the user's own, and
+  // when a sub-panel last went (the double-click guard in buildAimConfig).
+  var aimRenaming = null, aimNameInput = null, aimCloseTimer = 0, aimShutAt = -Infinity;
+  var AIM_DOUBLE_CLICK = 0.5;   // s, Windows' own double-click time
+  function aimCancelClose() { if (aimCloseTimer) window.clearTimeout(aimCloseTimer); aimCloseTimer = 0; }
+  // The sub-panel goes; whoever calls this repaints. `shut` is "a panel really went, and the menu under it is
+  // bare again": only then is the moment stamped for the double-click guard. A panel MOVED from one slot to
+  // the next leaves another panel in its place, so the second click of a double-click there is the user's own.
+  function aimDropLayer(shut) {
+    if (aimLayer && shut) aimShutAt = aimSeconds();
+    aimCancelClose(); aimLayer = ''; aimRenaming = null;
+  }
+  // Its ×, the scrim, Escape: the sub-panel closes and the popover stays. The preset list hands the keys back
+  // to the preset control, so the arrows go on stepping through the presets.
+  function aimCloseLayer() {
+    if (!aimLayer) return;
+    var presets = aimLayer === 'presets';
+    aimDropLayer(true); paintAimConfig(true);
+    if (presets) aimConfigControls.preset.focus();
+  }
+  // A preset of the user's own is also renamed by a double-click on its name, so a click on it leaves the list
+  // up for the length of a double-click; the preset is in force at once all the same.
+  function aimCloseSoon() {
+    aimCancelClose();
+    aimCloseTimer = window.setTimeout(function () {
+      aimCloseTimer = 0;
+      if (aimLayer === 'presets' && !aimRenaming) aimCloseLayer();
+    }, AIM_DOUBLE_CLICK * 1000);
+  }
+  // The layer as aimLayer says: the scrim, the panel and its content, the owner lifted over the scrim. The
+  // owner is the whole slot row, so the other slots stay clickable and move the panel to themselves.
+  function aimPaintLayer() {
+    var c = aimConfigControls, key = aimLayer;
+    var owner = key === 'presets' ? c.preset : key === 'directive' ? c.directive : key ? c.slots : null;
+    [c.preset, c.slots, c.directive].forEach(function (el) {
+      if (el === owner) el.setAttribute('data-owner', 'true'); else el.removeAttribute('data-owner');
     });
-    preset.value = shooterPreset;
-    var mine = !!(shooterPreset && !aimBuiltIn(shooterPreset));
-    aimConfigControls.rename.disabled = !mine;
-    aimConfigControls['delete'].disabled = !mine;
-    aimConfigControls.slots.replaceChildren();
-    AIM_SLOTS.forEach(function (i) { aimConfigControls.slots.appendChild(aimSlotTile(i)); });
-    // One honest note instead of a silent assumption: what the record does not know about this vehicle.
-    var lines = [];
-    if (!(shooterFit && shooterFit.tags)) lines.push('This record does not carry the vehicle’s tags, so what it '
-      + 'may mount is unknown and everything is offered. A battle recorded by a current build knows.');
-    ['devices', 'consumables', 'crew'].forEach(function (kind) { if (aimForbidden(kind)) lines.push(aimPolicyLine(kind)); });
-    var carried = aimCarried();
-    if (carried) lines.push(carried);
-    aimConfigControls.fit.textContent = lines.join(' ');
-    aimConfigControls.fit.hidden = !lines.length;
-    if (aimForbidden('devices')) aimPickerOpen = '';   // a picker left open on the previous shooter goes (S3)
-    aimConfigControls.picker.replaceChildren();
-    aimConfigControls.picker.hidden = !aimPickerOpen;
-    if (aimPickerOpen === 'directive') aimConfigControls.picker.appendChild(aimDirectivePicker());
-    else if (aimPickerOpen) aimConfigControls.picker.appendChild(aimPicker(Number(aimPickerOpen.slice(4))));
-    aimConfigControls.directive.replaceChildren();
-    aimConfigControls.directive.appendChild(aimDirectiveTile());
-    aimConfigControls.consumables.replaceChildren();
-    aimConfigControls.consumables.appendChild(aimConsumableChips());
-    aimConfigControls.crew.replaceChildren();
-    aimCrewSection(aimConfigControls.crew);
+    c.scrim.hidden = c.layer.hidden = c.picker.hidden = !key;
+    c.picker.replaceChildren(); aimNameInput = null;
+    if (!key) return;
+    c.picker.appendChild(key === 'presets' ? aimPresetList()
+      : key === 'directive' ? aimDirectivePicker() : aimPicker(Number(key.slice(4))));
+    aimPlaceLayer(owner);
+    if (aimNameInput) { aimNameInput.focus(); if (aimRenaming.draft === aimRenaming.from) aimNameInput.select(); }
   }
-  function aimNameBox(mode, value) {
-    aimNameMode = mode;
-    aimConfigControls.namer.hidden = !mode;
-    aimConfigControls.warn.hidden = true;
-    if (!mode) return;
-    aimConfigControls.name.value = value || '';
-    aimConfigControls.name.focus(); aimConfigControls.name.select();
+  // THE SUB-PANEL'S ONE PLACEMENT RULE (user, 22.09): straight under the element it belongs to, across the
+  // popover's width (the stylesheet), down to the popover's bottom at most - so it never covers that element
+  // and never opens above it for one slot and below it for the next. The sections are scrolled first when the
+  // element is out of sight or the panel wants more room under it than there is, never past the element's own
+  // top; what still does not fit scrolls inside the panel.
+  function aimPlaceLayer(owner) {
+    var c = aimConfigControls, edge = 8;
+    var pop = c.body.getBoundingClientRect(), o = owner.getBoundingClientRect();
+    // The top of the popover may be off screen: it is bottom-anchored and #viewport clips it. Scrolling the
+    // element up to a strip nobody can see would hide the very thing the panel belongs to, so the sections
+    // are never scrolled past whichever of the two tops is really on screen.
+    var lid = Math.max(pop.top, $('viewport').getBoundingClientRect().top);
+    // What the panel WANTS is its content's height plus the panel's own 10px top and bottom padding: the panel
+    // itself does not scroll (its × is pinned in the corner), the content box inside it does.
+    var shift = o.top - lid - edge;
+    if (shift > 0) shift = Math.min(shift, Math.max(0, c.picker.scrollHeight + 20 + 6 + edge - (pop.bottom - o.bottom)));
+    if (shift) { c.main.scrollTop = Math.max(0, (c.main.scrollTop || 0) + shift); o = owner.getBoundingClientRect(); }
+    var top = Math.round(o.bottom - pop.top + 6);
+    c.layer.style.top = top + 'px';
+    c.layer.style.maxHeight = 'calc(100% - ' + (top + edge) + 'px)';
   }
-  function aimWarn(text) { aimConfigControls.warn.textContent = text; aimConfigControls.warn.hidden = !text; }
-  function aimPresetAction(kind) {
-    if (kind === 'save') return aimNameBox('save', shooterPreset && !aimBuiltIn(shooterPreset) ? shooterPreset : '');
-    if (kind === 'rename') return aimNameBox('rename', shooterPreset);
-    if (!shooterPreset || aimBuiltIn(shooterPreset)) return;
-    delete aimStore.presets[shooterPreset];
-    Object.keys(aimStore.chosen).forEach(function (type) { if (aimStore.chosen[type] === shooterPreset) delete aimStore.chosen[type]; });
-    shooterPreset = aimPresetMatch();
-    aimNameBox(''); aimConfigChanged(); persistSettings();
+  // Arrow Up / Down on the preset control step through the list and put each entry in force, the list open or
+  // not - the quick way to compare two builds on the circle. Kept from the viewer, whose arrows orbit.
+  function aimPresetKey(e) {
+    var step = e.key === 'ArrowDown' ? 1 : e.key === 'ArrowUp' ? -1 : 0;
+    if (!step) return;
+    e.preventDefault(); e.stopPropagation();
+    var names = aimEntryNames(), at = names.indexOf(shooterPreset) + step;
+    if (at >= 0 && at < names.length) aimChoose(names[at]);
   }
-  function aimPresetCommit() {
-    var name = aimName(aimConfigControls.name.value);
-    if (!name) return aimWarn('Give the build a name.');
-    if (aimBuiltIn(name)) return aimWarn('That is the name of a built-in preset. Pick another one.');
-    if (aimNameMode === 'rename') {
-      var from = shooterPreset;
-      if (!from || aimBuiltIn(from)) return aimWarn('Only your own presets can be renamed.');
-      if (name !== from && aimStore.presets[name]) return aimWarn('You already have a preset with that name.');
-      delete aimStore.presets[from];
-      Object.keys(aimStore.chosen).forEach(function (type) { if (aimStore.chosen[type] === from) aimStore.chosen[type] = name; });
-    } else if (!aimStore.presets[name] && aimUserNames().length >= AIM_PRESET_LIMIT) {
-      return aimWarn('That is as many presets as the page keeps. Delete one first.');
+  // The preset list: Custom first, then the built-in builds, then the user's own, the entry in force marked. A
+  // click on a name puts that entry in force and closes the list; the popover stays. Only what can be managed
+  // has icons: Custom saves itself as a preset, a preset of the user's own is renamed in place (the pencil, or
+  // a double-click on its name) and deleted. The built-in builds are read-only.
+  function aimPresetList() {
+    var list = node('div', undefined, 'aim-presets');
+    var full = aimUserNames().length >= AIM_PRESET_LIMIT;
+    aimEntryNames().forEach(function (name) {
+      var kind = name === AIM_CUSTOM ? 'custom' : aimBuiltIn(name) ? 'builtin' : 'user';
+      // A row is not a listbox option: it holds buttons of its own. The mark on it is the stylesheet's, and
+      // what a screen reader is told is the pick button's own aria-current.
+      var row = node('div', undefined, 'aim-preset-row');
+      row.setAttribute('data-selected', String(name === shooterPreset));
+      row.setAttribute('data-kind', kind);
+      // The pencil and the bin read the name out of `ref` when they are PRESSED, not when they are made. The
+      // mousedown of either takes the focus off an open name field, which commits the rename there and then:
+      // a closure holding the old name would look up a preset that no longer answers to it and do nothing.
+      var ref = {name: name};
+      if (aimRenaming && aimRenaming.from === name) aimRenaming.ref = ref;
+      row.appendChild(aimRenaming && aimRenaming.from === name ? aimNameField() : aimPresetPick(name, kind));
+      if (kind === 'custom') {
+        row.appendChild(aimPresetAct('save', 'Save as a preset', aimSaveCustom,
+                                     full ? 'That is as many presets as the page keeps. Delete one first.'
+                                     : !aimStore.custom[shooterType] ? 'Nothing to save yet: change something in the menu first.' : ''));
+      }
+      if (kind === 'user') {
+        row.appendChild(aimPresetAct('rename', 'Rename', function () { aimStartRename(ref.name); }, ''));
+        row.appendChild(aimPresetAct('delete', 'Delete', function () { aimDeletePreset(ref.name); }, ''));
+      }
+      list.appendChild(row);
+    });
+    return list;
+  }
+  function aimEntryTitle(name) {
+    return name === AIM_CUSTOM ? 'Custom: your own build. Every change made in this menu lands here and is kept; the presets stay as they are.'
+      : aimBuiltIn(name) ? name + ': a built-in build. A change made to it lands in Custom.'
+      : name + ': your preset. A change made to it lands in Custom.';
+  }
+  function aimPresetPick(name, kind) {
+    var b = node('button', name, 'aim-preset-pick');
+    b.type = 'button';
+    if (name === shooterPreset) b.setAttribute('aria-current', 'true');
+    b.title = aimEntryTitle(name) + (kind === 'user' ? ' Double-click to rename it.' : '');
+    b.onclick = function (e) {
+      if (kind === 'user' && e && e.detail > 1) { aimStartRename(name); return; }
+      if (kind === 'user') aimCloseSoon(); else aimDropLayer(true);
+      aimChoose(name);
+      if (!aimLayer) aimConfigControls.preset.focus();
+    };
+    b.ondblclick = function () { if (kind === 'user') aimStartRename(name); };
+    return b;
+  }
+  // An icon of a row: the glyph is the stylesheet's (data-act), the words are its tooltip. `off` is why it
+  // cannot act now, which is then the tooltip.
+  function aimPresetAct(act, words, run, off) {
+    var b = node('button', undefined, 'aim-preset-act');
+    b.type = 'button';
+    b.setAttribute('data-act', act); b.setAttribute('aria-label', words);
+    b.title = off || words;
+    if (off) b.setAttribute('aria-disabled', 'true');
+    b.onclick = function () { if (!off) run(); };
+    return b;
+  }
+  // The name of a preset of the user's own, edited in place. Enter or leaving the field keeps it, Escape goes
+  // back to the old one; a name that cannot be taken keeps the field open, outlined red, the reason in its
+  // tooltip. Every key typed here is the field's own: the viewer's arrows and +/- and the popover's Escape
+  // never see it. The name is typed here, never in window.prompt: the game's CEF may not show one at all.
+  function aimNameField() {
+    var r = aimRenaming, field = node('input', undefined, 'aim-preset-field');
+    field.type = 'text'; field.maxLength = AIM_NAME_LIMIT; field.value = r.draft;
+    field.setAttribute('aria-label', 'Name of the preset');
+    if (r.error) { field.setAttribute('aria-invalid', 'true'); field.title = r.error; }
+    field.oninput = function () {
+      r.draft = field.value; r.error = '';
+      field.removeAttribute('aria-invalid'); field.title = '';
+    };
+    field.onkeydown = function (e) {
+      e.stopPropagation();
+      if (e.key === 'Enter') { e.preventDefault(); aimRenameCommit(field); }
+      else if (e.key === 'Escape' || e.key === 'Esc') { e.preventDefault(); aimRenaming = null; aimPaintLayer(); }
+    };
+    // A field a repaint took away is not a field the user left.
+    field.onblur = function () { if (field.isConnected && aimRenaming === r) aimRenameCommit(field); };
+    aimNameInput = field;
+    return field;
+  }
+  function aimStartRename(name) {
+    if (!aimStore.presets[name]) return;
+    aimCancelClose();
+    if (!(aimRenaming && aimRenaming.from === name)) aimRenaming = {from: name, draft: name, error: ''};
+    aimPaintLayer();
+  }
+  function aimNameProblem(name, from) {
+    return !name ? 'Give the preset a name.'
+      : aimReserved(name) ? '“Custom” is the name of your own working build. Pick another one.'
+      : aimBuiltIn(name) ? 'That is the name of a built-in preset. Pick another one.'
+      : name !== from && aimStore.presets[name] ? 'You already have a preset with that name.' : '';
+  }
+  function aimRenameCommit(field) {
+    var r = aimRenaming, c = aimConfigControls;
+    if (!r) return;
+    var name = aimName(r.draft), why = aimNameProblem(name, r.from);
+    if (why) { r.error = why; field.setAttribute('aria-invalid', 'true'); field.title = why; return; }
+    aimRenaming = null; aimNameInput = null;
+    if (name !== r.from) {
+      aimStore.presets[name] = aimStore.presets[r.from]; delete aimStore.presets[r.from];
+      Object.keys(aimStore.chosen).forEach(function (type) { if (aimStore.chosen[type] === r.from) aimStore.chosen[type] = name; });
+      if (shooterPreset === r.from) shooterPreset = name;
+      persistSettings();
     }
-    aimStore.presets[name] = aimPresetValues(shooterConfig);
-    shooterPreset = name;
-    if (shooterType) aimStore.chosen[shooterType] = name;
-    aimNameBox(''); aimConfigChanged(); persistSettings();
+    // THE ROW IS MENDED IN PLACE, NOT REPAINTED. What usually commits a name is the mousedown of the next
+    // thing the user presses - the bin of another row - and a repaint here builds every row again, so that
+    // button is off the page before its own click is delivered and the press does nothing at all. Only the
+    // field becomes a name again; the list finds its new order the next time it is opened.
+    if (r.ref) r.ref.name = name;
+    field.replaceWith(aimPresetPick(name, 'user'));
+    if (shooterPreset === name) {   // the preset control carries the name
+      c.preset.textContent = name;
+      c.preset.title = aimEntryTitle(name) + ' Click for the list; the arrow keys step through it.';
+    }
+  }
+  // Custom saved as a preset of its own under the first free "Build N", whose name opens for typing at once.
+  // The entry in force stays what it was.
+  function aimSaveCustom() {
+    if (aimUserNames().length >= AIM_PRESET_LIMIT) return;
+    var name = aimFreeName('Build', function (n) { return !!aimStore.presets[n]; });
+    aimStore.presets[name] = aimStoredPreset(aimStore.custom[shooterType] || {});
+    persistSettings();
+    aimStartRename(name);
+  }
+  // A preset of the user's own deleted: the vehicles that had it chosen go back to the stock build, the one on
+  // screen at once. The list stays open.
+  function aimDeletePreset(name) {
+    if (!aimStore.presets[name]) return;
+    aimCancelClose();   // the list stays up to be read: the timer of a preset clicked a moment ago is dropped
+    delete aimStore.presets[name];
+    Object.keys(aimStore.chosen).forEach(function (type) { if (aimStore.chosen[type] === name) delete aimStore.chosen[type]; });
+    if (aimRenaming && aimRenaming.from === name) aimRenaming = null;
+    persistSettings();
+    if (shooterPreset === name) { shooterPreset = AIM_BUILT_IN[0].name; shooterConfig = aimPreset(shooterPreset); aimConfigChanged(); }
+    else aimPaintLayer();
+  }
+  // Escape takes the top layer of the popover away: the sub-panel first, the popover itself next. Listened for
+  // on the document while the popover is open and at no other time; a key typed into a field is the field's.
+  function aimConfigKey(e) {
+    if ((e.key !== 'Escape' && e.key !== 'Esc') || aimTyping(e)) return;
+    var box = $('aim-config');
+    if (!box.open) return;
+    e.preventDefault();
+    if (aimLayer) { aimCloseLayer(); return; }
+    box.open = false;
+    box.querySelector('summary').focus();
+  }
+  // Run on the popover's toggle and on every updateAim, which may close it: the Escape listener comes and goes
+  // with the popover, and a popover closed with a sub-panel open opens again without it.
+  var aimConfigHeld = false;
+  function aimConfigListen() {
+    var open = !!$('aim-config').open;
+    if (open === aimConfigHeld) return;
+    aimConfigHeld = open;
+    if (open) { document.addEventListener('keydown', aimConfigKey); return; }
+    document.removeEventListener('keydown', aimConfigKey);
+    if (aimLayer || aimRenaming) { aimDropLayer(); aimConfigDirty = true; }
+  }
+  // The Config button's tooltip: what is fitted, then - only when there is something to say - what the record
+  // does not let the page know. The note under the slots and the "?" on the button went here (user, 22.09):
+  // nothing in them changes what can be clicked, so none of it is printed in the menu.
+  function aimConfigTitle() {
+    var out = 'This shooter’s equipment, directive, consumables and crew, with presets. Now: ' + aimLongSummary() + '.';
+    var fixed = ['devices', 'consumables', 'crew'].filter(aimForbidden)
+      .map(function (kind) { return AIM_POLICY_WORDS[kind].toLowerCase(); });
+    if (fixed.length) out += ' The game fixes this vehicle’s ' + fixed.join(', ') + ': what is set here for them is not applied.';
+    var unknown = '', why = [];
+    ['devices', 'consumables', 'crew'].forEach(function (kind) {
+      if (!unknown && shooterPolicy[kind].state === 'unknown') unknown = shooterPolicy[kind].source;
+    });
+    if (unknown) why.push(unknown);
+    if (!(shooterFit && shooterFit.tags) && !/tags/.test(unknown)) why.push('the record does not carry the vehicle’s tags');
+    if (why.length) out += ' Everything is offered, which may be more than the game allowed here: ' + why.join('; ') + '.';
+    var kept = aimKept();
+    if (kept) out += ' Kept from the record: ' + kept + ' (field modifications).';
+    return out;
   }
   // THE CONFIGURATOR TAKES OUT WHAT IT APPLIES ITSELF, AND NOTHING ELSE (S3, 22.09 - the open item "equipment
   // double-counted in the recorded aim block"; corrected by the S3 review the same day). The four miscAttrs
@@ -2044,54 +2275,19 @@
     }
     return aimBare;
   }
-  // What the recorded block carried in those four factors, what the configuration keeps of it and what it
-  // leaves out, in words, for the note under the slots - or ''.
+  // What the configuration KEEPS of the record's own four factors - the field modifications it does not set
+  // itself (aimBaseFactors above) - in words, for the Config button's tooltip, or ''. Nothing when the game
+  // fixes this vehicle's equipment: the record's own then stays in whole, and the tooltip says so already.
   var AIM_CARRIED_WORDS = {multFactor: 'the circle', additiveFactor: 'the movement terms',
     aimingTimeFactor: 'the aiming time', reloadTimeFactor: 'the reload'};
-  function aimCarried() {
-    var a = activeHit && activeHit.attacker && activeHit.attacker.aim, base = aimBlockData();
-    if (!(a && base)) return '';
-    var carried = [], kept = [], left = [];
-    function part(v, k) { return '×' + aimNum(v) + ' on ' + AIM_CARRIED_WORDS[k]; }
+  function aimKept() {
+    var base = aimBlockData(), kept = [];
+    if (!base || aimForbidden('devices')) return '';
     AIM_BARE_FACTORS.forEach(function (k) {
-      var v = Number(a[k]), b = Number(base[k]);
-      if (!(v > 0 && isFinite(v)) || Math.abs(v - 1) <= 1e-6) return;
-      carried.push(part(v, k));
-      if (Math.abs(b - 1) > 1e-6) kept.push(part(b, k));
-      if (Math.abs(v / b - 1) > 1e-6) left.push(part(v / b, k));
+      var b = Number(base[k]);
+      if (b > 0 && isFinite(b) && Math.abs(b - 1) > 1e-6) kept.push('×' + aimNum(b) + ' on ' + AIM_CARRIED_WORDS[k]);
     });
-    if (!carried.length) return '';
-    var from = a.aimFrom === 'arena' ? 'read live in the battle' : a.aimFrom === 'compact' ? 'rebuilt from the vehicle’s descriptor' : 'as recorded';
-    var fieldMods = kept.length ? 'Kept: ' + kept.join(', ') + ' - the vehicle’s field modifications, which the configuration does not set. ' : '';
-    var devices = left.length ? 'Left out: ' + left.join(', ') + ' - equipment packed in the vehicle’s descriptor, which is set here instead, so it does not count twice.' : '';
-    var why;
-    if (aimForbidden('devices')) why = 'The game fixes this vehicle’s equipment, so all of it stays in.';
-    else if (a.aimFrom === 'compact' || (a.compactFactors && typeof a.compactFactors === 'object')) why = fieldMods + devices;
-    else if (aimShooterIsPlayer(activeHit)) why = 'Your field modifications and your equipment cannot be told apart in it, so the '
-      + 'configuration leaves both out and applies only what is set here.';
-    else why = fieldMods + 'Another player’s equipment never reaches the record.';
-    return 'The record’s own aim block carries ' + carried.join(', ') + ' - ' + from + '. ' + why.replace(/\s+$/, '');
-  }
-  // The small mark inside the Config button (S3): '?' when the rules of this battle's mode are not known -
-  // the configuration then works as in a standard battle - and '⊘' when the vehicle's own lock keeps a kind
-  // of equipment out. Nothing for a confirmed standard battle. Its own tooltip says which and why.
-  function paintAimModeMark() {
-    var mark = $('aim-mode-mark');
-    if (!mark) return;
-    var locked = [], unknown = '';
-    ['devices', 'consumables', 'crew'].forEach(function (kind) {
-      var rule = shooterPolicy[kind];
-      if (rule.state === 'forbidden') locked.push(aimPolicyLine(kind));
-      else if (rule.state === 'unknown' && !unknown) unknown = rule.source;
-    });
-    var kind = locked.length ? 'forbidden' : unknown ? 'unknown' : '';
-    mark.hidden = !kind;
-    mark.setAttribute('data-kind', kind || 'none');
-    mark.textContent = kind === 'forbidden' ? '⊘' : kind ? '?' : '';
-    mark.setAttribute('aria-label', kind === 'forbidden' ? 'Some equipment is fixed by the game for this vehicle'
-      : kind ? 'The rules of this battle’s mode are not known' : '');
-    mark.title = !kind ? '' : locked.concat(unknown ? ['The rules of this battle are not known: ' + unknown
-      + '. The configuration works as in a standard battle, which may be more than the game allowed here.'] : []).join(' ');
+    return kept.join(', ');
   }
   // --- Driving the shooter ----------------------------------------------------------------------
   // With the emulation on, W A S D move the vehicle, the turret chases the cursor at its own rotation
@@ -2548,7 +2744,7 @@
     // changes (updateAim runs on every shell, distance or pose step, and each pass forces a page layout).
     var shownBefore = [$('aim-config').hidden, tile.hidden, $('aim-gun').hidden, $('aim-block').hidden].join();
     $('aim-config').hidden = !live;
-    if (!live) { $('aim-config').open = false; aimPickerOpen = ''; }
+    if (!live) $('aim-config').open = false;   // aimConfigListen below takes the sub-panel and the Escape key with it
     tile.hidden = !live;
     // The gun panel rides with the mode, exactly as the speed tile and Config do: its reload figures are
     // the emulation's own state, and the heading shell list carries the shells when the mode is off.
@@ -2568,6 +2764,7 @@
     }
     aimCursorClass();
     aimSyncCentre();   // a mode going off closed the popover above, and the hold goes with it
+    aimConfigListen();
     if (!live) {
       if (viewer) viewer.clearLiveAim();
       stopAimLoop();
@@ -3492,7 +3689,13 @@
   // the class while the mode is on.
   $('crosshair-style').onchange=function(){aimCursorClass();aimSyncCentre();};
   // The Config popover opening or closing, whoever did it: its summary, a click elsewhere, the mode going off.
-  $('aim-config').addEventListener('toggle',function(){aimSyncCentre();});
+  $('aim-config').addEventListener('toggle',function(){aimSyncCentre();aimConfigListen();});
+  // The wheel over the OPEN menu is the menu's: the viewer's own handler sits on #viewport, takes every wheel
+  // and zooms the scene with it, so the popover and a sub-panel taller than the room could not be scrolled at
+  // all. On the popover and not on the whole <details>, or the wheel over the collapsed "Config" button - a
+  // button like any other in the row - would stop zooming the scene. While a sub-panel is open only the panel
+  // scrolls: a wheel anywhere else over the menu is swallowed, or the page itself would scroll under it.
+  $('aim-config-body').addEventListener('wheel',function(e){e.stopPropagation();if(aimLayer&&!aimConfigControls.layer.contains(e.target))e.preventDefault();},{passive:false});
   // A popover left out of date while it was closed is painted by the click that opens it - synchronously, before
   // <details> opens (Enter and Space on the summary are clicks too), so it never shows the previous shooter for a
   // frame. The asynchronous toggle event would come too late for that.
@@ -3513,7 +3716,7 @@
     var box=$('vehicle-focus'),summary=box.querySelector('summary');
     summary.addEventListener('click',function(e){if(box.classList.contains('is-locked'))e.preventDefault();});
     box.addEventListener('keydown',function(e){if((e.key==='Escape'||e.key==='Esc')&&box.open){box.open=false;summary.focus();}});
-    document.addEventListener('click',function(e){if(box.open&&!box.contains(e.target))box.open=false;});
+    document.addEventListener('click',function(e){if(box.open&&!clickedIn(e,box))box.open=false;});
   }());
   document.querySelectorAll('[data-filter]').forEach(function(b){b.onclick=function(){filter=b.dataset.filter;document.querySelectorAll('[data-filter]').forEach(function(x){x.setAttribute('aria-pressed',String(x===b));});renderHits();};});
   $('wireframe').onchange=function(){if(viewer)viewer.wireframe(this.checked);};
@@ -3602,8 +3805,9 @@
   $('reset-settings').onclick=function(){
     settingControls.forEach(function(el){settingSet(el,settingDefaults[el.id]);settingRun(el);});
     try{window.localStorage.removeItem(SETTINGS_KEY);}catch(e){}
-    // The shooter presets a user saved are his own data, not a setting of this menu, so they are kept.
-    if(aimUserNames().length)persistSettings();
+    // The shooter presets a user saved and the build he made by hand are his own data, not settings of this
+    // menu, so they are kept.
+    if(aimUserNames().length||Object.keys(aimStore.custom).length)persistSettings();
   };
   // The Target group is built before the settings are restored: restoring the Display setting already runs
   // updateShell(), which asks the group whether it belongs on screen.
@@ -3712,9 +3916,14 @@
   // Closing on a click outside is written out here: the settings menu has no such handler to reuse. Every
   // popover of the page is a .toolbar-more <details>, the toolbar's own and the modifier groups' alike, and
   // the battle list of the heading tile rides on the same handler rather than bringing a third mechanism.
-  document.addEventListener('click',function(e){document.querySelectorAll('.toolbar-more[open]').forEach(function(d){if(!d.contains(e.target))d.open=false;});
+  // WHERE THE CLICK CAME FROM IS THE EVENT'S OWN PATH, not the tree as it stands now (22.09): a control whose
+  // own handler repaints the menu around it - choosing a preset, picking a device - is gone from the document
+  // by the time this runs, and `contains(e.target)` then read that click as one from outside and closed the
+  // menu under the user. composedPath() is taken when the dispatch starts, so it still names the menu.
+  function clickedIn(e,box){var path=e.composedPath?e.composedPath():null;return path&&path.length?path.indexOf(box)>=0:box.contains(e.target);}
+  document.addEventListener('click',function(e){document.querySelectorAll('.toolbar-more[open]').forEach(function(d){if(!clickedIn(e,d))d.open=false;});
     var pick=document.querySelector('.heading-pick');
-    if(pick&&!$('battle-list').hidden&&!pick.contains(e.target))openBattleList(false);});
+    if(pick&&!$('battle-list').hidden&&!clickedIn(e,pick))openBattleList(false);});
   layoutHeading();layoutToolbar();layoutMods();layoutPose();
   if(host.interrupted){$('host-note').hidden=false;$('host-note').textContent='The previous session was interrupted during “'+host.interrupted.action+'» ('+(host.interrupted.host==='game'?'in the game':'in the browser')+', '+new Date(host.interrupted.at).toLocaleString('en-GB')+'). Mention this when reporting.';}
   (function(){var pv=$('app-version').getAttribute('data-version');if(pv!=='dev')$('app-version').textContent=pv;}());
