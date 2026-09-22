@@ -2,7 +2,7 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
-## Unreleased
+## 0.7.20 (2026-09-22)
 
 - Hit tiles show the damaged modules and injured crew with the client's own icons when the game reports them; any other critical hit gets one crit icon. Names and sources are on hover and in a "Critical damage" row of the hit details. A crit without damage shows 0 instead of ⚙.
 - The recorder logs the client's critical-damage messages next to the hits; older battles show the crit their hit records carry.
@@ -27,8 +27,6 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 - Dragging the Distance slider inside "More" no longer closes the menu: the toolbar is re-measured only when something on it appears or disappears.
 - A turret or gun drag is handled once per mouse move, and the Config menu is built when it is opened instead of on every hit.
 - The Statistics log pass that runs when a battle opens takes about half the time and reads each collision model far less often; the lines are the same, now grouped by target vehicle.
-
-## 0.7.19 (2026-09-21)
 
 - Collision models are resolved from mounted shared and event packages, including Waffentrager vehicles; saved battles can recover their missing parts with the matching client.
 - Incomplete or unsupported collision models show an explicit message instead of isolated parts or misleading armour estimates.
