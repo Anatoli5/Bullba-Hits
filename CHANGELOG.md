@@ -14,6 +14,7 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 - The impact cross is drawn at 90 % by default instead of 50 %, where it was hard to see; a stored 50 % from the old default follows it.
 - Config drops the paragraph under the slots and the "?" on the button; what they said is in the button's tooltip.
 - The installer comes in a second form for machines whose App Control refuses the single EXE's copy in the temp folder (error 4551): `noloader\BullbaHits-<version>-Setup.exe` with two `.bin` files beside it, which runs nothing out of the temp folder. Its executable carries no version of its own and is the same file for every build.
+- For a machine that refuses any unsigned program of ours there is now `BullbaHits-<version>-Install.zip`: unpack it, close the game and double-click `Install.cmd`, which runs only Windows' own PowerShell and copies the same files with the same checks — but leaves no Programs-and-Features entry and no shortcut.
 
 ## 0.7.20 (2026-09-22)
 

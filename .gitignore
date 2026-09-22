@@ -21,6 +21,8 @@ __pycache__/
 /installer/*
 !/installer/ArmorInspector.iss
 !/installer/armor-inspector.ico
+# The script form of the installer: the .cmd, the .ps1 and the README the builder stages.
+!/installer/script/
 !/installer/upgrades/
 # Upgrade manifests are the recorded hashes of released builds, kept for reference; the installer does not read them.
 /installer/upgrades/*
@@ -30,6 +32,7 @@ __pycache__/
 !/tools/build.py
 !/tools/package.py
 !/tools/build_installer.py
+!/tools/build_script_installer.py
 !/tools/fetch_installer_compiler.py
 !/tools/make_installer_icon.ps1
 !/tools/release_github.py
