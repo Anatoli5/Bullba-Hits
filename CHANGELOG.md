@@ -14,6 +14,12 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 - Collision models are read straight from the client packages instead of re-reading a whole package directory for each one: about 45 ms less hangar work per model.
 - Game start does less work: the viewer's files are rewritten only when they differ from the package, saved vehicles load about eight times faster, and each vehicle configuration is rebuilt once instead of for every hit that needs it.
 - Newly extracted collision models are about 40 % smaller (coordinates rounded to a micrometre); models already saved stay as they are.
+- The armour map is no longer recomposed on frames where nothing changed (a still camera, a settling aiming circle), and the live aiming circle no longer rebuilds its shader every frame.
+- Circle chances and shot lines are computed faster, up to ten times on heavy vehicles: a ray stops at the first main armour plate. The results are the same.
+- Wheel zoom updates the shell, the panels and the map once, when the glide ends, instead of on every frame; a glide cut short by leaving the page finishes on return.
+- Dragging the Distance slider inside "More" no longer closes the menu: the toolbar is re-measured only when something on it appears or disappears.
+- A turret or gun drag is handled once per mouse move, and the Config menu is built when it is opened instead of on every hit.
+- The Statistics log pass that runs when a battle opens takes about half the time and reads each collision model far less often; the logged lines are unchanged.
 
 ## 0.7.19 (2026-09-21)
 

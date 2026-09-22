@@ -7,6 +7,10 @@
   // rebuild it. Set by selectHit, cleared by display() so that every other scene (a browsed vehicle, a
   // swapped shooter) counts as “not the recorded hit”.
   var currentHitKey=null;
+  // The four parts of the layout pass (scheduleLayout, near the end of this file): the heading row, the toolbar
+  // row, the modifier groups over the scene and the pose tile. A caller that changed one of them asks for that
+  // one; no mask is all four. Declared up here so a call made while the module is still starting sees them.
+  var LAYOUT_HEADING=1,LAYOUT_TOOLBAR=2,LAYOUT_MODS=4,LAYOUT_POSE=8,LAYOUT_ALL=15;
   // web/host.js: game-host flag, breadcrumb-guarded heavy handlers. Absent in isolated tests.
   var host=window.BullbaHost||{game:false,interrupted:null,guard:function(action,fn){return fn;},done:function(){},
     canSend:function(){return false;},send:function(){return Promise.reject(new Error('No channel to the mod'));}};
@@ -626,7 +630,8 @@
          title:'Driver skill “Reliable Placement”: +15 % at 100 % skill (tankmen.xml driver_reliablePlacement → perks.xml id 304, antifragmentationLining 0.0015 per point). The per-point scaling is a reading of the client XML, not a verified rule.',
          choices:[{value:'0',label:'Off',title:'Not trained · ×1.00'},
            {value:'1',label:'+15 %',title:'Trained to 100 % · ×1.15 · the scaling is read from the client XML, not verified'}]}],
-      onChange:function(){if(modsType)modsState[modsType]=targetMods.values();updateShell();}});
+      // The collapsed summary is the width of the group's button, so the group is placed again beside the tile.
+      onChange:function(){if(modsType)modsState[modsType]=targetMods.values();updateShell();scheduleLayout(LAYOUT_MODS);}});
   }
   // A new vehicle on screen: its own remembered switches, or fresh ones read from the factor of its record.
   function syncTargetMods(hit){
@@ -1152,7 +1157,7 @@
       shooterModsState[shooterType] = {values: aimValues(shooterConfig), preset: shooterPreset};
       if (shooterPreset) { aimStore.chosen[shooterType] = shooterPreset; persistSettings(); }
     }
-    paintAimConfig();
+    paintAimConfig(true);   // a click inside the open popover: its tiles depend on one another, all are redrawn
     // A different build is a different vehicle, not a moment in the life of this one: the running
     // exponential is dropped and the circle is rebuilt for the new modifiers, so the answer to "what
     // would a stabiliser do here" is on screen at once instead of waiting for the next frame.
@@ -1294,7 +1299,7 @@
     tile.onclick = function (e) { e.stopPropagation(); aimOpenPicker(key); };
     return tile;
   }
-  function aimOpenPicker(key) { aimPickerOpen = aimPickerOpen === key ? '' : key; paintAimConfig(); }
+  function aimOpenPicker(key) { aimPickerOpen = aimPickerOpen === key ? '' : key; paintAimConfig(true); }
   // A tile of the picker: the client's own icon with the client's own grade badge over the corner, and
   // not one word (user, 21.09). `art` is {icon, label, badge}: the label is the tile's accessible name,
   // because a button made of a decorative picture has none otherwise, and everything that used to be
@@ -1618,9 +1623,17 @@
   function aimRow(grid, label, control) { grid.appendChild(node('span', label)); grid.appendChild(control); }
   // The corner readout and its ⓘ popover are gone (user, 20.09): the mode's one-line explanation is the
   // switch's own tooltip, and the figures of the two rings live on the two info panels.
-  function paintAimConfig() {
+  // `force`: repaint even with the popover closed. Without it a closed popover is only marked out of date and
+  // is painted on the click that opens it (the summary's own click handler, which runs before <details>
+  // opens): showing a hit rebuilt all of it - about a hundred nodes and two dozen icons - for a menu nobody
+  // had open. The button's tooltip lists what is fitted and is on screen either way, so it is always written.
+  var aimConfigDirty = false;
+  function paintAimConfig(force) {
     var preset = aimConfigControls.preset;
     if (!preset) return;
+    $('aim-config').querySelector('summary').title = 'This shooter’s equipment, directive, consumables and crew, with presets. Now: ' + aimLongSummary() + '.';
+    if (!force && !$('aim-config').open) { aimConfigDirty = true; return; }
+    aimConfigDirty = false;
     var names = AIM_BUILT_IN.map(function (p) { return p.name; }).concat(aimUserNames());
     preset.replaceChildren();
     if (!shooterPreset) { var custom = node('option', 'Custom'); custom.value = ''; preset.appendChild(custom); }
@@ -1650,7 +1663,6 @@
     aimConfigControls.consumables.appendChild(aimConsumableChips());
     aimConfigControls.crew.replaceChildren();
     aimCrewSection(aimConfigControls.crew);
-    $('aim-config').querySelector('summary').title = 'This shooter’s equipment, directive, consumables and crew, with presets. Now: ' + aimLongSummary() + '.';
   }
   function aimNameBox(mode, value) {
     aimNameMode = mode;
@@ -2143,9 +2155,12 @@
     var tile = $('aim-drive'); if (!tile) return;
     var a = aimBlockData(), mode = $('armor-mode').value, modelled = mode !== 'parts' && !$('model-tile').hidden;
     var live = !!(a && modelled && viewer && aimOn);
+    // What the layout pass measures here is which of the four is on screen; it runs again only when that
+    // changes (updateAim runs on every shell, distance or pose step, and each pass forces a page layout).
+    var shownBefore = [$('aim-config').hidden, tile.hidden, $('aim-gun').hidden, $('aim-block').hidden].join();
     $('aim-config').hidden = !live;
     if (!live) { $('aim-config').open = false; aimPickerOpen = ''; }
-    tile.hidden = !live; scheduleLayout();
+    tile.hidden = !live;
     // The gun panel rides with the mode, exactly as the speed tile and Config do: its reload figures are
     // the emulation's own state, and the heading shell list carries the shells when the mode is off.
     $('aim-gun').hidden = !live;
@@ -2154,6 +2169,7 @@
     // asked for the emulation and this record cannot give it.
     var fallback = !!(modelled && aimOn && !a), wasHidden = $('aim-block').hidden;
     $('aim-block').hidden = !fallback;
+    if ([$('aim-config').hidden, tile.hidden, $('aim-gun').hidden, $('aim-block').hidden].join() !== shownBefore) scheduleLayout();
     // Said once, when the block appears: writing it on every pass would wipe the result of the
     // Estimate button the moment the camera moved.
     if (fallback && wasHidden) $('spread-result').textContent = 'This shooter’s record carries no aiming parameters, so the circle cannot be computed. Old battles get them on the next game start; until then the manual radius above stands.';
@@ -2220,10 +2236,18 @@
     verdicts.forEach(function(v){verdictLine(current.id,activeHit,v,shell,'view');});
   }
   // Every hit of a loaded battle, automatically (user, 14.09: the more data the better the analysis): the hit's own
-  // shell, its models from the cache, a throwaway ballistics engine, one hit every 150 ms so the page stays responsive.
+  // shell, its models from the cache, a throwaway flat ballistics engine, one hit every 150 ms so the page stays responsive.
   // Nothing is displayed and nothing is sent anywhere - the lines go to the console, in the game to game.log.
   function queueVerdicts(battle){
     (battle.hits||[]).forEach(function(h){var key=battle.id+'/'+h.id;if(verdictDone[key]||!(h.points||[]).some(function(p){return p.status==='resolved';}))return;verdictDone[key]=true;verdictQueue.push({battle:battle,hit:h});});
+    // The hits on one set of target models go one after another (stable: the groups in the order they first
+    // appear, the hits of a group in queue order). local-data.js keeps the last sixteen models, and a queue in
+    // hit order read the same model files again and again as the targets alternated. Written out here and not
+    // as a helper: tools/verdicts_offline.cjs cuts this function out of the page as it stands.
+    var groups=Object.create(null),count=0;
+    verdictQueue=verdictQueue.map(function(job,i){var models=((job.hit.target||{}).parts||[]).map(function(p){return p.modelKey||'';}).join(',');
+      if(groups[models]===undefined)groups[models]=count++;return [groups[models],i,job];})
+      .sort(function(a,b){return a[0]-b[0]||a[1]-b[1];}).map(function(t){return t[2];});
     verdictStatus();if(!verdictTimer)verdictTimer=setTimeout(drainVerdicts,150);
   }
   function drainVerdicts(){
@@ -2236,7 +2260,9 @@
       if(data.geometryIncomplete)return;
       var context=ArmorShotContext.resolve(hit,battle.shotEvents||[]),c=context.index>=0?context.choices[context.index]:context.choices[0]||null;
       var range=context.range>0?context.range:hit.rangeAtImpact>0?hit.rangeAtImpact:100,shell=c?shellAt(c,c.kind,c.penetration100,c.caliber,range,hit):null;
-      if(!shell)return;var engine=ArmorBallistics.build(data,false),pts=ArmorViewer.points(hit);
+      // A flat engine (one leaf, no kd-tree): the tree would cost far more to build than the one to three rays
+      // cast through it here save, and the verdicts are the same.
+      if(!shell)return;var engine=ArmorBallistics.build(data,false,true),pts=ArmorViewer.points(hit);
       ArmorViewer.verdicts(engine,pts,shell).forEach(function(v){verdictLine(battle.id,hit,v,shell,context.index>=0?'auto':'auto-shell-guess');});
     }).catch(function(e){if(window.console)console.warn('Bullba Hits verdict: hit '+hit.id+' skipped: '+e.message);})
       .then(function(){verdictBusy=false;verdictStatus();if(verdictQueue.length)verdictTimer=setTimeout(drainVerdicts,150);});
@@ -2914,7 +2940,16 @@
   }
   // Keep a visible reason when the GPU chance map cannot be drawn.
   if(viewer)viewer.onBackend=function(text){backendText=text;frameBadge();var unavailable=/^Estimate unavailable:/.test(text);$('backend-badge').hidden=!unavailable;$('backend-badge').textContent=unavailable?text:'';};
-  if(viewer)viewer.onCamera=function(state){var changed=lastDistance!==state.distance;lastDistance=state.distance;if(document.activeElement!==$('camera-distance-field'))$('camera-distance-field').value=Math.round(state.distance);if(document.activeElement!==$('camera-zoom-field'))$('camera-zoom-field').value=state.zoom.toFixed(2);$('camera-distance').value=Math.round(distanceSlider(state.distance));$('camera-zoom').value=Math.round(Math.max(0,Math.min(1000,Math.log(state.zoom/.1)/Math.log(1000)*1000)));var hr=viewer.heightRange(),hy=viewer.target.y;$('pivot-height').max=Math.max(1,Math.round((hr[1]-hr[0])*100));$('pivot-height').value=Math.round((hy-hr[0])*100);$('pivot-height-field').min=hr[0].toFixed(2);$('pivot-height-field').max=hr[1].toFixed(2);if(document.activeElement!==$('pivot-height-field'))$('pivot-height-field').value=hy.toFixed(2);var key=[state.distance,state.yaw,state.pitch,viewer.turretAngle,viewer.gunAngle].join(',');if(analysisKey!==null&&analysisKey!==key)staleEstimate();if(changed)updateShell();else if(totalEngine!==viewer.engine)shotStats();// The circle stands across the line from the camera to the aimed point, so a camera that moved needs it
+  var shellTimer=0; // the end of a wheel glide (onCamera below)
+  if(viewer)viewer.onCamera=function(state){var changed=lastDistance!==state.distance;lastDistance=state.distance;if(document.activeElement!==$('camera-distance-field'))$('camera-distance-field').value=Math.round(state.distance);if(document.activeElement!==$('camera-zoom-field'))$('camera-zoom-field').value=state.zoom.toFixed(2);$('camera-distance').value=Math.round(distanceSlider(state.distance));$('camera-zoom').value=Math.round(Math.max(0,Math.min(1000,Math.log(state.zoom/.1)/Math.log(1000)*1000)));var hr=viewer.heightRange(),hy=viewer.target.y;$('pivot-height').max=Math.max(1,Math.round((hr[1]-hr[0])*100));$('pivot-height').value=Math.round((hy-hr[0])*100);$('pivot-height-field').min=hr[0].toFixed(2);$('pivot-height-field').max=hr[1].toFixed(2);if(document.activeElement!==$('pivot-height-field'))$('pivot-height-field').value=hy.toFixed(2);var key=[state.distance,state.yaw,state.pitch,viewer.turretAngle,viewer.gunAngle].join(',');if(analysisKey!==null&&analysisKey!==key)staleEstimate();
+    // A wheel glide changes the distance on every frame of its way (about sixteen a click). The shell - its
+    // penetration at the new distance - and everything built on it are redone once, at the end: the last step
+    // clears targetDistance before it renders, so the end runs at once, and a glide cut short (a hidden page)
+    // is caught by the timer. The slider, the +/- keys, Fit and a restored camera set the distance directly
+    // and are answered at once, as before.
+    if(changed&&typeof viewer.targetDistance==='number'){window.clearTimeout(shellTimer);shellTimer=window.setTimeout(function(){shellTimer=0;updateShell();},150);}
+    else if(changed){if(shellTimer){window.clearTimeout(shellTimer);shellTimer=0;}updateShell();}
+    else if(totalEngine!==viewer.engine)shotStats();// The circle stands across the line from the camera to the aimed point, so a camera that moved needs it
     // redrawn; only the geometry is rebuilt here, the integral still waits for the cursor to rest.
     if(viewer.liveRadius100)viewer.drawLiveAim();};
   // Logarithmic slider between the viewer's distance limits: fine steps in a clinch, coarse steps far away.
@@ -2959,9 +2994,17 @@
   // gunRangeAbsolute(), the same samples without the recorded pitch subtracted. A record with no hit.aim - an
   // old battle, a vehicle opened without a shot - has nothing absolute to add to and keeps the delta wording.
   // Gun readouts: up positive, down negative. #viewport keeps the drag hints in its aria-label.
+  // One call per pose change (the viewer notifies once per drag step). While a drag lasts only the tile is
+  // brought up to date - the figures along the shot line answer for the pose of the last full rebuild anyway, and
+  // that rebuild reaches the page through onCamera when the pose is committed (viewer.js commitPose) - except
+  // when the pose crosses the recorded one, which hides or brings back the hit marks and the line's figure.
+  var poseOff=null,poseShown='';
   function poseChanged(){
     if(!viewer)return;
-    var loaded=!!viewer.loadedData;$('pose-info').hidden=!loaded;scheduleLayout();if(!loaded)return;
+    var loaded=!!viewer.loadedData;
+    // The tile is measured again only when it appears, goes, or its text (and so its width) changes.
+    if($('pose-info').hidden!==!loaded){$('pose-info').hidden=!loaded;scheduleLayout(LAYOUT_POSE);}
+    if(!loaded)return;
     var hit=viewer.loadedData.hit||{},aim=hit.aim||[],absolute=Number.isFinite(aim[0])&&Number.isFinite(aim[1]);
     var off=!(Math.abs(viewer.turretAngle)<.1&&Math.abs(viewer.gunAngle)<.1),DEG=180/Math.PI;
     var sign=function(v){return (v>0?'+':'')+Math.round(v)+'°';},wrap=function(v){return ((v+180)%360+360)%360-180;};
@@ -2976,8 +3019,13 @@
     }
     $('pose-turret').textContent=turret;$('pose-gun').textContent=gun;
     $('pose-note').textContent=off?'Hit marks hidden until the recorded pose returns':'';$('pose-note').hidden=!off;
-    staleEstimate();shotStats();
-    if(viewer.liveRadius100)viewer.drawLiveAim();
+    var shown=turret+'|'+gun+'|'+off;if(shown!==poseShown){poseShown=shown;scheduleLayout(LAYOUT_POSE);}
+    if(viewer.dragging&&off===poseOff)return;
+    poseOff=off;
+    // The live ring does not depend on the pose: with the ring up and no manual estimate on screen there is
+    // nothing to put away and draw again. Otherwise the estimate goes stale and the ring (if any) is redrawn.
+    if(analysisKey!==null||!viewer.liveRadius100){staleEstimate();shotStats();if(viewer.liveRadius100)viewer.drawLiveAim();}
+    else shotStats();
   }
   function pivotButtons(){if(!viewer)return;$('pivot-hit').disabled=!viewer.point;$('pivot-vehicle').setAttribute('aria-pressed',String(viewer.pivot!=='hit'));$('pivot-hit').setAttribute('aria-pressed',String(viewer.pivot==='hit'));}
   $('pivot-vehicle').onclick=function(){if(viewer)viewer.setPivot('vehicle');pivotButtons();};$('pivot-hit').onclick=function(){if(viewer)viewer.setPivot('hit');pivotButtons();};
@@ -3031,6 +3079,10 @@
   $('crosshair-style').onchange=function(){aimCursorClass();aimSyncCentre();};
   // The Config popover opening or closing, whoever did it: its summary, a click elsewhere, the mode going off.
   $('aim-config').addEventListener('toggle',function(){aimSyncCentre();});
+  // A popover left out of date while it was closed is painted by the click that opens it - synchronously, before
+  // <details> opens (Enter and Space on the summary are clicks too), so it never shows the previous shooter for a
+  // frame. The asynchronous toggle event would come too late for that.
+  $('aim-config').querySelector('summary').addEventListener('click',function(){if(!$('aim-config').open&&aimConfigDirty)paintAimConfig(true);});
   // The manual estimate, for a shooter whose record carries no aiming parameters. Expected damage is a
   // share of the shell's alpha here too, so the two paths read the same way.
   $('estimate-spread').onclick=function(){if(!viewer)return;try{var result=viewer.estimateSpread(Number($('spread-radius').value));analysisKey=[viewer.distance,viewer.yaw,viewer.pitch,viewer.turretAngle,viewer.gunAngle].join(',');$('spread-result').textContent=(damageView?'Nominal expected damage: '+(result.unknown?damagePct(result.damage)+'–'+damagePct(result.damageHigh):damagePct(result.damage))+' % of alpha':'Nominal total chance: '+(result.unknown?result.low.toFixed(1)+'–'+result.high.toFixed(1):result.low.toFixed(1))+'%')+' · outside the main armour '+result.miss.toFixed(1)+'% · '+result.samples+' rays.'+(result.unknown?' A range because armour data is missing.':'')+(damageView?' For the chosen dispersion model; the non-penetration damage is a reconstruction, without map obstacles or splash onto other parts.':' For the chosen dispersion model, without map obstacles or blast damage.');}catch(e){$('spread-result').textContent=e.message;}};
@@ -3231,8 +3283,18 @@
     var p=pose.getBoundingClientRect(),r=row.getBoundingClientRect();
     if(p.right+10>r.left&&p.bottom>r.top&&p.top<r.bottom)pose.style.bottom=(r.height+20)+'px';
   }
-  function scheduleLayout(){if(tbFrame)return;tbFrame=window.requestAnimationFrame(function(){tbFrame=0;layoutHeading();layoutToolbar();layoutMods();layoutPose();});}
-  window.addEventListener('resize',scheduleLayout);
+  // `parts` is a mask of the LAYOUT_ constants; the masks asked for before the frame are added up, and the frame
+  // lays out exactly those. Every pass writes styles and reads widths in turn, so each one forces the browser to
+  // lay the page out: a pose tile that changed its text must not also take the toolbar out of its popover (and
+  // close “More” under a slider being dragged there). No argument - a mode switch, a new shell list, a resize,
+  // the start - is the whole pass, as it always was.
+  var tbParts; // no initialiser: a pass asked for while the module was still starting keeps its mask
+  function scheduleLayout(parts){
+    tbParts|=parts>0?parts:LAYOUT_ALL;if(tbFrame)return;
+    tbFrame=window.requestAnimationFrame(function(){var p=tbParts;tbFrame=0;tbParts=0;
+      if(p&LAYOUT_HEADING)layoutHeading();if(p&LAYOUT_TOOLBAR)layoutToolbar();if(p&LAYOUT_MODS)layoutMods();if(p&LAYOUT_POSE)layoutPose();});
+  }
+  window.addEventListener('resize',function(){scheduleLayout();}); // not the handler itself: the Event would be read as a mask
   // Closing on a click outside is written out here: the settings menu has no such handler to reuse. Every
   // popover of the page is a .toolbar-more <details>, the toolbar's own and the modifier groups' alike, and
   // the battle list of the heading tile rides on the same handler rather than bringing a third mechanism.

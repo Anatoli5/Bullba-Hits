@@ -69,7 +69,7 @@
     // Layout read once per resize instead of once per frame, and the geometry of the drawn pose.
     this.viewWidth=0;this.viewHeight=0;this.viewRect=null;this.poseGeometries=null;this.poseBuilt=null;this.poseStale=false;this.poseAt=0;
     this.quality='auto';this.bounceMode='always';this.bounceTimer=null;this.dots=true;this.dotSpacing=3;this.tint=.5;this.partEdges=true;this.zoneOutline=false;this.turretAngle=0;this.turretTimer=null;this.turretPending=false;
-    this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.trackOpacity=.12;this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.lighting=false;this.gunAngle=0;this.autoFrame=true;this.frameScale=this.defaults.scale;this.outline=null;this.outlineDepth=null;this.outlineStyle={brightness:.8,opacity:.06};this.showOutline=false;
+    this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.trackOpacity=.12;this.trackKey=null;this.pinCache=null;this.liveRingMaterial=null;this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.lighting=false;this.gunAngle=0;this.autoFrame=true;this.frameScale=this.defaults.scale;this.outline=null;this.outlineDepth=null;this.outlineStyle={brightness:.8,opacity:.06};this.showOutline=false;
     var drag = null;
     container.addEventListener('contextmenu', function(e) { e.preventDefault(); });
     container.addEventListener('pointerdown', function(e) { /* The scene tiles and the modifier groups beside them are controls of their own: capturing the pointer here would retarget the click to #viewport and the shooter tile would never fire. Leaving the drag unstarted also keeps the pointerup below from pinning a point under the control. */ if(e.target&&e.target.closest&&e.target.closest('.viewport-tile,.mod-slot,.swap-roles,.aim-gun,.aim-drive,#aim-config'))return; /* pan: right button, or Ctrl + left button (the in-game browser swallows the right button) */ if(e.button===2||(e.button===0&&e.ctrlKey)){drag={pan:true,x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY,moved:false};self.dragging=true;try{container.setPointerCapture(e.pointerId);}catch(ignore){}return;}if(e.button!==0)return;if(e.altKey){self.aimAt(e);return;}drag={x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY,moved:false,part:self.pickPart(e)};self.dragging=true; try{container.setPointerCapture(e.pointerId);}catch(ignore){} container.focus();
@@ -82,7 +82,7 @@
        once the first round is away, moving the mouse AIMS the burst (the turret chases the cursor) and only
        the release stops it. onShotCancel says which it is: false = the burst goes on, so the press is never
        handed to the orbit or the turret drag and the pointer goes back to plain hovering. */
-    container.addEventListener('pointermove', function(e) { if (!drag){self.hover(e);return;}if(Math.abs(e.clientX-drag.sx)+Math.abs(e.clientY-drag.sy)>3)drag.moved=true;if(!drag.moved)return;if(self.aimHold){if(self.onShotCancel&&self.onShotCancel()===false){drag=null;self.dragging=false;self.hover(e);return;}self.aimHold=false;}if(drag.pan){/* the pan is accumulated and applied once in the camera's own frame loop, not per event */var p=self.pendingPan||(self.pendingPan={x:0,y:0});p.x+=e.clientX-drag.x;p.y+=e.clientY-drag.y;drag.x=e.clientX;drag.y=e.clientY;self.startOrbit();return;}if(drag.part===2||drag.part===3){/* turret and gun are one module: left/right turns the turret, up/down moves the gun */var dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(dx)self.setTurret(self.turretAngle-dx*.5);if(dy)self.setGun(self.gunAngle+dy*.16);}else{self.orbitTo(self.targetYaw-(e.clientX-drag.x)*0.008,self.targetPitch+(e.clientY-drag.y)*0.008);}drag.x=e.clientX;drag.y=e.clientY; });
+    container.addEventListener('pointermove', function(e) { if (!drag){self.hover(e);return;}if(Math.abs(e.clientX-drag.sx)+Math.abs(e.clientY-drag.sy)>3)drag.moved=true;if(!drag.moved)return;if(self.aimHold){if(self.onShotCancel&&self.onShotCancel()===false){drag=null;self.dragging=false;self.hover(e);return;}self.aimHold=false;}if(drag.pan){/* the pan is accumulated and applied once in the camera's own frame loop, not per event */var p=self.pendingPan||(self.pendingPan={x:0,y:0});p.x+=e.clientX-drag.x;p.y+=e.clientY-drag.y;drag.x=e.clientX;drag.y=e.clientY;self.startOrbit();return;}if(drag.part===2||drag.part===3){/* turret and gun are one module: left/right turns the turret, up/down moves the gun - both applied first, then one markPose and one notification for the step */var dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(self.loadedData&&(dx||dy)){var turned=dx?self.turretTo(self.turretAngle-dx*.5):null,gun=dy?self.gunTo(self.gunAngle+dy*.16):null;self.markPose();if(turned){if(self.onTurret)self.onTurret(turned);}else if(self.onGun)self.onGun(gun);}}else{self.orbitTo(self.targetYaw-(e.clientX-drag.x)*0.008,self.targetPitch+(e.clientY-drag.y)*0.008);}drag.x=e.clientX;drag.y=e.clientY; });
     // The end of a drag: the pose the drag only previewed is rebuilt in full, and one frame is asked for so the
     // map comes back at full quality with the ricochet trace (paint() draws a drag at half resolution).
     // The end of a press: a press the emulation claimed is handed back to it (a tap fires one shot, a
@@ -104,7 +104,7 @@
     // Returning to the page asks for one frame and nothing else: no rebuild, no re-creation. A frame requested
     // while the host had stopped painting may never fire, and draw() would then decline every later frame
     // forever (a frozen picture over working panels), so the pending ids are dropped first.
-    document.addEventListener('visibilitychange',function(){if(document.hidden)return;window.cancelAnimationFrame(self.frameId);self.frameId=null;self.cancelHover();self.cancelOrbit();self.draw();if(self.yaw!==self.targetYaw||self.pitch!==self.targetPitch)self.startOrbit();});
+    document.addEventListener('visibilitychange',function(){if(document.hidden)return;window.cancelAnimationFrame(self.frameId);self.frameId=null;self.cancelHover();self.cancelOrbit();self.draw();self.resumeOrbit();});
     window.addEventListener('resize', function(){self.resize();});
     // The cached rect follows a scrolled page: scroll events do not bubble, so they are caught in the capture phase.
     window.addEventListener('scroll',function(){if(self.viewRect)self.viewRect=self.container.getBoundingClientRect();},true);
@@ -128,7 +128,7 @@
     this.contextLost=false;this.paintedKey=null;this.inspectKey=null;
     if(this.surface){try{this.surface.dispose();}catch(e){this.surfaceError=e.message;}this.surface=null;}
     this.surfaceAttempted=false;
-    this.resize();this.draw();
+    this.resize();this.draw();this.resumeOrbit();
     window.dispatchEvent(new Event('armor-context-restored'));
   };
   // Coalesce input and color updates into one draw at the next browser frame.
@@ -161,6 +161,10 @@
   Viewer.prototype.zoomTo=function(value){if(!Number.isFinite(value)||value<=0)return;this.targetZoom=Math.max(.1,Math.min(150,value));this.startOrbit();};
   Viewer.prototype.dropTargets=function(){this.targetDistance=null;this.targetScale=null;this.targetZoom=null;};
   Viewer.prototype.cancelOrbit=function(){if(this.orbitId!==null)window.cancelAnimationFrame(this.orbitId);this.orbitId=null;};
+  // After a hidden page or a lost context the easing loop is started again for whatever it had not reached: the
+  // angles, and a wheel glide of the distance, frame scale or zoom - one cut short used to stay half way, and the
+  // page (which waits for the end of a glide before it redoes its panels) with it.
+  Viewer.prototype.resumeOrbit=function(){if(this.yaw!==this.targetYaw||this.pitch!==this.targetPitch||this.targetDistance!==null||this.targetScale!==null||this.targetZoom!==null)this.startOrbit();};
   // One easing step and one accumulated pan per browser frame. The factor follows the frame time, so the same
   // gesture takes the same wall-clock time at 47 frames/s in the game and at 130 in a desktop browser.
   Viewer.prototype.startOrbit=function(){
@@ -187,7 +191,7 @@
   Viewer.prototype.setDistance=function(value){if(!Number.isFinite(value))return;this.targetDistance=null;this.distance=Math.max(DISTANCE_MIN,Math.min(DISTANCE_MAX,value));this.render();};
   Viewer.limits={distanceMin:DISTANCE_MIN,distanceMax:DISTANCE_MAX};
   Viewer.prototype.saveDefaults=function(){var frame=this.framing();this.defaults={distance:this.distance,scale:Math.max(.1,Math.min(10,this.camera.zoom/(frame?frame.zoom:this.fitZoom)))};try{window.localStorage.setItem('armor-camera-defaults',JSON.stringify(this.defaults));return true;}catch(ignore){return false;}};
-  Viewer.prototype.clear=function(){this.dropTargets();this.clearLiveAim();this.fitPending=false;this.shotPoints=null;this.recordedDistance=null;this.pinned=null;this.disposePin();this.pinReticles=[];if(this.surface)this.surface.dispose();this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.gunAngle=0;this.savedAim=null;this.aimGroup=null;this.reticles=[];this.reticleLayer.replaceChildren();clearTimeout(this.turretTimer);this.turretTimer=null;this.turretPending=false;this.poseGeometries=null;this.poseBuilt=null;this.poseStale=false;this.spreadAim=null;this.hideSpread();clearTimeout(this.paintTimer);this.paintTimer=null;window.clearTimeout(this.aimSettleTimer);this.aimSettleTimer=null;window.cancelAnimationFrame(this.frameId);this.frameId=null;this.cancelHover();this.cancelOrbit();this.pendingPan=null;this.inspectKey=null;this.paintMesh=null;this.outline=null;this.outlineDepth=null;this.engine=null;this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.loadedData=null;this.paintedKey=null;this.samples=[];var disposed=new Set();this.root.traverse(function(o){var shared=!!(o.parent&&o.parent.type==='ArrowHelper'&&(o===o.parent.line||o===o.parent.cone));if(o.geometry&&!shared&&!disposed.has(o.geometry)){disposed.add(o.geometry);o.geometry.dispose();}if(o.material){(Array.isArray(o.material)?o.material:[o.material]).forEach(function(m){m.dispose();});}});while(this.root.children.length)this.root.remove(this.root.children[0]);this.materials=[];this.point=null;this.travel=null;this.render();};
+  Viewer.prototype.clear=function(){this.dropTargets();this.clearLiveAim();this.fitPending=false;this.shotPoints=null;this.recordedDistance=null;this.pinned=null;this.disposePin();this.pinCache=null;this.pinReticles=[];if(this.surface)this.surface.dispose();this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.gunAngle=0;this.savedAim=null;this.aimGroup=null;this.reticles=[];this.reticleLayer.replaceChildren();clearTimeout(this.turretTimer);this.turretTimer=null;this.turretPending=false;this.poseGeometries=null;this.poseBuilt=null;this.poseStale=false;this.spreadAim=null;this.hideSpread();clearTimeout(this.paintTimer);this.paintTimer=null;window.clearTimeout(this.aimSettleTimer);this.aimSettleTimer=null;window.cancelAnimationFrame(this.frameId);this.frameId=null;this.cancelHover();this.cancelOrbit();this.pendingPan=null;this.inspectKey=null;this.paintMesh=null;this.outline=null;this.outlineDepth=null;this.engine=null;this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.loadedData=null;this.paintedKey=null;this.samples=[];var disposed=new Set();this.root.traverse(function(o){var shared=!!(o.parent&&o.parent.type==='ArrowHelper'&&(o===o.parent.line||o===o.parent.cone));if(o.geometry&&!shared&&!disposed.has(o.geometry)){disposed.add(o.geometry);o.geometry.dispose();}if(o.material){(Array.isArray(o.material)?o.material:[o.material]).forEach(function(m){m.dispose();});}});while(this.root.children.length)this.root.remove(this.root.children[0]);this.materials=[];this.point=null;this.travel=null;this.render();};
   Viewer.prototype.rebuild=function(){
     if(!this.loadedData)return;var T=THREE,self=this;this.samples=[];this.paintedKey=null;
     // A failed composition is retried on the next rebuild (pose or model) instead of staying off for good.
@@ -251,10 +255,13 @@
       this.trackMesh=new T.Mesh(geometry,material);this.trackMesh.renderOrder=2;
       this.trackGroup=new T.Group();this.trackGroup.add(depth,this.trackMesh);this.root.add(this.trackGroup);
     }else{this.trackMesh.geometry.dispose();this.trackGroup.children.forEach(function(mesh){mesh.geometry=geometry;});}
-    this.trackGroup.visible=true;this.updateTrackAppearance();
+    this.trackGroup.visible=true;this.trackKey=null;this.updateTrackAppearance(); // a new buffer is always filled
   };
+  // The colours depend on the map switch and the track opacity alone - not on the shell or the distance - so a
+  // buffer already filled for both is left as it is (configure() runs on every shell or distance change).
   Viewer.prototype.updateTrackAppearance=function(){
-    if(!this.trackMesh)return;var self=this,attribute=this.trackMesh.geometry.attributes.color,buffer=attribute.array;
+    if(!this.trackMesh)return;var key=(this.heatmap?'map':'parts')+'|'+this.trackOpacity;if(this.trackKey===key)return;this.trackKey=key;
+    var self=this,attribute=this.trackMesh.geometry.attributes.color,buffer=attribute.array;
     this.trackTriangles.forEach(function(t,i){
       var opacity=self.heatmap?self.trackOpacity:1;
       var color=self.heatmap?baseColors[0]:baseColors[t.part%4];
@@ -308,12 +315,20 @@
   Viewer.prototype.setTint=function(value){var v=Number(value);this.tint=Math.max(0,Math.min(1.5,isFinite(v)?v:.5));this.draw();};
   Viewer.prototype.pointerRay=function(event){var rect=this.viewRect||this.container.getBoundingClientRect(),mouse=new THREE.Vector2((event.clientX-rect.left)/rect.width*2-1,-(event.clientY-rect.top)/rect.height*2+1),caster=new THREE.Raycaster();this.camera.updateMatrixWorld();caster.setFromCamera(mouse,this.camera);return caster;};
   Viewer.prototype.pickPart=function(event){if(event.shiftKey||!this.paintMesh)return 1;var objects=[this.paintMesh];if(this.trackGroup)objects.push(this.trackMesh);var hits=this.pointerRay(event).intersectObjects(objects);if(!hits.length)return false;var sample=(hits[0].object===this.trackMesh?this.trackTriangles:this.samples)[hits[0].faceIndex];return sample?sample.part:1;};
-  Viewer.prototype.setTurret=function(degrees){
-    if(!this.loadedData)return;var hit=this.loadedData.hit,limits=(hit.target||{}).turretYawLimits,initial=(hit.aim||[])[0],lo=-180,hi=180;
+  // The pose moves in two quiet steps - turretTo() and gunTo() only clamp and store - and every caller sends ONE
+  // notification for the whole change once both are in (onTurret, or onGun when only the gun moved). A drag step
+  // used to notify two or three times, each a full pass of the page's pose handler, the first of them with a gun
+  // angle not yet clamped against the new turret angle.
+  Viewer.prototype.turretTo=function(degrees){
+    var hit=this.loadedData.hit,limits=(hit.target||{}).turretYawLimits,initial=(hit.aim||[])[0],lo=-180,hi=180;
     if(Array.isArray(limits)&&limits.length===2&&Number.isFinite(initial)){lo=Math.max(-180,(limits[0]-initial)*180/Math.PI);hi=Math.min(180,(limits[1]-initial)*180/Math.PI);}
     var limited=Array.isArray(limits)&&limits.length===2&&Number.isFinite(initial);
-    this.turretAngle=limited?Math.max(lo,Math.min(hi,degrees)):((degrees+180)%360+360)%360-180;if(this.onTurret)this.onTurret({angle:this.turretAngle,min:lo,max:hi,limited:limited});
-    this.setGun(this.gunAngle);this.markPose();
+    this.turretAngle=limited?Math.max(lo,Math.min(hi,degrees)):((degrees+180)%360+360)%360-180;
+    this.gunTo(this.gunAngle); // the gun's range follows the turret angle
+    return {angle:this.turretAngle,min:lo,max:hi,limited:limited};
+  };
+  Viewer.prototype.setTurret=function(degrees){
+    if(!this.loadedData)return;var state=this.turretTo(degrees);this.markPose();if(this.onTurret)this.onTurret(state);
   };
   // The pose the viewer holds is a delta from the recorded one, so gunRange() reports the vertical limits in
   // that same delta - setGun() clamps against them. gunRangeAbsolute() is the very same interpolation with the
@@ -329,7 +344,8 @@
   };
   Viewer.prototype.gunRange=function(){return this.gunSpan(false);};
   Viewer.prototype.gunRangeAbsolute=function(){return this.gunSpan(true);};
-  Viewer.prototype.setGun=function(degrees){if(!this.loadedData)return;var limits=this.gunRange();this.gunAngle=Math.max(limits.min,Math.min(limits.max,degrees));this.markPose();if(this.onGun)this.onGun({angle:this.gunAngle,known:limits.known});};
+  Viewer.prototype.gunTo=function(degrees){var limits=this.gunRange();this.gunAngle=Math.max(limits.min,Math.min(limits.max,degrees));return {angle:this.gunAngle,known:limits.known};};
+  Viewer.prototype.setGun=function(degrees){if(!this.loadedData)return;var state=this.gunTo(degrees);this.markPose();if(this.onGun)this.onGun(state);};
   Viewer.prototype.resetPose=function(){this.turretAngle=0;this.gunAngle=0;this.setTurret(0);};
   // A pose change asks for a frame and starts the settle timer: while the drag lasts the frame only re-transforms
   // the drawn geometry, and POSE_SETTLE ms after the last change (or at the end of the drag) everything else
@@ -381,6 +397,9 @@
     return true;
   };
   // The drawn pose and everything derived from it back in step, once per drag instead of once per frame.
+  // The page relies on this for its figures: while a drag lasts its pose handler only updates the pose tile, and
+  // the shot figure of the committed pose reaches it through applyTurret -> rebuild -> render -> onCamera (a new
+  // engine; with a pinned line also through onPin). Nothing is sent from here.
   Viewer.prototype.commitPose=function(){
     clearTimeout(this.turretTimer);this.turretTimer=null;
     if(!this.turretPending&&!this.poseStale)return;
@@ -539,7 +558,7 @@
     this.pinned={origin:caster.ray.origin.clone(),direction:caster.ray.direction.clone(),point:hit.point.clone(),normal:normal};
     // The recorded aim circles belong to the recorded shot line: a tracer pinned elsewhere is another shot, so
     // they leave with the recorded tracer and come back when the pin is dropped (user, 20.09).
-    this.refreshPin();this.showSavedAim(false);if(this.onPin)this.onPin(true);
+    this.refreshPin(hit.point);this.showSavedAim(false);if(this.onPin)this.onPin(true); // the contact is the one just cast
   };
   // Tracer: a 2.3 m arrow ending at the hit point. A WebGL line is always one pixel wide, so the line is backed by a
   // thin cylinder (6 mm radius: a pixel or two at a Fit zoom, a visible dot end-on) — the user could barely find the
@@ -622,16 +641,33 @@
     group.traverse(function(o){var owned=o.userData&&o.userData.ownedResources;if(!owned)return;owned.forEach(function(r){if(r&&r.dispose)r.dispose();});o.userData.ownedResources=null;});
     this.pinGroup=null;
   };
-  Viewer.prototype.refreshPin=function(){
-    var self=this,p=this.pinned;
-    this.disposePin();
+  // What of a pinned line's drawing depends on the shell: the flight after a ricochet (its start, direction and
+  // length) and whether it ends in a second contact or is lost. Everything else - the contact on the model, the
+  // arrow, the crosshair - depends on the line and the model alone.
+  function pinLeg(result){var b=result&&result.bounce;return b?b.point.join(',')+'|'+b.direction.join(',')+'|'+result.distance+'|'+result.reason:'';}
+  // `point`: the contact the caller has just found along this very line (pinAt, pinAtPoint cast it already), or
+  // null when that cast met nothing; left out, the line is cast here.
+  Viewer.prototype.refreshPin=function(point){
+    var self=this,p=this.pinned,cache=this.pinCache,result=null,cast=false;
+    // The same line on the same engine - a new shell, palette or distance through configure(): the contact, the
+    // arrow and the crosshair stand. The ray is cast again for the shell, and the drawing is redone only when the
+    // flight after a ricochet changed with it. rebuild() makes a new engine, so a new pose never lands here.
+    if(p&&cache&&cache.pinned===p&&cache.engine===this.engine&&this.pinGroup){
+      result=this.shell&&this.engine?this.engine.ray(p.origin.toArray(),p.direction.toArray(),this.shell):null;cast=true;
+      if(pinLeg(result)===cache.leg){this.syncRecorded();this.draw();return;}
+      point=cache.contact;
+    }
+    this.disposePin();this.pinCache=null;
     this.pinReticles.forEach(function(r){r.element.remove();});this.reticles=this.reticles.filter(function(r){return !r.pinned;});this.pinReticles=[];
     this.syncRecorded();
     if(!p)return;
     // The line is fixed in the world; the vehicle under it may have been posed since the click, so find the contact again.
-    var caster=new THREE.Raycaster(p.origin,p.direction),objects=this.paintMesh?[this.paintMesh]:[];if(this.trackMesh)objects.push(this.trackMesh);
-    var hits=caster.intersectObjects(objects),contact=hits.length?hits[0].point.clone():null;
-    var result=this.shell&&this.engine?this.engine.ray(p.origin.toArray(),p.direction.toArray(),this.shell):null;
+    var contact;
+    if(point===undefined){var caster=new THREE.Raycaster(p.origin,p.direction),objects=this.paintMesh?[this.paintMesh]:[];if(this.trackMesh)objects.push(this.trackMesh);
+      var hits=caster.intersectObjects(objects);contact=hits.length?hits[0].point.clone():null;}
+    else contact=point?point.clone():null;
+    if(!cast)result=this.shell&&this.engine?this.engine.ray(p.origin.toArray(),p.direction.toArray(),this.shell):null;
+    this.pinCache={pinned:p,engine:this.engine,contact:contact,leg:pinLeg(result)};
     var group=new THREE.Group(),tip=contact||(result&&result.bounce?new THREE.Vector3().fromArray(result.bounce.point):p.point);
     group.add(this.shotArrow(p.direction,tip,0x9fdcff));
     if(result&&result.bounce){
@@ -800,7 +836,7 @@
   Viewer.prototype.aimAt=function(event){var ray=this.pointerRay(event).ray,normal=this.target.clone().sub(this.camera.position).normalize(),plane=new THREE.Plane().setFromNormalAndCoplanarPoint(normal,this.target),point=new THREE.Vector3();if(ray.intersectPlane(plane,point)){this.spreadAim=point;this.hideSpread();
     if(this.liveRadius100){var pinned=this.drawLiveAim();if(this.onAimMove)this.onAimMove(pinned);if(this.onAim)this.onAim('Circle pinned here. It keeps following the shooter’s state; “Centre on the hit” releases it.');}
     else if(this.onAim)this.onAim('Estimate centre moved. Press “Estimate”.');}};
-  Viewer.prototype.hideSpread=function(){if(this.spreadCircle){this.scene.remove(this.spreadCircle);this.spreadCircle.geometry.dispose();this.spreadCircle.material.dispose();this.spreadCircle=null;this.draw();}};
+  Viewer.prototype.hideSpread=function(){if(this.spreadCircle){this.scene.remove(this.spreadCircle);this.spreadCircle.geometry.dispose();if(this.spreadCircle.material!==this.liveRingMaterial)this.spreadCircle.material.dispose();this.spreadCircle=null;this.draw();}};
   // The sampling model of a dispersion circle, in one place: 'count' rays fanned over the circle at the
   // quantiles of the chosen radial distribution (a sunflower spiral, so the same count always gives the
   // same points), a miss counting as 0 % and 0 HP. The distribution itself is a setting - the page's own
@@ -836,23 +872,33 @@
   // rings (12) and the tracers (4) puts it last of all, on top of everything.
   // `style` is {color, dashed, opacity}; without one the circle is the gold manual estimate of 0.7.13.
   // `from`/`to` in radians cut an arc out of it (the reload); the full circle is the default.
-  function aimLine(center,right,up,radius,style,from,to){
+  // `material`: a dashed material the caller keeps (the live ring's own, drawCircle); its dashes are sized here
+  // for this radius, and dropping the line leaves it alone.
+  function aimLine(center,right,up,radius,style,from,to,material){
     var T=THREE,points=[],s=style||{},a0=from===undefined?0:from,a1=to===undefined?Math.PI*2:to;
     // 97 points, the last on top of the first: a closed T.Line rather than a LineLoop, because
     // computeLineDistances() has no distance for a LineLoop's closing segment and the dashes break there.
     var steps=Math.max(2,Math.round(96*Math.abs(a1-a0)/(Math.PI*2)));
     for(var j=0;j<=steps;j++){var a=a0+(a1-a0)*j/steps;points.push(center.clone().addScaledVector(right,radius*Math.cos(a)).addScaledVector(up,radius*Math.sin(a)));}
     var options={color:s.color===undefined?0xf1d18b:s.color,transparent:true,opacity:s.opacity>0?s.opacity:1,depthTest:false,depthWrite:false};
-    var material=s.dashed?new T.LineDashedMaterial(Object.assign(options,{dashSize:radius*.09,gapSize:radius*.06})):new T.LineBasicMaterial(options);
+    if(material){material.dashSize=radius*.09;material.gapSize=radius*.06;}
+    else material=s.dashed?new T.LineDashedMaterial(Object.assign(options,{dashSize:radius*.09,gapSize:radius*.06})):new T.LineBasicMaterial(options);
     var line=new T.Line(new T.BufferGeometry().setFromPoints(points),material);
     if(s.dashed)line.computeLineDistances();
     line.frustumCulled=false;
     return line;
   }
   function dropLine(scene,line){if(!line)return;scene.remove(line);line.geometry.dispose();line.material.dispose();}
+  // The live ring is redrawn on every frame of the emulation. Its dashed material is one for the viewer's life
+  // and is never disposed: three r160 deletes a program whose last material goes, so a fresh material per frame
+  // recompiled and relinked the dashed-line program on every frame whenever the live ring was the only dashed
+  // line on screen (the Vehicles mode, a swapped view). The geometry is still new per frame.
+  Viewer.prototype.liveRing=function(){
+    return this.liveRingMaterial||(this.liveRingMaterial=new THREE.LineDashedMaterial({color:AIM_LIVE.color,transparent:true,opacity:AIM_LIVE.opacity,depthTest:false,depthWrite:false}));
+  };
   Viewer.prototype.drawCircle=function(center,right,up,radius,style,from,to){
     this.hideSpread();
-    this.spreadCircle=aimLine(center,right,up,radius,style,from,to);
+    this.spreadCircle=aimLine(center,right,up,radius,style,from,to,style===AIM_LIVE?this.liveRing():null);
     this.spreadCircle.renderOrder=14;this.scene.add(this.spreadCircle);this.draw();
   };
   Viewer.prototype.estimateSpread=function(radius100){
@@ -1109,7 +1155,7 @@
     var normal=hit&&hit.face?hit.face.normal.clone().transformDirection(hit.object.matrixWorld):null;
     this.pinned={origin:origin,direction:direction,point:hit?hit.point.clone():point.clone(),normal:normal};
     this.aimPinned=true;   // this pin belongs to the emulated shot: dropping the shot releases it
-    this.refreshPin();if(this.onPin)this.onPin(true);
+    this.refreshPin(hit?hit.point:null);if(this.onPin)this.onPin(true);   // the same line was just cast above
     return true;
   };
   Viewer.prototype.liveAimProbability=function(shell,count){

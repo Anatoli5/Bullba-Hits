@@ -298,6 +298,11 @@ void main(){
     // characters of garbage per frame, drawn or not). Float64: the matrices are doubles, and a float32 copy
     // would differ from every original and report a move on every frame.
     this.viewportSave=new T.Vector4();this.scissorSave=new T.Vector4();this.colorSave=new T.Color();this.bufferSize=new T.Vector2();this.cameraCache=new Float64Array(32);
+    // What the composition in this.result was made from, beyond the layers themselves: every uniform render()
+    // writes, and the drawing-buffer size (renderSignature). A frame that changes none of it - the camera still,
+    // the live ring settling - keeps the result and runs only the mark pass. The program and the light map it was
+    // made with are held beside it, so a recompiled composite or a new light target is never read as the same.
+    this.signature=new Float64Array(24);this.signatureNext=new Float64Array(24);this.signature[0]=NaN;this.composedMaterial=null;this.composedLight=null;
     // The peel geometry as update() built it, so a turret drag can pose it in place (Viewer.previewPose).
     this.poseRuns=null;this.basePosition=null;this.baseNormal=null;
     // Soft lighting. `lighting` is what was asked for, `lit` what actually runs (they differ only when the
@@ -352,7 +357,7 @@ void main(){
   // is replaced while it already hangs in the viewer's scene. Its parent and its visibility are therefore
   // carried over to the new quad: losing them would take the whole map off the screen.
   Surface.prototype.compose=function(){
-    var parent=null,visible=false;
+    var parent=null,visible=false;this.composedMaterial=null; // the next render() composes with the new program
     if(this.quad){parent=this.quad.parent;visible=this.quad.visible;if(parent)parent.remove(this.quad);this.quad.geometry.dispose();this.markMaterial.dispose();}
     if(this.compositeQuad){this.compositeScene.remove(this.compositeQuad);this.compositeQuad.geometry.dispose();this.material.dispose();}
     var uniforms={uMaterials:{value:this.materialTexture},uPen:{value:new T.Vector4()},uShell:{value:new T.Vector4()},uFlags:{value:new Int32Array(4)},uClassic:{value:false},uOpacity:{value:.35},
@@ -684,6 +689,21 @@ void main(){
     if(moved)for(i=0;i<16;i++){cache[i]=world[i];cache[i+16]=projection[i];}
     return moved;
   };
+  // The composite's own inputs as render() has just written them, compared element by element with the last
+  // frame's and stored in place (the same no-garbage discipline as cameraCache). The layer frame - uOrigin,
+  // uAnchor, uForward, uCameraWorld, uInvProjection - changes only together with the layers (`stale`), and the
+  // textures only in update(), pose() and setLighting(), which all drop the layers too. Returns true on a change.
+  Surface.prototype.renderSignature=function(u){
+    var sig=this.signature,next=this.signatureNext,buffer=this.renderer.getDrawingBufferSize(this.bufferSize),flags=u.uFlags.value,changed=false,i;
+    var pen=u.uPen.value,shell=u.uShell.value,damage=u.uDamage.value;
+    next[0]=pen.x;next[1]=pen.y;next[2]=pen.z;next[3]=pen.w;next[4]=shell.x;next[5]=shell.y;next[6]=shell.z;next[7]=shell.w;
+    next[8]=flags[0];next[9]=flags[1];next[10]=flags[2];next[11]=flags[3];
+    next[12]=u.uClassic.value?1:0;next[13]=u.uOpacity.value;next[14]=u.uRicochetLoss.value;next[15]=u.uBounce.value;next[16]=u.uTint.value;
+    next[17]=damage.x;next[18]=damage.y;next[19]=damage.z;next[20]=damage.w;next[21]=buffer.x;next[22]=buffer.y;
+    // NaN never equals itself, so a value that is not a number keeps the old every-frame composite.
+    for(i=0;i<23;i++)if(sig[i]!==next[i]){sig[i]=next[i];changed=true;}
+    return changed;
+  };
   Surface.prototype.render=function(camera,anchor,shell,palette,opacity,quality,width,height,pixelRatio,bounceMode,mode){
     var renderer=this.renderer,size=this.size(quality,width,height,pixelRatio);
     if(this.width!==size.width||this.height!==size.height){this.width=size.width;this.height=size.height;this.targets.forEach(function(t){t.setSize(size.width,size.height);});this.key=null;this.checkPending=true;}
@@ -719,7 +739,14 @@ void main(){
     // The bound texture is re-read every frame: the target is created on the first pass, may be rebuilt once
     // as RGBA8, and is dropped again when the switch goes off or a pass is refused.
     if(this.lit)u.uLightMap.value=this.lightTarget&&!this.lightFailed?this.lightTarget.texture:this.neutral;
-    this.composite();
+    // The heavy full-screen pass only when its inputs moved: fresh layers, a first or recompiled composite, another
+    // light map, or a changed uniform or buffer size. A still frame reuses this.result bit for bit - the mark
+    // pass already reads it through uResult. debugReadback() calls composite() itself.
+    var changed=this.renderSignature(u);
+    if(stale||changed||!this.result||this.composedMaterial!==this.material||(this.lit&&u.uLightMap.value!==this.composedLight)){
+      this.composedMaterial=null;   // a pass that throws is tried again on the next frame
+      this.composite();this.composedMaterial=this.material;this.composedLight=this.lit?u.uLightMap.value:null;
+    }
     var light=this.lit&&!this.lightFailed?' · soft lighting':this.lighting?' · soft lighting off: '+(this.lightingReason||'unavailable'):'';
     this.quad.visible=true;return size.width+' × '+size.height+(size.scale<.999?' ('+Math.round(size.scale*100)+'% of the window)':'')+' · up to '+COUNT+' layers'+(this.bounce?(bounceMode==='always'?' · bounce traced':' · bounce traced after the camera stops'):' · bounce off: '+this.bounceReason)+light;
   };
@@ -742,6 +769,6 @@ void main(){
   Surface.prototype.dispose=function(){if(this.quad){if(this.quad.parent)this.quad.parent.remove(this.quad);this.quad.geometry.dispose();}if(this.markMaterial)this.markMaterial.dispose();if(this.compositeQuad)this.compositeQuad.geometry.dispose();if(this.material)this.material.dispose();if(this.result)this.result.dispose();if(this.mesh)this.mesh.geometry.dispose();if(this.peelMaterial)this.peelMaterial.dispose();if(this.materialTexture)this.materialTexture.dispose();if(this.bvhStruct)this.bvhStruct.dispose();if(this.faceMaterial)this.faceMaterial.dispose();this.bvh=null;this.targets.forEach(function(t){t.dispose();});if(this.depth)this.depth.dispose();if(this.blank)this.blank.dispose();
     // Soft lighting goes with the instance. The light mesh shares the peel geometry, already disposed above.
     if(this.lightTarget)this.lightTarget.dispose();if(this.lightMaterial)this.lightMaterial.dispose();if(this.neutral)this.neutral.dispose();
-    this.lightTarget=null;this.lightMesh=null;this.lightScene=null;this.baseVisual=null;};
+    this.lightTarget=null;this.lightMesh=null;this.lightScene=null;this.baseVisual=null;this.composedMaterial=null;this.composedLight=null;};
   root.BullbaScreenArmor=Surface;
 }(window));

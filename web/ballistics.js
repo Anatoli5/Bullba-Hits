@@ -22,14 +22,16 @@
     tris.sort(function(a,b){return a.center[axis]-b.center[axis];});var half=tris.length>>1;
     node.left=tree(tris.slice(0,half));node.right=tree(tris.slice(half));return node;
   }
+  // The distance at which the ray enters the box (0 when it starts inside), or -1 for a miss. Callers test
+  // `< 0`, never falsiness: 0 is an ordinary hit - the second leg after a ricochet starts 1 mm off the surface.
   function intersectsBox(node,o,d){
     var near=0,far=Infinity;
     for(var i=0;i<3;i++){
-      if(Math.abs(d[i])<1e-12){if(o[i]<node.min[i]-EPS||o[i]>node.max[i]+EPS)return false;continue;}
+      if(Math.abs(d[i])<1e-12){if(o[i]<node.min[i]-EPS||o[i]>node.max[i]+EPS)return -1;continue;}
       var a=(node.min[i]-o[i])/d[i],b=(node.max[i]-o[i])/d[i];
-      near=Math.max(near,Math.min(a,b));far=Math.min(far,Math.max(a,b));if(near>far+EPS)return false;
+      near=Math.max(near,Math.min(a,b));far=Math.min(far,Math.max(a,b));if(near>far+EPS)return -1;
     }
-    return far>=0;
+    return far>=0?near:-1;
   }
   function intersect(t,o,d){
     // Same intersection arithmetic without temporary vectors for every triangle.
@@ -39,10 +41,18 @@
     var qx=sy*e1[2]-sz*e1[1],qy=sz*e1[0]-sx*e1[2],qz=sx*e1[1]-sy*e1[0],v=(d[0]*qx+d[1]*qy+d[2]*qz)/det;if(v<-1e-8||u+v>1+1e-8)return null;
     var distance=(e2[0]*qx+e2[1]*qy+e2[2]*qz)/det;return distance>EPS?{distance:distance,triangle:t,cos:Math.abs(dot(d,t.normal))}:null;
   }
-  function collisions(node,o,d,out){
-    if(!node||!intersectsBox(node,o,d))return;
-    if(node.tris){for(var i=0;i<node.tris.length;i++){var hit=intersect(node.tris[i],o,d);if(hit)out.push(hit);}}
-    else{collisions(node.left,o,d,out);collisions(node.right,o,d,out);}
+  // Every contact of the ray, cut off past the nearest MAIN armour met so far (st.best): walk() below stops at
+  // the first main plate, so nothing behind it can change the result, and a box the ray enters beyond it is
+  // skipped. The condition that moves st.best is exactly walk()'s exit - armour with a value and a damage
+  // factor - so a plate walk() would pass (no armour table, armour null) never cuts anything. A contact at x
+  // lies inside every box above it (each is entered at or before x), so the kept contacts are the ones the
+  // full walk would have found up to best, in the same order; the stable sort leaves them as they were.
+  // Keep this condition and walk()'s exits in step.
+  function collisions(node,o,d,out,st){
+    if(!node)return;var near=intersectsBox(node,o,d);if(near<0||near>st.best+EPS)return;
+    if(node.tris){for(var i=0;i<node.tris.length;i++){var t=node.tris[i],hit=intersect(t,o,d);if(hit){out.push(hit);var a=t.armor;
+      if(a&&a.armor!=null&&a.vehicleDamageFactor>EPS&&hit.distance<st.best)st.best=hit.distance;}}}
+    else{collisions(node.left,o,d,out,st);collisions(node.right,o,d,out,st);}
   }
   function erf(x){var sign=x<0?-1:1;x=Math.abs(x);var t=1/(1+.3275911*x);return sign*(1-(((((1.061405429*t-1.453152027)*t)+1.421413741)*t-.284496736)*t+.254829592)*t*Math.exp(-x*x));}
   // Same Gaussian scale as the 2.4 #936 client's _computePenetrationChance.
@@ -374,7 +384,10 @@
     }
     return {chance:0,reason:'no-hull',layers:layers,screenPass:screenPass};
   }
-  function build(data,useCurrent){
+  // `flat`: one leaf holding every triangle instead of the kd-tree, for a caller that casts only a handful of
+  // rays through a throwaway engine (the Statistics log pass: 1-3 rays a hit). Building the tree costs far more
+  // than those rays save; the rays and their results are the same either way.
+  function build(data,useCurrent,flat){
     var tris=[];
     ((data.hit.target||{}).parts||[]).forEach(function(part){
       var model=data.models[String(part.id)];if(!model||!part.transform)return;
@@ -384,14 +397,21 @@
         for(var i=0;i<g.indices.length;i+=3)tris.push(triangle(vertices[g.indices[i]],vertices[g.indices[i+1]],vertices[g.indices[i+2]],part.id,g.material,(armor||{})[g.material]));
       });
     });
-    return fromTriangles(tris);
+    return fromTriangles(tris,flat);
   }
-  function fromTriangles(tris){
-    var acceleration=tree(tris.slice());
+  function leaf(tris){
+    if(!tris.length)return null;
+    var lo=[Infinity,Infinity,Infinity],hi=[-Infinity,-Infinity,-Infinity];
+    tris.forEach(function(t){for(var i=0;i<3;i++){lo[i]=Math.min(lo[i],t.min[i]);hi[i]=Math.max(hi[i],t.max[i]);}});
+    return {min:lo,max:hi,tris:tris.slice()};
+  }
+  function fromTriangles(tris,flat){
+    var acceleration=flat?leaf(tris):tree(tris.slice());
     var engine={triangles:tris,acceleration:acceleration};
     engine.ray=function(o,d,s){
       if(!s||!(s.penetration>0)||!(s.caliber>0))return evaluate([],s);
-      d=unit(d);var hits=[];collisions(acceleration,o,d,hits);hits.sort(function(a,b){return a.distance-b.distance;});
+      // A fresh cut-off for every ray, the second leg after a ricochet included (collisions above).
+      d=unit(d);var hits=[];collisions(acceleration,o,d,hits,{best:Infinity});hits.sort(function(a,b){return a.distance-b.distance;});
       var r=evaluate(hits,s);r.origin=o;r.direction=d;
       // Client rule since 9.3: after a ricochet the shell flies on along the mirrored direction with the reduced
       // penetration and may hit the same vehicle again; a second ricochet destroys it. The first-contact picture
