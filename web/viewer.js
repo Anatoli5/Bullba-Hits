@@ -299,6 +299,13 @@
   // was last asked for, so a stored setting can be written from it, and off is the previous picture with no
   // extra pass, buffer or attribute. Whether the driver actually granted it is reported in the backend line,
   // not here - a device that declines must not silently rewrite the user's setting.
+  // How deep the soft shading is: 1 is what the feature shipped with, 0 flat, above 1 more contrast. Kept
+  // here so a new Surface (a new model, a quality change, a restored context) is given it again.
+  Viewer.prototype.setLightStrength=function(value){
+    this.lightStrength=Math.max(0,Math.min(4,Number(value)||0));
+    if(this.surface&&this.surface.setLightStrength){try{this.surface.setLightStrength(this.lightStrength);}catch(e){this.surfaceError=e.message;}}
+    this.draw();
+  };
   Viewer.prototype.setLighting=function(value){
     this.lighting=!!value;
     // The visual normals are built from the geometry of the last full rebuild, so a pose that is only drawn
@@ -787,7 +794,8 @@
         // A fresh composition starts unlit, so the switch is re-applied here - the one path every new
         // instance goes through: the first paint, a new model, a quality change and a restored context.
         // Caught on its own: a cosmetic light the driver will not give must never read as a map that failed.
-        if(this.lighting){try{this.surface.setLighting(true);}catch(light){console.warn('Soft lighting unavailable:',light.message);}}}catch(e){this.surfaceError=e.message;console.warn('Screen composition unavailable:',e.message);if(window.BullbaHost)window.BullbaHost.mark('Layer composition','unavailable: '+e.message);}}
+        if(this.lighting){try{this.surface.setLighting(true);}catch(light){console.warn('Soft lighting unavailable:',light.message);}}
+        if(Number.isFinite(this.lightStrength)&&this.surface.setLightStrength){try{this.surface.setLightStrength(this.lightStrength);}catch(light){console.warn('Soft lighting depth unavailable:',light.message);}}}catch(e){this.surfaceError=e.message;console.warn('Screen composition unavailable:',e.message);if(window.BullbaHost)window.BullbaHost.mark('Layer composition','unavailable: '+e.message);}}
       if(this.surface){try{
         this.surface.hatch=this.dotSpacing;this.surface.dots=this.dots;this.surface.edges=this.partEdges;this.surface.outline=this.zoneOutline;this.surface.tint=this.tint;/* The user's Detail and Ricochet trace settings hold during a drag too: 'Always' means live while rotating (0.7.4 lowered both while dragging; reverted on his feedback). */var size=this.surface.render(this.camera,this.target,this.shell,this.palette,this.trackOpacity,this.quality,this.viewWidth,this.viewHeight,this.renderer.getPixelRatio(),this.bounceMode,this.mapMode);
         composed=true;this.surfaceError=null;

@@ -3556,6 +3556,7 @@
   try{viewer=new ArmorViewer($('viewport'));}catch(e){message('WebGL unavailable: '+e.message);}
   if(viewer)viewer.setAutoFrame($('auto-frame').checked); // on by default (user, 18.09)
   if(viewer)viewer.setLighting($('soft-lighting').checked); // on by default (user, 19.09); the checkbox is the switch
+  if(viewer)viewer.setLightStrength(Number($('light-strength').value)/100);
   if(viewer)viewer.onInspect=inspectArmor;
   // The viewer's real frame rate next to the composition's own report: in the game the browser's frame pump
   // decides it, and it is neither 60 nor what a desktop browser shows. Refreshed at most once a second, and
@@ -3740,7 +3741,14 @@
   }());
   document.querySelectorAll('[data-filter]').forEach(function(b){b.onclick=function(){filter=b.dataset.filter;document.querySelectorAll('[data-filter]').forEach(function(x){x.setAttribute('aria-pressed',String(x===b));});renderHits();};});
   $('wireframe').onchange=function(){if(viewer)viewer.wireframe(this.checked);};
-  $('soft-lighting').onchange=function(){if(viewer)viewer.setLighting(this.checked);};
+  $('soft-lighting').onchange=function(){if(viewer)viewer.setLighting(this.checked);lightStrengthState();};
+  // How deep the soft light shades (user, 22.09): the slider only scales the composite's brightness range.
+  $('light-strength').oninput=function(){
+    $('light-strength-value').textContent=this.value+' %';
+    if(viewer)viewer.setLightStrength(Number(this.value)/100);
+  };
+  // The depth means nothing with the light off, so the slider is greyed out with it.
+  function lightStrengthState(){var on=$('soft-lighting').checked;$('light-strength').disabled=!on;}
   var CONTEXT_LOST='The browser lost its WebGL context. Reload the page.';
   window.addEventListener('armor-context-lost',function(){if(host.mark)host.mark('WebGL','context-lost');message(CONTEXT_LOST);});
   // The context came back and the viewer has redrawn: take the reload notice away again, leave any other message.
@@ -3880,6 +3888,7 @@
   buildTargetMods();
   buildAimConfig();
   restoreSettings();
+  lightStrengthState();   // the stored switch decides whether the depth slider is live
   // The stored presets are in place now, so the shooter on screen can be given his own again. The mode
   // itself needs no line here any more: restoreSettings() has already run the checkbox's own handler.
   syncShooterMods(activeHit);

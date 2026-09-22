@@ -366,7 +366,7 @@ void main(){
     for(var i=0;i<=COUNT;i++)uniforms['uLayer'+i]={value:this.targets[i].texture};
     if(this.bounce){var lib=root.MeshBVHLib;if(!this.bvhStruct){this.bvhStruct=new lib.MeshBVHUniformStruct();this.faceMaterial=new lib.FloatVertexAttributeTexture();}
       uniforms.uBVH={value:this.bvhStruct};uniforms.uFaceMaterial={value:this.faceMaterial};}
-    if(this.lit){uniforms.uLightMap={value:this.lightTarget?this.lightTarget.texture:this.neutral};uniforms.uLightRange={value:new T.Vector2(LIGHT_MIN,LIGHT_MAX)};}
+    if(this.lit){uniforms.uLightMap={value:this.lightTarget?this.lightTarget.texture:this.neutral};uniforms.uLightRange={value:new T.Vector2(this.lightFloor(),LIGHT_MAX)};}
     // Pass one draws into this.result with blending off, so it is neither transparent nor depth-tested.
     this.material=new T.RawShaderMaterial({glslVersion:T.GLSL3,vertexShader:quadVertex,fragmentShader:compositeSource(this.bounce,this.lit),uniforms:uniforms,blending:T.NoBlending,depthWrite:false,depthTest:false,toneMapped:false});
     if(!this.compositeScene)this.compositeScene=new T.Scene();
@@ -565,6 +565,22 @@ void main(){
      feature, down to the texture unit the program does not ask for. On, the composite is recompiled with the
      lookup and the next render peels the light map together with the layers. Returns the effective state,
      which differs from the request only when the driver declines; lightingReason then says why. */
+  /* How deeply the soft light shades (user, 22.09): 1 is the shading this feature shipped with, 0 leaves the
+     picture flat and higher values darken the turned-away faces further. Only the brightness multiplier of
+     the composite changes - the normals, the palette, the numbers and the ricochet law are untouched. */
+  Surface.prototype.lightFloor=function(){
+    var s=Number.isFinite(this.lightStrength)?this.lightStrength:1;
+    return Math.max(0,Math.min(1,LIGHT_MAX-(LIGHT_MAX-LIGHT_MIN)*s));
+  };
+  Surface.prototype.setLightStrength=function(value){
+    var s=Math.max(0,Math.min(4,Number(value)||0));
+    if(s===this.lightStrength)return s;
+    this.lightStrength=s;
+    var u=this.material&&this.material.uniforms;
+    if(u&&u.uLightRange)u.uLightRange.value.set(this.lightFloor(),LIGHT_MAX);
+    this.key=null;   // the composite is drawn again with the new range; the light map itself is unchanged
+    return s;
+  };
   Surface.prototype.setLighting=function(enabled){
     var want=!!enabled;this.lighting=want;
     var reason=want?this.lightingBlocked():'';
