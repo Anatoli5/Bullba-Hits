@@ -43,5 +43,29 @@
       range:range,rangeSource:rangeSource,
       source:index<0?'Shell not determined unambiguously':kindValues.length?'Type and calibre from the hit; gun data from the client':'The only shell with this effect in the record'};
   }
-  root.ArmorShotContext={resolve:resolve};
+  /* Which shell to assume when resolve() could not name one (user, 22.09: a grey model has no logic, and of
+     two shells the record cannot tell apart the one that pierces deeper is the likelier - it had the better
+     chance of making the hit that was recorded). Order: the shells of the type the hit names; those whose
+     own maximum can account for the damage (a shell cannot do more than its maximum; less it can, because
+     the last hit on a vehicle is capped by what is left of it); the one whose damage window alone contains
+     the recorded damage, if exactly one does; otherwise the deepest penetration. In the 60 recorded battles
+     of 22.09 the type left two shells 65 times, always of different penetration and only 5 times of
+     different damage, and the damage decided 2 of them. Returns {index, reason}; index -1 when the list
+     holds nothing of that type - the page then falls back to the bare type. */
+  function assume(choices,kind,damage){
+    var all=(choices||[]).map(function(c,i){return {c:c,i:i};});
+    var same=kind?all.filter(function(e){return e.c.kind===kind;}):all;
+    if(!same.length)return {index:-1,reason:''};
+    var dmg=Number(damage)||0;
+    var band=function(e){var r=Number.isFinite(e.c.damageRandomization)?e.c.damageRandomization:.25,a=Number(e.c.alpha)||0;
+      return a>0?[a*(1-r)*.999,a*(1+r)*1.001]:null;};
+    var could=dmg>0?same.filter(function(e){var b=band(e);return !b||dmg<=b[1];}):same;
+    if(!could.length)could=same;
+    var exact=dmg>0?could.filter(function(e){var b=band(e);return b&&dmg>=b[0]&&dmg<=b[1];}):[];
+    if(exact.length===1)return {index:exact[0].i,reason:'the recorded damage fits this shell alone'};
+    var best=could.reduce(function(a,b){return (Number(b.c.penetration100)||0)>(Number(a.c.penetration100)||0)?b:a;},could[0]);
+    return {index:best.i,reason:could.length>1?'the deepest penetration of the shells that fit':
+      same.length>1?'the deepest penetration of this type':'the only shell of this type the record lists'};
+  }
+  root.ArmorShotContext={resolve:resolve,assume:assume};
 }(typeof window==='undefined'?globalThis:window));

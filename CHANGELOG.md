@@ -4,6 +4,8 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 
 ## 0.7.21 (2026-09-22)
 
+- Of two shells the record cannot tell apart, the page now assumes the one that pierces deeper — it had the better chance of making that hit — or the one the recorded damage fits when only one of them can do it. The reason is on hover.
+
 - Config sub-menus (the equipment and directive pickers, the preset list) open as a panel over the menu, always under the slot or control they belong to, which stays visible and lit while the panel is up. A click beside the panel, its ×, or Esc closes the panel alone; the Config menu stays open.
 - Presets are one control with the list inside it: rename in place by double-click or the pencil, delete by the bin, and a Custom entry per vehicle that holds every change you make by hand, kept across launches — choosing a preset no longer throws your build away, and the built-in and saved presets are never changed by an edit. Choosing a preset keeps Config open, and the arrow keys step through the presets with the aiming circle following.
 - Soft lighting has a depth slider in Settings: 0 % leaves the armour flat, 100 % is the shading as before, more darkens the faces turned away. It changes brightness only.

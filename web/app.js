@@ -566,7 +566,7 @@
   function detail(label,value,small){var e=node('div');e.appendChild(node('div',label,'detail-label'));e.appendChild(node('div',String(value),'detail-value'));if(small)e.appendChild(node('div',small,'detail-small'));$('details').appendChild(e);}
   // Which of the candidates the page assumed when the record does not say (22.09); -1 when it does say, or
   // when the assumption is the bare type rather than one of the shooter's shells.
-  var shellAssumed=-1;
+  var shellAssumed=-1,shellAssumedWhy='';
   function prepareShell(hit){
     // A swapped view has no shot and therefore no shells: keep the shell that is on screen - type,
     // penetration and calibre - instead of falling back to the empty manual defaults. A browsed vehicle and a
@@ -581,24 +581,19 @@
     // nothing (owner, 22.09). It is coloured with the likeliest shell instead - one of the shooter's own of the
     // type the hit names, or, when his list holds none of that type, the type itself on manual figures. Every
     // place this shell is shown says "assumed"; it is never counted as the shell that actually flew.
-    shellAssumed=-1;
+    shellAssumed=-1;shellAssumedWhy='';
     if(shotContext.index>=0)choice.value='saved:'+shotContext.index;
     else{
-      var want=shotContext.kind?candidates.findIndex(function(c){return c.kind===shotContext.kind;}):-1;
-      if(want<0&&!shotContext.kind&&candidates.length){
-        ['ARMOR_PIERCING','ARMOR_PIERCING_CR','ARMOR_PIERCING_HE','HOLLOW_CHARGE','HIGH_EXPLOSIVE'].some(function(k){
-          want=candidates.findIndex(function(c){return c.kind===k;});return want>=0;});
-        if(want<0)want=0;
-      }
-      shellAssumed=want;
-      choice.value=want>=0?'saved:'+want:shotContext.kind||'ARMOR_PIERCING';
+      var guess=ArmorShotContext.assume?ArmorShotContext.assume(candidates,shotContext.kind,hit&&hit.damage):{index:-1,reason:''};
+      shellAssumed=guess.index;shellAssumedWhy=guess.reason||'';
+      choice.value=guess.index>=0?'saved:'+guess.index:shotContext.kind||'ARMOR_PIERCING';
     }
     // A browsed vehicle has no hit to identify a shell, so resolve() leaves the index at -1. The shooter's own
     // list is nevertheless the right set of choices: preselect the first AP-like shell so the model is coloured
     // the moment a vehicle is picked, instead of “pick a shell”.
     if(browsing&&candidates.length){var first=candidates.findIndex(function(c){return c.kind==='ARMOR_PIERCING';});
       if(first<0)first=candidates.findIndex(function(c){return c.kind==='ARMOR_PIERCING_CR';});if(first<0)first=0;choice.value='saved:'+first;shellAssumed=-1;}
-    $('shell-quick').replaceChildren();candidates.forEach(function(c,i){var actual=i===shotContext.index,assumed=i===shellAssumed,b=node('button',(actual?'● ':assumed?'◌ ':'')+(shellNames[c.kind]||c.kind)+' '+Math.round(c.penetration100)+(c.gunInstallation>0?' ✦':''),'shell-chip');b.dataset.shell='saved:'+i;b.title=c.name+' · '+c.caliber+' mm · '+(c.gunInstallation>0?'ability gun'+(c.gun?' '+c.gun:'')+' · ':'')+(actual?'Type from the hit':assumed?'Assumed: the record does not say which shell it was':'Compare with this shell');b.onclick=function(){choice.value='saved:'+i;selectShell();};$('shell-quick').appendChild(b);});
+    $('shell-quick').replaceChildren();candidates.forEach(function(c,i){var actual=i===shotContext.index,assumed=i===shellAssumed,b=node('button',(actual?'● ':assumed?'◌ ':'')+(shellNames[c.kind]||c.kind)+' '+Math.round(c.penetration100)+(c.gunInstallation>0?' ✦':''),'shell-chip');b.dataset.shell='saved:'+i;b.title=c.name+' · '+c.caliber+' mm · '+(c.gunInstallation>0?'ability gun'+(c.gun?' '+c.gun:'')+' · ':'')+(actual?'Type from the hit':assumed?'Assumed: the record does not say which shell it was'+(shellAssumedWhy?', so '+shellAssumedWhy+' was taken':''):'Compare with this shell');b.onclick=function(){choice.value='saved:'+i;selectShell();};$('shell-quick').appendChild(b);});
     paintGunShells();
     syncTargetMods(hit);syncShooterMods(hit);
     if(keep){choice.value=keep.kind;manualPen=keep.penetration;$('penetration').value=keep.penetration;$('caliber').value=keep.caliber;penLabel(false);updateShell();}
