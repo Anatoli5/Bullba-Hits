@@ -10,6 +10,10 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 - The "Fitted: …" line under the configuration is gone; the Config button's tooltip still lists the build.
 - The aiming circle shrinks back after the turret catches up with the cursor instead of staying bloomed until the mouse moves again, and its Circle % follows every configuration click.
 - After a click on a hit, the roster marks that hit's shooter instead of the previous one.
+- Recording a hit takes about 1.3 ms less of the game's time: armour tables that have not changed are recognised at once instead of being rebuilt for every hit.
+- Collision models are read straight from the client packages instead of re-reading a whole package directory for each one: about 45 ms less hangar work per model.
+- Game start does less work: the viewer's files are rewritten only when they differ from the package, saved vehicles load about eight times faster, and each vehicle configuration is rebuilt once instead of for every hit that needs it.
+- Newly extracted collision models are about 40 % smaller (coordinates rounded to a micrometre); models already saved stay as they are.
 
 ## 0.7.19 (2026-09-21)
 

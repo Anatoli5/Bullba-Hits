@@ -129,6 +129,8 @@ class Writer(object):
         self.dirty_lock = threading.Lock()
         self.dirty = {}
         self.encoders = {}
+        # File name -> its size after the last clean append of this session. Writer thread only.
+        self.ends = {}
         self.export_queue = queue.Queue(1024)
         self.export_thread = None
         if exporter is not None:
@@ -198,17 +200,26 @@ class Writer(object):
                     path = os.path.join(self.folder, name+'.jsonl')
                     # A failed earlier append may have left a partial tail. End it
                     # as an unreadable row so this complete record remains recoverable.
-                    if os.path.isfile(path) and os.path.getsize(path):
-                        with open(path, 'rb') as existing:
-                            existing.seek(-1, os.SEEK_END)
-                            partial = existing.read(1) != b'\n'
-                        if partial:
-                            with open(path, 'ab') as stream: stream.write(b'\n')
-                    start = os.path.getsize(path) if os.path.isfile(path) else 0
+                    # The tail is read only when the file is new to this session, when the last
+                    # append failed (its mark is taken off before writing) or when the size is not
+                    # the one our last clean append left: anything else ends in our own newline.
+                    known = self.ends.pop(name, None)
+                    try: size = os.path.getsize(path)
+                    except OSError: size = None
+                    if known is None or size != known:
+                        if size:
+                            with open(path, 'rb') as existing:
+                                existing.seek(-1, os.SEEK_END)
+                                partial = existing.read(1) != b'\n'
+                            if partial:
+                                with open(path, 'ab') as stream: stream.write(b'\n')
                     with open(path, 'ab') as stream:
                         stream.write(line)
                         stream.flush()
                         end = stream.tell()
+                    # A binary append puts the whole line right before the end.
+                    start = end - len(line)
+                    self.ends[name] = end
                     encoder.commit()
                     if self.exporter is not None: self.mark_dirty(name, start, end)
                 except Exception:

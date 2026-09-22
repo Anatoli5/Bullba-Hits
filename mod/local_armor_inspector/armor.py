@@ -16,6 +16,15 @@ NUMBERS = ('armor', 'vehicleDamageFactor', 'chanceToHitByProjectile')
 
 
 _material_cache = threading.local()
+# Components remembered by the quick check below, per thread: a battle has up to 30 vehicles x 4 parts x 2
+# siege modes = 240 of them, so a full table is simply dropped and refilled.
+FAST_LIMIT = 256
+
+
+def _all_tuples(mapping):
+    for value in mapping.values():
+        if not isinstance(value, tuple): return False
+    return True
 
 
 def live_materials(component):
@@ -24,11 +33,37 @@ def live_materials(component):
     A component/boss may change in place: identity alone is not a safe cache key.
     Re-reading scalar values avoids stale armour while skipping hundreds of dict
     allocations per hit. The cache is bounded and local to each calling thread.
+
+    Before that, a quick check: the client's MaterialInfo is a namedtuple, an immutable
+    tuple, so a component whose material dictionaries still hold the very same entries (compared
+    against copies taken before the last full read) and whose armorHomogenization is unchanged
+    resolves to the same table. It skips rebuilding the 52-material signature, 0.35 ms per call
+    and eight calls per hit on the game thread. Any replaced entry in the component's own or the
+    common dictionary, a value that is not a tuple, or any exception falls back to the full path.
     """
     from material_kinds import NAMES_BY_IDS
     from items import vehicles
     common = vehicles.g_cache.commonConfig['materials']
     overrides = component.materials
+    homog = getattr(component, 'armorHomogenization', 1.0)
+    state = _material_cache
+    try:
+        if getattr(state, 'common_ref', None) is common and state.common_copy == common:
+            entry = state.fast.get(id(component))
+            if (entry is not None and entry[0] is component and entry[2] == homog
+                    and entry[1] == overrides):
+                return entry[3]
+        else:
+            state.fast, state.common_ref, state.common_copy = {}, None, None
+    except Exception:
+        state.fast, state.common_ref, state.common_copy = {}, None, None
+    # Snapshots come before the full read: the export thread calls this too, and a dictionary may
+    # change while the table is being built - then the next call sees a difference, never a stale hit.
+    try:
+        overrides_copy = dict(overrides)
+        common_copy = dict(common) if getattr(state, 'common_ref', None) is not common else None
+    except Exception:
+        overrides_copy = common_copy = None
     kinds = set(common)
     kinds.update(overrides)
     rows = []
@@ -47,18 +82,35 @@ def live_materials(component):
     if cache is None:
         cache = _material_cache.values = OrderedDict()
     if signature in cache:
-        value = cache.pop(signature)
-        cache[signature] = value
-        return value
-    result = ArmorTable()
-    for name, flags, numbers in rows:
-        value = dict(zip(FLAGS, flags))
-        value.update(zip(NUMBERS, numbers))
-        result[name] = value
-    cache[signature] = result
-    if len(cache) > 128:
-        cache.popitem(last=False)
+        result = cache.pop(signature)
+        cache[signature] = result
+    else:
+        result = ArmorTable()
+        for name, flags, numbers in rows:
+            value = dict(zip(FLAGS, flags))
+            value.update(zip(NUMBERS, numbers))
+            result[name] = value
+        cache[signature] = result
+        if len(cache) > 128:
+            cache.popitem(last=False)
+    _remember_fast(state, component, common, common_copy, overrides_copy, homog, result)
     return result
+
+
+def _remember_fast(state, component, common, common_copy, overrides_copy, homog, result):
+    """Arm the quick check of live_materials for this component; never raises."""
+    try:
+        if overrides_copy is None or not _all_tuples(overrides_copy): return
+        if common_copy is not None:
+            if not _all_tuples(common_copy): return
+            # One copy of the common dictionary per thread, not one in every entry.
+            state.fast, state.common_ref, state.common_copy = {}, common, common_copy
+        elif getattr(state, 'common_ref', None) is not common:
+            return
+        if len(state.fast) >= FAST_LIMIT: state.fast = {}
+        state.fast[id(component)] = (component, overrides_copy, homog, result)
+    except Exception:
+        pass
 
 
 def gun_installations(descriptor):

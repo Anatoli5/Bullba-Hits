@@ -57,7 +57,12 @@ def extract(data):
         if shape['__type'] != 'hknpCompressedMeshShape':
             raise FormatError('Unsupported collision shape: ' + shape['__type'])
         vertices, indices = compressed_mesh(shape)
-        vertices = [transform(v, body['position'], body['orientation']) for v in vertices]
+        # Rounded to 1e-6 m (half a micron at most) once placed in the body: the full repr of
+        # a double was ~20 bytes a coordinate, 41 % smaller files. Shared vertices stay equal.
+        # Only models extracted from now on are affected: files already in data/models are
+        # never rewritten, and the model key and the resource's sha256 do not change.
+        vertices = [[round(c, 6) for c in transform(v, body['position'], body['orientation'])]
+                    for v in vertices]
         name = body['name']
         groups.append({'material':name[2:] if name.startswith('s_') else name, 'vertices':vertices, 'indices':indices})
     if not groups: raise FormatError('Empty shot collision model')

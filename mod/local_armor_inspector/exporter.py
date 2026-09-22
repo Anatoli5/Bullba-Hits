@@ -13,10 +13,14 @@ import json
 import logging
 import os
 import re
+import struct
 import sys
+import threading
 import time
 import zipfile
+import zlib
 import xml.etree.ElementTree as ET
+from collections import OrderedDict
 from .geometry import extract
 from .armor import ArmorCatalog
 from .records import RecordDecoder, pack_battle, unpack_battle
@@ -123,6 +127,49 @@ def atomic_write(path, data):
         os.rename(temp, path)
 
 
+MODEL_LIMIT = 32*1024*1024
+PACKAGE_RESCAN_PAUSE = 300
+ZIP_LOCAL_HEADER = struct.Struct('<4sHHHHHIIIHH')
+
+
+def read_package_entry(path, name, entry):
+    """One ZIP entry read at the offset its central-directory record gave.
+
+    entry is (header_offset, compress_type, compress_size, file_size, CRC) as zipfile's own
+    ZipInfo holds them. Every check zipfile makes on the way is made here too - the local
+    header's signature, no encryption, the same file name, the length, the size and the CRC-32 -
+    and any failure raises, so the caller can take the ordinary zipfile path instead.
+    """
+    offset, method, compressed, size, crc = entry
+    with open(path, 'rb') as stream:
+        stream.seek(offset)
+        header = stream.read(ZIP_LOCAL_HEADER.size)
+        if len(header) != ZIP_LOCAL_HEADER.size: raise ValueError('Truncated local header')
+        fields = ZIP_LOCAL_HEADER.unpack(header)
+        if fields[0] != b'PK\x03\x04': raise ValueError('Bad local header signature')
+        if fields[2] & 1: raise ValueError('Encrypted entry')
+        stored = stream.read(fields[9])
+        if stored.decode('ascii', 'replace') != name: raise ValueError('Local header names another file')
+        stream.seek(fields[10], 1)
+        data = stream.read(compressed)
+    if len(data) != compressed: raise ValueError('Truncated entry')
+    if method == zipfile.ZIP_DEFLATED:
+        inflate = zlib.decompressobj(-15)
+        data = inflate.decompress(data) + inflate.flush()
+    elif method != zipfile.ZIP_STORED:
+        raise ValueError('Unsupported compression')
+    if len(data) != size or (zlib.crc32(data) & 0xffffffff) != crc: raise ValueError('Entry CRC mismatch')
+    return data
+
+
+def same_as_member(path, info):
+    """True when the file at path holds exactly the ZIP entry described by info (size and CRC-32)."""
+    if not os.path.isfile(path) or os.path.getsize(path) != info.file_size: return False
+    with open(path, 'rb') as stream:
+        data = stream.read(info.file_size + 1)
+    return len(data) == info.file_size and (zlib.crc32(data) & 0xffffffff) == info.CRC
+
+
 def write_data(path, key, value):
     # JSON is serialized, never interpolated into executable text unescaped.
     if str(key).startswith('battle:'):
@@ -133,9 +180,15 @@ def write_data(path, key, value):
 
 
 def read_data_file(path):
-    """The value written by write_data, read back from a classic-script payload."""
+    """The value written by write_data, read back from a classic-script payload.
+
+    Read by the file's own size: on Windows read(64 MB) costs 14-19 ms per file whatever its
+    size, because the whole buffer is allocated first, and setup reads every exported vehicle.
+    """
     with open(path, 'rb') as stream:
-        payload = stream.read(64*1024*1024).decode('ascii')
+        size = os.fstat(stream.fileno()).st_size
+        if size > 64*1024*1024: raise ValueError('Data file too large')
+        payload = stream.read(size).decode('ascii')
     prefix, suffix = 'ArmorInspectorData.receive(', ');\n'
     if not payload.startswith(prefix) or not payload.endswith(suffix):
         raise ValueError('Not an exported data file')
@@ -546,15 +599,43 @@ def fix_fitment(vehicle):
     return True
 
 
+_descr_cache = threading.local()
+DESCR_CACHE_LIMIT = 128
+
+
 def vehicle_descr(compact_descriptor):
     """The client's own VehicleDescr for a recorded base64 compact descriptor.
 
     Publishing runs inside the game (the exporter is imported by the mod), so
     items.vehicles is available; outside it this raises, and every caller is guarded.
+
+    Memoised per thread by the descriptor string, least recently used out after 128: every fix_*
+    of a hit used to build its own descriptor, some 70 builds per distinct descriptor on a setup
+    and three per new hit. The descriptor is always built by the running client, so the
+    string alone is the key, and only a successful build is kept. Callers only read it; the
+    one that installs components (top_descriptor) builds its own.
     """
     import base64
     from items import vehicles
-    return vehicles.VehicleDescr(compactDescr=base64.b64decode(compact_descriptor))
+    factory = vehicles.VehicleDescr
+    cache = getattr(_descr_cache, 'values', None)
+    if cache is None:
+        cache = _descr_cache.values = OrderedDict()
+    try:
+        entry = cache.pop(compact_descriptor, None)
+    except TypeError:
+        entry = None
+    if entry is not None and entry[0] is factory:
+        cache[compact_descriptor] = entry
+        return entry[1]
+    descr = factory(compactDescr=base64.b64decode(compact_descriptor))
+    try:
+        cache[compact_descriptor] = (factory, descr)
+        if len(cache) > DESCR_CACHE_LIMIT:
+            cache.popitem(last=False)
+    except TypeError:
+        pass
+    return descr
 
 
 def parts_from_descr(descr, armor_source='client descriptor rebuilt from the record'):
@@ -864,6 +945,8 @@ class Exporter(object):
         self.version = canonical(version)
         self.archive = archive
         self.packages = None
+        self.package_entries = None
+        self.package_scan_failed = None
         self.package_conflicts = set()
         self.overrides = None
         self.attempts = {}
@@ -919,7 +1002,16 @@ class Exporter(object):
             archive = sorted(candidates, key=folder_key)[-1]
         with zipfile.ZipFile(archive) as z:
             for name in ASSETS:
-                atomic_write(os.path.join(self.folder, *name.split('/')), z.read('res/armor_inspector_viewer/'+name))
+                target = os.path.join(self.folder, *name.split('/'))
+                member = 'res/armor_inspector_viewer/'+name
+                # The installer has usually just put the very same bytes there: a file of the same size
+                # and CRC-32 as the package entry is left alone. Anything else - missing, half written,
+                # edited - is rewritten, and any doubt falls back to the unconditional write.
+                try:
+                    if same_as_member(target, z.getinfo(member)): continue
+                except Exception:
+                    pass
+                atomic_write(target, z.read(member))
         self.load_settings()
         self.load_vehicles()
         # Rebuild derived records after an interrupted game. Raw JSONL is untouched.
@@ -954,7 +1046,7 @@ class Exporter(object):
         else:
             # Offline fixtures/older layouts without a mounting manifest.
             paths = sorted(glob.glob(os.path.join(self.game, 'res', 'packages', '*.pkg')))
-        packages, signatures, conflicts, overrides = {}, {}, set(), set()
+        packages, signatures, conflicts, overrides, entries = {}, {}, set(), set(), {}
         for path in paths:
             with zipfile.ZipFile(path) as archive:
                 for info in archive.infolist():
@@ -968,7 +1060,12 @@ class Exporter(object):
                         conflicts.add(name)
                     else:
                         signatures[name] = signature
-                        packages.setdefault(name, path)
+                        if name not in packages:
+                            packages[name] = path
+                            # Where the chosen copy sits in its package, so a model is later read
+                            # with one seek instead of parsing this whole directory again.
+                            entries[name] = (info.header_offset, info.compress_type, info.compress_size,
+                                             info.file_size, info.CRC)
         for path in glob.glob(os.path.join(self.game, 'mods', '*', '*.wotmod')):
             with zipfile.ZipFile(path) as archive:
                 for name in archive.namelist():
@@ -977,6 +1074,42 @@ class Exporter(object):
                         overrides.add(resource)
         # Publish the index only after a complete successful scan.
         self.packages, self.package_conflicts, self.overrides = packages, conflicts, overrides
+        self.package_entries = entries
+
+    def ensure_packages(self):
+        """The package index, built on first need. A failed scan (an unreadable package or .wotmod)
+        is not repeated for every model: each would cost the full 2-3 s scan and fail the same way.
+        It is tried again after PACKAGE_RESCAN_PAUSE."""
+        if self.packages is not None: return
+        failed = self.package_scan_failed
+        if failed is not None and time.time()-failed[0] < PACKAGE_RESCAN_PAUSE:
+            raise ValueError(failed[1])
+        try:
+            self._index_resources()
+        except Exception as exc:
+            self.package_scan_failed = (time.time(), str(exc) or exc.__class__.__name__)
+            raise
+        self.package_scan_failed = None
+
+    def read_resource(self, name):
+        """The bytes of one indexed collision resource.
+
+        Straight from its local header in the package (read_package_entry). Any mismatch there
+        falls back once to zipfile, which parses the package directory again; its error is the
+        one that reaches 'attempts'. The same bytes either way, so every model already written
+        keeps its sha256.
+        """
+        path = self.packages[name]
+        entry = (self.package_entries or {}).get(name)
+        if entry is not None:
+            if entry[2] > MODEL_LIMIT or entry[3] > MODEL_LIMIT: raise ValueError('Model too large')
+            try:
+                return read_package_entry(path, name, entry)
+            except Exception as exc:
+                LOG.warning('Direct package read of %s failed (%s); reading it through zipfile', name, exc)
+        with zipfile.ZipFile(path) as z:
+            if z.getinfo(name).file_size > MODEL_LIMIT: raise ValueError('Model too large')
+            return z.read(name)
 
     def model(self, resource, version):
         """The cache-or-extract call of every explicit request.
@@ -1011,7 +1144,7 @@ class Exporter(object):
             if canonical(version) != self.version:
                 raise ValueError('Client version changed; model was not saved before the update')
             name = resource.rsplit('.', 1)[0]+'.havok'
-            if self.packages is None: self._index_resources()
+            self.ensure_packages()
             if name in self.package_conflicts: raise ValueError('Conflicting mounted collision resources')
             if name not in self.packages: raise ValueError('Collision model not found in client')
             if name in self.overrides or resource in self.overrides:
@@ -1019,9 +1152,7 @@ class Exporter(object):
             for root in glob.glob(os.path.join(self.game, 'res_mods', '*')):
                 if os.path.isfile(os.path.join(root, name)) or os.path.isfile(os.path.join(root, resource)):
                     raise ValueError('res_mods overrides this collision model')
-            with zipfile.ZipFile(self.packages[name]) as z:
-                if z.getinfo(name).file_size > 32*1024*1024: raise ValueError('Model too large')
-                data = z.read(name)
+            data = self.read_resource(name)
             model = extract(data)
             model.update({'resource':name, 'sha256':hashlib.sha256(data).hexdigest()})
             write_data(path, 'model:'+key, model)
@@ -1078,7 +1209,10 @@ class Exporter(object):
                     key = hashlib.sha256(identity.encode('utf-8')).hexdigest()
                     cache = os.path.join(self.folder, 'data', 'armor', key+'.json')
                     if os.path.isfile(cache):
-                        with open(cache, 'rb') as stream: part['armor'] = json.loads(stream.read(1024*1024).decode('ascii'))
+                        with open(cache, 'rb') as stream:
+                            size = os.fstat(stream.fileno()).st_size
+                            if size > 1024*1024: raise ValueError('Armor metadata cache too large')
+                            part['armor'] = json.loads(stream.read(size).decode('ascii'))
                     else:
                         if canonical(client_version) != self.version:
                             raise ValueError('Armor metadata was not saved for the old client version')
@@ -1087,38 +1221,9 @@ class Exporter(object):
                     part['armorSource'] = 'version-matched client XML (cached)'
                 except Exception as exc:
                     part['armorError'] = str(exc)
-                    # A separate, visibly labelled comparison is allowed only
-                    # when today's mesh is byte-identical to the saved mesh.
-                    # A pending model has not been read yet, so there is nothing to
-                    # compare with; the republish after the job does this instead.
-                    if (canonical(client_version) != self.version and not part.get('modelError')
-                            and not part.get('modelPending')):
-                        try:
-                            if self.packages is None: self._index_resources()
-                            havok = part['resource'].rsplit('.', 1)[0]+'.havok'
-                            if havok in self.overrides or part['resource'] in self.overrides:
-                                raise ValueError('Current collision model is overridden')
-                            for override_root in glob.glob(os.path.join(self.game, 'res_mods', '*')):
-                                if any(os.path.isfile(os.path.join(override_root, r)) for r in (havok, part['resource'])):
-                                    raise ValueError('Current collision model is overridden')
-                            current_key, error = self.model(part['resource'], self.version)
-                            if error: raise ValueError(error)
-                            meshes = []
-                            for model_id in (part['modelKey'], current_key):
-                                with open(os.path.join(self.folder, 'data', 'models', model_id+'.js'), 'rb') as stream:
-                                    payload = stream.read(32*1024*1024).decode('ascii')
-                                meshes.append(json.loads(payload[len('ArmorInspectorData.receive('):-3])[1])
-                            if meshes[0]['sha256'] != meshes[1]['sha256']:
-                                raise ValueError('Current geometry differs from this battle')
-                            with zipfile.ZipFile(self.packages[havok]) as resource_zip:
-                                if resource_zip.getinfo(havok).file_size > 32*1024*1024: raise ValueError('Model too large')
-                                current_hash = hashlib.sha256(resource_zip.read(havok)).hexdigest()
-                            if current_hash != meshes[0]['sha256']:
-                                raise ValueError('Current geometry differs from the cached mesh')
-                            part['comparisonArmor'] = self.armor.materials(vehicle['type'], part['resource'])
-                            match = re.search(r'<version>\s*(.*?)\s*</version>', self.version)
-                            part['comparisonVersion'] = match.group(1) if match else 'current client'
-                        except Exception as comparison_error: part['comparisonError'] = str(comparison_error)
+                    # 0.6.28 removed the page's "Current <version>" comparison; the current client's
+                    # armour for an old battle (comparisonArmor) had no reader left, and building it
+                    # meant a synchronous model extraction inside publishing. It is gone.
 
     def reset_prepared(self):
         self.prepared_hits = [None] * len((self.current or {}).get('hits') or [])
