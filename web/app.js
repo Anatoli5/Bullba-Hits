@@ -3738,12 +3738,13 @@
   $('wireframe').onchange=function(){if(viewer)viewer.wireframe(this.checked);};
   $('soft-lighting').onchange=function(){if(viewer)viewer.setLighting(this.checked);lightStrengthState();};
   // How deep the soft light shades (user, 22.09): the slider only scales the composite's brightness range.
+  // It sits in the checkbox's own row, like the ricochet tint and dots, so the Settings grid keeps its pairs.
   $('light-strength').oninput=function(){
     $('light-strength-value').textContent=this.value+' %';
     if(viewer)viewer.setLightStrength(Number(this.value)/100);
   };
   // The depth means nothing with the light off, so the slider is greyed out with it.
-  function lightStrengthState(){var on=$('soft-lighting').checked;$('light-strength').disabled=!on;}
+  function lightStrengthState(){var on=$('soft-lighting').checked,input=$('light-strength'),row=input.parentNode;input.disabled=!on;if(row&&row.classList)row.classList.toggle('off',!on);}
   var CONTEXT_LOST='The browser lost its WebGL context. Reload the page.';
   window.addEventListener('armor-context-lost',function(){if(host.mark)host.mark('WebGL','context-lost');message(CONTEXT_LOST);});
   // The context came back and the viewer has redrawn: take the reload notice away again, leave any other message.
@@ -3797,6 +3798,8 @@
         // v2 (user, 22.09): the impact cross was hard to see at the old default of 50 %, so the default is 90.
         // A store written before that keeps the user's own choice and only lets the old default through.
         if(!(box.v>=2)&&String(box.values['impact-opacity'])==='50')delete box.values['impact-opacity'];
+        // v3 (user, 22.09): the lighting depth default moves from 100 to 250 %; a stored 100 from the old default follows.
+        if(!(box.v>=3)&&String(box.values['light-strength'])==='100')delete box.values['light-strength'];
         return box.values;}}catch(e){}
     return null;
   }
@@ -3813,7 +3816,7 @@
   }
   function persistSettings(){
     var values={};settingControls.forEach(function(el){values[el.id]=settingValue(el);});
-    try{window.localStorage.setItem(SETTINGS_KEY,JSON.stringify({v:2,values:values,aim:aimStored()}));}catch(e){}
+    try{window.localStorage.setItem(SETTINGS_KEY,JSON.stringify({v:3,values:values,aim:aimStored()}));}catch(e){}
   }
   function restoreSettings(){
     var stored=settingsStored(),migrated=false;

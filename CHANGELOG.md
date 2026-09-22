@@ -2,6 +2,10 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
+## Unreleased
+
+- The lighting-depth slider sits in the Soft lighting row next to its own tick box, like the ricochet rows, so the Settings grid keeps its pairs; its default is 250 % (the deepest shading), and a stored 100 % from the old default follows.
+
 ## 0.7.23 (2026-09-22)
 
 - New versioned build with the standard single-file Windows installer.
