@@ -58,6 +58,9 @@
     // aimPinned: the pinned line on screen is the emulated shot's own, so dropping that shot releases it
     // and the recorded tracer and reticles come back.
     this.aimShotCircle=null;this.aimReloadPart=null;this.aimHold=false;this.aimPinned=false;
+    // aimCentred: the aim held on the model centre while the page's Config popover is open (setAimCentre),
+    // null otherwise; aimMarker the crosshair drawn there, in aimMarkerShape.
+    this.aimCentred=null;this.aimMarker=null;this.aimMarkerShape='cross';
     this.frameAt=0;this.frameTimes=[]; // when the pending frame was asked for, and the cadence of the frames that ran
     this.contextLost=false;this.dragging=false;this.hoverId=null;this.hoverEvent=null;this.inspectKey=null;
     // The camera is driven by its own frame loop: pointer and key events only move the target.
@@ -418,6 +421,7 @@
   Viewer.prototype.updateReticles=function(){
     var self=this,w=this.viewWidth,h=this.viewHeight,size=this.reticleSize()+'px';
     this.reticles.forEach(function(marker){var behind=marker.position.clone().applyMatrix4(self.camera.matrixWorldInverse).z>-.01,p=marker.position.clone().project(self.camera);marker.element.hidden=(!marker.pinned&&!self.recordedShown())||behind||Math.abs(p.x)>1||Math.abs(p.y)>1;if(!marker.element.hidden){var s=marker.element.style;s.left=(p.x+1)*w/2+'px';s.top=(1-p.y)*h/2+'px';if(s.width!==size){s.width=size;s.height=size;}}});
+    this.updateAimMarker();   // the crosshair of an aim held on the model follows the camera the same way
   };
   // Fit the actual projected mesh, including off-centre impacts. Only the lens
   // changes: the camera remains on the recorded shot line at the chosen distance.
@@ -868,9 +872,60 @@
     var value=Number.isFinite(radius100)&&radius100>0&&radius100<=50?radius100:null;
     this.liveRadius100=value;
     if(value===null){this.liveAim=null;this.hideSpread();return;}
+    if(this.aimCentred&&!this.liveAimPoint)this.centreAim();   // a new model arrived while the aim is held
     this.drawLiveAim();
   };
-  Viewer.prototype.clearLiveAim=function(){this.liveRadius100=null;this.liveAimPoint=null;this.aimCursorPoint=null;this.liveAim=null;this.clearAimShot();this.hideSpread();};
+  // A new model (clear) or the mode going off drops the points; a hold on the model survives it, but what it
+  // would hand back belonged to the previous model, so it forgets that and stays on the centre.
+  Viewer.prototype.clearLiveAim=function(){this.liveRadius100=null;this.liveAimPoint=null;this.aimCursorPoint=null;this.liveAim=null;if(this.aimCentred)this.aimCentred={cursor:null,gun:null,seen:null};this.clearAimShot();this.hideSpread();this.updateAimMarker();};
+  // THE AIM HELD ON THE MODEL (user, 21.09). While the page's Config popover is open the mouse is on the
+  // menu, so the circle would sit behind it and nobody could see what a tile does to it. The aim is parked
+  // in the middle of the target instead: the point on the model's surface along the view ray through the
+  // centre of its bounds, found with the same raycast and the same fallback the cursor uses. The gun and
+  // the cursor point both go there, so the turret has nothing to chase and the ring does not bloom for the
+  // jump, and a drawn crosshair marks the spot, because the real crosshair is the mouse pointer and cannot
+  // be moved. Pointer moves meanwhile only remember where the cursor is, and letting go puts the aim there
+  // (or back where it was, if the pointer never moved). A pinned centre (Alt + click) is left alone and is
+  // in force again once the hold ends. `shape` is the Settings crosshair, 'cross' or 'dot'.
+  Viewer.prototype.setAimCentre=function(on,shape){
+    this.aimMarkerShape=shape==='dot'?'dot':'cross';
+    if(!!on===!!this.aimCentred){this.updateAimMarker();return;}
+    if(on){this.aimCentred={cursor:this.aimCursorPoint,gun:this.liveAimPoint,seen:null};this.centreAim();}
+    else{
+      var held=this.aimCentred,back=held.seen||held.cursor;this.aimCentred=null;
+      // Nothing to go back to (the pointer never crossed the scene): the circle stays where it is until it does.
+      if(back){this.aimCursorPoint=back.clone();this.liveAimPoint=(held.seen||held.gun||back).clone();}
+    }
+    if(this.liveRadius100)this.drawLiveAim();
+    this.updateAimMarker();this.draw();
+  };
+  Viewer.prototype.centreAim=function(){
+    var point=this.aimCentrePoint();
+    if(point){this.aimCursorPoint=point;this.liveAimPoint=point.clone();}
+    return point;
+  };
+  Viewer.prototype.aimCentrePoint=function(){
+    if(!this.bounds||!this.camera)return null;
+    var T=THREE,centre=this.bounds.getCenter(new T.Vector3()),eye=this.camera.position.clone(),dir=centre.clone().sub(eye);
+    if(dir.lengthSq()<1e-12)return centre;
+    var caster=new T.Raycaster(eye,dir.normalize()),objects=this.paintMesh?[this.paintMesh]:[];if(this.trackMesh)objects.push(this.trackMesh);
+    return this.aimSurfacePoint(caster,objects.length?caster.intersectObjects(objects):[])||centre;
+  };
+  // The centre a pin holds the circle on, or null. The hold on the model outranks a pin while it lasts.
+  Viewer.prototype.aimPin=function(){return this.aimCentred?null:this.spreadAim;};
+  // The crosshair drawn where the held aim points: the Settings shape, the very picture of the mouse pointer
+  // (style.css .aim-marker), put on the projected point every frame so it stays on the model while the
+  // camera moves. Hidden whenever the aim is not held.
+  Viewer.prototype.updateAimMarker=function(){
+    var m=this.aimMarker,p=this.aimCentred?this.aimCursorPoint:null;
+    if(!p){if(m)m.hidden=true;return;}
+    if(!m){m=this.aimMarker=document.createElement('span');m.className='aim-marker';m.setAttribute('aria-hidden','true');}
+    if(m.parentNode!==this.reticleLayer)this.reticleLayer.appendChild(m);   // clear() empties the layer
+    var behind=p.clone().applyMatrix4(this.camera.matrixWorldInverse).z>-.01,q=p.clone().project(this.camera);
+    m.setAttribute('data-shape',this.aimMarkerShape||'cross');
+    m.hidden=behind||Math.abs(q.x)>1||Math.abs(q.y)>1;
+    if(!m.hidden){m.style.left=(q.x+1)*this.viewWidth/2+'px';m.style.top=(1-q.y)*this.viewHeight/2+'px';}
+  };
   // The ring the LAST SHOT left behind (user, 20.09): a copy of the live ring frozen where and as wide
   // as it was, solid and magenta, standing next to its own tracer until the next shot replaces it. The
   // live ring is untouched by this and goes on aiming. This is also the moment everything RECORDED
@@ -925,7 +980,7 @@
   // A pinned centre (Alt + click, or "Centre on the hit") outranks the cursor: the circle then stays where
   // the user put it and only its radius follows the state, which is what the Estimate button needs too.
   Viewer.prototype.drawLiveAim=function(){
-    var center=this.spreadAim||this.liveAimPoint;
+    var center=this.aimPin()||this.liveAimPoint;
     if(!this.liveRadius100||!center){this.liveAim=null;return null;}
     var origin=this.camera.position.clone(),range=origin.distanceTo(center),frame=circleFrame(origin,center);
     var radius=range*this.liveRadius100/100;
@@ -947,20 +1002,28 @@
   // chaseAim() in the frame loop, at the turret's own rotation speed.
   Viewer.prototype.aimAtPointer=function(caster,hits){
     if(!this.liveRadius100)return null;
-    var T=THREE,point=null;
-    if(hits&&hits.length)point=hits[0].point.clone();
-    else{var plane=new T.Plane().setFromNormalAndCoplanarPoint(this.target.clone().sub(this.camera.position).normalize(),this.target),p=new T.Vector3();if(caster.ray.intersectPlane(plane,p))point=p;}
+    var point=this.aimSurfacePoint(caster,hits);
     if(!point)return null;
+    // The aim is held on the model while the page's menu is open (setAimCentre): the pointer is on the
+    // menu, so where it points is only remembered for the moment the hold ends.
+    if(this.aimCentred){this.aimCentred.seen=point;return null;}
     this.aimCursorPoint=point;
     if(!this.aimChase||!this.liveAimPoint)this.liveAimPoint=point.clone();
     return this.drawLiveAim();
+  };
+  // The point a ray aims at: the first surface of the model it meets, or else its crossing with the plane
+  // through the orbit centre square to the view. The cursor and the held centre both find their point here.
+  Viewer.prototype.aimSurfacePoint=function(caster,hits){
+    if(hits&&hits.length)return hits[0].point.clone();
+    var T=THREE,plane=new T.Plane().setFromNormalAndCoplanarPoint(this.target.clone().sub(this.camera.position).normalize(),this.target),p=new T.Vector3();
+    return caster.ray.intersectPlane(plane,p)?p:null;
   };
   // The angle between where the gun points and where the cursor points, seen from the shooter (the
   // camera). Both are points in the scene, so the angle is the one the turret actually has to turn
   // through; the distance to them plays no part in it.
   Viewer.prototype.aimGap=function(){
-    var gun=this.spreadAim||this.liveAimPoint,cursor=this.aimCursorPoint;
-    if(!gun||!cursor||this.spreadAim)return 0; // a pinned centre is not chasing anything
+    var pin=this.aimPin(),gun=pin||this.liveAimPoint,cursor=this.aimCursorPoint;
+    if(!gun||!cursor||pin)return 0; // a pinned centre is not chasing anything
     var eye=this.camera.position,a=gun.clone().sub(eye),b=cursor.clone().sub(eye);
     if(a.lengthSq()<1e-12||b.lengthSq()<1e-12)return 0;
     return a.normalize().angleTo(b.normalize());
@@ -971,7 +1034,7 @@
   // cursor snaps exactly onto it, so a turret that has caught up reads identically to stage 1.
   Viewer.prototype.chaseAim=function(step){
     var T=THREE,gun=this.liveAimPoint,cursor=this.aimCursorPoint;
-    if(!gun||!cursor||this.spreadAim)return false;
+    if(!gun||!cursor||this.aimPin())return false;
     var eye=this.camera.position.clone(),a=gun.clone().sub(eye),range=a.length(),b=cursor.clone().sub(eye);
     if(range<1e-6||b.lengthSq()<1e-12)return false;
     a.divideScalar(range);b.normalize();
@@ -994,7 +1057,7 @@
   // rotation. A pinned centre is not being aimed at all, so it is left alone.
   Viewer.prototype.turnAim=function(angle){
     var T=THREE,gun=this.liveAimPoint,a=Number(angle)||0;
-    if(!gun||!a||this.spreadAim||!this.liveRadius100)return false;
+    if(!gun||!a||this.aimPin()||!this.liveRadius100)return false;
     var eye=this.camera.position.clone(),dir=gun.clone().sub(eye),range=dir.length();
     if(range<1e-6)return false;
     dir.divideScalar(range).applyQuaternion(new T.Quaternion().setFromAxisAngle(new T.Vector3(0,1,0),-a));

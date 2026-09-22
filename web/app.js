@@ -799,11 +799,104 @@
     }
     return out;
   }
+  // --- The crew --------------------------------------------------------------------------------
+  // A crew is a list of tankmen, each the list of the roles he serves in, his main role first - the
+  // client's own descr.type.crewRoles, in slot order: [['commander', 'radioman'], ['gunner'], ...]. The
+  // crew maths below runs on such a list and on nothing else, so the vehicle's real crew can be fed in
+  // the day the record carries it. Today it does not (outputs/brothers-in-arms-2026-09-21.md section 6:
+  // the recorder writes no crew), so every vehicle gets the five-man crew below, and the Brothers in Arms
+  // tooltips say so. aimCrewOf() is the one place that decides; it already takes a `crewRoles` list off
+  // the aim block when one is there - the field and the shape that report proposes for aim_block - but
+  // nothing writes it yet.
+  var AIM_DEFAULT_CREW = [['commander'], ['gunner'], ['driver'], ['radioman'], ['loader']];
+  var AIM_CREW_ROLES = ['commander', 'gunner', 'driver', 'radioman', 'loader'];   // skills_constants ROLES
+  var AIM_BIA = SKILL_BY_ID.brotherhood || null;
+  // BrotherhoodSkill.crewLevelIncrease (tankmen.xml), read off the catalogue: 5.
+  var AIM_BIA_LEVELS = AIM_BIA && AIM_BIA.eff && AIM_BIA.eff.crewLevel ? Number(AIM_BIA.eff.crewLevel[1]) || 0 : 0;
+  // A crew list is taken only when it is one the client would accept (vehicles.pyc _readCrew): every
+  // role held by somebody, one commander and never as an extra role, no role twice on one tankman.
+  function aimCrewOf(a) {
+    var list = a && a.crewRoles;
+    if (!list || !list.length || list.length > 8) return AIM_DEFAULT_CREW;
+    var crew = [], held = {}, commanders = 0;
+    for (var i = 0; i < list.length; i++) {
+      var roles = list[i], member = [];
+      if (!roles || !roles.length || roles.length > AIM_CREW_ROLES.length) return AIM_DEFAULT_CREW;
+      for (var j = 0; j < roles.length; j++) {
+        var role = String(roles[j]);
+        if (AIM_CREW_ROLES.indexOf(role) < 0 || member.indexOf(role) >= 0) return AIM_DEFAULT_CREW;
+        if (role === 'commander') { if (j) return AIM_DEFAULT_CREW; commanders++; }
+        member.push(role); held[role] = true;
+      }
+      crew.push(member);
+    }
+    if (commanders !== 1) return AIM_DEFAULT_CREW;
+    for (var r = 0; r < AIM_CREW_ROLES.length; r++) if (!held[AIM_CREW_ROLES[r]]) return AIM_DEFAULT_CREW;
+    return crew;
+  }
+  function aimCrew() { return aimCrewOf(aimBlockData()); }
+  // A crew member's name in a preset: his main role, numbered from the second of that role on ('loader',
+  // 'loader2'). A preset is shared between vehicles whose crews differ, so it cannot name slot indices;
+  // the role is what carries over.
+  var AIM_MEMBER_KEY = /^(commander|gunner|driver|radioman|loader)[2-9]?$/;
+  function aimCrewKeys(crew) {
+    var seen = {};
+    return crew.map(function (roles) {
+      var main = roles[0];
+      seen[main] = (seen[main] || 0) + 1;
+      return seen[main] > 1 ? main + seen[main] : main;
+    });
+  }
+  // THE CREW LAW, per role, from the client's own crew code (items/VehicleDescrCrew.pyc; the report above,
+  // sections 1-5, checked by running that bytecode on built crews):
+  //   B      = 5 x sum(Brothers in Arms level of each tankman) / (N x 100)   _calculateLevelIncreaseByBrotherhood
+  //   common = B + every other crew-level add                                _buildFactors
+  //   inc    = common for the commander,                                     _calcLeverIncreaseForNonCommander
+  //            common + (100 + common) / 10 for everybody else               (COMMANDER_ADDITION_RATIO)
+  //   eff(r) = mean over the tankmen who hold role r of (100 + inc) / 100    _computeSummSkillLevel
+  //   f(r)   = 0.57 + 0.43 x eff(r)                                          _processSkills
+  // The gunner's f sets shot dispersion x 1/f, aiming time x 1/f and turret speed x f (_updateGunnerFactors);
+  // the loader's sets the reload x 1/f (_updateLoaderFactors). N is the number of TANKMEN, not of roles.
+  // Brothers in Arms is neither all-or-nothing nor a bonus of the man who has it: it is ONE crew-wide
+  // average. Every tankman who has it adds 5/N levels to everybody; one without it adds nothing but still
+  // counts in N. A role the commander holds himself gets no commander's tenth, so it is 1.0 with nothing
+  // fitted rather than 1.043 - which is why the gunner and the loader have a factor each.
+  // 'levels' is every other crew-level add: the ventilation in a slot, the combat rations (+10), the Vent
+  // Purge directive (+2.5) and the six situational crew-level perks (equipment report 2.6, 6.1, 7 and 8).
+  //
+  // THE CREW IS NOT A SETTING (user, 19.09): every tankman is fully trained (role level 100, skills
+  // efficiency 1.0), alive and on his own vehicle, because that is what a real vehicle in a battle has. That
+  // is why the baseline f is 1.043 and not 1.0 - the bare descriptor the record carries has no crew at all.
+  // Only what a player really trains or fits is switchable, Brothers in Arms per member included. `bia` is
+  // each tankman's Brothers in Arms level, 0..100, in crew order; the page only ever passes 0 or 100.
+  function crewFactors(crew, bia, levels) {
+    var n = crew.length, sum = 0, i;
+    for (i = 0; i < n; i++) sum += Math.max(0, Math.min(100, Number(bia[i]) || 0));
+    var brotherhood = n ? AIM_BIA_LEVELS * sum / (n * 100) : 0;
+    var common = brotherhood + (Number(levels) || 0), others = common + (100 + common) / 10;
+    var out = {brotherhood: brotherhood, common: common};
+    AIM_CREW_ROLES.forEach(function (role) {
+      var total = 0, count = 0;
+      crew.forEach(function (roles) {
+        if (roles.indexOf(role) < 0) return;
+        total += (100 + (roles[0] === 'commander' ? common : others)) / 100; count++;
+      });
+      // A role nobody holds cannot come out of aimCrewOf; it would count as a non-commander's.
+      out[role] = 0.57 + 0.43 * (count ? total / count : (100 + others) / 100);
+    });
+    return out;
+  }
+  // The factors of the shooter on screen, with the configuration on screen and `levels` added crew levels.
+  function aimCrewFactors(levels) {
+    var crew = aimCrew(), keys = aimCrewKeys(crew);
+    return crewFactors(crew, keys.map(function (k) { return shooterConfig.bia[k] ? 100 : 0; }), levels);
+  }
   // --- The configuration object -----------------------------------------------------------------
   // {slots: [device id, '', ''],      one device id per optional-device slot, '' = empty
   //  directive: '',                   one directive id
   //  food: false, fuel: '',           the consumables
-  //  skills: {gunner_smoothTurret: true}}  the crew skills and perks that are on
+  //  skills: {gunner_smoothTurret: true},  the crew skills and perks that are on, Brothers in Arms apart
+  //  bia: {commander: true, gunner: true}}  the crew members who have Brothers in Arms, by aimCrewKeys()
   var AIM_PRESET_LIMIT = 40, AIM_NAME_LIMIT = 48;
   // User presets, the preset last chosen per shooter type and the state of the switch, kept in the
   // page's one settings object under its own key. Storage may be refused (the game's CEF, a private
@@ -811,6 +904,9 @@
   // Version 3 is the real-item model; a version 2 store (the kind/variant slots of 0.7.15) is dropped
   // the way v2 dropped v1, because "stabiliser, variant trophyUp" cannot be turned into a client entry
   // id without guessing which Class band the vehicle takes.
+  // Brothers in Arms per crew member (21.09) did NOT change the version: a build that gives it to the
+  // whole crew is stored as skills.brotherhood exactly as before, and only a partly trained crew adds a
+  // `bia` map beside it - which an older page simply does not read. Nothing saved is dropped.
   var aimStore = {presets: {}, chosen: {}};
   var shooterFit = null;
   var shooterConfig = aimValues(null), shooterPreset = '';
@@ -818,7 +914,7 @@
   // click or a built-in build. A device the vehicle cannot mount and a device whose archetype another
   // slot already holds are both dropped here and nowhere else.
   function aimValues(base) {
-    var out = {slots: ['', '', ''], directive: '', food: false, fuel: '', skills: {}};
+    var out = {slots: ['', '', ''], directive: '', food: false, fuel: '', skills: {}, bia: {}};
     if (!base) return out;
     var taken = {};
     AIM_SLOTS.forEach(function (i) {
@@ -833,28 +929,51 @@
     out.food = base.food === true || base.food === '1' || base.food === 1;
     var fuel = String(base.fuel || '');
     if (fuel === 'qualityFuel' || fuel === 'excellentFuel') out.fuel = fuel;
-    if (base.skills && typeof base.skills === 'object') AIM_SKILLS.forEach(function (s) {
-      if (base.skills[s.id] === true || base.skills[s.id] === '1') out.skills[s.id] = true;
+    function flag(v) { return v === true || v === '1'; }
+    var skills = base.skills && typeof base.skills === 'object' ? base.skills : {};
+    AIM_SKILLS.forEach(function (s) {
+      if (s.role !== 'each' && flag(skills[s.id])) out.skills[s.id] = true;
+    });
+    // Brothers in Arms is one switch per crew member now. The whole-crew flag the store and the built-in
+    // presets held until 21.09, skills.brotherhood, means "every member has it" and still does - on
+    // whatever crew the vehicle on screen has. A partly trained crew comes as the `bia` map; a key that
+    // is no crew member's name is dropped, one this crew does not have is kept for a crew that has him.
+    if (flag(skills.brotherhood)) aimCrewKeys(aimCrew()).forEach(function (k) { out.bia[k] = true; });
+    else if (base.bia && typeof base.bia === 'object') Object.keys(base.bia).forEach(function (k) {
+      if (AIM_MEMBER_KEY.test(k) && flag(base.bia[k])) out.bia[k] = true;
     });
     return out;
   }
-  // What a preset holds: the build, never the vehicle's slot categories.
+  // What a preset holds: the build, never the vehicle's slot categories. Brothers in Arms on every member
+  // of the crew is written the way it always was, skills.brotherhood, so the preset still means "the whole
+  // crew" on a vehicle whose crew is another size; only a partly trained crew needs the `bia` map.
   function aimPresetValues(cfg) {
-    var skills = {};
+    var skills = {}, keys = aimCrewKeys(aimCrew());
     Object.keys(cfg.skills).forEach(function (id) { if (cfg.skills[id]) skills[id] = true; });
-    return {slots: cfg.slots.slice(), directive: cfg.directive, food: cfg.food, fuel: cfg.fuel, skills: skills};
+    var out = {slots: cfg.slots.slice(), directive: cfg.directive, food: cfg.food, fuel: cfg.fuel, skills: skills};
+    var bia = {}, some = false;
+    Object.keys(cfg.bia || {}).sort().forEach(function (k) { if (cfg.bia[k]) { bia[k] = true; some = true; } });
+    if (keys.length && keys.every(function (k) { return bia[k]; })) skills.brotherhood = true;
+    else if (some) out.bia = bia;
+    return out;
   }
   function aimSkillKey(cfg) {
     return AIM_SKILLS.filter(function (s) { return !!cfg.skills[s.id]; })
       .map(function (s) { return s.id; }).join(',');
   }
+  // Who of the crew on screen has Brothers in Arms, as one comparable string.
+  function aimBiaKey(cfg) {
+    return aimCrewKeys(aimCrew()).filter(function (k) { return !!(cfg.bia && cfg.bia[k]); }).join(',');
+  }
   function aimSame(a, b) {
     return a.slots.join('|') === b.slots.join('|') && a.directive === b.directive
-      && !!a.food === !!b.food && a.fuel === b.fuel && aimSkillKey(a) === aimSkillKey(b);
+      && !!a.food === !!b.food && a.fuel === b.fuel && aimSkillKey(a) === aimSkillKey(b)
+      && aimBiaKey(a) === aimBiaKey(b);
   }
   // The built-in presets are read-only: they are what a player actually fits, so nobody has to
   // assemble a common build slot by slot every time. They name real items of the client; the Class
-  // band is picked for the vehicle on screen by aimResolve.
+  // band is picked for the vehicle on screen by aimResolve. brotherhood: true is Brothers in Arms on
+  // every member of the crew (aimValues).
   var AIM_BUILT_IN = [
     {name: 'Stock — no equipment', values: {}},
     {name: 'Rammer, stabiliser, vents',
@@ -902,25 +1021,6 @@
     aimStore.presets = presets; aimStore.chosen = chosen;
   }
   function aimStored() { return {v: 3, presets: aimStore.presets, chosen: aimStore.chosen}; }
-  // Crew factor, from the client's own crew code (items/VehicleDescrCrew.pyc, items/utils.pyc):
-  //   nonCommanderLevelIncrease = common + (commanderLevel + common) / tankmen.COMMANDER_ADDITION_RATIO (10)
-  //   efficiency = (gunnerLevel + nonCommanderLevelIncrease) / tankmen.MAX_SKILL_LEVEL (100)
-  //   f = 0.57 + 0.43 * efficiency                                            (_processSkills)
-  //   the gunner sets shot dispersion x 1/f, aiming time x 1/f, turret speed x f  (_updateGunnerFactors)
-  //   the loader sets factors['gun/reloadTime'] = 1/f                            (_updateLoaderFactors)
-  // 'common' is everything that adds to crewLevelIncrease and nothing else: Brothers in Arms, the
-  // ventilation in a slot, the combat rations (+10), the Vent Purge directive (+2.5) and the six
-  // situational crew-level perks (report sections 2.6, 6.1, 7 and 8). One chain, one place.
-  //
-  // THE CREW IS NOT A SETTING (user, 19.09): it is always the fully trained crew the client computes,
-  // commander's bonus included, because that is what a real vehicle in a battle has. That is why the
-  // baseline f is 1.043 and not 1.0 - the bare descriptor the record carries has no crew at all, and no
-  // vehicle is ever in that state. Only what a player really fits is switchable.
-  // Assumed: a full crew, everyone alive, nobody serving two roles (crewRolesFactor = 1).
-  function crewFactor(level, common) {
-    var nonCommander = common + (level + common) / 10;
-    return 0.57 + 0.43 * (level + nonCommander) / 100;
-  }
   // --- Reading the configuration ----------------------------------------------------------------
   // Which slot holds a device that occupies `tag`, or -1. Two devices conflict when their `blocks`
   // lists intersect - the client's own <incompatibleTags><installed> rule, and the reason a Vertical
@@ -1021,18 +1121,18 @@
   function aimMul(e, input) { return e.mul[input] === undefined ? 1 : e.mul[input]; }
   function aimAdd(e, input) { return e.add[input] === undefined ? 0 : e.add[input]; }
   // The multipliers of the shooter's configuration, each named after the client attribute it
-  // multiplies. The crew factor f is used for the loader as well as the gunner: the client computes
-  // both from the same _processSkills law, and the page models one evenly trained crew.
+  // multiplies. The gunner and the loader each have their own crew factor: the law is the same, but a
+  // role the commander holds himself gets no commander's tenth (crewFactors above).
   function aimModifiers() {
-    var e = aimEffects(), f = crewFactor(100, aimAdd(e, 'crewLevel'));
-    return {mult: aimMul(e, 'multFactor') / f,             // multShotDispersionFactor and the gunner
+    var e = aimEffects(), crew = aimCrewFactors(aimAdd(e, 'crewLevel')), g = crew.gunner, l = crew.loader;
+    return {mult: aimMul(e, 'multFactor') / g,             // multShotDispersionFactor and the gunner
             additive: aimMul(e, 'additiveFactor'),         // additiveShotDispersionFactor: the stabiliser
             movement: aimMul(e, 'movementFactor'),         // chassis/shotDispersionFactors/movement
             rotation: aimMul(e, 'rotationFactor'),         // chassis/shotDispersionFactors/rotation
             turret: aimMul(e, 'turretRotationFactor'),     // gun/shotDispersionFactors/turretRotation
-            aimingTime: aimMul(e, 'aimingTimeFactor') / f, // gunAimingTimeFactor and the gunner
-            reload: aimMul(e, 'reloadTimeFactor') / f,     // gunReloadTimeFactor and the loader
-            turretSpeed: aimMul(e, 'turretRotationSpeed') * f,  // miscAttrs/turretRotationSpeed
+            aimingTime: aimMul(e, 'aimingTimeFactor') / g, // gunAimingTimeFactor and the gunner
+            reload: aimMul(e, 'reloadTimeFactor') / l,     // gunReloadTimeFactor and the loader
+            turretSpeed: aimMul(e, 'turretRotationSpeed') * g,  // miscAttrs/turretRotationSpeed
             hullSpeed: aimMul(e, 'hullRotationSpeed'),     // Clutch Braking, through the rate
             clipInterval: aimMul(e, 'clipInterval'),       // Mag Mastery, on gun.clip[1]
             // forwardMaxSpeedKMHTerm / backwardMaxSpeedKMHTerm are km/h; the record holds m/s. A
@@ -1081,6 +1181,8 @@
     if (dir) out.push(dir.name + (aimDirectiveActive(dir) ? '' : ' (inactive)'));
     if (shooterConfig.food) out.push('Combat rations');
     AIM_CONSUMABLES.forEach(function (c) { if (c.slot === 'fuel' && shooterConfig.fuel === c.id) out.push(c.name); });
+    var keys = aimCrewKeys(aimCrew()), have = keys.filter(function (k) { return !!shooterConfig.bia[k]; }).length;
+    if (have) out.push('Brothers in Arms' + (have < keys.length ? ' (' + have + ' of ' + keys.length + ')' : ''));
     var skills = AIM_SKILLS.filter(function (s) { return !!shooterConfig.skills[s.id]; });
     if (skills.length) out.push(skills.map(function (s) { return s.name; }).join(', '));
     return out.length ? out.join(' · ') : 'nothing fitted';
@@ -1180,7 +1282,7 @@
     tile.setAttribute('data-tier', dev ? dev.tier : 'none');
     tile.setAttribute('aria-expanded', String(aimPickerOpen === key));
     var what = 'Slot ' + (index + 1) + '. ';
-    tile.title = dev ? what + aimDeviceTitle(dev) + ' Click to change this slot.'
+    tile.title = dev ? what + aimDeviceTitle(dev) + ' Click to change it, or to take it out.'
                      : what + 'Empty. Click to fit a piece of equipment.';
     tile.setAttribute('aria-label', what + (dev ? dev.name : 'Empty'));
     tile.appendChild(dev ? aimIcon(dev.icon, aimShort((FAMILY_BY_ID[dev.family] || {}).name || dev.name),
@@ -1241,18 +1343,15 @@
     return aimDeviceTitle(item.dev) + (tier.note ? ' ' + tier.note : '') + bands
       + (clash >= 0 ? ' Already fitted in another slot.' : '');
   }
-  // The equipment picker: an "empty this slot" tile, then one dense grid of icons per grade. Only the
-  // pieces THIS vehicle may mount are listed (report section 4); a piece whose archetype another slot
-  // already holds is shown disabled instead of vanishing, so the conflict is visible.
+  // The equipment picker: one dense grid of icons per grade. Only the pieces THIS vehicle may mount are
+  // listed (report section 4); a piece whose archetype another slot already holds is shown disabled
+  // instead of vanishing, so the conflict is visible.
+  // There is no "empty this slot" tile any more (user, 21.09): it wore the empty slot's own art and dashed
+  // frame, so it read as a second copy of the slot just clicked. The piece fitted in THIS slot is the
+  // pressed tile, and clicking it takes it out - the way the fuel chips already work. A collapsed Standard
+  // tile is pressed for any Class band it stands for, since a preset may have fitted the other band.
   function aimPicker(index) {
-    var box = node('div', undefined, 'aim-picker');
-    var head = node('div', undefined, 'aim-pick-row');
-    var empty = aimPickTile({icon: 'empty_slot', label: 'Empty', short: '—'},
-                            'Leave slot ' + (index + 1) + ' empty.',
-                            !shooterConfig.slots[index], false, 'none');
-    empty.onclick = function (e) { e.stopPropagation(); aimSetSlot(index, ''); };
-    head.appendChild(empty);
-    box.appendChild(head);
+    var box = node('div', undefined, 'aim-picker'), fitted = shooterConfig.slots[index];
     AIM_GRADE_GROUPS.forEach(function (group) {
       var items = aimGroupItems(group);
       if (!items.length) return;
@@ -1260,11 +1359,13 @@
       var row = node('div', undefined, 'aim-pick-row');
       items.forEach(function (item) {
         var dev = item.dev, clash = aimConflict(dev, index);
+        var here = !!fitted && item.band.some(function (d) { return d.id === fitted; });
         var tile = aimPickTile({icon: dev.icon, label: dev.name, badge: aimDeviceBadge(dev),
                                 short: (FAMILY_BY_ID[dev.family] || {}).name || dev.name},
-                               aimPickTitle(item, clash),
-                               shooterConfig.slots[index] === dev.id, clash >= 0, dev.tier);
-        tile.onclick = function (e) { e.stopPropagation(); aimSetSlot(index, dev.id); };
+                               aimPickTitle(item, clash)
+                                 + (here ? ' Fitted in slot ' + (index + 1) + ': click it to take it out.' : ''),
+                               here, clash >= 0, dev.tier);
+        tile.onclick = function (e) { e.stopPropagation(); aimSetSlot(index, here ? '' : dev.id); };
         row.appendChild(tile);
       });
       box.appendChild(row);
@@ -1317,7 +1418,7 @@
     tile.type = 'button';
     tile.setAttribute('data-tier', dir ? (aimDirectiveActive(dir) ? 'improved' : 'none') : 'none');
     tile.setAttribute('aria-expanded', String(aimPickerOpen === 'directive'));
-    tile.title = dir ? aimDirectiveTitle(dir) + ' Click to change the directive.'
+    tile.title = dir ? aimDirectiveTitle(dir) + ' Click to change the directive, or to take it out.'
                      : 'The directive slot, empty. Click to fit one.';
     tile.setAttribute('aria-label', 'Directive. ' + (dir ? dir.name : 'Empty'));
     tile.appendChild(dir ? aimIcon(dir.icon, aimShort(dir.name)) : aimIcon('empty_slot', '—'));
@@ -1325,19 +1426,18 @@
     return tile;
   }
   // The directive picker is the same grid of icons, without badges - a directive has no grade, and its
-  // own art already tells the nine of them apart. The frame says whether it is active here.
+  // own art already tells the nine of them apart. The frame says whether it is active here. As in the
+  // equipment picker, the fitted directive is the pressed tile and a click on it empties the slot: no
+  // tile of the slot's own empty art stands in the list.
   function aimDirectivePicker() {
     var box = node('div', undefined, 'aim-picker');
     var row = node('div', undefined, 'aim-pick-row');
-    var empty = aimPickTile({icon: 'empty_slot', label: 'No directive', short: '—'},
-                            'Leave the directive slot empty.', !shooterConfig.directive, false, 'none');
-    empty.onclick = function (e) { e.stopPropagation(); aimSetDirective(''); };
-    row.appendChild(empty);
     AIM_DIRECTIVES.forEach(function (dir) {
-      var active = aimDirectiveActive(dir);
-      var tile = aimPickTile({icon: dir.icon, label: dir.name}, aimDirectiveTitle(dir),
-                             shooterConfig.directive === dir.id, false, active ? 'improved' : 'none');
-      tile.onclick = function (e) { e.stopPropagation(); aimSetDirective(dir.id); };
+      var active = aimDirectiveActive(dir), here = shooterConfig.directive === dir.id;
+      var tile = aimPickTile({icon: dir.icon, label: dir.name},
+                             aimDirectiveTitle(dir) + (here ? ' Fitted: click it to take it out.' : ''),
+                             here, false, active ? 'improved' : 'none');
+      tile.onclick = function (e) { e.stopPropagation(); aimSetDirective(here ? '' : dir.id); };
       row.appendChild(tile);
     });
     box.appendChild(row);
@@ -1393,12 +1493,52 @@
       + (mult > 1 ? ' A crew directive is doubling its trained level here.' : '')
       + ' (tankmen.xml ' + s.id + ', perks.xml)';
   }
+  // A crew member by his roles, for the tooltips: "Commander", "Commander and Radio Operator", "Loader 2".
+  function aimMemberName(crew, keys, i) {
+    var names = crew[i].map(function (r) {
+      for (var j = 0; j < AIM_ROLES.length; j++) if (AIM_ROLES[j].id === r) return AIM_ROLES[j].name;
+      return r;
+    });
+    var number = /(\d)$/.exec(keys[i]);
+    return names.join(' and ') + (number ? ' ' + number[1] : '');
+  }
+  // Brothers in Arms, one tile per crew member, first in his main role's group (user, 21.09). The tile
+  // is the skill's icon and nothing else; what one member is worth - and why it is not +5 on its own -
+  // is the tooltip's job.
+  function aimBiaTitle(crew, keys, i) {
+    var n = crew.length, per = AIM_BIA_LEVELS / n;
+    var have = keys.filter(function (k) { return !!shooterConfig.bia[k]; }).length;
+    var who = crew === AIM_DEFAULT_CREW
+      ? 'The record does not carry this vehicle’s crew yet, so the page assumes five tankmen: commander, gunner, driver, radio operator and loader.'
+      : 'This vehicle’s crew, from the record: ' + crew.map(function (r, j) { return aimMemberName(crew, keys, j); }).join(', ') + '.';
+    return 'Brothers in Arms · ' + aimMemberName(crew, keys, i) + ' · a skill each crew member learns for himself. '
+      + 'The client averages it over the whole crew: each of the ' + n + ' tankmen who has it adds '
+      + aimNum(AIM_BIA_LEVELS) + '/' + n + ' = ' + aimNum(per) + ' crew level' + (per === 1 ? '' : 's')
+      + ' to everybody, one without it adds nothing but still counts, and the full +' + aimNum(AIM_BIA_LEVELS)
+      + ' comes only when all ' + n + ' have it. Now ' + have + ' of ' + n + ': +' + aimNum(per * have)
+      + ' crew level' + (per * have === 1 ? '' : 's')
+      + ', which tighten the circle and the aiming time, shorten the reload and speed the turret up. '
+      + who + ' (tankmen.xml brotherhood; VehicleDescrCrew._calculateLevelIncreaseByBrotherhood)';
+  }
+  function aimBiaTile(crew, keys, i) {
+    var key = keys[i];
+    return aimChip(AIM_BIA.icon || AIM_BIA.id, AIM_BIA.name + ', ' + aimMemberName(crew, keys, i),
+                   aimBiaTitle(crew, keys, i), !!shooterConfig.bia[key], function () {
+      if (shooterConfig.bia[key]) delete shooterConfig.bia[key];
+      else shooterConfig.bia[key] = true;
+      aimConfigChanged();
+    }, false);
+  }
   function aimCrewSection(body) {
+    var crew = aimCrew(), keys = aimCrewKeys(crew);
     AIM_ROLES.forEach(function (role) {
       var rows = AIM_SKILLS.filter(function (s) { return s.role === role.id; });
-      if (!rows.length) return;
+      var members = [];
+      if (AIM_BIA) crew.forEach(function (roles, i) { if (roles[0] === role.id) members.push(i); });
+      if (!rows.length && !members.length) return;
       body.appendChild(node('div', role.name, 'aim-role'));
       var chips = node('div', undefined, 'aim-chips');
+      members.forEach(function (i) { chips.appendChild(aimBiaTile(crew, keys, i)); });
       rows.forEach(function (s) {
         chips.appendChild(aimChip(s.icon || s.id, s.name, aimSkillTitle(s), !!shooterConfig.skills[s.id], function () {
           if (shooterConfig.skills[s.id]) delete shooterConfig.skills[s.id];
@@ -1468,8 +1608,8 @@
     body.appendChild(node('div', 'Crew', 'aim-config-head'));
     var crew = node('div'); crew.id = 'aim-cfg-crew';
     aimConfigControls.crew = crew; body.appendChild(crew);
-    var note = node('p', '', 'aim-config-note'); note.id = 'aim-cfg-summary';
-    aimConfigControls.summary = note; body.appendChild(note);
+    // No "Fitted: ..." line under the crew any more (user, 21.09): the tiles above already show what is
+    // fitted, and the list lives on in the Config button's own tooltip.
     paintAimConfig();
   }
   function aimRow(grid, label, control) { grid.appendChild(node('span', label)); grid.appendChild(control); }
@@ -1507,8 +1647,6 @@
     aimConfigControls.consumables.appendChild(aimConsumableChips());
     aimConfigControls.crew.replaceChildren();
     aimCrewSection(aimConfigControls.crew);
-    // No crew wording in the panel (user, 20.09): the crew is never a setting, so it is not worth a line.
-    aimConfigControls.summary.textContent = 'Fitted: ' + aimLongSummary() + '.';
     $('aim-config').querySelector('summary').title = 'This shooter’s equipment, directive, consumables and crew, with presets. Now: ' + aimLongSummary() + '.';
   }
   function aimNameBox(mode, value) {
@@ -1575,6 +1713,8 @@
   // grown into a held burst, aimClipDry that the clip ran out and nothing more fires until the release.
   var aimDown = false, aimBurst = false, aimHoldTimer = 0, aimClipDry = false;
   var aimLive = false, aimCursor = '';
+  // aimCentred: the Config popover is open and the viewer holds the aim on the middle of the model.
+  var aimCentred = false;
   // A press longer than this is a burst, a shorter one a single shot (user, 20.09). Milliseconds of wall
   // clock through window.setTimeout, not a count of frames, so a slow scene does not lengthen the tap.
   var AIM_HOLD_MS = 250;
@@ -1854,6 +1994,10 @@
   // shoots. Claiming the press here is what tells the viewer this is not a drag.
   function beginShot() {
     if (!aimLive || !aimBlockData() || !viewer || !viewer.liveRadius100) return false;
+    // With the Config popover open the aim is parked on the model centre, not under the cursor, so a
+    // press in the scene fires nothing: it only closes the popover (the document click handler). It is
+    // still claimed, or the viewer would pin a point on its release; a drag still orbits (cancelShot).
+    if (aimCentred) return true;
     cancelHoldTimer();
     aimDown = true; aimBurst = false; aimClipDry = false;
     // A fresh press is never blocked by a running reload and starts with a full clip: the reload paces
@@ -1958,6 +2102,27 @@
     if (want) box.classList.add(want);
     aimCursor = want;
   }
+  // THE CIRCLE GOES TO THE TANK WHILE THE MENU IS OPEN (user, 21.09). With the Config popover open the
+  // mouse is on the menu, so the live circle and the crosshair would sit behind it and nobody could see
+  // what a tile does to the circle. While it is open the viewer holds the aim on the middle of the model
+  // and draws a crosshair there in the Settings shape (viewer.setAimCentre); every configuration change
+  // repaints the circle at once (aimConfigChanged), so its size moves while the tiles are clicked. The
+  // figures on the info panels follow the circle as always, the keys go on driving, and closing the
+  // popover hands the aim back to the cursor. Run on the popover's own toggle, on every pass of
+  // updateAim and when the crosshair shape changes.
+  function aimCrosshairShape() { return $('crosshair-style').value === 'dot' ? 'dot' : 'cross'; }
+  function aimSyncCentre() {
+    var want = !!(aimLive && viewer && viewer.setAimCentre && $('aim-config').open);
+    if (!want && !aimCentred) return;
+    var moved = want !== aimCentred;
+    aimCentred = want;
+    viewer.setAimCentre(want, aimCrosshairShape());
+    if (!moved || !aimLive) return;
+    // The circle stands somewhere else now: its figure is taken again at once, and finely once at rest.
+    aimEstAt = 0; aimEstFine = false;
+    paintAim(aimLastState || aimState());
+    startAimLoop();
+  }
   // One pass over everything the mode owns: what is on screen, the circle in the scene and the figures
   // on the two info panels. Cheap - no ray is cast here.
   function updateAim() {
@@ -1983,6 +2148,7 @@
       if (viewer) viewer.setAimEmulation(live);
     }
     aimCursorClass();
+    aimSyncCentre();   // a mode going off closed the popover above, and the hold goes with it
     if (!live) {
       if (viewer) viewer.clearLiveAim();
       stopAimLoop();
@@ -2840,7 +3006,9 @@
   $('aim-on').onchange=function(){setAimEmulation(this.checked);};
   // The crosshair shape is a Settings control, so the settings machinery stores it; this only re-applies
   // the class while the mode is on.
-  $('crosshair-style').onchange=function(){aimCursorClass();};
+  $('crosshair-style').onchange=function(){aimCursorClass();aimSyncCentre();};
+  // The Config popover opening or closing, whoever did it: its summary, a click elsewhere, the mode going off.
+  $('aim-config').addEventListener('toggle',function(){aimSyncCentre();});
   // The manual estimate, for a shooter whose record carries no aiming parameters. Expected damage is a
   // share of the shell's alpha here too, so the two paths read the same way.
   $('estimate-spread').onclick=function(){if(!viewer)return;try{var result=viewer.estimateSpread(Number($('spread-radius').value));analysisKey=[viewer.distance,viewer.yaw,viewer.pitch,viewer.turretAngle,viewer.gunAngle].join(',');$('spread-result').textContent=(damageView?'Nominal expected damage: '+(result.unknown?damagePct(result.damage)+'–'+damagePct(result.damageHigh):damagePct(result.damage))+' % of alpha':'Nominal total chance: '+(result.unknown?result.low.toFixed(1)+'–'+result.high.toFixed(1):result.low.toFixed(1))+'%')+' · outside the main armour '+result.miss.toFixed(1)+'% · '+result.samples+' rays.'+(result.unknown?' A range because armour data is missing.':'')+(damageView?' For the chosen dispersion model; the non-penetration damage is a reconstruction, without map obstacles or splash onto other parts.':' For the chosen dispersion model, without map obstacles or blast damage.');}catch(e){$('spread-result').textContent=e.message;}};

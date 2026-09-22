@@ -95,10 +95,18 @@ CATEGORY_NAMES = {'firepower': 'Firepower', 'mobility': 'Mobility', 'survivabili
 # per-point number into the multiplier at a fully trained skill. The sign of a raw argument depends on the
 # argument, so the resolved figure is what is carried here; "situational" marks a perk that only holds while
 # its condition does (stationary, low health, alone, close range), which is why it is off by default.
+#
+# Brothers in Arms is the one skill with role 'each': every tankman learns it for himself, so the page gives
+# it one switch per crew member rather than one for the whole crew. Its 5 is BrotherhoodSkill.crewLevelIncrease
+# (tankmen.xml <brotherhood><crewLevelIncrease>), and the client AVERAGES it over the crew:
+# VehicleDescrCrew._calculateLevelIncreaseByBrotherhood adds 5 x (tankmen who have it) / (all tankmen) to every
+# crew member (outputs/brothers-in-arms-2026-09-21.md, checked by running the client's own bytecode).
 SKILLS = [
-    {'id': 'brotherhood', 'role': 'any', 'name': 'Brothers in Arms', 'kind': 'skill',
+    {'id': 'brotherhood', 'role': 'each', 'name': 'Brothers in Arms', 'kind': 'skill',
      'eff': {'crewLevel': ['add', 5]}, 'situational': False,
-     'note': 'trained on the whole crew: every crew member counts as 5 levels higher'},
+     'note': 'learned by each crew member for himself; the client averages it over the whole crew, so every '
+             'member who has it adds 5/N crew levels to everyone (N = the number of tankmen) and the full +5 '
+             'comes only when all of them have it'},
     {'id': 'gunner_smoothTurret', 'role': 'gunner', 'name': 'Snap Shot', 'kind': 'skill',
      'eff': {'turretRotationFactor': ['mul', 0.925]}, 'situational': False,
      'note': 'the turret-rotation term only'},
@@ -144,8 +152,11 @@ SKILLS = [
     {'id': 'radioman_sideBySide', 'role': 'radioman', 'name': 'Side By Side', 'kind': 'perk',
      'eff': {'crewLevel': ['add', 2.5]}, 'situational': True, 'when': 'while an ally is near'},
 ]
-ROLE_ORDER = ['any', 'commander', 'gunner', 'driver', 'loader', 'radioman']
-ROLE_NAMES = {'any': 'Whole crew', 'commander': 'Commander', 'gunner': 'Gunner', 'driver': 'Driver',
+# The five crew roles of the client (items/components/skills_constants.pyc ROLES), in the order the page
+# groups the crew tiles. There is no "whole crew" group any more: the one skill that belonged to it, Brothers
+# in Arms, now has a tile in every role group.
+ROLE_ORDER = ['commander', 'gunner', 'driver', 'loader', 'radioman']
+ROLE_NAMES = {'commander': 'Commander', 'gunner': 'Gunner', 'driver': 'Driver',
               'loader': 'Loader', 'radioman': 'Radio Operator'}
 
 # Consumables that reach the maths. Every food ration is the same +10 crew levels, so the page offers one

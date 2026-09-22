@@ -186,6 +186,8 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 /* The picker: four grade groups under a quiet heading, each a dense grid several tiles to the row. */
 .aim-picker{display:flex;flex-direction:column;gap:4px;width:100%}
 .aim-pick-grade{font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin-top:6px}
+/* No "empty" tile heads the picker any more (the fitted piece takes itself out), so the first grade opens it. */
+.aim-pick-grade:first-child{margin-top:0}
 .aim-pick-row{display:flex;flex-wrap:wrap;gap:4px;width:100%}
 /* A situational perk holds only while its condition does, and says so by art alone: the tile is dimmed
    and wears a dot in the corner the badge does not use. Once it is switched on it stops being dim. */
@@ -459,6 +461,12 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
    hotspot is the centre of the 32 px image and `crosshair` is the fallback if the image is refused. */
 #viewport.aim-cross,#viewport.aim-cross canvas{cursor:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Cg fill='none' stroke='%23000' stroke-opacity='.6' stroke-width='3.5' stroke-linecap='round'%3E%3Cpath d='M16 3v8M16 21v8M3 16h8M21 16h8'/%3E%3C/g%3E%3Cg fill='none' stroke='%235ee0ff' stroke-width='1.6' stroke-linecap='round'%3E%3Cpath d='M16 3v8M16 21v8M3 16h8M21 16h8'/%3E%3C/g%3E%3Ccircle cx='16' cy='16' r='1.1' fill='%235ee0ff'/%3E%3C/svg%3E") 16 16,crosshair}
 #viewport.aim-dot,#viewport.aim-dot canvas{cursor:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Ccircle cx='16' cy='16' r='4' fill='none' stroke='%23000' stroke-opacity='.6' stroke-width='3.5'/%3E%3Ccircle cx='16' cy='16' r='4' fill='none' stroke='%235ee0ff' stroke-width='1.6'/%3E%3Ccircle cx='16' cy='16' r='1.1' fill='%235ee0ff'/%3E%3C/svg%3E") 16 16,crosshair}
+/* The crosshair the viewer draws on the model while the Config popover holds the aim there (the real one
+   is the mouse pointer, which cannot be moved): the very two pictures above, centred on the point the way
+   the cursor's 16 16 hotspot is. Keep the data URIs identical to the cursor ones. */
+.aim-marker{position:absolute;width:32px;height:32px;transform:translate(-50%,-50%);pointer-events:none;background:no-repeat center/32px 32px url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Cg fill='none' stroke='%23000' stroke-opacity='.6' stroke-width='3.5' stroke-linecap='round'%3E%3Cpath d='M16 3v8M16 21v8M3 16h8M21 16h8'/%3E%3C/g%3E%3Cg fill='none' stroke='%235ee0ff' stroke-width='1.6' stroke-linecap='round'%3E%3Cpath d='M16 3v8M16 21v8M3 16h8M21 16h8'/%3E%3C/g%3E%3Ccircle cx='16' cy='16' r='1.1' fill='%235ee0ff'/%3E%3C/svg%3E")}
+.aim-marker[data-shape=dot]{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Ccircle cx='16' cy='16' r='4' fill='none' stroke='%23000' stroke-opacity='.6' stroke-width='3.5'/%3E%3Ccircle cx='16' cy='16' r='4' fill='none' stroke='%235ee0ff' stroke-width='1.6'/%3E%3Ccircle cx='16' cy='16' r='1.1' fill='%235ee0ff'/%3E%3C/svg%3E")}
+.aim-marker[hidden]{display:none}
 
 #pose-note{font-size:12px;color:var(--muted)}
 

@@ -2,6 +2,13 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
+## Unreleased
+
+- Brothers in Arms is one tile per crew member and counts the way the client does: each tankman with it adds 5/N crew levels to the whole crew, the full +5 only when everyone has it. Until records carry the vehicle's crew, the page assumes five tankmen. Builds saved with Brothers in Arms keep it on every member.
+- The equipment and directive pickers no longer start with an "empty" tile that looked like the slot itself: click the fitted piece to take it out.
+- While Config is open, the aiming circle and a crosshair move to the middle of the target, so each tile's effect on the circle is visible. A click in the scene then only closes the menu; closing it gives the aim back to the mouse.
+- The "Fitted: …" line under the configuration is gone; the Config button's tooltip still lists the build.
+
 ## 0.7.19 (2026-09-21)
 
 - Collision models are resolved from mounted shared and event packages, including Waffentrager vehicles; saved battles can recover their missing parts with the matching client.
