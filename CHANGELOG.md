@@ -11,6 +11,7 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 - The gun's own mechanics (shell switcher, low charge, charge shot, overheat and the rest) are recorded for the shooter, so the page can say that a gun's numbers vary instead of showing one value in silence.
 - Statistics log: the lines of a two-mode shooter carry the mode, the mode's shells and the recorded siege state, and a guessed line now names the shell the page itself shows instead of the first of the list.
 - The lighting-depth slider sits in the Soft lighting row next to its own tick box, like the ricochet rows, so the Settings grid keeps its pairs; its default is 250 % (the deepest shading), and a stored 100 % from the old default follows.
+- The aiming-circle percentage left the small line inside the info panels for a tile of its own at the top right of the scene, level with the panel it belongs to and in the big figure size: a cyan “Circle” heading for the live ring under the cursor, magenta for the standing ring the hit line refers to.
 
 ## 0.7.23 (2026-09-22)
 

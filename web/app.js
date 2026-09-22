@@ -2579,11 +2579,13 @@
     if (shell && shell.alpha > 0) return {alpha: true, damage: damagePct(r.damage, shell)};
     return {alpha: false, low: r.low, high: r.high, unknown: !!r.unknown};
   }
+  // The figure alone: the word "Circle" is the heading of the tile it is written into (user, 22.09). And no
+  // figure to be had is no tile at all - an empty text puts the tile away instead of printing the old dash.
   function circleText(figure) {
     if (!figure) return '';
-    if (figure.alpha) return 'Circle ' + figure.damage + ' %';
-    if (!(figure.low >= 0)) return 'Circle —';
-    return 'Circle ' + (figure.unknown ? Math.round(figure.low) + '–' + Math.round(figure.high) : Math.round(figure.low)) + ' %';
+    if (figure.alpha) return figure.damage + ' %';
+    if (!(figure.low >= 0)) return '';
+    return (figure.unknown ? Math.round(figure.low) + '–' + Math.round(figure.high) : Math.round(figure.low)) + ' %';
   }
   var SHARE = ', as a share of the shell’s alpha';
   var NO_ALPHA = ': penetration chance over the circle — this shell has no alpha, so no damage figure';
@@ -2597,17 +2599,24 @@
     // an estimate with it. Said on the line itself, so the number is never read as a recorded one.
     estimate: 'This hit has no recorded reticle: the figure is for the nominal full-aim circle drawn on the hit line (gun accuracy × range, no crew or equipment). Expected damage of a shot inside it'
   };
-  // One line per ring, in the colour of the ring it belongs to (user, 20.09): the live cyan one into the
-  // "Under the cursor" panel, the STANDING magenta ring into the hit-line panel above it. That ring is
+  // One tile per ring, in the colour of the ring it belongs to (user, 20.09; a column of its own at the top
+  // RIGHT of the scene since 22.09, each tile on the row of the panel it belongs to): the live cyan one
+  // beside "Under the cursor", the STANDING magenta ring beside the hit-line panel above it. That ring is
   // the recorded reticle of the hit (or its nominal estimate) until the user fires, and the ring of his
   // own last shot afterwards - which is exactly what has replaced it on the model. No figure twice.
+  // `id` names the VALUE element, `<id>-tile` the tile around it: the tile takes the hidden flag, the ring's
+  // colour class and the tooltip, the value element the figure alone. The class is written only when it
+  // really changes - the markup already ships each tile with the right one.
   function circleLine(id, figure, kind) {
-    var e = $(id);
-    if (!e) return;
+    var e = $(id), tile = $(id + '-tile');
+    if (!e || !tile) return;
     var text = figure ? circleText(figure) : '';
     e.textContent = text;
-    e.hidden = !text;
-    e.title = text ? (CIRCLE_TITLES[kind] || CIRCLE_TITLES.live) + (figure.alpha ? SHARE : NO_ALPHA) : '';
+    tile.hidden = !text;
+    tile.title = text ? (CIRCLE_TITLES[kind] || CIRCLE_TITLES.live) + (figure.alpha ? SHARE : NO_ALPHA) : '';
+    if (!text) return;
+    var cls = kind === 'live' ? 'aim-circle-tile live' : 'aim-circle-tile shot';
+    if (tile.className !== cls) tile.className = cls;
   }
   function paintCircleLines() {
     circleLine('probe-circle', aimLive ? aimEst : null, 'live');
@@ -4168,20 +4177,29 @@
   // same frame as the two rows above, never per frame.
   // The shooter's group does the same in the bottom band, beside the Shooter tile, so each group sits with
   // the vehicle it describes.
+  // The hit-line panel's circle tile stands at the right end of the SAME top band as a mod slot (22.09), so
+  // the room a group has up there ends where that tile begins. Measured in the layout pass, not per frame;
+  // the tile below it is on the next row and never in the way.
+  function circleBand(){
+    var e=$('shot-circle-tile');
+    if(!e||e.hidden)return 0;
+    var w=e.getBoundingClientRect().width;
+    return w>0?w+12:0;
+  }
   function placeMods(group,slot,tile){
     var box=$('viewport');
     if(!group||!slot||slot.hidden||!box||!box.clientWidth)return;
     // The tile is centred with a transform, which offsetLeft does not see: its painted right edge comes from
     // the rectangles, measured against the viewport's own.
-    var edge=14,gap=12,left=edge;
+    var edge=14,gap=12,left=edge,band=circleBand();
     if(tile&&tile.getBoundingClientRect().width>0){var box0=box.getBoundingClientRect(),t0=tile.getBoundingClientRect();left=Math.max(edge,t0.right-box0.left+gap);}
     slot.style.left=left+'px';
-    group.fit(box.clientWidth-edge-left);
+    group.fit(box.clientWidth-edge-band-left);
     // Collapsed, a group is exactly as wide as its own summary button, which fit() cannot shrink. When even
     // that does not fit beside the tile it is pulled back to the edge of the viewport instead of being
     // painted past it - overlapping the tile is the lesser evil, and only the bottom band ever gets there.
     var width=slot.getBoundingClientRect().width;
-    if(left+width>box.clientWidth-edge)slot.style.left=Math.max(edge,box.clientWidth-edge-width)+'px';
+    if(left+width>box.clientWidth-edge-band)slot.style.left=Math.max(edge,box.clientWidth-edge-band-width)+'px';
   }
   function layoutMods(){
     placeMods(targetMods,$('target-mods-slot'),$('model-tile').hidden?null:$('model-tile'));

@@ -50,7 +50,7 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 .hover-panel{pointer-events:none;background:rgba(23,35,48,.15);text-shadow:0 1px 2px rgba(0,0,0,.7)}/* The hover panel is a column (user, 13.09): the title, the chance, then the details under them. The pen chip
    (penetration at the range) is a row of its own right under the chance, above the effective armour line - the
    two read alike and belong together (user, 20.09). */
-#armor-probe{grid-template-columns:auto auto;grid-template-rows:auto auto auto auto auto auto;column-gap:10px}#armor-probe .info-title{grid-row:1;grid-column:1/3}#armor-probe #probe-pen{grid-row:3;grid-column:1/3}#armor-probe .info-chance{grid-row:2;grid-column:1/3;align-self:center}#armor-probe #probe-details{grid-row:4;grid-column:1/3}#armor-probe .info-extra{grid-row:5;grid-column:1/3}
+#armor-probe{grid-template-columns:auto auto;grid-template-rows:auto auto auto auto auto;column-gap:10px}#armor-probe .info-title{grid-row:1;grid-column:1/3}#armor-probe #probe-pen{grid-row:3;grid-column:1/3}#armor-probe .info-chance{grid-row:2;grid-column:1/3;align-self:center}#armor-probe #probe-details{grid-row:4;grid-column:1/3}#armor-probe .info-extra{grid-row:5;grid-column:1/3}
 
 
 /* Vehicle tile: tier | name | class+role, with the nation flag faded into the right side.
@@ -388,11 +388,16 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 .shell-fields .fields-row label{display:flex;flex-direction:row;align-items:center;gap:6px;font-size:13px;color:var(--muted);white-space:nowrap}
 .shell-fields input{width:84px;min-height:30px;padding:4px 7px;font-size:13px;font-variant-numeric:tabular-nums}
 
-/* Both scene tiles share one top-left column of constant width, so the band they cover does not move with the
-   window (web/viewer.js FIT_TOP_BAND reserves it). The hover panel stays click-through: it reads what is under
-   the cursor and must not swallow the move. */
-.viewport-tiles{position:absolute;left:14px;top:12px;z-index:6;display:flex;flex-direction:column;gap:8px;width:320px;max-width:calc(100% - 28px);pointer-events:none}
-.viewport-tiles>.info-panel{width:100%;white-space:normal}
+/* One grid across the top of the scene, in three columns: the two panels in a left column of constant width,
+   so the band they cover does not move with the window (web/viewer.js FIT_TOP_BAND reserves it), empty room in
+   the middle, and the aiming-circle tiles in a column of their own at the RIGHT edge (user, 22.09). The tiles
+   of a row are placed by row, not stacked, so each circle tile stays level with the top of the panel it
+   belongs to however tall that panel's chips make it. The hover panel stays click-through: it reads what is
+   under the cursor and must not swallow the move. */
+.viewport-tiles{position:absolute;left:14px;right:14px;top:12px;z-index:6;display:grid;grid-template-columns:minmax(0,320px) 1fr auto;align-items:start;gap:8px;pointer-events:none}
+.viewport-tiles>.info-panel{grid-column:1;width:100%;white-space:normal}
+.viewport-tiles>#shot-panel,.viewport-tiles>#shot-circle-tile{grid-row:1}
+.viewport-tiles>#armor-probe,.viewport-tiles>#probe-circle-tile{grid-row:2}
 .viewport-tiles .chips{overflow:visible;text-overflow:clip}
 /* Inside the scene the tiles no longer set the height of anything above the canvas, so an empty chip row costs
    nothing instead of holding its old placeholder height: the pair stays as short as the reserved band. */
@@ -400,20 +405,25 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 .viewport-tiles #shot-pen,.viewport-tiles .info-extra{min-height:0}
 .viewport-tiles .info-chance{font-size:20px}
 #shot-panel{pointer-events:auto}
-#shot-panel{grid-template-columns:auto auto;grid-template-rows:auto auto auto auto auto auto;column-gap:10px}
+#shot-panel{grid-template-columns:auto auto;grid-template-rows:auto auto auto auto auto;column-gap:10px}
 #shot-panel .info-title{grid-row:1;grid-column:1/3}
 #shot-panel #shot-pen{grid-row:3;grid-column:1/3}
 #shot-panel .info-chance{grid-row:2;grid-column:1/3;align-self:center}
 #shot-panel #shot-details{grid-row:4;grid-column:1/3}
 #shot-panel .info-extra{grid-row:5;grid-column:1/3}
-/* The figure of the aiming circle, one line per panel in the colour of the ring it belongs to (user,
-   20.09): cyan for the live ring under the cursor, magenta on the hit-line panel for whichever standing
-   ring is on the model there - the recorded reticle of the hit, its nominal estimate, or the ring an
-   emulated shot left behind. */
-#shot-panel #shot-circle,#armor-probe #probe-circle{grid-row:6;grid-column:1/3}
-.aim-circle{font-size:13px;font-weight:600;font-variant-numeric:tabular-nums;color:var(--aim-live);pointer-events:auto;cursor:help}
-.aim-circle.shot{color:var(--aim-shot)}
-.aim-circle[hidden]{display:none}
+/* The figure of the aiming circle: a tile of its own at the right end of its panel's row (user, 22.09 - the
+   figure is worth as much as the point figure and was too small for it). The tile mirrors the panel opposite
+   it: the same padding, the same quiet backdrop, the same shadow, read from the right edge inwards. It carries
+   no word but the heading "Circle", and the COLOUR of that heading says which ring the figure belongs to -
+   cyan for the live ring under the cursor, magenta for whichever standing ring the hit-line panel refers to
+   (the recorded reticle of the hit, its nominal estimate, or the ring an emulated shot left behind). The
+   sentence that used to hang on the little line is the tile's own tooltip, so the tile takes the pointer. */
+.aim-circle-tile{grid-column:3;justify-self:end;display:grid;justify-items:end;row-gap:2px;padding:6px 12px 8px;border-radius:6px;background:rgba(23,35,48,.15);white-space:nowrap;text-shadow:0 1px 2px rgba(0,0,0,.7);color:var(--aim-live);pointer-events:auto;cursor:help}
+.aim-circle-tile.shot{color:var(--aim-shot)}
+.aim-circle-tile[hidden]{display:none}
+/* The heading is a panel title and the figure a panel's big number (.viewport-tiles .info-chance gives it the
+   scene's 20 px), both in the ring's colour instead of the panel gold. */
+.aim-circle-tile .info-title,.aim-circle-tile .info-chance{color:inherit}
 
 /* Toolbar: one row, never wrapped. app.js layoutToolbar() moves whole groups into the popover in reverse keep
    order (data-tb ascending is kept longest) and brings them back when the window widens. */
