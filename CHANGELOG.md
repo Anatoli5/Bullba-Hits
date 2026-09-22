@@ -4,7 +4,7 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 
 ## Unreleased
 
-- Brothers in Arms is one tile per crew member and counts the way the client does: each tankman with it adds 5/N crew levels to the whole crew, the full +5 only when everyone has it. Records now carry the vehicle's real crew (older battles get it on the next game start); only a vehicle the client no longer has falls back to five tankmen. Builds saved with Brothers in Arms keep it on every member, and a build saved for part of a crew stays that way when loaded on another vehicle.
+- Brothers in Arms is one tile per crew member and counts the way the client does: each tankman with it adds 5/N crew levels to the whole crew, the full +5 only when everyone has it. Records now carry the vehicle's real crew (older battles get it on the next game start); only a vehicle the client no longer has falls back to five tankmen. Builds saved with Brothers in Arms keep it on every member, and a build saved for part of a crew stays partial when the page is reopened.
 - Configuring a shooter no longer counts equipment twice: equipment already inside the aim data of your own recorded shots is taken out before the configuration applies its own (a stabiliser made the circle on the move far too tight). Field modifications recorded in battle stay in. Recorded reticles are unchanged.
 - Battles record their mode (Random, Onslaught, White Tiger …) and each vehicle's hit points, field modifications and whether it is a bot.
 - Config knows mode and event vehicles: equipment, consumables or crew skills the vehicle's own lock fixes are not offered or applied, and the Config button says why. A "?" on it marks a battle whose rules the client data does not give (events, and battles recorded before this build). Records now keep the vehicle's locks and mode tags, so an event vehicle stays recognised after its event leaves the client.
@@ -19,11 +19,11 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 - Game start does less work: the viewer's files are rewritten only when they differ from the package, saved vehicles load about eight times faster, and each vehicle configuration is rebuilt once instead of for every hit that needs it.
 - Newly extracted collision models are about 40 % smaller (coordinates rounded to a micrometre); models already saved stay as they are.
 - The armour map is no longer recomposed on frames where nothing changed (a still camera, a settling aiming circle), and the live aiming circle no longer rebuilds its shader every frame.
-- Circle chances and shot lines are computed faster, up to ten times on heavy vehicles: a ray stops at the first main armour plate. The results are the same.
+- Circle chances and shot lines are computed faster: a ray stops at the first main armour plate. The results are the same.
 - Wheel zoom updates the shell, the panels and the map once, when the glide ends, instead of on every frame; a glide cut short by leaving the page finishes on return.
 - Dragging the Distance slider inside "More" no longer closes the menu: the toolbar is re-measured only when something on it appears or disappears.
 - A turret or gun drag is handled once per mouse move, and the Config menu is built when it is opened instead of on every hit.
-- The Statistics log pass that runs when a battle opens takes about half the time and reads each collision model far less often; the logged lines are unchanged.
+- The Statistics log pass that runs when a battle opens takes about half the time and reads each collision model far less often; the lines are the same, now grouped by target vehicle.
 
 ## 0.7.19 (2026-09-21)
 

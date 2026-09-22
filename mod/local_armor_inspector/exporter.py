@@ -428,7 +428,9 @@ def json_safe(value, limit=4000, depth=16):
             return out
         if isinstance(item, (list, tuple, set, frozenset)):
             return [walk(entry, level + 1) for entry in item]
-        return repr(item)[:200]
+        text = repr(item)
+        if isinstance(text, bytes): text = text.decode('utf-8', 'replace')
+        return text[:200]
 
     return walk(value, 0)
 
@@ -1118,6 +1120,7 @@ class Exporter(object):
         self.package_conflicts = set()
         self.overrides = None
         self.attempts = {}
+        self.scan_errors = set()
         self.summaries = {}
         self.model_refs = {}
         self.current = None
@@ -1295,16 +1298,28 @@ class Exporter(object):
         extraction was tried and failed, (key, PENDING) when nothing was tried yet.
         """
         key = model_key(resource, version)
-        if key in self.attempts: return key, self.attempts[key]
+        if key in self.attempts and not self.scan_retry(key): return key, self.attempts[key]
         if os.path.isfile(os.path.join(self.folder, 'data', 'models', key+'.js')):
             self.attempts[key] = None
             return key, None
         return key, PENDING
 
+    def scan_retry(self, key):
+        """Forget a model's failure when it was the package scan's and its pause is over.
+
+        A scan failure says nothing about the model itself, so it must not last the session;
+        within the pause it stands, so a failed job cannot requeue itself in a loop."""
+        if key not in self.scan_errors: return False
+        failed = self.package_scan_failed
+        if failed is not None and time.time()-failed[0] < PACKAGE_RESCAN_PAUSE: return False
+        self.scan_errors.discard(key)
+        self.attempts.pop(key, None)
+        return True
+
     def model_extract(self, resource, version):
         key = model_key(resource, version)
         path = os.path.join(self.folder, 'data', 'models', key+'.js')
-        if key in self.attempts: return key, self.attempts[key]
+        if key in self.attempts and not self.scan_retry(key): return key, self.attempts[key]
         if os.path.isfile(path):
             self.attempts[key] = None
             return key, None
@@ -1312,7 +1327,11 @@ class Exporter(object):
             if canonical(version) != self.version:
                 raise ValueError('Client version changed; model was not saved before the update')
             name = resource.rsplit('.', 1)[0]+'.havok'
-            self.ensure_packages()
+            try:
+                self.ensure_packages()
+            except Exception:
+                self.scan_errors.add(key)
+                raise
             if name in self.package_conflicts: raise ValueError('Conflicting mounted collision resources')
             if name not in self.packages: raise ValueError('Collision model not found in client')
             if name in self.overrides or resource in self.overrides:

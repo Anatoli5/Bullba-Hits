@@ -904,13 +904,17 @@
   function battleModeOf(battle) {
     var m = battle && battle.mode;
     if (m && typeof m === 'object' && m.read !== false && (m.bonusTypeName || m.bonusType !== undefined)) {
-      var family = BONUS_FAMILY[String(m.bonusTypeName || '')] || BONUS_ID_FAMILY[m.bonusType] || 'unknown';
+      // The name decides when it was written: an id reused by a later client must not borrow an old event's name.
+      var family = (m.bonusTypeName ? BONUS_FAMILY[String(m.bonusTypeName)] : BONUS_ID_FAMILY[m.bonusType]) || 'unknown';
       var name = family === 'unknown' ? 'bonus type ' + (m.bonusTypeName || m.bonusType) : modeFamilyName(family);
       if (family === 'fun_random' && m.guiTypeName && m.guiTypeName !== 'FUN_RANDOM') {
         name += ' (' + String(m.guiTypeName).toLowerCase().replace(/_/g, ' ') + ')';
       }
       return {family: family, source: 'arena', name: name};
     }
+    // Why the arena's word is missing: no block (a battle recorded before the mod wrote the mode), a block
+    // the mod could not read, or a block whose bonus fields were unavailable.
+    var why = !m || typeof m !== 'object' ? 'old' : m.read === false ? 'unreadable' : 'unavailable';
     var counts = {}, best = '';
     ((battle && battle.roster) || []).forEach(function (row) {
       var entry = row && row.type && Object.prototype.hasOwnProperty.call(MODE_LISTED, String(row.type)) ? MODE_LISTED[String(row.type)] : null;
@@ -918,8 +922,8 @@
       counts[entry.mode] = (counts[entry.mode] || 0) + 1;
       if (!best || counts[entry.mode] > counts[best]) best = entry.mode;
     });
-    if (best) return {family: best, source: 'roster', name: modeFamilyName(best)};
-    return {family: '', source: m && m.read === false ? 'unreadable' : 'none', name: ''};
+    if (best) return {family: best, source: 'roster', name: modeFamilyName(best), why: why};
+    return {family: '', source: 'none', name: '', why: why};
   }
   function aimRule(state, source) { return {state: state, source: source}; }
   var AIM_OPEN_RULE = aimRule('allowed', '');
@@ -938,7 +942,8 @@
         : klass.group === 'mode' ? aimRule('unknown', 'a vehicle made for ' + modeFamilyName(klass.family) + ': what that mode lets it fit is not in the client data')
         : aimRule('unknown', 'this record does not carry the vehicle’s tags, so a mode vehicle cannot be told from a standard one');
     } else if (mode.source !== 'arena') {
-      base = aimRule('unknown', (mode.source === 'unreadable' ? 'the mod could not read this battle’s mode'
+      base = aimRule('unknown', (mode.why === 'unreadable' ? 'the mod could not read this battle’s mode'
+        : mode.why === 'unavailable' ? 'the client did not give this battle’s mode type'
         : 'this battle was recorded before the mod wrote the battle mode')
         + (mode.source === 'roster' ? ' (its roster has vehicles of ' + mode.name + ')' : ''));
     } else if (!MODE_EQUIPMENT_OPEN[mode.family]) {
@@ -3404,8 +3409,10 @@
     $('pose-turret').textContent=turret;$('pose-gun').textContent=gun;
     $('pose-note').textContent=off?'Hit marks hidden until the recorded pose returns':'';$('pose-note').hidden=!off;
     var shown=turret+'|'+gun+'|'+off;if(shown!==poseShown){poseShown=shown;scheduleLayout(LAYOUT_POSE);}
-    if(viewer.dragging&&off===poseOff)return;
-    poseOff=off;
+    // The figures vanish at the viewer's own 0.001° (recordedShown, shotProbability), the note at 0.1°.
+    var state=off+'|'+(Math.abs(viewer.turretAngle)<.001&&Math.abs(viewer.gunAngle)<.001);
+    if(viewer.dragging&&state===poseOff)return;
+    poseOff=state;
     // The live ring does not depend on the pose: with the ring up and no manual estimate on screen there is
     // nothing to put away and draw again. Otherwise the estimate goes stale and the ring (if any) is redrawn.
     if(analysisKey!==null||!viewer.liveRadius100){staleEstimate();shotStats();if(viewer.liveRadius100)viewer.drawLiveAim();}
