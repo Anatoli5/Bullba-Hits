@@ -70,7 +70,156 @@ def vehicle_identity(descr):
         identity['nation'] = str(vtype.name.split(':')[0])
     except Exception:
         pass
+    try:
+        # S3 review (22.09): the tags that put the vehicle in a group - its locks and its battle-mode tags -
+        # written while this client still has the type. An event vehicle's type leaves the client with its
+        # event, and the exporter's fitment backfill (full 'tags') lives only in the published copy, so this
+        # short list is what a record made today keeps of them. Written even when empty: that it was read
+        # is the point. vtype.tags is a small frozenset; one pass over it per recorded vehicle.
+        modes = group_mode_tags()
+        identity['groupTags'] = sorted(str(tag) for tag in vtype.tags if str(tag).startswith('lock') or str(tag) in modes)
+    except Exception:
+        pass
     return identity
+
+
+# constants.BATTLE_MODE_VEHICLE_TAGS of client 2.4.0.1, the fallback when the client's own set cannot be
+# read, plus maps_training, which gui Vehicle.isOnlyForMapsTrainingBattles reads outside that set
+# (outputs/vehicle-classes-modes-2026-09-21.md, summary point 6).
+DEFAULT_MODE_TAGS = ('event_battles', 'comp7', 'comp7_light', 'epic_battles', 'battle_royale', 'fun_random',
+                     'fallout', 'bob', 'clanWarsBattles', 'maps_training')
+_mode_tags = []
+
+
+def group_mode_tags():
+    """The battle-mode vehicle tags of the running client, read once; the known set when it has none."""
+    if not _mode_tags:
+        names = set(DEFAULT_MODE_TAGS)
+        try:
+            from constants import BATTLE_MODE_VEHICLE_TAGS
+            names.update(str(tag) for tag in BATTLE_MODE_VEHICLE_TAGS)
+        except Exception:
+            pass
+        _mode_tags.append(frozenset(names))
+    return _mode_tags[0]
+
+
+def constant_name(table, value):
+    """The name a client constants class gives an integer, e.g. ARENA_GUI_TYPE, or None.
+
+    Only integer attributes whose name starts with a capital count (RTS_1x1 has a small x): the
+    classes also hold tuples (RANDOM_RANGE and the like) and helpers. Two names for one value are
+    joined in sorted order, so the answer is stable.
+    """
+    names = []
+    for name in dir(table):
+        if not name[:1].isupper(): continue
+        try: attribute = getattr(table, name)
+        except Exception: continue
+        if isinstance(attribute, bool) or not isinstance(attribute, int): continue
+        if attribute == value: names.append(name)
+    return '/'.join(sorted(names)) or None
+
+
+def battle_mode(arena):
+    """The battle's mode, as the client itself names it (S3, 22.09) - one small dictionary per battle.
+
+    arena.bonusType is the authority (outputs/vehicle-classes-modes-2026-09-21.md 1.2), arena.guiType the
+    sub-mode; the gameplay name is NOT one (maps training has its own, Onslaught plays on standard
+    geometries too) and is kept for reference only. The names are resolved NOW, from this client's
+    constants, because the ids of an event are injected by its extension at runtime and may mean
+    nothing in a later client. battleModifiersDescr is the RAW descriptor the client builds
+    arena.battleModifiers from (ClientArena.__init__: extraData.get('battleModifiersDescr', ()), so an
+    absent key is written as the empty list the client uses), made JSON-safe - never read through the
+    BattleModifiers object, whose real class exists only with the battle_modifiers extension.
+    Game thread: attribute and dictionary reads only, once per battle. Every field on its own; one the
+    client refuses is named in 'unavailable'.
+    """
+    mode = {'read':True}
+    missing = []
+    try:
+        import constants
+    except Exception:
+        constants = None
+    try:
+        from local_armor_inspector.exporter import json_safe
+    except Exception:
+        json_safe = None
+
+    def take(name, action):
+        try:
+            value = action()
+        except Exception:
+            missing.append(name)
+            return
+        if value is not None: mode[name] = value
+
+    def bonus_name():
+        # ARENA_BONUS_TYPE_IDS (id -> name) is the table the extensions update when they add their ids
+        # (constants_utils.addArenaBonusTypesFromExtension); the class attributes are the fallback.
+        bonus = mode.get('bonusType')
+        if bonus is None: return None
+        try: name = constants.ARENA_BONUS_TYPE_IDS.get(bonus)
+        except Exception: name = None
+        return str(name) if name else constant_name(constants.ARENA_BONUS_TYPE, bonus)
+
+    def gui_label():
+        if mode.get('guiType') is None: return None
+        label = constants.ARENA_GUI_TYPE_LABEL.LABELS.get(mode['guiType'])
+        return str(label) if label else None
+
+    take('bonusType', lambda: int(arena.bonusType))
+    take('bonusTypeName', bonus_name)
+    take('guiType', lambda: int(arena.guiType))
+    take('guiTypeName', lambda: None if mode.get('guiType') is None
+         else constant_name(constants.ARENA_GUI_TYPE, mode['guiType']))
+    take('guiLabel', gui_label)
+    arena_type = getattr(arena, 'arenaType', None)
+    if arena_type is not None:
+        take('arenaTypeId', lambda: int(arena_type.id))
+        take('gameplayName', lambda: str(arena_type.gameplayName))
+        take('geometryName', lambda: str(arena_type.geometryName))
+    else:
+        missing.append('arenaType')
+    extra = getattr(arena, 'extraData', None)
+    if isinstance(extra, dict):
+        for key in ('queueType', 'battleLevel'):
+            if key in extra: take(key, lambda key=key: json_safe(extra[key], 64))
+        take('battleModifiersDescr', lambda: json_safe(extra.get('battleModifiersDescr', ()), 20000))
+    else:
+        missing.extend(('queueType', 'battleLevel', 'battleModifiersDescr'))
+    if missing: mode['unavailable'] = missing
+    return mode
+
+
+def roster_state(info, descr, json_safe):
+    """Per-battle state of one roster vehicle that its type cannot give (S3, 22.09).
+
+      maxHealth, defaultMaxHealth  descr.maxHealth / defaultMaxHealth. maxHealth is NOT the mode's HP
+                                   modifier on its own: VehicleDescriptor.__updateAttributes multiplies it
+                                   by miscAttrs['healthFactor'] too (field modifications, Improved
+                                   Hardening), so that factor is written beside it.
+      vehPostProgression,          the arena info the client builds this very descriptor from
+      customRoleSlotTypeId         (ClientArena.getVehicleType subscripts both, so they are always there)
+      isBot                        only when the info carries 'avatarSessionID': True when it is empty
+                                   (ClientArena.__preprocessVehicleInfo). A missing key says nothing.
+    Game thread, dictionary and attribute reads only; every field on its own.
+    """
+    state = {}
+    try: state['maxHealth'] = int(descr.maxHealth)
+    except Exception: pass
+    try: state['defaultMaxHealth'] = int(descr.defaultMaxHealth)
+    except Exception: pass
+    try: state['healthFactor'] = float(descr.miscAttrs['healthFactor'])
+    except Exception: pass
+    try: state['vehPostProgression'] = json_safe(info['vehPostProgression'], 256)
+    except Exception: pass
+    try: state['customRoleSlotTypeId'] = int(info['customRoleSlotTypeId'])
+    except Exception: pass
+    try:
+        if 'avatarSessionID' in info: state['isBot'] = not info['avatarSessionID']
+    except Exception: pass
+    return state
 
 
 def matrix_columns(matrix, root_inverse):
@@ -302,7 +451,8 @@ class VehicleEvents(object):
     PlayerEvents.g_playerEvents has onAvatarBecomePlayer / onAvatarBecomeNonPlayer;
     ClientArena creates onNewVehicleListReceived and onVehicleAdded and stores
     info['vehicleType'] = self.getVehicleType(info, info.pop('compDescr')), which
-    returns vehicles.VehicleDescr(compactDescr=...).
+    returns vehicles.VehicleDescr(compactDescr=..., extData=...) - the extData carries the
+    field modifications, the role slot and the battle modifiers of this battle (2.4.0.1).
 
     Everything here is optional: any failure logs and leaves hit recording alone.
     """
@@ -514,6 +664,8 @@ class Recorder(object):
         if not player_id or not getattr(arena, 'vehicles', None): return
         if not self.ensure_battle(player): return
         vehicles, player_team = [], None
+        try: from local_armor_inspector.exporter import json_safe
+        except Exception: json_safe = None
         for vehicle_id, info in list(getattr(arena, 'vehicles', {}).items()):
             try:
                 descr = (info or {}).get('vehicleType')
@@ -521,6 +673,9 @@ class Recorder(object):
                 if descr is not None:
                     row['name'] = descr.type.shortUserString
                     row['type'] = descr.type.name
+                    # S3 (22.09): what this battle did to the vehicle, beside who it is.
+                    try: row.update(roster_state(info, descr, json_safe))
+                    except Exception: pass
                 vehicles.append(row)
                 if vehicle_id == player_id: player_team = info.get('team')
             except Exception: LOG.exception('Roster vehicle could not be listed')
@@ -535,10 +690,14 @@ class Recorder(object):
         if self.battle != battle_id:
             filename = battle_id+'-'+self.session
             arena_type = getattr(arena, 'arenaType', None)
+            # The battle's mode (S3, 22.09). A failure costs the block, never the battle: the page reads a
+            # header without it - every battle recorded before - as a mode it does not know.
+            try: mode = battle_mode(arena)
+            except Exception: mode = {'read':False, 'error':'Battle mode unavailable'}
             self.writer.put(filename, {'schema':1, 'type':'battle', 'id':filename,
                 'arenaId':battle_id, 'startedAt':time.time(), 'playerVehicleId':player.playerVehicleID,
                 'map':getattr(arena_type, 'name', None) or 'Unknown map',
-                'clientVersion':self.version, 'recorderVersion':VERSION})
+                'clientVersion':self.version, 'recorderVersion':VERSION, 'mode':mode})
             self.battle = battle_id
             self.seq = 0
             self.file = filename

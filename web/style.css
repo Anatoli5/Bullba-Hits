@@ -153,6 +153,11 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 /* “Configuration ▾” beside the Shooter tile: its popover opens upward, over the scene. */
 .aim-config{flex-shrink:0}
 .aim-config>summary{padding:6px 10px}
+/* The mark inside the Config button (S3): '?' - the rules of this battle's mode are not known; the lock
+   sign - the vehicle's own lock keeps a kind of equipment out. Its tooltip says which and why. */
+.aim-mode-mark{display:inline-block;margin-left:6px;min-width:15px;height:15px;padding:0 3px;border-radius:8px;font-size:11px;font-weight:700;line-height:15px;text-align:center;vertical-align:1px;color:#111a24;background:var(--gold);cursor:help}
+.aim-mode-mark[hidden]{display:none}
+.aim-mode-mark[data-kind=forbidden]{background:var(--red)}
 .aim-config .toolbar-popover{left:0;right:auto;bottom:calc(100% + 6px);min-width:min(520px,calc(100vw - 40px));max-width:min(560px,calc(100vw - 40px));max-height:min(70vh,560px);overflow:auto;gap:10px}
 .aim-config-grid{display:grid;grid-template-columns:auto 1fr;align-items:center;gap:8px 12px;width:100%}
 .aim-config-grid>span{color:var(--muted);font-size:12px}
@@ -170,6 +175,10 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 .aim-tile,.aim-pick{position:relative;display:flex;align-items:center;justify-content:center;flex:0 0 auto;width:46px;height:46px;min-height:0;padding:2px;border:2px solid #35475a;border-radius:6px;background:#0c151f;cursor:pointer}
 .aim-tile:hover,.aim-pick:hover{border-color:#9daebf}
 .aim-tile:disabled,.aim-pick:disabled{opacity:.3;cursor:default}
+/* A kind of equipment the vehicle's own lock keeps out (S3, 22.09): dimmed like a disabled tile, but
+   aria-disabled instead of `disabled`, so the tooltip that says why still shows on hover. */
+.aim-tile[aria-disabled=true],.aim-pick[aria-disabled=true]{opacity:.3;cursor:not-allowed}
+.aim-tile[aria-disabled=true]:hover,.aim-pick[aria-disabled=true]:hover{border-color:#35475a}
 .aim-tile[aria-pressed=true],.aim-pick[aria-pressed=true]{background:#302b23;box-shadow:0 0 0 1px var(--gold) inset}
 .aim-icon{position:relative;display:flex;align-items:center;justify-content:center;width:100%;height:100%}
 .aim-icon img{width:100%;height:100%;object-fit:contain}

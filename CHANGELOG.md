@@ -4,7 +4,11 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 
 ## Unreleased
 
-- Brothers in Arms is one tile per crew member and counts the way the client does: each tankman with it adds 5/N crew levels to the whole crew, the full +5 only when everyone has it. Until records carry the vehicle's crew, the page assumes five tankmen. Builds saved with Brothers in Arms keep it on every member.
+- Brothers in Arms is one tile per crew member and counts the way the client does: each tankman with it adds 5/N crew levels to the whole crew, the full +5 only when everyone has it. Records now carry the vehicle's real crew (older battles get it on the next game start); only a vehicle the client no longer has falls back to five tankmen. Builds saved with Brothers in Arms keep it on every member, and a build saved for part of a crew stays that way when loaded on another vehicle.
+- Configuring a shooter no longer counts equipment twice: equipment already inside the aim data of your own recorded shots is taken out before the configuration applies its own (a stabiliser made the circle on the move far too tight). Field modifications recorded in battle stay in. Recorded reticles are unchanged.
+- Battles record their mode (Random, Onslaught, White Tiger …) and each vehicle's hit points, field modifications and whether it is a bot.
+- Config knows mode and event vehicles: equipment, consumables or crew skills the vehicle's own lock fixes are not offered or applied, and the Config button says why. A "?" on it marks a battle whose rules the client data does not give (events, and battles recorded before this build). Records now keep the vehicle's locks and mode tags, so an event vehicle stays recognised after its event leaves the client.
+- The gun panel's tooltip names the gun's reloading system (magazine, autoreloader, dual or twin gun, automatic).
 - The equipment and directive pickers no longer start with an "empty" tile that looked like the slot itself: click the fitted piece to take it out.
 - While Config is open, the aiming circle and a crosshair move to the middle of the target and stay there when the camera turns, so each tile's effect on the circle is visible. A click in the scene then only closes the menu; closing it gives the aim back to the mouse.
 - The "Fitted: …" line under the configuration is gone; the Config button's tooltip still lists the build.

@@ -797,22 +797,225 @@
   function aimFitment(vehicle) {
     if (!vehicle) return null;
     var out = {tags: null, level: Number(vehicle.level) > 0 ? Number(vehicle.level) : 0};
-    var tags = vehicle.tags;
-    if (tags && tags.length) {
+    var tags = aimTagList(vehicle);
+    if (tags) {
       out.tags = {};
       for (var i = 0; i < tags.length; i++) out.tags[String(tags[i])] = true;
     }
     return out;
   }
+  // The recorded tag list, or null when the record does not know it. Since S3 (22.09) the exporter writes
+  // `tagsRead`: a list that was read comes even when empty, and tagsRead false says the read failed. A
+  // record from before carries a non-empty list or none at all.
+  function aimTagList(vehicle) {
+    if (!vehicle || vehicle.tagsRead === false || !Array.isArray(vehicle.tags)) return null;
+    return vehicle.tags.length || vehicle.tagsRead === true ? vehicle.tags : null;
+  }
+  // --- Vehicle groups, battle modes and what the client data says about equipment (S3, 22.09) --------
+  // outputs/vehicle-classes-modes-2026-09-21.md, with the corrections of its independent check. Two axes,
+  // kept apart: the VEHICLE - a type the client ships in an event's own package (web/vehicle-modes.js) or
+  // tags as a mode vehicle - and the BATTLE - arena.bonusType, which the recorder writes into the battle
+  // header's `mode` block since this build. Unknown stays unknown: a battle recorded before has no mode,
+  // not "Random"; and the tag 'special' is no mode marker (100 of the client's 138 'special' vehicles
+  // carry no mode tag), so it is not read here at all.
+  var VEHICLE_MODES = window.BULLBA_VEHICLE_MODES || {};
+  var MODE_LISTED = VEHICLE_MODES.vehicles || {};
+  // constants.BATTLE_MODE_VEHICLE_TAGS of the client, plus maps_training (gui Vehicle.isOnlyForMapsTrainingBattles),
+  // each with the mode family it makes a vehicle for. event_battles says "an event", not which one.
+  var MODE_TAG_FAMILY = {event_battles: 'event', comp7: 'onslaught', comp7_light: 'onslaught_light',
+    epic_battles: 'frontline', battle_royale: 'steel_hunter', fun_random: 'fun_random', fallout: 'legacy',
+    bob: 'legacy', clanWarsBattles: 'legacy', maps_training: 'maps_training'};
+  var MODE_NAMES = {random: 'Random Battle', ranked: 'Ranked Battle', grand_battle: 'Grand Battle',
+    onslaught: 'Onslaught', onslaught_light: 'Onslaught Light', frontline: 'Frontline',
+    steel_hunter: 'Steel Hunter', white_tiger: 'White Tiger', last_stand: 'Last Stand', story_mode: 'Story Mode',
+    fun_random: 'Fun Random', maps_training: 'Topography', mapbox: 'Mapbox', winback: 'Winback',
+    training: 'Training Room', tournament: 'Tournament', clan: 'Clan and team battles', event: 'an event',
+    legacy: 'a retired mode'};
+  // ARENA_BONUS_TYPE by the name the recorder resolved from the client's own constants when it wrote the
+  // battle (report 1.2). The ids of an event are injected by its extension and may mean something else in
+  // another client, so the name decides and the id table below is only the fallback for this client.
+  var BONUS_FAMILY = {REGULAR: 'random', RANDOM_NP2: 'random', RANKED: 'ranked', EPIC_RANDOM: 'grand_battle',
+    EPIC_RANDOM_TRAINING: 'grand_battle', TRAINING: 'training', COMP7: 'onslaught', TOURNAMENT_COMP7: 'onslaught',
+    TRAINING_COMP7: 'onslaught', COMP7_LIGHT: 'onslaught_light', EPIC_BATTLE: 'frontline',
+    EPIC_BATTLE_TRAINING: 'frontline', BATTLE_ROYALE_SOLO: 'steel_hunter', BATTLE_ROYALE_SQUAD: 'steel_hunter',
+    BATTLE_ROYALE_TRN_SOLO: 'steel_hunter', BATTLE_ROYALE_TRN_SQUAD: 'steel_hunter', MAPBOX: 'mapbox',
+    WINBACK: 'winback', FUN_RANDOM: 'fun_random', MAPS_TRAINING: 'maps_training',
+    STORY_MODE_ONBOARDING: 'story_mode', STORY_MODE_REGULAR: 'story_mode', LAST_STAND: 'last_stand',
+    LAST_STAND_MEDIUM: 'last_stand', LAST_STAND_HARD: 'last_stand', WHITE_TIGER: 'white_tiger',
+    TOURNAMENT: 'tournament', TOURNAMENT_REGULAR: 'tournament', TOURNAMENT_CLAN: 'tournament',
+    TOURNAMENT_EVENT: 'tournament', CLAN: 'clan', CYBERSPORT: 'clan', GLOBAL_MAP: 'clan', SORTIE_2: 'clan',
+    FORT_BATTLE_2: 'clan', EVENT_BATTLES: 'event', EVENT_BATTLES_2: 'event', FALLOUT_CLASSIC: 'legacy',
+    FALLOUT_MULTITEAM: 'legacy', BOB: 'legacy', RTS: 'legacy', RTS_1x1: 'legacy', RTS_BOOTCAMP: 'legacy'};
+  var BONUS_ID_FAMILY = {1: 'random', 2: 'training', 22: 'ranked', 24: 'grand_battle', 27: 'frontline',
+    29: 'steel_hunter', 30: 'steel_hunter', 37: 'mapbox', 38: 'maps_training', 42: 'fun_random', 43: 'onslaught',
+    44: 'winback', 46: 'random', 49: 'onslaught_light', 100: 'story_mode', 104: 'story_mode', 107: 'last_stand',
+    108: 'last_stand', 109: 'last_stand', 110: 'white_tiger'};
+  // The modes whose client data restricts no ordinary equipment on an ordinary vehicle (report sections
+  // 2.4 and 3). That is what the client files say, not proof that the server allows it, and the source
+  // line says so. Every other mode - the events, Steel Hunter, Topography - is 'unknown', never 'forbidden':
+  // "special modes forbid equipment" is exactly the assumption the page must not make.
+  var MODE_EQUIPMENT_OPEN = {random: 1, ranked: 1, grand_battle: 1, onslaught: 1, onslaught_light: 1,
+    frontline: 1, mapbox: 1, winback: 1, training: 1, fun_random: 1, tournament: 1, clan: 1};
+  // The locks a vehicle's list entry carries, what they fix and whether the client reads them itself
+  // (report section 3): a lock means "fixed by the game", not "empty" - the twelve Onslaught rentals come
+  // with devices, only which ones is not in the record.
+  var LOCK_RULES = {
+    lockOptionalDevices: {what: 'devices', reader: 'the client itself reads it (VehicleType.isOptionalDevicesLocked)'},
+    lockDevices: {what: 'devices', reader: 'no client code reads it, so what it locks is taken from its name and its place beside lockShells and lockCrewSkills on the event vehicles'},
+    lockEquipment: {what: 'consumables', reader: 'the client itself reads it (VehicleType.isEquipmentLocked)'},
+    lockCrewSkills: {what: 'crew', reader: 'the client itself reads it (items/tankmen)'}};
+  function modeFamilyName(family) {
+    var listed = VEHICLE_MODES.families || {};
+    return MODE_NAMES[family] || listed[family] || String(family || 'an unknown mode').replace(/_/g, ' ');
+  }
+  // One recorded vehicle: its group (standard / mode / unknown), the mode family it was made for, its locks.
+  // The tags come from the full list the exporter backfills while the client has the type, else from the
+  // short `groupTags` list the recorder writes into the record itself since the S3 review (22.09) - its locks
+  // and mode tags, all that decides the group - else the locks come from the vehicle table.
+  function vehicleClass(vehicle) {
+    var type = vehicle && vehicle.type ? String(vehicle.type) : '';
+    var listed = type && Object.prototype.hasOwnProperty.call(MODE_LISTED, type) ? MODE_LISTED[type] : null;
+    var tags = aimTagList(vehicle);
+    if (!tags && vehicle && Array.isArray(vehicle.groupTags)) tags = vehicle.groupTags;
+    var out = {group: 'unknown', family: '', listed: !!listed, tags: !!tags, modeTags: [], locks: {}, lockSource: '', client: ''};
+    var i;
+    if (tags) {
+      for (i = 0; i < tags.length; i++) {
+        var tag = String(tags[i]);
+        if (Object.prototype.hasOwnProperty.call(MODE_TAG_FAMILY, tag)) out.modeTags.push(tag);
+        if (/^lock/.test(tag)) out.locks[tag] = true;
+      }
+      out.lockSource = 'record';
+    } else if (listed) {
+      // An event vehicle's type leaves the client with its event, and a record made before the recorder wrote
+      // groupTags cannot be given its tags any more: its locks come from the table of the client that last
+      // listed it (tools/build_vehicle_modes.py keeps every type it has ever seen).
+      (listed.locks || []).forEach(function (t) { out.locks[String(t)] = true; });
+      out.lockSource = 'table';
+      out.client = String(listed.client || VEHICLE_MODES.client || '');
+    }
+    if (listed) { out.group = 'mode'; out.family = String(listed.mode || ''); }
+    else if (out.modeTags.length) { out.group = 'mode'; out.family = MODE_TAG_FAMILY[out.modeTags[0]]; }
+    else if (tags) out.group = 'standard';
+    return out;
+  }
+  // The battle's mode: from the header's `mode` block, else guessed from the roster's event vehicles (a
+  // guess that only names the mode - it never makes the rules known), else unknown.
+  function battleModeOf(battle) {
+    var m = battle && battle.mode;
+    if (m && typeof m === 'object' && m.read !== false && (m.bonusTypeName || m.bonusType !== undefined)) {
+      var family = BONUS_FAMILY[String(m.bonusTypeName || '')] || BONUS_ID_FAMILY[m.bonusType] || 'unknown';
+      var name = family === 'unknown' ? 'bonus type ' + (m.bonusTypeName || m.bonusType) : modeFamilyName(family);
+      if (family === 'fun_random' && m.guiTypeName && m.guiTypeName !== 'FUN_RANDOM') {
+        name += ' (' + String(m.guiTypeName).toLowerCase().replace(/_/g, ' ') + ')';
+      }
+      return {family: family, source: 'arena', name: name};
+    }
+    var counts = {}, best = '';
+    ((battle && battle.roster) || []).forEach(function (row) {
+      var entry = row && row.type && Object.prototype.hasOwnProperty.call(MODE_LISTED, String(row.type)) ? MODE_LISTED[String(row.type)] : null;
+      if (!entry || !entry.mode) return;
+      counts[entry.mode] = (counts[entry.mode] || 0) + 1;
+      if (!best || counts[entry.mode] > counts[best]) best = entry.mode;
+    });
+    if (best) return {family: best, source: 'roster', name: modeFamilyName(best)};
+    return {family: '', source: m && m.read === false ? 'unreadable' : 'none', name: ''};
+  }
+  function aimRule(state, source) { return {state: state, source: source}; }
+  var AIM_OPEN_RULE = aimRule('allowed', '');
+  var AIM_OPEN_POLICY = {devices: AIM_OPEN_RULE, consumables: AIM_OPEN_RULE, crew: AIM_OPEN_RULE, vehicle: null, mode: null};
+  // equipmentPolicy of the shooter on screen, per kind: devices (and the directive, which is fitted like
+  // one), consumables and crew skills. allowed / forbidden / unknown, each with the source it rests on.
+  // A lock of the vehicle's own is 'forbidden' whatever the battle; otherwise the battle decides: a mode
+  // whose client data restricts nothing is 'allowed', anything else - an event, a battle recorded before
+  // the mode was written, a vehicle whose tags are not known - 'unknown'.
+  function aimPolicyFor(hit) {
+    if (!hit || !hit.attacker) return AIM_OPEN_POLICY;
+    var klass = vehicleClass(hit.attacker), battle = hit.vehicle ? null : current, mode = battle ? battleModeOf(battle) : null;
+    var base;
+    if (!battle) {
+      base = klass.group === 'standard' ? aimRule('allowed', 'a standard vehicle outside a battle: the garage rules')
+        : klass.group === 'mode' ? aimRule('unknown', 'a vehicle made for ' + modeFamilyName(klass.family) + ': what that mode lets it fit is not in the client data')
+        : aimRule('unknown', 'this record does not carry the vehicle’s tags, so a mode vehicle cannot be told from a standard one');
+    } else if (mode.source !== 'arena') {
+      base = aimRule('unknown', (mode.source === 'unreadable' ? 'the mod could not read this battle’s mode'
+        : 'this battle was recorded before the mod wrote the battle mode')
+        + (mode.source === 'roster' ? ' (its roster has vehicles of ' + mode.name + ')' : ''));
+    } else if (!MODE_EQUIPMENT_OPEN[mode.family]) {
+      base = aimRule('unknown', 'the client data says nothing about equipment in ' + mode.name);
+    } else if (klass.group === 'unknown') {
+      base = aimRule('unknown', 'this record does not carry the vehicle’s tags, so a rental with fixed equipment cannot be told from an own vehicle');
+    } else {
+      base = aimRule('allowed', 'client data: no restriction in ' + mode.name + ' (not proof that the server allows everything)');
+    }
+    var out = {devices: base, consumables: base, crew: base, vehicle: klass, mode: mode};
+    var from = klass.lockSource === 'table'
+      ? ' (from the ' + modeFamilyName(klass.family) + ' list of client ' + (klass.client || '?') + ', web/vehicle-modes.js)' : '';
+    Object.keys(LOCK_RULES).forEach(function (tag) {
+      var rule = LOCK_RULES[tag];
+      if (!klass.locks[tag] || out[rule.what].state === 'forbidden') return;
+      out[rule.what] = aimRule('forbidden', 'the vehicle carries the client tag ' + tag + from + ' - ' + rule.reader
+        + '. The game fixes this for the vehicle; what it fits instead is not in the record');
+    });
+    return out;
+  }
+  var shooterPolicy = AIM_OPEN_POLICY;
+  function aimForbidden(kind) { return !!(shooterPolicy && shooterPolicy[kind] && shooterPolicy[kind].state === 'forbidden'); }
+  var AIM_POLICY_WORDS = {devices: 'Equipment and directive', consumables: 'Consumables', crew: 'Crew skills and perks'};
+  // The words the mark beside Config and the locked tiles carry.
+  function aimPolicyLine(kind) {
+    var rule = shooterPolicy[kind];
+    return AIM_POLICY_WORDS[kind] + ': not offered here - ' + rule.source + '.';
+  }
+  // The gun's reloading system, read off the aim block (exporter.py aim_block, S3): the gun's own tags
+  // first, the mechanics sections of a block without a tag list second. Says what the emulation does not.
+  // It decides nothing about what the vehicle may fit: no data file of this client uses the gun filters of
+  // a device's vehicleFilter, and "a clip gun takes no rammer" is false for five clip vehicles and one dual
+  // gun of the client - the eligibility tags above stay the only rule.
+  var AIM_MECHANICS_WORDS = {
+    autoreload: 'an autoreloading magazine: every round reloads on its own timer. The emulation paces the rounds of a hold at the clip interval and does not model the per-round reload',
+    clip: 'a magazine: the rounds go at the clip interval, then the whole clip reloads. The emulation stops a burst when the clip is empty',
+    burst: 'a burst gun: one pull of the trigger fires several rounds',
+    dualGun: 'a dual gun: its barrels fire one at a time or together as a charged volley. The emulation fires single rounds only',
+    twinGun: 'a twin gun: two barrels, each with its own reload. The emulation fires single rounds only',
+    autoShoot: 'an automatic gun: it fires while the trigger is held and the circle grows with every round. The emulation does not model the growth',
+    single: 'a single-shot gun'};
+  function aimMechanics(a) {
+    if (!a) return '';
+    var tags = {}, list = Array.isArray(a.gunTags) ? a.gunTags : [], i;
+    for (i = 0; i < list.length; i++) tags[String(list[i])] = true;
+    if (tags.autoreload || a.autoreload) return 'autoreload';
+    if (tags.dualGun || a.dualGun) return 'dualGun';
+    if (tags.twinGun || a.twinGun) return 'twinGun';
+    if (tags.autoShoot || a.autoShoot) return 'autoShoot';
+    if (tags.clip || (a.clip && a.clip[0] > 1)) return 'clip';
+    if (a.burst && a.burst[0] > 1) return 'burst';
+    return list.length || a.clip ? 'single' : '';
+  }
+  var AIM_GUN_LOAD_TITLE = 'The gun’s state, as the reticle shows it in the game: while a burst is held, the time left to the next round and, for a clip gun, the rounds still in the clip. At rest it reads the gun’s own reload time and clip size.';
+  function paintAimMechanics() {
+    var time = $('aim-gun-reload'), load = time && time.parentNode;
+    if (!load) return;
+    var a = aimBlockData(), kind = aimMechanics(a), extra = '';
+    if (kind) extra = ' This gun is ' + AIM_MECHANICS_WORDS[kind] + '.';
+    if (kind === 'autoreload' && a.autoreload && Array.isArray(a.autoreload.reloadTime)) {
+      extra += ' Its per-round reload: ' + a.autoreload.reloadTime.map(function (v) { return aimNum(v); }).join(', ') + ' s.';
+    }
+    if (a && (a.dualAccuracy || (Array.isArray(a.gunTags) && a.gunTags.indexOf('dualAccuracy') >= 0))) {
+      extra += ' It has dual accuracy: the circle right after a shot follows a law of its own, which the page does not model.';
+    }
+    load.title = AIM_GUN_LOAD_TITLE + extra;
+    load.setAttribute('data-mechanics', kind || 'unknown');
+  }
   // --- The crew --------------------------------------------------------------------------------
   // A crew is a list of tankmen, each the list of the roles he serves in, his main role first - the
   // client's own descr.type.crewRoles, in slot order: [['commander', 'radioman'], ['gunner'], ...]. The
   // crew maths below runs on such a list and on nothing else, so the vehicle's real crew can be fed in
-  // the day the record carries it. Today it does not (outputs/brothers-in-arms-2026-09-21.md section 6:
-  // the recorder writes no crew), so every vehicle gets the five-man crew below, and the Brothers in Arms
-  // tooltips say so. aimCrewOf() is the one place that decides; it already takes a `crewRoles` list off
-  // the aim block when one is there - the field and the shape that report proposes for aim_block - but
-  // nothing writes it yet.
+  // the day the record carries it. Since S3 (22.09) it does: aim_block writes descr.type.crewRoles and
+  // fix_aim gives it to every older record from its compact descriptor (outputs/brothers-in-arms-2026-09-21.md
+  // section 6), so one Brothers in Arms tile stands for each real tankman. Only a record whose descriptor
+  // can no longer be rebuilt - an event vehicle whose event has left the client - still gets the five-man
+  // crew below, and the Brothers in Arms tooltips say so. aimCrewOf() is the one place that decides.
   var AIM_DEFAULT_CREW = [['commander'], ['gunner'], ['driver'], ['radioman'], ['loader']];
   var AIM_CREW_ROLES = ['commander', 'gunner', 'driver', 'radioman', 'loader'];   // skills_constants ROLES
   var AIM_BIA = SKILL_BY_ID.brotherhood || null;
@@ -893,8 +1096,10 @@
   }
   // The factors of the shooter on screen, with the configuration on screen and `levels` added crew levels.
   function aimCrewFactors(levels) {
-    var crew = aimCrew(), keys = aimCrewKeys(crew);
-    return crewFactors(crew, keys.map(function (k) { return shooterConfig.bia[k] ? 100 : 0; }), levels);
+    // Crew skills the vehicle's own lockCrewSkills fixes (S3) are not the user's to give: nobody has Brothers
+    // in Arms then, and the crew is the plain trained one.
+    var crew = aimCrew(), keys = aimCrewKeys(crew), locked = aimForbidden('crew');
+    return crewFactors(crew, keys.map(function (k) { return !locked && shooterConfig.bia[k] ? 100 : 0; }), levels);
   }
   // --- The configuration object -----------------------------------------------------------------
   // {slots: [device id, '', ''],      one device id per optional-device slot, '' = empty
@@ -1017,13 +1222,45 @@
     if (box.presets && typeof box.presets === 'object') Object.keys(box.presets).forEach(function (key) {
       var name = aimName(key), row = box.presets[key];
       if (!name || aimBuiltIn(name) || !row || typeof row !== 'object' || count >= AIM_PRESET_LIMIT) return;
-      presets[name] = aimPresetValues(aimValues(row)); count++;
+      presets[name] = aimStoredPreset(row); count++;
     });
     if (box.chosen && typeof box.chosen === 'object') Object.keys(box.chosen).forEach(function (type) {
       var name = aimName(box.chosen[type]);
       if (name && (aimBuiltIn(name) || presets[name])) chosen[String(type).slice(0, 64)] = name;
     });
     aimStore.presets = presets; aimStore.chosen = chosen;
+  }
+  // A stored preset, checked field by field and kept in the shape it was SAVED in (S3, 22.09). The load used
+  // to run it through aimPresetValues(aimValues(row)), which decides "the whole crew or only some" against
+  // the crew ON SCREEN at that moment - at start-up the assumed five. A map saved for five members of a
+  // six-man crew covered those five completely, came back as skills.brotherhood, and the next persist wrote
+  // that over the preset: Brothers in Arms for all six on the very vehicle it was saved for. Nothing here
+  // depends on the vehicle on screen now: device ids are checked against the catalogue, not against what
+  // this shooter may mount - that, and the crew, are aimValues' business when the preset is APPLIED.
+  function aimStoredPreset(row) {
+    function flag(v) { return v === true || v === '1'; }
+    var out = {slots: ['', '', ''], directive: '', food: false, fuel: '', skills: {}};
+    AIM_SLOTS.forEach(function (i) {
+      var id = row.slots && row.slots[i] ? String(row.slots[i]) : '';
+      if (DEVICE_BY_ID[id]) out.slots[i] = id;
+    });
+    if (DIRECTIVE_BY_ID[String(row.directive || '')]) out.directive = String(row.directive);
+    out.food = row.food === true || row.food === '1' || row.food === 1;
+    var fuel = String(row.fuel || '');
+    if (fuel === 'qualityFuel' || fuel === 'excellentFuel') out.fuel = fuel;
+    var skills = row.skills && typeof row.skills === 'object' ? row.skills : {};
+    AIM_SKILLS.forEach(function (s) {
+      if (s.role !== 'each' && flag(skills[s.id])) out.skills[s.id] = true;
+    });
+    if (flag(skills.brotherhood)) out.skills.brotherhood = true;
+    else if (row.bia && typeof row.bia === 'object') {
+      var bia = {}, some = false;
+      Object.keys(row.bia).sort().forEach(function (k) {
+        if (AIM_MEMBER_KEY.test(k) && flag(row.bia[k])) { bia[k] = true; some = true; }
+      });
+      if (some) out.bia = bia;
+    }
+    return out;
   }
   function aimStored() { return {v: 3, presets: aimStore.presets, chosen: aimStore.chosen}; }
   // --- Reading the configuration ----------------------------------------------------------------
@@ -1084,6 +1321,7 @@
   // through a skill that is switched on - what the client grants a crew member who never learned the
   // skill is not in the data (report section 7), so the page does not invent a level for it.
   function aimSkillMult(id) {
+    if (aimForbidden('devices') || aimForbidden('crew')) return 1;   // no directive, or no skill, is in force (S3)
     var dir = DIRECTIVE_BY_ID[shooterConfig.directive];
     return dir && dir.skill === id && dir.skillMult > 1 && shooterConfig.skills[id] ? Number(dir.skillMult) : 1;
   }
@@ -1094,6 +1332,9 @@
   }
   // Every multiplier and every added crew level of the configuration, gathered in one pass: the
   // devices in their slots, the crew skills and perks that are on, the directive and the consumables.
+  // A kind the vehicle's own lock makes 'forbidden' (S3, aimPolicyFor) is left out here and nowhere else:
+  // the configuration itself - and the user's preset - keeps it, so the same build comes back whole on
+  // the next vehicle that may fit it.
   function aimEffects() {
     var mul = {}, add = {};
     function apply(input, eff) {
@@ -1103,21 +1344,22 @@
       if (eff[0] === 'add') add[input] = (add[input] || 0) + v;
       else mul[input] = (mul[input] === undefined ? 1 : mul[input]) * v;
     }
-    AIM_SLOTS.forEach(function (i) {
+    var devices = !aimForbidden('devices');
+    if (devices) AIM_SLOTS.forEach(function (i) {
       var dev = DEVICE_BY_ID[shooterConfig.slots[i]];
       if (!dev) return;
       Object.keys(dev.eff).forEach(function (input) {
         apply(input, [dev.eff[input][0], aimEffValue(dev.eff[input])]);
       });
     });
-    AIM_SKILLS.forEach(function (s) {
+    if (!aimForbidden('crew')) AIM_SKILLS.forEach(function (s) {
       if (!shooterConfig.skills[s.id]) return;
       var mult = aimSkillMult(s.id);
       Object.keys(s.eff).forEach(function (input) { apply(input, aimBoost(s.eff[input], mult)); });
     });
-    var level = aimDirectiveLevel(DIRECTIVE_BY_ID[shooterConfig.directive]);
+    var level = devices ? aimDirectiveLevel(DIRECTIVE_BY_ID[shooterConfig.directive]) : null;
     if (level && level.eff) Object.keys(level.eff).forEach(function (input) { apply(input, level.eff[input]); });
-    AIM_CONSUMABLES.forEach(function (c) {
+    if (!aimForbidden('consumables')) AIM_CONSUMABLES.forEach(function (c) {
       if (!(c.slot === 'food' ? shooterConfig.food : shooterConfig.fuel === c.id)) return;
       Object.keys(c.eff).forEach(function (input) { apply(input, c.eff[input]); });
     });
@@ -1180,19 +1422,27 @@
   // The collapsed button says "Config" and nothing else (user, 20.09): no preset name, no "custom" or
   // "stock" - what is fitted is in the tiles one click away, and in the button's own tooltip.
   function aimLongSummary() {
+    // What is IN FORCE: a kind the vehicle's lock forbids (S3) is not listed, although the configuration
+    // still holds it for the next vehicle.
     var out = [];
-    AIM_SLOTS.forEach(function (i) {
-      var dev = DEVICE_BY_ID[shooterConfig.slots[i]];
-      if (dev) out.push(dev.name);
-    });
-    var dir = DIRECTIVE_BY_ID[shooterConfig.directive];
-    if (dir) out.push(dir.name + (aimDirectiveActive(dir) ? '' : ' (inactive)'));
-    if (shooterConfig.food) out.push('Combat rations');
-    AIM_CONSUMABLES.forEach(function (c) { if (c.slot === 'fuel' && shooterConfig.fuel === c.id) out.push(c.name); });
-    var keys = aimCrewKeys(aimCrew()), have = keys.filter(function (k) { return !!shooterConfig.bia[k]; }).length;
-    if (have) out.push('Brothers in Arms' + (have < keys.length ? ' (' + have + ' of ' + keys.length + ')' : ''));
-    var skills = AIM_SKILLS.filter(function (s) { return !!shooterConfig.skills[s.id]; });
-    if (skills.length) out.push(skills.map(function (s) { return s.name; }).join(', '));
+    if (!aimForbidden('devices')) {
+      AIM_SLOTS.forEach(function (i) {
+        var dev = DEVICE_BY_ID[shooterConfig.slots[i]];
+        if (dev) out.push(dev.name);
+      });
+      var dir = DIRECTIVE_BY_ID[shooterConfig.directive];
+      if (dir) out.push(dir.name + (aimDirectiveActive(dir) ? '' : ' (inactive)'));
+    }
+    if (!aimForbidden('consumables')) {
+      if (shooterConfig.food) out.push('Combat rations');
+      AIM_CONSUMABLES.forEach(function (c) { if (c.slot === 'fuel' && shooterConfig.fuel === c.id) out.push(c.name); });
+    }
+    if (!aimForbidden('crew')) {
+      var keys = aimCrewKeys(aimCrew()), have = keys.filter(function (k) { return !!shooterConfig.bia[k]; }).length;
+      if (have) out.push('Brothers in Arms' + (have < keys.length ? ' (' + have + ' of ' + keys.length + ')' : ''));
+      var skills = AIM_SKILLS.filter(function (s) { return !!shooterConfig.skills[s.id]; });
+      if (skills.length) out.push(skills.map(function (s) { return s.name; }).join(', '));
+    }
     return out.length ? out.join(' · ') : 'nothing fitted';
   }
   function aimDirectiveActive(dir) {
@@ -1208,8 +1458,11 @@
     var changed = type !== shooterType;
     shooterType = type;
     // What he may mount is read before anything is normalised: aimValues drops a device this vehicle
-    // cannot take, and it has to know which vehicle that is.
+    // cannot take, and it has to know which vehicle that is. So is what the battle and the vehicle's own
+    // locks allow (S3): it decides which kinds of the configuration are applied at all.
     shooterFit = aimFitment(a);
+    shooterPolicy = aimPolicyFor(hit);
+    paintAimMechanics();
     var kept = type ? shooterModsState[type] : null;
     if (kept) { shooterConfig = aimValues(kept.values); shooterPreset = kept.preset || aimPresetMatch(); }
     else {
@@ -1283,10 +1536,25 @@
     return dev.name + ' · ' + (tier.name || dev.tier) + (fam.what ? ' · it ' + fam.what : '')
       + ' · ' + parts.join('; ') + '. (optional_devices.xml ' + dev.id + ')';
   }
+  // A tile of a kind the vehicle's own lock forbids (S3): shown empty, not pressable, and its tooltip says
+  // why. aria-disabled rather than `disabled`, so the tooltip still shows on hover.
+  function aimLockTile(tile, kind, what) {
+    tile.setAttribute('aria-disabled', 'true');
+    tile.setAttribute('aria-pressed', 'false');
+    tile.setAttribute('data-tier', 'none');
+    tile.title = what + aimPolicyLine(kind);
+    tile.onclick = function (e) { e.stopPropagation(); };
+    return tile;
+  }
   function aimSlotTile(index) {
     var dev = DEVICE_BY_ID[shooterConfig.slots[index]], key = 'slot' + index;
     var tile = node('button', undefined, 'aim-tile aim-slot');
     tile.type = 'button';
+    if (aimForbidden('devices')) {
+      tile.setAttribute('aria-label', 'Slot ' + (index + 1) + ': not offered for this vehicle');
+      tile.appendChild(aimIcon('empty_slot', '—'));
+      return aimLockTile(tile, 'devices', 'Slot ' + (index + 1) + '. ');
+    }
     tile.setAttribute('data-tier', dev ? dev.tier : 'none');
     tile.setAttribute('aria-expanded', String(aimPickerOpen === key));
     var what = 'Slot ' + (index + 1) + '. ';
@@ -1299,7 +1567,10 @@
     tile.onclick = function (e) { e.stopPropagation(); aimOpenPicker(key); };
     return tile;
   }
-  function aimOpenPicker(key) { aimPickerOpen = aimPickerOpen === key ? '' : key; paintAimConfig(true); }
+  function aimOpenPicker(key) {
+    if (aimForbidden('devices')) key = '';   // nothing to pick for a vehicle whose devices the game fixes (S3)
+    aimPickerOpen = aimPickerOpen === key ? '' : key; paintAimConfig(true);
+  }
   // A tile of the picker: the client's own icon with the client's own grade badge over the corner, and
   // not one word (user, 21.09). `art` is {icon, label, badge}: the label is the tile's accessible name,
   // because a button made of a decorative picture has none otherwise, and everything that used to be
@@ -1424,6 +1695,11 @@
     var dir = DIRECTIVE_BY_ID[shooterConfig.directive];
     var tile = node('button', undefined, 'aim-tile aim-slot');
     tile.type = 'button';
+    if (aimForbidden('devices')) {
+      tile.setAttribute('aria-label', 'Directive: not offered for this vehicle');
+      tile.appendChild(aimIcon('empty_slot', '—'));
+      return aimLockTile(tile, 'devices', 'The directive slot. ');
+    }
     tile.setAttribute('data-tier', dir ? (aimDirectiveActive(dir) ? 'improved' : 'none') : 'none');
     tile.setAttribute('aria-expanded', String(aimPickerOpen === 'directive'));
     tile.title = dir ? aimDirectiveTitle(dir) + ' Click to change the directive, or to take it out.'
@@ -1480,11 +1756,12 @@
       var title = c.name + ' · ' + parts.join('; ') + '. ' + (c.note || '')
         + (c.slot === 'fuel' ? ' One fuel at a time; click the one that is on to take it off.' : '')
         + ' (vehicle_equipments.xml)';
-      row.appendChild(aimChip(c.icon, c.name, title, on, function () {
+      var chip = aimChip(c.icon, c.name, title, on, function () {
         if (c.slot === 'food') shooterConfig.food = !shooterConfig.food;
         else shooterConfig.fuel = shooterConfig.fuel === c.id ? '' : c.id;
         aimConfigChanged();
-      }, false));
+      }, false);
+      row.appendChild(aimForbidden('consumables') ? aimLockTile(chip, 'consumables', c.name + '. ') : chip);
     });
     return row;
   }
@@ -1538,7 +1815,7 @@
     }, false);
   }
   function aimCrewSection(body) {
-    var crew = aimCrew(), keys = aimCrewKeys(crew);
+    var crew = aimCrew(), keys = aimCrewKeys(crew), locked = aimForbidden('crew');
     AIM_ROLES.forEach(function (role) {
       var rows = AIM_SKILLS.filter(function (s) { return s.role === role.id; });
       var members = [];
@@ -1546,13 +1823,17 @@
       if (!rows.length && !members.length) return;
       body.appendChild(node('div', role.name, 'aim-role'));
       var chips = node('div', undefined, 'aim-chips');
-      members.forEach(function (i) { chips.appendChild(aimBiaTile(crew, keys, i)); });
+      members.forEach(function (i) {
+        var tile = aimBiaTile(crew, keys, i);
+        chips.appendChild(locked ? aimLockTile(tile, 'crew', 'Brothers in Arms, ' + aimMemberName(crew, keys, i) + '. ') : tile);
+      });
       rows.forEach(function (s) {
-        chips.appendChild(aimChip(s.icon || s.id, s.name, aimSkillTitle(s), !!shooterConfig.skills[s.id], function () {
+        var chip = aimChip(s.icon || s.id, s.name, aimSkillTitle(s), !!shooterConfig.skills[s.id], function () {
           if (shooterConfig.skills[s.id]) delete shooterConfig.skills[s.id];
           else shooterConfig.skills[s.id] = true;
           aimConfigChanged();
-        }, s.kind === 'perk'));
+        }, s.kind === 'perk');
+        chips.appendChild(locked ? aimLockTile(chip, 'crew', s.name + '. ') : chip);
       });
       body.appendChild(chips);
     });
@@ -1632,6 +1913,7 @@
     var preset = aimConfigControls.preset;
     if (!preset) return;
     $('aim-config').querySelector('summary').title = 'This shooter’s equipment, directive, consumables and crew, with presets. Now: ' + aimLongSummary() + '.';
+    paintAimModeMark();
     if (!force && !$('aim-config').open) { aimConfigDirty = true; return; }
     aimConfigDirty = false;
     var names = AIM_BUILT_IN.map(function (p) { return p.name; }).concat(aimUserNames());
@@ -1651,8 +1933,12 @@
     var lines = [];
     if (!(shooterFit && shooterFit.tags)) lines.push('This record does not carry the vehicle’s tags, so what it '
       + 'may mount is unknown and everything is offered. A battle recorded by a current build knows.');
+    ['devices', 'consumables', 'crew'].forEach(function (kind) { if (aimForbidden(kind)) lines.push(aimPolicyLine(kind)); });
+    var carried = aimCarried();
+    if (carried) lines.push(carried);
     aimConfigControls.fit.textContent = lines.join(' ');
     aimConfigControls.fit.hidden = !lines.length;
+    if (aimForbidden('devices')) aimPickerOpen = '';   // a picker left open on the previous shooter goes (S3)
     aimConfigControls.picker.replaceChildren();
     aimConfigControls.picker.hidden = !aimPickerOpen;
     if (aimPickerOpen === 'directive') aimConfigControls.picker.appendChild(aimDirectivePicker());
@@ -1700,9 +1986,107 @@
     if (shooterType) aimStore.chosen[shooterType] = name;
     aimNameBox(''); aimConfigChanged(); persistSettings();
   }
+  // THE CONFIGURATOR TAKES OUT WHAT IT APPLIES ITSELF, AND NOTHING ELSE (S3, 22.09 - the open item "equipment
+  // double-counted in the recorded aim block"; corrected by the S3 review the same day). The four miscAttrs
+  // factors of a recorded block are not always 1.0 (outputs/vehicle-classes-modes-2026-09-21.md 2.5):
+  //   aimFrom 'arena'   a LIVE shooter block (recorder 0.7.14 and later), read from the arena's descriptor: the
+  //                     battle's field modifications and, for the player's own shots only, his devices - the
+  //                     server strips them from everybody else's descriptor (0 of 1938 enemy blocks carry any).
+  //   aimFrom 'compact' a block REBUILT from the compact descriptor (every older record, the target side, a
+  //                     browsed vehicle): the devices that descriptor packs, no field modifications.
+  // The configuration below applies the user's devices, and applying them on top of recorded ones counted a
+  // stabiliser twice - the circle on the move some 23 % too tight. Field modifications are another matter:
+  // the configurator has none, so a factor they put in must stay, or an enemy's pair (×1.03 on the circle,
+  // ×0.95 on the aiming time, found in 445 enemy blocks) is simply lost. So per factor (aimBaseFactors):
+  //   - the vehicle's own lock fixes its devices (aimPolicyFor): the configurator applies none, so what the
+  //     record holds is what fought, preset devices included - kept as recorded;
+  //   - 'compact': the packed devices alone - 1.0;
+  //   - 'arena' with `compactFactors` (the exporter's rebuild of the same compact descriptor, stamp_aim_origin):
+  //     live / compact - the packed devices out, the field modifications kept;
+  //   - otherwise (the descriptor could not be rebuilt, or data published before aimFrom existed): the
+  //     player's own shots cannot be split and start from 1.0; anybody else's hold no devices and stay.
+  // The component values - the gun's dispersion and aiming time, the chassis and turret factors, the speeds,
+  // the reload, where a mode's battle modifiers act - always stay as recorded. That is the configurator's
+  // view alone: the recorded reticle rings come from the shot's own telemetry, and the record itself is
+  // never changed. The view inherits everything else from the recorded block, so a field the page reads
+  // later still comes through.
+  var aimBareFrom = null, aimBareKey = '', aimBare = null;
+  var AIM_BARE_FACTORS = ['multFactor', 'additiveFactor', 'aimingTimeFactor', 'reloadTimeFactor'];
+  // True when the shooter on screen is the player himself: a recorded hit's own direction says it (the
+  // recorder sets 'outgoing' when the attacker is the player's vehicle). A browsed vehicle or a swapped view
+  // counts as his too: its block is a rebuild, and his garage vehicle is the one that packs devices.
+  function aimShooterIsPlayer(hit) { return !!(hit && (hit.synthetic || hit.direction === 'outgoing')); }
+  function aimBaseFactors(a, own, fixed) {
+    var packed = a.compactFactors && typeof a.compactFactors === 'object' ? a.compactFactors : null, out = {};
+    AIM_BARE_FACTORS.forEach(function (k) {
+      var v = Number(a[k]), c = packed ? Number(packed[k]) : NaN;
+      if (!(v > 0 && isFinite(v))) out[k] = 1;
+      else if (fixed) out[k] = v;
+      else if (a.aimFrom === 'compact') out[k] = 1;
+      else if (c > 0 && isFinite(c)) out[k] = v / c;
+      else out[k] = own ? 1 : v;
+    });
+    return out;
+  }
   function aimBlockData() {
     var a = activeHit && activeHit.attacker && activeHit.attacker.aim;
-    return a && a.dispersion > 0 ? a : null;
+    if (!(a && a.dispersion > 0)) return null;
+    var own = aimShooterIsPlayer(activeHit), fixed = aimForbidden('devices'), key = (own ? 'own' : 'other') + (fixed ? '|fixed' : '');
+    if (a !== aimBareFrom || key !== aimBareKey) {
+      var base = aimBaseFactors(a, own, fixed);
+      aimBareFrom = a; aimBareKey = key; aimBare = Object.create(a);
+      AIM_BARE_FACTORS.forEach(function (k) { aimBare[k] = base[k]; });
+    }
+    return aimBare;
+  }
+  // What the recorded block carried in those four factors, what the configuration keeps of it and what it
+  // leaves out, in words, for the note under the slots - or ''.
+  var AIM_CARRIED_WORDS = {multFactor: 'the circle', additiveFactor: 'the movement terms',
+    aimingTimeFactor: 'the aiming time', reloadTimeFactor: 'the reload'};
+  function aimCarried() {
+    var a = activeHit && activeHit.attacker && activeHit.attacker.aim, base = aimBlockData();
+    if (!(a && base)) return '';
+    var carried = [], kept = [], left = [];
+    function part(v, k) { return '×' + aimNum(v) + ' on ' + AIM_CARRIED_WORDS[k]; }
+    AIM_BARE_FACTORS.forEach(function (k) {
+      var v = Number(a[k]), b = Number(base[k]);
+      if (!(v > 0 && isFinite(v)) || Math.abs(v - 1) <= 1e-6) return;
+      carried.push(part(v, k));
+      if (Math.abs(b - 1) > 1e-6) kept.push(part(b, k));
+      if (Math.abs(v / b - 1) > 1e-6) left.push(part(v / b, k));
+    });
+    if (!carried.length) return '';
+    var from = a.aimFrom === 'arena' ? 'read live in the battle' : a.aimFrom === 'compact' ? 'rebuilt from the vehicle’s descriptor' : 'as recorded';
+    var fieldMods = kept.length ? 'Kept: ' + kept.join(', ') + ' - the vehicle’s field modifications, which the configuration does not set. ' : '';
+    var devices = left.length ? 'Left out: ' + left.join(', ') + ' - equipment packed in the vehicle’s descriptor, which is set here instead, so it does not count twice.' : '';
+    var why;
+    if (aimForbidden('devices')) why = 'The game fixes this vehicle’s equipment, so all of it stays in.';
+    else if (a.aimFrom === 'compact' || (a.compactFactors && typeof a.compactFactors === 'object')) why = fieldMods + devices;
+    else if (aimShooterIsPlayer(activeHit)) why = 'Your field modifications and your equipment cannot be told apart in it, so the '
+      + 'configuration leaves both out and applies only what is set here.';
+    else why = fieldMods + 'Another player’s equipment never reaches the record.';
+    return 'The record’s own aim block carries ' + carried.join(', ') + ' - ' + from + '. ' + why.replace(/\s+$/, '');
+  }
+  // The small mark inside the Config button (S3): '?' when the rules of this battle's mode are not known -
+  // the configuration then works as in a standard battle - and '⊘' when the vehicle's own lock keeps a kind
+  // of equipment out. Nothing for a confirmed standard battle. Its own tooltip says which and why.
+  function paintAimModeMark() {
+    var mark = $('aim-mode-mark');
+    if (!mark) return;
+    var locked = [], unknown = '';
+    ['devices', 'consumables', 'crew'].forEach(function (kind) {
+      var rule = shooterPolicy[kind];
+      if (rule.state === 'forbidden') locked.push(aimPolicyLine(kind));
+      else if (rule.state === 'unknown' && !unknown) unknown = rule.source;
+    });
+    var kind = locked.length ? 'forbidden' : unknown ? 'unknown' : '';
+    mark.hidden = !kind;
+    mark.setAttribute('data-kind', kind || 'none');
+    mark.textContent = kind === 'forbidden' ? '⊘' : kind ? '?' : '';
+    mark.setAttribute('aria-label', kind === 'forbidden' ? 'Some equipment is fixed by the game for this vehicle'
+      : kind ? 'The rules of this battle’s mode are not known' : '');
+    mark.title = !kind ? '' : locked.concat(unknown ? ['The rules of this battle are not known: ' + unknown
+      + '. The configuration works as in a standard battle, which may be more than the game allowed here.'] : []).join(' ');
   }
   // --- Driving the shooter ----------------------------------------------------------------------
   // With the emulation on, W A S D move the vehicle, the turret chases the cursor at its own rotation
