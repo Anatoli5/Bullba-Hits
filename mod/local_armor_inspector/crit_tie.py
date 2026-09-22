@@ -208,7 +208,9 @@ def attach_crits(hits, events, player_vehicle_id=None, offsets=None):
         when = float(event['gameTime'])
         found = near(event.get('vehicleId'), when, -WINDOW_EXACT, WINDOW_EXACT,
                      lambda h: h.get('attackerId') == event.get('attackerId'))
-        same = [c for c in found if hits[c[1]].get('damage') == event.get('damage')]
+        # A blocked hit's indicator carries the damage the armour stopped; the hit itself did 0 (first battle, 22.09).
+        dealt = 0 if event.get('isBlocked') else event.get('damage')
+        same = [c for c in found if hits[c[1]].get('damage') == dealt]
         for dt, i in same or found: pairs.append((not same, abs(dt), n, i, dt, len(same or found)))
         if not found and event.get('isShellHE') and int(event.get('crits') or 0) & ~STUN and any(
                 e.get('attackerId') == event.get('attackerId') and e.get('vehicleId') == event.get('vehicleId')
