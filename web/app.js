@@ -561,7 +561,7 @@
   function message(text,spinner){var e=$('scene-message');e.textContent=text;e.hidden=!text;e.classList.toggle('busy',!!(text&&spinner));}
   function warnings(lines){$('warnings').textContent=lines.map(function(line){return line==='Additional vehicle parts are not yet rendered'?'Extra parts of this vehicle are not shown and not included in the estimate.':line;}).join(' · ');$('warnings').hidden=!lines.length;}
   function result(hit){if(hit.damage>0)return 'Damage '+hit.damage+' HP';var p=(hit.points||[]).filter(function(p){return p.effect!==undefined;});return p.length?(effects[p[p.length-1].effect]||'Result '+p[p.length-1].effect):'Result not decoded';}
-  function resultIcon(hit){if(hit.damage>0)return '▰ −'+hit.damage;var p=(hit.points||[]).filter(function(p){return p.effect!==undefined;}),effect=p.length?p[p.length-1].effect:null;return effect===2||effect===1?'↪':effect===3?'▰ ×':effect===4?'▰ ✓':effect===5||effect===6?'⚙':effect===0?'▰ 0':'—';}
+  function resultIcon(hit){if(hit.damage>0)return '▰ −'+hit.damage;var p=(hit.points||[]).filter(function(p){return p.effect!==undefined;}),effect=p.length?p[p.length-1].effect:null;return effect===2||effect===1?'↪':effect===3?'▰ ×':effect===4?'▰ ✓':effect===5||effect===6||effect===0?'▰ 0':'—';}
   function clock(seconds){if(!Number.isFinite(seconds))return '—';var d=new Date(seconds*1000);return d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'});}
   function detail(label,value,small){var e=node('div');e.appendChild(node('div',label,'detail-label'));e.appendChild(node('div',String(value),'detail-value'));if(small)e.appendChild(node('div',small,'detail-small'));$('details').appendChild(e);}
   function prepareShell(hit){
@@ -2597,7 +2597,7 @@
   var verdictLines=0,verdictQueue=[],verdictDone={},verdictTimer=null,verdictBusy=false;
   function verdictLine(battleId,hit,v,shell,mode){var r=v.result||{},chance=r.chance;
     var ours=r.reason==='ricochet'?'ricochet':chance===null||chance===undefined?(r.reason||'none'):(chance>=50?'pen':'no-pen')+'_'+chance+'%';
-    console.info('Bullba Hits verdict: battle='+battleId+' hit='+hit.id+' point='+v.index+' part='+(partNames[v.part]||v.part)+' server='+String(effects[v.effect]||v.effect).replace(/ /g,'_')+' ours='+ours+' angle='+(r.angle!=null?Math.round(r.angle):'-')+' eff='+(r.effective!=null?Math.round(r.effective):'-')+' pen='+Math.round(shell.penetration)+' shell='+shell.kind+' dir='+v.source+' chordDev='+(v.chordDev==null?'-':(v.chordDev*180/Math.PI).toFixed(1))+' mode='+mode+damageColumns(hit,r,shell)+' v='+($('app-version').getAttribute('data-version')||'dev').replace(/\s+/g,'_')+' rec='+(recordsVersion||'-'));
+    console.info('Bullba Hits verdict: battle='+battleId+' hit='+hit.id+' point='+v.index+' part='+(partNames[v.part]||v.part)+' server='+String(effects[v.effect]||v.effect).replace(/ /g,'_')+' ours='+ours+' angle='+(r.angle!=null?Math.round(r.angle):'-')+' eff='+(r.effective!=null?Math.round(r.effective):'-')+' pen='+Math.round(shell.penetration)+' shell='+shell.kind+' dir='+v.source+' chordDev='+(v.chordDev==null?'-':(v.chordDev*180/Math.PI).toFixed(1))+' mode='+mode+damageColumns(hit,r,shell)+ArmorCrits.columns(hit,v)+' v='+($('app-version').getAttribute('data-version')||'dev').replace(/\s+/g,'_')+' rec='+(recordsVersion||'-'));
     verdictLines++;verdictStatus();}
   // HE damage columns of the log line: the server's damage for this hit next to both candidate laws for the
   // non-penetration part - the ratio law the page draws and the linear legacy shape (k = 1.1), which is written
@@ -2628,7 +2628,7 @@
   // shell, its models from the cache, a throwaway flat ballistics engine, one hit every 150 ms so the page stays responsive.
   // Nothing is displayed and nothing is sent anywhere - the lines go to the console, in the game to game.log.
   function queueVerdicts(battle){
-    (battle.hits||[]).forEach(function(h){var key=battle.id+'/'+h.id;if(verdictDone[key]||!(h.points||[]).some(function(p){return p.status==='resolved';}))return;verdictDone[key]=true;verdictQueue.push({battle:battle,hit:h});});
+    (battle.hits||[]).forEach(function(h){var key=battle.id+'/'+h.id+'/'+ArmorCrits.key(h);if(verdictDone[key]||!(h.points||[]).some(function(p){return p.status==='resolved';}))return;verdictDone[key]=true;verdictQueue.push({battle:battle,hit:h});});
     // The hits on one set of target models go one after another (stable: the groups in the order they first
     // appear, the hits of a group in queue order). local-data.js keeps the last sixteen models, and a queue in
     // hit order read the same model files again and again as the targets alternated. Written out here and not
@@ -3219,11 +3219,25 @@
       $('details').appendChild(node('p',(shooter.name||'This vehicle')+'\u2019s gun against '+(under.name||'the model on screen')+': '+(shooter.gun||'gun not recorded')+'. Nothing was fired between these two in the record, so there is no hit line and no reticle - the shells are his, the armour is the model already loaded. Pin a point to read a line, or pick a hit in the list to go back to a recorded shot.'));
       return;}
     if(hit.synthetic){$('details').appendChild(node('p','The shooter\u2019s collision model, swapped in from the hit at '+clock(hit.receivedAt)+'. Nothing was fired at this vehicle in the record, so there is no hit line, no reticle and no shell of its own. The \u21c5 button next to the shooter tile goes back to the recorded hit.'));return;}
-    detail('Direction',view==='incoming'?'Incoming':view==='outgoing'?'Outgoing':'Not this vehicle',clock(hit.receivedAt));detail('Result',result(hit));
+    detail('Direction',view==='incoming'?'Incoming':view==='outgoing'?'Outgoing':'Not this vehicle',clock(hit.receivedAt));detail('Result',result(hit));var critRow=critDetail(hit);if(critRow)$('details').appendChild(critRow);
     var points=hit.points||[],point=points.find(function(p){return p.status==='resolved';});
     detail('Point on the model',point?['Chassis','Hull','Turret','Gun'][point.part]:'Not restored',point?'Per the client collision handler':'Segment kept for diagnostics');
     detail('Calibre',point&&point.caliber?point.caliber+' mm':'No data',points.length+' points in the event');
     if(hit.rangeAtImpact!=null)detail('To the attacker at impact',hit.rangeAtImpact.toFixed(1)+' m','Position when the hit was received; not a measured flight length.');
+  }
+  // The details row of the critical damage, marked so that a later tie can replace it in place: the exporter ties
+  // the client's crit records on its next publish, which can come after the hit is on screen.
+  function critDetail(hit){
+    var text=ArmorCrits.describe(hit);if(!text)return null;
+    var e=node('div');e.setAttribute('data-detail','crits');e.appendChild(node('div','Critical damage','detail-label'));e.appendChild(node('div',text,'detail-value'));
+    var from=ArmorCrits.sources(hit);if(from)e.appendChild(node('div',from,'detail-small'));return e;
+  }
+  function renderCritDetail(hit){
+    var box=$('details'),rows=Array.prototype.slice.call(box.children||[]),row=critDetail(hit);
+    var old=rows.find(function(r){return r.getAttribute&&r.getAttribute('data-detail')==='crits';});
+    var anchor=rows.find(function(r){return r.children&&r.children[0]&&r.children[0].textContent==='Result';});
+    if(old){if(row)box.insertBefore(row,old);box.removeChild(old);}
+    else if(row&&anchor)box.insertBefore(row,anchor.nextSibling||null);
   }
   function renderHits(){
     renderFocus();
@@ -3234,8 +3248,13 @@
       var any=!!current&&current.hits.some(function(h){return !!viewDirection(h);});
       container.appendChild(node('p',!current?'No records yet. Start the game with the recorder and play a battle. The viewer can stay open.':any?'No hits for the chosen filter.':focusNote||'No hits for '+focusName()+' in this battle','empty'));
       return;}
-    hits.forEach(function(h){var hasDamage=h.damage>0,view=viewDirection(h),b=node('button',undefined,'hit');b.setAttribute('aria-pressed',String(selected===h.id));b.setAttribute('data-direction',view);b.setAttribute('data-result',hasDamage?'damage':'none');b.title=(view==='incoming'?'Incoming from '+((h.attacker||{}).name||'?'):'Outgoing at '+((h.target||{}).name||'?'))+' · '+result(h);
+    hits.forEach(function(h){var hasDamage=h.damage>0,view=viewDirection(h),b=node('button',undefined,'hit');b.setAttribute('aria-pressed',String(selected===h.id));b.setAttribute('data-direction',view);b.setAttribute('data-result',hasDamage?'damage':'none');b.title=(view==='incoming'?'Incoming from '+((h.attacker||{}).name||'?'):'Outgoing at '+((h.target||{}).name||'?'))+' · '+result(h)+(ArmorCrits.describe(h)?' · '+ArmorCrits.describe(h):'');
       b.appendChild(vehicleTile(view==='incoming'?h.attacker:h.target));
+      // Critical damage (22.09): the client's own icons of the damaged modules and injured crew, up to four in a
+      // 2x2 grid, every word in the icon's title. Nothing known about the crits of this hit - no element at all.
+      // An icon that fails to load (not extracted yet) takes itself away, and the empty box with it.
+      var crit=ArmorCrits.badges(h);
+      if(crit.length){var box=node('span',undefined,'hit-crits');crit.slice(0,4).forEach(function(c){var i=node('img',undefined,'crit-icon');i.alt='';i.title=c.title;i.onerror=function(){i.remove();if(!box.children.length)box.remove();};i.src=c.src;box.appendChild(i);});b.appendChild(box);}
       // Outcome column: damage in the direction colour, or the muted result icon; the full result text stays in the button title.
       // Outcome widget: direction arrow in the top-left corner, the figure (damage, or the no-damage result icon)
       // in the top-right, the time underneath - the arrow never glues to the figure.
@@ -3282,7 +3301,11 @@
       if(!existing)selected=null;
       renderHits();
       // The selected shot is untouched: the list, the shot events and the verdict queue are refreshed, the scene is not.
-      if(unchanged)return;
+      // Only its critical-damage row follows, since crit ties may have arrived after the hit (they stay out of the
+      // fingerprint, which would rebuild the scene).
+      // The shot on screen is still the old object: the new ties go onto it, or the Statistics log would write
+      // the old crit fields on the next shell change.
+      if(unchanged){if(activeHit&&activeHit!==kept&&activeHit.id===kept.id&&!activeHit.synthetic)activeHit.crits=kept.crits;renderCritDetail(kept);return;}
       // The first hit of the list, which is the first hit the focused vehicle took part in: a record also
       // holds the hits between two other vehicles, and those are not on the list.
       var first=b.hits.find(function(h){return !!viewDirection(h);});

@@ -35,6 +35,8 @@ __pycache__/
 !/tools/release_github.py
 !/tools/verdicts_from_log.py
 !/tools/verdicts_offline.cjs
+!/tools/extract_crit_icons.py
+!/tools/crits_from_records.py
 !/tools/preview.py
 !/tools/third_party.py
 !/tools/shot_spread_from_records.py

@@ -504,3 +504,8 @@ header>.settings-menu>.settings-content{top:calc(100% + 8px);right:0;max-height:
    tracer is a single dot - it reads too heavy over the armour. Settings -> Scene sets how strongly it is
    drawn; viewer.js writes the variable on the layer and every cross inherits it. Nothing else is dimmed. */
 .hit-reticle{opacity:var(--impact-opacity,.5)}
+
+/* Critical damage on a hit tile (22.09): the client's own module and crew icons, up to four in a 2x2 grid between
+   the vehicle and the outcome. An icon only - every word is in its title. The 36 and 48 px sources scale down. */
+.hit-crits{flex:0 0 auto;display:grid;grid-template-columns:repeat(2,16px);grid-auto-rows:16px;gap:2px;align-content:center}
+.crit-icon{width:16px;height:16px;display:block}

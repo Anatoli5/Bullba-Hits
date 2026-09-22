@@ -12,7 +12,7 @@
  *     --battle   one battle id instead of every battle of the index
  *     --version  print the page build and the records build the pass would stamp, then stop
  *
- * Nothing here re-implements the verdict: web/ballistics.js, web/viewer.js, web/shot-context.js and
+ * Nothing here re-implements the verdict: web/ballistics.js, web/viewer.js, web/shot-context.js, web/crits.js and
  * web/local-data.js are loaded as they are, and the verdict functions of web/app.js (shellAt, verdictLine,
  * damageColumns, queueVerdicts, drainVerdicts and the helpers they call) are cut out of the file at run time
  * and evaluated, so a change to the page's line is a change to this log too. If one of those functions is
@@ -162,7 +162,7 @@ function verdictModule(appSource, deps) {
     'return {queueVerdicts:queueVerdicts,pending:function(){return verdictQueue.length>0||verdictBusy;},lines:function(){return verdictLines;}};'
   ];
   const names = ['$', 'console', 'document', 'window', 'setTimeout', 'ArmorInspectorData', 'ArmorShotContext',
-    'ArmorViewer', 'ArmorBallistics', 'recordsVersion'];
+    'ArmorViewer', 'ArmorBallistics', 'ArmorCrits', 'recordsVersion'];
   let make;
   try { make = new Function(names.join(','), parts.join('\n')); }
   catch (e) { throw new Error('the verdict code of web/app.js could not be compiled on its own: ' + e.message); }
@@ -197,8 +197,10 @@ function main(argv) {
   require(path.join(WEB, 'ballistics.js'));
   require(path.join(WEB, 'viewer.js'));
   require(path.join(WEB, 'shot-context.js'));
+  // The crit fields of the line (22.09): without this module the cut-out verdictLine would throw at the first line.
+  require(path.join(WEB, 'crits.js'));
   require(path.join(WEB, 'local-data.js'));
-  const ArmorBallistics = window.ArmorBallistics, ArmorShotContext = window.ArmorShotContext;
+  const ArmorBallistics = window.ArmorBallistics, ArmorShotContext = window.ArmorShotContext, ArmorCrits = window.ArmorCrits;
   const RealViewer = window.ArmorViewer, Data = window.ArmorInspectorData;
 
   // What the pass did with each hit, read off the calls the page's own code makes. Nothing is inferred
@@ -271,7 +273,7 @@ function main(argv) {
       $: function (id) { return id === 'app-version' ? versionBadge : null; },
       console: pen, document: window.document, window: sandboxWindow, setTimeout: fakeTimeout,
       ArmorInspectorData: probeData, ArmorShotContext: ArmorShotContext, ArmorViewer: probeViewer,
-      ArmorBallistics: ArmorBallistics, recordsVersion: recordsVersion
+      ArmorBallistics: ArmorBallistics, ArmorCrits: ArmorCrits, recordsVersion: recordsVersion
     });
 
     let ids = index.battles.map(function (b) { return b.id; });

@@ -4,6 +4,9 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 
 ## Unreleased
 
+- Hit tiles show the damaged modules and injured crew with the client's own icons when the game reports them; any other critical hit gets one crit icon. Names and sources are on hover and in a "Critical damage" row of the hit details. A crit without damage shows 0 instead of ⚙.
+- The recorder logs the client's critical-damage messages next to the hits; older battles show the crit their hit records carry.
+- Statistics log lines carry the hit's damage, crit code and items, and the ricochet chain.
 - Brothers in Arms is one tile per crew member and counts the way the client does: each tankman with it adds 5/N crew levels to the whole crew, the full +5 only when everyone has it. Records now carry the vehicle's real crew (older battles get it on the next game start); only a vehicle the client no longer has falls back to five tankmen. Builds saved with Brothers in Arms keep it on every member, and a build saved for part of a crew stays partial when the page is reopened.
 - Configuring a shooter no longer counts equipment twice: equipment already inside the aim data of your own recorded shots is taken out before the configuration applies its own (a stabiliser made the circle on the move far too tight). Field modifications recorded in battle stay in. Recorded reticles are unchanged.
 - Battles record their mode (Random, Onslaught, White Tiger …) and each vehicle's hit points, field modifications and whether it is a bot.

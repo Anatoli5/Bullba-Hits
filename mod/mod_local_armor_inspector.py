@@ -612,6 +612,8 @@ class Recorder(object):
         self.last_vehicle = None
         from local_armor_inspector.telemetry import ShotTelemetry
         self.telemetry = ShotTelemetry(self)
+        from local_armor_inspector.crit_log import CritLog
+        self.crits = CritLog(self)
 
     def request_vehicle(self, descr, source):
         """Queue one vehicle export, skipping the request we just queued.
@@ -1043,6 +1045,8 @@ def init():
         Vehicle.showDamageFromShot = wrapper
         try: _recorder.telemetry.install()
         except Exception: LOG.exception('Aim telemetry hooks unavailable; hit recording continues')
+        try: _recorder.crits.install()
+        except Exception: LOG.exception('Crit hooks unavailable; hit recording continues')
         try:
             _events = VehicleEvents(_recorder)
             _events.install()
@@ -1086,6 +1090,7 @@ def fini():
     if _recorder is not None:
         _recorder.enabled = False
         _recorder.telemetry.close()
+        _recorder.crits.close()
         try:
             from Vehicle import Vehicle
             if Vehicle.showDamageFromShot is _wrapper: Vehicle.showDamageFromShot = _original

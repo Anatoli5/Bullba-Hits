@@ -7,13 +7,16 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parent.parent
 import sys
 sys.path.insert(0, str(ROOT/'mod'))
-from local_armor_inspector.exporter import ASSETS, VERSION
+from local_armor_inspector.exporter import ASSETS, CRIT_ICON_FILES, VERSION
 COMPILER=ROOT/'work/research-options/sources/openwg--openwg.build/bin/windows_amd64/owg_python_compiler/owg_python_compiler.exe'
 EXPECTED='d36dbe2ffd4d77710750fbd9814e45bb7086d2ff7a38b33afce0c142383ffd13'
 
 
 def build():
     if hashlib.sha256(COMPILER.read_bytes()).hexdigest()!=EXPECTED: raise ValueError('Compiler checksum mismatch')
+    # The crit icons are the client's own art and come out of the installed game (22.09): say which and how.
+    missing=[asset for asset in CRIT_ICON_FILES if not (ROOT/asset).is_file()]
+    if missing: raise FileNotFoundError('Crit icons missing: '+', '.join(missing)+'. Run tools/extract_crit_icons.py first; it copies them from the installed client.')
     out=ROOT/'dist';out.mkdir(exist_ok=True)
     compiled=out/'compiled'
     subprocess.run([str(COMPILER),'compile','--source',str(ROOT/'mod'),'--target',str(compiled),'--python-version','2.7','--jobs','1','--timestamp','0','--filename-root','.'],check=True)

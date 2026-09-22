@@ -575,7 +575,8 @@
   // The resolved contact points of a hit in the viewer's frame (part transforms applied, z mirrored), as plain data.
   Viewer.points=function(hit){
     var T=THREE,transforms={};((hit&&hit.target||{}).parts||[]).forEach(function(part){if(part.transform)transforms[part.id]=new T.Matrix4().fromArray(part.transform);});
-    var pts=[];((hit&&hit.points)||[]).forEach(function(p){if(p.status!=='resolved'||!transforms[p.part]||!p.position||!p.direction)return;var pos=new T.Vector3().fromArray(p.position).applyMatrix4(transforms[p.part]);pos.z*=-1;var direction=new T.Vector3().fromArray(p.direction).transformDirection(transforms[p.part]).normalize();direction.z*=-1;pts.push({pos:pos,dir:direction,effect:p.effect,part:p.part,source:'segment',chordDev:null,line:direction.clone(),stretch:null});});
+    // pi: the point's index in hit.points (the log's point= counts resolved points only); hitType as recorded.
+    var pts=[];((hit&&hit.points)||[]).forEach(function(p,pi){if(p.status!=='resolved'||!transforms[p.part]||!p.position||!p.direction)return;var pos=new T.Vector3().fromArray(p.position).applyMatrix4(transforms[p.part]);pos.z*=-1;var direction=new T.Vector3().fromArray(p.direction).transformDirection(transforms[p.part]).normalize();direction.z*=-1;pts.push({pos:pos,dir:direction,effect:p.effect,part:p.part,pi:pi,hitType:p.hitType,source:'segment',chordDev:null,line:direction.clone(),stretch:null});});
     return Viewer.chain(pts);
   };
   // The chain rule, as data: every point gets `line` (the direction drawn through it), `source` (chord / segment /
@@ -621,7 +622,7 @@
     return pts.map(function(p,i){var prev=i?pts[i-1]:null,afterRicochet=prev&&(prev.effect===1||prev.effect===2);
       var origin=afterRicochet?prev.pos.clone().addScaledVector(p.line,.02):p.pos.clone().addScaledVector(p.line,-60);
       var result=null;try{result=engine.ray(origin.toArray(),p.line.toArray(),shell);}catch(e){result=null;}
-      return {index:i,part:p.part,effect:p.effect,source:p.source,chordDev:p.chordDev,result:result};});
+      return {index:i,part:p.part,effect:p.effect,pi:p.pi,hitType:p.hitType,prevEffect:prev?prev.effect:null,source:p.source,chordDev:p.chordDev,result:result};});
   };
   Viewer.prototype.pointVerdicts=function(shell){return Viewer.verdicts(this.engine,this.shotPoints,shell);};
   Viewer.prototype.shotArrow=function(direction,tip,color){
