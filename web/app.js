@@ -564,6 +564,9 @@
   function resultIcon(hit){if(hit.damage>0)return '▰ −'+hit.damage;var p=(hit.points||[]).filter(function(p){return p.effect!==undefined;}),effect=p.length?p[p.length-1].effect:null;return effect===2||effect===1?'↪':effect===3?'▰ ×':effect===4?'▰ ✓':effect===5||effect===6||effect===0?'▰ 0':'—';}
   function clock(seconds){if(!Number.isFinite(seconds))return '—';var d=new Date(seconds*1000);return d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'});}
   function detail(label,value,small){var e=node('div');e.appendChild(node('div',label,'detail-label'));e.appendChild(node('div',String(value),'detail-value'));if(small)e.appendChild(node('div',small,'detail-small'));$('details').appendChild(e);}
+  // Which of the candidates the page assumed when the record does not say (22.09); -1 when it does say, or
+  // when the assumption is the bare type rather than one of the shooter's shells.
+  var shellAssumed=-1;
   function prepareShell(hit){
     // A swapped view has no shot and therefore no shells: keep the shell that is on screen - type,
     // penetration and calibre - instead of falling back to the empty manual defaults. A browsed vehicle and a
@@ -574,14 +577,28 @@
     activeHit=hit;shotContext=ArmorShotContext.resolve(hit,hit&&hit.vehicle?[]:(current&&current.shotEvents||[]));candidates=shotContext.choices;var choice=$('shell-choice');choice.replaceChildren();
     candidates.forEach(function(c,i){var o=node('option',(shellNames[c.kind]||c.kind)+' · '+c.name+(c.gunInstallation>0?' · ability gun':''));o.value='saved:'+i;choice.appendChild(o);});
     Object.keys(shellNames).forEach(function(kind){var o=node('option',shellNames[kind]+' — manual');o.value=kind;choice.appendChild(o);});
-    if(candidates.length>1&&!browsing){var uncertain=node('option','Pick a shell — several matches');uncertain.value='';choice.insertBefore(uncertain,choice.firstChild);}
-    choice.value=shotContext.index>=0?'saved:'+shotContext.index:candidates.length?'':shotContext.kind||'ARMOR_PIERCING';
+    // Nothing determined (139 of 4284 recorded hits, 22.09): the model used to stay grey, which tells the user
+    // nothing (owner, 22.09). It is coloured with the likeliest shell instead - one of the shooter's own of the
+    // type the hit names, or, when his list holds none of that type, the type itself on manual figures. Every
+    // place this shell is shown says "assumed"; it is never counted as the shell that actually flew.
+    shellAssumed=-1;
+    if(shotContext.index>=0)choice.value='saved:'+shotContext.index;
+    else{
+      var want=shotContext.kind?candidates.findIndex(function(c){return c.kind===shotContext.kind;}):-1;
+      if(want<0&&!shotContext.kind&&candidates.length){
+        ['ARMOR_PIERCING','ARMOR_PIERCING_CR','ARMOR_PIERCING_HE','HOLLOW_CHARGE','HIGH_EXPLOSIVE'].some(function(k){
+          want=candidates.findIndex(function(c){return c.kind===k;});return want>=0;});
+        if(want<0)want=0;
+      }
+      shellAssumed=want;
+      choice.value=want>=0?'saved:'+want:shotContext.kind||'ARMOR_PIERCING';
+    }
     // A browsed vehicle has no hit to identify a shell, so resolve() leaves the index at -1. The shooter's own
     // list is nevertheless the right set of choices: preselect the first AP-like shell so the model is coloured
     // the moment a vehicle is picked, instead of “pick a shell”.
     if(browsing&&candidates.length){var first=candidates.findIndex(function(c){return c.kind==='ARMOR_PIERCING';});
-      if(first<0)first=candidates.findIndex(function(c){return c.kind==='ARMOR_PIERCING_CR';});if(first<0)first=0;choice.value='saved:'+first;}
-    $('shell-quick').replaceChildren();candidates.forEach(function(c,i){var actual=i===shotContext.index,b=node('button',(actual?'● ':'')+(shellNames[c.kind]||c.kind)+' '+Math.round(c.penetration100)+(c.gunInstallation>0?' ✦':''),'shell-chip');b.dataset.shell='saved:'+i;b.title=c.name+' · '+c.caliber+' mm · '+(c.gunInstallation>0?'ability gun'+(c.gun?' '+c.gun:'')+' · ':'')+(actual?'Type from the hit':'Compare with this shell');b.onclick=function(){choice.value='saved:'+i;selectShell();};$('shell-quick').appendChild(b);});
+      if(first<0)first=candidates.findIndex(function(c){return c.kind==='ARMOR_PIERCING_CR';});if(first<0)first=0;choice.value='saved:'+first;shellAssumed=-1;}
+    $('shell-quick').replaceChildren();candidates.forEach(function(c,i){var actual=i===shotContext.index,assumed=i===shellAssumed,b=node('button',(actual?'● ':assumed?'◌ ':'')+(shellNames[c.kind]||c.kind)+' '+Math.round(c.penetration100)+(c.gunInstallation>0?' ✦':''),'shell-chip');b.dataset.shell='saved:'+i;b.title=c.name+' · '+c.caliber+' mm · '+(c.gunInstallation>0?'ability gun'+(c.gun?' '+c.gun:'')+' · ':'')+(actual?'Type from the hit':assumed?'Assumed: the record does not say which shell it was':'Compare with this shell');b.onclick=function(){choice.value='saved:'+i;selectShell();};$('shell-quick').appendChild(b);});
     paintGunShells();
     syncTargetMods(hit);syncShooterMods(hit);
     if(keep){choice.value=keep.kind;manualPen=keep.penetration;$('penetration').value=keep.penetration;$('caliber').value=keep.caliber;penLabel(false);updateShell();}
@@ -2818,7 +2835,7 @@
     if(!viewer||!shell||!activeHit||activeHit.synthetic||!current||!window.console)return;
     var key=current.id+'/'+activeHit.id+'|'+JSON.stringify(shell);if(key===verdictKey)return;
     // Before load() the previous hit's points would be logged under the new id: wait for the points of this hit.
-    var verdicts=viewer.pointVerdicts(shell);if(!verdicts.length||viewer.loadedData.hit!==activeHit)return;verdictKey=key;
+    var verdicts=viewer.pointVerdicts(shell)||[];if(!verdicts.length||viewer.loadedData.hit!==activeHit)return;verdictKey=key;
     verdicts.forEach(function(v){verdictLine(current.id,activeHit,v,shell,'view');});
   }
   // Every hit of a loaded battle, automatically (user, 14.09: the more data the better the analysis): the hit's own
@@ -2916,10 +2933,13 @@
     var distance=viewer?viewer.distance:100,shell=shellAt(c,choice,penetration,caliber,distance);
     var edited=c&&(penetration!==c.penetration100||caliber!==c.caliber);
     var actual=shotContext&&choice==='saved:'+shotContext.index&&!edited;
+    // The shell the page assumed for a hit whose own is not known: its own marker, never the hit's ●.
+    var assumed=!actual&&!edited&&shotContext&&shotContext.index<0
+      &&(shellAssumed>=0?choice==='saved:'+shellAssumed:!c&&!!shotContext.kind&&choice===shotContext.kind);
     var browsing=!!(activeHit&&(activeHit.vehicle||activeHit.chosenShooter));
     // The caption band under the fields is gone (user, 18.09: the line read as noise). Its sentence is now the
     // title of the shell group, and the two states that are a warning keep their words in #parameters-notice.
-    var source=!choice?'Pick a shell':!valid?'No penetration in the record':(actual?'● From the hit':c?(browsing?'● Shooter’s shell':'◇ Comparison'):'◇ Manual')+' · '+Math.round(shell.penetration)+' mm at target · ±'+Math.round(shell.randomization*100)+'%';
+    var source=!choice?'Pick a shell':!valid?'No penetration in the record':(actual?'● From the hit':assumed?'◌ Assumed shell':c?(browsing?'● Shooter’s shell':'◇ Comparison'):'◇ Manual')+' · '+Math.round(shell.penetration)+' mm at target · ±'+Math.round(shell.randomization*100)+'%';
     // Damage mode says out loud that the non-penetration part is a reconstruction; without an alpha in the
     // record the old sentence stands, because then nothing but the penetration is drawn anyway.
     var damageNote=(c?c.kind:choice)==='HIGH_EXPLOSIVE'&&shell&&shell.alpha>0?'HE non-penetration damage: reconstruction (ratio law), not a confirmed server formula.':'HE: penetration only, no blast damage.';

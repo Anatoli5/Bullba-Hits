@@ -27,7 +27,11 @@
     var chosen=sources.find(function(s){return usable(s.aim,s.stamp,s.window);})||null,aim=chosen?chosen.aim:null;
     var aimReason=aim?null:!possible.length?'no-tracer':!matches.length?'no-endpoint':!tracer?'ambiguous':!tracer.own?'foreign':!sources.length?'no-snapshot':'stale';
     var kindValues=Array.from(new Set(points.map(function(p){return p.shellKind||kinds[p.shellType];}).filter(Boolean)));
-    var recorded=(hit.shellCandidates||[]).slice(),choices=(hit.availableShells||recorded).slice();
+    // shellCandidates is what the record narrowed down; when it is empty (39 of 181 unresolved hits in the
+    // 60 recorded battles, 22.09) the shells the shooter could load are the only list there is, and a single
+    // one of them that agrees with the hit is an answer, not a blank.
+    var recorded=((hit.shellCandidates&&hit.shellCandidates.length?hit.shellCandidates:hit.availableShells)||[]).slice();
+    var choices=(hit.availableShells||hit.shellCandidates||[]).slice();
     var matching=recorded.filter(function(c){return (kindValues.length===0||kindValues.length===1&&c.kind===kindValues[0])&&points.every(function(p){return !(p.caliber>0)||Math.abs(c.caliber-p.caliber)<.1;});});
     if(matching.length>1&&tracer&&tracer.velocity){var speed=Math.hypot.apply(null,tracer.velocity),narrow=matching.filter(function(c){return c.speed>0&&Math.abs(c.speed-speed)<Math.max(.1,c.speed*.001);});if(narrow.length===1)matching=narrow;}
     var selected=matching.length===1?matching[0]:null;
