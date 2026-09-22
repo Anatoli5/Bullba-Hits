@@ -2,7 +2,9 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
-## 0.7.22 (2026-09-22)
+## 0.7.23 (2026-09-22)
+
+- New versioned build with the standard single-file Windows installer.
 
 - Of two shells the record cannot tell apart, the page now assumes the one that pierces deeper — it had the better chance of making that hit — or the one the recorded damage fits when only one of them can do it. The reason is on hover.
 
