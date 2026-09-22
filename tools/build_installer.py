@@ -2,6 +2,7 @@
 import argparse
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -35,7 +36,7 @@ def signature_info(path):
     return json.loads(result.stdout)
 
 
-def build(test=False,sign_command=None,require_signature=False):
+def build(test=False,sign_command=None,require_signature=False,only=None):
     if require_signature and not sign_command:
         raise ValueError('A trusted RSA signing command is required; provide --sign-command')
     if sign_command and '$f' not in sign_command:
@@ -63,13 +64,23 @@ def build(test=False,sign_command=None,require_signature=False):
             target.parent.mkdir(parents=True,exist_ok=True)
             target.write_bytes(data)
             files.append((target,'mods/configs/local.armor_inspector/'+relative,True,False))
-    files.extend((ROOT/source,'mods/configs/local.armor_inspector/'+dest,True,False) for source,dest in (
-        ('installer/armor-inspector.ico','web/icon.ico'),('README.md','README.md'),('CHANGELOG.md','CHANGELOG.md'),
-        ('THIRD_PARTY.md','THIRD_PARTY.md'),('licenses/InnoSetup.txt','licenses/InnoSetup.txt'),
-        ('licenses/ModsList.txt','licenses/ModsList.txt'),('licenses/OpenWGGameface.txt','licenses/OpenWGGameface.txt')))
-    seed=generated/'empty-index.js'
+    for source,dest in (('installer/armor-inspector.ico','web/icon.ico'),('README.md','README.md'),('CHANGELOG.md','CHANGELOG.md'),
+                        ('THIRD_PARTY.md','THIRD_PARTY.md'),('licenses/InnoSetup.txt','licenses/InnoSetup.txt'),
+                        ('licenses/ModsList.txt','licenses/ModsList.txt'),('licenses/OpenWGGameface.txt','licenses/OpenWGGameface.txt')):
+        target=generated/'payload'/dest
+        target.parent.mkdir(parents=True,exist_ok=True)
+        target.write_bytes((ROOT/source).read_bytes())
+        files.append((target,'mods/configs/local.armor_inspector/'+dest,True,False))
+    seed=generated/'payload'/'data'/'index.js'
+    seed.parent.mkdir(parents=True,exist_ok=True)
     write_data(str(seed),'index',{'application':'local.armor_inspector','version':VERSION,'updatedAt':None,'battles':[]})
     files.append((seed,'mods/configs/local.armor_inspector/data/index.js',True,True))
+    # Inno packs each file's modification time, so a staged payload rewritten now would make every run of this
+    # script a different installer (found 22.09: 9 bytes, new hash, same content). Every staged file takes the
+    # .wotmod's own time: one build of the mod gives one installer, however often it is packed.
+    stamp=mod.stat().st_mtime
+    for source,_,_,_ in files:
+        if generated in source.parents: os.utime(source,(stamp,stamp))
     lines=[]
     checks=['function CheckOwnedFiles(const Folder: String): String;','begin',"  Result := ''; "]
     manifest={}
@@ -88,28 +99,46 @@ def build(test=False,sign_command=None,require_signature=False):
     (generated/'checks.iss').write_text('\n'.join(checks),encoding='utf-8-sig')
     (generated/'build.iss').write_text('#define ProductVersion "'+VERSION+'"\n#define ModName "'+mod.name+'"\n#define ModHash "'+digest(mod)+'"\n',encoding='utf-8-sig')
     (generated/'payload-manifest.json').write_text(json.dumps(manifest,indent=2),encoding='utf-8')
-    args=[str(compiler),'/Qp']
-    if sign_command: args.extend(['/DSignBuild','/SBullbaHitsSign='+sign_command])
-    if test: args.extend(['/DTestBuild','/DTestRoot='+str(ROOT/'work/installer-tests')])
-    args.append(str(ROOT/'installer/ArmorInspector.iss'))
-    subprocess.run(args,check=True)
-    output=ROOT/'dist'/('BullbaHits-'+VERSION+'-Setup'+('-Test' if test else '')+'.exe')
-    signature=signature_info(output)
-    signed=signature['status']=='Valid' and signature['publicKeyAlgorithm']=='1.2.840.113549.1.1.1'
-    if sign_command and not signed:
-        raise ValueError('Installer does not have a valid trusted RSA signature: '+signature['status'])
-    result={'artifact':str(output),'bytes':output.stat().st_size,'sha256':digest(output),
-            'innoSetup':'7.1.0','compilerSha256':digest(compiler),'modSha256':digest(mod),'testBuild':test,
-            'digitallySigned':signature['status']=='Valid','authenticode':signature,
-            'signedInnerSetupRequested':bool(sign_command),'smartAppControlTested':False}
-    (ROOT/'outputs'/('installer-test-build.json' if test else 'installer-build.json')).write_text(json.dumps(result,indent=2),encoding='utf-8')
-    print(json.dumps(result,indent=2))
-    if not signed: print('Unsigned build: Smart App Control may block it. No signing certificate was used.',file=sys.stderr)
+    # Two forms of the same installer from one script and one payload. The single EXE in dist/: Inno's loader
+    # unpacks the setup engine into %TEMP% and runs it there - the copy Smart App Control refused on 22.09
+    # (error 4551). The loaderless set in dist/noloader/: the engine itself plus the .bin data beside it, nothing
+    # run out of %TEMP%, and an EXE with no version data in it, so it is the same file for every build (.iss).
+    variants=[v for v in ('loader','noloader') if only in (None,v)]
+    results={}
+    for variant in variants:
+        out_dir=ROOT/'dist'/('noloader' if variant=='noloader' else '')
+        out_dir.mkdir(parents=True,exist_ok=True)
+        args=[str(compiler),'/Qp','/O'+str(out_dir)]
+        if variant=='noloader': args.append('/DNoLoader')
+        if sign_command: args.extend(['/DSignBuild','/SBullbaHitsSign='+sign_command])
+        if test: args.extend(['/DTestBuild','/DTestRoot='+str(ROOT/'work/installer-tests')])
+        args.append(str(ROOT/'installer/ArmorInspector.iss'))
+        subprocess.run(args,check=True)
+        base='BullbaHits-'+VERSION+'-Setup'+('-Test' if test else '')
+        output=out_dir/(base+'.exe')
+        signature=signature_info(output)
+        signed=signature['status']=='Valid' and signature['publicKeyAlgorithm']=='1.2.840.113549.1.1.1'
+        if sign_command and not signed:
+            raise ValueError('Installer does not have a valid trusted RSA signature: '+signature['status'])
+        parts=[output]+sorted(out_dir.glob(base+'-*.bin'))
+        result={'variant':variant,'artifact':str(output),'bytes':output.stat().st_size,'sha256':digest(output),
+                'files':[{'name':p.name,'bytes':p.stat().st_size,'sha256':digest(p)} for p in parts],
+                'innoSetup':'7.1.0','compilerSha256':digest(compiler),'modSha256':digest(mod),'testBuild':test,
+                'digitallySigned':signature['status']=='Valid','authenticode':signature,
+                'signedInnerSetupRequested':bool(sign_command),'smartAppControlTested':False}
+        name=('installer-test-build' if test else 'installer-build')+('-noloader' if variant=='noloader' else '')+'.json'
+        (ROOT/'outputs'/name).write_text(json.dumps(result,indent=2),encoding='utf-8')
+        print(json.dumps(result,indent=2))
+        results[variant]=result
+    if not all(r['digitallySigned'] for r in results.values()):
+        print('Unsigned build: Smart App Control may block it. No signing certificate was used.',file=sys.stderr)
+    return results
 
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser();parser.add_argument('--test',action='store_true')
     parser.add_argument('--sign-command',help='Inno SignTool command with $f; use a trusted RSA certificate, never inline passwords')
     parser.add_argument('--require-signature',action='store_true',help='Refuse to build without a signing command')
+    parser.add_argument('--only',choices=['loader','noloader'],help='Build one form only; both by default (dist/ and dist/noloader/)')
     options=parser.parse_args()
-    build(options.test,options.sign_command,options.require_signature)
+    build(options.test,options.sign_command,options.require_signature,options.only)

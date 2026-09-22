@@ -13,6 +13,7 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 - Any slider takes the mouse wheel and the arrow keys while the cursor is over it: one notch or one press is one step, and the scene no longer zooms or turns under your hand.
 - The impact cross is drawn at 90 % by default instead of 50 %, where it was hard to see; a stored 50 % from the old default follows it.
 - Config drops the paragraph under the slots and the "?" on the button; what they said is in the button's tooltip.
+- The installer comes in a second form for machines whose App Control refuses the single EXE's copy in the temp folder (error 4551): `noloader\BullbaHits-<version>-Setup.exe` with two `.bin` files beside it, which runs nothing out of the temp folder. Its executable carries no version of its own and is the same file for every build.
 
 ## 0.7.20 (2026-09-22)
 

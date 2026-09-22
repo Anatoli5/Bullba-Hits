@@ -19,11 +19,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0
 WizardStyle=modern
 SetupIconFile=armor-inspector.ico
-#ifdef NoLoader
-OutputDir=..\dist\noloader
-#else
 OutputDir=..\dist
-#endif
 Compression=lzma2
 SolidCompression=yes
 CloseApplications=no
@@ -32,25 +28,29 @@ UninstallFilesDir={app}\mods\configs\local.armor_inspector\installer
 UninstallDisplayIcon={app}\mods\configs\local.armor_inspector\web\icon.ico
 UninstallDisplayName=Bullba Hits
 SetupMutex=LocalArmorInspectorSetup
-; The stub used to carry no version resource at all (found 20.09): an unsigned EXE with an empty
-; FileVersion is the weakest possible case for Windows reputation checks. This does not replace a
-; signature, but the file now describes itself.
-VersionInfoVersion={#ProductVersion}
-VersionInfoProductVersion={#ProductVersion}
+; Version resource (added 20.09; the stub used to have none). Loaderless: the EXE is the setup engine, the only file
+; that runs, and carries no mod version, so it is byte-identical for every build (22.09: 0.7.22 and 0.7.99, one hash).
 VersionInfoProductName=Bullba Hits
 VersionInfoDescription=Bullba Hits Setup
 VersionInfoCompany=Bullba Hits
+#ifdef NoLoader
+VersionInfoVersion=1.0
+VersionInfoProductVersion=1.0
+VersionInfoProductTextVersion=setup engine; the mod version is in the file name
+VersionInfoOriginalFileName=BullbaHits-Setup.exe
+#else
+VersionInfoVersion={#ProductVersion}
+VersionInfoProductVersion={#ProductVersion}
 VersionInfoOriginalFileName=BullbaHits-{#ProductVersion}-Setup.exe
+#endif
 #ifdef SignBuild
 ; Sign both the outer EXE and the temporary setup/uninstaller executables.
 SignTool=BullbaHitsSign
 SignedUninstaller=yes
 SignToolRunMinimized=yes
 #endif
-; App Control refuses the setup loader's own copy in %TEMP% on this machine ("Unable to execute file in the
-; temporary directory. Setup aborted. Error 4551", 22.09.2026) - an unsigned binary Windows has never seen.
-; A loaderless build has no such copy: the EXE reads its data from the .bin files beside it, so there is
-; nothing to run out of %TEMP%. Built as a second artifact next to the single-file installer.
+; Loaderless (tools/build_installer.py, /O per variant): nothing is unpacked into %TEMP% and run there - the copy App
+; Control refused with error 4551 (22.09); the EXE reads the .bin files beside it. Built next to the single-file EXE.
 #ifdef NoLoader
 UseSetupLdr=no
 #endif
