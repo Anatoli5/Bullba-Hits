@@ -2752,7 +2752,15 @@
     if (!centre) return false;
     var mods = aimModifiers(), shell = viewer.shell;
     var chance = shell ? viewer.liveAimProbability(shell, 1024) : null;
-    viewer.pinAtPoint(centre);
+    // The fun layer (user, 22.09): with Target HP or Hit marks on the shot lands at a point DRAWN inside
+    // the live circle instead of at its middle, and the shot line, the pinned panel and the reticle then
+    // show that point - it is the same pin, cast down the same line by the same caster. Both switches off
+    // and this is the centre shot of 0.7.24, call for call.
+    var fun = funOn(), point = fun && viewer.liveAimSample ? viewer.liveAimSample(rng) || centre : centre;
+    // A pin that refused (no engine, no point) left no verdict of its own, and a shot no line was cast for
+    // must not roll damage off the stale one.
+    var pinned = viewer.pinAtPoint(point);
+    if (fun && pinned) funShot(shell);
     if (viewer.setAimShot) viewer.setAimShot();   // the ring left behind, drawn before the recoil widens the live one
     // The shot's own figure, on the pinned-shot panel and in the colour of its ring (user, 20.09): the
     // same single number the live ring prints - the expected damage over the circle, share of alpha.
@@ -2827,6 +2835,139 @@
     return true;
   }
   function cancelHoldTimer() { if (aimHoldTimer) window.clearTimeout(aimHoldTimer); aimHoldTimer = 0; }
+  // --- The fun layer: target HP, a rolled shot and hit marks (user, 22.09) -------------------------
+  // Two Settings switches, both OFF by default. With either of them on a shot stops flying through the
+  // middle of the ring: the impact point is DRAWN inside the circle from the very law that circle's own
+  // figure is integrated with (viewer.liveAimSample -> the profile's quantile), the line is cast and
+  // judged by the one path a shot has always taken (pinAtPoint -> refreshPin -> engine.ray, whose result
+  // comes back on viewer.pinResult), and the verdict is then rolled instead of read as odds. With both
+  // switches off nothing below runs at all and a shot is exactly the shot of 0.7.24.
+  function funHp() { var e = $('target-hp-on'); return !!(e && e.checked); }
+  function funMarks() { var e = $('hit-marks-on'); return !!(e && e.checked); }
+  function funOn() { return funHp() || funMarks(); }
+  // The random source of this layer, Math.random by default. A harness puts its own seeded function on
+  // window.BullbaHitsRng and every draw below takes it - one lookup per roll, nothing per frame.
+  function rng() { var f = window.BullbaHitsRng; return typeof f === 'function' ? f() : Math.random(); }
+  // The target's hit points. The roster of the battle carries them since 0.7.20: `maxHealth` is the value
+  // of THIS battle - Onslaught writes its own through the battle modifiers - and `defaultMaxHealth` the
+  // stock one. The row is found by the hit's own target id; a swapped view has no ids of its own, so it
+  // asks the hit it was made from for its shooter, and the last resort is a roster row of that vehicle
+  // type when the battle holds exactly one. A browsed vehicle has no hit points anywhere - neither the
+  // catalogue nor a vehicle export carries them - and then there is no bar rather than an invented number.
+  function targetMaxHp(hit) {
+    var rows = current && Array.isArray(current.roster) ? current.roster : null;
+    if (!rows || !hit || hit.vehicle) return 0;
+    var id = hit.targetId;
+    if (id === undefined || id === null) {
+      var base = hit.synthetic && hit.base ? (current.hits || []).find(function (h) { return h.id === hit.base; }) : null;
+      if (base) id = base.attackerId;
+    }
+    var row = id === undefined || id === null ? null : rows.find(function (r) { return r.id === id; });
+    if (!row) {
+      var type = String((hit.target || {}).type || '');
+      var same = type ? rows.filter(function (r) { return String(r.type || '') === type; }) : [];
+      row = same.length === 1 ? same[0] : null;
+    }
+    if (!row) return 0;
+    var hp = Number(row.maxHealth) > 0 ? Number(row.maxHealth) : Number(row.defaultMaxHealth);
+    return hp > 0 ? hp : 0;
+  }
+  var hpMax = 0, hpLeft = 0, hpRoll = '', hpTitleKey = '';
+  // The spread of the damage roll. The shell carries its own `damageRandomization` (0.25 on the stock
+  // shells, 0.12 in the Onslaught records), and shellAt puts it on the shell object for a saved candidate
+  // as for a manual one, so this is the record's number and not a constant.
+  function funRandomization(shell) {
+    var s = shell ? Number(shell.damageRandomization) : NaN;
+    return s >= 0 && s <= 1 ? s : .25;
+  }
+  // ASSUMPTION, said out loud in the bar's tooltip and in docs/KNOWLEDGE.md §2: the roll is drawn
+  // UNIFORMLY over the band. The client stores the KIND of the roll (`damageRandomizationType`, NORMAL on
+  // every shell of this build) but not its arithmetic - the damage roll is made on the cellapp - so the
+  // shape of the spread is this page's guess. Nothing else on the page depends on it.
+  function funRoll(base, shell) { return base * (1 + (rng() * 2 - 1) * funRandomization(shell)); }
+  var FUN_PEN = 'pen', FUN_NONE = 'no-pen', FUN_RICOCHET = 'ricochet', FUN_UNKNOWN = 'unknown';
+  // One shot, ONE penetration roll - the very model the figures on screen are built on (ballistics.js
+  // withDamage): the shell passes a screen when the roll beats that screen's own plate and pierces the
+  // hull when it beats the main plate too. So a uniform u below `chance` is a penetration, u between
+  // `chance` and the screen-pass chance is a non-penetration on the main armour (the page's HE law gives
+  // what that is worth, `nonPen`), and above it the shell was stopped on a screen and does nothing at all.
+  function funVerdict(r, shell) {
+    if (!r) return {outcome: FUN_UNKNOWN, base: 0};
+    if (r.reason === 'ricochet') return {outcome: FUN_RICOCHET, base: 0};
+    if (r.reason === 'screen') return {outcome: FUN_NONE, base: 0};
+    if (r.reason === 'no-hull' || r.chance === null || r.chance === undefined) return {outcome: FUN_UNKNOWN, base: 0};
+    var p = Math.max(0, Math.min(1, r.chance / 100));
+    var pass = r.screenPass === undefined || r.screenPass === null ? 1 : r.screenPass;
+    var u = rng();
+    if (u < p) return {outcome: FUN_PEN, base: shell && shell.alpha > 0 ? shell.alpha : 0};
+    return {outcome: FUN_NONE, base: u < pass && r.nonPen > 0 ? r.nonPen : 0};
+  }
+  // The outcome palette is the page's own (ArmorBallistics.color through chanceRgb): a penetration is the
+  // colour of 100 %, a non-penetration that of 0 %, a ricochet the blued 0 % the ricochet zones and the
+  // ricochet labels wear, and a line with no estimate the neutral grey. One palette, one Ricochet tint,
+  // one Display mode for the marks and for the armour under them.
+  function funColor(outcome) {
+    if (outcome === FUN_PEN) return chanceRgb({chance: 100, expectedShare: 1});
+    if (outcome === FUN_RICOCHET) return chanceRgb({chance: 0, expectedShare: 0, reason: 'ricochet'});
+    if (outcome === FUN_NONE) return chanceRgb({chance: 0, expectedShare: 0});
+    return chanceRgb({chance: null, expectedShare: null});
+  }
+  var FUN_WORDS = {pen: 'penetration', 'no-pen': 'no penetration', ricochet: 'ricochet', unknown: 'no estimate'};
+  function hpNumber(v) { return String(Math.round(v)).replace(/\B(?=(\d{3})+(?!\d))/g, ' '); }
+  // What one emulated shot does once its line has been cast and judged. Everything here reads the result
+  // of the ONE ray pinAtPoint has just cast: nothing is cast, sampled or evaluated a second time.
+  function funShot(shell) {
+    if (!viewer) return;
+    var r = viewer.pinResult, pin = viewer.pinned;
+    var v = funVerdict(r, shell), damage = v.base > 0 ? funRoll(v.base, shell) : 0;
+    if (funHp() && hpMax > 0) {
+      hpLeft = Math.max(0, hpLeft - damage);
+      hpRoll = 'Last shot: ' + FUN_WORDS[v.outcome] + (damage > 0 ? ', ' + hpNumber(damage) + ' HP' : ', no damage') + '.';
+    }
+    if (funMarks() && pin && pin.point && viewer.addHitMark) viewer.addHitMark(pin.point, pin.normal, funColor(v.outcome));
+    paintFun();
+  }
+  // The bar is graphics and nothing else (the owner's rule: no words on a tile) - every number is in its
+  // tooltip. Called on a shot, on a reset, on a model change and when a Settings switch moves; never per frame.
+  function paintFun() {
+    var bar = $('target-hp'), fill = $('target-hp-fill'), reset = $('target-hp-reset');
+    if (!bar || !fill || !reset) return;
+    var model = !$('model-tile').hidden, show = funHp() && model && hpMax > 0;
+    bar.hidden = !show;
+    reset.hidden = !(funOn() && model);
+    if (!show) return;
+    var share = Math.max(0, Math.min(1, hpLeft / hpMax)), width = (share * 100).toFixed(1) + '%';
+    if (fill.style.width !== width) fill.style.width = width;
+    var rgb = chanceRgb({chance: Math.round(share * 100), expectedShare: share});
+    if (fill.style.backgroundColor !== rgb) fill.style.backgroundColor = rgb;
+    // The sentence is long and paintFun runs on every shell or distance step too: it is composed only when
+    // one of the four things in it has really changed.
+    var key = hpLeft + '/' + hpMax + '|' + hpRoll + '|' + funRandomization(viewer && viewer.shell);
+    if (key === hpTitleKey) return;
+    hpTitleKey = key;
+    bar.title = hpNumber(hpLeft) + ' / ' + hpNumber(hpMax) + ' HP' +
+      (hpLeft <= 0 ? ' · destroyed; further shots still leave marks' : '') + '. ' + (hpRoll || 'Nothing fired yet.') +
+      ' Each hit rolls its damage as alpha × (1 ± ' + Math.round(funRandomization(viewer && viewer.shell) * 100) +
+      ' %), the shell’s own spread from the record; a hit that does not pierce rolls the reconstructed' +
+      ' non-penetration damage the same way. The SHAPE of that roll is drawn uniformly - the client stores' +
+      ' the kind of the roll but makes it on the server, so it is this page’s assumption, not a confirmed rule.';
+  }
+  // Full HP again and no marks: the ↺ button, and every change of the model on screen.
+  function funReset() {
+    hpMax = targetMaxHp(activeHit); hpLeft = hpMax; hpRoll = '';
+    if (viewer && viewer.clearHitMarks) viewer.clearHitMarks();
+    paintFun();
+  }
+  // A switch moved: the viewer is told whether an emulated shot leaves a dot or a cross, marks left behind
+  // by a switch going off go with it, and a bar switched on starts full.
+  function funSettings() {
+    if (viewer) {
+      if (viewer.setHitMarks) viewer.setHitMarks(funMarks());
+      if (!funMarks() && viewer.clearHitMarks) viewer.clearHitMarks();
+    }
+    if (funHp() && !(hpMax > 0)) { hpMax = targetMaxHp(activeHit); hpLeft = hpMax; hpRoll = ''; }
+    paintFun();
+  }
   // Everything the emulation holds, back to a standing, loaded, fully aimed shooter.
   function resetAimRun() {
     cancelHoldTimer();
@@ -2997,8 +3138,11 @@
     }
     // Every one of these is taken from the shell OBJECT, never from a constant, so a second-mode shell's
     // own normalisation, ricochet angle, jet loss and alpha flow straight into the ballistics (P4).
+    // `damageRandomization` rides along for the damage roll of the fun layer (22.09), the same field a
+    // manual shell already borrows through MANUAL_DAMAGE_KEYS: the ballistics never read it, so the
+    // chances, the colours and the verdict lines are untouched by its being there.
     if(c){['normalization','ricochetCos','jetLossPerMeter','randomization','randomizationType','shieldPenetration',
-      'alpha','spallDamage','spallAbsorption','mechanics','nonPiercingArmorDamage','vehicleMode'].forEach(function(k){if(c[k]!==undefined)shell[k]=c[k];});var fraction=Math.max(0,Math.min(1,(distance-100)/400));if(c.penetration500>0&&c.penetration100>0)shell.penetration=penetration*(1+fraction*(c.penetration500/c.penetration100-1));}
+      'alpha','spallDamage','spallAbsorption','mechanics','nonPiercingArmorDamage','vehicleMode','damageRandomization'].forEach(function(k){if(c[k]!==undefined)shell[k]=c[k];});var fraction=Math.max(0,Math.min(1,(distance-100)/400));if(c.penetration500>0&&c.penetration100>0)shell.penetration=penetration*(1+fraction*(c.penetration500/c.penetration100-1));}
     // The alpha field (user, 22.09): the user's own number wins over the record's and over the borrowed
     // one, exactly as his penetration and calibre do. HE's spall damage is the non-penetration base and
     // moves with the alpha - the record's own ratio is kept when there is one, the ballistics default
@@ -3208,6 +3352,7 @@
     $('probe-chance').textContent='—';$('probe-chance').style.color='';$('probe-pen').replaceChildren();$('probe-extra').replaceChildren();$('probe-details').replaceChildren(node('span','Hover over the armour','placeholder'));
     modsVisible();
     staleEstimate();if(viewer)viewer.configure(shell,mapMode,$('palette').value,mode);shotStats();updateAim();
+    paintFun();   // the health bar is painted on the chance scale, so a palette or Display change repaints it
   }
   var shellGroup=document.querySelector('.shell-fields');
   var ricochetTint=.5; // the Ricochet tint row of Settings, 0 (off)..1.5; the panels' ricochet colours follow the map
@@ -3730,6 +3875,9 @@
     if(window.console)console.info('Bullba Hits aim: hit '+hit.id+' '+(view||'other')+' saved='+!!aimReady+' estimate='+!!estimate+' reason='+reason);
     aimStatus=status;aimTitle();
     shotStats();updateAim();
+    // The model on screen changed: the target is full again and the marks of the previous one are gone
+    // (user, 22.09). Every branch below has already passed through here.
+    funReset();
     if(reference){$('details').appendChild(node('p','The model is extracted from the installed client. There are no invented hits here. Once the recorder is installed, new battles appear in the list on the left.'));return;}
     if(hit.vehicle){
       var mv=hit.target||{},sv=hit.attacker||{},when=Number.isFinite(hit.receivedAt)?new Date(hit.receivedAt*1000).toLocaleDateString('en-GB'):'an unknown date';
@@ -3859,7 +4007,7 @@
     }).catch(function(e){$('connection').textContent='No local records';if(!current&&sidebarMode==='battles'){message(e.message);warnings([e.message]);}}).then(function(){polling=false;});
   }
   try{viewer=new ArmorViewer($('viewport'));}catch(e){message('WebGL unavailable: '+e.message);}
-  if(viewer)viewer.setAutoFrame($('auto-frame').checked); // on by default (user, 18.09)
+  if(viewer)viewer.setAutoFrame($('auto-frame').checked); // OFF by default (user, 22.09; it was on since 18.09)
   if(viewer)viewer.setLighting($('soft-lighting').checked); // on by default (user, 19.09); the checkbox is the switch
   if(viewer)viewer.setLightStrength(Number($('light-strength').value)/100);
   if(viewer)viewer.onInspect=inspectArmor;
@@ -4053,6 +4201,13 @@
   document.querySelectorAll('[data-filter]').forEach(function(b){b.onclick=function(){filter=b.dataset.filter;document.querySelectorAll('[data-filter]').forEach(function(x){x.setAttribute('aria-pressed',String(x===b));});renderHits();};});
   $('wireframe').onchange=function(){if(viewer)viewer.wireframe(this.checked);outlineState();};
   $('soft-lighting').onchange=function(){if(viewer)viewer.setLighting(this.checked);lightStrengthState();};
+  // The fun layer's two switches (user, 22.09). They are ordinary Settings rows of the standard shape
+  // (.hatch-row with its checkbox, exactly as Aim emulation is), so the settings machinery stores them,
+  // restores them and runs this handler for each - there is no second copy of that logic here. Neither
+  // row carries a slider, so rowState has nothing to enable or grey out.
+  $('target-hp-on').onchange=funSettings;
+  $('hit-marks-on').onchange=funSettings;
+  $('target-hp-reset').onclick=funReset;
   // How deep the soft light shades (user, 22.09): the slider only scales the composite's brightness range.
   // It sits in the checkbox's own row, like the ricochet tint and dots, so the Settings grid keeps its pairs.
   $('light-strength').oninput=function(){
@@ -4322,7 +4477,9 @@
     if(left+width>box.clientWidth-edge-band)slot.style.left=Math.max(edge,box.clientWidth-edge-band-width)+'px';
   }
   function layoutMods(){
-    placeMods(targetMods,$('target-mods-slot'),$('model-tile').hidden?null:$('model-tile'));
+    // Measured against the model tile's whole ROW since 22.09: the health bar and its ↺ stand in it, so
+    // the room left for the group starts to the right of them, not of the tile.
+    placeMods(targetMods,$('target-mods-slot'),$('model-tile').hidden?null:$('model-row')||$('model-tile'));
   }
   // One rAF debounce for all three: the heading is measured first, because stacking it changes nothing the
   // toolbar measures but a toolbar fold must not race the heading's own reflow.

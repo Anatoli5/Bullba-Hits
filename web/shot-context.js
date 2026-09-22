@@ -21,7 +21,7 @@
   // shot can straddle the change.
   function modeOfSiegeState(state){return state<=1?MODE_DEFAULT:MODE_SIEGE;}
   /* --- The live state of the shooter's gun (outputs/own-gun-state-2026-09-22.md, owner 22.09) --------
-     From the build after 0.7.24 the recorder writes the state of the gun mechanics the shooter's vehicle
+     From 0.7.25 the recorder writes the state of the gun mechanics the shooter's vehicle
      really carries: `gunState` on the tracer - the instant the shell leaves the barrel - and
      `attacker.gunStateAtImpact` up to a second later, exactly the pair and the precedence the siege state
      already uses. Private fields are written for the player's own shot only ("you know whether you pressed

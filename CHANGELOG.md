@@ -2,7 +2,7 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
-## Unreleased
+## 0.7.25 (2026-09-22)
 
 - The Circle figure of the recorded shot no longer blinks and is no longer recomputed when the Distance slider moves: that ring belongs to a shot fired at its own range, so its figure is taken with the shell at that range and the tile keeps its number while a new one is worked out.
 - The Circle figures are coloured by the chance scale, like the armour under them; the heading keeps the colour of the ring it belongs to.
@@ -11,6 +11,10 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 - The mouse wheel over a slider now accelerates: a slow turn moves one step, a continuous spin steps further and further (up to a tenth of the scale per notch), and a pause or the other direction goes back to the smallest step.
 - The ⇅ swap button is offered again wherever the shooter has a model to be had: a model still being extracted is waited for, a shooter with no parts in the record is read from his own vehicle export, and the button no longer disappears when the side panel is switched to Vehicles.
 - The live state of the shooter's gun is recorded at the shot and at the impact — the charge level of the Object 432U, the Gorilla's low charge, the German shell switch, the overheat level and the rest. A charged shot now shows the charged alpha (×1.045, ×1.177 or ×1.244), the Gorilla's low charge picks the low-charge shell, and every other mechanic gets a line in the shell tooltip without changing a figure. Incoming shots with no recorded state are read exactly as before.
+- Two new Settings switches, both off by default. Target HP gives the vehicle on screen a health bar, filled from the hit points the battle recorded for it (this battle's own values, so an Onslaught vehicle gets its Onslaught health); Hit marks leaves a small coloured dot on the armour where each emulated shot landed. With either of them on an emulated shot no longer flies through the middle of the aiming circle: its impact point is drawn at random inside the circle, by the same distribution the circle's own percentage is worked out with, and the shot line and the panel follow that point.
+- With Target HP on, a shot that gets through rolls its damage — alpha, or the reconstructed non-penetration damage, times one plus or minus the shell's own spread (0.25 normally, 0.12 in an Onslaught record) — and takes it off the bar, down to nothing. The numbers and the last roll are in the bar's tooltip, which also says that the shape of that roll is an assumption: the game makes it on the server. A vehicle the record carries no hit points for gets no bar.
+- The dots are coloured by the outcome on the usual chance scale — penetration, no penetration, ricochet — pile up over a whole burst (the last 500 are kept) and take the place of the big impact cross of an emulated shot; a recorded hit keeps its own cross. The ↺ button beside the model fills the bar again and clears the dots, and so does putting another vehicle on screen.
+- Auto-frame in the scene toolbar starts off.
 
 ## 0.7.24 (2026-09-22)
 

@@ -58,6 +58,10 @@
     // aimPinned: the pinned line on screen is the emulated shot's own, so dropping that shot releases it
     // and the recorded tracer and reticles come back.
     this.aimShotCircle=null;this.aimReloadPart=null;this.aimHold=false;this.aimPinned=false;
+    // The fun layer (user, 22.09). pinResult is the ballistic verdict of the line the pin was last cast
+    // along - refreshPin has it anyway, and handing it out here is what keeps the page from casting a
+    // second ray for the same shot. markMesh is the ONE instanced mesh every hit mark lives in.
+    this.pinResult=null;this.hitMarks=false;this.markMesh=null;this.markCount=0;this.markNext=0;this.markSize=0;
     // aimCentred: the aim held on the model centre while the page's Config popover is open (setAimCentre),
     // null otherwise; aimMarker the crosshair drawn there, in aimMarkerShape; aimSettleTimer the wait after a
     // +/- key before the held point is looked for again (settleAimSoon).
@@ -191,7 +195,7 @@
   Viewer.prototype.setDistance=function(value){if(!Number.isFinite(value))return;this.targetDistance=null;this.distance=Math.max(DISTANCE_MIN,Math.min(DISTANCE_MAX,value));this.render();};
   Viewer.limits={distanceMin:DISTANCE_MIN,distanceMax:DISTANCE_MAX};
   Viewer.prototype.saveDefaults=function(){var frame=this.framing();this.defaults={distance:this.distance,scale:Math.max(.1,Math.min(10,this.camera.zoom/(frame?frame.zoom:this.fitZoom)))};try{window.localStorage.setItem('armor-camera-defaults',JSON.stringify(this.defaults));return true;}catch(ignore){return false;}};
-  Viewer.prototype.clear=function(){this.dropTargets();this.clearLiveAim();this.fitPending=false;this.shotPoints=null;this.recordedDistance=null;this.pinned=null;this.disposePin();this.pinCache=null;this.pinReticles=[];if(this.surface)this.surface.dispose();this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.gunAngle=0;this.savedAim=null;this.aimGroup=null;this.reticles=[];this.reticleLayer.replaceChildren();clearTimeout(this.turretTimer);this.turretTimer=null;this.turretPending=false;this.poseGeometries=null;this.poseBuilt=null;this.poseStale=false;this.spreadAim=null;this.hideSpread();clearTimeout(this.paintTimer);this.paintTimer=null;window.clearTimeout(this.aimSettleTimer);this.aimSettleTimer=null;window.cancelAnimationFrame(this.frameId);this.frameId=null;this.cancelHover();this.cancelOrbit();this.pendingPan=null;this.inspectKey=null;this.paintMesh=null;this.outline=null;this.outlineDepth=null;this.engine=null;this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.loadedData=null;this.paintedKey=null;this.samples=[];var disposed=new Set();this.root.traverse(function(o){var shared=!!(o.parent&&o.parent.type==='ArrowHelper'&&(o===o.parent.line||o===o.parent.cone));if(o.geometry&&!shared&&!disposed.has(o.geometry)){disposed.add(o.geometry);o.geometry.dispose();}if(o.material){(Array.isArray(o.material)?o.material:[o.material]).forEach(function(m){m.dispose();});}});while(this.root.children.length)this.root.remove(this.root.children[0]);this.materials=[];this.point=null;this.travel=null;this.render();};
+  Viewer.prototype.clear=function(){this.dropTargets();this.clearLiveAim();this.clearHitMarks();this.pinResult=null;this.fitPending=false;this.shotPoints=null;this.recordedDistance=null;this.pinned=null;this.disposePin();this.pinCache=null;this.pinReticles=[];if(this.surface)this.surface.dispose();this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.gunAngle=0;this.savedAim=null;this.aimGroup=null;this.reticles=[];this.reticleLayer.replaceChildren();clearTimeout(this.turretTimer);this.turretTimer=null;this.turretPending=false;this.poseGeometries=null;this.poseBuilt=null;this.poseStale=false;this.spreadAim=null;this.hideSpread();clearTimeout(this.paintTimer);this.paintTimer=null;window.clearTimeout(this.aimSettleTimer);this.aimSettleTimer=null;window.cancelAnimationFrame(this.frameId);this.frameId=null;this.cancelHover();this.cancelOrbit();this.pendingPan=null;this.inspectKey=null;this.paintMesh=null;this.outline=null;this.outlineDepth=null;this.engine=null;this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.loadedData=null;this.paintedKey=null;this.samples=[];var disposed=new Set();this.root.traverse(function(o){var shared=!!(o.parent&&o.parent.type==='ArrowHelper'&&(o===o.parent.line||o===o.parent.cone));if(o.geometry&&!shared&&!disposed.has(o.geometry)){disposed.add(o.geometry);o.geometry.dispose();}if(o.material){(Array.isArray(o.material)?o.material:[o.material]).forEach(function(m){m.dispose();});}});while(this.root.children.length)this.root.remove(this.root.children[0]);this.materials=[];this.point=null;this.travel=null;this.render();};
   Viewer.prototype.rebuild=function(){
     if(!this.loadedData)return;var T=THREE,self=this;this.samples=[];this.paintedKey=null;
     // A failed composition is retried on the next rebuild (pose or model) instead of staying off for good.
@@ -661,20 +665,22 @@
     // arrow and the crosshair stand. The ray is cast again for the shell, and the drawing is redone only when the
     // flight after a ricochet changed with it. rebuild() makes a new engine, so a new pose never lands here.
     if(p&&cache&&cache.pinned===p&&cache.engine===this.engine&&this.pinGroup){
-      result=this.shell&&this.engine?this.engine.ray(p.origin.toArray(),p.direction.toArray(),this.shell):null;cast=true;
+      result=this.shell&&this.engine?this.engine.ray(p.origin.toArray(),p.direction.toArray(),this.shell):null;cast=true;this.pinResult=result;
       if(pinLeg(result)===cache.leg){this.syncRecorded();this.draw();return;}
       point=cache.contact;
     }
     this.disposePin();this.pinCache=null;
     this.pinReticles.forEach(function(r){r.element.remove();});this.reticles=this.reticles.filter(function(r){return !r.pinned;});this.pinReticles=[];
     this.syncRecorded();
-    if(!p)return;
+    if(!p){this.pinResult=null;return;}
     // The line is fixed in the world; the vehicle under it may have been posed since the click, so find the contact again.
     var contact;
     if(point===undefined){var caster=new THREE.Raycaster(p.origin,p.direction),objects=this.paintMesh?[this.paintMesh]:[];if(this.trackMesh)objects.push(this.trackMesh);
       var hits=caster.intersectObjects(objects);contact=hits.length?hits[0].point.clone():null;}
     else contact=point?point.clone():null;
-    if(!cast)result=this.shell&&this.engine?this.engine.ray(p.origin.toArray(),p.direction.toArray(),this.shell):null;
+    // The verdict of this line, kept for the page: the fun layer rolls its outcome and its damage out of
+    // THIS result (viewer.pinResult), so an emulated shot never casts or evaluates a second ray.
+    if(!cast){result=this.shell&&this.engine?this.engine.ray(p.origin.toArray(),p.direction.toArray(),this.shell):null;this.pinResult=result;}
     this.pinCache={pinned:p,engine:this.engine,contact:contact,leg:pinLeg(result)};
     var group=new THREE.Group(),tip=contact||(result&&result.bounce?new THREE.Vector3().fromArray(result.bounce.point):p.point);
     group.add(this.shotArrow(p.direction,tip,0x9fdcff));
@@ -686,7 +692,10 @@
       if(result.distance!==undefined)this.pinReticleAt(end,result.reason==='ricochet'?'pinned lost':'pinned second');
     }
     this.pinGroup=group;this.scene.add(group);
-    if(contact)this.pinReticleAt(contact,'pinned');
+    // Hit marks on: an EMULATED shot marks its impact with a dot on the armour instead of the cross
+    // (user, 22.09 - a burst of crosses turns the model into mush). A pin the user made himself keeps its
+    // cross, and so does the marker at the end of a ricochet leg, which is never one of a pile.
+    if(contact&&!(this.hitMarks&&this.aimPinned))this.pinReticleAt(contact,'pinned');
     this.draw();
   };
   Viewer.prototype.pinReticleAt=function(position,classes){
@@ -846,6 +855,14 @@
     if(this.liveRadius100){var pinned=this.drawLiveAim();if(this.onAimMove)this.onAimMove(pinned);if(this.onAim)this.onAim('Circle pinned here. It keeps following the shooter’s state; “Centre on the hit” releases it.');}
     else if(this.onAim)this.onAim('Estimate centre moved. Press “Estimate”.');}};
   Viewer.prototype.hideSpread=function(){if(this.spreadCircle){this.scene.remove(this.spreadCircle);this.spreadCircle.geometry.dispose();if(this.spreadCircle.material!==this.liveRingMaterial)this.spreadCircle.material.dispose();this.spreadCircle=null;this.draw();}};
+  // ONE point of a dispersion circle: the radial quantile of the chosen profile at `u`, at the angle
+  // `angle`. The integral below walks `u` over the stratified (i+.5)/count and the angle over the golden
+  // step; a RANDOM shot (liveAimSample) draws both from the page's own source. Both therefore read the
+  // very same law - there is no second distribution anywhere on the page.
+  function circlePoint(center,right,up,radius,u,angle,quantile){
+    var r=radius*quantile(u);
+    return center.clone().addScaledVector(right,r*Math.cos(angle)).addScaledVector(up,r*Math.sin(angle));
+  }
   // The sampling model of a dispersion circle, in one place: 'count' rays fanned over the circle at the
   // quantiles of the chosen radial distribution (a sunflower spiral, so the same count always gives the
   // same points), a miss counting as 0 % and 0 HP. The distribution itself is a setting - the page's own
@@ -856,8 +873,7 @@
     var sum=0,unknown=0,miss=0,dmg=0,o=origin.toArray();
     var q=typeof quantile==='function'?quantile:ArmorBallistics.aimProfile().quantile;
     for(var i=0;i<count;i++){
-      var r=radius*q((i+.5)/count),angle=i*2.399963229728653;
-      var point=center.clone().addScaledVector(right,r*Math.cos(angle)).addScaledVector(up,r*Math.sin(angle));
+      var point=circlePoint(center,right,up,radius,(i+.5)/count,i*2.399963229728653,q);
       var hit=engine.ray(o,point.sub(origin).toArray(),shell);
       if(hit.chance===null)unknown++;else sum+=hit.chance;
       if(hit.expected>0)dmg+=hit.expected;
@@ -1173,5 +1189,65 @@
     this.commitPose();
     return sampleCircle(this.engine,shell,aim.origin,aim.center,aim.right,aim.up,aim.radius,count>0?count:256,this.aimQuantile());
   };
+  // A RANDOM impact point inside the live ring (the fun layer, user 22.09): the same radial law the figure
+  // over that ring is integrated with (circlePoint above with this viewer's own profile), drawn at a
+  // uniform u instead of the stratified one and at a uniform angle. `random` is the page's own source, so
+  // a harness can seed it. GEOMETRY ONLY - no ray is cast here: the shot casts the one line it always cast
+  // (pinAtPoint), and its verdict comes back on pinResult.
+  Viewer.prototype.liveAimSample=function(random){
+    var aim=this.liveAim,r=typeof random==='function'?random:Math.random;
+    if(!aim)return null;
+    return circlePoint(aim.center,aim.right,aim.up,aim.radius,r(),r()*Math.PI*2,this.aimQuantile());
+  };
+  // --- Hit marks (user, 22.09) ---------------------------------------------------------------------
+  // Every emulated shot leaves a small disc lying on the armour in the colour of its outcome, and they
+  // pile up: NOT the impact cross, which is a screen-sized glyph and turns the model into mush after a
+  // burst. One InstancedMesh holds all of them - allocated once at the cap, never one mesh per dot - and
+  // nothing at all happens per frame: an instance stands in the world where it was put.
+  // The map is composed as a full-screen quad (paint()), which would cover any depth-tested geometry, so
+  // the discs are drawn like the rings: depth off, above the quad. Back-face culling then does the
+  // occlusion the depth buffer cannot - a disc lies along the surface normal, so one on a face turned away
+  // from the camera is culled with that face.
+  var MARK_LIMIT=500;
+  Viewer.prototype.hitMarkMesh=function(){
+    if(this.markMesh)return this.markMesh;
+    var T=THREE,mesh=new T.InstancedMesh(new T.CircleGeometry(1,16),
+      new T.MeshBasicMaterial({transparent:true,opacity:.95,depthTest:false,depthWrite:false}),MARK_LIMIT);
+    mesh.count=0;mesh.renderOrder=11;mesh.frustumCulled=false;
+    if(mesh.instanceMatrix.setUsage&&T.DynamicDrawUsage)mesh.instanceMatrix.setUsage(T.DynamicDrawUsage);
+    // A quarter of the impact cross, as a FIXED size in the world: the cross spans a fifth of the
+    // vehicle's projected diameter, so a mark is about a twentieth of it. Taken once per model, not per
+    // mark, so the marks of one run are all the same size however the camera moves.
+    var radius=this.bounds?this.bounds.getBoundingSphere(new T.Sphere()).radius:1.6;
+    this.markSize=Math.max(.03,Math.min(.2,radius*.05));
+    this.markMesh=mesh;this.markCount=0;this.markNext=0;this.scene.add(mesh);
+    return mesh;
+  };
+  // `color` is any value THREE.Color takes - the page hands in the 'rgb(r,g,b)' its own outcome palette
+  // gives. Without a normal (a shot that met nothing) there is nothing to lie on and no mark is made.
+  Viewer.prototype.addHitMark=function(point,normal,color){
+    if(!point||!normal)return false;
+    var T=THREE,mesh=this.hitMarkMesh(),size=this.markSize;
+    var n=normal.clone();
+    if(n.lengthSq()<1e-12)return false;
+    n.normalize();
+    var m=new T.Matrix4().compose(point.clone().addScaledVector(n,size*.15),
+      new T.Quaternion().setFromUnitVectors(new T.Vector3(0,0,1),n),new T.Vector3(size,size,size));
+    var i=this.markNext;
+    mesh.setMatrixAt(i,m);mesh.setColorAt(i,new T.Color(color===undefined||color===null?0xffffff:color));
+    this.markNext=(i+1)%MARK_LIMIT;this.markCount=Math.min(MARK_LIMIT,this.markCount+1);mesh.count=this.markCount;
+    mesh.instanceMatrix.needsUpdate=true;if(mesh.instanceColor)mesh.instanceColor.needsUpdate=true;
+    this.draw();return true;
+  };
+  Viewer.prototype.clearHitMarks=function(){
+    var mesh=this.markMesh;
+    this.markCount=0;this.markNext=0;
+    if(!mesh)return false;
+    this.scene.remove(mesh);mesh.geometry.dispose();mesh.material.dispose();if(mesh.dispose)mesh.dispose();
+    this.markMesh=null;this.draw();return true;
+  };
+  // With the marks on, an emulated shot leaves a dot instead of the big cross (refreshPin). The recorded
+  // hit's own crosses and a manual Alt + click pin keep theirs: only the pin of an emulated shot changes.
+  Viewer.prototype.setHitMarks=function(on){this.hitMarks=!!on;};
   window.ArmorViewer=Viewer;
 }());

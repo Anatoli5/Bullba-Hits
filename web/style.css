@@ -97,6 +97,16 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 .viewport-tile .vehicle-tile{flex:0 0 auto;height:40px;padding-right:44px;max-width:320px}
 .tile-caption{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--gold);white-space:nowrap}
 #model-tile{top:12px}
+/* Target HP (user, 22.09): the health bar of the vehicle on screen stands in the model tile's own row, with
+   the ↺ that fills it again and clears the hit marks - the same button as the swap (.swap-roles), because it
+   is the same kind of control. The row takes over the tile's placing exactly as the shooter row does below.
+   The bar is graphics only: the figures live in its tooltip. Its fill colour is written by the page from the
+   very chance/damage scale the armour is drawn with, so full and empty read as green and red of one palette. */
+.model-row{position:absolute;left:50%;top:12px;transform:translateX(-50%);z-index:5;display:flex;flex-wrap:nowrap;align-items:center;gap:8px;max-width:calc(100% - 24px)}
+.model-row>#model-tile{position:static;transform:none;max-width:100%}
+.target-hp{flex:0 0 auto;width:140px;height:12px;padding:2px;border:1px solid rgba(157,174,191,.55);border-radius:6px;background:rgba(23,35,48,.35);box-shadow:0 1px 2px rgba(0,0,0,.7)}
+.target-hp[hidden]{display:none}
+.target-hp-fill{display:block;height:100%;width:100%;border-radius:4px;background:#5ac8a0}
 /* The swap left the shooter tile for a button of its own (19.09): the tile picks the role now. The two share
    one row so the button keeps to the left of the tile, and the row takes over the tile's own placing. */
 .shooter-row{position:absolute;left:50%;bottom:12px;transform:translateX(-50%);z-index:7;display:flex;flex-wrap:nowrap;align-items:center;gap:8px;max-width:calc(100% - 24px)}
