@@ -109,6 +109,16 @@ class ShotTelemetry(object):
                   'origin':vec(refStartPoint), 'velocity':vec(velocity), 'gravity':number(gravity),
                   'maxDistance':number(maxShotDist), 'gunIndex':int(gunIndex), 'gunInstallationIndex':int(gunInstallationIndex),
                   'source':'received Avatar.showTracer', 'own':shooterID == player.playerVehicleID}
+        # R2 of outputs/mode-shell-modifiers-2026-09-22.md: the shooter's siege state at the moment the
+        # shot leaves the barrel - the one moment that really decides which of his two shells flew. Only
+        # for a vehicle that has two modes; an ordinary one would carry a 0 that says nothing. Vehicle
+        # .siegeState is UINT8/ALL_CLIENTS, so it is readable for every vehicle in the area of interest,
+        # the player's own included. Guarded: an entity outside the AoI simply leaves the field out.
+        try:
+            entity = self.recorder.bw.entity(int(shooterID))
+            if entity is not None and getattr(entity.typeDescriptor, 'hasSiegeMode', False):
+                values['siegeState'] = int(entity.siegeState)
+        except Exception: pass
         if values['own'] and not isRicochet and gunInstallationIndex == 0:
             values['aimAtTracer'] = self.snapshot(player)
             values['aimAtTracer']['source'] = 'client snapshot when own tracer received'

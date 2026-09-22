@@ -152,9 +152,15 @@ function verdictModule(appSource, deps) {
     takeFunction(appSource, 'modsFactor'),
     takeFunction(appSource, 'linerFactor'),
     takeFunction(appSource, 'targetFactor'),
+    // A manual shell borrows the shooter's alpha (22.09); shellAt reaches for both of these, and although
+    // this pass only ever hands it a saved candidate, the cut-out copy must still be able to run.
+    'var MANUAL_DAMAGE_KEYS=' + takeLiteral(appSource, /var\s+MANUAL_DAMAGE_KEYS=(\[[^\]]*\])/, 'the manual-shell damage keys') + ';',
+    takeFunction(appSource, 'manualDamageFrom'),
     takeFunction(appSource, 'shellAt'),
     takeLiteral(appSource, /(var\s+verdictLines=[^\n]*)\n/, 'the verdict counters'),
     takeFunction(appSource, 'verdictLine'),
+    // The shooter's vehicle mode on the line (22.09): verdictLine calls it, so it has to come along.
+    takeFunction(appSource, 'shellModeColumns'),
     takeFunction(appSource, 'damageColumns'),
     takeFunction(appSource, 'queueVerdicts'),
     takeFunction(appSource, 'drainVerdicts'),

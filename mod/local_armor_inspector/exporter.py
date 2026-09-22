@@ -277,16 +277,29 @@ def fix_shells(hit):
     record, so the same client lookups the recorder makes today rebuild them exactly;
     nothing is guessed. A hit whose shells already carry 'alpha' is left alone.
     Guarded like the fixes above: a failure leaves the record as it was.
+
+    R5 of outputs/mode-shell-modifiers-2026-09-22.md - what a rebuilt shell is NOT. vehicle_descr()
+    passes no extData, so a shell built here carries neither the battle's modifiers nor the shooter's
+    post-progression, while the ones the recorder wrote live do (ClientArena.getVehicleType builds the
+    attacker's descriptor with both). Measured on the owner's own records, 22.09: in the twenty 7v7
+    battles of 20-21.09 the live shells carry damageRandomization 0.12 where the stock value is 0.25
+    and half the module damage. So a live list is never replaced: the only records touched are those
+    whose shells carry no 'alpha' at all, i.e. were written before 0.7.13. The second mode's shells
+    (modeShells) are live-only for the same reason and are never rebuilt here.
     """
     attacker, target = hit.get('attacker') or {}, hit.get('target') or {}
     shells = hit.get('availableShells') or hit.get('shellCandidates') or []
-    if attacker.get('compactDescriptor') and not (shells and all('alpha' in s for s in shells)):
+    live = bool(shells and all('alpha' in s for s in shells)) or bool(attacker.get('modeShells'))
+    if attacker.get('compactDescriptor') and not live:
         try:
             from .armor import shot_candidates
             descr = vehicle_descr(attacker['compactDescriptor'])
             slot = hit.get('gunInstallationIndex') or 0
             candidates = shot_candidates(descr, hit.get('effectsIndex'), slot)
-            hit['availableShells'] = shot_candidates(descr)
+            # A type the client can no longer build gives an empty list; the record then keeps the
+            # shells it was written with instead of losing them.
+            rebuilt = shot_candidates(descr)
+            if rebuilt: hit['availableShells'] = rebuilt
             if candidates:
                 hit['shellCandidates'] = candidates
                 hit['shellStatus'] = 'matched'
@@ -600,6 +613,19 @@ def aim_block(descr):
             if value is not None: aim[key] = value
         except Exception:
             aim['unavailable'].append(key)
+    # R3: the gun mechanics this vehicle carries, by the client's own names. A mechanic is declared in
+    # the vehicle's <mechanics> section and lands in VehicleType.mechanicsParams keyed by the class's
+    # MECHANICS_NAME (vehicles.pyc VehicleType.__init__ 3515-3524; the names are the MECHANICS_NAME
+    # constants of items/components/shared_components.pyc, read in this client). It says only THAT the
+    # gun has the mechanic, never its state at the shot - that is live state nobody sends to other
+    # clients - so the page can say "this gun's numbers vary" instead of quietly showing one value.
+    # Type-level, so fix_aim gives it to every older record from the compact descriptor for free.
+    try:
+        params = getattr(descr.type, 'mechanicsParams', None) or {}
+        found = sorted(str(name) for name in params if str(name) in AIM_GUN_MECHANICS)
+        if found: aim['gunMechanics'] = found
+    except Exception:
+        aim['unavailable'].append('gunMechanics')
     if not aim['unavailable']:
         del aim['unavailable']
     # Without the angle itself there is no circle to draw, so an empty block is no block.
@@ -615,6 +641,14 @@ AIM_RELOAD_KEYS = ('reloadTime', 'clip', 'reloadTimeFactor')
 # them from it; the mechanics tuples come along with gunTags, whose presence decides them.
 AIM_TYPE_KEYS = ('crewRoles', 'gunTags')
 AIM_MECHANICS_KEYS = ('autoreload', 'dualGun', 'twinGun', 'dualAccuracy', 'autoShoot')
+# The gun mechanics whose presence changes what a shell does or how hard the shot hits, by the client's
+# own MECHANICS_NAME (shared_components.pyc, verified in 2.4.0.1): the first four are the ones the garage
+# itself shows a shell in two states for (shell_mechanics_helper.pyc), the rest multiply the damage or the
+# penetration of a single shot from live state. Anything else in mechanicsParams is mobility or vision and
+# is not written here.
+AIM_GUN_MECHANICS = frozenset((
+    'shellParamsSwitcher', 'lowChargeShot', 'shellCalibration', 'bustleFeed',
+    'chargeShot', 'propellantAfterburnerGun', 'overheatStacks', 'chargeableBurst', 'secondaryGun'))
 AIM_COMPLETION_KEYS = AIM_RELOAD_KEYS + AIM_TYPE_KEYS
 
 
@@ -648,7 +682,10 @@ def fix_aim(vehicle):
     # Only the missing keys are copied over: whatever the old block holds stays byte for byte,
     # so a record is never silently rewritten by a later change to an unrelated field.
     fresh = list(block.get('unavailable') or [])
-    for key in AIM_COMPLETION_KEYS + ('burst',) + AIM_MECHANICS_KEYS:
+    # 'burst' and 'gunMechanics' are written only when the gun really has them, so neither may decide
+    # that a block is incomplete - a vehicle without them would be "completed" on every pass for ever.
+    # They are copied when a completion key brings the rebuild here anyway.
+    for key in AIM_COMPLETION_KEYS + ('burst', 'gunMechanics') + AIM_MECHANICS_KEYS:
         if key in existing:
             continue
         if key in block:

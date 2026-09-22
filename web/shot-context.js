@@ -5,7 +5,60 @@
   var kinds=['HOLLOW_CHARGE','HIGH_EXPLOSIVE','ARMOR_PIERCING','ARMOR_PIERCING_HE','ARMOR_PIERCING_CR','SMOKE'];
   function point(m,p){return [0,1,2].map(function(i){return m[i]*p[0]+m[i+4]*p[1]+m[i+8]*p[2]+m[i+12];});}
   function distance(a,b){return Math.hypot(a[0]-b[0],a[1]-b[1],a[2]-b[2]);}
-  function same(a,b){return a.kind===b.kind&&a.name===b.name&&a.caliber===b.caliber&&a.penetration100===b.penetration100&&a.speed===b.speed;}
+  function same(a,b){return a.kind===b.kind&&a.name===b.name&&a.caliber===b.caliber&&a.penetration100===b.penetration100&&a.speed===b.speed&&a.vehicleMode===b.vehicleMode;}
+  /* --- The shooter's two modes (outputs/mode-shell-modifiers-2026-09-22.md, P2-P4) -----------------
+     Six vehicles of client 2.4.0.1 are built twice and really fire another shell in their second mode:
+     five German tanks with the mechanic `shellParamsSwitcher` (AP/APCR normalisation 5/2 -> 10/7 deg,
+     ricochet 70 -> 75 deg, HEAT jet loss 0.5 -> 0.2 per metre, alpha 40-45 lower) and the Gorilla with
+     `lowChargeShot` (alpha 800 -> 390, penetration 305 -> 255, speed 900 -> 700, and another effects id).
+     Since 22.09 the recorder writes the other mode's list beside the one the client handed it:
+     attacker.modeShells with attacker.modeShellsMode, and attacker.vehicleMode for availableShells.
+     VEHICLE_MODE: 0 default, 1 siege. A record without those fields behaves exactly as it did. */
+  var MODE_DEFAULT=0,MODE_SIEGE=1;
+  // VEHICLE_SIEGE_STATE (constants.pyc 4166-4182, read in this client): DEFAULT_MODE = {0 DISABLED,
+  // 1 SWITCHING_ON}, SIEGE_MODE = {2 ENABLED, 3 SWITCHING_OFF, 4 PILLBOX_ENABLED}. The mode flips at the
+  // END of switching on and the START of switching off, and the gun is blocked while switching, so no
+  // shot can straddle the change.
+  function modeOfSiegeState(state){return state<=1?MODE_DEFAULT:MODE_SIEGE;}
+  // The server scales every shot's (velocity, gravity) by some k, so |v| alone does not name a shell -
+  // but v/sqrt(g) cancels k and equals the descriptor's speed/sqrt(gravity) exactly. Measured over the
+  // owner's 5352 tracers, 22.09: 94.5 % match one of the shooter's own shells inside 0.1 %. The tolerance
+  // is 2.5 %, not the 0.5 % first tried: the Tesak's tracers sit a flat 2 % off its descriptor (114 hits of
+  // 60 battles, cause unknown), and every real mismatch measured is far outside - the Gorilla's charge
+  // 14 %, event shells more. At 0.5 % the pass called 255 hits assumed, at 2.5 % 139, and the difference
+  // was the Tesak plus two B-C 155 58 hits (offline pass, 22.09).
+  var BALLISTIC_TOLERANCE=.025;
+  function ratioOf(c){return c&&c.speed>0&&c.gravity>0?c.speed/Math.sqrt(c.gravity):null;}
+  function copyShell(c,mode){var out={},k;for(k in c)if(Object.prototype.hasOwnProperty.call(c,k))out[k]=c[k];out.vehicleMode=mode;return out;}
+  function tagged(list,mode){return (list||[]).map(function(c){return copyShell(c,mode);});}
+  // The same shell in both modes: 76 of this client's 79 second descriptors change no shell at all, and
+  // the five switchers leave their HE alone, so the second list is mostly a copy of the first. Everything
+  // the recorder writes is compared except the mode tag and the provenance string.
+  function identical(a,b){
+    if(!a||!b)return false;
+    var keys={},k;
+    for(k in a)if(Object.prototype.hasOwnProperty.call(a,k))keys[k]=1;
+    for(k in b)if(Object.prototype.hasOwnProperty.call(b,k))keys[k]=1;
+    for(k in keys){
+      if(k==='vehicleMode'||k==='source')continue;
+      if(a[k]!==b[k])return false;
+    }
+    return true;
+  }
+  /* The client's own name for the state a mode shell was fired in (common/vehicle_mechanics.xml):
+     AP and APCR basic = straight_armor, modified = angled_armor; HEAT basic = noscreen,
+     modified = screen. The Gorilla's second mode is its low charge, not a shell switch. Returns '' for
+     the vehicle's own default mode and for every vehicle that has only one. */
+  function modeLabel(hit,shell){
+    if(!shell||!(shell.vehicleMode===MODE_DEFAULT||shell.vehicleMode===MODE_SIEGE))return '';
+    var aim=((hit||{}).attacker||{}).aim||{},mechanics=Array.isArray(aim.gunMechanics)?aim.gunMechanics:[];
+    if(mechanics.indexOf('lowChargeShot')>=0)return shell.vehicleMode===MODE_SIEGE?'low charge':'';
+    if(mechanics.indexOf('shellParamsSwitcher')<0&&mechanics.length)return shell.vehicleMode===MODE_SIEGE?'siege':'';
+    var kind=String(shell.kind||'');
+    if(kind==='HOLLOW_CHARGE')return shell.vehicleMode===MODE_SIEGE?'screen':'no screen';
+    if(kind==='ARMOR_PIERCING'||kind==='ARMOR_PIERCING_CR')return shell.vehicleMode===MODE_SIEGE?'angled armour':'straight armour';
+    return shell.vehicleMode===MODE_SIEGE?'siege':'';
+  }
   function resolve(hit,events){
     var target=hit.target||{},parts=target.parts||[],points=hit.points||[],world=[];
     if(target.worldTransform)points.forEach(function(p){var part=parts.find(function(v){return v.id===p.part;});if(p.status==='resolved'&&p.position&&part&&part.transform)world.push(point(target.worldTransform,point(part.transform,p.position)));});
@@ -32,16 +85,73 @@
     // one of them that agrees with the hit is an answer, not a blank.
     var recorded=((hit.shellCandidates&&hit.shellCandidates.length?hit.shellCandidates:hit.availableShells)||[]).slice();
     var choices=(hit.availableShells||hit.shellCandidates||[]).slice();
+    // P2: the shooter's other mode, when the record carries it. Each candidate is copied and tagged with
+    // the mode it belongs to, so the two sets can never be confused - for the five switchers they share
+    // name, calibre, penetration and speed, and only alpha, normalisation, ricochet and the HEAT jet loss
+    // differ. A mode shell the mode did not change (the switchers' HE) is dropped: it is the same shell.
+    var attacker=hit.attacker||{},extra=Array.isArray(attacker.modeShells)?attacker.modeShells:[];
+    var ownMode=attacker.vehicleMode===MODE_DEFAULT||attacker.vehicleMode===MODE_SIEGE?attacker.vehicleMode:null;
+    var otherMode=attacker.modeShellsMode===MODE_DEFAULT||attacker.modeShellsMode===MODE_SIEGE?attacker.modeShellsMode:null;
+    var modeSet=[],hasModes=false;
+    if(extra.length&&otherMode!==null&&ownMode!==null&&otherMode!==ownMode){
+      modeSet=tagged(extra.filter(function(c){return !(hit.availableShells||[]).some(function(d){return identical(c,d);});}),otherMode);
+      if(modeSet.length){hasModes=true;recorded=tagged(recorded,ownMode).concat(modeSet);choices=tagged(choices,ownMode).concat(modeSet);}
+    }
     var matching=recorded.filter(function(c){return (kindValues.length===0||kindValues.length===1&&c.kind===kindValues[0])&&points.every(function(p){return !(p.caliber>0)||Math.abs(c.caliber-p.caliber)<.1;});});
+    // The Gorilla's low charge changes the shell's own effects id (hugeAPCR 50 -> largeAPCR 42), so the
+    // hit names its mode outright. Only for a record that carries the second set: for every other record
+    // shellCandidates was already narrowed by this very field and the step is a no-op.
+    if(hasModes&&matching.length>1&&Number.isFinite(hit.effectsIndex)){
+      var byEffect=matching.filter(function(c){return c.effectsIndex===hit.effectsIndex;});
+      if(byEffect.length)matching=byEffect;
+    }
     if(matching.length>1&&tracer&&tracer.velocity){var speed=Math.hypot.apply(null,tracer.velocity),narrow=matching.filter(function(c){return c.speed>0&&Math.abs(c.speed-speed)<Math.max(.1,c.speed*.001);});if(narrow.length===1)matching=narrow;}
+    // The k-free ballistic invariant (see BALLISTIC_TOLERANCE above): it names the Gorilla's charge -
+    // 351.20 against 303.30, a 14 % gap - where the raw speed test cannot.
+    var flight=tracer&&Array.isArray(tracer.velocity)&&tracer.gravity>0?Math.hypot.apply(null,tracer.velocity)/Math.sqrt(tracer.gravity):null;
+    function ballistics(c){var r=ratioOf(c);return flight===null||r===null?null:Math.abs(r-flight)<=flight*BALLISTIC_TOLERANCE;}
+    // Narrowing by it is kept to a record that carries the second mode: on every older record the page
+    // must answer exactly as it did, P1 below apart. (It would name the shell of 9 more contact points of
+    // the 4794 in the owner's 60 battles - the owner's call, not this build's.)
+    if(hasModes&&matching.length>1&&flight!==null){var fit=matching.filter(function(c){return ballistics(c)===true;});if(fit.length===1)matching=fit;}
+    // P3: the five switchers fire the same speed, gravity, penetration and effects id in both modes, so
+    // nothing above can tell their two sets apart. Strongest evidence first: the siege state recorded at
+    // the tracer (the moment of the shot), then the one read at the impact, then the recorded damage when
+    // only one of the two alpha bands could have produced it - an upper bound only, because a shell can
+    // always do less than its band (the last hit on a vehicle is capped by what is left of it).
+    var modeSource='';
+    if(hasModes&&matching.length>1){
+      var state=Number.isFinite(tracer&&tracer.siegeState)?tracer.siegeState
+        :Number.isFinite(attacker.siegeStateAtImpact)?attacker.siegeStateAtImpact:null;
+      if(state!==null){
+        var byState=matching.filter(function(c){return c.vehicleMode===modeOfSiegeState(state);});
+        if(byState.length){matching=byState;modeSource=Number.isFinite(tracer&&tracer.siegeState)?'the shooter’s recorded state at the shot':'the shooter’s recorded state at the impact';}
+      }
+      if(matching.length>1&&Number(hit.damage)>0){
+        var dmg=Number(hit.damage),could=matching.filter(function(c){
+          var r=Number.isFinite(c.damageRandomization)?c.damageRandomization:.25,a=Number(c.alpha)||0;
+          return !(a>0)||dmg<=a*(1+r)*1.001;});
+        if(could.length===1){matching=could;modeSource='only this state’s damage band reaches the recorded damage';}
+      }
+    }
     var selected=matching.length===1?matching[0]:null;
+    // P1: a single candidate is still only a candidate. When the tracer's own ballistics contradict it -
+    // the three measured Gorilla low-charge hits of 22.09 were shown as a determined full-charge shell,
+    // penetration 385 instead of ~325 and alpha 800 instead of 390 - the shell is NOT determined.
+    var contradicted=!!(selected&&ballistics(selected)===false);
+    if(contradicted)selected=null;
     if(selected&&!choices.some(function(c){return same(c,selected);}))choices.push(selected);
     var index=selected?choices.findIndex(function(c){return same(c,selected);}):-1;
     var range=tracer&&Array.isArray(tracer.origin)&&world.length?distance(tracer.origin,world[0]):null,rangeSource='tracer';
     if(!(Number.isFinite(range)&&range>0)){range=Number.isFinite(hit.rangeAtImpact)&&hit.rangeAtImpact>0?hit.rangeAtImpact:null;rangeSource=range===null?null:'impact';}
+    // Why the shell stayed unknown, in the words the shell chips and the tooltip use.
+    var why=contradicted?'no shell of this shooter fits the shot’s ballistics'
+      :hasModes&&index<0?'this vehicle switches its shell parameters; the record does not say which state was on':'';
     return {choices:choices,index:index,kind:kindValues.length===1?kindValues[0]:null,tracer:tracer,command:command,aim:aim,aimSource:chosen?chosen.from:null,aimReason:aimReason,
-      range:range,rangeSource:rangeSource,
-      source:index<0?'Shell not determined unambiguously':kindValues.length?'Type and calibre from the hit; gun data from the client':'The only shell with this effect in the record'};
+      range:range,rangeSource:rangeSource,modes:hasModes,unresolvedWhy:why,
+      source:index<0?'Shell not determined unambiguously'
+        :modeSource?'The shooter’s second mode: '+modeSource
+        :kindValues.length?'Type and calibre from the hit; gun data from the client':'The only shell with this effect in the record'};
   }
   /* Which shell to assume when resolve() could not name one (user, 22.09: a grey model has no logic, and of
      two shells the record cannot tell apart the one that pierces deeper is the likelier - it had the better
@@ -67,5 +177,5 @@
     return {index:best.i,reason:could.length>1?'the deepest penetration of the shells that fit':
       same.length>1?'the deepest penetration of this type':'the only shell of this type the record lists'};
   }
-  root.ArmorShotContext={resolve:resolve,assume:assume};
+  root.ArmorShotContext={resolve:resolve,assume:assume,modeLabel:modeLabel,identical:identical};
 }(typeof window==='undefined'?globalThis:window));

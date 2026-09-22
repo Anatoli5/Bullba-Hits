@@ -4,6 +4,12 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 
 ## Unreleased
 
+- Vehicles that fire different shells in their second mode (the Gorilla's low charge and the five German shell switchers) are recorded and computed with that mode's own numbers: the recorder writes both sets of shells, the shooter's siege state at the shot and at the impact, and the page marks a second-mode shell ◐ and says which state it was in.
+- The page no longer claims a shell whose flight the tracer contradicts: when the shot's own speed and gravity fit no shell the shooter carries, it is shown as assumed with that reason instead of as the shell that flew.
+- A shell you pick by hand now carries the shooter's own alpha for that type, and a new α field beside the penetration and the calibre shows it and lets you change it. The circle figures work for a manual shell again — they printed a dash — and fall back to the penetration chance only when nothing in the record has an alpha at all.
+- The aim configuration takes a battle's own modifiers into account: for an Onslaught battle it starts from the numbers that battle was fought with, and the Config tooltip names the mode, what was applied and what was not.
+- The gun's own mechanics (shell switcher, low charge, charge shot, overheat and the rest) are recorded for the shooter, so the page can say that a gun's numbers vary instead of showing one value in silence.
+- Statistics log: the lines of a two-mode shooter carry the mode, the mode's shells and the recorded siege state, and a guessed line now names the shell the page itself shows instead of the first of the list.
 - The lighting-depth slider sits in the Soft lighting row next to its own tick box, like the ricochet rows, so the Settings grid keeps its pairs; its default is 250 % (the deepest shading), and a stored 100 % from the old default follows.
 
 ## 0.7.23 (2026-09-22)

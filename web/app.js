@@ -2,7 +2,7 @@
   'use strict';
   var $=function(id){return document.getElementById(id);},viewer=null,current=null,selected=null,filter='all',generation=0,battleGeneration=0;
   var effects={0:'Penetration without damage',1:'Intermediate ricochet',2:'Ricochet',3:'No penetration',4:'Penetration',5:'Critical hit',6:'Penetration with module damage'};
-  var shellNames={ARMOR_PIERCING:'AP',ARMOR_PIERCING_CR:'APCR',HOLLOW_CHARGE:'HEAT',HIGH_EXPLOSIVE:'HE'},candidates=[],activeHit=null,shotContext=null,manualPen='',lastDistance=null,analysisKey=null,recordsVersion='';
+  var shellNames={ARMOR_PIERCING:'AP',ARMOR_PIERCING_CR:'APCR',HOLLOW_CHARGE:'HEAT',HIGH_EXPLOSIVE:'HE'},candidates=[],activeHit=null,shotContext=null,manualPen='',manualAlpha='',lastDistance=null,analysisKey=null,recordsVersion='';
   // Fingerprint of the hit record the scene was built from, so an index bump that changed nothing does not
   // rebuild it. Set by selectHit, cleared by display() so that every other scene (a browsed vehicle, a
   // swapped shooter) counts as “not the recorded hit”.
@@ -573,9 +573,12 @@
     // shooter picked from the roster do carry a gun of their own, so they take their own shells instead.
     var browsing=!!(hit&&(hit.vehicle||hit.chosenShooter)),keep=null;
     if(hit&&hit.synthetic&&!browsing){var was=$('shell-choice').value,c0=was.indexOf('saved:')===0?candidates[Number(was.slice(6))]:null;
-      keep={kind:c0?c0.kind:was||'ARMOR_PIERCING',penetration:$('penetration').value,caliber:$('caliber').value};}
+      keep={kind:c0?c0.kind:was||'ARMOR_PIERCING',penetration:$('penetration').value,caliber:$('caliber').value,alpha:$('alpha').value};}
     activeHit=hit;shotContext=ArmorShotContext.resolve(hit,hit&&hit.vehicle?[]:(current&&current.shotEvents||[]));candidates=shotContext.choices;var choice=$('shell-choice');choice.replaceChildren();
-    candidates.forEach(function(c,i){var o=node('option',(shellNames[c.kind]||c.kind)+' · '+c.name+(c.gunInstallation>0?' · ability gun':''));o.value='saved:'+i;choice.appendChild(o);});
+    // The list is the one place a word is needed: the five switchers' two sets share the shell's name,
+    // calibre, penetration and speed, so without the mode two entries would read exactly alike.
+    candidates.forEach(function(c,i){var mode=ArmorShotContext.modeLabel?ArmorShotContext.modeLabel(hit,c):'';
+      var o=node('option',(shellNames[c.kind]||c.kind)+' · '+c.name+(mode?' · '+mode:'')+(c.gunInstallation>0?' · ability gun':''));o.value='saved:'+i;choice.appendChild(o);});
     Object.keys(shellNames).forEach(function(kind){var o=node('option',shellNames[kind]+' — manual');o.value=kind;choice.appendChild(o);});
     // Nothing determined (139 of 4284 recorded hits, 22.09): the model used to stay grey, which tells the user
     // nothing (owner, 22.09). It is coloured with the likeliest shell instead - one of the shooter's own of the
@@ -586,6 +589,11 @@
     else{
       var guess=ArmorShotContext.assume?ArmorShotContext.assume(candidates,shotContext.kind,hit&&hit.damage):{index:-1,reason:''};
       shellAssumed=guess.index;shellAssumedWhy=guess.reason||'';
+      // Why the record could not name the shell comes before how the page picked one: the two reasons the
+      // resolver knows (22.09) are worth more than "the deepest penetration" - the shot's own ballistics
+      // fit no shell the shooter carries, or the vehicle switches its shell parameters and the record does
+      // not say which state was on.
+      if(shotContext.unresolvedWhy)shellAssumedWhy=shotContext.unresolvedWhy+(guess.reason?', and of the rest '+guess.reason:'');
       choice.value=guess.index>=0?'saved:'+guess.index:shotContext.kind||'ARMOR_PIERCING';
     }
     // A browsed vehicle has no hit to identify a shell, so resolve() leaves the index at -1. The shooter's own
@@ -593,10 +601,22 @@
     // the moment a vehicle is picked, instead of “pick a shell”.
     if(browsing&&candidates.length){var first=candidates.findIndex(function(c){return c.kind==='ARMOR_PIERCING';});
       if(first<0)first=candidates.findIndex(function(c){return c.kind==='ARMOR_PIERCING_CR';});if(first<0)first=0;choice.value='saved:'+first;shellAssumed=-1;}
-    $('shell-quick').replaceChildren();candidates.forEach(function(c,i){var actual=i===shotContext.index,assumed=i===shellAssumed,b=node('button',(actual?'● ':assumed?'◌ ':'')+(shellNames[c.kind]||c.kind)+' '+Math.round(c.penetration100)+(c.gunInstallation>0?' ✦':''),'shell-chip');b.dataset.shell='saved:'+i;b.title=c.name+' · '+c.caliber+' mm · '+(c.gunInstallation>0?'ability gun'+(c.gun?' '+c.gun:'')+' · ':'')+(actual?'Type from the hit':assumed?'Assumed: the record does not say which shell it was'+(shellAssumedWhy?', so '+shellAssumedWhy+' was taken':''):'Compare with this shell');b.onclick=function(){choice.value='saved:'+i;selectShell();};$('shell-quick').appendChild(b);});
+    // P2/P4 (22.09): a shooter whose vehicle is built twice brings both sets of shells. The chip of a
+    // second-mode shell carries ◐ beside the ● of the shell that flew and the ◌ of an assumed one - no
+    // new words on the tile; the client's own name for the state (straight / angled armour, no screen /
+    // screen, the Gorilla's low charge) and what it means are in the tooltip.
+    $('shell-quick').replaceChildren();candidates.forEach(function(c,i){var actual=i===shotContext.index,assumed=i===shellAssumed,
+      second=c.vehicleMode===1,mode=ArmorShotContext.modeLabel?ArmorShotContext.modeLabel(hit,c):'',
+      b=node('button',(actual?'● ':assumed?'◌ ':'')+(second?'◐ ':'')+(shellNames[c.kind]||c.kind)+' '+Math.round(c.penetration100)+(c.gunInstallation>0?' ✦':''),'shell-chip');
+      b.dataset.shell='saved:'+i;b.title=c.name+' · '+c.caliber+' mm · '+(c.gunInstallation>0?'ability gun'+(c.gun?' '+c.gun:'')+' · ':'')
+        +(mode?mode+' · ':'')
+        +(actual?(second?'The shooter fired in his second mode; the client’s numbers for that mode are used':'Type from the hit')
+          :assumed?'Assumed: the record does not say which shell it was'+(shellAssumedWhy?', so '+shellAssumedWhy+' was taken':'')
+          :second?'The same gun in the vehicle’s second mode':'Compare with this shell');
+      b.onclick=function(){choice.value='saved:'+i;selectShell();};$('shell-quick').appendChild(b);});
     paintGunShells();
     syncTargetMods(hit);syncShooterMods(hit);
-    if(keep){choice.value=keep.kind;manualPen=keep.penetration;$('penetration').value=keep.penetration;$('caliber').value=keep.caliber;penLabel(false);updateShell();}
+    if(keep){choice.value=keep.kind;manualPen=keep.penetration;manualAlpha=keep.alpha;$('penetration').value=keep.penetration;$('caliber').value=keep.caliber;$('alpha').value=keep.alpha;penLabel(false);updateShell();}
     else selectShell();
     // The shooter's chips just changed, so the shell block wants a different width: re-measure the heading.
     scheduleLayout();
@@ -2232,6 +2252,102 @@
     if (why.length) out += ' Everything is offered, which may be more than the game allowed here: ' + why.join('; ') + '.';
     var kept = aimKept();
     if (kept) out += ' Kept from the record: ' + kept + ' (field modifications).';
+    out += aimModifierLine();
+    return out;
+  }
+  // --- The battle's own modifiers (Onslaught and the other special modes) -------------------------
+  // A special mode changes vehicle parameters through BATTLE MODIFIERS the server sends with the arena;
+  // the recorder writes the raw descriptor into the battle header as mode.battleModifiersDescr (0.7.20
+  // and later). The wire shape, read out of battle_modifiers.pkg in this client, 22.09:
+  //   descr      = [modifier, ...]
+  //   modifier   = [paramId, gameplayImpact, tree]   paramId is the parameter's own name, e.g.
+  //                                                  'shotDispersionRadius' (BattleParam.readId = config.name)
+  //   tree       = [node, ...]; node = ['root', nodeDescr] | ['shell', keys, nodeDescr]
+  //                                                       | ['vehicle', keys, nodeDescr]
+  //   nodeDescr  = [packed, value, (min), (max)]     useType = (packed >> 2) & 3: 1 val, 2 mul, 3 add;
+  //                                                  packed & 2 -> a min follows, packed & 1 -> a max
+  // WHAT IS APPLIED HERE and why so little. Measured on the owner's own records, 22.09
+  // (outputs/onslaught-modifiers-2026-09-22.md): in the twenty 7v7 battles of 20-21.09 every shooter's
+  // gun dispersion is exactly 0.0015 BELOW the same gun's value in a random battle - one additive
+  // modifier on shotDispersionRadius - while the aiming time, all four dispersion factors, the rotation
+  // and top speeds and the reload are untouched, and so are the shell's penetration, alpha, speed,
+  // normalisation and ricochet angle. Only the aiming group is applied (the owner, 22.09: the collision
+  // calculation is the same as in a random battle), and a parameter this page does not model is counted
+  // and named instead of being applied silently.
+  // A LIVE shooter block already carries all of it: ClientArena.getVehicleType builds the attacker's
+  // descriptor with the battle's modifiers, which is how they were measured. So the modifiers are applied
+  // only to a block REBUILT from the compact descriptor (aimFrom 'compact'), which has none of them.
+  var AIM_MODIFIER_FIELD = {shotDispersionRadius: 'dispersion', aimingTime: 'aimingTime',
+    dispFactorChassisMovement: 'movementFactor', dispFactorChassisRotation: 'rotationFactor',
+    dispFactorTurretRotation: 'turretRotationFactor', dispFactorAfterShot: 'afterShotFactor'};
+  var AIM_MODIFIER_WORDS = {dispersion: 'the circle', aimingTime: 'the aiming time',
+    movementFactor: 'the movement term', rotationFactor: 'the hull-rotation term',
+    turretRotationFactor: 'the turret term', afterShotFactor: 'the term after a shot'};
+  var aimModsFrom = null, aimMods = null;
+  // One node of a modification tree: [packed, value, (min), (max)]. Returns null for anything else,
+  // so a descriptor of a shape this build does not know can never throw and never changes a number.
+  function aimModifierNode(descr) {
+    if (!Array.isArray(descr) || descr.length < 2) return null;
+    var packed = Number(descr[0]), value = Number(descr[1]), at = 2, out;
+    if (!isFinite(packed) || !isFinite(value)) return null;
+    out = {use: (packed >> 2) & 3, value: value, min: null, max: null};
+    if (packed & 2) { out.min = Number(descr[at]); at++; }
+    if (packed & 1) out.max = Number(descr[at]);
+    return out.use >= 1 && out.use <= 3 ? out : null;
+  }
+  // The modifiers of a battle, read once per battle object. {rules: [{field, param, node}], unknown: [param]}.
+  function aimBattleModifiers(battle) {
+    if (aimMods && battle === aimModsFrom) return aimMods;
+    aimModsFrom = battle;
+    aimMods = {rules: [], unknown: [], any: false};
+    var list = battle && battle.mode && battle.mode.battleModifiersDescr;
+    if (!Array.isArray(list) || !list.length) return aimMods;
+    aimMods.any = true;
+    list.forEach(function (mod) {
+      if (!Array.isArray(mod) || mod.length < 3) { aimMods.unknown.push('a modifier of an unknown shape'); return; }
+      var param = String(mod[0]), tree = mod[2], field = AIM_MODIFIER_FIELD[param];
+      if (!field) { aimMods.unknown.push(param); return; }
+      // Only the tree's root node is applied: a node under a shell or a vehicle filter selects by
+      // something the record does not carry (the shell kind the modifier was written for, the vehicle's
+      // class or level), so it is named as unknown rather than applied to everything.
+      var root = null, filtered = false;
+      (Array.isArray(tree) ? tree : []).forEach(function (node) {
+        if (!Array.isArray(node) || !node.length) return;
+        if (node[0] === 'root') root = aimModifierNode(node[1]);
+        else filtered = true;
+      });
+      if (!root) { aimMods.unknown.push(param); return; }
+      if (filtered) aimMods.unknown.push(param + ' (a filtered node of it)');
+      aimMods.rules.push({field: field, param: param, node: root});
+    });
+    return aimMods;
+  }
+  // The client's own three ways of using a value (UseType: 1 VAL, 2 MUL, 3 ADD), with the parameter's
+  // own limits applied exactly as the client's value limiter does.
+  function aimModifierApply(rule, value) {
+    var node = rule.node, out = node.use === 1 ? node.value : node.use === 2 ? value * node.value : value + node.value;
+    if (!isFinite(out)) return value;
+    if (node.min !== null && isFinite(node.min)) out = Math.max(out, node.min);
+    if (node.max !== null && isFinite(node.max)) out = Math.min(out, node.max);
+    return out;
+  }
+  // The line the Config tooltip carries when the battle has modifiers of its own.
+  function aimModifierLine() {
+    var battle = activeHit && activeHit.vehicle ? null : current;
+    var mods = aimBattleModifiers(battle);
+    if (!mods.any) return '';
+    var mode = battle ? battleModeOf(battle) : null, name = mode && mode.name ? mode.name : 'this mode';
+    var a = activeHit && activeHit.attacker && activeHit.attacker.aim;
+    var live = a && a.aimFrom !== 'compact';
+    var applied = mods.rules.map(function (r) { return AIM_MODIFIER_WORDS[r.field]; });
+    var out = ' ' + name + ' sent this battle ' + (mods.rules.length + mods.unknown.length) + ' modifier'
+      + (mods.rules.length + mods.unknown.length === 1 ? '' : 's') + ' of its own.';
+    out += live ? ' The numbers above are the ones this battle was fought with, so they already carry them.'
+      : applied.length ? ' This block was rebuilt from the vehicle descriptor, so they are applied here: '
+        + applied.join(', ') + '.'
+      : ' This block was rebuilt from the vehicle descriptor and carries none of them.';
+    if (mods.unknown.length) out += ' Not applied: ' + mods.unknown.join(', ')
+      + ' - the page does not model ' + (mods.unknown.length === 1 ? 'it' : 'them') + ' and shows the numbers without.';
     return out;
   }
   // THE CONFIGURATOR TAKES OUT WHAT IT APPLIES ITSELF, AND NOTHING ELSE (S3, 22.09 - the open item "equipment
@@ -2280,10 +2396,20 @@
     var a = activeHit && activeHit.attacker && activeHit.attacker.aim;
     if (!(a && a.dispersion > 0)) return null;
     var own = aimShooterIsPlayer(activeHit), fixed = aimForbidden('devices'), key = (own ? 'own' : 'other') + (fixed ? '|fixed' : '');
+    // A block REBUILT from the compact descriptor knows nothing of the battle's own modifiers, so they go
+    // on here (aimModifiers above); a live block was already built with them and is left alone.
+    var battle = activeHit && activeHit.vehicle ? null : current;
+    var mods = a.aimFrom === 'compact' ? aimBattleModifiers(battle) : null;
+    if (mods && !mods.rules.length) mods = null;
+    key += mods ? '|mods' : '';
     if (a !== aimBareFrom || key !== aimBareKey) {
       var base = aimBaseFactors(a, own, fixed);
       aimBareFrom = a; aimBareKey = key; aimBare = Object.create(a);
       AIM_BARE_FACTORS.forEach(function (k) { aimBare[k] = base[k]; });
+      if (mods) mods.rules.forEach(function (r) {
+        var v = Number(aimBare[r.field]);
+        if (isFinite(v)) aimBare[r.field] = aimModifierApply(r, v);
+      });
     }
     return aimBare;
   }
@@ -2440,20 +2566,36 @@
     if (!shell || !viewer.liveRadius100) { aimEst = null; return; }
     if (!fine && aimEstAt && now - aimEstAt < 0.12) return;
     var r = viewer.liveAimProbability(shell, fine ? 1024 : 256);
-    aimEst = r ? {damage: damagePct(r.damage), alpha: shell.alpha > 0} : null;
+    aimEst = circleFigure(r, shell);
     aimEstAt = now; aimEstFine = !!fine;
   }
-  function circleText(figure) { return 'Circle ' + (figure && figure.alpha ? figure.damage + ' %' : '—'); }
+  // The figure one sampled circle is worth (user, 22.09: with a MANUAL shell every Circle line read "—").
+  // A shell chosen by hand - a type on the shell-type buttons, or a penetration and a calibre with no
+  // saved candidate behind them - has no alpha at all, so a share of alpha is meaningless. It then carries
+  // the mean PENETRATION CHANCE over the circle instead, which needs no alpha, and the tooltip says so. A
+  // saved shell whose penetration or calibre the user edited keeps its own alpha and its damage figure.
+  function circleFigure(r, shell) {
+    if (!r) return null;
+    if (shell && shell.alpha > 0) return {alpha: true, damage: damagePct(r.damage, shell)};
+    return {alpha: false, low: r.low, high: r.high, unknown: !!r.unknown};
+  }
+  function circleText(figure) {
+    if (!figure) return '';
+    if (figure.alpha) return 'Circle ' + figure.damage + ' %';
+    if (!(figure.low >= 0)) return 'Circle —';
+    return 'Circle ' + (figure.unknown ? Math.round(figure.low) + '–' + Math.round(figure.high) : Math.round(figure.low)) + ' %';
+  }
   var SHARE = ', as a share of the shell’s alpha';
+  var NO_ALPHA = ': penetration chance over the circle — this shell has no alpha, so no damage figure';
   var CIRCLE_TITLES = {
-    live: 'Expected damage of a shot inside the live aiming circle' + SHARE,
-    shot: 'Expected damage of the shot inside the magenta ring it left on the model' + SHARE,
+    live: 'Expected damage of a shot inside the live aiming circle',
+    shot: 'Expected damage of the shot inside the magenta ring it left on the model',
     // The recorded reticle: the circle the shooter's own client had at the instant of the shot, slid
     // along the shot line onto the impact point - the ring drawn solid magenta on the model.
-    saved: 'Expected damage of a shot inside the recorded aiming circle of this hit — the shooter’s client reticle, slid along the shot line to the impact point' + SHARE,
+    saved: 'Expected damage of a shot inside the recorded aiming circle of this hit — the shooter’s client reticle, slid along the shot line to the impact point',
     // No recorded reticle: the dashed magenta ring is the nominal full-aim estimate, and the figure is
     // an estimate with it. Said on the line itself, so the number is never read as a recorded one.
-    estimate: 'This hit has no recorded reticle: the figure is for the nominal full-aim circle drawn on the hit line (gun accuracy × range, no crew or equipment). Expected damage of a shot inside it' + SHARE
+    estimate: 'This hit has no recorded reticle: the figure is for the nominal full-aim circle drawn on the hit line (gun accuracy × range, no crew or equipment). Expected damage of a shot inside it'
   };
   // One line per ring, in the colour of the ring it belongs to (user, 20.09): the live cyan one into the
   // "Under the cursor" panel, the STANDING magenta ring into the hit-line panel above it. That ring is
@@ -2465,7 +2607,7 @@
     var text = figure ? circleText(figure) : '';
     e.textContent = text;
     e.hidden = !text;
-    e.title = text ? CIRCLE_TITLES[kind] || CIRCLE_TITLES.live : '';
+    e.title = text ? (CIRCLE_TITLES[kind] || CIRCLE_TITLES.live) + (figure.alpha ? SHARE : NO_ALPHA) : '';
   }
   function paintCircleLines() {
     circleLine('probe-circle', aimLive ? aimEst : null, 'live');
@@ -2587,7 +2729,7 @@
     if (viewer.setAimShot) viewer.setAimShot();   // the ring left behind, drawn before the recoil widens the live one
     // The shot's own figure, on the pinned-shot panel and in the colour of its ring (user, 20.09): the
     // same single number the live ring prints - the expected damage over the circle, share of alpha.
-    aimShot = chance ? {damage: damagePct(chance.damage), alpha: !!(shell && shell.alpha > 0)} : null;
+    aimShot = circleFigure(chance, shell);
     // The recoil enters the factor for this very instant and the exponential restarts from it, so the
     // next round of a held burst leaves a wider circle unless the gun had time to settle.
     var state = aimLastState || aimState();
@@ -2791,12 +2933,57 @@
     if (!aimNow) { viewer.clearLiveAim(); return; }
     paintAim(aimState());
   }
-  function shellAt(c,choice,penetration,caliber,distance,hit){
+  // What a shell chosen BY HAND borrows from the shooter (user, 22.09). A manual shell is a type, a
+  // penetration and a calibre the user typed - ArmorBallistics.shell() gives it no alpha at all, and every
+  // damage figure on the page then read "—" or 0 %. It is still a shell of the SAME shooter, so the damage
+  // side comes from his own shell of that type: his candidate of the kind the user picked, else the shell
+  // the record resolved for the hit, else his first shell that has an alpha. What the user typed - kind,
+  // penetration, calibre - is never touched. A record whose shells carry no alpha at all (before 0.7.13)
+  // has nothing to lend, and the circle then prints the penetration chance instead (circleFigure).
+  var MANUAL_DAMAGE_KEYS=['alpha','spallDamage','spallAbsorption','nonPiercingArmorDamage','damageRandomization','mechanics'];
+  // The shooter's own shells, best first: the one the record named for this hit (or the one the page
+  // assumed), then the rest of the list on screen. Only a manual shell ever reads it.
+  function manualPool(){
+    var out=[];
+    if(shotContext&&shotContext.index>=0&&shotContext.choices[shotContext.index])out.push(shotContext.choices[shotContext.index]);
+    else if(shellAssumed>=0&&candidates[shellAssumed])out.push(candidates[shellAssumed]);
+    return out.concat(candidates||[]);
+  }
+  function manualDamageFrom(hit,kind,pool){
+    var all=[];
+    function add(list){if(Array.isArray(list))list.forEach(function(s){if(s&&s.alpha>0)all.push(s);});}
+    add(pool);
+    if(hit){add(hit.shellCandidates);add(hit.availableShells);add(hit.shells);
+      if(hit.attacker)add(hit.attacker.modeShells);}
+    if(!all.length)return null;
+    var ofKind=all.filter(function(s){return s.kind===kind;});
+    return ofKind.length?ofKind[0]:all[0];
+  }
+  function shellAt(c,choice,penetration,caliber,distance,hit,pool,alpha){
     if(!choice||!(penetration>0)||penetration>3000||!(caliber>0)||caliber>1000)return null;
     var shell=ArmorBallistics.shell(c?c.kind:choice,penetration,caliber);
     shell.liner=targetFactor(hit);
+    if(!c){
+      var lend=manualDamageFrom(hit,choice,pool);
+      if(lend){MANUAL_DAMAGE_KEYS.forEach(function(k){if(lend[k]!==undefined&&lend[k]!==null)shell[k]=lend[k];});
+        shell.alphaFrom=lend.name||'';}
+    }
+    // Every one of these is taken from the shell OBJECT, never from a constant, so a second-mode shell's
+    // own normalisation, ricochet angle, jet loss and alpha flow straight into the ballistics (P4).
     if(c){['normalization','ricochetCos','jetLossPerMeter','randomization','randomizationType','shieldPenetration',
-      'alpha','spallDamage','spallAbsorption','mechanics','nonPiercingArmorDamage'].forEach(function(k){if(c[k]!==undefined)shell[k]=c[k];});var fraction=Math.max(0,Math.min(1,(distance-100)/400));if(c.penetration500>0&&c.penetration100>0)shell.penetration=penetration*(1+fraction*(c.penetration500/c.penetration100-1));}
+      'alpha','spallDamage','spallAbsorption','mechanics','nonPiercingArmorDamage','vehicleMode'].forEach(function(k){if(c[k]!==undefined)shell[k]=c[k];});var fraction=Math.max(0,Math.min(1,(distance-100)/400));if(c.penetration500>0&&c.penetration100>0)shell.penetration=penetration*(1+fraction*(c.penetration500/c.penetration100-1));}
+    // The alpha field (user, 22.09): the user's own number wins over the record's and over the borrowed
+    // one, exactly as his penetration and calibre do. HE's spall damage is the non-penetration base and
+    // moves with the alpha - the record's own ratio is kept when there is one, the ballistics default
+    // otherwise. 0 or empty means "no alpha": every damage figure then falls back to the chance.
+    if(alpha!==undefined&&alpha!==null&&alpha!==''){
+      var want=Number(alpha);
+      if(want>0&&want<=5000){
+        var ratio=shell.alpha>0&&shell.spallDamage>0?shell.spallDamage/shell.alpha:0;
+        shell.alpha=want;
+        if(ratio>0)shell.spallDamage=want*ratio;
+      }else if(!(want>0))shell.alpha=null;
+    }
     return shell;
   }
   var totalTimer=null,totalKey=null,totalEngine=null,totalAim=null,totalEstimate=null,verdictKey=null,partNames=['chassis','hull','turret','gun'];
@@ -2806,8 +2993,20 @@
   var verdictLines=0,verdictQueue=[],verdictDone={},verdictTimer=null,verdictBusy=false;
   function verdictLine(battleId,hit,v,shell,mode){var r=v.result||{},chance=r.chance;
     var ours=r.reason==='ricochet'?'ricochet':chance===null||chance===undefined?(r.reason||'none'):(chance>=50?'pen':'no-pen')+'_'+chance+'%';
-    console.info('Bullba Hits verdict: battle='+battleId+' hit='+hit.id+' point='+v.index+' part='+(partNames[v.part]||v.part)+' server='+String(effects[v.effect]||v.effect).replace(/ /g,'_')+' ours='+ours+' angle='+(r.angle!=null?Math.round(r.angle):'-')+' eff='+(r.effective!=null?Math.round(r.effective):'-')+' pen='+Math.round(shell.penetration)+' shell='+shell.kind+' dir='+v.source+' chordDev='+(v.chordDev==null?'-':(v.chordDev*180/Math.PI).toFixed(1))+' mode='+mode+damageColumns(hit,r,shell)+ArmorCrits.columns(hit,v)+' v='+($('app-version').getAttribute('data-version')||'dev').replace(/\s+/g,'_')+' rec='+(recordsVersion||'-'));
+    console.info('Bullba Hits verdict: battle='+battleId+' hit='+hit.id+' point='+v.index+' part='+(partNames[v.part]||v.part)+' server='+String(effects[v.effect]||v.effect).replace(/ /g,'_')+' ours='+ours+' angle='+(r.angle!=null?Math.round(r.angle):'-')+' eff='+(r.effective!=null?Math.round(r.effective):'-')+' pen='+Math.round(shell.penetration)+' shell='+shell.kind+' dir='+v.source+' chordDev='+(v.chordDev==null?'-':(v.chordDev*180/Math.PI).toFixed(1))+' mode='+mode+shellModeColumns(hit,shell)+damageColumns(hit,r,shell)+ArmorCrits.columns(hit,v)+' v='+($('app-version').getAttribute('data-version')||'dev').replace(/\s+/g,'_')+' rec='+(recordsVersion||'-'));
     verdictLines++;verdictStatus();}
+  // The shooter's vehicle mode on a log line that already carries the shell (22.09): which of the two
+  // modes the shell used belongs to, whether the record held a second set at all and the siege state the
+  // recorder read. Only for a shooter whose vehicle really has two modes - a line without these fields
+  // says the vehicle has one, which is every vehicle but six in this client. tools/verdicts_from_log.py
+  // splits the line into key=value pairs, so new keys cost it nothing.
+  function shellModeColumns(hit,shell){
+    var a=(hit||{}).attacker||{};
+    if(!(a.vehicleMode===0||a.vehicleMode===1))return '';
+    var used=shell&&(shell.vehicleMode===0||shell.vehicleMode===1)?shell.vehicleMode:'-';
+    return ' vehMode='+a.vehicleMode+' shellMode='+used+' modeShells='+(a.modeShells&&a.modeShells.length?a.modeShells.length:0)+
+      ' siegeAtImpact='+(Number.isFinite(a.siegeStateAtImpact)?a.siegeStateAtImpact:'-');
+  }
   // HE damage columns of the log line: the server's damage for this hit next to both candidate laws for the
   // non-penetration part - the ratio law the page draws and the linear legacy shape (k = 1.1), which is written
   // here only so recorded hits can decide between them later. Nothing else in the page reads nonPenLin.
@@ -2856,7 +3055,13 @@
     var job=verdictQueue.shift(),battle=job.battle,hit=job.hit;
     ArmorInspectorData.sceneFor(battle,hit).then(function(data){
       if(data.geometryIncomplete)return;
-      var context=ArmorShotContext.resolve(hit,battle.shotEvents||[]),c=context.index>=0?context.choices[context.index]:context.choices[0]||null;
+      // A hit whose shell the record does not name is logged with the shell THE PAGE WOULD SHOW - the one
+      // ArmorShotContext.assume picks (the shells of the hit's own type, the damage band, then the deepest
+      // penetration) - not with the first of the list, which was a different shell from the one on screen
+      // and made the guessed lines of the Statistics log disagree with the view. Still marked as a guess.
+      var context=ArmorShotContext.resolve(hit,battle.shotEvents||[]),c=context.choices[context.index]||null;
+      if(!c&&ArmorShotContext.assume){var picked=ArmorShotContext.assume(context.choices,context.kind,hit.damage);c=context.choices[picked.index]||null;}
+      if(!c)c=context.choices[0]||null;
       var range=context.range>0?context.range:hit.rangeAtImpact>0?hit.rangeAtImpact:100,shell=c?shellAt(c,c.kind,c.penetration100,c.caliber,range,hit):null;
       // A flat engine (one leaf, no kd-tree): the tree would cost far more to build than the one to three rays
       // cast through it here save, and the verdicts are the same.
@@ -2870,7 +3075,7 @@
   function shotStats(){
     var choice=$('shell-choice').value,c=choice.indexOf('saved:')===0?candidates[Number(choice.slice(6))]:null;
     var range=viewer?viewer.distance:100;
-    var shell=shellAt(c,choice,Number($('penetration').value),Number($('caliber').value),range),r=viewer&&viewer.shotProbability(shell),output=$('shot-chance');
+    var shell=shellAt(c,choice,Number($('penetration').value),Number($('caliber').value),range,activeHit,manualPool(),$('alpha').value),r=viewer&&viewer.shotProbability(shell),output=$('shot-chance');
     var pinned=!!(viewer&&viewer.pinned),line=armorLine(r,shell?shell.penetration:null,range);fillPanel('shot',line,shell&&shell.alpha);
     logVerdicts(shell);
     // The tile's own tooltip says what its number is before it says where the line comes from.
@@ -2897,12 +3102,12 @@
       // The reticle tile keeps its own number whether the ring is on screen or not - it is about the saved
       // circle, not about what is drawn - so only the panel LINE waits for the ring to be visible.
       if(viewer.savedAim&&shell)totalTimer=window.setTimeout(function(){var v=viewer.savedAimProbability(shell);
-        $('total-chance').textContent=!v?'—':damageView?'≈ '+(v.unknown?damagePct(v.damage)+'–'+damagePct(v.damageHigh):damagePct(v.damage))+' %':'≈ '+(v.unknown?v.low.toFixed(0)+'–'+v.high.toFixed(0):v.low.toFixed(0))+'%';
-        aimRecorded=v&&ringShown?{damage:damagePct(v.damage,shell),alpha:shell.alpha>0,kind:'saved'}:null;paintCircleLines();},100);
+        $('total-chance').textContent=!v?'—':damageView&&shell.alpha>0?'≈ '+(v.unknown?damagePct(v.damage,shell)+'–'+damagePct(v.damageHigh,shell):damagePct(v.damage,shell))+' %':'≈ '+(v.unknown?v.low.toFixed(0)+'–'+v.high.toFixed(0):v.low.toFixed(0))+'%';
+        aimRecorded=v&&ringShown?Object.assign(circleFigure(v,shell),{kind:'saved'}):null;paintCircleLines();},100);
       // A hit with no reticle of its own: the dashed nominal ring is the one on the model, so the line
       // is printed for THAT ring and its tooltip says the figure is an estimate with it.
       else if(viewer.estimateAim&&shell&&ringShown)totalTimer=window.setTimeout(function(){var v=viewer.estimateAimProbability(shell);
-        aimRecorded=v?{damage:damagePct(v.damage,shell),alpha:shell.alpha>0,kind:'estimate'}:null;paintCircleLines();},100);
+        aimRecorded=v?Object.assign(circleFigure(v,shell),{kind:'estimate'}):null;paintCircleLines();},100);
     }
   }
   // The reticle tile's tooltip: what its number means first, then which circles this hit has and how the figure
@@ -2910,7 +3115,10 @@
   // setting, so the whole title is rebuilt from both.
   var aimStatus='',shotPanelTitle=$('shot-panel').title;
   function aimTitle(){
-    $('aim-metric').title=(damageView?'Expected damage per shot from this reticle, as a share of the shell’s alpha: a random shot inside the saved circle, the mean of penetration damage and the reconstructed non-penetration damage.':'Chance to penetrate from this reticle: a random shot inside the saved circle that both hits and penetrates. Nominal penetration, no RNG.')+
+    // A shell chosen by hand has no alpha, so the tile falls back to the penetration chance even in damage
+    // view and says why, instead of printing a 0 % share of an alpha that does not exist (user, 22.09).
+    var noAlpha=damageView&&!(viewer&&viewer.shell&&viewer.shell.alpha>0);
+    $('aim-metric').title=(noAlpha?'Chance to penetrate from this reticle: this shell was chosen by hand and has no alpha, so there is no damage figure for it. A random shot inside the saved circle that both hits and penetrates. Nominal penetration, no RNG.':damageView?'Expected damage per shot from this reticle, as a share of the shell’s alpha: a random shot inside the saved circle, the mean of penetration damage and the reconstructed non-penetration damage.':'Chance to penetrate from this reticle: a random shot inside the saved circle that both hits and penetrates. Nominal penetration, no RNG.')+
       ' Reticle circles on the model. '+aimStatus+' Over the saved circle: '+ArmorBallistics.aimProfile().label+'; 256 rays, misses = 0. Server formula not confirmed'+(damageView?'; the non-penetration part is a reconstruction (ratio law). No map obstacles, target motion or splash onto other parts.':'; no map obstacles, target motion or blast damage.');
   }
   // The heading row has no space for the full wording: the label reads “Pen.” and the sentence lives in its title.
@@ -2918,15 +3126,25 @@
   function selectShell(){
     var index=$('shell-choice').value,c=index.indexOf('saved:')===0?candidates[Number(index.slice(6))]:null;
     var point=(activeHit&&activeHit.points||[]).find(function(p){return p.caliber>0;});
-    if(!c){manualPen=$('penetration').value||manualPen;} // manual shell keeps the penetration that was on screen
+    if(!c){manualPen=$('penetration').value||manualPen;manualAlpha=$('alpha').value||manualAlpha;} // a manual shell keeps what was on screen
     $('penetration').value=c?c.penetration100:manualPen;$('caliber').value=c?c.caliber:point?point.caliber:100;
+    // The alpha field (user, 22.09). A saved shell shows the record's own alpha; a manual type keeps the
+    // number the user last typed, and starts from the alpha of the shooter's own shell of that type when
+    // he has typed none - the same borrowing shellAt does, so the field shows what is really being used.
+    if(c)$('alpha').value=c.alpha>0?Math.round(c.alpha):'';
+    else{
+      if(!(Number(manualAlpha)>0)){var lend=manualDamageFrom(activeHit,index,manualPool());manualAlpha=lend?String(Math.round(lend.alpha)):'';}
+      $('alpha').value=manualAlpha;
+    }
     penLabel(!!c);updateShell();
   }
   function updateShell(){
     var choice=$('shell-choice').value,c=choice.indexOf('saved:')===0?candidates[Number(choice.slice(6))]:null;
     var penetration=Number($('penetration').value),caliber=Number($('caliber').value),valid=!!choice&&penetration>0&&penetration<=3000&&caliber>0&&caliber<=1000;
-    var distance=viewer?viewer.distance:100,shell=shellAt(c,choice,penetration,caliber,distance);
-    var edited=c&&(penetration!==c.penetration100||caliber!==c.caliber);
+    var alphaField=$('alpha').value,alpha=Number(alphaField);
+    var distance=viewer?viewer.distance:100,shell=shellAt(c,choice,penetration,caliber,distance,activeHit,manualPool(),alphaField);
+    // An edited alpha is an edit like an edited penetration or calibre: the shell stops being the record's.
+    var edited=c&&(penetration!==c.penetration100||caliber!==c.caliber||(alpha>0?Math.round(c.alpha)!==Math.round(alpha):c.alpha>0));
     var actual=shotContext&&choice==='saved:'+shotContext.index&&!edited;
     // The shell the page assumed for a hit whose own is not known: its own marker, never the hit's ●.
     var assumed=!actual&&!edited&&shotContext&&shotContext.index<0
@@ -2934,7 +3152,10 @@
     var browsing=!!(activeHit&&(activeHit.vehicle||activeHit.chosenShooter));
     // The caption band under the fields is gone (user, 18.09: the line read as noise). Its sentence is now the
     // title of the shell group, and the two states that are a warning keep their words in #parameters-notice.
-    var source=!choice?'Pick a shell':!valid?'No penetration in the record':(actual?'● From the hit':assumed?'◌ Assumed shell':c?(browsing?'● Shooter’s shell':'◇ Comparison'):'◇ Manual')+' · '+Math.round(shell.penetration)+' mm at target · ±'+Math.round(shell.randomization*100)+'%';
+    // A manual shell says whose alpha it is using: the type, the penetration and the calibre are the user's,
+    // the damage side is the shooter's own shell of that type (user, 22.09).
+    var lent=!c&&shell&&shell.alpha>0?' · alpha of the shooter’s '+(shell.alphaFrom||'shell'):'';
+    var source=!choice?'Pick a shell':!valid?'No penetration in the record':(actual?'● From the hit':assumed?'◌ Assumed shell':c?(browsing?'● Shooter’s shell':'◇ Comparison'):'◇ Manual')+lent+' · '+Math.round(shell.penetration)+' mm at target · ±'+Math.round(shell.randomization*100)+'%';
     // Damage mode says out loud that the non-penetration part is a reconstruction; without an alpha in the
     // record the old sentence stands, because then nothing but the penetration is drawn anyway.
     var damageNote=(c?c.kind:choice)==='HIGH_EXPLOSIVE'&&shell&&shell.alpha>0?'HE non-penetration damage: reconstruction (ratio law), not a confirmed server formula.':'HE: penetration only, no blast damage.';
@@ -2953,6 +3174,8 @@
     // colours are read off the panels, which print the figure itself.
     $('track-overlay-note').classList.toggle('classic',$('palette').value==='classic');$('parameters-notice').hidden=!mapMode||(valid&&!noAlpha);
     $('penetration').setAttribute('aria-invalid',String(mapMode&&!(penetration>0&&penetration<=3000)));$('caliber').setAttribute('aria-invalid',String(mapMode&&!(caliber>0&&caliber<=1000)));
+    // The alpha may be left empty - that is "no alpha", not a mistake - but a number outside 1..5000 is one.
+    $('alpha').setAttribute('aria-invalid',String(!!alphaField&&!(alpha>0&&alpha<=5000)));
     $('probe-chance').textContent='—';$('probe-chance').style.color='';$('probe-pen').replaceChildren();$('probe-extra').replaceChildren();$('probe-details').replaceChildren(node('span','Hover over the armour','placeholder'));
     modsVisible();
     staleEstimate();if(viewer)viewer.configure(shell,mapMode,$('palette').value,mode);shotStats();updateAim();
@@ -3724,6 +3947,7 @@
   // Shell type switch: the entered penetration and calibre stay, only the type's law changes.
   document.querySelectorAll('#shell-types [data-kind]').forEach(function(b){b.onclick=function(){$('shell-choice').value=b.dataset.kind;selectShell();};});
   $('penetration').oninput=function(){if($('shell-choice').value.indexOf('saved:')!==0)manualPen=this.value;updateShell();};
+  $('alpha').oninput=function(){if($('shell-choice').value.indexOf('saved:')!==0)manualAlpha=this.value;updateShell();};
   $('battles').onchange=function(){loadBattle(this.value,false).catch(function(e){warnings([e.message]);});};
   // The picker's own handlers. A row click is the change handler (chooseFocus); the rest is what a <details>
   // does not give: no disabled state, so a locked control refuses to open; Escape closes it and hands the

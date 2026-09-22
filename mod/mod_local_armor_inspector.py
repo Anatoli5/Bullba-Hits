@@ -222,6 +222,39 @@ def roster_state(info, descr, json_safe):
     return state
 
 
+# The two states of VEHICLE_MODE (constants.pyc 4151-4153, read in this client): 0 DEFAULT, 1 SIEGE.
+VEHICLE_MODE_DEFAULT, VEHICLE_MODE_SIEGE = 0, 1
+
+
+def mode_shell_block(descr):
+    """Both modes' shells of a vehicle that is built twice (R1 of outputs/mode-shell-modifiers-2026-09-22.md).
+
+    A vehicle tagged `siegeMode` is read from `<Name>.xml` AND `<Name>_siege_mode.xml`, and the two
+    descriptors are wrapped in a CompositeVehicleDescriptor (vehicles.pyc 2850) whose __getattr__ hands
+    every attribute to whichever of the two the current VEHICLE_MODE names. Six vehicles of this client
+    re-declare the gun's <shots> there, so their second mode really fires another shell: five German
+    `shellParamsSwitcher` tanks (normalisation, ricochet angle, alpha, HEAT jet loss) and the Gorilla's
+    `lowChargeShot` (alpha, penetration, speed and the shell's effects id).
+
+    Read-only. `defaultVehicleDescr` and `siegeVehicleDescr` are plain properties of the composite that
+    the client's own garage code reads; **onSiegeStateChanged is never called here** - the client calls it
+    itself on this very object for the attached vehicle (Avatar.pyc __getDetailedVehicleDescriptor), and
+    the recorder stays out of that race.
+
+    Returns None for every ordinary vehicle (one attribute read), else
+    {'default': [shell], 'siege': [shell], 'same': bool}. Both lists are read ONCE per battle per
+    descriptor object (Recorder.mode_blocks) because neither of the two descriptors changes while the
+    battle runs; a hit only picks the list of the mode it was not fired in.
+    """
+    if not getattr(descr, 'hasSiegeMode', False): return None
+    siege = getattr(descr, 'siegeVehicleDescr', None)
+    default = getattr(descr, 'defaultVehicleDescr', None)
+    if siege is None or default is None: return None
+    from local_armor_inspector.armor import shot_candidates
+    first, second = shot_candidates(default), shot_candidates(siege)
+    return {'default': first, 'siege': second, 'same': first == second}
+
+
 def matrix_columns(matrix, root_inverse):
     """Column-major affine transform, using API operations instead of layout guesses."""
     columns = []
@@ -589,6 +622,12 @@ class Recorder(object):
         self.bw = BigWorld
         self.battle = None
         self.seq = 0
+        # Static mode block of a shooter, once per battle and per descriptor object (optimisation
+        # plan A4b): the second descriptor of a siege vehicle never changes while the battle runs,
+        # so its shells and the gun's mechanics are read once and every later hit of that shooter
+        # copies them. Keyed by id() with the descriptor itself kept in the value, so the key can
+        # never be reused by another object; emptied in ensure_battle when the battle changes.
+        self.mode_blocks = {}
         self.session = uuid.uuid4().hex[:12]
         self.enabled = True
         # Two flags the export thread reads before it runs deferred work (0.7.11):
@@ -704,6 +743,7 @@ class Recorder(object):
             self.seq = 0
             self.file = filename
             self.roster_known = False
+            self.mode_blocks = {}
         return True
 
     def capture(self, vehicle, attackerID, hitPoints, effectsIndex, prefabEffIndex,
@@ -807,6 +847,30 @@ class Recorder(object):
         except Exception:
             record['shellStatus'] = 'shell parameter extraction failed'
             LOG.exception('Shell parameters unavailable; hit is retained')
+        # R1: the shells of the shooter's OTHER mode, beside the ones above and never instead of them.
+        # 'availableShells' keeps the one meaning it has always had - the shells of the descriptor the
+        # client handed us - and 'vehicleMode' now says which of the two modes that descriptor was in,
+        # so the page can label both lists instead of guessing. Written only for the six vehicles whose
+        # second mode really changes a shell; the block itself is read once per battle (mode_blocks).
+        if attacker is not None and 'attacker' in record:
+            try:
+                key = id(attacker)
+                block = self.mode_blocks.get(key)
+                if block is None or block['descr'] is not attacker:
+                    block = {'descr':attacker, 'shells':mode_shell_block(attacker)}
+                    self.mode_blocks[key] = block
+                shells = block['shells']
+                if shells is not None:
+                    mode = int(getattr(attacker, 'vehicleMode', VEHICLE_MODE_DEFAULT))
+                    record['attacker']['vehicleMode'] = mode
+                    if not shells['same']:
+                        other = VEHICLE_MODE_DEFAULT if mode == VEHICLE_MODE_SIEGE else VEHICLE_MODE_SIEGE
+                        record['attacker']['modeShells'] = shells['default' if other == VEHICLE_MODE_DEFAULT else 'siege']
+                        record['attacker']['modeShellsMode'] = other
+                        record['attacker']['modeShellsFrom'] = ('default descriptor' if other == VEHICLE_MODE_DEFAULT
+                                                                else 'siege descriptor')
+            except Exception:
+                record['warnings'].append('Shooter second-mode shells unavailable')
         for hit in hitPoints:
             record['rawHitPoints'].append({'networkID':str(hit['networkID']), 'segment':str(hit['segment']), 'params':str(hit['params'])})
         # Persist even when geometry cannot be recovered from a departed entity.
@@ -882,6 +946,15 @@ class Recorder(object):
             if entity is not None:
                 record['attackerPositionAtImpact'] = vector(entity.position)
                 record['rangeAtImpact'] = float((vehicle.position-entity.position).length)
+                # R2: the shooter's own siege state, from the entity the line above already looked up.
+                # Vehicle.siegeState is UINT8/ALL_CLIENTS (entity_defs/Vehicle.def), so it is there for
+                # every vehicle in the area of interest, the player's own included. It is the state AT
+                # IMPACT, up to a second after the shot - never call it the mode of the shot. Written
+                # only for a vehicle that has the two modes, and only when the attacker block exists.
+                try:
+                    if 'attacker' in record and record['attacker'].get('vehicleMode') is not None:
+                        record['attacker']['siegeStateAtImpact'] = int(entity.siegeState)
+                except Exception: pass
             telemetry = self.telemetry
             record['traceCandidates'] = [t['id'] for t in telemetry.tracers.values()
                 if t['shooterId'] == attackerID and t['effectsIndex'] == effectsIndex
