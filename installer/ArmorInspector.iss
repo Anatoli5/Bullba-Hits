@@ -19,7 +19,11 @@ ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0
 WizardStyle=modern
 SetupIconFile=armor-inspector.ico
+#ifdef NoLoader
+OutputDir=..\dist\noloader
+#else
 OutputDir=..\dist
+#endif
 Compression=lzma2
 SolidCompression=yes
 CloseApplications=no
@@ -42,6 +46,13 @@ VersionInfoOriginalFileName=BullbaHits-{#ProductVersion}-Setup.exe
 SignTool=BullbaHitsSign
 SignedUninstaller=yes
 SignToolRunMinimized=yes
+#endif
+; App Control refuses the setup loader's own copy in %TEMP% on this machine ("Unable to execute file in the
+; temporary directory. Setup aborted. Error 4551", 22.09.2026) - an unsigned binary Windows has never seen.
+; A loaderless build has no such copy: the EXE reads its data from the .bin files beside it, so there is
+; nothing to run out of %TEMP%. Built as a second artifact next to the single-file installer.
+#ifdef NoLoader
+UseSetupLdr=no
 #endif
 #ifdef TestBuild
 CreateUninstallRegKey=no
