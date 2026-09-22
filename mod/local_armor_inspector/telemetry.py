@@ -4,6 +4,7 @@ from __future__ import absolute_import
 import copy
 import logging
 import math
+import numbers
 import time
 
 LOG = logging.getLogger('local.armor_inspector')
@@ -22,6 +23,120 @@ def vec(value):
 def marker(info):
     return {'position':vec(info.position), 'direction':vec(info.direction),
             'diameter':number(info.size), 'receivedAt':time.time()}
+
+
+# The live state of the shooter's gun mechanics, by the client's own names (owner's decision 22.09: for the
+# player's OWN shot the state is known and must be recorded, for other vehicles the replicated public state,
+# and for an incoming shot with no state nothing is guessed). Research: outputs/own-gun-state-2026-09-22.md.
+#
+# Every one of these is a BigWorld dynamic component of the Vehicle ENTITY, not of the descriptor:
+# `vehicle.dynamicComponents` is a plain dict keyed by the component's DefaultKeyName, which is exactly how
+# the client itself reads them (scripts/client/vehicles/mechanics/mechanic_helpers.pyc,
+# getVehicleMechanicComponent -> findVehicleMechanicDynamicComponent, disassembled in client 2.4.0.1). A
+# property is either a number or a FIXED_DICT declared in scripts/entity_defs/alias.xml; none of those
+# dictionaries has an `implementedBy`, and the client reads their fields as ATTRIBUTES
+# (ChargeShotComponent.__getCurrentState: privateState.flags / .level / .endTime), which is what is done
+# below. Nothing here calls a controller method, subscribes to an event or keeps per-frame state.
+#
+# Each entry is (component key, property on the component, name in the record, fields of the FIXED_DICT or
+# None for a plain number, own-vehicle-only). "own only" means the property carries DetailLevel = MY_VEHICLE
+# in its component def and the server replicates it to the player's own vehicle alone; it is read for the
+# player's own shot and skipped for everybody else, so a default value is never recorded as if it were a
+# state. The keys are the mechanic names of VehicleType.mechanicsParams - the same set as AIM_GUN_MECHANICS
+# in exporter.py - so only the twelve vehicles of this client that carry one of them cost anything at all.
+GUN_MECHANIC_STATE = {
+    'shellParamsSwitcher': (
+        ('shellParamsSwitcherController', 'status', 'status', ('state', 'endTime'), False),
+        ('shellParamsSwitcherController', 'publicStatus', 'publicStatus',
+         ('isActive', 'lastActiveShotTimestamp'), False)),
+    'lowChargeShot': (
+        ('lowChargeShotPublicController', 'stateStatus', 'publicState',
+         ('visualState', 'fullShotChangeTime'), False),
+        ('lowChargeShotController', 'stateStatus', 'privateState',
+         ('reloadingState', 'baseTime', 'timeLeft', 'endTime', 'lowChargeTime'), True)),
+    'chargeShot': (
+        ('chargeShotComponent', 'publicState', 'publicState', ('flags', 'level'), False),
+        ('chargeShotComponent', 'privateState', 'privateState', ('flags', 'level', 'endTime'), True)),
+    'propellantAfterburnerGun': (
+        ('propellantGunController', 'status', 'status',
+         ('state', 'chargeStageID', 'chargeProgress', 'isOverchargeEnabled', 'isSwitchCooldownActive',
+          'updateTimestamp', 'isForbiddenShell', 'lastShotTimestamp', 'lastShotCharge'), False),),
+    'overheatStacks': (
+        ('overheatStacksController', 'gainState', 'gainState', None, False),
+        ('overheatStacksController', 'curLevel', 'curLevel', None, False),
+        ('overheatStacksController', 'delayTimerElapsed', 'delayTimerElapsed', None, True),
+        ('overheatStacksController', 'timeElapsed', 'timeElapsed', None, True),
+        ('overheatStacksController', 'timeNextGain', 'timeNextGain', None, True)),
+    'chargeableBurst': (
+        ('chargeableBurstComponent', 'charges', 'charges', None, True),
+        ('chargeableBurstComponent', 'shots', 'shots', None, True),
+        ('chargeableBurstComponent', 'isBurstActive', 'isBurstActive', None, True)),
+    'bustleFeed': (
+        ('bustleFeedController', 'status', 'status', ('state', 'baseTime', 'endTime', 'switchAccessState'), True),
+        ('bustleFeedController', 'reloadStatus', 'reloadStatus', ('timeLeft', 'baseTime', 'endTime'), True)),
+    # No vehicle of client 2.4.0.1 carries this one, and the client's own lookup table names the component
+    # 'ShellCalibrationController' while its def declares DefaultKeyName 'shellCalibrationController'. The
+    # def is what the entity is keyed by, so that is the name used here.
+    'shellCalibration': (
+        ('shellCalibrationController', 'status', 'status', None, True),),
+    'secondaryGun': (
+        ('secondaryGunComponent', 'gunInstallationIndex', 'gunInstallationIndex', None, False),),
+}
+
+
+def state_value(value):
+    """One number of a mechanic component, or None when the client has nothing usable there.
+
+    The same rule exporter.json_safe uses for a number, written out here because the values are read
+    one by one out of a fixed dictionary and a non-finite float would cost the Writer the whole record.
+    """
+    if value is None or isinstance(value, bool): return value
+    if isinstance(value, numbers.Integral): return int(value)
+    if isinstance(value, numbers.Real):
+        result = float(value)
+        return result if result - result == 0 else None
+    return None
+
+
+def mechanic_state(entity, own):
+    """The state of the shooter's gun mechanics at this instant, {mechanic: {property: value}}.
+
+    One dictionary lookup per mechanic the vehicle really has and a few attribute reads; empty - and
+    therefore left out of the record - for every vehicle without one, which is all but twelve. Never
+    raises: a component that is not attached, a property the server has not sent and an entity outside
+    the area of interest all simply leave their field out.
+    """
+    result = {}
+    components = getattr(entity, 'dynamicComponents', None)
+    if not components: return result
+    try:
+        params = getattr(entity.typeDescriptor.type, 'mechanicsParams', None) or {}
+    except Exception:
+        return result
+    for name in params:
+        entries = GUN_MECHANIC_STATE.get(str(name))
+        if not entries: continue
+        values = {}
+        for key, prop, out, fields, private in entries:
+            if private and not own: continue
+            try:
+                component = components.get(key)
+                if component is None: continue
+                value = getattr(component, prop, None)
+                if value is None: continue
+                if fields is None:
+                    item = state_value(value)
+                    if item is not None: values[out] = item
+                    continue
+                packed = {}
+                for field in fields:
+                    item = state_value(getattr(value, field, None))
+                    if item is not None: packed[field] = item
+                if packed: values[out] = packed
+            except Exception:
+                LOG.debug('Gun mechanic state unavailable: %s.%s', key, prop, exc_info=True)
+        if values: result[str(name)] = values
+    return result
 
 
 class ShotTelemetry(object):
@@ -114,10 +229,16 @@ class ShotTelemetry(object):
         # for a vehicle that has two modes; an ordinary one would carry a 0 that says nothing. Vehicle
         # .siegeState is UINT8/ALL_CLIENTS, so it is readable for every vehicle in the area of interest,
         # the player's own included. Guarded: an entity outside the AoI simply leaves the field out.
+        # The live state of the gun mechanics rides on the very same entity lookup (22.09): one read per
+        # shot, at the instant the shell leaves the barrel - the moment the owner's decision is about.
+        # Private properties only for his own shot; for every other vehicle the replicated public state.
         try:
             entity = self.recorder.bw.entity(int(shooterID))
-            if entity is not None and getattr(entity.typeDescriptor, 'hasSiegeMode', False):
-                values['siegeState'] = int(entity.siegeState)
+            if entity is not None:
+                if getattr(entity.typeDescriptor, 'hasSiegeMode', False):
+                    values['siegeState'] = int(entity.siegeState)
+                state = mechanic_state(entity, shooterID == player.playerVehicleID)
+                if state: values['gunState'] = state
         except Exception: pass
         if values['own'] and not isRicochet and gunInstallationIndex == 0:
             values['aimAtTracer'] = self.snapshot(player)

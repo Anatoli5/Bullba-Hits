@@ -2,6 +2,16 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
+## Unreleased
+
+- The Circle figure of the recorded shot no longer blinks and is no longer recomputed when the Distance slider moves: that ring belongs to a shot fired at its own range, so its figure is taken with the shell at that range and the tile keeps its number while a new one is worked out.
+- The Circle figures are coloured by the chance scale, like the armour under them; the heading keeps the colour of the ring it belongs to.
+- The scene toolbar loses the circle percentage and the (i) beside it — the figure has its own tile at the right edge of the scene.
+- Settings: the Grid tick box now carries its brightness and opacity sliders in its own row, like Ricochet tint and Soft lighting, and both are greyed out with the grid off. Soft lighting starts at 200 % instead of 250 %.
+- The mouse wheel over a slider now accelerates: a slow turn moves one step, a continuous spin steps further and further (up to a tenth of the scale per notch), and a pause or the other direction goes back to the smallest step.
+- The ⇅ swap button is offered again wherever the shooter has a model to be had: a model still being extracted is waited for, a shooter with no parts in the record is read from his own vehicle export, and the button no longer disappears when the side panel is switched to Vehicles.
+- The live state of the shooter's gun is recorded at the shot and at the impact — the charge level of the Object 432U, the Gorilla's low charge, the German shell switch, the overheat level and the rest. A charged shot now shows the charged alpha (×1.045, ×1.177 or ×1.244), the Gorilla's low charge picks the low-charge shell, and every other mechanic gets a line in the shell tooltip without changing a figure. Incoming shots with no recorded state are read exactly as before.
+
 ## 0.7.24 (2026-09-22)
 
 - Vehicles that fire different shells in their second mode (the Gorilla's low charge and the five German shell switchers) are recorded and computed with that mode's own numbers: the recorder writes both sets of shells, the shooter's siege state at the shot and at the impact, and the page marks a second-mode shell ◐ and says which state it was in.

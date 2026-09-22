@@ -649,8 +649,11 @@ class Recorder(object):
             except Exception: LOG.exception('HTML exporter unavailable; raw recording continues')
         self.writer = Writer(folder, exporter)
         self.last_vehicle = None
-        from local_armor_inspector.telemetry import ShotTelemetry
+        # The reader of the gun mechanics' live state is bound once here, beside the telemetry it lives in,
+        # so the hit path does not run an import statement per hit (22.09).
+        from local_armor_inspector.telemetry import ShotTelemetry, mechanic_state
         self.telemetry = ShotTelemetry(self)
+        self.mechanic_state = mechanic_state
         from local_armor_inspector.crit_log import CritLog
         self.crits = CritLog(self)
 
@@ -954,6 +957,14 @@ class Recorder(object):
                 try:
                     if 'attacker' in record and record['attacker'].get('vehicleMode') is not None:
                         record['attacker']['siegeStateAtImpact'] = int(entity.siegeState)
+                except Exception: pass
+                # The gun mechanics of the shooter, from the same entity and with the same warning: this
+                # is the state AT IMPACT, up to a second after the shot, so it is the FALLBACK - the
+                # tracer's own 'gunState' is the reading that decides, exactly as for the siege state.
+                try:
+                    if 'attacker' in record:
+                        state = self.mechanic_state(entity, attackerID == player_id)
+                        if state: record['attacker']['gunStateAtImpact'] = state
                 except Exception: pass
             telemetry = self.telemetry
             record['traceCandidates'] = [t['id'] for t in telemetry.tracers.values()

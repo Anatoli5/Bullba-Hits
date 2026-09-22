@@ -20,6 +20,78 @@
   // END of switching on and the START of switching off, and the gun is blocked while switching, so no
   // shot can straddle the change.
   function modeOfSiegeState(state){return state<=1?MODE_DEFAULT:MODE_SIEGE;}
+  /* --- The live state of the shooter's gun (outputs/own-gun-state-2026-09-22.md, owner 22.09) --------
+     From the build after 0.7.24 the recorder writes the state of the gun mechanics the shooter's vehicle
+     really carries: `gunState` on the tracer - the instant the shell leaves the barrel - and
+     `attacker.gunStateAtImpact` up to a second later, exactly the pair and the precedence the siege state
+     already uses. Private fields are written for the player's own shot only ("you know whether you pressed
+     the ability or not"); for every other vehicle it is the half the server replicates to everybody. A
+     record without the fields is read exactly as it was. */
+  // Object 432U is the one vehicle of client 2.4.0.1 with chargeShot. damageFactorsPerLevel = 1 1.045
+  // 1.177 1.244 comes from its own <mechanics> section, and the client multiplies the shell's base damage
+  // by damageFactorsPerLevel[level] - `level` is the 0-based index into that list, and maxLevel is
+  // len(timePerLevel) - 1 = 3 (ChargeShotMechanicWidget and ChargeShotParams of client 2.4.0.1).
+  var CHARGE_SHOT_FACTORS=[1,1.045,1.177,1.244];
+  // LowChargeShotReloadingState (constants.pyc 5905, read in this client): 0 NONE, 1 INITIAL_RELOAD,
+  // 2 LOW_CHARGE, 3 ALMOST_FINISHED, 4 FULL_CHARGE, 5 QUICK_RELOAD, 6 EMPTY. The public half carries the
+  // same numbers in `visualState` (LOW_CHARGE_SHOT_CONSTS). Only the two that name a charge are used.
+  var LOW_CHARGE=2,FULL_CHARGE=4;
+  function chargeStateOf(state){var s=state&&state.chargeShot;return s?(s.privateState||s.publicState||null):null;}
+  function lowChargeOf(state){
+    var s=state&&state.lowChargeShot;if(!s)return null;
+    var v=s.privateState?Number(s.privateState.reloadingState):s.publicState?Number(s.publicState.visualState):NaN;
+    return v===LOW_CHARGE?LOW_CHARGE:v===FULL_CHARGE?FULL_CHARGE:null;
+  }
+  // Which of the two descriptors a recorded gun state names, or null when it names neither. The Gorilla's
+  // low charge is its second descriptor and LowChargeShotReloadingState is the client's own named constant,
+  // so that reading is as good as the siege state. The five German switchers' publicStatus.isActive is a
+  // plain flag whose DIRECTION is still to confirm in a real battle, so it is kept apart and read only
+  // after the siege state of the shot and of the impact have both had their say.
+  function modeOfGunState(state){
+    var low=state&&typeof state==='object'?lowChargeOf(state):null;
+    return low===null?null:low===LOW_CHARGE?MODE_SIEGE:MODE_DEFAULT;
+  }
+  function modeOfSwitcher(state){
+    var sw=state&&typeof state==='object'&&state.shellParamsSwitcher&&state.shellParamsSwitcher.publicStatus;
+    return sw&&typeof sw.isActive==='boolean'?(sw.isActive?MODE_SIEGE:MODE_DEFAULT):null;
+  }
+  // One short line per mechanic the record carries. Nothing here invents a meaning for a packed status:
+  // the charge level and the low/full charge are the client's own named values, everything else is shown
+  // as the number the client gave, and the page changes no figure for it.
+  function gunNotes(state,from){
+    if(!state||typeof state!=='object')return [];
+    var out=[],tail=from==='impact'?' (state at the impact)':'';
+    var charge=chargeStateOf(state);
+    if(charge&&Number.isFinite(Number(charge.level))){
+      var lvl=Number(charge.level),f=CHARGE_SHOT_FACTORS[lvl];
+      out.push(f>0?'Charge level '+(lvl+1)+' of '+CHARGE_SHOT_FACTORS.length+': ×'+f+' alpha'
+        :'Charge level '+(lvl+1));
+    }
+    var low=lowChargeOf(state);
+    if(low!==null)out.push(low===LOW_CHARGE?'Low charge shot':'Full charge shot');
+    var sw=state.shellParamsSwitcher&&state.shellParamsSwitcher.publicStatus;
+    if(sw&&typeof sw.isActive==='boolean')out.push(sw.isActive?'Shell parameters switched on':'Shell parameters switched off');
+    var heat=state.overheatStacks;
+    if(heat&&Number.isFinite(Number(heat.curLevel)))out.push('Overheat level '+Number(heat.curLevel)+' (no change to penetration or alpha)');
+    var prop=state.propellantAfterburnerGun&&state.propellantAfterburnerGun.status;
+    if(prop&&Number.isFinite(Number(prop.chargeStageID)))out.push('Propellant charge stage '+Number(prop.chargeStageID));
+    var burst=state.chargeableBurst;
+    if(burst&&typeof burst.isBurstActive==='boolean')out.push(burst.isBurstActive?'Burst active':'Burst not active');
+    var bustle=state.bustleFeed&&state.bustleFeed.status;
+    if(bustle&&Number.isFinite(Number(bustle.state)))out.push('Bustle feed state '+Number(bustle.state));
+    var calib=state.shellCalibration;
+    if(calib&&Number.isFinite(Number(calib.status)))out.push('Shell calibration state '+Number(calib.status));
+    var second=state.secondaryGun;
+    if(second&&Number.isFinite(Number(second.gunInstallationIndex)))out.push('Secondary gun installation '+Number(second.gunInstallationIndex));
+    return tail?out.map(function(line){return line+tail;}):out;
+  }
+  // A copy of a candidate with the charge's factor on its alpha. The recorded arrays are never touched:
+  // they belong to the battle file and the page reads them again for the next hit.
+  function withCharge(c,factor){
+    var out={},k;for(k in c)if(Object.prototype.hasOwnProperty.call(c,k))out[k]=c[k];
+    if(Number(out.alpha)>0){out.alpha=Math.round(Number(out.alpha)*factor);out.chargeFactor=factor;}
+    return out;
+  }
   // The server scales every shot's (velocity, gravity) by some k, so |v| alone does not name a shell -
   // but v/sqrt(g) cancels k and equals the descriptor's speed/sqrt(gravity) exactly. Measured over the
   // owner's 5352 tracers, 22.09: 94.5 % match one of the shooter's own shells inside 0.1 %. The tolerance
@@ -115,18 +187,32 @@
     // the 4794 in the owner's 60 battles - the owner's call, not this build's.)
     if(hasModes&&matching.length>1&&flight!==null){var fit=matching.filter(function(c){return ballistics(c)===true;});if(fit.length===1)matching=fit;}
     // P3: the five switchers fire the same speed, gravity, penetration and effects id in both modes, so
-    // nothing above can tell their two sets apart. Strongest evidence first: the siege state recorded at
-    // the tracer (the moment of the shot), then the one read at the impact, then the recorded damage when
-    // only one of the two alpha bands could have produced it - an upper bound only, because a shell can
-    // always do less than its band (the last hit on a vehicle is capped by what is left of it).
+    // nothing above can tell their two sets apart. Strongest evidence first: the gun state and the siege
+    // state recorded at the tracer (the moment of the shot), then the two the impact carries, then the
+    // switcher's own flag, and last the recorded damage when only one of the two alpha bands could have
+    // produced it - an upper bound only, because a shell can always do less than its band (the last hit
+    // on a vehicle is capped by what is left of it).
+    // The gun state of this shot, read once: the tracer's own (the instant the shell left the barrel)
+    // before the one the impact carries, exactly the precedence the siege state already uses.
+    var gunState=(tracer&&tracer.gunState)||attacker.gunStateAtImpact||null,
+      gunFrom=tracer&&tracer.gunState?'shot':attacker.gunStateAtImpact?'impact':null,
+      shotState=tracer&&tracer.gunState||null,impactState=attacker.gunStateAtImpact||null;
     var modeSource='';
     if(hasModes&&matching.length>1){
-      var state=Number.isFinite(tracer&&tracer.siegeState)?tracer.siegeState
-        :Number.isFinite(attacker.siegeStateAtImpact)?attacker.siegeStateAtImpact:null;
-      if(state!==null){
-        var byState=matching.filter(function(c){return c.vehicleMode===modeOfSiegeState(state);});
-        if(byState.length){matching=byState;modeSource=Number.isFinite(tracer&&tracer.siegeState)?'the shooter’s recorded state at the shot':'the shooter’s recorded state at the impact';}
-      }
+      // Every reading the record can hold, strongest first - by WHEN it was taken, the shot's own instant
+      // before the impact's, and with the two confirmed readings before the switcher's unconfirmed flag.
+      // A record that carries none of them narrows nothing, exactly as before.
+      var evidence=[[modeOfGunState(shotState),'the shooter’s recorded gun state at the shot'],
+        [Number.isFinite(tracer&&tracer.siegeState)?modeOfSiegeState(tracer.siegeState):null,'the shooter’s recorded state at the shot'],
+        [modeOfGunState(impactState),'the shooter’s recorded gun state at the impact'],
+        [Number.isFinite(attacker.siegeStateAtImpact)?modeOfSiegeState(attacker.siegeStateAtImpact):null,'the shooter’s recorded state at the impact'],
+        [modeOfSwitcher(shotState),'the shooter’s recorded shell switch at the shot'],
+        [modeOfSwitcher(impactState),'the shooter’s recorded shell switch at the impact']];
+      evidence.forEach(function(e){
+        if(e[0]===null||matching.length<2)return;
+        var byState=matching.filter(function(c){return c.vehicleMode===e[0];});
+        if(byState.length){matching=byState;modeSource=e[1];}
+      });
       if(matching.length>1&&Number(hit.damage)>0){
         var dmg=Number(hit.damage),could=matching.filter(function(c){
           var r=Number.isFinite(c.damageRandomization)?c.damageRandomization:.25,a=Number(c.alpha)||0;
@@ -142,6 +228,13 @@
     if(contradicted)selected=null;
     if(selected&&!choices.some(function(c){return same(c,selected);}))choices.push(selected);
     var index=selected?choices.findIndex(function(c){return same(c,selected);}):-1;
+    // The charge of the shot multiplies the shell's damage, whichever shell it was, so it belongs to the
+    // whole list and not to one entry of it: the client's own widget shows damageFactorsPerLevel[level]
+    // times the base damage of the shell that is loaded. Level 0 is x1 and changes nothing, so a record
+    // whose state says "not charged" answers exactly as a record without the state at all. The spall
+    // damage of HE is left alone: the client's own law for it is not this factor.
+    var charge=chargeStateOf(gunState),chargeFactor=charge?CHARGE_SHOT_FACTORS[Number(charge.level)]:null;
+    if(chargeFactor>1)choices=choices.map(function(c){return withCharge(c,chargeFactor);});
     var range=tracer&&Array.isArray(tracer.origin)&&world.length?distance(tracer.origin,world[0]):null,rangeSource='tracer';
     if(!(Number.isFinite(range)&&range>0)){range=Number.isFinite(hit.rangeAtImpact)&&hit.rangeAtImpact>0?hit.rangeAtImpact:null;rangeSource=range===null?null:'impact';}
     // Why the shell stayed unknown, in the words the shell chips and the tooltip use.
@@ -149,6 +242,7 @@
       :hasModes&&index<0?'this vehicle switches its shell parameters; the record does not say which state was on':'';
     return {choices:choices,index:index,kind:kindValues.length===1?kindValues[0]:null,tracer:tracer,command:command,aim:aim,aimSource:chosen?chosen.from:null,aimReason:aimReason,
       range:range,rangeSource:rangeSource,modes:hasModes,unresolvedWhy:why,
+      gunState:gunState,gunStateFrom:gunFrom,gunNotes:gunNotes(gunState,gunFrom),chargeFactor:chargeFactor>1?chargeFactor:null,
       source:index<0?'Shell not determined unambiguously'
         :modeSource?'The shooter’s second mode: '+modeSource
         :kindValues.length?'Type and calibre from the hit; gun data from the client':'The only shell with this effect in the record'};
@@ -177,5 +271,5 @@
     return {index:best.i,reason:could.length>1?'the deepest penetration of the shells that fit':
       same.length>1?'the deepest penetration of this type':'the only shell of this type the record lists'};
   }
-  root.ArmorShotContext={resolve:resolve,assume:assume,modeLabel:modeLabel,identical:identical};
+  root.ArmorShotContext={resolve:resolve,assume:assume,modeLabel:modeLabel,identical:identical,gunNotes:gunNotes};
 }(typeof window==='undefined'?globalThis:window));

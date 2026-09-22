@@ -612,7 +612,10 @@
         +(mode?mode+' · ':'')
         +(actual?(second?'The shooter fired in his second mode; the client’s numbers for that mode are used':'Type from the hit')
           :assumed?'Assumed: the record does not say which shell it was'+(shellAssumedWhy?', so '+shellAssumedWhy+' was taken':'')
-          :second?'The same gun in the vehicle’s second mode':'Compare with this shell');
+          :second?'The same gun in the vehicle’s second mode':'Compare with this shell')
+        // The live state of the shooter's gun at the shot, one short line per mechanic the record carries
+        // (22.09). It belongs to the shot, not to one shell, so every chip of this hit says the same.
+        +((shotContext.gunNotes||[]).length?' · '+shotContext.gunNotes.join(' · '):'');
       b.onclick=function(){choice.value='saved:'+i;selectShell();};$('shell-quick').appendChild(b);});
     paintGunShells();
     syncTargetMods(hit);syncShooterMods(hit);
@@ -2607,14 +2610,29 @@
   // `id` names the VALUE element, `<id>-tile` the tile around it: the tile takes the hidden flag, the ring's
   // colour class and the tooltip, the value element the figure alone. The class is written only when it
   // really changes - the markup already ships each tile with the right one.
+  // The colour of the FIGURE (user, 22.09): the heading keeps the ring's colour, the number takes the one
+  // the chance scale gives that percentage - the very mapping the armour map and the panels are drawn with,
+  // so a tile and the armour under it read as the same scale. ArmorBallistics.color picks the quantity by
+  // mode, so both fields are handed in and one percentage means one colour in either Display mode.
+  function circleColor(figure) {
+    var pct = figure.alpha ? figure.damage : figure.low;
+    if (!(pct >= 0)) return '';
+    return chanceRgb({chance: pct, expectedShare: pct / 100});
+  }
+  var circleRgb = {};   // what was last written into each figure: an unchanged colour is not written again per frame
   function circleLine(id, figure, kind) {
     var e = $(id), tile = $(id + '-tile');
     if (!e || !tile) return;
     var text = figure ? circleText(figure) : '';
     e.textContent = text;
     tile.hidden = !text;
-    tile.title = text ? (CIRCLE_TITLES[kind] || CIRCLE_TITLES.live) + (figure.alpha ? SHARE : NO_ALPHA) : '';
+    // The sampling sentence of the recorded ring (it used to hang on the toolbar's reticle box, removed on
+    // 22.09) is composed by aimTitle() once per hit, not here per frame.
+    var extra = kind === 'saved' || kind === 'estimate' ? aimExtra : '';
+    tile.title = text ? (CIRCLE_TITLES[kind] || CIRCLE_TITLES.live) + (figure.alpha ? SHARE : NO_ALPHA) + extra : '';
     if (!text) return;
+    var rgb = circleColor(figure);
+    if (circleRgb[id] !== rgb) { circleRgb[id] = rgb; e.style.color = rgb; }
     var cls = kind === 'live' ? 'aim-circle-tile live' : 'aim-circle-tile shot';
     if (tile.className !== cls) tile.className = cls;
   }
@@ -3084,7 +3102,8 @@
   function shotStats(){
     var choice=$('shell-choice').value,c=choice.indexOf('saved:')===0?candidates[Number(choice.slice(6))]:null;
     var range=viewer?viewer.distance:100;
-    var shell=shellAt(c,choice,Number($('penetration').value),Number($('caliber').value),range,activeHit,manualPool(),$('alpha').value),r=viewer&&viewer.shotProbability(shell),output=$('shot-chance');
+    var pen=Number($('penetration').value),cal=Number($('caliber').value),alphaValue=$('alpha').value,pool=manualPool();
+    var shell=shellAt(c,choice,pen,cal,range,activeHit,pool,alphaValue),r=viewer&&viewer.shotProbability(shell),output=$('shot-chance');
     var pinned=!!(viewer&&viewer.pinned),line=armorLine(r,shell?shell.penetration:null,range);fillPanel('shot',line,shell&&shell.alpha);
     logVerdicts(shell);
     // The tile's own tooltip says what its number is before it says where the line comes from.
@@ -3094,41 +3113,42 @@
     // The ring on screen is part of the key: a pinned point and the user's first emulated shot both take
     // the recorded rings away, and the line that describes them has to go with them.
     var ringShown=!!(viewer&&viewer.savedAimShown&&viewer.savedAimShown());
-    // damageView is part of the key: the figure below is formatted as a share of alpha or as a chance, so a
-    // Display switch alone must rebuild it - otherwise the tile keeps the other mode's number (inspection, 20.09).
-    var key=JSON.stringify(shell)+'|'+(viewer?viewer.turretAngle+','+viewer.gunAngle:'')+'|'+ringShown+'|'+damageView;
+    // The STANDING ring is the reticle of a shot that was fired at its OWN range: its figure is taken with
+    // the shell at that range, never at the one the Distance slider happens to stand on (user, 22.09 - the
+    // tile blinked and was recomputed on every move of a slider that changes nothing for it). Only a saved
+    // candidate has a penetration that falls off with range at all, and the same object is reused whenever
+    // the two ranges agree, so no shell is built twice.
+    var ringRange=viewer&&viewer.recordedDistance>0?viewer.recordedDistance:range;
+    var ringShell=c&&ringRange!==range?shellAt(c,choice,pen,cal,ringRange,activeHit,null,alphaValue):shell;
+    // The key is built from the RING's shell, so the probe distance is not in it. The pose is (the integral
+    // is refused off the rest pose), the ring's visibility is, and damageView is: the figure is formatted
+    // as a share of alpha or as a chance, so a Display switch alone must rebuild it (inspection, 20.09).
+    var key=JSON.stringify(ringShell)+'|'+(viewer?viewer.turretAngle+','+viewer.gunAngle:'')+'|'+ringShown+'|'+damageView;
     if(viewer&&(totalKey!==key||totalEngine!==viewer.engine||totalAim!==viewer.savedAim||totalEstimate!==viewer.estimateAim)){
       totalKey=key;totalEngine=viewer.engine;totalAim=viewer.savedAim;totalEstimate=viewer.estimateAim;window.clearTimeout(totalTimer);
-      // No saved circle: the emulated circle's own figure while it is on screen, else the nominal ring's
-      // diameter, so a 10 cm ring at short range reads as present, not missing.
-      $('total-chance').textContent=!viewer.savedAim&&viewer.estimateAim?'\u2300 '+(viewer.estimateAim.radius*2).toFixed(2)+' m':'—';
-      // The Circle line of the hit-line panel is rebuilt with it and stays away until the integral below
-      // has a figure: a stale percentage under a new shell or a new pose would be a lie.
-      aimRecorded=null;paintCircleLines();
-      // In damage mode the tile reads as a share of alpha: the mean expected damage over the circle, misses
-      // counted as 0, divided by what one shot of this shell can do. The same pass feeds the Circle line
-      // of the recorded ring (user, 20.09), so the rays are cast once for both.
-      // The reticle tile keeps its own number whether the ring is on screen or not - it is about the saved
-      // circle, not about what is drawn - so only the panel LINE waits for the ring to be visible.
-      if(viewer.savedAim&&shell)totalTimer=window.setTimeout(function(){var v=viewer.savedAimProbability(shell);
-        $('total-chance').textContent=!v?'—':damageView&&shell.alpha>0?'≈ '+(v.unknown?damagePct(v.damage,shell)+'–'+damagePct(v.damageHigh,shell):damagePct(v.damage,shell))+' %':'≈ '+(v.unknown?v.low.toFixed(0)+'–'+v.high.toFixed(0):v.low.toFixed(0))+'%';
-        aimRecorded=v&&ringShown?Object.assign(circleFigure(v,shell),{kind:'saved'}):null;paintCircleLines();},100);
-      // A hit with no reticle of its own: the dashed nominal ring is the one on the model, so the line
-      // is printed for THAT ring and its tooltip says the figure is an estimate with it.
-      else if(viewer.estimateAim&&shell&&ringShown)totalTimer=window.setTimeout(function(){var v=viewer.estimateAimProbability(shell);
-        aimRecorded=v?Object.assign(circleFigure(v,shell),{kind:'estimate'}):null;paintCircleLines();},100);
+      // No ring on screen, or no shell to fire into it: there is genuinely no figure and the tile goes away.
+      // While one is being RECOMPUTED the old figure stands (user, 22.09: a tile that blanks for 100 ms and
+      // comes back reads as a fault) - the integral below replaces it the moment it has an answer.
+      // In damage mode that figure is a share of alpha: the mean expected damage over the circle, misses
+      // counted as 0, divided by what one shot of this shell can do.
+      if(!(ringShell&&ringShown&&(viewer.savedAim||viewer.estimateAim))){if(aimRecorded){aimRecorded=null;paintCircleLines();}}
+      else if(viewer.savedAim)totalTimer=window.setTimeout(function(){var v=viewer.savedAimProbability(ringShell);
+        aimRecorded=v?Object.assign(circleFigure(v,ringShell),{kind:'saved'}):null;paintCircleLines();},100);
+      // A hit with no reticle of its own: the dashed nominal ring is the one on the model, so the figure is
+      // printed for THAT ring and its tooltip says it is an estimate with it.
+      else totalTimer=window.setTimeout(function(){var v=viewer.estimateAimProbability(ringShell);
+        aimRecorded=v?Object.assign(circleFigure(v,ringShell),{kind:'estimate'}):null;paintCircleLines();},100);
     }
   }
-  // The reticle tile's tooltip: what its number means first, then which circles this hit has and how the figure
-  // is sampled. The status half is written once per hit by display(); the mode half changes with the Display
-  // setting, so the whole title is rebuilt from both.
-  var aimStatus='',shotPanelTitle=$('shot-panel').title;
+  // The tail of the recorded ring's tooltip: which circles this hit has and how the figure over them is
+  // sampled. The toolbar box that used to carry this text together with the figure is gone (user, 22.09:
+  // the number lives on the tile at the right edge and the (i) beside it did nothing), so the sentence
+  // moved onto that tile. The status half is written once per hit by display(), the mode half changes with
+  // the Display setting - composed HERE, once, because the tile's tooltip is rewritten on every repaint.
+  var aimStatus='',aimExtra='',shotPanelTitle=$('shot-panel').title;
   function aimTitle(){
-    // A shell chosen by hand has no alpha, so the tile falls back to the penetration chance even in damage
-    // view and says why, instead of printing a 0 % share of an alpha that does not exist (user, 22.09).
-    var noAlpha=damageView&&!(viewer&&viewer.shell&&viewer.shell.alpha>0);
-    $('aim-metric').title=(noAlpha?'Chance to penetrate from this reticle: this shell was chosen by hand and has no alpha, so there is no damage figure for it. A random shot inside the saved circle that both hits and penetrates. Nominal penetration, no RNG.':damageView?'Expected damage per shot from this reticle, as a share of the shell’s alpha: a random shot inside the saved circle, the mean of penetration damage and the reconstructed non-penetration damage.':'Chance to penetrate from this reticle: a random shot inside the saved circle that both hits and penetrates. Nominal penetration, no RNG.')+
-      ' Reticle circles on the model. '+aimStatus+' Over the saved circle: '+ArmorBallistics.aimProfile().label+'; 256 rays, misses = 0. Server formula not confirmed'+(damageView?'; the non-penetration part is a reconstruction (ratio law). No map obstacles, target motion or splash onto other parts.':'; no map obstacles, target motion or blast damage.');
+    aimExtra=' Reticle circles on the model. '+aimStatus+' Over the saved circle: '+ArmorBallistics.aimProfile().label+
+      '; 256 rays, misses = 0. Server formula not confirmed'+(damageView?'; the non-penetration part is a reconstruction (ratio law). No map obstacles, target motion or splash onto other parts.':'; no map obstacles, target motion or blast damage.');
   }
   // The heading row has no space for the full wording: the label reads “Pen.” and the sentence lives in its title.
   function penLabel(at100){var e=$('penetration-label');e.textContent='Pen.';e.title=at100?'Penetration at 100 m, mm':'Penetration at target, mm';}
@@ -3560,7 +3580,30 @@
   // then takes it back to the recorded hit.
   var swapped=null;
   function shallow(value){var copy={};if(value)Object.keys(value).forEach(function(k){copy[k]=value[k];});return copy;}
-  function swapReady(hit){return !!(hit&&hit.attacker&&(hit.attacker.parts||[]).some(function(p){return p.modelKey;}));}
+  // Can the shooter of this hit be put on screen? His own parts carry his collision models - but since the
+  // export-by-need change of 0.7.21 a hit is published before they are extracted, so a part marked
+  // modelPending is a model ON ITS WAY, not a missing one, and the button is offered: the click waits for the
+  // extraction exactly as the target's pending model is waited for. A record that carries no shooter parts at
+  // all (an old battle) is still offered when the catalogue knows his vehicle - his own export holds the same
+  // collision parts and is read the way the Vehicles panel reads one. Only a shooter with none of the three is
+  // genuinely without a model, and only then does the button go.
+  function swapParts(hit){
+    var parts=(hit&&hit.attacker&&hit.attacker.parts)||[];
+    return {key:parts.some(function(p){return p.modelKey;}),pending:parts.some(function(p){return p.modelPending;})};
+  }
+  // The catalogue row of the shooter's vehicle, matched by the client's own type name (the same match
+  // adoptHitVehicles and showFocusEmpty make). Null while the catalogue has not been read - the Battles
+  // panel does not need it, and every published record since 0.7.11 carries the parts anyway.
+  function swapVehicleRow(hit){
+    var type=String((hit&&hit.attacker&&hit.attacker.type)||'');
+    if(!type)return null;
+    return ((catalogue&&catalogue.vehicles)||[]).find(function(v){return String(v.type||'')===type;})||null;
+  }
+  function swapReady(hit){
+    if(!hit||!hit.attacker)return false;
+    var p=swapParts(hit);
+    return p.key||p.pending||!!swapVehicleRow(hit);
+  }
   // The swapped view as a hit the scene loader and the viewer understand: the recorded shooter becomes the
   // target (his parts carry the models), the recorded target becomes the shooter. No points, so no hit line,
   // no reticle and no shells - the vehicle now on screen never fired in this record.
@@ -3569,6 +3612,36 @@
     return {id:hit.id+':swap',synthetic:true,base:hit.id,direction:viewDirection(hit)==='incoming'?'outgoing':'incoming',
       attacker:attacker,target:shallow(hit.attacker),points:[],rawHitPoints:[],warnings:[],
       shellCandidates:[],availableShells:[],receivedAt:hit.receivedAt,rangeAtImpact:hit.rangeAtImpact};
+  }
+  // The swapped hit with a model under it, whichever of the three ways this shooter's model can be had.
+  // Parts with a key are ready at once; parts still being extracted are asked for at the front of the mod's
+  // queue and the battle is read again until they land (the page's own 2 s / 30 s wait, the one a browsed
+  // vehicle uses); no parts at all are replaced by the shooter's own vehicle export - the same file and the
+  // same reader showVehicleScene() uses - so his recorded name and gun stay and only the parts come from it.
+  function swapScene(hit,deadline){
+    var parts=swapParts(hit);
+    if(parts.key)return Promise.resolve(swapHit(hit));
+    if(parts.pending&&current)return swapExtracting(hit,deadline);
+    var row=swapVehicleRow(hit);
+    if(!row)return Promise.reject(new Error('The shooter’s collision model is not exported yet.'));
+    return readVehicle(row.id,deadline).then(function(record){
+      var synthetic=swapHit(hit);
+      synthetic.target.parts=(record.parts||[]).slice();
+      if(record.exportedAt!==undefined)synthetic.target.exportedAt=record.exportedAt;
+      if(record.source!==undefined)synthetic.target.source=record.source;
+      return synthetic;
+    });
+  }
+  function swapExtracting(hit,deadline){
+    var type=String((hit.attacker||{}).type||'');
+    if(type)sendCommand('prioritise',{vehicleTypes:[type]});
+    message(EXTRACTING,true);
+    return ArmorInspectorData.battle(current.id).then(function(b){
+      var fresh=((b&&b.hits)||[]).find(function(h){return h.id===hit.id;});
+      if(fresh&&swapParts(fresh).key)return swapHit(fresh);
+      if(!deadline||Date.now()>=deadline)throw new Error('The shooter’s collision model is still being extracted.');
+      return new Promise(function(r){window.setTimeout(r,2000);}).then(function(){return swapExtracting(hit,deadline);});
+    });
   }
   function sceneTiles(hit,reference){
     // The pose tile belongs to the model on screen: it goes as soon as there is none, and poseChanged()
@@ -3616,7 +3689,12 @@
     var b=$('swap-roles'),back=!!(hit&&hit.synthetic&&!hit.vehicle&&hit.base);
     // Vehicles mode: two different browsed vehicles simply change places (user, 19.09: the button must work there too).
     var browsed=sidebarMode==='vehicles'&&!!(hit&&hit.vehicle)&&!!modelVehicle&&!!shooterVehicle&&shooterVehicle.id!==modelVehicle.id;
-    b.hidden=!(browsed||(sidebarMode==='battles'&&!!current&&(back||(!!hit&&!hit.synthetic&&swapReady(hit)))));
+    // A RECORDED hit keeps its swap in EITHER panel, and so does the way back from a swapped view (22.09:
+    // switching the side panel to Vehicles took the button off a hit that was still on screen, which reads
+    // exactly like the button having gone for good). The swap of a recorded hit is about the hit, not about
+    // which list is open beside it.
+    var recorded=!!current&&!!hit&&!hit.synthetic&&swapReady(hit);
+    b.hidden=!(browsed||recorded||(!!current&&back));
     b.title=back?'Back to the recorded hit and its shot line':'Swap the model and the shooter';
   }
   function display(data,reference){
@@ -3641,11 +3719,11 @@
     // aim group the estimate is drawn into.
     var view=viewDirection(hit),ownShot=focusIsPlayer()&&view==='outgoing';
     var aimReady=viewer&&viewer.setShotContext(ownShot?shotContext:null),estimate=!aimReady&&viewer?viewer.setAimEstimate(shotContext):null;
-    $('total-chance').textContent=estimate?'\u2300 '+(estimate.radius*2).toFixed(2)+' m':'—';
     // Why there is no circle, in full: no resolved impact point to centre on, no gun dispersion in the record,
     // no range, or no own reticle linked to this hit (every incoming hit by design - the enemy's is not recorded).
     var reason=aimReady?'saved reticle':estimate?'nominal estimate':!(viewer&&viewer.point&&viewer.travel)?'no resolved impact point':!(hit.attacker&&hit.attacker.gunDispersion>0)?'no gun dispersion in the record':!(shotContext.range>0||hit.rangeAtImpact>0)?'no range for this hit':!ownShot?'enemy reticle unavailable':(aimReasons[shotContext.aimReason]||'no linked snapshot').toLowerCase();
-    // The reticle block stays small: what the circles mean and where this one came from lives in the ⓘ tooltip.
+    // What the circles mean and where this one came from is the tooltip of the Circle tile at the right edge
+    // of the scene (the toolbar's own reticle box went with its figure on 22.09).
     var status=aimReady?'This hit: ● solid magenta — the client reticle at the shot, ◌ dashed magenta — the server reticle, both slid along the shot line to the impact point. Every standing ring is magenta; only the live emulation ring is cyan.':estimate?'This hit: ◌ dashed magenta — nominal full-aim estimate of the '+(estimate.gun||'mounted gun')+': '+(estimate.dispersion*100).toFixed(2)+' m at 100 m × '+Math.round(estimate.range)+' m ('+(estimate.source==='tracer'?'tracer range':'approximate range at impact')+') = ⌀ '+(estimate.radius*2).toFixed(2)+' m. Without crew or equipment, centred on the hit line; not the recorded reticle and not used in the figure.':'This hit: no reticle — '+reason+'.';
     // One line per hit in the page console; the game writes page console lines into game.log, so an in-game
     // report about missing rings can be read there instead of guessed at.
@@ -3818,7 +3896,7 @@
   $('camera-zoom').oninput=function(){if(viewer)viewer.setZoom(.1*Math.pow(1000,Number(this.value)/1000));}; // ×0.1 … ×100, ×1 at a third
   // No “back to the recorded shot” button any more (user, 18.09): clicking the hit in the list again
   // re-runs selectHit, which clears the viewer and rebuilds the scene, so the pin and the pose reset with it.
-  if(viewer)viewer.onPin=function(on){$('shot-source').textContent=on?'Pinned point':activeHit&&activeHit.synthetic?'No recorded shot':'Hit line';$('total-chance').textContent=on?'—':$('total-chance').textContent;shotStats();};
+  if(viewer)viewer.onPin=function(on){$('shot-source').textContent=on?'Pinned point':activeHit&&activeHit.synthetic?'No recorded shot':'Hit line';shotStats();};
   $('auto-frame').onchange=function(){if(viewer)viewer.setAutoFrame(this.checked);};
   $('track-opacity').oninput=function(){if(viewer)viewer.setTrackOpacity(Number(this.value)/100);$('track-opacity-value').textContent=this.value+' %';};
   // The cross at the impact point only (user, 20.09). Stored and restored with every other setting in the
@@ -3905,12 +3983,17 @@
   // way - the swap is a view of it, not another hit.
   $('shooter-tile').onclick=function(){chooseRole('shooter');};
   $('swap-roles').onclick=function(){
-    if(sidebarMode==='vehicles'){if(!modelVehicle||!shooterVehicle)return;var m=modelVehicle;modelVehicle=shooterVehicle;shooterVehicle=m;shooterPicked=true;showVehicleScene(false).catch(function(){});return;}
+    // Two BROWSED vehicles simply change places; a recorded hit below takes its own path in either panel.
+    if(sidebarMode==='vehicles'&&activeHit&&activeHit.vehicle){if(!modelVehicle||!shooterVehicle)return;var m=modelVehicle;modelVehicle=shooterVehicle;shooterVehicle=m;shooterPicked=true;showVehicleScene(false).catch(function(){});return;}
     if(swapped){if(swapped.base)selectHit(swapped.base).catch(function(){});return;}
     var hit=activeHit;if(!hit||hit.synthetic||!swapReady(hit)||!current)return;
-    var synthetic=swapHit(hit),token=++generation;message('Preparing the model\u2026');if(viewer)viewer.clear();
-    ArmorInspectorData.sceneFor(current,synthetic).then(function(data){if(token!==generation)return;display(data,false);})
-      .catch(function(e){if(token===generation){message(e.message);warnings([e.message]);}});
+    var token=++generation;message('Preparing the model\u2026');if(viewer)viewer.clear();
+    // In the game the model can still be on its way: the same 30 s the vehicle browser waits. Outside it
+    // there is nobody to extract anything, so what is published is all there will be.
+    swapScene(hit,host.game?Date.now()+30000:0).then(function(synthetic){
+      if(token!==generation)return null;
+      return ArmorInspectorData.sceneFor(current,synthetic).then(function(data){if(token!==generation)return;display(data,false);});
+    }).catch(function(e){if(token===generation){message(e.message);warnings([e.message]);}});
   };
   if(viewer)viewer.onAim=function(text){analysisKey=null;$('spread-result').textContent=text;};
   // Releasing the pinned centre: the manual estimate goes stale as before, the emulated circle simply
@@ -3968,7 +4051,7 @@
     document.addEventListener('click',function(e){if(box.open&&!clickedIn(e,box))box.open=false;});
   }());
   document.querySelectorAll('[data-filter]').forEach(function(b){b.onclick=function(){filter=b.dataset.filter;document.querySelectorAll('[data-filter]').forEach(function(x){x.setAttribute('aria-pressed',String(x===b));});renderHits();};});
-  $('wireframe').onchange=function(){if(viewer)viewer.wireframe(this.checked);};
+  $('wireframe').onchange=function(){if(viewer)viewer.wireframe(this.checked);outlineState();};
   $('soft-lighting').onchange=function(){if(viewer)viewer.setLighting(this.checked);lightStrengthState();};
   // How deep the soft light shades (user, 22.09): the slider only scales the composite's brightness range.
   // It sits in the checkbox's own row, like the ricochet tint and dots, so the Settings grid keeps its pairs.
@@ -3976,8 +4059,17 @@
     $('light-strength-value').textContent=this.value+' %';
     if(viewer)viewer.setLightStrength(Number(this.value)/100);
   };
-  // The depth means nothing with the light off, so the slider is greyed out with it.
-  function lightStrengthState(){var on=$('soft-lighting').checked,input=$('light-strength'),row=input.parentNode;input.disabled=!on;if(row&&row.classList)row.classList.toggle('off',!on);}
+  // A switch and its own sliders are ONE row of Settings (user, 22.09: the same function is the same widget
+  // and the same code). A slider means nothing with its switch off, so it is disabled and its row greyed
+  // out with it - one function for every such row, not a copy per checkbox. A checkbox with more sliders
+  // than one row holds keeps them in a second .hatch-row under the first, and both rows are named here.
+  function rowState(box,ids){
+    var on=!!($(box)||{}).checked;
+    ids.forEach(function(id){var input=$(id);if(!input)return;input.disabled=!on;
+      var row=input.parentNode;if(row&&row.classList)row.classList.toggle('off',!on);});
+  }
+  function lightStrengthState(){rowState('soft-lighting',['light-strength']);}
+  function outlineState(){rowState('wireframe',['outline-brightness','outline-opacity']);}
   var CONTEXT_LOST='The browser lost its WebGL context. Reload the page.';
   window.addEventListener('armor-context-lost',function(){if(host.mark)host.mark('WebGL','context-lost');message(CONTEXT_LOST);});
   // The context came back and the viewer has redrawn: take the reload notice away again, leave any other message.
@@ -4033,6 +4125,10 @@
         if(!(box.v>=2)&&String(box.values['impact-opacity'])==='50')delete box.values['impact-opacity'];
         // v3 (user, 22.09): the lighting depth default moves from 100 to 250 %; a stored 100 from the old default follows.
         if(!(box.v>=3)&&String(box.values['light-strength'])==='100')delete box.values['light-strength'];
+        // v4 (user, 22.09, same evening): 250 % was too deep after all - the default is 200, and a store
+        // holding the 250 it was given by the previous default takes the new one. A depth the user set
+        // himself to anything else is his own and is kept.
+        if(!(box.v>=4)&&String(box.values['light-strength'])==='250')delete box.values['light-strength'];
         return box.values;}}catch(e){}
     return null;
   }
@@ -4049,7 +4145,7 @@
   }
   function persistSettings(){
     var values={};settingControls.forEach(function(el){values[el.id]=settingValue(el);});
-    try{window.localStorage.setItem(SETTINGS_KEY,JSON.stringify({v:3,values:values,aim:aimStored()}));}catch(e){}
+    try{window.localStorage.setItem(SETTINGS_KEY,JSON.stringify({v:4,values:values,aim:aimStored()}));}catch(e){}
   }
   function restoreSettings(){
     var stored=settingsStored(),migrated=false;
@@ -4071,15 +4167,38 @@
   (function(){
     var hovered=null,rolled=0;
     function under(target){for(var n=target;n;n=n.parentNode)if(n.type==='range')return n.disabled?null:n;return null;}
-    function step(el,dir){
+    // `mult` is how many of the slider's own steps this one event is worth (the wheel's run below); it is
+    // clamped here to a tenth of the slider's range, so however long the wheel is spun one event never
+    // crosses the scale. The value stays on the slider's own grid - Zoom's step is smaller than a whole
+    // unit, and adding it up would drift off the grid.
+    function step(el,dir,mult){
       var s=Math.abs(Number(el.step))||1,min=el.min===''?0:Number(el.min),max=el.max===''?100:Number(el.max);
-      var was=Number(el.value),now=Math.min(max,Math.max(min,was+dir*s));
+      var cap=Math.max(1,Math.floor((max-min)/10/s)),n=Math.max(1,Math.min(mult>0?mult:1,cap));
+      var was=Number(el.value),now=was+dir*s*n;
+      now=min+Math.round((Math.min(max,Math.max(min,now))-min)/s)*s;
+      now=Math.min(max,Math.max(min,Number(now.toFixed(6))));   // 7 × 0.1 is 0.7000000000000001 without this
       if(!isFinite(now)||now===was)return;
       el.value=String(now);
       // The control's own handler draws the change; the shared 'input'/'change' listeners save it.
       el.dispatchEvent(new Event('input',{bubbles:true}));
       el.dispatchEvent(new Event('change',{bubbles:true}));
     }
+    // A continuous turn of the wheel steps further and further (user, 22.09: one unit a notch is too fine,
+    // and Zoom's own step is smaller than a whole). The run counts the notches that arrive without a pause
+    // and its multiplier walks 1, 1, 2, 3, 5, 8 … - each the sum of the two before it - until step() cuts it
+    // to a tenth of the slider's range. A notch after a pause, the other direction or another slider starts
+    // the run over at the smallest step there is. Only the wheel grows: an arrow key is a deliberate press
+    // each time and keeps the minimal step.
+    var runEl=null,runDir=0,runAt=-1,runPrev=0,runStep=1;
+    var RUN_FAST=.15,RUN_OVER=.3;   // seconds: under the first the turn is continuous, over the second it is done
+    function runMultiplier(el,dir){
+      var now=aimSeconds(),gap=now-runAt;
+      if(el!==runEl||dir!==runDir||gap>RUN_OVER){runPrev=0;runStep=1;}
+      else if(gap<RUN_FAST&&runStep<1e4){var next=runPrev+runStep;runPrev=runStep;runStep=next;}
+      runEl=el;runDir=dir;runAt=now;
+      return runStep;
+    }
+    function wheelStep(el,dir){step(el,dir,runMultiplier(el,dir));}
     document.addEventListener('pointerover',function(e){hovered=under(e&&e.target);rolled=0;},true);
     document.addEventListener('pointerout',function(e){if(hovered&&hovered===under(e&&e.target)){hovered=null;rolled=0;}},true);
     document.addEventListener('wheel',function(e){
@@ -4088,11 +4207,12 @@
       var d=e.deltaY||e.deltaX||0;
       if(!d)return;
       e.preventDefault();e.stopPropagation();
-      // One notch is one step. A trackpad sends many small deltas instead, so they add up to a notch first.
-      if(e.deltaMode!==0||Math.abs(d)>=40){rolled=0;return step(el,d<0?1:-1);}
+      // One notch is one step of the run. A trackpad sends many small deltas instead, so they add up to a
+      // notch first - and only a notch counts towards the run, never the deltas that made it.
+      if(e.deltaMode!==0||Math.abs(d)>=40){rolled=0;return wheelStep(el,d<0?1:-1);}
       rolled+=d;
       if(Math.abs(rolled)<100)return;
-      step(el,rolled<0?1:-1);rolled=0;
+      wheelStep(el,rolled<0?1:-1);rolled=0;
     },{capture:true,passive:false});
     document.addEventListener('keydown',function(e){
       var el=hovered;
@@ -4119,7 +4239,7 @@
   buildTargetMods();
   buildAimConfig();
   restoreSettings();
-  lightStrengthState();   // the stored switch decides whether the depth slider is live
+  lightStrengthState();outlineState();   // the stored switches decide whether their own sliders are live
   // The stored presets are in place now, so the shooter on screen can be given his own again. The mode
   // itself needs no line here any more: restoreSettings() has already run the checkbox's own handler.
   syncShooterMods(activeHit);
