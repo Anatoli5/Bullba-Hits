@@ -8,6 +8,10 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 - New recordings keep the gun's pitch table once per gun configuration in the raw file too, instead of 22 KB in every single hit. Publishing a 405-hit battle now takes 38 ms of the export thread instead of 302 ms, so the page keeps up with a busy battle.
 - Every battle recorded before this build is read exactly as it was. A reference whose table is missing leaves the field empty and says so in the hit's warnings; no value is ever made up.
 - The battle header now records where the battle came from.
+- Recordings now carry what a later pass needs to check the aiming circle against the shot that really left the barrel: the player's own gun axis and gun pitch at the tracer, how old the last server aim vector was, the time of his previous shot, and the last six seconds of every shooter's movement - position, speed, hull turn rate, hull, turret and gun angles, five times a second - attached to his own tracers and to the hits he takes.
+- Target HP, the RNG shot and the hit dots are one mode with one switch, and it stands on the scene beside the collision-model tile instead of in Settings: a button that lights up while the mode is on. The two Settings rows are gone, and a store that still holds them drops them.
+- The dots have a name now, Hitmarks, and they are visible: every one of them used to be laid facing into the armour and thrown away by the graphics card, because the exported collision meshes are wound the other way round. They are laid along the side the shot came from instead.
+- Picking another shooter no longer empties the health bar and no longer leaves the ↺ doing nothing: the health belongs to the vehicle on screen, not to the hit, so it survives a change of shooter with its Hitmarks and only another vehicle starts afresh.
 
 ## 0.7.25 (2026-09-22)
 

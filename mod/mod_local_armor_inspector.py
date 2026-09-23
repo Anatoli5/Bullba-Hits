@@ -543,6 +543,10 @@ class VehicleEvents(object):
         # in a battle. The hits themselves are written and published throughout.
         try: self.recorder.in_battle = True
         except Exception: LOG.exception('Battle state could not be noted')
+        # The motion sampler lives exactly as long as the battle does: armed here, stopped when the
+        # avatar stops being the player. It never runs in the hangar and never per frame.
+        try: self.recorder.motion.start()
+        except Exception: LOG.exception('Motion sampler unavailable; hit recording continues')
         self.attempts = 0
         self.attach_arena()
 
@@ -574,6 +578,8 @@ class VehicleEvents(object):
     def on_avatar_become_non_player(self, *args):
         try: self.recorder.in_battle = False
         except Exception: LOG.exception('Battle state could not be noted')
+        try: self.recorder.motion.stop()
+        except Exception: LOG.exception('Motion sampler stop failed')
         self.detach_arena()
         self.flush_roster()
 
@@ -654,6 +660,12 @@ class Recorder(object):
         from local_armor_inspector.telemetry import ShotTelemetry, mechanic_state
         self.telemetry = ShotTelemetry(self)
         self.mechanic_state = mechanic_state
+        # The motion history of every shooter, in memory only; started and stopped by the battle
+        # hooks of VehicleEvents. It reuses this recorder's BigWorld handle and the telemetry's own
+        # "are we recording" gate, so it can never sample where the telemetry would not record.
+        from local_armor_inspector.motion import MotionSampler, PERIOD as MOTION_PERIOD
+        self.motion = MotionSampler(self)
+        self.motion_period = MOTION_PERIOD
         from local_armor_inspector.crit_log import CritLog
         self.crits = CritLog(self)
 
@@ -744,7 +756,10 @@ class Recorder(object):
             self.writer.put(filename, {'schema':1, 'type':'battle', 'id':filename, 'source':'live',
                 'arenaId':battle_id, 'startedAt':time.time(), 'playerVehicleId':player.playerVehicleID,
                 'map':getattr(arena_type, 'name', None) or 'Unknown map',
-                'clientVersion':self.version, 'recorderVersion':VERSION, 'mode':mode})
+                'clientVersion':self.version, 'recorderVersion':VERSION, 'mode':mode,
+                # Seconds between two motion samples of this battle. The layout of a sample rides
+                # on every attached buffer; the period belongs to the battle, so it is written once.
+                'motionPeriod':self.motion_period})
             self.battle = battle_id
             self.seq = 0
             self.file = filename
@@ -978,6 +993,16 @@ class Recorder(object):
                 if t['shooterId'] == attackerID and t['effectsIndex'] == effectsIndex
                 and 0 <= time.time()-t['receivedAt'] < 10]
         except Exception: pass
+        # The shooter's last six seconds, for a shot that hit the PLAYER (docs/BACKLOG.md row 28).
+        # Only for an incoming hit: the player's own shots carry it on their tracer, and putting it
+        # on every hit between two other vehicles would grow the file for nothing. Nothing is
+        # sampled here - this is a copy of what the sampler already holds, and it stands outside the
+        # block above so that a missing attacker entity cannot take it away.
+        try:
+            if record['direction'] == 'incoming' and 'attacker' in record:
+                motion = self.motion.history(attackerID)
+                if motion: record['attacker']['motion'] = motion
+        except Exception: LOG.debug('Attacker motion history unavailable', exc_info=True)
         record['droppedRecords'] = self.writer.dropped
         record['writeFailures'] = self.writer.failed
         self.writer.put(self.file, record)
@@ -1182,6 +1207,8 @@ def fini():
         _recorder.enabled = False
         _recorder.telemetry.close()
         _recorder.crits.close()
+        try: _recorder.motion.stop()
+        except Exception: LOG.exception('Motion sampler stop failed')
         try:
             from Vehicle import Vehicle
             if Vehicle.showDamageFromShot is _wrapper: Vehicle.showDamageFromShot = _original

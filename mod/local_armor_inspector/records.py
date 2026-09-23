@@ -57,7 +57,7 @@ class PitchTable(_SharedTable):
 # vehicle at this very shot. A field wrongly left out of this list only costs table entries -
 # the tables are content-addressed, so a value that does change still produces its own entry.
 LIVE_VEHICLE_KEYS = ('parts', 'worldTransform', 'siegeStateAtImpact', 'vehicleMode',
-                     'gunStateAtImpact')
+                     'gunStateAtImpact', 'motion')
 # Hit-level lists that belong to the gun configuration, not to the shot.
 SHELL_LIST_FIELDS = ('availableShells', 'shellCandidates')
 # Where the fingerprints of one hit are kept between prepare and publish.

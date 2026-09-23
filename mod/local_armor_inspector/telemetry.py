@@ -154,6 +154,10 @@ class ShotTelemetry(object):
         self.commands = []
         self.tracers = {}
         self.sequence = 0
+        # gameTime of the player's previous shot. The after-shot term of the dispersion formula
+        # decays from it, and the offline calibration needs the instant, not a hook of its own:
+        # this is the tracer bookkeeping already running here, remembering one number more.
+        self.last_own_shot = None
 
     def active(self, player):
         import BattleReplay
@@ -166,12 +170,16 @@ class ShotTelemetry(object):
             self.arena = identity
         return True
 
-    def emit(self, player, event, values):
+    def emit(self, player, event, values, gameTime=None):
+        """One shot event. `gameTime` is passed in when the caller already read the clock for it,
+        so a record and the ages computed against it are the same instant and serverTime() is
+        called once, not twice."""
         if not self.active(player): return None
         if not self.recorder.ensure_battle(player): return None
         self.sequence += 1
+        if gameTime is None: gameTime = number(self.recorder.bw.serverTime())
         record = {'schema':1, 'type':'shot', 'event':event, 'id':'s'+str(self.sequence),
-                  'receivedAt':time.time(), 'gameTime':number(self.recorder.bw.serverTime())}
+                  'receivedAt':time.time(), 'gameTime':gameTime}
         record.update(values)
         self.recorder.writer.put(self.recorder.file, record)
         return record
@@ -182,11 +190,28 @@ class ShotTelemetry(object):
             try: result[name] = action()
             except Exception: result['unavailable'].append(name)
         rotator = getattr(player, 'gunRotator', None)
+        # VehicleGunRotator.getCurShotDispersionAngles returns the client's own current dispersion
+        # pair; getCurShotPosition() is __getShotPosition(__turretYaw, __gunPitch) and returns the
+        # muzzle point and the shot velocity, so its second half IS the gun's world axis times the
+        # shell's speed. Asked for once here and used three times - it used to be asked twice.
         get('dispersionAngles', lambda: [number(v) for v in rotator.getCurShotDispersionAngles()])
-        get('gunOrigin', lambda: vec(rotator.getCurShotPosition()[0]))
-        get('gunVelocity', lambda: vec(rotator.getCurShotPosition()[1]))
+        shot = []
+        def shot_position():
+            if not shot: shot.append(rotator.getCurShotPosition())
+            return shot[0]
+        def gun_direction():
+            value = vec(shot_position()[1])
+            length = math.sqrt(value[0]*value[0]+value[1]*value[1]+value[2]*value[2])
+            if not length: raise ValueError('Gun axis has no length')
+            return [v/length for v in value]
+        get('gunOrigin', lambda: vec(shot_position()[0]))
+        get('gunVelocity', lambda: vec(shot_position()[1]))
+        get('gunDirection', gun_direction)
         get('desiredPoint', lambda: vec(player.inputHandler.getDesiredShotPoint(getattr(rotator, 'ignoreAimingMode', False))))
         get('turretYaw', lambda: number(rotator.turretYaw))
+        # The other half of the own gun axis in the vehicle's own frame; the packed pair of every
+        # other vehicle carries exactly these two angles, so own and foreign shots compare directly.
+        get('gunPitch', lambda: number(rotator.gunPitch))
         get('turretRotationSpeed', lambda: number(rotator.turretRotationSpeed))
         get('vehicleSpeeds', lambda: [number(v) for v in player.getOwnVehicleSpeeds(True)])
         if self.client_marker is not None: result['clientMarker'] = copy.deepcopy(self.client_marker)
@@ -251,7 +276,28 @@ class ShotTelemetry(object):
                 values['possibleCommandId'] = possible[0]['id']
                 values['association'] = 'single recent command; temporal association, not server identity'
                 if possible[0]['gunIndex'] != -1: self.commands.remove(possible[0])
-        record = self.emit(player, 'tracer', values)
+        # The logging half of the aiming-circle calibration (owner's decision 22.09,
+        # docs/BACKLOG.md row 28). A ricochet tracer is a continuation, not a shot, so it is left
+        # out of all three. The clock is read once here and handed to emit() below.
+        shot_time = None
+        if values['own'] and not isRicochet:
+            shot_time = number(self.recorder.bw.serverTime())
+            vector = self.server_vector
+            if vector is not None and vector.get('gameTime') is not None:
+                # The artefact of the method (KNOWLEDGE section 6): the last server aim vector is
+                # older than the shot, which is why the horizontal spread of the 19.09 measurement
+                # is not a law. Recorded now instead of inferred, on the gameTime clock.
+                values['serverVectorAge'] = shot_time-vector['gameTime']
+            if self.last_own_shot is not None:
+                values['previousShotGameTime'] = self.last_own_shot
+                values['sinceLastShot'] = shot_time-self.last_own_shot
+            self.last_own_shot = shot_time
+            try:
+                motion = self.recorder.motion.history(int(shooterID))
+                if motion: values['motion'] = motion
+            except Exception:
+                LOG.debug('Own motion history unavailable', exc_info=True)
+        record = self.emit(player, 'tracer', values, shot_time)
         if record:
             self.tracers[str(shotID)] = record
             if len(self.tracers) > 512:
@@ -276,9 +322,12 @@ class ShotTelemetry(object):
         self.endpoint(player, shotID, endPoint, 'explosion', {'direction':vec(velocityDir), 'speed':number(speed), 'material':int(effectMaterialIndex)})
 
     def server_update(self, player, vehicleID, shotPos, shotVec, dispersionAngle):
+        # Server message, not a frame: the clock read here is what makes the age of this vector at
+        # the next shot measurable on the same gameTime scale as every other record.
         if self.active(player) and vehicleID == player.playerVehicleID:
             self.server_vector = {'vehicleId':int(vehicleID), 'origin':vec(shotPos), 'vector':vec(shotVec),
-                                  'dispersionAngle':number(dispersionAngle), 'receivedAt':time.time()}
+                                  'dispersionAngle':number(dispersionAngle), 'receivedAt':time.time(),
+                                  'gameTime':number(self.recorder.bw.serverTime())}
 
     def targeting_update(self, player, entityId, *values):
         if self.active(player) and entityId == player.playerVehicleID:
