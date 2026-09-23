@@ -2,7 +2,7 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
-## Unreleased
+## 0.7.34 (2026-09-23)
 
 - ✸ is off each time the page opens: a hit shows as it was recorded until you switch the emulation on.
 - Characteristics: the reload line on top, above DPM, as the garage prints each gun: magazine rounds on the left, the reload in the middle, the time between rounds (or bursts) on the right; autoloader slots, dual-gun salvo preparation, twin-gun mode switch, automatic and Ares continuous fire.
