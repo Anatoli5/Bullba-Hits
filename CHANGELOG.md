@@ -2,7 +2,7 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
-## Unreleased
+## 0.7.35 (2026-09-23)
 
 - The Target HP / RNG / Hitmarks switch is a crosshair icon ⌖ (was ✸). The camera's orbit-centre buttons now read ⊙ Vehicle / ⊙ Hit.
 - With ⌖ on, the reload, magazine, gun heat and mode button stand in a strip at the top beside the model tile, with ◔ real reload, the target's health bar and ↺ (the bottom panel keeps the shells); with ⌖ off the strip is gone - nothing then blocks a shot. On a narrow screen the strip drops under the tile, and below the info panels if they are in the way.
