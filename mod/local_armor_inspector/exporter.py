@@ -30,7 +30,7 @@ from .telemetry import mechanics_params
 from .crit_tie import attach_crits, moves_tie
 
 LOG = logging.getLogger('local.armor_inspector')
-VERSION = '0.7.35'
+VERSION = '0.7.36'
 RESOURCE = re.compile(r'^(?:[A-Za-z0-9_-]+/)?vehicles/[A-Za-z0-9_/-]+\.(?:model|havok)\Z')
 IDENTIFIER = re.compile(r'^[-a-zA-Z0-9_]{1,100}\Z')
 # The interface icons of the aim configuration (equipment, perks, shells) ship with the page in web/icons
