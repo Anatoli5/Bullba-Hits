@@ -2273,14 +2273,19 @@
         if (row.pair.some(function (id) { return shooterConfig.field.indexOf(id) >= 0; })) frame.setAttribute('data-set', 'true');
         col.appendChild(frame);
       }
-      // The page's one help dot (web/tooltips.js): its click pins the three tooltips of this level.
-      var dot = node('button', '?', 'help-dot');
-      dot.type = 'button'; dot.title = '';
-      dot.setAttribute('data-help-for', ids.join(' '));
-      dot.setAttribute('aria-label', 'Help');
-      col.appendChild(dot);
+      // The page's one help dot (web/tooltips.js): the three tooltips of this level, and the help mode.
+      col.appendChild(helpDotFor(ids));
       box.appendChild(col);
     });
+  }
+  // A help dot made by the page (web/tooltips.js): its click shows the tooltips of the elements it lists and turns the
+  // help mode on, where a click on any control shows its tooltip instead of acting.
+  function helpDotFor(ids) {
+    var dot = node('button', '?', 'help-dot');
+    dot.type = 'button';
+    dot.setAttribute('data-help-for', ids.join(' '));
+    dot.setAttribute('aria-label', 'Help');
+    return dot;
   }
   function buildAimConfig() {
     var body = $('aim-config-body');
@@ -2303,7 +2308,11 @@
     preset.setAttribute('aria-haspopup', 'true');
     preset.onclick = function () { aimOpenLayer('presets'); };
     preset.onkeydown = aimPresetKey;
-    aimRow(grid, 'Preset', preset);
+    // Config's own "?" at the top of its box (user 23.09): the shooter row's dot is outside the popover, and a click
+    // there closes it - this one keeps Config open, shows its summary and turns the help mode on for its tiles.
+    var top = node('div', undefined, 'aim-config-top');
+    top.appendChild(preset); top.appendChild(helpDotFor(['aim-config']));
+    aimRow(grid, 'Preset', top);
     // The turret of the characteristics panel (panel v2, user 23.09): picked here, beside the build it is read with,
     // for a vehicle with more than one turret - the tiles are ttxPaintTurrets', the state the panel's own stored pair.
     var turretLabel = node('span', 'Turret'), turrets = node('div', undefined, 'aim-pick-row aim-cfg-turrets');
@@ -6365,16 +6374,19 @@
   // tooltip - and the figures inside a group in the garage's order too (RELATIVE_POWER_PARAMS: the loading, the
   // turret, the angles, aiming, dispersion, the DPM last; the stabilisation factors are its extra KPIs after them).
   // The compact view keeps two of them: Firepower - the reload line on top, above the DPM, as the user asked, and the
-  // DPM leading the grid right under it (user 23.09: the reload line goes "even above the DPM" - the DPM is the first
+  // DPM leading the rows right under it (user 23.09: the reload line goes "even above the DPM" - the DPM is the first
   // figure he reads; the expanded view keeps the garage's order with the DPM last) - and
   // Mobility. Survivability keeps only the hit points there (user 23.09), in the head on its empty left side, not a
   // rule and a row; the expanded view has the garage's whole group - the HP, the hull's and the turret's armour and the
   // suspension's repair time.
+  // Both views lay every row on ONE grid of three columns (user 23.09: the columns of the rows did not line up; the
+  // stylesheet's .ttx-body): the reload line's three sides, then rows of three - here the DPM, dispersion and aiming,
+  // the three stabilisation factors (a row of their own in both views), the turret; Mobility's three under them.
   var TTX_GROUP_NAMES = {};
   (TTX ? TTX.GROUPS : []).forEach(function (g) { TTX_GROUP_NAMES[g[0]] = g[1]; });
-  var TTX_COMPACT = [{group: 'relativePower', line: true, grid: ['avgDamagePerMinute', 'shotDispersionAngle', 'aimingTime', 'turretRotationSpeed'],
-                      row: ['stabMovement', 'stabRotation', 'stabTurret']},
-                     {group: 'relativeMobility', row: ['enginePowerPerTon', 'speedLimits', 'hull']}];
+  var TTX_COMPACT = [{group: 'relativePower', line: true, rows: ['avgDamagePerMinute', 'shotDispersionAngle', 'aimingTime',
+                      'stabMovement', 'stabRotation', 'stabTurret', 'turretRotationSpeed']},
+                     {group: 'relativeMobility', rows: ['enginePowerPerTon', 'speedLimits', 'hull']}];
   // ⚙'S TOOLTIP holds the words every row shares, once (23.09; they used to close every row's tooltip): what the stock
   // and the build are, what the build holds now, where its figures come from, and its field modification - the build
   // counts Config's by the client's law, in the same pass as the equipment (aimEffects), and then leaves the record's
@@ -6629,8 +6641,8 @@
     ttxSet(row, glyph, text, cmp, ttxTitle(key, sText, text, fText, ctx));
   }
   // The reload line (panel v2, web/ttx.js reloadLine): three sides - what the magazine holds, the reload, the time
-  // between rounds - so the line grows both ways from its centre. Each part is a row of the one widget (ttxRow), kept
-  // by its key and moved only when the gun's kind of loading changes.
+  // between rounds - each on its own column of the view's grid, the reload in the middle one. Each part is a row of
+  // the one widget (ttxRow), kept by its key and moved only when the gun's kind of loading changes.
   function ttxReloadLine() {
     var line = node('div', undefined, 'ttx-reload');
     line.ttxSides = {};
@@ -6777,8 +6789,8 @@
       ttxModeFollows() ? 'Under ⌖ this is the emulator’s own mode: the switch presses its mode button, with the game’s switch time.'
                        : 'Off ⌖ only the panel changes, and the choice is kept for this vehicle.']));
   }
-  // A title written only when its words change: comparing with el.title would write it again on every paint while the
-  // page tooltip holds a hovered element's title aside (web/tooltips.js).
+  // A title written only when its words change (el.title reads back what the page wrote, web/tooltips.js keeping it in
+  // data-tip): no write, no mutation for the tooltip's observer, on every paint.
   function ttxSetTitle(el, title) { if (el.ttxTitle !== title) { el.ttxTitle = title; el.title = title; } }
   // THE GUN CHIP (panel v2, user 23.09): plainly a gun - a barrel's glyph, the calibre and the GUN's tier - and a ▾
   // where the turret on the panel carries more than one gun. A click opens the quick list of THAT turret's guns, the
@@ -6937,7 +6949,7 @@
     ttxChoose(pick);
   }
   // The garage's groups (panel v2): a section is a thin rule with the group's glyph - its name in the tooltip - over
-  // its figures, in both views. The rows of a section sit in a grid of two, a line of three or the reload line.
+  // its figures, in both views: the reload line and one box of rows, both laid on the view's grid of three columns.
   function ttxRule(group) {
     var rule = node('div', undefined, 'ttx-rule'), name = TTX_GROUP_NAMES[group] || group;
     rule.setAttribute('data-group', group);
@@ -7018,8 +7030,8 @@
     rows(ttxSection(box, 'relativeVisibility'), ['circularVisionRadius']);
   }
   // The panel's controls, wired once (index.html holds the markup; the settings menu keeps ⚙'s state). The compact
-  // view: the hit points on the head's left, then Firepower (the reload line, a grid of four, the stabilisation line)
-  // and Mobility (a line of three) - every figure a row of the one widget.
+  // view: the hit points on the head's left, then Firepower (the reload line and its rows) and Mobility (its three) -
+  // every figure a row of the one widget, on the view's one grid.
   var ttxLine = null;
   function buildTtxPanel() {
     var compact = $('ttx-compact');
@@ -7027,14 +7039,10 @@
     compact.replaceChildren();
     ttxRows = {};
     TTX_COMPACT.forEach(function (s) {
-      var sec = ttxSection(compact, s.group);
+      var sec = ttxSection(compact, s.group), box = node('div', undefined, 'ttx-rows');
       if (s.line) { ttxLine = ttxReloadLine(); sec.appendChild(ttxLine); }
-      [['grid', 'ttx-rows'], ['row', 'ttx-line']].forEach(function (kind) {
-        if (!s[kind[0]]) return;
-        var box = node('div', undefined, kind[1]);
-        s[kind[0]].forEach(function (slot) { ttxRows[slot] = ttxRow(slot); box.appendChild(ttxRows[slot]); });
-        sec.appendChild(box);
-      });
+      s.rows.forEach(function (slot) { ttxRows[slot] = ttxRow(slot); box.appendChild(ttxRows[slot]); });
+      sec.appendChild(box);
     });
     var hp = $('ttx-hp');
     if (hp) { ttxRows.maxHealth = ttxRow('maxHealth'); hp.replaceChildren(ttxRows.maxHealth); }
