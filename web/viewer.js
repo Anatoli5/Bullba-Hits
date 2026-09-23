@@ -158,7 +158,12 @@
   // A frame that was asked for and never fired blocks every later draw(), because draw() declines while one is
   // pending. The page's own poll calls this; a frame long overdue is dropped and asked for again.
   Viewer.prototype.kick=function(){if(this.contextLost||this.frameId===null)return;if(clock()-this.frameAt<FRAME_STALL)return;window.cancelAnimationFrame(this.frameId);this.frameId=null;this.draw();};
-  Viewer.prototype.render=function(){var c=Math.cos(this.pitch);this.camera.position.set(this.target.x+this.distance*c*Math.sin(this.yaw),this.target.y+this.distance*Math.sin(this.pitch),this.target.z+this.distance*c*Math.cos(this.yaw));this.camera.near=Math.max(.05,this.distance*.02);this.camera.far=this.distance*4+200;this.projection();this.camera.lookAt(this.target);this.camera.updateMatrixWorld();if(this.pan.x||this.pan.y){var m=this.camera.matrixWorld,off=new THREE.Vector3().setFromMatrixColumn(m,0).multiplyScalar(this.pan.x).add(new THREE.Vector3().setFromMatrixColumn(m,1).multiplyScalar(this.pan.y));this.camera.position.add(off);this.camera.updateMatrixWorld();}if(this.autoFrame)this.autoFit();this.draw();if(this.onCamera)this.onCamera({distance:this.distance,zoom:this.camera.zoom,yaw:this.yaw,pitch:this.pitch});};
+  // The camera placed from the orbit (target, yaw, pitch, distance) and the pan, without drawing. render() starts
+  // with it, and so does fit(): setPivot and the like change the orbit and fit at once, before any render, and a Fit
+  // measured through the camera of the old centre put the model off screen (user 23.09, once Auto-frame, which re-zoomed
+  // every frame and hid it, was off by default).
+  Viewer.prototype.placeCamera=function(){var c=Math.cos(this.pitch);this.camera.position.set(this.target.x+this.distance*c*Math.sin(this.yaw),this.target.y+this.distance*Math.sin(this.pitch),this.target.z+this.distance*c*Math.cos(this.yaw));this.camera.near=Math.max(.05,this.distance*.02);this.camera.far=this.distance*4+200;this.projection();this.camera.lookAt(this.target);this.camera.updateMatrixWorld();if(this.pan.x||this.pan.y){var m=this.camera.matrixWorld,off=new THREE.Vector3().setFromMatrixColumn(m,0).multiplyScalar(this.pan.x).add(new THREE.Vector3().setFromMatrixColumn(m,1).multiplyScalar(this.pan.y));this.camera.position.add(off);this.camera.updateMatrixWorld();}};
+  Viewer.prototype.render=function(){this.placeCamera();if(this.autoFrame)this.autoFit();this.draw();if(this.onCamera)this.onCamera({distance:this.distance,zoom:this.camera.zoom,yaw:this.yaw,pitch:this.pitch});};
   // The camera angles are a target the view eases towards in its own frame loop, so a rotation is time-based
   // instead of event-based: the game's browser delivers pointer events in bursts between its own frames, and
   // turning the model straight from the events made every burst a jump. setOrbit places the camera at once
@@ -516,7 +521,7 @@
     var tris=(this.engine||{}).triangles||[];if(!tris.length)return;var cam=this.camera,v=new THREE.Vector3(),local=new THREE.Vector3(),radius=0,i,k,t;
     for(i=0;i<tris.length;i++){t=tris[i];for(k=0;k<3;k++)radius=Math.max(radius,v.fromArray(k===0?t.a:k===1?t.b:t.c).distanceTo(this.target));}
     var minDistance=Math.min(DISTANCE_MAX,radius*2+1);if(this.distance<minDistance){this.distance=minDistance;this.render();}
-    cam.zoom=1;this.frameCenter.set(0,0);this.projection();cam.updateMatrixWorld();
+    cam.zoom=1;this.frameCenter.set(0,0);this.placeCamera();
     var all=[Infinity,-Infinity,Infinity,-Infinity],main=[Infinity,-Infinity,Infinity,-Infinity];
     function grow(box,x,y){if(x<box[0])box[0]=x;if(x>box[1])box[1]=x;if(y<box[2])box[2]=y;if(y>box[3])box[3]=y;}
     for(i=0;i<tris.length;i++){t=tris[i];var isMain=!!(t.armor&&t.armor.vehicleDamageFactor>0);

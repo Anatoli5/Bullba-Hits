@@ -2,6 +2,10 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
+## Unreleased
+
+- Switching the orbit centre between ⊙ Vehicle and ⊙ Hit keeps the tank framed again; with Auto-frame off it jumped off the screen.
+
 ## 0.7.35 (2026-09-23)
 
 - The Target HP / RNG / Hitmarks switch is a crosshair icon ⌖ (was ✸). The camera's orbit-centre buttons now read ⊙ Vehicle / ⊙ Hit.
