@@ -76,7 +76,7 @@ CRIT_ICON_FILES = tuple('web/icons/crits/%s.png' % name for name in (
 # web/ttx.js (23.09) is the arithmetic of the characteristics panel; index.html loads it before app.js, and without it
 # here the panel would stay hidden in the package the way the modifier group did.
 ASSETS = ('Viewer.html', 'web/style.css', 'web/icon.svg', 'web/viewer.js',
-          'web/local-data.js', 'web/host.js', 'web/app.js', 'web/modifiers.js', 'web/equipment.js', 'web/vehicle-modes.js', 'web/ballistics.js', 'web/shot-telemetry.js', 'web/shot-context.js', 'web/crits.js', 'web/ttx.js', 'web/screen-armor.js', 'web/vendor/three.min.js',
+          'web/local-data.js', 'web/host.js', 'web/app.js', 'web/modifiers.js', 'web/equipment.js', 'web/vehicle-modes.js', 'web/ballistics.js', 'web/shot-telemetry.js', 'web/shot-context.js', 'web/crits.js', 'web/ttx.js', 'web/tooltips.js', 'web/screen-armor.js', 'web/vendor/three.min.js',
           'web/vendor/three.LICENSE', 'web/vendor/three-mesh-bvh.umd.js',
           # THIRD_PARTY.md ships with the page and points at these two: the packed-XML reader's licence and
           # the vendor manifest with the sources and hashes of three.js / three-mesh-bvh (inspection, 20.09).

@@ -2,6 +2,10 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
+## Unreleased
+
+- Tooltips work in the game's browser too: the page draws them itself. Hover an icon or tile for its explanation; click one that is not a button to pin it open, Escape or a click elsewhere closes it.
+
 ## 0.7.31 (2026-09-23)
 
 - Ares, M-II-Y ... M-VII-Y, AHT-7, LTC II: the outer track pair is recorded, drawn and judged as a part of its own. Hits on an Ares 90 or M-V-Y recorded on this client version that were shown without a model get the model and the verdict at the next game start.
