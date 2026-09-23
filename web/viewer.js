@@ -24,6 +24,9 @@
   // run, so a whole ring means a loaded gun.
   var AIM_RING=0xff5ad6;
   var AIM_LIVE={color:0x5ee0ff,dashed:true,opacity:.95},AIM_FIXED={color:AIM_RING,dashed:false,opacity:1};
+  // A press the gun refused (the page's gunBalk, 23.09): the live ring takes the page's red (--red) for a step, then
+  // its own colour, twice - the pulse the refused indicator of the page's strip gives at the same time.
+  var AIM_BALK={color:0xfb8580,opacity:1},AIM_BALK_STEP=150;
   function linear(color){return color.map(function(c){return c<=.04045?c/12.92:Math.pow((c+.055)/1.055,2.4);});}
   var baseColors=[[.38,.46,.54],[.65,.73,.8],[.75,.83,.87],[.55,.65,.72]].map(linear);
   function externalLayer(t){return t.part===0||!!(t.armor&&Number.isFinite(t.armor.vehicleDamageFactor)&&t.armor.vehicleDamageFactor<=1e-5);}
@@ -81,7 +84,7 @@
     this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.trackOpacity=.12;this.trackKey=null;this.pinCache=null;this.liveRingMaterial=null;this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.lighting=false;this.gunAngle=0;this.autoFrame=true;this.frameScale=this.defaults.scale;this.outline=null;this.outlineDepth=null;this.outlineStyle={brightness:.8,opacity:.06};this.showOutline=false;
     var drag = null;
     container.addEventListener('contextmenu', function(e) { e.preventDefault(); });
-    container.addEventListener('pointerdown', function(e) { /* The scene tiles and the modifier groups beside them are controls of their own: capturing the pointer here would retarget the click to #viewport and the shooter tile would never fire. Leaving the drag unstarted also keeps the pointerup below from pinning a point under the control. */ if(e.target&&e.target.closest&&e.target.closest('.viewport-tile,.mod-slot,.swap-roles,.aim-gun,.aim-drive,#aim-config,.ttx-panel'))return; /* pan: right button, or Ctrl + left button (the in-game browser swallows the right button) */ if(e.button===2||(e.button===0&&e.ctrlKey)){drag={pan:true,x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY,moved:false};self.dragging=true;try{container.setPointerCapture(e.pointerId);}catch(ignore){}return;}if(e.button!==0)return;if(e.altKey){self.aimAt(e);return;}drag={x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY,moved:false,part:self.pickPart(e)};if(drag.part===2||drag.part===3){/* a turret and gun the client holds still (poseLocks) are not dragged; with both held the drag orbits */drag.locks=self.poseLocks();if(drag.locks.turret&&drag.locks.gun)drag.part=1;}self.dragging=true; try{container.setPointerCapture(e.pointerId);}catch(ignore){} container.focus();
+    container.addEventListener('pointerdown', function(e) { /* The scene tiles and the modifier groups beside them are controls of their own: capturing the pointer here would retarget the click to #viewport and the shooter tile would never fire. Leaving the drag unstarted also keeps the pointerup below from pinning a point under the control. */ if(e.target&&e.target.closest&&e.target.closest('.viewport-tile,.mod-slot,.swap-roles,.aim-gun,.fun-strip,.aim-drive,#aim-config,.ttx-panel'))return; /* pan: right button, or Ctrl + left button (the in-game browser swallows the right button) */ if(e.button===2||(e.button===0&&e.ctrlKey)){drag={pan:true,x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY,moved:false};self.dragging=true;try{container.setPointerCapture(e.pointerId);}catch(ignore){}return;}if(e.button!==0)return;if(e.altKey){self.aimAt(e);return;}drag={x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY,moved:false,part:self.pickPart(e)};if(drag.part===2||drag.part===3){/* a turret and gun the client holds still (poseLocks) are not dragged; with both held the drag orbits */drag.locks=self.poseLocks();if(drag.locks.turret&&drag.locks.gun)drag.part=1;}self.dragging=true; try{container.setPointerCapture(e.pointerId);}catch(ignore){} container.focus();
       /* Hold to fire (user, 20.09): the press itself never shoots. The page starts a hold timer and decides -
          a short press is one shot on release, a long one a burst on the gun's cooldown - and a drag past the
          threshold below cancels the whole thing. aimHold marks the press as a shot so the emulation is not
@@ -1091,6 +1094,21 @@
   Viewer.prototype.setAimReload=function(part){
     var p=Number(part);
     this.aimReloadPart=part===null||part===undefined||!(p>=0)?null:Math.min(1,p);
+  };
+  // A PRESS THE GUN REFUSED (user, 23.09: the gun did not fire and nothing on screen said why). The live ring pulses
+  // twice in AIM_BALK: its one material (liveRing) changes colour, so nothing is built, and each step asks for the one
+  // frame draw() already renders - coalesced with the emulation's own frame while that runs. Four steps of one
+  // timeout each, the last giving the ring its colour back; a new refusal starts the pulse over. No ring, no pulse.
+  Viewer.prototype.flashAim=function(){
+    var self=this,m=this.liveRingMaterial,step=0;
+    if(!m||!this.liveRadius100||!this.spreadCircle)return false;
+    window.clearTimeout(this.aimFlashTimer);
+    (function next(){
+      var lit=step%2===0,s=lit?AIM_BALK:AIM_LIVE;
+      m.color.setHex(s.color);m.opacity=s.opacity;self.draw();
+      self.aimFlashTimer=++step<4?window.setTimeout(next,AIM_BALK_STEP):null;
+    }());
+    return true;
   };
   // The emulation as a whole. Switching it on leaves the battle's own reticles and tracers where they
   // are (user, 20.09): they make way for the USER'S FIRST SHOT and for nothing else, and clearAimShot

@@ -92,7 +92,11 @@
   // Rock's Burst mode take the movement, hull and turret terms ×0.0 - where for every other key 0 means "not given".
   // `forwardSpeed` and `backwardSpeed` (23.09): a rocket booster's own caps of the forward and the reverse speed
   // (rocketAcceleration: vehicle/maxSpeed/forward x1.5, backward x0.1 on the BZ-176), where `speed` takes both at once.
-  var NO_MODS={mult:1,additive:1,movement:1,rotation:1,turret:1,aimingTime:1,turretSpeed:1,hullSpeed:1,reload:1,magazineReload:1,afterShot:1,speed:1,forwardSpeed:1,backwardSpeed:1};
+  // `afterShotField` (23.09): the field modification's factor of miscAttrs gunShotDispersionFactorsAfterShot, the
+  // page's Config block. CLIENT RULE (Avatar.getOwnVehicleShotDispersionAngle 3310-3318): only the plain after-shot
+  // term (withShot 1) reads that copy; an automatic gun's controller term and a burst's afterShotInBurst (the gun
+  // component's own) never do - so it goes on the recorded afterShot alone, never on a shotTerm handed in.
+  var NO_MODS={mult:1,additive:1,movement:1,rotation:1,turret:1,aimingTime:1,turretSpeed:1,hullSpeed:1,reload:1,magazineReload:1,afterShot:1,afterShotField:1,speed:1,forwardSpeed:1,backwardSpeed:1};
   var ZERO_MODS={movement:1,rotation:1,turret:1,speed:1};
   function aimMods(mods){
     var out={},keys=Object.keys(NO_MODS);
@@ -114,6 +118,7 @@
     // s.shotTerm replaces afterShot for this state (shotTerm below); s.hold keeps it in the formula between two
     // rounds, as an automatic gun's controller does. Neither given: exactly the term of every earlier build.
     if(typeof s.shotTerm==='number'&&s.shotTerm>=0)cs=s.shotTerm;
+    else cs*=m.afterShotField;
     cs*=m.afterShot;
     var v=Math.abs(Number(s.speed)||0),w=Math.abs(Number(s.hullTurn)||0),wt=Math.abs(Number(s.turretTurn)||0);
     var sum=(v*cm)*(v*cm)+(w*cr)*(w*cr)+(wt*ct)*(wt*ct)+(s.afterShot||s.hold?cs*cs:0);

@@ -2,6 +2,15 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
+## Unreleased
+
+- The Target HP / RNG / Hitmarks switch is a crosshair icon ⌖ (was ✸). The camera's orbit-centre buttons now read ⊙ Vehicle / ⊙ Hit.
+- With ⌖ on, the reload, magazine, gun heat and mode button stand in a strip at the top beside the model tile, with ◔ real reload, the target's health bar and ↺ (the bottom panel keeps the shells); with ⌖ off the strip is gone - nothing then blocks a shot. On a narrow screen the strip drops under the tile, and below the info panels if they are in the way.
+- ⌖: a press the gun refuses (reloading, a burst still going out, overheated, switching mode) makes the blocking indicator and the aiming circle blink red.
+- Characteristics, expanded view: the whole Survivability group as in the garage - hit points, hull and turret armour (front / sides / rear; no turret line on turretless vehicles) and suspension repair time. The mod rewrites every characteristics file once for this.
+- Config: the empty slot is back at the top of the equipment and directive pickers.
+- Config: field modification by the vehicle's own tree and level: standard modifications on/off, dual modifications one of two (click the other side to swap, click the lit one to clear). Counted by the game's rule on the aiming circle and in the characteristics panel's build view; once anything is on, it replaces the field modification the record carries.
+
 ## 0.7.34 (2026-09-23)
 
 - ✸ is off each time the page opens: a hit shows as it was recorded until you switch the emulation on.

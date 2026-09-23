@@ -58,7 +58,17 @@ ICON_FILES = tuple('web/icons/%s.png' % name for name in (
     # Shell types, for the gun panel
     'ARMOR_PIERCING', 'ARMOR_PIERCING_CR', 'ARMOR_PIERCING_CR_PREMIUM', 'ARMOR_PIERCING_PREMIUM',
     'HIGH_EXPLOSIVE', 'HIGH_EXPLOSIVE_MODERN', 'HIGH_EXPLOSIVE_MODERN_PREMIUM', 'HIGH_EXPLOSIVE_PREMIUM',
-    'HOLLOW_CHARGE', 'HOLLOW_CHARGE_PREMIUM'))
+    'HOLLOW_CHARGE', 'HOLLOW_CHARGE_PREMIUM',
+    # Field modification (23.09): the garage's own art, copied by tools/build_equipment_catalogue.py - a pair
+    # side's icon, and the level's hexagon for a standard modification
+    'fm_additionalGrousers', 'fm_betterFriction', 'fm_improvedAimingHandling', 'fm_improvedCamouflage',
+    'fm_improvedChassisDurability', 'fm_improvedChassisStability', 'fm_improvedEnginePower', 'fm_improvedGunBreech',
+    'fm_improvedLightFilters', 'fm_improvedMuzzleBreak', 'fm_improvedObservationDevice', 'fm_improvedProjectileRifling',
+    'fm_improvedReflexScopes', 'fm_improvedScope', 'fm_improvedSelfRepairingTracks', 'fm_improvedSelfRepairingWheels',
+    'fm_improvedSharpnessVisor', 'fm_improvedSpallingResistance', 'fm_improvedSpeedIndicator',
+    'fm_improvedSpeedIndicatorBackwards', 'fm_improvedTurretRingStability', 'fm_improvedTurretTurningWheels',
+    'fm_increasedSensitivityOptics', 'fm_increasedThickness', 'fm_reinforcedInteriorModules', 'fm_reinforcedStructure',
+    'fm_level_2', 'fm_level_4', 'fm_level_5', 'fm_level_7', 'fm_level_8'))
 # The client's own 16 px icons of damaged modules and injured crew for the hit tiles (22.09), plus the generic
 # crit, chassis-crit, fire and module pictures. tools/extract_crit_icons.py copies them out of the installed
 # client: the user runs it once before a build, and tools/build.py stops with its name while one is missing.
@@ -1771,6 +1781,10 @@ TTX_SCHEMA = 1
 # blocks' hullAiming/siegeMode/static angles). The schema stays 1 - an older page reads the file as before - and a file
 # of a vehicle with a second mode or a rocket booster without this marker is rebuilt once (ttx_current).
 TTX_MODES_SCHEMA = 1
+# The garage's Survivability (23.09): the hull's nominal armour per pair (configs[k].hullArmor), each turret's
+# (turrets[i].primaryArmor) and the suspension's repair times (modules.chassis.repairTime). Every file is built
+# again once without this marker (ttx_current); an older page ignores the new fields.
+TTX_ARMOR_SCHEMA = 1
 TTX_CURRENT, TTX_FAILED = 'current', 'failed'
 # A clock fine enough for buildMs: time.time() moves in 15.6 ms steps on Windows; time.clock is the
 # performance counter there in Python 2.7, perf_counter its successor in 3.
@@ -1782,7 +1796,10 @@ TTX_TOP_MODULES = (('chassis', 'chassis'), ('engine', 'engines'), ('radio', 'rad
 # mode's own values are configs[k].modeAim/modePitch and vehicle.modeValues (23.09, ttx_mode_values).
 TTX_MODE_FLAGS = (('siege', 'hasSiegeMode'), ('wheeled', 'isWheeledVehicle'),
                   ('onSpotRotation', 'isWheeledOnSpotRotation'), ('turboshaft', 'hasTurboshaftEngine'),
-                  ('rocketAcceleration', 'hasRocketAcceleration'), ('hydraulicChassis', 'hasHydraulicChassis'))
+                  ('rocketAcceleration', 'hasRocketAcceleration'), ('hydraulicChassis', 'hasHydraulicChassis'),
+                  # A chassis whose track pairs run one inside the other: the garage titles its repair times "main /
+                  # reserve" (formatters.needUseYohChassisRepairTime 316). The M-VI-Yoh has two pairs without it.
+                  ('trackWithinTrack', 'isTrackWithinTrack'))
 
 
 def ttx_take(target, key, action, warnings, label):
@@ -1837,6 +1854,19 @@ def ttx_steering_lock(values):
     if not values or not any(values):
         return None
     return float(max(abs(float(item)) for item in values))
+
+
+def ttx_repair_times(chassis):
+    """The suspension's repair times of the XML in seconds, the inputs of the garage's params.VehicleParams.
+    chassisRepairTime (883-897, 2.4.0.1): one per track pair (chassis.trackPairs - two on the M-VI-Yoh) in the
+    chassis's own order, which the garage divides by the repair factors and then REVERSES; [] when a pair has none, as
+    the garage returns then. A wheeled chassis has no track pairs: its own healthParams.repairTime."""
+    pairs = getattr(chassis, 'trackPairs', None) or ()
+    if pairs:
+        times = [pair.healthParams.repairTime for pair in pairs]
+        return [] if any(time is None for time in times) else [float(time) for time in times]
+    time = getattr(chassis, 'repairTime', None)
+    return [] if time is None else [float(time)]
 
 
 def ttx_reload_extra(descr):
@@ -1921,6 +1951,9 @@ def ttx_pair(descr, turret_index, gun_name, top):
         config['modeAim'] = aims['siege']
         config['modeAimMode'] = 1
     ttx_take(config, 'maxHealth', lambda: int(descr.maxHealth), warnings, 'Health')
+    # The hull's nominal armour front / sides / rear, mm (params.VehicleParams.hullArmor 263): per pair, because the
+    # client picks the hull variant with the turret.
+    ttx_take(config, 'hullArmor', lambda: [float(item) for item in descr.hull.primaryArmor], warnings, 'Hull armour')
     ttx_take(config, 'weight', lambda: ttx_weight(descr, warnings), warnings, 'Weight')
     ttx_take(config, 'maxAmmo', lambda: int(gun.maxAmmo), warnings, 'Ammunition')
     ttx_take(config, 'invisibilityFactorAtShot', lambda: float(gun.invisibilityFactorAtShot), warnings,
@@ -2060,6 +2093,7 @@ def ttx_block(type_name, version):
         if modes.get('wheeled') and not modes.get('onSpotRotation'):
             physics = vtype.xphysics['chassis'][component.name]
             block['maxSteeringLockAngle'] = ttx_steering_lock(physics.get('axleSteeringLockAngles'))
+        ttx_take(block, 'repairTime', lambda: ttx_repair_times(component), warnings, 'Suspension repair time')
         return block
 
     def engine():
@@ -2082,6 +2116,10 @@ def ttx_block(type_name, version):
                  'View range of ' + entry['name'])
         ttx_take(entry, 'invisibilityFactor', lambda: float(turret.invisibilityFactor), warnings,
                  'Turret concealment of ' + entry['name'])
+        # The turret's nominal armour front / sides / rear, mm (params.VehicleParams.turretArmor 461): the garage prints
+        # it only on a real turret (vehicle.hasTurret); a fake one has figures of its own that nobody shows.
+        ttx_take(entry, 'primaryArmor', lambda: [float(item) for item in turret.primaryArmor], warnings,
+                 'Turret armour of ' + entry['name'])
         turrets.append(entry)
         for gun in turret.guns:
             name = str(gun.name)
@@ -2120,7 +2158,8 @@ def ttx_block(type_name, version):
     if modes.get('rocketAcceleration'):
         ttx_take(vehicle, 'rocketAcceleration', lambda: rocket_block(vtype.rocketAccelerationParams), warnings,
                  'Rocket acceleration')
-    result = {'schema': TTX_SCHEMA, 'modesSchema': TTX_MODES_SCHEMA, 'id': vehicle_id(type_name), 'type': str(type_name),
+    result = {'schema': TTX_SCHEMA, 'modesSchema': TTX_MODES_SCHEMA, 'armorSchema': TTX_ARMOR_SCHEMA,
+              'id': vehicle_id(type_name), 'type': str(type_name),
               'clientVersion': version, 'producedAt': time.time(), 'buildMs': round((TTX_TIMER() - started) * 1000.0, 1),
               'vehicle': vehicle, 'modules': modules, 'turrets': turrets, 'shells': shells,
               'configs': configs, 'warnings': warnings}
@@ -3149,6 +3188,9 @@ class Exporter(object):
             return False
         if not (isinstance(value, dict) and value.get('schema') == TTX_SCHEMA
                 and canonical(value.get('clientVersion') or '') == self.version):
+            return False
+        # Any file that predates the armour and the suspension's repair (23.09) is built again, once.
+        if value.get('armorSchema') != TTX_ARMOR_SCHEMA:
             return False
         # A vehicle with a second mode or a rocket booster whose file predates their fields is built again, once.
         vehicle = value.get('vehicle') or {}

@@ -246,7 +246,8 @@
       out.stabMovement = num(a.movementFactor) !== null ? a.movementFactor * KMH_TO_MS * additive * mul('movementFactor') * amp('movementFactor') : null;
       out.stabRotation = num(a.rotationFactor) !== null ? a.rotationFactor / DEG * additive * mul('rotationFactor') * amp('rotationFactor') : null;
       out.stabTurret = num(a.turretRotationFactor) !== null ? a.turretRotationFactor / DEG * additive * mul('turretRotationFactor') * amp('turretRotationFactor') : null;
-      out.stabAfterShot = num(a.afterShotFactor) !== null ? a.afterShotFactor * additive : null;
+      // x the field modification's miscAttrs afterShot (23.09, the agent fieldmods; 1 without one).
+      out.stabAfterShot = num(a.afterShotFactor) !== null ? a.afterShotFactor * additive * mul('afterShotFactor') : null;
     }
     if (a && a.aimingTime > 0) out.aimingTime = a.aimingTime * own('aimingTimeFactor') * mul('aimingTimeFactor') / g * amp('aimingTimeFactor');
 
@@ -286,6 +287,26 @@
     // ---- Survivability, gun limits ---------------------------------------------------------------------------
     // vehicles.__updateAttributes 2788-2789: with a health factor the hit points go UP to whole tens.
     if (pair && pair.maxHealth > 0) out.maxHealth = mul('healthFactor') !== 1 ? Math.trunc(ceilTo(pair.maxHealth * mul('healthFactor'), 1)) : Number(pair.maxHealth);
+    // The garage's whole Survivability group (23.09, params_helper PARAMS_GROUPS['relativeArmor']): the hit points, the
+    // nominal armour of the hull and of the turret - front / sides / rear, each XML figure round_py2_style'd (params
+    // hullArmor 263, turretArmor 461) - and the suspension's repair. A turret that is only the hull's fake one has no
+    // line in the garage (turretArmor is None without __hasTurret; the file's vehicle.hasTurret). No device, crew or
+    // modification touches the armour. A file written before 23.09 has none of the three: they stay null.
+    function whole(list) { return Array.isArray(list) && list.length ? list.map(rp) : null; }
+    out.hullArmor = pair ? whole(pair.hullArmor) : null;
+    out.turretArmor = t && t.vehicle && t.vehicle.hasTurret === false ? null : whole(turret && turret.primaryArmor);
+    // params chassisRepairTime 883-897 and __calcRealChassisRepairTime 1128-1150: each track pair's XML time / the crew's
+    // repair factor / (1 + KPI vehicleRepairSpeed - the Repairs skill's own KPI) / KPI vehicleChassisRepairSpeed, the
+    // list REVERSED. The repair factor is the group skill Repairs, 0.57 + 0.43 x eff, and 0.57 while nobody has it
+    // whatever the crew's level (VehicleDescrCrew._updateRepairFactors 509; the client's own run: 12.03 s on the IS-7 in
+    // the stock and with rations and Brothers in Arms alike). The page's crew has no Repairs skill (crewFactors gives no
+    // `repair`) and Config carries no repair KPI of a device, directive or kit - the panel says so - so the page's
+    // figure is XML / 0.57 in both views. The situational perk (driver_suspensionRepair) is not in the main figure.
+    var repairXml = modules.chassis && Array.isArray(modules.chassis.repairTime) ? modules.chassis.repairTime : null;
+    if (repairXml) {
+      var repairCrew = crew.repair > 0 ? Number(crew.repair) : 0.57;
+      out.chassisRepairTime = repairXml.map(function (x) { return Number(x) / repairCrew; }).reverse();
+    }
     // The vertical and the horizon WITH THE HULL AIMING (23.09, params __getPitchLimitsValues 1311-1336 and 698-710,
     // outputs/second-modes-2026-09-23.md 3.7): where the hull tilts (isPitchHullAimingAvailable - available, in both
     // modes) a gun with a static pitch shows the hull's own (pitchMin, pitchMax), any other gun its absolute limits
@@ -350,7 +371,8 @@
       out.invisibilityMovingFactor = 100 * Math.max(0, moving);
       out.invisibilityStillFactor = 100 * Math.max(0, still);
       var atShot = pair ? num(pair.invisibilityFactorAtShot) : null;
-      out.invisibilityAfterShot = atShot !== null ? out.invisibilityStillFactor * atShot : null;
+      // M['invisibilityFactorAtShot'] is the gun's figure x the field modification (23.09, the agent fieldmods).
+      out.invisibilityAfterShot = atShot !== null ? out.invisibilityStillFactor * atShot * mul('invisibilityAtShot') : null;
     }
 
     // ---- The shells of the gun (the expanded view) -----------------------------------------------------------
@@ -402,6 +424,9 @@
       maxSteeringLockAngle: nice(v.maxSteeringLockAngle), speedLimits: list(v.speedLimits),
       enginePower: integral(v.enginePower), vehicleWeight: nice(v.vehicleWeight), enginePowerPerTon: nice(v.enginePowerPerTon),
       maxHealth: integral(v.maxHealth), pitchLimits: list(v.pitchLimits), gunYawLimits: list(v.gunYawLimits),
+      // _listFormat for the armour (whole, truncated), _niceListFormat for the repair (FORMAT_SETTINGS 553-554, 618).
+      hullArmor: list(v.hullArmor, integral), turretArmor: list(v.turretArmor, integral),
+      chassisRepairTime: v.chassisRepairTime && v.chassisRepairTime.length ? list(v.chassisRepairTime) : '—',
       switchTime: v.switchTime ? list(v.switchTime, v.modeKind === 'turboshaft' ? integral : nice) : '—', autoSiege: list(v.autoSiege),
       maxAmmo: v.maxAmmo ? String(v.maxAmmo) : '—',
       circularVisionRadius: nice(v.circularVisionRadius), circularVisionRadiusMoving: nice(v.circularVisionRadiusMoving),
@@ -412,7 +437,8 @@
   // Which way is better (spec 3.2): smaller for the reload, the dispersion, the aiming, the stabilisation terms,
   // the terrain resistance and the mass; bigger for everything else.
   var SMALLER = {reload: 1, reloadTimeSecs: 1, clipFireRate: 1, autoReloadTime: 1, dualGun: 1, shotDispersionAngle: 1, aimingTime: 1,
-    stabMovement: 1, stabRotation: 1, stabTurret: 1, stabAfterShot: 1, terrainResistance: 1, vehicleWeight: 1, switchTime: 1};
+    stabMovement: 1, stabRotation: 1, stabTurret: 1, stabAfterShot: 1, terrainResistance: 1, vehicleWeight: 1, switchTime: 1,
+    chassisRepairTime: 1};
   function better(key) { return SMALLER[key] ? -1 : 1; }
   // One number per key to compare the build with the stock by: the first of a pair, the reload figure itself.
   function score(v, key) {

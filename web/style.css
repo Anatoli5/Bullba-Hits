@@ -102,9 +102,21 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
    is the same kind of control. The row takes over the tile's placing exactly as the shooter row does below.
    The bar is graphics only: the figures live in its tooltip. Its fill colour is written by the page from the
    very chance/damage scale the armour is drawn with, so full and empty read as green and red of one palette. */
-.model-row{position:absolute;left:50%;top:12px;transform:translateX(-50%);z-index:5;display:flex;flex-wrap:nowrap;align-items:center;gap:8px;max-width:calc(100% - 24px)}
-.model-row>#model-tile{position:static;transform:none;max-width:100%}
-.target-hp{flex:0 0 auto;width:140px;height:12px;padding:2px;border:1px solid rgba(157,174,191,.55);border-radius:6px;background:rgba(23,35,48,.35);box-shadow:0 1px 2px rgba(0,0,0,.7)}
+/* 23.09: the row is the tile's head (the tile, ⌖ and the help dot) and the strip (.fun-strip, below): the emulated
+   gun's load whenever the aim emulation runs, and under ⌖ also ◔, the target's health and ↺. `width:max-content`: a
+   row centred from left:50% would otherwise be squeezed to half the scene before it ever reached its max-width. The
+   strip stands on the tile's line while the whole row fits between the info panels and the circle tiles; when it
+   does not, the page's layout pass sets data-stack and the row turns into a column - the strip on its own line under
+   the tile - and where even that line crosses a tile of the grid the row goes down under it (app.js layoutModelRow). */
+.model-row{position:absolute;left:50%;top:12px;transform:translateX(-50%);z-index:5;display:flex;flex-wrap:nowrap;align-items:center;gap:8px;width:max-content;max-width:calc(100% - 24px)}
+.model-row[data-stack]{flex-direction:column;gap:6px}
+.model-head{display:flex;flex-wrap:nowrap;align-items:center;gap:8px;min-width:0;max-width:100%}
+.model-head>#model-tile{position:static;transform:none;max-width:100%}
+/* ⌖, the crosshair the emulation is switched by (user, 23.09: the ✸ said nothing): drawn in currentColor, so it is
+   lit in the accent with the switch like every glyph of a .swap-roles button, at the glyph's own size. */
+.fun-icon{display:block;width:1em;height:1em;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;filter:drop-shadow(0 1px 1px rgba(0,0,0,.7))}
+.fun-icon .fun-icon-dot{fill:currentColor;stroke:none}
+.target-hp{flex:0 1 140px;width:140px;min-width:64px;height:12px;padding:2px;border:1px solid rgba(157,174,191,.55);border-radius:6px;background:rgba(23,35,48,.35);box-shadow:0 1px 2px rgba(0,0,0,.7)}
 .target-hp[hidden]{display:none}
 .target-hp-fill{display:block;height:100%;width:100%;border-radius:4px;background:#5ac8a0}
 /* The swap left the shooter tile for a button of its own (19.09): the tile picks the role now. The two share
@@ -152,8 +164,16 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 /* The gun panel stands where the mode's switch used to, between the Shooter tile and Config (user,
    20.09): the shells of this gun as the client's own icons, then the load state. Same translucent
    panel as the other overlays of the row, and it never wraps - the row has to stay one line. */
-.aim-gun{display:flex;align-items:center;gap:10px;flex:0 0 auto;flex-wrap:nowrap;padding:4px 9px;border-radius:5px;background:rgba(23,35,48,.55);color:#e5edf5;font-size:13px;line-height:1.1;white-space:nowrap}
-.aim-gun[hidden]{display:none}
+/* 23.09: the load state left the bottom row for the strip beside ⌖ at the top (user: the reload at the bottom went
+   unnoticed while the gun would not fire) - the same panel, one rule for both. The shells stay down here: they
+   choose the shell with ⌖ off as well. The strip may wrap onto a second line only when even its own line under
+   the tile is too narrow for it (a phone); .fun-gun is the part that needs a live emulation. Its switches - ◔, the
+   mode button, ↺ - are ⌖'s own size (final review: one size for the lit switches of the top row), so the strip's
+   own padding is thinner and it stands no taller than the tile. */
+.aim-gun,.fun-strip{display:flex;align-items:center;gap:10px;flex:0 0 auto;flex-wrap:nowrap;padding:4px 9px;border-radius:5px;background:rgba(23,35,48,.55);color:#e5edf5;font-size:13px;line-height:1.1;white-space:nowrap}
+.aim-gun[hidden],.fun-strip[hidden],.fun-gun[hidden]{display:none}
+.fun-strip{flex-wrap:wrap;justify-content:center;row-gap:4px;max-width:100%;padding:2px 9px}
+.fun-gun{display:flex;align-items:center;gap:10px;flex:0 0 auto}
 .aim-gun-shells{display:flex;align-items:center;gap:5px}
 .aim-gun-shells[hidden]{display:none}
 .aim-shell{position:relative;display:flex;align-items:center;justify-content:center;width:30px;height:30px;min-height:0;flex:0 0 auto;padding:2px;border:1px solid #35475a;border-radius:4px;background:#0c151f;cursor:pointer}
@@ -162,7 +182,7 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 .aim-shell:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
 .aim-shell-mark{position:absolute;top:-3px;right:-2px;font-size:9px;line-height:1;color:var(--gold);text-shadow:0 1px 2px #000}
 .aim-gun-load{display:flex;align-items:baseline;gap:6px}
-.aim-gun-load b{font-weight:600;font-variant-numeric:tabular-nums}
+.aim-gun-load b{display:inline-block;min-width:5.4ch;text-align:right;font-weight:600;font-variant-numeric:tabular-nums}
 .aim-gun-load b[data-running="1"]{color:var(--gold)}
 /* The magazine (user, 22.09 ~24:15): one slot per round, graphics only - the numbers are in its tooltip. A loaded
    round is a bright slug, a spent one a hollow frame, the next to fire is lit in the accent (dimmed while the gap
@@ -193,13 +213,20 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
    something runs down (a switch, a cooldown, a deployment, the charges building); a gold ring while an effect of its own
    runs beside the mode (the Szakal's fight ability, a Borkenkäfer mark on the target); a passive one (stacks, fury)
    takes no press; dimmed for a mechanic the emulation does not run - the tooltip says why. */
-.aim-gun>.aim-gun-mech{padding:3px 7px;font-size:14px}
-.aim-gun>.aim-gun-mech[data-busy="1"]{border-style:dashed}
-.aim-gun>.aim-gun-mech[data-glow="1"]{box-shadow:0 0 0 1px var(--gold)}
-.aim-gun>.aim-gun-mech[data-passive="1"]{cursor:default}
-.aim-gun>.aim-gun-mech[data-passive="1"]:hover{border-color:rgba(157,174,191,.55);background:rgba(23,35,48,.15)}
-.aim-gun>.aim-gun-mech[data-passive="1"][aria-pressed=true]:hover{border-color:var(--gold);background:#302b23}
-.aim-gun>.aim-gun-mech[aria-disabled=true]:not([data-passive="1"]){opacity:.5;cursor:default}
+.fun-gun>.aim-gun-mech[data-busy="1"]{border-style:dashed}
+.fun-gun>.aim-gun-mech[data-glow="1"]{box-shadow:0 0 0 1px var(--gold)}
+.fun-gun>.aim-gun-mech[data-passive="1"]{cursor:default}
+.fun-gun>.aim-gun-mech[data-passive="1"]:hover{border-color:rgba(157,174,191,.55);background:rgba(23,35,48,.15)}
+.fun-gun>.aim-gun-mech[data-passive="1"][aria-pressed=true]:hover{border-color:var(--gold);background:#302b23}
+.fun-gun>.aim-gun-mech[aria-disabled=true]:not([data-passive="1"]){opacity:.5;cursor:default}
+/* A press the gun refused (user, 23.09): the indicator in the way - the reload, the magazine, the heat bar, the mode
+   button - pulses twice in red, and the live aiming circle with it (viewer.flashAim); its tooltip says why. The page
+   alternates the two names so a second refusal starts the pulse again, and takes the attribute off after it. */
+.aim-gun-load[data-balk],.aim-gun-mag[data-balk]{border-radius:4px}
+.fun-strip [data-balk="1"]{animation:balk-1 .3s ease-out 2}
+.fun-strip [data-balk="2"]{animation:balk-2 .3s ease-out 2}
+@keyframes balk-1{from{box-shadow:0 0 0 2px var(--red),0 0 10px 3px rgba(251,133,128,.65)}}
+@keyframes balk-2{from{box-shadow:0 0 0 2px var(--red),0 0 10px 3px rgba(251,133,128,.65)}}
 /* “Configuration ▾” beside the Shooter tile: its popover opens upward, over the scene. Nothing is printed
    inside the button any more (user, 22.09): a battle whose rules the client data does not give, and a kind of
    equipment the vehicle's own lock fixes, are said in the button's own tooltip. */
@@ -280,7 +307,8 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 /* The picker: four grade groups under a quiet heading, each a dense grid several tiles to the row. */
 .aim-picker{display:flex;flex-direction:column;gap:4px;width:100%}
 .aim-pick-grade{font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin-top:6px}
-/* No "empty" tile heads the picker any more (the fitted piece takes itself out), so the first grade opens it. */
+/* The empty slot's own tile heads the picker again (user, 23.09), in a row of its own; a picker without it would
+   open on its first grade. */
 .aim-pick-grade:first-child{margin-top:0}
 .aim-pick-row{display:flex;flex-wrap:wrap;gap:4px;width:100%}
 /* A situational perk holds only while its condition does, and says so by art alone: the tile is dimmed
@@ -289,6 +317,15 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 .aim-pick[data-situational='1'][aria-pressed=true]{opacity:1}
 .aim-pick[data-situational='1']::after{content:'';position:absolute;top:3px;right:3px;width:5px;height:5px;border-radius:50%;background:var(--muted)}
 .aim-chips{display:flex;flex-wrap:wrap;gap:4px;width:100%}
+/* The field modification (23.09): one column per level of the shooter's tree - its standard modification on top,
+   its two Dual Modifications in one frame under it, the level's help dot last. While one side of a pair is on the
+   other is dimmed: a click on it swaps them. */
+.aim-fm{display:flex;flex-wrap:wrap;align-items:flex-start;gap:8px 12px;width:100%}
+.aim-fm[hidden]{display:none}
+.aim-fm-level{display:flex;flex-direction:column;align-items:center;gap:4px}
+.aim-fm-pair{display:flex;flex-direction:column;gap:3px;padding:3px;border:1px solid #35475a;border-radius:8px}
+.aim-fm-pair[data-set] .aim-pick[aria-pressed=false]{opacity:.55}
+.aim-fm-pair[data-set] .aim-pick[aria-pressed=false]:hover{opacity:1}
 .aim-role{font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin:8px 0 4px}
 .aim-role:first-child{margin-top:0}
 #aim-cfg-picker{flex:1 1 auto;min-height:0;width:100%;overflow:auto;overscroll-behavior:contain}

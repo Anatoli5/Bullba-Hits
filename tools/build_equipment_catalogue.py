@@ -15,6 +15,14 @@ camouflage net, the exhaust, the binoculars, the grousers, the hull part of the 
 device's mass (outputs/ttx-data-2026-09-22.md section 4.3). They are decoded straight out of scripts.pkg with the
 mod's own packed-XML reader. No client, no catalogue: the script stops and says so rather than dropping them.
 
+Since 23.09 it also writes the FIELD MODIFICATION catalogue (AIM_CATALOGUE.field) out of the same client: the 18
+role trees of post_progression/field_modifications_trees.xml, their pairs (pairs.xml) and every modification of
+field_modifications.xml with the page input each modifier lands on, the garage's own name (artefacts.mo) and the
+garage's own lines of what it changes (its <kpi> block in the words of tank_setup.mo), and copies the garage's art
+for them into web/icons (fm_<imgName>.png for a pair side, fm_level_<N>.png - the level's hexagon - for a standard
+modification). Research: outputs/field-modifications-2026-09-20.md. The tier-XI vehicle skill trees of the same
+folder are left out on purpose (see FIELD_TREES_FILE below).
+
     runtime/python.exe tools/build_equipment_catalogue.py [game folder]     (default C:/Games/World_of_Tanks_NA)
 """
 import io
@@ -152,6 +160,60 @@ SCRIPT_INPUTS = {
 SLOT_TYPES = {1: [], 2: ['mobility'], 3: ['stealth'], 4: ['firepower'], 5: ['survivability']}
 CATEGORY_NAMES = {'firepower': 'Firepower', 'mobility': 'Mobility', 'survivability': 'Survivability',
                   'stealth': 'Scouting'}
+
+# --- Field modification (23.09) -------------------------------------------------------------------------------
+# Only the ROLE trees: the tier-XI vehicle skill trees in the same folder (veh_skill_configs, 28 of them) are a
+# different thing - a 23-node graph per vehicle with "unlock any" edges and no pairs, whose nodes mostly ADD to the
+# component descriptors (descrAttrs: the turret's and the hull's degrees a second, the ammunition, a shell's speed)
+# or change the tier-XI mechanics the page's ✸ layer already models with the full tree. They are not factors on
+# the miscAttrs law this catalogue feeds.
+FIELD_DIR = 'scripts/item_defs/vehicles/common/post_progression/'
+FIELD_TREES_FILE = FIELD_DIR + 'field_modifications_trees.xml'
+FIELD_MODS_FILE = FIELD_DIR + 'field_modifications.xml'
+FIELD_PAIRS_FILE = FIELD_DIR + 'pairs.xml'
+LC_MESSAGES = 'res/text/lc_messages'
+# The page input each client attribute of a modification lands on - the same inputs the devices use, so the
+# emulator's circle and the characteristics panel read field modifications through the one path they read
+# equipment through (web/app.js aimEffects). The client's law for them (attributes_helpers
+# AggregatedCollectorHelper, lines 226-267): the deviations of every active modification ADD (merger
+# current + v - 1 from 0.0), the sum is applied ONCE (current x (sum + 1)); an 'add' sums. The devices then
+# multiply that, one by one (vehicles __updateAttributes 2685 then 2688).
+#   - onStill/onMoveRotationSpeedFactor: the garage and the battle take the larger of the two
+#     (params 231, utils.getChassisRotationSpeed); every modification writes both with one figure, so the pair
+#     is one input, the hull's traverse, as the rotation mechanism's is (checked below);
+#   - circularVisionRadiusBaseFactor multiplies the view range whatever else does (params 1152), which is what
+#     'visionBoost' does on the page (the binoculars replace only circularVisionRadiusFactor);
+#   - invisibilityBaseAdditive is added to the concealment moving and standing (getClientInvisibility 366);
+#   - invisibilityFactorAtShot and gun/shotDispersionFactors/afterShot are the gun's own factors copied into
+#     miscAttrs (__updateAttributes), so the page multiplies its recorded ones.
+# Everything else a modification writes (module health, repair, stun, ramming, spotting, the damaged-gun term,
+# rolling friction, the descriptor edits of four entries) moves nothing the page draws: its tooltip still lists it.
+FIELD_INPUT = {
+    'miscAttrs/multShotDispersionFactor': 'multFactor',
+    'miscAttrs/gunAimingTimeFactor': 'aimingTimeFactor',
+    'miscAttrs/gunReloadTimeFactor': 'reloadTimeFactor',
+    'miscAttrs/turretRotationSpeed': 'turretRotationSpeed',
+    'miscAttrs/chassis/shotDispersionFactors/movement': 'movementFactor',
+    'miscAttrs/chassis/shotDispersionFactors/rotation': 'rotationFactor',
+    'miscAttrs/gun/shotDispersionFactors/turretRotation': 'turretRotationFactor',
+    'miscAttrs/gun/shotDispersionFactors/afterShot': 'afterShotFactor',
+    'miscAttrs/healthFactor': 'healthFactor',
+    'miscAttrs/enginePowerFactor': 'enginePower',
+    'miscAttrs/forwardMaxSpeedKMHTerm': 'speedForward',
+    'miscAttrs/backwardMaxSpeedKMHTerm': 'speedBackward',
+    'miscAttrs/onStillRotationSpeedFactor': 'hullRotationSpeed',
+    'miscAttrs/circularVisionRadiusBaseFactor': 'visionBoost',
+    'miscAttrs/invisibilityBaseAdditive': 'invisibilityAdd',
+    'miscAttrs/invisibilityFactorAtShot': 'invisibilityAtShot',
+}
+FIELD_TWIN = {'miscAttrs/onMoveRotationSpeedFactor': 'miscAttrs/onStillRotationSpeedFactor'}
+# The unit of an 'add' line of the garage (its KPI formatter prints the figure with it).
+KPI_UNITS = {'vehicleForwardMaxSpeed': ' km/h', 'vehicleBackwardMaxSpeed': ' km/h', 'vehicleEnemySpottingTime': ' s'}
+# The garage's art: a pair side's own icon, and the level's hexagon for a standard modification - the node of
+# the level on the garage's grid, which is what researching that level gives.
+FIELD_PAIR_ART = 'gui/maps/icons/vehPostProgression/actionItems/pairModifications/80x80/%s.png'
+FIELD_LEVEL_ART = 'gui/maps/icons/vehPostProgression/stepLevels/180x135/roman_number_%d.png'
+ICON_DIR = os.path.join(ROOT, 'web', 'icons')
 
 # Crew skills and perks, transcribed from section 6.1 of the research report, which resolved every
 # per-point number into the multiplier at a fully trained skill. The sign of a raw argument depends on the
@@ -506,6 +568,151 @@ def directive_rows(data, boosters):
     return out
 
 
+def mo_catalog(game, name):
+    """One of the client's own string tables (res/text/lc_messages/<name>.mo), key -> text; this client is English."""
+    import gettext
+    path = os.path.join(game, LC_MESSAGES, name)
+    if not os.path.isfile(path):
+        raise SystemExit('No %s in the client at %s: the field modification names come from it.' % (name, game))
+    with open(path, 'rb') as handle:
+        return dict((k, v) for k, v in gettext.GNUTranslations(handle)._catalog.items() if isinstance(k, str))
+
+
+def field_ops(node, tag):
+    """The <modifiers> or <kpi> block of a modification as [(op, name, value)], in the file's order."""
+    block = node.find(tag)
+    out = []
+    for item in block if block is not None else ():
+        name, value = (item.findtext('name') or '').strip(), (item.findtext('value') or '').strip()
+        if name and value:
+            out.append((item.tag, name, float(value)))
+    return out
+
+
+def kpi_line(op, name, value, texts):
+    """One line of what a modification changes, as the garage's tooltip prints it: the figure, then the words of
+    tank_setup.mo kpi/bonus/<positive|negative>/<name>. A 'mul' is a percentage (0.97 is -3%)."""
+    if op == 'mul':
+        figure = round((value - 1.0) * 100.0, 2)
+        text = '%+g%%' % figure
+    else:
+        figure = value
+        text = '%+g%s' % (value, KPI_UNITS.get(name, ''))
+    side = 'positive' if figure > 0 else 'negative'
+    words = texts.get('kpi/bonus/%s/%s' % (side, name)) or texts.get('kpi/bonus/positive/%s' % name) or name
+    return text + ' ' + ' '.join(words.split())
+
+
+def field_rows(archive, game):
+    """The field modification catalogue: {'trees': {id: {name, levels}}, 'mods': {entry: row}} and the icon files
+    it needs, {published name: client path}. A tree is its levels in order, each the standard modification of that
+    level (`base`) and its pair of Dual Modifications (`pair`, [first, second]), with the vehicle tier band the
+    step is offered to (min/max; absent = every tier that has the tree). The levels that only unlock a feature
+    (the two loadouts, the role slot) are left out: no feature writes a modifier (features.xml)."""
+    names, texts = mo_catalog(game, 'artefacts.mo'), mo_catalog(game, 'tank_setup.mo')
+    pairs = {}
+    for node in client_decode(archive, FIELD_PAIRS_FILE):
+        pairs[node.tag] = [node.findtext('first/name').strip(), node.findtext('second/name').strip()]
+    entries = dict((node.tag, node) for node in client_decode(archive, FIELD_MODS_FILE))
+    trees, used, icons = {}, {}, {}
+    for node in client_decode(archive, FIELD_TREES_FILE):
+        levels = {}
+        for step in node.find('steps'):
+            kind, value = step.findtext('action/type').strip(), step.findtext('action/value').strip()
+            if kind == 'feature':
+                continue
+            level = int(step.findtext('level'))
+            row = levels.setdefault(level, {'level': level})
+            band = step.find('vehicleFilter/include/vehicle')
+            lo = int(band.findtext('minLevel')) if band is not None and band.findtext('minLevel') else 0
+            hi = int(band.findtext('maxLevel')) if band is not None and band.findtext('maxLevel') else 0
+            if 'min' in row and (row['min'], row['max']) != (lo, hi):
+                raise SystemExit('Tree %s level %d: its base and its pair have different tier bands.' % (node.tag, level))
+            row['min'], row['max'] = lo, hi
+            if kind == 'modification':
+                if 'base' in row:
+                    raise SystemExit('Tree %s level %d has two standard modifications.' % (node.tag, level))
+                row['base'] = value
+                used[value] = level
+                icons['fm_level_%d' % level] = FIELD_LEVEL_ART % level
+            elif kind == 'pair_modification':
+                if 'pair' in row or value not in pairs:
+                    raise SystemExit('Tree %s level %d: a second pair or an unknown one (%s).' % (node.tag, level, value))
+                row['pair'] = pairs[value]
+                for side in pairs[value]:
+                    used[side] = level
+            else:
+                raise SystemExit('Tree %s: an unknown step type %s.' % (node.tag, kind))
+        out = []
+        for level in sorted(levels):
+            row = levels[level]
+            if not row['min'] and not row['max']:
+                del row['min'], row['max']
+            out.append(row)
+        trees[node.findtext('id').strip()] = {'name': node.tag, 'levels': out}
+    mods = {}
+    for entry in sorted(used):
+        node = entries.get(entry)
+        if node is None:
+            raise SystemExit('A tree names the modification %s, which field_modifications.xml does not have.' % entry)
+        loc, img = (node.findtext('locName') or '').strip(), (node.findtext('imgName') or '').strip()
+        name = names.get((loc or entry) + '/name')
+        if not name:
+            raise SystemExit('No garage name for %s (artefacts.mo %s/name).' % (entry, loc or entry))
+        eff, rest, twins, fed = {}, False, {}, {}
+        modifiers = field_ops(node, 'modifiers')
+        for op, attr, value in modifiers:
+            if attr in FIELD_TWIN:
+                twins[FIELD_TWIN[attr]] = (op, value)
+                continue
+            page = FIELD_INPUT.get(attr)
+            if not page:
+                rest = True
+                continue
+            if page in fed:
+                raise SystemExit('%s: two attributes land on %s.' % (entry, page))
+            fed[page] = attr
+            eff[page] = [op, value]
+        for attr, (op, value) in twins.items():
+            if [op, value] != eff.get(FIELD_INPUT[attr]):
+                raise SystemExit('%s writes %s without its twin at the same figure.' % (entry, attr))
+        row = {'id': int(node.findtext('id')), 'name': ' '.join(name.split()), 'eff': eff,
+               'kpi': [kpi_line(op, kpi, value, texts) for op, kpi, value in field_ops(node, 'kpi')]}
+        if img:
+            row['icon'] = 'fm_' + img
+            icons[row['icon']] = FIELD_PAIR_ART % img
+        if rest:
+            row['rest'] = True
+        mods[entry] = row
+    if len(trees) < 18 or len(mods) < 150:
+        raise SystemExit('Only %d trees and %d modifications decoded: the package layout has changed.' % (len(trees), len(mods)))
+    return {'trees': trees, 'mods': mods}, icons
+
+
+def copy_field_icons(game, icons):
+    """The garage's art for the field modification tiles, copied byte for byte out of the client's gui packages
+    into web/icons (interface art ships with the page, user 20.09). Returns the names written."""
+    found = {}
+    for part in sorted(os.listdir(os.path.join(game, 'res', 'packages'))):
+        if not re.match(r'^gui-part\d+\.pkg$', part):
+            continue
+        with zipfile.ZipFile(os.path.join(game, 'res', 'packages', part)) as archive:
+            listed = set(archive.namelist())
+            for name, entry in icons.items():
+                if name not in found and entry in listed:
+                    found[name] = archive.read(entry)
+    missing = sorted(set(icons) - set(found))
+    if missing:
+        raise SystemExit('The client has no art for %s.' % ', '.join(missing))
+    for name in sorted(found):
+        path = os.path.join(ICON_DIR, name + '.png')
+        old = open(path, 'rb').read() if os.path.isfile(path) else None
+        if old != found[name]:
+            with open(path, 'wb') as handle:
+                handle.write(found[name])
+    return sorted(found)
+
+
 def dump(value, indent):
     """JSON that reads like hand-written JavaScript: one line per record, no dangling whitespace."""
     return json.dumps(value, ensure_ascii=False, separators=(', ', ': '), sort_keys=False)
@@ -513,8 +720,11 @@ def dump(value, indent):
 
 def main(argv):
     data = json.load(io.open(CATALOGUE, encoding='utf-8'))
-    with client_packages(argv[0] if argv else GAME) as archive:
+    game = argv[0] if argv else GAME
+    with client_packages(game) as archive:
         client, boosters = client_devices(archive), client_boosters(archive)
+        field, field_icons = field_rows(archive, game)
+    art = copy_field_icons(game, field_icons)
     devices = device_rows(data, client)
     directives = directive_rows(data, boosters)
     lines = [
@@ -566,12 +776,31 @@ def main(argv):
         lines.append('      %s,' % dump(consumable, 6))
     lines.append('    ],')
     lines.append('    paint: %s,' % dump(PAINT, 4))
-    lines.append('    food: %s' % dump(FOOD, 4))
+    lines.append('    food: %s,' % dump(FOOD, 4))
+    # The field modification (23.09): trees by the id the recorder writes (fitment postProgressionTree), each its
+    # levels in order - {level, base, pair: [first, second], min/max tier} - and the modifications by entry name:
+    # the garage name, `eff` in the devices' own shape ({input: [op, value]}) for the attributes the page draws,
+    # `kpi` the garage's own lines of everything it changes, `icon` for a pair side (a standard modification wears
+    # its level's hexagon, fm_level_<N>), `rest` when it also changes something the page does not show.
+    lines.append('    field: {')
+    lines.append('      trees: {')
+    tree_ids = sorted(field['trees'], key=int)
+    for i, key in enumerate(tree_ids):
+        lines.append('        %s: %s%s' % (dump(key, 8), dump(field['trees'][key], 8), ',' if i < len(tree_ids) - 1 else ''))
+    lines.append('      },')
+    lines.append('      mods: {')
+    names = sorted(field['mods'])
+    for i, key in enumerate(names):
+        lines.append('        %s: %s%s' % (dump(key, 8), dump(field['mods'][key], 8), ',' if i < len(names) - 1 else ''))
+    lines.append('      }')
+    lines.append('    }')
     lines.append('  };')
     lines.append('})();')
     io.open(TARGET, 'w', encoding='utf-8', newline='\n').write('\n'.join(lines) + '\n')
-    print('web/equipment.js: %d devices, %d families, %d skills, %d directives, %d consumables'
-          % (len(devices), len(families(devices)), len(SKILLS), len(directives), len(CONSUMABLES)))
+    print('web/equipment.js: %d devices, %d families, %d skills, %d directives, %d consumables, '
+          '%d field modification trees with %d modifications; %d icons in web/icons (%s)'
+          % (len(devices), len(families(devices)), len(SKILLS), len(directives), len(CONSUMABLES),
+             len(field['trees']), len(field['mods']), len(art), ', '.join(art)))
 
 
 if __name__ == '__main__':

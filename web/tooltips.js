@@ -144,11 +144,13 @@
     return true;
   }
   function textOf(el) { return el ? String(el.textContent || '').replace(/\s+/g, ' ').trim() : ''; }
-  // The glyph a row starts with, as the element shows itself: its symbol (✸, ⇅, ◔), its accessible name, its
-  // first part's caption (the tile's “Collision model”, not the vehicle after it), a short caption (Fit,
-  // ● AP 258) or its icon (a shell of the gun panel).
+  // The glyph a row starts with, as the element shows itself: its symbol (⇅, ◔), the symbol a drawn icon stands for
+  // (data-glyph: the ⌖ switch is an SVG crosshair, 23.09), its accessible name, its first part's caption (the tile's
+  // “Collision model”, not the vehicle after it), a short caption (Fit, ● AP 258) or its icon (a shell of the gun panel).
   function glyphOf(el) {
     var t = textOf(el), a = el.getAttribute('aria-label'), img = el.querySelector ? el.querySelector('img') : null;
+    var g = el.getAttribute('data-glyph');
+    if (g) return g;
     if (t && t.length <= 3 && !img) return t;
     if (a) return a;
     var f = textOf(el.firstElementChild);

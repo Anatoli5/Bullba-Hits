@@ -8,7 +8,8 @@
   // swapped shooter) counts as “not the recorded hit”.
   var currentHitKey=null;
   // The five parts of the layout pass (scheduleLayout, near the end of this file): the heading row, the toolbar
-  // row, the modifier groups over the scene, the pose tile and the characteristics panel (23.09). A caller that
+  // row, the top band over the scene (the model row with the strip beside ⌖, and the modifier group beside it; 23.09),
+  // the pose tile and the characteristics panel (23.09). A caller that
   // changed one of them asks for that one; no mask is all of them. Declared up here so a call made while the
   // module is still starting sees them.
   var LAYOUT_HEADING=1,LAYOUT_TOOLBAR=2,LAYOUT_MODS=4,LAYOUT_POSE=8,LAYOUT_TTX=16,LAYOUT_ALL=31;
@@ -737,6 +738,17 @@
   AIM_FAMILIES.forEach(function (f) { FAMILY_BY_ID[f.id] = f; });
   AIM_SKILLS.forEach(function (s) { SKILL_BY_ID[s.id] = s; });
   AIM_DIRECTIVES.forEach(function (d) { DIRECTIVE_BY_ID[d.id] = d; });
+  // THE FIELD MODIFICATION (23.09): the client's role trees by the id the recorder writes (fitment
+  // postProgressionTree), each its levels - a standard modification and a pair of Dual Modifications - and every
+  // modification with its effects in the devices' own shape (tools/build_equipment_catalogue.py field_rows).
+  // FIELD_PARTNER is each pair side's other side.
+  var AIM_FIELD = CATALOGUE.field || {};
+  var FIELD_TREES = AIM_FIELD.trees || {}, FIELD_MODS = AIM_FIELD.mods || {}, FIELD_PARTNER = {};
+  Object.keys(FIELD_TREES).forEach(function (id) {
+    (FIELD_TREES[id].levels || []).forEach(function (l) {
+      if (l.pair && l.pair.length === 2) { FIELD_PARTNER[l.pair[0]] = l.pair[1]; FIELD_PARTNER[l.pair[1]] = l.pair[0]; }
+    });
+  });
   // Which page input each effect moves, in words, for the tooltips. The ids are the fields of the
   // recorded aim block (mod/local_armor_inspector/exporter.py aim_block) plus the four the page derives.
   var AIM_INPUT_WORDS = {
@@ -765,7 +777,10 @@
     terrainResistance: 'the terrain resistance, so the hull turns faster',
     mediumGround: 'the medium ground’s resistance',
     softGround: 'the soft ground’s resistance, brought down to the medium one',
-    healthFactor: 'the hit points'};
+    healthFactor: 'the hit points',
+    // Two the field modification moves (23.09): the gun's own factors the client copies into miscAttrs.
+    afterShotFactor: 'the term a shot adds to the circle',
+    invisibilityAtShot: 'the concealment after a shot'};
   // The archetypes a device occupies (its <incompatibleTags><installed>), in words, for the directive
   // tooltips and for "already fitted in another slot".
   var AIM_ARCHETYPE_WORDS = {
@@ -844,12 +859,75 @@
   // writes <supplySlots>; the page stopped reading it when the slot bonus went.
   function aimFitment(vehicle) {
     if (!vehicle) return null;
-    var out = {tags: null, level: Number(vehicle.level) > 0 ? Number(vehicle.level) : 0};
+    // `tree`: the field modification tree the record names (fitment_block since 0.7.18, the tree's id as the
+    // client keeps it); '' when it names none or the record is older - then no field modification is offered.
+    var out = {tags: null, level: Number(vehicle.level) > 0 ? Number(vehicle.level) : 0,
+               tree: vehicle.postProgressionTree ? String(vehicle.postProgressionTree) : ''};
     var tags = aimTagList(vehicle);
     if (tags) {
       out.tags = {};
       for (var i = 0; i < tags.length; i++) out.tags[String(tags[i])] = true;
     }
+    return out;
+  }
+  // The field modification this shooter may have: the levels of his tree his tier reaches (a level's tier band is
+  // the client's own step vehicleFilter: level 7 from tier IX, level 8 at tier X only), in the tree's order, and
+  // which level each of their modifications stands on. Taken once per shooter (shooterFit is a new object then).
+  var aimFieldMemo = {fit: undefined, levels: [], mods: {}};
+  function aimFieldOffer() {
+    var fit = shooterFit;
+    if (aimFieldMemo.fit === fit) return aimFieldMemo;
+    var tree = fit && fit.tree && Object.prototype.hasOwnProperty.call(FIELD_TREES, fit.tree) ? FIELD_TREES[fit.tree] : null;
+    var levels = [], mods = {};
+    (tree ? tree.levels || [] : []).forEach(function (l) {
+      if (l.min > 0 && !(fit.level >= l.min)) return;
+      if (l.max > 0 && !(fit.level <= l.max)) return;
+      var row = {level: l.level, base: FIELD_MODS[l.base] ? l.base : '', pair: l.pair && FIELD_MODS[l.pair[0]] && FIELD_MODS[l.pair[1]] ? l.pair : null};
+      if (!row.base && !row.pair) return;
+      levels.push(row);
+      if (row.base) mods[row.base] = row;
+      if (row.pair) { mods[row.pair[0]] = row; mods[row.pair[1]] = row; }
+    });
+    aimFieldMemo = {fit: fit, levels: levels, mods: mods, tree: tree ? tree.name : ''};
+    return aimFieldMemo;
+  }
+  // A list of field modifications as a configuration keeps it: entries the catalogue knows - with `offered`, only
+  // the ones this shooter's tree offers him - and one side of a pair at most, the first one named; sorted, so one
+  // build is always written the same way.
+  function aimFieldList(list, offered) {
+    var out = [], seen = {}, offer = offered ? aimFieldOffer().mods : null;
+    (Array.isArray(list) ? list : []).forEach(function (raw) {
+      var id = String(raw);
+      if (!Object.prototype.hasOwnProperty.call(FIELD_MODS, id) || seen[id] || (offer && !offer[id])) return;
+      if (FIELD_PARTNER[id] && seen[FIELD_PARTNER[id]]) return;
+      seen[id] = true; out.push(id);
+    });
+    return out.sort();
+  }
+  // The configuration's field modification is IN FORCE: something is on, and the game does not fix this vehicle's
+  // equipment - where it does, the record's own figures stay whole (aimBaseFactors), field modification included.
+  function aimFieldOn(cfg) { cfg = cfg || shooterConfig; return !!(cfg.field && cfg.field.length) && !aimForbidden('devices'); }
+  // THE CLIENT'S LAW (attributes_helpers AggregatedCollectorHelper 226-267, KNOWLEDGE section 7): for one attribute
+  // the deviations of all active modifications ADD UP from 0.0 and the sum is applied once, x (1 + sum) - three
+  // x0.99 make x0.97, not 0.99 cubed; an 'add' sums. Summed in the tree's order, base before pair, as the client
+  // walks the active steps. {input: [op, value]}, one entry per input, in the devices' own shape for aimEffects.
+  function aimFieldEffects(cfg) {
+    var on = {}, dev = {}, add = {}, out = {};
+    (cfg.field || []).forEach(function (id) { on[id] = true; });
+    aimFieldOffer().levels.forEach(function (l) {
+      [l.base].concat(l.pair || []).forEach(function (id) {
+        if (!id || !on[id]) return;
+        var eff = FIELD_MODS[id].eff || {};
+        Object.keys(eff).forEach(function (input) {
+          var v = Number(eff[input][1]);
+          if (!isFinite(v)) return;
+          if (eff[input][0] === 'add') add[input] = (add[input] || 0) + v;
+          else dev[input] = (dev[input] || 0) + (v - 1);
+        });
+      });
+    });
+    Object.keys(dev).forEach(function (k) { out[k] = ['mul', dev[k] + 1]; });
+    Object.keys(add).forEach(function (k) { out[k] = ['add', add[k]]; });
     return out;
   }
   // The recorded tag list, or null when the record does not know it. Since S3 (22.09) the exporter writes
@@ -1026,12 +1104,12 @@
   // a device's vehicleFilter, and "a clip gun takes no rammer" is false for five clip vehicles and one dual
   // gun of the client - the eligibility tags above stay the only rule.
   var AIM_MECHANICS_WORDS = {
-    autoreload: 'an autoreloading magazine: every spent round loads back on its own timer, one at a time. Under ✸ with real reload ◔ the emulation runs those timers; otherwise a hold fires the rounds at the clip interval and nothing loads back',
-    clip: 'a magazine: the rounds go at the clip interval, then the whole clip reloads. Under ✸ with real reload ◔ the emulation runs that reload; otherwise a burst stops when the clip is empty',
-    burst: 'a burst gun: one pull of the trigger fires several rounds. Under ✸ one press fires the whole burst, and every round but the last widens the circle by the burst’s own factor, as the game does',
+    autoreload: 'an autoreloading magazine: every spent round loads back on its own timer, one at a time. Under ⌖ with real reload ◔ the emulation runs those timers; otherwise a hold fires the rounds at the clip interval and nothing loads back',
+    clip: 'a magazine: the rounds go at the clip interval, then the whole clip reloads. Under ⌖ with real reload ◔ the emulation runs that reload; otherwise a burst stops when the clip is empty',
+    burst: 'a burst gun: one pull of the trigger fires several rounds. Under ⌖ one press fires the whole burst, and every round but the last widens the circle by the burst’s own factor, as the game does',
     dualGun: 'a dual gun: its barrels fire one at a time or together as a charged volley. The emulation fires single rounds only',
     twinGun: 'a twin gun: two barrels, each with its own reload. The emulation fires single rounds only',
-    autoShoot: 'an automatic gun: it fires while the trigger is held and the circle grows with every round. Under ✸ the growth is the game’s own - the n-th round of a hold adds n × its per-round figure, up to the cap, and the release lets the circle settle; the pause the server may keep after the last round is not modelled',
+    autoShoot: 'an automatic gun: it fires while the trigger is held and the circle grows with every round. Under ⌖ the growth is the game’s own - the n-th round of a hold adds n × its per-round figure, up to the cap, and the release lets the circle settle; the pause the server may keep after the last round is not modelled',
     single: 'a single-shot gun'};
   function aimMechanics(a) {
     if (!a) return '';
@@ -1045,7 +1123,8 @@
     if (a.burst && a.burst[0] > 1) return 'burst';
     return list.length || a.clip ? 'single' : '';
   }
-  var AIM_GUN_LOAD_TITLE = 'The gun’s reload, as the reticle shows it in the game: the time left while the next round is loading, the gun’s own reload time at rest. The rounds are in the magazine beside it.';
+  var AIM_GUN_LOAD_TITLE = 'The gun’s reload, as the reticle shows it in the game: the time left while the next round is loading, the gun’s own reload time at rest. The rounds are in the magazine beside it.' +
+    ' A press the gun cannot take does not fire, and what is in the way blinks with the aiming circle: this figure while the next round is still loading or a burst is still going out (the magazine too when it is empty or the burst takes its rounds), the heat bar of an overheated gun, the mode button while the mode switches.';
   function paintAimMechanics() {
     var time = $('aim-gun-reload'), load = time && time.parentNode;
     if (!load) return;
@@ -1060,13 +1139,13 @@
       var dual = dualParams(a);
       extra += dual ? ' It has dual accuracy: after a shot the game widens the whole circle ×' + aimNum(dual.factor) +
         ' (' + aimNum(Math.round(a.dualAccuracy.afterShotDispersionAngle * 1e5) / 1e3) + ' against ' + aimNum(Math.round(a.dispersion * 1e5) / 1e3) +
-        ' m at 100 m). Under ✸ the emulation applies it for ' + aimNum(dual.delay) + ' s after every round - that length is this page’s assumption.'
+        ' m at 100 m). Under ⌖ the emulation applies it for ' + aimNum(dual.delay) + ' s after every round - that length is this page’s assumption.'
         : ' It has dual accuracy: the circle right after a shot follows a law of its own, which this record does not carry the numbers of.';
     }
     if (a && Array.isArray(a.gunMechanics) && a.gunMechanics.indexOf('chargeableBurst') >= 0) {
-      extra += ' Its burst comes only in the Burst mode of its chargeableBurst: under ✸ the mode button beside this switches it.';
+      extra += ' Its burst comes only in the Burst mode of its chargeableBurst: under ⌖ the mode button beside this switches it.';
     }
-    if (a && a.secondaryFrom) extra += ' This is the vehicle’s second gun, taken up with the ✸ mode button.';
+    if (a && a.secondaryFrom) extra += ' This is the vehicle’s second gun, taken up with the ⌖ mode button.';
     load.title = AIM_GUN_LOAD_TITLE + extra;
     load.setAttribute('data-mechanics', kind || 'unknown');
   }
@@ -1187,7 +1266,10 @@
   //  skills: {gunner_smoothTurret: true},  the crew skills and perks that are on, Brothers in Arms apart
   //  bia: {commander: true, gunner: true},  the crew members who have Brothers in Arms, by aimCrewKeys()
   //  camo: {gunner: true},             the crew members who have Concealment, the same way (23.09)
-  //  paint: false}                     a camouflage painted on, which adds the vehicle's own bonus (23.09)
+  //  paint: false,                     a camouflage painted on, which adds the vehicle's own bonus (23.09)
+  //  field: ['role_heavyTank_base_1', 'role_heavyTank_pair_2_2']}   the field modifications that are on (23.09),
+  //                                    by the client's entry name: a preset carries them to every vehicle whose tree
+  //                                    has the same entries (levels 2-5 are one set per vehicle class), no further
   // The two keys of 23.09 did not change the store's version either, as `bia` and `custom` did not: an older
   // page does not read them, and a store without them has nobody with Concealment and no paint.
   var AIM_PRESET_LIMIT = 40, AIM_NAME_LIMIT = 48;
@@ -1217,8 +1299,10 @@
   // click or a built-in build. A device the vehicle cannot mount and a device whose archetype another
   // slot already holds are both dropped here and nowhere else.
   function aimValues(base) {
-    var out = {slots: ['', '', ''], directive: '', food: false, fuel: '', skills: {}, bia: {}, camo: {}, paint: false};
+    var out = {slots: ['', '', ''], directive: '', food: false, fuel: '', skills: {}, bia: {}, camo: {}, paint: false, field: []};
     if (!base) return out;
+    // The field modifications this shooter's tree offers, one side of a pair (23.09); the rest wait in the preset.
+    out.field = aimFieldList(base.field, true);
     var taken = {};
     AIM_SLOTS.forEach(function (i) {
       var id = aimResolve(base.slots && base.slots[i] ? String(base.slots[i]) : '');
@@ -1270,6 +1354,7 @@
     if (keys.length && keys.every(function (k) { return camo[k]; })) skills.camouflage = true;
     else if (hid) out.camo = camo;
     if (cfg.paint) out.paint = true;
+    if (cfg.field && cfg.field.length) out.field = cfg.field.slice();   // only when set, as the paint (23.09)
     return out;
   }
   // The built-in presets are read-only: they are what a player actually fits, so nobody has to
@@ -1397,6 +1482,10 @@
       if (hid) out.camo = camo;
     }
     if (flag(row.paint)) out.paint = true;
+    // The field modifications as saved, checked against the catalogue only - which of them a vehicle's tree
+    // offers is aimValues' business when the preset is applied (23.09).
+    var field = aimFieldList(row.field, false);
+    if (field.length) out.field = field;
     return out;
   }
   // `pairs` (23.09): the turret and gun the characteristics panel was last set to, per vehicle type, as
@@ -1503,6 +1592,14 @@
       }
     }
     var devices = !aimForbidden('devices');
+    // THE FIELD MODIFICATION FIRST (23.09), one aggregate per input by the client's own law (aimFieldEffects) and
+    // then the devices multiplying it, in the order vehicles __updateAttributes runs them (2685, 2688). It lives in
+    // miscAttrs as the devices do, so it goes where they go - `mul` for the emulator, `dev` for the characteristics
+    // panel - and both read this one pass: the ring and ⚙ never count it twice or differently.
+    if (aimFieldOn(cfg)) {
+      var fieldFx = aimFieldEffects(cfg);
+      Object.keys(fieldFx).forEach(function (input) { apply(input, fieldFx[input], false); });
+    }
     if (devices) AIM_SLOTS.forEach(function (i) {
       var piece = DEVICE_BY_ID[cfg.slots[i]];
       if (!piece) return;
@@ -1563,6 +1660,9 @@
             turretSpeed: aimMul(e, 'turretRotationSpeed') * g,  // miscAttrs/turretRotationSpeed
             hullSpeed: aimMul(e, 'hullRotationSpeed'),     // Clutch Braking and the hull part of the rotation mechanism
             magazineReload: aimMul(e, 'magazineReload'),   // Mag Mastery: the whole magazine (ballistics.js reloadSeconds)
+            // miscAttrs gunShotDispersionFactorsAfterShot, a field modification (23.09): its own key, not the tier-XI
+            // `afterShot` (xiApply) - the client reads it for the plain after-shot term only (ballistics.js aimFactor).
+            afterShotField: aimMul(e, 'afterShotFactor'),
             // forwardMaxSpeedKMHTerm / backwardMaxSpeedKMHTerm are km/h; the record holds m/s. A
             // turbocharger raises the cap the WASD model accelerates to, so the circle gets BIGGER.
             speedForwardAdd: aimAdd(e, 'speedForward') * KMH_TO_MS,
@@ -1619,6 +1719,7 @@
       var dir = DIRECTIVE_BY_ID[shooterConfig.directive];
       if (dir) out.push(dir.name + (aimDirectiveActive(dir) ? '' : ' (inactive)'));
     }
+    if (aimFieldOn()) out.push('field modification: ' + shooterConfig.field.map(function (id) { return FIELD_MODS[id].name; }).join(', '));
     if (!aimForbidden('consumables')) {
       if (shooterConfig.food) out.push('Combat rations');
       AIM_CONSUMABLES.forEach(function (c) { if (c.slot === 'fuel' && shooterConfig.fuel === c.id) out.push(c.name); });
@@ -1826,12 +1927,25 @@
   // The equipment picker: one dense grid of icons per grade. Only the pieces THIS vehicle may mount are
   // listed (report section 4); a piece whose archetype another slot already holds is shown disabled
   // instead of vanishing, so the conflict is visible.
-  // There is no "empty this slot" tile any more (user, 21.09): it wore the empty slot's own art and dashed
-  // frame, so it read as a second copy of the slot just clicked. The piece fitted in THIS slot is the
-  // pressed tile, and clicking it takes it out - the way the fuel chips already work. A collapsed Standard
-  // tile is pressed for any Class band it stands for, since a preset may have fitted the other band.
+  // THE EMPTY SLOT IS BACK (user, 23.09: "there is no option to clear the cell... put an empty slot there... let it
+  // be"), as the garage has it: the first tile of the picker, in a row of its own above the grades, wearing the empty
+  // slot's art; pressed while the slot is empty, and a click on it empties the slot. The piece fitted in THIS slot is
+  // still the pressed tile of its grade, and a click on it still takes it out. A collapsed Standard tile is pressed
+  // for any Class band it stands for, since a preset may have fitted the other band.
+  // The same tile heads the directive picker (aimDirectivePicker): one widget for "nothing in this slot".
+  function aimEmptyPick(empty, what, run) {
+    var row = node('div', undefined, 'aim-pick-row aim-pick-clear');
+    var tile = aimPickTile({icon: 'empty_slot', label: 'Empty slot'},
+                           'Empty slot · ' + what + (empty ? ' It is empty now.' : ' Click to take out what is fitted and leave it empty.'),
+                           empty, false, 'none');
+    // Already empty: nothing to change, so nothing lands in Custom - the picker just closes.
+    tile.onclick = function (e) { e.stopPropagation(); if (empty) aimCloseLayer(); else run(); };
+    row.appendChild(tile);
+    return row;
+  }
   function aimPicker(index) {
     var box = node('div', undefined, 'aim-picker'), fitted = shooterConfig.slots[index];
+    box.appendChild(aimEmptyPick(!fitted, 'Slot ' + (index + 1) + ' with nothing in it.', function () { aimSetSlot(index, ''); }));
     AIM_GRADE_GROUPS.forEach(function (group) {
       var items = aimGroupItems(group);
       if (!items.length) return;
@@ -1912,10 +2026,11 @@
   }
   // The directive picker is the same grid of icons, without badges - a directive has no grade, and its
   // own art already tells the nine of them apart. The frame says whether it is active here. As in the
-  // equipment picker, the fitted directive is the pressed tile and a click on it empties the slot: no
-  // tile of the slot's own empty art stands in the list.
+  // equipment picker, the fitted directive is the pressed tile and a click on it empties the slot, and the
+  // empty slot's own tile heads the list (user, 23.09).
   function aimDirectivePicker() {
     var box = node('div', undefined, 'aim-picker');
+    box.appendChild(aimEmptyPick(!DIRECTIVE_BY_ID[shooterConfig.directive], 'The directive slot with nothing in it.', function () { aimSetDirective(''); }));
     var row = node('div', undefined, 'aim-pick-row');
     AIM_DIRECTIVES.forEach(function (dir) {
       var active = aimDirectiveActive(dir), here = shooterConfig.directive === dir.id;
@@ -2069,6 +2184,73 @@
       body.appendChild(chips);
     });
   }
+  // --- The field modification (user, 23.09) -----------------------------------------------------------------
+  // The shooter's own tree (aimFieldOffer), one column per level in the tree's order, as the garage's grid runs: on
+  // top the level's standard modification - the garage's hexagon of that level - and under it the level's two Dual
+  // Modifications in one frame. A pair has three states, exactly as the user put it: nothing on - a click switches
+  // the clicked side on; one side on - a click on the other swaps them; a click on the side that is on switches it
+  // off, and the pair is neutral again. A standard modification is the same widget on its own: on or off. The
+  // three loadout and slot "features" of the tree are not here: none of them changes a characteristic.
+  // Everything starts off, the bare vehicle. No word on a tile: the name and the garage's own lines of what it
+  // changes are its tooltip, and one help dot under each level gathers the three.
+  function aimFieldWords(id) {
+    var m = FIELD_MODS[id], parts = [];
+    Object.keys(m.eff || {}).forEach(function (input) {
+      var e = m.eff[input], v = Number(e[1]);
+      parts.push((e[0] === 'add' ? (v >= 0 ? '+' : '') + aimNum(v) + (input === 'speedForward' || input === 'speedBackward' ? ' km/h' : '') : '×' + aimNum(v))
+                 + ' on ' + (AIM_INPUT_WORDS[input] || input));
+    });
+    return (m.kpi && m.kpi.length ? m.kpi.join('; ') + '. ' : '')
+      + (parts.length ? 'Counted here: ' + parts.join('; ') + (m.rest ? '; the rest is not shown here.' : '.')
+         : 'Nothing of it is shown here.');
+  }
+  function aimFieldTitle(id, row) {
+    var m = FIELD_MODS[id], on = shooterConfig.field.indexOf(id) >= 0, level = tierRomans[row.level] || String(row.level);
+    var partner = FIELD_PARTNER[id], other = partner && shooterConfig.field.indexOf(partner) >= 0;
+    var what = partner ? 'Dual Modification, level ' + level + ': one of two with ' + FIELD_MODS[partner].name
+                       : 'Standard Modification, level ' + level;
+    var act = partner ? (on ? 'On: click to take it off - the pair is then neutral.'
+                            : other ? 'Click: it takes the place of ' + FIELD_MODS[partner].name + '.' : 'Click to switch it on.')
+                      : (on ? 'On: click to take it off.' : 'Click to switch it on.');
+    return m.name + ' · ' + what + ' · ' + aimFieldWords(id) + ' ' + act + ' (field_modifications.xml ' + id + ')';
+  }
+  function aimFieldTile(id, row, key) {
+    var m = FIELD_MODS[id], on = shooterConfig.field.indexOf(id) >= 0;
+    var tile = aimChip(m.icon || 'fm_level_' + row.level, m.name, aimFieldTitle(id, row), on, function () { aimFieldSet(id); }, false);
+    tile.id = 'aim-fm-' + row.level + '-' + key;
+    if (!aimForbidden('devices')) return tile;
+    // Where the game fixes the equipment the record's own figures stay whole, the field modification with them.
+    aimLockTile(tile, 'devices', '');
+    tile.title = m.name + '. Not set here: the game fixes this vehicle’s equipment, so the record’s own figures - its field modification with them - stay as they are.';
+    return tile;
+  }
+  // A click on a tile: off - on, and the other side of its pair off (the swap); on - off.
+  function aimFieldSet(id) {
+    var list = shooterConfig.field.filter(function (x) { return x !== id && x !== FIELD_PARTNER[id]; });
+    if (shooterConfig.field.indexOf(id) < 0) list.push(id);
+    shooterConfig.field = aimFieldList(list, true);
+    aimEdited();
+  }
+  function aimFieldSection(box) {
+    aimFieldOffer().levels.forEach(function (row) {
+      var col = node('div', undefined, 'aim-fm-level'), ids = [];
+      col.setAttribute('data-level', String(row.level));
+      if (row.base) { var b = aimFieldTile(row.base, row, 'b'); ids.push(b.id); col.appendChild(b); }
+      if (row.pair) {
+        var frame = node('div', undefined, 'aim-fm-pair');
+        row.pair.forEach(function (id, k) { var t = aimFieldTile(id, row, String(k + 1)); ids.push(t.id); frame.appendChild(t); });
+        if (row.pair.some(function (id) { return shooterConfig.field.indexOf(id) >= 0; })) frame.setAttribute('data-set', 'true');
+        col.appendChild(frame);
+      }
+      // The page's one help dot (web/tooltips.js): its click pins the three tooltips of this level.
+      var dot = node('button', '?', 'help-dot');
+      dot.type = 'button'; dot.title = '';
+      dot.setAttribute('data-help-for', ids.join(' '));
+      dot.setAttribute('aria-label', 'Help');
+      col.appendChild(dot);
+      box.appendChild(col);
+    });
+  }
   function buildAimConfig() {
     var body = $('aim-config-body');
     if (!body) return;
@@ -2108,6 +2290,12 @@
     var directive = node('div', undefined, 'aim-slots'); directive.id = 'aim-cfg-directive';
     main.appendChild(directive);
 
+    // The field modification (23.09), there only for a shooter whose record names his tree.
+    var fieldHead = node('div', 'Field modification', 'aim-config-head');
+    var field = node('div', undefined, 'aim-fm'); field.id = 'aim-cfg-field';
+    fieldHead.hidden = field.hidden = true;
+    main.appendChild(fieldHead); main.appendChild(field);
+
     main.appendChild(node('div', 'Consumables', 'aim-config-head'));
     var cons = node('div'); cons.id = 'aim-cfg-consumables';
     main.appendChild(cons);
@@ -2130,7 +2318,7 @@
     body.appendChild(scrim); body.appendChild(layer);
     aimConfigControls = {body: body, main: main, preset: preset, slots: slots, directive: directive,
                          consumables: cons, crew: crew, scrim: scrim, layer: layer, picker: picker,
-                         turretLabel: turretLabel, turrets: turrets};
+                         turretLabel: turretLabel, turrets: turrets, field: field, fieldHead: fieldHead};
     paintAimConfig();
     ttxPaintTurrets();
   }
@@ -2160,6 +2348,10 @@
     c.consumables.appendChild(aimConsumableChips());
     c.crew.replaceChildren();
     aimCrewSection(c.crew);
+    c.field.replaceChildren();
+    var fieldShown = aimFieldOffer().levels.length > 0;
+    c.field.hidden = c.fieldHead.hidden = !fieldShown;
+    if (fieldShown) aimFieldSection(c.field);
     aimPaintLayer();
   }
   // The layer's own state beside aimLayer: the name of a preset being renamed in place ({from, draft, error})
@@ -2418,7 +2610,10 @@
     if (!(shooterFit && shooterFit.tags) && !/tags/.test(unknown)) why.push('the record does not carry the vehicle’s tags');
     if (why.length) out += ' Everything is offered, which may be more than the game allowed here: ' + why.join('; ') + '.';
     var kept = aimKept();
-    if (kept) out += ' Kept from the record: ' + kept + ' (field modifications).';
+    if (kept) out += ' Kept from the record: ' + kept + ' (field modifications)'
+      + (aimFieldOffer().levels.length ? ' - until anything in the Field modification block is on, which takes their place.' : '.');
+    // The law, once, where the whole build is listed (23.09).
+    if (aimFieldOn()) out += ' Field modification by the client’s law: the deviations of its modifications add up and are applied once (three ×0.99 make ×0.97), and the equipment multiplies on top.';
     out += aimModifierLine();
     return out;
   }
@@ -2547,13 +2742,17 @@
   // recorder sets 'outgoing' when the attacker is the player's vehicle). A browsed vehicle or a swapped view
   // counts as his too: its block is a rebuild, and his garage vehicle is the one that packs devices.
   function aimShooterIsPlayer(hit) { return !!(hit && (hit.synthetic || hit.direction === 'outgoing')); }
-  function aimBaseFactors(a, own, fixed) {
+  // THE FIELD MODIFICATION OF CONFIG TAKES THE RECORD'S PLACE (23.09): once anything in its block is on (`field`), the
+  // record's own field modification - what the rules above keep - goes too, so the page never counts a field
+  // modification on top of one the record already carries; every factor is then the bare vehicle's 1.0. With the
+  // block all off, the record's is kept exactly as before.
+  function aimBaseFactors(a, own, fixed, field) {
     var packed = a.compactFactors && typeof a.compactFactors === 'object' ? a.compactFactors : null, out = {};
     AIM_BARE_FACTORS.forEach(function (k) {
       var v = Number(a[k]), c = packed ? Number(packed[k]) : NaN;
       if (!(v > 0 && isFinite(v))) out[k] = 1;
       else if (fixed) out[k] = v;
-      else if (a.aimFrom === 'compact') out[k] = 1;
+      else if (field || a.aimFrom === 'compact') out[k] = 1;
       else if (c > 0 && isFinite(c)) out[k] = v / c;
       else out[k] = own ? 1 : v;
     });
@@ -2622,7 +2821,8 @@
     // recorded block exactly as before.
     var xm = xiNow(), a = xiAim(aimOfHit(activeHit, xiSiegeMode(xm)), xm);
     if (!(a && a.dispersion > 0)) return null;
-    var own = aimShooterIsPlayer(activeHit), fixed = aimForbidden('devices'), key = (own ? 'own' : 'other') + (fixed ? '|fixed' : '');
+    var own = aimShooterIsPlayer(activeHit), fixed = aimForbidden('devices'), field = aimFieldOn();
+    var key = (own ? 'own' : 'other') + (fixed ? '|fixed' : '') + (field ? '|field' : '');
     // A block REBUILT from the compact descriptor knows nothing of the battle's own modifiers, so they go
     // on here (aimModifiers above); a live block was already built with them and is left alone.
     var battle = activeHit && activeHit.vehicle ? null : current;
@@ -2630,7 +2830,7 @@
     if (mods && !mods.rules.length) mods = null;
     key += mods ? '|mods' : '';
     if (a !== aimBareFrom || key !== aimBareKey) {
-      var base = aimBaseFactors(a, own, fixed);
+      var base = aimBaseFactors(a, own, fixed, field);
       aimBareFrom = a; aimBareKey = key; aimBare = Object.create(a);
       AIM_BARE_FACTORS.forEach(function (k) { aimBare[k] = base[k]; });
       if (mods) mods.rules.forEach(function (r) {
@@ -3067,11 +3267,15 @@
   // - every frame while the loop runs, at 10 Hz from the panel timer otherwise - and writes only what changed:
   // the fills are quantised to 2 % and move by transform, so a running reload costs no layout.
   var MAG_SLOTS = 12, magShape = '', magParts = [], magSeen = [], magTitleKey = '';
+  // The strip beside ⌖ (23.09) changed its width - a magazine of another size, the heat bar or the health bar coming or
+  // going, ◔ and ↺ with ⌖: the top band is laid out again, only while the strip is on screen (the strip coming lays it
+  // out anyway). An event, never a frame.
+  function stripLayout() { var s = $('fun-strip'); if (s && !s.hidden) scheduleLayout(LAYOUT_MODS); }
   function paintMag(a, rl) {
     var box = $('aim-gun-mag');
     if (!box) return;
     var n = rl ? clipRoundsOf(rl) : 0;
-    if (box.hidden !== !n) box.hidden = !n;
+    if (box.hidden !== !n) { box.hidden = !n; stripLayout(); }
     if (!n) { magTitleKey = ''; return; }
     var now = aimSeconds(), real = realReload(), gate = aimReloadLeft();
     refillSettle(now);
@@ -3104,6 +3308,7 @@
         magParts.push({box: part, fill: inner});
       }
       box.replaceChildren.apply(box, magParts.map(function (p) { return p.box; }));
+      stripLayout();   // another gun: the strip beside ⌖ has another width
     }
     var q = Math.round(fill * 50) / 50;
     if (bar) {
@@ -3141,12 +3346,12 @@
           list.slice().reverse().map(function (v) { return sec(Number(v) * k); }).join(', ') + ' s.';
         if (boost > 0 && boost < 1) out += ' Improved autoreloader: a round fired once the gun has rested - at least ' +
           sec(rl.interval + (Number(a.autoreload.boostStartTime) || 0)) + ' s into a round’s load and within ' + sec(Number(a.autoreload.boostResidueTime) || 0) +
-          ' s of its end, or with the magazine full - loads the next one in ×' + aimNum(boost) + ' of its time under ✸ with ◔.' +
+          ' s of its end, or with the magazine full - loads the next one in ×' + aimNum(boost) + ' of its time under ⌖ with ◔.' +
           ' The game’s own numbers; that the cut is ×' + aimNum(boost) + ' rather than less by it is this page’s reading.';
       } else out += '; the whole clip reloads in ' + sec(rl.reload) + ' s once it is empty.';
     }
-    if (!real) out += n > 1 ? ' Simplified (✸ or ◔ off): a hold fires what the magazine holds, nothing loads back, and the next press starts full.'
-      : ' Simplified (✸ or ◔ off): the reload runs only while the button is held.';
+    if (!real) out += n > 1 ? ' Simplified (⌖ or ◔ off): a hold fires what the magazine holds, nothing loads back, and the next press starts full.'
+      : ' Simplified (⌖ or ◔ off): the reload runs only while the button is held.';
     return out;
   }
   // One shot (user's decision, 19.09: no Alt - it may never reach the page inside the game). The tracer
@@ -3255,7 +3460,10 @@
     aimHoldTimer = 0;
     if (!aimDown) return;
     aimBurst = true;
-    if (gunFree() && fireShot()) paintAim(aimLastState || aimState());
+    // A hold the gun cannot start yet says why at once (gunBalk), and fires the moment it may, as before.
+    var why = gunBlock();
+    if (why) gunBalk(why);
+    else if (fireShot()) paintAim(aimLastState || aimState());
     startAimLoop();
   }
   // Let go. A short press fires its single shot here; a burst has been firing all along and just stops,
@@ -3263,9 +3471,10 @@
   function endShot() {
     cancelHoldTimer();
     if (!aimDown) return;
-    var single = !aimBurst;
+    var single = !aimBurst, why = single ? gunBlock() : '';
     aimDown = false; aimBurst = false; aimClipDry = false;
-    if (single && gunFree() && fireShot()) paintAim(aimLastState || aimState());
+    if (why) gunBalk(why);   // a tap the gun refused: what is in the way blinks, and the circle with it
+    if (single && !why && fireShot()) paintAim(aimLastState || aimState());
     else paintCircleLines();
     // The reload is shown only while the button is held and the gun fires on its cooldown; a released
     // button leaves a whole ring - the recoil bloom stays, the fill does not (user, 20.09) - and a full clip,
@@ -3299,16 +3508,42 @@
   function realReload() { if (!funOn()) return false; var e = $('real-reload'); return !!(e && e.checked); }
   // May the gun fire at this instant? Asked by the three callers of fireShot() - the tap, the start of a
   // hold and the held burst - beside what they already ask about the reload.
-  function gunFree() {
-    if (!funOn()) return true;
+  function gunFree() { return !gunBlock(); }
+  // What keeps the gun from firing now, or '' (23.09: the tap and the start of a hold name it with gunBalk):
+  // 'burst', 'mode', 'heat' or 'reload'. The same checks gunFree always made, in the same order.
+  function gunBlock() {
+    if (!funOn()) return '';
     // A burst already on its way takes no second pull of the trigger (burstLeft, below): its own rounds go out
     // on their own.
-    if (burstLeft > 0) return false;
+    if (burstLeft > 0) return 'burst';
     // A vehicle switching its mode does not fire, whatever the mode (PlayerAvatar.shoot, siegeState in SWITCHING; 23.09).
-    if (xiSwitching()) return false;
+    if (xiSwitching()) return 'mode';
     var h = heatNow();
-    if (h && h.locked) return false;
-    return !realReload() || aimReloadLeft() <= 0;
+    if (h && h.locked) return 'heat';
+    return realReload() && aimReloadLeft() > 0 ? 'reload' : '';
+  }
+  // A PRESS THE GUN REFUSED (user, 23.09: the reload at the bottom of the scene went unnoticed, and the gun seemed not
+  // to fire for no reason). The indicator in the way, in the strip beside ⌖, pulses twice in red (style.css
+  // [data-balk]) and so does the live aiming circle (viewer.flashAim); the indicator's tooltip says why. In the way:
+  // the heat bar of a locked gun, the mode button while the mode switches, otherwise the time to the next round - and
+  // the magazine beside it when that is what the gun waits for (an empty one reloading, the rounds of a burst going
+  // out). A refusal only: nothing here runs on a frame, and one timeout takes the attribute off after the pulse.
+  // The two values alternate so a second refusal during the pulse starts it again (a new animation name).
+  var balkEls = [], balkTimer = 0, balkFlip = '2', BALK_MS = 650;
+  function gunBalk(why) {
+    var els = why === 'heat' ? [$('aim-gun-heat')] : why === 'mode' ? [$('aim-gun-mech')] : [$('aim-gun-load')];
+    if (why === 'burst' || (why === 'reload' && aimClipSize > 1 && aimClip <= 0)) els.push($('aim-gun-mag'));
+    balkClear();
+    balkFlip = balkFlip === '1' ? '2' : '1';
+    els.forEach(function (e) { if (e && !e.hidden) { e.setAttribute('data-balk', balkFlip); balkEls.push(e); } });
+    balkTimer = window.setTimeout(balkClear, BALK_MS);
+    if (viewer && viewer.flashAim) viewer.flashAim();
+  }
+  function balkClear() {
+    if (balkTimer) window.clearTimeout(balkTimer);
+    balkTimer = 0;
+    balkEls.forEach(function (e) { e.removeAttribute('data-balk'); });
+    balkEls = [];
   }
   // The sub-switch moved: the load starts over under the new rule (a full clip, nothing running).
   function realReloadSettings() {
@@ -3512,7 +3747,7 @@
   function paintHeat(h) {
     var box = $('aim-gun-heat'), fill = $('aim-gun-heat-fill');
     if (!box || !fill) return;
-    if (box.hidden !== !h) box.hidden = !h;
+    if (box.hidden !== !h) { box.hidden = !h; stripLayout(); }   // the strip beside ⌖ changes width (an event)
     if (!h) { heatPaintKey = ''; heatTitleKey = ''; return; }
     var p = h.p, width = (h.t / p.max * 100).toFixed(1) + '%', key = width + (h.locked ? '|L' : '');
     if (key !== heatPaintKey) {
@@ -3540,7 +3775,7 @@
       ' a second) and fires again only at ' + aimNum(p.off) + '. The mark is the warning at ' + aimNum(p.warn) + '.'
         : ' It never overheats: this gun has no lock.') +
       (bands.length ? ' The aiming circle is ' + bands.join(', ') + ' — now ×' + aimNum(now) + '.' : '') +
-      ' The game’s own numbers for this gun; the ✸ emulation runs them, the server keeps the real temperature.';
+      ' The game’s own numbers for this gun; the ⌖ emulation runs them, the server keeps the real temperature.';
   }
   // --- ✸: the circle after a round, and one pull = the whole burst (23.09, BACKLOG 35-36) --------------------------
   // The client's formula takes the after-shot term by three branches (ArmorBallistics.shotTerm) and multiplies the
@@ -3779,6 +4014,17 @@
   }
   // The bar is graphics and nothing else (the owner's rule: no words on a tile) - every number is in its
   // tooltip. Called on a shot, on a reset, on a model change and when the switch moves; never per frame.
+  // THE STRIP BESIDE ⌖ (23.09): the emulated gun - its load, magazine, heat and mode button (#fun-gun, while the aim
+  // emulation runs: updateAim) - ◔, the target's health bar and ↺, ONLY under ⌖ (the user's word, 23.09: "only in the
+  // emulation mode, otherwise they are not needed" - off ⌖ nothing blocks a shot, gunBlock, so a reload count there
+  // would explain nothing). The top band is laid out again only when it comes or goes (the full pass of updateAim
+  // covers #fun-gun). Called by paintFun and updateAim, never per frame.
+  function paintStrip() {
+    var strip = $('fun-strip');
+    if (!strip) return;
+    var show = !$('model-tile').hidden && funOn();
+    if (strip.hidden !== !show) { strip.hidden = !show; scheduleLayout(LAYOUT_MODS); }
+  }
   function paintFun() {
     var bar = $('target-hp'), fill = $('target-hp-fill'), reset = $('target-hp-reset'), toggle = $('fun-mode-toggle');
     if (!bar || !fill || !reset) return;
@@ -3790,15 +4036,19 @@
       var pressed = String(on);
       if (pressed !== hpPressed) { hpPressed = pressed; toggle.setAttribute('aria-pressed', pressed); }
     }
-    // Its sub-switch, real reload, stands beside it only while the mode is on, lit while it is on itself.
-    var sub = $('real-reload-toggle'), subBox = $('real-reload');
+    // Its sub-switch, real reload, stands in the strip beside it only while the mode is on, lit while it is on itself;
+    // the health bar and ↺ likewise. Any of the three coming or going changes the strip's width: the top band is laid
+    // out again then (stripLayout), and only then - the health bar may come late, with the characteristics file.
+    var sub = $('real-reload-toggle'), subBox = $('real-reload'), wide = false;
     if (sub) {
-      sub.hidden = !(on && model);
+      if (sub.hidden !== !(on && model)) { sub.hidden = !(on && model); wide = true; }
       var subPressed = String(!!(subBox && subBox.checked));
       if (sub.getAttribute('aria-pressed') !== subPressed) sub.setAttribute('aria-pressed', subPressed);
     }
-    bar.hidden = !show;
-    reset.hidden = !(on && model);
+    if (bar.hidden !== !show) { bar.hidden = !show; wide = true; }
+    if (reset.hidden !== !(on && model)) { reset.hidden = !(on && model); wide = true; }
+    paintStrip();
+    if (wide) stripLayout();
     if (!show) return;
     var share = Math.max(0, Math.min(1, hpLeft / hpMax)), width = (share * 100).toFixed(1) + '%';
     if (fill.style.width !== width) fill.style.width = width;
@@ -4509,7 +4759,7 @@
     var b = $('aim-gun-mech');
     if (!b) return;
     var m = xiNow(), show = !!m;
-    if (b.hidden !== !show) { b.hidden = !show; scheduleLayout(); }
+    if (b.hidden !== !show) { b.hidden = !show; scheduleLayout(LAYOUT_MODS); }   // the strip beside ⌖ changes width
     if (!m) { xiPaintKey = ''; xiTitleKey = ''; return; }
     var now = aimSeconds(), look = xiLook(m, now);
     var key = [m.spec.glyph, look.on, look.busy, look.glow, look.skip, look.passive].join('|');
@@ -4550,7 +4800,7 @@
   function xiSec(v) { return String(Math.ceil(Math.max(0, v))); }
   function xiTitle(m, now) {
     var s = m.spec, head = s.name + ' — ', from = m.record ? ' Started from the recorded state of this shot.' : ' No state of it is recorded for this shot: started from the default.';
-    var stock = ' The client’s own stock numbers (' + s.mech + ' of client 2.4.0.1); the server applies them - the emulation runs them under ✸.';
+    var stock = ' The client’s own stock numbers (' + s.mech + ' of client 2.4.0.1); the server applies them - the emulation runs them under ⌖.';
     switch (s.kind) {
       case 'stance':
         return head + 'the stance: ' + (m.stance === 1 ? 'turbo' : 'fight') + (m.to !== null ? ', switching to ' + (m.to === 1 ? 'turbo' : 'fight') + ' - ' + xiSec(m.until - now) + ' s' : '') +
@@ -4569,7 +4819,7 @@
         var mark = xiMarkNow();
         return head + 'the target designator: ' + (m.state === 'armed' ? 'armed - the next round marks what it hits' : m.state === 'cooldown' ? 'cooling down - ' + xiSec(m.until - now) + ' s'
           : m.state === 'deploy' ? 'deploying - ' + xiSec(m.until - now) + ' s' : 'ready') + '.' + (mark ? ' The target is marked - ' + xiSec(mark.left) + ' s left.' : '') +
-          ' Press: arm it (again: disarm). The armed round marks the vehicle it hits for ' + s.markTime + ' s, and a marked vehicle takes ×' + XI_MARK + ' of the damage of every shell - under ✸ the damage rolled on it; the cooldown, ' + s.cooldown + ' s, runs from the round.' +
+          ' Press: arm it (again: disarm). The armed round marks the vehicle it hits for ' + s.markTime + ' s, and a marked vehicle takes ×' + XI_MARK + ' of the damage of every shell - under ⌖ the damage rolled on it; the cooldown, ' + s.cooldown + ' s, runs from the round.' +
           stock + ' This page’s readings: the marking round itself does not get the ×' + XI_MARK + ', and any hit marks, a ricochet too.' + from;
       case 'weapon':
         var sec = activeHit && activeHit.attacker && activeHit.attacker.aim && activeHit.attacker.aim.secondary;
@@ -4651,7 +4901,7 @@
       ', reverse ×' + aimNum(f.backwardSpeed !== undefined ? f.backwardSpeed : 1) + ', hull traverse ×' + aimNum(f.hullSpeed !== undefined ? f.hullSpeed : 1) +
       (f.power ? ', engine power ×' + aimNum(f.power) + ' (the page accelerates linearly in time and reads no power)' : '') + '.' +
       ' It has no factor of the dispersion: the circle grows only with the speed and the hull traverse, by the same formula - faster, so wider, and it takes longer to settle.' +
-      ' The client’s own numbers (rocketAcceleration of client 2.4.0.1, from the vehicle’s characteristics file); the server applies them - the emulation runs them under ✸. The ' +
+      ' The client’s own numbers (rocketAcceleration of client 2.4.0.1, from the vehicle’s characteristics file); the server applies them - the emulation runs them under ⌖. The ' +
       aimNum(s.deploy) + ' s it deploys at the start of a battle are not run here unless the record says so.' + from;
   }
   // The switch itself. Off means off: no frame loop, no key handlers, no live circle, no crosshair, and
@@ -4741,19 +4991,23 @@
     var live = !!(a && modelled && viewer && aimOn);
     // What the layout pass measures here is which of the four is on screen; it runs again only when that
     // changes (updateAim runs on every shell, distance or pose step, and each pass forces a page layout).
-    var shownBefore = [$('aim-config').hidden, tile.hidden, $('aim-gun').hidden, $('aim-block').hidden].join(), configWas = $('aim-config').hidden;
+    var shownBefore = [$('aim-config').hidden, tile.hidden, $('aim-gun').hidden, $('aim-block').hidden, $('fun-gun').hidden].join(), configWas = $('aim-config').hidden;
     $('aim-config').hidden = !live;
     if (!live) $('aim-config').open = false;   // aimConfigListen below takes the sub-panel and the Escape key with it
     tile.hidden = !live;
-    // The gun panel rides with the mode, exactly as the speed tile and Config do: its reload figures are
-    // the emulation's own state, and the heading shell list carries the shells when the mode is off.
-    $('aim-gun').hidden = !live;
+    // The gun panel rides with the mode, exactly as the speed tile and Config do, and the heading shell list carries
+    // the shells when the mode is off. Since 23.09 it holds the shells alone (an empty one is no panel at all); the
+    // load state - the emulation's own - is the part of the strip beside ⌖ that needs a live emulation (#fun-gun),
+    // and it is there whenever the emulation runs, ⌖ or not, as it was down here: paintStrip shows the strip with it.
+    $('aim-gun').hidden = !live || !candidates.length;
+    $('fun-gun').hidden = !live;
+    paintStrip();
     paintGunLoad();
     // The manual estimate of 0.7.13 is the fallback and nothing more: it appears exactly when the user
     // asked for the emulation and this record cannot give it.
     var fallback = !!(modelled && aimOn && !a), wasHidden = $('aim-block').hidden;
     $('aim-block').hidden = !fallback;
-    if ([$('aim-config').hidden, tile.hidden, $('aim-gun').hidden, $('aim-block').hidden].join() !== shownBefore) scheduleLayout();
+    if ([$('aim-config').hidden, tile.hidden, $('aim-gun').hidden, $('aim-block').hidden, $('fun-gun').hidden].join() !== shownBefore) scheduleLayout();
     // The gun chip of the characteristics panel lists the turrets itself while Config is away (ttxPaintPair).
     if ($('aim-config').hidden !== configWas) ttxPaintChip();
     // Said once, when the block appears: writing it on every pass would wipe the result of the
@@ -5932,8 +6186,8 @@
   // where the vehicle has more than one; ▴ opens everything else.
   // NOTHING HERE RUNS ON A FRAME: the panel is painted on an event - another shooter, a Config change, ⚙, a pair,
   // another shell, its file arriving, the expanded view opened - and writes only the text that changed.
-  // Field modifications are not modelled in this version (decision of 23.09, docs/CONTEXT.md): a player's own
-  // vehicle can differ from his garage by a few per cent, and the tooltips say so.
+  // The field modification (user, 23.09) is Config's: its block sets it, aimEffects counts it with the equipment by
+  // the client's law, and the build's figures carry it; the stock has none (ttxFieldWords says which in a tooltip).
   // Without the vehicle's characteristics file (data/ttx/<id>.js, written by the mod) the panel is not shown.
   var TTX = window.BullbaTtx || null;
   var ttxCache = {}, ttxOrder = [], ttxPending = {}, ttxAsked = {}, ttxTried = {}, ttxData = null, ttxType = '';
@@ -5963,6 +6217,10 @@
     enginePowerPerTon: '<path d="M7.2 1.3 3 7.5h3.2l-.9 4.5L9.5 6H6.3z"/><path d="M14 2.5l-3 11.5"/>',
     vehicleWeight: '<path d="M4.8 6.2h6.4l2.3 7.8h-11z"/><circle cx="8" cy="4" r="1.8"/>',
     maxHealth: '<path d="M8 14s-5.6-3.4-5.6-7.3A3 3 0 0 1 8 5a3 3 0 0 1 5.6 1.7C13.6 10.6 8 14 8 14z"/>',
+    // Survivability (23.09): a hull and a turret, each with its front plate drawn thick; a spanner over a track.
+    hullArmor: '<path d="M1.4 11.4h13.2l-1.7-4.6H3.4z"/><path d="M12.9 6.8l1.7 4.6" stroke-width="2.6"/>',
+    turretArmor: '<path d="M1.5 12.6h13"/><path d="M2.9 12.6a5.1 5.1 0 0 1 10.2 0"/><path d="M13.1 12.6a5.1 5.1 0 0 0-1.5-3.6" stroke-width="2.6"/>',
+    chassisRepairTime: '<rect x="1.4" y="11" width="13.2" height="3.6" rx="1.8"/><path d="M3 9.6 9 5.2"/><path d="M12.67 2.85A2.2 2.2 0 1 1 11.35 1.53"/>',
     pitchLimits: '<path d="M1.5 12.5h13"/><path d="M1.5 12.5 13 6"/><path d="M10.6 3.6 13 6l-3.2.7"/>',
     gunYawLimits: '<path d="M2.4 11A6 6 0 0 1 13.6 11"/><path d="M1.6 8.4 2.4 11l2.6-.7M14.4 8.4 13.6 11 11 10.3"/><path d="M8 11V5"/>',
     maxAmmo: '<path d="M5.8 14.5V6.5L8 2.5l2.2 4v8z"/><path d="M5.8 11.5h4.4"/>',
@@ -6035,6 +6293,10 @@
     turretRotationSpeed: ['turretRotationSpeed', 'Turret traverse speed', '°/s'],
     terrainResistance: ['terrainResistance', 'Terrain resistance: firm / medium / soft (not in the garage; less is better)', ''],
     maxHealth: ['maxHealth', 'Hit points', 'HP'],
+    // The garage's own names (menu.mo tank_params/hullArmor, turretArmor, chassisRepairTime) and units.
+    hullArmor: ['hullArmor', 'Hull armour: front / sides / rear', 'mm'],
+    turretArmor: ['turretArmor', 'Turret armour: front / sides / rear', 'mm'],
+    chassisRepairTime: ['chassisRepairTime', 'Suspension repair time', 's'],
     circularVisionRadius: ['circularVisionRadius', 'View range, standing', 'm'],
     invisibilityStillFactor: ['invisibilityStillFactor', 'Concealment standing', '%'],
     invisibilityMovingFactor: ['invisibilityMovingFactor', 'Concealment moving', '%'],
@@ -6048,21 +6310,35 @@
   // The compact view keeps two of them: Firepower - the reload line on top, above the DPM, as the user asked, and the
   // DPM leading the grid right under it (user 23.09: the reload line goes "even above the DPM" - the DPM is the first
   // figure he reads; the expanded view keeps the garage's order with the DPM last) - and
-  // Mobility. Survivability is only the hit points on this panel (the garage's hull and turret armour are not
-  // shown), so the compact view does not spend a rule and a row on one figure: the HP sit in the head, on its empty
-  // left side; the expanded view has them in their own section.
+  // Mobility. Survivability keeps only the hit points there (user 23.09), in the head on its empty left side, not a
+  // rule and a row; the expanded view has the garage's whole group - the HP, the hull's and the turret's armour and the
+  // suspension's repair time.
   var TTX_GROUP_NAMES = {};
   (TTX ? TTX.GROUPS : []).forEach(function (g) { TTX_GROUP_NAMES[g[0]] = g[1]; });
   var TTX_COMPACT = [{group: 'relativePower', line: true, grid: ['avgDamagePerMinute', 'shotDispersionAngle', 'aimingTime', 'turretRotationSpeed'],
                       row: ['stabMovement', 'stabRotation', 'stabTurret']},
                      {group: 'relativeMobility', row: ['enginePowerPerTon', 'speedLimits', 'hull']}];
   var TTX_STOCK_WORDS = 'Stock, as the garage shows a bare vehicle: top modules, a crew at 100 % with no skills (+10 % commander’s bonus on every role he does not hold himself), no equipment, directive, consumables or paint';
-  var TTX_NO_FIELD = 'Field modifications are not modelled here: the garage of a vehicle that has them may differ by a few per cent.';
+  // The field modification in a row's tooltip (23.09, the sentence "field modifications are not modelled here" is
+  // gone): the build counts Config's by the client's law - in the same pass as the equipment (aimEffects) - and then
+  // leaves the record's own out of the emulator's block; the stock has none. Taken once a paint, on the context.
+  function ttxFieldWords(ctx) {
+    if (ctx.fieldWords !== undefined) return ctx.fieldWords;
+    var offered = aimFieldOffer().levels.length > 0, live = ctx.cur && ctx.cur.source === 'live';
+    ctx.fieldWords = !ctx.build ? 'The stock has no field modification.'
+      : aimFieldOn() ? 'The field modification set in Config is counted by the client’s law' + (live ? '; any the record carries is left out.' : '.')
+      : offered ? 'No field modification is on in Config' + (live && aimKept() ? '; the fire figures keep the record’s own.' : '.')
+      : 'The record names no field modification tree for this vehicle.';
+    return ctx.fieldWords;
+  }
+  // The rows a characteristics file of before 23.09 has no figures for (the mod's TTX_ARMOR_SCHEMA; readTtx reads it again).
+  var TTX_OLD_FILE = 'This vehicle’s characteristics file was written before the armour and the suspension’s repair were added: the mod writes it anew when the page asks for it in the game.';
 
   // --- The file ---------------------------------------------------------------------------------------------
   // One read per type and session (eight kept, as the vehicle exports are). In the game a missing file is asked
   // of the mod once a session (exportTtx) and read again every 2 s for up to 30 s, the way a vehicle export is
   // waited for; outside it a missing file is simply not there. A file of another schema counts as missing.
+  function ttxUsable(t, id) { return !!(t && Number(t.schema) === 1 && (!t.id || t.id === id) && Array.isArray(t.configs) && t.configs.length); }
   function readTtx(type) {
     var id = typeId(type);
     if (!id || !TTX || !ArmorInspectorData.ttx) return Promise.resolve(null);
@@ -6075,7 +6351,7 @@
     var deadline = host.game ? now + TTX_WAIT_MS : 0;
     function attempt() {
       return ArmorInspectorData.ttx(id).then(function (t) {
-        if (!t || Number(t.schema) !== 1 || (t.id && t.id !== id) || !Array.isArray(t.configs) || !t.configs.length) throw new Error('No characteristics of ' + id);
+        if (!ttxUsable(t, id)) throw new Error('No characteristics of ' + id);
         return t;
       }).catch(function () {
         if (!deadline || Date.now() >= deadline) return null;
@@ -6085,9 +6361,26 @@
     ttxPending[id] = attempt().then(function (t) {
       delete ttxPending[id];
       if (t) { ttxCache[id] = t; ttxOrder.push(id); delete ttxTried[id]; while (ttxOrder.length > 8) delete ttxCache[ttxOrder.shift()]; }
+      if (t && host.game && !t.armorSchema) ttxRefresh(id, t);
       return t;
     });
     return ttxPending[id];
+  }
+  // A file written before the armour and the suspension's repair (23.09, the mod's TTX_ARMOR_SCHEMA) is shown at once,
+  // and in the game read again in the background - the mod builds it anew on the exportTtx above - every 2 s for up to
+  // 30 s: the new one takes its place in the cache, and the panel is painted again if it shows that vehicle.
+  function ttxRefresh(id, old) {
+    var deadline = Date.now() + TTX_WAIT_MS;
+    function again() {
+      window.setTimeout(function () {
+        ArmorInspectorData.ttx(id).then(function (t) {
+          if (!ttxUsable(t, id) || !t.armorSchema) throw new Error('Not rebuilt yet');
+          if (ttxCache[id] === old) ttxCache[id] = t;
+          if (ttxData === old) { ttxData = t; ttxPaint(); }
+        }).catch(function () { if (Date.now() < deadline) again(); });
+      }, TTX_RETRY_MS);
+    }
+    again();
   }
   // The hit points of a vehicle from its characteristics file, for the health bar (targetMaxHp): an export made
   // before the characteristics build has no maxHealth, and the file has it for every pair (spec section 8 point 13)
@@ -6264,7 +6557,7 @@
     var spec = TTX_ROWS[key] || [key, key, ''];
     return spec[1] + (spec[2] ? ', ' + spec[2] : '') + '. '
       + (ctx.build ? 'Stock ' + stockText + ' · this build ' + buildText + '. ' : 'Stock ' + stockText + '. ') + ctx.words
-      + (extra ? ' ' + extra : '') + ' ' + ctx.source + ' ' + TTX_NO_FIELD;
+      + (extra ? ' ' + extra : '') + ' ' + ctx.source + ' ' + ttxFieldWords(ctx);
   }
   // One row painted from the context: the figure, its colour against the stock (or the first mode), the tooltip.
   function ttxPaintRow(row, key, ctx) {
@@ -6362,6 +6655,17 @@
     if ((key === 'shotDispersionAngle' || key === 'aimingTime') && ttxModeOn() && ttxModeKind(pair) === 'hydraulic')
       return 'The garage shows the travel figures only; this is the siege descriptor’s, by the garage’s own formula.';
     if (key === 'maxHealth' && build && mulOf('healthFactor') !== 1) return 'With the hardening the client rounds the hit points UP to whole tens.';
+    // Survivability (23.09): the armour is the garage's nominal list; the repair is the stock's in both views.
+    if ((key === 'hullArmor' || key === 'turretArmor' || key === 'chassisRepairTime') && !v[key])
+      return ttxData && ttxData.armorSchema ? 'The client did not give this figure when the file was written (the file’s warnings say so).' : TTX_OLD_FILE;
+    if (key === 'hullArmor' || key === 'turretArmor') return 'Nominal, as the garage lists it: the thickness of the main plates' + (key === 'turretArmor' ? ' of this pair’s turret' : '') + ', not their slope or the rest of the armour.';
+    if (key === 'chassisRepairTime') {
+      if (!v.chassisRepairTime.length) return 'The client has no repair time for this suspension, and the garage prints none.';
+      var modes = ttxData && ttxData.vehicle && ttxData.vehicle.modes;
+      return 'A broken track (or wheel) with nobody in the crew having Repairs: the vehicle’s own time ÷ 0.57, the client’s factor of a group skill nobody has - rations and Brothers in Arms do not change it.'
+        + (v.chassisRepairTime.length > 1 ? (modes && modes.trackWithinTrack ? ' The main track / the reserve.' : ' Two pairs of tracks, each with its own time, in the garage’s order.') : '')
+        + (build ? ' Config has no Repairs skill and does not carry the repair figures of Modified or Improved Configuration, Improved Hardening, the Survival Improvement Suite, the Large Repair Kit, Pre-Battle Maintenance or a field modification, so this build shows the stock’s time.' : '');
+    }
     return '';
   }
   function mulOf(input) { var e = shooterEffects(false).e; return aimMul({mul: e.dev}, input); }
@@ -6403,7 +6707,7 @@
     if (b.getAttribute('aria-pressed') !== String(!!ctx.mode)) b.setAttribute('aria-pressed', String(!!ctx.mode));
     var w = ttxModeWords(pair), follows = !!ttxModeFollows();
     var title = 'The second mode: ' + w[1] + '. ' + (ctx.mode ? 'On: the panel shows ' + w[1] + '’s figures - a figure better than in ' + w[0] + ' is mint, a worse one red.' : 'Off: the panel shows ' + w[0] + '’s figures.')
-      + (follows ? ' Under ✸ this is the emulator’s own mode: the switch presses its mode button, with the game’s switch time.' : ' Off ✸ only the panel changes, and the choice is kept for this vehicle.');
+      + (follows ? ' Under ⌖ this is the emulator’s own mode: the switch presses its mode button, with the game’s switch time.' : ' Off ⌖ only the panel changes, and the choice is kept for this vehicle.');
     if (b.title !== title) b.title = title;
   }
   // THE GUN CHIP (panel v2, user 23.09): plainly a gun - a barrel's glyph, the calibre and the GUN's tier - and a ▾
@@ -6450,7 +6754,7 @@
     if (modes.dualGun) notes.push('the charged salvo of the two barrels: only its preparation is shown, on the reload line');
     if (modes.rocketAcceleration) {
       var r = ttxData.vehicle.rocketAcceleration;
-      notes.push('a rocket booster' + (r ? ' for ' + BullbaTtx.nice(r.duration) + ' s, ' + r.reuseCount + ' uses' : '') + ' - under ✸ the mode button fires it');
+      notes.push('a rocket booster' + (r ? ' for ' + BullbaTtx.nice(r.duration) + ' s, ' + r.reuseCount + ' uses' : '') + ' - under ⌖ the mode button fires it');
     }
     var cal = ttxCaliber(pair);
     tile.replaceChildren(ttxGlyph('gun'), node('b', cal, 'ttx-cal'), node('span', tierRomans[pair.gunLevel] || '', 'vt-tier'));
@@ -6633,7 +6937,9 @@
     var yaw = cur.gunYawLimits ? 'gunYawLimits' : '', onTurret = !!yaw && !cur.gunYawSector && !!ttxData.vehicle && ttxData.vehicle.hasTurret === true;
     rows(fire, ['shotsPerMinute', 'turretRotationSpeed', onTurret ? yaw : '', 'pitchLimits', onTurret ? '' : yaw, 'aimingTime', 'shotDispersionAngle',
       'avgDamagePerMinute', 'stabMovement', 'stabRotation', 'stabTurret', 'stabAfterShot', cur.kind === 'overheat' ? 'overheat' : '', 'maxAmmo']);
-    rows(ttxSection(box, 'relativeArmor'), ['maxHealth']);
+    // RELATIVE_ARMOR_PARAMS: the hit points, the hull's and the turret's armour - no turret line where the turret is the
+    // hull's fake one (the garage's __hasTurret, vehicle.hasTurret) - and the suspension's repair time.
+    rows(ttxSection(box, 'relativeArmor'), ['maxHealth', 'hullArmor', ttxData.vehicle && ttxData.vehicle.hasTurret === false ? '' : 'turretArmor', 'chassisRepairTime']);
     // RELATIVE_MOBILITY_PARAMS: weight, power, specific power, speed, the hull (or the wheels' lock), the mode's switch;
     // the terrain is an extra KPI of the group (medium / soft ground factors).
     rows(ttxSection(box, 'relativeMobility'), ['vehicleWeight', 'enginePower', 'enginePowerPerTon', 'speedLimits', ttxRowKey('hull', cur),
@@ -6980,17 +7286,57 @@
     if(!group||!slot||slot.hidden||!box||!box.clientWidth)return;
     // The tile is centred with a transform, which offsetLeft does not see: its painted right edge comes from
     // the rectangles, measured against the viewport's own.
-    var edge=14,gap=12,left=edge,band=circleBand();
-    if(tile&&tile.getBoundingClientRect().width>0){var box0=box.getBoundingClientRect(),t0=tile.getBoundingClientRect();left=Math.max(edge,t0.right-box0.left+gap);}
+    var edge=14,gap=12,left=edge,band=circleBand(),box0=box.getBoundingClientRect(),t0=null;
+    slot.style.top='';
+    if(tile&&tile.getBoundingClientRect().width>0){t0=tile.getBoundingClientRect();left=Math.max(edge,t0.right-box0.left+gap);}
     slot.style.left=left+'px';
     group.fit(box.clientWidth-edge-band-left);
     // Collapsed, a group is exactly as wide as its own summary button, which fit() cannot shrink. When even
-    // that does not fit beside the tile it is pulled back to the edge of the viewport instead of being
-    // painted past it - overlapping the tile is the lesser evil, and only the bottom band ever gets there.
+    // that does not fit beside the row it goes UNDER the row (23.09: the strip beside ⌖ makes the row wide) at the
+    // right end of the band, instead of being pulled back over the row as it was.
     var width=slot.getBoundingClientRect().width;
-    if(left+width>box.clientWidth-edge-band)slot.style.left=Math.max(edge,box.clientWidth-edge-band-width)+'px';
+    if(left+width>box.clientWidth-edge-band){
+      slot.style.left=Math.max(edge,box.clientWidth-edge-band-width)+'px';
+      if(t0)slot.style.top=(t0.bottom-box0.top+8)+'px';
+    }
+  }
+  // THE MODEL ROW (23.09): the tile's head (the tile, ⌖, the help dot) and the strip - the emulated gun's load whenever
+  // the aim emulation runs, and under ⌖ ◔, the target's health and ↺ (paintStrip). The strip stays on the tile's line
+  // while the whole row fits the band the scene leaves it - centred, between the info panels on the left and the circle
+  // tile on the right. When it does not (a narrow scene, a phone) the row is stacked: data-stack turns it into a column
+  // (style.css), the strip on its own line under the tile. The one-line width is read as natural() reads the heading's,
+  // nothing painted in between. Run by the layout pass alone - the strip's width changed, a resize - never per frame.
+  // STACKED AND STILL IN THE WAY (final review, 23.09): on a scene so narrow that even the stacked row's widest line -
+  // the strip's, or the head's - crosses a tile of the scene's top grid (the info panels, the circle tiles), the row
+  // goes down under that tile instead of lying beneath it (the grid is a layer above the row, and its panels take the
+  // clicks). The tiles are taken top to bottom, so a row moved under one is checked against the next one down.
+  // The grid's tiles: its two info panels (the left column the one-line width is measured from) and the two circle tiles.
+  var TOP_TILES=['shot-panel','armor-probe','shot-circle-tile','probe-circle-tile'];
+  function layoutModelRow(){
+    var row=$('model-row'),strip=$('fun-strip'),box=$('viewport');
+    if(!row||!box||!box.clientWidth)return;
+    var stacked=row.getAttribute('data-stack')!==null,stack=false,top='';
+    if(strip&&!strip.hidden){
+      if(stacked){row.removeAttribute('data-stack');stacked=false;}
+      if(row.style.top)row.style.top='';
+      var w=box.clientWidth,mid=w/2,b0=box.getBoundingClientRect(),left=14,right=w-14-circleBand(),tiles=[];
+      TOP_TILES.forEach(function(id,i){var p=$(id),r=p&&!p.hidden?p.getBoundingClientRect():null;if(r&&r.width>0){tiles.push(r);if(i<2)left=Math.max(left,r.right-b0.left+8);}});
+      stack=natural(row)>2*Math.min(mid-left,right-mid);
+      if(stack){
+        row.setAttribute('data-stack','');stacked=true;
+        var half=Math.min(Math.max(natural(strip),natural(row.firstElementChild)),w-24)/2,y=row.offsetTop,h=row.offsetHeight;
+        tiles.sort(function(a,b){return a.top-b.top;}).forEach(function(r){
+          var l=r.left-b0.left,rt=r.right-b0.left,t=r.top-b0.top,b=r.bottom-b0.top;
+          if(rt>mid-half&&l<mid+half&&t<y+h&&b>y)y=b+8;
+        });
+        if(y!==row.offsetTop)top=y+'px';
+      }
+    }else if(row.style.top)row.style.top='';
+    if(stack!==stacked){if(stack)row.setAttribute('data-stack','');else row.removeAttribute('data-stack');}
+    if(top&&row.style.top!==top)row.style.top=top;
   }
   function layoutMods(){
+    layoutModelRow();   // first: whether the strip stands beside the tile or under it decides the row's edge
     // Measured against the model tile's whole ROW since 22.09: the health bar and its ↺ stand in it, so
     // the room left for the group starts to the right of them, not of the tile.
     placeMods(targetMods,$('target-mods-slot'),$('model-tile').hidden?null:$('model-row')||$('model-tile'));
