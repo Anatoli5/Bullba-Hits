@@ -1201,35 +1201,65 @@
     return circlePoint(aim.center,aim.right,aim.up,aim.radius,r(),r()*Math.PI*2,this.aimQuantile());
   };
   // --- Hitmarks (user, 22.09) ------------------------------------------------------------------------
-  // Every emulated shot leaves a DECAL of the shell's own calibre lying on the armour, and they pile up:
-  // NOT the impact cross, which is a screen-sized glyph and turns the model into mush after a burst, and
-  // no longer the flat coloured disc of 0.7.26 (user, 22.09: "invisible and ugly - in the very colours of
-  // the hit map, so they melt into it, no texture, and the size of a railway sign").
-  // So: no colour of the chance palette anywhere. Each mark is a DARK CORE inside a LIGHT RIM, which reads
-  // on any map colour, in the classic and the accessible palette alike, and on the bare model. Three marks,
-  // one per outcome, told apart by their SHAPE and not by a hue:
-  //   penetration   - a near-black hole with a hot orange-white lip, torn at the edge;
-  //   no penetration- a grey scuff with a thin dark outline and a light highlight inside it;
-  //   ricochet      - a bright streak with dark edges, tapering as it skids away from the impact.
-  // The textures are drawn ONCE on a canvas for the life of the page (markTextures below) and shared by
-  // every viewer; clearing the marks disposes the meshes, never the three textures.
+  // Every emulated shot leaves a DECAL on the armour, and they pile up: not the impact cross, which is a
+  // screen-sized glyph and turns the model into mush after a burst; not the flat coloured disc of 0.7.26,
+  // which wore the very colours of the hit map and melted into it; and no longer the flat calibre-sized
+  // plane of the first decal build - "flat round stickers; the mark must be PROJECTED along the shell's own
+  // line the way the game does it, so a grazing hit smears along the plate, lies only where there IS armour
+  // and never hangs over the edge of a sheet" (user, 22.09, on the 21:47 preview).
+  //
+  // So the geometry of a mark is CUT OUT OF THE MODEL, DecalGeometry-style. An oriented box stands at the
+  // impact point: its Z runs along the shell's travel, its X/Y footprint is one calibre across, and it
+  // reaches MARK_DEPTH footprints in front of and behind the point. Every triangle of the armour the box
+  // catches is clipped against the box's six planes, the pieces keep exactly the surface they were cut
+  // from, and the texture is projected on them from the box's own X/Y. Two consequences, and they are the
+  // whole point: a shell arriving at the incidence i covers a footprint stretched by 1 / cos i on the
+  // plate - the smear - and a mark near an edge simply stops where the armour stops.
+  //
+  // The three textures tell the outcomes apart by what the metal looks like, never by a hue of the chance
+  // palette, and each pairs dark with light so it reads on any map colour and on the bare model:
+  //   penetration    - bare steel outside with a thin burnt-paint edge, a black hole with a red-orange
+  //                    glow inside it (the glow is INSIDE the lip, not a red ring round the outside);
+  //   no penetration - a metallic scrape: paint burnt black at the edges, bright scored metal inside;
+  //   ricochet       - the same scrape, lighter and greyer, light in the middle and dark at the rim, with
+  //                    no torn lip: its LENGTH comes from the projection angle, not from a longer texture.
+  // They are drawn ONCE on a canvas for the life of the page (markSheet below) and shared by every viewer;
+  // clearing the marks disposes the meshes, never the three textures.
   var MARK_LIMIT=500,MARK_TEX=256;
-  // The floor on the size, in metres: a 20 mm autocannon still leaves something a user can see.
+  // The footprint, in metres: ONE calibre across for every outcome (user, 22.09: the no-penetration mark of
+  // the first build, at 1.5 calibres, was far too big), with a floor of 40 mm so a 20 mm autocannon still
+  // leaves something to see. The ricochet is the same square - its length is the projection's.
   var MARK_FLOOR=.04;
-  // How far the decal is lifted off the plate along its facing normal. With the map ON nothing writes
-  // depth at all (the composition is a full-screen quad), with the map OFF the painted mesh does, and
-  // polygonOffset on top of this lift keeps a mark out of the z-fight either way.
+  // The box along the shot, in footprints, and the cap on the smear. A footprint tilted by the incidence i
+  // needs a depth of (size/2)·tan i to be held whole, and half of MARK_STRETCH·sin i covers exactly that
+  // up to cos i = 1 / MARK_STRETCH; past it the depth cuts the footprint off, so the length on the plate is
+  // min(size / cos i, 2·depth / sin i) and never grows past MARK_STRETCH·size - a near-tangent hit cannot
+  // paint a metre-long streak. MARK_NEAR keeps a little depth at a square-on hit, where a curved plate
+  // still bends away from the impact plane.
+  var MARK_DEPTH=1.5,MARK_STRETCH=4,MARK_NEAR=.25;
+  // How far a piece is lifted off the facet it was cut from, along that facet's own normal. With the map ON
+  // nothing writes depth at all (the composition is a full-screen quad), with the map OFF the painted mesh
+  // does, and polygonOffset on top of this lift keeps a decal out of the z-fight either way.
   var MARK_LIFT=.006;
+  // Which triangles belong to the plate that was hit: a candidate whose normal agrees with the struck
+  // facet's by at least this much. It keeps a curved plate, and throws away the BACK of the plate (-1),
+  // anything standing across the shot (0) and the inner plates the box would otherwise paint through.
+  var MARK_FACING=.2;
+  // A hit within this much of square-on (in sin i, so .05 is about 3 degrees) has no slide to line the
+  // footprint up with, and is turned round the shot line by the roll the page drew for that very shot.
+  var MARK_SLIDE=.05;
   var MARK_KINDS=['pen','no-pen','ricochet'];
-  // A line with no verdict at all gets the scuff, muted: it is not a stopped shell, it is a shot the page
-  // could not judge, and it must not read as one. The only per-instance tint there is.
+  // A line with no verdict at all gets the scrape, muted: it is not a stopped shell, it is a shot the page
+  // could not judge, and it must not read as one. The only tint there is.
   var MARK_MUTED=0x7f8488,MARK_PLAIN=0xffffff;
+  // Vertices one outcome's buffer starts at; it doubles when a mark does not fit.
+  var MARK_START=1536,MARK_ATTRIBUTES=['position','normal','uv','color'];
   // The grain of the three textures. Drawn once, so a fixed seed keeps the page's marks the same from run
   // to run; it is NOT the emulation's rng and takes nothing from the page's seeded draws.
   function markNoise(seed){var s=seed>>>0;return function(){s=(s*1664525+1013904223)>>>0;return s/4294967296;};}
   // A canvas is a BROWSER thing: under node (the harness) document.createElement gives a bare stub with no
   // 2d context, so the generator degrades to a 1 x 1 transparent DataTexture instead of throwing. The page
-  // then still builds its meshes, lays its marks and answers every question about them.
+  // then still builds its meshes, cuts its decals and answers every question about them.
   function markCanvas(size){
     var doc=typeof document!=='undefined'?document:null,canvas=doc&&doc.createElement?doc.createElement('canvas'):null;
     if(!canvas||typeof canvas.getContext!=='function')return null;
@@ -1247,180 +1277,328 @@
     texture.userData.stub=false;
     return texture;
   }
-  // The hole a shell that went through leaves: a black pit, a glowing lip, and a torn edge of alternating
-  // hot and sooty spokes so a burst does not look like a row of printed circles.
+  // PENETRATION. Outwards from the middle: the black pit, the red-orange glow just inside the lip (hot
+  // metal seen THROUGH the hole), the bare steel the paint was blown off, and a thin burnt-paint edge.
+  // The impact is at the CENTRE of every one of the three - the projection does all the stretching.
   function drawHole(ctx,S){
-    var c=S/2,r=S*.46,g=ctx.createRadialGradient(c,c,0,c,c,r);
-    g.addColorStop(0,'rgba(6,5,5,1)');g.addColorStop(.42,'rgba(16,13,11,1)');
-    g.addColorStop(.54,'rgba(122,58,16,.98)');g.addColorStop(.66,'rgba(255,196,104,.95)');
-    g.addColorStop(.78,'rgba(255,240,214,.7)');g.addColorStop(.9,'rgba(88,62,40,.26)');
-    g.addColorStop(1,'rgba(40,30,22,0)');
+    var c=S/2,r=S*.47,g=ctx.createRadialGradient(c,c,0,c,c,r);
+    g.addColorStop(0,'rgba(5,4,4,1)');g.addColorStop(.26,'rgba(14,9,8,1)');
+    g.addColorStop(.34,'rgba(96,30,10,.95)');g.addColorStop(.41,'rgba(206,88,26,.9)');
+    g.addColorStop(.47,'rgba(178,182,185,.95)');g.addColorStop(.63,'rgba(210,214,216,.86)');
+    g.addColorStop(.8,'rgba(138,143,146,.7)');g.addColorStop(.9,'rgba(26,23,21,.8)');
+    g.addColorStop(.97,'rgba(16,14,13,.32)');g.addColorStop(1,'rgba(16,14,13,0)');
     ctx.fillStyle=g;ctx.beginPath();ctx.arc(c,c,r,0,Math.PI*2);ctx.fill();
+    // The metal is torn, not printed: short spokes of bright steel and soot across the bare ring.
     var rnd=markNoise(0x9e3779b9);ctx.lineCap='round';
-    for(var i=0;i<26;i++){
-      var a=i/26*Math.PI*2+rnd()*.2,r0=r*(.5+rnd()*.06),r1=r*(.74+rnd()*.24);
-      ctx.strokeStyle=(i%3?'rgba(255,214,150,':'rgba(24,17,13,')+(.18+rnd()*.3).toFixed(3)+')';
-      ctx.lineWidth=S*(.006+rnd()*.012);
+    for(var i=0;i<28;i++){
+      var a=i/28*Math.PI*2+rnd()*.22,r0=r*(.42+rnd()*.1),r1=r*(.6+rnd()*.28);
+      ctx.strokeStyle=(i%3?'rgba(228,232,234,':'rgba(20,17,15,')+(.16+rnd()*.3).toFixed(3)+')';
+      ctx.lineWidth=S*(.005+rnd()*.012);
       ctx.beginPath();ctx.moveTo(c+Math.cos(a)*r0,c+Math.sin(a)*r0);ctx.lineTo(c+Math.cos(a)*r1,c+Math.sin(a)*r1);ctx.stroke();
     }
   }
-  // The dent a shell that did not go through leaves: bare metal caught by the light off-centre, a thin dark
-  // outline round it, and a few scrapes.
+  // NO PENETRATION. A metallic scrape and nothing else: the paint burnt black round the edge, bright bare
+  // metal scored inside it, the light caught off-centre so it reads as a dent and not as a printed ring.
   function drawScuff(ctx,S){
-    var c=S/2,r=S*.46,g=ctx.createRadialGradient(c*.86,c*.84,S*.015,c,c,r);
-    g.addColorStop(0,'rgba(238,240,240,.76)');g.addColorStop(.3,'rgba(174,177,178,.64)');
-    g.addColorStop(.62,'rgba(92,95,98,.62)');g.addColorStop(.84,'rgba(26,26,28,.82)');
-    g.addColorStop(.94,'rgba(16,16,18,.5)');g.addColorStop(1,'rgba(16,16,18,0)');
+    var c=S/2,r=S*.47,g=ctx.createRadialGradient(c*.9,c*.88,S*.02,c,c,r);
+    g.addColorStop(0,'rgba(242,244,244,.84)');g.addColorStop(.3,'rgba(198,201,203,.72)');
+    g.addColorStop(.56,'rgba(122,126,129,.68)');g.addColorStop(.79,'rgba(36,33,31,.84)');
+    g.addColorStop(.93,'rgba(16,15,14,.44)');g.addColorStop(1,'rgba(16,15,14,0)');
     ctx.fillStyle=g;ctx.beginPath();ctx.arc(c,c,r,0,Math.PI*2);ctx.fill();
-    ctx.strokeStyle='rgba(12,12,14,.85)';ctx.lineWidth=S*.016;
-    ctx.beginPath();ctx.arc(c,c,r*.8,0,Math.PI*2);ctx.stroke();
-    ctx.strokeStyle='rgba(246,247,247,.45)';ctx.lineWidth=S*.009;
-    ctx.beginPath();ctx.arc(c,c,r*.6,Math.PI*.85,Math.PI*1.85);ctx.stroke();
     var rnd=markNoise(0x85ebca6b);ctx.lineCap='round';
-    for(var i=0;i<18;i++){
-      var a=rnd()*Math.PI*2,r0=r*(.08+rnd()*.42),len=r*(.1+rnd()*.3);
-      ctx.strokeStyle=(i%2?'rgba(242,243,243,':'rgba(22,22,24,')+(.1+rnd()*.26).toFixed(3)+')';
-      ctx.lineWidth=S*(.004+rnd()*.008);
+    for(var i=0;i<22;i++){
+      var a=rnd()*Math.PI*2,r0=r*(.05+rnd()*.4),len=r*(.08+rnd()*.3);
+      ctx.strokeStyle=(i%2?'rgba(246,248,248,':'rgba(20,19,18,')+(.1+rnd()*.28).toFixed(3)+')';
+      ctx.lineWidth=S*(.004+rnd()*.009);
       ctx.beginPath();ctx.moveTo(c+Math.cos(a)*r0,c+Math.sin(a)*r0);ctx.lineTo(c+Math.cos(a)*(r0+len),c+Math.sin(a)*(r0+len));ctx.stroke();
     }
   }
-  // A tapered lens along the canvas's y, wide at y0 and narrow at y1: the shape both layers of the streak
-  // are cut from.
-  function markTaper(ctx,x,y0,y1,w0,w1){
-    ctx.beginPath();
-    ctx.moveTo(x-w0,y0);
-    ctx.quadraticCurveTo(x-(w0+w1)*.5,(y0+y1)*.5,x-w1,y1);
-    ctx.quadraticCurveTo(x,y1+(y1-y0)*.06,x+w1,y1);
-    ctx.quadraticCurveTo(x+(w0+w1)*.5,(y0+y1)*.5,x+w0,y0);
-    ctx.quadraticCurveTo(x,y0-(y1-y0)*.08,x-w0,y0);
-    ctx.closePath();ctx.fill();
-  }
-  // The skid a bounced shell leaves. The IMPACT end is drawn at the BOTTOM of the canvas and the tail at
-  // the top: a CanvasTexture is flipped on upload, so the bottom row is v = 0, which is the plane's -Y, and
-  // the plane's +Y is laid along the direction the shell skidded (markAxis). The mark therefore starts
-  // bright and wide where the shell struck and fades out the way it went.
-  function drawStreak(ctx,S){
-    var x=S/2,y0=S*.93,y1=S*.05,dark=ctx.createLinearGradient(0,y0,0,y1);
-    dark.addColorStop(0,'rgba(12,11,10,.92)');dark.addColorStop(.55,'rgba(20,18,16,.55)');dark.addColorStop(1,'rgba(24,22,20,0)');
-    ctx.fillStyle=dark;markTaper(ctx,x,y0,y1,S*.34,S*.055);
-    var light=ctx.createLinearGradient(0,y0,0,y1);
-    light.addColorStop(0,'rgba(255,248,232,.95)');light.addColorStop(.35,'rgba(255,226,178,.7)');
-    light.addColorStop(.72,'rgba(226,214,196,.3)');light.addColorStop(1,'rgba(220,210,196,0)');
-    ctx.fillStyle=light;markTaper(ctx,x,y0-S*.02,y1+S*.02,S*.2,S*.022);
-    var bite=ctx.createRadialGradient(x,y0-S*.05,0,x,y0-S*.05,S*.17);
-    bite.addColorStop(0,'rgba(255,252,242,.95)');bite.addColorStop(.5,'rgba(255,214,150,.55)');bite.addColorStop(1,'rgba(255,200,120,0)');
-    ctx.fillStyle=bite;ctx.beginPath();ctx.arc(x,y0-S*.05,S*.17,0,Math.PI*2);ctx.fill();
+  // RICOCHET. The same scrape, lighter and greyer, light in the middle and dark at the rim, with no torn
+  // lip: a shell that slid off polished the plate, it did not open it. It needs no long texture of its own -
+  // the skid is the footprint stretched by the angle the shell came in at.
+  function drawGraze(ctx,S){
+    var c=S/2,r=S*.47,g=ctx.createRadialGradient(c,c,0,c,c,r);
+    g.addColorStop(0,'rgba(248,249,249,.72)');g.addColorStop(.34,'rgba(210,213,214,.6)');
+    g.addColorStop(.62,'rgba(150,153,155,.52)');g.addColorStop(.84,'rgba(58,57,56,.6)');
+    g.addColorStop(.95,'rgba(26,25,24,.28)');g.addColorStop(1,'rgba(26,25,24,0)');
+    ctx.fillStyle=g;ctx.beginPath();ctx.arc(c,c,r,0,Math.PI*2);ctx.fill();
+    var rnd=markNoise(0xc2b2ae35);ctx.lineCap='round';
+    for(var i=0;i<16;i++){
+      var a=rnd()*Math.PI*2,r0=r*(.04+rnd()*.34),len=r*(.1+rnd()*.28);
+      ctx.strokeStyle=(i%3?'rgba(250,251,251,':'rgba(34,33,32,')+(.08+rnd()*.2).toFixed(3)+')';
+      ctx.lineWidth=S*(.003+rnd()*.007);
+      ctx.beginPath();ctx.moveTo(c+Math.cos(a)*r0,c+Math.sin(a)*r0);ctx.lineTo(c+Math.cos(a)*(r0+len),c+Math.sin(a)*(r0+len));ctx.stroke();
+    }
   }
   // The three textures, for the whole page: built at the first Hitmark and never again, whatever happens
   // to the meshes afterwards. Exposed so a harness can see that asking twice gives the very same objects.
   var markTextures=null;
   function markSheet(){
     if(markTextures)return markTextures;
-    markTextures={pen:markTexture(drawHole,MARK_TEX),'no-pen':markTexture(drawScuff,MARK_TEX),ricochet:markTexture(drawStreak,MARK_TEX)};
+    markTextures={pen:markTexture(drawHole,MARK_TEX),'no-pen':markTexture(drawScuff,MARK_TEX),ricochet:markTexture(drawGraze,MARK_TEX)};
     return markTextures;
   }
   Viewer.hitMarkTextures=markSheet;
   // The page keeps what a mark was made of so a rebuilt scene can have its marks back, and it keeps no
   // more of them than these meshes do. One number, asked for, never copied into the page.
   Viewer.prototype.hitMarkLimit=function(){return MARK_LIMIT;};
-  // One InstancedMesh per outcome - a mark's texture is its material, so a mesh cannot mix them - and ONE
-  // ring of 500 slots across all three, so the cap is on the marks and not on each shape separately.
-  // Allocated once, at the cap; nothing at all happens per frame, an instance just stands where it was put.
+  // ---- cutting one decal out of the model ----------------------------------------------------------
+  // The surfaces a decal may be cut from are exactly the meshes the shot itself was cast against (pinAt,
+  // pinAtPoint): the painted armour and the tracks. Nothing is rebuilt, re-posed or triangulated a second
+  // time - a decal lies on the very geometry the ray met.
+  function markSurfaces(viewer){
+    var list=[];
+    if(viewer.paintMesh)list.push(viewer.paintMesh);
+    if(viewer.trackMesh)list.push(viewer.trackMesh);
+    return list;
+  }
+  var markM4=null,markQuery=null,markMin=null,markMax=null,markTmp=null;
+  function markScratch(){
+    var T=THREE;
+    if(!markM4){markM4=new T.Matrix4();markQuery=new T.Box3();
+      markMin=new T.Vector3();markMax=new T.Vector3();markTmp=new T.Vector3();}
+  }
+  function markPush(out,e,x,y,z){out.push(e[0]*x+e[4]*y+e[8]*z+e[12],e[1]*x+e[5]*y+e[9]*z+e[13],e[2]*x+e[6]*y+e[10]*z+e[14]);}
+  // Every triangle of one surface whose own box meets the query box, in WORLD coordinates and flat - nine
+  // numbers a triangle. A geometry that carries a three-mesh-bvh bounds tree is asked through it; otherwise
+  // the triangles are walked once with a box reject each, which on the heaviest exported model is a few
+  // thousand rejects, ONCE PER SHOT and never per frame (outputs/optimization-plan-2026-09-21.md, the page
+  // frame: nothing here runs while the page stands still).
+  function markGather(mesh,lo,hi,out){
+    var geometry=mesh&&mesh.geometry,position=geometry&&geometry.getAttribute?geometry.getAttribute('position'):null;
+    if(!position||!position.array)return out;
+    markScratch();
+    var world=mesh.matrixWorld,e=world.elements,tree=geometry.boundsTree;
+    markQuery.set(lo,hi).applyMatrix4(markM4.copy(world).invert());
+    if(tree&&typeof tree.shapecast==='function'){
+      var box=markQuery.clone();
+      tree.shapecast({intersectsBounds:function(bounds){return bounds.intersectsBox(box);},
+        intersectsTriangle:function(tri){
+          markPush(out,e,tri.a.x,tri.a.y,tri.a.z);markPush(out,e,tri.b.x,tri.b.y,tri.b.z);markPush(out,e,tri.c.x,tri.c.y,tri.c.z);
+          return false;}});
+      return out;
+    }
+    var array=position.array,index=geometry.index,idx=index?index.array:null;
+    var n=idx?idx.length:position.count,q=markQuery,i,a,b,c;
+    for(i=0;i+2<n;i+=3){
+      a=(idx?idx[i]:i)*3;b=(idx?idx[i+1]:i+1)*3;c=(idx?idx[i+2]:i+2)*3;
+      var ax=array[a],ay=array[a+1],az=array[a+2],bx=array[b],by=array[b+1],bz=array[b+2],cx=array[c],cy=array[c+1],cz=array[c+2];
+      if(Math.min(ax,bx,cx)>q.max.x||Math.max(ax,bx,cx)<q.min.x)continue;
+      if(Math.min(ay,by,cy)>q.max.y||Math.max(ay,by,cy)<q.min.y)continue;
+      if(Math.min(az,bz,cz)>q.max.z||Math.max(az,bz,cz)<q.min.z)continue;
+      markPush(out,e,ax,ay,az);markPush(out,e,bx,by,bz);markPush(out,e,cx,cy,cz);
+    }
+    return out;
+  }
+  // The triangle's own normal, in the winding the model was exported with. Which way that points is never
+  // assumed anywhere below: the FACET THE SHELL STRUCK is the reference, and every other triangle is judged
+  // against it, so the marks come out the same whichever way the exporter wound the mesh.
+  function markNormal(tri,i,target){
+    return target.set(tri[i+3]-tri[i],tri[i+4]-tri[i+1],tri[i+5]-tri[i+2])
+      .cross(markTmp.set(tri[i+6]-tri[i],tri[i+7]-tri[i+1],tri[i+8]-tri[i+2])).normalize();
+  }
+  // The squared distance from a point to one triangle (Ericson, Real-Time Collision Detection): the exact
+  // test, so the struck facet is found without a second raycast and without trusting a normal's sign.
+  function markDistance(t,i,px,py,pz){
+    var ax=t[i],ay=t[i+1],az=t[i+2],abx=t[i+3]-ax,aby=t[i+4]-ay,abz=t[i+5]-az,acx=t[i+6]-ax,acy=t[i+7]-ay,acz=t[i+8]-az;
+    var apx=px-ax,apy=py-ay,apz=pz-az,d1=abx*apx+aby*apy+abz*apz,d2=acx*apx+acy*apy+acz*apz,x,y,z,v,w;
+    if(d1<=0&&d2<=0)return apx*apx+apy*apy+apz*apz;
+    var bpx=apx-abx,bpy=apy-aby,bpz=apz-abz,d3=abx*bpx+aby*bpy+abz*bpz,d4=acx*bpx+acy*bpy+acz*bpz;
+    if(d3>=0&&d4<=d3)return bpx*bpx+bpy*bpy+bpz*bpz;
+    var vc=d1*d4-d3*d2;
+    if(vc<=0&&d1>=0&&d3<=0){v=d1/(d1-d3);x=abx*v-apx;y=aby*v-apy;z=abz*v-apz;return x*x+y*y+z*z;}
+    var cpx=apx-acx,cpy=apy-acy,cpz=apz-acz,d5=abx*cpx+aby*cpy+abz*cpz,d6=acx*cpx+acy*cpy+acz*cpz;
+    if(d6>=0&&d5<=d6)return cpx*cpx+cpy*cpy+cpz*cpz;
+    var vb=d5*d2-d1*d6;
+    if(vb<=0&&d2>=0&&d6<=0){w=d2/(d2-d6);x=acx*w-apx;y=acy*w-apy;z=acz*w-apz;return x*x+y*y+z*z;}
+    var va=d3*d6-d5*d4;
+    if(va<=0&&d4-d3>=0&&d5-d6>=0){w=(d4-d3)/(d4-d3+d5-d6);x=abx+(acx-abx)*w-apx;y=aby+(acy-aby)*w-apy;z=abz+(acz-abz)*w-apz;return x*x+y*y+z*z;}
+    var den=1/(va+vb+vc);v=vb*den;w=vc*den;x=abx*v+acx*w-apx;y=aby*v+acy*w-apy;z=abz*v+acz*w-apz;
+    return x*x+y*y+z*z;
+  }
+  // Sutherland-Hodgman against ONE plane of the box, in the box's own coordinates: keep everything with
+  // coordinate·sign <= limit. The polygon keeps the source triangle's order, so the winding survives the
+  // six cuts and the decal's faces can be turned to the shot side once, by a single flag.
+  function markClip(poly,axis,limit,sign){
+    var out=[],n=poly.length/3,i,j,ai,bi,inside,next,t;
+    for(i=0;i<n;i++){
+      j=(i+1)%n;ai=poly[i*3+axis]*sign;bi=poly[j*3+axis]*sign;inside=ai<=limit;next=bi<=limit;
+      if(inside)out.push(poly[i*3],poly[i*3+1],poly[i*3+2]);
+      if(inside!==next){
+        t=(limit-ai)/(bi-ai);
+        out.push(poly[i*3]+(poly[j*3]-poly[i*3])*t,poly[i*3+1]+(poly[j*3+1]-poly[i*3+1])*t,poly[i*3+2]+(poly[j*3+2]-poly[i*3+2])*t);
+      }
+    }
+    return out;
+  }
+  // ONE decal, cut out of the model. `mark` is the page's OWN record of one shot - {point, normal, from,
+  // dir, outcome, caliber, roll} - and the page hands back the very same object when it lays its kept marks
+  // on a scene the viewer has rebuilt; everything this reads comes out of that record and out of the
+  // geometry, never out of the camera of the moment, so a mark laid again is the SAME mark, vertex for
+  // vertex. Nothing is stored twice: the viewer keeps no copy of the record, the page no copy of this
+  // geometry. Returns null when the shot met no armour at all - then the page keeps no record either.
+  Viewer.prototype.hitMarkGeometry=function(mark){
+    if(!mark||!mark.point||!mark.normal)return null;
+    var T=THREE,point=mark.point,eye=mark.from||this.camera.position;
+    var dir=mark.dir?mark.dir.clone():point.clone().sub(eye);
+    if(dir.lengthSq()<1e-12)return null;
+    dir.normalize();
+    var size=Math.max(MARK_FLOOR,Number(mark.caliber)>0?Number(mark.caliber)/1000:0);
+    markScratch();
+    // ONE pass over the model. The sphere round the impact holds the box whichever way it turns - half a
+    // footprint each way across, MARK_DEPTH footprints along - so the facet, the filter and the clipping
+    // all read the same gathered list and the model is walked once per shot.
+    var reach=size*Math.sqrt(.5+MARK_DEPTH*MARK_DEPTH)+MARK_LIFT;
+    var lo=markMin.set(point.x-reach,point.y-reach,point.z-reach),hi=markMax.set(point.x+reach,point.y+reach,point.z+reach);
+    var tri=[],surfaces=markSurfaces(this),s;
+    for(s=0;s<surfaces.length;s++)markGather(surfaces[s],lo,hi,tri);
+    if(!tri.length)return null;
+    // The facet the shell struck: the triangle nearest the impact point. It gives the decal its normal,
+    // the side it is lifted to and the reference the other triangles are judged against.
+    var at=-1,best=Infinity,i,d;
+    for(i=0;i<tri.length;i+=9){d=markDistance(tri,i,point.x,point.y,point.z);if(d<best){best=d;at=i;}}
+    var ref=markNormal(tri,at,new T.Vector3());
+    if(ref.lengthSq()<1e-12)return null;
+    // WHICH WAY A DECAL FACES (user, 22.09: "the hit marks are not visible" - 0.7.25 left not one of them
+    // on screen). The exported collision meshes are wound the other way round: measured over 12 files and
+    // 13 299 triangles, not ONE face normal points out of the vehicle, which is why the painted mesh is
+    // drawn DoubleSide (docs/KNOWLEDGE.md §9). So the decal is turned to the side the shot CAME from, and
+    // `sign` carries that turn through the winding of every piece as well - front-face culling then still
+    // does the occlusion the depth buffer cannot, and orbiting past the plate takes its marks with it.
+    var sign=ref.dot(markTmp.copy(eye).sub(point))<0?-1:1;
+    var n=ref.clone().multiplyScalar(sign);
+    // The box. Z along the shell's travel; Y along the slide - the normal's own component across the shot,
+    // which is the direction the footprint smears in - and X across it. A square-on hit has no slide, so it
+    // is turned by the roll the page drew for that shot and a burst does not stamp one picture twice.
+    var cosI=Math.abs(dir.dot(n)),sinI=Math.sqrt(Math.max(0,1-cosI*cosI));
+    var up=n.clone().addScaledVector(dir,-n.dot(dir));
+    if(up.lengthSq()>MARK_SLIDE*MARK_SLIDE)up.normalize();
+    else{
+      var roll=Number(mark.roll);
+      up=new T.Vector3().crossVectors(dir,Math.abs(dir.y)>.9?new T.Vector3(1,0,0):new T.Vector3(0,1,0)).normalize()
+        .applyAxisAngle(dir,Number.isFinite(roll)?roll:0);
+    }
+    var right=new T.Vector3().crossVectors(up,dir);   // (right, up, dir) is right-handed: windings survive
+    var half=size/2,depth=size*Math.min(MARK_DEPTH,Math.max(MARK_NEAR,.5*MARK_STRETCH*sinI));
+    var pos=[],nrm=[],uvs=[],fn=new T.Vector3();
+    for(i=0;i<tri.length;i+=9){
+      markNormal(tri,i,fn);
+      if(fn.lengthSq()<1e-12||fn.dot(ref)<MARK_FACING)continue;   // another plate, the back of this one, or across the shot
+      var fx=fn.x*sign,fy=fn.y*sign,fz=fn.z*sign,poly=[],k;
+      for(k=0;k<9;k+=3){
+        var dx=tri[i+k]-point.x,dy=tri[i+k+1]-point.y,dz=tri[i+k+2]-point.z;
+        poly.push(dx*right.x+dy*right.y+dz*right.z,dx*up.x+dy*up.y+dz*up.z,dx*dir.x+dy*dir.y+dz*dir.z);
+      }
+      poly=markClip(poly,0,half,1);if(poly.length<9)continue;
+      poly=markClip(poly,0,half,-1);if(poly.length<9)continue;
+      poly=markClip(poly,1,half,1);if(poly.length<9)continue;
+      poly=markClip(poly,1,half,-1);if(poly.length<9)continue;
+      poly=markClip(poly,2,depth,1);if(poly.length<9)continue;
+      poly=markClip(poly,2,depth,-1);if(poly.length<9)continue;
+      var m=poly.length/3,v,o;
+      for(k=1;k+1<m;k++)for(v=0;v<3;v++){
+        o=(v===0?0:sign>0?(v===1?k:k+1):(v===1?k+1:k))*3;
+        var x=poly[o],y=poly[o+1],z=poly[o+2];
+        pos.push(point.x+right.x*x+up.x*y+dir.x*z+fx*MARK_LIFT,
+                 point.y+right.y*x+up.y*y+dir.y*z+fy*MARK_LIFT,
+                 point.z+right.z*x+up.z*y+dir.z*z+fz*MARK_LIFT);
+        nrm.push(fx,fy,fz);
+        uvs.push(Math.min(1,Math.max(0,x/size+.5)),Math.min(1,Math.max(0,y/size+.5)));
+      }
+    }
+    if(!pos.length)return null;
+    return {count:pos.length/3,position:new Float32Array(pos),normal:new Float32Array(nrm),uv:new Float32Array(uvs),
+            facing:n,across:right,along:up,size:size,depth:depth,triangles:tri.length/9};
+  };
+  // ---- the three buffers ---------------------------------------------------------------------------
+  // ONE merged geometry per outcome - a mark's texture is its material, so a mesh cannot mix them - and ONE
+  // ring of MARK_LIMIT slots across all three, so the cap is on the marks and not on each shape separately.
+  // A mark is APPENDED to its outcome's buffer and only the new tail is uploaded; the buffer is rebuilt
+  // (in place, by one copyWithin) only when the ring evicts a mark out of the middle of it. Nothing at all
+  // happens per frame: a standing page draws three meshes that have not changed since the last shot.
   // DEPTH: the map is composed as a full-screen quad that writes no depth, so a depth-tested decal is not
   // hidden by it; renderOrder 3 puts the marks after that quad (0) and after the screens (1, 2) and before
   // the tracers (4), the recorded rings (12) and the live ring (14). With the map off the painted mesh
   // does write depth, and MARK_LIFT plus polygonOffset keep the decal in front of the plate it lies on.
-  // Back-face culling still does the occlusion the depth buffer cannot: a decal is laid along the side the
-  // shot came from, so orbiting past its plate turns it away and it goes with the plate.
-  // vertexColors AND a unit colour attribute: three r160 reads instanceColor in the vertex shader only,
-  // and the fragment applies vColor only under USE_COLOR - that is material.vertexColors - so without both
-  // of these the per-instance tint is silently dropped (which is what happened to 0.7.26's palette).
+  // vertexColors AND a colour attribute: the muted tint of an unjudged shot is written into the vertices
+  // themselves, which is the one tint there is (0.7.26 lost its palette by leaving vertexColors off).
   Viewer.prototype.hitMarkMeshes=function(){
     if(this.markMeshes)return this.markMeshes;
     var T=THREE,sheet=markSheet(),self=this,meshes={};
     MARK_KINDS.forEach(function(kind){
-      var geometry=new T.PlaneGeometry(1,1);
-      geometry.setAttribute('color',new T.Float32BufferAttribute([1,1,1,1,1,1,1,1,1,1,1,1],3));
       var material=new T.MeshBasicMaterial({map:sheet[kind],vertexColors:true,transparent:true,opacity:1,
         depthTest:true,depthWrite:false,polygonOffset:true,polygonOffsetFactor:-4,polygonOffsetUnits:-4,toneMapped:false});
-      var mesh=new T.InstancedMesh(geometry,material,MARK_LIMIT);
-      mesh.count=0;mesh.renderOrder=3;mesh.frustumCulled=false;
-      if(mesh.instanceMatrix.setUsage&&T.DynamicDrawUsage)mesh.instanceMatrix.setUsage(T.DynamicDrawUsage);
-      mesh.instanceColor=new T.InstancedBufferAttribute(new Float32Array(MARK_LIMIT*3).fill(1),3);
-      if(mesh.instanceColor.setUsage&&T.DynamicDrawUsage)mesh.instanceColor.setUsage(T.DynamicDrawUsage);
-      mesh.userData.slotOf=new Int16Array(MARK_LIMIT);
+      var mesh=new T.Mesh(markBuffer(null,MARK_START),material);
+      mesh.renderOrder=3;mesh.frustumCulled=false;
+      mesh.userData.chunks=[];mesh.userData.vertices=0;
       meshes[kind]=mesh;self.scene.add(mesh);
     });
     this.markMeshes=meshes;this.markSlots=new Array(MARK_LIMIT);this.markCount=0;this.markNext=0;
     return meshes;
   };
-  // Which outcome a mark wears. Anything the page could not judge takes the scuff, muted.
-  function markKind(outcome){return outcome==='pen'?'pen':outcome==='ricochet'?'ricochet':'no-pen';}
-  // The axis the decal's +Y runs along. A ricochet runs along the TANGENTIAL projection of the shot on the
-  // plate - the way the shell skidded - and everything else is turned round the normal by the roll the
-  // page drew for this very shot, so a burst does not stamp identical copies of one picture.
-  function markAxis(n,mark){
-    var T=THREE,dir=mark.dir||(mark.from&&mark.point?mark.point.clone().sub(mark.from):null);
-    if(mark.outcome==='ricochet'&&dir){
-      var slide=dir.clone().addScaledVector(n,-dir.dot(n));
-      if(slide.lengthSq()>1e-12)return slide.normalize();
-    }
-    var across=new T.Vector3().crossVectors(n,Math.abs(n.y)>.9?new T.Vector3(1,0,0):new T.Vector3(0,1,0)).normalize();
-    var roll=Number(mark.roll);
-    return across.applyAxisAngle(n,Number.isFinite(roll)?roll:0);
+  // A buffer for `size` vertices, carrying over what an older one held. Growing means a NEW geometry and a
+  // dispose of the old one: three frees a geometry's GL buffers on dispose and not on a replaced attribute,
+  // so this is the one way to double the room without leaking the old buffers for the life of the page.
+  function markBuffer(from,size){
+    var T=THREE,geometry=new T.BufferGeometry(),live=from?from.drawRange.count:0;
+    MARK_ATTRIBUTES.forEach(function(name){
+      var old=from?from.getAttribute(name):null,items=name==='uv'?2:3,array=new Float32Array(size*items);
+      if(old)array.set(old.array.subarray(0,live*items));
+      var attribute=new T.BufferAttribute(array,items);
+      if(attribute.setUsage&&T.DynamicDrawUsage)attribute.setUsage(T.DynamicDrawUsage);
+      geometry.setAttribute(name,attribute);
+    });
+    geometry.setDrawRange(0,live);
+    if(from)from.dispose();
+    return geometry;
   }
-  // `mark` is the page's OWN record of one shot - {point, normal, outcome, caliber, from, dir, roll} - and
-  // the page hands back the very same object when it lays its kept marks on a scene the viewer has rebuilt.
-  // Nothing is stored twice: the viewer keeps no copy of the page's record, the page keeps no copy of the
-  // geometry worked out here.
-  // WHY THE NORMAL IS TURNED (user, 22.09: "the hit marks are not visible" - 0.7.25 left not one of them on
-  // screen): the exported collision meshes are wound the other way round. Measured on the exported models,
-  // 13 299 triangles of 12 files: NOT ONE has its face normal pointing out of the vehicle, which is exactly
-  // why the painted mesh is drawn DoubleSide. So the normal a raycast hands back points INTO the armour, the
-  // decal was laid along it with its front face turned away from the camera, and front-face culling threw
-  // away every single mark. It is therefore laid along the side the shot CAME from, which is the outward
-  // side whatever the winding. `from` is where that shot came from (the pin carries it), so a kept mark is
-  // turned by its own shot and not by wherever the camera happens to be while the scene is rebuilt.
-  // THE SIZE IS THE SHELL'S, never the model's: a hole is one calibre across, a scuff one and a half, a
-  // skid one calibre wide and three long, with a floor of 40 mm so a 20 mm gun still shows.
+  // The uploads: an append touches only its own tail (addUpdateRange), a rebuilt buffer goes up whole.
+  function markTouch(geometry,from,count,whole){
+    MARK_ATTRIBUTES.forEach(function(name){
+      var a=geometry.getAttribute(name);
+      if(whole&&a.clearUpdateRanges)a.clearUpdateRanges();
+      else if(a.addUpdateRange)a.addUpdateRange(from*a.itemSize,count*a.itemSize);
+      a.needsUpdate=true;
+    });
+  }
+  // Which outcome a mark wears. Anything the page could not judge takes the scrape, muted.
+  function markKind(outcome){return outcome==='pen'?'pen':outcome==='ricochet'?'ricochet':'no-pen';}
   Viewer.prototype.addHitMark=function(mark){
-    if(!mark||!mark.point||!mark.normal)return false;
-    var T=THREE,point=mark.point,n=mark.normal.clone();
-    if(n.lengthSq()<1e-12)return false;
-    n.normalize();
-    var eye=mark.from||this.camera.position;
-    if(n.x*(eye.x-point.x)+n.y*(eye.y-point.y)+n.z*(eye.z-point.z)<0)n.negate();
-    var kind=markKind(mark.outcome),caliber=Number(mark.caliber);
-    var base=Math.max(MARK_FLOOR,caliber>0?caliber/1000:0);
-    var wide=kind==='no-pen'?base*1.5:base,along=kind==='ricochet'?base*3:wide;
-    var up=markAxis(n,mark),right=new T.Vector3().crossVectors(up,n);
-    var m=new T.Matrix4().makeBasis(right,up,n);
-    m.scale(new T.Vector3(wide,along,1));
-    m.setPosition(point.x+n.x*MARK_LIFT,point.y+n.y*MARK_LIFT,point.z+n.z*MARK_LIFT);
-    var meshes=this.hitMarkMeshes(),mesh=meshes[kind],slot=this.markNext,old=this.markSlots[slot];
+    var piece=this.hitMarkGeometry(mark);
+    if(!piece)return false;
+    var T=THREE,kind=markKind(mark.outcome),meshes=this.hitMarkMeshes(),mesh=meshes[kind];
+    var slot=this.markNext,old=this.markSlots[slot];
     if(old)this.dropHitMark(old.kind,old.index);
-    var i=mesh.count++;
-    mesh.setMatrixAt(i,m);
-    mesh.setColorAt(i,new T.Color(mark.outcome==='pen'||mark.outcome==='no-pen'||mark.outcome==='ricochet'?MARK_PLAIN:MARK_MUTED));
-    mesh.userData.slotOf[i]=slot;
-    this.markSlots[slot]={kind:kind,index:i};
+    var at=mesh.userData.vertices,need=at+piece.count,grown=need>mesh.geometry.getAttribute('position').count;
+    if(grown){var size=mesh.geometry.getAttribute('position').count;while(size<need)size*=2;mesh.geometry=markBuffer(mesh.geometry,size);}
+    var geometry=mesh.geometry,colour=new T.Color(mark.outcome==='pen'||mark.outcome==='no-pen'||mark.outcome==='ricochet'?MARK_PLAIN:MARK_MUTED);
+    geometry.getAttribute('position').array.set(piece.position,at*3);
+    geometry.getAttribute('normal').array.set(piece.normal,at*3);
+    geometry.getAttribute('uv').array.set(piece.uv,at*2);
+    var tint=geometry.getAttribute('color').array,i;
+    for(i=at;i<need;i++){tint[i*3]=colour.r;tint[i*3+1]=colour.g;tint[i*3+2]=colour.b;}
+    markTouch(geometry,at,piece.count,grown);
+    mesh.userData.vertices=need;geometry.setDrawRange(0,need);
+    mesh.userData.chunks.push({slot:slot,start:at,count:piece.count});
+    this.markSlots[slot]={kind:kind,index:mesh.userData.chunks.length-1};
     this.markNext=(slot+1)%MARK_LIMIT;this.markCount=Math.min(MARK_LIMIT,this.markCount+1);
-    mesh.instanceMatrix.needsUpdate=true;mesh.instanceColor.needsUpdate=true;
-    if(old&&old.kind!==kind){var gone=meshes[old.kind];gone.instanceMatrix.needsUpdate=true;gone.instanceColor.needsUpdate=true;}
     this.draw();return true;
   };
-  // The oldest mark of the ring leaves its own mesh: the last instance of that mesh is moved into the hole
-  // and the slot that pointed at it is told where it went. O(1), so passing the cap costs no more than any
-  // other shot and no buffer is ever rebuilt.
+  // The oldest mark of the ring leaves its own buffer: everything after it slides down by one copyWithin an
+  // attribute, and the slots that pointed past it are told where their marks went. The buffer keeps its
+  // room, so a burst past the cap allocates nothing at all.
   Viewer.prototype.dropHitMark=function(kind,index){
-    var T=THREE,mesh=this.markMeshes[kind],last=mesh.count-1;
-    if(index<last){
-      var m=new T.Matrix4();mesh.getMatrixAt(last,m);mesh.setMatrixAt(index,m);
-      var c=new T.Color();mesh.getColorAt(last,c);mesh.setColorAt(index,c);
-      var slot=mesh.userData.slotOf[last];mesh.userData.slotOf[index]=slot;
-      if(this.markSlots[slot])this.markSlots[slot].index=index;
-    }
-    mesh.count=last;
+    var mesh=this.markMeshes[kind],chunks=mesh.userData.chunks,gone=chunks[index];
+    if(!gone)return;
+    var geometry=mesh.geometry,live=mesh.userData.vertices,from=gone.start+gone.count,slots=this.markSlots,i;
+    MARK_ATTRIBUTES.forEach(function(name){
+      var a=geometry.getAttribute(name),items=a.itemSize;
+      if(live>from)a.array.copyWithin(gone.start*items,from*items,live*items);
+    });
+    markTouch(geometry,0,0,true);
+    chunks.splice(index,1);
+    for(i=index;i<chunks.length;i++){chunks[i].start-=gone.count;if(slots&&slots[chunks[i].slot])slots[chunks[i].slot].index=i;}
+    mesh.userData.vertices=live-gone.count;geometry.setDrawRange(0,mesh.userData.vertices);
   };
   // The three meshes go, the three textures stay: they belong to the page, not to this model.
   Viewer.prototype.clearHitMarks=function(){
@@ -1428,7 +1606,7 @@
     this.markCount=0;this.markNext=0;this.markSlots=null;
     if(!meshes)return false;
     MARK_KINDS.forEach(function(kind){
-      var mesh=meshes[kind];self.scene.remove(mesh);mesh.geometry.dispose();mesh.material.dispose();if(mesh.dispose)mesh.dispose();
+      var mesh=meshes[kind];self.scene.remove(mesh);mesh.geometry.dispose();mesh.material.dispose();
     });
     this.markMeshes=null;this.draw();return true;
   };

@@ -4,8 +4,9 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 
 ## Unreleased
 
-- Hitmarks are shell-sized marks on the armour instead of coloured dots: a penetration leaves a dark hole with a hot rim, a stopped shell a grey scuff, a ricochet a bright skid running the way the shell slid. Each one is as wide as the shell that made it, so a 20 mm gun and a 152 mm gun no longer leave the same blob.
-- They no longer take the colours of the hit map and melt into it: every mark is a dark core inside a light rim, which reads on the map in either palette and on the bare model.
+- Hitmarks are projected onto the armour along the shell's own line, the way the game lays a decal: the mark is cut out of the collision model itself, so it lies only where there is armour, never hangs over the edge of a plate, and a shell arriving at an angle smears it into a streak along the plate instead of stamping a round sticker on it.
+- Every Hitmark is one calibre across, whatever the outcome: a 20 mm gun and a 152 mm gun no longer leave the same blob, and a stopped shell no longer leaves a bigger mark than a penetration.
+- What the three marks look like: a penetration is bare steel with a thin burnt edge round a black hole with a red-orange glow inside it; a stopped shell is a grey metal scrape, paint burnt black at the rim and bright metal inside; a ricochet is the same scrape, lighter and greyer. None of them takes a colour of the hit map, and each pairs dark with light so it reads on the map in either palette and on the bare model.
 
 ## 0.7.26 (2026-09-22)
 

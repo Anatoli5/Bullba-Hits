@@ -2929,7 +2929,7 @@
   }
   // A Hitmark carries NO colour of the chance palette (user, 22.09: the discs of 0.7.26 were painted in the
   // very colours of the hit map and melted into it). The outcome is handed to the viewer as it stands and
-  // the viewer draws the shape that belongs to it - a hole, a scuff or a skid - so there is one outcome
+  // the viewer cuts the decal that belongs to it - a hole, a scrape or a graze - so there is one outcome
   // word in this page and no second palette beside the map's.
   var FUN_WORDS = {pen: 'penetration', 'no-pen': 'no penetration', ricochet: 'ricochet', unknown: 'no estimate'};
   function hpNumber(v) { return String(Math.round(v)).replace(/\B(?=(\d{3})+(?!\d))/g, ' '); }
@@ -2948,12 +2948,13 @@
   }
   // One Hitmark: ONE record, made here, handed to the viewer to draw and kept as it is so a scene the
   // viewer rebuilds can have the very same mark back - the point, the recorded normal, the outcome the
-  // shape is chosen by, the shell's calibre the size is taken from, where the shot came from and the line
-  // it came along (which turn the decal), and the roll that turns a hole or a scuff round its own normal so
-  // a burst does not stamp identical copies. The roll is drawn HERE, once, and travels with the mark: a
-  // mark laid again must be the same mark, not a freshly turned one.
-  // A shot that met nothing has no surface to lie on and is refused by the viewer; then nothing is kept
-  // either. The cap is the viewer's own, asked for, not copied.
+  // texture is chosen by, the shell's calibre the footprint is taken from, where the shot came from and the
+  // line it came along (the decal is PROJECTED along that line, so the mark smears on a plate met at an
+  // angle), and the roll that turns a square-on mark round that line so a burst does not stamp identical
+  // copies. The roll is drawn HERE, once, and travels with the mark: a mark laid again must be the same
+  // mark, vertex for vertex, and not a freshly turned one.
+  // A shot that met no armour at all has nothing to cut a decal out of and is refused by the viewer; then
+  // nothing is kept either. The cap is the viewer's own, asked for, not copied.
   function funMark(pin, outcome, shell) {
     var caliber = shell && Number(shell.caliber) > 0 ? Number(shell.caliber) : 0;
     var mark = {point: pin.point, normal: pin.normal, from: pin.origin, dir: pin.direction,
