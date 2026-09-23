@@ -40,11 +40,16 @@ def marker(info):
 #
 # Each entry is (component key, property on the component, name in the record, fields of the FIXED_DICT or
 # None for a plain number, own-vehicle-only). "own only" means the property carries DetailLevel = MY_VEHICLE
-# in its component def and the server replicates it to the player's own vehicle alone; it is read for the
-# player's own shot and skipped for everybody else, so a default value is never recorded as if it were a
-# state. The keys are the mechanic names of the descriptor's mechanicsParams (mechanics_params below) - the
-# same set as AIM_GUN_MECHANICS in exporter.py - so only the vehicles of this client that carry one of them
-# cost anything at all.
+# in its component def - or the whole component does, at the root of its def (concentrationMode,
+# autoreloaderSurge, stationaryReload, battleFury, supportWeapon, dualAccuracy, overheatGun), and then a
+# foreign vehicle most likely has no such component at all - and the server replicates it to the player's own
+# vehicle alone; it is read for the player's own shot and skipped for everybody else, so a default value is
+# never recorded as if it were a state. The keys are the client's own mechanic names (the MECHANICS_NAME
+# constants of items/components/shared_components.pyc, the VehicleMechanic names of mechanic_constants.pyc);
+# which of them a vehicle has is decided by mechanic_names below - the descriptor's mechanicsParams, and for
+# four of them the gun's tags, the type's flag or a companion mechanic - so only the vehicles of this client
+# that carry one cost anything at all. A field that is itself a TIME_INTERVAL {startTime, endTime} is not
+# listed: state_value keeps plain numbers only, and the enclosing state already says the same.
 GUN_MECHANIC_STATE = {
     'shellParamsSwitcher': (
         ('shellParamsSwitcherController', 'status', 'status', ('state', 'endTime'), False),
@@ -75,14 +80,82 @@ GUN_MECHANIC_STATE = {
     'bustleFeed': (
         ('bustleFeedController', 'status', 'status', ('state', 'baseTime', 'endTime', 'switchAccessState'), True),
         ('bustleFeedController', 'reloadStatus', 'reloadStatus', ('timeLeft', 'baseTime', 'endTime'), True)),
-    # No vehicle of client 2.4.0.1 carries this one, and the client's own lookup table names the component
+    # The Vz. 63P (czech:Cz46_Vz_63P) carries this one in its gun's <mechanics> - the first reading of 22.09
+    # looked at the vehicle files only and found no carrier. The client's own lookup table names the component
     # 'ShellCalibrationController' while its def declares DefaultKeyName 'shellCalibrationController'. The
     # def is what the entity is keyed by, so that is the name used here.
     'shellCalibration': (
         ('shellCalibrationController', 'status', 'status', None, True),),
     'secondaryGun': (
         ('secondaryGunComponent', 'gunInstallationIndex', 'gunInstallationIndex', None, False),),
+    # 23.09, docs/BACKLOG.md row 34 - part (a) of outputs/mechanics-impact-2026-09-23.md: the tier XI
+    # mechanics, the gun's heat, the autocannons, the dual-accuracy guns and the rocket acceleration. Fields
+    # by scripts/entity_defs/alias.xml, visibility and keys by each component's def (client 2.4.0.1). Every
+    # value is written as the client holds it; what a packed state means is left to the page once a battle
+    # has shown it.
+    'stanceDance': (  # CS-67 Szakal; state is the client's bit mask of stance, switching and abilities
+        ('stanceDanceController', 'abilityState', 'abilityState', ('state', 'energyFight', 'energyTurbo'), False),),
+    'powerMode': (  # AT-FV230 Breaker
+        ('powerModeController', 'stateStatus', 'stateStatus',
+         ('state', 'powerProgress', 'stateActivationTime', 'directionFactor'), False),
+        ('powerModeController', 'timeInfo', 'timeInfo', ('modeThreshold', 'modeDuration'), False)),
+    'concentrationMode': (  # XM69 Hacker
+        ('concentrationModeComponent', 'status', 'status', ('state', 'baseTime', 'endTime'), True),),
+    'pillboxSiegeMode': (  # Strv 107-12; on the base and the siege descriptor alike
+        ('pillboxSiegeComponent', 'publicStatus', 'publicStatus', ('state', 'nextState'), False),
+        ('pillboxSiegeComponent', 'status', 'status', ('baseTime', 'endTime'), True)),
+    'targetDesignator': (  # leKpz Borkenkafer, the shooter's side; the mark on a target is another component
+        ('targetDesignatorController', 'abilityState', 'abilityState', ('state', 'startTime', 'endTime'), False),),
+    'temperatureGun': (  # the five Ares and the STK-2
+        ('temperatureGunController', 'stateStatus', 'stateStatus',
+         ('state', 'thermalStateID', 'updateTime', 'directionFactor', 'currentTemperature', 'coolingPerSecFactor'),
+         False),),
+    'overheatGun': (  # the five Ares
+        ('overheatGunComponent', 'state', 'state', None, True),),
+    'accuracyStacks': (  # Leopard 120 Verbessert
+        ('accuracyStacksController', 'abilityState', 'abilityState',
+         ('curLevel', 'maxLevel', 'timeElapsed', 'gainMaxSpdKmh', 'gainTime', 'aimLevelBonus'), False),),
+    'autoreloaderSurge': (  # CAV mod. 71
+        ('autoreloaderSurgeController', 'abilityState', 'abilityState', ('state', 'charges', 'restrictions'), True),),
+    'crestMoving': (  # the CAV mod. 71's crest: the direction it moves in, not its position; key with a capital
+        ('CrestMovingController', 'state', 'state', None, False),),
+    'stationaryReload': (  # AS-XX 40 t
+        ('stationaryReloadController', 'status', 'status',
+         ('state', 'baseTime', 'timeLeft', 'gunLockMask', 'sequenceEndTime'), True),),
+    'extraShotClip': (  # AMX 67 Imbattable
+        ('extraShotClipComponent', 'reloadState', 'reloadState', None, False),),
+    'battleFury': (  # T803
+        ('battleFuryController', 'abilityState', 'abilityState', ('currentLevel', 'maxLevel'), True),),
+    # Ho-Ri Shugo. The key is the def's DefaultKeyName; VEHICLE_MECHANIC_DYN_COMPONENT_NAMES of the client
+    # says 'auxiliaryRocketLauncherComponent', the same mismatch as shellCalibration above.
+    'auxiliaryRocketLauncher': (
+        ('auxiliaryRocketLauncher', 'visualStatus', 'visualStatus', ('isReloaded', 'reloadStartTime'), False),
+        ('auxiliaryRocketLauncher', 'status', 'status', ('state', 'baseTime', 'endTime'), True)),
+    'supportWeapon': (  # Taschenratte
+        ('supportWeaponComponent', 'status', 'status', ('state', 'baseTime', 'endTime', 'gunInstallationIndex'), True),),
+    'autoShoot': (  # a gun tag: the five Ares, PGZ-70, Blesk, Selma, Squall, Tesak
+        ('autoShootGunController', 'stateStatus', 'stateStatus', ('state', 'rateMultFactor'), False),
+        ('autoShootGunController', 'defaultShotRate', 'defaultShotRate', None, False),
+        ('autoShootGunController', 'dispersionStatus', 'dispersionStatus',
+         ('dispersionFactor', 'updateTime', 'shotDispersionPerSec', 'maxShotDispersion'), True)),
+    'dualAccuracy': (  # a gun tag: nine vehicles
+        ('dualAccuracy', 'state', 'state', None, True),),
+    'rocketAcceleration': (  # a flag of the type: sixteen vehicles
+        ('rocketAccelerationController', 'stateStatus', 'stateStatus',
+         ('status', 'endTime', 'timeLeft', 'reuseCount'), False),),
 }
+
+# The mechanics a descriptor does not list in its mechanicsParams, and what names them instead (23.09).
+# autoShoot and dualAccuracy are flags of the mounted gun, descr.gun.tags (vehicles.pyc _readGun; the recorded
+# aim.gunTags of an Ares and of a dual-accuracy gun carry them). rocketAcceleration is a section at the root of
+# the vehicle file: VehicleType.__init__ sets type.hasRocketAcceleration = 'rocketAcceleration' in its tags and
+# the descriptor exposes the same name as a property (vehicles.pyc 1059), like hasSiegeMode. The crest of the
+# CAV mod. 71 comes with its gun's prefab (slotPrefabs/crest_module) and sits in no <mechanics> block at all;
+# its one carrier has autoreloaderSurge, so it is looked for on the vehicles with that one - a vehicle without
+# the component costs one dictionary lookup and records nothing.
+GUN_TAG_MECHANICS = ('autoShoot', 'dualAccuracy')
+TYPE_FLAG_MECHANICS = (('hasRocketAcceleration', 'rocketAcceleration'),)
+COMPANION_MECHANICS = {'autoreloaderSurge': ('crestMoving',)}
 
 
 def mechanics_params(descr):
@@ -125,23 +198,53 @@ def state_value(value):
     return None
 
 
+def mechanic_names(descr):
+    """The mechanics a vehicle descriptor carries, as a set of names for GUN_MECHANIC_STATE (23.09).
+
+    The keys of its mechanicsParams (mechanics_params), the gun tags of GUN_TAG_MECHANICS the mounted gun
+    has, the names of TYPE_FLAG_MECHANICS whose flag is set, and the companions of what was found. A few
+    attribute reads on the descriptor, no call into the client. Never raises; each source that fails simply
+    adds nothing.
+    """
+    names = set()
+    try:
+        for name in mechanics_params(descr):
+            names.add(str(name))
+    except Exception:
+        pass
+    try:
+        tags = descr.gun.tags
+        for tag in GUN_TAG_MECHANICS:
+            if tag in tags: names.add(tag)
+    except Exception:
+        pass
+    for flag, name in TYPE_FLAG_MECHANICS:
+        try:
+            if getattr(descr, flag, False): names.add(name)
+        except Exception:
+            pass
+    for name in tuple(names):
+        names.update(COMPANION_MECHANICS.get(name, ()))
+    return names
+
+
 def mechanic_state(entity, own):
     """The state of the shooter's gun mechanics at this instant, {mechanic: {property: value}}.
 
     One dictionary lookup per mechanic the vehicle really has and a few attribute reads; empty - and
-    therefore left out of the record - for every vehicle without one, which is all but twelve. Never
-    raises: a component that is not attached, a property the server has not sent and an entity outside
-    the area of interest all simply leave their field out.
+    therefore left out of the record - for every vehicle without one, which is all but a few dozen of the
+    client's vehicles. Never raises: a component that is not attached, a property the server has not sent
+    and an entity outside the area of interest all simply leave their field out.
     """
     result = {}
     components = getattr(entity, 'dynamicComponents', None)
     if not components: return result
     try:
-        params = mechanics_params(entity.typeDescriptor)
+        names = mechanic_names(entity.typeDescriptor)
     except Exception:
         return result
-    for name in params:
-        entries = GUN_MECHANIC_STATE.get(str(name))
+    for name in names:
+        entries = GUN_MECHANIC_STATE.get(name)
         if not entries: continue
         values = {}
         for key, prop, out, fields, private in entries:
