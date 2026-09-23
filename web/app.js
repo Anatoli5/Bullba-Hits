@@ -1028,10 +1028,10 @@
   var AIM_MECHANICS_WORDS = {
     autoreload: 'an autoreloading magazine: every spent round loads back on its own timer, one at a time. Under ✸ with real reload ◔ the emulation runs those timers; otherwise a hold fires the rounds at the clip interval and nothing loads back',
     clip: 'a magazine: the rounds go at the clip interval, then the whole clip reloads. Under ✸ with real reload ◔ the emulation runs that reload; otherwise a burst stops when the clip is empty',
-    burst: 'a burst gun: one pull of the trigger fires several rounds',
+    burst: 'a burst gun: one pull of the trigger fires several rounds. Under ✸ one press fires the whole burst, and every round but the last widens the circle by the burst’s own factor, as the game does',
     dualGun: 'a dual gun: its barrels fire one at a time or together as a charged volley. The emulation fires single rounds only',
     twinGun: 'a twin gun: two barrels, each with its own reload. The emulation fires single rounds only',
-    autoShoot: 'an automatic gun: it fires while the trigger is held and the circle grows with every round. The emulation does not model the growth',
+    autoShoot: 'an automatic gun: it fires while the trigger is held and the circle grows with every round. Under ✸ the growth is the game’s own - the n-th round of a hold adds n × its per-round figure, up to the cap, and the release lets the circle settle; the pause the server may keep after the last round is not modelled',
     single: 'a single-shot gun'};
   function aimMechanics(a) {
     if (!a) return '';
@@ -1056,7 +1056,12 @@
       extra += ' Its rounds load back in, from an empty magazine: ' + a.autoreload.reloadTime.slice().reverse().map(function (v) { return aimNum(v); }).join(', ') + ' s.';
     }
     if (a && (a.dualAccuracy || (Array.isArray(a.gunTags) && a.gunTags.indexOf('dualAccuracy') >= 0))) {
-      extra += ' It has dual accuracy: the circle right after a shot follows a law of its own, which the page does not model.';
+      // B3: the factor is the client's; how long it lasts is not in the client (the server switches it).
+      var dual = dualParams(a);
+      extra += dual ? ' It has dual accuracy: after a shot the game widens the whole circle ×' + aimNum(dual.factor) +
+        ' (' + aimNum(Math.round(a.dualAccuracy.afterShotDispersionAngle * 1e5) / 1e3) + ' against ' + aimNum(Math.round(a.dispersion * 1e5) / 1e3) +
+        ' m at 100 m). Under ✸ the emulation applies it for ' + aimNum(dual.delay) + ' s after every round - that length is this page’s assumption.'
+        : ' It has dual accuracy: the circle right after a shot follows a law of its own, which this record does not carry the numbers of.';
     }
     load.title = AIM_GUN_LOAD_TITLE + extra;
     load.setAttribute('data-mechanics', kind || 'unknown');
@@ -2538,8 +2543,33 @@
     });
     return out;
   }
+  // THE SHOOTER'S CIRCLE IN THE MODE THE SHOT WAS FIRED IN (B5, 23.09). A vehicle built twice changes its circle in
+  // the second mode far more often than its shells - 34 of the client's 79 siege files (the Strv 107-12 0.29 -> 0.24
+  // m/100 m and 3.0 -> 1.0 s, the Contriver's salvo 0.33 -> 1.1 and afterShot 4 -> 8) - while the recorded block is the
+  // one of the descriptor the client handed over, DEFAULT for anybody else's vehicle. Since the build after 0.7.28 the
+  // recorder writes the other descriptor's block beside it (attacker.modeAim, the mode in modeAimMode); the shot's own
+  // mode is its siege state - the tracer's, the instant it left the barrel, before the one the impact carries, the
+  // precedence the shell's mode already uses (shot-context.js). With or without ✸ (23.09: the recorded ring of a
+  // siege shot is the siege circle too); for every record without the block, the recorded block exactly as before. The configurator reads the mode block with the recorded
+  // block's provenance (aimFrom, compactFactors): both come from the same descriptor and the same devices.
+  var aimModeFrom = null, aimModeView = null;
+  function aimOfHit(hit) {
+    var at = hit && hit.attacker, a = at && at.aim, m = at && at.modeAim;
+    if (!m || !(m.dispersion > 0) || !(a && a.dispersion > 0)) return a;
+    var tracer = hit === activeHit && shotContext ? shotContext.tracer : null;
+    var siege = tracer && Number.isFinite(tracer.siegeState) ? tracer.siegeState : at.siegeStateAtImpact;
+    if (!Number.isFinite(siege)) return a;
+    // VEHICLE_SIEGE_STATE: 0 and 1 are the default mode, 2 and up the siege one (constants.pyc 4166-4182).
+    var mode = siege <= 1 ? 0 : 1;
+    if (mode !== at.modeAimMode || mode === at.vehicleMode) return a;
+    if (aimModeFrom !== m || !aimModeView || aimModeView.base !== a) {
+      aimModeFrom = m;
+      aimModeView = {base: a, view: Object.assign({}, m, {aimFrom: m.aimFrom || a.aimFrom, compactFactors: m.compactFactors || a.compactFactors})};
+    }
+    return aimModeView.view;
+  }
   function aimBlockData() {
-    var a = activeHit && activeHit.attacker && activeHit.attacker.aim;
+    var a = aimOfHit(activeHit);
     if (!(a && a.dispersion > 0)) return null;
     var own = aimShooterIsPlayer(activeHit), fixed = aimForbidden('devices'), key = (own ? 'own' : 'other') + (fixed ? '|fixed' : '');
     // A block REBUILT from the compact descriptor knows nothing of the battle's own modifiers, so they go
@@ -2672,11 +2702,14 @@
     // `turned`: the gun really moved in this frame (chaseAim says so for anything above a micro-radian).
     var turned = chase.step > 0 && !!viewer.chaseAim(chase.step);
     var state = {speed: aimMove.speed, hullTurn: aimMove.hullTurn, hullMax: aimMove.hullMax, turretTurn: chase.turretTurn};
+    autoHold(a, state);   // ✸: an automatic gun's stream keeps its term in the circle (nothing otherwise)
     aimNow = ArmorBallistics.aimStep(aimNow, state, a, mods, dt);
+    // ✸: the rest of a gun's burst goes out on its own, one round per burst interval, button down or not.
+    if (burstLeft > 0) { if (aimReloadLeft() <= 0 && !heatLocked()) burstNext(); }
     // The next shot of a held burst, the moment the cooldown is over. The recoil of the shot just fired is
     // already in `aimNow`, so a gun that cannot settle between two rounds fires the second one wider -
     // which is the whole point of the feature for autoloaders.
-    if (aimBurst && aimDown && !aimClipDry && aimReloadLeft() <= 0 && gunFree()) fireShot();
+    else if (aimBurst && aimDown && !aimClipDry && aimReloadLeft() <= 0 && gunFree()) fireShot();
     // Under ✸ real reload the reload runs on after the release (without it a released button has no reload
     // at all, so this never happens). A shooter at rest with a settled ring and nothing but that countdown
     // running needs only the ring's fill and the panel each frame: the ring's figure cannot have changed, so
@@ -2696,7 +2729,7 @@
     // until the next mouse move (optimisation plan 21.09, §8.3). So the loop runs on for as long as the
     // gun moves; the next frame has no turret speed, the ring decays from the bloom, and the fine figure
     // is taken once, when it is really at rest - the coarse one keeps its 120 ms pace meanwhile.
-    if (aimHeld() || !aimMove.resting || reloading || !chase.caught || turned || (aimBurst && aimDown && !aimClipDry) || (aimNow && !aimNow.settled)) startAimLoop();
+    if (aimHeld() || !aimMove.resting || reloading || !chase.caught || turned || (aimBurst && aimDown && !aimClipDry) || burstLeft > 0 || (aimNow && !aimNow.settled)) startAimLoop();
     else { aimClock = 0; if (reloadJustFinished()) paintAim(state); if (!aimEstFine) { estimateLive(true); paintCircleLines(); } }
   }
   // The reload is over: drop it so the ring is drawn whole again.
@@ -2992,7 +3025,10 @@
         var k = a.reloadTime > 0 ? rl.reload / a.reloadTime : 1, boost = Number(a.autoreload.boostFraction);
         out += '; each spent round loads back on its own timer, one at a time - from an empty magazine ' +
           list.slice().reverse().map(function (v) { return sec(Number(v) * k); }).join(', ') + ' s.';
-        if (boost > 0 && boost < 1) out += ' The faster load of its improved autoreloader is not modelled.';
+        if (boost > 0 && boost < 1) out += ' Improved autoreloader: a round fired once the gun has rested - at least ' +
+          sec(rl.interval + (Number(a.autoreload.boostStartTime) || 0)) + ' s into a round’s load and within ' + sec(Number(a.autoreload.boostResidueTime) || 0) +
+          ' s of its end, or with the magazine full - loads the next one in ×' + aimNum(boost) + ' of its time under ✸ with ◔.' +
+          ' The game’s own numbers; that the cut is ×' + aimNum(boost) + ' rather than less by it is this page’s reading.';
       } else out += '; the whole clip reloads in ' + sec(rl.reload) + ' s once it is empty.';
     }
     if (!real) out += n > 1 ? ' Simplified (✸ or ◔ off): a hold fires what the magazine holds, nothing loads back, and the next press starts full.'
@@ -3005,12 +3041,14 @@
   // that instant is integrated there and then with 1024 rays and stands on the pinned-shot panel, and a
   // copy of the circle stays on the model beside the tracer until the next shot replaces it (user, 20.09).
   // The live circle itself is never frozen: it goes on aiming through the shot and past it.
-  // Whether the gun MAY fire is decided by the caller, not here.
-  function fireShot() {
+  // Whether the gun MAY fire is decided by the caller, not here. `cont`: a round of a burst already on its way (✸).
+  function fireShot(cont) {
     var a = aimBlockData();
     if (!aimLive || !a || !viewer || !viewer.liveRadius100) return false;
     var centre = viewer.spreadAim || viewer.liveAimPoint;
     if (!centre) return false;
+    var now = aimSeconds();
+    dualShot(a, now);   // ✸: a dual-accuracy gun is wider from this very round on (nothing otherwise)
     var mods = aimHeated(aimModifiers()), shell = viewer.shell;
     var chance = shell ? viewer.liveAimProbability(shell, 1024) : null;
     // The fun layer (user, 22.09): with the mode on the shot lands at a point DRAWN inside
@@ -3026,16 +3064,25 @@
     // The shot's own figure, on the pinned-shot panel and in the colour of its ring (user, 20.09): the
     // same single number the live ring prints - the expected damage over the circle, share of alpha.
     aimShot = circleFigure(chance, shell);
+    // The reload first (it names the burst), then the circle: the round's place in a burst decides its term.
+    var rl = ArmorBallistics.reloadSeconds(a, mods), real = realReload();
+    var times = autoreloadTimes(a, rl);   // an autoloader under real reload, or null
+    // Real reload (✸ sub-switch): a clip emptied earlier has been reloaded in full by now - the caller let this
+    // round through only once that reload was over - so it starts again from a full clip.
+    if (times) refillSettle(now);
+    else if (aimClipSize > 1 && real && aimClip <= 0) aimClip = aimClipSize;
+    // ✸: the round's place in the gun's burst (a pull starts one of what the magazine holds); the gap after it.
+    var burst = burstRule(a, rl), more = burstRound(burst, cont, aimClipSize > 1 ? aimClip : 1);
+    var gap = rl ? (more ? burst.interval : rl.interval) : 0;
     // The recoil enters the factor for this very instant and the exponential restarts from it, so the
-    // next round of a held burst leaves a wider circle unless the gun had time to settle.
-    var state = aimLastState || aimState();
+    // next round of a held burst leaves a wider circle unless the gun had time to settle. Under ✸ the term is
+    // the one the client takes for this round (roundState: an automatic gun's stream, a round inside a burst).
+    var state = roundState(a, aimLastState || aimState(), more);
     aimNow = ArmorBallistics.aimShot(aimNow, state, a, mods);
     // The round heats an Ares gun under ✸ (gunHeat below) - after the recoil, which is taken in the band
     // the gun was in when it fired; the new band shows from the next frame. Nothing off the ✸ layer.
     heatShot();
     // The cooldown to the next round of the same hold.
-    var rl = ArmorBallistics.reloadSeconds(a, mods), now = aimSeconds(), real = realReload();
-    var times = autoreloadTimes(a, rl);   // an autoloader under real reload, or null
     aimClipDry = false;
     // No reload in the record: the cooldown is unknown, so a hold fires once and waits for the release
     // instead of emptying a magazine at the frame rate.
@@ -3043,18 +3090,16 @@
     else if (times) {
       // An autoloader under real reload (the rule is with the ✸ code below): the round leaves the magazine and
       // one starts loading back - or the one already loading goes on - and the next round waits for the gap
-      // between rounds or, with the magazine empty, for that load, whose progress the ring then shows.
-      refillSettle(now);
+      // between rounds or, with the magazine empty, for that load, whose progress the ring then shows. An
+      // improved autoloader rested long enough loads that round faster (boostAt).
+      var cut = boostAt(a, rl.interval, now);
       aimClip = Math.max(0, aimClip - 1);
-      refillShot(times, now);
-      aimReload = aimClip > 0 ? {at: now, until: now + rl.interval, clip: true}
-        : {at: aimRefill.at, until: Math.max(aimRefill.until, now + rl.interval), clip: false};
+      refillShot(times, now, cut);
+      aimReload = aimClip > 0 ? {at: now, until: now + gap, clip: true}
+        : {at: aimRefill.at, until: Math.max(aimRefill.until, now + gap), clip: false};
     } else if (aimClipSize > 1) {
-      // Real reload (✸ sub-switch): a clip emptied earlier has been reloaded in full by now - the caller let
-      // this round through only once that reload was over - so it starts again from a full clip.
-      if (real && aimClip <= 0) aimClip = aimClipSize;
       aimClip = Math.max(0, aimClip - 1);
-      if (aimClip > 0) aimReload = {at: now, until: now + rl.interval, clip: true};
+      if (aimClip > 0) aimReload = {at: now, until: now + gap, clip: true};
       // The last round of the clip. By default an empty clip simply stops the burst: the clip reload is NOT
       // emulated (user, 20.09 - it would only annoy), letting go and pressing again starts from a full clip.
       // Under real reload the whole reload runs instead, as in the game, and a held burst goes on after it.
@@ -3077,8 +3122,10 @@
     // A fresh press is never blocked by a running reload and starts with a full clip: the reload paces
     // the shots INSIDE one hold and nothing else. Under ✸ real reload (the sub-switch) the gun keeps its
     // load between presses instead - the clip is refilled here only when this gun's clip size is new.
+    // A burst still on its way (✸) keeps its magazine: the press cannot fire before it is out anyway (gunFree).
     var rounds = aimClipRounds();
-    if (!realReload() || rounds !== aimClipSize) aimLoadFull(rounds);
+    if (!(burstLeft > 0) && (!realReload() || rounds !== aimClipSize)) aimLoadFull(rounds);
+    aimAutoRounds = 0;   // ✸: an automatic gun's stream starts with the press
     aimHoldTimer = window.setTimeout(holdFire, AIM_HOLD_MS);
     return true;
   }
@@ -3104,8 +3151,10 @@
     // The reload is shown only while the button is held and the gun fires on its cooldown; a released
     // button leaves a whole ring - the recoil bloom stays, the fill does not (user, 20.09) - and a full clip,
     // which is what the next press starts from (the magazine shows it so). Under ✸ real reload the release
-    // changes nothing: the reload runs on and its fill stays on the ring.
-    if (!realReload()) { aimReload = null; aimClip = aimClipSize; }
+    // changes nothing: the reload runs on and its fill stays on the ring. A gun's burst on its way (✸) runs on
+    // through the release, and does this itself once its last round is out (burstNext).
+    if (!realReload() && !(burstLeft > 0)) { aimReload = null; aimClip = aimClipSize; }
+    aimAutoRounds = 0;   // ✸: the release ends an automatic gun's stream, and its term leaves the circle
     paintAim(aimLastState || aimState());
     startAimLoop();
   }
@@ -3133,13 +3182,16 @@
   // hold and the held burst - beside what they already ask about the reload.
   function gunFree() {
     if (!funOn()) return true;
+    // A burst already on its way takes no second pull of the trigger (burstLeft, below): its own rounds go out
+    // on their own.
+    if (burstLeft > 0) return false;
     var h = heatNow();
     if (h && h.locked) return false;
     return !realReload() || aimReloadLeft() <= 0;
   }
   // The sub-switch moved: the load starts over under the new rule (a full clip, nothing running).
   function realReloadSettings() {
-    aimReload = null; aimClipDry = false;
+    aimReload = null; aimClipDry = false; burstLeft = 0;
     aimLoadFull();
     paintFun();
     if (aimLive && aimNow) paintAim(aimLastState || aimState());
@@ -3175,12 +3227,29 @@
     }
   }
   // A round has just left the magazine (fireShot, after the count went down): one starts loading back, or the
-  // one loading goes on at the time of the new count with the share it has done.
-  function refillShot(times, now) {
-    var d = refillSeconds(times, aimClip), done = 0;
+  // one loading goes on at the time of the new count with the share it has done. `fraction` (boostAt below) is
+  // the improved autoloader's cut of that load, 1 or nothing for every other round.
+  function refillShot(times, now, fraction) {
+    var d = refillSeconds(times, aimClip) * (fraction > 0 && fraction < 1 ? fraction : 1), done = 0;
     if (aimRefill) done = Math.max(0, Math.min(1, (now - aimRefill.at) / (aimRefill.until - aimRefill.at)));
     aimRefill = {at: now - done * d, until: now + (1 - done) * d, times: times};
     panelWake();
+  }
+  // THE IMPROVED AUTOLOADER (C2, 23.09; autoLoaderGunBoost - the seven guns whose aim.autoreload.boostFraction is
+  // below 1: Progetto 54 and 66, Bisonte C45, Stone Sentinel, Toro, Rinoceronte, Bélier). CLIENT RULE for the
+  // indicator (ammo_ctrl._AutoReloadingBoostStateCtrl): from the start of a round's load it WAITS until the clip
+  // interval + boostStartTime, CHARGES until the end of that load - boostResidueTime, and is CHARGED from there on;
+  // with the magazine full the last load is long over. A round fired while it is CHARGED "reduces the standard time
+  // for autoreloading the next shell" (the client's own text). OUR ASSUMPTION, which only a battle on the Bélier can
+  // confirm: the load that shot leaves running takes ×boostFraction of its time - the other reading, less by the
+  // fraction, differs only on the Bélier's 0.25 (3.75 s against 11.25 s of a 15 s round). The fraction of this shot,
+  // or 1: not an improved autoloader, or not rested long enough. Read before the round leaves the magazine.
+  function boostAt(a, interval, now) {
+    var r = a && a.autoreload, f = r ? Number(r.boostFraction) : 1;
+    if (!(f > 0 && f < 1)) return 1;
+    if (!aimRefill) return f;
+    var wait = aimRefill.at + (Number(interval) || 0) + (Number(r.boostStartTime) || 0);
+    return now >= wait && now >= aimRefill.until - (Number(r.boostResidueTime) || 0) ? f : 1;
   }
   // THE HEAT of the five Ares guns (outputs/gun-overheat-2026-09-22.md; the record carries the gun's own
   // numbers since the build after 0.7.26: aim.temperatureGun and aim.overheatGun). The client's rule:
@@ -3192,15 +3261,20 @@
   //     circle: none up to 50, ×1.25, then ×1.5 over 88..93 - with the hysteresis on the way down.
   // The simulation is the server's; the numbers and the shape of the rule are the client's
   // (params_utils.getTemperatureRateOfFire, TemperatureMechanicState, OverheatGunAmmoState). Penetration and
-  // alpha are untouched. A gun that heats without ever locking (the STK-2) is left alone, as decided.
+  // alpha are untouched.
+  // A GUN THAT HEATS WITHOUT EVER LOCKING (B4, 23.09): the STK-2 has temperatureGun and no overheatGun. Its bands
+  // are the client's all the same (docs/KNOWLEDGE.md section 4: ×1.227 up to 20 - on the cold gun already -, then
+  // ×1.455, ×1.682, ×1.909 and ×2.136; +50 a round, 1 s of rest, 2.8 a second), so it runs the same rule with no
+  // lock at all. The choice of 22.09 to leave it alone was caution, not the owner's decision, and the bands are
+  // checked against the XML now.
   var gunHeat = null, heatFrom = null, heatSpec = null, panelTimer = 0, heatPaintKey = '', heatTitleKey = '', heatWarnAt = '';
   // The gun's numbers, normalised once per shooter block.
   function heatParams() {
     var a = aimBlockData();
     if (a === heatFrom) return heatSpec;
     heatFrom = a; heatSpec = null;
-    var t = a && a.temperatureGun, o = a && a.overheatGun;
-    if (!t || !o) return null;
+    var t = a && a.temperatureGun, o = (a && a.overheatGun) || null;
+    if (!t) return null;
     var max = Number(t.maxTemperature), per = Number(t.heatingPerShot), cool = Number(t.coolingPerSec);
     if (!(max > 0) || !(per > 0) || !(cool > 0)) return null;
     // One multiplier of the circle per band, ascending as the client sorts them; a band with no modifier is ×1.
@@ -3211,14 +3285,16 @@
       });
       return {top: Number(s && s.maxTemperature), factor: f};
     }).filter(function (s) { return s.top > 0; }).sort(function (x, y) { return x.top - y.top; });
-    var on = Number(o.tempOverheatOnThreshold) > 0 ? Math.min(max, Number(o.tempOverheatOnThreshold)) : max;
-    var off = Number(o.tempOverheatOffThreshold) >= 0 ? Math.min(on, Number(o.tempOverheatOffThreshold)) : 0;
-    var warn = Number(o.tempOverheatWarnThreshold) > 0 ? Math.min(on, Number(o.tempOverheatWarnThreshold)) : on;
+    // No overheatGun: no lock (`on` is never reached), no warning mark, and the plain cooling throughout.
+    var lock = !!o;
+    var on = !lock ? Infinity : Number(o.tempOverheatOnThreshold) > 0 ? Math.min(max, Number(o.tempOverheatOnThreshold)) : max;
+    var off = lock && Number(o.tempOverheatOffThreshold) >= 0 ? Math.min(on, Number(o.tempOverheatOffThreshold)) : 0;
+    var warn = !lock ? max : Number(o.tempOverheatWarnThreshold) > 0 ? Math.min(on, Number(o.tempOverheatWarnThreshold)) : on;
     var delay = Number(t.coolingDelay) >= 0 ? Number(t.coolingDelay) : 0;
-    var slow = Number(o.coolingPerSecFactor) > 0 ? Number(o.coolingPerSecFactor) : 1;
+    var slow = lock && Number(o.coolingPerSecFactor) > 0 ? Number(o.coolingPerSecFactor) : 1;
     var hyst = Number(t.thermalStateHysteresis) >= 0 ? Number(t.thermalStateHysteresis) : 0;
     heatSpec = {max: max, per: per, cool: cool, delay: delay, slow: slow, on: on, off: off, warn: warn, hyst: hyst, states: states,
-                key: [max, per, cool, delay, slow, on, off].join('|')};
+                lock: lock, key: [max, per, cool, delay, slow, on, off].join('|')};
     return heatSpec;
   }
   // The temperature and the lock at `now`, from what the last round left (h.t at h.at) - a pure function of
@@ -3263,9 +3339,10 @@
   }
   // The circle's multiplier of the present band, applied where the client applies it: on the full-aim factor
   // (the `mult` of ArmorBallistics.aimFactor). The same object comes back untouched off ✸ or for a cold band.
+  // The dual-accuracy factor (dualNow, below) is a factor on the same ideal and goes on the same `mult`.
   function aimHeated(mods) {
     if (!funOn()) return mods;
-    var h = heatNow(), f = h && h.band >= 0 ? h.p.states[h.band].factor : 1;
+    var h = heatNow(), f = (h && h.band >= 0 ? h.p.states[h.band].factor : 1) * dualNow();
     if (f !== 1 && mods) mods.mult *= f;
     return mods;
   }
@@ -3283,12 +3360,14 @@
     if (h && h.band !== band) startAimLoop();
     if ((h && (h.t > 0 || h.locked)) || (aimRefill && aimLive)) panelWake();
   }
-  // ✸ switched, a new shooter, the emulation reset: a cold gun and no timer.
+  // ✸ switched, a new shooter, the emulation reset: a cold gun and no timer - and nothing left of a burst, an
+  // automatic gun's stream or a dual-accuracy penalty (circleReset, below).
   function gunHeatReset() {
     gunHeat = null;
     if (panelTimer) window.clearTimeout(panelTimer);
     panelTimer = 0;
     paintHeat(null);
+    circleReset();
   }
   // Seconds until a locked gun fires again: what is left of the delay, then the slow fall to the unlock mark.
   function heatUnlockIn(h) {
@@ -3316,19 +3395,119 @@
       fill.style.backgroundColor = heatRgb(h);
       box.setAttribute('data-locked', h.locked ? '1' : '0');
     }
-    var mark = $('aim-gun-heat-warn'), at = (p.warn / p.max * 100).toFixed(1) + '%';
-    if (mark && at !== heatWarnAt) { heatWarnAt = at; mark.style.left = at; }
+    // A gun that never locks has no warning either: the mark is put away (B4).
+    var mark = $('aim-gun-heat-warn'), at = p.lock ? (p.warn / p.max * 100).toFixed(1) + '%' : 'none';
+    if (mark && at !== heatWarnAt) { heatWarnAt = at; mark.hidden = !p.lock; if (p.lock) mark.style.left = at; }
     var left = heatUnlockIn(h), title = Math.round(h.t) + '|' + h.band + '|' + (h.locked ? Math.ceil(left) : '') + '|' + p.key;
     if (title === heatTitleKey) return;
     heatTitleKey = title;
     var bands = [];
-    p.states.forEach(function (s, i) { if (i > 0 && s.factor !== 1) bands.push('×' + aimNum(s.factor) + ' above ' + aimNum(p.states[i - 1].top)); });
+    // The first band carries a factor too on a gun that is wider from the first round (the STK-2's ×1.227).
+    p.states.forEach(function (s, i) {
+      if (s.factor === 1) return;
+      bands.push('×' + aimNum(s.factor) + (i > 0 ? ' above ' + aimNum(p.states[i - 1].top) : ' up to ' + aimNum(s.top)));
+    });
+    var now = h.band >= 0 ? p.states[h.band].factor : 1;
     box.title = 'Gun heat ' + Math.round(h.t) + ' / ' + aimNum(p.max) + (h.locked ? ' — overheated, fires again in ' + Math.ceil(left) + ' s' : '') +
       '. Each round adds ' + aimNum(p.per) + '; after ' + aimNum(p.delay) + ' s without firing the gun cools ' + aimNum(p.cool) +
-      ' a second. At ' + aimNum(p.on) + ' it overheats and locks: it cools at ×' + aimNum(p.slow) + ' (' + aimNum(p.cool * p.slow) +
-      ' a second) and fires again only at ' + aimNum(p.off) + '. The mark is the warning at ' + aimNum(p.warn) + '.' +
-      (bands.length ? ' The aiming circle is ' + bands.join(', ') + (h.band > 0 ? ' — now ×' + aimNum(p.states[h.band].factor) : ' — now ×1') + '.' : '') +
+      ' a second.' + (p.lock ? ' At ' + aimNum(p.on) + ' it overheats and locks: it cools at ×' + aimNum(p.slow) + ' (' + aimNum(p.cool * p.slow) +
+      ' a second) and fires again only at ' + aimNum(p.off) + '. The mark is the warning at ' + aimNum(p.warn) + '.'
+        : ' It never overheats: this gun has no lock.') +
+      (bands.length ? ' The aiming circle is ' + bands.join(', ') + ' — now ×' + aimNum(now) + '.' : '') +
       ' The game’s own numbers for this gun; the ✸ emulation runs them, the server keeps the real temperature.';
+  }
+  // --- ✸: the circle after a round, and one pull = the whole burst (23.09, BACKLOG 35-36) --------------------------
+  // The client's formula takes the after-shot term by three branches (ArmorBallistics.shotTerm) and multiplies the
+  // ideal of a dual-accuracy gun after a shot; the game fires a burst gun's whole burst on one pull of the trigger.
+  // All of it belongs to the ✸ layer: every entry asks funOn() first and leaves the old call exactly as it was off
+  // the layer and for every gun without the mechanic.
+  //
+  // THE BURST (C1; gun.burst, 57 vehicles: Donnola 3 × 0.3 s, Char Mle. 75 3 × 0.5 s, Durendal and MBT-B 2 × 0.5 s,
+  // 121-2 Ziqiang 2 × 0.75 s, the autocannons of tiers I-IV). One pull fires min(burst count, rounds in the magazine)
+  // rounds burst.interval apart, whether the button is still down or not; a pull during it is refused. Every round
+  // with more of the burst after it takes afterShotInBurst (B1), the last one afterShot. The next pull waits the clip
+  // interval after the last round, or the reload of an empty magazine - OUR READING of the client's two rates (the
+  // server times the rounds). `syncReloading` (the Black Rock only) is not modelled: the client stores it and reads
+  // it nowhere. The Black Rock itself fires single rounds here: its burst is only in the Burst mode of its
+  // chargeableBurst, which the emulation has no switch for (BACKLOG 37).
+  var burstLeft = 0;   // rounds of the running burst still to go after the one just fired
+  // The gun's burst under ✸, {count, interval} (ArmorBallistics.reloadSeconds reads it off the record), or null.
+  function burstRule(a, rl) {
+    var b = rl && rl.burst;
+    if (!b || !(b.count > 1) || !funOn()) return null;
+    var mech = a && Array.isArray(a.gunMechanics) ? a.gunMechanics : [];
+    return mech.indexOf('chargeableBurst') >= 0 ? null : b;
+  }
+  // This round's place in the burst: a pull (`cont` false) starts one of what the magazine holds (`have`), a round
+  // of a running burst (`cont` true) counts it down. True while more of the burst follow this round.
+  function burstRound(b, cont, have) {
+    if (!b) { burstLeft = 0; return false; }
+    burstLeft = cont ? Math.max(0, burstLeft - 1) : Math.max(0, Math.min(b.count, have > 0 ? have : 1) - 1);
+    return burstLeft > 0;
+  }
+  // THE AUTOMATIC GUN (B2; aim.autoShoot - the five Ares, PGZ-70, Blesk, Šelma, Squall, Tesák): its controller's term
+  // grows n·shotDispersionPerShot with the n-th round of a stream (Ares 90: ×1.10 after the first round, ×4.6 after
+  // the tenth; the page drew ×4.12 from the first) and stays in the circle while the stream goes on. The stream is
+  // one press: it ends with the release, a lock or an empty magazine. The aimingDelay (0.3 s on the Ares) the server
+  // may keep the term after the last round has no reader in the client and is not modelled.
+  var aimAutoRounds = 0;
+  function autoGun(a) { return !!(a && a.autoShoot && Number(a.autoShoot.shotDispersionPerShot) > 0); }
+  // The state a round is fired in: the frame's own state when nothing of the above applies (exactly the old call),
+  // else a copy with the round's term (and `hold` for an automatic gun).
+  function roundState(a, base, more) {
+    var s = base || {}, fun = funOn(), auto = fun && autoGun(a);
+    if (!auto && !(fun && more && a.afterShotInBurstFactor >= 0)) {
+      // A frame state that still carries a stream's term (✸ switched off in the middle of one) is not handed on.
+      return s.hold || s.shotTerm !== undefined ? {speed: s.speed, hullTurn: s.hullTurn, hullMax: s.hullMax, turretTurn: s.turretTurn} : base;
+    }
+    if (auto) aimAutoRounds++;
+    var r = ArmorBallistics.shotTerm(a, aimAutoRounds, more);
+    return {speed: s.speed, hullTurn: s.hullTurn, hullMax: s.hullMax, turretTurn: s.turretTurn, shotTerm: r.term, hold: r.hold};
+  }
+  // Every frame of a stream the controller's term stays in the ideal; it goes the moment the stream stops.
+  function autoHold(a, state) {
+    if (!(aimAutoRounds > 0)) return;
+    var h = funOn() && autoGun(a) ? heatNow() : null;
+    if (!funOn() || !autoGun(a) || !aimDown || !aimBurst || aimClipDry || (h && h.locked)) { aimAutoRounds = 0; return; }
+    state.shotTerm = ArmorBallistics.shotTerm(a, aimAutoRounds, false).term; state.hold = true;
+  }
+  // DUAL ACCURACY (B3; aim.dualAccuracy - SZDV Vz. 50, Type 63 HT, Type 57, Type 68, Type 71, Kame, Ashigaru,
+  // Headshaker). CLIENT RULE (Avatar.getOwnVehicleShotDispersionAngle 3327-3331, DualAccuracy._collectComponentParams):
+  // while the component is ACTIVE the ideal factor is multiplied by afterShotDispersionAngle / shotDispersionAngle -
+  // Type 71 0.22 -> 0.38 m/100 m, ×1.73; Kame ×2.0. That ACTIVE follows a shot is derived (the factor is above 1 on all
+  // nine); that it lasts dualAccuracy.coolingDelay seconds after every round is OUR ASSUMPTION - the server switches
+  // the state. It starts with the round itself, so its own bloom is wider by the factor too. A timer wakes the frame
+  // loop when it runs out, so a ring that has settled at the wider circle narrows again without a mouse move.
+  var dualUntil = -Infinity, dualTimer = 0;
+  function dualParams(a) {
+    var d = a && a.dualAccuracy, f = d && a.dispersion > 0 ? Number(d.afterShotDispersionAngle) / a.dispersion : 0;
+    var delay = d ? Number(d.coolingDelay) : 0;
+    return f > 0 && isFinite(f) && f !== 1 && delay > 0 ? {factor: f, delay: delay} : null;
+  }
+  function dualNow() {
+    if (!(dualUntil > -Infinity)) return 1;
+    var d = dualParams(aimBlockData());
+    return d && aimSeconds() < dualUntil ? d.factor : 1;
+  }
+  function dualShot(a, now) {
+    var d = funOn() ? dualParams(a) : null;
+    if (!d) return;
+    dualUntil = now + d.delay;
+    if (dualTimer) window.clearTimeout(dualTimer);
+    dualTimer = window.setTimeout(function () { dualTimer = 0; startAimLoop(); }, d.delay * 1000 + 20);
+  }
+  function heatLocked() { var h = heatNow(); return !!(h && h.locked); }
+  // A round of the running burst (aimTick). Under the simplified reload a burst whose button is already up leaves
+  // the gun as a release does - full, nothing running - once its last round is out.
+  function burstNext() {
+    if (!fireShot(true)) { burstLeft = 0; return; }
+    if (!(burstLeft > 0) && !aimDown && !realReload()) { aimReload = null; aimClip = aimClipSize; aimClipDry = false; }
+  }
+  // Nothing of the above survives ✸ switching, a new shooter or the emulation starting over (gunHeatReset).
+  function circleReset() {
+    burstLeft = 0; aimAutoRounds = 0; dualUntil = -Infinity;
+    if (dualTimer) window.clearTimeout(dualTimer);
+    dualTimer = 0;
   }
   // --- The fun layer: target HP, a rolled shot and Hitmarks (user, 22.09) --------------------------
   // ONE switch, and it stands ON THE SCENE beside the collision-model tile, not in Settings (user, 22.09:

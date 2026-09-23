@@ -107,6 +107,44 @@
   // was the Tesak plus two B-C 155 58 hits (offline pass, 22.09).
   var BALLISTIC_TOLERANCE=.025;
   function ratioOf(c){return c&&c.speed>0&&c.gravity>0?c.speed/Math.sqrt(c.gravity):null;}
+  /* The shell velocity nodes of the tier-XI skill trees (B6, 23.09): client 2.4.0.1
+     common/post_progression/veh_skill_configs/<Vehicle>_modifications.xml, `descrAttrs/shot<N>/speed`, N the index of
+     the shot in the gun's own list (components/guns.xml of the nation). A node adds its value to the shell's XML speed
+     and shotSpeedProcessor scales it by projectileSpeedFactor 0.8, as _readShot scales the speed itself (the Gorilla's
+     low-charge APCR records 760 = 900·0.8 + 50·0.8), so the descriptor's speed rises by 0.8 × the node while gravity
+     stays - and v/sqrt(g) by (v + 0.8·node) / v. The tree is the player's own progress: nothing in a record says
+     whether he had the node, so a tracer that matches either the stock shell or the shell with the node names it.
+     Measured on the owner's records, to four places: Breaker APDS Mk. 2B ×1.0400 = (1000 + 40) / 1000, KR-1 BR-79
+     ×1.1000 = (800 + 80) / 800, Taschenratte Hl. Gr. ×1.1429 = (560 + 80) / 560 - 17 hits that were 'assumed' until this
+     check (docs/KNOWLEDGE.md section 3). Per vehicle: [the shot's XML speed, the node], the XML speed ×0.8
+     being the `speed` the record carries. The same trees add alpha (+10) and penetration (+5) to most shells as well;
+     those only go into the words, because the record cannot tell either. */
+  var XI_TREE_SPEED={
+    'china:Ch70_PTZ_78':[[960,40],[760,40]],
+    'czech:Cz46_Vz_63P':[[980,50],[1150,50],[870,50]],
+    'france:F143_Fauteur':[[970,50],[1250,50]],
+    'germany:G185_Leopard_120_Verbessert':[[1400,100]],
+    'germany:G187_Taschenratte':[[1050,100],[700,100]],
+    'germany:G197_Pz_Kpfw_Neu':[[1150,50],[990,50]],
+    'italy:It43_CAV_mod_71':[[1470,50]],
+    'japan:J52_STK_2':[[1050,50],[1380,50]],
+    'japan:J53_Ho_Ri_Shugo':[[1100,50]],
+    'sweden:S41_BV_111':[[1050,100],[850,50]],
+    'uk:GB147_FV4025_Contriver':[[1050,100],[1250,100]],
+    'uk:GB152_AT_FV230_Breaker':[[1000,50],[1250,50]],
+    'uk:GB158_Executor':[[1250,50],[1500,50],[1150,50]],
+    'usa:A191_Ares_90_C':[[1000,50],[1300,50]],
+    'usa:A195_Gorilla':[[900,50],[1100,50]],
+    'ussr:R228_KR_1':[[1000,100]],
+    'ussr:R230_Object_432U':[[1050,50]]};
+  var PROJECTILE_SPEED_FACTOR=.8;
+  // The rise in m/s of the recorded speed a node of this shooter's tree gives this shell, or 0.
+  function treeSpeed(type,c){
+    var list=XI_TREE_SPEED[String(type||'')];
+    if(!list||!(c&&c.speed>0))return 0;
+    for(var i=0;i<list.length;i++)if(Math.abs(c.speed-list[i][0]*PROJECTILE_SPEED_FACTOR)<.5)return list[i][1]*PROJECTILE_SPEED_FACTOR;
+    return 0;
+  }
   function copyShell(c,mode){var out={},k;for(k in c)if(Object.prototype.hasOwnProperty.call(c,k))out[k]=c[k];out.vehicleMode=mode;return out;}
   function tagged(list,mode){return (list||[]).map(function(c){return copyShell(c,mode);});}
   // The same shell in both modes: 76 of this client's 79 second descriptors change no shell at all, and
@@ -234,7 +272,10 @@
     // P1: a single candidate is still only a candidate. When the tracer's own ballistics contradict it -
     // the three measured Gorilla low-charge hits of 22.09 were shown as a determined full-charge shell,
     // penetration 385 instead of ~325 and alpha 800 instead of 390 - the shell is NOT determined.
-    var contradicted=!!(selected&&ballistics(selected)===false);
+    // B6: unless the shooter's tier-XI tree speeds exactly that shell up to what the tracer flew (treeSpeed above).
+    var treeDv=selected&&ballistics(selected)===false?treeSpeed(attacker.type,selected):0,byTree=false;
+    if(treeDv>0&&flight!==null){var tr=ratioOf(selected)*(selected.speed+treeDv)/selected.speed;byTree=Math.abs(tr-flight)<=flight*BALLISTIC_TOLERANCE;}
+    var contradicted=!!(selected&&ballistics(selected)===false&&!byTree);
     if(contradicted)selected=null;
     if(selected&&!choices.some(function(c){return same(c,selected);}))choices.push(selected);
     var index=selected?choices.findIndex(function(c){return same(c,selected);}):-1;
@@ -251,9 +292,11 @@
     return {choices:choices,index:index,kind:kindValues.length===1?kindValues[0]:null,tracer:tracer,command:command,aim:aim,aimSource:chosen?chosen.from:null,aimReason:aimReason,
       range:range,rangeSource:rangeSource,modes:hasModes,unresolvedWhy:why,
       gunState:gunState,gunStateFrom:gunFrom,gunNotes:gunNotes(gunState,gunFrom),chargeFactor:chargeFactor>1?chargeFactor:null,
+      treeSpeed:byTree?treeDv:null,
       source:index<0?'Shell not determined unambiguously'
         :modeSource?'The shooter’s second mode: '+modeSource
-        :kindValues.length?'Type and calibre from the hit; gun data from the client':'The only shell with this effect in the record'};
+        :(kindValues.length?'Type and calibre from the hit; gun data from the client':'The only shell with this effect in the record')+
+          (byTree?'; XI skill tree: the tracer flew '+Math.round(treeDv)+' m/s faster, the velocity node of the shooter’s tree - which may add to its alpha and penetration too, unknown to the record':'')};
   }
   /* Which shell to assume when resolve() could not name one (user, 22.09: a grey model has no logic, and of
      two shells the record cannot tell apart the one that pierces deeper is the likelier - it had the better

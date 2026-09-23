@@ -2,11 +2,19 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
-## Unreleased
+## 0.7.29 (2026-09-23)
 
 - Penetration changes with distance as in the client: full up to 50 m, then along the line through the 500 m value, still falling past 500 m, and 0 beyond the shell's range (was: from 100 m, flat after 500 m).
 - Polish smoothbore APCR (Grom, Kilana, Husarz, Gonkiewicza, Błyskawica, Bzyg) lose damage with distance as in the client: damage figures, the ✸ roll, the assumed shell and the Statistics log use the alpha at the range (Błyskawica at 300 m: 522, not 800).
 - A crit on the outer track of a twin-track vehicle is named the outer track, not the inner one.
+- ✸: one press fires a burst gun's whole burst (Donnola, Char Mle. 75, Durendal, MBT-B, 121-2 Ziqiang, tier I-IV autocannons); the rounds before the last widen the circle by the gun's own in-burst factor (Donnola: ×1.41, then ×8.06 after the last round, was ×8 on every round).
+- ✸: an automatic gun's circle grows round by round as in the game (Ares 90: ×1.10 after the first round, ×4.6 after the tenth, was ×4.12 from the first) and settles once you let go.
+- ✸: dual-accuracy guns (Type 57, Type 63 HT, Type 68, Type 71, SZDV Vz. 50, Kame, Ashigaru, Headshaker) widen the whole circle after every shot by their own factor for their cooling delay (Type 71: ×1.73 for 12 s).
+- ✸: the STK-2 heats up and widens its circle by its heat bands like the Ares, but never locks (×1.227 cold, ×1.91 in steady fire).
+- ✸ with ◔: an improved autoloader (Progetto 54/66, Bisonte C45, Stone Sentinel, Toro, Rinoceronte, Bélier) loads the next round faster when you fire after a pause.
+- A shot fired in a siege or alternative mode uses that mode's own dispersion, aiming time and reload (Strv 103B, Strv 107-12, the Contriver and the rest of the 34 second-mode files that change the circle); the mod now records the second mode's aiming numbers, and the recorded ring of such a shot is drawn from them with or without ✸.
+- A hit whose tracer is faster than the stock shell by the tier XI skill-tree velocity bonus now names its shell instead of assuming it (Breaker, KR-1, Taschenratte and 14 more).
+- The mod records each gun's in-burst dispersion factor where it differs from the normal one (Donnola, Black Rock).
 
 ## 0.7.28 (2026-09-23)
 

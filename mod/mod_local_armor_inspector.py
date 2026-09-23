@@ -13,7 +13,7 @@ try:
 except ImportError:
     import queue
 
-VERSION = '0.7.28'
+VERSION = '0.7.29'
 VIEWER_PATH = os.path.join('mods', 'configs', 'local.armor_inspector', 'Viewer.html')
 LOG = logging.getLogger('local.armor_inspector')
 PARTS = ('chassis', 'hull', 'turret', 'gun')
@@ -252,6 +252,29 @@ def mode_shell_block(descr):
     if siege is None or default is None: return None
     from local_armor_inspector.armor import shot_candidates
     first, second = shot_candidates(default), shot_candidates(siege)
+    return {'default': first, 'siege': second, 'same': first == second}
+
+
+def mode_aim_block(descr):
+    """Both modes' aim blocks of a vehicle that is built twice (23.09, BACKLOG 35 B5 'modeAim').
+
+    The second descriptor changes the circle far more often than the shells: 34 of the client's 79
+    `*_siege_mode.xml` differ from their base in shotDispersionRadius, aimingTime, reloadTime or the
+    dispersion factors (the Strv 107-12 0.29 -> 0.24 m/100 m and 3.0 -> 1.0 s, the Contriver's salvo mode
+    0.33 -> 1.1 and afterShot 4 -> 8) - docs/KNOWLEDGE.md section 4. The shooter's 'aim' is the block of the
+    descriptor the client handed us (always DEFAULT for somebody else's vehicle), so the page gets the other
+    one beside it, exactly as modeShells: read ONCE per battle per descriptor object (Recorder.mode_blocks),
+    written only where the two blocks differ, shared by reference like every static vehicle field.
+
+    Same contract as mode_shell_block: None for an ordinary vehicle (one attribute read), else
+    {'default': block, 'siege': block, 'same': bool}; onSiegeStateChanged is never called here.
+    """
+    if not getattr(descr, 'hasSiegeMode', False): return None
+    siege = getattr(descr, 'siegeVehicleDescr', None)
+    default = getattr(descr, 'defaultVehicleDescr', None)
+    if siege is None or default is None: return None
+    from local_armor_inspector.exporter import aim_block
+    first, second = aim_block(default), aim_block(siege)
     return {'default': first, 'siege': second, 'same': first == second}
 
 
@@ -884,12 +907,13 @@ class Recorder(object):
         # so the page can label both lists instead of guessing. Written only for the six vehicles whose
         # second mode really changes a shell; the block itself is read once per battle (mode_blocks).
         if attacker is not None and 'attacker' in record:
+            key = id(attacker)
+            block = self.mode_blocks.get(key)
+            if block is None or block['descr'] is not attacker:
+                block = {'descr':attacker}
+                self.mode_blocks[key] = block
             try:
-                key = id(attacker)
-                block = self.mode_blocks.get(key)
-                if block is None or block['descr'] is not attacker:
-                    block = {'descr':attacker, 'shells':mode_shell_block(attacker)}
-                    self.mode_blocks[key] = block
+                if 'shells' not in block: block['shells'] = mode_shell_block(attacker)
                 shells = block['shells']
                 if shells is not None:
                     mode = int(getattr(attacker, 'vehicleMode', VEHICLE_MODE_DEFAULT))
@@ -902,6 +926,26 @@ class Recorder(object):
                                                                 else 'siege descriptor')
             except Exception:
                 record['warnings'].append('Shooter second-mode shells unavailable')
+            # B5 (23.09): the aim block of the other mode, the same way and from the same cache entry - read once
+            # per battle per descriptor, written only where the two modes' circles differ. Its own guard, so a
+            # failure here costs this field and never the shells above.
+            try:
+                if 'aims' not in block:
+                    # A descriptor that fails once fails every time: remembered, so it costs no rebuild per hit.
+                    try: block['aims'] = mode_aim_block(attacker)
+                    except Exception: block['aims'] = False
+                aims = block['aims']
+                if aims is False: raise ValueError('Second-mode aim block failed')
+                if aims is not None and not aims['same']:
+                    mode = int(getattr(attacker, 'vehicleMode', VEHICLE_MODE_DEFAULT))
+                    other = VEHICLE_MODE_DEFAULT if mode == VEHICLE_MODE_SIEGE else VEHICLE_MODE_SIEGE
+                    second = aims['default' if other == VEHICLE_MODE_DEFAULT else 'siege']
+                    if second:
+                        record['attacker']['vehicleMode'] = mode
+                        record['attacker']['modeAim'] = second
+                        record['attacker']['modeAimMode'] = other
+            except Exception:
+                record['warnings'].append('Shooter second-mode aim unavailable')
         for hit in hitPoints:
             record['rawHitPoints'].append({'networkID':str(hit['networkID']), 'segment':str(hit['segment']), 'params':str(hit['params'])})
         # Persist even when geometry cannot be recovered from a departed entity.

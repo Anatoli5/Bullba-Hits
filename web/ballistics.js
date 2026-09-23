@@ -76,8 +76,9 @@
   // Everything the crew, the equipment, the perks and the field modification do sits in `mods`, and
   // each multiplier is applied exactly where the client applies it: the full-aim accuracy on mult,
   // the stabiliser on additive, a perk on the single dispersion factor it names, the laying drive on
-  // the aiming time. The client's dual accuracy and auto-shoot guns are separate mechanics and are
-  // not modelled here.
+  // the aiming time. The after-shot term is the gun's afterShot unless the caller hands in the one the
+  // client really takes for that round (shotTerm below: an automatic gun's controller, a burst's own
+  // factor); dual accuracy is a factor on the whole ideal and the ✸ layer of the page applies it on `mult`.
   //
   // aimFactor() answers a question about one state: "the vehicle was in this state, then everything
   // stopped settledFor seconds ago". The factor decays from the ideal factor of that state towards
@@ -102,8 +103,11 @@
     var cr=(aim.rotationFactor>0?aim.rotationFactor:0)*m.rotation;
     var ct=(aim.turretRotationFactor>0?aim.turretRotationFactor:0)*m.turret;
     var cs=aim.afterShotFactor>0?aim.afterShotFactor:0;
+    // s.shotTerm replaces afterShot for this state (shotTerm below); s.hold keeps it in the formula between two
+    // rounds, as an automatic gun's controller does. Neither given: exactly the term of every earlier build.
+    if(typeof s.shotTerm==='number'&&s.shotTerm>=0)cs=s.shotTerm;
     var v=Math.abs(Number(s.speed)||0),w=Math.abs(Number(s.hullTurn)||0),wt=Math.abs(Number(s.turretTurn)||0);
-    var sum=(v*cm)*(v*cm)+(w*cr)*(w*cr)+(wt*ct)*(wt*ct)+(s.afterShot?cs*cs:0);
+    var sum=(v*cm)*(v*cm)+(w*cr)*(w*cr)+(wt*ct)*(wt*ct)+(s.afterShot||s.hold?cs*cs:0);
     var ideal=mult*Math.sqrt(1+additive*additive*sum);
     // The laying drive and the field modification scale the aiming time through miscAttrs; the
     // descriptor's own gunAimingTimeFactor is already in the record and is kept.
@@ -128,7 +132,27 @@
   function idealOf(aim,state,mods,afterShot){
     // settledFor is deliberately dropped: the settling is what this step function integrates.
     var s=state||{};
-    return aimFactor(aim,{speed:s.speed,hullTurn:s.hullTurn,turretTurn:s.turretTurn,afterShot:!!afterShot},mods);
+    return aimFactor(aim,{speed:s.speed,hullTurn:s.hullTurn,turretTurn:s.turretTurn,afterShot:!!afterShot,shotTerm:s.shotTerm,hold:!!s.hold},mods);
+  }
+  // THE AFTER-SHOT TERM OF ONE ROUND. CLIENT RULE, Avatar.getOwnVehicleShotDispersionAngle 3310-3318
+  // (docs/KNOWLEDGE.md section 6), three branches:
+  //   - a vehicle with an AutoShootGunController (aim.autoShoot, the automatic guns): the controller's own
+  //     factor in every frame, min(dispersionFactor + (t - updateTime)·shotDispersionPerSec, maxShotDispersion),
+  //     and afterShot is not used at all. After n rounds of one stream of fire that is n·shotDispersionPerShot
+  //     (perSec ≈ perShot × the rate: derived), so `hold` says the term stays between the rounds;
+  //   - withShot 2, a round of a burst that still has rounds after it (vehicle_extras.ShowShooting):
+  //     afterShotInBurst, which the record carries only where it differs from afterShot;
+  //   - withShot 1, every other round: afterShot.
+  // `rounds` is the n of an automatic gun's stream (1 for its first round), `inBurst` that more rounds of the
+  // burst follow this one. Returns {term, hold}.
+  function shotTerm(aim,rounds,inBurst){
+    var a=aim||{},auto=a.autoShoot,per=auto?Number(auto.shotDispersionPerShot):0;
+    if(per>0){
+      var cap=Number(auto.maxShotDispersion)>0?Number(auto.maxShotDispersion):Infinity,n=Math.max(1,Math.floor(Number(rounds)||1));
+      return {term:Math.min(n*per,cap),hold:true};
+    }
+    if(inBurst&&a.afterShotInBurstFactor>=0)return {term:Number(a.afterShotInBurstFactor),hold:false};
+    return {term:a.afterShotFactor>0?a.afterShotFactor:0,hold:false};
   }
   function aimReading(aim,factor,ideal,start,elapsed,aimingTime){
     return {factor:factor,ideal:ideal,start:start,elapsed:elapsed,aimingTime:aimingTime,
@@ -149,9 +173,11 @@
     return aimReading(aim,decayed,now.ideal,start,elapsed,at);
   }
   // A shot. CLIENT RULE: the recoil enters the very same formula as one more term under the square
-  // root (gun.shotDispersionFactors['afterShot']), so the ideal factor AT THE INSTANT OF THE SHOT
-  // is computed with that term and the exponential restarts from it - or from the current factor
-  // when the circle was still wider than that, because the client never shrinks the circle instantly.
+  // root (gun.shotDispersionFactors['afterShot'], or the term shotTerm gives the round, handed in as
+  // state.shotTerm), so the ideal factor AT THE INSTANT OF THE SHOT is computed with that term and the
+  // exponential restarts from it - or from the current factor when the circle was still wider than
+  // that, because the client never shrinks the circle instantly. With state.hold the term stays in the
+  // ideal after the shot too (an automatic gun firing on).
   function aimShot(prev,state,aim,mods){
     var bloom=idealOf(aim,state,mods,true),after=idealOf(aim,state,mods,false);
     if(!bloom||!after)return prev||null;
@@ -512,6 +538,6 @@
     return stops[i].map(function(v,k){return v+(stops[i+1][k]-v)*f;});
   }
   root.ArmorBallistics={build:build,fromTriangles:fromTriangles,triangle:triangle,subdivide:subdivide,evaluate:evaluate,shell:shell,atDistance:atDistance,penetrationAt:penetrationAt,alphaAt:alphaAt,chance:chance,effective:effective,ricochet:ricochet,color:color,value:value,nonPenetration:nonPenetration,transform:transform,unit:unit,sub:sub,aimFactor:aimFactor,
-    aimStep:aimStep,aimShot:aimShot,reloadSeconds:reloadSeconds,autoreloadScaled:autoreloadScaled,moveStep:moveStep,turretChase:turretChase,
+    aimStep:aimStep,aimShot:aimShot,shotTerm:shotTerm,reloadSeconds:reloadSeconds,autoreloadScaled:autoreloadScaled,moveStep:moveStep,turretChase:turretChase,
     aimProfiles:AIM_PROFILES,aimProfile:aimProfile,aimProfileDefault:DEFAULT_PROFILE,moveDefaults:MOVE};
 }(typeof window==='undefined'?globalThis:window));

@@ -29,7 +29,7 @@ from .telemetry import mechanics_params
 from .crit_tie import attach_crits, moves_tie
 
 LOG = logging.getLogger('local.armor_inspector')
-VERSION = '0.7.28'
+VERSION = '0.7.29'
 RESOURCE = re.compile(r'^(?:[A-Za-z0-9_-]+/)?vehicles/[A-Za-z0-9_/-]+\.(?:model|havok)\Z')
 IDENTIFIER = re.compile(r'^[-a-zA-Z0-9_]{1,100}\Z')
 # The interface icons of the aim configuration (equipment, perks, shells) ship with the page in web/icons
@@ -507,7 +507,10 @@ def aim_block(descr):
       aimingTime            s          gun.aimingTime
       turretRotationFactor  per rad/s  gun.shotDispersionFactors['turretRotation']
       afterShotFactor       -          gun.shotDispersionFactors['afterShot']
-      movementFactor        per m/s    chassis.shotDispersionFactors[0] (a two-item tuple, not a dict)
+      afterShotInBurstFactor -         gun.shotDispersionFactors['afterShotInBurst'] - a round of a burst
+                                       with more rounds after it; written only where it differs from
+                                       afterShot (the client's default)
+      movementFactor       per m/s    chassis.shotDispersionFactors[0] (a two-item tuple, not a dict)
       rotationFactor        per rad/s  chassis.shotDispersionFactors[1]
       turretRotationSpeed   rad/s      turret.rotationSpeed
       hullRotationSpeed     rad/s      chassis.rotationSpeed
@@ -584,6 +587,17 @@ def aim_block(descr):
     take('aimingTime', lambda: float(descr.gun.aimingTime))
     take('turretRotationFactor', lambda: float(descr.gun.shotDispersionFactors['turretRotation']))
     take('afterShotFactor', lambda: float(descr.gun.shotDispersionFactors['afterShot']))
+    # The factor of a round of a burst that still has rounds after it (23.09, BACKLOG 35 B1): the client
+    # takes it where withShot is 2 (Avatar.getOwnVehicleShotDispersionAngle; vehicle_extras.ShowShooting
+    # fires the burst of a showShooting(burstCount) that way). _readGunShotDispersionFactors defaults it to
+    # afterShot, so it is written only where the gun's own differs - the Donnola and the Black Rock of client
+    # 2.4.0.1 - and never named in 'unavailable', like 'burst'. Static per configuration.
+    try:
+        in_burst = float(descr.gun.shotDispersionFactors['afterShotInBurst'])
+        if positive(in_burst) and in_burst != aim.get('afterShotFactor'):
+            aim['afterShotInBurstFactor'] = in_burst
+    except Exception:
+        pass
     take('movementFactor', lambda: float(descr.chassis.shotDispersionFactors[0]))
     take('rotationFactor', lambda: float(descr.chassis.shotDispersionFactors[1]))
     take('turretRotationSpeed', lambda: float(descr.turret.rotationSpeed))
@@ -782,10 +796,10 @@ def fix_aim(vehicle):
     # Only the missing keys are copied over: whatever the old block holds stays byte for byte,
     # so a record is never silently rewritten by a later change to an unrelated field.
     fresh = list(block.get('unavailable') or [])
-    # 'burst' and 'gunMechanics' are written only when the gun really has them, so neither may decide
-    # that a block is incomplete - a vehicle without them would be "completed" on every pass for ever.
-    # They are copied when a completion key brings the rebuild here anyway.
-    for key in AIM_COMPLETION_KEYS + ('burst', 'gunMechanics') + AIM_MECHANICS_KEYS + AIM_GUN_HEAT_KEYS:
+    # 'burst', 'afterShotInBurstFactor' and 'gunMechanics' are written only when the gun really has them, so
+    # none may decide that a block is incomplete - a vehicle without them would be "completed" on every pass
+    # for ever. They are copied when a completion key brings the rebuild here anyway.
+    for key in AIM_COMPLETION_KEYS + ('burst', 'afterShotInBurstFactor', 'gunMechanics') + AIM_MECHANICS_KEYS + AIM_GUN_HEAT_KEYS:
         if key in existing:
             continue
         if key in block:
