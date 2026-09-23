@@ -2895,7 +2895,8 @@
   var hpMax = 0, hpLeft = 0, hpRoll = '', hpTitleKey = '', hpKey = '', hpPressed = '';
   // What the Hitmarks are made of, kept so they can be laid again on a scene the viewer has rebuilt under
   // the SAME vehicle: viewer.load() drops everything the viewer holds, and picking another shooter loads
-  // the model again although the target has not changed. Three values per mark, nothing computed twice.
+  // the model again although the target has not changed. ONE record per mark (funMark), handed straight to
+  // the viewer and kept as it is - nothing about a mark is worked out or stored twice.
   var funMarks = [];
   // The spread of the damage roll. The shell carries its own `damageRandomization` (0.25 on the stock
   // shells, 0.12 in the Onslaught records), and shellAt puts it on the shell object for a saved candidate
@@ -2926,16 +2927,10 @@
     if (u < p) return {outcome: FUN_PEN, base: shell && shell.alpha > 0 ? shell.alpha : 0};
     return {outcome: FUN_NONE, base: u < pass && r.nonPen > 0 ? r.nonPen : 0};
   }
-  // The outcome palette is the page's own (ArmorBallistics.color through chanceRgb): a penetration is the
-  // colour of 100 %, a non-penetration that of 0 %, a ricochet the blued 0 % the ricochet zones and the
-  // ricochet labels wear, and a line with no estimate the neutral grey. One palette, one Ricochet tint,
-  // one Display mode for the Hitmarks and for the armour under them.
-  function funColor(outcome) {
-    if (outcome === FUN_PEN) return chanceRgb({chance: 100, expectedShare: 1});
-    if (outcome === FUN_RICOCHET) return chanceRgb({chance: 0, expectedShare: 0, reason: 'ricochet'});
-    if (outcome === FUN_NONE) return chanceRgb({chance: 0, expectedShare: 0});
-    return chanceRgb({chance: null, expectedShare: null});
-  }
+  // A Hitmark carries NO colour of the chance palette (user, 22.09: the discs of 0.7.26 were painted in the
+  // very colours of the hit map and melted into it). The outcome is handed to the viewer as it stands and
+  // the viewer draws the shape that belongs to it - a hole, a scuff or a skid - so there is one outcome
+  // word in this page and no second palette beside the map's.
   var FUN_WORDS = {pen: 'penetration', 'no-pen': 'no penetration', ricochet: 'ricochet', unknown: 'no estimate'};
   function hpNumber(v) { return String(Math.round(v)).replace(/\B(?=(\d{3})+(?!\d))/g, ' '); }
   // What one emulated shot does once its line has been cast and judged. Everything here reads the result
@@ -2948,17 +2943,23 @@
       hpLeft = Math.max(0, hpLeft - damage);
       hpRoll = 'Last shot: ' + FUN_WORDS[v.outcome] + (damage > 0 ? ', ' + hpNumber(damage) + ' HP' : ', no damage') + '.';
     }
-    if (pin && pin.point) funMark(pin.point, pin.normal, funColor(v.outcome), pin.origin);
+    if (pin && pin.point) funMark(pin, v.outcome, shell);
     paintFun();
   }
-  // One Hitmark: the viewer draws it, and the page keeps what it was made of so a scene the viewer
-  // rebuilds can have it back - the point, the recorded normal, the colour and where the shot came from,
-  // which is what turns the disc the right way whatever the camera is doing at the moment it is laid.
+  // One Hitmark: ONE record, made here, handed to the viewer to draw and kept as it is so a scene the
+  // viewer rebuilds can have the very same mark back - the point, the recorded normal, the outcome the
+  // shape is chosen by, the shell's calibre the size is taken from, where the shot came from and the line
+  // it came along (which turn the decal), and the roll that turns a hole or a scuff round its own normal so
+  // a burst does not stamp identical copies. The roll is drawn HERE, once, and travels with the mark: a
+  // mark laid again must be the same mark, not a freshly turned one.
   // A shot that met nothing has no surface to lie on and is refused by the viewer; then nothing is kept
   // either. The cap is the viewer's own, asked for, not copied.
-  function funMark(point, normal, color, from) {
-    if (!viewer || !viewer.addHitMark || !viewer.addHitMark(point, normal, color, from)) return;
-    funMarks.push({point: point, normal: normal, color: color, from: from});
+  function funMark(pin, outcome, shell) {
+    var caliber = shell && Number(shell.caliber) > 0 ? Number(shell.caliber) : 0;
+    var mark = {point: pin.point, normal: pin.normal, from: pin.origin, dir: pin.direction,
+                outcome: outcome, caliber: caliber, roll: rng() * Math.PI * 2};
+    if (!viewer || !viewer.addHitMark || !viewer.addHitMark(mark)) return;
+    funMarks.push(mark);
     var cap = viewer.hitMarkLimit ? viewer.hitMarkLimit() : funMarks.length;
     while (funMarks.length > cap) funMarks.shift();
   }
@@ -3008,7 +3009,7 @@
   // Hitmarks are laid on the new model again, because viewer.load() clears everything the viewer held.
   function funModel() {
     if (targetKey(activeHit) !== hpKey) { funReset(); return; }
-    funMarks.forEach(function (m) { if (viewer && viewer.addHitMark) viewer.addHitMark(m.point, m.normal, m.color, m.from); });
+    funMarks.forEach(function (m) { if (viewer && viewer.addHitMark) viewer.addHitMark(m); });
     paintFun();
   }
   // The switch moved: the viewer is told whether an emulated shot leaves a dot or the big cross, the marks
