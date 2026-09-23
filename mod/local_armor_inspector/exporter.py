@@ -24,7 +24,7 @@ import xml.etree.ElementTree as ET
 from collections import OrderedDict
 from .geometry import extract
 from .armor import ArmorCatalog
-from .records import RecordDecoder, pack_battle, unpack_battle
+from .records import RecordDecoder, pack_battle, stamp_snapshot, unpack_battle
 from .crit_tie import attach_crits, moves_tie
 
 LOG = logging.getLogger('local.armor_inspector')
@@ -1506,6 +1506,11 @@ class Exporter(object):
                         self.prepared_models.setdefault(key, set()).add(index)
                     except Exception:
                         pass
+        # The static blocks of this hit are fingerprinted here, once, and the publish loop then
+        # only copies the references. Hashing them on every publish would cost more than the
+        # duplication it removes (optimisation plan B1 cost trap, B5 step 3); an
+        # invalidated model drops the whole slot, so the fingerprints can never go stale.
+        stamp_snapshot(hit)
         return hit
 
     def publish(self, battle):

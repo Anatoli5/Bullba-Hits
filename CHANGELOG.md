@@ -2,6 +2,13 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
+## Unreleased
+
+- Battle files are much smaller. What a vehicle brings to a battle - the gun's pitch table, the vehicle's passport and aim block, the static part data and the shell lists - is now written once per battle and named by every hit that uses it, instead of being copied into all of them. The 62 recorded battles go from 161.5 MB to 50.7 MB, the biggest one from 14.2 MB to 2.1 MB, and a battle opens with less to read.
+- New recordings keep the gun's pitch table once per gun configuration in the raw file too, instead of 22 KB in every single hit. Publishing a 405-hit battle now takes 38 ms of the export thread instead of 302 ms, so the page keeps up with a busy battle.
+- Every battle recorded before this build is read exactly as it was. A reference whose table is missing leaves the field empty and says so in the hit's warnings; no value is ever made up.
+- The battle header now records where the battle came from.
+
 ## 0.7.25 (2026-09-22)
 
 - The Circle figure of the recorded shot no longer blinks and is no longer recomputed when the Distance slider moves: that ring belongs to a shot fired at its own range, so its figure is taken with the shell at that range and the tile keeps its number while a new one is worked out.

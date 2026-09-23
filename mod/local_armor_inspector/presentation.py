@@ -16,29 +16,47 @@ _prioritise_request = None
 _warned = set()
 
 
-def gun_limits(descr):
-    key = descr.makeCompactDescr()
-    if key not in _limits:
-        from gun_rotation_shared import calcPitchLimitsFromDesc
-        pitch = float(descr.hull.turretPitches[0])
-        joint = float(descr.turret.gunJointPitch)
-        definition = descr.gun.pitchLimits
-        angles = set(-math.pi + i * math.pi / 180 for i in range(361))
-        for curve in ('minPitch', 'maxPitch'):
-            for point in definition[curve]:
-                yaw = (float(point[0]) + math.pi) % (math.pi * 2) - math.pi
-                angles.add(yaw)
-        samples = []
-        for yaw in sorted(angles):
-            lo, hi = calcPitchLimitsFromDesc(yaw, definition, pitch, joint)
-            samples.append([yaw, float(lo), float(hi)])
-        _limits[key] = {'samples':samples, 'hullTurretPitch':pitch, 'gunJointPitch':joint,
-                        'source':'client calcPitchLimitsFromDesc; knots and 1 degree samples'}
-        if len(_limits) > 64:
-            value = _limits[key]
-            _limits.clear()
-            _limits[key] = value
-    return _limits[key]
+def gun_limits(descr, key=None):
+    """The gun's pitch limits of one configuration: ~365 samples, one shared object.
+
+    `key` are the compact descriptor bytes when the caller has already built them (the hit path
+    does, right beside this call), so the descriptor is not packed twice for one hit.
+
+    The table is returned as a records.PitchTable: hits reference it by the fingerprint of its
+    contents instead of carrying 22 KB each, and the fingerprint is taken once per distinct
+    table. The local variable is returned rather than `_limits[key]`, because the export thread
+    calls this too and may clear the cache between the assignment and the return.
+
+    Known defect, unchanged here: the key is the compact descriptor alone, so a vehicle whose
+    mode changes the limits freezes on the mode seen first (confirmed once in 176 configurations,
+    record-format audit 2026-09-22 section 3). Referencing does not make it worse - a hit
+    references whatever table it was recorded with - but the key still needs the mode.
+    """
+    if key is None:
+        key = descr.makeCompactDescr()
+    table = _limits.get(key)
+    if table is not None:
+        return table
+    from gun_rotation_shared import calcPitchLimitsFromDesc
+    from .records import PitchTable
+    pitch = float(descr.hull.turretPitches[0])
+    joint = float(descr.turret.gunJointPitch)
+    definition = descr.gun.pitchLimits
+    angles = set(-math.pi + i * math.pi / 180 for i in range(361))
+    for curve in ('minPitch', 'maxPitch'):
+        for point in definition[curve]:
+            yaw = (float(point[0]) + math.pi) % (math.pi * 2) - math.pi
+            angles.add(yaw)
+    samples = []
+    for yaw in sorted(angles):
+        lo, hi = calcPitchLimitsFromDesc(yaw, definition, pitch, joint)
+        samples.append([yaw, float(lo), float(hi)])
+    table = PitchTable({'samples':samples, 'hullTurretPitch':pitch, 'gunJointPitch':joint,
+                        'source':'client calcPitchLimitsFromDesc; knots and 1 degree samples'})
+    if len(_limits) > 64:
+        _limits.clear()
+    _limits[key] = table
+    return table
 
 
 def set_export_request(handler):

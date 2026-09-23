@@ -738,7 +738,10 @@ class Recorder(object):
             # header without it - every battle recorded before - as a mode it does not know.
             try: mode = battle_mode(arena)
             except Exception: mode = {'read':False, 'error':'Battle mode unavailable'}
-            self.writer.put(filename, {'schema':1, 'type':'battle', 'id':filename,
+            # 'source' says who produced the battle: this recorder writes 'live'. An offline parser
+            # of a .wotreplay will write its own value one day, so no reader may branch on it and
+            # none may require it - every battle recorded before this build has no such field.
+            self.writer.put(filename, {'schema':1, 'type':'battle', 'id':filename, 'source':'live',
                 'arenaId':battle_id, 'startedAt':time.time(), 'playerVehicleId':player.playerVehicleID,
                 'map':getattr(arena_type, 'name', None) or 'Unknown map',
                 'clientVersion':self.version, 'recorderVersion':VERSION, 'mode':mode})
@@ -879,8 +882,10 @@ class Recorder(object):
         # Persist even when geometry cannot be recovered from a departed entity.
         try:
             descr = vehicle.typeDescriptor
+            # Packed once and reused for the pitch-limit cache key below (optimisation plan A4a).
+            compact = descr.makeCompactDescr()
             record['target'] = {'name':descr.type.shortUserString, 'type':descr.type.name,
-                'compactDescriptor':base64.b64encode(descr.makeCompactDescr()).decode('ascii'), 'parts':[]}
+                'compactDescriptor':base64.b64encode(compact).decode('ascii'), 'parts':[]}
             record['target'].update(vehicle_identity(descr))
             try:
                 # Spall-liner factor of the target: 1.0 without a liner, higher with one. The page divides the
@@ -897,7 +902,9 @@ class Recorder(object):
             if limits is not None: record['target']['turretYawLimits'] = [float(x) for x in limits]
             try:
                 from local_armor_inspector.presentation import gun_limits
-                record['target']['gunPitchLimits'] = gun_limits(descr)
+                # One shared table per gun configuration; the encoder writes it once per file and
+                # every later hit carries only its fingerprint.
+                record['target']['gunPitchLimits'] = gun_limits(descr, compact)
             except Exception:
                 record['warnings'].append('Gun pitch limits unavailable')
             for idx, name in enumerate(PARTS):
