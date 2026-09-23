@@ -3957,7 +3957,18 @@
       stop: sm.stopEngineOnSwitch !== false, device: sm.device || 'engine',
       autoOn: siegeNum(sm.autoOn, 0.1 * KMH_TO_MS), autoOff: siegeNum(sm.autoOff, 1.0 * KMH_TO_MS),
       tilt: hull ? {min: Number(hull.min) || 0, max: Number(hull.max) || 0, speed: Number(hull.speed) || 0} : null,
-      pill: base ? base.pill : null, second: second, from: got.from};
+      pill: base ? base.pill : null, rapid: sm.kind === 'wheeled' ? rapidTurnOf(hit) : null, second: second, from: got.from};
+  }
+  // RAPID TURNS SLOWER (23.09, the user's word): the client narrows the wheels' steering lock in Rapid (EBR 33° -> 15°)
+  // and has no hull traverse of its own for the mode. At a given speed a wheeled hull turns as the tangent of its lock
+  // (the bicycle model), so in Rapid the hull traverse is x tan(Rapid) / tan(Cruise), 0.413 on the EBR - our estimate,
+  // closer to the game than the full traverse. The two locks are the characteristics file's (Cruise on the chassis,
+  // Rapid in modeValues); without the file the traverse stays the block's.
+  function rapidTurnOf(hit) {
+    var ch = ttxData && hit === activeHit && ttxData.modules ? ttxData.modules.chassis : null, mv = ttxData && ttxData.vehicle ? ttxData.vehicle.modeValues : null;
+    var cruise = ch ? Number(ch.maxSteeringLockAngle) : NaN, rapid = mv ? Number(mv.maxSteeringLockAngle) : NaN;
+    if (!(cruise > 0 && cruise < 90 && rapid > 0 && rapid < cruise)) return null;
+    return {hullSpeed: Math.tan(rapid * Math.PI / 180) / Math.tan(cruise * Math.PI / 180), cruise: cruise, rapid: rapid};
   }
   // THE ROCKET BOOSTER (23.09, part 2; rocketAcceleration, sixteen vehicles - docs/KNOWLEDGE.md section 4): an ability
   // like the XM69's gyro. Its numbers are the shooter's characteristics file's (vehicle.rocketAcceleration): the mod
@@ -4182,7 +4193,10 @@
         if (m.fightUntil > now) out.push(s.fight);
         break;
       case 'ability': case 'rocket': if (m.state === 'active') out.push(s.mods); break;
-      case 'siege': if (m.st === 2 && s.pill) out.push(s.pill.mods); break;
+      case 'siege':
+        if (m.st === 2 && s.pill) out.push(s.pill.mods);
+        if (m.st === 1 && s.rapid) out.push({hullSpeed: s.rapid.hullSpeed});
+        break;
       case 'burst': if (m.burst) out.push(s.mods); break;
       case 'stacks': if (m.level > 0) out.push({mult: Math.max(0, 1 - m.bonus * m.level)}); break;
       case 'fury': if (m.level > 0) out.push({reload: Math.max(0, 1 - s.bonus * m.level)}); break;
@@ -4613,7 +4627,10 @@
     if (a.staticTurretYaw !== undefined && a.staticTurretYaw !== null) out += ' The gun is held on the hull’s axis while you drive and while the mode switches; standing, it moves in its sector (the client’s gun rotator).';
     if (aimYawLimits(first) || aimYawLimits(a)) out += ' Past its sector the hull turns by itself towards the cursor at its own traverse speed, as the game’s autorotation does; A and D take over.';
     if (s.mode === 'turboshaft') out += ' The engine mode switches only standing (the client’s help).';
-    if (s.mode === 'wheeled') out += ' Standing, a French wheeled vehicle does not turn on the spot: A and D steer only on the move. Rapid narrows the wheels’ steering lock (the characteristics panel); the hull traverse stays the block’s.';
+    if (s.mode === 'wheeled') out += ' Standing, a French wheeled vehicle does not turn on the spot: A and D steer only on the move.' + (s.rapid ?
+      ' Rapid narrows the wheels’ steering lock from ' + aimNum(s.rapid.cruise) + '° to ' + aimNum(s.rapid.rapid) + '°: the hull turns ×' + aimNum(s.rapid.hullSpeed) +
+      ' (our estimate - at a given speed a wheeled hull turns as the tangent of its lock; the game gives no figure).' :
+      ' Rapid narrows the wheels’ steering lock (the characteristics panel); without the characteristics file the hull traverse stays the block’s.');
     if (s.mode === 'twinGun') out += ' The salvo’s double damage and double reload are not emulated yet; with one shell left the game refuses the switch - the page’s ammunition is endless.';
     return out + ' Damage to the engine (longer switches) is not modelled.' + from;
   }
