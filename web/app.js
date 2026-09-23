@@ -1176,7 +1176,7 @@
     if (a.burst && a.burst[0] > 1) return 'burst';
     return list.length || a.clip ? 'single' : '';
   }
-  var AIM_GUN_LOAD_TITLE = 'Reload, as in the game\n• Loading: time to the next round\n• At rest: the gun’s reload time\nBlinks when a press comes too early or a burst is still firing.';
+  var AIM_GUN_LOAD_TITLE = 'Reload\nSeconds to the next round; at rest, the gun’s reload time. Blinks when a press comes too early.';
   function paintAimMechanics() {
     var time = $('aim-gun-reload'), load = time && time.parentNode;
     if (!load) return;

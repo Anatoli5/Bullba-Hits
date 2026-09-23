@@ -55,6 +55,8 @@
     + '#page-tip .tip-h+div{margin-top:3px}#page-tip div.tip-gap{margin-top:7px}'
     + '#page-tip .tip-row+.tip-row{margin-top:8px}'
     + '#page-tip .tip-glyph{margin-right:7px}'
+    // A help bubble ends with how to go on - drawn by CSS, so the bubble's groups stay the elements' own.
+    + '#page-tip[data-help]::after{content:"Click any of them for details, Esc to leave";display:block;margin-top:8px;color:#96a9bd;font-size:12px}'
     + '#page-tip .tip-glyph img{height:18px;width:auto;vertical-align:-4px}'
     + dotCss('') + '{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;'
     + 'align-self:center;box-sizing:border-box;width:18px;height:18px;min-width:0;min-height:0;margin:0;padding:0;'
@@ -186,12 +188,19 @@
   // One row (a group) per element the dot lists that is on screen: its own words; for a group without words of its
   // own, the words of its items (the gun's shells, the shell chips); for an element inside one with words (the
   // checkbox of a labelled switch), that one's. Each once.
+  // A help dot's group shows the GIST of each control: its heading and the one line under it that says what it
+  // does - never the whole tooltip (user 23.09: the ⌖ group read as a wall that opened on the collision model and
+  // never said what the switch does). The details are one click away: the dot turns the help mode on.
+  function gist(text) {
+    var lines = String(text || '').split(/\r?\n/).map(function (l) { return l.trim(); }).filter(function (l) { return l; });
+    return lines.length > 1 && !/^\u2022/.test(lines[1]) ? lines[0] + '\n' + lines[1] : lines[0] || '';
+  }
   function helpRows(dot) {
     var els = listed(dot), rows = [], seen = [];
     function add(el, holder) {
       if (seen.indexOf(holder) >= 0) return;
       seen.push(holder);
-      rows.push({glyph: glyphOf(el) || (holder !== el ? glyphOf(holder) : ''), text: tipOf(holder)});
+      rows.push({glyph: glyphOf(el) || (holder !== el ? glyphOf(holder) : ''), text: gist(tipOf(holder))});
     }
     for (var i = 0; i < els.length; i++) {
       var el = els[i];
