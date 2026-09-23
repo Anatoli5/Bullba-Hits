@@ -2752,10 +2752,10 @@
     if (!centre) return false;
     var mods = aimModifiers(), shell = viewer.shell;
     var chance = shell ? viewer.liveAimProbability(shell, 1024) : null;
-    // The fun layer (user, 22.09): with Target HP or Hit marks on the shot lands at a point DRAWN inside
+    // The fun layer (user, 22.09): with the mode on the shot lands at a point DRAWN inside
     // the live circle instead of at its middle, and the shot line, the pinned panel and the reticle then
-    // show that point - it is the same pin, cast down the same line by the same caster. Both switches off
-    // and this is the centre shot of 0.7.24, call for call.
+    // show that point - it is the same pin, cast down the same line by the same caster. The switch off and
+    // this is the centre shot of 0.7.24, call for call.
     var fun = funOn(), point = fun && viewer.liveAimSample ? viewer.liveAimSample(rng) || centre : centre;
     // A pin that refused (no engine, no point) left no verdict of its own, and a shot no line was cast for
     // must not roll damage off the stale one.
@@ -2835,44 +2835,68 @@
     return true;
   }
   function cancelHoldTimer() { if (aimHoldTimer) window.clearTimeout(aimHoldTimer); aimHoldTimer = 0; }
-  // --- The fun layer: target HP, a rolled shot and hit marks (user, 22.09) -------------------------
-  // Two Settings switches, both OFF by default. With either of them on a shot stops flying through the
-  // middle of the ring: the impact point is DRAWN inside the circle from the very law that circle's own
-  // figure is integrated with (viewer.liveAimSample -> the profile's quantile), the line is cast and
-  // judged by the one path a shot has always taken (pinAtPoint -> refreshPin -> engine.ray, whose result
-  // comes back on viewer.pinResult), and the verdict is then rolled instead of read as odds. With both
-  // switches off nothing below runs at all and a shot is exactly the shot of 0.7.24.
-  function funHp() { var e = $('target-hp-on'); return !!(e && e.checked); }
-  function funMarks() { var e = $('hit-marks-on'); return !!(e && e.checked); }
-  function funOn() { return funHp() || funMarks(); }
+  // --- The fun layer: target HP, a rolled shot and Hitmarks (user, 22.09) --------------------------
+  // ONE switch, and it stands ON THE SCENE beside the collision-model tile, not in Settings (user, 22.09:
+  // the health bar appears there, and it has to be plain that the switch turns on more than the bar). It
+  // lights in the page's accent while it is down and turns the health bar, the RNG shot and the Hitmarks
+  // on together; its state is kept by the settings machinery in a hidden control of the Settings menu
+  // (#fun-mode), OFF by default. With it off nothing below runs at all and a shot is exactly the shot of
+  // 0.7.24, call for call.
+  // With it on a shot stops flying through the middle of the ring: the impact point is DRAWN inside the
+  // circle from the very law that circle's own figure is integrated with (viewer.liveAimSample -> the
+  // profile's quantile), the line is cast and judged by the one path a shot has always taken (pinAtPoint
+  // -> refreshPin -> engine.ray, whose result comes back on viewer.pinResult), and the verdict is then
+  // rolled instead of read as odds.
+  function funOn() { var e = $('fun-mode'); return !!(e && e.checked); }
   // The random source of this layer, Math.random by default. A harness puts its own seeded function on
   // window.BullbaHitsRng and every draw below takes it - one lookup per roll, nothing per frame.
   function rng() { var f = window.BullbaHitsRng; return typeof f === 'function' ? f() : Math.random(); }
-  // The target's hit points. The roster of the battle carries them since 0.7.20: `maxHealth` is the value
-  // of THIS battle - Onslaught writes its own through the battle modifiers - and `defaultMaxHealth` the
-  // stock one. The row is found by the hit's own target id; a swapped view has no ids of its own, so it
-  // asks the hit it was made from for its shooter, and the last resort is a roster row of that vehicle
-  // type when the battle holds exactly one. A browsed vehicle has no hit points anywhere - neither the
-  // catalogue nor a vehicle export carries them - and then there is no bar rather than an invented number.
-  function targetMaxHp(hit) {
+  // WHOSE health the bar shows: the vehicle ON SCREEN, which is the target of the hit being displayed -
+  // never the hit itself (user, 22.09: picking another shooter does not change the target, so the bar
+  // must not go and the ↺ must still fill it). The roster of the battle carries the hit points since
+  // 0.7.20: `maxHealth` is the value of THIS battle - Onslaught writes its own through the battle
+  // modifiers - and `defaultMaxHealth` the stock one. The row is found, in this order:
+  //   - a recorded hit names the vehicle outright (targetId);
+  //   - a shooter picked from the roster leaves the model where it is, and pickShooter carries the id of
+  //     the vehicle already on screen over on the synthetic hit (modelVehicleId);
+  //   - a swapped view has no ids of its own and names the hit it was made from: the vehicle now on
+  //     screen is that hit's SHOOTER;
+  //   - failing all of them, the roster row of the same vehicle type when the battle holds exactly one.
+  //     That is also all a browsed vehicle can be matched by: a vehicle export carries no hit points at
+  //     all, neither does the catalogue, so outside a battle it gets no bar rather than a made-up number.
+  function targetRow(hit) {
     var rows = current && Array.isArray(current.roster) ? current.roster : null;
-    if (!rows || !hit || hit.vehicle) return 0;
+    if (!rows || !hit) return null;
     var id = hit.targetId;
-    if (id === undefined || id === null) {
-      var base = hit.synthetic && hit.base ? (current.hits || []).find(function (h) { return h.id === hit.base; }) : null;
+    if (id === undefined || id === null) id = hit.modelVehicleId;
+    if ((id === undefined || id === null) && hit.synthetic && hit.base && !hit.chosenShooter) {
+      var base = (current.hits || []).find(function (h) { return h.id === hit.base; });
       if (base) id = base.attackerId;
     }
     var row = id === undefined || id === null ? null : rows.find(function (r) { return r.id === id; });
-    if (!row) {
-      var type = String((hit.target || {}).type || '');
-      var same = type ? rows.filter(function (r) { return String(r.type || '') === type; }) : [];
-      row = same.length === 1 ? same[0] : null;
-    }
+    if (row) return row;
+    var type = String((hit.target || {}).type || '');
+    var same = type ? rows.filter(function (r) { return String(r.type || '') === type; }) : [];
+    return same.length === 1 ? same[0] : null;
+  }
+  function targetMaxHp(hit) {
+    var row = targetRow(hit);
     if (!row) return 0;
     var hp = Number(row.maxHealth) > 0 ? Number(row.maxHealth) : Number(row.defaultMaxHealth);
     return hp > 0 ? hp : 0;
   }
-  var hpMax = 0, hpLeft = 0, hpRoll = '', hpTitleKey = '';
+  // What the health belongs to, so a NEW vehicle can be told from the same one under another shooter:
+  // the battle plus the roster row, or the vehicle's own type and name when the record has no row for it.
+  function targetKey(hit) {
+    var row = targetRow(hit), t = (hit && hit.target) || {};
+    return (current ? String(current.id) : '-') + '|' +
+      (row ? 'r' + row.id : 't' + String(t.type || '') + '/' + String(t.name || ''));
+  }
+  var hpMax = 0, hpLeft = 0, hpRoll = '', hpTitleKey = '', hpKey = '', hpPressed = '';
+  // What the Hitmarks are made of, kept so they can be laid again on a scene the viewer has rebuilt under
+  // the SAME vehicle: viewer.load() drops everything the viewer holds, and picking another shooter loads
+  // the model again although the target has not changed. Three values per mark, nothing computed twice.
+  var funMarks = [];
   // The spread of the damage roll. The shell carries its own `damageRandomization` (0.25 on the stock
   // shells, 0.12 in the Onslaught records), and shellAt puts it on the shell object for a saved candidate
   // as for a manual one, so this is the record's number and not a constant.
@@ -2905,7 +2929,7 @@
   // The outcome palette is the page's own (ArmorBallistics.color through chanceRgb): a penetration is the
   // colour of 100 %, a non-penetration that of 0 %, a ricochet the blued 0 % the ricochet zones and the
   // ricochet labels wear, and a line with no estimate the neutral grey. One palette, one Ricochet tint,
-  // one Display mode for the marks and for the armour under them.
+  // one Display mode for the Hitmarks and for the armour under them.
   function funColor(outcome) {
     if (outcome === FUN_PEN) return chanceRgb({chance: 100, expectedShare: 1});
     if (outcome === FUN_RICOCHET) return chanceRgb({chance: 0, expectedShare: 0, reason: 'ricochet'});
@@ -2913,28 +2937,46 @@
     return chanceRgb({chance: null, expectedShare: null});
   }
   var FUN_WORDS = {pen: 'penetration', 'no-pen': 'no penetration', ricochet: 'ricochet', unknown: 'no estimate'};
-  function hpNumber(v) { return String(Math.round(v)).replace(/\B(?=(\d{3})+(?!\d))/g, ' '); }
+  function hpNumber(v) { return String(Math.round(v)).replace(/\B(?=(\d{3})+(?!\d))/g, ' '); }
   // What one emulated shot does once its line has been cast and judged. Everything here reads the result
   // of the ONE ray pinAtPoint has just cast: nothing is cast, sampled or evaluated a second time.
   function funShot(shell) {
     if (!viewer) return;
     var r = viewer.pinResult, pin = viewer.pinned;
     var v = funVerdict(r, shell), damage = v.base > 0 ? funRoll(v.base, shell) : 0;
-    if (funHp() && hpMax > 0) {
+    if (hpMax > 0) {
       hpLeft = Math.max(0, hpLeft - damage);
       hpRoll = 'Last shot: ' + FUN_WORDS[v.outcome] + (damage > 0 ? ', ' + hpNumber(damage) + ' HP' : ', no damage') + '.';
     }
-    if (funMarks() && pin && pin.point && viewer.addHitMark) viewer.addHitMark(pin.point, pin.normal, funColor(v.outcome));
+    if (pin && pin.point) funMark(pin.point, pin.normal, funColor(v.outcome), pin.origin);
     paintFun();
   }
+  // One Hitmark: the viewer draws it, and the page keeps what it was made of so a scene the viewer
+  // rebuilds can have it back - the point, the recorded normal, the colour and where the shot came from,
+  // which is what turns the disc the right way whatever the camera is doing at the moment it is laid.
+  // A shot that met nothing has no surface to lie on and is refused by the viewer; then nothing is kept
+  // either. The cap is the viewer's own, asked for, not copied.
+  function funMark(point, normal, color, from) {
+    if (!viewer || !viewer.addHitMark || !viewer.addHitMark(point, normal, color, from)) return;
+    funMarks.push({point: point, normal: normal, color: color, from: from});
+    var cap = viewer.hitMarkLimit ? viewer.hitMarkLimit() : funMarks.length;
+    while (funMarks.length > cap) funMarks.shift();
+  }
   // The bar is graphics and nothing else (the owner's rule: no words on a tile) - every number is in its
-  // tooltip. Called on a shot, on a reset, on a model change and when a Settings switch moves; never per frame.
+  // tooltip. Called on a shot, on a reset, on a model change and when the switch moves; never per frame.
   function paintFun() {
-    var bar = $('target-hp'), fill = $('target-hp-fill'), reset = $('target-hp-reset');
+    var bar = $('target-hp'), fill = $('target-hp-fill'), reset = $('target-hp-reset'), toggle = $('fun-mode-toggle');
     if (!bar || !fill || !reset) return;
-    var model = !$('model-tile').hidden, show = funHp() && model && hpMax > 0;
+    var on = funOn(), model = !$('model-tile').hidden, show = on && model && hpMax > 0;
+    // The switch lives with the model: it is there whenever there is something to shoot at, and it is lit
+    // while the mode is on. One attribute write, and only when the state has really changed.
+    if (toggle) {
+      toggle.hidden = !model;
+      var pressed = String(on);
+      if (pressed !== hpPressed) { hpPressed = pressed; toggle.setAttribute('aria-pressed', pressed); }
+    }
     bar.hidden = !show;
-    reset.hidden = !(funOn() && model);
+    reset.hidden = !(on && model);
     if (!show) return;
     var share = Math.max(0, Math.min(1, hpLeft / hpMax)), width = (share * 100).toFixed(1) + '%';
     if (fill.style.width !== width) fill.style.width = width;
@@ -2946,26 +2988,39 @@
     if (key === hpTitleKey) return;
     hpTitleKey = key;
     bar.title = hpNumber(hpLeft) + ' / ' + hpNumber(hpMax) + ' HP' +
-      (hpLeft <= 0 ? ' · destroyed; further shots still leave marks' : '') + '. ' + (hpRoll || 'Nothing fired yet.') +
+      (hpLeft <= 0 ? ' · destroyed; further shots still leave Hitmarks' : '') + '. ' + (hpRoll || 'Nothing fired yet.') +
       ' Each hit rolls its damage as alpha × (1 ± ' + Math.round(funRandomization(viewer && viewer.shell) * 100) +
       ' %), the shell’s own spread from the record; a hit that does not pierce rolls the reconstructed' +
       ' non-penetration damage the same way. The SHAPE of that roll is drawn uniformly - the client stores' +
       ' the kind of the roll but makes it on the server, so it is this page’s assumption, not a confirmed rule.';
   }
-  // Full HP again and no marks: the ↺ button, and every change of the model on screen.
+  // Full health again and no Hitmarks: the ↺ button, and every change of the vehicle on screen. The
+  // health is looked up for the vehicle ON SCREEN, so ↺ brings the bar back whenever the record knows it.
   function funReset() {
+    hpKey = targetKey(activeHit);
     hpMax = targetMaxHp(activeHit); hpLeft = hpMax; hpRoll = '';
+    funMarks.length = 0;
     if (viewer && viewer.clearHitMarks) viewer.clearHitMarks();
     paintFun();
   }
-  // A switch moved: the viewer is told whether an emulated shot leaves a dot or a cross, marks left behind
-  // by a switch going off go with it, and a bar switched on starts full.
+  // The scene has just been rebuilt (display()). A DIFFERENT vehicle starts at full health with no marks;
+  // the SAME vehicle under another shooter keeps both - the target did not change (user, 22.09) - and its
+  // Hitmarks are laid on the new model again, because viewer.load() clears everything the viewer held.
+  function funModel() {
+    if (targetKey(activeHit) !== hpKey) { funReset(); return; }
+    funMarks.forEach(function (m) { if (viewer && viewer.addHitMark) viewer.addHitMark(m.point, m.normal, m.color, m.from); });
+    paintFun();
+  }
+  // The switch moved: the viewer is told whether an emulated shot leaves a dot or the big cross, the marks
+  // of a mode switched off go with it, and a mode switched on starts the target at full health.
   function funSettings() {
+    var on = funOn();
     if (viewer) {
-      if (viewer.setHitMarks) viewer.setHitMarks(funMarks());
-      if (!funMarks() && viewer.clearHitMarks) viewer.clearHitMarks();
+      if (viewer.setHitMarks) viewer.setHitMarks(on);
+      if (!on && viewer.clearHitMarks) viewer.clearHitMarks();
     }
-    if (funHp() && !(hpMax > 0)) { hpMax = targetMaxHp(activeHit); hpLeft = hpMax; hpRoll = ''; }
+    if (!on) funMarks.length = 0;
+    if (on && !(hpMax > 0)) { hpKey = targetKey(activeHit); hpMax = targetMaxHp(activeHit); hpLeft = hpMax; hpRoll = ''; }
     paintFun();
   }
   // Everything the emulation holds, back to a standing, loaded, fully aimed shooter.
@@ -3698,6 +3753,10 @@
       if(token!==generation)return null;
       message('Preparing the model…');
       var synthetic=shooterHit(model,found.vehicle,found.shells,row.id,base,aim);
+      // Only the shooter changes here, so the VEHICLE ON SCREEN is the one that was already there: its
+      // roster row travels with the synthetic hit, and the health bar stays on the same target instead of
+      // hunting for it in the hit (user, 22.09 - the bar used to go and the ↺ to do nothing).
+      var onScreen=targetRow(hit);if(onScreen&&onScreen.id!==undefined&&onScreen.id!==null)synthetic.modelVehicleId=onScreen.id;
       return ArmorInspectorData.sceneFor(current||{warnings:[]},synthetic).then(function(data){
         if(token!==generation)return null;
         display(data,false);if(camera&&viewer)viewer.restoreCamera(camera);renderHits();
@@ -3875,9 +3934,10 @@
     if(window.console)console.info('Bullba Hits aim: hit '+hit.id+' '+(view||'other')+' saved='+!!aimReady+' estimate='+!!estimate+' reason='+reason);
     aimStatus=status;aimTitle();
     shotStats();updateAim();
-    // The model on screen changed: the target is full again and the marks of the previous one are gone
-    // (user, 22.09). Every branch below has already passed through here.
-    funReset();
+    // The scene has just been rebuilt. Another VEHICLE on screen is full again with no Hitmarks; the same
+    // vehicle under another shooter keeps its health and gets its Hitmarks back (user, 22.09 - the target
+    // did not change). Every branch below has already passed through here.
+    funModel();
     if(reference){$('details').appendChild(node('p','The model is extracted from the installed client. There are no invented hits here. Once the recorder is installed, new battles appear in the list on the left.'));return;}
     if(hit.vehicle){
       var mv=hit.target||{},sv=hit.attacker||{},when=Number.isFinite(hit.receivedAt)?new Date(hit.receivedAt*1000).toLocaleDateString('en-GB'):'an unknown date';
@@ -4101,7 +4161,7 @@
       gun='Gun '+sign(-viewer.gunAngle)+' from the recorded pose';
     }
     $('pose-turret').textContent=turret;$('pose-gun').textContent=gun;
-    $('pose-note').textContent=off?'Hit marks hidden until the recorded pose returns':'';$('pose-note').hidden=!off;
+    $('pose-note').textContent=off?'The recorded shot’s own marks are hidden until the recorded pose returns':'';$('pose-note').hidden=!off;
     var shown=turret+'|'+gun+'|'+off;if(shown!==poseShown){poseShown=shown;scheduleLayout(LAYOUT_POSE);}
     // The figures vanish at the viewer's own 0.001° (recordedShown, shotProbability), the note at 0.1°.
     var state=off+'|'+(Math.abs(viewer.turretAngle)<.001&&Math.abs(viewer.gunAngle)<.001);
@@ -4201,12 +4261,13 @@
   document.querySelectorAll('[data-filter]').forEach(function(b){b.onclick=function(){filter=b.dataset.filter;document.querySelectorAll('[data-filter]').forEach(function(x){x.setAttribute('aria-pressed',String(x===b));});renderHits();};});
   $('wireframe').onchange=function(){if(viewer)viewer.wireframe(this.checked);outlineState();};
   $('soft-lighting').onchange=function(){if(viewer)viewer.setLighting(this.checked);lightStrengthState();};
-  // The fun layer's two switches (user, 22.09). They are ordinary Settings rows of the standard shape
-  // (.hatch-row with its checkbox, exactly as Aim emulation is), so the settings machinery stores them,
-  // restores them and runs this handler for each - there is no second copy of that logic here. Neither
-  // row carries a slider, so rowState has nothing to enable or grey out.
-  $('target-hp-on').onchange=funSettings;
-  $('hit-marks-on').onchange=funSettings;
+  // The fun layer's ONE switch (user, 22.09: the two Settings rows of 0.7.25 are gone). #fun-mode is an
+  // ordinary, hidden control of the Settings menu, so the settings machinery stores it, restores it and
+  // runs this handler with every other setting - there is no second copy of that logic here. The button
+  // the user sees is on the scene beside the model tile: it flips that control, runs the same handler and
+  // saves, which is exactly what a change of the control does.
+  $('fun-mode').onchange=funSettings;
+  $('fun-mode-toggle').onclick=function(){var box=$('fun-mode');box.checked=!box.checked;funSettings();persistSettings();};
   $('target-hp-reset').onclick=funReset;
   // How deep the soft light shades (user, 22.09): the slider only scales the composite's brightness range.
   // It sits in the checkbox's own row, like the ricochet tint and dots, so the Settings grid keeps its pairs.
@@ -4284,6 +4345,11 @@
         // holding the 250 it was given by the previous default takes the new one. A depth the user set
         // himself to anything else is his own and is kept.
         if(!(box.v>=4)&&String(box.values['light-strength'])==='250')delete box.values['light-strength'];
+        // The fun layer's two rows of 0.7.25 (Target HP, Hit marks) became ONE switch on the scene
+        // (user, 22.09). The controls are gone, so their stored values belong to nothing: they are
+        // dropped here rather than left to ride along in the box for ever. No version gate - the keys
+        // cannot come back, and a store written by any build may still hold them.
+        delete box.values['target-hp-on'];delete box.values['hit-marks-on'];
         return box.values;}}catch(e){}
     return null;
   }

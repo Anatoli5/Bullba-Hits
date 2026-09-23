@@ -98,7 +98,7 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 .tile-caption{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--gold);white-space:nowrap}
 #model-tile{top:12px}
 /* Target HP (user, 22.09): the health bar of the vehicle on screen stands in the model tile's own row, with
-   the ↺ that fills it again and clears the hit marks - the same button as the swap (.swap-roles), because it
+   the ↺ that fills it again and clears the Hitmarks - the same button as the swap (.swap-roles), because it
    is the same kind of control. The row takes over the tile's placing exactly as the shooter row does below.
    The bar is graphics only: the figures live in its tooltip. Its fill colour is written by the page from the
    very chance/damage scale the armour is drawn with, so full and empty read as green and red of one palette. */
@@ -114,6 +114,12 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 .swap-roles{flex:0 0 auto;min-height:0;padding:6px 10px;font-size:16px;line-height:1;border:1px solid rgba(157,174,191,.55);border-radius:6px;background:rgba(23,35,48,.15);color:inherit;text-shadow:0 1px 2px rgba(0,0,0,.7)}
 .swap-roles:hover{border-color:#c9d3dd;background:rgba(38,55,73,.45)}
 .swap-roles[hidden]{display:none}
+/* A .swap-roles button that is a switch rather than an action is LIT while it is on, in the page's own
+   accent - the very state the shell chips, the filter pills and the fitted equipment tiles wear
+   (user, 22.09: the same function is the same widget and the same look). One switch, on the scene, turns
+   Target HP, the RNG shot and the Hitmarks on together, so it has to be obvious that it is down. */
+.swap-roles[aria-pressed=true]{border-color:var(--gold);color:var(--gold);background:#302b23}
+.swap-roles[aria-pressed=true]:hover{border-color:var(--gold);background:#3a3427}
 .viewport-tile:not(:disabled){border:1px solid rgba(157,174,191,.55);cursor:pointer}
 .viewport-tile:not(:disabled):hover{border-color:#c9d3dd;background:rgba(38,55,73,.45)}
 .viewport-tile:focus-visible{outline:2px solid var(--gold);outline-offset:2px}

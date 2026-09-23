@@ -692,7 +692,7 @@
       if(result.distance!==undefined)this.pinReticleAt(end,result.reason==='ricochet'?'pinned lost':'pinned second');
     }
     this.pinGroup=group;this.scene.add(group);
-    // Hit marks on: an EMULATED shot marks its impact with a dot on the armour instead of the cross
+    // The mode on: an EMULATED shot marks its impact with a Hitmark on the armour instead of the cross
     // (user, 22.09 - a burst of crosses turns the model into mush). A pin the user made himself keeps its
     // cross, and so does the marker at the end of a ricochet leg, which is never one of a pile.
     if(contact&&!(this.hitMarks&&this.aimPinned))this.pinReticleAt(contact,'pinned');
@@ -1199,7 +1199,7 @@
     if(!aim)return null;
     return circlePoint(aim.center,aim.right,aim.up,aim.radius,r(),r()*Math.PI*2,this.aimQuantile());
   };
-  // --- Hit marks (user, 22.09) ---------------------------------------------------------------------
+  // --- Hitmarks (user, 22.09) ------------------------------------------------------------------------
   // Every emulated shot leaves a small disc lying on the armour in the colour of its outcome, and they
   // pile up: NOT the impact cross, which is a screen-sized glyph and turns the model into mush after a
   // burst. One InstancedMesh holds all of them - allocated once at the cap, never one mesh per dot - and
@@ -1209,6 +1209,9 @@
   // occlusion the depth buffer cannot - a disc lies along the surface normal, so one on a face turned away
   // from the camera is culled with that face.
   var MARK_LIMIT=500;
+  // The page keeps what a mark was made of so a rebuilt scene can have its marks back, and it keeps no
+  // more of them than this mesh does. One number, asked for, never copied into the page.
+  Viewer.prototype.hitMarkLimit=function(){return MARK_LIMIT;};
   Viewer.prototype.hitMarkMesh=function(){
     if(this.markMesh)return this.markMesh;
     var T=THREE,mesh=new T.InstancedMesh(new T.CircleGeometry(1,16),
@@ -1225,12 +1228,26 @@
   };
   // `color` is any value THREE.Color takes - the page hands in the 'rgb(r,g,b)' its own outcome palette
   // gives. Without a normal (a shot that met nothing) there is nothing to lie on and no mark is made.
-  Viewer.prototype.addHitMark=function(point,normal,color){
+  // WHY THE NORMAL IS TURNED (user, 22.09: "the hit marks are not visible" - 0.7.25 left not one of them
+  // on screen): the exported collision meshes are wound the other way round. Measured on the exported
+  // models, 13 299 triangles of 12 files: NOT ONE has its face normal pointing out of the vehicle, which
+  // is exactly why the painted mesh is drawn DoubleSide. So the normal a raycast hands back points INTO
+  // the armour; the disc was laid along it, with its front face turned away from the camera and sunk a
+  // little INTO the plate, and front-face culling threw away every single mark. The marks were in the
+  // scene, at the right points, in the right colours, and never drawn. The disc is therefore laid along
+  // the side the shot CAME from, which is the outward side whatever the winding, and the back-face
+  // culling above still does the occlusion: orbit past a surface and its marks turn away with it.
+  // `from` is where that shot came from - the pin carries it (pinned.origin) - and the page hands it back
+  // when it lays a kept mark on a scene the viewer has rebuilt, so a mark is turned the same way whatever
+  // the camera is doing at that moment. Left out, the camera is where the shot came from, which it is.
+  Viewer.prototype.addHitMark=function(point,normal,color,from){
     if(!point||!normal)return false;
     var T=THREE,mesh=this.hitMarkMesh(),size=this.markSize;
     var n=normal.clone();
     if(n.lengthSq()<1e-12)return false;
     n.normalize();
+    var eye=from||this.camera.position;
+    if(n.x*(eye.x-point.x)+n.y*(eye.y-point.y)+n.z*(eye.z-point.z)<0)n.negate();
     var m=new T.Matrix4().compose(point.clone().addScaledVector(n,size*.15),
       new T.Quaternion().setFromUnitVectors(new T.Vector3(0,0,1),n),new T.Vector3(size,size,size));
     var i=this.markNext;
@@ -1246,8 +1263,8 @@
     this.scene.remove(mesh);mesh.geometry.dispose();mesh.material.dispose();if(mesh.dispose)mesh.dispose();
     this.markMesh=null;this.draw();return true;
   };
-  // With the marks on, an emulated shot leaves a dot instead of the big cross (refreshPin). The recorded
-  // hit's own crosses and a manual Alt + click pin keep theirs: only the pin of an emulated shot changes.
+  // With the mode on, an emulated shot leaves a Hitmark instead of the big cross (refreshPin). The
+  // recorded hit's own crosses and a manual Alt + click pin keep theirs: only the emulated shot changes.
   Viewer.prototype.setHitMarks=function(on){this.hitMarks=!!on;};
   window.ArmorViewer=Viewer;
 }());
