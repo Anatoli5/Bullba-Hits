@@ -279,6 +279,12 @@
 
     // ---- The shells of the gun (the expanded view) -----------------------------------------------------------
     var speedFactor = t && t.vehicle && t.vehicle.projectileSpeedFactor > 0 ? Number(t.vehicle.projectileSpeedFactor) : null;
+    // The penetration at 500 m is the garage's own (shell_params.piercingPowerTable): the client's distance law, the
+    // one ballistics.js holds for the whole page, at 500 m - or at int(maxDistance) for a shell that flies less far.
+    function penAt500(s, P) {
+      var far = num(s.penetration500), d = s.maxDistance > 0 && s.maxDistance < 500 ? Math.floor(s.maxDistance) : 500;
+      return P !== null && far !== null && R && R.atDistance ? R.atDistance(P, far, d) : far;
+    }
     out.shells = (input.shells || []).map(function (s) {
       var A = num(s.alpha), r = s.damageRandomization >= 0 && s.damageRandomization <= 1 ? Number(s.damageRandomization) : 0.25;
       var P = num(s.penetration100), pr = s.randomization >= 0 && s.randomization <= 1 ? Number(s.randomization) : 0.25;
@@ -286,7 +292,7 @@
       return {shell: s, kind: s.kind, avgDamage: A > 0 ? rp(A) : null,
         damage: A > 0 ? [Math.ceil(A * (1 - r)), Math.floor(A * (1 + r))] : null,
         avgPiercingPower: P !== null ? rp((lo + hi) / 2) : null, piercingPower: P !== null ? [lo, hi] : null,
-        pen500: num(s.penetration500), shellVelocity: s.speed > 0 && speedFactor ? Number(s.speed) / speedFactor : null,
+        pen500: penAt500(s, P), shellVelocity: s.speed > 0 && speedFactor ? Number(s.speed) / speedFactor : null,
         dpm: spm && A > 0 ? rp(spm * rp(A)) : null, selected: s === shell};
     });
     return out;

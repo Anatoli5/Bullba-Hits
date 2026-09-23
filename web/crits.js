@@ -34,7 +34,7 @@
     if(it.kind==='fire')return 'Fire';
     if(it.kind==='ammoBay')return 'Ammo rack';
     if(it.kind==='crew'){m=/(\d+)$/.exec(x);return (CREW[it.type]||'A crew member')+(m?' '+m[1]:'');}
-    if(it.type==='track'&&(m=/^(left|right)Track(\d+)$/.exec(x)))return (m[1]==='left'?'Left ':'Right ')+(m[2]==='0'?'track':m[2]==='1'?'inner track':'track '+m[2]);
+    if(it.type==='track'&&(m=/^(left|right)Track(\d+)$/.exec(x)))return (m[1]==='left'?'Left ':'Right ')+(m[2]==='0'?'track':m[2]==='1'?'outer track':'track '+m[2]);
     if(it.type==='wheel'&&(m=/^wheel(\d+)$/.exec(x)))return 'Wheel '+(Number(m[1])+1);
     return it.type==='chassis'?'Tracks or wheels':it.type==='device'?'A module':DEVICES[it.type]||'A module';
   }

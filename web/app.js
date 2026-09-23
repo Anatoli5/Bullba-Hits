@@ -588,7 +588,7 @@
     shellAssumed=-1;shellAssumedWhy='';
     if(shotContext.index>=0)choice.value='saved:'+shotContext.index;
     else{
-      var guess=ArmorShotContext.assume?ArmorShotContext.assume(candidates,shotContext.kind,hit&&hit.damage):{index:-1,reason:''};
+      var guess=ArmorShotContext.assume?ArmorShotContext.assume(candidates,shotContext.kind,hit&&hit.damage,shotContext.range):{index:-1,reason:''};
       shellAssumed=guess.index;shellAssumedWhy=guess.reason||'';
       // Why the record could not name the shell comes before how the page picked one: the two reasons the
       // resolver knows (22.09) are worth more than "the deepest penetration" - the shot's own ballistics
@@ -3714,7 +3714,14 @@
     // manual shell already borrows through MANUAL_DAMAGE_KEYS: the ballistics never read it, so the
     // chances, the colours and the verdict lines are untouched by its being there.
     if(c){['normalization','ricochetCos','jetLossPerMeter','randomization','randomizationType','shieldPenetration',
-      'alpha','spallDamage','spallAbsorption','mechanics','nonPiercingArmorDamage','vehicleMode','damageRandomization'].forEach(function(k){if(c[k]!==undefined)shell[k]=c[k];});var fraction=Math.max(0,Math.min(1,(distance-100)/400));if(c.penetration500>0&&c.penetration100>0)shell.penetration=penetration*(1+fraction*(c.penetration500/c.penetration100-1));}
+      'alpha','spallDamage','spallAbsorption','mechanics','nonPiercingArmorDamage','vehicleMode','damageRandomization'].forEach(function(k){if(c[k]!==undefined)shell[k]=c[k];});
+      // The penetration at this distance is the client's law in ballistics.js, never a copy of it here (BACKLOG
+      // № 32): the field holds the shell's first value (up to 50 m) and falls off by the record's own factor, so
+      // a number typed over the record's falls off exactly as the record's would.
+      if(c.penetration100>0)shell.penetration=penetration*ArmorBallistics.penetrationAt(c,distance)/c.penetration100;}
+    // The alpha falls off with the distance on the Polish smoothbore APCR alone (damageMutable, alphaFar in the
+    // record); the factor is exactly 1 on every other shell, which is then what it always was.
+    var fall=c&&c.alpha>0?ArmorBallistics.alphaAt(c,distance)/c.alpha:1;
     // The alpha field (user, 22.09): the user's own number wins over the record's and over the borrowed
     // one, exactly as his penetration and calibre do. HE's spall damage is the non-penetration base and
     // moves with the alpha - the record's own ratio is kept when there is one, the ballistics default
@@ -3727,6 +3734,9 @@
         if(ratio>0)shell.spallDamage=want*ratio;
       }else if(!(want>0))shell.alpha=null;
     }
+    // The alpha field, like the penetration field, holds the value up to 50 m; the one that counts at this
+    // distance goes on the shell, and the one of the field stays beside it for the tooltips and the log line.
+    if(fall!==1&&shell.alpha>0){shell.alphaNear=shell.alpha;shell.alpha*=fall;}
     return shell;
   }
   var totalTimer=null,totalKey=null,totalEngine=null,totalAim=null,totalEstimate=null,verdictKey=null,partNames=['chassis','hull','turret','gun'];
@@ -3754,6 +3764,9 @@
   // non-penetration part - the ratio law the page draws and the linear legacy shape (k = 1.1), which is written
   // here only so recorded hits can decide between them later. Nothing else in the page reads nonPenLin.
   function damageColumns(hit,r,shell){
+    // A shell whose alpha falls off with the distance (damageMutable, BACKLOG № 32): the server's damage beside the
+    // alpha at this hit's range and the one up to 50 m, so recorded hits can confirm the client's law.
+    if(shell.kind!=='HIGH_EXPLOSIVE'&&shell.alphaNear>0)return ' dmg='+(hit.damage>0?hit.damage:'-')+' alpha='+Math.round(shell.alpha)+' alphaNear='+Math.round(shell.alphaNear);
     if(shell.kind!=='HIGH_EXPLOSIVE'||!(shell.alpha>0))return '';
     var plate=r.reason==='penetration'&&r.nominal>0?r.nominal:null,liner=shell.liner>0?shell.liner:1;
     // liner= is the factor the numbers were computed with (the switches of the Target group); linerRec= is what
@@ -3802,10 +3815,13 @@
       // ArmorShotContext.assume picks (the shells of the hit's own type, the damage band, then the deepest
       // penetration) - not with the first of the list, which was a different shell from the one on screen
       // and made the guessed lines of the Statistics log disagree with the view. Still marked as a guess.
+      // The damage window of the assumed shell is taken at the hit's own range, the one prepareShell hands it
+      // too: a Polish APCR's alpha falls off with it, and the window at the muzzle threw the right shell out.
       var context=ArmorShotContext.resolve(hit,battle.shotEvents||[]),c=context.choices[context.index]||null;
-      if(!c&&ArmorShotContext.assume){var picked=ArmorShotContext.assume(context.choices,context.kind,hit.damage);c=context.choices[picked.index]||null;}
+      var range=context.range>0?context.range:hit.rangeAtImpact>0?hit.rangeAtImpact:100;
+      if(!c&&ArmorShotContext.assume){var picked=ArmorShotContext.assume(context.choices,context.kind,hit.damage,context.range);c=context.choices[picked.index]||null;}
       if(!c)c=context.choices[0]||null;
-      var range=context.range>0?context.range:hit.rangeAtImpact>0?hit.rangeAtImpact:100,shell=c?shellAt(c,c.kind,c.penetration100,c.caliber,range,hit):null;
+      var shell=c?shellAt(c,c.kind,c.penetration100,c.caliber,range,hit):null;
       // A flat engine (one leaf, no kd-tree): the tree would cost far more to build than the one to three rays
       // cast through it here save, and the verdicts are the same.
       if(!shell)return;var engine=ArmorBallistics.build(data,false,true),pts=ArmorViewer.points(hit);
@@ -3867,7 +3883,8 @@
       '; 256 rays, misses = 0. Server formula not confirmed'+(damageView?'; the non-penetration part is a reconstruction (ratio law). No map obstacles, target motion or splash onto other parts.':'; no map obstacles, target motion or blast damage.');
   }
   // The heading row has no space for the full wording: the label reads “Pen.” and the sentence lives in its title.
-  function penLabel(at100){var e=$('penetration-label');e.textContent='Pen.';e.title=at100?'Penetration at 100 m, mm':'Penetration at target, mm';}
+  // A saved shell's field holds the client's first value, which holds up to 50 m and falls off beyond (BACKLOG № 32).
+  function penLabel(near){var e=$('penetration-label');e.textContent='Pen.';e.title=near?'Penetration up to 50 m, mm — it falls off with the distance':'Penetration at target, mm';}
   function selectShell(){
     var index=$('shell-choice').value,c=index.indexOf('saved:')===0?candidates[Number(index.slice(6))]:null;
     var point=(activeHit&&activeHit.points||[]).find(function(p){return p.caliber>0;});
@@ -3900,7 +3917,10 @@
     // A manual shell says whose alpha it is using: the type, the penetration and the calibre are the user's,
     // the damage side is the shooter's own shell of that type (user, 22.09).
     var lent=!c&&shell&&shell.alpha>0?' · alpha of the shooter’s '+(shell.alphaFrom||'shell'):'';
-    var source=!choice?'Pick a shell':!valid?'No penetration in the record':(actual?'● From the hit':assumed?'◌ Assumed shell':c?(browsing?'● Shooter’s shell':'◇ Comparison'):'◇ Manual')+lent+' · '+Math.round(shell.penetration)+' mm at target · ±'+Math.round(shell.randomization*100)+'%';
+    var source=!choice?'Pick a shell':!valid?'No penetration in the record':(actual?'● From the hit':assumed?'◌ Assumed shell':c?(browsing?'● Shooter’s shell':'◇ Comparison'):'◇ Manual')+lent+' · '+Math.round(shell.penetration)+' mm at target · ±'+Math.round(shell.randomization*100)+'%'+(shell.alphaNear>0?' · alpha '+Math.round(shell.alpha)+' HP at target':'');
+    // The alpha field says the same about a shell whose damage falls off with the distance (damageMutable).
+    var alphaTitle='Alpha of the shell, HP — the damage figures are shares of it'+(shell&&shell.alphaNear>0?'. This shell’s damage falls off with the distance: the field holds it up to 50 m, '+Math.round(shell.alpha)+' HP at '+Math.round(distance)+' m':'');
+    $('alpha-label').title=alphaTitle;$('alpha').title=alphaTitle;
     // Damage mode says out loud that the non-penetration part is a reconstruction; without an alpha in the
     // record the old sentence stands, because then nothing but the penetration is drawn anyway.
     var damageNote=(c?c.kind:choice)==='HIGH_EXPLOSIVE'&&shell&&shell.alpha>0?'HE non-penetration damage: reconstruction (ratio law), not a confirmed server formula.':'HE: penetration only, no blast damage.';

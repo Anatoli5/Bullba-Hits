@@ -2,6 +2,12 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
+## Unreleased
+
+- Penetration changes with distance as in the client: full up to 50 m, then along the line through the 500 m value, still falling past 500 m, and 0 beyond the shell's range (was: from 100 m, flat after 500 m).
+- Polish smoothbore APCR (Grom, Kilana, Husarz, Gonkiewicza, Błyskawica, Bzyg) lose damage with distance as in the client: damage figures, the ✸ roll, the assumed shell and the Statistics log use the alpha at the range (Błyskawica at 300 m: 522, not 800).
+- A crit on the outer track of a twin-track vehicle is named the outer track, not the inner one.
+
 ## 0.7.28 (2026-09-23)
 
 - The gun panel shows the magazine as a row of rounds instead of the "2/3" text, whenever the emulation is on: loaded, spent, the next round lit, the one loading filling up; a single-shot gun shows one round filling with its reload, a magazine over 12 rounds (Ares) one bar. The numbers are in its tooltip.

@@ -90,8 +90,14 @@
   function withCharge(c,factor){
     var out={},k;for(k in c)if(Object.prototype.hasOwnProperty.call(c,k))out[k]=c[k];
     if(Number(out.alpha)>0){out.alpha=Math.round(Number(out.alpha)*factor);out.chargeFactor=factor;}
+    // The far value goes with it, or a shell whose two values were equal would seem to lose damage with range.
+    if(Number(out.alphaFar)>0&&out.chargeFactor)out.alphaFar=Math.round(Number(out.alphaFar)*factor);
     return out;
   }
+  // A candidate's alpha at the shot's range: the client's law, which lives in ballistics.js (the page loads it
+  // first; BACKLOG № 32). Only the Polish smoothbore APCR lose damage with range; a shell without alphaFar, a hit
+  // without a range and a caller that has not loaded ballistics.js all get the shell's own alpha.
+  function alphaAt(c,range){var B=root.ArmorBallistics;return B&&B.alphaAt?B.alphaAt(c,range):Number(c.alpha)||0;}
   // The server scales every shot's (velocity, gravity) by some k, so |v| alone does not name a shell -
   // but v/sqrt(g) cancels k and equals the descriptor's speed/sqrt(gravity) exactly. Measured over the
   // owner's 5352 tracers, 22.09: 94.5 % match one of the shooter's own shells inside 0.1 %. The tolerance
@@ -197,6 +203,10 @@
     var gunState=(tracer&&tracer.gunState)||attacker.gunStateAtImpact||null,
       gunFrom=tracer&&tracer.gunState?'shot':attacker.gunStateAtImpact?'impact':null,
       shotState=tracer&&tracer.gunState||null,impactState=attacker.gunStateAtImpact||null;
+    // The flight range: the tracer's muzzle to the hit, else the one the impact carries. The damage band below
+    // and the page's penetration and alpha are taken at it.
+    var range=tracer&&Array.isArray(tracer.origin)&&world.length?distance(tracer.origin,world[0]):null,rangeSource='tracer';
+    if(!(Number.isFinite(range)&&range>0)){range=Number.isFinite(hit.rangeAtImpact)&&hit.rangeAtImpact>0?hit.rangeAtImpact:null;rangeSource=range===null?null:'impact';}
     var modeSource='';
     if(hasModes&&matching.length>1){
       // Every reading the record can hold, strongest first - by WHEN it was taken, the shot's own instant
@@ -215,7 +225,7 @@
       });
       if(matching.length>1&&Number(hit.damage)>0){
         var dmg=Number(hit.damage),could=matching.filter(function(c){
-          var r=Number.isFinite(c.damageRandomization)?c.damageRandomization:.25,a=Number(c.alpha)||0;
+          var r=Number.isFinite(c.damageRandomization)?c.damageRandomization:.25,a=alphaAt(c,range);
           return !(a>0)||dmg<=a*(1+r)*1.001;});
         if(could.length===1){matching=could;modeSource='only this state’s damage band reaches the recorded damage';}
       }
@@ -235,8 +245,6 @@
     // damage of HE is left alone: the client's own law for it is not this factor.
     var charge=chargeStateOf(gunState),chargeFactor=charge?CHARGE_SHOT_FACTORS[Number(charge.level)]:null;
     if(chargeFactor>1)choices=choices.map(function(c){return withCharge(c,chargeFactor);});
-    var range=tracer&&Array.isArray(tracer.origin)&&world.length?distance(tracer.origin,world[0]):null,rangeSource='tracer';
-    if(!(Number.isFinite(range)&&range>0)){range=Number.isFinite(hit.rangeAtImpact)&&hit.rangeAtImpact>0?hit.rangeAtImpact:null;rangeSource=range===null?null:'impact';}
     // Why the shell stayed unknown, in the words the shell chips and the tooltip use.
     var why=contradicted?'no shell of this shooter fits the shot’s ballistics'
       :hasModes&&index<0?'this vehicle switches its shell parameters; the record does not say which state was on':'';
@@ -255,13 +263,15 @@
      the recorded damage, if exactly one does; otherwise the deepest penetration. In the 60 recorded battles
      of 22.09 the type left two shells 65 times, always of different penetration and only 5 times of
      different damage, and the damage decided 2 of them. Returns {index, reason}; index -1 when the list
-     holds nothing of that type - the page then falls back to the bare type. */
-  function assume(choices,kind,damage){
+     holds nothing of that type - the page then falls back to the bare type. `range` (metres, optional) is the
+     shot's flight: the window is built from the alpha AT that range, which on a Polish smoothbore APCR is far
+     below the muzzle's (Błyskawica at 300 m: 522, not 800), and the window at the muzzle threw such a shell out. */
+  function assume(choices,kind,damage,range){
     var all=(choices||[]).map(function(c,i){return {c:c,i:i};});
     var same=kind?all.filter(function(e){return e.c.kind===kind;}):all;
     if(!same.length)return {index:-1,reason:''};
     var dmg=Number(damage)||0;
-    var band=function(e){var r=Number.isFinite(e.c.damageRandomization)?e.c.damageRandomization:.25,a=Number(e.c.alpha)||0;
+    var band=function(e){var r=Number.isFinite(e.c.damageRandomization)?e.c.damageRandomization:.25,a=alphaAt(e.c,range);
       return a>0?[a*(1-r)*.999,a*(1+r)*1.001]:null;};
     var could=dmg>0?same.filter(function(e){var b=band(e);return !b||dmg<=b[1];}):same;
     if(!could.length)could=same;

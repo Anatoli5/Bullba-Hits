@@ -327,6 +327,34 @@
       alpha:null,spallDamage:null,spallAbsorption:null,mechanics:null,nonPiercingArmorDamage:0,liner:1,
       ricochetLoss:ap?.25:0}; // client rule since 9.3: AP and APCR keep 75% of the penetration after a ricochet, HEAT keeps all of it
   }
+  // ---- Penetration and damage over the flight distance -----------------------------------------------------
+  // The client has ONE law for both (helpers_common.computePiercingPowerAtDist and computeDamageAtDist, 2.4.0.1:
+  // max(0, interpolateLinearly(dist, 50, 500, v0, v1, limitLower=True, limitUpper=False))): the first value up to
+  // 50 m, then the line through the second value at 500 m, which goes ON past 500 m and stops at 0. This is the
+  // page's only copy: the verdicts, the shell choice, the Statistics log and the characteristics panel all take
+  // their figures at a distance from here. A missing second value keeps the first.
+  var DIST_FIRST=50,DIST_LAST=500;
+  function atDistance(near,far,distance){
+    if(!(distance>DIST_FIRST)||!(far>=0)||far===near)return near;
+    return Math.max(0,near+(distance-DIST_FIRST)*(far-near)/(DIST_LAST-DIST_FIRST));
+  }
+  // A recorded shell's penetration at `distance` metres of flight, as the client's reticle has it
+  // (gun_marker_ctrl.computePiercingPowerAtDist): the law above over penetration100/penetration500 - the XML pair
+  // at up to 50 m and at 500 m, the names are historical - and 0 from the shot's maxDistance on, where the shell
+  // flies no further (computeShotMaxDistance: at most 720 m, less where the damage or the penetration reach 0).
+  function penetrationAt(c,distance){
+    var p0=Number(c&&c.penetration100),p1=Number(c&&c.penetration500);
+    if(!(p0>0))return p0;
+    if(distance>DIST_FIRST&&c.maxDistance>0&&distance>=c.maxDistance)return 0;
+    return atDistance(p0,p1>0?p1:p0,distance);
+  }
+  // A recorded shell's alpha at `distance`: the same law over alpha/alphaFar (armorDamage). The two differ only
+  // on the 18 Polish smoothbore APCR shells (damageMutable: Grom, Kilana, Husarz, Gonkiewicza, Błyskawica, Bzyg);
+  // every other shell, and a record without alphaFar, keeps its alpha at every distance.
+  function alphaAt(c,distance){
+    var a0=Number(c&&c.alpha),a1=Number(c&&c.alphaFar);
+    return a0>0&&a1>0?atDistance(a0,a1,distance):a0;
+  }
   function effective(armor,cos,s){
     if(!armor.useHitAngle)return armor.armor;
     var normalization=s.normalization;
@@ -483,7 +511,7 @@
     var stops=palettes[palette]||palettes.accessible,p=share*2,i=Math.min(1,Math.floor(p)),f=p-i;
     return stops[i].map(function(v,k){return v+(stops[i+1][k]-v)*f;});
   }
-  root.ArmorBallistics={build:build,fromTriangles:fromTriangles,triangle:triangle,subdivide:subdivide,evaluate:evaluate,shell:shell,chance:chance,effective:effective,ricochet:ricochet,color:color,value:value,nonPenetration:nonPenetration,transform:transform,unit:unit,sub:sub,aimFactor:aimFactor,
+  root.ArmorBallistics={build:build,fromTriangles:fromTriangles,triangle:triangle,subdivide:subdivide,evaluate:evaluate,shell:shell,atDistance:atDistance,penetrationAt:penetrationAt,alphaAt:alphaAt,chance:chance,effective:effective,ricochet:ricochet,color:color,value:value,nonPenetration:nonPenetration,transform:transform,unit:unit,sub:sub,aimFactor:aimFactor,
     aimStep:aimStep,aimShot:aimShot,reloadSeconds:reloadSeconds,autoreloadScaled:autoreloadScaled,moveStep:moveStep,turretChase:turretChase,
     aimProfiles:AIM_PROFILES,aimProfile:aimProfile,aimProfileDefault:DEFAULT_PROFILE,moveDefaults:MOVE};
 }(typeof window==='undefined'?globalThis:window));
