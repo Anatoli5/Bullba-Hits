@@ -1,6 +1,7 @@
 /* Critical damage of a hit (22.09): the crit code of the hit record and what the exporter tied to it (hit.crits).
-   Icons are the client's own; every word goes into the hover title. Nothing known about a hit's crits gives
-   nothing at all - a missing crit code does not mean "no crit" (a splash crit comes without one). */
+   Icons are the client's own; every word goes into the hover title, in the page's tooltip markup (a heading
+   line, then bullet points "Key: text"; web/tooltips.js). Nothing known about a hit's crits gives nothing at all -
+   a missing crit code does not mean "no crit" (a splash crit comes without one). */
 (function(root){
   'use strict';
   var BASE='web/icons/crits/';
@@ -11,7 +12,8 @@
   var SOURCES={damageInfo:'the vehicle\u2019s damage report',hitDirection:'the hit indicator',fireInfo:'the fire report',shotFlags:'your shot result',
     snapshotDiff:'the target\u2019s damaged-modules panel, before/after',publicState:'the vehicle\u2019s public state',fireComponent:'flames on the vehicle',ammoBayEffect:'the ammo-rack effect'};
   var TIES=['record','unique','nearest','shared','time-only'];
-  var TIE_TEXT={unique:'matched by shooter and time',nearest:'nearest of several hits',shared:'shared with other hits between two panel updates','time-only':'by vehicle and time only'};
+  // How a crit is tied to this hit: the words after "Matched:".
+  var TIE_TEXT={unique:'by shooter and time',nearest:'the nearest of several hits',shared:'shared with other hits between two panel updates','time-only':'by vehicle and time only'};
   var LOG_SOURCES={hitDirection:'mask',damageInfo:'info',fireInfo:'fire',fireComponent:'fire',shotFlags:'flags',snapshotDiff:'diff',publicState:'state',ammoBayEffect:'state'};
   function decoded(hit){return ((hit&&hit.points)||[]).filter(function(p){return p&&typeof p.effect==='number';});}
   // The last decoded point's effect when it is 5 or 6: the rule result() and crit_tie.py use for the hit's outcome.
@@ -43,9 +45,10 @@
     return name(it)+' '+(STATES[it.state]||it.state);
   }
   function tieText(it){return it.tie==='unique'&&it.from==='snapshotDiff'?'the only hit between two panel updates':TIE_TEXT[it.tie]||'';}
+  function origin(it){return [it.from].concat(it.confirmedBy||[]).map(function(f){return SOURCES[f];}).filter(Boolean).join(' and ');}
   function title(it){
-    var from=[it.from].concat(it.confirmedBy||[]).map(function(f){return SOURCES[f];}).filter(Boolean),tie=tieText(it);
-    return phrase(it)+(from.length?' \u2014 '+from.join(' and '):'')+(tie?', '+tie:'');
+    var from=origin(it),tie=tieText(it);
+    return phrase(it)+(from?'\n\u2022 From: '+from:'')+(tie?'\n\u2022 Matched: '+tie:'');
   }
   function icon(it){
     if(it.kind==='fire')return 'fire.png';
@@ -57,24 +60,36 @@
   }
   function count(hit){return hit&&hit.crits&&hit.crits.count>0?hit.crits.count:0;}
   // A crit without an identified module: the crit code of the record, or a count from the battle feedback.
-  function generic(hit){
-    var n=count(hit),where=lastCode(hit)===5&&lastPart(hit)===0?' on the chassis':'';
-    return 'Critical hit'+where+': '+(n>1?n+' modules or crew members were damaged; which ones were not reported':'a module or crew member was damaged; which one was not reported');
+  function chassis(hit){return lastCode(hit)===5&&lastPart(hit)===0;}
+  function unreported(hit){
+    var n=count(hit);
+    return n>1?n+' modules or crew members were damaged; which ones were not reported':'a module or crew member was damaged; which one was not reported';
   }
+  function generic(hit){var s=unreported(hit);return 'Critical hit'+(chassis(hit)?' on the chassis':'')+'\n'+s.charAt(0).toUpperCase()+s.slice(1)+'.';}
+  // The same in one line, after "Critical damage:" in the hit row's tooltip.
+  function unnamed(hit){var n=count(hit);return 'Not named'+(n>1?' ('+n+' modules or crew members)':'')+(chassis(hit)?', on the chassis':'');}
   // The tile's icons, at most four: more than four items give three and the generic crit icon listing them all.
   function badges(hit){
     var list=items(hit);
-    if(!list.length)return lastCode(hit)||count(hit)?[{src:BASE+(lastCode(hit)===5&&lastPart(hit)===0?'hit_critical_track.png':'hit_critical.png'),title:generic(hit)}]:[];
+    if(!list.length)return lastCode(hit)||count(hit)?[{src:BASE+(chassis(hit)?'hit_critical_track.png':'hit_critical.png'),title:generic(hit)}]:[];
     var all=list.map(function(it){return {src:BASE+icon(it),title:title(it)};});
-    return all.length<=4?all:all.slice(0,3).concat([{src:BASE+'hit_critical.png',title:all.map(function(b){return b.title;}).join('\n')}]);
+    // The fourth icon lists every item (23.09: five full titles in a row were a wall of text): the first three by name
+    // only - their own icons carry the source and the tie - the rest with theirs after the name.
+    return all.length<=4?all:all.slice(0,3).concat([{src:BASE+'hit_critical.png',title:'Critical damage'+list.map(function(it,i){
+      var more=i<3?'':[origin(it)&&'from '+origin(it),tieText(it)&&'matched: '+tieText(it)].filter(Boolean).join('; ');
+      return '\n\u2022 '+phrase(it)+(more?': '+more:'');}).join('')}]);
   }
-  function describe(hit){var list=items(hit);return list.length?list.map(phrase).join(', '):lastCode(hit)||count(hit)?generic(hit):'';}
+  // The critical damage in one line: the details row (a sentence when nothing is named), or, short, the hit row's tooltip.
+  function describe(hit,short){
+    var list=items(hit);
+    return list.length?list.map(phrase).join(', '):!(lastCode(hit)||count(hit))?'':short?unnamed(hit):'Critical hit'+(chassis(hit)?' on the chassis':'')+': '+unreported(hit);
+  }
   // The small line of the details row: what the damage rests on.
   function sources(hit){
     var list=items(hit),seen={},from=[],weakest=null,code=lastCode(hit),out=[];
     list.forEach(function(it){[it.from].concat(it.confirmedBy||[]).forEach(function(f){if(SOURCES[f]&&!seen[f]){seen[f]=true;from.push(SOURCES[f]);}});
       if(!weakest||TIES.indexOf(it.tie)>TIES.indexOf(weakest.tie))weakest=it;});
-    if(from.length)out.push('From '+from.join(', ')+(weakest&&tieText(weakest)?'; '+tieText(weakest):''));
+    if(from.length)out.push('From '+from.join(', ')+(weakest&&tieText(weakest)?'; matched: '+tieText(weakest):''));
     if(code)out.push('Effect code '+code+' in the hit record ('+(code===5?'critical hit':'penetration with module damage')+')');
     if(count(hit))out.push('Battle feedback: '+count(hit)+' damaged');
     return out.join('. ');

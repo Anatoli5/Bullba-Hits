@@ -9,8 +9,13 @@
 //   a scroll or a resize closes it; a click on a control keeps its action and the bubble only follows hover;
 // - a help dot (<button class="help-dot" data-help-for="id id ...">?</button>, 23.09) is the pin a control
 //   cannot have: its click IS the pin (a second click, Escape or a click elsewhere closes it), and its bubble
-//   gathers the words of the elements it lists - one row each, the element's glyph and what hovering it shows,
-//   the ones not on screen left out. A dot is hidden while every element it lists is hidden;
+//   gathers the words of the elements it lists - one group each, led by the element's glyph and the heading of
+//   what hovering it shows, the ones not on screen left out. A dot is hidden while every element it lists is hidden;
+// - the words are one plain-text markup for every title (23.09), readable as is in a native tooltip and drawn
+//   here with createElement/textContent only - a title is data (a record's names), never HTML:
+//     lines split by '\n'; the first line is the heading, drawn bold (unless it is a sentence: ends in . ! ?);
+//     '• Key: text' is an item, its key up to the first ': ' bold; '• text' an item without a key;
+//     an empty line starts a new group (a gap); any other line is a paragraph;
 // - while an element is hovered or pinned its title waits in data-tip, so a normal browser never draws its own
 //   tooltip over this one; a title the page writes meanwhile (the characteristics panel updates live) is moved
 //   again by a MutationObserver on that element alone, and the bubble takes the new words - for a help dot the
@@ -29,7 +34,9 @@
   var GAP_X = 12, GAP_Y = 18, ABOVE = 8, EDGE = 6;
   var HELP = 'data-help-for';
   // The page's dark panel: the popover background, the tiles' border, 13 px text, a gold edge - all gold when pinned.
-  // A help bubble is wider (it gathers several tooltips), each row led by its element's glyph in gold.
+  // The markup: a bright bold heading, items hanging off a grey bullet with a bold key, a gap between groups.
+  // A help bubble is wider (it gathers several tooltips), each group led by its element's glyph in gold and
+  // parted from the one before by a faint line.
   // The help dot: one small round "?" wherever it stands, one look above whatever the row around it gives a
   // button (hence the doubled class); a lighter edge on hover, gold while its bubble is pinned.
   var DOT = 'button.help-dot.help-dot[data-help-for]';
@@ -45,9 +52,13 @@
     + 'box-shadow:0 8px 25px rgba(0,0,0,.55);pointer-events:none;-webkit-user-select:none;user-select:none}'
     + '#page-tip[hidden]{display:none}#page-tip[data-pinned]{border-color:var(--gold,#eac36e)}'
     + '#page-tip[data-help]{max-width:520px;max-width:min(520px,calc(100vw - 12px))}'
-    + '#page-tip .tip-row+.tip-row{margin-top:6px}'
-    + '#page-tip .tip-row>b{margin-right:7px;color:var(--gold,#eac36e);font-weight:600}'
-    + '#page-tip .tip-row img{height:18px;width:auto;vertical-align:-4px}'
+    + '#page-tip .tip-h,#page-tip .tip-li>b{color:#f4f8fb;font-weight:600}'
+    + '#page-tip .tip-li{position:relative;padding-left:13px}'
+    + '#page-tip .tip-li::before{content:"\\2022";position:absolute;left:2px;top:0;color:#96a9bd}'
+    + '#page-tip .tip-h+div{margin-top:3px}#page-tip div.tip-gap{margin-top:7px}'
+    + '#page-tip .tip-row+.tip-row{margin-top:7px;padding-top:6px;border-top:1px solid rgba(157,174,191,.22)}'
+    + '#page-tip .tip-glyph{margin-right:7px;color:var(--gold,#eac36e);font-weight:600}'
+    + '#page-tip .tip-glyph img{height:18px;width:auto;vertical-align:-4px}'
     + dotCss('') + '{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;'
     + 'align-self:center;box-sizing:border-box;width:18px;height:18px;min-width:0;min-height:0;margin:0;padding:0;'
     + 'border:1px solid rgba(157,174,191,.55);border-radius:50%;background:rgba(23,35,48,.35);color:#96a9bd;'
@@ -158,7 +169,7 @@
     if (t && t.length <= 24 && !img) return t;
     return img && img.getAttribute('src') ? img : '';
   }
-  // One row per element the dot lists that is on screen: the words hovering it shows - its own title; for a
+  // One row (a group) per element the dot lists that is on screen: the words hovering it shows - its own title; for a
   // group without one, the titles of its items (the gun's shells, the shell chips); for an element inside a
   // titled one (the checkbox of a labelled switch), that one's. Each title once.
   function helpRows(dot) {
@@ -167,7 +178,7 @@
       if (seen.indexOf(holder) >= 0) return;
       seen.push(holder);
       var text = tipOf(holder);
-      if (text) rows.push({glyph: glyphOf(el) || (holder !== el ? glyphOf(holder) : ''), text: text});
+      if (/\S/.test(text)) rows.push({glyph: glyphOf(el) || (holder !== el ? glyphOf(holder) : ''), text: text});
     }
     for (var i = 0; i < els.length; i++) {
       var el = els[i];
@@ -263,30 +274,70 @@
     bubble.hidden = true;
     (doc.body || doc.documentElement).appendChild(bubble);
   }
-  // The bubble's words: the element's title, or the rows a help dot gathers. 0 - nothing to show, 1 - the
+  // --- The markup: lines of a title, then their elements ----------------------------------------------------
+  // Each non-empty line: {kind: 'h' heading | 'li' item | 'p' paragraph, key, text, gap - an empty line before it}.
+  var BULLET = /^\u2022\s*/, SENTENCE = /[.!?]$/, TRIM = /^\s+|\s+$/g;
+  // The first line is the heading; a lone line that ends like a sentence is an old one-sentence title, drawn plain.
+  // A title of several lines keeps its heading even when a name ends in a full stop ("… wz. 62 P.").
+  function parse(text) {
+    var src = String(text).split('\n'), out = [], gap = false, lines = 0;
+    for (var n = 0; n < src.length && lines < 2; n++) if (src[n].replace(TRIM, '')) lines++;
+    for (var i = 0; i < src.length; i++) {
+      var s = src[i].replace(TRIM, ''), line;
+      if (!s) { gap = out.length > 0; continue; }
+      if (BULLET.test(s)) {
+        s = s.replace(BULLET, '');
+        var at = s.indexOf(': ');
+        line = at > 0 ? {kind: 'li', key: s.slice(0, at + 1) + ' ', text: s.slice(at + 2).replace(TRIM, '')} : {kind: 'li', key: '', text: s};
+      } else line = {kind: !out.length && (lines > 1 || !SENTENCE.test(s)) ? 'h' : 'p', key: '', text: s};
+      line.gap = gap; gap = false;
+      out.push(line);
+    }
+    return out;
+  }
+  function lineOf(l, mark) {
+    var div = doc.createElement('div');
+    div.className = 'tip-' + l.kind + (l.gap ? ' tip-gap' : '');
+    if (mark) div.appendChild(mark);
+    if (l.key) { var k = doc.createElement('b'); k.textContent = l.key; div.appendChild(k); }
+    if (l.text) { var s = doc.createElement('span'); s.textContent = l.text; div.appendChild(s); }
+    return div;
+  }
+  function squash(s) { return String(s).replace(/\s+/g, ' ').replace(TRIM, '').toLowerCase(); }
+  // A title's lines into a box. In a help group the glyph leads the first line - the heading (left out when it only
+  // repeats the glyph's caption: Auto-frame) or a lone sentence; before an item it stands on a line of its own.
+  function draw(box, text, glyph) {
+    var list = parse(text), from = 0;
+    if (glyph) {
+      var mark = doc.createElement('b'), l0 = list[0], head = {kind: 'h', key: '', text: ''};
+      mark.className = 'tip-glyph';
+      if (typeof glyph === 'string') mark.textContent = glyph; else mark.appendChild(glyph.cloneNode(false));
+      if (l0 && l0.kind !== 'li') {
+        from = 1;
+        if (!(l0.kind === 'h' && typeof glyph === 'string' && squash(glyph) === squash(l0.text))) head = l0;
+      }
+      box.appendChild(lineOf(head, mark));
+    }
+    for (var i = from; i < list.length; i++) box.appendChild(lineOf(list[i]));
+  }
+  // The bubble's words: the element's title, or the groups a help dot gathers. 0 - nothing to show, 1 - the
   // bubble already shows exactly this, 2 - written.
   function paint(el) {
     var rows = isHelp(el) ? helpRows(el) : null, key = rows ? rowsKey(rows) : tipOf(el);
-    if (!key) return 0;
+    if (!/\S/.test(key)) return 0;
     if (key === shownKey) return 1;
     shownKey = key;
+    bubble.textContent = '';
     if (!rows) {
       if (bubble.hasAttribute('data-help')) bubble.removeAttribute('data-help');
-      bubble.textContent = key;
+      draw(bubble, key, '');
       return 2;
     }
     bubble.setAttribute('data-help', '');
-    bubble.textContent = '';
     for (var i = 0; i < rows.length; i++) {
-      var row = doc.createElement('div'), words = doc.createElement('span'), g = rows[i].glyph;
+      var row = doc.createElement('div');
       row.className = 'tip-row';
-      if (g) {
-        var mark = doc.createElement('b');
-        if (typeof g === 'string') mark.textContent = g; else mark.appendChild(g.cloneNode(false));
-        row.appendChild(mark);
-      }
-      words.textContent = rows[i].text;
-      row.appendChild(words);
+      draw(row, rows[i].text, rows[i].glyph);
       bubble.appendChild(row);
     }
     return 2;

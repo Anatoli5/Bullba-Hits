@@ -33,9 +33,20 @@
   var roleNames={spg:'SPG',assault:'Assault',break:'Breakthrough',universal:'Universal',support:'Support',sniper:'Sniper',scout:'Scout'};
   var nationNames={ussr:'USSR',germany:'Germany',usa:'USA',china:'China',france:'France',uk:'UK',
     japan:'Japan',czech:'Czechoslovakia',sweden:'Sweden',poland:'Poland',italy:'Italy'};
-  function vehicleTile(info){
+  function vehicleNation(info){return info.nation||String(info.type||'').split(':')[0];}
+  // The tile's words in the page's tooltip markup: the name as the heading, then tier, nation, class and role in
+  // one line. A list row that carries its own tooltip takes these words into it and asks for a bare tile
+  // (bare = true), so the tile, which covers most of the row, does not hide the row's words under its own.
+  function vehicleWords(info){
     info=info||{};
-    var tile=node('span',undefined,'vehicle-tile'),nation=info.nation||String(info.type||'').split(':')[0];
+    var cls=classNames[info['class']]?info['class']:null,family=roleFamilies[info.role]||null;
+    var line=[tierRomans[info.level]?'Tier '+tierRomans[info.level]:'',nationNames[vehicleNation(info)]||'',classNames[cls]||'',
+      family&&family!=='spg'?roleNames[family]+' role':''].filter(Boolean).join(' \u00b7 ');
+    return (info.name||'Unknown vehicle')+(line?'\n'+line:'');
+  }
+  function vehicleTile(info,bare){
+    info=info||{};
+    var tile=node('span',undefined,'vehicle-tile'),nation=vehicleNation(info);
     if(nationNames[nation])tile.setAttribute('data-nation',nation);
     var tier=tierRomans[info.level]||'',cls=classNames[info['class']]?info['class']:null,family=roleFamilies[info.role]||null;
     tile.appendChild(node('span',info.name||'Unknown vehicle','vt-name'));
@@ -46,9 +57,9 @@
     if(cls){mark.setAttribute('data-class',cls);mark.title=classNames[cls];}
     meta.appendChild(mark);
     var role=node('span',undefined,'vt-role');
-    if(family){role.setAttribute('data-role',family);role.title=roleNames[family]+(cls?' \u00b7 '+classNames[cls].toLowerCase():'');}
+    if(family){role.setAttribute('data-role',family);role.title='Role: '+roleNames[family]+(cls&&family!=='spg'?' ('+classNames[cls].toLowerCase()+')':'');}
     meta.appendChild(role);tile.appendChild(meta);
-    tile.title=[info.name||'Unknown vehicle',tier?'Tier '+tier:'',nationNames[nation]||'',classNames[cls]||'',family?roleNames[family]:''].filter(Boolean).join(' \u00b7 ');
+    if(!bare)tile.title=vehicleWords(info);
     return tile;
   }
   // ============================ Vehicles mode =============================
@@ -60,7 +71,7 @@
   var CLASS_ORDER=['lightTank','mediumTank','heavyTank','AT-SPG','SPG'];
   var FLAG_KEYS=['premium','collector','special','exported'];
   var FLAG_NAMES={premium:'Premium',collector:'Collector',special:'Special',exported:'Exported'};
-  var FLAG_TITLES={premium:'Premium vehicles only',collector:'Collector vehicles only',special:'Special (reward) vehicles only',exported:'Only vehicles whose collision model is already exported'};
+  var FLAG_TITLES={premium:'Premium vehicles only',collector:'Collector vehicles only',special:'Special (reward) vehicles only',exported:'Only vehicles with an exported model'};
   // Flags the client itself draws an icon for (the files are named in style.css). "Exported" is our own
   // idea, not the client's, so that pill keeps its word.
   var FLAG_ICONS={premium:true,collector:true,special:true};
@@ -72,14 +83,15 @@
   // be a paragraph under the count and a two-line foot under the list; both are gone (user, 19.09: the pane
   // is a list, not a leaflet).
   var VEHICLE_INFO=[
-    ['What is listed',['Every vehicle your client knows, grouped by class.',
-      'With a battle open, \u201cThis battle\u201d lists its roster instead: allies and enemies.',
-      'A row without a collision model is dimmed.']],
-    ['How models get here',['The mod exports the vehicle you select in the hangar.',
-      'Every vehicle of a battle you play is exported after it.',
-      'While the game runs, a row clicked here exports on the spot.']],
-    ['In the browser',['Only vehicles whose model is already exported can be drawn.',
-      'Play a battle, or open this page from the game, to get more of them.']]];
+    ['What is listed',['Every vehicle of your client, by class.',
+      '\u201cThis battle\u201d: the open battle\u2019s allies and enemies.',
+      'Dimmed: no collision model yet.']],
+    ['A click on a row',['Shows it as the model.',
+      'After a click on the Shooter tile: as the shooter.',
+      'In the game, a dimmed row exports first.']],
+    ['Models come from',['The vehicle you select in the hangar.',
+      'Every vehicle of a battle you play, after it.']],
+    ['In a browser',['Only exported models can be drawn.']]];
   var sidebarMode='battles',battlesDirty=false;
   var catalogue=null,catalogueStamp=null,catalogueError=null,cataloguePending=false;
   var vehicleFilters={tier:[],nation:[],'class':[],role:[],flag:[],text:''},vehicleScope='battle';
@@ -108,7 +120,7 @@
     var n=vehicleFilters.role.length+vehicleFilters.flag.length,mark=fold.querySelector('.filter-count');
     if(mark)mark.textContent=n?String(n):'';
     fold.setAttribute('data-on',String(n>0));
-    fold.querySelector('summary').title=(n?n+' of them are pressed. ':'')+'Role and Flags';
+    fold.querySelector('summary').title='Role and Flags filters'+(n?'\n'+n+' selected':'');
   }
   // The search is a magnifier at the right end of the Tier row: a click puts the input where the row's label
   // is, Escape or an empty blur puts the label back. A text that stays shows as a chip on the count line and
@@ -302,11 +314,15 @@
     if(item.side)b.setAttribute('data-side',item.side);
     if(isShooter)b.setAttribute('data-role','shooter');
     if(activeRole==='shooter'?isShooter:isModel)b.setAttribute('data-active','true');
-    b.appendChild(vehicleTile(v));
-    b.title=[v.name||'Unknown vehicle',item.side==='ally'?'Ally':item.side==='enemy'?'Enemy':'',
-      v.exported?'model exported '+(SOURCE_TAG[v.source]||''):'no collision model yet'].filter(Boolean).join(' \u00b7 ');
+    b.appendChild(vehicleTile(v,true));
+    b.title=vehicleRowWords(item);
     b.onclick=function(){chooseVehicle(v);};
     return b;
+  }
+  function vehicleRowWords(item){
+    var v=item.v;
+    return vehicleWords(v)+(item.side==='ally'||item.side==='enemy'?'\n\u2022 Team: '+(item.side==='ally'?'Ally':'Enemy'):'')
+      +'\n\u2022 Collision model: '+(v.exported?'exported'+(SOURCE_TAG[v.source]?' '+SOURCE_TAG[v.source]:''):'none yet');
   }
   // One DOM node per row, up to about a thousand of them: the list is rebuilt only when the set of rows, the
   // roles or the export marks actually change, so the five-second poll of the catalogue costs nothing.
@@ -326,7 +342,8 @@
     var roles=(modelVehicle?modelVehicle.id:'')+'/'+(shooterVehicle?shooterVehicle.id:'')+'/'+activeRole+'/'+scope;
     if(!force&&ids===listIds&&roles===listRoles){
       if(marks!==listMarks){listMarks=marks;shown.forEach(function(item){
-        var row=list.querySelector('[data-vehicle="'+item.v.id+'"]');if(row)row.setAttribute('data-exported',String(!!item.v.exported));});}
+        var row=list.querySelector('[data-vehicle="'+item.v.id+'"]');
+        if(row&&row.getAttribute('data-exported')!==String(!!item.v.exported)){row.setAttribute('data-exported',String(!!item.v.exported));row.title=vehicleRowWords(item);}});}
       return;
     }
     listIds=ids;listMarks=marks;listRoles=roles;
@@ -610,14 +627,16 @@
     $('shell-quick').replaceChildren();candidates.forEach(function(c,i){var actual=i===shotContext.index,assumed=i===shellAssumed,
       second=c.vehicleMode===1,mode=ArmorShotContext.modeLabel?ArmorShotContext.modeLabel(hit,c):'',
       b=node('button',(actual?'● ':assumed?'◌ ':'')+(second?'◐ ':'')+(shellNames[c.kind]||c.kind)+' '+Math.round(c.penetration100)+(c.gunInstallation>0?' ✦':''),'shell-chip');
-      b.dataset.shell='saved:'+i;b.title=c.name+' · '+c.caliber+' mm · '+(c.gunInstallation>0?'ability gun'+(c.gun?' '+c.gun:'')+' · ':'')
-        +(mode?mode+' · ':'')
-        +(actual?(second?'The shooter fired in his second mode; the client’s numbers for that mode are used':'Type from the hit')
-          :assumed?'Assumed: the record does not say which shell it was'+(shellAssumedWhy?', so '+shellAssumedWhy+' was taken':'')
-          :second?'The same gun in the vehicle’s second mode':'Compare with this shell')
+      // Tooltip markup (tooltips.js): the shell is the heading, then whose it is, then its points.
+      b.dataset.shell='saved:'+i;b.title=c.name+', '+c.caliber+' mm\n'
+        +(actual?(second?'The shooter fired in his second mode; the client’s numbers for that mode are used.':'Type from the hit.')
+          :assumed?'Assumed: the record does not say which shell it was'+(shellAssumedWhy?', so '+shellAssumedWhy+' was taken':'')+'.'
+          :second?'The same gun in the vehicle’s second mode.':'Compare with this shell.')
+        +(c.gunInstallation>0?'\n• Ability gun'+(c.gun?': '+c.gun:''):'')
+        +(mode?'\n• Mode: '+mode:'')
         // The live state of the shooter's gun at the shot, one short line per mechanic the record carries
         // (22.09). It belongs to the shot, not to one shell, so every chip of this hit says the same.
-        +((shotContext.gunNotes||[]).length?' · '+shotContext.gunNotes.join(' · '):'');
+        +((shotContext.gunNotes||[]).length?'\n\nGun at the shot:\n• '+shotContext.gunNotes.join('\n• '):'');
       b.onclick=function(){choice.value='saved:'+i;selectShell();};$('shell-quick').appendChild(b);});
     paintGunShells();
     syncTargetMods(hit);syncShooterMods(hit);
@@ -654,19 +673,19 @@
         if(v.skill==='1')out.push('driver +15 %');return out.join(' · ');},
       options:[
         {id:'liner',label:'Liner',kind:'choice',value:'1',
-         title:'Spall liner (optional device): none ×1.0, mounted ×1.5, the same liner in the bonus slot ×1.6. The light, medium, heavy and superheavy variants all carry the same factor (optional_devices.xml, antifragmentationLining tiers 1–4).',
+         title:'Spall liner\nEvery size, light to superheavy, gives the same factor.',
          choices:[{value:'1',label:'None',title:'No spall liner · ×1.0'},
            {value:'1.5',label:'Liner ×1.5',title:'Spall liner in an ordinary slot · ×1.5'},
            {value:'1.6',label:'Improved ×1.6',title:'The same liner in the bonus slot (improved) · ×1.6'}]},
         {id:'fieldmod',label:'Field mod.',kind:'choice',value:'1',
-         title:'Field modification “Spalling resistance”, HT assault / HT universal / LT roles (post_progression/field_modifications.xml). It is one side of a pair — the other side takes speed instead — and no other role has it.',
+         title:'Field modification “Spalling resistance”\n• Only for: HT assault, HT universal and LT roles\n• Pair: its other side takes speed instead',
          choices:[{value:'0.85',label:'−',title:'The other side of the pair · ×0.85'},
            {value:'1',label:'default',title:'No such field modification · ×1.00'},
            {value:'1.15',label:'+',title:'Spalling resistance · ×1.15'}]},
         {id:'skill',label:'Driver skill',kind:'toggle',value:'0',
-         title:'Driver skill “Reliable Placement”: +15 % at 100 % skill (tankmen.xml driver_reliablePlacement → perks.xml id 304, antifragmentationLining 0.0015 per point). The per-point scaling is a reading of the client XML, not a verified rule.',
+         title:'Driver skill “Reliable Placement”\n• At 100 % skill: +15 %\n• Scaling per skill point: read from the game files, not verified',
          choices:[{value:'0',label:'Off',title:'Not trained · ×1.00'},
-           {value:'1',label:'+15 %',title:'Trained to 100 % · ×1.15 · the scaling is read from the client XML, not verified'}]}],
+           {value:'1',label:'+15 %',title:'Trained to 100 % · ×1.15'}]}],
       // The collapsed summary is the width of the group's button, so the group is placed again beside the tile.
       onChange:function(){if(modsType)modsState[modsType]=targetMods.values();updateShell();scheduleLayout(LAYOUT_MODS);}});
   }
@@ -677,9 +696,10 @@
     modsType=type;modsRecorded=t&&t.linerFactor>0?t.linerFactor:0;
     if(type&&!modsState[type])modsState[type]=modsDefaults(modsRecorded);
     targetMods.setDefaults(modsState[type]||modsDefaults(0));
-    targetMods.element.title='What this vehicle has fitted against spalling: C = liner × field modification × (1 + 0.15 × driver skill). The non-penetration damage of HE divides by C. '+
-      (modsRecorded>0?'recorded ×'+modsRecorded.toFixed(2)+' — the factor the client’s descriptor carried here: it holds the mounted liner, may hold the field modification, never the crew skill.':'This record carries no factor — the switches start unlined.')+
-      ' Kept per vehicle type until the page is reloaded.';
+    targetMods.element.title='Target’s spall protection\nHE damage without penetration is divided by C.'+
+      '\n• C: liner × field mod. × (1 + 0.15 × driver skill)'+
+      (modsRecorded>0?'\n• Recorded: ×'+modsRecorded.toFixed(2)+' — the liner, maybe the field mod., never the skill':'\n• Recorded: none — the switches start unlined')+
+      '\n• Kept: per vehicle type until the page reloads';
   }
   // The switches have something to change only while a model is on screen and the map is drawn in damage: in
   // chance mode the factor is a no-op, so they leave with the damage caption instead of sitting dead.
@@ -787,9 +807,43 @@
     rammer: 'a Gun Rammer', aimingStabilizer: 'a Vertical Stabilizer',
     enhancedAimDrives: 'an Enhanced Gun Laying Drive', improvedSights: 'Improved Aiming',
     rotationMechanism: 'an Improved Rotation Mechanism', ventilation: 'Improved Ventilation',
-    turbocharger: 'a Turbocharger', healthReserve: 'Improved Hardening'};
-  var AIM_GRADE_WORDS = {deluxe: 'of the Improved grade', trophyUpgraded: 'a Bounty piece'};
+    turbocharger: 'a Turbocharger', healthReserve: 'Improved Hardening',
+    coatedOptics: 'Coated Optics', additInvisibilityDevice: 'a Low Noise Exhaust System'};
+  var AIM_GRADE_WORDS = {deluxe: 'of the Improved grade', trophyUpgraded: 'of the Bounty grade'};
   function aimNum(v) { return String(Math.round(Number(v) * 10000) / 10000); }
+  // A tooltip in the page's one markup (web/tooltips.js, 23.09): the lines joined by '\n' - the first the heading,
+  // '• Key: text' an item, '' a gap between groups (never two in a row, never at either end); null or false is left out.
+  function tipJoin(lines) {
+    var out = [];
+    lines.forEach(function (l) {
+      if (l === '') { if (out.length && out[out.length - 1] !== '') out.push(''); }
+      else if (l) out.push(l);
+    });
+    if (out[out.length - 1] === '') out.pop();
+    return out.join('\n');
+  }
+  // One factor of a device, directive, consumable, skill or field modification, as its tooltip lists it: "×0.9 on the
+  // reload", "+1 km/h on the top speed" (the words of AIM_INPUT_WORDS that start with the unit take the number).
+  // `short`: the tooltip says what the input does already (a device's family), so its ", which ..." is left out.
+  function aimEffText(op, v, input, short) {
+    var words = AIM_INPUT_WORDS[input] || input, unit = /^km\/h /.test(words);
+    if (unit) words = words.slice(5);
+    if (short) words = words.replace(/,\s*(which|so)\s.*$/, '');
+    return (op === 'add' ? (v >= 0 ? '+' : '') + aimNum(v) + (unit ? ' km/h' : '') : '×' + aimNum(v)) + (unit ? ' ' : ' on ') + words;
+  }
+  // The catalogue's notes (web/equipment.js, generated) say what the client's code does in the client's own names; a
+  // tooltip keeps the words and drops those names: a sentence built on one goes, a bracket of them goes, a bracket's
+  // part after ';' that is one goes. Returns the sentences, each one a line, the first letter raised.
+  var AIM_CODE_WORD = /[a-z][A-Z]|\w\.\w/;
+  function aimNoteLines(note) {
+    var text = String(note || '').replace(/\s*\(([^()]*)\)/g, function (all, inner) {
+      var keep = inner.split(/;\s*/).filter(function (s) { return !AIM_CODE_WORD.test(s.replace(/\d\.\d/g, '')); });
+      return keep.length ? ' (' + keep.join('; ') + ')' : '';
+    });
+    return text.split(/\.\s+(?=[A-Z])/).map(function (s) { return s.replace(/\.$/, ''); }).filter(function (s) {
+      return s && !AIM_CODE_WORD.test(s.replace(/\d\.\d/g, ''));
+    }).map(function (s) { return s.charAt(0).toUpperCase() + s.slice(1) + '.'; });
+  }
   // --- The client's own rules, read off the catalogue -------------------------------------------
   // THE SLOT BONUS, and why the page no longer models it (user, 21.09). The client's rule is real:
   // OptionalDevice.defineActiveLevel hands out valueByLevel[1] instead of [0] when the device's
@@ -1080,37 +1134,36 @@
       base = aimRule('allowed', 'client data: no restriction in ' + mode.name + ' (not proof that the server allows everything)');
     }
     var out = {devices: base, consumables: base, crew: base, vehicle: klass, mode: mode};
-    var from = klass.lockSource === 'table'
-      ? ' (from the ' + modeFamilyName(klass.family) + ' list of client ' + (klass.client || '?') + ', web/vehicle-modes.js)' : '';
+    // The tooltip says what the lock means for the player; which tag and which client code carry it (LOCK_RULES'
+    // readers, the vehicle table) stay in the code.
     Object.keys(LOCK_RULES).forEach(function (tag) {
       var rule = LOCK_RULES[tag];
       if (!klass.locks[tag] || out[rule.what].state === 'forbidden') return;
-      out[rule.what] = aimRule('forbidden', 'the vehicle carries the client tag ' + tag + from + ' - ' + rule.reader
-        + '. The game fixes this for the vehicle; what it fits instead is not in the record');
+      out[rule.what] = aimRule('forbidden', 'the game fixes this for the vehicle; what it fits instead is not in the record');
     });
     return out;
   }
   var shooterPolicy = AIM_OPEN_POLICY;
   function aimForbidden(kind) { return !!(shooterPolicy && shooterPolicy[kind] && shooterPolicy[kind].state === 'forbidden'); }
   var AIM_POLICY_WORDS = {devices: 'Equipment and directive', consumables: 'Consumables', crew: 'Crew skills and perks'};
-  // The words the locked tiles carry.
+  // The line the locked tiles carry under their heading.
   function aimPolicyLine(kind) {
-    var rule = shooterPolicy[kind];
-    return AIM_POLICY_WORDS[kind] + ': not offered here - ' + rule.source + '.';
+    return AIM_POLICY_WORDS[kind] + ' not offered here: ' + shooterPolicy[kind].source + '.';
   }
   // The gun's reloading system, read off the aim block (exporter.py aim_block, S3): the gun's own tags
   // first, the mechanics sections of a block without a tag list second. Says what the emulation does not.
   // It decides nothing about what the vehicle may fit: no data file of this client uses the gun filters of
   // a device's vehicleFilter, and "a clip gun takes no rammer" is false for five clip vehicles and one dual
   // gun of the client - the eligibility tags above stay the only rule.
+  // The tooltip markup (tooltips.js): '\n' between lines, '• Key: text' a point, an empty line a group.
   var AIM_MECHANICS_WORDS = {
-    autoreload: 'an autoreloading magazine: every spent round loads back on its own timer, one at a time. Under ⌖ with real reload ◔ the emulation runs those timers; otherwise a hold fires the rounds at the clip interval and nothing loads back',
-    clip: 'a magazine: the rounds go at the clip interval, then the whole clip reloads. Under ⌖ with real reload ◔ the emulation runs that reload; otherwise a burst stops when the clip is empty',
-    burst: 'a burst gun: one pull of the trigger fires several rounds. Under ⌖ one press fires the whole burst, and every round but the last widens the circle by the burst’s own factor, as the game does',
-    dualGun: 'a dual gun: its barrels fire one at a time or together as a charged volley. The emulation fires single rounds only',
-    twinGun: 'a twin gun: two barrels, each with its own reload. The emulation fires single rounds only',
-    autoShoot: 'an automatic gun: it fires while the trigger is held and the circle grows with every round. Under ⌖ the growth is the game’s own - the n-th round of a hold adds n × its per-round figure, up to the cap, and the release lets the circle settle; the pause the server may keep after the last round is not modelled',
-    single: 'a single-shot gun'};
+    autoreload: '• Autoreloader: spent rounds load back one by one, each on its own timer\n• ⌖ with ◔: these timers run\n• Otherwise: a hold fires at the clip interval, nothing loads back',
+    clip: '• Magazine: rounds at the clip interval, then the whole clip reloads\n• ⌖ with ◔: that reload runs\n• Otherwise: a burst stops when the clip is empty',
+    burst: '• Burst gun: one pull fires several rounds\n• Under ⌖: one press, the whole burst; each round but the last widens the circle by the burst’s factor',
+    dualGun: '• Dual gun: barrels fire singly or as a charged volley; emulated: single rounds only',
+    twinGun: '• Twin gun: two barrels, each with its own reload; emulated: single rounds only',
+    autoShoot: '• Automatic gun: fires while held; the circle grows with every round\n• Under ⌖: the n-th round of a hold adds n × its per-round figure, up to the cap; release lets it settle\n• Not modelled: the pause the server may keep after the last round',
+    single: '• Single-shot gun'};
   function aimMechanics(a) {
     if (!a) return '';
     var tags = {}, list = Array.isArray(a.gunTags) ? a.gunTags : [], i;
@@ -1123,29 +1176,28 @@
     if (a.burst && a.burst[0] > 1) return 'burst';
     return list.length || a.clip ? 'single' : '';
   }
-  var AIM_GUN_LOAD_TITLE = 'The gun’s reload, as the reticle shows it in the game: the time left while the next round is loading, the gun’s own reload time at rest. The rounds are in the magazine beside it.' +
-    ' A press the gun cannot take does not fire, and what is in the way blinks with the aiming circle: this figure while the next round is still loading or a burst is still going out (the magazine too when it is empty or the burst takes its rounds), the heat bar of an overheated gun, the mode button while the mode switches.';
+  var AIM_GUN_LOAD_TITLE = 'Reload, as in the game\n• Loading: time to the next round\n• At rest: the gun’s reload time\nBlinks when a press comes too early or a burst is still firing.';
   function paintAimMechanics() {
     var time = $('aim-gun-reload'), load = time && time.parentNode;
     if (!load) return;
     var a = aimBlockData(), kind = aimMechanics(a), extra = '';
-    if (kind) extra = ' This gun is ' + AIM_MECHANICS_WORDS[kind] + '.';
+    if (kind) extra = '\n\n' + AIM_MECHANICS_WORDS[kind];
     if (kind === 'autoreload' && a.autoreload && Array.isArray(a.autoreload.reloadTime)) {
       // The client keeps the tuple last-round-first and the garage shows it reversed, in loading order (KNOWLEDGE §4).
-      extra += ' Its rounds load back in, from an empty magazine: ' + a.autoreload.reloadTime.slice().reverse().map(function (v) { return aimNum(v); }).join(', ') + ' s.';
+      extra += '\n• Load-back times, from empty: ' + a.autoreload.reloadTime.slice().reverse().map(function (v) { return aimNum(v); }).join(', ') + ' s';
     }
     if (a && (a.dualAccuracy || (Array.isArray(a.gunTags) && a.gunTags.indexOf('dualAccuracy') >= 0))) {
       // B3: the factor is the client's; how long it lasts is not in the client (the server switches it).
       var dual = dualParams(a);
-      extra += dual ? ' It has dual accuracy: after a shot the game widens the whole circle ×' + aimNum(dual.factor) +
+      extra += (extra ? '\n' : '\n\n') + (dual ? '• Dual accuracy: after a shot the whole circle widens ×' + aimNum(dual.factor) +
         ' (' + aimNum(Math.round(a.dualAccuracy.afterShotDispersionAngle * 1e5) / 1e3) + ' against ' + aimNum(Math.round(a.dispersion * 1e5) / 1e3) +
-        ' m at 100 m). Under ⌖ the emulation applies it for ' + aimNum(dual.delay) + ' s after every round - that length is this page’s assumption.'
-        : ' It has dual accuracy: the circle right after a shot follows a law of its own, which this record does not carry the numbers of.';
+        ' m at 100 m); under ⌖ for ' + aimNum(dual.delay) + ' s after every round - that length is this page’s assumption'
+        : '• Dual accuracy: the circle right after a shot follows its own law; this record lacks its numbers');
     }
     if (a && Array.isArray(a.gunMechanics) && a.gunMechanics.indexOf('chargeableBurst') >= 0) {
-      extra += ' Its burst comes only in the Burst mode of its chargeableBurst: under ⌖ the mode button beside this switches it.';
+      extra += (extra ? '\n' : '\n\n') + '• Burst: only in the Burst mode; under ⌖ the mode button switches it';
     }
-    if (a && a.secondaryFrom) extra += ' This is the vehicle’s second gun, taken up with the ⌖ mode button.';
+    if (a && a.secondaryFrom) extra += (extra ? '\n' : '\n\n') + 'This is the vehicle’s second gun, taken up with the ⌖ mode button.';
     load.title = AIM_GUN_LOAD_TITLE + extra;
     load.setAttribute('data-mechanics', kind || 'unknown');
   }
@@ -1707,33 +1759,35 @@
   }
   // The collapsed button says "Config" and nothing else (user, 20.09): no preset name, no "custom" or
   // "stock" - what is fitted is in the tiles one click away, and in the button's own tooltip.
-  function aimLongSummary() {
+  // What is fitted, one item a section of the menu ('• Equipment: …'), for the Config button's and ⚙'s tooltips;
+  // [] when nothing is.
+  function aimSummaryLines() {
     // What is IN FORCE: a kind the vehicle's lock forbids (S3) is not listed, although the configuration
     // still holds it for the next vehicle.
     var out = [];
+    function item(key, names) { if (names.length) out.push('• ' + key + ': ' + names.join(', ')); }
     if (!aimForbidden('devices')) {
-      AIM_SLOTS.forEach(function (i) {
-        var dev = DEVICE_BY_ID[shooterConfig.slots[i]];
-        if (dev) out.push(dev.name);
-      });
+      item('Equipment', AIM_SLOTS.map(function (i) { var dev = DEVICE_BY_ID[shooterConfig.slots[i]]; return dev ? dev.name : ''; }).filter(Boolean));
       var dir = DIRECTIVE_BY_ID[shooterConfig.directive];
-      if (dir) out.push(dir.name + (aimDirectiveActive(dir) ? '' : ' (inactive)'));
+      item('Directive', dir ? [dir.name + (aimDirectiveActive(dir) ? '' : ' (inactive)')] : []);
     }
-    if (aimFieldOn()) out.push('field modification: ' + shooterConfig.field.map(function (id) { return FIELD_MODS[id].name; }).join(', '));
+    item('Field modification', aimFieldOn() ? shooterConfig.field.map(function (id) { return FIELD_MODS[id].name; }) : []);
+    var cons = [];
     if (!aimForbidden('consumables')) {
-      if (shooterConfig.food) out.push('Combat rations');
-      AIM_CONSUMABLES.forEach(function (c) { if (c.slot === 'fuel' && shooterConfig.fuel === c.id) out.push(c.name); });
+      if (shooterConfig.food) cons.push('Combat rations');
+      AIM_CONSUMABLES.forEach(function (c) { if (c.slot === 'fuel' && shooterConfig.fuel === c.id) cons.push(c.name); });
     }
-    if (shooterConfig.paint && AIM_PAINT) out.push(AIM_PAINT.name);
+    item('Consumables', cons);
+    item('Paint', shooterConfig.paint && AIM_PAINT ? [AIM_PAINT.name] : []);
     if (!aimForbidden('crew')) {
-      var keys = aimCrewKeys(aimCrew()), have = keys.filter(function (k) { return !!shooterConfig.bia[k]; }).length;
-      if (have) out.push('Brothers in Arms' + (have < keys.length ? ' (' + have + ' of ' + keys.length + ')' : ''));
+      var keys = aimCrewKeys(aimCrew()), have = keys.filter(function (k) { return !!shooterConfig.bia[k]; }).length, crew = [];
+      if (have) crew.push('Brothers in Arms' + (have < keys.length ? ' (' + have + ' of ' + keys.length + ')' : ''));
       var hid = keys.filter(function (k) { return !!(shooterConfig.camo && shooterConfig.camo[k]); }).length;
-      if (hid && AIM_CAMO) out.push(AIM_CAMO.name + (hid < keys.length ? ' (' + hid + ' of ' + keys.length + ')' : ''));
-      var skills = AIM_SKILLS.filter(function (s) { return !!shooterConfig.skills[s.id]; });
-      if (skills.length) out.push(skills.map(function (s) { return s.name; }).join(', '));
+      if (hid && AIM_CAMO) crew.push(AIM_CAMO.name + (hid < keys.length ? ' (' + hid + ' of ' + keys.length + ')' : ''));
+      AIM_SKILLS.forEach(function (s) { if (shooterConfig.skills[s.id]) crew.push(s.name); });
+      item('Crew', crew);
     }
-    return out.length ? out.join(' · ') : 'nothing fitted';
+    return out;
   }
   function aimDirectiveActive(dir) {
     if (!dir) return false;
@@ -1817,30 +1871,27 @@
     var word = String(name || '').split(' ')[0];
     return word.length > 6 ? word.slice(0, 6) : word;
   }
-  // The tooltip of a device: the garage name, the grade, what the family does, every factor with the
-  // input it moves, and the client entry id - so every number on screen can be walked straight back
-  // into optional_devices.xml. The tile itself says none of this; the hover does.
+  // The tooltip of a device: the garage name, what the family does, the grade, every factor with the input it moves
+  // and the weight. The tile itself says none of this; the hover does.
   function aimDeviceTitle(dev) {
-    var tier = TIER_BY_ID[dev.tier] || {}, fam = FAMILY_BY_ID[dev.family] || {}, parts = [];
-    Object.keys(dev.eff).forEach(function (input) {
-      var eff = dev.eff[input], v = aimEffValue(eff);
-      parts.push((eff[0] === 'add' ? (v >= 0 ? '+' : '') + aimNum(v) : '×' + aimNum(v))
-                 + ' on ' + (AIM_INPUT_WORDS[input] || input));
-    });
+    var tier = TIER_BY_ID[dev.tier] || {}, fam = FAMILY_BY_ID[dev.family] || {};
+    var effs = Object.keys(dev.eff).map(function (input) { var eff = dev.eff[input]; return '• ' + aimEffText(eff[0], aimEffValue(eff), input, !!fam.what); });
     // Every device of the client is offered since 23.09: one whose effect the page does not model still weighs
     // something, and the characteristics panel counts that mass.
-    var weight = Number(dev.weight) > 0 ? ' It weighs ' + aimNum(dev.weight) + ' kg, which the characteristics panel adds to the vehicle.' : '';
-    return dev.name + ' · ' + (tier.name || dev.tier) + (fam.what ? ' · it ' + fam.what : '')
-      + ' · ' + (parts.length ? parts.join('; ') + '.' : 'its effect is not shown here; its weight counts.') + weight
-      + ' (optional_devices.xml ' + dev.id + ')';
+    // The experimental families' "what" is a noun phrase ("a laying drive and a stabiliser in one slot"), the others'
+    // a verb phrase ("shortens the reload").
+    var what = fam.what ? (/ in one slot$/.test(fam.what) ? 'Combines ' : 'It ') + fam.what + '.' : null;
+    return tipJoin([dev.name, what, '• Grade: ' + (tier.name || dev.tier)].concat(effs, [
+      effs.length ? null : 'Its effect is not shown here; its weight counts.',
+      Number(dev.weight) > 0 ? '• Weight: ' + aimNum(dev.weight) + ' kg, added to the vehicle on the characteristics panel' : null]));
   }
   // A tile of a kind the vehicle's own lock forbids (S3): shown empty, not pressable, and its tooltip says
-  // why. aria-disabled rather than `disabled`, so the tooltip still shows on hover.
+  // why under the tile's heading `what`. aria-disabled rather than `disabled`, so the tooltip still shows on hover.
   function aimLockTile(tile, kind, what) {
     tile.setAttribute('aria-disabled', 'true');
     tile.setAttribute('aria-pressed', 'false');
     tile.setAttribute('data-tier', 'none');
-    tile.title = what + aimPolicyLine(kind);
+    tile.title = tipJoin([what, aimPolicyLine(kind)]);
     tile.onclick = function (e) { e.stopPropagation(); };
     return tile;
   }
@@ -1851,13 +1902,13 @@
     if (aimForbidden('devices')) {
       tile.setAttribute('aria-label', 'Slot ' + (index + 1) + ': not offered for this vehicle');
       tile.appendChild(aimIcon('empty_slot', '—'));
-      return aimLockTile(tile, 'devices', 'Slot ' + (index + 1) + '. ');
+      return aimLockTile(tile, 'devices', 'Slot ' + (index + 1));
     }
     tile.setAttribute('data-tier', dev ? dev.tier : 'none');
     tile.setAttribute('aria-expanded', String(aimLayer === key));
     var what = 'Slot ' + (index + 1) + '. ';
-    tile.title = dev ? what + aimDeviceTitle(dev) + ' Click to change it, or to take it out.'
-                     : what + 'Empty. Click to fit a piece of equipment.';
+    tile.title = dev ? tipJoin([aimDeviceTitle(dev), '', '• Click: change it or take it out of slot ' + (index + 1)])
+                     : tipJoin(['Empty slot', '• Click: fit a piece of equipment in slot ' + (index + 1)]);
     tile.setAttribute('aria-label', what + (dev ? dev.name : 'Empty'));
     tile.appendChild(dev ? aimIcon(dev.icon, aimShort((FAMILY_BY_ID[dev.family] || {}).name || dev.name),
                                    aimDeviceBadge(dev))
@@ -1913,16 +1964,12 @@
     });
     return out;
   }
-  // Everything the tile no longer prints: the device, its grade note, the collapsed Class bands and
-  // the reason a piece is greyed out.
+  // Everything the tile no longer prints: the device, the collapsed Class bands and the reason a piece is greyed
+  // out. The grade's note is the grade heading's tooltip (aimPicker), not repeated on every tile of the grade.
   function aimPickTitle(item, clash) {
-    var tier = TIER_BY_ID[item.dev.tier] || {};
-    var bands = item.band.length > 1
-      ? ' One item under ' + item.band.length + ' names here — '
-        + item.band.map(function (d) { return d.name; }).join(', ') + ' — for this vehicle.'
-      : '';
-    return aimDeviceTitle(item.dev) + (tier.note ? ' ' + tier.note : '') + bands
-      + (clash >= 0 ? ' Already fitted in another slot.' : '');
+    return tipJoin([aimDeviceTitle(item.dev),
+      item.band.length > 1 ? '• Names: ' + item.band.map(function (d) { return d.name; }).join(', ') + ' - one item for this vehicle' : null,
+      '', clash >= 0 ? 'Already fitted in another slot.' : null]);
   }
   // The equipment picker: one dense grid of icons per grade. Only the pieces THIS vehicle may mount are
   // listed (report section 4); a piece whose archetype another slot already holds is shown disabled
@@ -1933,10 +1980,12 @@
   // still the pressed tile of its grade, and a click on it still takes it out. A collapsed Standard tile is pressed
   // for any Class band it stands for, since a preset may have fitted the other band.
   // The same tile heads the directive picker (aimDirectivePicker): one widget for "nothing in this slot".
+  // `what` names the slot in a sentence: 'slot 1', 'the directive slot'.
   function aimEmptyPick(empty, what, run) {
     var row = node('div', undefined, 'aim-pick-row aim-pick-clear');
     var tile = aimPickTile({icon: 'empty_slot', label: 'Empty slot'},
-                           'Empty slot · ' + what + (empty ? ' It is empty now.' : ' Click to take out what is fitted and leave it empty.'),
+                           tipJoin(['Empty slot', empty ? what.charAt(0).toUpperCase() + what.slice(1) + ' is empty now.'
+                                                        : '• Click: take out what is fitted and leave ' + what + ' empty']),
                            empty, false, 'none');
     // Already empty: nothing to change, so nothing lands in Custom - the picker just closes.
     tile.onclick = function (e) { e.stopPropagation(); if (empty) aimCloseLayer(); else run(); };
@@ -1945,19 +1994,21 @@
   }
   function aimPicker(index) {
     var box = node('div', undefined, 'aim-picker'), fitted = shooterConfig.slots[index];
-    box.appendChild(aimEmptyPick(!fitted, 'Slot ' + (index + 1) + ' with nothing in it.', function () { aimSetSlot(index, ''); }));
+    box.appendChild(aimEmptyPick(!fitted, 'slot ' + (index + 1), function () { aimSetSlot(index, ''); }));
     AIM_GRADE_GROUPS.forEach(function (group) {
       var items = aimGroupItems(group);
       if (!items.length) return;
-      box.appendChild(node('div', group.name, 'aim-pick-grade'));
+      // The grade's note, once, on its heading: its first sentence, the client's code names left out.
+      var head = node('div', group.name, 'aim-pick-grade'), note = aimNoteLines((TIER_BY_ID[group.tiers[0]] || {}).note)[0];
+      if (note) head.title = tipJoin([group.name, note]);
+      box.appendChild(head);
       var row = node('div', undefined, 'aim-pick-row');
       items.forEach(function (item) {
         var dev = item.dev, clash = aimConflict(dev, index);
         var here = !!fitted && item.band.some(function (d) { return d.id === fitted; });
         var tile = aimPickTile({icon: dev.icon, label: dev.name, badge: aimDeviceBadge(dev),
                                 short: (FAMILY_BY_ID[dev.family] || {}).name || dev.name},
-                               aimPickTitle(item, clash)
-                                 + (here ? ' Fitted in slot ' + (index + 1) + ': click it to take it out.' : ''),
+                               tipJoin([aimPickTitle(item, clash), '', here ? '• Click: take it out of slot ' + (index + 1) : null]),
                                here, clash >= 0, dev.tier);
         tile.onclick = function (e) { e.stopPropagation(); aimSetSlot(index, here ? '' : dev.id); };
         row.appendChild(tile);
@@ -1981,30 +2032,23 @@
   // The directive: one slot, in force for the whole battle. An equipment directive without its device
   // is offered but inactive - the client would not apply it either - and says which device it wants.
   function aimDirectiveTitle(dir) {
-    var level = aimDirectiveLevel(dir), parts = [];
+    var level = aimDirectiveLevel(dir);
     if (dir.skill) {
-      var skill = SKILL_BY_ID[dir.skill] || {};
-      var on = !!shooterConfig.skills[dir.skill];
-      return dir.name + ' · a crew directive: it multiplies ' + (skill.name || dir.skill)
-        + '’s trained level by ' + aimNum(dir.skillMult) + ', which doubles that skill’s deviation — '
-        + '×0.925 becomes ×0.85. ' + (on ? 'Active: the skill is trained here.'
-          : 'Inactive: switch ' + (skill.name || dir.skill) + ' on in Crew below. The client also grants the '
-            + 'skill to a crew member who never learned it, but at what level is not in the data, so the page '
-            + 'does not guess one.')
-        + ' (battle_boosters.xml ' + dir.id + ')';
+      var skill = SKILL_BY_ID[dir.skill] || {}, name = skill.name || dir.skill;
+      return tipJoin([dir.name, 'A crew directive: it multiplies ' + name + '’s trained level by ' + aimNum(dir.skillMult)
+        + ', which doubles the skill’s deviation (×0.925 becomes ×0.85).',
+        shooterConfig.skills[dir.skill] ? '• Active: the skill is trained here'
+          : '• Inactive: switch ' + name + ' on in Crew below',
+        shooterConfig.skills[dir.skill] ? null
+          : 'The client also grants the skill to a crew member who never learned it, but at a level the data does not give, so the page does not guess one.']);
     }
     var base = (dir.levels && dir.levels[0]) || {};
-    if (level) Object.keys(level.eff).forEach(function (input) {
-      var eff = level.eff[input], v = Number(eff[1]);
-      parts.push((eff[0] === 'add' ? (v >= 0 ? '+' : '') + aimNum(v) : '×' + aimNum(v))
-                 + ' on ' + (AIM_INPUT_WORDS[input] || input));
-    });
     var needs = (base.needs || []).map(function (tag) {
       return AIM_ARCHETYPE_WORDS[tag] || AIM_GRADE_WORDS[tag] || tag;
     }).join(' ');
-    return dir.name + ' · an equipment directive, in force for the whole battle. '
-      + (level ? parts.join('; ') + '.' : 'Inactive: it needs ' + (needs || 'its own device') + ' in a slot.')
-      + ' (battle_boosters.xml ' + dir.id + ')';
+    return tipJoin([dir.name, 'An equipment directive, in force for the whole battle.'].concat(level
+      ? Object.keys(level.eff).map(function (input) { var eff = level.eff[input]; return '• ' + aimEffText(eff[0], Number(eff[1]), input); })
+      : ['• Inactive: it needs ' + (needs || 'its own device') + ' in a slot']));
   }
   function aimDirectiveTile() {
     var dir = DIRECTIVE_BY_ID[shooterConfig.directive];
@@ -2013,12 +2057,12 @@
     if (aimForbidden('devices')) {
       tile.setAttribute('aria-label', 'Directive: not offered for this vehicle');
       tile.appendChild(aimIcon('empty_slot', '—'));
-      return aimLockTile(tile, 'devices', 'The directive slot. ');
+      return aimLockTile(tile, 'devices', 'Directive slot');
     }
     tile.setAttribute('data-tier', dir ? (aimDirectiveActive(dir) ? 'improved' : 'none') : 'none');
     tile.setAttribute('aria-expanded', String(aimLayer === 'directive'));
-    tile.title = dir ? aimDirectiveTitle(dir) + ' Click to change the directive, or to take it out.'
-                     : 'The directive slot, empty. Click to fit one.';
+    tile.title = dir ? tipJoin([aimDirectiveTitle(dir), '', '• Click: change the directive or take it out'])
+                     : tipJoin(['Empty directive slot', '• Click: fit a directive']);
     tile.setAttribute('aria-label', 'Directive. ' + (dir ? dir.name : 'Empty'));
     tile.appendChild(dir ? aimIcon(dir.icon, aimShort(dir.name)) : aimIcon('empty_slot', '—'));
     tile.onclick = function (e) { e.stopPropagation(); aimOpenLayer('directive'); };
@@ -2030,12 +2074,12 @@
   // empty slot's own tile heads the list (user, 23.09).
   function aimDirectivePicker() {
     var box = node('div', undefined, 'aim-picker');
-    box.appendChild(aimEmptyPick(!DIRECTIVE_BY_ID[shooterConfig.directive], 'The directive slot with nothing in it.', function () { aimSetDirective(''); }));
+    box.appendChild(aimEmptyPick(!DIRECTIVE_BY_ID[shooterConfig.directive], 'the directive slot', function () { aimSetDirective(''); }));
     var row = node('div', undefined, 'aim-pick-row');
     AIM_DIRECTIVES.forEach(function (dir) {
       var active = aimDirectiveActive(dir), here = shooterConfig.directive === dir.id;
       var tile = aimPickTile({icon: dir.icon, label: dir.name},
-                             aimDirectiveTitle(dir) + (here ? ' Fitted: click it to take it out.' : ''),
+                             tipJoin([aimDirectiveTitle(dir), '', here ? '• Click: take it out' : null]),
                              here, false, active ? 'improved' : 'none');
       tile.onclick = function (e) { e.stopPropagation(); aimSetDirective(here ? '' : dir.id); };
       row.appendChild(tile);
@@ -2062,42 +2106,37 @@
   function aimConsumableChips() {
     var row = node('div', undefined, 'aim-chips');
     AIM_CONSUMABLES.forEach(function (c) {
-      var parts = [];
-      Object.keys(c.eff).forEach(function (input) {
-        var eff = c.eff[input], v = Number(eff[1]);
-        parts.push((eff[0] === 'add' ? (v >= 0 ? '+' : '') + aimNum(v) : '×' + aimNum(v))
-                   + ' on ' + (AIM_INPUT_WORDS[input] || input));
-      });
       var on = c.slot === 'food' ? !!shooterConfig.food : shooterConfig.fuel === c.id;
-      var title = c.name + ' · ' + parts.join('; ') + '. ' + (c.note || '')
-        + (c.slot === 'fuel' ? ' One fuel at a time; click the one that is on to take it off.' : '')
-        + ' (vehicle_equipments.xml)';
+      var title = tipJoin([c.name].concat(aimNoteLines(c.note),
+        Object.keys(c.eff).map(function (input) { var eff = c.eff[input]; return '• ' + aimEffText(eff[0], Number(eff[1]), input); }),
+        ['', c.slot === 'fuel' ? '• Click: switch it on or off; one fuel at a time' : null]));
       var chip = aimChip(c.icon, c.name, title, on, function () {
         if (c.slot === 'food') shooterConfig.food = !shooterConfig.food;
         else shooterConfig.fuel = shooterConfig.fuel === c.id ? '' : c.id;
         aimEdited();
       }, false);
-      row.appendChild(aimForbidden('consumables') ? aimLockTile(chip, 'consumables', c.name + '. ') : chip);
+      row.appendChild(aimForbidden('consumables') ? aimLockTile(chip, 'consumables', c.name) : chip);
     });
     // The paint (23.09): not a consumable, but a switch of the vehicle's look that the garage counts - one tile
     // beside them rather than a section of its own.
     if (AIM_PAINT) row.appendChild(aimChip(AIM_PAINT.icon, AIM_PAINT.name,
-      AIM_PAINT.name + ' · ' + AIM_PAINT.note + ' It moves nothing in the circle; the characteristics panel shows it.',
+      tipJoin([AIM_PAINT.name].concat(aimNoteLines(AIM_PAINT.note), ['It moves nothing in the circle; the characteristics panel shows it.'])),
       !!shooterConfig.paint, function () { shooterConfig.paint = !shooterConfig.paint; aimEdited(); }, false));
     return row;
   }
+  // A skill whose catalogue note mostly repeats its effect item: null drops the note, a string keeps only what the
+  // effect item does not say already.
+  var AIM_SKILL_NOTE = {
+    gunner_smoothTurret: null, driver_virtuoso: null, radioman_finder: null,
+    loader_magMastery: 'Not on an automatic gun either.',
+    driver_motorExpert: 'The garage shows no engine-power figure for it in this client.'};
   function aimSkillTitle(s) {
-    var mult = aimSkillMult(s.id), parts = [];
-    Object.keys(s.eff).forEach(function (input) {
-      var eff = aimBoost(s.eff[input], mult), v = eff[1];
-      parts.push((eff[0] === 'add' ? (v >= 0 ? '+' : '') + aimNum(v) : '×' + aimNum(v))
-                 + ' on ' + (AIM_INPUT_WORDS[input] || input));
-    });
-    return s.name + ' · ' + (s.kind === 'perk' ? 'a perk, and it holds only ' + (s.when || 'in its own situation')
-                                               : 'a skill, always on for the fully trained crew the page models')
-      + ' · ' + parts.join('; ') + '.' + (s.note ? ' ' + s.note + '.' : '')
-      + (mult > 1 ? ' A crew directive is doubling its trained level here.' : '')
-      + ' (tankmen.xml ' + s.id + ', perks.xml)';
+    var mult = aimSkillMult(s.id);
+    var note = s.id in AIM_SKILL_NOTE ? [AIM_SKILL_NOTE[s.id]] : aimNoteLines(s.note);
+    return tipJoin([s.name, s.kind === 'perk' ? 'A perk: it holds only ' + (s.when || 'in its own situation') + '.'
+                                              : 'A skill: always on for the fully trained crew the page models.']
+      .concat(Object.keys(s.eff).map(function (input) { var eff = aimBoost(s.eff[input], mult); return '• ' + aimEffText(eff[0], eff[1], input); }),
+              note, [mult > 1 ? 'A crew directive is doubling its trained level here.' : null]));
   }
   // A crew member by his roles, for the tooltips: "Commander", "Commander and Radio Operator", "Loader 2".
   function aimMemberName(crew, keys, i) {
@@ -2117,14 +2156,13 @@
     var who = crew === AIM_DEFAULT_CREW
       ? 'The record does not carry this vehicle’s crew yet, so the page assumes five tankmen: commander, gunner, driver, radio operator and loader.'
       : 'This vehicle’s crew, from the record: ' + crew.map(function (r, j) { return aimMemberName(crew, keys, j); }).join(', ') + '.';
-    return 'Brothers in Arms · ' + aimMemberName(crew, keys, i) + ' · a skill each crew member learns for himself. '
-      + 'The client averages it over the whole crew: each of the ' + n + ' tankmen who has it adds '
-      + aimNum(AIM_BIA_LEVELS) + '/' + n + ' = ' + aimNum(per) + ' crew level' + (per === 1 ? '' : 's')
-      + ' to everybody, one without it adds nothing but still counts, and the full +' + aimNum(AIM_BIA_LEVELS)
-      + ' comes only when all ' + n + ' have it. Now ' + have + ' of ' + n + ': +' + aimNum(per * have)
-      + ' crew level' + (per * have === 1 ? '' : 's')
-      + ', which tighten the circle and the aiming time, shorten the reload and speed the turret up. '
-      + who + ' (tankmen.xml brotherhood; VehicleDescrCrew._calculateLevelIncreaseByBrotherhood)';
+    return tipJoin(['Brothers in Arms: ' + aimMemberName(crew, keys, i),
+      'Each crew member learns it for himself; the client averages it over the whole crew.',
+      '• Each member with it: +' + aimNum(AIM_BIA_LEVELS) + '/' + n + ' = ' + aimNum(per) + ' crew level' + (per === 1 ? '' : 's') + ' to everybody',
+      '• A member without it: adds nothing, but still counts',
+      '• The full +' + aimNum(AIM_BIA_LEVELS) + ': only when all ' + n + ' have it',
+      '• Now: ' + have + ' of ' + n + ', +' + aimNum(per * have) + ' crew level' + (per * have === 1 ? '' : 's'),
+      'Crew levels tighten the circle and the aiming time, shorten the reload and speed the turret up.', '', who]);
   }
   function aimBiaTile(crew, keys, i) {
     var key = keys[i];
@@ -2140,9 +2178,8 @@
   function aimCamoTitle(crew, keys, i) {
     var n = crew.length, have = keys.filter(function (k) { return !!(shooterConfig.camo && shooterConfig.camo[k]); }).length;
     var f = aimCrewFactors(aimAdd(shooterEffects(false).e, 'crewLevel')).camouflage;
-    return AIM_CAMO.name + ' · ' + aimMemberName(crew, keys, i) + ' · ' + (AIM_CAMO.note || '') + '. Now ' + have + ' of ' + n
-      + ': the concealment factor is ' + aimNum(f) + '. It moves nothing in the circle; the characteristics panel shows it.'
-      + ' (tankmen.xml camouflage; VehicleDescrCrew)';
+    return tipJoin([AIM_CAMO.name + ': ' + aimMemberName(crew, keys, i)].concat(aimNoteLines(AIM_CAMO.note),
+      ['• Now: ' + have + ' of ' + n + ', the concealment factor ' + aimNum(f), 'It moves nothing in the circle; the characteristics panel shows it.']));
   }
   function aimCamoTile(crew, keys, i) {
     var key = keys[i];
@@ -2166,11 +2203,11 @@
       members.forEach(function (i) {
         if (AIM_BIA) {
           var tile = aimBiaTile(crew, keys, i);
-          chips.appendChild(locked ? aimLockTile(tile, 'crew', 'Brothers in Arms, ' + aimMemberName(crew, keys, i) + '. ') : tile);
+          chips.appendChild(locked ? aimLockTile(tile, 'crew', 'Brothers in Arms: ' + aimMemberName(crew, keys, i)) : tile);
         }
         if (AIM_CAMO) {
           var camo = aimCamoTile(crew, keys, i);
-          chips.appendChild(locked ? aimLockTile(camo, 'crew', AIM_CAMO.name + ', ' + aimMemberName(crew, keys, i) + '. ') : camo);
+          chips.appendChild(locked ? aimLockTile(camo, 'crew', AIM_CAMO.name + ': ' + aimMemberName(crew, keys, i)) : camo);
         }
       });
       rows.forEach(function (s) {
@@ -2179,7 +2216,7 @@
           else shooterConfig.skills[s.id] = true;
           aimEdited();
         }, s.kind === 'perk');
-        chips.appendChild(locked ? aimLockTile(chip, 'crew', s.name + '. ') : chip);
+        chips.appendChild(locked ? aimLockTile(chip, 'crew', s.name) : chip);
       });
       body.appendChild(chips);
     });
@@ -2193,26 +2230,20 @@
   // three loadout and slot "features" of the tree are not here: none of them changes a characteristic.
   // Everything starts off, the bare vehicle. No word on a tile: the name and the garage's own lines of what it
   // changes are its tooltip, and one help dot under each level gathers the three.
+  // The garage's own lines of what it changes, one item each, then what of it the page counts.
   function aimFieldWords(id) {
-    var m = FIELD_MODS[id], parts = [];
-    Object.keys(m.eff || {}).forEach(function (input) {
-      var e = m.eff[input], v = Number(e[1]);
-      parts.push((e[0] === 'add' ? (v >= 0 ? '+' : '') + aimNum(v) + (input === 'speedForward' || input === 'speedBackward' ? ' km/h' : '') : '×' + aimNum(v))
-                 + ' on ' + (AIM_INPUT_WORDS[input] || input));
-    });
-    return (m.kpi && m.kpi.length ? m.kpi.join('; ') + '. ' : '')
-      + (parts.length ? 'Counted here: ' + parts.join('; ') + (m.rest ? '; the rest is not shown here.' : '.')
-         : 'Nothing of it is shown here.');
+    var m = FIELD_MODS[id], parts = Object.keys(m.eff || {}).map(function (input) { var e = m.eff[input]; return aimEffText(e[0], Number(e[1]), input); });
+    return (m.kpi || []).map(function (k) { return '• ' + k; }).concat(parts.length
+      ? ['• Counted here: ' + parts.join('; '), m.rest ? 'The rest is not shown here.' : null] : ['Nothing of it is shown here.']);
   }
   function aimFieldTitle(id, row) {
     var m = FIELD_MODS[id], on = shooterConfig.field.indexOf(id) >= 0, level = tierRomans[row.level] || String(row.level);
     var partner = FIELD_PARTNER[id], other = partner && shooterConfig.field.indexOf(partner) >= 0;
-    var what = partner ? 'Dual Modification, level ' + level + ': one of two with ' + FIELD_MODS[partner].name
-                       : 'Standard Modification, level ' + level;
-    var act = partner ? (on ? 'On: click to take it off - the pair is then neutral.'
-                            : other ? 'Click: it takes the place of ' + FIELD_MODS[partner].name + '.' : 'Click to switch it on.')
-                      : (on ? 'On: click to take it off.' : 'Click to switch it on.');
-    return m.name + ' · ' + what + ' · ' + aimFieldWords(id) + ' ' + act + ' (field_modifications.xml ' + id + ')';
+    var what = partner ? 'Dual Modification, level ' + level + ': one of two with ' + FIELD_MODS[partner].name + '.'
+                       : 'Standard Modification, level ' + level + '.';
+    var act = '• Click: ' + (on ? 'take it off' + (partner ? '; the pair is then neutral' : '')
+                                    : other ? 'it takes the place of ' + FIELD_MODS[partner].name : 'switch it on');
+    return tipJoin([m.name, what].concat(aimFieldWords(id), ['', act]));
   }
   function aimFieldTile(id, row, key) {
     var m = FIELD_MODS[id], on = shooterConfig.field.indexOf(id) >= 0;
@@ -2221,7 +2252,7 @@
     if (!aimForbidden('devices')) return tile;
     // Where the game fixes the equipment the record's own figures stay whole, the field modification with them.
     aimLockTile(tile, 'devices', '');
-    tile.title = m.name + '. Not set here: the game fixes this vehicle’s equipment, so the record’s own figures - its field modification with them - stay as they are.';
+    tile.title = tipJoin([m.name, 'Not set here: the game fixes this vehicle’s equipment, so the record’s own figures - its field modification with them - stay as they are.']);
     return tile;
   }
   // A click on a tile: off - on, and the other side of its pair off (the swap); on - off.
@@ -2338,7 +2369,7 @@
     aimConfigDirty = false;
     if (aimForbidden('devices') && aimLayer !== 'presets') aimDropLayer();   // a picker left open on the previous shooter goes (S3)
     c.preset.textContent = shooterPreset;
-    c.preset.title = aimEntryTitle(shooterPreset) + ' Click for the list; the arrow keys step through it.';
+    c.preset.title = aimPresetTitle(shooterPreset);
     c.preset.setAttribute('aria-expanded', String(aimLayer === 'presets'));
     c.slots.replaceChildren();
     AIM_SLOTS.forEach(function (i) { c.slots.appendChild(aimSlotTile(i)); });
@@ -2464,15 +2495,17 @@
     return list;
   }
   function aimEntryTitle(name) {
-    return name === AIM_CUSTOM ? 'Custom: your own build. Every change made in this menu lands here and is kept; the presets stay as they are.'
-      : aimBuiltIn(name) ? name + ': a built-in build. A change made to it lands in Custom.'
-      : name + ': your preset. A change made to it lands in Custom.';
+    return tipJoin([name, name === AIM_CUSTOM ? 'Your own build: every change made in this menu lands here and is kept; the presets stay as they are.'
+      : aimBuiltIn(name) ? 'A built-in build: a change made to it lands in Custom.'
+      : 'Your preset: a change made to it lands in Custom.']);
   }
+  // The preset control's own: the entry in force and how to step through the list.
+  function aimPresetTitle(name) { return tipJoin([aimEntryTitle(name), '', '• Click: the list', '• Arrow keys: step through it']); }
   function aimPresetPick(name, kind) {
     var b = node('button', name, 'aim-preset-pick');
     b.type = 'button';
     if (name === shooterPreset) b.setAttribute('aria-current', 'true');
-    b.title = aimEntryTitle(name) + (kind === 'user' ? ' Double-click to rename it.' : '');
+    b.title = tipJoin([aimEntryTitle(name), '', kind === 'user' ? '• Double-click: rename it' : null]);
     b.onclick = function (e) {
       if (kind === 'user' && e && e.detail > 1) { aimStartRename(name); return; }
       if (kind === 'user') aimCloseSoon(); else aimDropLayer(true);
@@ -2548,7 +2581,7 @@
     field.replaceWith(aimPresetPick(name, 'user'));
     if (shooterPreset === name) {   // the preset control carries the name
       c.preset.textContent = name;
-      c.preset.title = aimEntryTitle(name) + ' Click for the list; the arrow keys step through it.';
+      c.preset.title = aimPresetTitle(name);
     }
   }
   // Custom saved as a preset of its own under the first free "Build N", whose name opens for typing at once.
@@ -2598,24 +2631,24 @@
   // does not let the page know. The note under the slots and the "?" on the button went here (user, 22.09):
   // nothing in them changes what can be clicked, so none of it is printed in the menu.
   function aimConfigTitle() {
-    var out = 'This shooter’s equipment, directive, consumables and crew, with presets. Now: ' + aimLongSummary() + '.';
+    var fitted = aimSummaryLines(), out = ['Config', 'This shooter’s equipment, directive, consumables and crew, with presets.'];
+    out = out.concat(fitted.length ? fitted : ['Nothing fitted.'], ['']);
     var fixed = ['devices', 'consumables', 'crew'].filter(aimForbidden)
       .map(function (kind) { return AIM_POLICY_WORDS[kind].toLowerCase(); });
-    if (fixed.length) out += ' The game fixes this vehicle’s ' + fixed.join(', ') + ': what is set here for them is not applied.';
+    if (fixed.length) out.push('The game fixes this vehicle’s ' + fixed.join(', ') + ': what is set here for them is not applied.');
     var unknown = '', why = [];
     ['devices', 'consumables', 'crew'].forEach(function (kind) {
       if (!unknown && shooterPolicy[kind].state === 'unknown') unknown = shooterPolicy[kind].source;
     });
     if (unknown) why.push(unknown);
     if (!(shooterFit && shooterFit.tags) && !/tags/.test(unknown)) why.push('the record does not carry the vehicle’s tags');
-    if (why.length) out += ' Everything is offered, which may be more than the game allowed here: ' + why.join('; ') + '.';
+    if (why.length) out.push('Everything is offered, which may be more than the game allowed here: ' + why.join('; ') + '.');
     var kept = aimKept();
-    if (kept) out += ' Kept from the record: ' + kept + ' (field modifications)'
-      + (aimFieldOffer().levels.length ? ' - until anything in the Field modification block is on, which takes their place.' : '.');
+    if (kept) out.push('• Kept from the record: ' + kept + ' (field modifications)'
+      + (aimFieldOffer().levels.length ? ' - until anything in the Field modification block is on, which takes their place' : ''));
     // The law, once, where the whole build is listed (23.09).
-    if (aimFieldOn()) out += ' Field modification by the client’s law: the deviations of its modifications add up and are applied once (three ×0.99 make ×0.97), and the equipment multiplies on top.';
-    out += aimModifierLine();
-    return out;
+    if (aimFieldOn()) out.push('Field modification by the client’s law: the deviations of its modifications add up and are applied once (three ×0.99 make ×0.97), and the equipment multiplies on top.');
+    return tipJoin(out.concat([''], aimModifierLines()));
   }
   // --- The battle's own modifiers (Onslaught and the other special modes) -------------------------
   // A special mode changes vehicle parameters through BATTLE MODIFIERS the server sends with the arena;
@@ -2693,24 +2726,23 @@
     if (node.max !== null && isFinite(node.max)) out = Math.min(out, node.max);
     return out;
   }
-  // The line the Config tooltip carries when the battle has modifiers of its own.
-  function aimModifierLine() {
+  // The lines the Config tooltip carries when the battle has modifiers of its own ([] when it has none).
+  function aimModifierLines() {
     var battle = activeHit && activeHit.vehicle ? null : current;
     var mods = aimBattleModifiers(battle);
-    if (!mods.any) return '';
-    var mode = battle ? battleModeOf(battle) : null, name = mode && mode.name ? mode.name : 'this mode';
+    if (!mods.any) return [];
+    var mode = battle ? battleModeOf(battle) : null, name = mode && mode.name ? mode.name : 'This mode';
     var a = activeHit && activeHit.attacker && activeHit.attacker.aim;
     var live = a && a.aimFrom !== 'compact';
     var applied = mods.rules.map(function (r) { return AIM_MODIFIER_WORDS[r.field]; });
-    var out = ' ' + name + ' sent this battle ' + (mods.rules.length + mods.unknown.length) + ' modifier'
-      + (mods.rules.length + mods.unknown.length === 1 ? '' : 's') + ' of its own.';
-    out += live ? ' The numbers above are the ones this battle was fought with, so they already carry them.'
-      : applied.length ? ' This block was rebuilt from the vehicle descriptor, so they are applied here: '
-        + applied.join(', ') + '.'
-      : ' This block was rebuilt from the vehicle descriptor and carries none of them.';
-    if (mods.unknown.length) out += ' Not applied: ' + mods.unknown.join(', ')
-      + ' - the page does not model ' + (mods.unknown.length === 1 ? 'it' : 'them') + ' and shows the numbers without.';
-    return out;
+    return [name + ' sent this battle ' + (mods.rules.length + mods.unknown.length) + ' modifier'
+      + (mods.rules.length + mods.unknown.length === 1 ? '' : 's') + ' of its own.',
+      live ? 'The numbers above are the ones this battle was fought with, so they already carry them.'
+        : applied.length ? 'This block was rebuilt from the vehicle descriptor, so they are applied here.'
+        : 'This block was rebuilt from the vehicle descriptor and carries none of them.',
+      !live && applied.length ? '• Applied: ' + applied.join(', ') : null,
+      mods.unknown.length ? '• Not applied: ' + mods.unknown.join(', ') + ' - the page does not model '
+        + (mods.unknown.length === 1 ? 'it' : 'them') + ' and shows the numbers without' : null];
   }
   // THE CONFIGURATOR TAKES OUT WHAT IT APPLIES ITSELF, AND NOTHING ELSE (S3, 22.09 - the open item "equipment
   // double-counted in the recorded aim block"; corrected by the S3 review the same day). The four miscAttrs
@@ -3092,17 +3124,17 @@
     if (!(figure.low >= 0)) return '';
     return (figure.unknown ? Math.round(figure.low) + '–' + Math.round(figure.high) : Math.round(figure.low)) + ' %';
   }
-  var SHARE = ', as a share of the shell’s alpha';
-  var NO_ALPHA = ': penetration chance over the circle — this shell has no alpha, so no damage figure';
+  var SHARE = '\n• Figure: expected damage of a shot inside it, as a share of the shell’s alpha';
+  var NO_ALPHA = '\n• Figure: penetration chance over the circle — this shell has no alpha, so no damage figure';
   var CIRCLE_TITLES = {
-    live: 'Expected damage of a shot inside the live aiming circle',
-    shot: 'Expected damage of the shot inside the magenta ring it left on the model',
+    live: 'Live aiming circle',
+    shot: 'Last shot’s ring\nThe magenta ring the shot left on the model.',
     // The recorded reticle: the circle the shooter's own client had at the instant of the shot, slid
     // along the shot line onto the impact point - the ring drawn solid magenta on the model.
-    saved: 'Expected damage of a shot inside the recorded aiming circle of this hit — the shooter’s client reticle, slid along the shot line to the impact point',
+    saved: 'Recorded aiming circle\nThe shooter’s client reticle at this hit.',
     // No recorded reticle: the dashed magenta ring is the nominal full-aim estimate, and the figure is
     // an estimate with it. Said on the line itself, so the number is never read as a recorded one.
-    estimate: 'This hit has no recorded reticle: the figure is for the nominal full-aim circle drawn on the hit line (gun accuracy × range, no crew or equipment). Expected damage of a shot inside it'
+    estimate: 'Nominal full-aim circle\nThis hit has no recorded reticle: the figure is for this estimate.'
   };
   // One tile per ring, in the colour of the ring it belongs to (user, 20.09; a column of its own at the top
   // RIGHT of the scene since 22.09, each tile on the row of the panel it belongs to): the live cyan one
@@ -3202,10 +3234,9 @@
     return c.kind === 'HIGH_EXPLOSIVE' && c.mechanics === 'MODERN' ? 'HIGH_EXPLOSIVE_MODERN' : c.kind;
   }
   function shellIconTitle(c) {
-    var out = [c.name, shellNames[c.kind] || c.kind, Math.round(c.penetration100) + ' mm'];
-    if (c.alpha > 0) out.push(Math.round(c.alpha) + ' HP');
-    if (c.gunInstallation > 0) out.push('ability gun' + (c.gun ? ' ' + c.gun : ''));
-    return out.join(' · ');
+    return tipJoin([c.name, '• Type: ' + (shellNames[c.kind] || c.kind), '• Penetration: ' + Math.round(c.penetration100) + ' mm',
+      c.alpha > 0 ? '• Damage: ' + Math.round(c.alpha) + ' HP' : null,
+      c.gunInstallation > 0 ? '• Ability gun' + (c.gun ? ': ' + c.gun : '') : null, '', '• Click: use this shell']);
   }
   function paintGunShells() {
     var box = $('aim-gun-shells');
@@ -3333,25 +3364,26 @@
   function magTitle(a, rl, n, loaded, filling, loadLeft, gate, real) {
     var sec = function (v) { return aimNum(Math.round(v * 10) / 10); };
     var list = a && a.autoreload && a.autoreload.reloadTime, auto = n > 1 && Array.isArray(list) && list.length > 0;
-    var out = n > 1 ? 'Magazine ' + loaded + ' / ' + n + '.'
-      : filling === 0 ? 'Loading: ' + Math.ceil(loadLeft) + ' s left of ' + sec(rl.reload) + ' s.' : 'Loaded. The reload takes ' + sec(rl.reload) + ' s.';
+    // Tooltip markup (tooltips.js): the state is the heading, the figures are points.
+    var out = n > 1 ? 'Magazine ' + loaded + ' / ' + n
+      : filling === 0 ? 'Loading: ' + Math.ceil(loadLeft) + ' s left of ' + sec(rl.reload) + ' s' : 'Loaded\n• Reload: ' + sec(rl.reload) + ' s';
     if (n > 1) {
-      if (filling === n) out += ' The whole clip is reloading: ' + Math.ceil(loadLeft) + ' s left.';
-      else if (filling >= 0) out += ' A round is loading back: ' + Math.ceil(loadLeft) + ' s left.';
-      if (gate > 0 && loaded > 0) out += ' The next round in ' + Math.ceil(gate) + ' s.';
-      out += ' Rounds ' + sec(rl.interval) + ' s apart';
+      if (filling === n) out += '\n• Clip reloading: ' + Math.ceil(loadLeft) + ' s left';
+      else if (filling >= 0) out += '\n• Round loading back: ' + Math.ceil(loadLeft) + ' s left';
+      if (gate > 0 && loaded > 0) out += '\n• Next round: in ' + Math.ceil(gate) + ' s';
+      out += '\n• Rounds: ' + sec(rl.interval) + ' s apart';
       if (auto) {
         var k = a.reloadTime > 0 ? rl.reload / a.reloadTime : 1, boost = Number(a.autoreload.boostFraction);
-        out += '; each spent round loads back on its own timer, one at a time - from an empty magazine ' +
-          list.slice().reverse().map(function (v) { return sec(Number(v) * k); }).join(', ') + ' s.';
-        if (boost > 0 && boost < 1) out += ' Improved autoreloader: a round fired once the gun has rested - at least ' +
-          sec(rl.interval + (Number(a.autoreload.boostStartTime) || 0)) + ' s into a round’s load and within ' + sec(Number(a.autoreload.boostResidueTime) || 0) +
-          ' s of its end, or with the magazine full - loads the next one in ×' + aimNum(boost) + ' of its time under ⌖ with ◔.' +
-          ' The game’s own numbers; that the cut is ×' + aimNum(boost) + ' rather than less by it is this page’s reading.';
-      } else out += '; the whole clip reloads in ' + sec(rl.reload) + ' s once it is empty.';
+        out += '\n• Load back: one round at a time, each on its own timer — from empty ' +
+          list.slice().reverse().map(function (v) { return sec(Number(v) * k); }).join(', ') + ' s';
+        if (boost > 0 && boost < 1) out += '\n• Improved autoreloader: a round fired after a rest loads the next one in ×' + aimNum(boost) + ' of its time (⌖ with ◔)' +
+          '\n• Rest: at least ' + sec(rl.interval + (Number(a.autoreload.boostStartTime) || 0)) + ' s into a round’s load and within ' +
+          sec(Number(a.autoreload.boostResidueTime) || 0) + ' s of its end, or a full magazine' +
+          '\nThe game’s numbers; this page reads ×' + aimNum(boost) + ' as the share of the time kept, not the share cut.';
+      } else out += '\n• Clip reload: ' + sec(rl.reload) + ' s once it is empty';
     }
-    if (!real) out += n > 1 ? ' Simplified (⌖ or ◔ off): a hold fires what the magazine holds, nothing loads back, and the next press starts full.'
-      : ' Simplified (⌖ or ◔ off): the reload runs only while the button is held.';
+    if (!real) out += n > 1 ? '\n\n• Simplified (⌖ or ◔ off): a hold fires what the magazine holds, nothing loads back, the next press starts full'
+      : '\n\n• Simplified (⌖ or ◔ off): the reload runs only while the button is held';
     return out;
   }
   // One shot (user's decision, 19.09: no Alt - it may never reach the page inside the game). The tracer
@@ -3769,13 +3801,13 @@
       bands.push('×' + aimNum(s.factor) + (i > 0 ? ' above ' + aimNum(p.states[i - 1].top) : ' up to ' + aimNum(s.top)));
     });
     var now = h.band >= 0 ? p.states[h.band].factor : 1;
-    box.title = 'Gun heat ' + Math.round(h.t) + ' / ' + aimNum(p.max) + (h.locked ? ' — overheated, fires again in ' + Math.ceil(left) + ' s' : '') +
-      '. Each round adds ' + aimNum(p.per) + '; after ' + aimNum(p.delay) + ' s without firing the gun cools ' + aimNum(p.cool) +
-      ' a second.' + (p.lock ? ' At ' + aimNum(p.on) + ' it overheats and locks: it cools at ×' + aimNum(p.slow) + ' (' + aimNum(p.cool * p.slow) +
-      ' a second) and fires again only at ' + aimNum(p.off) + '. The mark is the warning at ' + aimNum(p.warn) + '.'
-        : ' It never overheats: this gun has no lock.') +
-      (bands.length ? ' The aiming circle is ' + bands.join(', ') + ' — now ×' + aimNum(now) + '.' : '') +
-      ' The game’s own numbers for this gun; the ⌖ emulation runs them, the server keeps the real temperature.';
+    box.title = 'Gun heat ' + Math.round(h.t) + ' / ' + aimNum(p.max) + (h.locked ? '\n• Overheated: fires again in ' + Math.ceil(left) + ' s' : '') +
+      '\n• Per round: +' + aimNum(p.per) + '\n• Cooling: ' + aimNum(p.cool) + ' a second after ' + aimNum(p.delay) + ' s without firing' +
+      (p.lock ? '\n• Overheat: at ' + aimNum(p.on) + ' the gun locks, cools at ×' + aimNum(p.slow) + ' (' + aimNum(p.cool * p.slow) +
+      ' a second) and fires again only at ' + aimNum(p.off) + '; a press meanwhile blinks this bar\n• Mark: the warning at ' + aimNum(p.warn)
+        : '\n• Overheat: never — this gun has no lock') +
+      (bands.length ? '\n• Aiming circle: ' + bands.join(', ') + ' — now ×' + aimNum(now) : '') +
+      '\nThe game’s own numbers for this gun; the server keeps the real temperature.';
   }
   // --- ✸: the circle after a round, and one pull = the whole burst (23.09, BACKLOG 35-36) --------------------------
   // The client's formula takes the after-shot term by three branches (ArmorBallistics.shotTerm) and multiplies the
@@ -3987,7 +4019,7 @@
     if (hpMax > 0) {
       kill = hpLeft > 0 && hpLeft - damage <= 0;
       hpLeft = Math.max(0, hpLeft - damage);
-      hpRoll = 'Last shot: ' + FUN_WORDS[v.outcome] + (damage > 0 ? ', ' + hpNumber(damage) + ' HP' + (mark ? ' (×' + mark.factor + ': the target carries a Borkenkäfer mark)' : '') : ', no damage') + '.';
+      hpRoll = '• Last shot: ' + FUN_WORDS[v.outcome] + (damage > 0 ? ', ' + hpNumber(damage) + ' HP' + (mark ? ' (×' + mark.factor + ': the target carries a Borkenkäfer mark)' : '') : ', no damage');
     }
     if (pin && pin.point) funMark(v, shell);
     paintFun();
@@ -4061,13 +4093,12 @@
     if (key === hpTitleKey) return;
     hpTitleKey = key;
     bar.title = hpNumber(hpLeft) + ' / ' + hpNumber(hpMax) + ' HP' +
-      (hpLeft <= 0 ? ' · destroyed; further shots still leave Hitmarks' : '') + '. ' + (hpRoll || 'Nothing fired yet.') +
-      ' Each hit rolls its damage as alpha × (1 ± ' + Math.round(funRandomization(viewer && viewer.shell) * 100) +
-      ' %), the shell’s own spread from the record; a hit that does not pierce rolls the reconstructed' +
-      ' non-penetration damage the same way. The SHAPE of that roll is drawn uniformly - the client stores' +
-      ' the kind of the roll but makes it on the server, so it is this page’s assumption, not a confirmed rule.' +
-      (mark ? ' The target carries a leKpz Borkenkäfer mark' + (mark.from === 'record' ? ' (the record’s, at this hit)' : '') + ' - ' + Math.ceil(mark.left) +
-        ' s left: every hit on it rolls ×' + mark.factor + ', the stock factor (×1.15 with the marker’s full skill tree, which the record cannot tell).' : '');
+      (hpLeft <= 0 ? '\n• Destroyed: further shots still leave Hitmarks' : '') + '\n' + (hpRoll || '• Last shot: nothing fired yet') +
+      '\n• Damage roll: alpha × (1 ± ' + Math.round(funRandomization(viewer && viewer.shell) * 100) +
+      ' %), the shell’s spread; a non-penetration rolls its reconstructed damage alike' +
+      (mark ? '\n• leKpz Borkenkäfer mark' + (mark.from === 'record' ? ' (the record’s, at this hit)' : '') + ': ' + Math.ceil(mark.left) +
+        ' s left — every hit on it rolls ×' + mark.factor + ' (×1.15 with the marker’s full skill tree, which the record cannot tell)' : '') +
+      '\nThe uniform shape of the roll is this page’s assumption.';
   }
   // Full health again and no Hitmarks: the ↺ button, and every change of the vehicle on screen. The
   // health is looked up for the vehicle ON SCREEN, so ↺ brings the bar back whenever the record knows it.
@@ -4160,11 +4191,11 @@
     'usa:A182_T803': {mech: 'battleFury', name: 'T803', glyph: '⇈', kind: 'fury', levelMax: 5, duration: 9.5, bonus: 0.02, perHit: 1, perKill: 2},
     'italy:It43_CAV_mod_71': {mech: 'autoreloaderSurge', name: 'CAV mod. 71', glyph: '↯', kind: 'surge', maxCharges: 3, startCharges: 1, chargeRegular: 50, chargeFull: 18, reloadTime: 8.5},
     'france:F135_AS_XX_40_t': {mech: 'stationaryReload', name: 'AS-XX 40 t', glyph: '⧖', kind: 'skip',
-      why: 'The stationary reload: preparingDelay 4.5 s and finishingDelay 3 s (2.5 and 1.5 s in the garage with the full skill tree). The client carries these numbers but not the rule the server runs them by - when the vehicle counts as standing, what the gun lock mask holds - so the emulation does not run it.'},
+      why: 'stationary reload\n• Delays: preparing 4.5 s, finishing 3 s (2.5 and 1.5 s in the garage with the full skill tree)\n• Not emulated: the game files lack the rule the server runs them by - when the vehicle counts as standing, what the gun lock holds'},
     'france:F136_AMX_67_Imbattable': {mech: 'extraShotClip', name: 'AMX 67 Imbattable', glyph: '⊞', kind: 'skip',
-      why: 'The extra shot: extraReloadTime 4.5 s (2.5 with the full skill tree). The client carries the number, but not what the extra round does to the reload or what the values of its reloadState mean, so the emulation does not run it.'},
+      why: 'extra shot\n• Extra-shot reload: 4.5 s (2.5 with the full skill tree)\n• Not emulated: the game files do not say what the extra round does to the reload'},
     'uk:GB152_AT_FV230_Breaker': {mech: 'powerMode', name: 'AT-FV230 Breaker', glyph: '⇶', kind: 'skip',
-      why: 'Direct Drive: after 18 s of driving forward faster than 7 km/h it builds up in 3 s to speed ×1.35, hull traverse ×0.7, engine power ×1.36 and dispersion ×2.0. Which term of the circle that ×2.0 doubles the client does not say (it never reads it) - blocked until a battle on the Breaker shows it in the server’s own factors of the shot (aimAtTracer.targeting).'}
+      why: 'Direct Drive\n• Builds up: after 18 s of driving forward faster than 7 km/h, in 3 s, to speed ×1.35, hull traverse ×0.7, engine power ×1.36 and dispersion ×2.0\n• Not emulated: the game does not say which term of the circle the ×2.0 doubles - blocked until a battle on the Breaker shows it in the server’s own factors of the shot'}
   };
   var XI_SECONDARY_CLEAR = {afterShotInBurstFactor: undefined, burst: undefined, autoreload: undefined, autoShoot: undefined,
     dualAccuracy: undefined, dualGun: undefined, twinGun: undefined, temperatureGun: undefined, overheatGun: undefined,
@@ -4207,7 +4238,7 @@
     // pillbox on the recorded block, as it did before.
     if (!second && sm.kind !== 'auto' && !base) {
       return {mech: 'siegeMode', name: name, glyph: k.glyph, kind: 'skip', label: k.label,
-        why: k.label + ': the second mode’s numbers come with the vehicle’s characteristics file, and this vehicle has none yet (the game writes it in the garage), so the emulation cannot switch it.'};
+        why: k.label + '\n• Not emulated: the second mode’s numbers come with the vehicle’s characteristics file, which the game writes in the garage - this vehicle has none yet'};
     }
     return {mech: base ? base.mech : 'siegeMode', kind: 'siege', mode: sm.kind, name: name, glyph: base ? base.glyph : k.glyph, label: k.label,
       on: siegeNum(sm.switchOnTime, 2), off: siegeNum(sm.switchOffTime, 2), cancel: sm.switchCancelEnabled === true,
@@ -4799,52 +4830,66 @@
   // The words, all of them here: the state now, what a press does, the client's numbers and this page's readings.
   function xiSec(v) { return String(Math.ceil(Math.max(0, v))); }
   function xiTitle(m, now) {
-    var s = m.spec, head = s.name + ' — ', from = m.record ? ' Started from the recorded state of this shot.' : ' No state of it is recorded for this shot: started from the default.';
-    var stock = ' The client’s own stock numbers (' + s.mech + ' of client 2.4.0.1); the server applies them - the emulation runs them under ⌖.';
+    // Tooltip markup (tooltips.js): the vehicle and its mechanic are the heading, then the state, the press and the
+    // numbers as points; the provenance and this page's readings close it.
+    var s = m.spec, head = s.name + ' — ', from = '\n' + (m.record ? 'Started from the recorded state of this shot.' : 'No state of it is recorded for this shot: started from the default.');
+    var stock = '\nThe game’s stock numbers, run under ⌖.';
     switch (s.kind) {
       case 'stance':
-        return head + 'the stance: ' + (m.stance === 1 ? 'turbo' : 'fight') + (m.to !== null ? ', switching to ' + (m.to === 1 ? 'turbo' : 'fight') + ' - ' + xiSec(m.until - now) + ' s' : '') +
-          (m.fightUntil > now ? '; the fight ability on - ' + xiSec(m.fightUntil - now) + ' s left' : '') + '. Fight energy ' + Math.floor(m.energy) + ' / ' + s.energyMax + '.' +
-          ' Press: switch the stance - ' + s.switchTime + ' s, the new stance takes over at its end. Turbo, the whole stance: aiming time ×1.9, the movement, hull and turret terms of the circle ×1.9, the after-shot term ×1.66, +15 / +5 km/h.' +
-          ' Fight: the energy builds ' + s.energyPerSec + ' a second and +' + s.energyPerHit + ' for a hit that deals damage; at ' + s.energyMax + ' the fight ability for ' + s.fightTime + ' s - the circle ×0.8, aiming time ×0.75, reload ×0.8.' +
-          stock + ' This page’s readings: the ability goes off the moment the energy is full (the game spends the ' + s.energyMax + ' when the player calls it), the energy does not build while it runs, it runs its time whatever the stance, and the gun is not locked while the stance switches; ×1.66 on the after-shot term has no line in the garage.' + from;
+        return head + 'stance\n• Now: ' + (m.stance === 1 ? 'turbo' : 'fight') + (m.to !== null ? ', switching to ' + (m.to === 1 ? 'turbo' : 'fight') + ' - ' + xiSec(m.until - now) + ' s' : '') +
+          (m.fightUntil > now ? '; the fight ability on - ' + xiSec(m.fightUntil - now) + ' s left' : '') + '\n• Fight energy: ' + Math.floor(m.energy) + ' / ' + s.energyMax +
+          '\n• Press: switch the stance - ' + s.switchTime + ' s, the new stance takes over at its end' +
+          '\n\n• Turbo: aiming time ×1.9; the movement, hull and turret terms of the circle ×1.9; the after-shot term ×1.66; +15 / +5 km/h' +
+          '\n• Fight: energy +' + s.energyPerSec + ' a second, +' + s.energyPerHit + ' per damaging hit; at ' + s.energyMax + ' the fight ability for ' + s.fightTime + ' s - the circle ×0.8, aiming time ×0.75, reload ×0.8' +
+          stock + '\nThis page’s readings:' +
+          '\n• Fight ability: goes off the moment the energy is full (the game spends the ' + s.energyMax + ' when the player calls it) and runs its time in either stance; the energy does not build meanwhile' +
+          '\n• Stance switch: the gun is not locked' + from;
       case 'ability':
-        return head + 'the pneumatic gyro-stabiliser: ' + (m.state === 'active' ? 'on - ' + xiSec(m.until - now) + ' s left' : m.state === 'cooldown' ? 'cooling down - ' + xiSec(m.until - now) + ' s'
-          : m.state === 'deploy' ? 'deploying - ' + xiSec(m.until - now) + ' s' : 'ready') + '.' +
-          ' Press: switch it on for ' + s.duration + ' s, then it cools down ' + s.cooldown + ' s. While on: the movement, hull and turret terms of the circle ×0, aiming time ×0.3, the circle ×0.94, hull traverse ×1.1.' +
-          stock + ' The ' + s.deploy + ' s it deploys at the start of a battle are not run here unless the record says so.' + from;
+        return head + 'pneumatic gyro-stabiliser\n• Now: ' + (m.state === 'active' ? 'on - ' + xiSec(m.until - now) + ' s left' : m.state === 'cooldown' ? 'cooling down - ' + xiSec(m.until - now) + ' s'
+          : m.state === 'deploy' ? 'deploying - ' + xiSec(m.until - now) + ' s' : 'ready') +
+          '\n• Press: on for ' + s.duration + ' s, then it cools down ' + s.cooldown + ' s' +
+          '\n• While on: the movement, hull and turret terms of the circle ×0, aiming time ×0.3, the circle ×0.94, hull traverse ×1.1' +
+          '\n• Deploy: ' + s.deploy + ' s at the start of a battle, run only if the record says so' + stock + from;
       case 'siege': return xiSiegeTitle(m, now, head, from);
       case 'rocket': return xiRocketTitle(m, now, head, from);
       case 'designator':
         var mark = xiMarkNow();
-        return head + 'the target designator: ' + (m.state === 'armed' ? 'armed - the next round marks what it hits' : m.state === 'cooldown' ? 'cooling down - ' + xiSec(m.until - now) + ' s'
-          : m.state === 'deploy' ? 'deploying - ' + xiSec(m.until - now) + ' s' : 'ready') + '.' + (mark ? ' The target is marked - ' + xiSec(mark.left) + ' s left.' : '') +
-          ' Press: arm it (again: disarm). The armed round marks the vehicle it hits for ' + s.markTime + ' s, and a marked vehicle takes ×' + XI_MARK + ' of the damage of every shell - under ⌖ the damage rolled on it; the cooldown, ' + s.cooldown + ' s, runs from the round.' +
-          stock + ' This page’s readings: the marking round itself does not get the ×' + XI_MARK + ', and any hit marks, a ricochet too.' + from;
+        return head + 'target designator\n• Now: ' + (m.state === 'armed' ? 'armed - the next round marks what it hits' : m.state === 'cooldown' ? 'cooling down - ' + xiSec(m.until - now) + ' s'
+          : m.state === 'deploy' ? 'deploying - ' + xiSec(m.until - now) + ' s' : 'ready') + (mark ? '\n• Target: marked - ' + xiSec(mark.left) + ' s left' : '') +
+          '\n• Press: arm it; again: disarm' +
+          '\n• Mark: the vehicle the armed round hits, for ' + s.markTime + ' s; it takes ×' + XI_MARK + ' of the damage of every shell (under ⌖: the damage rolled on it)' +
+          '\n• Cooldown: ' + s.cooldown + ' s, from the round' +
+          stock + '\nThis page’s readings: the marking round itself does not get the ×' + XI_MARK + '; any hit marks, a ricochet too.' + from;
       case 'weapon':
         var sec = activeHit && activeHit.attacker && activeHit.attacker.aim && activeHit.attacker.aim.secondary;
-        return head + (m.weapon === 1 ? s.what + ' in hand' : 'the main gun in hand') + '.' +
-          ' Press: take up ' + (m.weapon === 1 ? 'the main gun' : s.what) + '. Each gun has its own circle and its own reload: the one put away goes on loading, and the shell on screen follows the gun.' +
-          ' ' + (sec ? 'The second gun’s numbers are the record’s (aim.secondary).' : 'This record carries no numbers of the second gun: its stock figures from the vehicle file are used (' + s.gun.name + ': reload ' + s.gun.reloadTime + ' s, aiming ' + s.gun.aimingTime + ' s, ' +
-          aimNum(Math.round(Math.tan(s.gun.dispersion) * 1e4) / 100) + ' m at 100 m' + (s.gun.clip[0] > 1 ? ', ' + s.gun.clip[0] + ' rounds ' + s.gun.clip[1] + ' s apart' : '') + ').') + from;
+        return head + 'second gun\n• In hand: ' + (m.weapon === 1 ? s.what : 'the main gun') +
+          '\n• Press: take up ' + (m.weapon === 1 ? 'the main gun' : s.what) +
+          '\nEach gun has its own circle and reload: the one put away goes on loading, and the shell on screen follows the gun.' +
+          '\n• Second gun’s numbers: ' + (sec ? 'the record’s' : 'stock, from the vehicle file (not in this record) - reload ' + s.gun.reloadTime + ' s, aiming ' + s.gun.aimingTime + ' s, ' +
+          aimNum(Math.round(Math.tan(s.gun.dispersion) * 1e4) / 100) + ' m at 100 m' + (s.gun.clip[0] > 1 ? ', ' + s.gun.clip[0] + ' rounds ' + s.gun.clip[1] + ' s apart' : '')) + from;
       case 'burst':
-        return head + 'the Burst mode: ' + (m.burst ? 'on - one press fires the burst' : 'off - one press, one round') + '.' +
-          ' Press: switch it. In the game it charges after two penetrations; here the button switches it. While on: the burst of the gun (2 rounds 1.5 s apart, every round but the last widening the circle by its own factor), the movement, hull and turret terms of the circle ×0, aiming time ×0.3.' +
+        return head + 'Burst mode\n• Now: ' + (m.burst ? 'on - one press fires the burst' : 'off - one press, one round') +
+          '\n• Press: switch it (in the game it charges after two penetrations)' +
+          '\n• While on: the gun’s burst (2 rounds 1.5 s apart, every round but the last widening the circle by its own factor); the movement, hull and turret terms of the circle ×0; aiming time ×0.3' +
           stock + from;
       case 'stacks':
-        return head + 'accuracy stacks: level ' + m.level + ' of ' + m.max + (m.level > 0 ? ' - the circle ×' + aimNum(Math.round((1 - m.bonus * m.level) * 1e4) / 1e4) : '') + '.' +
-          ' It works by itself: a level every ' + aimNum(m.gainTime) + ' s below ' + aimNum(m.gainKmh) + ' km/h, up to ' + m.max + ', and every round takes them all away; a level narrows the circle by ' + aimNum(m.bonus * 100) + ' %.' +
-          stock + ' This page’s reading: the level scales the full-aim circle (×(1 − ' + aimNum(m.bonus) + ' × level)); the moving bonus (stabilizeBonus 0.7) and aimBonusCap 0.95 are not applied - when and on what they work the client does not say.' + from;
+        return head + 'accuracy stacks\n• Now: level ' + m.level + ' of ' + m.max + (m.level > 0 ? ' - the circle ×' + aimNum(Math.round((1 - m.bonus * m.level) * 1e4) / 1e4) : '') +
+          '\n• Works by itself: a level every ' + aimNum(m.gainTime) + ' s below ' + aimNum(m.gainKmh) + ' km/h, up to ' + m.max + '; every round takes them all away' +
+          '\n• Per level: the circle ' + aimNum(m.bonus * 100) + ' % narrower' +
+          '\n• Not applied: the moving bonus (0.7) and the 0.95 cap - the game does not say when they work' +
+          stock + '\nThis page’s reading: the level scales the full-aim circle, ×(1 − ' + aimNum(m.bonus) + ' × level).' + from;
       case 'fury':
-        return head + 'battle fury: level ' + m.level + ' of ' + m.max + (m.level > 0 ? ' - the reload ×' + aimNum(Math.round((1 - s.bonus * m.level) * 1e4) / 1e4) + ', a level lost in ' + xiSec(m.at + s.duration - now) + ' s' : '') + '.' +
-          ' It works by itself: +' + s.perHit + ' for a hit that deals damage, +' + s.perKill + ' more for the one that destroys the target, up to ' + m.max + '; every level shortens the reload by ' + aimNum(s.bonus * 100) + ' %.' +
-          stock + ' This page’s readings: a level lasts ' + s.duration + ' s and they go one at a time, and the level counts when the reload starts.' + from;
+        return head + 'battle fury\n• Now: level ' + m.level + ' of ' + m.max + (m.level > 0 ? ' - the reload ×' + aimNum(Math.round((1 - s.bonus * m.level) * 1e4) / 1e4) + ', a level lost in ' + xiSec(m.at + s.duration - now) + ' s' : '') +
+          '\n• Works by itself: +' + s.perHit + ' for a hit that deals damage, +' + s.perKill + ' more for the one that destroys the target, up to ' + m.max +
+          '\n• Per level: the reload ' + aimNum(s.bonus * 100) + ' % shorter' +
+          stock + '\nThis page’s readings: a level lasts ' + s.duration + ' s and they go one at a time; the level counts when the reload starts.' + from;
       case 'surge':
-        return head + 'the autoloader surge: ' + m.charges + ' of ' + s.maxCharges + ' charges' + (m.boostUntil > now ? ' - a surged round loading, ' + xiSec(m.boostUntil - now) + ' s' : '') + '.' +
-          ' Press: spend a charge on the round loading back - it loads in ' + s.reloadTime + ' s instead of its own 10-16 s. A charge builds every ' + s.chargeRegular + ' s, every ' + s.chargeFull + ' s with the magazine full, up to ' + s.maxCharges + '.' +
-          stock + ' This page’s reading: one charge is one round, spent by the press (the client gives the numbers, not how a charge is spent); it needs real reload ◔.' + from;
+        return head + 'autoloader surge\n• Now: ' + m.charges + ' of ' + s.maxCharges + ' charges' + (m.boostUntil > now ? ' - a surged round loading, ' + xiSec(m.boostUntil - now) + ' s' : '') +
+          '\n• Press: spend a charge on the round loading back - it loads in ' + s.reloadTime + ' s instead of its own 10-16 s' +
+          '\n• Charges: one every ' + s.chargeRegular + ' s (' + s.chargeFull + ' s with the magazine full), up to ' + s.maxCharges +
+          stock + '\nThis page’s reading: one charge is one round, spent by the press; it needs real reload ◔.' + from;
       case 'skip':
-        return head + s.why + ' The button does nothing.';
+        return head + s.why + '\nThe button does nothing.';
     }
     return head;
   }
@@ -4859,50 +4904,51 @@
     var words = function (st) { return st === 2 ? 'the pillbox' : st === 1 ? k.on : k.off; }, out;
     if (s.mode === 'auto') {
       var t = s.tilt, deg = function (r) { return aimNum(Math.round(Math.abs(r) * 1800 / Math.PI) / 10); };
-      return head + k.label + ': ' + (m.on ? k.on : k.off) + '.' +
-        ' It works by itself: the server tilts the hull' + (t ? ' ' + deg(t.max) + '° down and ' + deg(t.min) + '° up at ' + deg(t.speed) + '°/s' : '') +
-        ' once the vehicle is at or below ' + xiKmh(s.autoOn) + ' km/h, and levels it above ' + xiKmh(s.autoOff) + ' km/h. The circle does not change: the second descriptor differs only in the hull’s tilt, which the dispersion formula does not read. The button takes no press.' + from;
+      return head + k.label + '\n• Now: ' + (m.on ? k.on : k.off) +
+        '\n• Works by itself: the server tilts the hull' + (t ? ' ' + deg(t.max) + '° down and ' + deg(t.min) + '° up at ' + deg(t.speed) + '°/s' : '') +
+        ' at or below ' + xiKmh(s.autoOn) + ' km/h and levels it above ' + xiKmh(s.autoOff) + ' km/h' +
+        '\n• Circle: does not change - the two modes differ only in the hull’s tilt\n• Button: takes no press' + from;
     }
-    out = head + k.label + ': ' + words(m.st) + (m.to !== null ? ', switching to ' + words(m.to) + ' - ' + xiSec(m.until - now) + ' s' : '') + '.';
-    if (m.refused) out += ' The last press was refused: the engine mode switches only standing - stop first.';
+    out = head + k.label + '\n• Now: ' + words(m.st) + (m.to !== null ? ', switching to ' + words(m.to) + ' - ' + xiSec(m.until - now) + ' s' : '');
+    if (m.refused) out += '\n• Last press refused: the engine mode switches only standing - stop first';
     if (s.pill) {
-      out += ' Touch (shorter than ' + XI_TAP + ' s): ' + (m.st === 2 ? 'to siege, ' + s.pill.toSiege + ' s' : m.st === 1 ? 'to travel, ' + s.off + ' s' : 'to siege, ' + s.on + ' s') +
-        '; hold ' + XI_HOLD + ' s: ' + (m.st === 2 ? 'out to travel, ' + s.pill.toDrive + ' s' : 'into the pillbox, ' + (m.st === 1 ? s.pill.fromSiege : s.pill.fromDrive) + ' s') +
-        '; a press between the two does nothing (the client’s own times).';
+      out += '\n• Touch (shorter than ' + XI_TAP + ' s): ' + (m.st === 2 ? 'to siege, ' + s.pill.toSiege + ' s' : m.st === 1 ? 'to travel, ' + s.off + ' s' : 'to siege, ' + s.on + ' s') +
+        '\n• Hold ' + XI_HOLD + ' s: ' + (m.st === 2 ? 'out to travel, ' + s.pill.toDrive + ' s' : 'into the pillbox, ' + (m.st === 1 ? s.pill.fromSiege : s.pill.fromDrive) + ' s') +
+        '\nA press between the two does nothing.';
     } else {
-      out += ' Press: ' + (m.st === 1 ? k.switchOff + (s.off > 0 ? ' - ' + aimNum(s.off) + ' s' : '') : k.switchOn + (s.on > 0 ? ' - ' + aimNum(s.on) + ' s' : '')) +
-        (s.cancel ? '; a press while it switches cancels it' : '') + '.';
+      out += '\n• Press: ' + (m.st === 1 ? k.switchOff + (s.off > 0 ? ' - ' + aimNum(s.off) + ' s' : '') : k.switchOn + (s.on > 0 ? ' - ' + aimNum(s.on) + ' s' : '')) +
+        (s.cancel ? '; a press while it switches cancels it' : '');
     }
-    out += s.on > 0 || s.off > 0 ? ' While it switches the gun does not fire' + (s.stop ? ' and the vehicle stops - W A S D do nothing' : ' - the engine keeps running (the switch belongs to the gun)') +
-      '; the old mode holds until the switch ends.' : ' The switch is instant.';
+    out += s.on > 0 || s.off > 0 ? '\n• While it switches: the gun does not fire' + (s.stop ? ', the vehicle stops and W A S D do nothing' : ', the engine keeps running') +
+      '; the old mode holds until the switch ends' : '\n• Switch: instant';
     if (second && first) {
-      out += ' ' + xiCap(k.on) + ': the circle ' + xiM100(second.dispersion) + ' m at 100 m (' + xiM100(first.dispersion) + ' in ' + k.off + '), aiming ' +
-        aimNum(second.aimingTime) + ' s (' + aimNum(first.aimingTime) + ')' + (second.speedForward > 0 ? ', top speed ' + xiKmh(second.speedForward) + ' km/h (' + xiKmh(first.speedForward) + ')' : '') + '.';
-      out += sec.from === 'ttx' ? ' The second mode’s numbers are the vehicle’s characteristics file’s (its pair), with the recorded block’s own factors.' : ' The second mode’s numbers are the record’s (attacker.modeAim).';
-    } else if (s.pill) out += ' This record carries no siege block and the vehicle no characteristics file: the pillbox works on the recorded block.';
-    if (s.pill) out += ' In the pillbox, on the siege mode’s own circle: the circle ×0.85, reload ×0.925, no driving, hull traverse ×0.4.';
-    if (a.staticTurretYaw !== undefined && a.staticTurretYaw !== null) out += ' The gun is held on the hull’s axis while you drive and while the mode switches; standing, it moves in its sector (the client’s gun rotator).';
-    if (aimYawLimits(first) || aimYawLimits(a)) out += ' Past its sector the hull turns by itself towards the cursor at its own traverse speed, as the game’s autorotation does; A and D take over.';
-    if (s.mode === 'turboshaft') out += ' The engine mode switches only standing (the client’s help).';
-    if (s.mode === 'wheeled') out += ' Standing, a French wheeled vehicle does not turn on the spot: A and D steer only on the move.' + (s.rapid ?
-      ' Rapid narrows the wheels’ steering lock from ' + aimNum(s.rapid.cruise) + '° to ' + aimNum(s.rapid.rapid) + '°: the hull turns ×' + aimNum(s.rapid.hullSpeed) +
-      ' (our estimate - at a given speed a wheeled hull turns as the tangent of its lock; the game gives no figure).' :
-      ' Rapid narrows the wheels’ steering lock (the characteristics panel); without the characteristics file the hull traverse stays the block’s.');
-    if (s.mode === 'twinGun') out += ' The salvo’s double damage and double reload are not emulated yet; with one shell left the game refuses the switch - the page’s ammunition is endless.';
-    return out + ' Damage to the engine (longer switches) is not modelled.' + from;
+      out += '\n\n• ' + xiCap(k.on) + ': the circle ' + xiM100(second.dispersion) + ' m at 100 m (' + xiM100(first.dispersion) + ' in ' + k.off + '), aiming ' +
+        aimNum(second.aimingTime) + ' s (' + aimNum(first.aimingTime) + ')' + (second.speedForward > 0 ? ', top speed ' + xiKmh(second.speedForward) + ' km/h (' + xiKmh(first.speedForward) + ')' : '');
+      out += sec.from === 'ttx' ? '\nThe second mode’s numbers are from the vehicle’s characteristics file, with the recorded block’s own factors.' : '\nThe second mode’s numbers are the record’s.';
+    } else if (s.pill) out += '\n\nThis record carries no siege block and the vehicle no characteristics file: the pillbox works on the recorded block.';
+    if (s.pill) out += '\n• Pillbox, on the siege mode’s own circle: the circle ×0.85, reload ×0.925, no driving, hull traverse ×0.4';
+    if (a.staticTurretYaw !== undefined && a.staticTurretYaw !== null) out += '\n• Gun: held on the hull’s axis while you drive and while the mode switches; standing, it moves in its sector';
+    if (aimYawLimits(first) || aimYawLimits(a)) out += '\n• Past its sector: the hull turns by itself towards the cursor at its own traverse speed, as the game’s autorotation does; A and D take over';
+    if (s.mode === 'turboshaft') out += '\n• Engine mode: switches only standing';
+    if (s.mode === 'wheeled') out += '\n• Standing: a French wheeled vehicle does not turn on the spot - A and D steer only on the move' + (s.rapid ?
+      '\n• Rapid: the wheels’ steering lock ' + aimNum(s.rapid.cruise) + '° → ' + aimNum(s.rapid.rapid) + '°, the hull turns ×' + aimNum(s.rapid.hullSpeed) +
+      ' (our estimate: at a given speed a wheeled hull turns as the tangent of its lock; the game gives no figure)' :
+      '\n• Rapid: narrows the wheels’ steering lock (the characteristics panel); without the characteristics file the hull traverse stays the block’s');
+    if (s.mode === 'twinGun') out += '\n• Salvo: double damage and double reload are not emulated yet; with one shell left the game refuses the switch - the page’s ammunition is endless';
+    return out + '\n• Not modelled: damage to the engine (longer switches)' + from;
   }
   function xiRocketTitle(m, now, head, from) {
     var s = m.spec, a = aimBlockData() || {}, f = s.mods, cap = a.speedForward > 0 ? a.speedForward : 0;
     var state = m.state === 'active' ? 'burning - ' + xiSec(m.until - now) + ' s left' : m.state === 'cooldown' ? 'recharging - ' + xiSec(m.until - now) + ' s'
       : m.state === 'deploy' ? 'deploying - ' + xiSec(m.until - now) + ' s' : m.state === 'empty' ? 'spent' : 'ready';
-    return head + 'the rocket booster: ' + state + '.' + (isFinite(s.uses) ? ' Uses left: ' + m.uses + ' of ' + s.uses + '.' : '') +
-      ' Press: fire it for ' + aimNum(s.duration) + ' s; it recharges ' + aimNum(s.cooldown) + ' s between two uses.' +
-      ' While it burns: top speed ' + (cap ? xiKmh(cap) + ' → ' + xiKmh(cap * (f.forwardSpeed > 0 ? f.forwardSpeed : 1)) + ' km/h' : '×' + aimNum(f.forwardSpeed || 1)) +
+    return head + 'rocket booster\n• Now: ' + state + (isFinite(s.uses) ? '\n• Uses left: ' + m.uses + ' of ' + s.uses : '') +
+      '\n• Press: fire it for ' + aimNum(s.duration) + ' s; it recharges ' + aimNum(s.cooldown) + ' s between two uses' +
+      '\n• While it burns: top speed ' + (cap ? xiKmh(cap) + ' → ' + xiKmh(cap * (f.forwardSpeed > 0 ? f.forwardSpeed : 1)) + ' km/h' : '×' + aimNum(f.forwardSpeed || 1)) +
       ', reverse ×' + aimNum(f.backwardSpeed !== undefined ? f.backwardSpeed : 1) + ', hull traverse ×' + aimNum(f.hullSpeed !== undefined ? f.hullSpeed : 1) +
-      (f.power ? ', engine power ×' + aimNum(f.power) + ' (the page accelerates linearly in time and reads no power)' : '') + '.' +
-      ' It has no factor of the dispersion: the circle grows only with the speed and the hull traverse, by the same formula - faster, so wider, and it takes longer to settle.' +
-      ' The client’s own numbers (rocketAcceleration of client 2.4.0.1, from the vehicle’s characteristics file); the server applies them - the emulation runs them under ⌖. The ' +
-      aimNum(s.deploy) + ' s it deploys at the start of a battle are not run here unless the record says so.' + from;
+      (f.power ? ', engine power ×' + aimNum(f.power) + ' (not read: the page accelerates linearly in time)' : '') +
+      '\n• Circle: no factor of its own - it grows only with the speed and the hull traverse, so faster means wider and slower to settle' +
+      '\n• Deploy: ' + aimNum(s.deploy) + ' s at the start of a battle, run only if the record says so' +
+      '\nThe game’s own numbers, from the vehicle’s characteristics file; the emulation runs them under ⌖.' + from;
   }
   // The switch itself. Off means off: no frame loop, no key handlers, no live circle, no crosshair, and
   // everything recorded is back on the model.
@@ -5200,9 +5246,9 @@
     var pinned=!!(viewer&&viewer.pinned),line=armorLine(r,shell?shell.penetration:null,range);fillPanel('shot',line,shell&&shell.alpha);
     logVerdicts(shell);
     // The tile's own tooltip says what its number is before it says where the line comes from.
-    $('shot-panel').title=(damageView?'Expected damage per shot along the saved hit line, as a share of the shell’s alpha: the penetration chance times alpha, plus the reconstructed non-penetration damage for the rest, divided by alpha.\n\nThe record holds what the shot did; this is the expectation it had, not the rolled RNG.':shotPanelTitle)+markNote(shell&&shell.alpha);
+    $('shot-panel').title=(damageView?'Expected damage on the hit line\nPer shot, as a share of the shell’s alpha:\n• Penetration: the chance × alpha\n• No penetration: the reconstructed non-penetration damage\nThe expectation the shot had, not the rolled RNG: the record holds what it did.':shotPanelTitle)+markNote(shell&&shell.alpha);
     aimTitle();
-    output.title=!r?'No parameters or the pose changed':pinned?'Along the pinned line from the current view':'Along the saved line · flight ≈ '+Math.round(range)+' m · nominal penetration '+Math.round(shell.penetration)+' mm';
+    output.title=!r?'No parameters or the pose changed':pinned?'Along the pinned line from the current view':'Along the saved line\n• Flight: ≈ '+Math.round(range)+' m\n• Nominal penetration: '+Math.round(shell.penetration)+' mm';
     // The ring on screen is part of the key: a pinned point and the user's first emulated shot both take
     // the recorded rings away, and the line that describes them has to go with them.
     var ringShown=!!(viewer&&viewer.savedAimShown&&viewer.savedAimShown());
@@ -5240,9 +5286,9 @@
   function markNote(alpha){
     var mk=shotContext&&shotContext.mark;
     if(!mk)return '';
-    return '\n\nThe target carried a leKpz Borkenkäfer mark at this hit ('+Math.ceil(mk.left)+' s of it left): every shell deals it ×'+mk.low+
+    return '\n\n• leKpz Borkenkäfer mark: on the target at this hit, '+Math.ceil(mk.left)+' s left\n• Mark damage: every shell ×'+mk.low+
       ' (×'+mk.high+' with the marker’s full skill tree, which the record cannot tell)'+(alpha>0?' - '+Math.round(alpha*mk.low)+'…'+Math.round(alpha*mk.high)+' HP for this shell’s '+Math.round(alpha):'')+
-      '. The shares here are of the plain alpha, so they stand; the damage window of the shell choice reaches ×'+mk.high+' at the top. The factor is the server’s, the numbers the client’s.';
+      '\n• Shares here: of the plain alpha, so they stand';
   }
   // The tail of the recorded ring's tooltip: which circles this hit has and how the figure over them is
   // sampled. The toolbar box that used to carry this text together with the figure is gone (user, 22.09:
@@ -5251,12 +5297,13 @@
   // the Display setting - composed HERE, once, because the tile's tooltip is rewritten on every repaint.
   var aimStatus='',aimExtra='',shotPanelTitle=$('shot-panel').title;
   function aimTitle(){
-    aimExtra=' Reticle circles on the model. '+aimStatus+' Over the saved circle: '+ArmorBallistics.aimProfile().label+
-      '; 256 rays, misses = 0. Server formula not confirmed'+(damageView?'; the non-penetration part is a reconstruction (ratio law). No map obstacles, target motion or splash onto other parts.':'; no map obstacles, target motion or blast damage.');
+    aimExtra=(aimStatus?'\n\n'+aimStatus:'')+'\n\n• Sampling: '+ArmorBallistics.aimProfile().label+', 256 rays, misses = 0'+
+      '\n• Not modelled: map obstacles, target motion, '+(damageView?'splash onto other parts':'blast damage')+
+      '\nServer formula not confirmed'+(damageView?'; the non-penetration part is a reconstruction (ratio law).':'.');
   }
   // The heading row has no space for the full wording: the label reads “Pen.” and the sentence lives in its title.
   // A saved shell's field holds the client's first value, which holds up to 50 m and falls off beyond (BACKLOG № 32).
-  function penLabel(near){var e=$('penetration-label');e.textContent='Pen.';e.title=near?'Penetration up to 50 m, mm — it falls off with the distance':'Penetration at target, mm';}
+  function penLabel(near){var e=$('penetration-label');e.textContent='Pen.';e.title=near?'Penetration up to 50 m, mm\nFalls off with the distance.':'Penetration at target, mm';}
   function selectShell(){
     var index=$('shell-choice').value,c=index.indexOf('saved:')===0?candidates[Number(index.slice(6))]:null;
     var point=(activeHit&&activeHit.points||[]).find(function(p){return p.caliber>0;});
@@ -5288,15 +5335,16 @@
     // title of the shell group, and the two states that are a warning keep their words in #parameters-notice.
     // A manual shell says whose alpha it is using: the type, the penetration and the calibre are the user's,
     // the damage side is the shooter's own shell of that type (user, 22.09).
-    var lent=!c&&shell&&shell.alpha>0?' · alpha of the shooter’s '+(shell.alphaFrom||'shell'):'';
-    var source=!choice?'Pick a shell':!valid?'No penetration in the record':(actual?'● From the hit':assumed?'◌ Assumed shell':c?(browsing?'● Shooter’s shell':'◇ Comparison'):'◇ Manual')+lent+' · '+Math.round(shell.penetration)+' mm at target · ±'+Math.round(shell.randomization*100)+'%'+(shell.alphaNear>0?' · alpha '+Math.round(shell.alpha)+' HP at target':'');
+    // Tooltip markup (tooltips.js): the shell's source is the heading, its figures are points.
+    var lent=!c&&shell&&shell.alpha>0?'\n• Alpha: of the shooter’s '+(shell.alphaFrom||'shell'):'';
+    var source=!choice?'Pick a shell':!valid?'No penetration in the record':(actual?'● From the hit':assumed?'◌ Assumed shell':c?(browsing?'● Shooter’s shell':'◇ Comparison'):'◇ Manual')+'\n• Penetration: '+Math.round(shell.penetration)+' mm at target, ±'+Math.round(shell.randomization*100)+'%'+lent+(shell.alphaNear>0?'\n• Alpha at target: '+Math.round(shell.alpha)+' HP':'');
     // The alpha field says the same about a shell whose damage falls off with the distance (damageMutable).
-    var alphaTitle='Alpha of the shell, HP — the damage figures are shares of it'+(shell&&shell.alphaNear>0?'. This shell’s damage falls off with the distance: the field holds it up to 50 m, '+Math.round(shell.alpha)+' HP at '+Math.round(distance)+' m':'');
+    var alphaTitle='Shell alpha, HP\nThe damage figures are shares of it.'+(shell&&shell.alphaNear>0?'\n• Falls off with the distance: the field holds it up to 50 m; '+Math.round(shell.alpha)+' HP at '+Math.round(distance)+' m':'');
     $('alpha-label').title=alphaTitle;$('alpha').title=alphaTitle;
     // Damage mode says out loud that the non-penetration part is a reconstruction; without an alpha in the
-    // record the old sentence stands, because then nothing but the penetration is drawn anyway.
-    var damageNote=(c?c.kind:choice)==='HIGH_EXPLOSIVE'&&shell&&shell.alpha>0?'HE non-penetration damage: reconstruction (ratio law), not a confirmed server formula.':'HE: penetration only, no blast damage.';
-    var sourceTitle=source+' · '+(shotContext?shotContext.source:'')+' · Nominal penetration at the current distance, not the rolled RNG. '+damageNote;
+    // record the old sentence stands, because then nothing but the penetration is drawn anyway. Only an HE shell says it.
+    var he=(c?c.kind:choice)==='HIGH_EXPLOSIVE',damageNote=!he?'':shell&&shell.alpha>0?'\nHE non-penetration damage: a reconstruction (ratio law), not a confirmed server formula.':'\nHE: penetration only, no blast damage.';
+    var sourceTitle=source+(shotContext&&shotContext.source?'\n• Record: '+shotContext.source:'')+'\nNominal penetration at the current distance, not the rolled RNG.'+damageNote;
     $('shell-choice').title=sourceTitle;if(shellGroup)shellGroup.title=sourceTitle;
     document.querySelectorAll('[data-shell]').forEach(function(b){b.setAttribute('aria-pressed',String(b.dataset.shell===choice));});
     var kind=c?c.kind:choice;document.querySelectorAll('#shell-types [data-kind]').forEach(function(b){b.setAttribute('aria-pressed',String(b.dataset.kind===kind));});
@@ -5347,7 +5395,7 @@
   function damageGroups(r){
     var s=viewer&&viewer.shell;if(!s)return [];
     if(r.damageLaw==='legacy-unknown')return [{kind:'damage',text:'splash not modelled'}];
-    if(r.damageLaw==='special-unknown')return [{kind:'damage',text:'non-pen unknown',title:'This shell has its own spall absorption rule and does deal damage without piercing; no law fits the recorded shots, so the number is a lower bound (penetration only).'}];
+    if(r.damageLaw==='special-unknown')return [{kind:'damage',text:'non-pen unknown',title:'Non-penetration damage unknown\nThis shell has its own spall rule and does deal damage without piercing, but no law fits the recorded shots: the figure is a lower bound (penetration only).'}];
     if(r.damageLaw!=='ratio'||!(r.nonPen>0)||r.chance===null||r.chance===undefined)return [];
     var liner=s.liner>0?s.liner:1,pass=r.screenPass===undefined||r.screenPass===null?1:r.screenPass;
     var groups=[{kind:'damage',text:'pen '+Math.round(r.chance)+' %'},
@@ -5355,10 +5403,10 @@
       // scale: "pen 40 % · non-pen 5 %" adds up to the 43 % above it without a unit change in the middle.
       {kind:'damage',text:'non-pen '+Math.round(s.alpha>0?100*r.nonPen/s.alpha:0)+' %',
        // Two decimals: the liner is no longer one device factor but the product of the Target switches (1.725).
-       title:'Damage without piercing, as a share of alpha: '+Math.round(r.nonPen)+' HP of '+Math.round(s.alpha||0)+' HP · spall '+Math.round(s.spallDamage||0)+' HP · plate '+Math.round(r.nominal)+' mm · liner ×'+liner.toFixed(2)}];
+       title:'Non-penetration damage, share of alpha\n• Damage: '+Math.round(r.nonPen)+' HP of '+Math.round(s.alpha||0)+' HP\n• Spall: '+Math.round(s.spallDamage||0)+' HP\n• Plate: '+Math.round(r.nominal)+' mm\n• Liner: ×'+liner.toFixed(2)}];
     // A screen on the way: the chance the shell gets through it at all; below it the shell explodes on the screen
     // and deals nothing, so the non-penetration damage only counts in the gap between passing and piercing.
-    if(pass<.995)groups.push({kind:'damage',text:'through screen '+Math.round(pass*100)+' %',title:'Chance to pass the screen(s); stopped there, the shell deals no damage at all'});
+    if(pass<.995)groups.push({kind:'damage',text:'through screen '+Math.round(pass*100)+' %',title:'Chance to pass the screens\nStopped there, the shell deals no damage at all.'});
     return groups;
   }
   // Compact reading of one ballistic result: the chance first, then the numbers that explain it.
@@ -5414,9 +5462,10 @@
       var o=node('button',undefined,'battle-option');o.type='button';o.setAttribute('role','option');
       o.setAttribute('data-id',b.id);o.setAttribute('aria-selected',String(b.id===id));
       o.appendChild(node('span',b.map||'Unknown map','battle-option-map'));
-      var slot=node('span',undefined,'battle-option-vehicle');if(b.vehicle)slot.appendChild(vehicleTile(b.vehicle));
+      var slot=node('span',undefined,'battle-option-vehicle');if(b.vehicle)slot.appendChild(vehicleTile(b.vehicle,true));
       o.appendChild(slot);o.appendChild(node('span',battleWhen(b.startedAt),'battle-option-when'));
-      o.title=[b.map||'Unknown map',b.vehicle&&b.vehicle.name,battleWhen(b.startedAt)].filter(Boolean).join(' \u00b7 ');
+      var line=[b.vehicle&&b.vehicle.name,battleWhen(b.startedAt)].filter(Boolean).join(' \u00b7 ');
+      o.title=(b.map||'Unknown map')+(line?'\n'+line:'');
       o.onclick=function(){pickBattle(b.id);};
       list.appendChild(o);
     });
@@ -5517,7 +5566,7 @@
     if(shooter)b.setAttribute('data-role','shooter');
     b.appendChild(node('span',row.name||'Unknown vehicle','picker-vehicle'));
     b.appendChild(node('span',row.player||'','picker-player'));
-    b.title=[row.name||'Unknown vehicle',row.player,side==='ally'?'Ally':'Enemy',shooter?'in the shooter role':''].filter(Boolean).join(' · ');
+    b.title=(row.name||'Unknown vehicle')+'\n'+[row.player,side==='ally'?'Ally':'Enemy',shooter?'in the shooter role':''].filter(Boolean).join(' · ');
     // The roster serves whichever scene tile is the active role: the model tile reads the battle from this
     // vehicle, the shooter tile puts his gun against the model already on screen.
     b.onclick=function(){if(activeRole==='shooter')pickShooter(row);else chooseFocus(row.id);};
@@ -5763,21 +5812,22 @@
     if(!hit)$('pose-info').hidden=true;
     var target=hit&&hit.target||null,attacker=hit&&hit.attacker||null,button=$('shooter-tile'),model=$('model-tile');
     $('model-caption').textContent=reference?'Reference model':'Collision model';
-    model.hidden=!target;$('model-tile-body').replaceChildren();if(target)$('model-tile-body').appendChild(vehicleTile(target));
-    button.hidden=!attacker;$('shooter-tile-body').replaceChildren();if(attacker)$('shooter-tile-body').appendChild(vehicleTile(attacker));
+    model.hidden=!target;$('model-tile-body').replaceChildren();if(target)$('model-tile-body').appendChild(vehicleTile(target,true));
+    button.hidden=!attacker;$('shooter-tile-body').replaceChildren();if(attacker)$('shooter-tile-body').appendChild(vehicleTile(attacker,true));
     // Both tiles are role controls in both modes (user, 19.09): the one pressed last is the role the next
     // click in the side panel fills - a catalogue row in Vehicles, a roster row in Battles. The swap that
     // used to sit on the shooter tile has a button of its own next to it.
     model.disabled=false;button.disabled=false;
-    model.title=roleHint('model');button.title=roleHint('shooter');
+    model.title=roleHint('model',target);button.title=roleHint('shooter',attacker);
     swapTile(hit);roleTiles();
     ttxPaint();   // no Shooter tile, no characteristics panel
   }
   // What a click on this tile does: it opens the vehicle list on the vehicle that is in this role, in either
-  // mode, and the next row clicked there fills it.
-  function roleHint(role){
-    return role==='shooter'?'The shooter \u00b7 click to pick him in the vehicle list: his gun against the model on screen'
-      :'The collision model on screen \u00b7 click to pick it in the vehicle list';
+  // mode, and the next row clicked there fills it. The tile inside is bare: its vehicle's words come in here.
+  function roleHint(role,info){
+    var words=info?vehicleWords(info).split('\n'):[],vehicle=words.length?'\n\u2022 Vehicle: '+words[0]+(words[1]?' ('+words[1]+')':''):'';
+    return role==='shooter'?'Shooter\nHis gun fires at the model on screen.'+vehicle+'\n\u2022 Click: pick him in the vehicle list'
+      :'Collision model on screen'+vehicle+'\n\u2022 Click: pick it in the vehicle list';
   }
   function roleTiles(){
     $('model-tile').setAttribute('aria-pressed',String(activeRole!=='shooter'));
@@ -5839,7 +5889,8 @@
     var reason=aimReady?'saved reticle':estimate?'nominal estimate':!(viewer&&viewer.point&&viewer.travel)?'no resolved impact point':!(hit.attacker&&hit.attacker.gunDispersion>0)?'no gun dispersion in the record':!(shotContext.range>0||hit.rangeAtImpact>0)?'no range for this hit':!ownShot?'enemy reticle unavailable':(aimReasons[shotContext.aimReason]||'no linked snapshot').toLowerCase();
     // What the circles mean and where this one came from is the tooltip of the Circle tile at the right edge
     // of the scene (the toolbar's own reticle box went with its figure on 22.09).
-    var status=aimReady?'This hit: ● solid magenta — the client reticle at the shot, ◌ dashed magenta — the server reticle, both slid along the shot line to the impact point. Every standing ring is magenta; only the live emulation ring is cyan.':estimate?'This hit: ◌ dashed magenta — nominal full-aim estimate of the '+(estimate.gun||'mounted gun')+': '+(estimate.dispersion*100).toFixed(2)+' m at 100 m × '+Math.round(estimate.range)+' m ('+(estimate.source==='tracer'?'tracer range':'approximate range at impact')+') = ⌀ '+(estimate.radius*2).toFixed(2)+' m. Without crew or equipment, centred on the hit line; not the recorded reticle and not used in the figure.':'This hit: no reticle — '+reason+'.';
+    // Tooltip markup (tooltips.js): one point per ring on the model.
+    var status=aimReady?'• ● Solid magenta: the client reticle at the shot\n• ◌ Dashed magenta: the server reticle\nBoth slid along the shot line to the impact point; only the live emulation ring is cyan.':estimate?'• ◌ Dashed magenta: '+(estimate.gun||'mounted gun')+', '+(estimate.dispersion*100).toFixed(2)+' m at 100 m × '+Math.round(estimate.range)+' m ('+(estimate.source==='tracer'?'tracer range':'approximate range at impact')+') = ⌀ '+(estimate.radius*2).toFixed(2)+' m\nWithout crew or equipment, centred on the hit line.':'No reticle for this hit: '+reason+'.';
     // One line per hit in the page console; the game writes page console lines into game.log, so an in-game
     // report about missing rings can be read there instead of guessed at.
     if(window.console)console.info('Bullba Hits aim: hit '+hit.id+' '+(view||'other')+' saved='+!!aimReady+' estimate='+!!estimate+' reason='+reason);
@@ -5889,8 +5940,12 @@
       var any=!!current&&current.hits.some(function(h){return !!viewDirection(h);});
       container.appendChild(node('p',!current?'No records yet. Start the game with the recorder and play a battle. The viewer can stay open.':any?'No hits for the chosen filter.':focusNote||'No hits for '+focusName()+' in this battle','empty'));
       return;}
-    hits.forEach(function(h){var hasDamage=h.damage>0,view=viewDirection(h),b=node('button',undefined,'hit');b.setAttribute('aria-pressed',String(selected===h.id));b.setAttribute('data-direction',view);b.setAttribute('data-result',hasDamage?'damage':'none');b.title=(view==='incoming'?'Incoming from '+((h.attacker||{}).name||'?'):'Outgoing at '+((h.target||{}).name||'?'))+' · '+result(h)+(ArmorCrits.describe(h)?' · '+ArmorCrits.describe(h):'');
-      b.appendChild(vehicleTile(view==='incoming'?h.attacker:h.target));
+    hits.forEach(function(h){var hasDamage=h.damage>0,view=viewDirection(h),b=node('button',undefined,'hit');b.setAttribute('aria-pressed',String(selected===h.id));b.setAttribute('data-direction',view);b.setAttribute('data-result',hasDamage?'damage':'none');
+      // One tooltip for the whole row (the tile inside is bare): who, then the result and the critical damage.
+      // result() speaks for a details row labelled Result: after the key its own leading "Result" goes.
+      var critWords=ArmorCrits.describe(h,true),said=result(h).replace(/^Result (\d)/,'Effect $1').replace(/^Result not/,'Not');
+      b.title=(view==='incoming'?'Incoming from '+((h.attacker||{}).name||'?'):'Outgoing at '+((h.target||{}).name||'?'))+'\n• Result: '+said+(critWords?'\n• Critical damage: '+critWords:'');
+      b.appendChild(vehicleTile(view==='incoming'?h.attacker:h.target,true));
       // Critical damage (22.09): the client's own icons of the damaged modules and injured crew, up to four in a
       // 2x2 grid, every word in the icon's title. Nothing known about the crits of this hit - no element at all.
       // An icon that fails to load (not extracted yet) takes itself away, and the empty box with it.
@@ -6073,8 +6128,9 @@
     }
     $('pose-turret').textContent=turret;$('pose-gun').textContent=gun;
     // A turret and gun the client holds still (viewer.poseLocks, 23.09): the words only in the tile's tooltip.
-    var locks=(viewer.poseLocks&&viewer.poseLocks())||{},held=locks.turret&&locks.gun?'turret and gun':locks.turret?'turret':locks.gun?'gun':'';
-    var lockWords=held?'The client holds this '+held+' fixed (the gun’s static angles): the garage draws '+(locks.turret&&locks.gun?'them':'it')+' in that pose and its armour view does not let '+(locks.turret&&locks.gun?'them':'it')+' be dragged - nor does this one.':'';
+    var locks=(viewer.poseLocks&&viewer.poseLocks())||{},held=locks.turret&&locks.gun?'Turret and gun':locks.turret?'Turret':locks.gun?'Gun':'';
+    var them=locks.turret&&locks.gun?'them':'it';
+    var lockWords=held?held+' fixed\nThe game holds '+them+' in this pose; neither the garage armour view nor this page lets '+them+' be dragged.':'';
     if($('pose-info').title!==lockWords)$('pose-info').title=lockWords;
     $('pose-note').textContent=off?'The recorded shot’s own marks are hidden until the recorded pose returns':'';$('pose-note').hidden=!off;
     var shown=turret+'|'+gun+'|'+off;if(shown!==poseShown){poseShown=shown;scheduleLayout(LAYOUT_POSE);}
@@ -6187,7 +6243,7 @@
   // NOTHING HERE RUNS ON A FRAME: the panel is painted on an event - another shooter, a Config change, ⚙, a pair,
   // another shell, its file arriving, the expanded view opened - and writes only the text that changed.
   // The field modification (user, 23.09) is Config's: its block sets it, aimEffects counts it with the equipment by
-  // the client's law, and the build's figures carry it; the stock has none (ttxFieldWords says which in a tooltip).
+  // the client's law, and the build's figures carry it; the stock has none (⚙'s tooltip says which, ttxBuildTitle).
   // Without the vehicle's characteristics file (data/ttx/<id>.js, written by the mod) the panel is not shown.
   var TTX = window.BullbaTtx || null;
   var ttxCache = {}, ttxOrder = [], ttxPending = {}, ttxAsked = {}, ttxTried = {}, ttxData = null, ttxType = '';
@@ -6258,29 +6314,30 @@
     icon.innerHTML = '<svg viewBox="0 0 16 16">' + (TTX_GLYPHS[name] || '') + '</svg>';
     return icon;
   }
-  // Every row of the panel: [glyph, name, unit]. The words live in the row's tooltip only.
+  // Every row of the panel: [glyph, name, unit, what it is]. The name and unit head the row's tooltip; the last, where
+  // the name alone does not say it, is the line under them. The words live in the row's tooltip only.
   var TTX_ROWS = {
     avgDamagePerMinute: ['dpm', 'Damage per minute', 'HP'],
     shotsPerMinute: ['spm', 'Rate of fire', 'rounds a minute'],
     // The parts of the reload line (web/ttx.js reloadLine), by the garage's own names of those figures (menu.mo).
     reloadTimeSecs: ['reload', 'Gun loading', 's'],
-    clipFireRate: ['reload', 'Reload of the magazine: from the last round fired to a full magazine', 's'],
+    clipFireRate: ['reload', 'Reload of the magazine', 's', 'From the last round fired to a full magazine.'],
     shellsCount: ['clip', 'Shells in the magazine', 'rounds'],
     shellReloadingTime: ['interval', 'Loading between shots', 's'],
-    burstFireRate: ['burst', 'Loading between the shells of one container (one burst)', 's'],
-    autoReloadTime: ['autoreload', 'Autoreloading of each shell, in loading order from an empty magazine', 's'],
+    burstFireRate: ['burst', 'Loading within a burst', 's', 'Between the shells of one container (one burst).'],
+    autoReloadTime: ['autoreload', 'Autoreloading of each shell', 's', 'In loading order, from an empty magazine.'],
     autoShootClipFireRate: ['reload', 'Reload of the magazine', 's'],
     shellLoadingTime: ['reload', 'Ammunition belt loading', 's'],
     continuousShotsPerMinute: ['spmHold', 'Rate of continuous fire', 'rounds a minute'],
-    twinGunSwitchFireModeTime: ['switchTime', 'Fire mode switch time: single fire / salvo', 's'],
-    chargeTime: ['salvo', 'Salvo preparation: charging both barrels / the reload lock after a salvo', 's'],
-    overheat: ['overheat', 'Heat: rounds before the gun overheats / the burst / the cooling', 'rounds / s / s'],
+    twinGunSwitchFireModeTime: ['switchTime', 'Fire mode switch time', 's', 'Single fire / salvo.'],
+    chargeTime: ['salvo', 'Salvo preparation', 's', 'Charging both barrels / the reload lock after a salvo.'],
+    overheat: ['overheat', 'Heat', 'rounds / s / s', 'Rounds before the gun overheats / the burst / the cooling.'],
     shotDispersionAngle: ['dispersion', 'Dispersion at 100 m', 'm'],
     aimingTime: ['aiming', 'Aiming time', 's'],
-    stabMovement: ['stabMovement', 'Dispersion on the move (not in the garage: the client’s own factor)', 'per km/h'],
-    stabRotation: ['stabRotation', 'Dispersion on hull traverse (the client’s own factor)', 'per °/s'],
-    stabTurret: ['stabTurret', 'Dispersion on turret traverse (the client’s own factor)', 'per °/s'],
-    stabAfterShot: ['stabAfterShot', 'Dispersion after a shot (the client’s own factor)', ''],
+    stabMovement: ['stabMovement', 'Dispersion on the move', 'per km/h', 'Not in the garage: the client’s own factor.'],
+    stabRotation: ['stabRotation', 'Dispersion on hull traverse', 'per °/s', 'The client’s own factor.'],
+    stabTurret: ['stabTurret', 'Dispersion on turret traverse', 'per °/s', 'The client’s own factor.'],
+    stabAfterShot: ['stabAfterShot', 'Dispersion after a shot', '', 'The client’s own factor.'],
     pitchLimits: ['pitchLimits', 'Gun depression / elevation', '°'],
     gunYawLimits: ['gunYawLimits', 'Gun traverse left / right', '°'],
     maxAmmo: ['maxAmmo', 'Ammunition', 'rounds'],
@@ -6289,20 +6346,20 @@
     vehicleWeight: ['vehicleWeight', 'Weight', 't'],
     enginePowerPerTon: ['enginePowerPerTon', 'Specific power', 'hp/t'],
     chassisRotationSpeed: ['chassisRotationSpeed', 'Hull traverse speed', '°/s'],
-    maxSteeringLockAngle: ['maxSteeringLockAngle', 'Steering lock of the wheels (a wheeled vehicle that cannot turn on the spot)', '°'],
+    maxSteeringLockAngle: ['maxSteeringLockAngle', 'Steering lock of the wheels', '°', 'A wheeled vehicle that cannot turn on the spot.'],
     turretRotationSpeed: ['turretRotationSpeed', 'Turret traverse speed', '°/s'],
-    terrainResistance: ['terrainResistance', 'Terrain resistance: firm / medium / soft (not in the garage; less is better)', ''],
+    terrainResistance: ['terrainResistance', 'Terrain resistance', '', 'Firm / medium / soft ground; less is better; not in the garage.'],
     maxHealth: ['maxHealth', 'Hit points', 'HP'],
     // The garage's own names (menu.mo tank_params/hullArmor, turretArmor, chassisRepairTime) and units.
-    hullArmor: ['hullArmor', 'Hull armour: front / sides / rear', 'mm'],
-    turretArmor: ['turretArmor', 'Turret armour: front / sides / rear', 'mm'],
+    hullArmor: ['hullArmor', 'Hull armour', 'mm', 'Front / sides / rear.'],
+    turretArmor: ['turretArmor', 'Turret armour', 'mm', 'Front / sides / rear.'],
     chassisRepairTime: ['chassisRepairTime', 'Suspension repair time', 's'],
     circularVisionRadius: ['circularVisionRadius', 'View range, standing', 'm'],
     invisibilityStillFactor: ['invisibilityStillFactor', 'Concealment standing', '%'],
     invisibilityMovingFactor: ['invisibilityMovingFactor', 'Concealment moving', '%'],
     invisibilityAfterShot: ['invisibilityAfterShot', 'Concealment after a shot (standing)', '%'],
-    switchTime: ['switchTime', 'Switching the mode: into the second mode / back', 's'],
-    autoSiege: ['autoSiege', 'The hull tilts at or below / levels above (the automatic siege; not in the garage)', 'km/h']};
+    switchTime: ['switchTime', 'Switching the mode', 's', 'Into the second mode / back.'],
+    autoSiege: ['autoSiege', 'Automatic siege', 'km/h', 'The hull tilts at or below / levels above; not in the garage.']};
   // THE SECTIONS ARE THE GARAGE'S (panel v2, user 23.09): its five groups in its order (web/ttx.js GROUPS, from the
   // client's params_helper PARAMS_GROUPS) under a thin rule with the group's glyph - the group's name is the rule's
   // tooltip - and the figures inside a group in the garage's order too (RELATIVE_POWER_PARAMS: the loading, the
@@ -6318,18 +6375,25 @@
   var TTX_COMPACT = [{group: 'relativePower', line: true, grid: ['avgDamagePerMinute', 'shotDispersionAngle', 'aimingTime', 'turretRotationSpeed'],
                       row: ['stabMovement', 'stabRotation', 'stabTurret']},
                      {group: 'relativeMobility', row: ['enginePowerPerTon', 'speedLimits', 'hull']}];
-  var TTX_STOCK_WORDS = 'Stock, as the garage shows a bare vehicle: top modules, a crew at 100 % with no skills (+10 % commander’s bonus on every role he does not hold himself), no equipment, directive, consumables or paint';
-  // The field modification in a row's tooltip (23.09, the sentence "field modifications are not modelled here" is
-  // gone): the build counts Config's by the client's law - in the same pass as the equipment (aimEffects) - and then
-  // leaves the record's own out of the emulator's block; the stock has none. Taken once a paint, on the context.
-  function ttxFieldWords(ctx) {
-    if (ctx.fieldWords !== undefined) return ctx.fieldWords;
-    var offered = aimFieldOffer().levels.length > 0, live = ctx.cur && ctx.cur.source === 'live';
-    ctx.fieldWords = !ctx.build ? 'The stock has no field modification.'
-      : aimFieldOn() ? 'The field modification set in Config is counted by the client’s law' + (live ? '; any the record carries is left out.' : '.')
-      : offered ? 'No field modification is on in Config' + (live && aimKept() ? '; the fire figures keep the record’s own.' : '.')
-      : 'The record names no field modification tree for this vehicle.';
-    return ctx.fieldWords;
+  // ⚙'S TOOLTIP holds the words every row shares, once (23.09; they used to close every row's tooltip): what the stock
+  // and the build are, what the build holds now, where its figures come from, and its field modification - the build
+  // counts Config's by the client's law, in the same pass as the equipment (aimEffects), and then leaves the record's
+  // own out of the emulator's block; the stock has none. Written by ttxPaint, once a paint.
+  var TTX_BUILD_HEAD = ['Stock or this build',
+    '• Off: the stock, as the garage shows a bare vehicle - top modules, a crew at 100 % with no skills (+10 % commander’s bonus on every role he does not hold himself), no equipment, directive, consumables, paint or field modification',
+    '• On: this shooter’s build from Config on top; a figure better than the stock is mint, a worse one red'];
+  function ttxBuildTitle(ctx) {
+    if (!ctx.build) return tipJoin(TTX_BUILD_HEAD);
+    var fitted = aimSummaryLines(), live = ctx.cur.source === 'live', offered = aimFieldOffer().levels.length > 0;
+    var sit = AIM_SKILLS.some(function (s) { return s.situational && shooterConfig.skills[s.id]; });
+    return tipJoin(TTX_BUILD_HEAD.concat(['', 'This build: top modules, a crew at 100 % with the commander’s bonus'
+        + (fitted.length ? ', and from Config:' : '; nothing fitted in Config.')], fitted,
+      [sit ? 'The situational perks switched on in Config are counted, which the garage’s main figure does not do.' : null, '',
+       live ? '• From the gun on the scene: the fire figures - the very circle, reload and aiming the emulator uses, with what the record carries (field modifications, the battle’s own modifiers)' : null,
+       live ? '• From the characteristics file: the rest' : '• From the characteristics file: every figure',
+       aimFieldOn() ? 'The field modification set in Config is counted by the client’s law' + (live ? '; any the record carries is left out.' : '.')
+         : offered ? 'No field modification is on in Config' + (live && aimKept() ? '; the fire figures keep the record’s own.' : '.')
+         : 'The record names no field modification tree for this vehicle.']));
   }
   // The rows a characteristics file of before 23.09 has no figures for (the mod's TTX_ARMOR_SCHEMA; readTtx reads it again).
   var TTX_OLD_FILE = 'This vehicle’s characteristics file was written before the armour and the suspension’s repair were added: the mod writes it anew when the page asks for it in the game.';
@@ -6520,30 +6584,19 @@
     if (s.cmp !== cmp) { s.cmp = cmp; if (cmp) row.setAttribute('data-cmp', cmp); else row.removeAttribute('data-cmp'); }
     if (s.title !== title) { s.title = title; row.title = title; }
   }
-  // What the build holds, in words, for the tooltips.
-  function ttxBuildWords() {
-    var sit = AIM_SKILLS.some(function (s) { return s.situational && shooterConfig.skills[s.id]; });
-    return 'This build: ' + aimLongSummary() + '; top modules, a crew at 100 % with the commander’s bonus'
-      + (sit ? '; the situational perks switched on in Config are counted, which the garage’s main figure does not do' : '');
-  }
-  function ttxSourceWords(v, build) {
-    if (!build) return 'From the characteristics file of this vehicle.';
-    return v.source === 'live' ? 'The fire figures come from the gun on the scene - the very circle, reload and aiming the emulator uses, with whatever the record carries (field modifications, the battle’s own modifiers); the rest from the characteristics file.'
-      : 'From the characteristics file of this vehicle.';
-  }
-  // What one paint shows, gathered once: both sets of figures, both sets of strings and the words every tooltip
-  // shares (the build's summary is composed once, not once a row).
+  // What one paint shows, gathered once: both sets of figures and both sets of strings.
   function ttxContext(index) {
     var pair = ttxData.configs[index], build = ttxBuildOn(), mode = ttxHasMode(pair) ? ttxModeOn() : 0;
     var stock = ttxValues(false, index, mode), cur = build ? ttxValues(true, index, mode) : stock;
     var shownS = TTX.display(stock);
-    var ctx = {build: build, mode: mode, stock: stock, cur: cur, shownS: shownS, shownB: build ? TTX.display(cur) : shownS,
-               words: (build ? ttxBuildWords() : TTX_STOCK_WORDS) + '.', source: ttxSourceWords(cur, build), pair: pair};
+    var ctx = {build: build, mode: mode, stock: stock, cur: cur, shownS: shownS, shownB: build ? TTX.display(cur) : shownS, pair: pair};
     // In the second mode a figure is coloured against the FIRST mode of the same view (stock or build): the rows it
-    // changes are marked the way the build is marked against the stock.
+    // changes are marked the way the build is marked against the stock. The tooltips' items name the modes: 'Siege,
+    // stock', 'Siege, this build' and the first mode's 'Travel, this build'.
     if (mode) {
       ctx.first = ttxValues(build, index, 0); ctx.shownF = TTX.display(ctx.first);
-      var w = ttxModeWords(pair); ctx.firstWords = w[0]; ctx.modeWords = w[1];
+      var w = ttxModeWords(pair);
+      ctx.modeKey = ttxCap(w[1]) + ', '; ctx.firstKey = ttxCap(w[0]) + (build ? ', this build' : ', stock');
     }
     // The reload line's parts (web/ttx.js reloadLine), once a paint for both views: this view's, the stock's and the
     // first mode's, which its colours and tooltips are read against.
@@ -6552,12 +6605,16 @@
     if (mode) ctx.lineF = TTX.reloadLine(ctx.first, ctx.shownF);
     return ctx;
   }
-  // One row's tooltip: the name and unit, the stock and the build, what is counted and where it comes from.
-  function ttxTitle(key, stockText, buildText, ctx, extra) {
-    var spec = TTX_ROWS[key] || [key, key, ''];
-    return spec[1] + (spec[2] ? ', ' + spec[2] : '') + '. '
-      + (ctx.build ? 'Stock ' + stockText + ' · this build ' + buildText + '. ' : 'Stock ' + stockText + '. ') + ctx.words
-      + (extra ? ' ' + extra : '') + ' ' + ctx.source + ' ' + ttxFieldWords(ctx);
+  function ttxCap(s) { s = String(s || ''); return s.charAt(0).toUpperCase() + s.slice(1); }
+  // One row's tooltip: the name and unit, what the figure is, the stock and the build - in the second mode also the
+  // first mode's figure of the same view - then what this row alone needs said (ttxExtra). The words every row shares
+  // are ⚙'s tooltip (ttxBuildTitle), not repeated here.
+  function ttxTitle(key, sText, bText, fText, ctx) {
+    var spec = TTX_ROWS[key] || [key, key, ''], m = ctx.modeKey || '';
+    return tipJoin([spec[1] + (spec[2] ? ', ' + spec[2] : ''), spec[3], ttxAbout(key, ctx.cur) || null,
+      '• ' + (m ? m + 'stock' : 'Stock') + ': ' + sText,
+      ctx.build ? '• ' + (m ? m + 'this build' : 'This build') + ': ' + bText : null,
+      ctx.mode ? '• ' + ctx.firstKey + ': ' + fText : null, ''].concat(ttxExtra(key, ctx.cur, ctx.build, ctx.shownB, ctx.pair)));
   }
   // One row painted from the context: the figure, its colour against the stock (or the first mode), the tooltip.
   function ttxPaintRow(row, key, ctx) {
@@ -6567,12 +6624,9 @@
                ctx.mode ? ttxText(key, ctx.shownF, ctx.first) : '', cmp, ctx);
   }
   // Every row of both views is written here - a row of the grid or a part of the reload line: the figure, its colour
-  // and the tooltip with the stock, this build, the first mode's figure and where they come from.
+  // and the tooltip with the stock, this build and the first mode's figure.
   function ttxPaintAs(row, key, glyph, text, sText, fText, cmp, ctx) {
-    var extra = ttxExtra(key, ctx.cur, ctx.build, ctx.shownB, ctx.pair);
-    if (ctx.mode) extra = 'These are ' + ctx.modeWords + '’s; ' + ctx.firstWords + ': ' + fText
-      + ' - a figure better than there is mint, a worse one red.' + (extra ? ' ' + extra : '');
-    ttxSet(row, glyph, text, cmp, ttxTitle(key, sText, text, ctx, extra));
+    ttxSet(row, glyph, text, cmp, ttxTitle(key, sText, text, fText, ctx));
   }
   // The reload line (panel v2, web/ttx.js reloadLine): three sides - what the magazine holds, the reload, the time
   // between rounds - so the line grows both ways from its centre. Each part is a row of the one widget (ttxRow), kept
@@ -6611,62 +6665,72 @@
     if (key === 'overheat') return v.overheat ? [String(v.overheat.shots), BullbaTtx.nice(v.overheat.burst), BullbaTtx.nice(v.overheat.cooling)].join('/') : '—';
     return shown[key] !== undefined ? shown[key] : '—';
   }
-  // The garage's own whole lines of the loading, as it prints them (web/ttx.js display): the reload line splits them
-  // into its parts, and the part in the middle carries them whole in its tooltip.
+  // The garage's own whole lines of the loading, as it prints them (web/ttx.js display), one item each: the reload
+  // line splits them into its parts, and the part in the middle carries them whole in its tooltip.
   function ttxLoadingWords(v, d) {
     var out = [];
-    if (v.kind === 'dualGun' || v.kind === 'twinGun') out.push('Gun loading' + (v.kind === 'twinGun' ? ' (single fire / salvo) ' : ' (each barrel) ') + d.reloadTimeSecs + ' s');
-    if (v.kind === 'autoreload') out.push('Autoreloading of each shell ' + d.autoReloadTime + ' s');
-    if (v.clipFireRate) out.push('Reload (' + (v.kind === 'dualGun' ? 'both barrels / between the barrels / barrels' : 'the magazine / between the shells / shells') + ') ' + d.clipFireRate);
-    if (v.burstFireRate) out.push('Shell container (between the shells / containers / shells in one) ' + d.burstFireRate);
-    if (v.autoShootClipFireRate) out.push('Reload (the magazine / shells) ' + d.autoShootClipFireRate);
-    if (v.shellLoadingTime !== undefined) out.push('Ammunition belt loading ' + d.shellLoadingTime + ' s');
-    if (v.continuousShotsPerMinute !== undefined) out.push('Rate of continuous fire ' + d.continuousShotsPerMinute + ' rounds a minute');
-    if (v.twinGunSwitchFireModeTime !== undefined) out.push('Fire mode switch time ' + d.twinGunSwitchFireModeTime + ' s');
-    if (v.chargeTime) out.push('Salvo preparation (charging / the reload lock after a salvo) ' + d.chargeTime + ' s');
-    return out.length ? 'As the garage prints it: ' + out.join('; ') + '.' : '';
+    if (v.kind === 'dualGun' || v.kind === 'twinGun') out.push('• Gun loading' + (v.kind === 'twinGun' ? ' (single fire / salvo)' : ' (each barrel)') + ': ' + d.reloadTimeSecs + ' s');
+    if (v.kind === 'autoreload') out.push('• Autoreloading of each shell: ' + d.autoReloadTime + ' s');
+    if (v.clipFireRate) out.push('• Reload (' + (v.kind === 'dualGun' ? 'both barrels / between the barrels / barrels' : 'the magazine / between the shells / shells') + '): ' + d.clipFireRate);
+    if (v.burstFireRate) out.push('• Shell container (between the shells / containers / shells in one): ' + d.burstFireRate);
+    if (v.autoShootClipFireRate) out.push('• Reload (the magazine / shells): ' + d.autoShootClipFireRate);
+    if (v.shellLoadingTime !== undefined) out.push('• Ammunition belt loading: ' + d.shellLoadingTime + ' s');
+    if (v.continuousShotsPerMinute !== undefined) out.push('• Rate of continuous fire: ' + d.continuousShotsPerMinute + ' rounds a minute');
+    if (v.twinGunSwitchFireModeTime !== undefined) out.push('• Fire mode switch time: ' + d.twinGunSwitchFireModeTime + ' s');
+    if (v.chargeTime) out.push('• Salvo preparation (charging / the reload lock after a salvo): ' + d.chargeTime + ' s');
+    return out.length ? ['As the garage prints it:'].concat(out) : [];
   }
-  // Extra lines a few rows carry in their tooltip. `pair` is the context's (the pair on the panel), taken once a paint.
-  function ttxExtra(key, v, build, shown, pair) {
-    if (key === 'avgDamagePerMinute') return v.avgDamage ? 'With a ' + BullbaTtx.nice(v.avgDamage) + ' HP shell at ' + BullbaTtx.nice(v.shotsPerMinute) + ' rounds a minute' + (v.kind === 'autoreload' ? ', the fastest slot' : v.kind === 'overheat' ? ' over the whole heat cycle' : '') + '.' : 'The shell’s damage is not in the file.';
+  // What the figure is, where the gun decides it: the line under a row's heading.
+  function ttxAbout(key, v) {
     var burst = v.burstFireRate;
     if (key === 'shellsCount') return v.kind === 'dualGun' ? 'Two barrels, each with its own reload; the charged salvo fires both.'
       : burst && burst[1] > 1 ? burst[1] + ' bursts of ' + burst[2] + ' shells.' : burst ? 'The whole magazine is one burst.' : '';
     if (key === 'shellReloadingTime') return v.kind === 'dualGun' ? 'Between the shots of the two barrels.' : burst ? 'Between two bursts.' : 'Between two shells of the magazine.';
-    if (key === 'burstFireRate') return 'Between the shells of one burst; one press fires the burst.';
+    if (key === 'burstFireRate') return 'One press fires the whole burst.';
     if (key === 'continuousShotsPerMinute') return 'While the trigger is held' + (v.kind === 'overheat' ? ', until the gun overheats' : '') + '.';
-    if (key === 'chargeTime') return 'Hold the trigger to charge a salvo of both barrels; after the salvo the reload waits the second figure. The garage’s own figures: no crew or device changes them.';
+    if (key === 'chargeTime') return 'Hold the trigger to charge a salvo of both barrels; after the salvo the reload waits the second figure.';
+    return '';
+  }
+  // The lines a few rows carry after their figures, [] for the rest. `pair` is the context's (the pair on the panel),
+  // taken once a paint.
+  function ttxExtra(key, v, build, shown, pair) {
+    var nice = BullbaTtx.nice;
+    if (key === 'avgDamagePerMinute') return [v.avgDamage ? '• Shell: ' + nice(v.avgDamage) + ' HP at ' + nice(v.shotsPerMinute) + ' rounds a minute'
+      + (v.kind === 'autoreload' ? ', the fastest slot' : v.kind === 'overheat' ? ', over the whole heat cycle' : '') : 'The shell’s damage is not in the file.'];
+    if (key === 'chargeTime') return ['The garage’s own figures: no crew or device changes them.'];
     if (key === 'reloadTimeSecs' || key === 'clipFireRate' || key === 'autoReloadTime' || key === 'autoShootClipFireRate' || key === 'shellLoadingTime' || key === 'overheat') {
-      return (key === 'overheat' ? '' : ttxLoadingWords(v, shown) + ' ') + 'Rate of fire ' + BullbaTtx.nice(v.shotsPerMinute) + ' rounds a minute'
-        + (v.kind === 'overheat' ? ' over the whole heat cycle' : v.kind === 'autoreload' ? ' at the fastest slot' : '') + '.'
-        + (v.kind === 'clip' ? ' Mag Mastery shortens the whole reload, not the interval.' : '')
-        + (pair && !pair.reloadExtra ? ' What the gun’s mechanics add to the reload was not exported, so it is not counted.' : '');
+      return (key === 'overheat' ? [] : ttxLoadingWords(v, shown)).concat(['• Rate of fire: ' + nice(v.shotsPerMinute) + ' rounds a minute'
+          + (v.kind === 'overheat' ? ', over the whole heat cycle' : v.kind === 'autoreload' ? ', at the fastest slot' : ''), '',
+        v.kind === 'clip' ? 'Mag Mastery shortens the whole reload, not the interval.' : null,
+        pair && !pair.reloadExtra ? 'What the gun’s mechanics add to the reload was not exported, so it is not counted.' : null]);
     }
-    if (key === 'circularVisionRadius') return 'Moving: ' + BullbaTtx.nice(v.circularVisionRadiusMoving) + ' m (binoculars work only standing).';
+    if (key === 'circularVisionRadius') return ['• Moving: ' + nice(v.circularVisionRadiusMoving) + ' m (binoculars work only standing)'];
     if (key === 'pitchLimits') {
       // With the hull aiming the garage counts the hull's tilt in (23.09): the gun's own limits go to the tooltip.
-      if (v.gunPitchOwn) return 'With the hull’s tilt, as the garage counts it; the gun alone: ' + v.gunPitchOwn.map(BullbaTtx.nice).join('/') + '°. The hull tilts only in the second mode.';
+      if (v.gunPitchOwn) return ['With the hull’s tilt, as the garage counts it.', '• Gun alone: ' + v.gunPitchOwn.map(nice).join('/') + '°', 'The hull tilts only in the second mode.'];
       var p = pair && pair.pitch;
-      if (p && Array.isArray(p.minPitch) && p.minPitch.length > 2) return 'The limits change around the turret: these are the extremes over the whole circle.';
+      if (p && Array.isArray(p.minPitch) && p.minPitch.length > 2) return ['The limits change around the turret: these are the extremes over the whole circle.'];
     }
-    if (key === 'gunYawLimits' && v.gunYawSector) return 'The hull aims the gun sideways, so the garage prints 0/0; the gun itself moves ' + v.gunYawSector.map(BullbaTtx.nice).join('/') + '° in its sector, and past it the hull turns.';
-    if (key === 'switchTime') return v.modeKind === 'turboshaft' ? 'The turbine switches only standing; the garage prints its times whole, cut short.' : 'While it switches the gun does not fire and the vehicle stops; a damaged engine makes it slower.';
-    if (key === 'autoSiege') return 'The server switches it by the speed; the hull tilts, the circle does not change.';
+    if (key === 'gunYawLimits' && v.gunYawSector) return ['The hull aims the gun sideways, so the garage prints 0/0.', '• Gun’s own sector: ' + v.gunYawSector.map(nice).join('/') + '°; past it the hull turns'];
+    if (key === 'switchTime') return [v.modeKind === 'turboshaft' ? 'The turbine switches only standing; the garage prints its times whole, cut short.' : 'While it switches the gun does not fire and the vehicle stops; a damaged engine makes it slower.'];
+    if (key === 'autoSiege') return ['The server switches it by the speed; the hull tilts, the circle does not change.'];
     if ((key === 'shotDispersionAngle' || key === 'aimingTime') && ttxModeOn() && ttxModeKind(pair) === 'hydraulic')
-      return 'The garage shows the travel figures only; this is the siege descriptor’s, by the garage’s own formula.';
-    if (key === 'maxHealth' && build && mulOf('healthFactor') !== 1) return 'With the hardening the client rounds the hit points UP to whole tens.';
+      return ['The garage shows the travel figures only; this is the siege descriptor’s, by the garage’s own formula.'];
+    if (key === 'maxHealth' && build && mulOf('healthFactor') !== 1) return ['With the hardening the client rounds the hit points UP to whole tens.'];
     // Survivability (23.09): the armour is the garage's nominal list; the repair is the stock's in both views.
     if ((key === 'hullArmor' || key === 'turretArmor' || key === 'chassisRepairTime') && !v[key])
-      return ttxData && ttxData.armorSchema ? 'The client did not give this figure when the file was written (the file’s warnings say so).' : TTX_OLD_FILE;
-    if (key === 'hullArmor' || key === 'turretArmor') return 'Nominal, as the garage lists it: the thickness of the main plates' + (key === 'turretArmor' ? ' of this pair’s turret' : '') + ', not their slope or the rest of the armour.';
+      return [ttxData && ttxData.armorSchema ? 'The client did not give this figure when the file was written (the file’s warnings say so).' : TTX_OLD_FILE];
+    if (key === 'hullArmor' || key === 'turretArmor') return ['Nominal, as the garage lists it: the thickness of the main plates' + (key === 'turretArmor' ? ' of this pair’s turret' : '') + ', not their slope or the rest of the armour.'];
     if (key === 'chassisRepairTime') {
-      if (!v.chassisRepairTime.length) return 'The client has no repair time for this suspension, and the garage prints none.';
+      if (!v.chassisRepairTime.length) return ['The client has no repair time for this suspension, and the garage prints none.'];
       var modes = ttxData && ttxData.vehicle && ttxData.vehicle.modes;
-      return 'A broken track (or wheel) with nobody in the crew having Repairs: the vehicle’s own time ÷ 0.57, the client’s factor of a group skill nobody has - rations and Brothers in Arms do not change it.'
-        + (v.chassisRepairTime.length > 1 ? (modes && modes.trackWithinTrack ? ' The main track / the reserve.' : ' Two pairs of tracks, each with its own time, in the garage’s order.') : '')
-        + (build ? ' Config has no Repairs skill and does not carry the repair figures of Modified or Improved Configuration, Improved Hardening, the Survival Improvement Suite, the Large Repair Kit, Pre-Battle Maintenance or a field modification, so this build shows the stock’s time.' : '');
+      return ['A broken track (or wheel), nobody in the crew having Repairs.',
+        '• Time: the vehicle’s own ÷ 0.57, the client’s factor of a group skill nobody has',
+        '• Rations and Brothers in Arms: do not change it',
+        v.chassisRepairTime.length > 1 ? '• Two figures: ' + (modes && modes.trackWithinTrack ? 'the main track / the reserve' : 'two pairs of tracks, each with its own time, in the garage’s order') : null,
+        build ? 'Config has no Repairs skill and does not carry the repair figures of equipment, directives, consumables or a field modification, so this build shows the stock’s time.' : null];
     }
-    return '';
+    return [];
   }
   function mulOf(input) { var e = shooterEffects(false).e; return aimMul({mul: e.dev}, input); }
   function ttxPaint() {
@@ -6682,6 +6746,7 @@
     // The emulator's pair and the pair on the panel, counted once a paint and handed to all that follows.
     var emu = ttxEmuIndex(), index = ttxPairIndex(emu), ctx = ttxContext(index), toggle = $('ttx-build-toggle');
     if (toggle && toggle.getAttribute('aria-pressed') !== String(ctx.build)) toggle.setAttribute('aria-pressed', String(ctx.build));
+    if (toggle) ttxSetTitle(toggle, ttxBuildTitle(ctx));
     ttxPaintTurrets(index, emu);   // the Turret row of Config follows the same pair
     ttxPaintMode(index, ctx);
     ttxPaintPair(index, emu);
@@ -6705,11 +6770,16 @@
     if (b.hidden !== !show) { b.hidden = !show; scheduleLayout(LAYOUT_TTX); }
     if (!show) return;
     if (b.getAttribute('aria-pressed') !== String(!!ctx.mode)) b.setAttribute('aria-pressed', String(!!ctx.mode));
-    var w = ttxModeWords(pair), follows = !!ttxModeFollows();
-    var title = 'The second mode: ' + w[1] + '. ' + (ctx.mode ? 'On: the panel shows ' + w[1] + '’s figures - a figure better than in ' + w[0] + ' is mint, a worse one red.' : 'Off: the panel shows ' + w[0] + '’s figures.')
-      + (follows ? ' Under ⌖ this is the emulator’s own mode: the switch presses its mode button, with the game’s switch time.' : ' Off ⌖ only the panel changes, and the choice is kept for this vehicle.');
-    if (b.title !== title) b.title = title;
+    var w = ttxModeWords(pair);
+    ttxSetTitle(b, tipJoin(['Second mode: ' + w[1],
+      '• On: the panel shows ' + w[1] + '’s figures - a figure better than in ' + w[0] + ' is mint, a worse one red',
+      '• Off: the panel shows ' + w[0] + '’s figures', '',
+      ttxModeFollows() ? 'Under ⌖ this is the emulator’s own mode: the switch presses its mode button, with the game’s switch time.'
+                       : 'Off ⌖ only the panel changes, and the choice is kept for this vehicle.']));
   }
+  // A title written only when its words change: comparing with el.title would write it again on every paint while the
+  // page tooltip holds a hovered element's title aside (web/tooltips.js).
+  function ttxSetTitle(el, title) { if (el.ttxTitle !== title) { el.ttxTitle = title; el.title = title; } }
   // THE GUN CHIP (panel v2, user 23.09): plainly a gun - a barrel's glyph, the calibre and the GUN's tier - and a ▾
   // where the turret on the panel carries more than one gun. A click opens the quick list of THAT turret's guns, the
   // garage's own pairs only; another turret is picked in Config (the Turret row, ttxPaintTurrets). While Config is not
@@ -6748,26 +6818,26 @@
     var modes = (ttxData.vehicle && ttxData.vehicle.modes) || {}, notes = [], sm = pair.aim && pair.aim.siegeMode;
     if (sm && sm.kind === 'auto') {
       var hp = pair.aim.hullAiming && pair.aim.hullAiming.pitch;
-      notes.push('the hull tilts' + (hp ? ' ' + BullbaTtx.nice(Math.abs(hp.max) * 180 / Math.PI) + '° down / ' + BullbaTtx.nice(Math.abs(hp.min) * 180 / Math.PI) + '° up' : '')
-        + ' at or below ' + BullbaTtx.nice(Number(sm.autoOn) * 3.6) + ' km/h (the automatic siege) - the circle does not change');
+      notes.push('• Automatic siege: the hull tilts' + (hp ? ' ' + BullbaTtx.nice(Math.abs(hp.max) * 180 / Math.PI) + '° down / ' + BullbaTtx.nice(Math.abs(hp.min) * 180 / Math.PI) + '° up' : '')
+        + ' at or below ' + BullbaTtx.nice(Number(sm.autoOn) * 3.6) + ' km/h; the circle does not change');
     }
-    if (modes.dualGun) notes.push('the charged salvo of the two barrels: only its preparation is shown, on the reload line');
+    if (modes.dualGun) notes.push('• Charged salvo of the two barrels: only its preparation is shown, on the reload line');
     if (modes.rocketAcceleration) {
       var r = ttxData.vehicle.rocketAcceleration;
-      notes.push('a rocket booster' + (r ? ' for ' + BullbaTtx.nice(r.duration) + ' s, ' + r.reuseCount + ' uses' : '') + ' - under ⌖ the mode button fires it');
+      notes.push('• Rocket booster' + (r ? ': ' + BullbaTtx.nice(r.duration) + ' s, ' + r.reuseCount + ' uses;' : ':') + ' under ⌖ the mode button fires it');
     }
     var cal = ttxCaliber(pair);
     tile.replaceChildren(ttxGlyph('gun'), node('b', cal, 'ttx-cal'), node('span', tierRomans[pair.gunLevel] || '', 'vt-tier'));
     if (notes.length) tile.appendChild(node('span', '◐', 'ttx-mode'));
     box.setAttribute('data-many', String(many));
     if (other) box.setAttribute('data-other', 'true'); else box.removeAttribute('data-other');
-    tile.title = 'Gun: ' + (pair.gunUserString || pair.gun) + ' (' + (cal !== '—' ? cal + ' mm, ' : '') + 'tier ' + (tierRomans[pair.gunLevel] || '?') + ')'
-      + ' on the turret ' + (turret.userString || turret.name || '') + '.'
-      + (guns > 1 ? ' Click: the other guns of this turret, to see the difference.' : listTurrets ? '' : ' This turret carries no other gun.')
-      + (turrets > 1 ? (config ? ' The turret itself is picked in Config, in its Turret row.'
-                                : ' Click: the turrets too - Config, where the turret is picked, is not on screen now.') : '')
-      + (other ? ' The circle and the gun panel keep the gun that fired; these numbers are this gun’s.' : '')
-      + (notes.length ? ' This vehicle: ' + notes.join('; ') + '.' : '');
+    tile.title = tipJoin(['Gun: ' + (pair.gunUserString || pair.gun),
+      cal !== '—' ? '• Calibre: ' + cal + ' mm' : null, '• Tier: ' + (tierRomans[pair.gunLevel] || '?'), '• Turret: ' + (turret.userString || turret.name || ''), '',
+      guns > 1 ? '• Click: the other guns of this turret, to see the difference' : listTurrets ? null : 'This turret carries no other gun.',
+      turrets > 1 ? (config ? 'The turret itself is picked in Config, in its Turret row.'
+                            : '• Click: the turrets too - Config, where the turret is picked, is not on screen now') : null,
+      other ? 'The circle and the gun panel keep the gun that fired; these numbers are this gun’s.' : null,
+      '', notes.length ? 'This vehicle (◐):' : null].concat(notes));
   }
   // The quick list: the guns of the turret on the panel, the one shown pressed, the emulator's marked with a dot and
   // the top pair with ▲; while Config is not on screen, the turret tiles of its Turret row above them. Built when it
@@ -6795,11 +6865,11 @@
       tile.appendChild(node('span', tierRomans[p.gunLevel] || '', 'vt-tier'));
       if (i === emu) tile.appendChild(node('span', '●', 'ttx-mark ttx-emu'));
       if (p.top) tile.appendChild(node('span', '▲', 'ttx-mark ttx-top'));
-      tile.title = (p.gunUserString || p.gun) + ' · tier ' + (tierRomans[p.gunLevel] || '?') + ' · ' + (info.userString || info.name || '') + ' · '
-        + (shell ? BullbaTtx.nice(shell.avgDamage) + ' HP, ' + BullbaTtx.nice(shell.avgPiercingPower) + ' mm · ' : '')
-        + 'DPM ' + BullbaTtx.nice(v.avgDamagePerMinute) + (build ? ' (this build)' : ' (stock)')
-        + (i === emu ? ' · the gun on the scene' : '') + (p.top ? ' · the top pair' : '')
-        + (i === here ? '. On the panel now.' : '. Click: the panel shows this gun.');
+      tile.title = tipJoin([p.gunUserString || p.gun, '• Tier: ' + (tierRomans[p.gunLevel] || '?'), '• Turret: ' + (info.userString || info.name || ''),
+        shell ? '• Shell: ' + BullbaTtx.nice(shell.avgDamage) + ' HP, ' + BullbaTtx.nice(shell.avgPiercingPower) + ' mm' : null,
+        '• DPM: ' + BullbaTtx.nice(v.avgDamagePerMinute) + (build ? ' (this build)' : ' (stock)'),
+        i === emu ? '• ●: the gun on the scene' : null, p.top ? '• ▲: the top pair' : null, '',
+        i === here ? 'On the panel now.' : '• Click: the panel shows this gun']);
       tile.onclick = function (e) { e.stopPropagation(); ttxChoose(i); };
       row.appendChild(tile);
     });
@@ -6847,10 +6917,10 @@
       tile.appendChild(node('span', tierRomans[info.level] || '', 'vt-tier'));
       if (t === emuTurret) tile.appendChild(node('span', '●', 'ttx-mark ttx-emu'));
       if (guns.some(function (i) { return ttxData.configs[i].top; })) tile.appendChild(node('span', '▲', 'ttx-mark ttx-top'));
-      tile.title = 'Turret: ' + (info.userString || info.name || '') + ' · tier ' + (tierRomans[info.level] || '?') + ' · its guns: '
-        + guns.map(function (i) { return ttxData.configs[i].gunUserString || ttxData.configs[i].gun; }).join(', ')
-        + (t === emuTurret ? ' · the turret of the gun on the scene' : '')
-        + (t === cur ? '. On the characteristics panel now.' : '. Click: the characteristics panel shows this turret; the circle keeps the gun that fired.');
+      tile.title = tipJoin(['Turret: ' + (info.userString || info.name || ''), '• Tier: ' + (tierRomans[info.level] || '?'),
+        '• Guns: ' + guns.map(function (i) { return ttxData.configs[i].gunUserString || ttxData.configs[i].gun; }).join(', '),
+        t === emuTurret ? '• ●: the turret of the gun on the scene' : null, '',
+        t === cur ? 'On the characteristics panel now.' : '• Click: the characteristics panel shows this turret; the circle keeps the gun that fired']);
       tile.onclick = function (e) { e.stopPropagation(); ttxChooseTurret(t); };
       box.appendChild(tile);
     });
@@ -6874,7 +6944,7 @@
     rule.setAttribute('role', 'separator');
     rule.setAttribute('aria-label', name);
     rule.appendChild(ttxGlyph(group));
-    rule.title = name + ': the garage’s own group of the figures under this line, in the garage’s order.';
+    rule.title = tipJoin([name, 'The garage’s own group of the figures below, in its order.']);
     return rule;
   }
   function ttxSection(box, group) {
@@ -6903,7 +6973,7 @@
     var table = node('div', undefined, 'ttx-shells');
     var head = node('div', undefined, 'ttx-shell-row ttx-shell-head');
     head.appendChild(node('span', '', 'ttx-shell-kind'));
-    [['avgDamage', 'Average damage, HP'], ['avgPiercingPower', 'Average penetration at up to 50 m, mm'], ['shellVelocity', 'Shell velocity, m/s (the garage’s figure)']].forEach(function (h) {
+    [['avgDamage', 'Average damage, HP'], ['avgPiercingPower', 'Average penetration, mm\nAt up to 50 m.'], ['shellVelocity', 'Shell velocity, m/s\nThe garage’s figure.']].forEach(function (h) {
       var g = ttxGlyph(h[0]); g.title = h[1]; head.appendChild(g);
     });
     table.appendChild(head);
@@ -6920,10 +6990,10 @@
       line.appendChild(node('b', BullbaTtx.nice(s.avgPiercingPower), 'ttx-val'));
       // The garage prints a shell's speed whole, truncated (formatters FORMAT_SETTINGS 'shotSpeed': _integralFormat).
       line.appendChild(node('b', BullbaTtx.integral(s.shellVelocity), 'ttx-val'));
-      line.title = (s.shell.name || s.kind) + ' · ' + (shellNames[s.kind] || s.kind)
-        + (s.damage ? ' · damage ' + s.damage.join('-') + ' HP' : '') + (s.piercingPower ? ' · penetration ' + s.piercingPower.join('-') + ' mm' : '')
-        + (s.pen500 !== null ? ', ' + BullbaTtx.nice(s.pen500) + ' mm at 500 m' : '')
-        + (s.dpm ? ' · DPM with this shell ' + s.dpm : '') + (s.selected ? ' · the shell the page is using' : '');
+      var pen = [s.piercingPower ? s.piercingPower.join('-') + ' mm' : '', s.pen500 !== null ? BullbaTtx.nice(s.pen500) + ' mm at 500 m' : ''].filter(Boolean);
+      line.title = tipJoin([s.shell.name || s.kind, '• Type: ' + (shellNames[s.kind] || s.kind),
+        s.damage ? '• Damage: ' + s.damage.join('-') + ' HP' : null, pen.length ? '• Penetration: ' + pen.join('; ') : null,
+        s.dpm ? '• DPM with this shell: ' + s.dpm : null, s.selected ? '• The shell the page is using' : null]);
       table.appendChild(line);
     });
     fire.appendChild(table);
