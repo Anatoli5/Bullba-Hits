@@ -5,6 +5,15 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 ## Unreleased
 
 - Tooltips work in the game's browser too: the page draws them itself. Hover an icon or tile for its explanation; click one that is not a button to pin it open, Escape or a click elsewhere closes it.
+- ✸: the gun panel's mode button switches a vehicle's second mode with the game's own switch times: siege of the hydraulic tank destroyers (Strv 103, UDES 03, Kunze Panzer and others), the turbine (CS-63, CS-52 C, Ogar, Vercingétorix, Char Mle. 75), Rapid of the French wheeled vehicles, the salvo of the British twin guns. The gun does not fire while it switches and the vehicle stops; the second mode brings its own circle, aiming, stabilisation and top speed.
+- ✸: a hydropneumatic vehicle's automatic siege shows on the same button as an indicator (it tilts the hull below its speed; the circle does not change).
+- ✸: Strv 107-12 - a tap switches siege / travel, holding the button 1 s goes into the pillbox or out of it, as in the game.
+- ✸: a tank destroyer with a fixed gun holds it on the hull's axis while driving or switching; past its sector the hull turns by itself towards the aim. A French wheeled vehicle does not turn on the spot.
+- ✸: the rocket booster of the Chinese heavies and others (BZ-176, BZ-75, DZT-159, Yong Bing, T 56 G, Schwertwal, Tiger (P) CFE…) on the mode button: its time, recharge and uses; faster forward, slower turning - the circle grows only with the speed.
+- Characteristics: a second-mode switch beside ⚙ shows the second mode's figures, better or worse than the first in colour; under ✸ it follows the emulator's mode. Switch times; the vertical and horizontal limits with hull aiming as the garage prints them (Strv 103B -11/11 and 0/0).
+- A turret and gun the game holds fixed (Strv 103 and other tank destroyers) can no longer be dragged on the model.
+- ✸: the Ares and STK-2 heat bands now widen the circle on real records too (the recorded modifier name was not recognised).
+- The mod records the second mode's switch, the hull aiming and the fixed gun angles; older battles get the second mode's circle when republished.
 
 ## 0.7.31 (2026-09-23)
 

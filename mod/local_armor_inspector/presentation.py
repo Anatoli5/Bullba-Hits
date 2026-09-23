@@ -28,13 +28,20 @@ def gun_limits(descr, key=None):
     table. The local variable is returned rather than `_limits[key]`, because the export thread
     calls this too and may clear the cache between the assignment and the return.
 
-    Known defect, unchanged here: the key is the compact descriptor alone, so a vehicle whose
-    mode changes the limits freezes on the mode seen first (confirmed once in 176 configurations,
-    record-format audit 2026-09-22 section 3). Referencing does not make it worse - a hit
-    references whatever table it was recorded with - but the key still needs the mode.
+    The key is the compact descriptor AND the vehicle's mode (23.09, second modes M4): a vehicle built
+    twice has two guns' limits - the Strv 103B -1..-1 degrees in travel, -4..+2 in siege - and a key
+    without the mode froze the table on the mode seen first (record-format audit 2026-09-22 section 3).
+    The gun's static angles (staticPitch / staticTurretYaw, radians, client sign) ride in the same
+    table where the gun has them: the viewer holds such a turret and gun still, as the client's own
+    armour view does, and the table travels by reference, so they cost nothing per hit.
     """
     if key is None:
         key = descr.makeCompactDescr()
+    try:
+        mode = int(getattr(descr, 'vehicleMode', 0) or 0) if getattr(descr, 'hasSiegeMode', False) else 0
+    except Exception:
+        mode = 0
+    key = (key, mode)
     table = _limits.get(key)
     if table is not None:
         return table
@@ -54,6 +61,12 @@ def gun_limits(descr, key=None):
         samples.append([yaw, float(lo), float(hi)])
     table = PitchTable({'samples':samples, 'hullTurretPitch':pitch, 'gunJointPitch':joint,
                         'source':'client calcPitchLimitsFromDesc; knots and 1 degree samples'})
+    for name in ('staticPitch', 'staticTurretYaw'):
+        try:
+            value = getattr(descr.gun, name, None)
+            if value is not None: table[name] = float(value)
+        except Exception:
+            pass
     if len(_limits) > 64:
         _limits.clear()
     _limits[key] = table

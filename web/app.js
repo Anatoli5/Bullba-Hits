@@ -1208,7 +1208,7 @@
   // loss Custom exists to end. A store without the key (an older page's) starts Custom empty: that page never
   // kept a hand build, only the name of a preset the build happened to match. A store holding ONE build under
   // the key gives it to every vehicle whose chosen entry is Custom, so nothing made by hand is lost.
-  var aimStore = {presets: {}, chosen: {}, custom: {}, pairs: {}};
+  var aimStore = {presets: {}, chosen: {}, custom: {}, pairs: {}, modes: {}};
   var AIM_CUSTOM = 'Custom';   // the entry's name, which no preset of the user's may take
   var shooterFit = null;
   // shooterPreset is the entry in force: Custom, a built-in build or one of the user's presets - always one of them.
@@ -1319,8 +1319,12 @@
   // a corrupted or hand-edited store can never put the page in a state it cannot show.
   function adoptAimStore(box) {
     if (!box || typeof box !== 'object') return;
-    aimStore = {presets: {}, chosen: {}, custom: {}, pairs: {}};
-    if (Number(box.v) !== 3) return;   // 0.7.15 presets held kinds and variants, not client entries
+    aimStore = {presets: {}, chosen: {}, custom: {}, pairs: {}, modes: {}};
+    if (Number(box.v) !== 3) return;
+    // `modes` (23.09): the vehicles whose characteristics panel shows the second mode, off ✸ - 1 or nothing.
+    if (box.modes && typeof box.modes === 'object') Object.keys(box.modes).forEach(function (type) {
+      if (box.modes[type] === 1) aimStore.modes[String(type).slice(0, 64)] = 1;
+    });   // 0.7.15 presets held kinds and variants, not client entries
     if (box.pairs && typeof box.pairs === 'object') Object.keys(box.pairs).forEach(function (type) {
       var key = String(box.pairs[type] || '').slice(0, 160);
       if (/^[^|]+\|[^|]+$/.test(key)) aimStore.pairs[String(type).slice(0, 64)] = key;
@@ -1400,6 +1404,7 @@
   function aimStored() {
     var out = {v: 3, presets: aimStore.presets, chosen: aimStore.chosen, custom: aimStore.custom};
     if (Object.keys(aimStore.pairs).length) out.pairs = aimStore.pairs;
+    if (Object.keys(aimStore.modes).length) out.modes = aimStore.modes;
     return out;
   }
   // --- Reading the configuration ----------------------------------------------------------------
@@ -2558,9 +2563,37 @@
   // block's provenance (aimFrom, compactFactors): both come from the same descriptor and the same devices.
   // `want` (BACKLOG 37): the mode the ✸ layer puts the shooter in - the Strv 107-12's pillbox is the siege mode whatever
   // the shot was recorded in (xiSiegeMode); undefined, the recorded mode decides as before.
-  var aimModeFrom = null, aimModeView = null;
-  function aimOfHit(hit, want) {
+  var aimModeFrom = null, aimModeView = null, modeTtxView = null, modeTtxPair = null;
+  // THE OTHER MODE'S BLOCK (23.09, outputs/second-modes-2026-09-23.md 5.2 p. 3): {block, mode, from}, or null.
+  //   1. the record's own attacker.modeAim (the recorder since the build after 0.7.28; an older record gets it at
+  //      publish, exporter.fix_mode_blocks);
+  //   2. under ✸ only, the second block of the shooter's pair in his characteristics file (configs[k].modeAim, the pair
+  //      the emulator fires - ttxEmuIndex), with the recorded block's own four miscAttrs factors, aimFrom and
+  //      compactFactors laid over it: the field modifications and the battle's modifiers are the same in both modes.
+  //      A shot recorded in the siege mode (vehicleMode 1) gets the file's first block as its other one.
+  // The block carries everything itself - circle, aiming, stabilisation, after-shot term, top speed, hull and turret
+  // traverse, reload, burst - so there is no second formula anywhere: whoever reads a block reads this one too.
+  function modeAimOf(hit) {
     var at = hit && hit.attacker, a = at && at.aim, m = at && at.modeAim;
+    if (!(a && a.dispersion > 0)) return null;
+    if (m && m.dispersion > 0 && (at.modeAimMode === 0 || at.modeAimMode === 1)) return {block: m, mode: at.modeAimMode, from: 'record'};
+    if (!funOn() || hit !== activeHit || !ttxData || !TTX) return null;
+    // The pair is looked up once per file and shooter, not on every read of the block (several a frame).
+    if (!modeTtxPair || modeTtxPair.t !== ttxData || modeTtxPair.at !== at) modeTtxPair = {t: ttxData, at: at, i: ttxEmuIndex()};
+    var i = modeTtxPair.i, pair = i >= 0 ? ttxData.configs[i] : null;
+    if (!pair || !(pair.modeAim && pair.modeAim.dispersion > 0) || !(pair.aim && pair.aim.dispersion > 0)) return null;
+    var own = at.vehicleMode === 1 ? 1 : 0, src = own === 1 ? pair.aim : pair.modeAim;
+    if (!modeTtxView || modeTtxView.a !== a || modeTtxView.src !== src) {
+      var view = Object.assign({}, src);
+      AIM_BARE_FACTORS.forEach(function (k) { if (a[k] !== undefined) view[k] = a[k]; else delete view[k]; });
+      if (a.aimFrom) view.aimFrom = a.aimFrom;
+      if (a.compactFactors) view.compactFactors = a.compactFactors; else delete view.compactFactors;
+      modeTtxView = {a: a, src: src, view: view};
+    }
+    return {block: modeTtxView.view, mode: 1 - own, from: 'ttx'};
+  }
+  function aimOfHit(hit, want) {
+    var at = hit && hit.attacker, a = at && at.aim, sec = modeAimOf(hit), m = sec && sec.block;
     if (!m || !(m.dispersion > 0) || !(a && a.dispersion > 0)) return a;
     var mode = want;
     if (mode !== 0 && mode !== 1) {
@@ -2570,7 +2603,7 @@
       // VEHICLE_SIEGE_STATE: 0 and 1 are the default mode, 2 and up the siege one (constants.pyc 4166-4182).
       mode = siege <= 1 ? 0 : 1;
     }
-    if (mode !== at.modeAimMode || mode === at.vehicleMode) return a;
+    if (mode !== sec.mode || mode === at.vehicleMode) return a;
     if (aimModeFrom !== m || !aimModeView || aimModeView.base !== a) {
       aimModeFrom = m;
       aimModeView = {base: a, view: Object.assign({}, m, {aimFrom: m.aimFrom || a.aimFrom, compactFactors: m.compactFactors || a.compactFactors})};
@@ -2699,7 +2732,10 @@
     // as one nominal frame instead.
     if (!dt) dt = 1 / 60;   // one nominal frame, never a zero step
     var mods = aimHeated(aimModifiers());
-    aimMove = ArmorBallistics.moveStep(aimMove, aimKeys, a, mods, dt);
+    // The gun's sector of this frame (under ✸ a static gun is held on the hull's axis while driving or switching the
+    // mode) and the keys the vehicle drives by (aimKeysNow: the second modes' rules and the autorotation past the sector).
+    var yawLimits = aimYawLimits(a);
+    aimMove = ArmorBallistics.moveStep(aimMove, aimKeysNow(yawLimits), a, mods, dt);
     xiMotion(aimMove.speed);   // the Leopard 120 V's stacks build only below their speed (nothing for other vehicles)
     // The hull turns first and TAKES THE GUN WITH IT (user, 20.09): the aim point swings around the
     // shooter by hullTurn·dt, opening a gap to the crosshair, and the turret below spends what the hull
@@ -2712,8 +2748,7 @@
     }
     // The gun turns only within the shooter's horizontal sector (BACKLOG 40): the gap is the one to the point it can
     // reach, so a gun stopped at its limit has none to close and puts no turret term into the circle - the hull,
-    // turned by A or D, carries it on (viewer.aimReach).
-    var yawLimits = aimYawLimits(a);
+    // turned by A or D, carries it on (viewer.aimReach), under ✸ the autorotation too.
     var chase = ArmorBallistics.turretChase(viewer.aimGap(yawLimits), aimMove.hullTurn, a, mods, dt, swung);
     // `turned`: the gun really moved in this frame (chaseAim says so for anything above a micro-radian).
     var turned = chase.step > 0 && !!viewer.chaseAim(chase.step, yawLimits);
@@ -2752,11 +2787,55 @@
   // block in force (exporter.aim_block since 23.09; an older record gets it at publish from its compact descriptor) -
   // or null for a gun that turns all the way round. A pair that spans the whole circle (nine turrets carry -180 180)
   // is no limit either.
+  // UNDER ✸, A GUN WITH A STATIC YAW (23.09, the 14 tank destroyers with gun.staticTurretYaw) is held on the hull's
+  // axis while a key of W A S D is held or the mode switches - the client's VehicleGunRotator collapses its limits to
+  // (staticTurretYaw, staticTurretYaw) then (hasMovingFlags, SWITCHING; a dead engine or track too, not modelled) - and
+  // moves in its sector standing. The chase brings it there at the turret's speed, its term in the circle by the block.
+  var AIM_STATIC_YAW = [0, 0];
   function aimYawLimits(a) {
+    var st = a && funOn() && a.staticTurretYaw !== undefined && a.staticTurretYaw !== null ? Number(a.staticTurretYaw) : NaN;
+    if (isFinite(st) && (aimHeld() || xiSwitching())) { AIM_STATIC_YAW[0] = st; AIM_STATIC_YAW[1] = st; return AIM_STATIC_YAW; }
     var l = a && a.turretYawLimits;
     if (!Array.isArray(l) || l.length !== 2) return null;
     var lo = Number(l[0]), hi = Number(l[1]);
     return isFinite(lo) && isFinite(hi) && hi > lo && hi - lo < 2 * Math.PI - 1e-6 ? l : null;
+  }
+  // THE KEYS THE VEHICLE DRIVES BY, under ✸ (23.09, outputs/second-modes-2026-09-23.md 5.2 p. 4, 6, 10); off ✸ the held
+  // keys themselves, as before.
+  //   - a mode switch with stopEngineOnSwitch stops the vehicle: no key at all (the speed dies by the brake, the turn by
+  //     its own ramp) - updateSiegeStateStatus drops the movement keys;
+  //   - a French wheeled vehicle that cannot turn on the spot does not turn standing (below 0.1 km/h A and D do nothing,
+  //     the client's help);
+  //   - THE AUTOROTATION: with a sector and neither A nor D held, the hull turns itself towards a cursor past the sector -
+  //     the client sends the aim to the server (trackRelativePointWithGun) and the server turns the hull, at the hull's
+  //     own traverse (derived: the client has no other). A virtual key of moveStep, so the ramp, the fall and the turn's
+  //     term in the circle are the keys' own; `auto` is what is left past the sector, so the hull never overshoots it,
+  //     and it stops the moment it is there (autoStop). Measured by the viewer (aimBeyond: two directions, no ray).
+  var AIM_NO_KEYS = {}, AIM_AUTO_KEYS = {}, aimAutoTurn = false;
+  function aimNoSpotTurn() {
+    var modes = ttxData && ttxData.vehicle && ttxData.vehicle.modes, a = activeHit && activeHit.attacker && activeHit.attacker.aim;
+    if (modes && modes.wheeled !== undefined) return !!modes.wheeled && !modes.onSpotRotation;
+    return !!(a && a.siegeMode && a.siegeMode.kind === 'wheeled');
+  }
+  function aimKeysNow(limits) {
+    if (!funOn()) return aimKeys;
+    var m = xiMech ? xiNow() : null;
+    if (m && m.spec.kind === 'siege' && m.to !== null && m.spec.stop) { aimAutoTurn = false; return AIM_NO_KEYS; }
+    var turn = !!(aimKeys.left || aimKeys.right), keys = aimKeys;
+    if (turn && !(aimMove && Math.abs(Number(aimMove.speed) || 0) >= 0.1 * KMH_TO_MS) && aimNoSpotTurn()) turn = false;
+    if (!turn && limits && viewer && viewer.aimBeyond) {
+      var over = Number(viewer.aimBeyond(limits)) || 0;
+      if (Math.abs(over) > 1e-4) aimAutoTurn = true;
+      else if (aimAutoTurn) { aimAutoTurn = false; over = 0; AIM_AUTO_KEYS.autoStop = true; }
+      else over = NaN;
+      if (!isNaN(over)) {
+        AIM_AUTO_KEYS.forward = aimKeys.forward; AIM_AUTO_KEYS.back = aimKeys.back; AIM_AUTO_KEYS.auto = over;
+        if (over) AIM_AUTO_KEYS.autoStop = false;
+        return AIM_AUTO_KEYS;
+      }
+    } else aimAutoTurn = false;
+    if (!turn && (aimKeys.left || aimKeys.right)) { AIM_AUTO_KEYS.forward = aimKeys.forward; AIM_AUTO_KEYS.back = aimKeys.back; AIM_AUTO_KEYS.auto = 0; AIM_AUTO_KEYS.autoStop = false; return AIM_AUTO_KEYS; }
+    return keys;
   }
   // The reload is over: drop it so the ring is drawn whole again.
   function reloadJustFinished() {
@@ -3218,6 +3297,8 @@
     // A burst already on its way takes no second pull of the trigger (burstLeft, below): its own rounds go out
     // on their own.
     if (burstLeft > 0) return false;
+    // A vehicle switching its mode does not fire, whatever the mode (PlayerAvatar.shoot, siegeState in SWITCHING; 23.09).
+    if (xiSwitching()) return false;
     var h = heatNow();
     if (h && h.locked) return false;
     return !realReload() || aimReloadLeft() <= 0;
@@ -3302,6 +3383,8 @@
   // lock at all. The choice of 22.09 to leave it alone was caution, not the owner's decision, and the bands are
   // checked against the XML now.
   var gunHeat = null, heatFrom = null, heatSpec = null, panelTimer = 0, heatPaintKey = '', heatTitleKey = '', heatWarnAt = '';
+  // A modifier's attribute name as the XML spells it, whatever number of slashes the record joined it with.
+  function modName(m) { return String(m && m.name || '').replace(/\/+/g, '/'); }
   // The gun's numbers, normalised once per shooter block.
   function heatParams() {
     var a = aimBlockData();
@@ -3312,10 +3395,12 @@
     var max = Number(t.maxTemperature), per = Number(t.heatingPerShot), cool = Number(t.coolingPerSec);
     if (!(max > 0) || !(per > 0) || !(cool > 0)) return null;
     // One multiplier of the circle per band, ascending as the client sorts them; a band with no modifier is ×1.
+    // Every record since 0.7.27 spells the name 'dynAttrs//multShotDispersionFactor' (the client keeps the kind with its
+    // own slash and the mod joined another one on - fixed in the mod 23.09): until then no band was ever applied.
     var states = (Array.isArray(t.thermalStates) ? t.thermalStates : []).map(function (s) {
       var f = 1;
       (s && Array.isArray(s.modifiers) ? s.modifiers : []).forEach(function (m) {
-        if (m && m.op === 'mul' && m.name === 'dynAttrs/multShotDispersionFactor' && Number(m.value) > 0) f *= Number(m.value);
+        if (m && m.op === 'mul' && modName(m) === 'dynAttrs/multShotDispersionFactor' && Number(m.value) > 0) f *= Number(m.value);
       });
       return {top: Number(s && s.maxTemperature), factor: f};
     }).filter(function (s) { return s.top > 0; }).sort(function (x, y) { return x.top - y.top; });
@@ -3761,6 +3846,8 @@
     aimReload = null; aimClipDry = false; aimLoadFull();
     paintFun();
     startAimLoop();
+    // The characteristics panel's mode switch follows ✸ (the emulator's mode under it, the panel's own off it).
+    if (ttxData) ttxPaint();
   }
   // Everything the emulation holds, back to a standing, loaded, fully aimed shooter.
   function resetAimRun() {
@@ -3805,8 +3892,9 @@
       fight: {mult: 0.8, aimingTime: 0.75, reload: 0.8}},
     'usa:A183_XM69_Hacker': {mech: 'concentrationMode', name: 'XM69 Hacker', glyph: '◎', kind: 'ability', duration: 10, cooldown: 40, deploy: 40,
       mods: {movement: 0, rotation: 0, turret: 0, aimingTime: 0.3, mult: 0.94, hullSpeed: 1.1}},
-    'sweden:S36_Strv_107_12': {mech: 'pillboxSiegeMode', name: 'Strv 107-12', glyph: '▣', kind: 'pillbox', fromDrive: 5, fromSiege: 3, toSiege: 3, toDrive: 4,
-      mods: {mult: 0.85, reload: 0.925, speed: 0, hullSpeed: 0.4}},
+    'sweden:S36_Strv_107_12': {mech: 'pillboxSiegeMode', name: 'Strv 107-12', glyph: '▣', kind: 'siege',
+      pill: {fromDrive: 5, fromSiege: 3, toSiege: 3, toDrive: 4, mods: {mult: 0.85, reload: 0.925, speed: 0, hullSpeed: 0.4}},
+      siege: {kind: 'hydraulic', switchOnTime: 2, switchOffTime: 1, switchCancelEnabled: false, stopEngineOnSwitch: true, device: 'engine'}},
     'germany:G188_LeKpz_Borkenkafer': {mech: 'targetDesignator', name: 'leKpz Borkenkäfer', glyph: '⊕', kind: 'designator', deploy: 60, cooldown: 25, markTime: 10},
     'japan:J53_Ho_Ri_Shugo': {mech: 'auxiliaryRocketLauncher', name: 'Ho-Ri Shugo', glyph: '✦', kind: 'weapon', gun: XI_HORI_GUN, what: 'the auxiliary rocket launcher'},
     'germany:G187_Taschenratte': {mech: 'supportWeapon', name: 'Taschenratte', glyph: '✦', kind: 'weapon', gun: XI_TASCHEN_GUN, what: 'the support mortar'},
@@ -3824,18 +3912,83 @@
   var XI_SECONDARY_CLEAR = {afterShotInBurstFactor: undefined, burst: undefined, autoreload: undefined, autoShoot: undefined,
     dualAccuracy: undefined, dualGun: undefined, twinGun: undefined, temperatureGun: undefined, overheatGun: undefined,
     heatingZonesGun: undefined, gunMechanics: undefined, clip: [1, 0]};
-  var xiMech = null, xiTimer = 0, xiAimView = null, xiShellBack = '', xiPaintKey = '', xiTitleKey = '', xiSpecHit = null, xiSpecVal = null;
+  var xiMech = null, xiTimer = 0, xiAimView = null, xiShellBack = '', xiPaintKey = '', xiTitleKey = '', xiSpecHit = null, xiSpecVal = null, xiSpecTtx = null;
   // The words of the button's aria-label, by kind (the three the emulation does not run carry their own).
-  var XI_LABEL = {stance: 'Stance', ability: 'Gyro-stabiliser', pillbox: 'Pillbox', designator: 'Target designator', weapon: 'Second gun',
-    burst: 'Burst mode', stacks: 'Accuracy stacks', fury: 'Battle fury', surge: 'Autoloader surge'};
+  var XI_LABEL = {stance: 'Stance', ability: 'Gyro-stabiliser', designator: 'Target designator', weapon: 'Second gun',
+    burst: 'Burst mode', stacks: 'Accuracy stacks', fury: 'Battle fury', surge: 'Autoloader surge', rocket: 'Rocket booster'};
+  // THE SECOND MODES (23.09, outputs/second-modes-2026-09-23.md 5.2): the same button, kind 'siege', for every vehicle
+  // whose aim block names its mode switch (aim.siegeMode: the record since the build after 0.7.31, an older record at
+  // publish, else the shooter's pair in his characteristics file). A glyph per kind of mode, lit in the second mode, the
+  // words in the tooltip: the client's own names of the modes (menu.mo "Siege / Travel", "Rapid / Cruise", the turbine's
+  // "engine modes"). The automatic siege is an indicator: the server switches it by the speed. The charged salvo of the
+  // dual guns and the shell switchers get no button (section 5.5).
+  var SIEGE_KINDS = {
+    hydraulic: {glyph: '⤓', label: 'Siege mode', on: 'siege', off: 'travel', switchOn: 'into siege', switchOff: 'into travel'},
+    turboshaft: {glyph: '≫', label: 'Engine mode', on: 'the turbine', off: 'the normal engine mode', switchOn: 'to the turbine', switchOff: 'to the normal mode'},
+    wheeled: {glyph: '↠', label: 'Speed mode', on: 'Rapid', off: 'Cruise', switchOn: 'to Rapid', switchOff: 'to Cruise'},
+    twinGun: {glyph: '∥', label: 'Salvo mode', on: 'the salvo', off: 'single rounds', switchOn: 'to the salvo', switchOff: 'to single rounds'},
+    auto: {glyph: '∠', label: 'Hull tilt', on: 'the hull tilting (siege)', off: 'level (travel)'}};
+  // The client's defaults of _readSiegeModeParams (vehicles.pyc 11215) for a field the block does not carry.
+  function siegeNum(v, fallback) { var n = Number(v); return v !== null && v !== undefined && isFinite(n) && n >= 0 ? n : fallback; }
+  // The mode switch of the shooter: the record's block, else his pair's in the characteristics file, else `base`.
+  function siegeModeOf(hit, base) {
+    var at = hit.attacker, sm = at.aim && at.aim.siegeMode;
+    if (sm && SIEGE_KINDS[sm.kind]) return {sm: sm, a: at.aim, from: 'record'};
+    if (ttxData && TTX && hit === activeHit) {
+      var i = ttxEmuIndex(), pa = i >= 0 ? ttxData.configs[i].aim : null;
+      if (pa && pa.siegeMode && SIEGE_KINDS[pa.siegeMode.kind]) return {sm: pa.siegeMode, a: pa, from: 'ttx'};
+    }
+    return base && base.siege ? {sm: base.siege, a: at.aim || {}, from: 'default'} : null;
+  }
+  function siegeSpecOf(hit, base) {
+    var got = siegeModeOf(hit, base);
+    if (!got) return null;
+    var sm = got.sm, k = SIEGE_KINDS[sm.kind], at = hit.attacker, name = base ? base.name : String(at.name || at.type || 'This vehicle');
+    var second = sm.kind === 'auto' ? null : modeAimOf(hit), hull = got.a.hullAiming && got.a.hullAiming.pitch;
+    // No second block anywhere (a record before the build after 0.7.28 published by an older build, no characteristics
+    // file): the button is dimmed with the reason - the switch alone would move nothing. The Strv 107-12 keeps its
+    // pillbox on the recorded block, as it did before.
+    if (!second && sm.kind !== 'auto' && !base) {
+      return {mech: 'siegeMode', name: name, glyph: k.glyph, kind: 'skip', label: k.label,
+        why: k.label + ': the second mode’s numbers come with the vehicle’s characteristics file, and this vehicle has none yet (the game writes it in the garage), so the emulation cannot switch it.'};
+    }
+    return {mech: base ? base.mech : 'siegeMode', kind: 'siege', mode: sm.kind, name: name, glyph: base ? base.glyph : k.glyph, label: k.label,
+      on: siegeNum(sm.switchOnTime, 2), off: siegeNum(sm.switchOffTime, 2), cancel: sm.switchCancelEnabled === true,
+      stop: sm.stopEngineOnSwitch !== false, device: sm.device || 'engine',
+      autoOn: siegeNum(sm.autoOn, 0.1 * KMH_TO_MS), autoOff: siegeNum(sm.autoOff, 1.0 * KMH_TO_MS),
+      tilt: hull ? {min: Number(hull.min) || 0, max: Number(hull.max) || 0, speed: Number(hull.speed) || 0} : null,
+      pill: base ? base.pill : null, second: second, from: got.from};
+  }
+  // THE ROCKET BOOSTER (23.09, part 2; rocketAcceleration, sixteen vehicles - docs/KNOWLEDGE.md section 4): an ability
+  // like the XM69's gyro. Its numbers are the shooter's characteristics file's (vehicle.rocketAcceleration): the mod
+  // writes them from type.rocketAccelerationParams. No record carries them, so without the file there is no button.
+  function rocketSpecOf(hit) {
+    var at = hit.attacker, r = ttxData && hit === activeHit && ttxData.vehicle ? ttxData.vehicle.rocketAcceleration : null;
+    if (!r || !(Number(r.duration) > 0)) return null;
+    var mods = {};
+    (Array.isArray(r.modifiers) ? r.modifiers : []).forEach(function (m) {
+      var v = Number(m && m.value), n = modName(m);
+      if (!(m && m.op === 'mul' && v >= 0 && isFinite(v))) return;
+      if (n === 'dynAttrs/vehicle/maxSpeed/forward') mods.forwardSpeed = v;
+      else if (n === 'dynAttrs/vehicle/maxSpeed/backward') mods.backwardSpeed = v;
+      else if (n === 'dynAttrs/vehicle/rotationSpeed') mods.hullSpeed = v;
+      else if (n === 'dynAttrs/engine/power') mods.power = v;
+    });
+    return {mech: 'rocketAcceleration', kind: 'rocket', name: String(at.name || at.type || 'This vehicle'), glyph: '⇮',
+      duration: Number(r.duration), cooldown: siegeNum(r.reloadTime, 0), deploy: siegeNum(r.deployTime, 0),
+      uses: Number(r.reuseCount) > 0 ? Math.floor(Number(r.reuseCount)) : Infinity, mods: mods};
+  }
   // The mechanic of the shooter on screen, or null. A gun whose record names chargeableBurst is the Black Rock's.
   function xiSpecOf(hit) {
     var at = hit && hit.attacker;
     if (!at) return null;
     var s = XI_MECHANICS[String(at.type || '')];
-    if (s) return s;
+    if (s && s.kind !== 'siege') return s;
+    var sg = siegeSpecOf(hit, s);
+    if (sg) return sg;
     var list = at.aim && Array.isArray(at.aim.gunMechanics) ? at.aim.gunMechanics : [];
-    return list.indexOf('chargeableBurst') >= 0 ? XI_MECHANICS['usa:A179_Black_Rock'] : null;
+    if (list.indexOf('chargeableBurst') >= 0) return XI_MECHANICS['usa:A179_Black_Rock'];
+    return rocketSpecOf(hit);
   }
   // The recorded state the emulation starts from and the server time it belongs to (the tracer's, else the hit's), so
   // a timer the record gives - endTime - runs on for exactly what it had left.
@@ -3871,13 +4024,25 @@
         m.until = m.state === 'ready' ? 0 : now + left;
         m.record = !!g;
         break;
-      case 'pillbox':
-        // VEHICLE_SIEGE_STATE 4 is PILLBOX_ENABLED, inside the siege mode; publicStatus carries the same numbers.
-        g = st.pillboxSiegeMode && st.pillboxSiegeMode.publicStatus;
-        m.pillbox = !!((g && Number(g.state) === 4) || rec.siege === 4);
-        m.base = m.pillbox || (rec.siege !== null && rec.siege >= 2) ? 'siege' : 'drive';
-        m.to = null; m.until = 0;
+      case 'siege':
+        // VEHICLE_SIEGE_STATE: 0 DISABLED, 1 SWITCHING_ON, 2 ENABLED, 3 SWITCHING_OFF, 4 PILLBOX_ENABLED (the Strv
+        // 107-12's publicStatus carries the same numbers); st 0 travel, 1 the second mode, 2 the pillbox.
+        g = spec.pill ? st.pillboxSiegeMode && st.pillboxSiegeMode.publicStatus : null;
+        m.st = (g && Number(g.state) === 4) || (spec.pill && rec.siege === 4) ? 2 : rec.siege !== null && rec.siege >= 2 ? 1 : 0;
+        m.to = null; m.until = 0; m.refused = 0;
+        // The automatic siege: on at a standstill, the recorded state where there is one.
+        m.on = spec.mode === 'auto' ? (rec.siege !== null ? rec.siege >= 2 : true) : false;
         m.record = !!g || rec.siege !== null;
+        break;
+      case 'rocket':
+        // ROCKET_ACCELERATION_STATE: 0 NOT_RUNNING, 1 DEPLOYING, 2 PREPARING, 3 READY, 4 ACTIVE, 5 DISABLED, 6 EMPTY.
+        g = st.rocketAcceleration && st.rocketAcceleration.stateStatus;
+        code = g ? Number(g.status) : NaN; left = g ? xiLeft(rec, g.endTime) : 0;
+        m.uses = g && Number(g.reuseCount) >= 0 && Number.isFinite(Number(g.reuseCount)) ? Math.floor(Number(g.reuseCount)) : spec.uses;
+        m.state = code === 4 && left > 0 ? 'active' : code === 2 && left > 0 ? 'cooldown' : code === 1 && left > 0 ? 'deploy'
+          : code === 6 || !(m.uses > 0) ? 'empty' : 'ready';
+        m.until = m.state === 'active' || m.state === 'cooldown' || m.state === 'deploy' ? now + left : 0;
+        m.record = !!g;
         break;
       case 'designator':
         // TARGET_DESIGNATOR_STATE: 0 ready, 1 active (the next shot marks), 2 cooldown, 3 pre-battle.
@@ -3954,8 +4119,15 @@
           else { m.state = 'ready'; m.until = 0; }
         }
         break;
-      case 'pillbox':
-        if (m.to !== null && now >= m.until) { m.pillbox = m.to; m.to = null; }
+      case 'siege':
+        // The mode changes on the EDGE of the switch (VEHICLE_SIEGE_STATE.getMode): the old one holds until it ends.
+        if (m.to !== null && now >= m.until) { m.st = m.to; m.to = null; }
+        break;
+      case 'rocket':
+        for (guard = 0; guard < 4 && m.until > 0 && now >= m.until; guard++) {
+          if (m.state === 'active') { if (m.uses > 0) { m.state = 'cooldown'; m.until += s.cooldown; } else { m.state = 'empty'; m.until = 0; } }
+          else { m.state = m.uses > 0 ? 'ready' : 'empty'; m.until = 0; }
+        }
         break;
       case 'designator':
         if ((m.state === 'cooldown' || m.state === 'deploy') && now >= m.until) { m.state = 'ready'; m.until = 0; }
@@ -3987,7 +4159,8 @@
   // The mechanic's state now, or null: off ✸ and for every other vehicle. A new hit starts from its own record.
   function xiNow() {
     if (!funOn()) return null;
-    if (xiSpecHit !== activeHit) { xiSpecHit = activeHit; xiSpecVal = xiSpecOf(activeHit); }
+    // The spec depends on the shooter's characteristics file too (the second block, the rocket), which may arrive later.
+    if (xiSpecHit !== activeHit || xiSpecTtx !== ttxData) { xiSpecHit = activeHit; xiSpecTtx = ttxData; xiSpecVal = xiSpecOf(activeHit); }
     var spec = xiSpecVal;
     if (!spec) { xiMech = null; return null; }
     var now = aimSeconds();
@@ -4008,8 +4181,8 @@
         if (m.stance === 1) out.push(s.turbo);
         if (m.fightUntil > now) out.push(s.fight);
         break;
-      case 'ability': if (m.state === 'active') out.push(s.mods); break;
-      case 'pillbox': if (m.pillbox) out.push(s.mods); break;
+      case 'ability': case 'rocket': if (m.state === 'active') out.push(s.mods); break;
+      case 'siege': if (m.st === 2 && s.pill) out.push(s.pill.mods); break;
       case 'burst': if (m.burst) out.push(s.mods); break;
       case 'stacks': if (m.level > 0) out.push({mult: Math.max(0, 1 - m.bonus * m.level)}); break;
       case 'fury': if (m.level > 0) out.push({reload: Math.max(0, 1 - s.bonus * m.level)}); break;
@@ -4031,9 +4204,14 @@
     });
     return mods;
   }
-  // The Strv 107-12 in its pillbox fires in the siege mode, whatever mode the shot was recorded in: aimOfHit takes the
-  // siege descriptor's block (attacker.modeAim) then. undefined: the recorded mode decides, as without ✸.
-  function xiSiegeMode(m) { return m && m.spec.kind === 'pillbox' && m.pillbox ? 1 : undefined; }
+  // The mode the emulated vehicle is in: 1 in the second mode and in the Strv 107-12's pillbox, 0 in travel - the
+  // switch starts from the recorded state, so until the first press this is the recorded mode. aimOfHit then takes the
+  // other descriptor's block (modeAimOf). undefined - the recorded mode decides, as without ✸ - for every other vehicle
+  // and for the automatic siege, whose second block differs only in the hull's tilt.
+  function xiSiegeMode(m) { return m && m.spec.kind === 'siege' && m.spec.mode !== 'auto' ? (m.st >= 1 ? 1 : 0) : undefined; }
+  // A switch of the mode is running (and takes time): the gun does not fire (PlayerAvatar.shoot), and with
+  // stopEngineOnSwitch the vehicle stops.
+  function xiSwitching() { var m = xiMech && funOn() ? xiNow() : null; return !!(m && m.spec.kind === 'siege' && m.to !== null); }
   // The secondary gun in force (Ho-Ri Shugo, Taschenratte): its own block laid over the vehicle's - the exported
   // aim.secondary, else the gun's own XML figures - with the main gun's own mechanics taken away. The vehicle's
   // factors, the chassis and the crew stay the vehicle's. One view per block, so the aim cache keeps working.
@@ -4093,6 +4271,13 @@
   // The frame's own speed, for the Leopard's stacks: they build only below gainMaxSpd.
   function xiMotion(speed) {
     var m = xiMech && funOn() ? xiNow() : null;
+    // The automatic siege: on at or below autoOn, off above autoOff - a hysteresis, as the thresholds' names say (the
+    // switching itself is the server's). The circle does not change; only the button and its tooltip follow.
+    if (m && m.spec.kind === 'siege' && m.spec.mode === 'auto') {
+      var v = Math.abs(Number(speed) || 0), on = m.on ? !(v > m.spec.autoOff) : v <= m.spec.autoOn;
+      if (on !== m.on) { m.on = on; paintXi(); }
+      return;
+    }
     if (!m || m.spec.kind !== 'stacks') return;
     var slow = Math.abs(Number(speed) || 0) < m.gainKmh * KMH_TO_MS;
     if (slow === m.slow) return;
@@ -4108,8 +4293,8 @@
         if (m.fightUntil > m.energyAt) t = Math.min(t, m.fightUntil);
         else if (m.stance === 0 && m.to === null) t = Math.min(t, m.energyAt + Math.max(0, s.energyMax - m.energy) / s.energyPerSec);
         return t;
-      case 'ability': case 'designator': return m.until > 0 ? m.until : Infinity;
-      case 'pillbox': return m.to !== null ? m.until : Infinity;
+      case 'ability': case 'designator': case 'rocket': return m.until > 0 ? m.until : Infinity;
+      case 'siege': return m.to !== null ? m.until : Infinity;
       case 'stacks': return m.slow && m.level < m.max ? m.since + m.gainTime : Infinity;
       case 'fury': return m.level > 0 ? m.at + s.duration : Infinity;
       case 'surge': return m.charges < s.maxCharges ? m.chargeAt + s.chargeFull : Infinity;
@@ -4125,16 +4310,17 @@
     if (!m || m.spec.kind === 'skip') return;
     var due = xiNext(m) - aimSeconds();
     if (!(due < Infinity)) return;
-    xiTimer = window.setTimeout(function () { xiTimer = 0; xiNow(); startAimLoop(); paintXi(); xiWake(); }, Math.max(0, due) * 1000 + 20);
+    xiTimer = window.setTimeout(function () { xiTimer = 0; xiNow(); startAimLoop(); paintXi(); xiModePanel(); xiWake(); }, Math.max(0, due) * 1000 + 20);
   }
   // Nothing of it survives ✸ switching, a new shooter or the emulation starting over (circleReset).
   function xiReset() {
-    xiMech = null; xiAimView = null; xiMarkState = null; xiSpecHit = null; xiSpecVal = null; xiShellBack = '';
+    xiMech = null; xiAimView = null; xiMarkState = null; xiSpecHit = null; xiSpecVal = null; xiSpecTtx = null; xiShellBack = '';
+    xiHoldCancel();
     if (xiTimer) window.clearTimeout(xiTimer);
     xiTimer = 0;
   }
   // THE PRESS. What it does is the mechanic's: a stance or a mode switched, an ability started, a gun chosen.
-  function xiPress() {
+  function xiPress(e) {
     var m = xiNow();
     if (!m || m.spec.kind === 'skip') return;
     var s = m.spec, now = aimSeconds();
@@ -4145,11 +4331,14 @@
       case 'ability':
         if (m.state === 'ready') { m.state = 'active'; m.until = now + s.duration; }
         break;
-      case 'pillbox':
-        if (m.to === null) {
-          m.to = !m.pillbox;
-          m.until = now + (m.to ? (m.base === 'siege' ? s.fromSiege : s.fromDrive) : (m.base === 'siege' ? s.toSiege : s.toDrive));
-        }
+      case 'rocket':
+        if (m.state === 'ready' && m.uses > 0) { m.state = 'active'; m.until = now + s.duration; m.uses--; }
+        break;
+      case 'siege':
+        // The Strv 107-12 tells a touch from a hold on the pointer itself (xiDown/xiUp); its click does nothing, but a
+        // click without a pointer (the keyboard: detail 0) is a touch.
+        if (s.pill && !(e && e.detail === 0)) return;
+        xiSiegeTap(m, now);
         break;
       case 'designator':
         if (m.state === 'ready') m.state = 'armed';
@@ -4159,10 +4348,72 @@
       case 'burst': m.burst = !m.burst; break;
       case 'surge': xiSurge(m, now); break;
     }
+    xiPressed();
+  }
+  function xiPressed() {
     paintAimMechanics();
     paintGunLoad();
     startAimLoop();
+    xiModePanel();
     xiWake();
+  }
+  // A second mode switched: the characteristics panel shows the emulator's mode under ✸ (one state), so it is painted
+  // again - at the press and at the end of the switch, never per frame.
+  function xiModePanel() { if (xiMech && xiMech.spec.kind === 'siege' && ttxData) ttxPaint(); }
+  // A TOUCH of the mode key (the key X of the client; SiegeModeControl): the second mode on or off, in the switch
+  // time of that direction; during a switch a touch cancels it only where the client allows it (switchCancelEnabled).
+  // The turbine switches only standing (the client's help, detailsHelp/engineMode: "requires a full stop"): refused on
+  // the move. The automatic siege takes no key at all. From the Strv 107-12's pillbox a touch goes to the siege mode.
+  function xiSiegeTap(m, now) {
+    var s = m.spec;
+    if (s.mode === 'auto') return;
+    if (m.to !== null) { if (s.cancel) { m.to = null; m.until = 0; } return; }
+    if (s.mode === 'turboshaft' && aimMove && Math.abs(Number(aimMove.speed) || 0) > 0.1 * KMH_TO_MS) { m.refused = now; return; }
+    if (m.st === 2) xiSiegeGo(m, 1, s.pill.toSiege, now);
+    else if (m.st === 1) xiSiegeGo(m, 0, s.off, now);
+    else xiSiegeGo(m, 1, s.on, now);
+  }
+  // A HOLD of 1 s, the Strv 107-12 only (PillboxSiegeComponent HOLD_TIME): into the pillbox - 5 s from travel, 3 s from
+  // siege - or out of it to travel, 4 s.
+  function xiSiegeHold(m, now) {
+    var p = m.spec.pill;
+    if (!p || m.to !== null) return;
+    if (m.st === 2) xiSiegeGo(m, 0, p.toDrive, now);
+    else xiSiegeGo(m, 2, m.st === 1 ? p.fromSiege : p.fromDrive, now);
+  }
+  // An instant switch (the French wheeled vehicles, 0 s) is done at once; any other runs its time.
+  function xiSiegeGo(m, to, seconds, now) {
+    m.refused = 0;
+    if (!(seconds > 0)) { m.st = to; m.to = null; m.until = 0; return; }
+    m.to = to; m.until = now + seconds;
+  }
+  // THE TOUCH AND THE HOLD on the button, the client's own times (PillboxSiegeComponent TAP_TIME 0.25 s, HOLD_TIME 1.0 s):
+  // released before 0.25 s - a touch; held 1 s - the hold goes off while still held; released in between - nothing, as
+  // the client's __onHoldCanceled. Left button only (the game's browser passes no other).
+  var XI_TAP = 0.25, XI_HOLD = 1.0, xiHold = null;
+  function xiHoldCancel() { if (xiHold && xiHold.timer) window.clearTimeout(xiHold.timer); xiHold = null; }
+  function xiDown(e) {
+    var m = xiNow();
+    if (!m || m.spec.kind !== 'siege' || !m.spec.pill || (e && e.button !== undefined && e.button !== 0)) return;
+    xiHoldCancel();
+    var hold = {at: aimSeconds(), fired: false, timer: 0};
+    hold.timer = window.setTimeout(function () {
+      hold.timer = 0;
+      if (xiHold !== hold) return;
+      hold.fired = true;
+      var n = xiNow();
+      if (n && n.spec.kind === 'siege' && n.spec.pill) { xiSiegeHold(n, aimSeconds()); xiPressed(); }
+    }, XI_HOLD * 1000);
+    xiHold = hold;
+  }
+  function xiUp() {
+    var hold = xiHold;
+    xiHoldCancel();
+    if (!hold || hold.fired) return;
+    var m = xiNow(), now = aimSeconds();
+    if (!m || m.spec.kind !== 'siege' || !m.spec.pill || now - hold.at >= XI_TAP) return;
+    xiSiegeTap(m, now);
+    xiPressed();
   }
   // THE OTHER GUN (Ho-Ri Shugo, Taschenratte). Each gun keeps its own load: the one put away goes on loading in the
   // background (its timers are in absolute time), the one taken up comes back as it was left, or loaded when it was
@@ -4220,8 +4471,9 @@
     var s = m.spec, on = false, busy = false, glow = false;
     switch (s.kind) {
       case 'stance': on = m.stance === 1; busy = m.to !== null; glow = m.fightUntil > now; break;
-      case 'ability': on = m.state === 'active'; busy = m.state === 'cooldown' || m.state === 'deploy'; break;
-      case 'pillbox': on = m.pillbox; busy = m.to !== null; break;
+      case 'ability': case 'rocket': on = m.state === 'active'; busy = m.state === 'cooldown' || m.state === 'deploy'; break;
+      // Lit in the second mode, dashed while it switches; the Strv 107-12's pillbox wears the gold ring on top.
+      case 'siege': on = s.mode === 'auto' ? m.on : m.st >= 1; busy = m.to !== null; glow = m.st === 2; break;
       case 'designator': on = m.state === 'armed'; busy = m.state === 'cooldown' || m.state === 'deploy'; glow = !!xiMarkNow(); break;
       case 'weapon': on = m.weapon === 1; break;
       case 'burst': on = m.burst; break;
@@ -4229,7 +4481,8 @@
       case 'fury': on = m.level > 0; break;
       case 'surge': on = m.boostUntil > now; busy = m.charges < s.maxCharges; break;
     }
-    return {on: on, busy: busy, glow: glow, skip: s.kind === 'skip', passive: s.kind === 'stacks' || s.kind === 'fury'};
+    return {on: on, busy: busy, glow: glow, skip: s.kind === 'skip' || (s.kind === 'rocket' && m.state === 'empty'),
+            passive: s.kind === 'stacks' || s.kind === 'fury' || (s.kind === 'siege' && s.mode === 'auto')};
   }
   function paintXi() {
     var b = $('aim-gun-mech');
@@ -4253,7 +4506,7 @@
     var tk = xiKey(m, now);
     if (tk !== xiTitleKey) {
       xiTitleKey = tk; b.title = xiTitle(m, now);
-      b.setAttribute('aria-label', m.spec.name + ': ' + (XI_LABEL[m.spec.kind] || m.spec.mech));
+      b.setAttribute('aria-label', m.spec.name + ': ' + (m.spec.pill ? 'Siege mode and pillbox' : m.spec.label || XI_LABEL[m.spec.kind] || m.spec.mech));
     }
   }
   function xiKey(m, now) {
@@ -4261,8 +4514,9 @@
     switch (s.kind) {
       case 'stance': return [s.mech, m.stance, m.to, left(m.until), left(m.fightUntil), Math.floor(m.energy), m.record].join();
       case 'ability': return [s.mech, m.state, left(m.until), m.record].join();
+      case 'rocket': return [s.mech, m.state, left(m.until), m.uses, m.record].join();
       case 'designator': mk = xiMarkNow(); return [s.mech, m.state, left(m.until), mk ? Math.ceil(mk.left) : 0, m.record].join();
-      case 'pillbox': return [s.mech, m.pillbox, m.to, left(m.until), m.base, m.record].join();
+      case 'siege': return [s.mech, s.mode, m.st, m.to, left(m.until), m.on, m.refused ? 1 : 0, m.record, s.from].join();
       case 'weapon': return [s.mech, m.weapon, m.record].join();
       case 'burst': return [s.mech, m.burst, m.record].join();
       case 'stacks': return [s.mech, m.level, m.max, m.record].join();
@@ -4288,11 +4542,8 @@
           : m.state === 'deploy' ? 'deploying - ' + xiSec(m.until - now) + ' s' : 'ready') + '.' +
           ' Press: switch it on for ' + s.duration + ' s, then it cools down ' + s.cooldown + ' s. While on: the movement, hull and turret terms of the circle ×0, aiming time ×0.3, the circle ×0.94, hull traverse ×1.1.' +
           stock + ' The ' + s.deploy + ' s it deploys at the start of a battle are not run here unless the record says so.' + from;
-      case 'pillbox':
-        return head + 'the pillbox: ' + (m.pillbox ? 'on' : 'off') + (m.to !== null ? ', switching ' + (m.to ? 'in' : 'out') + ' - ' + xiSec(m.until - now) + ' s' : '') + '.' +
-          ' Press: into the pillbox - ' + s.fromDrive + ' s from travel, ' + s.fromSiege + ' s from siege - or out of it - ' + s.toSiege + ' s to siege, ' + s.toDrive + ' s to travel; this shot was fired in ' + (m.base === 'siege' ? 'the siege mode' : 'travel') + ', where a press out returns.' +
-          ' In the pillbox, on the siege mode’s own circle' + (activeHit && activeHit.attacker && activeHit.attacker.modeAim ? ' (the siege descriptor’s block the record carries)' : ' - this record carries no siege block, so on the recorded one') +
-          ': the circle ×0.85, reload ×0.925, no driving, hull traverse ×0.4.' + stock + ' Whether the gun is locked while it switches is not known: here it is not.' + from;
+      case 'siege': return xiSiegeTitle(m, now, head, from);
+      case 'rocket': return xiRocketTitle(m, now, head, from);
       case 'designator':
         var mark = xiMarkNow();
         return head + 'the target designator: ' + (m.state === 'armed' ? 'armed - the next round marks what it hits' : m.state === 'cooldown' ? 'cooling down - ' + xiSec(m.until - now) + ' s'
@@ -4325,6 +4576,59 @@
         return head + s.why + ' The button does nothing.';
     }
     return head;
+  }
+  function xiKmh(v) { return aimNum(Math.round(Number(v) * 3.6 * 10) / 10); }
+  function xiM100(d) { return aimNum(Math.round(Math.tan(Number(d)) * 1e4) / 100); }
+  function xiCap(t) { return t.charAt(0).toUpperCase() + t.slice(1); }
+  // The words of a second mode: the state and the switch, what a touch (and the 107-12's hold) does, the client's
+  // rules while it switches, the two modes' numbers, and what the page does and does not run.
+  function xiSiegeTitle(m, now, head, from) {
+    var s = m.spec, k = SIEGE_KINDS[s.mode] || SIEGE_KINDS.hydraulic, at = activeHit && activeHit.attacker || {}, a = at.aim || {};
+    var sec = s.second, first = sec && sec.mode === 0 ? sec.block : a, second = sec && sec.mode === 1 ? sec.block : sec ? a : null;
+    var words = function (st) { return st === 2 ? 'the pillbox' : st === 1 ? k.on : k.off; }, out;
+    if (s.mode === 'auto') {
+      var t = s.tilt, deg = function (r) { return aimNum(Math.round(Math.abs(r) * 1800 / Math.PI) / 10); };
+      return head + k.label + ': ' + (m.on ? k.on : k.off) + '.' +
+        ' It works by itself: the server tilts the hull' + (t ? ' ' + deg(t.max) + '° down and ' + deg(t.min) + '° up at ' + deg(t.speed) + '°/s' : '') +
+        ' once the vehicle is at or below ' + xiKmh(s.autoOn) + ' km/h, and levels it above ' + xiKmh(s.autoOff) + ' km/h. The circle does not change: the second descriptor differs only in the hull’s tilt, which the dispersion formula does not read. The button takes no press.' + from;
+    }
+    out = head + k.label + ': ' + words(m.st) + (m.to !== null ? ', switching to ' + words(m.to) + ' - ' + xiSec(m.until - now) + ' s' : '') + '.';
+    if (m.refused) out += ' The last press was refused: the engine mode switches only standing - stop first.';
+    if (s.pill) {
+      out += ' Touch (shorter than ' + XI_TAP + ' s): ' + (m.st === 2 ? 'to siege, ' + s.pill.toSiege + ' s' : m.st === 1 ? 'to travel, ' + s.off + ' s' : 'to siege, ' + s.on + ' s') +
+        '; hold ' + XI_HOLD + ' s: ' + (m.st === 2 ? 'out to travel, ' + s.pill.toDrive + ' s' : 'into the pillbox, ' + (m.st === 1 ? s.pill.fromSiege : s.pill.fromDrive) + ' s') +
+        '; a press between the two does nothing (the client’s own times).';
+    } else {
+      out += ' Press: ' + (m.st === 1 ? k.switchOff + (s.off > 0 ? ' - ' + aimNum(s.off) + ' s' : '') : k.switchOn + (s.on > 0 ? ' - ' + aimNum(s.on) + ' s' : '')) +
+        (s.cancel ? '; a press while it switches cancels it' : '') + '.';
+    }
+    out += s.on > 0 || s.off > 0 ? ' While it switches the gun does not fire' + (s.stop ? ' and the vehicle stops - W A S D do nothing' : ' - the engine keeps running (the switch belongs to the gun)') +
+      '; the old mode holds until the switch ends.' : ' The switch is instant.';
+    if (second && first) {
+      out += ' ' + xiCap(k.on) + ': the circle ' + xiM100(second.dispersion) + ' m at 100 m (' + xiM100(first.dispersion) + ' in ' + k.off + '), aiming ' +
+        aimNum(second.aimingTime) + ' s (' + aimNum(first.aimingTime) + ')' + (second.speedForward > 0 ? ', top speed ' + xiKmh(second.speedForward) + ' km/h (' + xiKmh(first.speedForward) + ')' : '') + '.';
+      out += sec.from === 'ttx' ? ' The second mode’s numbers are the vehicle’s characteristics file’s (its pair), with the recorded block’s own factors.' : ' The second mode’s numbers are the record’s (attacker.modeAim).';
+    } else if (s.pill) out += ' This record carries no siege block and the vehicle no characteristics file: the pillbox works on the recorded block.';
+    if (s.pill) out += ' In the pillbox, on the siege mode’s own circle: the circle ×0.85, reload ×0.925, no driving, hull traverse ×0.4.';
+    if (a.staticTurretYaw !== undefined && a.staticTurretYaw !== null) out += ' The gun is held on the hull’s axis while you drive and while the mode switches; standing, it moves in its sector (the client’s gun rotator).';
+    if (aimYawLimits(first) || aimYawLimits(a)) out += ' Past its sector the hull turns by itself towards the cursor at its own traverse speed, as the game’s autorotation does; A and D take over.';
+    if (s.mode === 'turboshaft') out += ' The engine mode switches only standing (the client’s help).';
+    if (s.mode === 'wheeled') out += ' Standing, a French wheeled vehicle does not turn on the spot: A and D steer only on the move. Rapid narrows the wheels’ steering lock (the characteristics panel); the hull traverse stays the block’s.';
+    if (s.mode === 'twinGun') out += ' The salvo’s double damage and double reload are not emulated yet; with one shell left the game refuses the switch - the page’s ammunition is endless.';
+    return out + ' Damage to the engine (longer switches) is not modelled.' + from;
+  }
+  function xiRocketTitle(m, now, head, from) {
+    var s = m.spec, a = aimBlockData() || {}, f = s.mods, cap = a.speedForward > 0 ? a.speedForward : 0;
+    var state = m.state === 'active' ? 'burning - ' + xiSec(m.until - now) + ' s left' : m.state === 'cooldown' ? 'recharging - ' + xiSec(m.until - now) + ' s'
+      : m.state === 'deploy' ? 'deploying - ' + xiSec(m.until - now) + ' s' : m.state === 'empty' ? 'spent' : 'ready';
+    return head + 'the rocket booster: ' + state + '.' + (isFinite(s.uses) ? ' Uses left: ' + m.uses + ' of ' + s.uses + '.' : '') +
+      ' Press: fire it for ' + aimNum(s.duration) + ' s; it recharges ' + aimNum(s.cooldown) + ' s between two uses.' +
+      ' While it burns: top speed ' + (cap ? xiKmh(cap) + ' → ' + xiKmh(cap * (f.forwardSpeed > 0 ? f.forwardSpeed : 1)) + ' km/h' : '×' + aimNum(f.forwardSpeed || 1)) +
+      ', reverse ×' + aimNum(f.backwardSpeed !== undefined ? f.backwardSpeed : 1) + ', hull traverse ×' + aimNum(f.hullSpeed !== undefined ? f.hullSpeed : 1) +
+      (f.power ? ', engine power ×' + aimNum(f.power) + ' (the page accelerates linearly in time and reads no power)' : '') + '.' +
+      ' It has no factor of the dispersion: the circle grows only with the speed and the hull traverse, by the same formula - faster, so wider, and it takes longer to settle.' +
+      ' The client’s own numbers (rocketAcceleration of client 2.4.0.1, from the vehicle’s characteristics file); the server applies them - the emulation runs them under ✸. The ' +
+      aimNum(s.deploy) + ' s it deploys at the start of a battle are not run here unless the record says so.' + from;
   }
   // The switch itself. Off means off: no frame loop, no key handlers, no live circle, no crosshair, and
   // everything recorded is back on the model.
@@ -5488,6 +5792,10 @@
       gun='Gun '+sign(-viewer.gunAngle)+' from the recorded pose';
     }
     $('pose-turret').textContent=turret;$('pose-gun').textContent=gun;
+    // A turret and gun the client holds still (viewer.poseLocks, 23.09): the words only in the tile's tooltip.
+    var locks=(viewer.poseLocks&&viewer.poseLocks())||{},held=locks.turret&&locks.gun?'turret and gun':locks.turret?'turret':locks.gun?'gun':'';
+    var lockWords=held?'The client holds this '+held+' fixed (the gun’s static angles): the garage draws '+(locks.turret&&locks.gun?'them':'it')+' in that pose and its armour view does not let '+(locks.turret&&locks.gun?'them':'it')+' be dragged - nor does this one.':'';
+    if($('pose-info').title!==lockWords)$('pose-info').title=lockWords;
     $('pose-note').textContent=off?'The recorded shot’s own marks are hidden until the recorded pose returns':'';$('pose-note').hidden=!off;
     var shown=turret+'|'+gun+'|'+off;if(shown!==poseShown){poseShown=shown;scheduleLayout(LAYOUT_POSE);}
     // The figures vanish at the viewer's own 0.001° (recordedShown, shotProbability), the note at 0.1°.
@@ -5640,7 +5948,10 @@
     avgDamage: '<path d="M8 1.4l1.7 4.2 4.5.4-3.5 2.9 1.1 4.4L8 10.9 4.2 13.3l1.1-4.4L1.8 6l4.5-.4z"/>',
     avgPiercingPower: '<path d="M10.5 1.8v12.4"/><path d="M1.2 8h12M10.2 5.2 13.2 8l-3 2.8"/>',
     shellVelocity: '<path d="M6.8 5.4h5.4L14.8 8l-2.6 2.6H6.8z"/><path d="M1.2 5.8h3.8M1.2 8h3.2M1.2 10.2h3.8"/>',
-    turret: '<path d="M2.8 12.5a5.2 5.2 0 0 1 10.4 0z"/><path d="M8 9h6.6"/>'};
+    turret: '<path d="M2.8 12.5a5.2 5.2 0 0 1 10.4 0z"/><path d="M8 9h6.6"/>',
+    // The second modes (23.09): the switch's two times - two arrows meeting; the automatic siege - a hull tilting.
+    switchTime: '<path d="M1.2 8h5M4.4 5.4 7 8l-2.6 2.6"/><path d="M14.8 8h-5M11.6 5.4 9 8l2.6 2.6"/>',
+    autoSiege: '<path d="M1.5 13.5h13"/><path d="M3 11.5 13 8.2"/><path d="M11 4.2l2 1.8-2 1.8"/>'};
   function ttxGlyph(name) {
     var icon = node('i', undefined, 'ttx-icon');
     icon.setAttribute('aria-hidden', 'true');
@@ -5678,7 +5989,9 @@
     circularVisionRadius: ['circularVisionRadius', 'View range, standing', 'm'],
     invisibilityStillFactor: ['invisibilityStillFactor', 'Concealment standing', '%'],
     invisibilityMovingFactor: ['invisibilityMovingFactor', 'Concealment moving', '%'],
-    invisibilityAfterShot: ['invisibilityAfterShot', 'Concealment after a shot (standing)', '%']};
+    invisibilityAfterShot: ['invisibilityAfterShot', 'Concealment after a shot (standing)', '%'],
+    switchTime: ['switchTime', 'Switching the mode: into the second mode / back', 's'],
+    autoSiege: ['autoSiege', 'The hull tilts at or below / levels above (the automatic siege; not in the garage)', 'km/h']};
   // The compact view (spec 3.4.3): fire on the left, mobility on the right, the three stabilisation factors under both.
   var TTX_COMPACT = {fire: ['avgDamagePerMinute', 'reload', 'shotDispersionAngle', 'aimingTime'],
     move: ['turretRotationSpeed', 'hull', 'speedLimits', 'enginePowerPerTon'],
@@ -5760,18 +6073,83 @@
   // the build of the emulator's own pair the fire figures come from EXACTLY the emulator's inputs - the block of
   // aimBlockData() and the Config memo - so the panel explains the circle on screen (spec 1.3); every other pair
   // is counted from its own bare block in the file. The stock is always the file's (spec 1.4).
-  function ttxValues(build, index) {
+  // `mode` 1: the pair's second mode (23.09) - the same values() on the second block and the vehicle's second figures
+  // (ttxModeInput); the emulator's own block stands in for the build only when the emulator is in that very mode.
+  function ttxValues(build, index, mode) {
     var a = aimBlockData(), key = [ttxType, aimRev, shooterRev, ttxShell].join('|');
     if (key !== ttxMemoKey || ttxMemo.a !== a || ttxMemo.t !== ttxData) { ttxMemo = {a: a, t: ttxData}; ttxMemoKey = key; }
-    var slot = (build ? 'b' : 's') + index;
+    var slot = (build ? 'b' : 's') + (mode ? 'm' : '') + index;
     if (ttxMemo[slot]) return ttxMemo[slot];
-    var t = ttxData, pair = t.configs[index], live = build && index === ttxEmuIndex() ? a : null;
+    var t = ttxData, pair = t.configs[index];
+    if (mode) { var mi = ttxModeInput(t, index); t = mi.t; pair = mi.pair; }
+    var live = build && index === ttxEmuIndex() && (mode ? 1 : 0) === aimModeNow() ? a : null;
     var fx = shooterEffects(!build), shells = ttxShellsOf(t, pair);
     var v = TTX.values({ttx: t, pair: pair, aim: live || pair.aim || null, shells: shells, shell: ttxShellOf(shells),
                         fx: fx.e, crew: fx.crew, paint: build && !!shooterConfig.paint});
     v.source = live ? 'live' : 'file';
     ttxMemo[slot] = v;
     return v;
+  }
+  // --- The second mode on the panel (23.09, outputs/second-modes-2026-09-23.md 5.3) --------------------------------
+  // The mode of the block the emulator fires with now: the recorded block is the recorded mode's, the other one the
+  // other's (modeAimOf).
+  function aimModeNow() {
+    var at = activeHit && activeHit.attacker;
+    if (!at) return 0;
+    var rec = at.vehicleMode === 1 ? 1 : 0;
+    return aimOfHit(activeHit, xiSiegeMode(xiNow())) === at.aim ? rec : 1 - rec;
+  }
+  function ttxModeKind(pair) { var sm = pair && pair.aim && pair.aim.siegeMode; return sm ? String(sm.kind || '') : ''; }
+  // A pair with a second mode worth a switch: its second block, or the vehicle's own second figures - not the automatic
+  // siege, whose second block changes only the hull's tilt (the pair tile's ◐ says so).
+  function ttxHasMode(pair) {
+    // Nor the charged salvo of a dual gun or a shell switcher's state: those are not a mode switch here (5.5).
+    var kind = ttxModeKind(pair);
+    if (!pair || kind === 'auto' || kind === 'dualGun' || kind === 'gun') return false;
+    var mv = ttxData && ttxData.vehicle && ttxData.vehicle.modeValues;
+    return !!((pair.modeAim && pair.modeAim.dispersion > 0) || (mv && Object.keys(mv).length));
+  }
+  // Which mode the panel shows: under ✸ with a mode button the emulator's own - ONE state, the panel explains the circle
+  // on the scene - else the user's choice, kept per type beside the pair (aimStore.modes).
+  function ttxModeFollows() { var m = funOn() ? xiNow() : null; return m && m.spec.kind === 'siege' && m.spec.mode !== 'auto' ? m : null; }
+  function ttxModeOn() {
+    var m = ttxModeFollows();
+    if (m) return m.st >= 1 ? 1 : 0;
+    return ttxType && aimStore.modes[ttxType] === 1 ? 1 : 0;
+  }
+  // The file and the pair as the second mode sees them: the second block and the siege gun's limits on the pair, the
+  // vehicle's second figures (modeValues: engine power, concealment, view range per turret, the wheels' steering lock)
+  // on the file - BullbaTtx.values(), the one formula, reads them as it reads the first mode. Built once per file.
+  var ttxModeMemo = null;
+  function ttxModeInput(t, index) {
+    if (!ttxModeMemo || ttxModeMemo.t !== t) ttxModeMemo = {t: t, file: ttxModeFile(t), pairs: {}};
+    if (!ttxModeMemo.pairs[index]) {
+      var p = t.configs[index];
+      ttxModeMemo.pairs[index] = Object.assign({}, p, {aim: p.modeAim && p.modeAim.dispersion > 0 ? p.modeAim : p.aim, pitch: p.modePitch || p.pitch});
+    }
+    return {t: ttxModeMemo.file, pair: ttxModeMemo.pairs[index]};
+  }
+  function ttxModeFile(t) {
+    var mv = t.vehicle && t.vehicle.modeValues;
+    if (!mv) return t;
+    var modules = Object.assign({}, t.modules), vehicle = Object.assign({}, t.vehicle), turrets = t.turrets;
+    if (mv.enginePower > 0 && modules.engine) modules.engine = Object.assign({}, modules.engine, {power: mv.enginePower});
+    if (mv.maxSteeringLockAngle !== undefined && modules.chassis) modules.chassis = Object.assign({}, modules.chassis, {maxSteeringLockAngle: mv.maxSteeringLockAngle});
+    if (Array.isArray(mv.invisibility)) vehicle.invisibility = mv.invisibility;
+    if (Array.isArray(mv.circularVisionRadius) && Array.isArray(t.turrets)) turrets = t.turrets.map(function (x, i) {
+      return mv.circularVisionRadius[i] > 0 ? Object.assign({}, x, {circularVisionRadius: mv.circularVisionRadius[i]}) : x;
+    });
+    return Object.assign({}, t, {vehicle: vehicle, modules: modules, turrets: turrets});
+  }
+  // The words of the two modes of this pair's kind (the client's own names, SIEGE_KINDS).
+  function ttxModeWords(pair) { var k = SIEGE_KINDS[ttxModeKind(pair)]; return k ? [k.off, k.on] : ['the first mode', 'the second mode']; }
+  function ttxModeToggle() {
+    if (!ttxData || !ttxType) return;
+    var m = ttxModeFollows();
+    if (m) { xiPress({detail: 0}); ttxPaint(); return; }   // under ✸: the emulator's mode button, one state
+    if (ttxModeOn()) delete aimStore.modes[ttxType]; else aimStore.modes[ttxType] = 1;
+    persistSettings();
+    ttxPaint();
   }
   // --- Painting ---------------------------------------------------------------------------------------------
   // ONE widget for a row, in both views: a glyph and a figure (spec 3.4.9).
@@ -5805,10 +6183,18 @@
   // What one paint shows, gathered once: both sets of figures, both sets of strings and the words every tooltip
   // shares (the build's summary is composed once, not once a row).
   function ttxContext(index) {
-    var build = ttxBuildOn(), stock = ttxValues(false, index), cur = build ? ttxValues(true, index) : stock;
+    var pair = ttxData.configs[index], build = ttxBuildOn(), mode = ttxHasMode(pair) ? ttxModeOn() : 0;
+    var stock = ttxValues(false, index, mode), cur = build ? ttxValues(true, index, mode) : stock;
     var shownS = TTX.display(stock);
-    return {build: build, stock: stock, cur: cur, shownS: shownS, shownB: build ? TTX.display(cur) : shownS,
-            words: (build ? ttxBuildWords() : TTX_STOCK_WORDS) + '.', source: ttxSourceWords(cur, build)};
+    var ctx = {build: build, mode: mode, stock: stock, cur: cur, shownS: shownS, shownB: build ? TTX.display(cur) : shownS,
+               words: (build ? ttxBuildWords() : TTX_STOCK_WORDS) + '.', source: ttxSourceWords(cur, build)};
+    // In the second mode a figure is coloured against the FIRST mode of the same view (stock or build): the rows it
+    // changes are marked the way the build is marked against the stock.
+    if (mode) {
+      ctx.first = ttxValues(build, index, 0); ctx.shownF = TTX.display(ctx.first);
+      var w = ttxModeWords(pair); ctx.firstWords = w[0]; ctx.modeWords = w[1];
+    }
+    return ctx;
   }
   // One row's tooltip: the name and unit, the stock and the build, what is counted and where it comes from.
   function ttxTitle(key, stockText, buildText, ctx, extra) {
@@ -5821,8 +6207,12 @@
   // figure a compact row prints when it is not the row's own (the reload: one figure whatever the gun).
   function ttxPaintRow(row, key, cmpKey, ctx, textKey) {
     var text = ttxText(textKey || key, ctx.shownB, ctx.cur), sText = ttxText(textKey || key, ctx.shownS, ctx.stock);
-    var cmp = ctx.build ? TTX.compare(ctx.stock, ctx.cur, cmpKey || key, ctx.shownS, ctx.shownB) : '';
-    ttxSet(row, TTX_ROWS[key] ? TTX_ROWS[key][0] : key, text, cmp, ttxTitle(key, sText, text, ctx, ttxExtra(key, ctx.cur, ctx.build)));
+    var cmp = ctx.mode ? TTX.compare(ctx.first, ctx.cur, cmpKey || key, ctx.shownF, ctx.shownB)
+      : ctx.build ? TTX.compare(ctx.stock, ctx.cur, cmpKey || key, ctx.shownS, ctx.shownB) : '';
+    var extra = ttxExtra(key, ctx.cur, ctx.build);
+    if (ctx.mode) extra = 'These are ' + ctx.modeWords + '’s; ' + ctx.firstWords + ': ' + ttxText(textKey || key, ctx.shownF, ctx.first)
+      + ' - a figure better than there is mint, a worse one red.' + (extra ? ' ' + extra : '');
+    ttxSet(row, TTX_ROWS[key] ? TTX_ROWS[key][0] : key, text, cmp, ttxTitle(key, sText, text, ctx, extra));
   }
   // The rows' figures by key, with the reload and the hull resolved to the row that stands for them.
   function ttxRowKey(key, v) {
@@ -5845,9 +6235,16 @@
     }
     if (key === 'circularVisionRadius') return 'Moving: ' + BullbaTtx.nice(v.circularVisionRadiusMoving) + ' m (binoculars work only standing).';
     if (key === 'pitchLimits') {
+      // With the hull aiming the garage counts the hull's tilt in (23.09): the gun's own limits go to the tooltip.
+      if (v.gunPitchOwn) return 'With the hull’s tilt, as the garage counts it; the gun alone: ' + v.gunPitchOwn.map(BullbaTtx.nice).join('/') + '°. The hull tilts only in the second mode.';
       var p = ttxData && ttxData.configs[ttxPairIndex()] && ttxData.configs[ttxPairIndex()].pitch;
       if (p && Array.isArray(p.minPitch) && p.minPitch.length > 2) return 'The limits change around the turret: these are the extremes over the whole circle.';
     }
+    if (key === 'gunYawLimits' && v.gunYawSector) return 'The hull aims the gun sideways, so the garage prints 0/0; the gun itself moves ' + v.gunYawSector.map(BullbaTtx.nice).join('/') + '° in its sector, and past it the hull turns.';
+    if (key === 'switchTime') return v.modeKind === 'turboshaft' ? 'The turbine switches only standing; the garage prints its times whole, cut short.' : 'While it switches the gun does not fire and the vehicle stops; a damaged engine makes it slower.';
+    if (key === 'autoSiege') return 'The server switches it by the speed; the hull tilts, the circle does not change.';
+    if ((key === 'shotDispersionAngle' || key === 'aimingTime') && ttxModeOn() && ttxModeKind(ttxData && ttxData.configs[ttxPairIndex()]) === 'hydraulic')
+      return 'The garage shows the travel figures only; this is the siege descriptor’s, by the garage’s own formula.';
     if (key === 'maxHealth' && build && mulOf('healthFactor') !== 1) return 'With the hardening the client rounds the hit points UP to whole tens.';
     return '';
   }
@@ -5860,6 +6257,7 @@
     if (!show) { ['ttx-pairs', 'ttx-more', 'ttx-fold'].forEach(function (id) { var d = $(id); if (d) d.open = false; }); return; }
     var index = ttxPairIndex(), ctx = ttxContext(index), toggle = $('ttx-build-toggle');
     if (toggle && toggle.getAttribute('aria-pressed') !== String(ctx.build)) toggle.setAttribute('aria-pressed', String(ctx.build));
+    ttxPaintMode(index, ctx);
     ttxPaintPair(index);
     ['fire', 'move', 'stab'].forEach(function (group) {
       TTX_COMPACT[group].forEach(function (slot) {
@@ -5877,6 +6275,20 @@
     var shells = ttxShellsOf(ttxData, pair), c = shells.length ? Number(shells[0].caliber) : 0;
     return c > 0 ? String(Math.round(c)) : '—';
   }
+  // THE PANEL'S MODE SWITCH (23.09, spec 5.3 p. 1): #ttx-mode, the same lit widget as ⚙ beside it, a glyph and no word.
+  // There for a pair with a second mode (ttxHasMode); lit while the panel shows it. Under ✸ it is the emulator's mode.
+  function ttxPaintMode(index, ctx) {
+    var b = $('ttx-mode'), pair = ttxData.configs[index];
+    if (!b) return;
+    var show = ttxHasMode(pair);
+    if (b.hidden !== !show) { b.hidden = !show; scheduleLayout(LAYOUT_TTX); }
+    if (!show) return;
+    if (b.getAttribute('aria-pressed') !== String(!!ctx.mode)) b.setAttribute('aria-pressed', String(!!ctx.mode));
+    var w = ttxModeWords(pair), follows = !!ttxModeFollows();
+    var title = 'The second mode: ' + w[1] + '. ' + (ctx.mode ? 'On: the panel shows ' + w[1] + '’s figures - a figure better than in ' + w[0] + ' is mint, a worse one red.' : 'Off: the panel shows ' + w[0] + '’s figures.')
+      + (follows ? ' Under ✸ this is the emulator’s own mode: the switch presses its mode button, with the game’s switch time.' : ' Off ✸ only the panel changes, and the choice is kept for this vehicle.');
+    if (b.title !== title) b.title = title;
+  }
   function ttxPaintPair(index) {
     var tile = $('ttx-pair'), box = $('ttx-pairs'), pair = ttxData.configs[index];
     if (!tile || !pair) return;
@@ -5884,16 +6296,27 @@
     var key = [index, many, other, ttxData.id].join('|');
     if (tile.ttxKey === key) return;
     tile.ttxKey = key;
-    var modes = (ttxData.vehicle && ttxData.vehicle.modes) || {}, special = ['siege', 'wheeled', 'turboshaft', 'rocketAcceleration', 'dualGun', 'twinGun'].filter(function (m) { return modes[m]; });
+    // The ◐ the shell chips of a second mode wear, for what the panel does not show by its mode switch: the automatic
+    // siege (only the hull tilts), the charged salvo of a dual gun, the rocket booster (the ✸ mode button fires it).
+    var modes = (ttxData.vehicle && ttxData.vehicle.modes) || {}, notes = [], sm = pair.aim && pair.aim.siegeMode;
+    if (sm && sm.kind === 'auto') {
+      var hp = pair.aim.hullAiming && pair.aim.hullAiming.pitch;
+      notes.push('the hull tilts' + (hp ? ' ' + BullbaTtx.nice(Math.abs(hp.max) * 180 / Math.PI) + '° down / ' + BullbaTtx.nice(Math.abs(hp.min) * 180 / Math.PI) + '° up' : '')
+        + ' at or below ' + BullbaTtx.nice(Number(sm.autoOn) * 3.6) + ' km/h (the automatic siege) - the circle does not change');
+    }
+    if (modes.dualGun) notes.push('the charged salvo of the two barrels is not shown');
+    if (modes.rocketAcceleration) {
+      var r = ttxData.vehicle.rocketAcceleration;
+      notes.push('a rocket booster' + (r ? ' for ' + BullbaTtx.nice(r.duration) + ' s, ' + r.reuseCount + ' uses' : '') + ' - under ✸ the mode button fires it');
+    }
     tile.replaceChildren(node('b', ttxCaliber(pair), 'ttx-cal'), node('span', tierRomans[pair.gunLevel] || '', 'vt-tier'));
-    // A vehicle with a second mode wears the ◐ the shell chips of a second mode wear: only the basic one is counted yet.
-    if (special.length) tile.appendChild(node('span', '◐', 'ttx-mode'));
+    if (notes.length) tile.appendChild(node('span', '◐', 'ttx-mode'));
     box.setAttribute('data-many', String(many));
     if (other) box.setAttribute('data-other', 'true'); else box.removeAttribute('data-other');
     tile.title = (pair.gunUserString || pair.gun) + ' on ' + (turret.userString || turret.name || 'the turret')
       + (many ? '. Click for the other turrets and guns of this vehicle.' : '.')
       + (other ? ' The circle and the gun panel keep the gun that fired; these numbers are this gun’s.' : '')
-      + (special.length ? ' This vehicle has a second mode (' + special.join(', ') + '): only its basic mode is shown yet.' : '');
+      + (notes.length ? ' This vehicle: ' + notes.join('; ') + '.' : '');
   }
   // The pair list: grouped by turret, a turret's glyph and tier over its guns; the pair on the panel pressed, the
   // emulator's marked with a dot and the top pair with ▲. Built when it opens, never before.
@@ -5979,7 +6402,8 @@
       table.appendChild(line);
     });
     var move = ttxSection(box);
-    rows(move, ['speedLimits', 'enginePower', 'vehicleWeight', 'enginePowerPerTon', ttxRowKey('hull', cur), 'turretRotationSpeed', 'terrainResistance']);
+    rows(move, ['speedLimits', 'enginePower', 'vehicleWeight', 'enginePowerPerTon', ttxRowKey('hull', cur), 'turretRotationSpeed', 'terrainResistance',
+      cur.switchTime ? 'switchTime' : '', cur.autoSiege ? 'autoSiege' : '']);
     rows(ttxSection(box), ['maxHealth']);
     rows(ttxSection(box), ['circularVisionRadius', 'invisibilityStillFactor', 'invisibilityMovingFactor', 'invisibilityAfterShot']);
   }
@@ -5995,6 +6419,7 @@
     });
     $('ttx-build').onchange = function () { ttxPaint(); };
     $('ttx-build-toggle').onclick = function () { var box = $('ttx-build'); box.checked = !box.checked; ttxPaint(); persistSettings(); };
+    $('ttx-mode').onclick = ttxModeToggle;
     // The list and the expanded view are built by the click that opens them, which runs before <details> opens.
     $('ttx-pair').onclick = function (e) {
       if (!ttxData || ttxData.configs.length < 2) { if (e && e.preventDefault) e.preventDefault(); return; }
@@ -6034,6 +6459,12 @@
   $('target-hp-reset').onclick=funReset;
   // The tier-XI mode button in the gun panel (BACKLOG 37): what a press does is the shooter's mechanic's (xiPress).
   $('aim-gun-mech').onclick=xiPress;
+  // The Strv 107-12's touch and hold (23.09): the left button's own down and up, timed (xiDown/xiUp); leaving the button
+  // or losing the pointer drops a hold that has not gone off.
+  $('aim-gun-mech').onpointerdown=xiDown;
+  $('aim-gun-mech').onpointerup=xiUp;
+  $('aim-gun-mech').onpointerleave=xiHoldCancel;
+  $('aim-gun-mech').onpointercancel=xiHoldCancel;
   // ✸'s sub-switch, real reload: the same pattern - a hidden control of the menu keeps it, the button on the scene flips it.
   $('real-reload').onchange=realReloadSettings;
   $('real-reload-toggle').onclick=function(){var box=$('real-reload');box.checked=!box.checked;realReloadSettings();persistSettings();};

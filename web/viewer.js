@@ -81,7 +81,7 @@
     this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.trackOpacity=.12;this.trackKey=null;this.pinCache=null;this.liveRingMaterial=null;this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.lighting=false;this.gunAngle=0;this.autoFrame=true;this.frameScale=this.defaults.scale;this.outline=null;this.outlineDepth=null;this.outlineStyle={brightness:.8,opacity:.06};this.showOutline=false;
     var drag = null;
     container.addEventListener('contextmenu', function(e) { e.preventDefault(); });
-    container.addEventListener('pointerdown', function(e) { /* The scene tiles and the modifier groups beside them are controls of their own: capturing the pointer here would retarget the click to #viewport and the shooter tile would never fire. Leaving the drag unstarted also keeps the pointerup below from pinning a point under the control. */ if(e.target&&e.target.closest&&e.target.closest('.viewport-tile,.mod-slot,.swap-roles,.aim-gun,.aim-drive,#aim-config,.ttx-panel'))return; /* pan: right button, or Ctrl + left button (the in-game browser swallows the right button) */ if(e.button===2||(e.button===0&&e.ctrlKey)){drag={pan:true,x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY,moved:false};self.dragging=true;try{container.setPointerCapture(e.pointerId);}catch(ignore){}return;}if(e.button!==0)return;if(e.altKey){self.aimAt(e);return;}drag={x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY,moved:false,part:self.pickPart(e)};self.dragging=true; try{container.setPointerCapture(e.pointerId);}catch(ignore){} container.focus();
+    container.addEventListener('pointerdown', function(e) { /* The scene tiles and the modifier groups beside them are controls of their own: capturing the pointer here would retarget the click to #viewport and the shooter tile would never fire. Leaving the drag unstarted also keeps the pointerup below from pinning a point under the control. */ if(e.target&&e.target.closest&&e.target.closest('.viewport-tile,.mod-slot,.swap-roles,.aim-gun,.aim-drive,#aim-config,.ttx-panel'))return; /* pan: right button, or Ctrl + left button (the in-game browser swallows the right button) */ if(e.button===2||(e.button===0&&e.ctrlKey)){drag={pan:true,x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY,moved:false};self.dragging=true;try{container.setPointerCapture(e.pointerId);}catch(ignore){}return;}if(e.button!==0)return;if(e.altKey){self.aimAt(e);return;}drag={x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY,moved:false,part:self.pickPart(e)};if(drag.part===2||drag.part===3){/* a turret and gun the client holds still (poseLocks) are not dragged; with both held the drag orbits */drag.locks=self.poseLocks();if(drag.locks.turret&&drag.locks.gun)drag.part=1;}self.dragging=true; try{container.setPointerCapture(e.pointerId);}catch(ignore){} container.focus();
       /* Hold to fire (user, 20.09): the press itself never shoots. The page starts a hold timer and decides -
          a short press is one shot on release, a long one a burst on the gun's cooldown - and a drag past the
          threshold below cancels the whole thing. aimHold marks the press as a shot so the emulation is not
@@ -91,7 +91,7 @@
        once the first round is away, moving the mouse AIMS the burst (the turret chases the cursor) and only
        the release stops it. onShotCancel says which it is: false = the burst goes on, so the press is never
        handed to the orbit or the turret drag and the pointer goes back to plain hovering. */
-    container.addEventListener('pointermove', function(e) { if (!drag){self.hover(e);return;}if(Math.abs(e.clientX-drag.sx)+Math.abs(e.clientY-drag.sy)>3)drag.moved=true;if(!drag.moved)return;if(self.aimHold){if(self.onShotCancel&&self.onShotCancel()===false){drag=null;self.dragging=false;self.hover(e);return;}self.aimHold=false;}if(drag.pan){/* the pan is accumulated and applied once in the camera's own frame loop, not per event */var p=self.pendingPan||(self.pendingPan={x:0,y:0});p.x+=e.clientX-drag.x;p.y+=e.clientY-drag.y;drag.x=e.clientX;drag.y=e.clientY;self.startOrbit();return;}if(drag.part===2||drag.part===3){/* turret and gun are one module: left/right turns the turret, up/down moves the gun - both applied first, then one markPose and one notification for the step */var dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(self.loadedData&&(dx||dy)){var turned=dx?self.turretTo(self.turretAngle-dx*.5):null,gun=dy?self.gunTo(self.gunAngle+dy*.16):null;self.markPose();if(turned){if(self.onTurret)self.onTurret(turned);}else if(self.onGun)self.onGun(gun);}}else{self.orbitTo(self.targetYaw-(e.clientX-drag.x)*0.008,self.targetPitch+(e.clientY-drag.y)*0.008);}drag.x=e.clientX;drag.y=e.clientY; });
+    container.addEventListener('pointermove', function(e) { if (!drag){self.hover(e);return;}if(Math.abs(e.clientX-drag.sx)+Math.abs(e.clientY-drag.sy)>3)drag.moved=true;if(!drag.moved)return;if(self.aimHold){if(self.onShotCancel&&self.onShotCancel()===false){drag=null;self.dragging=false;self.hover(e);return;}self.aimHold=false;}if(drag.pan){/* the pan is accumulated and applied once in the camera's own frame loop, not per event */var p=self.pendingPan||(self.pendingPan={x:0,y:0});p.x+=e.clientX-drag.x;p.y+=e.clientY-drag.y;drag.x=e.clientX;drag.y=e.clientY;self.startOrbit();return;}if(drag.part===2||drag.part===3){/* turret and gun are one module: left/right turns the turret, up/down moves the gun - both applied first, then one markPose and one notification for the step */var dx=drag.locks&&drag.locks.turret?0:e.clientX-drag.x,dy=drag.locks&&drag.locks.gun?0:e.clientY-drag.y;if(self.loadedData&&(dx||dy)){var turned=dx?self.turretTo(self.turretAngle-dx*.5):null,gun=dy?self.gunTo(self.gunAngle+dy*.16):null;self.markPose();if(turned){if(self.onTurret)self.onTurret(turned);}else if(self.onGun)self.onGun(gun);}}else{self.orbitTo(self.targetYaw-(e.clientX-drag.x)*0.008,self.targetPitch+(e.clientY-drag.y)*0.008);}drag.x=e.clientX;drag.y=e.clientY; });
     // The end of a drag: the pose the drag only previewed is rebuilt in full, and one frame is asked for so the
     // map comes back at full quality with the ricochet trace (paint() draws a drag at half resolution).
     // The end of a press: a press the emulation claimed is handed back to it (a tap fires one shot, a
@@ -332,6 +332,16 @@
   // Blue tint of every ricochet colour, 0 (off) .. 1.5; the Ricochet tint row of Settings.
   Viewer.prototype.setTint=function(value){var v=Number(value);this.tint=Math.max(0,Math.min(1.5,isFinite(v)?v:.5));this.draw();};
   Viewer.prototype.pointerRay=function(event){var rect=this.viewRect||this.container.getBoundingClientRect(),mouse=new THREE.Vector2((event.clientX-rect.left)/rect.width*2-1,-(event.clientY-rect.top)/rect.height*2+1),caster=new THREE.Raycaster();this.camera.updateMatrixWorld();caster.setFromCamera(mouse,this.camera);return caster;};
+  // THE CLIENT HOLDS A STATIC TURRET AND GUN STILL (23.09, outputs/second-modes-2026-09-23.md 5.2 p. 8). Fourteen tank
+  // destroyers carry gun.staticTurretYaw (six of them staticPitch too); the garage draws them in that pose and its armour
+  // view does not let them be dragged (armor_sub_presenter._ModulesMover, setDragModuleMode(False)) - nor does this one.
+  // The angles ride in the target's pitch table (a record since the build after 0.7.31) or at the top of an exported
+  // vehicle's file; the recorded pose of a hit is left as it is.
+  Viewer.prototype.poseLocks=function(){
+    var hit=this.loadedData&&this.loadedData.hit,t=hit&&hit.target||{},info=t.gunPitchLimits||{};
+    var has=function(k){var v=info[k]!==undefined&&info[k]!==null?info[k]:t[k];return v!==undefined&&v!==null&&isFinite(Number(v));};
+    return {turret:has('staticTurretYaw'),gun:has('staticPitch')};
+  };
   Viewer.prototype.pickPart=function(event){if(event.shiftKey||!this.paintMesh)return 1;var objects=[this.paintMesh];if(this.trackGroup)objects.push(this.trackMesh);var hits=this.pointerRay(event).intersectObjects(objects);if(!hits.length)return false;var part=this.partOf(hits[0]);return part===undefined?1:part;};
   // The part a raycast hit on the drawn model belongs to: the drawn meshes are built one entry of samples /
   // trackTriangles per triangle, so the face index is the triangle's own record. undefined for anything else.
@@ -1170,6 +1180,18 @@
     var yaw=this.aimYaw||0,want=wrapAngle(Viewer.aimAzimuth(b)-Viewer.aimAzimuth(a)),got=Math.max(limits[0]-yaw,Math.min(limits[1]-yaw,want));
     if(Math.abs(got-want)<1e-12)return b;
     return b.clone().applyAxisAngle(new THREE.Vector3(0,1,0),want-got);
+  };
+  // How far the cursor lies past the sector, signed about the up axis (right positive), radians; 0 inside it, with no
+  // sector or nothing to aim. The page's autorotation turns the hull by this (23.09): it is want - got of aimReach, which
+  // depends on the cursor and the hull's heading only (the gun's own yaw cancels), and costs two directions, no ray.
+  Viewer.prototype.aimBeyond=function(limits){
+    if(!limits)return 0;
+    var pin=this.aimPin(),gun=pin||this.liveAimPoint,cursor=this.aimCursorPoint;
+    if(!gun||!cursor||pin)return 0;
+    var eye=this.camera.position,ax=gun.x-eye.x,az=gun.z-eye.z,bx=cursor.x-eye.x,bz=cursor.z-eye.z;
+    if(ax*ax+az*az<1e-12||bx*bx+bz*bz<1e-12)return 0;
+    var yaw=this.aimYaw||0,want=wrapAngle(Math.atan2(-bx,bz)-Math.atan2(-ax,az)),got=Math.max(limits[0]-yaw,Math.min(limits[1]-yaw,want));
+    return want-got;
   };
   // Turn the gun towards the cursor by at most `step` radians and put the circle where it now points.
   // The new point is picked off the model along the rotated ray so the circle keeps lying on the armour;

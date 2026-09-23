@@ -256,26 +256,10 @@ def mode_shell_block(descr):
 
 
 def mode_aim_block(descr):
-    """Both modes' aim blocks of a vehicle that is built twice (23.09, BACKLOG 35 B5 'modeAim').
-
-    The second descriptor changes the circle far more often than the shells: 34 of the client's 79
-    `*_siege_mode.xml` differ from their base in shotDispersionRadius, aimingTime, reloadTime or the
-    dispersion factors (the Strv 107-12 0.29 -> 0.24 m/100 m and 3.0 -> 1.0 s, the Contriver's salvo mode
-    0.33 -> 1.1 and afterShot 4 -> 8) - docs/KNOWLEDGE.md section 4. The shooter's 'aim' is the block of the
-    descriptor the client handed us (always DEFAULT for somebody else's vehicle), so the page gets the other
-    one beside it, exactly as modeShells: read ONCE per battle per descriptor object (Recorder.mode_blocks),
-    written only where the two blocks differ, shared by reference like every static vehicle field.
-
-    Same contract as mode_shell_block: None for an ordinary vehicle (one attribute read), else
-    {'default': block, 'siege': block, 'same': bool}; onSiegeStateChanged is never called here.
-    """
-    if not getattr(descr, 'hasSiegeMode', False): return None
-    siege = getattr(descr, 'siegeVehicleDescr', None)
-    default = getattr(descr, 'defaultVehicleDescr', None)
-    if siege is None or default is None: return None
-    from local_armor_inspector.exporter import aim_block
-    first, second = aim_block(default), aim_block(siege)
-    return {'default': first, 'siege': second, 'same': first == second}
+    """Both modes' aim blocks of a vehicle built twice (BACKLOG 35 B5): exporter.mode_aim_block, the one function
+    the characteristics file uses too (23.09, second modes M2). Kept under this name for the recorder's callers."""
+    from local_armor_inspector.exporter import mode_aim_block as both
+    return both(descr)
 
 
 def matrix_columns(matrix, root_inverse):
@@ -285,21 +269,6 @@ def matrix_columns(matrix, root_inverse):
         columns.extend(vector(root_inverse.applyVector(matrix.applyVector(axis))))
         columns.append(0.0)
     columns.extend(vector(root_inverse.applyPoint(matrix.applyPoint((0, 0, 0)))))
-    columns.append(1.0)
-    return columns
-
-
-def translation_columns(point):
-    """The same column-major layout as matrix_columns, for a pure translation.
-
-    Three axis columns, each with a trailing 0.0, then the offset with a trailing
-    1.0. Used where there is no live entity to read a part transform from.
-    """
-    columns = []
-    for axis in ((1, 0, 0), (0, 1, 0), (0, 0, 1)):
-        columns.extend([float(axis[0]), float(axis[1]), float(axis[2])])
-        columns.append(0.0)
-    columns.extend(vector(point))
     columns.append(1.0)
     return columns
 
@@ -351,12 +320,11 @@ def rest_transforms(descr):
     itself stacks them (vehicles.py VehicleDescr.__updateAttributes): the chassis
     is the frame, the hull sits at chassis.hullPosition, the turret on the hull at
     hull.turretPositions[0], the gun in the turret at turret.gunPosition. No
-    rotation: the collision models are authored in that pose. Order follows PARTS.
+    rotation: the collision models are authored in that pose - except a gun with a static pitch, which is
+    drawn in it (23.09). Order follows PARTS. The one writer is exporter.rest_columns.
     """
-    hull = descr.chassis.hullPosition
-    turret = hull + descr.hull.turretPositions[0]
-    gun = turret + descr.turret.gunPosition
-    return [translation_columns(offset) for offset in ((0.0, 0.0, 0.0), hull, turret, gun)]
+    from local_armor_inspector.exporter import rest_columns
+    return rest_columns(descr)
 
 
 class Writer(object):

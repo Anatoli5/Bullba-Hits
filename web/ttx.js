@@ -238,11 +238,39 @@
     // ---- Survivability, gun limits ---------------------------------------------------------------------------
     // vehicles.__updateAttributes 2788-2789: with a health factor the hit points go UP to whole tens.
     if (pair && pair.maxHealth > 0) out.maxHealth = mul('healthFactor') !== 1 ? Math.trunc(ceilTo(pair.maxHealth * mul('healthFactor'), 1)) : Number(pair.maxHealth);
+    // The vertical and the horizon WITH THE HULL AIMING (23.09, params __getPitchLimitsValues 1311-1336 and 698-710,
+    // outputs/second-modes-2026-09-23.md 3.7): where the hull tilts (isPitchHullAimingAvailable - available, in both
+    // modes) a gun with a static pitch shows the hull's own (pitchMin, pitchMax), any other gun its absolute limits
+    // widened by them; where the hull aims the gun sideways (isYawHullAimingAvailable) the garage prints 0/0 and the
+    // gun's own sector is only a note. The Strv 103B: -11/11 and 0/0, not the gun's -1/-1 and 3/3.
+    var ma = (pair && pair.aim) || a || {}, hull = ma.hullAiming || (a && a.hullAiming) || null;
+    var hp = hull && hull.pitch && hull.pitch.available ? hull.pitch : null;
+    var staticPitch = ma.staticPitch !== undefined && ma.staticPitch !== null ? ma.staticPitch : a && a.staticPitch !== undefined ? a.staticPitch : null;
     var pitch = pair && pair.pitch && Array.isArray(pair.pitch.absolute) ? pair.pitch.absolute : null;
-    if (pitch && pitch.length === 2) out.pitchLimits = pitch.map(function (p) { return -Number(p) * DEG; }).sort(function (x, y) { return x - y; });
+    if (pitch && pitch.length === 2) {
+      var lo = Number(pitch[0]), hi = Number(pitch[1]);
+      if (hp) {
+        if (staticPitch !== null) { lo = Number(hp.min) || 0; hi = Number(hp.max) || 0; }
+        else { lo += Number(hp.min) || 0; hi += Number(hp.max) || 0; }
+        out.gunPitchOwn = pitch.map(function (p) { return -Number(p) * DEG; }).sort(function (x, y) { return x - y; });
+      }
+      out.pitchLimits = [lo, hi].map(function (p) { return -p * DEG; }).sort(function (x, y) { return x - y; });
+    }
     var yaw = pair && Array.isArray(pair.turretYawLimits) ? pair.turretYawLimits : null;
-    if (yaw && yaw.length === 2) out.gunYawLimits = yaw.map(function (y) { return Math.abs(Number(y) * DEG); });
+    if (yaw && yaw.length === 2) {
+      out.gunYawLimits = yaw.map(function (y) { return Math.abs(Number(y) * DEG); });
+      if (hull && hull.yawAvailable) { out.gunYawSector = out.gunYawLimits; out.gunYawLimits = [0, 0]; }
+    }
     out.maxAmmo = pair && pair.maxAmmo > 0 ? Number(pair.maxAmmo) : null;
+    // The second mode's switch (23.09): the times of a manual switch as the garage prints them for its kind - the
+    // hydraulic ones as a number, the turbine's whole and truncated (FORMAT_SETTINGS: 'turboshaftSwitchOnTime'
+    // _integralFormat - the CS-52 C's 2.5/1.5 print 2/1) - and, for the automatic siege, the speeds it tilts and levels at.
+    var sm = ma.siegeMode || (a && a.siegeMode) || null;
+    if (sm) {
+      out.modeKind = String(sm.kind || '');
+      if ((sm.kind === 'hydraulic' || sm.kind === 'turboshaft') && num(sm.switchOnTime) !== null) out.switchTime = [num(sm.switchOnTime), num(sm.switchOffTime)];
+      if (sm.kind === 'auto' && num(sm.autoOn) !== null) out.autoSiege = [num(sm.autoOn) * KMH, num(sm.autoOff) * KMH];
+    }
 
     // ---- View range and concealment ----------------------------------------------------------------------
     var view = turret ? num(turret.circularVisionRadius) : null;
@@ -327,6 +355,7 @@
       maxSteeringLockAngle: nice(v.maxSteeringLockAngle), speedLimits: list(v.speedLimits),
       enginePower: integral(v.enginePower), vehicleWeight: nice(v.vehicleWeight), enginePowerPerTon: nice(v.enginePowerPerTon),
       maxHealth: integral(v.maxHealth), pitchLimits: list(v.pitchLimits), gunYawLimits: list(v.gunYawLimits),
+      switchTime: v.switchTime ? list(v.switchTime, v.modeKind === 'turboshaft' ? integral : nice) : '—', autoSiege: list(v.autoSiege),
       maxAmmo: v.maxAmmo ? String(v.maxAmmo) : '—',
       circularVisionRadius: nice(v.circularVisionRadius), circularVisionRadiusMoving: nice(v.circularVisionRadiusMoving),
       invisibilityStillFactor: nice(v.invisibilityStillFactor), invisibilityMovingFactor: nice(v.invisibilityMovingFactor),
@@ -336,7 +365,7 @@
   // Which way is better (spec 3.2): smaller for the reload, the dispersion, the aiming, the stabilisation terms,
   // the terrain resistance and the mass; bigger for everything else.
   var SMALLER = {reload: 1, reloadTimeSecs: 1, clipFireRate: 1, autoReloadTime: 1, dualGun: 1, shotDispersionAngle: 1, aimingTime: 1,
-    stabMovement: 1, stabRotation: 1, stabTurret: 1, stabAfterShot: 1, terrainResistance: 1, vehicleWeight: 1};
+    stabMovement: 1, stabRotation: 1, stabTurret: 1, stabAfterShot: 1, terrainResistance: 1, vehicleWeight: 1, switchTime: 1};
   function better(key) { return SMALLER[key] ? -1 : 1; }
   // One number per key to compare the build with the stock by: the first of a pair, the reload figure itself.
   function score(v, key) {

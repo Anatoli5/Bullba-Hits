@@ -11,6 +11,7 @@ import glob
 import hashlib
 import json
 import logging
+import math
 import numbers
 import os
 import re
@@ -518,6 +519,11 @@ def aim_block(descr):
       turretYawLimits       [rad, rad] yaw_limits(descr): the gun's sector on the hull, left negative -
                                        written only for a gun that has one (turretless tank destroyers,
                                        limited turrets); the page's turret chase stops at it (BACKLOG 40)
+      staticPitch,          rad        gun.staticPitch / gun.staticTurretYaw: the pose the client holds the gun in
+      staticTurretYaw                  while switching the mode, driving (yaw only) or with a dead engine; written only
+                                       for a gun that has them (aim_mode_fields, 23.09)
+      hullAiming            {..}       the hull aiming of a hydropneumatic or hydraulic chassis (aim_mode_fields)
+      siegeMode             {..}       the parameters of the vehicle's second mode (aim_mode_fields)
       multFactor            -          miscAttrs['multShotDispersionFactor']
       additiveFactor        -          miscAttrs['additiveShotDispersionFactor']
       aimingTimeFactor      -          miscAttrs['gunAimingTimeFactor']
@@ -614,6 +620,12 @@ def aim_block(descr):
     try:
         limits = yaw_limits(descr)
         if limits is not None: aim['turretYawLimits'] = limits
+    except Exception:
+        pass
+    # The second mode's static fields (23.09, outputs/second-modes-2026-09-23.md 5.1 M1): the gun's static angles, the
+    # hull aiming and the parameters of the mode switch - each only where the descriptor has it, never 'unavailable'.
+    try:
+        aim.update(aim_mode_fields(descr))
     except Exception:
         pass
     take('speedForward', lambda: speed_limits(descr)[0])
@@ -726,6 +738,9 @@ def heat_modifier(modifier):
     MODIFIER_FILTER_TYPE.COMMON.
     """
     op, kind, name, value, where = tuple(modifier)[:5]
+    # The client keeps the kind WITH its slash ('dynAttrs/', 2.4.0.1, checked on the real items.vehicles 23.09), so a
+    # plain join wrote 'dynAttrs//multShotDispersionFactor' into every record since 0.7.27; the page reads both.
+    kind = str(kind).rstrip('/') if kind else ''
     result = {'op': str(op), 'name': '%s/%s' % (kind, name) if kind else str(name), 'value': heat_number(value)}
     if where and str(where) != 'common':
         result['filter'] = str(where)
@@ -850,6 +865,108 @@ def secondary_aim(descr):
     return None
 
 
+# The fields of a mode switch the page reads, by the name aim_block writes and the key of the client's own
+# VehicleType.siegeModeParams (vehicles.pyc _readSiegeModeParams 11215, 2.4.0.1).
+SIEGE_MODE_FIELDS = (('switchOnTime', 'switchOnTime', float), ('switchOffTime', 'switchOffTime', float),
+                     ('switchCancelEnabled', 'switchCancelEnabled', bool), ('stopEngineOnSwitch', 'stopEngineOnSwitch', bool),
+                     ('device', 'device', str), ('engineDamageCoeff', 'engineDamageCoeff', float))
+# One block per (type, gun) object pair: the recorder builds aim_block on every hit, and these are static per
+# configuration - the same pattern as _SECONDARY_CACHE. The objects are kept in the entry, so an id is never reused.
+_MODE_FIELDS_CACHE = {}
+
+
+def mode_kind(descr):
+    """The kind of a vehicle's second mode, by the rule of the garage (params.py __hasHydraulicSiegeMode and its
+    neighbours) and of SiegeModeControl, first match (outputs/second-modes-2026-09-23.md section 5.1 M1):
+
+      hydraulic   hasHydraulicChassis - manual siege, key X (Strv 103, UDES 03, Kunze Panzer ...)
+      auto        hasAutoSiegeMode - the server switches it by the speed; only the hull's tilt changes
+      turboshaft  hasTurboshaftEngine - the gas turbine of the CS-63, CS-52 C, Ogar, Vercingetorix, Char Mle. 75
+      wheeled     isWheeledVehicle - Cruise / Rapid of the French wheeled vehicles
+      twinGun     the salvo of the British twin guns
+      dualGun     the 'dualgun' type tag - the charged salvo, on its own key, not a mode switch of the page
+      gun         anything else (the five shell switchers and the Gorilla: device 'gun')
+    """
+    if getattr(descr, 'hasHydraulicChassis', False): return 'hydraulic'
+    if getattr(descr, 'hasAutoSiegeMode', False): return 'auto'
+    if getattr(descr, 'hasTurboshaftEngine', False): return 'turboshaft'
+    if getattr(descr, 'isWheeledVehicle', False): return 'wheeled'
+    try:
+        if getattr(descr, 'isTwinGunVehicle', False) or 'twinGun' in descr.gun.tags: return 'twinGun'
+    except Exception:
+        pass
+    try:
+        if 'dualgun' in descr.type.tags: return 'dualGun'
+    except Exception:
+        pass
+    return 'gun'
+
+
+def aim_mode_fields(descr):
+    """The static fields of the second mode of one descriptor, {} for an ordinary vehicle (23.09, section 5.1 M1).
+
+      staticPitch, staticTurretYaw  rad  gun.staticPitch / gun.staticTurretYaw (client sign: a negative pitch is up),
+                                         only when the gun has them - 14 tank destroyers of client 2.4.0.1
+      hullAiming  {'pitch': {available, enabled, flexible, speed (rad/s), min, max (rad)}, 'yawAvailable'} - the
+                  type's hullAimingParams, only when descr.isHullAimingAvailable; 'enabled' is what differs between
+                  the two descriptors (True in the siege one only: the hull tilts in the second mode alone)
+      siegeMode   {kind (mode_kind), switchOnTime, switchOffTime, switchCancelEnabled, stopEngineOnSwitch, device,
+                  engineDamageCoeff[, autoOn, autoOff m/s for an auto siege]} - the type's siegeModeParams, only when
+                  descr.hasSiegeMode
+
+    Every field on its own: one the client refuses is left out and never named in 'unavailable'. Raises nothing.
+    """
+    try:
+        vtype, gun = descr.type, descr.gun
+    except Exception:
+        return {}
+    key = (id(vtype), id(gun))
+    cached = _MODE_FIELDS_CACHE.get(key)
+    if cached is not None and cached[0] is vtype and cached[1] is gun:
+        return cached[2]
+    block = {}
+    for name in ('staticPitch', 'staticTurretYaw'):
+        try:
+            value = getattr(gun, name, None)
+            if value is not None: block[name] = float(value)
+        except Exception:
+            pass
+    try:
+        if getattr(descr, 'isHullAimingAvailable', False):
+            params = vtype.hullAimingParams
+            pitch = params['pitch']
+            angles = pitch.get('wheelsCorrectionAngles') or {}
+            block['hullAiming'] = {
+                'pitch': {'available': bool(pitch.get('isAvailable')), 'enabled': bool(pitch.get('isEnabled')),
+                          'flexible': bool(pitch.get('isFlexible')), 'speed': float(pitch.get('wheelsCorrectionSpeed') or 0.0),
+                          'min': float(angles.get('pitchMin') or 0.0), 'max': float(angles.get('pitchMax') or 0.0)},
+                'yawAvailable': bool((params.get('yaw') or {}).get('isAvailable'))}
+    except Exception:
+        block.pop('hullAiming', None)
+    try:
+        if getattr(descr, 'hasSiegeMode', False):
+            params = vtype.siegeModeParams
+            mode = {'kind': mode_kind(descr)}
+            for name, source, cast in SIEGE_MODE_FIELDS:
+                try:
+                    if source in params: mode[name] = cast(params[source])
+                except Exception:
+                    pass
+            if mode['kind'] == 'auto':
+                for name, source in (('autoOn', 'autoSwitchOnRequiredVehicleSpeed'), ('autoOff', 'autoSwitchOffRequiredVehicleSpeed')):
+                    try:
+                        if source in params: mode[name] = float(params[source])
+                    except Exception:
+                        pass
+            block['siegeMode'] = mode
+    except Exception:
+        block.pop('siegeMode', None)
+    if len(_MODE_FIELDS_CACHE) > 128:
+        _MODE_FIELDS_CACHE.clear()
+    _MODE_FIELDS_CACHE[key] = (vtype, gun, block)
+    return block
+
+
 def fix_aim(vehicle):
     """Fill or complete the 'aim' block of a record written before the recorder knew it.
 
@@ -967,6 +1084,29 @@ def mode_descr(descr, mode):
         return getattr(descr, 'siegeVehicleDescr' if mode == 1 else 'defaultVehicleDescr', None) or descr
     return descr
 
+
+def mode_aim_block(descr):
+    """Both modes' aim blocks of a vehicle that is built twice (23.09, BACKLOG 35 B5 'modeAim').
+
+    The second descriptor changes the circle far more often than the shells: 34 of the client's 79
+    `*_siege_mode.xml` differ from their base in shotDispersionRadius, aimingTime, reloadTime or the
+    dispersion factors (the Strv 107-12 0.29 -> 0.24 m/100 m and 3.0 -> 1.0 s, the Contriver's salvo mode
+    0.33 -> 1.1 and afterShot 4 -> 8) - docs/KNOWLEDGE.md section 4; since the fields of aim_mode_fields (23.09) the
+    32 vehicles with hull aiming differ at least in hullAiming.enabled. The recorder writes the other block beside the
+    shooter's 'aim' (always DEFAULT for somebody else's vehicle), exactly as modeShells: read ONCE per battle per
+    descriptor object (Recorder.mode_blocks), written only where the two blocks differ, shared by reference like every
+    static vehicle field. The characteristics file writes the siege one per pair (ttx_pair) - one function for both.
+
+    Same contract as the recorder's mode_shell_block: None for an ordinary vehicle (one attribute read), else
+    {'default': block, 'siege': block, 'same': bool}; onSiegeStateChanged is never called here.
+    """
+    if not getattr(descr, 'hasSiegeMode', False): return None
+    siege = getattr(descr, 'siegeVehicleDescr', None)
+    default = getattr(descr, 'defaultVehicleDescr', None)
+    if siege is None or default is None: return None
+    first, second = aim_block(default), aim_block(siege)
+    return {'default': first, 'siege': second, 'same': first == second}
+
 # The first recorder that wrote the shooter's aim block live, from the arena's descriptor (0.7.14).
 LIVE_AIM_SINCE = (0, 7, 14)
 SHOOTER_AIM_WARNING = 'Shooter aim parameters unavailable'
@@ -1042,6 +1182,104 @@ def compact_factors(vehicle):
         if value > 0 and value - value == 0:
             factors[key] = value
     return factors or None
+
+
+# The first recorder whose aim blocks carry the second mode's fields (aim_mode_fields, 23.09) - the build after 0.7.31.
+MODE_FIELDS_SINCE = (0, 7, 32)
+AIM_MODE_KEYS = ('staticPitch', 'staticTurretYaw', 'hullAiming', 'siegeMode')
+# The numbers that tell which descriptor a recorded block came from: where the two modes differ, the block matches one.
+MODE_TELL_KEYS = ('dispersion', 'aimingTime', 'movementFactor', 'rotationFactor', 'turretRotationFactor', 'afterShotFactor',
+                  'turretRotationSpeed', 'hullRotationSpeed', 'speedForward', 'speedBackward', 'reloadTime')
+# Both modes' blocks per compact descriptor, for the old records of one publish (export thread only, like vehicle_descr).
+_MODE_AIMS_CACHE = OrderedDict()
+
+
+def recorded_mode(aim, aims):
+    """0 or 1: the mode whose descriptor a recorded block was built from, by the numbers the two modes' blocks differ
+    in; None when no such number matches either mode, or they point both ways. A number that matches neither (a field
+    modification that moved a speed, say) says nothing and is passed over."""
+    votes = set()
+    for key in MODE_TELL_KEYS:
+        first, second, value = aims['default'].get(key), aims['siege'].get(key), aim.get(key)
+        if not all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in (first, second, value)) or first == second:
+            continue
+        near_first = abs(value - first) <= 1e-6 * max(1.0, abs(first))
+        near_second = abs(value - second) <= 1e-6 * max(1.0, abs(second))
+        if near_first != near_second:
+            votes.add(0 if near_first else 1)
+    return votes.pop() if len(votes) == 1 else None
+
+
+def fix_mode_blocks(vehicle, battle):
+    """The second modes (23.09, outputs/second-modes-2026-09-23.md 5.1 M3) for a shooter recorded before the recorder
+    wrote them; True when it filled something. Only records of a recorder before MODE_FIELDS_SINCE, like
+    stamp_aim_origin, and only the published copy: the raw record is never touched.
+
+      1. The recorded 'aim' and 'modeAim' get the fields of aim_mode_fields of their OWN mode's descriptor - 'aim' the
+         one of vehicleMode, 'modeAim' the one of modeAimMode - exactly as fix_yaw_limits gives them their sector.
+      2. A shooter built twice with no 'modeAim' gets it when the two modes' blocks differ: the mode of the recorded
+         block is its vehicleMode where the record has it, else the one whose numbers it matches (recorded_mode; never
+         written when it matches neither or both ways), and the other mode's block takes the recorded block's own four
+         miscAttrs factors, aimFrom and compactFactors - the field modifications and the battle's modifiers are the
+         same in both modes. 'vehicleMode' is not added: the shells of the record read it.
+
+    The descriptor is vehicle_descr's, built for the other fixes of the hit anyway; a type the running client cannot
+    build, or one that names another type than the record, gets nothing. Never raises out of a guarded caller.
+    """
+    if not isinstance(vehicle, dict):
+        return False
+    version = version_tuple((battle or {}).get('recorderVersion'))
+    if version is not None and version >= MODE_FIELDS_SINCE:
+        return False
+    aim = vehicle.get('aim')
+    if not (isinstance(aim, dict) and positive(aim.get('dispersion'))) or not vehicle.get('compactDescriptor'):
+        return False
+    compact = vehicle['compactDescriptor']
+    try:
+        descr = vehicle_descr(compact)
+        if vehicle.get('type') and str(descr.type.name) != str(vehicle.get('type')):
+            return False
+    except Exception:
+        return False
+    filled = False
+    for block, mode in ((aim, vehicle.get('vehicleMode')), (vehicle.get('modeAim'), vehicle.get('modeAimMode'))):
+        if not (isinstance(block, dict) and positive(block.get('dispersion'))) or any(key in block for key in AIM_MODE_KEYS):
+            continue
+        try:
+            fields = aim_mode_fields(mode_descr(descr, mode))
+        except Exception:
+            continue
+        for key, value in fields.items():
+            block[key] = value
+            filled = True
+    if 'modeAim' in vehicle or not getattr(descr, 'hasSiegeMode', False):
+        return filled
+    aims = _MODE_AIMS_CACHE.get(compact)
+    if aims is None:
+        try:
+            aims = mode_aim_block(descr) or False
+        except Exception:
+            aims = False
+        _MODE_AIMS_CACHE[compact] = aims
+        if len(_MODE_AIMS_CACHE) > 64:
+            _MODE_AIMS_CACHE.popitem(last=False)
+    if not aims or aims['same'] or not aims.get('default') or not aims.get('siege'):
+        return filled
+    mode = vehicle.get('vehicleMode')
+    if mode not in (0, 1):
+        mode = recorded_mode(aim, aims)
+    if mode not in (0, 1):
+        return filled
+    other = 1 - mode
+    block = dict(aims['siege' if other == 1 else 'default'])
+    block.pop('unavailable', None)
+    for key, _ in AIM_MISC_FACTORS:
+        if key in aim: block[key] = aim[key]
+    for key in ('aimFrom', 'compactFactors'):
+        if key in aim: block[key] = aim[key]
+    vehicle['modeAim'] = block
+    vehicle['modeAimMode'] = other
+    return True
 
 
 PARTS = ('chassis', 'hull', 'turret', 'gun')
@@ -1148,6 +1386,31 @@ def vehicle_descr(compact_descriptor):
     return descr
 
 
+def rest_columns(descr):
+    """The column-major transforms of the four static parts in the rest pose, in the chassis frame - the one writer of
+    the rest pose for the recorder's shooter (rest_transforms), the vehicle export and the parts of an old record.
+
+    The client's own stacking (vehicles.py VehicleDescr.__updateAttributes): chassis at the origin, the hull at
+    chassis.hullPosition, the turret at hull.turretPositions[0] above it, the gun at turret.gunPosition above that.
+    A gun with a static pitch (23.09, second modes M5: the Strv 103-0, 103B and S1 hold theirs 1 degree up, gun.staticPitch
+    -1 degree in the client's sign) is drawn in it, as the client's garage and its own vehicle draw it
+    (HangarVehicleAppearance, VehicleGunRotator): a rotation about the gun's X axis by the client's pitch, positive
+    down - the sense the page's pose gives the gun (viewer.poseExtra). Every other part is a pure translation.
+    """
+    hull = descr.chassis.hullPosition
+    turret = hull + descr.hull.turretPositions[0]
+    gun = turret + descr.turret.gunPosition
+    columns = [translation_columns(offset) for offset in ((0.0, 0.0, 0.0), hull, turret, gun)]
+    try:
+        pitch = getattr(descr.gun, 'staticPitch', None)
+        if pitch:
+            c, s = math.cos(float(pitch)), math.sin(float(pitch))
+            columns[3][4:12] = [0.0, c, s, 0.0, 0.0, -s, c, 0.0]
+    except Exception:
+        pass
+    return columns
+
+
 def parts_from_descr(descr, armor_source='client descriptor rebuilt from the record'):
     """A vehicle descriptor in, its collision parts out - no battle record involved.
 
@@ -1164,10 +1427,7 @@ def parts_from_descr(descr, armor_source='client descriptor rebuilt from the rec
     needs. Failures are per part, like the recorder's.
     """
     from .armor import live_materials
-    hull = descr.chassis.hullPosition
-    turret = hull + descr.hull.turretPositions[0]
-    gun = turret + descr.turret.gunPosition
-    offsets = ((0.0, 0.0, 0.0), hull, turret, gun)
+    transforms = rest_columns(descr)
     parts = []
     for idx, name, component in static_parts(descr):
         part = {'id':idx, 'name':name}
@@ -1178,7 +1438,7 @@ def parts_from_descr(descr, armor_source='client descriptor rebuilt from the rec
             pass
         try:
             part['resource'] = component.hitTesterManager.activeHitTester.bspModelName
-            part['transform'] = translation_columns(offsets[idx] if idx < len(offsets) else offsets[0])
+            part['transform'] = list(transforms[idx] if idx < len(transforms) else transforms[0])
         except Exception:
             part['error'] = 'Part model or transform unavailable'
         parts.append(part)
@@ -1507,6 +1767,10 @@ def top_descriptor(type_name):
 # only, outside battles, once per type; a file whose schema or client version is not the current one counts as
 # missing. The page reads it by the key 'ttx:<id>'.
 TTX_SCHEMA = 1
+# The second modes' fields (23.09: configs[k].modeAim/modePitch, vehicle.modeValues and rocketAcceleration, the aim
+# blocks' hullAiming/siegeMode/static angles). The schema stays 1 - an older page reads the file as before - and a file
+# of a vehicle with a second mode or a rocket booster without this marker is rebuilt once (ttx_current).
+TTX_MODES_SCHEMA = 1
 TTX_CURRENT, TTX_FAILED = 'current', 'failed'
 # A clock fine enough for buildMs: time.time() moves in 15.6 ms steps on Windows; time.clock is the
 # performance counter there in Python 2.7, perf_counter its successor in 3.
@@ -1514,8 +1778,8 @@ TTX_TIMER = getattr(time, 'perf_counter', None) or time.clock
 # The installable modules raised to their best before the pairs are walked: (attribute of the descriptor,
 # list on the type). The turret and gun come per pair.
 TTX_TOP_MODULES = (('chassis', 'chassis'), ('engine', 'engines'), ('radio', 'radios'), ('fuelTank', 'fuelTanks'))
-# The mode flags of a vehicle, by name in the file and the descriptor property (vehicles.pyc 2.4.0.1). Only flags
-# in this version: the second values of these modes are the second stage of the panel.
+# The mode flags of a vehicle, by name in the file and the descriptor property (vehicles.pyc 2.4.0.1). The second
+# mode's own values are configs[k].modeAim/modePitch and vehicle.modeValues (23.09, ttx_mode_values).
 TTX_MODE_FLAGS = (('siege', 'hasSiegeMode'), ('wheeled', 'isWheeledVehicle'),
                   ('onSpotRotation', 'isWheeledOnSpotRotation'), ('turboshaft', 'hasTurboshaftEngine'),
                   ('rocketAcceleration', 'hasRocketAcceleration'), ('hydraulicChassis', 'hasHydraulicChassis'))
@@ -1636,14 +1900,26 @@ def ttx_pair(descr, turret_index, gun_name, top):
     ttx_take(config, 'gunUserString', lambda: getattr(gun, 'shortUserString', None) or str(gun.name),
              warnings, 'Gun name')
     ttx_take(config, 'gunLevel', lambda: int(gun.level), warnings, 'Gun level')
+    # A vehicle built twice (23.09, second modes M2): both modes' blocks by the recorder's own mode_aim_block, the first
+    # one as 'aim' - so it is built once, not twice - and the siege one as 'modeAim' where the two differ.
+    aims = None
+    if getattr(descr, 'hasSiegeMode', False):
+        try:
+            aims = mode_aim_block(descr)
+        except Exception:
+            warnings.append('Second-mode aim parameters unavailable')
 
     def aim():
-        block = aim_block(descr)
+        block = aims['default'] if aims and aims.get('default') else aim_block(descr)
         if not block: raise ValueError('No aim block')
         # A bare descriptor rebuilt by the client: no battle, no field modifications, no devices.
         block['aimFrom'] = 'compact'
         return block
     ttx_take(config, 'aim', aim, warnings, 'Aim parameters')
+    if aims and not aims['same'] and aims.get('siege'):
+        aims['siege']['aimFrom'] = 'compact'
+        config['modeAim'] = aims['siege']
+        config['modeAimMode'] = 1
     ttx_take(config, 'maxHealth', lambda: int(descr.maxHealth), warnings, 'Health')
     ttx_take(config, 'weight', lambda: ttx_weight(descr, warnings), warnings, 'Weight')
     ttx_take(config, 'maxAmmo', lambda: int(gun.maxAmmo), warnings, 'Ammunition')
@@ -1652,8 +1928,76 @@ def ttx_pair(descr, turret_index, gun_name, top):
 
     ttx_take(config, 'turretYawLimits', lambda: yaw_limits(descr), warnings, 'Turret yaw limits')
     ttx_take(config, 'pitch', lambda: ttx_pitch(gun.pitchLimits), warnings, 'Pitch limits')
+    if aims is not None:
+        # The siege gun's own limits where they differ (the Strv 103: +1 degree fixed in travel, -2..+4 in siege).
+        try:
+            pitch = ttx_pitch(mode_descr(descr, 1).gun.pitchLimits)
+            if pitch != config.get('pitch'): config['modePitch'] = pitch
+        except Exception:
+            warnings.append('Second-mode pitch limits unavailable')
     ttx_take(config, 'reloadExtra', lambda: ttx_reload_extra(descr), warnings, 'Mechanics reload')
     return config, warnings
+
+
+def ttx_mode_values(descr, vehicle, modules, turrets, modes):
+    """The vehicle's own figures of its second mode, only the ones that differ from the first (23.09, second modes M2):
+
+      enginePower            W        the siege engine's power (the turbine: 740 -> 1150 hp on the CS-63)
+      invisibility           [2]      the siege type's concealment moving / standing
+      circularVisionRadius   [m, ..]  per turret of the file's turret list (the Char Mle. 75: 370 -> 350)
+      maxSteeringLockAngle   deg      a wheeled vehicle without on-the-spot turning, its Rapid wheels (33 -> 15)
+
+    Read off the siege descriptor of the composite the pairs were mounted on (mode_descr): the top engine and chassis
+    are installed in both. {} for a vehicle built once.
+    """
+    if not modes.get('siege'):
+        return {}
+    siege = mode_descr(descr, 1)
+    if siege is descr:
+        return {}
+    values = {}
+    try:
+        power = float(siege.engine.power)
+        if power != (modules.get('engine') or {}).get('power'): values['enginePower'] = power
+    except Exception:
+        pass
+    try:
+        inv = [float(item) for item in siege.type.invisibility]
+        if inv != vehicle.get('invisibility'): values['invisibility'] = inv
+    except Exception:
+        pass
+    try:
+        vision = [float(turret.circularVisionRadius) for turret in siege.type.turrets[0]]
+        if len(vision) == len(turrets) and vision != [entry.get('circularVisionRadius') for entry in turrets]:
+            values['circularVisionRadius'] = vision
+    except Exception:
+        pass
+    try:
+        if modes.get('wheeled') and not modes.get('onSpotRotation'):
+            chassis = siege.chassis
+            lock = ttx_steering_lock(siege.type.xphysics['chassis'][chassis.name].get('axleSteeringLockAngles'))
+            if lock != (modules.get('chassis') or {}).get('maxSteeringLockAngle'): values['maxSteeringLockAngle'] = lock
+    except Exception:
+        pass
+    return values
+
+
+def rocket_block(params):
+    """The rocket booster of sixteen vehicles (type.rocketAccelerationParams, items/components/shared_components.pyc
+    RocketAccelerationParams, 2.4.0.1): deployTime, reloadTime (the pause between two uses), reuseCount, duration (s)
+    and the modifiers in force while it burns, as the heat bands' modifiers are written - on the BZ-176
+    dynAttrs/engine/power x2.5, vehicle/maxSpeed/forward x1.5, backward x0.1, vehicle/rotationSpeed x0.15. None of
+    them touches the dispersion: the circle grows only with the speed (docs/KNOWLEDGE.md section 6)."""
+    block = {'deployTime': float(params.deployTime), 'reloadTime': float(params.reloadTime),
+             'reuseCount': int(params.reuseCount), 'duration': float(params.duration),
+             'modifiers': [heat_modifier(item) for item in (params.modifiers or ())]}
+    impulse = getattr(params, 'impulse', None)
+    if impulse is not None:
+        try:
+            block['impulse'] = {'magnitude': float(impulse.magnitude), 'duration': float(impulse.duration)}
+        except Exception:
+            pass
+    return block
 
 
 def ttx_block(type_name, version):
@@ -1757,7 +2101,16 @@ def ttx_block(type_name, version):
     modes['dualGun'] = 'dualGun' in tags
     modes['twinGun'] = 'twinGun' in tags
     vehicle['modes'] = modes
-    result = {'schema': TTX_SCHEMA, 'id': vehicle_id(type_name), 'type': str(type_name),
+    # The second mode's own figures of the vehicle, and the rocket booster (23.09, second modes M2).
+    try:
+        values = ttx_mode_values(descr, vehicle, modules, turrets, modes)
+        if values: vehicle['modeValues'] = values
+    except Exception:
+        warnings.append('Second-mode values unavailable')
+    if modes.get('rocketAcceleration'):
+        ttx_take(vehicle, 'rocketAcceleration', lambda: rocket_block(vtype.rocketAccelerationParams), warnings,
+                 'Rocket acceleration')
+    result = {'schema': TTX_SCHEMA, 'modesSchema': TTX_MODES_SCHEMA, 'id': vehicle_id(type_name), 'type': str(type_name),
               'clientVersion': version, 'producedAt': time.time(), 'buildMs': round((TTX_TIMER() - started) * 1000.0, 1),
               'vehicle': vehicle, 'modules': modules, 'turrets': turrets, 'shells': shells,
               'configs': configs, 'warnings': warnings}
@@ -2104,6 +2457,10 @@ class Exporter(object):
             stamp_aim_origin(hit, raw, battle)
         except Exception:
             LOG.exception('Aim block origin unavailable; the hit is published without it')
+        try:
+            fix_mode_blocks(hit.get('attacker'), battle)
+        except Exception:
+            LOG.exception('Second-mode fields unavailable; the hit is published without them')
         priority = JOB_PLAYER if hit.get('direction') in ('incoming', 'outgoing') else JOB_OTHER
         pending = set()
         for side in ('target', 'attacker'):
@@ -2729,6 +3086,14 @@ class Exporter(object):
             if limits is not None: record['turretYawLimits'] = limits
         except Exception:
             record['warnings'].append('Turret yaw limits unavailable')
+        # The gun's static angles beside its sector (23.09, second modes M5): the viewer holds such a turret and gun
+        # still, as the client's armour view does. Only for a gun that has them; older files are not rebuilt for it.
+        for name in ('staticPitch', 'staticTurretYaw'):
+            try:
+                value = getattr(descr.gun, name, None)
+                if value is not None: record[name] = float(value)
+            except Exception:
+                pass
         try:
             record['gunPitchLimits'] = gun_limits(descr)
         except Exception:
@@ -2772,8 +3137,12 @@ class Exporter(object):
             value = read_data_file(path)
         except Exception:
             return False
-        return (isinstance(value, dict) and value.get('schema') == TTX_SCHEMA
-                and canonical(value.get('clientVersion') or '') == self.version)
+        if not (isinstance(value, dict) and value.get('schema') == TTX_SCHEMA
+                and canonical(value.get('clientVersion') or '') == self.version):
+            return False
+        # A vehicle with a second mode or a rocket booster whose file predates their fields is built again, once.
+        modes = ((value.get('vehicle') or {}).get('modes') or {})
+        return not ((modes.get('siege') or modes.get('rocketAcceleration')) and value.get('modesSchema') != TTX_MODES_SCHEMA)
 
     def ensure_ttx(self, type_name, inline, priority=JOB_BULK):
         """Make sure the characteristics file of a type is current; export thread only.

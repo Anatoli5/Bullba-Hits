@@ -628,6 +628,8 @@ header>.settings-menu>.settings-content{top:calc(100% + 8px);right:0;max-height:
 /* The head: the pair tile and the glyph buttons are the .swap-roles widget at the panel's size. */
 .ttx-panel .toolbar-more>summary,.ttx-panel .ttx-head>.swap-roles{display:flex;align-items:center;gap:5px;min-height:0;padding:3px 7px;font-size:13px;line-height:1;border:1px solid rgba(157,174,191,.55);border-radius:6px;background:rgba(23,35,48,.15);color:inherit;white-space:nowrap}
 .ttx-panel .ttx-head>.swap-roles[aria-pressed=true],.ttx-more[open]>summary.swap-roles{border-color:var(--gold);color:var(--gold);background:#302b23}
+/* The second mode's switch (#ttx-mode, 23.09) is there only for a pair with a second mode. */
+.ttx-panel .ttx-head>.swap-roles[hidden]{display:none}
 .ttx-panel .toolbar-more>summary::after,.ttx-pairs[data-many=false]>summary::after{content:none}
 .ttx-pairs[data-many=true]>summary::after{content:'\25be';color:var(--muted)}
 .ttx-pairs[data-many=false]>summary{cursor:default}

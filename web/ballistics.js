@@ -90,7 +90,9 @@
   // and the Strv 107-12's pillbox stops the vehicle (dynAttrs/vehicle/maxSpeed/forward ×0). Every other caller leaves
   // them out and gets 1. ZERO_MODS: the factors a mechanic may really set to nothing - the XM69's gyro and the Black
   // Rock's Burst mode take the movement, hull and turret terms ×0.0 - where for every other key 0 means "not given".
-  var NO_MODS={mult:1,additive:1,movement:1,rotation:1,turret:1,aimingTime:1,turretSpeed:1,hullSpeed:1,reload:1,magazineReload:1,afterShot:1,speed:1};
+  // `forwardSpeed` and `backwardSpeed` (23.09): a rocket booster's own caps of the forward and the reverse speed
+  // (rocketAcceleration: vehicle/maxSpeed/forward x1.5, backward x0.1 on the BZ-176), where `speed` takes both at once.
+  var NO_MODS={mult:1,additive:1,movement:1,rotation:1,turret:1,aimingTime:1,turretSpeed:1,hullSpeed:1,reload:1,magazineReload:1,afterShot:1,speed:1,forwardSpeed:1,backwardSpeed:1};
   var ZERO_MODS={movement:1,rotation:1,turret:1,speed:1};
   function aimMods(mods){
     var out={},keys=Object.keys(NO_MODS);
@@ -263,7 +265,7 @@
     // brake keeps the vehicle's own rate, so a vehicle rolling when the cap drops comes to a stop instead of coasting.
     var forwardCap=a.speedForward>0?Math.max(0,a.speedForward+term(mods&&mods.speedForwardAdd)):0;
     var backCap=a.speedBackward>0?Math.max(0,a.speedBackward+term(mods&&mods.speedBackwardAdd)):0;
-    var forward=forwardCap*m.speed,back=backCap*m.speed;
+    var forward=forwardCap*m.speed*m.forwardSpeed,back=backCap*m.speed*m.backwardSpeed;
     var hullMax=(a.hullRotationSpeed>0?a.hullRotationSpeed:0)*m.hullSpeed;
     var accel=seconds(mods&&mods.accelSeconds,MOVE.accel),accelBack=seconds(mods&&mods.accelBackSeconds,MOVE.accelBack);
     var brake=seconds(mods&&mods.brakeSeconds,MOVE.brake),turn=seconds(mods&&mods.turnSeconds,MOVE.turn);
@@ -280,7 +282,13 @@
     var rate=rising?(goal>0?forward/accel:back/accelBack):Math.max(forwardCap,backCap)/brake;
     speed=approach(speed,goal,Math.max(0,rate)*step);
     var hullTarget=k.left&&!k.right?-hullMax:k.right&&!k.left?hullMax:0;
+    // THE AUTOROTATION (23.09, the page's ✸ layer): a virtual key with no A or D held - `auto` is the signed angle the
+    // cursor lies past the gun's sector, right positive. The hull turns towards it with the keys' own ramp, and never by
+    // more in a step than is left, so it does not overshoot; `autoStop` (the step after it got there) stops it at once.
+    var auto=!k.left&&!k.right?Number(k.auto)||0:0;
+    if(auto)hullTarget=auto>0?hullMax:-hullMax;
     hullTurn=approach(hullTurn,hullTarget,(hullMax>0?hullMax/turn:0)*step);
+    if((auto||k.autoStop)&&!k.left&&!k.right){var most=step>0?Math.abs(auto)/step:0;if(Math.abs(hullTurn)>most)hullTurn=hullTurn<0?-most:most;}
     return {speed:speed,hullTurn:hullTurn,forward:forward,back:back,hullMax:hullMax,
       resting:Math.abs(speed)<1e-3&&Math.abs(hullTurn)<1e-4&&target===0&&hullTarget===0};
   }
