@@ -2948,13 +2948,14 @@
   }
   // One Hitmark: ONE record, made here, handed to the viewer to draw and kept as it is so a scene the
   // viewer rebuilds can have the very same mark back - the point, the recorded normal, the outcome the
-  // texture is chosen by, the shell's calibre the footprint is taken from, where the shot came from and the
-  // line it came along (the decal is PROJECTED along that line, so the mark smears on a plate met at an
-  // angle), and the roll that turns a square-on mark round that line so a burst does not stamp identical
-  // copies. The roll is drawn HERE, once, and travels with the mark: a mark laid again must be the same
-  // mark, vertex for vertex, and not a freshly turned one.
-  // A shot that met no armour at all has nothing to cut a decal out of and is refused by the viewer; then
-  // nothing is kept either. The cap is the viewer's own, asked for, not copied.
+  // texture is chosen by, the shell's calibre the footprint is taken from (0.7 of it, no floor), where the
+  // shot came from and the line it came along (the decal is PROJECTED along that line, so a mark met at an
+  // angle is stretched along the plate for as long as the plate lasts), and the roll that turns a square-on
+  // mark round that line so a burst does not stamp identical copies. The roll is drawn HERE, once, and
+  // travels with the mark: a mark laid again must be the same mark, vertex for vertex, not a freshly turned one.
+  // A shot that met no armour at all has nothing to cut a decal out of, and a shell with no calibre in the
+  // record has no size to cut one at: the viewer refuses both, and then nothing is kept either - the shot's
+  // verdict and its damage above stand all the same. The cap is the viewer's own, asked for, not copied.
   function funMark(pin, outcome, shell) {
     var caliber = shell && Number(shell.caliber) > 0 ? Number(shell.caliber) : 0;
     var mark = {point: pin.point, normal: pin.normal, from: pin.origin, dir: pin.direction,
