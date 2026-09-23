@@ -2091,6 +2091,11 @@
     preset.onclick = function () { aimOpenLayer('presets'); };
     preset.onkeydown = aimPresetKey;
     aimRow(grid, 'Preset', preset);
+    // The turret of the characteristics panel (panel v2, user 23.09): picked here, beside the build it is read with,
+    // for a vehicle with more than one turret - the tiles are ttxPaintTurrets', the state the panel's own stored pair.
+    var turretLabel = node('span', 'Turret'), turrets = node('div', undefined, 'aim-pick-row aim-cfg-turrets');
+    turrets.id = 'aim-cfg-turrets'; turretLabel.hidden = turrets.hidden = true;
+    grid.appendChild(turretLabel); grid.appendChild(turrets);
     main.appendChild(grid);
 
     main.appendChild(node('div', 'Equipment', 'aim-config-head'));
@@ -2124,8 +2129,10 @@
     layer.appendChild(close); layer.appendChild(picker);
     body.appendChild(scrim); body.appendChild(layer);
     aimConfigControls = {body: body, main: main, preset: preset, slots: slots, directive: directive,
-                         consumables: cons, crew: crew, scrim: scrim, layer: layer, picker: picker};
+                         consumables: cons, crew: crew, scrim: scrim, layer: layer, picker: picker,
+                         turretLabel: turretLabel, turrets: turrets};
     paintAimConfig();
+    ttxPaintTurrets();
   }
   function aimRow(grid, label, control) { grid.appendChild(node('span', label)); grid.appendChild(control); }
   // The corner readout and its ⓘ popover are gone (user, 20.09): the mode's one-line explanation is the
@@ -4734,7 +4741,7 @@
     var live = !!(a && modelled && viewer && aimOn);
     // What the layout pass measures here is which of the four is on screen; it runs again only when that
     // changes (updateAim runs on every shell, distance or pose step, and each pass forces a page layout).
-    var shownBefore = [$('aim-config').hidden, tile.hidden, $('aim-gun').hidden, $('aim-block').hidden].join();
+    var shownBefore = [$('aim-config').hidden, tile.hidden, $('aim-gun').hidden, $('aim-block').hidden].join(), configWas = $('aim-config').hidden;
     $('aim-config').hidden = !live;
     if (!live) $('aim-config').open = false;   // aimConfigListen below takes the sub-panel and the Escape key with it
     tile.hidden = !live;
@@ -4747,6 +4754,8 @@
     var fallback = !!(modelled && aimOn && !a), wasHidden = $('aim-block').hidden;
     $('aim-block').hidden = !fallback;
     if ([$('aim-config').hidden, tile.hidden, $('aim-gun').hidden, $('aim-block').hidden].join() !== shownBefore) scheduleLayout();
+    // The gun chip of the characteristics panel lists the turrets itself while Config is away (ttxPaintPair).
+    if ($('aim-config').hidden !== configWas) ttxPaintChip();
     // Said once, when the block appears: writing it on every pass would wipe the result of the
     // Estimate button the moment the camera moved.
     if (fallback && wasHidden) $('spread-result').textContent = 'This shooter’s record carries no aiming parameters, so the circle cannot be computed. Old battles get them on the next game start; until then the manual radius above stands.';
@@ -5968,7 +5977,22 @@
     turret: '<path d="M2.8 12.5a5.2 5.2 0 0 1 10.4 0z"/><path d="M8 9h6.6"/>',
     // The second modes (23.09): the switch's two times - two arrows meeting; the automatic siege - a hull tilting.
     switchTime: '<path d="M1.2 8h5M4.4 5.4 7 8l-2.6 2.6"/><path d="M14.8 8h-5M11.6 5.4 9 8l2.6 2.6"/>',
-    autoSiege: '<path d="M1.5 13.5h13"/><path d="M3 11.5 13 8.2"/><path d="M11 4.2l2 1.8-2 1.8"/>'};
+    autoSiege: '<path d="M1.5 13.5h13"/><path d="M3 11.5 13 8.2"/><path d="M11 4.2l2 1.8-2 1.8"/>',
+    // The reload line (panel v2, 23.09): the time between two rounds of a magazine - a gap between two bars; the gap
+    // inside a burst - three rounds close together; the gun of the pair chip - a barrel with its muzzle brake.
+    interval: '<path d="M2.5 3.5v9M13.5 3.5v9"/><path d="M4.8 8h6.4M6.6 6.2 4.8 8l1.8 1.8M9.4 6.2 11.2 8l-1.8 1.8"/>',
+    burst: '<circle cx="3.6" cy="9.5" r="1.5"/><circle cx="8" cy="9.5" r="1.5"/><circle cx="12.4" cy="9.5" r="1.5"/><path d="M2.5 5.5h11"/>',
+    gun: '<path d="M1.5 8h9.3"/><path d="M1.5 5.8v4.4"/><path d="M10.8 6h3.2v4h-3.2z"/>',
+    // A dual gun's salvo preparation - two barrels meeting in one shot; the rate of continuous fire (an automatic gun,
+    // the Ares) - a belt running on, so it never shares the rate of fire's glyph in one section (review 23.09).
+    salvo: '<path d="M1.5 5.2h8.8M1.5 10.8h8.8"/><path d="M10.3 5.2 14.5 8l-4.2 2.8"/>',
+    spmHold: '<path d="M1.5 5.5h11M1.5 10.5h11"/><path d="M3.5 5.5v5M6.5 5.5v5M9.5 5.5v5"/><path d="M12.5 5.5 15 8l-2.5 2.5"/>',
+    // The garage's five groups (params_helper PARAMS_GROUPS): the glyph on the thin rule over each section.
+    relativePower: '<path d="M1.8 6.2h7.4L13.8 8l-4.6 1.8H1.8z"/><path d="M4.6 6.2v3.6"/>',
+    relativeArmor: '<path d="M8 1.6 13.4 3.6v4c0 3.3-2.4 5.6-5.4 6.8-3-1.2-5.4-3.5-5.4-6.8v-4z"/>',
+    relativeMobility: '<rect x="1.4" y="5.6" width="13.2" height="6.2" rx="3.1"/><circle cx="4.6" cy="8.7" r="1.2"/><circle cx="8" cy="8.7" r="1.2"/><circle cx="11.4" cy="8.7" r="1.2"/>',
+    relativeCamouflage: '<path d="M2.6 13.4C2.6 7.6 6.8 3.2 13.6 2.4 13 8.8 8.8 13.2 2.6 13.4z"/><path d="M2.6 13.4 9.6 6.4"/>',
+    relativeVisibility: '<circle cx="4.4" cy="10" r="2.7"/><circle cx="11.6" cy="10" r="2.7"/><path d="M4.4 7.3 5.8 3.2h4.4l1.4 4.1M7.1 10h1.8"/>'};
   function ttxGlyph(name) {
     var icon = node('i', undefined, 'ttx-icon');
     icon.setAttribute('aria-hidden', 'true');
@@ -5980,10 +6004,18 @@
   var TTX_ROWS = {
     avgDamagePerMinute: ['dpm', 'Damage per minute', 'HP'],
     shotsPerMinute: ['spm', 'Rate of fire', 'rounds a minute'],
-    reloadTimeSecs: ['reload', 'Reload', 's'],
-    clipFireRate: ['clip', 'Magazine: the whole reload / the interval between rounds / rounds', 's / s / rounds'],
-    autoReloadTime: ['autoreload', 'Autoloader: each round, in loading order from an empty magazine', 's'],
-    dualGun: ['reload', 'Reload of each barrel', 's'],
+    // The parts of the reload line (web/ttx.js reloadLine), by the garage's own names of those figures (menu.mo).
+    reloadTimeSecs: ['reload', 'Gun loading', 's'],
+    clipFireRate: ['reload', 'Reload of the magazine: from the last round fired to a full magazine', 's'],
+    shellsCount: ['clip', 'Shells in the magazine', 'rounds'],
+    shellReloadingTime: ['interval', 'Loading between shots', 's'],
+    burstFireRate: ['burst', 'Loading between the shells of one container (one burst)', 's'],
+    autoReloadTime: ['autoreload', 'Autoreloading of each shell, in loading order from an empty magazine', 's'],
+    autoShootClipFireRate: ['reload', 'Reload of the magazine', 's'],
+    shellLoadingTime: ['reload', 'Ammunition belt loading', 's'],
+    continuousShotsPerMinute: ['spmHold', 'Rate of continuous fire', 'rounds a minute'],
+    twinGunSwitchFireModeTime: ['switchTime', 'Fire mode switch time: single fire / salvo', 's'],
+    chargeTime: ['salvo', 'Salvo preparation: charging both barrels / the reload lock after a salvo', 's'],
     overheat: ['overheat', 'Heat: rounds before the gun overheats / the burst / the cooling', 'rounds / s / s'],
     shotDispersionAngle: ['dispersion', 'Dispersion at 100 m', 'm'],
     aimingTime: ['aiming', 'Aiming time', 's'],
@@ -6009,13 +6041,21 @@
     invisibilityAfterShot: ['invisibilityAfterShot', 'Concealment after a shot (standing)', '%'],
     switchTime: ['switchTime', 'Switching the mode: into the second mode / back', 's'],
     autoSiege: ['autoSiege', 'The hull tilts at or below / levels above (the automatic siege; not in the garage)', 'km/h']};
-  // The compact view (spec 3.4.3): fire on the left, mobility on the right, the three stabilisation factors under both.
-  var TTX_COMPACT = {fire: ['avgDamagePerMinute', 'reload', 'shotDispersionAngle', 'aimingTime'],
-    move: ['turretRotationSpeed', 'hull', 'speedLimits', 'enginePowerPerTon'],
-    stab: ['stabMovement', 'stabRotation', 'stabTurret']};
-  // The reload row is one figure whatever the gun (spec 3.4.3) and wears the garage's own icon of that figure.
-  var TTX_RELOAD_ROW = {single: 'reloadTimeSecs', clip: 'clipFireRate', burst: 'clipFireRate', autoShoot: 'clipFireRate',
-    autoreload: 'autoReloadTime', overheat: 'overheat', dualGun: 'dualGun', twinGun: 'dualGun'};
+  // THE SECTIONS ARE THE GARAGE'S (panel v2, user 23.09): its five groups in its order (web/ttx.js GROUPS, from the
+  // client's params_helper PARAMS_GROUPS) under a thin rule with the group's glyph - the group's name is the rule's
+  // tooltip - and the figures inside a group in the garage's order too (RELATIVE_POWER_PARAMS: the loading, the
+  // turret, the angles, aiming, dispersion, the DPM last; the stabilisation factors are its extra KPIs after them).
+  // The compact view keeps two of them: Firepower - the reload line on top, above the DPM, as the user asked, and the
+  // DPM leading the grid right under it (user 23.09: the reload line goes "even above the DPM" - the DPM is the first
+  // figure he reads; the expanded view keeps the garage's order with the DPM last) - and
+  // Mobility. Survivability is only the hit points on this panel (the garage's hull and turret armour are not
+  // shown), so the compact view does not spend a rule and a row on one figure: the HP sit in the head, on its empty
+  // left side; the expanded view has them in their own section.
+  var TTX_GROUP_NAMES = {};
+  (TTX ? TTX.GROUPS : []).forEach(function (g) { TTX_GROUP_NAMES[g[0]] = g[1]; });
+  var TTX_COMPACT = [{group: 'relativePower', line: true, grid: ['avgDamagePerMinute', 'shotDispersionAngle', 'aimingTime', 'turretRotationSpeed'],
+                      row: ['stabMovement', 'stabRotation', 'stabTurret']},
+                     {group: 'relativeMobility', row: ['enginePowerPerTon', 'speedLimits', 'hull']}];
   var TTX_STOCK_WORDS = 'Stock, as the garage shows a bare vehicle: top modules, a crew at 100 % with no skills (+10 % commander’s bonus on every role he does not hold himself), no equipment, directive, consumables or paint';
   var TTX_NO_FIELD = 'Field modifications are not modelled here: the garage of a vehicle that has them may differ by a few per cent.';
 
@@ -6072,10 +6112,11 @@
   // --- Which pair -------------------------------------------------------------------------------------------
   // The emulator's pair: the gun that fired in the record, or the browsed vehicle's exported one (spec 3.1).
   function ttxEmuIndex() { return ttxData && TTX ? TTX.match(ttxData, activeHit && activeHit.attacker) : -1; }
-  // The pair on the panel: the one the user last picked for this type, or the emulator's.
-  function ttxPairIndex() {
+  // The pair on the panel: the one the user last picked for this type, or the emulator's (`emu`, when the caller
+  // has counted it already).
+  function ttxPairIndex(emu) {
     var stored = ttxType && aimStore.pairs[ttxType], i = stored ? TTX.pairIndex(ttxData, stored) : -1;
-    return i >= 0 ? i : ttxEmuIndex();
+    return i >= 0 ? i : emu !== undefined ? emu : ttxEmuIndex();
   }
   function ttxBuildOn() { var e = $('ttx-build'); return !!(e && e.checked); }
   // The page's own shell when it is one of this gun's, else the gun's first - the garage's active shell.
@@ -6204,13 +6245,18 @@
     var stock = ttxValues(false, index, mode), cur = build ? ttxValues(true, index, mode) : stock;
     var shownS = TTX.display(stock);
     var ctx = {build: build, mode: mode, stock: stock, cur: cur, shownS: shownS, shownB: build ? TTX.display(cur) : shownS,
-               words: (build ? ttxBuildWords() : TTX_STOCK_WORDS) + '.', source: ttxSourceWords(cur, build)};
+               words: (build ? ttxBuildWords() : TTX_STOCK_WORDS) + '.', source: ttxSourceWords(cur, build), pair: pair};
     // In the second mode a figure is coloured against the FIRST mode of the same view (stock or build): the rows it
     // changes are marked the way the build is marked against the stock.
     if (mode) {
       ctx.first = ttxValues(build, index, 0); ctx.shownF = TTX.display(ctx.first);
       var w = ttxModeWords(pair); ctx.firstWords = w[0]; ctx.modeWords = w[1];
     }
+    // The reload line's parts (web/ttx.js reloadLine), once a paint for both views: this view's, the stock's and the
+    // first mode's, which its colours and tooltips are read against.
+    ctx.line = TTX.reloadLine(cur, ctx.shownB);
+    ctx.lineS = build ? TTX.reloadLine(stock, shownS) : ctx.line;
+    if (mode) ctx.lineF = TTX.reloadLine(ctx.first, ctx.shownF);
     return ctx;
   }
   // One row's tooltip: the name and unit, the stock and the build, what is counted and where it comes from.
@@ -6220,47 +6266,100 @@
       + (ctx.build ? 'Stock ' + stockText + ' · this build ' + buildText + '. ' : 'Stock ' + stockText + '. ') + ctx.words
       + (extra ? ' ' + extra : '') + ' ' + ctx.source + ' ' + TTX_NO_FIELD;
   }
-  // One row painted from the context: the figure, its colour against the stock, the tooltip. `textKey` is the
-  // figure a compact row prints when it is not the row's own (the reload: one figure whatever the gun).
-  function ttxPaintRow(row, key, cmpKey, ctx, textKey) {
-    var text = ttxText(textKey || key, ctx.shownB, ctx.cur), sText = ttxText(textKey || key, ctx.shownS, ctx.stock);
-    var cmp = ctx.mode ? TTX.compare(ctx.first, ctx.cur, cmpKey || key, ctx.shownF, ctx.shownB)
-      : ctx.build ? TTX.compare(ctx.stock, ctx.cur, cmpKey || key, ctx.shownS, ctx.shownB) : '';
-    var extra = ttxExtra(key, ctx.cur, ctx.build);
-    if (ctx.mode) extra = 'These are ' + ctx.modeWords + '’s; ' + ctx.firstWords + ': ' + ttxText(textKey || key, ctx.shownF, ctx.first)
-      + ' - a figure better than there is mint, a worse one red.' + (extra ? ' ' + extra : '');
-    ttxSet(row, TTX_ROWS[key] ? TTX_ROWS[key][0] : key, text, cmp, ttxTitle(key, sText, text, ctx, extra));
+  // One row painted from the context: the figure, its colour against the stock (or the first mode), the tooltip.
+  function ttxPaintRow(row, key, ctx) {
+    var cmp = ctx.mode ? TTX.compare(ctx.first, ctx.cur, key, ctx.shownF, ctx.shownB)
+      : ctx.build ? TTX.compare(ctx.stock, ctx.cur, key, ctx.shownS, ctx.shownB) : '';
+    ttxPaintAs(row, key, TTX_ROWS[key] ? TTX_ROWS[key][0] : key, ttxText(key, ctx.shownB, ctx.cur), ttxText(key, ctx.shownS, ctx.stock),
+               ctx.mode ? ttxText(key, ctx.shownF, ctx.first) : '', cmp, ctx);
   }
-  // The rows' figures by key, with the reload and the hull resolved to the row that stands for them.
+  // Every row of both views is written here - a row of the grid or a part of the reload line: the figure, its colour
+  // and the tooltip with the stock, this build, the first mode's figure and where they come from.
+  function ttxPaintAs(row, key, glyph, text, sText, fText, cmp, ctx) {
+    var extra = ttxExtra(key, ctx.cur, ctx.build, ctx.shownB, ctx.pair);
+    if (ctx.mode) extra = 'These are ' + ctx.modeWords + '’s; ' + ctx.firstWords + ': ' + fText
+      + ' - a figure better than there is mint, a worse one red.' + (extra ? ' ' + extra : '');
+    ttxSet(row, glyph, text, cmp, ttxTitle(key, sText, text, ctx, extra));
+  }
+  // The reload line (panel v2, web/ttx.js reloadLine): three sides - what the magazine holds, the reload, the time
+  // between rounds - so the line grows both ways from its centre. Each part is a row of the one widget (ttxRow), kept
+  // by its key and moved only when the gun's kind of loading changes.
+  function ttxReloadLine() {
+    var line = node('div', undefined, 'ttx-reload');
+    line.ttxSides = {};
+    ['left', 'center', 'right'].forEach(function (side) {
+      var s = node('span', undefined, 'ttx-reload-side');
+      s.setAttribute('data-side', side);
+      line.appendChild(s); line.ttxSides[side] = s;
+    });
+    line.ttxParts = {}; line.ttxSig = '';
+    return line;
+  }
+  function ttxPartOf(parts, key) { for (var i = 0; parts && i < parts.length; i++) if (parts[i].key === key) return parts[i]; return null; }
+  function ttxPaintLine(line, ctx) {
+    var parts = ctx.line, base = ctx.mode ? ctx.lineF : ctx.build ? ctx.lineS : null;
+    var sig = parts.map(function (p) { return p.side + ':' + p.key; }).join(',');
+    if (sig !== line.ttxSig) {
+      line.ttxSig = sig;
+      Object.keys(line.ttxSides).forEach(function (side) { line.ttxSides[side].replaceChildren(); });
+      parts.forEach(function (p) { line.ttxSides[p.side].appendChild(line.ttxParts[p.key] || (line.ttxParts[p.key] = ttxRow(p.key))); });
+    }
+    parts.forEach(function (p) {
+      var s = ttxPartOf(ctx.lineS, p.key), f = ctx.mode ? ttxPartOf(ctx.lineF, p.key) : null;
+      ttxPaintAs(line.ttxParts[p.key], p.key, p.glyph, p.text, s ? s.text : '—', f ? f.text : '—', base ? TTX.lineCompare(ttxPartOf(base, p.key), p) : '', ctx);
+    });
+  }
+  // The rows' figures by key, with the hull resolved to the row that stands for it.
   function ttxRowKey(key, v) {
-    if (key === 'reload') return TTX_RELOAD_ROW[v.kind] || 'reloadTimeSecs';
     if (key === 'hull') return v.chassisRotationSpeed === null && v.maxSteeringLockAngle !== undefined ? 'maxSteeringLockAngle' : 'chassisRotationSpeed';
     return key;
   }
   function ttxText(key, shown, v) {
     if (key === 'overheat') return v.overheat ? [String(v.overheat.shots), BullbaTtx.nice(v.overheat.burst), BullbaTtx.nice(v.overheat.cooling)].join('/') : '—';
-    if (key === 'dualGun') return (v.dualGun || v.twinGun) ? (v.dualGun || v.twinGun).map(BullbaTtx.nice).join('/') : '—';
     return shown[key] !== undefined ? shown[key] : '—';
   }
-  // Extra lines a few rows carry in their tooltip.
-  function ttxExtra(key, v, build) {
+  // The garage's own whole lines of the loading, as it prints them (web/ttx.js display): the reload line splits them
+  // into its parts, and the part in the middle carries them whole in its tooltip.
+  function ttxLoadingWords(v, d) {
+    var out = [];
+    if (v.kind === 'dualGun' || v.kind === 'twinGun') out.push('Gun loading' + (v.kind === 'twinGun' ? ' (single fire / salvo) ' : ' (each barrel) ') + d.reloadTimeSecs + ' s');
+    if (v.kind === 'autoreload') out.push('Autoreloading of each shell ' + d.autoReloadTime + ' s');
+    if (v.clipFireRate) out.push('Reload (' + (v.kind === 'dualGun' ? 'both barrels / between the barrels / barrels' : 'the magazine / between the shells / shells') + ') ' + d.clipFireRate);
+    if (v.burstFireRate) out.push('Shell container (between the shells / containers / shells in one) ' + d.burstFireRate);
+    if (v.autoShootClipFireRate) out.push('Reload (the magazine / shells) ' + d.autoShootClipFireRate);
+    if (v.shellLoadingTime !== undefined) out.push('Ammunition belt loading ' + d.shellLoadingTime + ' s');
+    if (v.continuousShotsPerMinute !== undefined) out.push('Rate of continuous fire ' + d.continuousShotsPerMinute + ' rounds a minute');
+    if (v.twinGunSwitchFireModeTime !== undefined) out.push('Fire mode switch time ' + d.twinGunSwitchFireModeTime + ' s');
+    if (v.chargeTime) out.push('Salvo preparation (charging / the reload lock after a salvo) ' + d.chargeTime + ' s');
+    return out.length ? 'As the garage prints it: ' + out.join('; ') + '.' : '';
+  }
+  // Extra lines a few rows carry in their tooltip. `pair` is the context's (the pair on the panel), taken once a paint.
+  function ttxExtra(key, v, build, shown, pair) {
     if (key === 'avgDamagePerMinute') return v.avgDamage ? 'With a ' + BullbaTtx.nice(v.avgDamage) + ' HP shell at ' + BullbaTtx.nice(v.shotsPerMinute) + ' rounds a minute' + (v.kind === 'autoreload' ? ', the fastest slot' : v.kind === 'overheat' ? ' over the whole heat cycle' : '') + '.' : 'The shell’s damage is not in the file.';
-    if (key === 'reloadTimeSecs' || key === 'clipFireRate' || key === 'autoReloadTime' || key === 'overheat' || key === 'dualGun') {
-      var pair = ttxData && ttxData.configs[ttxPairIndex()];
-      return 'Rate of fire ' + BullbaTtx.nice(v.shotsPerMinute) + ' rounds a minute.' + (v.kind === 'clip' ? ' Mag Mastery shortens the whole reload, not the interval.' : '')
+    var burst = v.burstFireRate;
+    if (key === 'shellsCount') return v.kind === 'dualGun' ? 'Two barrels, each with its own reload; the charged salvo fires both.'
+      : burst && burst[1] > 1 ? burst[1] + ' bursts of ' + burst[2] + ' shells.' : burst ? 'The whole magazine is one burst.' : '';
+    if (key === 'shellReloadingTime') return v.kind === 'dualGun' ? 'Between the shots of the two barrels.' : burst ? 'Between two bursts.' : 'Between two shells of the magazine.';
+    if (key === 'burstFireRate') return 'Between the shells of one burst; one press fires the burst.';
+    if (key === 'continuousShotsPerMinute') return 'While the trigger is held' + (v.kind === 'overheat' ? ', until the gun overheats' : '') + '.';
+    if (key === 'chargeTime') return 'Hold the trigger to charge a salvo of both barrels; after the salvo the reload waits the second figure. The garage’s own figures: no crew or device changes them.';
+    if (key === 'reloadTimeSecs' || key === 'clipFireRate' || key === 'autoReloadTime' || key === 'autoShootClipFireRate' || key === 'shellLoadingTime' || key === 'overheat') {
+      return (key === 'overheat' ? '' : ttxLoadingWords(v, shown) + ' ') + 'Rate of fire ' + BullbaTtx.nice(v.shotsPerMinute) + ' rounds a minute'
+        + (v.kind === 'overheat' ? ' over the whole heat cycle' : v.kind === 'autoreload' ? ' at the fastest slot' : '') + '.'
+        + (v.kind === 'clip' ? ' Mag Mastery shortens the whole reload, not the interval.' : '')
         + (pair && !pair.reloadExtra ? ' What the gun’s mechanics add to the reload was not exported, so it is not counted.' : '');
     }
     if (key === 'circularVisionRadius') return 'Moving: ' + BullbaTtx.nice(v.circularVisionRadiusMoving) + ' m (binoculars work only standing).';
     if (key === 'pitchLimits') {
       // With the hull aiming the garage counts the hull's tilt in (23.09): the gun's own limits go to the tooltip.
       if (v.gunPitchOwn) return 'With the hull’s tilt, as the garage counts it; the gun alone: ' + v.gunPitchOwn.map(BullbaTtx.nice).join('/') + '°. The hull tilts only in the second mode.';
-      var p = ttxData && ttxData.configs[ttxPairIndex()] && ttxData.configs[ttxPairIndex()].pitch;
+      var p = pair && pair.pitch;
       if (p && Array.isArray(p.minPitch) && p.minPitch.length > 2) return 'The limits change around the turret: these are the extremes over the whole circle.';
     }
     if (key === 'gunYawLimits' && v.gunYawSector) return 'The hull aims the gun sideways, so the garage prints 0/0; the gun itself moves ' + v.gunYawSector.map(BullbaTtx.nice).join('/') + '° in its sector, and past it the hull turns.';
     if (key === 'switchTime') return v.modeKind === 'turboshaft' ? 'The turbine switches only standing; the garage prints its times whole, cut short.' : 'While it switches the gun does not fire and the vehicle stops; a damaged engine makes it slower.';
     if (key === 'autoSiege') return 'The server switches it by the speed; the hull tilts, the circle does not change.';
-    if ((key === 'shotDispersionAngle' || key === 'aimingTime') && ttxModeOn() && ttxModeKind(ttxData && ttxData.configs[ttxPairIndex()]) === 'hydraulic')
+    if ((key === 'shotDispersionAngle' || key === 'aimingTime') && ttxModeOn() && ttxModeKind(pair) === 'hydraulic')
       return 'The garage shows the travel figures only; this is the siege descriptor’s, by the garage’s own formula.';
     if (key === 'maxHealth' && build && mulOf('healthFactor') !== 1) return 'With the hardening the client rounds the hit points UP to whole tens.';
     return '';
@@ -6271,20 +6370,21 @@
     if (!panel) return;
     var show = !!(TTX && ttxData && ttxData.configs && ttxData.configs.length && !$('shooter-tile').hidden);
     if (panel.hidden !== !show) { panel.hidden = !show; scheduleLayout(LAYOUT_TTX); }
-    if (!show) { ['ttx-pairs', 'ttx-more', 'ttx-fold'].forEach(function (id) { var d = $(id); if (d) d.open = false; }); return; }
-    var index = ttxPairIndex(), ctx = ttxContext(index), toggle = $('ttx-build-toggle');
+    if (!show) {
+      ttxPaintTurrets(-1, -1);   // the Turret row of Config goes with the panel
+      ['ttx-pairs', 'ttx-more', 'ttx-fold'].forEach(function (id) { var d = $(id); if (d) d.open = false; });
+      return;
+    }
+    // The emulator's pair and the pair on the panel, counted once a paint and handed to all that follows.
+    var emu = ttxEmuIndex(), index = ttxPairIndex(emu), ctx = ttxContext(index), toggle = $('ttx-build-toggle');
     if (toggle && toggle.getAttribute('aria-pressed') !== String(ctx.build)) toggle.setAttribute('aria-pressed', String(ctx.build));
+    ttxPaintTurrets(index, emu);   // the Turret row of Config follows the same pair
     ttxPaintMode(index, ctx);
-    ttxPaintPair(index);
-    ['fire', 'move', 'stab'].forEach(function (group) {
-      TTX_COMPACT[group].forEach(function (slot) {
-        if (ttxRows[slot]) ttxPaintRow(ttxRows[slot], ttxRowKey(slot, ctx.cur), slot === 'reload' ? 'reload' : '', ctx, slot === 'reload' ? 'reload' : '');
-      });
-    });
+    ttxPaintPair(index, emu);
+    if (ttxLine) ttxPaintLine(ttxLine, ctx);
+    Object.keys(ttxRows).forEach(function (slot) { ttxPaintRow(ttxRows[slot], ttxRowKey(slot, ctx.cur), ctx); });
     if ($('ttx-more').open) ttxPaintFull(ctx);
   }
-  // The pair tile: the gun's calibre and its tier, the ▾ only where there is a choice, lit when the pair on the
-  // panel is not the gun the emulator fires.
   // A pair's shells: its own list where its turret overrides the gun's (the mod writes configs[k].shells then,
   // spec section 8 point 4), else the gun's.
   function ttxShellsOf(t, pair) { return (pair && Array.isArray(pair.shells) ? pair.shells : t && t.shells && t.shells[pair.gun]) || []; }
@@ -6306,11 +6406,37 @@
       + (follows ? ' Under ✸ this is the emulator’s own mode: the switch presses its mode button, with the game’s switch time.' : ' Off ✸ only the panel changes, and the choice is kept for this vehicle.');
     if (b.title !== title) b.title = title;
   }
-  function ttxPaintPair(index) {
+  // THE GUN CHIP (panel v2, user 23.09): plainly a gun - a barrel's glyph, the calibre and the GUN's tier - and a ▾
+  // where the turret on the panel carries more than one gun. A click opens the quick list of THAT turret's guns, the
+  // garage's own pairs only; another turret is picked in Config (the Turret row, ttxPaintTurrets). While Config is not
+  // on screen (the aim emulation off, a record without its aim block, the parts view) the list carries the turret
+  // tiles too, or a turret could not be picked at all (review 23.09). Lit when the gun on the panel is not the one the
+  // emulator fires.
+  // The turrets of the file and the pairs on each, counted once a file (as ttxModeMemo).
+  var ttxTurretMemoOf = null;
+  function ttxTurretMemo() {
+    if (!ttxTurretMemoOf || ttxTurretMemoOf.t !== ttxData) {
+      var pairs = {}, count = 0;
+      (ttxData ? ttxData.configs : []).forEach(function (p, i) { if (!pairs[p.turret]) { pairs[p.turret] = []; count++; } pairs[p.turret].push(i); });
+      ttxTurretMemoOf = {t: ttxData, pairs: pairs, count: count};
+    }
+    return ttxTurretMemoOf;
+  }
+  function ttxTurretPairs(turret) { return ttxTurretMemo().pairs[turret] || []; }
+  // Config's own box on screen: its Turret row is where a turret is picked.
+  function ttxConfigShown() { var c = $('aim-config'); return !!(c && !c.hidden); }
+  // The chip again when Config comes or goes (updateAim): its ▾ and its words depend on it.
+  function ttxPaintChip() {
+    if (!TTX || !ttxData || $('ttx-panel').hidden) return;
+    var emu = ttxEmuIndex();
+    ttxPaintPair(ttxPairIndex(emu), emu);
+  }
+  function ttxPaintPair(index, emu) {
     var tile = $('ttx-pair'), box = $('ttx-pairs'), pair = ttxData.configs[index];
     if (!tile || !pair) return;
-    var many = ttxData.configs.length > 1, other = index !== ttxEmuIndex(), turret = (ttxData.turrets || [])[pair.turret] || {};
-    var key = [index, many, other, ttxData.id].join('|');
+    var guns = ttxTurretPairs(pair.turret).length, turrets = ttxTurretMemo().count, config = ttxConfigShown();
+    var listTurrets = turrets > 1 && !config, many = guns > 1 || listTurrets, other = index !== emu, turret = (ttxData.turrets || [])[pair.turret] || {};
+    var key = [index, many, other, turrets, config, ttxData.id].join('|');
     if (tile.ttxKey === key) return;
     tile.ttxKey = key;
     // The ◐ the shell chips of a second mode wear, for what the panel does not show by its mode switch: the automatic
@@ -6321,55 +6447,59 @@
       notes.push('the hull tilts' + (hp ? ' ' + BullbaTtx.nice(Math.abs(hp.max) * 180 / Math.PI) + '° down / ' + BullbaTtx.nice(Math.abs(hp.min) * 180 / Math.PI) + '° up' : '')
         + ' at or below ' + BullbaTtx.nice(Number(sm.autoOn) * 3.6) + ' km/h (the automatic siege) - the circle does not change');
     }
-    if (modes.dualGun) notes.push('the charged salvo of the two barrels is not shown');
+    if (modes.dualGun) notes.push('the charged salvo of the two barrels: only its preparation is shown, on the reload line');
     if (modes.rocketAcceleration) {
       var r = ttxData.vehicle.rocketAcceleration;
       notes.push('a rocket booster' + (r ? ' for ' + BullbaTtx.nice(r.duration) + ' s, ' + r.reuseCount + ' uses' : '') + ' - under ✸ the mode button fires it');
     }
-    tile.replaceChildren(node('b', ttxCaliber(pair), 'ttx-cal'), node('span', tierRomans[pair.gunLevel] || '', 'vt-tier'));
+    var cal = ttxCaliber(pair);
+    tile.replaceChildren(ttxGlyph('gun'), node('b', cal, 'ttx-cal'), node('span', tierRomans[pair.gunLevel] || '', 'vt-tier'));
     if (notes.length) tile.appendChild(node('span', '◐', 'ttx-mode'));
     box.setAttribute('data-many', String(many));
     if (other) box.setAttribute('data-other', 'true'); else box.removeAttribute('data-other');
-    tile.title = (pair.gunUserString || pair.gun) + ' on ' + (turret.userString || turret.name || 'the turret')
-      + (many ? '. Click for the other turrets and guns of this vehicle.' : '.')
+    tile.title = 'Gun: ' + (pair.gunUserString || pair.gun) + ' (' + (cal !== '—' ? cal + ' mm, ' : '') + 'tier ' + (tierRomans[pair.gunLevel] || '?') + ')'
+      + ' on the turret ' + (turret.userString || turret.name || '') + '.'
+      + (guns > 1 ? ' Click: the other guns of this turret, to see the difference.' : listTurrets ? '' : ' This turret carries no other gun.')
+      + (turrets > 1 ? (config ? ' The turret itself is picked in Config, in its Turret row.'
+                                : ' Click: the turrets too - Config, where the turret is picked, is not on screen now.') : '')
       + (other ? ' The circle and the gun panel keep the gun that fired; these numbers are this gun’s.' : '')
       + (notes.length ? ' This vehicle: ' + notes.join('; ') + '.' : '');
   }
-  // The pair list: grouped by turret, a turret's glyph and tier over its guns; the pair on the panel pressed, the
-  // emulator's marked with a dot and the top pair with ▲. Built when it opens, never before.
+  // The quick list: the guns of the turret on the panel, the one shown pressed, the emulator's marked with a dot and
+  // the top pair with ▲; while Config is not on screen, the turret tiles of its Turret row above them. Built when it
+  // opens, never before.
   function ttxPaintPairs() {
     var list = $('ttx-pair-list');
     if (!list || !ttxData) return;
     list.replaceChildren();
-    var build = ttxBuildOn(), here = ttxPairIndex(), emu = ttxEmuIndex();
-    TTX.groups(ttxData).forEach(function (g, gi) {
-      var head = node('div', undefined, 'ttx-pair-turret');
-      if (gi) head.setAttribute('data-rule', 'true');
-      head.appendChild(ttxGlyph('turret'));
-      head.appendChild(node('span', tierRomans[g.info.level] || '', 'vt-tier'));
-      head.title = g.info.userString || g.info.name || '';
-      list.appendChild(head);
-      var row = node('div', undefined, 'aim-pick-row');
-      g.pairs.forEach(function (i) {
-        var p = ttxData.configs[i], v = ttxValues(build, i), shell = v.shells.filter(function (s) { return s.selected; })[0] || v.shells[0];
-        var tile = node('button', undefined, 'aim-pick ttx-pick');
-        tile.type = 'button';
-        tile.setAttribute('aria-pressed', String(i === here));
-        tile.setAttribute('aria-label', p.gunUserString || p.gun);
-        tile.setAttribute('data-tier', 'plain');
-        tile.appendChild(node('b', ttxCaliber(p), 'ttx-cal'));
-        tile.appendChild(node('span', tierRomans[p.gunLevel] || '', 'vt-tier'));
-        if (i === emu) tile.appendChild(node('span', '●', 'ttx-mark ttx-emu'));
-        if (p.top) tile.appendChild(node('span', '▲', 'ttx-mark ttx-top'));
-        tile.title = (p.gunUserString || p.gun) + ' · ' + (g.info.userString || g.info.name || '') + ' · '
-          + (shell ? BullbaTtx.nice(shell.avgDamage) + ' HP, ' + BullbaTtx.nice(shell.avgPiercingPower) + ' mm · ' : '')
-          + 'DPM ' + BullbaTtx.nice(v.avgDamagePerMinute) + (build ? ' (this build)' : ' (stock)')
-          + (i === emu ? ' · the gun on the scene' : '') + (p.top ? ' · the top pair' : '');
-        tile.onclick = function (e) { e.stopPropagation(); ttxChoose(i); };
-        row.appendChild(tile);
-      });
-      list.appendChild(row);
+    var build = ttxBuildOn(), emu = ttxEmuIndex(), here = ttxPairIndex(emu), pair = ttxData.configs[here];
+    if (ttxTurretMemo().count > 1 && !ttxConfigShown()) {
+      var turrets = node('div', undefined, 'aim-pick-row');
+      turrets.setAttribute('data-turrets', 'true');
+      ttxTurretTiles(turrets, here, emu);
+      list.appendChild(turrets);
+    }
+    var info = (ttxData.turrets || [])[pair.turret] || {}, row = node('div', undefined, 'aim-pick-row');
+    ttxTurretPairs(pair.turret).forEach(function (i) {
+      var p = ttxData.configs[i], v = ttxValues(build, i), shell = v.shells.filter(function (s) { return s.selected; })[0] || v.shells[0];
+      var tile = node('button', undefined, 'aim-pick ttx-pick');
+      tile.type = 'button';
+      tile.setAttribute('aria-pressed', String(i === here));
+      tile.setAttribute('aria-label', p.gunUserString || p.gun);
+      tile.setAttribute('data-tier', 'plain');
+      tile.appendChild(node('b', ttxCaliber(p), 'ttx-cal'));
+      tile.appendChild(node('span', tierRomans[p.gunLevel] || '', 'vt-tier'));
+      if (i === emu) tile.appendChild(node('span', '●', 'ttx-mark ttx-emu'));
+      if (p.top) tile.appendChild(node('span', '▲', 'ttx-mark ttx-top'));
+      tile.title = (p.gunUserString || p.gun) + ' · tier ' + (tierRomans[p.gunLevel] || '?') + ' · ' + (info.userString || info.name || '') + ' · '
+        + (shell ? BullbaTtx.nice(shell.avgDamage) + ' HP, ' + BullbaTtx.nice(shell.avgPiercingPower) + ' mm · ' : '')
+        + 'DPM ' + BullbaTtx.nice(v.avgDamagePerMinute) + (build ? ' (this build)' : ' (stock)')
+        + (i === emu ? ' · the gun on the scene' : '') + (p.top ? ' · the top pair' : '')
+        + (i === here ? '. On the panel now.' : '. Click: the panel shows this gun.');
+      tile.onclick = function (e) { e.stopPropagation(); ttxChoose(i); };
+      row.appendChild(tile);
     });
+    list.appendChild(row);
   }
   function ttxChoose(i) {
     if (!ttxData || !ttxType) return;
@@ -6378,21 +6508,95 @@
     $('ttx-pairs').open = false;
     ttxPaint();
   }
-  // The expanded view (spec 3.4.7): sections under thin rules, no headings, the same rows. Rebuilt while it is
-  // open, on the same events as the compact rows; a closed one is not touched.
-  function ttxSection(box) { var s = node('div', undefined, 'ttx-sec'); box.appendChild(s); return s; }
+  // THE TURRET ROW OF CONFIG (panel v2, user 23.09): the turret is picked where the shooter is set up, not in the quick
+  // list of guns. It is the same stored pair (aimStore.pairs, per type), so the tiles of this row are the turrets of the
+  // characteristics file: the one on the panel pressed, ● the emulator's and ▲ the top one, as the gun list marks its
+  // guns. There only for a vehicle with more than one turret and its file read. A turret keeps the gun on the panel
+  // where it carries it, else takes the gun that fired where it is on that turret, else its top pair, else its best
+  // gun (the highest tier, the last of equals, as the client's best_component picks).
+  // `index` and `emu` are ttxPaint's; Config built just now (buildAimConfig) calls without them.
+  function ttxPaintTurrets(index, emu) {
+    var c = aimConfigControls, box = c && c.turrets;
+    if (!box) return;
+    if (index === undefined && TTX && ttxData && !$('ttx-panel').hidden) { emu = ttxEmuIndex(); index = ttxPairIndex(emu); }
+    var show = !!(TTX && ttxData && index >= 0 && ttxType && ttxType === shooterType && !$('ttx-panel').hidden && ttxTurretMemo().count > 1);
+    if (box.hidden !== !show) { box.hidden = !show; c.turretLabel.hidden = !show; }
+    if (!show) { box.ttxKey = ''; return; }
+    var key = [ttxData.id, index, emu].join('|');
+    if (box.ttxKey === key) return;
+    box.ttxKey = key;
+    ttxTurretTiles(box, index, emu);
+  }
+  // The turret tiles - Config's Turret row, and the quick list's while Config is away: one widget either way.
+  function ttxTurretTiles(box, here, emu) {
+    var cur = ttxData.configs[here].turret, emuTurret = emu >= 0 ? ttxData.configs[emu].turret : -1;
+    box.replaceChildren();
+    (ttxData.turrets || []).forEach(function (info, t) {
+      var guns = ttxTurretPairs(t);
+      if (!guns.length) return;
+      var tile = node('button', undefined, 'aim-pick ttx-pick');
+      tile.type = 'button';
+      tile.setAttribute('aria-pressed', String(t === cur));
+      tile.setAttribute('aria-label', info.userString || info.name || 'Turret');
+      tile.setAttribute('data-tier', 'plain');
+      tile.appendChild(ttxGlyph('turret'));
+      tile.appendChild(node('span', tierRomans[info.level] || '', 'vt-tier'));
+      if (t === emuTurret) tile.appendChild(node('span', '●', 'ttx-mark ttx-emu'));
+      if (guns.some(function (i) { return ttxData.configs[i].top; })) tile.appendChild(node('span', '▲', 'ttx-mark ttx-top'));
+      tile.title = 'Turret: ' + (info.userString || info.name || '') + ' · tier ' + (tierRomans[info.level] || '?') + ' · its guns: '
+        + guns.map(function (i) { return ttxData.configs[i].gunUserString || ttxData.configs[i].gun; }).join(', ')
+        + (t === emuTurret ? ' · the turret of the gun on the scene' : '')
+        + (t === cur ? '. On the characteristics panel now.' : '. Click: the characteristics panel shows this turret; the circle keeps the gun that fired.');
+      tile.onclick = function (e) { e.stopPropagation(); ttxChooseTurret(t); };
+      box.appendChild(tile);
+    });
+  }
+  function ttxChooseTurret(t) {
+    if (!ttxData || !ttxType) return;
+    var emu = ttxEmuIndex(), here = ttxPairIndex(emu), guns = ttxTurretPairs(t);
+    if (!guns.length || ttxData.configs[here].turret === t) return;
+    var gun = ttxData.configs[here].gun, pick = -1;
+    guns.forEach(function (i) { if (ttxData.configs[i].gun === gun) pick = i; });
+    if (pick < 0 && guns.indexOf(emu) >= 0) pick = emu;
+    if (pick < 0) guns.forEach(function (i) { if (ttxData.configs[i].top) pick = i; });
+    if (pick < 0) guns.forEach(function (i) { if (pick < 0 || (Number(ttxData.configs[i].gunLevel) || 0) >= (Number(ttxData.configs[pick].gunLevel) || 0)) pick = i; });
+    ttxChoose(pick);
+  }
+  // The garage's groups (panel v2): a section is a thin rule with the group's glyph - its name in the tooltip - over
+  // its figures, in both views. The rows of a section sit in a grid of two, a line of three or the reload line.
+  function ttxRule(group) {
+    var rule = node('div', undefined, 'ttx-rule'), name = TTX_GROUP_NAMES[group] || group;
+    rule.setAttribute('data-group', group);
+    rule.setAttribute('role', 'separator');
+    rule.setAttribute('aria-label', name);
+    rule.appendChild(ttxGlyph(group));
+    rule.title = name + ': the garage’s own group of the figures under this line, in the garage’s order.';
+    return rule;
+  }
+  function ttxSection(box, group) {
+    var s = node('div', undefined, 'ttx-sec');
+    s.setAttribute('data-group', group);
+    s.appendChild(ttxRule(group));
+    box.appendChild(s);
+    return s;
+  }
+  // The expanded view (spec 3.4.7, v2): the garage's five groups in its order, the same rows and the same reload line
+  // as the compact view. Rebuilt while it is open, on the same events as the compact rows; a closed one is not touched.
   function ttxPaintFull(ctx) {
     var box = $('ttx-full'), cur = ctx.cur;
     if (!box) return;
     box.replaceChildren();
-    function rows(sec, keys) { keys.forEach(function (k) { if (!k) return; var row = ttxRow(k); ttxPaintRow(row, k, '', ctx); sec.appendChild(row); }); }
-    var fire = ttxSection(box), kind = cur.kind;
-    rows(fire, ['avgDamagePerMinute', 'shotsPerMinute', TTX_RELOAD_ROW[kind] || 'reloadTimeSecs',
-      'shotDispersionAngle', 'aimingTime', 'stabMovement', 'stabRotation', 'stabTurret', 'stabAfterShot',
-      'pitchLimits', cur.gunYawLimits ? 'gunYawLimits' : '', 'maxAmmo']);
-    // The shells of the gun: a table under the three icons of the garage, the page's own shell lit.
-    var table = ttxSection(box);
-    table.className = 'ttx-sec ttx-shells';
+    function rows(sec, keys) {
+      var grid = node('div', undefined, 'ttx-rows');
+      keys.forEach(function (k) { if (!k) return; var row = ttxRow(k); ttxPaintRow(row, k, ctx); grid.appendChild(row); });
+      sec.appendChild(grid);
+    }
+    var fire = ttxSection(box, 'relativePower'), reload = ttxReloadLine();
+    fire.appendChild(reload);
+    ttxPaintLine(reload, ctx);
+    // The shells of the gun: a table under the three icons of the garage, the page's own shell lit - the garage's
+    // first figures of the group (avgDamage, avgPiercingPower).
+    var table = node('div', undefined, 'ttx-shells');
     var head = node('div', undefined, 'ttx-shell-row ttx-shell-head');
     head.appendChild(node('span', '', 'ttx-shell-kind'));
     [['avgDamage', 'Average damage, HP'], ['avgPiercingPower', 'Average penetration at up to 50 m, mm'], ['shellVelocity', 'Shell velocity, m/s (the garage’s figure)']].forEach(function (h) {
@@ -6418,28 +6622,53 @@
         + (s.dpm ? ' · DPM with this shell ' + s.dpm : '') + (s.selected ? ' · the shell the page is using' : '');
       table.appendChild(line);
     });
-    var move = ttxSection(box);
-    rows(move, ['speedLimits', 'enginePower', 'vehicleWeight', 'enginePowerPerTon', ttxRowKey('hull', cur), 'turretRotationSpeed', 'terrainResistance',
-      cur.switchTime ? 'switchTime' : '', cur.autoSiege ? 'autoSiege' : '']);
-    rows(ttxSection(box), ['maxHealth']);
-    rows(ttxSection(box), ['circularVisionRadius', 'invisibilityStillFactor', 'invisibilityMovingFactor', 'invisibilityAfterShot']);
+    fire.appendChild(table);
+    // RELATIVE_POWER_PARAMS' order after the loading and the shells: the rate of fire, the turret, the gun's angles,
+    // aiming, dispersion, the DPM; then its extra KPIs, the stabilisation factors. The heat of an Ares and the
+    // ammunition are the page's own and close the group.
+    // The gun's sector where the garage prints it (params 698-710, params_helper 47): on a real turret its
+    // turretYawLimits, after the turret's traverse; with no turret, or aiming with the hull, its gunYawLimits after
+    // the pitch limits. The file says which since 23.09 (vehicle.hasTurret); an older one: hull aiming has none, and
+    // otherwise the majority - 232 of the client's 266 vehicles with a sector have no real turret.
+    var yaw = cur.gunYawLimits ? 'gunYawLimits' : '', onTurret = !!yaw && !cur.gunYawSector && !!ttxData.vehicle && ttxData.vehicle.hasTurret === true;
+    rows(fire, ['shotsPerMinute', 'turretRotationSpeed', onTurret ? yaw : '', 'pitchLimits', onTurret ? '' : yaw, 'aimingTime', 'shotDispersionAngle',
+      'avgDamagePerMinute', 'stabMovement', 'stabRotation', 'stabTurret', 'stabAfterShot', cur.kind === 'overheat' ? 'overheat' : '', 'maxAmmo']);
+    rows(ttxSection(box, 'relativeArmor'), ['maxHealth']);
+    // RELATIVE_MOBILITY_PARAMS: weight, power, specific power, speed, the hull (or the wheels' lock), the mode's switch;
+    // the terrain is an extra KPI of the group (medium / soft ground factors).
+    rows(ttxSection(box, 'relativeMobility'), ['vehicleWeight', 'enginePower', 'enginePowerPerTon', 'speedLimits', ttxRowKey('hull', cur),
+      cur.switchTime ? 'switchTime' : '', cur.autoSiege ? 'autoSiege' : '', 'terrainResistance']);
+    rows(ttxSection(box, 'relativeCamouflage'), ['invisibilityStillFactor', 'invisibilityMovingFactor', 'invisibilityAfterShot']);
+    rows(ttxSection(box, 'relativeVisibility'), ['circularVisionRadius']);
   }
-  // The panel's controls, wired once (index.html holds the markup; the settings menu keeps ⚙'s state).
+  // The panel's controls, wired once (index.html holds the markup; the settings menu keeps ⚙'s state). The compact
+  // view: the hit points on the head's left, then Firepower (the reload line, a grid of four, the stabilisation line)
+  // and Mobility (a line of three) - every figure a row of the one widget.
+  var ttxLine = null;
   function buildTtxPanel() {
     var compact = $('ttx-compact');
     if (!compact) return;
     compact.replaceChildren();
-    ['fire', 'move', 'stab'].forEach(function (group) {
-      var col = node('div', undefined, 'ttx-col ttx-' + group);
-      TTX_COMPACT[group].forEach(function (slot) { ttxRows[slot] = ttxRow(slot); col.appendChild(ttxRows[slot]); });
-      compact.appendChild(col);
+    ttxRows = {};
+    TTX_COMPACT.forEach(function (s) {
+      var sec = ttxSection(compact, s.group);
+      if (s.line) { ttxLine = ttxReloadLine(); sec.appendChild(ttxLine); }
+      [['grid', 'ttx-rows'], ['row', 'ttx-line']].forEach(function (kind) {
+        if (!s[kind[0]]) return;
+        var box = node('div', undefined, kind[1]);
+        s[kind[0]].forEach(function (slot) { ttxRows[slot] = ttxRow(slot); box.appendChild(ttxRows[slot]); });
+        sec.appendChild(box);
+      });
     });
+    var hp = $('ttx-hp');
+    if (hp) { ttxRows.maxHealth = ttxRow('maxHealth'); hp.replaceChildren(ttxRows.maxHealth); }
     $('ttx-build').onchange = function () { ttxPaint(); };
     $('ttx-build-toggle').onclick = function () { var box = $('ttx-build'); box.checked = !box.checked; ttxPaint(); persistSettings(); };
     $('ttx-mode').onclick = ttxModeToggle;
     // The list and the expanded view are built by the click that opens them, which runs before <details> opens.
     $('ttx-pair').onclick = function (e) {
-      if (!ttxData || ttxData.configs.length < 2) { if (e && e.preventDefault) e.preventDefault(); return; }
+      // ▾ (data-many, ttxPaintPair): more guns on this turret, or the turrets while Config is away.
+      if (!ttxData || $('ttx-pairs').getAttribute('data-many') !== 'true') { if (e && e.preventDefault) e.preventDefault(); return; }
       if (!$('ttx-pairs').open) ttxPaintPairs();
     };
     $('ttx-more-button').onclick = function () {

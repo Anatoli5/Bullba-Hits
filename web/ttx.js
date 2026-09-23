@@ -68,6 +68,9 @@
   function ceilTo(x, decimals) { var k = Math.pow(10, decimals); return Math.ceil(dr((x + 0.0004) / k, 1)) * k; }
 
   // --- What kind of loading the gun has (the order of params __calcReloadTime 1383-1394) -----------------------
+  // A burst is a magazine's (params burstFireRate 777: clip[0] / burst[0] containers), so it is 'clip' with
+  // values().burstFireRate. A burst over a single round - only the Black Rock's chargeable one in 2.4.0.1 - is not
+  // a magazine for the garage (__hasClipGun: clip[0] != 1): it prints its Gun Loading like any single-shot gun.
   function tagsOf(a) { var t = {}; (Array.isArray(a && a.gunTags) ? a.gunTags : []).forEach(function (x) { t[String(x)] = true; }); return t; }
   function loading(a) {
     if (!a) return '';
@@ -78,13 +81,20 @@
     if ((t.unlimitedClip || a.unlimitedClip) && a.overheatGun && a.temperatureGun) return 'overheat';
     if (t.autoShoot || a.autoShoot) return 'autoShoot';
     if (a.clip && a.clip[0] > 1) return 'clip';
-    if (a.burst && a.burst[0] > 1) return 'burst';
     return 'single';
+  }
+  // The chargeable burst (the Black Rock in 2.4.0.1), which the client leaves out of the rate (getShotsPerMinute 143:
+  // burstCount 1 when the gun's mechanicsParams name it). The record names it in gunMechanics since 0.7.27; an older
+  // record does not, so a burst bigger than its one-round clip - never a magazine's burst, which the clip holds whole -
+  // is taken for it as well (review 23.09: the Black Rock's Gun Loading read 5.78 instead of 10.07 on such a record).
+  function chargeableBurst(a) {
+    if (Array.isArray(a.gunMechanics) && a.gunMechanics.indexOf('chargeableBurst') >= 0) return true;
+    var clip = Array.isArray(a.clip) ? Number(a.clip[0]) || 1 : 1;
+    return !!(a.burst && Number(a.burst[0]) > 1 && clip <= 1);
   }
   // items_parameters.getShotsPerMinute 134: rounds a minute for a reload of T seconds.
   function shotsPerMinute(a, T, autoreload) {
-    var mech = Array.isArray(a.gunMechanics) ? a.gunMechanics : [];
-    var burst = mech.indexOf('chargeableBurst') >= 0 ? 1 : (a.burst && a.burst[0] > 1 ? Number(a.burst[0]) : 1);
+    var burst = chargeableBurst(a) ? 1 : (a.burst && a.burst[0] > 1 ? Number(a.burst[0]) : 1);
     var burstGap = a.burst && a.burst.length > 1 ? Number(a.burst[1]) || 0 : 0;
     var clip = Array.isArray(a.clip) && a.clip.length > 1 ? [Number(a.clip[0]) || 1, Number(a.clip[1]) || 0] : [1, 0];
     var n, t = T;
@@ -160,6 +170,11 @@
       var extra = (pair && pair.reloadExtra) || {}, perkT = (Number(perk.reloadTimeFactor) || 0) + (rl.magazine ? Number(perk.magazineReload) || 0 : 0);
       var T = (rl.reload + (Number(extra.extraReloadTime) || 0)) * (1 + perkT) + (Number(extra.mechanicsReloadDelay) || 0);
       out.reload = T;
+      // The garage's lines of the loading, by its own keys (params 536-791, 1412-1428; outputs of the client's
+      // VehicleParams in tests/session-scratch-2026-09-22/ttx-reference/reload): reloadTimeSecs, clipFireRate
+      // (reload / interval / rounds), autoReloadTime, burstFireRate (interval / containers / rounds in one),
+      // autoShootClipFireRate (reload / rounds), shellLoadingTime, continuousShotsPerMinute, twinGunSwitchFireModeTime.
+      var interval = Array.isArray(a.clip) && a.clip.length > 1 ? Number(a.clip[1]) || 0 : 0;
       if (out.kind === 'autoreload') {
         var times = R.autoreloadScaled ? R.autoreloadScaled(a, rl) : null;
         if (times) {
@@ -170,22 +185,55 @@
           spmMin = shotsPerMinute(a, Math.max.apply(null, times), true);
         } else out.missing.reload = 'the autoloader’s times are not in the record';
       } else if (out.kind === 'dualGun' && a.dualGun && Array.isArray(a.dualGun.reloadTimes)) {
+        // Each barrel's own reload, the slower one first as the garage lists it (reloadTimeSecs 544 over
+        // __calcReloadTime's (max, min)), and the whole volley as its clipFireRate: both, the pause between the two
+        // barrels (dualGun.rateTime), two (params 1426-1428).
         var k = rl.reload / a.reloadTime * (1 + (Number(perk.reloadTimeFactor) || 0));
         var dual = a.dualGun.reloadTimes.map(function (v) { return Number(v) * k; }).filter(function (v) { return v > 0; });
-        if (dual.length) { out.dualGun = dual; spm = 60 / Math.min.apply(null, dual); spmMin = 60 / Math.max.apply(null, dual); out.reload = Math.min.apply(null, dual); }
+        if (dual.length) {
+          out.dualGun = dual; spm = 60 / Math.min.apply(null, dual); spmMin = 60 / Math.max.apply(null, dual); out.reload = Math.min.apply(null, dual);
+          out.reloadTimeSecs = [Math.max.apply(null, dual), Math.min.apply(null, dual)];
+          var rate = num(a.dualGun.rateTime);
+          if (rate !== null) out.clipFireRate = [dual.reduce(function (s, v) { return s + v; }, 0), rate, dual.length];
+        }
+        // Salvo Preparation (params 320 chargeTime, key DUAL_GUN_CHARGE_TIME = 'chargeTime'): charging both barrels /
+        // the reload lock after a salvo, the descriptor's own figures - no crew or device touches them (the client's
+        // own run: 2.5/3 on the ST-II stock and in both builds).
+        var charge = num(a.dualGun.chargeTime), lock = num(a.dualGun.reloadLockTime);
+        if (charge !== null && lock !== null) out.chargeTime = [charge, lock];
       } else if (out.kind === 'twinGun') {
+        // One gun's reload and the salvo's, the shorter first (reloadTimeSecs 546 reverses (max, min)); the switch
+        // between the two fire modes is the type's own siege times (twinGunSwitchFireModeTime 966, one figure when equal).
         var k2 = rl.reload / a.reloadTime * (1 + (Number(perk.reloadTimeFactor) || 0)), second = a.twinGun && num(a.twinGun.twinGunReloadTime);
         var twin = [a.reloadTime * k2].concat(second > 0 ? [second * k2] : []);
         out.twinGun = twin; spm = 60 / Math.min.apply(null, twin); spmMin = 60 / Math.max.apply(null, twin); out.reload = Math.min.apply(null, twin);
+        out.reloadTimeSecs = [Math.min.apply(null, twin), Math.max.apply(null, twin)];
+        var tm = a.siegeMode && a.siegeMode.kind === 'twinGun' ? a.siegeMode : null, on = tm ? num(tm.switchOnTime) : null, off = tm ? num(tm.switchOffTime) : null;
+        if (on !== null) out.twinGunSwitchFireModeTime = off !== null && off !== on ? [on, off] : on;
       } else if (out.kind === 'overheat') {
+        // The Ares: the belt's loading (shellLoadingTime 414 = __calcClipFireRate()[0], the reload with the mechanics'
+        // delay, no Mag Mastery on an automatic gun) and the continuous fire (continuousShotsPerMinute 426).
         var heat = overheatRate(a);
         if (heat) { out.overheat = heat; spm = heat.spm; }
         else out.missing.reload = 'the gun’s heat parameters are not in the record';
+        out.shellLoadingTime = T;
+        if (interval > 0) out.continuousShotsPerMinute = rp(60 / interval);
       } else {
         spm = shotsPerMinute(a, T, false);
         if (out.kind === 'single') out.reloadTimeSecs = spm ? 60 / spm : null;
-        else out.clipFireRate = [T, rl.interval, rl.shots];
-        if (out.kind === 'burst' && rl.burst) out.burst = rl.burst;
+        else if (out.kind === 'autoShoot') {
+          // An automatic gun with a magazine: Reload (the magazine / rounds) and its continuous fire (params 762, 426).
+          out.autoShootClipFireRate = [T, rl.shots];
+          if (interval > 0) out.continuousShotsPerMinute = rp(60 / interval);
+        } else {
+          out.clipFireRate = [T, rl.interval, rl.shots];
+          // A magazine fired in bursts (params burstFireRate 777-782, never the chargeable burst): the gap inside a
+          // burst, the bursts in the magazine (integer division, old_div), the rounds of one.
+          if (rl.burst && !chargeableBurst(a)) {
+            out.burst = rl.burst;
+            out.burstFireRate = [rl.burst.interval, Math.floor(rl.shots / rl.burst.count), rl.burst.count];
+          }
+        }
       }
     } else out.missing.reload = a ? 'the record carries no reload for this gun' : 'no aim block';
     out.shotsPerMinute = spm; out.shotsPerMinuteSlow = spmMin;
@@ -328,26 +376,25 @@
 
   // --- Showing ---------------------------------------------------------------------------------------------
   function list(v, fmt) { return Array.isArray(v) && v.every(function (x) { return x !== null && isFinite(x); }) ? v.map(fmt || nice).join('/') : '—'; }
-  // The reload in ONE figure for the compact row (spec 3.4.3): seconds of a single-shot gun, the whole magazine of a
-  // clip or burst, "min-max" of an autoloader's slots, rounds a minute of an Ares gun, the faster of two barrels.
-  function reloadText(v) {
-    if (v.kind === 'autoreload' && v.autoReloadTime) {
-      var slots = v.autoReloadTime.map(function (x) { return dr(x, 1); });
-      return nice(Math.min.apply(null, slots)) + '-' + nice(Math.max.apply(null, slots));
-    }
-    if (v.kind === 'overheat') return nice(v.shotsPerMinute);
-    if (v.kind === 'single') return nice(v.reloadTimeSecs);
-    if (v.clipFireRate) return nice(v.clipFireRate[0]);
-    return nice(v.reload);
+  // One figure or a list, the garage's _niceListFormat either way.
+  function niceOrList(v) { return Array.isArray(v) ? list(v) : nice(v); }
+  // An autoloader's slots as formatters._autoReloadPreprocessor prints them: each rounded to 0.1 (dr(t, 1)), in
+  // loading order; more than five of them as "min-max".
+  function autoReloadText(v) {
+    if (!v.autoReloadTime) return '—';
+    var slots = v.autoReloadTime.map(function (x) { return dr(x, 1); });
+    return slots.length > 5 ? nice(Math.min.apply(null, slots)) + '-' + nice(Math.max.apply(null, slots)) : slots.map(nice).join('/');
   }
   function display(v) {
     v = v || {};
-    var slots = v.autoReloadTime ? v.autoReloadTime.map(function (x) { return nice(dr(x, 1)); }) : null;
     return {
-      avgDamagePerMinute: nice(v.avgDamagePerMinute), reload: reloadText(v), shotsPerMinute: nice(v.shotsPerMinute),
-      reloadTimeSecs: nice(v.reloadTimeSecs),
+      avgDamagePerMinute: nice(v.avgDamagePerMinute), shotsPerMinute: nice(v.shotsPerMinute),
+      reloadTimeSecs: niceOrList(v.reloadTimeSecs),
       clipFireRate: v.clipFireRate ? [nice(v.clipFireRate[0]), nice(v.clipFireRate[1]), String(v.clipFireRate[2])].join('/') : '—',
-      autoReloadTime: slots ? (slots.length > 5 ? reloadText(v) : slots.join('/')) : '—',
+      autoReloadTime: autoReloadText(v),
+      burstFireRate: list(v.burstFireRate), autoShootClipFireRate: list(v.autoShootClipFireRate),
+      shellLoadingTime: nice(v.shellLoadingTime), continuousShotsPerMinute: nice(v.continuousShotsPerMinute),
+      twinGunSwitchFireModeTime: niceOrList(v.twinGunSwitchFireModeTime), chargeTime: list(v.chargeTime),
       shotDispersionAngle: nice(v.shotDispersionAngle), aimingTime: nice(v.aimingTime),
       stabMovement: nice(v.stabMovement), stabRotation: nice(v.stabRotation), stabTurret: nice(v.stabTurret),
       stabAfterShot: nice(v.stabAfterShot),
@@ -384,6 +431,66 @@
     var sign = key === 'reload' && stock.kind === 'overheat' ? -1 : better(key);   // rounds a minute: bigger is better, scored negative
     return (b - a) * sign > 0 ? 'better' : 'worse';
   }
+
+  // --- The reload line (panel v2, 23.09) ---------------------------------------------------------------------
+  // The gun's loading as ONE line at the top of the panel, above the DPM (user, 23.09): the reload itself in the
+  // middle, what the magazine holds to its left and the time between its rounds to its right - a single-shot gun's
+  // line is one figure, a magazine's grows both ways from the centre. Every figure is a piece of the garage's own
+  // line for that gun (the keys of display()), so the page prints what the client prints:
+  //   single          Gun Loading                      reloadTimeSecs
+  //   magazine        rounds | reload | interval       clipFireRate  (reload / interval / rounds)
+  //   in bursts       rounds | reload | burst gap, and the gap between bursts where there are several: burstFireRate
+  //   autoloader      rounds | each slot | interval     autoReloadTime, clipFireRate
+  //   dual gun        barrels | each barrel | between, salvo preparation   reloadTimeSecs, clipFireRate, chargeTime
+  //   twin gun        one gun / salvo | mode switch     reloadTimeSecs, twinGunSwitchFireModeTime
+  //   automatic       rounds | reload | continuous fire autoShootClipFireRate, continuousShotsPerMinute
+  //   Ares            belt loading | continuous fire    shellLoadingTime, continuousShotsPerMinute
+  // Each part: {side: left|center|right, key, glyph, text, score (a number to compare by), dir (1 bigger is better,
+  // -1 smaller)}. `shown` is display(v), which the caller has already.
+  function reloadLine(v, shown) {
+    v = v || {};
+    var s = shown || display(v), out = [], cf = v.clipFireRate, kind = v.kind;
+    function add(side, key, glyph, text, score, dir) {
+      if (text === undefined || text === null || text === '—') return;
+      out.push({side: side, key: key, glyph: glyph, text: text, score: Array.isArray(score) ? Math.min.apply(null, score) : score, dir: dir});
+    }
+    if (kind === 'single' || kind === 'twinGun') add('center', 'reloadTimeSecs', 'reload', s.reloadTimeSecs, v.reloadTimeSecs, -1);
+    if (kind === 'twinGun') add('right', 'twinGunSwitchFireModeTime', 'switchTime', s.twinGunSwitchFireModeTime, v.twinGunSwitchFireModeTime, -1);
+    if (kind === 'clip' && cf) {
+      var bf = v.burstFireRate;
+      add('left', 'shellsCount', 'clip', String(cf[2]), cf[2], 1);
+      add('center', 'clipFireRate', 'reload', nice(cf[0]), cf[0], -1);
+      if (bf) add('right', 'burstFireRate', 'burst', nice(bf[0]), bf[0], -1);
+      if (!bf || bf[1] > 1) add('right', 'shellReloadingTime', 'interval', nice(cf[1]), cf[1], -1);
+    }
+    if (kind === 'autoreload' || kind === 'dualGun') {
+      if (cf) add('left', 'shellsCount', 'clip', String(cf[2]), cf[2], 1);
+      if (kind === 'autoreload') add('center', 'autoReloadTime', 'autoreload', s.autoReloadTime, v.autoReloadTime, -1);
+      else add('center', 'reloadTimeSecs', 'reload', s.reloadTimeSecs, v.reloadTimeSecs, -1);
+      if (cf) add('right', 'shellReloadingTime', 'interval', nice(cf[1]), cf[1], -1);
+      if (kind === 'dualGun') add('right', 'chargeTime', 'salvo', s.chargeTime, v.chargeTime, -1);
+    }
+    if (kind === 'autoShoot' && v.autoShootClipFireRate) {
+      add('left', 'shellsCount', 'clip', String(v.autoShootClipFireRate[1]), v.autoShootClipFireRate[1], 1);
+      add('center', 'autoShootClipFireRate', 'reload', nice(v.autoShootClipFireRate[0]), v.autoShootClipFireRate[0], -1);
+    }
+    if (kind === 'overheat') add('center', 'shellLoadingTime', 'reload', s.shellLoadingTime, v.shellLoadingTime, -1);
+    if (kind === 'autoShoot' || kind === 'overheat') add('right', 'continuousShotsPerMinute', 'spmHold', s.continuousShotsPerMinute, v.continuousShotsPerMinute, 1);
+    // Nothing to show - the record carries no reload for this gun: the line keeps its reload glyph and a dash.
+    if (!out.some(function (p) { return p.side === 'center'; })) out.unshift({side: 'center', key: 'reloadTimeSecs', glyph: 'reload', text: '—', score: null, dir: -1});
+    return out;
+  }
+  // 'better', 'worse' or '' for one part of the line against the same part of another (the stock, the first mode).
+  function lineCompare(base, part) {
+    if (!base || !part || base.text === part.text || base.score === null || part.score === null) return '';
+    var d = (Number(part.score) - Number(base.score)) * part.dir;
+    return Math.abs(d) < 1e-9 ? '' : d > 0 ? 'better' : 'worse';
+  }
+  // The garage's own groups of its figures and their order (gui/shared/items_parameters/params_helper.pyc,
+  // PARAMS_GROUPS over RELATIVE_PARAMS; the hangar walks them in that order - vehicle_params_view _prepareData 305,
+  // params_helper VehParamsBaseGenerator.getFormattedParams 652), with the names of menu.mo tank_params/<group>.
+  var GROUPS = [['relativePower', 'Firepower'], ['relativeArmor', 'Survivability'], ['relativeMobility', 'Mobility'],
+                ['relativeCamouflage', 'Concealment'], ['relativeVisibility', 'Spotting']];
 
   // --- The pairs of a file (spec 3.1) ---------------------------------------------------------------------
   // The pair the recorded or exported gun is: by the XML names when the record has them, else by the gun's short
@@ -430,6 +537,7 @@
   }
 
   root.BullbaTtx = {values: values, display: display, better: better, compare: compare, loading: loading,
+    reloadLine: reloadLine, lineCompare: lineCompare, GROUPS: GROUPS,
     match: match, pairKey: pairKey, pairIndex: pairIndex, groups: groups,
     dr: dr, rp: rp, nice: nice, integral: integral, ceilTo: ceilTo, shotsPerMinute: shotsPerMinute};
 }(typeof window === 'undefined' ? globalThis : window));

@@ -400,9 +400,7 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 /* The help badge, one style everywhere it appears (user, 20.09): the gold "i in a circle" GLYPH on
    nothing, not a black glyph knocked out of a gold disc. The 22px box is the old disc, and the glyph
    is sized to fill it, so the badge takes the same room as before. */
-.vehicle-info.toolbar-more>summary{display:flex;align-items:center;justify-content:center;width:22px;height:22px;padding:0;border:0;border-radius:50%;background:none;color:var(--gold);font-size:21px;font-weight:400;line-height:1}
-.vehicle-info.toolbar-more>summary:hover{background:none;border:0;color:#f6d894}
-.vehicle-info.toolbar-more>summary::after{content:none}
+/* The list's help is the page's one help dot (web/tooltips.js .help-dot): a round "?", gold while its box is open. */
 .vehicle-info .toolbar-popover{left:auto;right:0;top:calc(100% + 6px);bottom:auto;min-width:210px;max-width:min(320px,calc(100vw - 30px));gap:11px;padding:13px;font-size:12px;line-height:1.5}
 .info-help b{display:block;color:var(--gold);font-size:11px;letter-spacing:.06em;text-transform:uppercase}
 .info-help ul{margin:4px 0 0;padding-left:15px;color:var(--muted)}
@@ -419,7 +417,6 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 /* The role a tile click fills: its row is the one the list scrolls to, whichever role it is. */
 .vehicle-row[data-active=true]{border-color:var(--gold);background:#302d25}
 /* Header verdict-log line: the (i) mark next to the count, the explanation is the title of the line. */
-.connection .info-mark{margin-left:6px;color:var(--muted);cursor:help}
 .hatch-row{display:flex;align-items:center;gap:8px}.hatch-row output{min-width:3.5em;font-variant-numeric:tabular-nums}.hatch-row input[type=checkbox]{flex:none;width:16px;height:16px;margin:0}.hatch-row input[type=range]{flex:1;min-width:0}.hatch-row.off input[type=range],.hatch-row.off output{opacity:.45}
 /* A checkbox with more sliders than one row holds (Grid: brightness and opacity) takes a second .hatch-row
    under the first, indented by the checkbox it belongs to - the same row, the same widget, one switch. */
@@ -616,9 +613,24 @@ header>.settings-menu>.settings-content{top:calc(100% + 8px);right:0;max-height:
 .ttx-panel[hidden],.ttx-fold[hidden]{display:none}
 .ttx-inner{display:flex;flex-direction:column;align-items:stretch;gap:5px}
 .ttx-head{display:flex;align-items:center;justify-content:flex-end;gap:6px}
-.ttx-grid{display:grid;grid-template-columns:auto auto;column-gap:16px;row-gap:3px}
-.ttx-col{display:flex;flex-direction:column;gap:3px}
-.ttx-col.ttx-stab{grid-column:1/-1;flex-direction:row;justify-content:space-between;gap:12px;padding-top:4px;border-top:1px solid rgba(157,174,191,.25)}
+/* Panel v2 (23.09): the garage's own groups (params_helper PARAMS_GROUPS) - a thin rule with the group's glyph over its
+   figures, the group's name in the rule's tooltip - in both views. The rows of a section: a grid of two, a line of
+   three, or the reload line, which keeps the reload in its middle and grows both ways: the magazine's rounds to the
+   left, the time between them to the right. */
+.ttx-body{display:flex;flex-direction:column;align-items:stretch;gap:3px}
+.ttx-sec{display:flex;flex-direction:column;align-items:stretch;gap:3px;width:100%}
+.ttx-rule{display:flex;align-items:center;gap:6px;color:var(--muted);height:12px}
+.ttx-rule::before,.ttx-rule::after{content:'';flex:1 1 auto;height:1px;background:rgba(157,174,191,.3)}
+.ttx-rule .ttx-icon{width:12px;height:12px}
+.ttx-rows{display:grid;grid-template-columns:auto auto;column-gap:16px;row-gap:3px}
+.ttx-line{display:flex;justify-content:space-between;gap:12px}
+.ttx-reload{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;column-gap:10px}
+.ttx-reload-side{display:flex;align-items:center;gap:8px}
+.ttx-reload-side[data-side=left]{justify-content:flex-end}
+.ttx-reload-side[data-side=center]{justify-content:center}
+.ttx-reload-side[data-side=right]{justify-content:flex-start}
+/* The hit points sit on the head's empty left side in the compact view (Survivability is one figure here). */
+.ttx-hp{display:flex;align-items:center;margin-right:auto;padding-right:6px}
 .ttx-row{display:flex;align-items:center;gap:5px;white-space:nowrap}
 .ttx-icon{display:inline-flex;flex:0 0 auto;width:15px;height:15px;color:var(--muted)}
 .ttx-icon svg{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round}
@@ -635,20 +647,21 @@ header>.settings-menu>.settings-content{top:calc(100% + 8px);right:0;max-height:
 .ttx-pairs[data-many=false]>summary{cursor:default}
 .ttx-pairs[data-other=true]>summary{border-color:var(--gold);color:var(--gold);background:#302b23}
 .ttx-cal{font-weight:600}
+/* The gun chip: a barrel's glyph before the calibre and the gun's tier, so it reads as the gun at once. */
+.ttx-pair .ttx-icon{width:14px;height:14px}
 .ttx-mode{color:var(--muted);font-size:11px}
 /* Every popover of the panel opens upward from it and keeps to the right edge of the scene. */
 .ttx-panel .toolbar-popover{left:auto;right:0;top:auto;bottom:calc(100% + 6px)}
 .ttx-full{min-width:260px;max-height:min(70vh,560px);overflow:auto;gap:0;padding:6px 12px}
-.ttx-sec{display:grid;grid-template-columns:auto auto;column-gap:18px;row-gap:4px;width:100%;padding:6px 0}
-.ttx-sec+.ttx-sec{border-top:1px solid rgba(157,174,191,.25)}
-.ttx-sec.ttx-shells{grid-template-columns:1fr}
+.ttx-full .ttx-sec{gap:4px;padding:3px 0 5px}
+.ttx-full .ttx-rows{column-gap:18px;row-gap:4px}
+.ttx-shells{display:flex;flex-direction:column;align-items:stretch}
 .ttx-shell-row{display:grid;grid-template-columns:28px repeat(3,minmax(46px,auto));column-gap:12px;align-items:center;justify-items:end;padding:1px 4px;border-radius:4px}
 .ttx-shell-row .ttx-shell-kind{justify-self:start}
 .ttx-shell-kind img{display:block;width:24px;height:24px}
 .ttx-shell-row[data-selected=true]{background:#302b23;box-shadow:0 0 0 1px var(--gold) inset}
-/* The pair list: a turret's glyph and tier over its guns, the .aim-pick tiles of Config. */
-.ttx-pair-turret{display:flex;align-items:center;gap:6px;width:100%}
-.ttx-pair-turret[data-rule=true]{padding-top:8px;border-top:1px solid rgba(157,174,191,.25)}
+/* The quick list of the turret's guns and the Turret row of Config: the .aim-pick tiles of Config. */
+.aim-config-grid>[hidden]{display:none}
 .ttx-pick{flex-direction:column;gap:1px;font-size:12px;color:#e5edf5}
 .ttx-pick .ttx-cal{font-size:14px}
 .ttx-mark{position:absolute;top:3px;font-size:9px;line-height:1;color:var(--gold)}

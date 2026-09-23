@@ -5,6 +5,11 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 ## Unreleased
 
 - ✸ is off each time the page opens: a hit shows as it was recorded until you switch the emulation on.
+- Characteristics: the reload line on top, above DPM, as the garage prints each gun: magazine rounds on the left, the reload in the middle, the time between rounds (or bursts) on the right; autoloader slots, dual-gun salvo preparation, twin-gun mode switch, automatic and Ares continuous fire.
+- Characteristics: hit points in the compact view; sections follow the garage's groups (Firepower, Survivability, Mobility, Concealment, Spotting), each under a thin rule with its glyph.
+- Characteristics: the gun chip shows the gun, its calibre and tier; a click lists the guns of the current turret. The turret is picked in Config (Turret row), or in the same list while Config is hidden.
+- Characteristics: Black Rock's reload is correct on battles recorded before 0.7.27; a gun's horizontal limits sit where the garage prints them (turretless vehicles after the elevation limits).
+- Help dots (?) by the ✸ switches, the shooter's gun panel, the camera toolbar, the shell block, the hit filter, the characteristics panel, the Statistics log and the vehicle list: hover shows, a click pins every tooltip of that group.
 
 ## 0.7.33 (2026-09-23)
 

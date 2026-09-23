@@ -2036,6 +2036,16 @@ def ttx_block(type_name, version):
     ttx_take(vehicle, 'projectileSpeedFactor',
              lambda: float(client_vehicles.g_cache.commonConfig['miscParams']['projectileSpeedFactor']),
              warnings, 'Shell speed factor')
+    # A real turret or only the hull's fake one (params.VehicleParams.__hasTurret 1236: len(hull.fakeTurrets['lobby'])
+    # != len(turrets)). The garage prints a gun's sector after the turret's traverse on a real turret (turretYawLimits)
+    # and after the pitch limits without one (gunYawLimits; params 698-710, params_helper 47) - the page's order of
+    # the expanded panel (23.09, panel v2). 34 of the client's 266 vehicles with a sector have a real turret (T110E4,
+    # FV4005, ...), so the page cannot tell by itself. None when the client refuses: never read again for that file.
+    try:
+        vehicle['hasTurret'] = len(descr.hull.fakeTurrets['lobby']) != len(descr.turrets)
+    except Exception:
+        vehicle['hasTurret'] = None
+        warnings.append('Turret flag unavailable')
     modes = {}
     for key, attribute in TTX_MODE_FLAGS:
         ttx_take(modes, key, lambda attribute=attribute: bool(getattr(descr, attribute)), warnings,
@@ -3141,8 +3151,12 @@ class Exporter(object):
                 and canonical(value.get('clientVersion') or '') == self.version):
             return False
         # A vehicle with a second mode or a rocket booster whose file predates their fields is built again, once.
-        modes = ((value.get('vehicle') or {}).get('modes') or {})
-        return not ((modes.get('siege') or modes.get('rocketAcceleration')) and value.get('modesSchema') != TTX_MODES_SCHEMA)
+        vehicle = value.get('vehicle') or {}
+        modes = vehicle.get('modes') or {}
+        if (modes.get('siege') or modes.get('rocketAcceleration')) and value.get('modesSchema') != TTX_MODES_SCHEMA:
+            return False
+        # So is a gun with a sector whose file predates hasTurret (23.09): the page places the sector by it.
+        return 'hasTurret' in vehicle or not any(c.get('turretYawLimits') for c in value.get('configs') or ())
 
     def ensure_ttx(self, type_name, inline, priority=JOB_BULK):
         """Make sure the characteristics file of a type is current; export thread only.
