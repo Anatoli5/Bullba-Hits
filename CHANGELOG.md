@@ -2,7 +2,7 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
-## Unreleased
+## 0.7.39 (2026-09-23)
 
 - Tooltips no longer pop up on hover: click a figure to see its tooltip; a “?” shows its group’s summary and starts help mode, where a click on any button explains it instead of pressing it (Escape or the same “?” leaves). Config has its own “?”; the tooltip box is plainer.
 - Characteristics panel: every row sits on one three-column grid, so the figures line up across sections.
