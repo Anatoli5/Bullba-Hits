@@ -1013,8 +1013,8 @@
   // a device's vehicleFilter, and "a clip gun takes no rammer" is false for five clip vehicles and one dual
   // gun of the client - the eligibility tags above stay the only rule.
   var AIM_MECHANICS_WORDS = {
-    autoreload: 'an autoreloading magazine: every round reloads on its own timer. The emulation paces the rounds of a hold at the clip interval and does not model the per-round reload',
-    clip: 'a magazine: the rounds go at the clip interval, then the whole clip reloads. The emulation stops a burst when the clip is empty',
+    autoreload: 'an autoreloading magazine: every spent round loads back on its own timer, one at a time. Under ✸ with real reload ◔ the emulation runs those timers; otherwise a hold fires the rounds at the clip interval and nothing loads back',
+    clip: 'a magazine: the rounds go at the clip interval, then the whole clip reloads. Under ✸ with real reload ◔ the emulation runs that reload; otherwise a burst stops when the clip is empty',
     burst: 'a burst gun: one pull of the trigger fires several rounds',
     dualGun: 'a dual gun: its barrels fire one at a time or together as a charged volley. The emulation fires single rounds only',
     twinGun: 'a twin gun: two barrels, each with its own reload. The emulation fires single rounds only',
@@ -1032,14 +1032,15 @@
     if (a.burst && a.burst[0] > 1) return 'burst';
     return list.length || a.clip ? 'single' : '';
   }
-  var AIM_GUN_LOAD_TITLE = 'The gun’s state, as the reticle shows it in the game: while a burst is held, the time left to the next round and, for a clip gun, the rounds still in the clip. At rest it reads the gun’s own reload time and clip size.';
+  var AIM_GUN_LOAD_TITLE = 'The gun’s reload, as the reticle shows it in the game: the time left while the next round is loading, the gun’s own reload time at rest. The rounds are in the magazine beside it.';
   function paintAimMechanics() {
     var time = $('aim-gun-reload'), load = time && time.parentNode;
     if (!load) return;
     var a = aimBlockData(), kind = aimMechanics(a), extra = '';
     if (kind) extra = ' This gun is ' + AIM_MECHANICS_WORDS[kind] + '.';
     if (kind === 'autoreload' && a.autoreload && Array.isArray(a.autoreload.reloadTime)) {
-      extra += ' Its per-round reload: ' + a.autoreload.reloadTime.map(function (v) { return aimNum(v); }).join(', ') + ' s.';
+      // The client keeps the tuple last-round-first and the garage shows it reversed, in loading order (KNOWLEDGE §4).
+      extra += ' Its rounds load back in, from an empty magazine: ' + a.autoreload.reloadTime.slice().reverse().map(function (v) { return aimNum(v); }).join(', ') + ' s.';
     }
     if (a && (a.dualAccuracy || (Array.isArray(a.gunTags) && a.gunTags.indexOf('dualAccuracy') >= 0))) {
       extra += ' It has dual accuracy: the circle right after a shot follows a law of its own, which the page does not model.';
@@ -2478,10 +2479,13 @@
     var part = (aimSeconds() - aimReload.at) / (aimReload.until - aimReload.at);
     return part >= 1 ? null : part > 0 ? part : 0;
   }
-  function aimClipRounds() {
-    var rl = ArmorBallistics.reloadSeconds(aimBlockData(), aimModifiers());
-    return rl && rl.shots > 1 && rl.interval > 0 ? rl.shots : 1;
-  }
+  function aimClipRounds() { return clipRoundsOf(ArmorBallistics.reloadSeconds(aimBlockData(), aimModifiers())); }
+  // The rounds the emulation loads, off a reload the caller has: a clip needs a gap between its rounds, or it
+  // is fired as a single-shot gun.
+  function clipRoundsOf(rl) { return rl && rl.shots > 1 && rl.interval > 0 ? rl.shots : 1; }
+  // The gun loaded in full with nothing loading: a new shooter, the emulation starting over, a rule switched, a
+  // press under the simplified rule. `rounds` when the caller has the clip size already.
+  function aimLoadFull(rounds) { aimClipSize = rounds || aimClipRounds(); aimClip = aimClipSize; aimRefill = null; }
   function startAimLoop() {
     if (aimFrame || !aimOn) return;
     aimFrame = window.requestAnimationFrame(aimTick);
@@ -2734,21 +2738,124 @@
     });
     box.hidden = !candidates.length;
   }
-  // The load state, small and iconic, no prose: while a burst is held the countdown to the next round
-  // (and the rounds left of a clip), otherwise the gun's own reload time and clip size. A record with
-  // no reload at all says so with a dash - the cooldown is unknown, and the emulation fires once.
+  // The load state, small and iconic, no prose: the countdown while the next round is loading, otherwise the
+  // gun's own reload time, and the magazine beside it. A record with no reload at all says so with a dash - the
+  // cooldown is unknown, and the emulation fires once. Returns the heat it painted, for the panel timer.
   function paintGunLoad() {
-    var time = $('aim-gun-reload'), clip = $('aim-gun-clip');
-    if (!time || !clip) return;
-    paintHeat(heatNow());   // the heat bar of an Ares gun under ✸; nothing but a hidden check otherwise
-    var rl = ArmorBallistics.reloadSeconds(aimBlockData(), aimModifiers());
-    if (!rl) { time.textContent = '—'; clip.textContent = ''; clip.hidden = true; return; }
+    var h = heatNow();
+    paintHeat(h);   // the heat bar of an Ares gun under ✸; nothing but a hidden check otherwise
+    var time = $('aim-gun-reload');
+    if (!time) return h;
+    var a = aimBlockData(), rl = ArmorBallistics.reloadSeconds(a, aimModifiers());
+    paintMag(a, rl);   // first: it brings an autoloader's load up to now, which the figure below reads
+    if (!rl) { time.textContent = '—'; return h; }
     var left = aimReloadLeft(), running = left > 0;
-    time.textContent = (running ? left : rl.reload).toFixed(1) + ' s';
+    // An autoloader under real reload counts down the round loading back too, as the reticle does, while the
+    // gun may already fire the rounds it has.
+    if (!running && aimRefill) { left = Math.max(0, aimRefill.until - aimSeconds()); running = left > 0; }
+    time.textContent = (running ? left : restReload(a, rl)).toFixed(1) + ' s';
     time.setAttribute('data-running', running ? '1' : '0');
-    var rounds = running && aimClipSize > 1 ? aimClip + '/' + aimClipSize : rl.shots > 1 ? String(rl.shots) : '';
-    clip.textContent = rounds;
-    clip.hidden = !rounds;
+    return h;
+  }
+  // The gun's own reload at rest. An autoloader has no single one: the client stands the load of the first round
+  // into an empty magazine - the LAST entry of its tuple - in for gun.reloadTime (items/utils getFirstReloadTime,
+  // ammo_ctrl _GunSettings), scaled by the same factors, and so does this.
+  function restReload(a, rl) {
+    var list = a && a.autoreload && a.autoreload.reloadTime;
+    var last = Array.isArray(list) && list.length ? Number(list[list.length - 1]) : 0;
+    return last > 0 && a.reloadTime > 0 ? last * rl.reload / a.reloadTime : rl.reload;
+  }
+  // THE MAGAZINE (user, 22.09 ~24:15): the rounds of the gun as a row of slots beside the reload figure -
+  // graphics only, every number in its tooltip. It shows the emulation's own load, under whichever rule runs it:
+  //   - a single-shot gun is one slot, which empties on the shot and fills with the reload;
+  //   - a clip empties slot by slot, and while the whole clip reloads (✸ real reload) every slot shows the one
+  //     shared fill, then they are all loaded together;
+  //   - an autoloader under real reload loads its spent rounds back one at a time, the loading slot filling;
+  //   - under the simplified rule (✸ or ◔ off) a hold empties the clip and nothing loads back; the release
+  //     leaves the gun full, as the next press will find it;
+  //   - more than MAG_SLOTS rounds (an Ares carries hundreds) is one bar: the rounds left, or the reload.
+  // The next round to fire is lit, dimmed while the gap between rounds still runs. It is painted with the panel
+  // - every frame while the loop runs, at 10 Hz from the panel timer otherwise - and writes only what changed:
+  // the fills are quantised to 2 % and move by transform, so a running reload costs no layout.
+  var MAG_SLOTS = 12, magShape = '', magParts = [], magSeen = [], magTitleKey = '';
+  function paintMag(a, rl) {
+    var box = $('aim-gun-mag');
+    if (!box) return;
+    var n = rl ? clipRoundsOf(rl) : 0;
+    if (box.hidden !== !n) box.hidden = !n;
+    if (!n) { magTitleKey = ''; return; }
+    var now = aimSeconds(), real = realReload(), gate = aimReloadLeft();
+    refillSettle(now);
+    // loaded: the rounds in; filling: the slot loading (-1 none, n all of them - the clip reload); fill: its share.
+    var loaded, filling = -1, fill = 0, wait = false, loadLeft = 0;
+    // A gun whose clip the emulation has not taken yet (a new shooter before the first press) is loaded in full:
+    // the press will find it so (beginShot).
+    if (n !== aimClipSize) loaded = n;
+    else if (n === 1) {
+      loaded = gate > 0 ? 0 : 1;
+      if (gate > 0) { filling = 0; fill = aimReloadPart() || 0; loadLeft = gate; }
+    } else if (aimRefill) {
+      loaded = aimClip; filling = aimClip; loadLeft = aimRefill.until - now;
+      fill = Math.max(0, Math.min(1, (now - aimRefill.at) / (aimRefill.until - aimRefill.at)));
+      wait = gate > 0 && aimClip > 0;
+    } else if (aimClip <= 0 && gate > 0 && aimReload && !aimReload.clip) {
+      loaded = 0; filling = n; fill = aimReloadPart() || 0; loadLeft = gate;
+    } else {
+      // A clip emptied under real reload and reloaded since is taken full by the next shot (fireShot): it is full.
+      loaded = aimClip <= 0 && real ? n : Math.max(0, Math.min(n, aimClip));
+      wait = gate > 0 && loaded > 0;
+    }
+    var bar = n > MAG_SLOTS, shape = (bar ? 'bar' : 'slots') + n, i;
+    if (shape !== magShape) {
+      magShape = shape; magParts = []; magSeen = [];
+      for (i = 0; i < (bar ? 1 : n); i++) {
+        var part = node('i', undefined, bar ? 'aim-mag-bar' : 'aim-mag-slot');
+        var inner = node('i', undefined, bar ? 'aim-mag-bar-fill' : 'aim-mag-fill');
+        part.appendChild(inner);
+        magParts.push({box: part, fill: inner});
+      }
+      box.replaceChildren.apply(box, magParts.map(function (p) { return p.box; }));
+    }
+    var q = Math.round(fill * 50) / 50;
+    if (bar) {
+      var share = filling === n ? q : Math.round((loaded + (filling >= 0 ? fill : 0)) / n * 500) / 500;
+      magSet(0, filling === n ? 'fill' : 'on', 'scaleX(' + share + ')');
+    } else {
+      for (i = 0; i < n; i++) {
+        var st = i < loaded ? (i === loaded - 1 ? (wait ? 'wait' : 'next') : 'on') : filling === n || i === filling ? 'fill' : 'off';
+        magSet(i, st, 'scaleY(' + (st === 'fill' ? q : 0) + ')');
+      }
+    }
+    var key = shape + '|' + loaded + '|' + filling + '|' + Math.ceil(loadLeft) + '|' + Math.ceil(gate) + '|' + real;
+    if (key !== magTitleKey) { magTitleKey = key; box.title = magTitle(a, rl, n, loaded, filling, loadLeft, gate, real); }
+  }
+  // One slot (or the bar): its state and its fill, each written only when it has changed.
+  function magSet(i, state, transform) {
+    var p = magParts[i], seen = magSeen[i] || (magSeen[i] = {});
+    if (seen.state !== state) { seen.state = state; p.box.setAttribute('data-s', state); }
+    if (seen.transform !== transform) { seen.transform = transform; p.fill.style.transform = transform; }
+  }
+  // The numbers behind the slots, composed only when one of them has changed (paintMag keys it).
+  function magTitle(a, rl, n, loaded, filling, loadLeft, gate, real) {
+    var sec = function (v) { return aimNum(Math.round(v * 10) / 10); };
+    var list = a && a.autoreload && a.autoreload.reloadTime, auto = n > 1 && Array.isArray(list) && list.length > 0;
+    var out = n > 1 ? 'Magazine ' + loaded + ' / ' + n + '.'
+      : filling === 0 ? 'Loading: ' + Math.ceil(loadLeft) + ' s left of ' + sec(rl.reload) + ' s.' : 'Loaded. The reload takes ' + sec(rl.reload) + ' s.';
+    if (n > 1) {
+      if (filling === n) out += ' The whole clip is reloading: ' + Math.ceil(loadLeft) + ' s left.';
+      else if (filling >= 0) out += ' A round is loading back: ' + Math.ceil(loadLeft) + ' s left.';
+      if (gate > 0 && loaded > 0) out += ' The next round in ' + Math.ceil(gate) + ' s.';
+      out += ' Rounds ' + sec(rl.interval) + ' s apart';
+      if (auto) {
+        var k = a.reloadTime > 0 ? rl.reload / a.reloadTime : 1, boost = Number(a.autoreload.boostFraction);
+        out += '; each spent round loads back on its own timer, one at a time - from an empty magazine ' +
+          list.slice().reverse().map(function (v) { return sec(Number(v) * k); }).join(', ') + ' s.';
+        if (boost > 0 && boost < 1) out += ' The faster load of its improved autoreloader is not modelled.';
+      } else out += '; the whole clip reloads in ' + sec(rl.reload) + ' s once it is empty.';
+    }
+    if (!real) out += n > 1 ? ' Simplified (✸ or ◔ off): a hold fires what the magazine holds, nothing loads back, and the next press starts full.'
+      : ' Simplified (✸ or ◔ off): the reload runs only while the button is held.';
+    return out;
   }
   // One shot (user's decision, 19.09: no Alt - it may never reach the page inside the game). The tracer
   // goes exactly down the middle of the LIVE circle, where the gun points: the random offset a real shot
@@ -2786,11 +2893,21 @@
     heatShot();
     // The cooldown to the next round of the same hold.
     var rl = ArmorBallistics.reloadSeconds(a, mods), now = aimSeconds(), real = realReload();
+    var times = autoreloadTimes(a, rl);   // an autoloader under real reload, or null
     aimClipDry = false;
     // No reload in the record: the cooldown is unknown, so a hold fires once and waits for the release
     // instead of emptying a magazine at the frame rate.
     if (!rl) { aimReload = null; aimClipDry = true; }
-    else if (aimClipSize > 1) {
+    else if (times) {
+      // An autoloader under real reload (the rule is with the ✸ code below): the round leaves the magazine and
+      // one starts loading back - or the one already loading goes on - and the next round waits for the gap
+      // between rounds or, with the magazine empty, for that load, whose progress the ring then shows.
+      refillSettle(now);
+      aimClip = Math.max(0, aimClip - 1);
+      refillShot(times, now);
+      aimReload = aimClip > 0 ? {at: now, until: now + rl.interval, clip: true}
+        : {at: aimRefill.at, until: Math.max(aimRefill.until, now + rl.interval), clip: false};
+    } else if (aimClipSize > 1) {
       // Real reload (✸ sub-switch): a clip emptied earlier has been reloaded in full by now - the caller let
       // this round through only once that reload was over - so it starts again from a full clip.
       if (real && aimClip <= 0) aimClip = aimClipSize;
@@ -2819,7 +2936,7 @@
     // the shots INSIDE one hold and nothing else. Under ✸ real reload (the sub-switch) the gun keeps its
     // load between presses instead - the clip is refilled here only when this gun's clip size is new.
     var rounds = aimClipRounds();
-    if (!realReload() || rounds !== aimClipSize) { aimClipSize = rounds; aimClip = aimClipSize; }
+    if (!realReload() || rounds !== aimClipSize) aimLoadFull(rounds);
     aimHoldTimer = window.setTimeout(holdFire, AIM_HOLD_MS);
     return true;
   }
@@ -2843,9 +2960,10 @@
     if (single && gunFree() && fireShot()) paintAim(aimLastState || aimState());
     else paintCircleLines();
     // The reload is shown only while the button is held and the gun fires on its cooldown; a released
-    // button leaves a whole ring - the recoil bloom stays, the fill does not (user, 20.09). Under ✸ real
-    // reload the release changes nothing: the reload runs on and its fill stays on the ring.
-    if (!realReload()) aimReload = null;
+    // button leaves a whole ring - the recoil bloom stays, the fill does not (user, 20.09) - and a full clip,
+    // which is what the next press starts from (the magazine shows it so). Under ✸ real reload the release
+    // changes nothing: the reload runs on and its fill stays on the ring.
+    if (!realReload()) { aimReload = null; aimClip = aimClipSize; }
     paintAim(aimLastState || aimState());
     startAimLoop();
   }
@@ -2865,8 +2983,9 @@
   //
   // REAL RELOAD is a sub-switch of ✸, ON by default, kept in the settings box as #real-reload. On, the gun
   // loads as in the game: the reload and the gap between rounds run on after the release, a press before the
-  // gun is loaded does not fire, and a clip keeps its rounds between presses and is reloaded in full once
-  // empty. Off, the simplified emulation of 20.09: the release resets the cooldown, every press a full clip.
+  // gun is loaded does not fire, a clip keeps its rounds between presses and is reloaded in full once empty, and
+  // an autoloader loads its spent rounds back one at a time (below). Off, the simplified emulation of 20.09: the
+  // release resets the cooldown, every press a full clip.
   function realReload() { if (!funOn()) return false; var e = $('real-reload'); return !!(e && e.checked); }
   // May the gun fire at this instant? Asked by the three callers of fireShot() - the tap, the start of a
   // hold and the held burst - beside what they already ask about the reload.
@@ -2879,10 +2998,49 @@
   // The sub-switch moved: the load starts over under the new rule (a full clip, nothing running).
   function realReloadSettings() {
     aimReload = null; aimClipDry = false;
-    aimClipSize = aimClipRounds(); aimClip = aimClipSize;
+    aimLoadFull();
     paintFun();
     if (aimLive && aimNow) paintAim(aimLastState || aimState());
     startAimLoop();
+  }
+  // AN AUTOLOADER under real reload (user, 22.09 ~24:15): every spent round loads back on its own timer, one
+  // round at a time, and the gun fires whatever the magazine holds - a gap of the clip interval between rounds,
+  // and with the magazine empty the wait for the round loading. The times are the gun's own tuple,
+  // aim.autoreload.reloadTime, scaled by the factors of the reload (rammer, crew: items/utils getClipReloadTime
+  // multiplies each entry by the factor of getReloadTime), which is rl.reload / aim.reloadTime here.
+  // CLIENT RULE for the order (getFirstReloadTime, ammo_ctrl _GunSettings.fromVehicle, the garage's
+  // VehicleParams.autoReloadTime): the LAST entry is the first round into an empty magazine and the garage lists
+  // the tuple reversed, in loading order - so with k rounds in, the next one takes reloadTime[N-1-k].
+  // OUR APPROXIMATION (the timing itself is the server's): a round fired while another is loading leaves that
+  // load its share done, and it goes on at the time of the new count.
+  var aimRefill = null;   // {at, until, times} of the round loading now, or null with the magazine full
+  // The gun's per-round times, scaled, in the tuple's own order - or null: not under real reload, not an
+  // autoloader, no times in the record. `a` and `rl` come from the caller, who has them already.
+  function autoreloadTimes(a, rl) {
+    var list = a && a.autoreload && a.autoreload.reloadTime;
+    if (!rl || !realReload() || !(aimClipSize > 1) || !Array.isArray(list) || !list.length || !(a.reloadTime > 0)) return null;
+    var k = rl.reload / a.reloadTime, out = [], i, v;
+    for (i = 0; i < list.length; i++) { v = Number(list[i]); if (!(v > 0)) return null; out.push(v * k); }
+    return out;
+  }
+  // The time of the round loaded next with `k` rounds in.
+  function refillSeconds(times, k) { var n = times.length; return times[Math.max(0, Math.min(n - 1, n - 1 - k))]; }
+  // The magazine brought up to `now`: every round whose load has run out is in, and the next one began loading
+  // the instant the last went in. A function of the time alone, so nothing has to run for the rounds to come in.
+  function refillSettle(now) {
+    while (aimRefill && now >= aimRefill.until) {
+      aimClip = Math.min(aimClipSize, aimClip + 1);
+      if (aimClip >= aimClipSize) aimRefill = null;
+      else aimRefill = {at: aimRefill.until, until: aimRefill.until + refillSeconds(aimRefill.times, aimClip), times: aimRefill.times};
+    }
+  }
+  // A round has just left the magazine (fireShot, after the count went down): one starts loading back, or the
+  // one loading goes on at the time of the new count with the share it has done.
+  function refillShot(times, now) {
+    var d = refillSeconds(times, aimClip), done = 0;
+    if (aimRefill) done = Math.max(0, Math.min(1, (now - aimRefill.at) / (aimRefill.until - aimRefill.at)));
+    aimRefill = {at: now - done * d, until: now + (1 - done) * d, times: times};
+    panelWake();
   }
   // THE HEAT of the five Ares guns (outputs/gun-overheat-2026-09-22.md; the record carries the gun's own
   // numbers since the build after 0.7.26: aim.temperatureGun and aim.overheatGun). The client's rule:
@@ -2895,7 +3053,7 @@
   // The simulation is the server's; the numbers and the shape of the rule are the client's
   // (params_utils.getTemperatureRateOfFire, TemperatureMechanicState, OverheatGunAmmoState). Penetration and
   // alpha are untouched. A gun that heats without ever locking (the STK-2) is left alone, as decided.
-  var gunHeat = null, heatFrom = null, heatSpec = null, heatTimer = 0, heatPaintKey = '', heatTitleKey = '', heatWarnAt = '';
+  var gunHeat = null, heatFrom = null, heatSpec = null, panelTimer = 0, heatPaintKey = '', heatTitleKey = '', heatWarnAt = '';
   // The gun's numbers, normalised once per shooter block.
   function heatParams() {
     var a = aimBlockData();
@@ -2961,7 +3119,7 @@
     var t = Math.min(h.p.max, h.t + h.p.per);
     gunHeat.t = t; gunHeat.at = h.now; gunHeat.locked = h.locked || t >= h.p.on;
     gunHeat.band = heatBand(h.p, t, gunHeat.band);
-    heatWake();
+    panelWake();
   }
   // The circle's multiplier of the present band, applied where the client applies it: on the full-aim factor
   // (the `mult` of ArmorBallistics.aimFactor). The same object comes back untouched off ✸ or for a cold band.
@@ -2971,22 +3129,25 @@
     if (f !== 1 && mods) mods.mult *= f;
     return mods;
   }
-  // A warm gun cools on screen with the frame loop asleep: a light 10 Hz timer paints the bar and wakes the loop
-  // only when the band - and with it the circle - has changed. It stops by itself once the gun is cold.
-  function heatWake() { if (!heatTimer) heatTimer = window.setTimeout(heatTick, 100); }
-  function heatTick() {
-    heatTimer = 0;
-    var band = gunHeat ? gunHeat.band : -1, h = heatNow();
-    paintHeat(h);
-    if (!h) return;
-    if (h.band !== band) startAimLoop();
-    if (h.t > 0 || h.locked) heatWake();
+  // THE GUN PANEL'S OWN TIMER, a light 10 Hz one for what moves on the panel with the frame loop asleep: a warm
+  // gun cooling, and a round of an autoloader loading back. It repaints the bar - the whole panel while a round
+  // loads, each part of it skipping what has not changed - wakes the loop only when the heat band, and with it
+  // the circle, has changed, and stops by itself once the gun is cold and the magazine full. With the emulation
+  // off a loading round no longer keeps it going: the load is a function of the time, taken up at the next paint.
+  function panelWake() { if (!panelTimer) panelTimer = window.setTimeout(panelTick, 100); }
+  function panelTick() {
+    panelTimer = 0;
+    var band = gunHeat ? gunHeat.band : -1, h;
+    if (aimRefill && aimLive) h = paintGunLoad();
+    else { h = heatNow(); paintHeat(h); }
+    if (h && h.band !== band) startAimLoop();
+    if ((h && (h.t > 0 || h.locked)) || (aimRefill && aimLive)) panelWake();
   }
   // ✸ switched, a new shooter, the emulation reset: a cold gun and no timer.
   function gunHeatReset() {
     gunHeat = null;
-    if (heatTimer) window.clearTimeout(heatTimer);
-    heatTimer = 0;
+    if (panelTimer) window.clearTimeout(panelTimer);
+    panelTimer = 0;
     paintHeat(null);
   }
   // Seconds until a locked gun fires again: what is left of the delay, then the slow fall to the unlock mark.
@@ -3233,7 +3394,7 @@
     // The gun under the other rule starts over: cold, loaded, a full clip - and the loop is woken, so the
     // circle drops the heat band it may have been drawn in.
     gunHeatReset();
-    aimReload = null; aimClipDry = false; aimClipSize = aimClipRounds(); aimClip = aimClipSize;
+    aimReload = null; aimClipDry = false; aimLoadFull();
     paintFun();
     startAimLoop();
   }
@@ -3244,7 +3405,7 @@
     aimDown = false; aimBurst = false; aimClipDry = false;
     aimShot = null; aimLastState = null; aimHeading = 0;
     if (viewer) { viewer.aimHold = false; if (viewer.clearAimShot) viewer.clearAimShot(); }
-    aimClipSize = aimClipRounds(); aimClip = aimClipSize;
+    aimLoadFull();
     gunHeatReset();   // a new shooter's gun, or the emulation starting over, is cold
   }
   // The switch itself. Off means off: no frame loop, no key handlers, no live circle, no crosshair, and
@@ -3365,7 +3526,7 @@
       return;
     }
     if (!aimNow) {
-      aimClipSize = aimClipRounds(); aimClip = aimClipSize;
+      aimLoadFull();
       aimNow = ArmorBallistics.aimStep(null, aimState(), a, aimModifiers(), 0);
     }
     if (!aimNow) { viewer.clearLiveAim(); return; }

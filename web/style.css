@@ -164,13 +164,26 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 .aim-gun-load{display:flex;align-items:baseline;gap:6px}
 .aim-gun-load b{font-weight:600;font-variant-numeric:tabular-nums}
 .aim-gun-load b[data-running="1"]{color:var(--gold)}
-.aim-gun-clip{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
-.aim-gun-clip[hidden]{display:none}
+/* The magazine (user, 22.09 ~24:15): one slot per round, graphics only - the numbers are in its tooltip. A loaded
+   round is a bright slug, a spent one a hollow frame, the next to fire is lit in the accent (dimmed while the gap
+   between rounds still runs), and a round being loaded fills its frame from the bottom in the steel of the cold
+   heat bar. More than twelve rounds make one bar instead, in the frame of the heat bar (the rule below it): its
+   fill is the rounds left, striped like a belt, and steel while the whole magazine reloads. The fills move by
+   transform alone, so a running reload costs no layout. */
+.aim-gun-mag{display:flex;align-items:center;gap:2px;flex:0 0 auto;align-self:center}
+.aim-gun-mag[hidden]{display:none}
+.aim-mag-slot{position:relative;display:block;flex:0 0 auto;width:6px;height:14px;border:1px solid rgba(157,174,191,.5);border-radius:3px 3px 1px 1px;overflow:hidden}
+.aim-mag-slot[data-s=on]{background:#d9e3ee;border-color:#d9e3ee}
+.aim-mag-slot[data-s=next]{background:var(--gold);border-color:var(--gold)}
+.aim-mag-slot[data-s=wait]{background:rgba(234,195,110,.35);border-color:var(--gold)}
+.aim-mag-fill{position:absolute;left:0;right:0;bottom:0;height:100%;background:#78aad2;transform:scaleY(0);transform-origin:50% 100%}
+.aim-mag-bar-fill{display:block;height:100%;width:100%;border-radius:3px;background:#d9e3ee repeating-linear-gradient(90deg,transparent 0 3px,rgba(12,21,31,.55) 3px 4px);transform:scaleX(1);transform-origin:0 50%}
+.aim-mag-bar[data-s=fill] .aim-mag-bar-fill{background-color:#78aad2}
 /* The heat of an Ares gun under ✸ (user, 22.09 ~23:30): a small bar in the gun panel, graphics only - the
    figures are in its tooltip. The fill's width is the temperature, its colour is written by the page (cool
    steel rising to the accent at the warning mark, red from there on), the thin mark is the warning threshold
    and a locked, overheated gun gets a red frame. Same frame as the health bar, at the panel's own size. */
-.aim-gun-heat{position:relative;flex:0 0 auto;align-self:center;width:46px;height:10px;padding:1px;border:1px solid rgba(157,174,191,.55);border-radius:5px;background:rgba(12,21,31,.6)}
+.aim-gun-heat,.aim-mag-bar{position:relative;display:block;flex:0 0 auto;align-self:center;width:46px;height:10px;padding:1px;border:1px solid rgba(157,174,191,.55);border-radius:5px;background:rgba(12,21,31,.6)}
 .aim-gun-heat[hidden]{display:none}
 .aim-gun-heat-fill{display:block;height:100%;width:0;border-radius:3px;background:#78aad2}
 .aim-gun-heat-warn{position:absolute;top:-2px;bottom:-2px;left:94%;width:1px;background:rgba(234,195,110,.85)}

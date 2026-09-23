@@ -2,6 +2,11 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
+## Unreleased
+
+- The gun panel shows the magazine as a row of rounds instead of the "2/3" text, whenever the emulation is on: loaded, spent, the next round lit, the one loading filling up; a single-shot gun shows one round filling with its reload, a magazine over 12 rounds (Ares) one bar. The numbers are in its tooltip.
+- Under ✸ with real reload ◔ an autoloader now loads its spent rounds back one at a time, each on its own timer from the game's data, and fires what it has; the reload figure at rest is its empty-magazine round.
+
 ## 0.7.27 (2026-09-22)
 
 - A shell that glances off and flies clear now counts as a ricochet in the Target HP tooltip instead of "no estimate".
