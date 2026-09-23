@@ -59,6 +59,13 @@ ICON_FILES = tuple('web/icons/%s.png' % name for name in (
     'ARMOR_PIERCING', 'ARMOR_PIERCING_CR', 'ARMOR_PIERCING_CR_PREMIUM', 'ARMOR_PIERCING_PREMIUM',
     'HIGH_EXPLOSIVE', 'HIGH_EXPLOSIVE_MODERN', 'HIGH_EXPLOSIVE_MODERN_PREMIUM', 'HIGH_EXPLOSIVE_PREMIUM',
     'HOLLOW_CHARGE', 'HOLLOW_CHARGE_PREMIUM',
+    # The Config pieces that do not shoot (0.7.28) - their art was never shipped until 23.09 (copied by
+    # tools/build_equipment_catalogue.py copy_config_icons): devices, directives, crew skills, the paint
+    'additInvisibilityDeviceBattleBooster', 'additionalInvisibilityDevice', 'antifragmentationLining', 'camouflage',
+    'camouflageNet', 'coatedOptics', 'coatedOpticsBattleBooster', 'commander_eagleEye', 'commandersView',
+    'driver_badRoadsKing', 'driver_motorExpert', 'extraHealthReserve', 'grousers', 'improvedConfiguration',
+    'improvedRadioCommunication', 'modernizedExtraHealthReserveAntifragmentationLining', 'radioman_finder',
+    'stereoscope', 'turbochargerBattleBooster',
     # Field modification (23.09): the garage's own art, copied by tools/build_equipment_catalogue.py - a pair
     # side's icon, and the level's hexagon for a standard modification
     'fm_additionalGrousers', 'fm_betterFriction', 'fm_improvedAimingHandling', 'fm_improvedCamouflage',

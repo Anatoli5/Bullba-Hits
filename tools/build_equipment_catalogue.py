@@ -713,6 +713,40 @@ def copy_field_icons(game, icons):
     return sorted(found)
 
 
+SKILL_ART = 'gui/maps/icons/tankmen/skills/80x80/%s.png'
+ITEM_ART = ('gui/maps/icons/artefact/%s.png', 'gui/maps/icons/quests/bonuses/small/%s.png',
+            'gui/maps/icons/moduleTypes/%s.png', 'gui/maps/icons/tanksetup/popular_loadouts/optional_devices/%s.png')
+
+
+def copy_config_icons(game, names, skills):
+    """The Config tiles' art the page names but web/icons lacks, copied out of the client's gui packages.
+
+    0.7.28 gave Config the devices, skills and directives that do not shoot, and nineteen of their icons were
+    never copied (the tiles showed nothing, 23.09). The icons already in web/icons are left as they are: they
+    came from the same places (a crew skill from tankmen/skills/80x80, a device from artefact) and a directive's
+    48 px art is not byte-identical to any file of this client. The first place that has the name wins."""
+    want = sorted(n for n in names if n and not os.path.isfile(os.path.join(ICON_DIR, n + '.png')))
+    places = dict((n, ((SKILL_ART,) if n in skills else ()) + ITEM_ART + ((SKILL_ART,) if n not in skills else ())) for n in want)
+    found = {}
+    for part in sorted(os.listdir(os.path.join(game, 'res', 'packages'))):
+        if not re.match(r'^gui-part\d+\.pkg$', part):
+            continue
+        with zipfile.ZipFile(os.path.join(game, 'res', 'packages', part)) as archive:
+            listed = set(archive.namelist())
+            for name in want:
+                for rank, pattern in enumerate(places[name]):
+                    entry = pattern % name
+                    if entry in listed and (name not in found or rank < found[name][0]):
+                        found[name] = (rank, archive.read(entry))
+    missing = sorted(set(want) - set(found))
+    if missing:
+        raise SystemExit('The client has no art for %s.' % ', '.join(missing))
+    for name in sorted(found):
+        with open(os.path.join(ICON_DIR, name + '.png'), 'wb') as handle:
+            handle.write(found[name][1])
+    return sorted(found)
+
+
 def dump(value, indent):
     """JSON that reads like hand-written JavaScript: one line per record, no dangling whitespace."""
     return json.dumps(value, ensure_ascii=False, separators=(', ', ': '), sort_keys=False)
@@ -797,6 +831,23 @@ def main(argv):
     lines.append('  };')
     lines.append('})();')
     io.open(TARGET, 'w', encoding='utf-8', newline='\n').write('\n'.join(lines) + '\n')
+    skills = skill_rows()
+    named = set()
+    def walk(value):
+        # every "icon"/"deviceIcon" string anywhere in the Config rows (families keep theirs in nested lists)
+        if isinstance(value, dict):
+            for key, item in value.items():
+                if key in ('icon', 'deviceIcon') and isinstance(item, str):
+                    named.add(item)
+                else:
+                    walk(item)
+        elif isinstance(value, (list, tuple)):
+            for item in value:
+                walk(item)
+    walk([devices, families(devices), skills, directives, CONSUMABLES, PAINT, FOOD])
+    config_art = copy_config_icons(game, named, set(r['icon'] for r in skills))
+    if config_art:
+        print('web/icons: copied the Config art it lacked - %s' % ', '.join(config_art))
     print('web/equipment.js: %d devices, %d families, %d skills, %d directives, %d consumables, '
           '%d field modification trees with %d modifications; %d icons in web/icons (%s)'
           % (len(devices), len(families(devices)), len(SKILLS), len(directives), len(CONSUMABLES),
