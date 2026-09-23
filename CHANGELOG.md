@@ -2,7 +2,7 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
-## Unreleased
+## 0.7.32 (2026-09-23)
 
 - Tooltips work in the game's browser too: the page draws them itself. Hover an icon or tile for its explanation; click one that is not a button to pin it open, Escape or a click elsewhere closes it.
 - ✸: the gun panel's mode button switches a vehicle's second mode with the game's own switch times: siege of the hydraulic tank destroyers (Strv 103, UDES 03, Kunze Panzer and others), the turbine (CS-63, CS-52 C, Ogar, Vercingétorix, Char Mle. 75), Rapid of the French wheeled vehicles, the salvo of the British twin guns. The gun does not fire while it switches and the vehicle stops; the second mode brings its own circle, aiming, stabilisation and top speed.
