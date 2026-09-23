@@ -60,9 +60,10 @@
     this.aimShotCircle=null;this.aimReloadPart=null;this.aimHold=false;this.aimPinned=false;
     // The fun layer (user, 22.09). pinResult is the ballistic verdict of the line the pin was last cast
     // along - refreshPin has it anyway, and handing it out here is what keeps the page from casting a
-    // second ray for the same shot. markMeshes are the three instanced decal meshes every hit mark lives in,
-    // markSlots the ONE ring of 500 across them (see the Hitmarks block).
-    this.pinResult=null;this.hitMarks=false;this.markMeshes=null;this.markSlots=null;this.markCount=0;this.markNext=0;
+    // second ray for the same shot. markSets are the decal buffers, one group per vehicle PART holding one
+    // merged mesh per outcome, markSlots the ONE ring of 500 shots across all of them, markDrawn/markBuilt the
+    // parts' world matrices as drawn and as the engine was built (see the Hitmarks block).
+    this.pinResult=null;this.hitMarks=false;this.markSets=null;this.markMaterials=null;this.markSlots=null;this.markCount=0;this.markNext=0;this.markDrawn=null;this.markBuilt=null;
     // aimCentred: the aim held on the model centre while the page's Config popover is open (setAimCentre),
     // null otherwise; aimMarker the crosshair drawn there, in aimMarkerShape; aimSettleTimer the wait after a
     // +/- key before the held point is looked for again (settleAimSoon).
@@ -196,7 +197,7 @@
   Viewer.prototype.setDistance=function(value){if(!Number.isFinite(value))return;this.targetDistance=null;this.distance=Math.max(DISTANCE_MIN,Math.min(DISTANCE_MAX,value));this.render();};
   Viewer.limits={distanceMin:DISTANCE_MIN,distanceMax:DISTANCE_MAX};
   Viewer.prototype.saveDefaults=function(){var frame=this.framing();this.defaults={distance:this.distance,scale:Math.max(.1,Math.min(10,this.camera.zoom/(frame?frame.zoom:this.fitZoom)))};try{window.localStorage.setItem('armor-camera-defaults',JSON.stringify(this.defaults));return true;}catch(ignore){return false;}};
-  Viewer.prototype.clear=function(){this.dropTargets();this.clearLiveAim();this.clearHitMarks();this.pinResult=null;this.fitPending=false;this.shotPoints=null;this.recordedDistance=null;this.pinned=null;this.disposePin();this.pinCache=null;this.pinReticles=[];if(this.surface)this.surface.dispose();this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.gunAngle=0;this.savedAim=null;this.aimGroup=null;this.reticles=[];this.reticleLayer.replaceChildren();clearTimeout(this.turretTimer);this.turretTimer=null;this.turretPending=false;this.poseGeometries=null;this.poseBuilt=null;this.poseStale=false;this.spreadAim=null;this.hideSpread();clearTimeout(this.paintTimer);this.paintTimer=null;window.clearTimeout(this.aimSettleTimer);this.aimSettleTimer=null;window.cancelAnimationFrame(this.frameId);this.frameId=null;this.cancelHover();this.cancelOrbit();this.pendingPan=null;this.inspectKey=null;this.paintMesh=null;this.outline=null;this.outlineDepth=null;this.engine=null;this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.loadedData=null;this.paintedKey=null;this.samples=[];var disposed=new Set();this.root.traverse(function(o){var shared=!!(o.parent&&o.parent.type==='ArrowHelper'&&(o===o.parent.line||o===o.parent.cone));if(o.geometry&&!shared&&!disposed.has(o.geometry)){disposed.add(o.geometry);o.geometry.dispose();}if(o.material){(Array.isArray(o.material)?o.material:[o.material]).forEach(function(m){m.dispose();});}});while(this.root.children.length)this.root.remove(this.root.children[0]);this.materials=[];this.point=null;this.travel=null;this.render();};
+  Viewer.prototype.clear=function(){this.dropTargets();this.clearLiveAim();this.clearHitMarks();this.markDrawn=this.markBuilt=null;this.pinResult=null;this.fitPending=false;this.shotPoints=null;this.recordedDistance=null;this.pinned=null;this.disposePin();this.pinCache=null;this.pinReticles=[];if(this.surface)this.surface.dispose();this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.gunAngle=0;this.savedAim=null;this.aimGroup=null;this.reticles=[];this.reticleLayer.replaceChildren();clearTimeout(this.turretTimer);this.turretTimer=null;this.turretPending=false;this.poseGeometries=null;this.poseBuilt=null;this.poseStale=false;this.spreadAim=null;this.hideSpread();clearTimeout(this.paintTimer);this.paintTimer=null;window.clearTimeout(this.aimSettleTimer);this.aimSettleTimer=null;window.cancelAnimationFrame(this.frameId);this.frameId=null;this.cancelHover();this.cancelOrbit();this.pendingPan=null;this.inspectKey=null;this.paintMesh=null;this.outline=null;this.outlineDepth=null;this.engine=null;this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.loadedData=null;this.paintedKey=null;this.samples=[];var disposed=new Set();this.root.traverse(function(o){var shared=!!(o.parent&&o.parent.type==='ArrowHelper'&&(o===o.parent.line||o===o.parent.cone));if(o.geometry&&!shared&&!disposed.has(o.geometry)){disposed.add(o.geometry);o.geometry.dispose();}if(o.material){(Array.isArray(o.material)?o.material:[o.material]).forEach(function(m){m.dispose();});}});while(this.root.children.length)this.root.remove(this.root.children[0]);this.materials=[];this.point=null;this.travel=null;this.render();};
   Viewer.prototype.rebuild=function(){
     if(!this.loadedData)return;var T=THREE,self=this;this.samples=[];this.paintedKey=null;
     // A failed composition is retried on the next rebuild (pose or model) instead of staying off for good.
@@ -212,6 +213,8 @@
     if(this.paintMesh){this.paintMesh.geometry.dispose();this.paintMesh.geometry=geom;}else{var mat=new T.MeshBasicMaterial({vertexColors:true,side:T.DoubleSide});this.materials.push(mat);this.paintMesh=new T.Mesh(geom,mat);this.root.add(this.paintMesh);}
     this.updateOutline();
     this.capturePose();
+    // The parts' own frames for the Hitmarks: the engine and the drawn model now stand in the same pose.
+    this.markBuilt=this.markDrawn=this.markFrames(this.poseBuilt);this.poseHitMarks();
     this.render();
   };
   // The drawn pose, vertex by vertex, as the last full rebuild left it: a copy of every position and the runs of
@@ -326,7 +329,10 @@
   // Blue tint of every ricochet colour, 0 (off) .. 1.5; the Ricochet tint row of Settings.
   Viewer.prototype.setTint=function(value){var v=Number(value);this.tint=Math.max(0,Math.min(1.5,isFinite(v)?v:.5));this.draw();};
   Viewer.prototype.pointerRay=function(event){var rect=this.viewRect||this.container.getBoundingClientRect(),mouse=new THREE.Vector2((event.clientX-rect.left)/rect.width*2-1,-(event.clientY-rect.top)/rect.height*2+1),caster=new THREE.Raycaster();this.camera.updateMatrixWorld();caster.setFromCamera(mouse,this.camera);return caster;};
-  Viewer.prototype.pickPart=function(event){if(event.shiftKey||!this.paintMesh)return 1;var objects=[this.paintMesh];if(this.trackGroup)objects.push(this.trackMesh);var hits=this.pointerRay(event).intersectObjects(objects);if(!hits.length)return false;var sample=(hits[0].object===this.trackMesh?this.trackTriangles:this.samples)[hits[0].faceIndex];return sample?sample.part:1;};
+  Viewer.prototype.pickPart=function(event){if(event.shiftKey||!this.paintMesh)return 1;var objects=[this.paintMesh];if(this.trackGroup)objects.push(this.trackMesh);var hits=this.pointerRay(event).intersectObjects(objects);if(!hits.length)return false;var part=this.partOf(hits[0]);return part===undefined?1:part;};
+  // The part a raycast hit on the drawn model belongs to: the drawn meshes are built one entry of samples /
+  // trackTriangles per triangle, so the face index is the triangle's own record. undefined for anything else.
+  Viewer.prototype.partOf=function(hit){var list=hit.object===this.trackMesh?this.trackTriangles:this.samples,t=list&&list[hit.faceIndex];return t?t.part:undefined;};
   // The pose moves in two quiet steps - turretTo() and gunTo() only clamp and store - and every caller sends ONE
   // notification for the whole change once both are in (onTurret, or onGun when only the gun moved). A drag step
   // used to notify two or three times, each a full pass of the page's pose handler, the first of them with a gun
@@ -405,6 +411,7 @@
     });
     this.poseGeometries.forEach(function(record){Viewer.poseArray(record,delta);});
     if(this.surface&&this.surface.pose)this.surface.pose(delta);
+    this.markDrawn=this.markFrames(extra);this.poseHitMarks();   // the marks go with their turret and gun: two matrices, no vertex
     this.turretPending=false;this.poseStale=true;this.syncRecorded();
     return true;
   };
@@ -1179,7 +1186,7 @@
     var objects=this.paintMesh?[this.paintMesh]:[];if(this.trackGroup)objects.push(this.trackMesh);
     var hits=new T.Raycaster(origin,direction).intersectObjects(objects),hit=hits.length?hits[0]:null;
     var normal=hit&&hit.face?hit.face.normal.clone().transformDirection(hit.object.matrixWorld):null;
-    this.pinned={origin:origin,direction:direction,point:hit?hit.point.clone():point.clone(),normal:normal};
+    this.pinned={origin:origin,direction:direction,point:hit?hit.point.clone():point.clone(),normal:normal,part:hit?this.partOf(hit):undefined};
     this.aimPinned=true;   // this pin belongs to the emulated shot: dropping the shot releases it
     this.refreshPin(hit?hit.point:null);if(this.onPin)this.onPin(true);   // the same line was just cast above
     return true;
@@ -1216,6 +1223,11 @@
   // its own (user, 22.09, 22:50: "if it comes out longer, then longer"): the plate ends it. A mark stops
   // where the armour stops, never hangs over an edge, and never spills onto the next plate round a bend or
   // onto a plate behind, however long a grazing box grows (the slab, MARK_PLANE).
+  //
+  // A shot leaves a mark at EVERY plate its path met - a hole in each screen it went through, its own
+  // outcome where it ended, a skid where it glanced off and the plate it flew into next - all read out of
+  // the one ray the shot cast; and each mark lives in the PART it was laid on, so it turns with the turret
+  // and pitches with the gun (user, 22.09, 23:15; the two blocks after the cut below).
   //
   // What the game itself does, read from the NA 2.4.0.1 client (outputs/hitmarks-research-2026-09-22.md,
   // docs/KNOWLEDGE.md §9): its hit decals are GPU decals projected orthonormally with a 50-degree cut-off
@@ -1351,8 +1363,8 @@
     return markTextures;
   }
   Viewer.hitMarkTextures=markSheet;
-  // The page keeps what a mark was made of so a rebuilt scene can have its marks back, and it keeps no
-  // more of them than these meshes do. One number, asked for, never copied into the page.
+  // The page keeps what a shot's marks were made of so a rebuilt scene can have them back, and it keeps no
+  // more shots than the ring does. One number, asked for, never copied into the page.
   Viewer.prototype.hitMarkLimit=function(){return MARK_LIMIT;};
   // ---- cutting one decal out of the model ----------------------------------------------------------
   // The surfaces a decal may be cut from are exactly the meshes the shot itself was cast against (pinAt,
@@ -1364,6 +1376,9 @@
     if(viewer.trackMesh)list.push(viewer.trackMesh);
     return list;
   }
+  // The triangle records a surface was built from, one per three vertices (rebuild, updateTracks): where a
+  // triangle came from, its PART among it. null for a mesh made any other way.
+  function markTriangles(viewer,mesh){return mesh===viewer.paintMesh?viewer.samples:mesh===viewer.trackMesh?viewer.trackTriangles:null;}
   var markM4=null,markQuery=null,markMin=null,markMax=null,markTmp=null;
   function markScratch(){
     var T=THREE;
@@ -1376,24 +1391,32 @@
   // the triangles are walked once with a box reject each, which on the heaviest exported model is a few
   // thousand rejects, ONCE PER SHOT and never per frame (outputs/optimization-plan-2026-09-21.md, the page
   // frame: nothing here runs while the page stands still).
-  function markGather(mesh,lo,hi,out){
+  // ONE PART'S triangles only, when `part` is given (user, 22.09, 23:15): a mark belongs to the part it was
+  // laid on and turns with it, so it must stop at that part's edge like at any other - a mark on a mantlet
+  // flush with the turret face must not run onto the turret and be left behind when the gun pitches. The
+  // part is read from the triangle's own record (`parts`, one entry per three vertices); a mesh made any
+  // other way has none, and is not filtered.
+  function markGather(mesh,lo,hi,out,parts,part){
     var geometry=mesh&&mesh.geometry,position=geometry&&geometry.getAttribute?geometry.getAttribute('position'):null;
     if(!position||!position.array)return out;
     markScratch();
-    var world=mesh.matrixWorld,e=world.elements,tree=geometry.boundsTree;
+    var world=mesh.matrixWorld,e=world.elements,tree=geometry.boundsTree,index=geometry.index,idx=index?index.array:null;
+    var only=part!==undefined&&part!==null&&parts&&parts.length*3===position.count?part:null;
     markQuery.set(lo,hi).applyMatrix4(markM4.copy(world).invert());
     if(tree&&typeof tree.shapecast==='function'){
       var box=markQuery.clone();
       tree.shapecast({intersectsBounds:function(bounds){return bounds.intersectsBox(box);},
-        intersectsTriangle:function(tri){
+        intersectsTriangle:function(tri,at){
+          if(only!==null){var own=parts[((idx?idx[at*3]:at*3)/3)|0];if(!own||own.part!==only)return false;}
           markPush(out,e,tri.a.x,tri.a.y,tri.a.z);markPush(out,e,tri.b.x,tri.b.y,tri.b.z);markPush(out,e,tri.c.x,tri.c.y,tri.c.z);
           return false;}});
       return out;
     }
-    var array=position.array,index=geometry.index,idx=index?index.array:null;
-    var n=idx?idx.length:position.count,q=markQuery,i,a,b,c;
+    var array=position.array,n=idx?idx.length:position.count,q=markQuery,i,a,b,c,t;
     for(i=0;i+2<n;i+=3){
-      a=(idx?idx[i]:i)*3;b=(idx?idx[i+1]:i+1)*3;c=(idx?idx[i+2]:i+2)*3;
+      a=idx?idx[i]:i;
+      if(only!==null){t=parts[(a/3)|0];if(!t||t.part!==only)continue;}
+      a*=3;b=(idx?idx[i+1]:i+1)*3;c=(idx?idx[i+2]:i+2)*3;
       var ax=array[a],ay=array[a+1],az=array[a+2],bx=array[b],by=array[b+1],bz=array[b+2],cx=array[c],cy=array[c+1],cz=array[c+2];
       if(Math.min(ax,bx,cx)>q.max.x||Math.max(ax,bx,cx)<q.min.x)continue;
       if(Math.min(ay,by,cy)>q.max.y||Math.max(ay,by,cy)<q.min.y)continue;
@@ -1462,7 +1485,7 @@
   // The world box that holds the shot's box whichever way it is turned round the shell's line (its square
   // cross-section is bounded by size·√2/2 across the line), and the triangles in it, over every surface:
   // ONE pass over the model per shot.
-  function markCollect(viewer,point,dir,size,box){
+  function markCollect(viewer,point,dir,size,box,part){
     var lo=markMin,hi=markMax,k,d,e,p;
     for(k=0;k<3;k++){
       d=dir.getComponent(k);p=point.getComponent(k);
@@ -1470,16 +1493,16 @@
       lo.setComponent(k,p-e);hi.setComponent(k,p+e);
     }
     var tri=[],surfaces=markSurfaces(viewer),s;
-    for(s=0;s<surfaces.length;s++)markGather(surfaces[s],lo,hi,tri);
+    for(s=0;s<surfaces.length;s++)markGather(surfaces[s],lo,hi,tri,markTriangles(viewer,surfaces[s]),part);
     return tri;
   }
-  // ONE decal, cut out of the model. `mark` is the page's OWN record of one shot - {point, normal, from,
-  // dir, outcome, caliber, roll} - and the page hands back the very same object when it lays its kept marks
-  // on a scene the viewer has rebuilt; everything this reads comes out of that record and out of the
-  // geometry, never out of the camera of the moment, so a mark laid again is the SAME mark, vertex for
-  // vertex. Nothing is stored twice: the viewer keeps no copy of the record, the page no copy of this
-  // geometry. Returns null when the shot met no armour at all, or when its shell has no calibre in the
-  // record - then the page keeps no record either (the shot's verdict and damage stand all the same).
+  // ONE decal, cut out of the model. `mark` is one contact in WORLD coordinates - {point, normal, from, dir,
+  // outcome, caliber, roll, part} - which addHitMark makes out of the page's own record of a shot, and
+  // everything this reads comes out of it and out of the geometry, never out of the camera of the moment,
+  // so a contact laid again is the SAME decal, vertex for vertex. `part` keeps the cut to that part's own
+  // plates; without one every surface counts. Nothing is stored twice: the viewer keeps no copy of the
+  // record, the page no copy of this geometry. Returns null when the contact met no armour at all, or when
+  // its shell has no calibre in the record (the shot's verdict and damage stand all the same).
   Viewer.prototype.hitMarkGeometry=function(mark){
     if(!mark||!mark.point||!mark.normal)return null;
     var caliber=Number(mark.caliber);
@@ -1495,13 +1518,13 @@
     markScratch();
     // ONE pass over the model, through the box the record's own normal lays out; the facet found under the
     // point then gives the decal its normal, the side it is lifted to and the plane everything is cut to.
-    var asked=markBox(dir,hint,size),tri=markCollect(this,point,dir,size,asked);
+    var asked=markBox(dir,hint,size),tri=markCollect(this,point,dir,size,asked,mark.part);
     if(!tri.length)return null;
     var at=markFacet(tri,point),ref=markNormal(tri,at,new T.Vector3());
     if(ref.lengthSq()<1e-12)return null;
     var box=markBox(dir,ref,size);
     if(Math.abs(ref.dot(hint))<MARK_AGREE||box.depth>asked.depth+1e-5){
-      tri=markCollect(this,point,dir,size,box);
+      tri=markCollect(this,point,dir,size,box,mark.part);
       at=markFacet(tri,point);markNormal(tri,at,ref);
     }
     // WHICH WAY A DECAL FACES (user, 22.09: "the hit marks are not visible" - 0.7.25 left not one of them
@@ -1559,30 +1582,181 @@
             facing:n,across:right,along:up,size:size,depth:depth,plane:plane,reach:box.reach,
             incidence:Math.acos(box.cosI),triangles:tri.length/9};
   };
-  // ---- the three buffers ---------------------------------------------------------------------------
-  // ONE merged geometry per outcome - a mark's texture is its material, so a mesh cannot mix them - and ONE
-  // ring of MARK_LIMIT slots across all three, so the cap is on the marks and not on each shape separately.
-  // A mark is APPENDED to its outcome's buffer and only the new tail is uploaded; the buffer is rebuilt
-  // (in place, by one copyWithin) only when the ring evicts a mark out of the middle of it. Nothing at all
-  // happens per frame: a standing page draws three meshes that have not changed since the last shot.
+  // ---- every plate the shell met, from the verdict's own path (user, 22.09, 23:15) ----------------
+  // A shell meets more than one plate - a screen, a track, a skirt, then the main armour; or a plate that
+  // turns it away and the plate it flies into next - and each contact is a mark of its own, with its own
+  // outcome. All of them are read out of the ONE ray the shot has already cast (pinResult): the layers the
+  // verdict walked carry how far along the line each plate was met and the facet it was met on
+  // (ballistics.js walk), so nothing is cast, walked or evaluated a second time here.
+  //   a plate the shell went on past (a screen, a track)  - a hole: the penetration mark;
+  //   the plate the verdict ended on                       - the shot's own outcome, as the page rolled it;
+  //   a screen an HE shell died on short of the hull       - the stop, and nothing behind it;
+  //   a plate that turned the shell away                   - the ricochet mark. The page's engine FOLLOWS a
+  //     ricochet (ArmorBallistics ray(), the client rule since 9.3: the shell flies on along the mirrored line
+  //     with 75 % of its penetration) and judges the next contact, so that flight's plates are marked too;
+  //   the far face of a plate the shell went through       - nothing: it is folded into that plate.
+  // A shell that went through its screens and missed the hull leaves the holes and nothing else.
+  function markDot(a,b){return a[0]*b[0]+a[1]*b[1]+a[2]*b[2];}
+  function markAt(o,d,t){return [o[0]+d[0]*t,o[1]+d[1]*t,o[2]+d[2]*t];}
+  // The plates of one leg, the far face of each plate folded into it. The next layer of the same part and
+  // material met on a facet facing the other way is where the shell LEFT the plate it had just entered -
+  // told by the pair's own facets, so it holds whichever way the exporter wound the mesh. `at` maps every
+  // layer to its plate.
+  function markPlates(layers){
+    var plates=[],at=[],last=null,i,l;
+    for(i=0;i<layers.length;i++){
+      l=layers[i];
+      if(last&&last.part===l.part&&last.material===l.material&&last.normal&&l.normal&&markDot(last.normal,l.normal)<0){at.push(plates.length-1);last=null;continue;}
+      plates.push(l);at.push(plates.length-1);last=l;
+    }
+    return {plates:plates,at:at};
+  }
+  function markContact(out,part,point,normal,o,d,outcome){out.push({part:part,point:point,normal:normal,from:o,dir:d,outcome:outcome});}
+  // One leg along o + d·t: every plate before the one layer `end` names was passed - a hole each; a plate
+  // with no armour at all is not armour and gets none - and that plate gets `outcome`. end < 0: holes only.
+  function markLeg(out,layers,o,d,end,outcome){
+    var folded=markPlates(layers||[]),plates=folded.plates,stop=end>=0?folded.at[end]:plates.length,i,l;
+    for(i=0;i<plates.length&&i<=stop;i++){
+      l=plates[i];
+      if(!Number.isFinite(l.distance)||!l.normal)continue;
+      if(i===stop){markContact(out,l.part,markAt(o,d,l.distance),l.normal,o,d,outcome);break;}
+      if(l.nominal>0)markContact(out,l.part,markAt(o,d,l.distance),l.normal,o,d,'pen');
+    }
+  }
+  // Every contact of one shot, in the coordinates of the engine that judged it. `line` is the pinned line -
+  // the first leg, the one a bounce leaves - and `verdict` what the page rolled for the shot ({outcome, u}):
+  // it decides nothing here but which plate the shell ended on. The outcome of the shot itself is the
+  // page's (funVerdict), untouched; only the marks multiply.
+  function markContacts(r,line,verdict){
+    var out=[];
+    if(!r||!line||!line.origin||!line.direction)return out;
+    var outcome=verdict&&verdict.outcome?verdict.outcome:'unknown',u=verdict?Number(verdict.u):NaN;
+    var b=r.bounce,o=r.origin,d=r.direction,layers=r.layers||[],last=layers.length-1,end,i;
+    if(b){
+      var o1=line.origin.toArray(),d1=line.direction.clone().normalize().toArray();
+      markLeg(out,b.layers,o1,d1,-1,'pen');
+      if(b.point&&b.normal)markContact(out,b.part,b.point,b.normal,o1,d1,'ricochet');
+    }
+    if(!o||!d)return out;
+    if(r.reason==='penetration'&&last>=0){
+      end=last;
+      // funVerdict: a roll at or above the screen-pass chance is a shell stopped on a screen. The pass
+      // chances of successive screens nest, so it died on the first screen whose own chance it did not beat.
+      var pass=r.screenPass===undefined||r.screenPass===null?1:r.screenPass;
+      if(outcome==='no-pen'&&u>=pass){
+        end=-1;
+        for(i=0;i<last;i++)if(Number.isFinite(layers[i].through)&&u>=layers[i].through/100){end=i;break;}
+        if(end<0)end=last>0?last-1:last;
+      }
+      markLeg(out,layers,o,d,end,end===last?outcome:'no-pen');
+    }else if(r.reason==='ricochet'&&r.hit){
+      markLeg(out,layers,o,d,-1,'pen');
+      markContact(out,r.hit.triangle.part,markAt(o,d,r.hit.distance),r.hit.triangle.normal,o,d,'ricochet');
+    }else if(r.reason==='screen'&&last>=0)markLeg(out,layers,o,d,last,'no-pen');
+    else if(r.reason==='no-hull')markLeg(out,layers,o,d,-1,'pen');
+    return out;
+  }
+  // ---- each mark lives in its PART (user, 22.09, 23:15) -----------------------------------------------
+  // A mark on the turret turns with the turret and one on the gun pitches with the gun. So a mark is kept in
+  // the coordinates of the part it was laid on: the part's world matrix is the mirror the engine puts on z,
+  // the pose the turret and gun are turned to (poseExtra), the part's own recorded transform and the mirror
+  // again - so the local coordinates are the part's own model coordinates, the same on every hit of this
+  // vehicle whatever pose that hit recorded, and a proper rotation, never a mirror. Every part with marks
+  // has ONE group in the scene carrying that matrix, and its marks are children of it: turning the turret
+  // sets two matrices (previewPose while the drag lasts, rebuild when it settles) and moves no vertex; the
+  // page's frame does nothing at all. markDrawn is the pose on screen, markBuilt the one the engine - and so
+  // every contact of pinResult - was built in; they differ only while a drag is still being previewed.
+  Viewer.prototype.markFrames=function(extra){
+    var T=THREE,parts=(((this.loadedData||{}).hit||{}).target||{}).parts||[],mirror=new T.Matrix4().makeScale(1,1,-1),out={};
+    parts.forEach(function(p){
+      if(!p||!p.transform)return;
+      var m=new T.Matrix4().fromArray(p.transform);
+      if(extra&&extra[p.id])m.premultiply(extra[p.id]);
+      out[p.id]=m.premultiply(mirror).multiply(mirror);
+    });
+    return out;
+  };
+  // A part's frame, or null for the world itself (a contact with no part, a model with no transforms).
+  Viewer.prototype.markFrame=function(part,built){
+    var frames=built?this.markBuilt:this.markDrawn;
+    return part===undefined||part===null||!frames?null:frames[part]||null;
+  };
+  // Every group onto the pose now drawn. Called only when the pose changes, never per frame.
+  Viewer.prototype.poseHitMarks=function(){
+    var sets=this.markSets,key,set,frame;
+    if(!sets)return;
+    for(key in sets){
+      set=sets[key];frame=this.markFrame(set.part,false);
+      if(frame)set.group.matrix.copy(frame);else set.group.matrix.identity();
+      set.group.matrixWorldNeedsUpdate=true;
+    }
+  };
+  function markVector(v){return v&&v.isVector3?v.clone():new THREE.Vector3().fromArray(v);}
+  // One contact moved by a matrix (or kept as it is, for null) - points as points, directions as directions.
+  function markMoved(c,m){
+    var point=markVector(c.point),normal=markVector(c.normal),from=c.from?markVector(c.from):null,dir=c.dir?markVector(c.dir):null;
+    if(m){point.applyMatrix4(m);normal.transformDirection(m);if(from)from.applyMatrix4(m);if(dir)dir.transformDirection(m);}
+    return {part:c.part,point:point,normal:normal,from:from,dir:dir,outcome:c.outcome};
+  }
+  // ONE SHOT, as the record the page keeps (funMark): {caliber, roll, marks}, one entry of `marks` per
+  // contact - its part, its own outcome, and its point, normal, line and origin in that PART's coordinates -
+  // so the record laid again after the turret has turned, or on another hit of the same vehicle, lands on the
+  // very same spot of the very same plate. `verdict` is the page's roll for the shot ({outcome, u}), `roll`
+  // the turn a square-on decal gets round its line, drawn by the page once for the whole shot. A shot the
+  // path could not place at all - no shell, no armour table - keeps the one mark it always had, at the
+  // pinned point on the drawn model, with the verdict's outcome (the muted scrape of an unjudged shot).
+  Viewer.prototype.hitMarkShot=function(verdict,caliber,roll){
+    var pin=this.pinned;
+    if(!pin||!pin.point)return null;
+    var list=markContacts(this.pinResult,pin,verdict),marks=[],i,frame;
+    for(i=0;i<list.length;i++){frame=this.markFrame(list[i].part,true);marks.push(markMoved(list[i],frame?new THREE.Matrix4().copy(frame).invert():null));}
+    if(!marks.length&&pin.normal){
+      frame=this.markFrame(pin.part,false);
+      marks.push(markMoved({part:pin.part,point:pin.point,normal:pin.normal,from:pin.origin,dir:pin.direction,
+        outcome:verdict&&verdict.outcome?verdict.outcome:'unknown'},frame?new THREE.Matrix4().copy(frame).invert():null));
+    }
+    return marks.length?{caliber:caliber,roll:roll,marks:marks}:null;
+  };
+  // ---- the buffers: one merged geometry per PART and outcome -------------------------------------------
+  // A mark's texture is its material, so a mesh cannot mix outcomes, and its part is its group, so a mesh
+  // cannot mix parts: one merged geometry per (part x outcome), made when that part first takes a mark of
+  // that outcome - a hull that was only ever pierced has one mesh. ONE ring of MARK_LIMIT SHOTS runs across
+  // all of them: every contact of a shot is a piece in its own buffer, and the shot is one slot, so the cap
+  // is on the shots and an evicted shot takes every one of its pieces with it. A piece is APPENDED to its
+  // buffer and only the new tail is uploaded; a buffer is rebuilt (in place, by one copyWithin) only when
+  // the ring evicts a piece out of the middle of it. Nothing at all happens per frame: a standing page draws
+  // meshes that have not changed since the last shot, and an empty one is not drawn at all.
   // DEPTH: the map is composed as a full-screen quad that writes no depth, so a depth-tested decal is not
   // hidden by it; renderOrder 3 puts the marks after that quad (0) and after the screens (1, 2) and before
   // the tracers (4), the recorded rings (12) and the live ring (14). With the map off the painted mesh
   // does write depth, and MARK_LIFT plus polygonOffset keep the decal in front of the plate it lies on.
   // vertexColors AND a colour attribute: the muted tint of an unjudged shot is written into the vertices
   // themselves, which is the one tint there is (0.7.26 lost its palette by leaving vertexColors off).
-  Viewer.prototype.hitMarkMeshes=function(){
-    if(this.markMeshes)return this.markMeshes;
-    var T=THREE,sheet=markSheet(),self=this,meshes={};
-    MARK_KINDS.forEach(function(kind){
-      var material=new T.MeshBasicMaterial({map:sheet[kind],vertexColors:true,transparent:true,opacity:1,
-        depthTest:true,depthWrite:false,polygonOffset:true,polygonOffsetFactor:-4,polygonOffsetUnits:-4,toneMapped:false});
-      var mesh=new T.Mesh(markBuffer(null,MARK_START),material);
-      mesh.renderOrder=3;mesh.frustumCulled=false;
-      mesh.userData.chunks=[];mesh.userData.vertices=0;
-      meshes[kind]=mesh;self.scene.add(mesh);
-    });
-    this.markMeshes=meshes;this.markSlots=new Array(MARK_LIMIT);this.markCount=0;this.markNext=0;
+  // The three materials are shared by every part: one per outcome, wearing its texture.
+  function markKey(part){return part===undefined||part===null?'w':String(part);}
+  Viewer.prototype.markSet=function(part){
+    var sets=this.markSets||(this.markSets={}),key=markKey(part);
+    if(sets[key])return sets[key];
+    var group=new THREE.Group(),frame=this.markFrame(part,false);
+    group.matrixAutoUpdate=false;if(frame)group.matrix.copy(frame);group.matrixWorldNeedsUpdate=true;
+    this.scene.add(group);
+    return (sets[key]={part:part,group:group,meshes:{}});
+  };
+  Viewer.prototype.markMesh=function(set,kind){
+    if(set.meshes[kind])return set.meshes[kind];
+    var materials=this.markMaterials||(this.markMaterials={});
+    var material=materials[kind]||(materials[kind]=new THREE.MeshBasicMaterial({map:markSheet()[kind],vertexColors:true,transparent:true,opacity:1,
+      depthTest:true,depthWrite:false,polygonOffset:true,polygonOffsetFactor:-4,polygonOffsetUnits:-4,toneMapped:false}));
+    var mesh=new THREE.Mesh(markBuffer(null,MARK_START),material);
+    mesh.renderOrder=3;mesh.frustumCulled=false;mesh.visible=false;
+    mesh.userData.chunks=[];mesh.userData.vertices=0;
+    set.meshes[kind]=mesh;set.group.add(mesh);
+    return mesh;
+  };
+  // The three meshes of one part (the world's own set without one), made if they are not there yet.
+  Viewer.prototype.hitMarkMeshes=function(part){
+    var set=this.markSet(part),self=this,meshes={};
+    MARK_KINDS.forEach(function(kind){meshes[kind]=self.markMesh(set,kind);});
     return meshes;
   };
   // A buffer for `size` vertices, carrying over what an older one held. Growing means a NEW geometry and a
@@ -1618,52 +1792,99 @@
   }
   // Which outcome a mark wears. Anything the page could not judge takes the scrape, muted.
   function markKind(outcome){return outcome==='pen'?'pen':outcome==='ricochet'?'ricochet':'no-pen';}
-  Viewer.prototype.addHitMark=function(mark){
-    var piece=this.hitMarkGeometry(mark);
-    if(!piece)return false;
-    var T=THREE,kind=markKind(mark.outcome),meshes=this.hitMarkMeshes(),mesh=meshes[kind];
-    var slot=this.markNext,old=this.markSlots[slot];
-    if(old)this.dropHitMark(old.kind,old.index);
-    var at=mesh.userData.vertices,need=at+piece.count,grown=need>mesh.geometry.getAttribute('position').count;
-    if(grown){var size=mesh.geometry.getAttribute('position').count;while(size<need)size*=2;mesh.geometry=markBuffer(mesh.geometry,size);}
-    var geometry=mesh.geometry,colour=new T.Color(mark.outcome==='pen'||mark.outcome==='no-pen'||mark.outcome==='ricochet'?MARK_PLAIN:MARK_MUTED);
-    geometry.getAttribute('position').array.set(piece.position,at*3);
-    geometry.getAttribute('normal').array.set(piece.normal,at*3);
-    geometry.getAttribute('uv').array.set(piece.uv,at*2);
+  // A piece is cut in world coordinates, off the model as it is drawn, and kept in its part's own: the
+  // inverse of the very matrix its group is drawn with. With no frame it is written as it was cut, bit for
+  // bit. A frame that mirrors would turn the winding inside out, so each triangle is then written the
+  // other way round (0, 2, 1) and still faces the side the shot came from.
+  var MARK_FLIP=[0,2,1];
+  function markWrite(geometry,at,piece,frame){
+    var pos=geometry.getAttribute('position').array,nrm=geometry.getAttribute('normal').array,uv=geometry.getAttribute('uv').array;
+    if(!frame){pos.set(piece.position,at*3);nrm.set(piece.normal,at*3);uv.set(piece.uv,at*2);return;}
+    markScratch();
+    var inv=markM4.copy(frame).invert(),e=inv.elements,flip=inv.determinant()<0,P=piece.position,N=piece.normal,i,k,s,d,x,y,z,l;
+    for(i=0;i<piece.count;i++){
+      k=flip?i-i%3+MARK_FLIP[i%3]:i;s=k*3;d=(at+i)*3;
+      x=P[s];y=P[s+1];z=P[s+2];
+      pos[d]=e[0]*x+e[4]*y+e[8]*z+e[12];pos[d+1]=e[1]*x+e[5]*y+e[9]*z+e[13];pos[d+2]=e[2]*x+e[6]*y+e[10]*z+e[14];
+      x=N[s];y=N[s+1];z=N[s+2];
+      var nx=e[0]*x+e[4]*y+e[8]*z,ny=e[1]*x+e[5]*y+e[9]*z,nz=e[2]*x+e[6]*y+e[10]*z;l=Math.sqrt(nx*nx+ny*ny+nz*nz)||1;
+      nrm[d]=nx/l;nrm[d+1]=ny/l;nrm[d+2]=nz/l;
+      uv[(at+i)*2]=piece.uv[k*2];uv[(at+i)*2+1]=piece.uv[k*2+1];
+    }
+  }
+  // ONE SHOT on the model: every contact of the record is cut out of the drawn model in the pose of the
+  // moment (its part's frame puts the kept coordinates back into the world) and appended, as a piece, to
+  // the buffer of its part and outcome - and the whole shot takes ONE slot of the ring. A record of one
+  // contact with no `marks` list is its own contact. Returns false when not one contact met armour, or the
+  // shell had no calibre: then there is nothing to keep.
+  Viewer.prototype.addHitMark=function(shot){
+    if(!shot)return false;
+    var list=Array.isArray(shot.marks)?shot.marks:[shot],cut=[],i,c,frame,world,piece;
+    for(i=0;i<list.length;i++){
+      c=list[i];frame=this.markFrame(c.part,false);
+      if(c===shot&&!frame)world=c;   // already in the world, as it stands
+      else{world=markMoved(c,frame);world.caliber=c.caliber!==undefined?c.caliber:shot.caliber;world.roll=c.roll!==undefined?c.roll:shot.roll;}
+      piece=this.hitMarkGeometry(world);
+      if(piece)cut.push({part:c.part,outcome:c.outcome,piece:piece,frame:frame});
+    }
+    if(!cut.length)return false;
+    if(!this.markSlots){this.markSlots=new Array(MARK_LIMIT);this.markCount=0;this.markNext=0;}
+    var slot=this.markNext;
+    if(this.markSlots[slot])this.dropHitMark(slot);
+    for(i=0;i<cut.length;i++)cut[i]=this.markAppend(slot,cut[i]);
+    this.markSlots[slot]=cut;
+    this.markNext=(slot+1)%MARK_LIMIT;this.markCount++;
+    this.draw();return true;
+  };
+  Viewer.prototype.markAppend=function(slot,c){
+    var set=this.markSet(c.part),mesh=this.markMesh(set,markKind(c.outcome)),piece=c.piece;
+    var at=mesh.userData.vertices,need=at+piece.count,room=mesh.geometry.getAttribute('position').count,grown=need>room;
+    if(grown){while(room<need)room*=2;mesh.geometry=markBuffer(mesh.geometry,room);}
+    var geometry=mesh.geometry,colour=new THREE.Color(c.outcome==='pen'||c.outcome==='no-pen'||c.outcome==='ricochet'?MARK_PLAIN:MARK_MUTED);
+    markWrite(geometry,at,piece,c.frame);
     var tint=geometry.getAttribute('color').array,i;
     for(i=at;i<need;i++){tint[i*3]=colour.r;tint[i*3+1]=colour.g;tint[i*3+2]=colour.b;}
     markTouch(geometry,at,piece.count,grown);
-    mesh.userData.vertices=need;geometry.setDrawRange(0,need);
-    mesh.userData.chunks.push({slot:slot,start:at,count:piece.count});
-    this.markSlots[slot]={kind:kind,index:mesh.userData.chunks.length-1};
-    this.markNext=(slot+1)%MARK_LIMIT;this.markCount=Math.min(MARK_LIMIT,this.markCount+1);
-    this.draw();return true;
+    mesh.userData.vertices=need;geometry.setDrawRange(0,need);mesh.visible=true;
+    var chunk={slot:slot,start:at,count:piece.count,mesh:mesh};
+    mesh.userData.chunks.push(chunk);
+    return chunk;
   };
-  // The oldest mark of the ring leaves its own buffer: everything after it slides down by one copyWithin an
-  // attribute, and the slots that pointed past it are told where their marks went. The buffer keeps its
-  // room, so a burst past the cap allocates nothing at all.
-  Viewer.prototype.dropHitMark=function(kind,index){
-    var mesh=this.markMeshes[kind],chunks=mesh.userData.chunks,gone=chunks[index];
-    if(!gone)return;
-    var geometry=mesh.geometry,live=mesh.userData.vertices,from=gone.start+gone.count,slots=this.markSlots,i;
+  // A shot leaves the ring: each of its pieces leaves its own buffer - everything after it slides down by
+  // one copyWithin an attribute - and a buffer left empty is no longer drawn. The buffers keep their room,
+  // so a burst past the cap allocates nothing at all.
+  function markCut(gone){
+    var mesh=gone.mesh,chunks=mesh.userData.chunks,index=chunks.indexOf(gone);
+    if(index<0)return;
+    var geometry=mesh.geometry,live=mesh.userData.vertices,from=gone.start+gone.count,i;
     MARK_ATTRIBUTES.forEach(function(name){
       var a=geometry.getAttribute(name),items=a.itemSize;
       if(live>from)a.array.copyWithin(gone.start*items,from*items,live*items);
     });
     markTouch(geometry,0,0,true);
     chunks.splice(index,1);
-    for(i=index;i<chunks.length;i++){chunks[i].start-=gone.count;if(slots&&slots[chunks[i].slot])slots[chunks[i].slot].index=i;}
-    mesh.userData.vertices=live-gone.count;geometry.setDrawRange(0,mesh.userData.vertices);
+    for(i=index;i<chunks.length;i++)chunks[i].start-=gone.count;
+    mesh.userData.vertices=live-gone.count;geometry.setDrawRange(0,mesh.userData.vertices);mesh.visible=mesh.userData.vertices>0;
+  }
+  Viewer.prototype.dropHitMark=function(slot){
+    var slots=this.markSlots,pieces=slots&&slots[slot];
+    if(!pieces)return false;
+    pieces.forEach(markCut);
+    slots[slot]=null;this.markCount=Math.max(0,this.markCount-1);
+    return true;
   };
-  // The three meshes go, the three textures stay: they belong to the page, not to this model.
+  // The groups, their meshes and the three materials go; the three textures stay: they belong to the page,
+  // not to this model.
   Viewer.prototype.clearHitMarks=function(){
-    var meshes=this.markMeshes,self=this;
-    this.markCount=0;this.markNext=0;this.markSlots=null;
-    if(!meshes)return false;
-    MARK_KINDS.forEach(function(kind){
-      var mesh=meshes[kind];self.scene.remove(mesh);mesh.geometry.dispose();mesh.material.dispose();
+    var sets=this.markSets,materials=this.markMaterials,self=this;
+    this.markCount=0;this.markNext=0;this.markSlots=null;this.markSets=null;this.markMaterials=null;
+    if(materials)MARK_KINDS.forEach(function(kind){if(materials[kind])materials[kind].dispose();});
+    if(!sets)return false;
+    Object.keys(sets).forEach(function(key){
+      var set=sets[key];self.scene.remove(set.group);
+      MARK_KINDS.forEach(function(kind){if(set.meshes[kind])set.meshes[kind].geometry.dispose();});
     });
-    this.markMeshes=null;this.draw();return true;
+    this.draw();return true;
   };
   // With the mode on, an emulated shot leaves a Hitmark instead of the big cross (refreshPin). The
   // recorded hit's own crosses and a manual Alt + click pin keep theirs: only the emulated shot changes.

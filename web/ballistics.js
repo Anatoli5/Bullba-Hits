@@ -365,7 +365,10 @@
       // plate; it never restarts the decay (user, 19.09: a second screen in the same gap used to raise the chance).
       if(jet)remaining=Math.max(0,remaining-jetRate*Math.max(0,hit.distance-jetStart));
       var plate=effective(a,cos,s);
-      layers.push({part:t.part,material:t.name,nominal:a.armor,effective:plate,angle:Math.acos(clamp(cos,0,1))/RAD,main:a.vehicleDamageFactor>EPS});
+      // `distance` along this leg and the struck facet's `normal` (a reference, never copied) say WHERE the plate was
+      // met: the Hitmarks lay one mark at every plate of the verdict's own path from them, with no second ray.
+      layers.push({part:t.part,material:t.name,nominal:a.armor,effective:plate,angle:Math.acos(clamp(cos,0,1))/RAD,main:a.vehicleDamageFactor>EPS,
+        distance:hit.distance,normal:t.normal});
       if(a.vehicleDamageFactor>EPS){
         return {chance:chance(remaining,plate,s.penetration,s.randomization,s.randomizationType),reason:'penetration',
           effective:s.penetration-remaining+plate,nominal:a.armor,angle:layers[layers.length-1].angle,layers:layers,distance:hit.distance,screenPass:screenPass};
@@ -376,6 +379,7 @@
         // thresholds of successive screens nest, so the smallest chance is the chance to pass them all.
         var through=chance(remaining,plate,s.penetration,s.randomization,s.randomizationType);
         if(through!==null)screenPass=Math.min(screenPass,through/100);
+        layers[layers.length-1].through=through; // which screen a shell stopped short of the hull died on (Hitmarks)
         remaining-=plate*3; // Modern HE shield penalty
       }else remaining-=plate;
       if(a.collideOnceOnly)ignored[key]=true;
@@ -421,7 +425,7 @@
         var point=[o[0]+d[0]*h.distance,o[1]+d[1]*h.distance,o[2]+d[2]*h.distance];
         var next=Object.assign({},s,{penetration:s.penetration*(1-s.ricochetLoss),ricocheted:true});
         var second=engine.ray([point[0]+out[0]*1e-3,point[1]+out[1]*1e-3,point[2]+out[2]*1e-3],out,next);
-        second.bounce={point:point,normal:n,direction:out,nominal:r.nominal,angle:r.angle,penetration:next.penetration,loss:s.ricochetLoss,layers:r.layers};
+        second.bounce={point:point,normal:n,direction:out,nominal:r.nominal,angle:r.angle,penetration:next.penetration,loss:s.ricochetLoss,layers:r.layers,part:h.triangle.part};
         return second;
       }
       return r;

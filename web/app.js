@@ -2895,8 +2895,9 @@
   var hpMax = 0, hpLeft = 0, hpRoll = '', hpTitleKey = '', hpKey = '', hpPressed = '';
   // What the Hitmarks are made of, kept so they can be laid again on a scene the viewer has rebuilt under
   // the SAME vehicle: viewer.load() drops everything the viewer holds, and picking another shooter loads
-  // the model again although the target has not changed. ONE record per mark (funMark), handed straight to
-  // the viewer and kept as it is - nothing about a mark is worked out or stored twice.
+  // the model again although the target has not changed. ONE record per SHOT (funMark) - every plate it
+  // met, each in the coordinates of its own part - handed straight to the viewer and kept as it is:
+  // nothing about a mark is worked out or stored twice.
   var funMarks = [];
   // The spread of the damage roll. The shell carries its own `damageRandomization` (0.25 on the stock
   // shells, 0.12 in the Onslaught records), and shellAt puts it on the shell object for a saved candidate
@@ -2916,6 +2917,8 @@
   // hull when it beats the main plate too. So a uniform u below `chance` is a penetration, u between
   // `chance` and the screen-pass chance is a non-penetration on the main armour (the page's HE law gives
   // what that is worth, `nonPen`), and above it the shell was stopped on a screen and does nothing at all.
+  // `u` rides along with the verdict so the Hitmarks can tell WHICH screen stopped a shell (the first whose
+  // own pass chance the roll did not beat); nothing else reads it.
   function funVerdict(r, shell) {
     if (!r) return {outcome: FUN_UNKNOWN, base: 0};
     if (r.reason === 'ricochet') return {outcome: FUN_RICOCHET, base: 0};
@@ -2924,8 +2927,8 @@
     var p = Math.max(0, Math.min(1, r.chance / 100));
     var pass = r.screenPass === undefined || r.screenPass === null ? 1 : r.screenPass;
     var u = rng();
-    if (u < p) return {outcome: FUN_PEN, base: shell && shell.alpha > 0 ? shell.alpha : 0};
-    return {outcome: FUN_NONE, base: u < pass && r.nonPen > 0 ? r.nonPen : 0};
+    if (u < p) return {outcome: FUN_PEN, base: shell && shell.alpha > 0 ? shell.alpha : 0, u: u};
+    return {outcome: FUN_NONE, base: u < pass && r.nonPen > 0 ? r.nonPen : 0, u: u};
   }
   // A Hitmark carries NO colour of the chance palette (user, 22.09: the discs of 0.7.26 were painted in the
   // very colours of the hit map and melted into it). The outcome is handed to the viewer as it stands and
@@ -2943,25 +2946,25 @@
       hpLeft = Math.max(0, hpLeft - damage);
       hpRoll = 'Last shot: ' + FUN_WORDS[v.outcome] + (damage > 0 ? ', ' + hpNumber(damage) + ' HP' : ', no damage') + '.';
     }
-    if (pin && pin.point) funMark(pin, v.outcome, shell);
+    if (pin && pin.point) funMark(v, shell);
     paintFun();
   }
-  // One Hitmark: ONE record, made here, handed to the viewer to draw and kept as it is so a scene the
-  // viewer rebuilds can have the very same mark back - the point, the recorded normal, the outcome the
-  // texture is chosen by, the shell's calibre the footprint is taken from (0.7 of it, no floor), where the
-  // shot came from and the line it came along (the decal is PROJECTED along that line, so a mark met at an
-  // angle is stretched along the plate for as long as the plate lasts), and the roll that turns a square-on
-  // mark round that line so a burst does not stamp identical copies. The roll is drawn HERE, once, and
-  // travels with the mark: a mark laid again must be the same mark, vertex for vertex, not a freshly turned one.
-  // A shot that met no armour at all has nothing to cut a decal out of, and a shell with no calibre in the
-  // record has no size to cut one at: the viewer refuses both, and then nothing is kept either - the shot's
-  // verdict and its damage above stand all the same. The cap is the viewer's own, asked for, not copied.
-  function funMark(pin, outcome, shell) {
-    var caliber = shell && Number(shell.caliber) > 0 ? Number(shell.caliber) : 0;
-    var mark = {point: pin.point, normal: pin.normal, from: pin.origin, dir: pin.direction,
-                outcome: outcome, caliber: caliber, roll: rng() * Math.PI * 2};
-    if (!viewer || !viewer.addHitMark || !viewer.addHitMark(mark)) return;
-    funMarks.push(mark);
+  // One shot's Hitmarks: ONE record, made by the viewer out of the ray this shot has already cast (every
+  // plate the path met - a hole in each screen passed, this shot's outcome where it ended, a skid where it
+  // glanced off and the plate it flew into next - each with its part and in that part's own coordinates, so
+  // the marks turn with the turret and gun and land on the same spot when laid again), handed to the viewer
+  // to draw and kept as it is so a scene the viewer rebuilds can have the very same marks back. The verdict
+  // goes in as rolled; the shell's calibre gives the footprint (0.7 of it, no floor); the roll that turns a
+  // square-on mark round its line is drawn HERE, once, and travels with the record: a mark laid again must
+  // be the same mark, vertex for vertex, not a freshly turned one. A shot that met no armour at all has
+  // nothing to cut a decal out of, and a shell with no calibre in the record has no size to cut one at: the
+  // viewer refuses both, and then nothing is kept either - the shot's verdict and its damage above stand all
+  // the same. All the plates of one shot are ONE entry of the cap, which is the viewer's own, asked for.
+  function funMark(v, shell) {
+    var caliber = shell && Number(shell.caliber) > 0 ? Number(shell.caliber) : 0, roll = rng() * Math.PI * 2;
+    var shot = viewer && viewer.hitMarkShot ? viewer.hitMarkShot(v, caliber, roll) : null;
+    if (!shot || !viewer.addHitMark || !viewer.addHitMark(shot)) return;
+    funMarks.push(shot);
     var cap = viewer.hitMarkLimit ? viewer.hitMarkLimit() : funMarks.length;
     while (funMarks.length > cap) funMarks.shift();
   }
