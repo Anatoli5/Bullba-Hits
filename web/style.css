@@ -188,6 +188,18 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 .aim-gun-heat-fill{display:block;height:100%;width:0;border-radius:3px;background:#78aad2}
 .aim-gun-heat-warn{position:absolute;top:-2px;bottom:-2px;left:94%;width:1px;background:rgba(234,195,110,.85)}
 .aim-gun-heat[data-locked="1"]{border-color:var(--red);box-shadow:0 0 0 1px rgba(251,133,128,.35)}
+/* The tier-XI mode button under ✸ (BACKLOG 37): ONE button in the gun panel, the page's lit switch (.swap-roles) at the
+   panel's size, a glyph per mechanic and every word in its tooltip. Lit while the mode or ability is on; dashed while
+   something runs down (a switch, a cooldown, a deployment, the charges building); a gold ring while an effect of its own
+   runs beside the mode (the Szakal's fight ability, a Borkenkäfer mark on the target); a passive one (stacks, fury)
+   takes no press; dimmed for a mechanic the emulation does not run - the tooltip says why. */
+.aim-gun>.aim-gun-mech{padding:3px 7px;font-size:14px}
+.aim-gun>.aim-gun-mech[data-busy="1"]{border-style:dashed}
+.aim-gun>.aim-gun-mech[data-glow="1"]{box-shadow:0 0 0 1px var(--gold)}
+.aim-gun>.aim-gun-mech[data-passive="1"]{cursor:default}
+.aim-gun>.aim-gun-mech[data-passive="1"]:hover{border-color:rgba(157,174,191,.55);background:rgba(23,35,48,.15)}
+.aim-gun>.aim-gun-mech[data-passive="1"][aria-pressed=true]:hover{border-color:var(--gold);background:#302b23}
+.aim-gun>.aim-gun-mech[aria-disabled=true]:not([data-passive="1"]){opacity:.5;cursor:default}
 /* “Configuration ▾” beside the Shooter tile: its popover opens upward, over the scene. Nothing is printed
    inside the button any more (user, 22.09): a battle whose rules the client data does not give, and a kind of
    equipment the vehicle's own lock fixes, are said in the button's own tooltip. */

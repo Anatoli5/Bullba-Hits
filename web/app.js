@@ -588,7 +588,7 @@
     shellAssumed=-1;shellAssumedWhy='';
     if(shotContext.index>=0)choice.value='saved:'+shotContext.index;
     else{
-      var guess=ArmorShotContext.assume?ArmorShotContext.assume(candidates,shotContext.kind,hit&&hit.damage,shotContext.range):{index:-1,reason:''};
+      var guess=ArmorShotContext.assume?ArmorShotContext.assume(candidates,shotContext.kind,hit&&hit.damage,shotContext.range,shotContext.mark):{index:-1,reason:''};
       shellAssumed=guess.index;shellAssumedWhy=guess.reason||'';
       // Why the record could not name the shell comes before how the page picked one: the two reasons the
       // resolver knows (22.09) are worth more than "the deepest penetration" - the shot's own ballistics
@@ -1063,6 +1063,10 @@
         ' m at 100 m). Under ✸ the emulation applies it for ' + aimNum(dual.delay) + ' s after every round - that length is this page’s assumption.'
         : ' It has dual accuracy: the circle right after a shot follows a law of its own, which this record does not carry the numbers of.';
     }
+    if (a && Array.isArray(a.gunMechanics) && a.gunMechanics.indexOf('chargeableBurst') >= 0) {
+      extra += ' Its burst comes only in the Burst mode of its chargeableBurst: under ✸ the mode button beside this switches it.';
+    }
+    if (a && a.secondaryFrom) extra += ' This is the vehicle’s second gun, taken up with the ✸ mode button.';
     load.title = AIM_GUN_LOAD_TITLE + extra;
     load.setAttribute('data-mechanics', kind || 'unknown');
   }
@@ -2552,15 +2556,20 @@
   // precedence the shell's mode already uses (shot-context.js). With or without ✸ (23.09: the recorded ring of a
   // siege shot is the siege circle too); for every record without the block, the recorded block exactly as before. The configurator reads the mode block with the recorded
   // block's provenance (aimFrom, compactFactors): both come from the same descriptor and the same devices.
+  // `want` (BACKLOG 37): the mode the ✸ layer puts the shooter in - the Strv 107-12's pillbox is the siege mode whatever
+  // the shot was recorded in (xiSiegeMode); undefined, the recorded mode decides as before.
   var aimModeFrom = null, aimModeView = null;
-  function aimOfHit(hit) {
+  function aimOfHit(hit, want) {
     var at = hit && hit.attacker, a = at && at.aim, m = at && at.modeAim;
     if (!m || !(m.dispersion > 0) || !(a && a.dispersion > 0)) return a;
-    var tracer = hit === activeHit && shotContext ? shotContext.tracer : null;
-    var siege = tracer && Number.isFinite(tracer.siegeState) ? tracer.siegeState : at.siegeStateAtImpact;
-    if (!Number.isFinite(siege)) return a;
-    // VEHICLE_SIEGE_STATE: 0 and 1 are the default mode, 2 and up the siege one (constants.pyc 4166-4182).
-    var mode = siege <= 1 ? 0 : 1;
+    var mode = want;
+    if (mode !== 0 && mode !== 1) {
+      var tracer = hit === activeHit && shotContext ? shotContext.tracer : null;
+      var siege = tracer && Number.isFinite(tracer.siegeState) ? tracer.siegeState : at.siegeStateAtImpact;
+      if (!Number.isFinite(siege)) return a;
+      // VEHICLE_SIEGE_STATE: 0 and 1 are the default mode, 2 and up the siege one (constants.pyc 4166-4182).
+      mode = siege <= 1 ? 0 : 1;
+    }
     if (mode !== at.modeAimMode || mode === at.vehicleMode) return a;
     if (aimModeFrom !== m || !aimModeView || aimModeView.base !== a) {
       aimModeFrom = m;
@@ -2569,7 +2578,9 @@
     return aimModeView.view;
   }
   function aimBlockData() {
-    var a = aimOfHit(activeHit);
+    // Under ✸ a tier-XI shooter's mode or second gun may be in force (xiSiegeMode, xiAim: BACKLOG 37); off it, the
+    // recorded block exactly as before.
+    var xm = xiNow(), a = xiAim(aimOfHit(activeHit, xiSiegeMode(xm)), xm);
     if (!(a && a.dispersion > 0)) return null;
     var own = aimShooterIsPlayer(activeHit), fixed = aimForbidden('devices'), key = (own ? 'own' : 'other') + (fixed ? '|fixed' : '');
     // A block REBUILT from the compact descriptor knows nothing of the battle's own modifiers, so they go
@@ -2689,6 +2700,7 @@
     if (!dt) dt = 1 / 60;   // one nominal frame, never a zero step
     var mods = aimHeated(aimModifiers());
     aimMove = ArmorBallistics.moveStep(aimMove, aimKeys, a, mods, dt);
+    xiMotion(aimMove.speed);   // the Leopard 120 V's stacks build only below their speed (nothing for other vehicles)
     // The hull turns first and TAKES THE GUN WITH IT (user, 20.09): the aim point swings around the
     // shooter by hullTurn·dt, opening a gap to the crosshair, and the turret below spends what the hull
     // left it on closing that gap again. So holding A with the cursor still drags the ring sideways and
@@ -2921,7 +2933,9 @@
     paintHeat(h);   // the heat bar of an Ares gun under ✸; nothing but a hidden check otherwise
     var time = $('aim-gun-reload');
     if (!time) return h;
-    var a = aimBlockData(), rl = ArmorBallistics.reloadSeconds(a, aimModifiers());
+    // The reload of a tier-XI mode in force (the Szakal's fight ability, the pillbox, the T803's fury) is the reload.
+    var a = aimBlockData(), rl = ArmorBallistics.reloadSeconds(a, xiApply(aimModifiers()));
+    paintXi();   // the tier-XI mode button (BACKLOG 37): a hidden check off ✸ and for every other vehicle
     paintMag(a, rl);   // first: it brings an autoloader's load up to now, which the figure below reads
     if (!rl) { time.textContent = '—'; return h; }
     var left = aimReloadLeft(), running = left > 0;
@@ -3059,7 +3073,7 @@
     // A pin that refused (no engine, no point) left no verdict of its own, and a shot no line was cast for
     // must not roll damage off the stale one.
     var pinned = viewer.pinAtPoint(point);
-    if (fun && pinned) funShot(shell);
+    var landed = fun && pinned ? funShot(shell) : null;
     if (viewer.setAimShot) viewer.setAimShot();   // the ring left behind, drawn before the recoil widens the live one
     // The shot's own figure, on the pinned-shot panel and in the colour of its ring (user, 20.09): the
     // same single number the live ring prints - the expected damage over the circle, share of alpha.
@@ -3072,7 +3086,9 @@
     if (times) refillSettle(now);
     else if (aimClipSize > 1 && real && aimClip <= 0) aimClip = aimClipSize;
     // ✸: the round's place in the gun's burst (a pull starts one of what the magazine holds); the gap after it.
-    var burst = burstRule(a, rl), more = burstRound(burst, cont, aimClipSize > 1 ? aimClip : 1);
+    // A single-shot gun that fires a burst - the Black Rock in its Burst mode, the one such gun of the client - fires the
+    // whole burst: its magazine of one does not cap it (BACKLOG 37).
+    var burst = burstRule(a, rl), more = burstRound(burst, cont, aimClipSize > 1 ? aimClip : burst ? burst.count : 1);
     var gap = rl ? (more ? burst.interval : rl.interval) : 0;
     // The recoil enters the factor for this very instant and the exponential restarts from it, so the
     // next round of a held burst leaves a wider circle unless the gun had time to settle. Under ✸ the term is
@@ -3082,6 +3098,9 @@
     // The round heats an Ares gun under ✸ (gunHeat below) - after the recoil, which is taken in the band
     // the gun was in when it fired; the new band shows from the next frame. Nothing off the ✸ layer.
     heatShot();
+    // A tier-XI mechanic takes the round in (BACKLOG 37): the stacks go, the armed designator marks what it hit, a
+    // damaging hit feeds the energy or the fury. The reload below was set by the level the round was fired at.
+    xiShot(now, landed);
     // The cooldown to the next round of the same hold.
     aimClipDry = false;
     // No reload in the record: the cooldown is unknown, so a hold fires once and waits for the release
@@ -3105,7 +3124,7 @@
       // Under real reload the whole reload runs instead, as in the game, and a held burst goes on after it.
       else if (real) aimReload = {at: now, until: now + rl.reload, clip: false};
       else { aimClipDry = true; aimReload = null; }
-    } else aimReload = {at: now, until: now + rl.reload, clip: false};
+    } else aimReload = more ? {at: now, until: now + gap, clip: true} : {at: now, until: now + rl.reload, clip: false};
     return true;
   }
   // --- The pointer: a tap is one shot, a hold is a burst on the gun's own cooldown (user, 20.09) ------
@@ -3192,6 +3211,7 @@
   // The sub-switch moved: the load starts over under the new rule (a full clip, nothing running).
   function realReloadSettings() {
     aimReload = null; aimClipDry = false; burstLeft = 0;
+    if (xiMech && xiMech.stash) xiMech.stash = [null, null];   // a second gun put away starts over too (BACKLOG 37)
     aimLoadFull();
     paintFun();
     if (aimLive && aimNow) paintAim(aimLastState || aimState());
@@ -3344,7 +3364,7 @@
     if (!funOn()) return mods;
     var h = heatNow(), f = (h && h.band >= 0 ? h.p.states[h.band].factor : 1) * dualNow();
     if (f !== 1 && mods) mods.mult *= f;
-    return mods;
+    return xiApply(mods);   // a tier-XI mode or ability in force (BACKLOG 37); nothing for every other vehicle
   }
   // THE GUN PANEL'S OWN TIMER, a light 10 Hz one for what moves on the panel with the frame loop asleep: a warm
   // gun cooling, and a round of an autoloader loading back. It repaints the bar - the whole panel while a round
@@ -3428,15 +3448,15 @@
   // with more of the burst after it takes afterShotInBurst (B1), the last one afterShot. The next pull waits the clip
   // interval after the last round, or the reload of an empty magazine - OUR READING of the client's two rates (the
   // server times the rounds). `syncReloading` (the Black Rock only) is not modelled: the client stores it and reads
-  // it nowhere. The Black Rock itself fires single rounds here: its burst is only in the Burst mode of its
-  // chargeableBurst, which the emulation has no switch for (BACKLOG 37).
+  // it nowhere. The Black Rock fires its burst only in the Burst mode of its chargeableBurst, which the ✸ mode button
+  // switches (BACKLOG 37, xiBurstOn below); single rounds otherwise.
   var burstLeft = 0;   // rounds of the running burst still to go after the one just fired
   // The gun's burst under ✸, {count, interval} (ArmorBallistics.reloadSeconds reads it off the record), or null.
   function burstRule(a, rl) {
     var b = rl && rl.burst;
     if (!b || !(b.count > 1) || !funOn()) return null;
     var mech = a && Array.isArray(a.gunMechanics) ? a.gunMechanics : [];
-    return mech.indexOf('chargeableBurst') >= 0 ? null : b;
+    return mech.indexOf('chargeableBurst') >= 0 && !xiBurstOn() ? null : b;
   }
   // This round's place in the burst: a pull (`cont` false) starts one of what the magazine holds (`have`), a round
   // of a running burst (`cont` true) counts it down. True while more of the burst follow this round.
@@ -3508,6 +3528,8 @@
     burstLeft = 0; aimAutoRounds = 0; dualUntil = -Infinity;
     if (dualTimer) window.clearTimeout(dualTimer);
     dualTimer = 0;
+    xiReset();   // the tier-XI mechanic starts over from the record (below)
+    paintXi();
   }
   // --- The fun layer: target HP, a rolled shot and Hitmarks (user, 22.09) --------------------------
   // ONE switch, and it stands ON THE SCENE beside the collision-model tile, not in Settings (user, 22.09:
@@ -3615,16 +3637,20 @@
   function hpNumber(v) { return String(Math.round(v)).replace(/\B(?=(\d{3})+(?!\d))/g, ' '); }
   // What one emulated shot does once its line has been cast and judged. Everything here reads the result
   // of the ONE ray pinAtPoint has just cast: nothing is cast, sampled or evaluated a second time.
+  // Returns what the round did - {v, damage, kill} - for the tier-XI mechanics that count hits (xiShot).
+  // A Borkenkäfer's mark on the target (BACKLOG 38, xiMarkNow) multiplies the roll by its stock ×1.1.
   function funShot(shell) {
-    if (!viewer) return;
-    var r = viewer.pinResult, pin = viewer.pinned;
-    var v = funVerdict(r, shell), damage = v.base > 0 ? funRoll(v.base, shell) : 0;
+    if (!viewer) return null;
+    var r = viewer.pinResult, pin = viewer.pinned, mark = xiMarkNow();
+    var v = funVerdict(r, shell), damage = v.base > 0 ? funRoll(v.base, shell) * (mark ? mark.factor : 1) : 0, kill = false;
     if (hpMax > 0) {
+      kill = hpLeft > 0 && hpLeft - damage <= 0;
       hpLeft = Math.max(0, hpLeft - damage);
-      hpRoll = 'Last shot: ' + FUN_WORDS[v.outcome] + (damage > 0 ? ', ' + hpNumber(damage) + ' HP' : ', no damage') + '.';
+      hpRoll = 'Last shot: ' + FUN_WORDS[v.outcome] + (damage > 0 ? ', ' + hpNumber(damage) + ' HP' + (mark ? ' (×' + mark.factor + ': the target carries a Borkenkäfer mark)' : '') : ', no damage') + '.';
     }
     if (pin && pin.point) funMark(v, shell);
     paintFun();
+    return {v: v, damage: damage, kill: kill};
   }
   // One shot's Hitmarks: ONE record, made by the viewer out of the ray this shot has already cast (every
   // plate the path met - a hole in each screen passed, this shot's outcome where it ended, a skid where it
@@ -3674,7 +3700,8 @@
     if (fill.style.backgroundColor !== rgb) fill.style.backgroundColor = rgb;
     // The sentence is long and paintFun runs on every shell or distance step too: it is composed only when
     // one of the four things in it has really changed.
-    var key = hpLeft + '/' + hpMax + '|' + hpRoll + '|' + funRandomization(viewer && viewer.shell);
+    var mark = xiMarkNow();
+    var key = hpLeft + '/' + hpMax + '|' + hpRoll + '|' + funRandomization(viewer && viewer.shell) + '|' + (mark ? Math.ceil(mark.left) + mark.from : '');
     if (key === hpTitleKey) return;
     hpTitleKey = key;
     bar.title = hpNumber(hpLeft) + ' / ' + hpNumber(hpMax) + ' HP' +
@@ -3682,13 +3709,16 @@
       ' Each hit rolls its damage as alpha × (1 ± ' + Math.round(funRandomization(viewer && viewer.shell) * 100) +
       ' %), the shell’s own spread from the record; a hit that does not pierce rolls the reconstructed' +
       ' non-penetration damage the same way. The SHAPE of that roll is drawn uniformly - the client stores' +
-      ' the kind of the roll but makes it on the server, so it is this page’s assumption, not a confirmed rule.';
+      ' the kind of the roll but makes it on the server, so it is this page’s assumption, not a confirmed rule.' +
+      (mark ? ' The target carries a leKpz Borkenkäfer mark' + (mark.from === 'record' ? ' (the record’s, at this hit)' : '') + ' - ' + Math.ceil(mark.left) +
+        ' s left: every hit on it rolls ×' + mark.factor + ', the stock factor (×1.15 with the marker’s full skill tree, which the record cannot tell).' : '');
   }
   // Full health again and no Hitmarks: the ↺ button, and every change of the vehicle on screen. The
   // health is looked up for the vehicle ON SCREEN, so ↺ brings the bar back whenever the record knows it.
   function funReset() {
     hpKey = targetKey(activeHit);
     hpMax = targetMaxHp(activeHit); hpLeft = hpMax; hpRoll = '';
+    xiMarkState = null;   // an emulated Borkenkäfer mark goes with the health; the record's own comes back (BACKLOG 38)
     funMarks.length = 0;
     if (viewer && viewer.clearHitMarks) viewer.clearHitMarks();
     paintFun();
@@ -3727,6 +3757,559 @@
     if (viewer) { viewer.aimHold = false; if (viewer.clearAimShot) viewer.clearAimShot(); }
     aimLoadFull();
     gunHeatReset();   // a new shooter's gun, or the emulation starting over, is cold
+  }
+  // --- ✸: the tier XI mechanics, one mode button (23.09, BACKLOG 37-38) ----------------------------------------------
+  // Eleven vehicles carry a mechanic of their own that changes the circle, the reload or the gun that fires
+  // (outputs/mechanics-impact-2026-09-23.md and -xi.md, docs/KNOWLEDGE.md section 4). Under ✸ ONE button in the gun
+  // panel runs the one this shooter has (#aim-gun-mech: the page's lit switch .swap-roles, a glyph per mechanic, every
+  // word in its tooltip - the owner's decision of 23.09, docs/CONTEXT.md). It is there only under ✸ and only for these
+  // vehicles, and it starts from the state the record gives for the shot - shotContext.gunState, the tracer's before
+  // the impact's - or, with none recorded, from the mechanic's default. The numbers are the stock ones of the vehicle
+  // files of client 2.4.0.1 (the recorded state carries the battle's own where it has them). Every factor goes on the
+  // very `mods` the circle, the movement and the reload are computed with (aimHeated, xiApply), so there is no second
+  // circle formula here: a mechanic only scales what ArmorBallistics already takes. The timers are functions of the
+  // time (xiAdvance), like the heat, and one timeout (xiWake) wakes the loop at the next change. Off ✸ nothing here
+  // runs (xiNow is null) and every caller gets exactly what it got before.
+  //
+  // The XM69's gyro and the Black Rock's Burst mode share one set of modifiers - the XM69 adds two of its own:
+  // A179_Black_Rock.xml chargeableBurst movement, rotation and turretRotation ×0.0, aiming time ×0.3 (and
+  // burstDispersionFactor 1); A183_XM69_Hacker.xml the same four plus multShotDispersionFactor ×0.94 and the hull's
+  // rotation speed ×1.1 (and engine power ×1.1, which the circle does not read).
+  var XI_GYRO = {movement: 0, rotation: 0, turret: 0, aimingTime: 0.3};
+  var XI_RAD = Math.PI / 180;
+  // The secondary gun of a vehicle whose record carries no aim.secondary (every record before the build after 0.7.29):
+  // the gun's own XML (turrets0/<turret>/secondaryGuns). The exported block, when there is one, is used instead.
+  var XI_HORI_GUN = {installation: 1, name: '_12_cm_Shisei_Funshinhou', dispersion: Math.atan(0.0015), aimingTime: 1.0,
+    turretRotationFactor: 0.10 / XI_RAD, afterShotFactor: 1.0, reloadTime: 60, clip: [1, 0], gunTags: []};
+  var XI_TASCHEN_GUN = {installation: 1, name: '_8_cm_8H62_2', dispersion: Math.atan(0.0035), aimingTime: 1.9,
+    turretRotationFactor: 0.05 / XI_RAD, afterShotFactor: 1.2, reloadTime: 50, clip: [2, 0.5], burst: [2, 0.5, false], gunTags: ['clip']};
+  var XI_MECHANICS = {
+    'poland:Pl37_CS_67_Szakal': {mech: 'stanceDance', name: 'CS-67 Szakal', glyph: '⇋', kind: 'stance', switchTime: 3,
+      energyMax: 100, energyPerSec: 0.6, energyPerHit: 15, fightTime: 13,
+      turbo: {aimingTime: 1.9, movement: 1.9, rotation: 1.9, turret: 1.9, afterShot: 1.66, speedForwardKmh: 15, speedBackwardKmh: 5},
+      fight: {mult: 0.8, aimingTime: 0.75, reload: 0.8}},
+    'usa:A183_XM69_Hacker': {mech: 'concentrationMode', name: 'XM69 Hacker', glyph: '◎', kind: 'ability', duration: 10, cooldown: 40, deploy: 40,
+      mods: {movement: 0, rotation: 0, turret: 0, aimingTime: 0.3, mult: 0.94, hullSpeed: 1.1}},
+    'sweden:S36_Strv_107_12': {mech: 'pillboxSiegeMode', name: 'Strv 107-12', glyph: '▣', kind: 'pillbox', fromDrive: 5, fromSiege: 3, toSiege: 3, toDrive: 4,
+      mods: {mult: 0.85, reload: 0.925, speed: 0, hullSpeed: 0.4}},
+    'germany:G188_LeKpz_Borkenkafer': {mech: 'targetDesignator', name: 'leKpz Borkenkäfer', glyph: '⊕', kind: 'designator', deploy: 60, cooldown: 25, markTime: 10},
+    'japan:J53_Ho_Ri_Shugo': {mech: 'auxiliaryRocketLauncher', name: 'Ho-Ri Shugo', glyph: '✦', kind: 'weapon', gun: XI_HORI_GUN, what: 'the auxiliary rocket launcher'},
+    'germany:G187_Taschenratte': {mech: 'supportWeapon', name: 'Taschenratte', glyph: '✦', kind: 'weapon', gun: XI_TASCHEN_GUN, what: 'the support mortar'},
+    'usa:A179_Black_Rock': {mech: 'chargeableBurst', name: 'Black Rock', glyph: '»', kind: 'burst', mods: XI_GYRO},
+    'germany:G185_Leopard_120_Verbessert': {mech: 'accuracyStacks', name: 'Leopard 120 Verbessert', glyph: '≡', kind: 'stacks', levelMax: 4, bonus: 0.04, gainTime: 5, gainMaxKmh: 20},
+    'usa:A182_T803': {mech: 'battleFury', name: 'T803', glyph: '⇈', kind: 'fury', levelMax: 5, duration: 9.5, bonus: 0.02, perHit: 1, perKill: 2},
+    'italy:It43_CAV_mod_71': {mech: 'autoreloaderSurge', name: 'CAV mod. 71', glyph: '↯', kind: 'surge', maxCharges: 3, startCharges: 1, chargeRegular: 50, chargeFull: 18, reloadTime: 8.5},
+    'france:F135_AS_XX_40_t': {mech: 'stationaryReload', name: 'AS-XX 40 t', glyph: '⧖', kind: 'skip',
+      why: 'The stationary reload: preparingDelay 4.5 s and finishingDelay 3 s (2.5 and 1.5 s in the garage with the full skill tree). The client carries these numbers but not the rule the server runs them by - when the vehicle counts as standing, what the gun lock mask holds - so the emulation does not run it.'},
+    'france:F136_AMX_67_Imbattable': {mech: 'extraShotClip', name: 'AMX 67 Imbattable', glyph: '⊞', kind: 'skip',
+      why: 'The extra shot: extraReloadTime 4.5 s (2.5 with the full skill tree). The client carries the number, but not what the extra round does to the reload or what the values of its reloadState mean, so the emulation does not run it.'},
+    'uk:GB152_AT_FV230_Breaker': {mech: 'powerMode', name: 'AT-FV230 Breaker', glyph: '⇶', kind: 'skip',
+      why: 'Direct Drive: after 18 s of driving forward faster than 7 km/h it builds up in 3 s to speed ×1.35, hull traverse ×0.7, engine power ×1.36 and dispersion ×2.0. Which term of the circle that ×2.0 doubles the client does not say (it never reads it) - blocked until a battle on the Breaker shows it in the server’s own factors of the shot (aimAtTracer.targeting).'}
+  };
+  var XI_SECONDARY_CLEAR = {afterShotInBurstFactor: undefined, burst: undefined, autoreload: undefined, autoShoot: undefined,
+    dualAccuracy: undefined, dualGun: undefined, twinGun: undefined, temperatureGun: undefined, overheatGun: undefined,
+    heatingZonesGun: undefined, gunMechanics: undefined, clip: [1, 0]};
+  var xiMech = null, xiTimer = 0, xiAimView = null, xiShellBack = '', xiPaintKey = '', xiTitleKey = '', xiSpecHit = null, xiSpecVal = null;
+  // The words of the button's aria-label, by kind (the three the emulation does not run carry their own).
+  var XI_LABEL = {stance: 'Stance', ability: 'Gyro-stabiliser', pillbox: 'Pillbox', designator: 'Target designator', weapon: 'Second gun',
+    burst: 'Burst mode', stacks: 'Accuracy stacks', fury: 'Battle fury', surge: 'Autoloader surge'};
+  // The mechanic of the shooter on screen, or null. A gun whose record names chargeableBurst is the Black Rock's.
+  function xiSpecOf(hit) {
+    var at = hit && hit.attacker;
+    if (!at) return null;
+    var s = XI_MECHANICS[String(at.type || '')];
+    if (s) return s;
+    var list = at.aim && Array.isArray(at.aim.gunMechanics) ? at.aim.gunMechanics : [];
+    return list.indexOf('chargeableBurst') >= 0 ? XI_MECHANICS['usa:A179_Black_Rock'] : null;
+  }
+  // The recorded state the emulation starts from and the server time it belongs to (the tracer's, else the hit's), so
+  // a timer the record gives - endTime - runs on for exactly what it had left.
+  function xiRecorded(hit) {
+    var ctx = shotContext && activeHit === hit ? shotContext : null, st = ctx && ctx.gunState;
+    var tr = ctx && ctx.gunStateFrom === 'shot' ? ctx.tracer : null;
+    var ref = tr && Number.isFinite(Number(tr.gameTime)) ? Number(tr.gameTime) : Number(hit && hit.gameTime);
+    var siege = ctx && ctx.tracer && Number.isFinite(ctx.tracer.siegeState) ? ctx.tracer.siegeState : hit && hit.attacker ? hit.attacker.siegeStateAtImpact : null;
+    return {state: st && typeof st === 'object' ? st : {}, ref: Number.isFinite(ref) ? ref : NaN, siege: Number.isFinite(siege) ? siege : null,
+            slot: hit ? Number(hit.gunInstallationIndex) : NaN};
+  }
+  function xiLeft(rec, end) { var e = Number(end); return Number.isFinite(e) && Number.isFinite(rec.ref) && e > rec.ref ? e - rec.ref : 0; }
+  function xiNum(v, fallback) { var n = Number(v); return Number.isFinite(n) && n > 0 ? n : fallback; }
+  // A fresh state for this hit: the recorded one where the record has it, the mechanic's default otherwise.
+  function xiInit(spec, hit, now) {
+    var rec = xiRecorded(hit), st = rec.state, m = {spec: spec, hit: hit, record: false}, g, code, left;
+    switch (spec.kind) {
+      case 'stance':
+        // STANCE_DANCE_STATE bits (constants of client 2.4.0.1): 1 turbo, 2 switching, 4 the fight ability, 8 the turbo one.
+        g = st.stanceDance && st.stanceDance.abilityState;
+        code = g ? Number(g.state) || 0 : 0;
+        m.stance = code & 1 ? 1 : 0; m.to = null; m.until = 0;
+        m.energy = g && Number(g.energyFight) >= 0 ? Math.min(spec.energyMax, Number(g.energyFight)) : 0; m.energyAt = now;
+        // The ability's own TIME_INTERVAL is not recorded: an ability on at the shot runs its full time from here.
+        m.fightUntil = code & 4 ? now + spec.fightTime : 0;
+        m.record = !!g;
+        break;
+      case 'ability':
+        // CONCENTRATION_MODE_STATE: 0 idle, 1 deploying, 2 ready, 3 active, 4 cooldown, 5 disabled.
+        g = st.concentrationMode && st.concentrationMode.status;
+        code = g ? Number(g.state) : NaN; left = g ? xiLeft(rec, g.endTime) : 0;
+        m.state = code === 3 && left > 0 ? 'active' : code === 4 && left > 0 ? 'cooldown' : code === 1 && left > 0 ? 'deploy' : 'ready';
+        m.until = m.state === 'ready' ? 0 : now + left;
+        m.record = !!g;
+        break;
+      case 'pillbox':
+        // VEHICLE_SIEGE_STATE 4 is PILLBOX_ENABLED, inside the siege mode; publicStatus carries the same numbers.
+        g = st.pillboxSiegeMode && st.pillboxSiegeMode.publicStatus;
+        m.pillbox = !!((g && Number(g.state) === 4) || rec.siege === 4);
+        m.base = m.pillbox || (rec.siege !== null && rec.siege >= 2) ? 'siege' : 'drive';
+        m.to = null; m.until = 0;
+        m.record = !!g || rec.siege !== null;
+        break;
+      case 'designator':
+        // TARGET_DESIGNATOR_STATE: 0 ready, 1 active (the next shot marks), 2 cooldown, 3 pre-battle.
+        g = st.targetDesignator && st.targetDesignator.abilityState;
+        code = g ? Number(g.state) : NaN; left = g ? xiLeft(rec, g.endTime) : 0;
+        m.state = code === 1 ? 'armed' : code === 2 && left > 0 ? 'cooldown' : code === 3 && left > 0 ? 'deploy' : 'ready';
+        m.until = m.state === 'cooldown' || m.state === 'deploy' ? now + left : 0;
+        m.record = !!g;
+        break;
+      case 'weapon':
+        // The hit's own gun slot names the gun that fired it; the recorded secondaryGun index is the same reading.
+        g = st.secondaryGun;
+        m.weapon = rec.slot === 1 || (g && Number(g.gunInstallationIndex) === 1) ? 1 : 0;
+        m.stash = [null, null];
+        m.record = Number.isFinite(rec.slot) || !!g;
+        break;
+      case 'burst':
+        g = st.chargeableBurst;
+        m.burst = !!(g && g.isBurstActive === true);
+        m.record = !!(g && typeof g.isBurstActive === 'boolean');
+        break;
+      case 'stacks':
+        // The recorded ability state carries the battle's own numbers (the tree's included): taken where it has them.
+        g = st.accuracyStacks && st.accuracyStacks.abilityState;
+        m.max = Math.round(xiNum(g && g.maxLevel, spec.levelMax));
+        m.bonus = xiNum(g && g.aimLevelBonus, spec.bonus);
+        m.gainTime = xiNum(g && g.gainTime, spec.gainTime);
+        m.gainKmh = xiNum(g && g.gainMaxSpdKmh, spec.gainMaxKmh);
+        m.level = g && Number(g.curLevel) >= 0 ? Math.min(m.max, Math.floor(Number(g.curLevel))) : 0;
+        m.since = now; m.slow = true;
+        m.record = !!g;
+        break;
+      case 'fury':
+        g = st.battleFury && st.battleFury.abilityState;
+        m.max = Math.round(xiNum(g && g.maxLevel, spec.levelMax));
+        m.level = g && Number(g.currentLevel) >= 0 ? Math.min(m.max, Math.floor(Number(g.currentLevel))) : 0;
+        m.at = now;
+        m.record = !!g;
+        break;
+      case 'surge':
+        g = st.autoreloaderSurge && st.autoreloaderSurge.abilityState;
+        m.charges = g && Number(g.charges) >= 0 ? Math.min(spec.maxCharges, Math.floor(Number(g.charges))) : spec.startCharges;
+        m.chargeAt = now; m.boostUntil = 0;
+        m.record = !!g;
+        break;
+    }
+    return m;
+  }
+  // The state brought up to `now`: every switch, ability, cooldown and level whose time has come. A function of the
+  // time and of the frame's own speed (the Leopard's stacks), so nothing has to run between two events.
+  function xiAdvance(m, now) {
+    var s = m.spec, n, guard;
+    switch (s.kind) {
+      case 'stance':
+        // The fight energy builds in the fight stance, not while switching and not while the ability runs (reading).
+        for (guard = 0; guard < 16; guard++) {
+          var t = m.energyAt, accrue = m.stance === 0 && m.to === null && !(m.fightUntil > t);
+          var tSwitch = m.to !== null ? m.until : Infinity, tEnd = m.fightUntil > t ? m.fightUntil : Infinity;
+          var tFull = accrue ? t + Math.max(0, s.energyMax - m.energy) / s.energyPerSec : Infinity;
+          var next = Math.min(tSwitch, tEnd, tFull);
+          if (!(next <= now)) break;
+          if (accrue) m.energy = Math.min(s.energyMax, m.energy + (next - t) * s.energyPerSec);
+          m.energyAt = next;
+          if (next === tSwitch) { m.stance = m.to; m.to = null; }
+          else if (next === tEnd) m.fightUntil = 0;
+          else { m.fightUntil = next + s.fightTime; m.energy = 0; }
+        }
+        if (m.stance === 0 && m.to === null && !(m.fightUntil > m.energyAt)) m.energy = Math.min(s.energyMax, m.energy + Math.max(0, now - m.energyAt) * s.energyPerSec);
+        m.energyAt = Math.max(m.energyAt, now);
+        break;
+      case 'ability':
+        for (guard = 0; guard < 4 && m.until > 0 && now >= m.until; guard++) {
+          if (m.state === 'active') { m.state = 'cooldown'; m.until += s.cooldown; }
+          else { m.state = 'ready'; m.until = 0; }
+        }
+        break;
+      case 'pillbox':
+        if (m.to !== null && now >= m.until) { m.pillbox = m.to; m.to = null; }
+        break;
+      case 'designator':
+        if ((m.state === 'cooldown' || m.state === 'deploy') && now >= m.until) { m.state = 'ready'; m.until = 0; }
+        break;
+      case 'stacks':
+        if (m.slow && m.level < m.max) {
+          n = Math.floor((now - m.since) / m.gainTime);
+          if (n > 0) { m.level = Math.min(m.max, m.level + n); m.since += n * m.gainTime; }
+        }
+        if (!m.slow || m.level >= m.max) m.since = now;
+        break;
+      case 'fury':
+        if (m.level > 0) {
+          n = Math.floor((now - m.at) / s.duration);
+          if (n > 0) { m.level = Math.max(0, m.level - n); m.at += n * s.duration; }
+        } else m.at = now;
+        break;
+      case 'surge':
+        // One charge every chargeTimeSRegular, or chargeTimeSFullClip with the magazine full - the fullness of now.
+        for (guard = 0; guard < 8 && m.charges < s.maxCharges; guard++) {
+          var step = aimClipSize > 1 && aimClip >= aimClipSize && !aimRefill ? s.chargeFull : s.chargeRegular;
+          if (now - m.chargeAt < step) break;
+          m.charges++; m.chargeAt += step;
+        }
+        if (m.charges >= s.maxCharges) m.chargeAt = now;
+        break;
+    }
+  }
+  // The mechanic's state now, or null: off ✸ and for every other vehicle. A new hit starts from its own record.
+  function xiNow() {
+    if (!funOn()) return null;
+    if (xiSpecHit !== activeHit) { xiSpecHit = activeHit; xiSpecVal = xiSpecOf(activeHit); }
+    var spec = xiSpecVal;
+    if (!spec) { xiMech = null; return null; }
+    var now = aimSeconds();
+    if (!xiMech || xiMech.hit !== activeHit || xiMech.spec !== spec) {
+      xiMech = spec.kind === 'skip' ? {spec: spec, hit: activeHit, record: false} : xiInit(spec, activeHit, now);
+      // The circle, the reload and the panel take the new state at the next frame; the timer the next change.
+      startAimLoop(); xiWake();
+      return xiMech;
+    }
+    if (spec.kind !== 'skip') xiAdvance(xiMech, now);
+    return xiMech;
+  }
+  // The factor sets in force, or null: they go on the circle's and the reload's own mods (xiApply).
+  function xiFactors(m, now) {
+    var s = m.spec, out = [];
+    switch (s.kind) {
+      case 'stance':
+        if (m.stance === 1) out.push(s.turbo);
+        if (m.fightUntil > now) out.push(s.fight);
+        break;
+      case 'ability': if (m.state === 'active') out.push(s.mods); break;
+      case 'pillbox': if (m.pillbox) out.push(s.mods); break;
+      case 'burst': if (m.burst) out.push(s.mods); break;
+      case 'stacks': if (m.level > 0) out.push({mult: Math.max(0, 1 - m.bonus * m.level)}); break;
+      case 'fury': if (m.level > 0) out.push({reload: Math.max(0, 1 - s.bonus * m.level)}); break;
+    }
+    return out.length ? out : null;
+  }
+  // The mechanic's factors multiplied into a copy of the shooter's mods (aimModifiers hands out a copy): the circle's
+  // own keys, the after-shot term and the speed cap (ballistics.js aimMods), and the turbo's km/h on the speed terms.
+  function xiApply(mods) {
+    var m = mods ? xiNow() : null, sets = m && m.spec.kind !== 'skip' ? xiFactors(m, aimSeconds()) : null;
+    if (!sets) return mods;
+    sets.forEach(function (set) {
+      Object.keys(set).forEach(function (k) {
+        var v = set[k];
+        if (k === 'speedForwardKmh') mods.speedForwardAdd = (Number(mods.speedForwardAdd) || 0) + v * KMH_TO_MS;
+        else if (k === 'speedBackwardKmh') mods.speedBackwardAdd = (Number(mods.speedBackwardAdd) || 0) + v * KMH_TO_MS;
+        else mods[k] = (mods[k] === undefined || mods[k] === null ? 1 : Number(mods[k])) * v;
+      });
+    });
+    return mods;
+  }
+  // The Strv 107-12 in its pillbox fires in the siege mode, whatever mode the shot was recorded in: aimOfHit takes the
+  // siege descriptor's block (attacker.modeAim) then. undefined: the recorded mode decides, as without ✸.
+  function xiSiegeMode(m) { return m && m.spec.kind === 'pillbox' && m.pillbox ? 1 : undefined; }
+  // The secondary gun in force (Ho-Ri Shugo, Taschenratte): its own block laid over the vehicle's - the exported
+  // aim.secondary, else the gun's own XML figures - with the main gun's own mechanics taken away. The vehicle's
+  // factors, the chassis and the crew stay the vehicle's. One view per block, so the aim cache keeps working.
+  function xiAim(a, m) {
+    if (!a || !m || m.spec.kind !== 'weapon' || m.weapon !== 1) return a;
+    var sec = a.secondary && a.secondary.dispersion > 0 ? a.secondary : m.spec.gun;
+    if (!xiAimView || xiAimView.base !== a || xiAimView.sec !== sec) {
+      xiAimView = {base: a, sec: sec, view: Object.assign({}, a, XI_SECONDARY_CLEAR, sec,
+        {gunTags: Array.isArray(sec.gunTags) ? sec.gunTags : [], secondaryFrom: sec === m.spec.gun ? 'xml' : 'record'})};
+    }
+    return xiAimView.view;
+  }
+  function xiBurstOn() { var m = xiNow(); return !!(m && m.spec.kind === 'burst' && m.burst); }
+  // THE MARK ON THE TARGET (BACKLOG 38): a Borkenkäfer's mark makes every shell deal the vehicle ×1.1 (stock
+  // damageIncomeFactor; ×1.15 with the marker's full tree, which only the window of the shell choice allows for). The
+  // target on screen carries it when the record says so at this hit (ArmorShotContext.markOf: what it had left then),
+  // or when an emulated Borkenkäfer shot marked it. It belongs to the TARGET, like its health: another shooter on the
+  // same vehicle keeps it, a new vehicle or a new recorded hit starts from its own record, and ↺ clears it.
+  var XI_MARK = 1.1, xiMarkState = null;
+  function xiMarkNow() {
+    if (!funOn()) return null;
+    var now = aimSeconds(), key = targetKey(activeHit), own = activeHit && !activeHit.synthetic ? activeHit.id : null;
+    if (!xiMarkState || xiMarkState.target !== key || (own !== null && xiMarkState.hitId !== own)) {
+      var rec = own !== null && ArmorShotContext.markOf ? ArmorShotContext.markOf(activeHit) : null;
+      xiMarkState = {target: key, hitId: own, until: rec ? now + rec.left : 0, from: rec ? 'record' : ''};
+    }
+    return xiMarkState.until > now ? {factor: XI_MARK, left: xiMarkState.until - now, from: xiMarkState.from} : null;
+  }
+  function xiMarkSet(until) { xiMarkNow(); xiMarkState.until = until; xiMarkState.from = 'shot'; }
+  // One emulated round has left the barrel (fireShot, after its damage was rolled). `landed`: what funShot made of it.
+  function xiShot(now, landed) {
+    var m = xiNow();
+    if (!m || m.spec.kind === 'skip') return;
+    var s = m.spec, v = landed && landed.v, touched = !!(v && v.outcome && v.outcome !== FUN_UNKNOWN), dealt = !!(landed && landed.damage > 0);
+    switch (s.kind) {
+      case 'stacks':   // levelAfterShot 0: every round takes the stacks away
+        m.level = 0; m.since = now;
+        break;
+      case 'designator':   // the armed round marks what it hit; the cooldown runs from the round
+        if (m.state === 'armed') {
+          m.state = 'cooldown'; m.until = now + s.cooldown;
+          if (touched) { xiMarkSet(now + s.markTime); paintFun(); }   // the health bar's tooltip names the mark
+        }
+        break;
+      case 'stance':   // +15 for a hit that deals damage (passiveFightEnergyBonusPerHit), in the fight stance
+        if (dealt && m.stance === 0 && m.to === null && !(m.fightUntil > now)) {
+          m.energy = Math.min(s.energyMax, m.energy + s.energyPerHit); m.energyAt = now;
+          if (m.energy >= s.energyMax && !(m.fightUntil > now)) { m.fightUntil = now + s.fightTime; m.energy = 0; }
+        }
+        break;
+      case 'fury':   // +1 a damaging hit, +2 more for the one that destroys the target
+        if (dealt) { m.level = Math.min(m.max, m.level + s.perHit + (landed.kill ? s.perKill : 0)); m.at = now; }
+        break;
+    }
+    xiWake();
+  }
+  // The frame's own speed, for the Leopard's stacks: they build only below gainMaxSpd.
+  function xiMotion(speed) {
+    var m = xiMech && funOn() ? xiNow() : null;
+    if (!m || m.spec.kind !== 'stacks') return;
+    var slow = Math.abs(Number(speed) || 0) < m.gainKmh * KMH_TO_MS;
+    if (slow === m.slow) return;
+    m.slow = slow; m.since = aimSeconds();
+    xiWake();
+  }
+  // The next moment the state changes by itself, or Infinity.
+  function xiNext(m) {
+    var s = m.spec;
+    switch (s.kind) {
+      case 'stance':
+        var t = m.to !== null ? m.until : Infinity;
+        if (m.fightUntil > m.energyAt) t = Math.min(t, m.fightUntil);
+        else if (m.stance === 0 && m.to === null) t = Math.min(t, m.energyAt + Math.max(0, s.energyMax - m.energy) / s.energyPerSec);
+        return t;
+      case 'ability': case 'designator': return m.until > 0 ? m.until : Infinity;
+      case 'pillbox': return m.to !== null ? m.until : Infinity;
+      case 'stacks': return m.slow && m.level < m.max ? m.since + m.gainTime : Infinity;
+      case 'fury': return m.level > 0 ? m.at + s.duration : Infinity;
+      case 'surge': return m.charges < s.maxCharges ? m.chargeAt + s.chargeFull : Infinity;
+    }
+    return Infinity;
+  }
+  // One timeout at the next change: it wakes the frame loop (the circle and the reload take the new factors) and
+  // repaints the panel, then sets itself for the change after. Nothing runs while nothing is due.
+  function xiWake() {
+    if (xiTimer) window.clearTimeout(xiTimer);
+    xiTimer = 0;
+    var m = funOn() ? xiMech : null;
+    if (!m || m.spec.kind === 'skip') return;
+    var due = xiNext(m) - aimSeconds();
+    if (!(due < Infinity)) return;
+    xiTimer = window.setTimeout(function () { xiTimer = 0; xiNow(); startAimLoop(); paintXi(); xiWake(); }, Math.max(0, due) * 1000 + 20);
+  }
+  // Nothing of it survives ✸ switching, a new shooter or the emulation starting over (circleReset).
+  function xiReset() {
+    xiMech = null; xiAimView = null; xiMarkState = null; xiSpecHit = null; xiSpecVal = null; xiShellBack = '';
+    if (xiTimer) window.clearTimeout(xiTimer);
+    xiTimer = 0;
+  }
+  // THE PRESS. What it does is the mechanic's: a stance or a mode switched, an ability started, a gun chosen.
+  function xiPress() {
+    var m = xiNow();
+    if (!m || m.spec.kind === 'skip') return;
+    var s = m.spec, now = aimSeconds();
+    switch (s.kind) {
+      case 'stance':
+        if (m.to === null) { m.to = 1 - m.stance; m.until = now + s.switchTime; m.energyAt = now; }
+        break;
+      case 'ability':
+        if (m.state === 'ready') { m.state = 'active'; m.until = now + s.duration; }
+        break;
+      case 'pillbox':
+        if (m.to === null) {
+          m.to = !m.pillbox;
+          m.until = now + (m.to ? (m.base === 'siege' ? s.fromSiege : s.fromDrive) : (m.base === 'siege' ? s.toSiege : s.toDrive));
+        }
+        break;
+      case 'designator':
+        if (m.state === 'ready') m.state = 'armed';
+        else if (m.state === 'armed') m.state = 'ready';
+        break;
+      case 'weapon': xiWeapon(m); break;
+      case 'burst': m.burst = !m.burst; break;
+      case 'surge': xiSurge(m, now); break;
+    }
+    paintAimMechanics();
+    paintGunLoad();
+    startAimLoop();
+    xiWake();
+  }
+  // THE OTHER GUN (Ho-Ri Shugo, Taschenratte). Each gun keeps its own load: the one put away goes on loading in the
+  // background (its timers are in absolute time), the one taken up comes back as it was left, or loaded when it was
+  // never fired. The circle is the new gun's own, rebuilt as a new build is (aimConfigChanged), and the shell on
+  // screen follows: the first of that gun's shells, and back to the one the main gun had.
+  function xiWeapon(m) {
+    m.stash[m.weapon] = {reload: aimReload, clip: aimClip, size: aimClipSize, refill: aimRefill};
+    m.weapon = 1 - m.weapon;
+    var back = m.stash[m.weapon];
+    burstLeft = 0; aimClipDry = false; aimAutoRounds = 0;
+    if (back) { aimReload = back.reload; aimClip = back.clip; aimClipSize = back.size; aimRefill = back.refill; }
+    else { aimReload = null; aimLoadFull(); }
+    var a = aimBlockData();
+    if (a) aimNow = ArmorBallistics.aimStep(null, aimLastState || aimState(), a, aimHeated(aimModifiers()), 0);
+    aimEstAt = 0; aimEstFine = false;
+    xiWeaponShell(m.weapon);
+  }
+  function xiWeaponShell(weapon) {
+    var choice = $('shell-choice'), cur = choice.value, i = cur.indexOf('saved:') === 0 ? Number(cur.slice(6)) : -1;
+    var slotOf = function (c) { return c && Number(c.gunInstallation) === 1 ? 1 : 0; };
+    if (i >= 0 && candidates[i] && slotOf(candidates[i]) === weapon) return;
+    var want = -1, k;
+    if (weapon === 0 && xiShellBack.indexOf('saved:') === 0) {
+      k = Number(xiShellBack.slice(6));
+      if (candidates[k] && slotOf(candidates[k]) === 0) want = k;
+    }
+    for (k = 0; want < 0 && k < candidates.length; k++) if (slotOf(candidates[k]) === weapon) want = k;
+    if (want < 0) return;
+    if (weapon === 1) xiShellBack = cur;
+    choice.value = 'saved:' + want;
+    selectShell();
+  }
+  // THE CAV mod. 71's SURGE. A press spends a charge on the round loading back: it loads in reloadTime 8.5 s (the tuple's
+  // own 10-16 s otherwise), scaled like the rest of the tuple and keeping the share already done. OUR READING: one
+  // charge is one round, spent by the press (the client gives the numbers, not how a charge is spent). Only with the
+  // autoloader's own timers running (◔); with nothing loading the press is refused.
+  function xiSurge(m, now) {
+    if (!(m.charges >= 1) || !realReload()) return;
+    refillSettle(now);
+    if (!aimRefill) return;
+    var a = aimBlockData(), rl = a ? ArmorBallistics.reloadSeconds(a, xiApply(aimModifiers())) : null;
+    var k = rl && a.reloadTime > 0 ? rl.reload / a.reloadTime : 1, d = m.spec.reloadTime * k;
+    var span = aimRefill.until - aimRefill.at, done = span > 0 ? Math.max(0, Math.min(1, (now - aimRefill.at) / span)) : 0;
+    if (!(d < span)) return;
+    aimRefill = {at: now - done * d, until: now + (1 - done) * d, times: aimRefill.times};
+    if (aimReload && !aimReload.clip && aimClip <= 0) aimReload = {at: aimRefill.at, until: aimRefill.until, clip: false};
+    if (m.charges >= m.spec.maxCharges) m.chargeAt = now;
+    m.charges--; m.boostUntil = aimRefill.until;
+    panelWake();
+  }
+  // THE BUTTON: graphics only, the page's lit switch - lit while the mode or ability is on (or, for a passive
+  // mechanic, while it gives anything), dashed while something runs down (a switch, a cooldown, a deployment, the
+  // charges building), dimmed for the three the emulation does not run. Written only when something it shows changed.
+  function xiLook(m, now) {
+    var s = m.spec, on = false, busy = false, glow = false;
+    switch (s.kind) {
+      case 'stance': on = m.stance === 1; busy = m.to !== null; glow = m.fightUntil > now; break;
+      case 'ability': on = m.state === 'active'; busy = m.state === 'cooldown' || m.state === 'deploy'; break;
+      case 'pillbox': on = m.pillbox; busy = m.to !== null; break;
+      case 'designator': on = m.state === 'armed'; busy = m.state === 'cooldown' || m.state === 'deploy'; glow = !!xiMarkNow(); break;
+      case 'weapon': on = m.weapon === 1; break;
+      case 'burst': on = m.burst; break;
+      case 'stacks': on = m.level > 0; break;
+      case 'fury': on = m.level > 0; break;
+      case 'surge': on = m.boostUntil > now; busy = m.charges < s.maxCharges; break;
+    }
+    return {on: on, busy: busy, glow: glow, skip: s.kind === 'skip', passive: s.kind === 'stacks' || s.kind === 'fury'};
+  }
+  function paintXi() {
+    var b = $('aim-gun-mech');
+    if (!b) return;
+    var m = xiNow(), show = !!m;
+    if (b.hidden !== !show) { b.hidden = !show; scheduleLayout(); }
+    if (!m) { xiPaintKey = ''; xiTitleKey = ''; return; }
+    var now = aimSeconds(), look = xiLook(m, now);
+    var key = [m.spec.glyph, look.on, look.busy, look.glow, look.skip, look.passive].join('|');
+    if (key !== xiPaintKey) {
+      xiPaintKey = key;
+      b.textContent = m.spec.glyph;
+      b.setAttribute('aria-pressed', String(look.on));
+      b.setAttribute('data-busy', look.busy ? '1' : '0');
+      b.setAttribute('data-glow', look.glow ? '1' : '0');
+      b.setAttribute('data-passive', look.passive ? '1' : '0');
+      b.setAttribute('aria-disabled', String(look.skip || look.passive));
+    }
+    // The sentence is long and this runs with the panel, every frame of the loop: it is composed only when a figure in
+    // it has changed (the countdowns to the whole second).
+    var tk = xiKey(m, now);
+    if (tk !== xiTitleKey) {
+      xiTitleKey = tk; b.title = xiTitle(m, now);
+      b.setAttribute('aria-label', m.spec.name + ': ' + (XI_LABEL[m.spec.kind] || m.spec.mech));
+    }
+  }
+  function xiKey(m, now) {
+    var s = m.spec, left = function (t) { return t > now ? Math.ceil(t - now) : 0; }, mk;
+    switch (s.kind) {
+      case 'stance': return [s.mech, m.stance, m.to, left(m.until), left(m.fightUntil), Math.floor(m.energy), m.record].join();
+      case 'ability': return [s.mech, m.state, left(m.until), m.record].join();
+      case 'designator': mk = xiMarkNow(); return [s.mech, m.state, left(m.until), mk ? Math.ceil(mk.left) : 0, m.record].join();
+      case 'pillbox': return [s.mech, m.pillbox, m.to, left(m.until), m.base, m.record].join();
+      case 'weapon': return [s.mech, m.weapon, m.record].join();
+      case 'burst': return [s.mech, m.burst, m.record].join();
+      case 'stacks': return [s.mech, m.level, m.max, m.record].join();
+      case 'fury': return [s.mech, m.level, m.level > 0 ? left(m.at + s.duration) : 0, m.record].join();
+      case 'surge': return [s.mech, m.charges, left(m.boostUntil), m.record].join();
+    }
+    return s.mech;
+  }
+  // The words, all of them here: the state now, what a press does, the client's numbers and this page's readings.
+  function xiSec(v) { return String(Math.ceil(Math.max(0, v))); }
+  function xiTitle(m, now) {
+    var s = m.spec, head = s.name + ' — ', from = m.record ? ' Started from the recorded state of this shot.' : ' No state of it is recorded for this shot: started from the default.';
+    var stock = ' The client’s own stock numbers (' + s.mech + ' of client 2.4.0.1); the server applies them - the emulation runs them under ✸.';
+    switch (s.kind) {
+      case 'stance':
+        return head + 'the stance: ' + (m.stance === 1 ? 'turbo' : 'fight') + (m.to !== null ? ', switching to ' + (m.to === 1 ? 'turbo' : 'fight') + ' - ' + xiSec(m.until - now) + ' s' : '') +
+          (m.fightUntil > now ? '; the fight ability on - ' + xiSec(m.fightUntil - now) + ' s left' : '') + '. Fight energy ' + Math.floor(m.energy) + ' / ' + s.energyMax + '.' +
+          ' Press: switch the stance - ' + s.switchTime + ' s, the new stance takes over at its end. Turbo, the whole stance: aiming time ×1.9, the movement, hull and turret terms of the circle ×1.9, the after-shot term ×1.66, +15 / +5 km/h.' +
+          ' Fight: the energy builds ' + s.energyPerSec + ' a second and +' + s.energyPerHit + ' for a hit that deals damage; at ' + s.energyMax + ' the fight ability for ' + s.fightTime + ' s - the circle ×0.8, aiming time ×0.75, reload ×0.8.' +
+          stock + ' This page’s readings: the ability goes off the moment the energy is full (the game spends the ' + s.energyMax + ' when the player calls it), the energy does not build while it runs, it runs its time whatever the stance, and the gun is not locked while the stance switches; ×1.66 on the after-shot term has no line in the garage.' + from;
+      case 'ability':
+        return head + 'the pneumatic gyro-stabiliser: ' + (m.state === 'active' ? 'on - ' + xiSec(m.until - now) + ' s left' : m.state === 'cooldown' ? 'cooling down - ' + xiSec(m.until - now) + ' s'
+          : m.state === 'deploy' ? 'deploying - ' + xiSec(m.until - now) + ' s' : 'ready') + '.' +
+          ' Press: switch it on for ' + s.duration + ' s, then it cools down ' + s.cooldown + ' s. While on: the movement, hull and turret terms of the circle ×0, aiming time ×0.3, the circle ×0.94, hull traverse ×1.1.' +
+          stock + ' The ' + s.deploy + ' s it deploys at the start of a battle are not run here unless the record says so.' + from;
+      case 'pillbox':
+        return head + 'the pillbox: ' + (m.pillbox ? 'on' : 'off') + (m.to !== null ? ', switching ' + (m.to ? 'in' : 'out') + ' - ' + xiSec(m.until - now) + ' s' : '') + '.' +
+          ' Press: into the pillbox - ' + s.fromDrive + ' s from travel, ' + s.fromSiege + ' s from siege - or out of it - ' + s.toSiege + ' s to siege, ' + s.toDrive + ' s to travel; this shot was fired in ' + (m.base === 'siege' ? 'the siege mode' : 'travel') + ', where a press out returns.' +
+          ' In the pillbox, on the siege mode’s own circle' + (activeHit && activeHit.attacker && activeHit.attacker.modeAim ? ' (the siege descriptor’s block the record carries)' : ' - this record carries no siege block, so on the recorded one') +
+          ': the circle ×0.85, reload ×0.925, no driving, hull traverse ×0.4.' + stock + ' Whether the gun is locked while it switches is not known: here it is not.' + from;
+      case 'designator':
+        var mark = xiMarkNow();
+        return head + 'the target designator: ' + (m.state === 'armed' ? 'armed - the next round marks what it hits' : m.state === 'cooldown' ? 'cooling down - ' + xiSec(m.until - now) + ' s'
+          : m.state === 'deploy' ? 'deploying - ' + xiSec(m.until - now) + ' s' : 'ready') + '.' + (mark ? ' The target is marked - ' + xiSec(mark.left) + ' s left.' : '') +
+          ' Press: arm it (again: disarm). The armed round marks the vehicle it hits for ' + s.markTime + ' s, and a marked vehicle takes ×' + XI_MARK + ' of the damage of every shell - under ✸ the damage rolled on it; the cooldown, ' + s.cooldown + ' s, runs from the round.' +
+          stock + ' This page’s readings: the marking round itself does not get the ×' + XI_MARK + ', and any hit marks, a ricochet too.' + from;
+      case 'weapon':
+        var sec = activeHit && activeHit.attacker && activeHit.attacker.aim && activeHit.attacker.aim.secondary;
+        return head + (m.weapon === 1 ? s.what + ' in hand' : 'the main gun in hand') + '.' +
+          ' Press: take up ' + (m.weapon === 1 ? 'the main gun' : s.what) + '. Each gun has its own circle and its own reload: the one put away goes on loading, and the shell on screen follows the gun.' +
+          ' ' + (sec ? 'The second gun’s numbers are the record’s (aim.secondary).' : 'This record carries no numbers of the second gun: its stock figures from the vehicle file are used (' + s.gun.name + ': reload ' + s.gun.reloadTime + ' s, aiming ' + s.gun.aimingTime + ' s, ' +
+          aimNum(Math.round(Math.tan(s.gun.dispersion) * 1e4) / 100) + ' m at 100 m' + (s.gun.clip[0] > 1 ? ', ' + s.gun.clip[0] + ' rounds ' + s.gun.clip[1] + ' s apart' : '') + ').') + from;
+      case 'burst':
+        return head + 'the Burst mode: ' + (m.burst ? 'on - one press fires the burst' : 'off - one press, one round') + '.' +
+          ' Press: switch it. In the game it charges after two penetrations; here the button switches it. While on: the burst of the gun (2 rounds 1.5 s apart, every round but the last widening the circle by its own factor), the movement, hull and turret terms of the circle ×0, aiming time ×0.3.' +
+          stock + from;
+      case 'stacks':
+        return head + 'accuracy stacks: level ' + m.level + ' of ' + m.max + (m.level > 0 ? ' - the circle ×' + aimNum(Math.round((1 - m.bonus * m.level) * 1e4) / 1e4) : '') + '.' +
+          ' It works by itself: a level every ' + aimNum(m.gainTime) + ' s below ' + aimNum(m.gainKmh) + ' km/h, up to ' + m.max + ', and every round takes them all away; a level narrows the circle by ' + aimNum(m.bonus * 100) + ' %.' +
+          stock + ' This page’s reading: the level scales the full-aim circle (×(1 − ' + aimNum(m.bonus) + ' × level)); the moving bonus (stabilizeBonus 0.7) and aimBonusCap 0.95 are not applied - when and on what they work the client does not say.' + from;
+      case 'fury':
+        return head + 'battle fury: level ' + m.level + ' of ' + m.max + (m.level > 0 ? ' - the reload ×' + aimNum(Math.round((1 - s.bonus * m.level) * 1e4) / 1e4) + ', a level lost in ' + xiSec(m.at + s.duration - now) + ' s' : '') + '.' +
+          ' It works by itself: +' + s.perHit + ' for a hit that deals damage, +' + s.perKill + ' more for the one that destroys the target, up to ' + m.max + '; every level shortens the reload by ' + aimNum(s.bonus * 100) + ' %.' +
+          stock + ' This page’s readings: a level lasts ' + s.duration + ' s and they go one at a time, and the level counts when the reload starts.' + from;
+      case 'surge':
+        return head + 'the autoloader surge: ' + m.charges + ' of ' + s.maxCharges + ' charges' + (m.boostUntil > now ? ' - a surged round loading, ' + xiSec(m.boostUntil - now) + ' s' : '') + '.' +
+          ' Press: spend a charge on the round loading back - it loads in ' + s.reloadTime + ' s instead of its own 10-16 s. A charge builds every ' + s.chargeRegular + ' s, every ' + s.chargeFull + ' s with the magazine full, up to ' + s.maxCharges + '.' +
+          stock + ' This page’s reading: one charge is one round, spent by the press (the client gives the numbers, not how a charge is spent); it needs real reload ◔.' + from;
+      case 'skip':
+        return head + s.why + ' The button does nothing.';
+    }
+    return head;
   }
   // The switch itself. Off means off: no frame loop, no key handlers, no live circle, no crosshair, and
   // everything recorded is back on the model.
@@ -3998,7 +4581,7 @@
       // too: a Polish APCR's alpha falls off with it, and the window at the muzzle threw the right shell out.
       var context=ArmorShotContext.resolve(hit,battle.shotEvents||[]),c=context.choices[context.index]||null;
       var range=context.range>0?context.range:hit.rangeAtImpact>0?hit.rangeAtImpact:100;
-      if(!c&&ArmorShotContext.assume){var picked=ArmorShotContext.assume(context.choices,context.kind,hit.damage,context.range);c=context.choices[picked.index]||null;}
+      if(!c&&ArmorShotContext.assume){var picked=ArmorShotContext.assume(context.choices,context.kind,hit.damage,context.range,context.mark);c=context.choices[picked.index]||null;}
       if(!c)c=context.choices[0]||null;
       var shell=c?shellAt(c,c.kind,c.penetration100,c.caliber,range,hit):null;
       // A flat engine (one leaf, no kd-tree): the tree would cost far more to build than the one to three rays
@@ -4018,7 +4601,7 @@
     var pinned=!!(viewer&&viewer.pinned),line=armorLine(r,shell?shell.penetration:null,range);fillPanel('shot',line,shell&&shell.alpha);
     logVerdicts(shell);
     // The tile's own tooltip says what its number is before it says where the line comes from.
-    $('shot-panel').title=damageView?'Expected damage per shot along the saved hit line, as a share of the shell’s alpha: the penetration chance times alpha, plus the reconstructed non-penetration damage for the rest, divided by alpha.\n\nThe record holds what the shot did; this is the expectation it had, not the rolled RNG.':shotPanelTitle;
+    $('shot-panel').title=(damageView?'Expected damage per shot along the saved hit line, as a share of the shell’s alpha: the penetration chance times alpha, plus the reconstructed non-penetration damage for the rest, divided by alpha.\n\nThe record holds what the shot did; this is the expectation it had, not the rolled RNG.':shotPanelTitle)+markNote(shell&&shell.alpha);
     aimTitle();
     output.title=!r?'No parameters or the pose changed':pinned?'Along the pinned line from the current view':'Along the saved line · flight ≈ '+Math.round(range)+' m · nominal penetration '+Math.round(shell.penetration)+' mm';
     // The ring on screen is part of the key: a pinned point and the user's first emulated shot both take
@@ -4050,6 +4633,17 @@
       else totalTimer=window.setTimeout(function(){var v=viewer.estimateAimProbability(ringShell);
         aimRecorded=v?Object.assign(circleFigure(v,ringShell),{kind:'estimate'}):null;paintCircleLines();},100);
     }
+  }
+  // BACKLOG 38: the target carried a leKpz Borkenkäfer mark at this hit (ArmorShotContext.markOf, on the resolved
+  // context): every shell deals it ×1.1, ×1.15 with the marker's full skill tree - which the record cannot tell. The
+  // figures on the panel are shares of the plain alpha, so they stand; what changes is the HP and the window of the
+  // shell choice, and the tooltip says both. '' for every hit without an active mark.
+  function markNote(alpha){
+    var mk=shotContext&&shotContext.mark;
+    if(!mk)return '';
+    return '\n\nThe target carried a leKpz Borkenkäfer mark at this hit ('+Math.ceil(mk.left)+' s of it left): every shell deals it ×'+mk.low+
+      ' (×'+mk.high+' with the marker’s full skill tree, which the record cannot tell)'+(alpha>0?' - '+Math.round(alpha*mk.low)+'…'+Math.round(alpha*mk.high)+' HP for this shell’s '+Math.round(alpha):'')+
+      '. The shares here are of the plain alpha, so they stand; the damage window of the shell choice reaches ×'+mk.high+' at the top. The factor is the server’s, the numbers the client’s.';
   }
   // The tail of the recorded ring's tooltip: which circles this hit has and how the figure over them is
   // sampled. The toolbar box that used to carry this text together with the figure is gone (user, 22.09:
@@ -5423,6 +6017,8 @@
   $('fun-mode').onchange=funSettings;
   $('fun-mode-toggle').onclick=function(){var box=$('fun-mode');box.checked=!box.checked;funSettings();persistSettings();};
   $('target-hp-reset').onclick=funReset;
+  // The tier-XI mode button in the gun panel (BACKLOG 37): what a press does is the shooter's mechanic's (xiPress).
+  $('aim-gun-mech').onclick=xiPress;
   // ✸'s sub-switch, real reload: the same pattern - a hidden control of the menu keeps it, the button on the scene flips it.
   $('real-reload').onchange=realReloadSettings;
   $('real-reload-toggle').onclick=function(){var box=$('real-reload');box.checked=!box.checked;realReloadSettings();persistSettings();};

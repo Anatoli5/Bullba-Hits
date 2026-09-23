@@ -13,7 +13,7 @@ try:
 except ImportError:
     import queue
 
-VERSION = '0.7.29'
+VERSION = '0.7.30'
 VIEWER_PATH = os.path.join('mods', 'configs', 'local.armor_inspector', 'Viewer.html')
 LOG = logging.getLogger('local.armor_inspector')
 PARTS = ('chassis', 'hull', 'turret', 'gun')
@@ -681,9 +681,10 @@ class Recorder(object):
         self.last_vehicle = None
         # The reader of the gun mechanics' live state is bound once here, beside the telemetry it lives in,
         # so the hit path does not run an import statement per hit (22.09).
-        from local_armor_inspector.telemetry import ShotTelemetry, mechanic_state
+        from local_armor_inspector.telemetry import ShotTelemetry, mechanic_state, designator_mark
         self.telemetry = ShotTelemetry(self)
         self.mechanic_state = mechanic_state
+        self.designator_mark = designator_mark
         # The motion history of every shooter, in memory only; started and stopped by the battle
         # hooks of VehicleEvents. It reuses this recorder's BigWorld handle and the telemetry's own
         # "are we recording" gate, so it can never sample where the telemetry would not record.
@@ -960,6 +961,14 @@ class Recorder(object):
                 # Spall-liner factor of the target: 1.0 without a liner, higher with one. The page divides the
                 # non-penetration HE damage by it; a client without the attribute simply leaves the field out.
                 record['target']['linerFactor'] = float(descr.miscAttrs.get('antifragmentationLiningFactor', 1.0))
+            except Exception:
+                pass
+            # BACKLOG 38: the leKpz Borkenkafer's mark on the TARGET at the impact - every shell deals a marked
+            # vehicle x1.1 (x1.15) from any shooter, above the page's damage window. One lookup on the entity this
+            # hit lands on, beside the reads above; no hook. A live field of the hit (records.LIVE_VEHICLE_KEYS).
+            try:
+                mark = self.designator_mark(vehicle)
+                if mark: record['target']['designatorMark'] = mark
             except Exception:
                 pass
             collisions = vehicle.appearance.collisions

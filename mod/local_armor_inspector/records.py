@@ -53,11 +53,12 @@ class PitchTable(_SharedTable):
 
 
 # Everything else of a vehicle block belongs to its configuration and is shared by reference.
-# These five are the battle's own: the pose, the parts that carry it, and the state of the
-# vehicle at this very shot. A field wrongly left out of this list only costs table entries -
+# These are the battle's own: the pose, the parts that carry it, the state of the vehicle at this
+# very shot, its motion and the Borkenkafer's mark on it (designatorMark, BACKLOG 38). A field
+# wrongly left out of this list only costs table entries -
 # the tables are content-addressed, so a value that does change still produces its own entry.
 LIVE_VEHICLE_KEYS = ('parts', 'worldTransform', 'siegeStateAtImpact', 'vehicleMode',
-                     'gunStateAtImpact', 'motion')
+                     'gunStateAtImpact', 'motion', 'designatorMark')
 # Hit-level lists that belong to the gun configuration, not to the shot.
 SHELL_LIST_FIELDS = ('availableShells', 'shellCandidates')
 # Where the fingerprints of one hit are kept between prepare and publish.

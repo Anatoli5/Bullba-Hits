@@ -269,6 +269,35 @@ def mechanic_state(entity, own):
     return result
 
 
+def designator_mark(entity):
+    """The leKpz Borkenkafer's mark on this vehicle, {creatorID, startTime, endTime}, or None (BACKLOG 38, 23.09).
+
+    The Borkenkafer's targetDesignator arms its next shot; a hit on a spotted target marks it for 10 s (12.5 with
+    the full skill tree), and every shell from ANY shooter then deals it damageIncomeFactor 1.1 (1.15) - applied by
+    the server. The mark lives on the TARGET: targetDesignatorTargetController.spottedMarker (TARGET_DESIGNATOR_MARKER
+    {creatorID, startTime, endTime}, ALL_CLIENTS in its def, client 2.4.0.1), so it is read off the entity the hit
+    lands on - one dictionary lookup, the same way mechanic_state reads the shooter. Written only when a mark was
+    ever set (a creator or an end time): the component's default says nothing. The times are server time, the
+    clock of the record's own gameTime, and whether the mark is still on at the impact is the page's comparison.
+    Never raises.
+    """
+    components = getattr(entity, 'dynamicComponents', None)
+    if not components: return None
+    try:
+        component = components.get('targetDesignatorTargetController')
+        marker = getattr(component, 'spottedMarker', None) if component is not None else None
+        if marker is None: return None
+        packed = {}
+        for field in ('creatorID', 'startTime', 'endTime'):
+            item = state_value(getattr(marker, field, None))
+            if item is not None and not isinstance(item, bool): packed[field] = item
+        if not (packed.get('creatorID') or packed.get('endTime')): return None
+        return packed
+    except Exception:
+        LOG.debug('Designator mark unavailable', exc_info=True)
+        return None
+
+
 class ShotTelemetry(object):
     def __init__(self, recorder):
         self.recorder = recorder

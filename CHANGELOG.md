@@ -2,6 +2,20 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
+## 0.7.30 (2026-09-23)
+
+- ✸: one mode button in the gun panel for tier XI vehicles with a mode or ability of their own, starting from the state the shot was recorded in; words in its tooltip.
+- CS-67 Szakal: the button switches the fight and turbo stances (3 s); turbo widens the circle in motion and after a shot and aims slower, the fight energy builds and at 100 fires the fight ability (circle ×0.8, aiming ×0.75, reload ×0.8 for 13 s).
+- XM69 Hacker: the button starts the gyro for 10 s (no dispersion from movement or turning, aiming ×0.3, circle ×0.94), then a 40 s cooldown.
+- Strv 107-12: the button switches the pillbox (5 s from travel, 3 s from siege): the siege circle ×0.85, reload ×0.925, the vehicle does not drive.
+- Black Rock: the button switches the Burst mode - one press fires both rounds 1.5 s apart, no dispersion from movement or turning, aiming ×0.3; single rounds otherwise.
+- Ho-Ri Shugo and Taschenratte: the button takes up the rocket launcher / support mortar with its own circle, reload and magazine; the other gun keeps reloading, and the shell on screen follows the gun.
+- leKpz Borkenkäfer: the button arms the designator; the next round marks the target for 10 s, and every hit on it rolls ×1.1.
+- Leopard 120 Verbessert (accuracy stacks) and T803 (battle fury) run by themselves; CAV mod. 71 spends a surge charge on the round loading back (8.5 s).
+- Breaker, AS-XX 40 t and AMX 67 Imbattable get the button dimmed, with why their mechanic is not emulated yet.
+- A hit on a target marked by a Borkenkäfer: the assumed shell allows the ×1.1-1.15 damage, and the hit panel's tooltip says so.
+- The mod records the Borkenkäfer mark on the target and the second gun's circle and reload (Ho-Ri Shugo, Taschenratte).
+
 ## 0.7.29 (2026-09-23)
 
 - Penetration changes with distance as in the client: full up to 50 m, then along the line through the 500 m value, still falling past 500 m, and 0 beyond the shell's range (was: from 100 m, flat after 500 m).

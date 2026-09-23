@@ -85,12 +85,18 @@
   // the resting one (mult, i.e. standing still, turret still, no shot); settledFor = 0 means the
   // shot is taken in the state itself. That is what the manual sliders ask and it stays as it was.
   // aimStep() below is the same formula integrated over real time instead, for the WASD emulation.
-  var NO_MODS={mult:1,additive:1,movement:1,rotation:1,turret:1,aimingTime:1,turretSpeed:1,hullSpeed:1,reload:1,magazineReload:1};
+  // `afterShot` and `speed` (23.09, BACKLOG 37) are written by the ✸ layer of the page only, for a tier-XI mechanic in
+  // force: the CS-67 Szakal's turbo stance takes the after-shot term ×1.66 (passiveTurboAfterShotDispersionDebuff),
+  // and the Strv 107-12's pillbox stops the vehicle (dynAttrs/vehicle/maxSpeed/forward ×0). Every other caller leaves
+  // them out and gets 1. ZERO_MODS: the factors a mechanic may really set to nothing - the XM69's gyro and the Black
+  // Rock's Burst mode take the movement, hull and turret terms ×0.0 - where for every other key 0 means "not given".
+  var NO_MODS={mult:1,additive:1,movement:1,rotation:1,turret:1,aimingTime:1,turretSpeed:1,hullSpeed:1,reload:1,magazineReload:1,afterShot:1,speed:1};
+  var ZERO_MODS={movement:1,rotation:1,turret:1,speed:1};
   function aimMods(mods){
     var out={},keys=Object.keys(NO_MODS);
     for(var i=0;i<keys.length;i++){
       var v=mods?Number(mods[keys[i]]):NaN;
-      out[keys[i]]=isFinite(v)&&v>0?v:NO_MODS[keys[i]];
+      out[keys[i]]=isFinite(v)&&(v>0||(v===0&&ZERO_MODS[keys[i]]&&mods[keys[i]]!==null&&mods[keys[i]]!==''))?v:NO_MODS[keys[i]];
     }
     return out;
   }
@@ -106,6 +112,7 @@
     // s.shotTerm replaces afterShot for this state (shotTerm below); s.hold keeps it in the formula between two
     // rounds, as an automatic gun's controller does. Neither given: exactly the term of every earlier build.
     if(typeof s.shotTerm==='number'&&s.shotTerm>=0)cs=s.shotTerm;
+    cs*=m.afterShot;
     var v=Math.abs(Number(s.speed)||0),w=Math.abs(Number(s.hullTurn)||0),wt=Math.abs(Number(s.turretTurn)||0);
     var sum=(v*cm)*(v*cm)+(w*cr)*(w*cr)+(wt*ct)*(wt*ct)+(s.afterShot||s.hold?cs*cs:0);
     var ideal=mult*Math.sqrt(1+additive*additive*sum);
@@ -252,8 +259,11 @@
     // term BIGGER, not smaller - the honest answer. The page hands the terms in already converted to the
     // m/s the record uses. A vehicle whose record carries no speed at all gains nothing: 0 means no data,
     // and a term on top of it would be an invented speed.
-    var forward=a.speedForward>0?Math.max(0,a.speedForward+term(mods&&mods.speedForwardAdd)):0;
-    var back=a.speedBackward>0?Math.max(0,a.speedBackward+term(mods&&mods.speedBackwardAdd)):0;
+    // m.speed: a tier-XI mode that caps the vehicle's speed outright (the Strv 107-12's pillbox, ×0), 1 otherwise. The
+    // brake keeps the vehicle's own rate, so a vehicle rolling when the cap drops comes to a stop instead of coasting.
+    var forwardCap=a.speedForward>0?Math.max(0,a.speedForward+term(mods&&mods.speedForwardAdd)):0;
+    var backCap=a.speedBackward>0?Math.max(0,a.speedBackward+term(mods&&mods.speedBackwardAdd)):0;
+    var forward=forwardCap*m.speed,back=backCap*m.speed;
     var hullMax=(a.hullRotationSpeed>0?a.hullRotationSpeed:0)*m.hullSpeed;
     var accel=seconds(mods&&mods.accelSeconds,MOVE.accel),accelBack=seconds(mods&&mods.accelBackSeconds,MOVE.accelBack);
     var brake=seconds(mods&&mods.brakeSeconds,MOVE.brake),turn=seconds(mods&&mods.turnSeconds,MOVE.turn);
@@ -267,7 +277,7 @@
     // Pushing the speed further from zero in the direction it already has is acceleration; anything
     // else - releasing the key, or braking towards zero - is the brake.
     var rising=goal!==0&&speed*goal>=0&&Math.abs(goal)>Math.abs(speed);
-    var rate=rising?(goal>0?forward/accel:back/accelBack):Math.max(forward,back)/brake;
+    var rate=rising?(goal>0?forward/accel:back/accelBack):Math.max(forwardCap,backCap)/brake;
     speed=approach(speed,goal,Math.max(0,rate)*step);
     var hullTarget=k.left&&!k.right?-hullMax:k.right&&!k.left?hullMax:0;
     hullTurn=approach(hullTurn,hullTarget,(hullMax>0?hullMax/turn:0)*step);

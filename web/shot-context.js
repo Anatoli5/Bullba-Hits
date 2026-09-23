@@ -98,6 +98,26 @@
   // first; BACKLOG № 32). Only the Polish smoothbore APCR lose damage with range; a shell without alphaFar, a hit
   // without a range and a caller that has not loaded ballistics.js all get the shell's own alpha.
   function alphaAt(c,range){var B=root.ArmorBallistics;return B&&B.alphaAt?B.alphaAt(c,range):Number(c.alpha)||0;}
+  /* THE BORKENKÄFER'S MARK ON THE TARGET (BACKLOG 38, 23.09). The leKpz Borkenkäfer's targetDesignator arms its next
+     shot; a hit on a spotted target marks it for spottedMarkedTime 10 s (12.5 with the full skill tree), and a marked
+     vehicle takes damageIncomeFactor ×1.1 of the damage of every shell - from ANY shooter - ×1.15 with the marker's
+     full tree (client 2.4.0.1 G188_LeKpz_Borkenkafer.xml and common/vehicle_mechanics.xml, docs/KNOWLEDGE.md section 4).
+     The factor is applied by the server (IncomingDamageModifier is empty in the client); whose tree the marker had,
+     the record cannot tell, so the window is ×1.1…×1.15. Since the build after 0.7.29 the recorder reads the mark the
+     target carries at the impact (target.designatorMark {creatorID, startTime, endTime}, server time); it is active
+     when it ends after the hit's own gameTime. Whether the marking shot itself gets the bonus is not known - so the
+     damage window only WIDENS: its top rises ×1.15, its bottom stays. Returns null for every hit without an active mark,
+     which is every record written before that build. */
+  var MARK_FACTOR=1.1,MARK_FACTOR_TREE=1.15;
+  function markOf(hit){
+    var m=hit&&hit.target&&hit.target.designatorMark,at=hit&&hit.gameTime!==null&&hit.gameTime!==undefined?Number(hit.gameTime):NaN;
+    if(!m||!Number.isFinite(at))return null;
+    var end=Number(m.endTime);
+    if(!(Number.isFinite(end)&&end>at))return null;
+    return {creatorID:m.creatorID,startTime:Number(m.startTime),endTime:end,left:end-at,low:MARK_FACTOR,high:MARK_FACTOR_TREE};
+  }
+  // The top of a damage window on a marked target: ×MARK_FACTOR_TREE, else ×1.
+  function markTop(mark){return mark&&mark.high>1?mark.high:1;}
   // The server scales every shot's (velocity, gravity) by some k, so |v| alone does not name a shell -
   // but v/sqrt(g) cancels k and equals the descriptor's speed/sqrt(gravity) exactly. Measured over the
   // owner's 5352 tracers, 22.09: 94.5 % match one of the shooter's own shells inside 0.1 %. The tolerance
@@ -262,9 +282,9 @@
         if(byState.length){matching=byState;modeSource=e[1];}
       });
       if(matching.length>1&&Number(hit.damage)>0){
-        var dmg=Number(hit.damage),could=matching.filter(function(c){
+        var dmg=Number(hit.damage),top=markTop(markOf(hit)),could=matching.filter(function(c){
           var r=Number.isFinite(c.damageRandomization)?c.damageRandomization:.25,a=alphaAt(c,range);
-          return !(a>0)||dmg<=a*(1+r)*1.001;});
+          return !(a>0)||dmg<=a*(1+r)*1.001*top;});
         if(could.length===1){matching=could;modeSource='only this state’s damage band reaches the recorded damage';}
       }
     }
@@ -292,7 +312,7 @@
     return {choices:choices,index:index,kind:kindValues.length===1?kindValues[0]:null,tracer:tracer,command:command,aim:aim,aimSource:chosen?chosen.from:null,aimReason:aimReason,
       range:range,rangeSource:rangeSource,modes:hasModes,unresolvedWhy:why,
       gunState:gunState,gunStateFrom:gunFrom,gunNotes:gunNotes(gunState,gunFrom),chargeFactor:chargeFactor>1?chargeFactor:null,
-      treeSpeed:byTree?treeDv:null,
+      treeSpeed:byTree?treeDv:null,mark:markOf(hit),
       source:index<0?'Shell not determined unambiguously'
         :modeSource?'The shooter’s second mode: '+modeSource
         :(kindValues.length?'Type and calibre from the hit; gun data from the client':'The only shell with this effect in the record')+
@@ -309,20 +329,22 @@
      holds nothing of that type - the page then falls back to the bare type. `range` (metres, optional) is the
      shot's flight: the window is built from the alpha AT that range, which on a Polish smoothbore APCR is far
      below the muzzle's (Błyskawica at 300 m: 522, not 800), and the window at the muzzle threw such a shell out. */
-  function assume(choices,kind,damage,range){
+  function assume(choices,kind,damage,range,mark){
     var all=(choices||[]).map(function(c,i){return {c:c,i:i};});
     var same=kind?all.filter(function(e){return e.c.kind===kind;}):all;
     if(!same.length)return {index:-1,reason:''};
-    var dmg=Number(damage)||0;
+    var dmg=Number(damage)||0,top=markTop(mark);
+    // `mark` (markOf above; resolve() hands it on as context.mark): on a marked target the window's top is ×1.15.
     var band=function(e){var r=Number.isFinite(e.c.damageRandomization)?e.c.damageRandomization:.25,a=alphaAt(e.c,range);
-      return a>0?[a*(1-r)*.999,a*(1+r)*1.001]:null;};
+      return a>0?[a*(1-r)*.999,a*(1+r)*1.001*top]:null;};
     var could=dmg>0?same.filter(function(e){var b=band(e);return !b||dmg<=b[1];}):same;
     if(!could.length)could=same;
     var exact=dmg>0?could.filter(function(e){var b=band(e);return b&&dmg>=b[0]&&dmg<=b[1];}):[];
-    if(exact.length===1)return {index:exact[0].i,reason:'the recorded damage fits this shell alone'};
+    var marked=top>1&&dmg>0?' (the target carried a Borkenkäfer mark: its damage window reaches ×'+top+')':'';
+    if(exact.length===1)return {index:exact[0].i,reason:'the recorded damage fits this shell alone'+marked};
     var best=could.reduce(function(a,b){return (Number(b.c.penetration100)||0)>(Number(a.c.penetration100)||0)?b:a;},could[0]);
-    return {index:best.i,reason:could.length>1?'the deepest penetration of the shells that fit':
-      same.length>1?'the deepest penetration of this type':'the only shell of this type the record lists'};
+    return {index:best.i,reason:(could.length>1?'the deepest penetration of the shells that fit':
+      same.length>1?'the deepest penetration of this type':'the only shell of this type the record lists')+marked};
   }
-  root.ArmorShotContext={resolve:resolve,assume:assume,modeLabel:modeLabel,identical:identical,gunNotes:gunNotes};
+  root.ArmorShotContext={resolve:resolve,assume:assume,modeLabel:modeLabel,identical:identical,gunNotes:gunNotes,markOf:markOf};
 }(typeof window==='undefined'?globalThis:window));

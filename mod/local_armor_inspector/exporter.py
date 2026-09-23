@@ -29,7 +29,7 @@ from .telemetry import mechanics_params
 from .crit_tie import attach_crits, moves_tie
 
 LOG = logging.getLogger('local.armor_inspector')
-VERSION = '0.7.29'
+VERSION = '0.7.30'
 RESOURCE = re.compile(r'^(?:[A-Za-z0-9_-]+/)?vehicles/[A-Za-z0-9_/-]+\.(?:model|havok)\Z')
 IDENTIFIER = re.compile(r'^[-a-zA-Z0-9_]{1,100}\Z')
 # The interface icons of the aim configuration (equipment, perks, shells) ship with the page in web/icons
@@ -570,6 +570,9 @@ def aim_block(descr):
       temperatureGun,       {field: v} the gun's heat parameters (gun_heat), only for a gun that has them
       overheatGun,
       heatingZonesGun
+      secondary             {field: v} the circle and the reload of the vehicle's secondary (ability) gun, gun
+                                       slot 1 (secondary_aim) - only the Ho-Ri Shugo and the Taschenratte of client
+                                       2.4.0.1 have one
 
     Every field is read on its own and a field the client does not give is simply left out
     and named in 'unavailable', the same contract the telemetry snapshot uses: this must
@@ -655,6 +658,13 @@ def aim_block(descr):
         aim.update(gun_heat(mechanics))
     except Exception:
         aim['unavailable'].append('temperatureGun')
+    # The secondary gun (23.09, BACKLOG 37): its own circle and reload, so the page can fire it under its own numbers.
+    # Static per configuration and built once per gun object (secondary_aim); written only for a vehicle that has it.
+    try:
+        secondary = secondary_aim(descr)
+        if secondary: aim['secondary'] = secondary
+    except Exception:
+        aim['unavailable'].append('secondary')
     if not aim['unavailable']:
         del aim['unavailable']
     # Without the angle itself there is no circle to draw, so an empty block is no block.
@@ -766,6 +776,69 @@ def gun_heat(params):
     return block
 
 
+# One block per secondary gun object: an arena keeps one descriptor per vehicle for the whole battle, so the block is
+# built once and every later hit of that shooter only looks it up (the gun object is kept in the entry, so an id can
+# never be reused while it is cached) - the same pattern as _GUN_HEAT_CACHE above.
+_SECONDARY_CACHE = {}
+
+
+def secondary_aim(descr):
+    """The circle and the reload of the vehicle's secondary gun, gun slot 1; None for every vehicle with one gun.
+
+    Two vehicles of client 2.4.0.1 carry one (turrets0/<turret>/secondaryGuns of the vehicle file): the Ho-Ri Shugo's
+    rocket launcher _12_cm_Shisei_Funshinhou (reload 60 s, aiming 1.0 s, 0.15 m/100 m, turret 0.10, after a shot 1.0)
+    and the Taschenratte's mortar _8_cm_8H62_2 (reload 50 s, clip and burst 2 at 120 a minute, aiming 1.9 s, 0.35 m,
+    turret 0.05, after a shot 1.2). The descriptor keeps the gun in VehicleDescriptor.gunInstallations, the list
+    armor.gun_installations already reads for the shells, so the same reader is used here. The fields carry the names
+    and the units of aim_block's own gun fields, so the page lays the block over the main one to fire that gun:
+
+      installation 1; name (the gun's XML name); dispersion, aimingTime, turretRotationFactor, afterShotFactor,
+      afterShotInBurstFactor (only where it differs), reloadTime, clip, burst (only with a count above 1), gunTags
+
+    The vehicle's own factors (miscAttrs, the chassis, the crew) are the main block's and are not repeated. Raises on
+    a malformed gun list; the caller guards it.
+    """
+    from .armor import gun_installations
+    for index, gun in gun_installations(descr):
+        if index != 1: continue
+        cached = _SECONDARY_CACHE.get(id(gun))
+        if cached is not None and cached[0] is gun:
+            return cached[1]
+        block = {'installation': 1}
+
+        def put(name, action):
+            try:
+                block[name] = action()
+            except Exception:
+                pass
+        put('name', lambda: str(gun.name))
+        put('dispersion', lambda: float(gun.shotDispersionAngle))
+        put('aimingTime', lambda: float(gun.aimingTime))
+        put('turretRotationFactor', lambda: float(gun.shotDispersionFactors['turretRotation']))
+        put('afterShotFactor', lambda: float(gun.shotDispersionFactors['afterShot']))
+        try:
+            in_burst = float(gun.shotDispersionFactors['afterShotInBurst'])
+            if positive(in_burst) and in_burst != block.get('afterShotFactor'):
+                block['afterShotInBurstFactor'] = in_burst
+        except Exception:
+            pass
+        put('reloadTime', lambda: float(gun.reloadTime))
+        put('clip', lambda: [int(gun.clip[0]), float(gun.clip[1])])
+        try:
+            burst = gun.burst
+            if int(burst[0]) > 1:
+                block['burst'] = [int(burst[0]), float(burst[1]), bool(burst[2])]
+        except Exception:
+            pass
+        put('gunTags', lambda: sorted(str(tag) for tag in gun.tags))
+        block = block if positive(block.get('dispersion')) else None
+        if len(_SECONDARY_CACHE) > 64:
+            _SECONDARY_CACHE.clear()
+        _SECONDARY_CACHE[id(gun)] = (gun, block)
+        return block
+    return None
+
+
 def fix_aim(vehicle):
     """Fill or complete the 'aim' block of a record written before the recorder knew it.
 
@@ -796,10 +869,10 @@ def fix_aim(vehicle):
     # Only the missing keys are copied over: whatever the old block holds stays byte for byte,
     # so a record is never silently rewritten by a later change to an unrelated field.
     fresh = list(block.get('unavailable') or [])
-    # 'burst', 'afterShotInBurstFactor' and 'gunMechanics' are written only when the gun really has them, so
-    # none may decide that a block is incomplete - a vehicle without them would be "completed" on every pass
+    # 'burst', 'afterShotInBurstFactor', 'gunMechanics' and 'secondary' are written only when the gun really has
+    # them, so none may decide that a block is incomplete - a vehicle without them would be "completed" on every pass
     # for ever. They are copied when a completion key brings the rebuild here anyway.
-    for key in AIM_COMPLETION_KEYS + ('burst', 'afterShotInBurstFactor', 'gunMechanics') + AIM_MECHANICS_KEYS + AIM_GUN_HEAT_KEYS:
+    for key in AIM_COMPLETION_KEYS + ('burst', 'afterShotInBurstFactor', 'gunMechanics', 'secondary') + AIM_MECHANICS_KEYS + AIM_GUN_HEAT_KEYS:
         if key in existing:
             continue
         if key in block:
