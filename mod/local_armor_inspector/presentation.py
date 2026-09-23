@@ -13,6 +13,7 @@ WEB_COMMAND = 'bullba_hits'
 _export_request = None
 _busy_request = None
 _prioritise_request = None
+_ttx_request = None
 _warned = set()
 
 
@@ -77,6 +78,12 @@ def set_prioritise_request(handler):
     _prioritise_request = handler
 
 
+def set_ttx_request(handler):
+    """The page asks for the characteristics file of one vehicle type (data/ttx/<id>.js)."""
+    global _ttx_request
+    _ttx_request = handler
+
+
 def _warn_once(key, message, *args):
     """A page command that keeps failing must not fill game.log line by line.
 
@@ -92,7 +99,8 @@ def _warn_once(key, message, *args):
 def _handle_web_command(command, ctx):
     """One w2c command from the page, on the game thread. Only the request is done here.
 
-    Three fire-and-forget actions: 'exportVehicle' asks for one vehicle type,
+    Four fire-and-forget actions: 'exportVehicle' asks for one vehicle type,
+    'exportTtx' for the characteristics file of one type (no collision models),
     'busy' says the user is dragging or zooming the page right now, and
     'prioritise' names the vehicle types whose collision models the page is
     waiting for. None of them may cost the game thread more than a flag.
@@ -114,6 +122,16 @@ def _handle_web_command(command, ctx):
                 _warn_once('prioritise', 'Bullba Hits page command: the recorder is not running')
                 return
             _prioritise_request([str(name) for name in list(types)[:8] if name])
+            return
+        if action == 'exportTtx':
+            type_name = getattr(command, 'vehicleType', None)
+            if not type_name or ':' not in str(type_name):
+                _warn_once('ttx-type', 'Bullba Hits page command: no vehicle type in %r', type_name)
+                return
+            if _ttx_request is None:
+                _warn_once('ttx', 'Bullba Hits page command: the recorder is not running')
+                return
+            _ttx_request(str(type_name))
             return
         if action != 'exportVehicle':
             LOG.warning('Bullba Hits page command: unknown action %r', action)

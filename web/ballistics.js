@@ -84,7 +84,7 @@
   // the resting one (mult, i.e. standing still, turret still, no shot); settledFor = 0 means the
   // shot is taken in the state itself. That is what the manual sliders ask and it stays as it was.
   // aimStep() below is the same formula integrated over real time instead, for the WASD emulation.
-  var NO_MODS={mult:1,additive:1,movement:1,rotation:1,turret:1,aimingTime:1,turretSpeed:1,hullSpeed:1,reload:1,clipInterval:1};
+  var NO_MODS={mult:1,additive:1,movement:1,rotation:1,turret:1,aimingTime:1,turretSpeed:1,hullSpeed:1,reload:1,magazineReload:1};
   function aimMods(mods){
     var out={},keys=Object.keys(NO_MODS);
     for(var i=0;i<keys.length;i++){
@@ -170,15 +170,38 @@
   // page multiplies the rammer and the crew in `mods.reload` and nothing is applied twice. The
   // extra reload term is a battle-time effect (a consumable, a damaged gun) and is not modelled.
   // Clip guns: `shots` rounds inside the magazine at `interval` seconds apart, then the full reload.
+  // MAG MASTERY (tankmen.xml loader_magMastery, magazineGunReloadSpeed -0.00025 a level; perks.xml 408) shortens
+  // the reload of the WHOLE MAGAZINE, and only of a magazine gun that is neither an autoloader nor an automatic
+  // one: the garage multiplies it into the reload in gui params __calcReloadTime 1401-1405 and
+  // __calcClipFireRate 1419-1423 (checked 23.09, docs/KNOWLEDGE.md section 17). Until 23.09 the page shortened
+  // the interval between the rounds instead, which the client never does - the interval is the gun's own.
+  // `magazine` says whether this gun is one Mag Mastery works on, so a caller that orders the factors its own
+  // way (the characteristics panel, web/ttx.js) reads the rule here instead of deciding it a second time.
+  function magazineGun(aim,shots){
+    if(!(shots>1))return false;
+    var tags=Array.isArray(aim.gunTags)?aim.gunTags:[];
+    return !aim.autoreload&&tags.indexOf('autoreload')<0&&!aim.autoShoot&&tags.indexOf('autoShoot')<0;
+  }
   function reloadSeconds(aim,mods){
     if(!aim||!(aim.reloadTime>0))return null;
     var m=aimMods(mods),clip=aim.clip,burst=aim.burst;
-    var shots=clip&&clip.length>1&&clip[0]>1?Math.floor(clip[0]):1;
-    return {reload:aim.reloadTime*(aim.reloadTimeFactor>0?aim.reloadTimeFactor:1)*m.reload,
-      // Mag Mastery (tankmen.xml loader_magMastery) shortens the interval between the rounds of a clip
-      // and nothing else; the page reads that interval from here alone, so one factor covers every caller.
-      shots:shots,interval:shots>1&&clip[1]>0?clip[1]*m.clipInterval:0,
+    var shots=clip&&clip.length>1&&clip[0]>1?Math.floor(clip[0]):1,magazine=magazineGun(aim,shots);
+    return {reload:aim.reloadTime*(aim.reloadTimeFactor>0?aim.reloadTimeFactor:1)*m.reload*(magazine?m.magazineReload:1),
+      magazine:magazine,shots:shots,interval:shots>1&&clip[1]>0?clip[1]:0,
       burst:burst&&burst.length>1&&burst[0]>1?{count:Math.floor(burst[0]),interval:burst[1]>0?burst[1]:0,sync:!!burst[2]}:null};
+  }
+  // An autoloader's per-round times, scaled by the factors of the reload, in the tuple's own order (the LAST entry
+  // is the first round into an empty magazine, KNOWLEDGE section 4) - or null when the gun is no autoloader or the
+  // record lacks the times. The client multiplies each entry by the factor of getReloadTime (items/utils
+  // getClipReloadTime), which is rl.reload / aim.reloadTime here: the rammer and the loader, never Mag Mastery,
+  // which spares an autoloader. One helper for the two readers - the emulation's real reload and the
+  // characteristics panel - so the scaling is written once.
+  function autoreloadScaled(aim,rl){
+    var list=aim&&aim.autoreload&&aim.autoreload.reloadTime;
+    if(!rl||!Array.isArray(list)||!list.length||!(aim.reloadTime>0))return null;
+    var k=rl.reload/aim.reloadTime,out=[],i,v;
+    for(i=0;i<list.length;i++){v=Number(list[i]);if(!(v>0))return null;out.push(v*k);}
+    return out;
   }
   // Movement. OUR APPROXIMATION, and there is no client formula behind any of it: the real vehicle
   // accelerates by engine power against weight, terrain resistance and the gearbox, which the record
@@ -461,6 +484,6 @@
     return stops[i].map(function(v,k){return v+(stops[i+1][k]-v)*f;});
   }
   root.ArmorBallistics={build:build,fromTriangles:fromTriangles,triangle:triangle,subdivide:subdivide,evaluate:evaluate,shell:shell,chance:chance,effective:effective,ricochet:ricochet,color:color,value:value,nonPenetration:nonPenetration,transform:transform,unit:unit,sub:sub,aimFactor:aimFactor,
-    aimStep:aimStep,aimShot:aimShot,reloadSeconds:reloadSeconds,moveStep:moveStep,turretChase:turretChase,
+    aimStep:aimStep,aimShot:aimShot,reloadSeconds:reloadSeconds,autoreloadScaled:autoreloadScaled,moveStep:moveStep,turretChase:turretChase,
     aimProfiles:AIM_PROFILES,aimProfile:aimProfile,aimProfileDefault:DEFAULT_PROFILE,moveDefaults:MOVE};
 }(typeof window==='undefined'?globalThis:window));

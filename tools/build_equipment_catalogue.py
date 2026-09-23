@@ -8,16 +8,31 @@ tooltip can be traced back to the client's own XML.
 
 Run it with runtime/python.exe. It reads outputs/ (local context, not in the repository) and writes
 web/equipment.js (shipped). Re-run it after a client update, with a fresh research pass behind it.
+
+Since the characteristics panel (23.09, outputs/ttx-panel-spec-2026-09-22.md section 3.3) it also reads the
+INSTALLED CLIENT itself, read-only: the research file lost the scripts of the devices that do not shoot (the
+camouflage net, the exhaust, the binoculars, the grousers, the hull part of the rotation mechanism) and every
+device's mass (outputs/ttx-data-2026-09-22.md section 4.3). They are decoded straight out of scripts.pkg with the
+mod's own packed-XML reader. No client, no catalogue: the script stops and says so rather than dropping them.
+
+    runtime/python.exe tools/build_equipment_catalogue.py [game folder]     (default C:/Games/World_of_Tanks_NA)
 """
 import io
 import json
 import os
+import re
+import sys
+import zipfile
 import xml.etree.ElementTree as ET
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CATALOGUE = os.path.join(ROOT, 'outputs', 'equipment-perks-2026-09-20.json')
 TARGET = os.path.join(ROOT, 'web', 'equipment.js')
 CLIENT = 'World of Tanks PC NA 2.4.0.1 #950'
+GAME = 'C:/Games/World_of_Tanks_NA'
+DEVICE_FILES = ['tiers_devices.xml', 'deluxe_devices.xml', 'trophy_devices.xml', 'modernized_devices.xml']
+DEVICE_DIR = 'scripts/item_defs/vehicles/common/optional_devices/'
+BOOSTERS = 'scripts/item_defs/vehicles/common/equipments/battle_boosters.xml'
 
 # The garage's own name for a family of devices. The research file carries a shortened form
 # ("Stabilizer", "Aiming"); these are the names the interface shows on the item itself.
@@ -32,6 +47,18 @@ FAMILY_NAMES = {
     'modernizedAimDrivesAimingStabilizer': 'Fire-Control System',
     'modernizedImprovedSightsEnhancedAimDrives': 'Accuracy Improvement System',
     'modernizedTurbochargerRotationMechanism': 'Mobility Improvement System',
+    # The pieces that do not shoot (23.09): the characteristics panel counts what they do, or at least their mass.
+    'coatedOptics': 'Coated Optics',
+    'stereoscope': 'Binocular Telescope',
+    'camouflageNet': 'Camouflage Net',
+    'additionalInvisibilityDevice': 'Low Noise Exhaust System',
+    'grousers': 'Additional Grousers',
+    'extraHealthReserve': 'Improved Hardening',
+    'antifragmentationLining': 'Spall Liner',
+    'improvedConfiguration': 'Improved Configuration',
+    'improvedRadioCommunication': 'Improved Radio Set',
+    'commandersView': 'Commander’s Vision System',
+    'modernizedExtraHealthReserveAntifragmentationLining': 'Survival Improvement Suite',
 }
 # What the family does, in one clause, for the tooltip.
 FAMILY_WHAT = {
@@ -48,11 +75,25 @@ FAMILY_WHAT = {
     'modernizedAimDrivesAimingStabilizer': 'a laying drive and a stabiliser in one slot',
     'modernizedImprovedSightsEnhancedAimDrives': 'improved aiming and a laying drive in one slot',
     'modernizedTurbochargerRotationMechanism': 'a turbocharger and a rotation mechanism in one slot',
+    'coatedOptics': 'widens the view range, moving or standing',
+    'stereoscope': 'widens the view range while the vehicle stands still, in place of the optics',
+    'camouflageNet': 'hides the vehicle while it stands still; with an exhaust fitted the larger of the two counts',
+    'additionalInvisibilityDevice': 'hides the vehicle, moving or standing',
+    'grousers': 'lowers the terrain resistance, so the hull turns faster',
+    'extraHealthReserve': 'adds hit points',
+    'antifragmentationLining': 'guards the crew and modules against spalling',
+    'improvedConfiguration': 'makes the modules and crew tougher',
+    'improvedRadioCommunication': 'lengthens how long a spotted enemy stays spotted',
+    'commandersView': 'spots enemies in foliage and on the move sooner',
+    'modernizedExtraHealthReserveAntifragmentationLining': 'hit points and module strength in one slot',
 }
 FAMILY_ORDER = ['tankRammer', 'aimingStabilizer', 'enhancedAimDrives', 'improvedSights',
                 'improvedRotationMechanism', 'improvedVentilation', 'turbocharger',
+                'coatedOptics', 'stereoscope', 'camouflageNet', 'additionalInvisibilityDevice', 'grousers',
+                'extraHealthReserve', 'antifragmentationLining', 'improvedConfiguration',
+                'improvedRadioCommunication', 'commandersView',
                 'modernizedAimDrivesAimingStabilizer', 'modernizedImprovedSightsEnhancedAimDrives',
-                'modernizedTurbochargerRotationMechanism']
+                'modernizedTurbochargerRotationMechanism', 'modernizedExtraHealthReserveAntifragmentationLining']
 TIER_ORDER = ['standard', 'improved', 'bounty', 'experimental']
 # "badge" is the grade mark the client lays over the corner of the device icon, extracted into web/icons
 # from the client's own artefact and demountKit folders (equipmentPlus_overlay,
@@ -85,6 +126,27 @@ PAGE_INPUT = {
     'speedForward': 'speedForward',
     'speedBackward': 'speedBackward',
     'speed (engine power -> speed reached -> movement term)': 'enginePower',
+}
+# Attributes the research file read without a page input, which the characteristics panel now has a place for.
+ATTRIBUTE_INPUT = {
+    'miscAttrs/circularVisionRadiusFactor': 'visionFactor',
+    'miscAttrs/healthFactor': 'healthFactor',
+    'miscAttrs/enginePowerFactor': 'enginePower',
+}
+# The device SCRIPTS whose numbers the research file lost, read out of the client (section 4.3 of the data
+# report): script name -> [(field of <script>, page input, operation, override key or None)]. The camouflage net
+# and the exhaust are set PER VEHICLE by the client (type.optDevsOverrides, 1247 of 1252 vehicles), so the page
+# looks the vehicle's own figure up in its characteristics file under `override` and keeps this one as the
+# fallback. The grousers' `rotationFactor` is what they multiply the terrain resistance by (Grousers,
+# artefacts.pyc; KNOWLEDGE section 17), and the rotation mechanism's hull part is trackRotateSpeedFactor (the
+# wheeled figure is the same number). The Bounty and Experimental pieces run the same scripts under an
+# 'Upgradable' or 'Upgraded' prefix (UpgradedLowNoiseTracks, UpgradableRotationMechanisms), read the same way.
+SCRIPT_INPUTS = {
+    'Stereoscope': [('circularVisionRadius', 'visionStill', 'mul', None)],
+    'CamouflageNet': [('overridableFactors/invisibilityBonus', 'invisibilityStill', 'add', 'camouflageNet')],
+    'LowNoiseTracks': [('overridableFactors/invisibilityBonus', 'invisibilityAdd', 'add', 'additionalInvisibilityDevice')],
+    'Grousers': [('rotationFactor', 'terrainResistance', 'mul', None)],
+    'RotationMechanisms': [('trackRotateSpeedFactor', 'hullRotationSpeed', 'mul', None)],
 }
 # Slot types a vehicle's <supplySlots> lists, and what each grants (supply_slot_types.xml).
 SLOT_TYPES = {1: [], 2: ['mobility'], 3: ['stealth'], 4: ['firepower'], 5: ['survivability']}
@@ -122,9 +184,36 @@ SKILLS = [
     {'id': 'driver_virtuoso', 'role': 'driver', 'name': 'Clutch Braking', 'kind': 'skill',
      'eff': {'hullRotationSpeed': ['mul', 1.05]}, 'situational': False,
      'note': 'the hull turns faster, so it also comes round sooner'},
+    # Mag Mastery shortens the reload of the WHOLE MAGAZINE (tankmen.xml magazineGunReloadSpeed -0.00025 a level,
+    # perks.xml 408 gunReloadSpeed; the garage's params __calcReloadTime 1401-1405), only of a magazine gun that
+    # is neither an autoloader nor automatic - not the interval between the rounds, as this list said until 23.09.
     {'id': 'loader_magMastery', 'role': 'loader', 'name': 'Mag Mastery', 'kind': 'skill',
-     'eff': {'clipInterval': ['mul', 0.975]}, 'situational': False,
-     'note': 'the interval between the rounds of a clip'},
+     'eff': {'magazineReload': ['mul', 0.975]}, 'situational': False,
+     'note': 'the reload of the whole magazine of a magazine gun - not an autoloader, not an automatic gun; '
+             'the interval between the rounds stays the gun’s own'},
+    # Skills that do not shoot (23.09, the characteristics panel; outputs/ttx-data-2026-09-22.md section 4.2).
+    # Concealment is a GROUP skill like Brothers in Arms: one switch per tankman, and the client averages it over
+    # the whole crew (VehicleDescrCrew camouflage processor, outputs/ttx-formulas-2026-09-22.md 2.3). Its tile
+    # moves no input of its own: the page's crew law turns the switches into the concealment factor.
+    {'id': 'camouflage', 'role': 'each', 'name': 'Concealment', 'kind': 'skill',
+     'eff': {}, 'situational': False,
+     'note': 'learned by each crew member for himself; the client averages it over the whole crew: the '
+             'concealment factor is 0.57 + 0.43 x (the levels of those who have it, with their crew-level '
+             'additions, over 100 x N), 0.57 with nobody and 1.0344 with a whole five-man crew'},
+    {'id': 'commander_eagleEye', 'role': 'commander', 'name': 'Recon', 'kind': 'skill',
+     'eff': {'eagleEye': ['add', 0.02]}, 'situational': False,
+     'note': 'the view range; the client adds it to the commander’s own factor (circularVisionRadiusB)'},
+    {'id': 'radioman_finder', 'role': 'radioman', 'name': 'Situational Awareness', 'kind': 'skill',
+     'eff': {'finder': ['mul', 1.03]}, 'situational': False,
+     'note': 'the view range, as the garage counts it: on top of everything else'},
+    {'id': 'driver_badRoadsKing', 'role': 'driver', 'name': 'Off-Road Driving', 'kind': 'skill',
+     'eff': {'mediumGround': ['mul', 1.05], 'softGround': ['mul', 2.0]}, 'situational': False,
+     'note': 'the medium ground resists 5 % less, and soft ground is brought down to it (the garage’s '
+             'params softGroundFactor 921-948)'},
+    {'id': 'driver_motorExpert', 'role': 'driver', 'name': 'Engineer', 'kind': 'skill',
+     'eff': {'speedForward': ['add', 1], 'speedBackward': ['add', 1]}, 'situational': False,
+     'note': 'the top speed forward and back, +1 km/h each (forward/backwardMaxSpeedKMHTerm); the garage '
+             'finds no engine-power figure for it in this client'},
     {'id': 'gunner_focus', 'role': 'gunner', 'name': 'Concentration', 'kind': 'perk',
      'eff': {'multFactor': ['mul', 0.965]}, 'situational': True, 'when': 'while the vehicle stands still'},
     {'id': 'gunner_loneWolf', 'role': 'gunner', 'name': 'Lone Wolf', 'kind': 'perk',
@@ -175,6 +264,84 @@ CONSUMABLES = [
      'eff': {'turretRotationSpeed': ['mul', 1.1], 'enginePower': ['mul', 1.1]},
      'note': 'Fuel.updateVehicleAttrFactorsForAspect writes turret/rotationSpeed as well as engine/power.'},
 ]
+# The paint (23.09): every one of the client's 3318 camouflages has invisibilityFactor 1, so ONE switch says
+# whether the vehicle wears a camouflage with its bonus - the figure itself is the vehicle's own,
+# type.invisibilityDeltas['camouflageBonus'], and the page reads it from the characteristics file
+# (outputs/ttx-data-2026-09-22.md section 4.2).
+PAINT = {'id': 'paint', 'name': 'Camouflage', 'icon': 'camouflage',
+         'note': 'A camouflage painted on the vehicle: its concealment gains the vehicle’s own bonus '
+                 '(0.02, 0.03 or 0.04 by the vehicle; invisibilityDeltas camouflageBonus). The pattern does not '
+                 'matter - every camouflage of the client gives the same.'}
+
+
+def client_packages(game):
+    """The installed client's scripts package, or a SystemExit that says what is missing."""
+    path = os.path.join(game, 'res', 'packages', 'scripts.pkg')
+    if not os.path.isfile(path):
+        raise SystemExit('No client at %s (res/packages/scripts.pkg): give the game folder as the argument. '
+                         'The catalogue needs the client for the device masses and the scripts that do not shoot, '
+                         'and is not written without them.' % game)
+    return zipfile.ZipFile(path)
+
+
+def client_decode(archive, entry):
+    sys.path.insert(0, os.path.join(ROOT, 'mod', 'local_armor_inspector'))
+    import packed_xml
+    return packed_xml.decode(archive.read(entry))
+
+
+def numbers(text):
+    return [float(v) for v in (text or '').split()]
+
+
+def client_devices(archive):
+    """Every device of the client: its mass (script/weight, kg added to the vehicle; Artefact._readWeight) and
+    the effects SCRIPT_INPUTS names, as {entry: {'weight': kg, 'eff': {input: [op, value...]}, 'override': {}}}."""
+    out = {}
+    for name in DEVICE_FILES:
+        root = client_decode(archive, DEVICE_DIR + name)
+        for node in root:
+            script = node.find('script')
+            if script is None:
+                continue
+            row = {'weight': 0.0, 'eff': {}, 'override': {}}
+            weight = script.find('weight')
+            if weight is not None and (weight.text or '').strip():
+                row['weight'] = float(weight.text.strip())
+            kind = re.sub('^(Upgradable|Upgraded)', '', (script.text or '').strip())
+            for field, page, op, override in SCRIPT_INPUTS.get(kind, ()):
+                found = script.find(field)
+                values = numbers(found.text if found is not None else '')
+                if values:
+                    row['eff'][page] = [op] + values
+                    if override:
+                        row['override'][page] = override
+            out[node.tag] = row
+    if len(out) < 80:
+        raise SystemExit('Only %d devices decoded from the client: the package layout has changed.' % len(out))
+    return out
+
+
+def client_boosters(archive):
+    """The equipment directives whose figure the research file lost: InvisibilityBattleBooster writes
+    factors['invisibility'] as [add, mul] (Exhaust Insulation: +0.02, x1.0)."""
+    out = {}
+    root = client_decode(archive, BOOSTERS)
+    for node in root:
+        script = node.find('script')
+        if script is None or (script.text or '').strip() != 'InvisibilityBattleBooster':
+            continue
+        levels = []
+        for level in script.findall('level'):
+            factors = numbers(level.findtext('factors'))
+            tags = level.find('deviceFilter/tags')
+            needs = (tags.findtext('required') or '').split() if tags is not None else []
+            banned = (tags.findtext('incompatible') or '').split() if tags is not None else []
+            if factors and factors[0]:
+                levels.append({'needs': needs, 'not': banned, 'eff': {'invisibilityAdd': ['add', factors[0]]}})
+        if levels:
+            out[node.tag] = levels
+    return out
 
 
 def parse_filter(text):
@@ -208,22 +375,30 @@ def parse_filter(text):
     return out or None
 
 
-def device_rows(data):
+def device_rows(data, client):
+    """EVERY device of the client (23.09): the characteristics panel counts the mass of each fitted piece, so a
+    device the page cannot model still belongs in a slot - its tooltip says its effect is not shown. `weight` is
+    the kg the client adds to the vehicle, `override` names the entry of the vehicle's own optDevsOverrides a
+    figure is looked up under (the camouflage net and the exhaust)."""
     rows = []
     for entry, row in data['devices'].items():
-        effects = {}
+        effects, override = {}, {}
         for effect in row.get('effects') or ():
-            name = PAGE_INPUT.get(effect.get('pageInput') or '')
+            name = PAGE_INPUT.get(effect.get('pageInput') or '') or ATTRIBUTE_INPUT.get(effect.get('attribute') or '')
             if not name:
                 continue
             values = [float(v) for v in effect.get('valueByLevel') or ()]
             if not values:
                 continue
             effects[name] = [effect.get('op') or 'mul'] + values
-        if not effects:
-            continue
+        own = client.get(entry)
+        if own is None:
+            raise SystemExit('The client has no device %s: the research file and the client differ.' % entry)
+        for name, eff in own['eff'].items():
+            effects.setdefault(name, eff)
+        override.update(own['override'])
         family = row['archetype']
-        rows.append({
+        item = {
             'id': entry,
             'family': family,
             'tier': row.get('tier'),
@@ -232,8 +407,12 @@ def device_rows(data):
             'cat': list(row.get('categories') or ()),
             'blocks': ((row.get('incompatibleTags') or {}).get('installed') or '').split() or [family],
             'eff': effects,
+            'weight': own['weight'],
             'fit': parse_filter(row.get('vehicleFilter')),
-        })
+        }
+        if override:
+            item['override'] = override
+        rows.append(item)
     # One Bounty tile per device, and it is the upgraded one (user, 21.09). A Bounty piece is upgraded
     # with the same bonds sooner or later, so the un-upgraded trophyBasic entry is a state nobody keeps
     # a build in; offering both would only split the grade into two tiles that share one badge.
@@ -273,12 +452,16 @@ def skill_rows():
     return rows
 
 
-def directive_rows(data):
-    """The directives that land on one of our factors, with the device grade each factor depends on."""
+def directive_rows(data, boosters):
+    """The directives that land on one of our factors, with the device grade each factor depends on. `boosters`
+    are the ones read from the client (client_boosters) because the research file lost their figure."""
     out = []
     for entry, row in data['directives'].items():
-        levels = []
-        for level in row.get('levels') or ():
+        levels = list(boosters.get(entry) or ())
+        for level in (row.get('levels') or ()) if not levels else ():
+            # Optical Calibration multiplies factors['circularVisionRadius'] - the crew-side factor, which the
+            # binoculars leave alone - so it has an input of its own beside the optics' visionFactor (a
+            # miscAttrs factor, which the binoculars replace while the vehicle stands still).
             name = {'additiveShotDispersionFactor': 'additiveFactor',
                     'multShotDispersionFactor': 'multFactor',
                     'gunAimingTimeFactor': 'aimingTimeFactor',
@@ -286,6 +469,7 @@ def directive_rows(data):
                     'gunReloadTimeFactor': 'reloadTimeFactor',
                     'gun/reloadTime': 'reloadTimeFactor',
                     'crewLevelIncrease': 'crewLevel',
+                    'circularVisionRadius': 'visionBoost',
                     'engine/power': 'enginePower'}.get(level.get('attribute') or '')
             if not name:
                 continue
@@ -308,17 +492,14 @@ def directive_rows(data):
             item['skillMult'] = float(row['perkLevelMultiplier'])
         out.append(item)
     # Only the ones that reach the page's own maths: a skill directive counts when the page models that
-    # skill, and an equipment directive when at least one of its levels moves an input the page uses.
-    # enginePower does not qualify — the movement term reads the speed cap, not the power that gets there,
-    # so the Fuel Filter Replacement would sit in the menu changing nothing.
-    known = set(s['id'] for s in SKILLS)
+    # skill, and an equipment directive when at least one of its levels moves an input the page uses. Since the
+    # characteristics panel (23.09) that includes the engine power, the view range and the concealment, so the
+    # Fuel Filter Replacement, the Optical Calibration and the Exhaust Insulation are offered too. Natural Cover
+    # (a crew directive on Concealment) is not: how its efficiency factor lands on the group skill is not traced.
+    known = set(s['id'] for s in SKILLS if s['role'] != 'each')
 
     def lands(row):
-        for level in row.get('levels') or ():
-            for name in level['eff']:
-                if name != 'enginePower':
-                    return True
-        return False
+        return any(level['eff'] for level in row.get('levels') or ())
 
     out = [row for row in out if lands(row) or row.get('skill') in known]
     out.sort(key=lambda r: r['name'])
@@ -330,9 +511,12 @@ def dump(value, indent):
     return json.dumps(value, ensure_ascii=False, separators=(', ', ': '), sort_keys=False)
 
 
-def main():
+def main(argv):
     data = json.load(io.open(CATALOGUE, encoding='utf-8'))
-    devices = device_rows(data)
+    with client_packages(argv[0] if argv else GAME) as archive:
+        client, boosters = client_devices(archive), client_boosters(archive)
+    devices = device_rows(data, client)
+    directives = directive_rows(data, boosters)
     lines = [
         '// The client\'s own equipment, crew skills, directives and consumables — everything in the game',
         '// that moves a number the aiming maths reads, and nothing else.',
@@ -374,20 +558,21 @@ def main():
         lines.append('      %s,' % dump(skill, 6))
     lines.append('    ],')
     lines.append('    directives: [')
-    for directive in directive_rows(data):
+    for directive in directives:
         lines.append('      %s,' % dump(directive, 6))
     lines.append('    ],')
     lines.append('    consumables: [')
     for consumable in CONSUMABLES:
         lines.append('      %s,' % dump(consumable, 6))
     lines.append('    ],')
+    lines.append('    paint: %s,' % dump(PAINT, 4))
     lines.append('    food: %s' % dump(FOOD, 4))
     lines.append('  };')
     lines.append('})();')
     io.open(TARGET, 'w', encoding='utf-8', newline='\n').write('\n'.join(lines) + '\n')
     print('web/equipment.js: %d devices, %d families, %d skills, %d directives, %d consumables'
-          % (len(devices), len(families(devices)), len(SKILLS), len(directive_rows(data)), len(CONSUMABLES)))
+          % (len(devices), len(families(devices)), len(SKILLS), len(directives), len(CONSUMABLES)))
 
 
 if __name__ == '__main__':
-    main()
+    main(sys.argv[1:])

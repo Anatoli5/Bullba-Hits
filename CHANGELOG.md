@@ -2,10 +2,20 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
-## Unreleased
+## 0.7.28 (2026-09-23)
 
 - The gun panel shows the magazine as a row of rounds instead of the "2/3" text, whenever the emulation is on: loaded, spent, the next round lit, the one loading filling up; a single-shot gun shows one round filling with its reload, a magazine over 12 rounds (Ares) one bar. The numbers are in its tooltip.
 - Under ✸ with real reload ◔ an autoloader now loads its spent rounds back one at a time, each on its own timer from the game's data, and fires what it has; the reload figure at rest is its empty-magazine round.
+- Each shot now also records the live state of the remaining special mechanics: tier XI abilities and modes, Ares and STK-2 gun heat, autocannons, dual-accuracy guns, rocket boost. Private state only on your own shots.
+- The mod now writes a characteristics file for every vehicle type it exports: every turret and gun combination on the top modules, with health, mass, engine power, view range, concealment, elevation limits, ammunition and shells. It is built once per type and client version, outside battles, and the page can ask for a missing one. The characteristics panel below reads it.
+- Exported vehicles and recorded shooters now carry the exact gun and turret names, and exported vehicles their health.
+- A characteristics panel in the bottom-right corner of the scene shows the shooter’s garage figures: damage per minute, reload, dispersion, aiming time, turret and hull traverse, top speed, specific power and the three dispersion factors of movement. ▴ opens the rest: the gun’s shells, weight, engine power, hit points, gun elevation, view range and concealment. Icons and numbers only, the words are in the tooltips. It appears once the vehicle has a characteristics file.
+- ⚙ on the panel switches between the stock (top modules, a trained crew, nothing fitted) and this shooter’s Config build; figures better than the stock turn green, worse ones red.
+- A vehicle with several guns or turrets gets a gun tile on the panel to look at the others. The choice is kept per vehicle; the circle keeps the gun that fired.
+- Config offers every device of the game, and the ones that do not shoot count on the panel: optics, binoculars, camouflage net, exhaust, grousers, hardening, and every device’s weight. The rotation mechanism now also turns the hull faster in the WASD emulation.
+- New Config tiles: Concealment for each crew member, Recon, Situational Awareness, Off-Road Driving, Engineer, the Optical Calibration, Fuel Filter Replacement and Exhaust Insulation directives, and a camouflage paint tile.
+- Fixed: Mag Mastery shortened the gap between the rounds of a magazine. As in the game, it now shortens the reload of the whole magazine (not on autoloaders): the rounds of a clip keep the gun’s own pace and the clip reloads 2.5 % faster.
+- A vehicle picked in the Vehicles list now has hit points for the health bar, from its export or its characteristics file.
 
 ## 0.7.27 (2026-09-22)
 

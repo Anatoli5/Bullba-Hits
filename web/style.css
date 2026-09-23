@@ -596,3 +596,47 @@ header>.settings-menu>.settings-content{top:calc(100% + 8px);right:0;max-height:
    the vehicle and the outcome. An icon only - every word is in its title. The 36 and 48 px sources scale down. */
 .hit-crits{flex:0 0 auto;display:grid;grid-template-columns:repeat(2,16px);grid-auto-rows:16px;gap:2px;align-content:center}
 .crit-icon{width:16px;height:16px;display:block}
+
+/* The characteristics panel (23.09, outputs/ttx-panel-spec-2026-09-22.md 3.4): the bottom-right corner of the scene,
+   the mirror of the pose tile, on the gun panel's own backdrop. Glyphs and figures only - every word is in a
+   tooltip. A figure of the build better than the stock is mint, a worse one red, as the garage's arrows are. */
+.ttx-panel{position:absolute;right:14px;bottom:12px;z-index:5;display:flex;align-items:flex-end;padding:4px 8px;border-radius:5px;background:rgba(23,35,48,.55);color:#e5edf5;font-size:13px;line-height:1.1;font-variant-numeric:tabular-nums;text-shadow:0 1px 2px rgba(0,0,0,.7)}
+.ttx-panel[hidden],.ttx-fold[hidden]{display:none}
+.ttx-inner{display:flex;flex-direction:column;align-items:stretch;gap:5px}
+.ttx-head{display:flex;align-items:center;justify-content:flex-end;gap:6px}
+.ttx-grid{display:grid;grid-template-columns:auto auto;column-gap:16px;row-gap:3px}
+.ttx-col{display:flex;flex-direction:column;gap:3px}
+.ttx-col.ttx-stab{grid-column:1/-1;flex-direction:row;justify-content:space-between;gap:12px;padding-top:4px;border-top:1px solid rgba(157,174,191,.25)}
+.ttx-row{display:flex;align-items:center;gap:5px;white-space:nowrap}
+.ttx-icon{display:inline-flex;flex:0 0 auto;width:15px;height:15px;color:var(--muted)}
+.ttx-icon svg{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round}
+.ttx-val{font-weight:600}
+.ttx-row[data-cmp=better] .ttx-val{color:var(--mint)}
+.ttx-row[data-cmp=worse] .ttx-val{color:var(--red)}
+/* The head: the pair tile and the glyph buttons are the .swap-roles widget at the panel's size. */
+.ttx-panel .toolbar-more>summary,.ttx-panel .ttx-head>.swap-roles{display:flex;align-items:center;gap:5px;min-height:0;padding:3px 7px;font-size:13px;line-height:1;border:1px solid rgba(157,174,191,.55);border-radius:6px;background:rgba(23,35,48,.15);color:inherit;white-space:nowrap}
+.ttx-panel .ttx-head>.swap-roles[aria-pressed=true],.ttx-more[open]>summary.swap-roles{border-color:var(--gold);color:var(--gold);background:#302b23}
+.ttx-panel .toolbar-more>summary::after,.ttx-pairs[data-many=false]>summary::after{content:none}
+.ttx-pairs[data-many=true]>summary::after{content:'\25be';color:var(--muted)}
+.ttx-pairs[data-many=false]>summary{cursor:default}
+.ttx-pairs[data-other=true]>summary{border-color:var(--gold);color:var(--gold);background:#302b23}
+.ttx-cal{font-weight:600}
+.ttx-mode{color:var(--muted);font-size:11px}
+/* Every popover of the panel opens upward from it and keeps to the right edge of the scene. */
+.ttx-panel .toolbar-popover{left:auto;right:0;top:auto;bottom:calc(100% + 6px)}
+.ttx-full{min-width:260px;max-height:min(70vh,560px);overflow:auto;gap:0;padding:6px 12px}
+.ttx-sec{display:grid;grid-template-columns:auto auto;column-gap:18px;row-gap:4px;width:100%;padding:6px 0}
+.ttx-sec+.ttx-sec{border-top:1px solid rgba(157,174,191,.25)}
+.ttx-sec.ttx-shells{grid-template-columns:1fr}
+.ttx-shell-row{display:grid;grid-template-columns:28px repeat(3,minmax(46px,auto));column-gap:12px;align-items:center;justify-items:end;padding:1px 4px;border-radius:4px}
+.ttx-shell-row .ttx-shell-kind{justify-self:start}
+.ttx-shell-kind img{display:block;width:24px;height:24px}
+.ttx-shell-row[data-selected=true]{background:#302b23;box-shadow:0 0 0 1px var(--gold) inset}
+/* The pair list: a turret's glyph and tier over its guns, the .aim-pick tiles of Config. */
+.ttx-pair-turret{display:flex;align-items:center;gap:6px;width:100%}
+.ttx-pair-turret[data-rule=true]{padding-top:8px;border-top:1px solid rgba(157,174,191,.25)}
+.ttx-pick{flex-direction:column;gap:1px;font-size:12px;color:#e5edf5}
+.ttx-pick .ttx-cal{font-size:14px}
+.ttx-mark{position:absolute;top:3px;font-size:9px;line-height:1;color:var(--gold)}
+.ttx-emu{left:4px}
+.ttx-top{right:4px}

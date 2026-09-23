@@ -13,7 +13,7 @@ try:
 except ImportError:
     import queue
 
-VERSION = '0.7.27'
+VERSION = '0.7.28'
 VIEWER_PATH = os.path.join('mods', 'configs', 'local.armor_inspector', 'Viewer.html')
 LOG = logging.getLogger('local.armor_inspector')
 PARTS = ('chassis', 'hull', 'turret', 'gun')
@@ -427,6 +427,7 @@ class Writer(object):
                 try:
                     if name == 'vehicle': self.exporter.request_vehicle_export(payload)
                     elif name == 'prioritise': self.exporter.prioritise(payload)
+                    elif name == 'ttx': self.exporter.request_ttx(payload)
                 except Exception: LOG.exception('HTML export command failed')
                 finally: self.export_queue.task_done()
             dirty = self.take_dirty()
@@ -705,6 +706,11 @@ class Recorder(object):
         names = [str(name) for name in list(types or [])[:8] if name]
         if names: self.writer.put_export('prioritise', names)
 
+    def request_ttx(self, type_name):
+        """The page asks for the characteristics file of one type (data/ttx/<id>.js). Game thread: the
+        string goes through the export queue; the check, the build and the file belong to that thread."""
+        if type_name: self.writer.put_export('ttx', str(type_name))
+
     def note_roster(self, arena, player):
         """The battle's roster as one record: id, player, vehicle and team of every vehicle known so far.
 
@@ -812,6 +818,10 @@ class Recorder(object):
                     # carry no 'gunHeightFrom'; the exporter recomputes them from the compact descriptor.
                     record['attacker']['gunHeight'] = float((attacker.chassis.hullPosition + attacker.hull.turretPositions[0] + attacker.turret.gunPosition).y)
                     record['attacker']['gunHeightFrom'] = 'ground'
+                    # The XML names of the mounted gun and turret: the exact pair among the configs of the
+                    # shooter's data/ttx/<id>.js. Static, so the snapshot keeps them in its vehicle table.
+                    record['attacker']['gunName'] = attacker.gun.name
+                    record['attacker']['turretName'] = attacker.turret.name
                 except Exception:
                     pass
                 try:
@@ -1066,6 +1076,12 @@ def page_prioritise(types):
     _recorder.prioritise(types)
 
 
+def page_ttx(type_name):
+    """The page has no current characteristics file of this type. Game thread: the request only."""
+    if _recorder is None: return
+    _recorder.request_ttx(type_name)
+
+
 def show_vehicle(handler):
     """The context-menu entry: export this vehicle and open the viewer on it.
 
@@ -1174,6 +1190,7 @@ def init():
             presentation.set_export_request(export_picked_vehicle)
             presentation.set_busy_request(page_busy)
             presentation.set_prioritise_request(page_prioritise)
+            presentation.set_ttx_request(page_ttx)
         except Exception: LOG.exception('Page export command unavailable; hit recording continues')
         try:
             from gui.modsListApi import g_modsListApi
@@ -1197,6 +1214,7 @@ def fini():
         presentation.set_export_request(None)
         presentation.set_busy_request(None)
         presentation.set_prioritise_request(None)
+        presentation.set_ttx_request(None)
     except Exception: LOG.exception('Page export command cleanup failed')
     remove_context_menu(_context_menu)
     _context_menu = None
