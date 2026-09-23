@@ -2,7 +2,7 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
-## Unreleased
+## 0.7.40 (2026-09-23)
 
 - A help dot (?) shows one line per control - what it does - and the details come with a click on the control; the ⌖ help starts with what the switch does, not with the model tile.
 
