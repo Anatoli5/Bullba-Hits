@@ -6589,7 +6589,9 @@
     if(!stored){stored=settingsLegacy();migrated=!!stored;}
     settingControls.forEach(function(el){
       settingDefaults[el.id]=settingDefault(el);
-      if(stored&&Object.prototype.hasOwnProperty.call(stored,el.id)&&settingValid(el,stored[el.id]))settingSet(el,stored[el.id]);
+      // ✸ is not remembered (user, 23.09): every opening of the page shows the recorded shot as it was, the emulation
+      // layer (HP bar, RNG shots, Hitmarks) waits for its switch. Its own sub-switches (real reload) still are.
+      if(stored&&el.id!=='fun-mode'&&Object.prototype.hasOwnProperty.call(stored,el.id)&&settingValid(el,stored[el.id]))settingSet(el,stored[el.id]);
       settingRun(el);
       // One shared listener per control instead of a save inside every handler; a programmatic change below
       // fires no event, so a restore and a reset never write anything back.

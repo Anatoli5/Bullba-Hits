@@ -2,6 +2,10 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
+## Unreleased
+
+- ✸ is off each time the page opens: a hit shows as it was recorded until you switch the emulation on.
+
 ## 0.7.33 (2026-09-23)
 
 - Tooltips work in the game's browser too: the page draws them itself. Hover an icon or tile for its explanation; click one that is not a button to pin it open, Escape or a click elsewhere closes it.
