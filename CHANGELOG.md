@@ -2,7 +2,7 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
-## Unreleased
+## 0.7.38 (2026-09-23)
 
 - Config: the icons of the devices, directives and crew skills that do not shoot (Coated Optics, Camouflage Net, Eagle Eye and the rest) show again; they were missing since 0.7.28.
 
