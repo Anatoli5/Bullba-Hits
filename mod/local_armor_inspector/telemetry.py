@@ -42,8 +42,9 @@ def marker(info):
 # None for a plain number, own-vehicle-only). "own only" means the property carries DetailLevel = MY_VEHICLE
 # in its component def and the server replicates it to the player's own vehicle alone; it is read for the
 # player's own shot and skipped for everybody else, so a default value is never recorded as if it were a
-# state. The keys are the mechanic names of VehicleType.mechanicsParams - the same set as AIM_GUN_MECHANICS
-# in exporter.py - so only the twelve vehicles of this client that carry one of them cost anything at all.
+# state. The keys are the mechanic names of the descriptor's mechanicsParams (mechanics_params below) - the
+# same set as AIM_GUN_MECHANICS in exporter.py - so only the vehicles of this client that carry one of them
+# cost anything at all.
 GUN_MECHANIC_STATE = {
     'shellParamsSwitcher': (
         ('shellParamsSwitcherController', 'status', 'status', ('state', 'endTime'), False),
@@ -84,6 +85,32 @@ GUN_MECHANIC_STATE = {
 }
 
 
+def mechanics_params(descr):
+    """The mechanics a vehicle descriptor carries, its own and its mounted gun's together (22.09).
+
+    VehicleType.__init__ (vehicles.pyc 3515-3524, client 2.4.0.1) reads into type.mechanicsParams only the
+    mechanics classes without a COMPONENT_TYPE_ID. Every subclass of GunMechanicsParams - shellParamsSwitcher,
+    lowChargeShot, shellCalibration, propellantAfterburnerGun, chargeableBurst, stationaryReload,
+    extraShotClip, secondaryGun, temperatureGun, overheatGun, heatingZonesGun, auxiliaryRocketLauncher - is
+    read with the GUN instead (_readItemMechanicsParams) and is never on the type. The descriptor merges the
+    two: VehicleDescriptor.__updateAttributes (vehicles.pyc 2558-2659) fills descr.mechanicsParams from
+    type.mechanicsParams and from every gun installation, applies the field modifications to the copies
+    (applyMiscAttrToMechanics) and drops the inactive ones. That dict is what the client itself reads
+    (mechanic_helpers.getVehicleDescrMechanicParams), so it is read here; a descriptor without it gets the
+    two merged by hand. Never raises; an empty dict when nothing is known.
+    """
+    params = getattr(descr, 'mechanicsParams', None)
+    if isinstance(params, dict):
+        return params
+    merged = {}
+    for owner in ('type', 'gun'):
+        try:
+            merged.update(getattr(getattr(descr, owner), 'mechanicsParams', None) or {})
+        except Exception:
+            pass
+    return merged
+
+
 def state_value(value):
     """One number of a mechanic component, or None when the client has nothing usable there.
 
@@ -110,7 +137,7 @@ def mechanic_state(entity, own):
     components = getattr(entity, 'dynamicComponents', None)
     if not components: return result
     try:
-        params = getattr(entity.typeDescriptor.type, 'mechanicsParams', None) or {}
+        params = mechanics_params(entity.typeDescriptor)
     except Exception:
         return result
     for name in params:

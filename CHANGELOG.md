@@ -2,13 +2,18 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
-## Unreleased
+## 0.7.27 (2026-09-22)
 
+- A shell that glances off and flies clear now counts as a ricochet in the Target HP tooltip instead of "no estimate".
 - Hitmarks are cut out of the armour along the shell's own line, centred on the hit: a square-on hit leaves a round mark, a hit at an angle an oval drawn out along the plate for as long as the angle makes it, with no length limit. The plate's edge ends it; it never hangs over the edge and never spills onto the next plate or a plate behind.
 - Hitmarks are 0.7 calibre across, with no minimum: a 20 mm gun leaves 14 mm. A shell with no calibre in the record leaves no mark.
 - What the marks look like: a penetration is a black hole with a dark red glow inside, bare steel round it and a thin burnt edge; a stopped shell is a grey metal scrape, paint burnt black round bright metal; a ricochet is a lighter grey skid. None of them uses a colour of the hit map.
 - A shot leaves a Hitmark at every plate it met, not only the first: a hole in each screen or track it went through, then its own outcome on the plate where it ended. A shell that glances off leaves the skid and a mark on whatever it flies into next; an HE shell that dies on a screen leaves its mark there and nothing behind. All of them count as one shot of the 500 kept.
 - Hitmarks on the turret and the gun turn and pitch with them instead of hanging in the air, and stay on the same spot of the turret when the scene is rebuilt for another shooter or another hit on the same vehicle.
+- Recordings from this build carry the gun's heat parameters for the five Ares and the STK-2: heat per shot, cooling, the temperature bands that widen the circle and the Ares overheat lock. Older recordings do not have them.
+- Fixed: the gun mechanics that belong to the gun rather than to the vehicle were never seen by the recorder, so the German shell switchers, the Gorilla, the Fauteur and the Black Rock recorded neither the mechanic's name nor its state at the shot.
+- ✸ mode: an Ares gun heats with every round, widens its aiming circle as it gets hot (×1.25, then ×1.5) and locks when it overheats until it has cooled right down, by the gun's own numbers from the record. A small heat bar in the gun panel shows it; the figures are in its tooltip.
+- ✸ mode: a second button beside ✸, real reload (◔, on by default). On, the gun loads as in the game: letting go does not reset the reload, a press before the gun is loaded does not fire, and a clip keeps its rounds between presses and reloads in full once empty. Off, the old simplified emulation.
 
 ## 0.7.26 (2026-09-22)
 

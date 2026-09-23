@@ -2511,7 +2511,7 @@
     // 20.09: 'a shot without a shot, exactly when it had settled and I moved the mouse'). Count that frame
     // as one nominal frame instead.
     if (!dt) dt = 1 / 60;   // one nominal frame, never a zero step
-    var mods = aimModifiers();
+    var mods = aimHeated(aimModifiers());
     aimMove = ArmorBallistics.moveStep(aimMove, aimKeys, a, mods, dt);
     // The hull turns first and TAKES THE GUN WITH IT (user, 20.09): the aim point swings around the
     // shooter by hullTurn·dt, opening a gap to the crosshair, and the turret below spends what the hull
@@ -2530,7 +2530,18 @@
     // The next shot of a held burst, the moment the cooldown is over. The recoil of the shot just fired is
     // already in `aimNow`, so a gun that cannot settle between two rounds fires the second one wider -
     // which is the whole point of the feature for autoloaders.
-    if (aimBurst && aimDown && !aimClipDry && aimReloadLeft() <= 0) fireShot();
+    if (aimBurst && aimDown && !aimClipDry && aimReloadLeft() <= 0 && gunFree()) fireShot();
+    // Under ✸ real reload the reload runs on after the release (without it a released button has no reload
+    // at all, so this never happens). A shooter at rest with a settled ring and nothing but that countdown
+    // running needs only the ring's fill and the panel each frame: the ring's figure cannot have changed, so
+    // the coarse integral paintAim takes every 120 ms is not taken again and again for nothing.
+    if (!aimDown && !aimHeld() && aimReloadLeft() > 0 && aimMove.resting && chase.caught && !turned && aimNow && aimNow.settled) {
+      if (viewer.setAimReload) viewer.setAimReload(aimReloadPart());
+      viewer.setLiveAim(aimNow.radius100);
+      paintGunLoad();
+      startAimLoop();
+      return;
+    }
     paintAim(state);
     var reloading = aimReloadLeft() > 0;
     // A frame in which the turret caught the cursor is not a resting frame, although it reads as one: the
@@ -2729,6 +2740,7 @@
   function paintGunLoad() {
     var time = $('aim-gun-reload'), clip = $('aim-gun-clip');
     if (!time || !clip) return;
+    paintHeat(heatNow());   // the heat bar of an Ares gun under ✸; nothing but a hidden check otherwise
     var rl = ArmorBallistics.reloadSeconds(aimBlockData(), aimModifiers());
     if (!rl) { time.textContent = '—'; clip.textContent = ''; clip.hidden = true; return; }
     var left = aimReloadLeft(), running = left > 0;
@@ -2750,7 +2762,7 @@
     if (!aimLive || !a || !viewer || !viewer.liveRadius100) return false;
     var centre = viewer.spreadAim || viewer.liveAimPoint;
     if (!centre) return false;
-    var mods = aimModifiers(), shell = viewer.shell;
+    var mods = aimHeated(aimModifiers()), shell = viewer.shell;
     var chance = shell ? viewer.liveAimProbability(shell, 1024) : null;
     // The fun layer (user, 22.09): with the mode on the shot lands at a point DRAWN inside
     // the live circle instead of at its middle, and the shot line, the pinned panel and the reticle then
@@ -2769,18 +2781,25 @@
     // next round of a held burst leaves a wider circle unless the gun had time to settle.
     var state = aimLastState || aimState();
     aimNow = ArmorBallistics.aimShot(aimNow, state, a, mods);
-    // The cooldown to the next round of the same hold. OVERHEATING GUNS (ARES and the like) are out of
-    // scope: their heat/cooling rule is not in the record and not modelled here.
-    var rl = ArmorBallistics.reloadSeconds(a, mods), now = aimSeconds();
+    // The round heats an Ares gun under ✸ (gunHeat below) - after the recoil, which is taken in the band
+    // the gun was in when it fired; the new band shows from the next frame. Nothing off the ✸ layer.
+    heatShot();
+    // The cooldown to the next round of the same hold.
+    var rl = ArmorBallistics.reloadSeconds(a, mods), now = aimSeconds(), real = realReload();
     aimClipDry = false;
     // No reload in the record: the cooldown is unknown, so a hold fires once and waits for the release
     // instead of emptying a magazine at the frame rate.
     if (!rl) { aimReload = null; aimClipDry = true; }
     else if (aimClipSize > 1) {
+      // Real reload (✸ sub-switch): a clip emptied earlier has been reloaded in full by now - the caller let
+      // this round through only once that reload was over - so it starts again from a full clip.
+      if (real && aimClip <= 0) aimClip = aimClipSize;
       aimClip = Math.max(0, aimClip - 1);
-      // An empty clip simply stops the burst: the clip reload is NOT emulated (user, 20.09 - it would
-      // only annoy), letting go and pressing again starts from a full clip.
       if (aimClip > 0) aimReload = {at: now, until: now + rl.interval, clip: true};
+      // The last round of the clip. By default an empty clip simply stops the burst: the clip reload is NOT
+      // emulated (user, 20.09 - it would only annoy), letting go and pressing again starts from a full clip.
+      // Under real reload the whole reload runs instead, as in the game, and a held burst goes on after it.
+      else if (real) aimReload = {at: now, until: now + rl.reload, clip: false};
       else { aimClipDry = true; aimReload = null; }
     } else aimReload = {at: now, until: now + rl.reload, clip: false};
     return true;
@@ -2797,17 +2816,21 @@
     cancelHoldTimer();
     aimDown = true; aimBurst = false; aimClipDry = false;
     // A fresh press is never blocked by a running reload and starts with a full clip: the reload paces
-    // the shots INSIDE one hold and nothing else.
-    aimClipSize = aimClipRounds(); aimClip = aimClipSize;
+    // the shots INSIDE one hold and nothing else. Under ✸ real reload (the sub-switch) the gun keeps its
+    // load between presses instead - the clip is refilled here only when this gun's clip size is new.
+    var rounds = aimClipRounds();
+    if (!realReload() || rounds !== aimClipSize) { aimClipSize = rounds; aimClip = aimClipSize; }
     aimHoldTimer = window.setTimeout(holdFire, AIM_HOLD_MS);
     return true;
   }
-  // Held long enough without moving: the burst starts with its first shot at this instant.
+  // Held long enough without moving: the burst starts with its first shot at this instant - or, when the
+  // gun may not fire yet (✸: reloading under real reload, locked by heat), the moment it may: the held
+  // burst of aimTick fires it.
   function holdFire() {
     aimHoldTimer = 0;
     if (!aimDown) return;
     aimBurst = true;
-    if (fireShot()) paintAim(aimLastState || aimState());
+    if (gunFree() && fireShot()) paintAim(aimLastState || aimState());
     startAimLoop();
   }
   // Let go. A short press fires its single shot here; a burst has been firing all along and just stops,
@@ -2817,11 +2840,12 @@
     if (!aimDown) return;
     var single = !aimBurst;
     aimDown = false; aimBurst = false; aimClipDry = false;
-    if (single && fireShot()) paintAim(aimLastState || aimState());
+    if (single && gunFree() && fireShot()) paintAim(aimLastState || aimState());
     else paintCircleLines();
     // The reload is shown only while the button is held and the gun fires on its cooldown; a released
-    // button leaves a whole ring - the recoil bloom stays, the fill does not (user, 20.09).
-    aimReload = null;
+    // button leaves a whole ring - the recoil bloom stays, the fill does not (user, 20.09). Under ✸ real
+    // reload the release changes nothing: the reload runs on and its fill stays on the ring.
+    if (!realReload()) aimReload = null;
     paintAim(aimLastState || aimState());
     startAimLoop();
   }
@@ -2835,6 +2859,176 @@
     return true;
   }
   function cancelHoldTimer() { if (aimHoldTimer) window.clearTimeout(aimHoldTimer); aimHoldTimer = 0; }
+  // --- ✸: real reload and the heat of an Ares gun (user, 22.09 ~23:30) -----------------------------
+  // Both belong to the ✸ layer and nothing of them runs with it off: every entry below asks funOn() first
+  // and answers exactly what the page did before (fire at will, no heat, no factor).
+  //
+  // REAL RELOAD is a sub-switch of ✸, ON by default, kept in the settings box as #real-reload. On, the gun
+  // loads as in the game: the reload and the gap between rounds run on after the release, a press before the
+  // gun is loaded does not fire, and a clip keeps its rounds between presses and is reloaded in full once
+  // empty. Off, the simplified emulation of 20.09: the release resets the cooldown, every press a full clip.
+  function realReload() { if (!funOn()) return false; var e = $('real-reload'); return !!(e && e.checked); }
+  // May the gun fire at this instant? Asked by the three callers of fireShot() - the tap, the start of a
+  // hold and the held burst - beside what they already ask about the reload.
+  function gunFree() {
+    if (!funOn()) return true;
+    var h = heatNow();
+    if (h && h.locked) return false;
+    return !realReload() || aimReloadLeft() <= 0;
+  }
+  // The sub-switch moved: the load starts over under the new rule (a full clip, nothing running).
+  function realReloadSettings() {
+    aimReload = null; aimClipDry = false;
+    aimClipSize = aimClipRounds(); aimClip = aimClipSize;
+    paintFun();
+    if (aimLive && aimNow) paintAim(aimLastState || aimState());
+    startAimLoop();
+  }
+  // THE HEAT of the five Ares guns (outputs/gun-overheat-2026-09-22.md; the record carries the gun's own
+  // numbers since the build after 0.7.26: aim.temperatureGun and aim.overheatGun). The client's rule:
+  //   - every round adds heatingPerShot, and the temperature stays within 0 .. maxTemperature;
+  //   - for coolingDelay seconds after a round it stands, then it falls by coolingPerSec a second;
+  //   - at tempOverheatOnThreshold the gun is LOCKED: it cools at coolingPerSec × coolingPerSecFactor and
+  //     fires again only once it is down to tempOverheatOffThreshold (0 on every Ares);
+  //   - the band of thermalStates the temperature lies in multiplies multShotDispersionFactor - the full-aim
+  //     circle: none up to 50, ×1.25, then ×1.5 over 88..93 - with the hysteresis on the way down.
+  // The simulation is the server's; the numbers and the shape of the rule are the client's
+  // (params_utils.getTemperatureRateOfFire, TemperatureMechanicState, OverheatGunAmmoState). Penetration and
+  // alpha are untouched. A gun that heats without ever locking (the STK-2) is left alone, as decided.
+  var gunHeat = null, heatFrom = null, heatSpec = null, heatTimer = 0, heatPaintKey = '', heatTitleKey = '', heatWarnAt = '';
+  // The gun's numbers, normalised once per shooter block.
+  function heatParams() {
+    var a = aimBlockData();
+    if (a === heatFrom) return heatSpec;
+    heatFrom = a; heatSpec = null;
+    var t = a && a.temperatureGun, o = a && a.overheatGun;
+    if (!t || !o) return null;
+    var max = Number(t.maxTemperature), per = Number(t.heatingPerShot), cool = Number(t.coolingPerSec);
+    if (!(max > 0) || !(per > 0) || !(cool > 0)) return null;
+    // One multiplier of the circle per band, ascending as the client sorts them; a band with no modifier is ×1.
+    var states = (Array.isArray(t.thermalStates) ? t.thermalStates : []).map(function (s) {
+      var f = 1;
+      (s && Array.isArray(s.modifiers) ? s.modifiers : []).forEach(function (m) {
+        if (m && m.op === 'mul' && m.name === 'dynAttrs/multShotDispersionFactor' && Number(m.value) > 0) f *= Number(m.value);
+      });
+      return {top: Number(s && s.maxTemperature), factor: f};
+    }).filter(function (s) { return s.top > 0; }).sort(function (x, y) { return x.top - y.top; });
+    var on = Number(o.tempOverheatOnThreshold) > 0 ? Math.min(max, Number(o.tempOverheatOnThreshold)) : max;
+    var off = Number(o.tempOverheatOffThreshold) >= 0 ? Math.min(on, Number(o.tempOverheatOffThreshold)) : 0;
+    var warn = Number(o.tempOverheatWarnThreshold) > 0 ? Math.min(on, Number(o.tempOverheatWarnThreshold)) : on;
+    var delay = Number(t.coolingDelay) >= 0 ? Number(t.coolingDelay) : 0;
+    var slow = Number(o.coolingPerSecFactor) > 0 ? Number(o.coolingPerSecFactor) : 1;
+    var hyst = Number(t.thermalStateHysteresis) >= 0 ? Number(t.thermalStateHysteresis) : 0;
+    heatSpec = {max: max, per: per, cool: cool, delay: delay, slow: slow, on: on, off: off, warn: warn, hyst: hyst, states: states,
+                key: [max, per, cool, delay, slow, on, off].join('|')};
+    return heatSpec;
+  }
+  // The temperature and the lock at `now`, from what the last round left (h.t at h.at) - a pure function of
+  // the time, so nothing has to run between two rounds for the gun to cool.
+  function heatAt(h, p, now) {
+    var t = h.t, locked = h.locked, run = now - h.at - p.delay;
+    if (run > 0 && t > 0 && locked) {
+      var speed = p.cool * p.slow, need = speed > 0 ? (t - p.off) / speed : Infinity;
+      if (run < need) { t -= speed * run; run = 0; }
+      else { t = p.off; locked = false; run -= need; }
+    }
+    if (run > 0 && t > 0 && !locked) t -= p.cool * run;
+    return {t: Math.max(0, Math.min(p.max, t)), locked: locked};
+  }
+  // The band the temperature lies in: up as soon as a band's top is passed, down only once the temperature is
+  // the hysteresis below the top of the band beneath. -1 for a gun with no bands.
+  function heatBand(p, t, prev) {
+    var n = p.states.length;
+    if (!n) return -1;
+    var i = prev >= 0 && prev < n ? prev : 0;
+    while (i < n - 1 && t > p.states[i].top) i++;
+    while (i > 0 && t < p.states[i - 1].top - p.hyst) i--;
+    return i;
+  }
+  // The gun's heat right now, or null: off the ✸ layer, and for every gun that does not overheat.
+  function heatNow() {
+    var p = funOn() ? heatParams() : null;
+    if (!p) { gunHeat = null; return null; }
+    if (!gunHeat || gunHeat.key !== p.key) gunHeat = {key: p.key, t: 0, at: -Infinity, locked: false, band: -1};
+    var now = aimSeconds(), s = heatAt(gunHeat, p, now);
+    gunHeat.band = heatBand(p, s.t, gunHeat.band);
+    return {p: p, t: s.t, locked: s.locked, band: gunHeat.band, now: now};
+  }
+  // A round has left the barrel (fireShot).
+  function heatShot() {
+    var h = heatNow();
+    if (!h) return;
+    var t = Math.min(h.p.max, h.t + h.p.per);
+    gunHeat.t = t; gunHeat.at = h.now; gunHeat.locked = h.locked || t >= h.p.on;
+    gunHeat.band = heatBand(h.p, t, gunHeat.band);
+    heatWake();
+  }
+  // The circle's multiplier of the present band, applied where the client applies it: on the full-aim factor
+  // (the `mult` of ArmorBallistics.aimFactor). The same object comes back untouched off ✸ or for a cold band.
+  function aimHeated(mods) {
+    if (!funOn()) return mods;
+    var h = heatNow(), f = h && h.band >= 0 ? h.p.states[h.band].factor : 1;
+    if (f !== 1 && mods) mods.mult *= f;
+    return mods;
+  }
+  // A warm gun cools on screen with the frame loop asleep: a light 10 Hz timer paints the bar and wakes the loop
+  // only when the band - and with it the circle - has changed. It stops by itself once the gun is cold.
+  function heatWake() { if (!heatTimer) heatTimer = window.setTimeout(heatTick, 100); }
+  function heatTick() {
+    heatTimer = 0;
+    var band = gunHeat ? gunHeat.band : -1, h = heatNow();
+    paintHeat(h);
+    if (!h) return;
+    if (h.band !== band) startAimLoop();
+    if (h.t > 0 || h.locked) heatWake();
+  }
+  // ✸ switched, a new shooter, the emulation reset: a cold gun and no timer.
+  function gunHeatReset() {
+    gunHeat = null;
+    if (heatTimer) window.clearTimeout(heatTimer);
+    heatTimer = 0;
+    paintHeat(null);
+  }
+  // Seconds until a locked gun fires again: what is left of the delay, then the slow fall to the unlock mark.
+  function heatUnlockIn(h) {
+    if (!h || !h.locked || !gunHeat) return 0;
+    var speed = h.p.cool * h.p.slow;
+    return Math.max(0, gunHeat.at + h.p.delay - h.now) + (speed > 0 ? Math.max(0, h.t - h.p.off) / speed : Infinity);
+  }
+  var HEAT_COLD = [120, 170, 210], HEAT_WARM = [234, 195, 110], HEAT_HOT = [251, 133, 128];
+  function heatRgb(h) {
+    if (h.locked || h.t >= h.p.warn) return 'rgb(' + HEAT_HOT.join(',') + ')';
+    var k = h.p.warn > 0 ? Math.max(0, Math.min(1, h.t / h.p.warn)) : 0;
+    return 'rgb(' + HEAT_COLD.map(function (c, i) { return Math.round(c + (HEAT_WARM[i] - c) * k); }).join(',') + ')';
+  }
+  // The bar in the gun panel: graphics only, the figures in its tooltip (the owner's rule). Every write is
+  // skipped when nothing it shows has changed, so the per-frame call of paintGunLoad costs a comparison.
+  function paintHeat(h) {
+    var box = $('aim-gun-heat'), fill = $('aim-gun-heat-fill');
+    if (!box || !fill) return;
+    if (box.hidden !== !h) box.hidden = !h;
+    if (!h) { heatPaintKey = ''; heatTitleKey = ''; return; }
+    var p = h.p, width = (h.t / p.max * 100).toFixed(1) + '%', key = width + (h.locked ? '|L' : '');
+    if (key !== heatPaintKey) {
+      heatPaintKey = key;
+      fill.style.width = width;
+      fill.style.backgroundColor = heatRgb(h);
+      box.setAttribute('data-locked', h.locked ? '1' : '0');
+    }
+    var mark = $('aim-gun-heat-warn'), at = (p.warn / p.max * 100).toFixed(1) + '%';
+    if (mark && at !== heatWarnAt) { heatWarnAt = at; mark.style.left = at; }
+    var left = heatUnlockIn(h), title = Math.round(h.t) + '|' + h.band + '|' + (h.locked ? Math.ceil(left) : '') + '|' + p.key;
+    if (title === heatTitleKey) return;
+    heatTitleKey = title;
+    var bands = [];
+    p.states.forEach(function (s, i) { if (i > 0 && s.factor !== 1) bands.push('×' + aimNum(s.factor) + ' above ' + aimNum(p.states[i - 1].top)); });
+    box.title = 'Gun heat ' + Math.round(h.t) + ' / ' + aimNum(p.max) + (h.locked ? ' — overheated, fires again in ' + Math.ceil(left) + ' s' : '') +
+      '. Each round adds ' + aimNum(p.per) + '; after ' + aimNum(p.delay) + ' s without firing the gun cools ' + aimNum(p.cool) +
+      ' a second. At ' + aimNum(p.on) + ' it overheats and locks: it cools at ×' + aimNum(p.slow) + ' (' + aimNum(p.cool * p.slow) +
+      ' a second) and fires again only at ' + aimNum(p.off) + '. The mark is the warning at ' + aimNum(p.warn) + '.' +
+      (bands.length ? ' The aiming circle is ' + bands.join(', ') + (h.band > 0 ? ' — now ×' + aimNum(p.states[h.band].factor) : ' — now ×1') + '.' : '') +
+      ' The game’s own numbers for this gun; the ✸ emulation runs them, the server keeps the real temperature.';
+  }
   // --- The fun layer: target HP, a rolled shot and Hitmarks (user, 22.09) --------------------------
   // ONE switch, and it stands ON THE SCENE beside the collision-model tile, not in Settings (user, 22.09:
   // the health bar appears there, and it has to be plain that the switch turns on more than the bar). It
@@ -2921,7 +3115,9 @@
   // own pass chance the roll did not beat); nothing else reads it.
   function funVerdict(r, shell) {
     if (!r) return {outcome: FUN_UNKNOWN, base: 0};
-    if (r.reason === 'ricochet') return {outcome: FUN_RICOCHET, base: 0};
+    // A shell that glanced off and flew clear of the hull ends as 'no-hull' with the bounce on record: that is
+    // a ricochet, not a shot without an estimate (the bar's tooltip said 'no estimate' for it until 22.09).
+    if (r.reason === 'ricochet' || (r.reason === 'no-hull' && r.bounce)) return {outcome: FUN_RICOCHET, base: 0};
     if (r.reason === 'screen') return {outcome: FUN_NONE, base: 0};
     if (r.reason === 'no-hull' || r.chance === null || r.chance === undefined) return {outcome: FUN_UNKNOWN, base: 0};
     var p = Math.max(0, Math.min(1, r.chance / 100));
@@ -2981,6 +3177,13 @@
       var pressed = String(on);
       if (pressed !== hpPressed) { hpPressed = pressed; toggle.setAttribute('aria-pressed', pressed); }
     }
+    // Its sub-switch, real reload, stands beside it only while the mode is on, lit while it is on itself.
+    var sub = $('real-reload-toggle'), subBox = $('real-reload');
+    if (sub) {
+      sub.hidden = !(on && model);
+      var subPressed = String(!!(subBox && subBox.checked));
+      if (sub.getAttribute('aria-pressed') !== subPressed) sub.setAttribute('aria-pressed', subPressed);
+    }
     bar.hidden = !show;
     reset.hidden = !(on && model);
     if (!show) return;
@@ -3027,7 +3230,12 @@
     }
     if (!on) funMarks.length = 0;
     if (on && !(hpMax > 0)) { hpKey = targetKey(activeHit); hpMax = targetMaxHp(activeHit); hpLeft = hpMax; hpRoll = ''; }
+    // The gun under the other rule starts over: cold, loaded, a full clip - and the loop is woken, so the
+    // circle drops the heat band it may have been drawn in.
+    gunHeatReset();
+    aimReload = null; aimClipDry = false; aimClipSize = aimClipRounds(); aimClip = aimClipSize;
     paintFun();
+    startAimLoop();
   }
   // Everything the emulation holds, back to a standing, loaded, fully aimed shooter.
   function resetAimRun() {
@@ -3037,6 +3245,7 @@
     aimShot = null; aimLastState = null; aimHeading = 0;
     if (viewer) { viewer.aimHold = false; if (viewer.clearAimShot) viewer.clearAimShot(); }
     aimClipSize = aimClipRounds(); aimClip = aimClipSize;
+    gunHeatReset();   // a new shooter's gun, or the emulation starting over, is cold
   }
   // The switch itself. Off means off: no frame loop, no key handlers, no live circle, no crosshair, and
   // everything recorded is back on the model.
@@ -4275,6 +4484,9 @@
   $('fun-mode').onchange=funSettings;
   $('fun-mode-toggle').onclick=function(){var box=$('fun-mode');box.checked=!box.checked;funSettings();persistSettings();};
   $('target-hp-reset').onclick=funReset;
+  // ✸'s sub-switch, real reload: the same pattern - a hidden control of the menu keeps it, the button on the scene flips it.
+  $('real-reload').onchange=realReloadSettings;
+  $('real-reload-toggle').onclick=function(){var box=$('real-reload');box.checked=!box.checked;realReloadSettings();persistSettings();};
   // How deep the soft light shades (user, 22.09): the slider only scales the composite's brightness range.
   // It sits in the checkbox's own row, like the ricochet tint and dots, so the Settings grid keeps its pairs.
   $('light-strength').oninput=function(){

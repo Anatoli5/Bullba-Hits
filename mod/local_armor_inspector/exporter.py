@@ -25,10 +25,11 @@ from collections import OrderedDict
 from .geometry import extract
 from .armor import ArmorCatalog
 from .records import RecordDecoder, pack_battle, stamp_snapshot, unpack_battle
+from .telemetry import mechanics_params
 from .crit_tie import attach_crits, moves_tie
 
 LOG = logging.getLogger('local.armor_inspector')
-VERSION = '0.7.26'
+VERSION = '0.7.27'
 RESOURCE = re.compile(r'^(?:[A-Za-z0-9_-]+/)?vehicles/[A-Za-z0-9_/-]+\.(?:model|havok)\Z')
 IDENTIFIER = re.compile(r'^[-a-zA-Z0-9_]{1,100}\Z')
 # The interface icons of the aim configuration (equipment, perks, shells) ship with the page in web/icons
@@ -559,6 +560,10 @@ def aim_block(descr):
       autoreload, dualGun,  {field: v} the gun's own namedtuple of that mechanic, by field name, written
       twinGun, dualAccuracy,           only when gunTags names it: the client keeps a default tuple on
       autoShoot                        every other gun, which says nothing
+      gunMechanics          [name]     the mechanics of AIM_GUN_MECHANICS the descriptor carries
+      temperatureGun,       {field: v} the gun's heat parameters (gun_heat), only for a gun that has them
+      overheatGun,
+      heatingZonesGun
 
     Every field is read on its own and a field the client does not give is simply left out
     and named in 'unavailable', the same contract the telemetry snapshot uses: this must
@@ -613,19 +618,26 @@ def aim_block(descr):
             if value is not None: aim[key] = value
         except Exception:
             aim['unavailable'].append(key)
-    # R3: the gun mechanics this vehicle carries, by the client's own names. A mechanic is declared in
-    # the vehicle's <mechanics> section and lands in VehicleType.mechanicsParams keyed by the class's
-    # MECHANICS_NAME (vehicles.pyc VehicleType.__init__ 3515-3524; the names are the MECHANICS_NAME
-    # constants of items/components/shared_components.pyc, read in this client). It says only THAT the
-    # gun has the mechanic, never its state at the shot - that is live state nobody sends to other
-    # clients - so the page can say "this gun's numbers vary" instead of quietly showing one value.
-    # Type-level, so fix_aim gives it to every older record from the compact descriptor for free.
+    # R3: the gun mechanics this vehicle carries, by the client's own names (the MECHANICS_NAME constants
+    # of items/components/shared_components.pyc). It says only THAT the gun has the mechanic, never its
+    # state at the shot, so the page can say "this gun's numbers vary" instead of quietly showing one
+    # value. Read from the descriptor's merged mechanicsParams (telemetry.mechanics_params): until 22.09
+    # it was read from VehicleType.mechanicsParams, which never holds a gun-level mechanic - so the five
+    # German switchers, the Gorilla, the Fauteur and the Black Rock silently got no list at all.
+    mechanics = {}
     try:
-        params = getattr(descr.type, 'mechanicsParams', None) or {}
-        found = sorted(str(name) for name in params if str(name) in AIM_GUN_MECHANICS)
+        mechanics = mechanics_params(descr)
+        found = sorted(str(name) for name in mechanics if str(name) in AIM_GUN_MECHANICS)
         if found: aim['gunMechanics'] = found
     except Exception:
         aim['unavailable'].append('gunMechanics')
+    # The gun's heat (22.09, outputs/gun-overheat-2026-09-22.md): the static parameters of temperatureGun,
+    # overheatGun and heatingZonesGun, written only for a gun that has them (the five Ares and the STK-2 in
+    # client 2.4.0.1). Static per configuration, so the by-reference snapshot carries it once.
+    try:
+        aim.update(gun_heat(mechanics))
+    except Exception:
+        aim['unavailable'].append('temperatureGun')
     if not aim['unavailable']:
         del aim['unavailable']
     # Without the angle itself there is no circle to draw, so an empty block is no block.
@@ -650,6 +662,91 @@ AIM_GUN_MECHANICS = frozenset((
     'shellParamsSwitcher', 'lowChargeShot', 'shellCalibration', 'bustleFeed',
     'chargeShot', 'propellantAfterburnerGun', 'overheatStacks', 'chargeableBurst', 'secondaryGun'))
 AIM_COMPLETION_KEYS = AIM_RELOAD_KEYS + AIM_TYPE_KEYS
+# The gun's temperature mechanics (gun_heat): written only for a gun that has them, so - like 'burst' -
+# they never decide that a block is incomplete and are copied only when a rebuild happens anyway.
+AIM_GUN_HEAT_KEYS = ('temperatureGun', 'overheatGun', 'heatingZonesGun')
+# One block per mechanics object of a descriptor: the arena keeps one descriptor per vehicle for the whole
+# battle and an Ares fires 3.3 rounds a second, so the block is built once and every later hit only looks
+# it up. The objects themselves are kept in the entry, so an id can never be reused while it is cached.
+_GUN_HEAT_CACHE = {}
+
+
+def heat_number(value):
+    """A finite float or a ValueError - one bad field must cost the block, not the recorder."""
+    result = float(value)
+    if result - result != 0:
+        raise ValueError('Non-finite heat parameter')
+    return result
+
+
+def heat_modifier(modifier):
+    """One modifier of a thermal state as {'op', 'name', 'value'[, 'filter']}.
+
+    items/attributes_helpers.pyc readModifiers (client 2.4.0.1) keeps each as the tuple
+    (opType 'mul'|'add'|'set', attrType, attrName, value, filterName); the name is written back whole, as
+    the XML spells it ('dynAttrs/multShotDispersionFactor'), and the filter only when it is not the default
+    MODIFIER_FILTER_TYPE.COMMON.
+    """
+    op, kind, name, value, where = tuple(modifier)[:5]
+    result = {'op': str(op), 'name': '%s/%s' % (kind, name) if kind else str(name), 'value': heat_number(value)}
+    if where and str(where) != 'common':
+        result['filter'] = str(where)
+    return result
+
+
+def gun_heat(params):
+    """The static heat parameters of the mounted gun, {mechanic: {field: value}}; {} for every other gun.
+
+    Read out of the client's own parameter objects (items/components/shared_components.pyc, 2.4.0.1):
+
+      temperatureGun   heatingPerShot, coolingDelay (s), coolingPerSec (degrees/s), maxTemperature (the
+                       hottest state's bound, TemperatureGunParams.maxTemperature), thermalStateHysteresis and
+                       thermalStates - ascending by maxTemperature, as the client sorts them, each with the
+                       modifiers applied while the temperature lies in that band (the Ares: none below 50,
+                       then multShotDispersionFactor 1.25 and 1.5)
+      overheatGun      coolingPerSecFactor (the cooling while overheated), tempOverheatOnThreshold (the gun
+                       locks), tempOverheatOffThreshold (it unlocks), tempOverheatWarnThreshold
+      heatingZonesGun  zones - four temperatures, one per HEATING_ZONES_GUN_STATE (idle, low, medium, high)
+
+    The values are the descriptor's, i.e. after the field modifications of the battle (a live block) or
+    stock (a block rebuilt from a compact descriptor). The live temperature is not here: it is replicated
+    state (TemperatureGunController.stateStatus), not a parameter. Raises on a malformed object; the
+    caller guards it.
+    """
+    objects = tuple(params.get(name) for name in AIM_GUN_HEAT_KEYS)
+    if not any(item is not None for item in objects):
+        return {}
+    key = tuple(id(item) for item in objects)
+    cached = _GUN_HEAT_CACHE.get(key)
+    if cached is not None and all(a is b for a, b in zip(cached[0], objects)):
+        return cached[1]
+    temperature, overheat, zones = objects
+    block = {}
+    if temperature is not None:
+        states = []
+        for state in sorted(temperature.thermalStates.states, key=lambda item: float(item.temperature)):
+            entry = {'maxTemperature': heat_number(state.temperature)}
+            modifiers = [heat_modifier(item) for item in (state.modifiers or ())]
+            if modifiers:
+                entry['modifiers'] = modifiers
+            states.append(entry)
+        block['temperatureGun'] = {
+            'heatingPerShot': heat_number(temperature.heatingPerShot),
+            'coolingDelay': heat_number(temperature.coolingDelay),
+            'coolingPerSec': heat_number(temperature.coolingPerSec),
+            'maxTemperature': heat_number(temperature.maxTemperature),
+            'thermalStateHysteresis': heat_number(temperature.thermalStates.thermalStateHysteresis),
+            'thermalStates': states}
+    if overheat is not None:
+        block['overheatGun'] = dict((name, heat_number(getattr(overheat, name))) for name in (
+            'coolingPerSecFactor', 'tempOverheatOnThreshold', 'tempOverheatOffThreshold',
+            'tempOverheatWarnThreshold'))
+    if zones is not None:
+        block['heatingZonesGun'] = {'zones': [heat_number(value) for value in zones.zones]}
+    if len(_GUN_HEAT_CACHE) > 256:
+        _GUN_HEAT_CACHE.clear()
+    _GUN_HEAT_CACHE[key] = (objects, block)
+    return block
 
 
 def fix_aim(vehicle):
@@ -685,7 +782,7 @@ def fix_aim(vehicle):
     # 'burst' and 'gunMechanics' are written only when the gun really has them, so neither may decide
     # that a block is incomplete - a vehicle without them would be "completed" on every pass for ever.
     # They are copied when a completion key brings the rebuild here anyway.
-    for key in AIM_COMPLETION_KEYS + ('burst', 'gunMechanics') + AIM_MECHANICS_KEYS:
+    for key in AIM_COMPLETION_KEYS + ('burst', 'gunMechanics') + AIM_MECHANICS_KEYS + AIM_GUN_HEAT_KEYS:
         if key in existing:
             continue
         if key in block:

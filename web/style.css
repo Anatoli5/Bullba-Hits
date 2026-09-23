@@ -166,6 +166,15 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 .aim-gun-load b[data-running="1"]{color:var(--gold)}
 .aim-gun-clip{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
 .aim-gun-clip[hidden]{display:none}
+/* The heat of an Ares gun under ✸ (user, 22.09 ~23:30): a small bar in the gun panel, graphics only - the
+   figures are in its tooltip. The fill's width is the temperature, its colour is written by the page (cool
+   steel rising to the accent at the warning mark, red from there on), the thin mark is the warning threshold
+   and a locked, overheated gun gets a red frame. Same frame as the health bar, at the panel's own size. */
+.aim-gun-heat{position:relative;flex:0 0 auto;align-self:center;width:46px;height:10px;padding:1px;border:1px solid rgba(157,174,191,.55);border-radius:5px;background:rgba(12,21,31,.6)}
+.aim-gun-heat[hidden]{display:none}
+.aim-gun-heat-fill{display:block;height:100%;width:0;border-radius:3px;background:#78aad2}
+.aim-gun-heat-warn{position:absolute;top:-2px;bottom:-2px;left:94%;width:1px;background:rgba(234,195,110,.85)}
+.aim-gun-heat[data-locked="1"]{border-color:var(--red);box-shadow:0 0 0 1px rgba(251,133,128,.35)}
 /* “Configuration ▾” beside the Shooter tile: its popover opens upward, over the scene. Nothing is printed
    inside the button any more (user, 22.09): a battle whose rules the client data does not give, and a kind of
    equipment the vehicle's own lock fixes, are said in the button's own tooltip. */
