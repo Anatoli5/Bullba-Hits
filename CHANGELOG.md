@@ -2,6 +2,12 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
+## 0.7.31 (2026-09-23)
+
+- Ares, M-II-Y ... M-VII-Y, AHT-7, LTC II: the outer track pair is recorded, drawn and judged as a part of its own. Hits on an Ares 90 or M-V-Y recorded on this client version that were shown without a model get the model and the verdict at the next game start.
+- ✸: a tank destroyer's or a limited turret's gun stops at the edge of its horizontal sector; beyond it only turning the hull (A/D) brings it round, and the circle gets no turret term while the gun sits at the edge.
+- Kunze Panzer, Kpz 3 GST Turm, CC 3, CC mod. 64, CC-67 B, Controcarro 1 Mk. 2, Object 168N: a dragged turret turns on its own tilted ring, as in the game; hit marks turn with it.
+
 ## 0.7.30 (2026-09-23)
 
 - ✸: one mode button in the gun panel for tier XI vehicles with a mode or ability of their own, starting from the state the shot was recorded in; words in its tooltip.

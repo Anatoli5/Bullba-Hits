@@ -29,7 +29,7 @@ from .telemetry import mechanics_params
 from .crit_tie import attach_crits, moves_tie
 
 LOG = logging.getLogger('local.armor_inspector')
-VERSION = '0.7.30'
+VERSION = '0.7.31'
 RESOURCE = re.compile(r'^(?:[A-Za-z0-9_-]+/)?vehicles/[A-Za-z0-9_/-]+\.(?:model|havok)\Z')
 IDENTIFIER = re.compile(r'^[-a-zA-Z0-9_]{1,100}\Z')
 # The interface icons of the aim configuration (equipment, perks, shells) ship with the page in web/icons
@@ -515,6 +515,9 @@ def aim_block(descr):
       turretRotationSpeed   rad/s      turret.rotationSpeed
       hullRotationSpeed     rad/s      chassis.rotationSpeed
       speedForward/Backward m/s        speed_limits(descr)
+      turretYawLimits       [rad, rad] yaw_limits(descr): the gun's sector on the hull, left negative -
+                                       written only for a gun that has one (turretless tank destroyers,
+                                       limited turrets); the page's turret chase stops at it (BACKLOG 40)
       multFactor            -          miscAttrs['multShotDispersionFactor']
       additiveFactor        -          miscAttrs['additiveShotDispersionFactor']
       aimingTimeFactor      -          miscAttrs['gunAimingTimeFactor']
@@ -605,6 +608,14 @@ def aim_block(descr):
     take('rotationFactor', lambda: float(descr.chassis.shotDispersionFactors[1]))
     take('turretRotationSpeed', lambda: float(descr.turret.rotationSpeed))
     take('hullRotationSpeed', lambda: float(descr.chassis.rotationSpeed))
+    # The gun's horizontal sector on the hull (23.09, BACKLOG 40): the page's turret chase stops at it, as the
+    # client's gun rotator does. Written only for a gun that has one - a turret that turns all the way round has
+    # none, so its absence says nothing and 'unavailable' never names it, like 'burst'. Static per configuration.
+    try:
+        limits = yaw_limits(descr)
+        if limits is not None: aim['turretYawLimits'] = limits
+    except Exception:
+        pass
     take('speedForward', lambda: speed_limits(descr)[0])
     take('speedBackward', lambda: speed_limits(descr)[1])
     take('multFactor', lambda: float(descr.miscAttrs['multShotDispersionFactor']))
@@ -854,7 +865,7 @@ def fix_aim(vehicle):
     complete = isinstance(existing, dict) and positive(existing.get('dispersion'))
     known = list(existing.get('unavailable') or []) if complete else []
     if complete and not [k for k in AIM_COMPLETION_KEYS if k not in existing and k not in known]:
-        return False
+        return fix_yaw_limits(vehicle)
     if not vehicle.get('compactDescriptor'):
         return False
     try:
@@ -881,8 +892,80 @@ def fix_aim(vehicle):
             known.append(key)
     if known:
         existing['unavailable'] = known
+    # The sector of the block's own mode, not the default one the rebuild above was made from (BACKLOG 40).
+    fix_yaw_limits(vehicle)
     return True
 
+
+def yaw_limits(descr):
+    """[left, right] of the gun's horizontal sector on the hull, radians with the left one negative, or None.
+
+    The client's gun.turretYawLimits (vehicles.pyc _readGun, where a turret may override the gun's own): None for a
+    turret that turns all the way round, a pair for a turretless tank destroyer or a limited turret; the garage
+    prints it as abs(degrees(l)) left and right (gui params 698-710). The one reader of the vehicle export, the
+    characteristics file and the aim block (BACKLOG 40).
+    """
+    limits = getattr(descr.gun, 'turretYawLimits', None)
+    return None if limits is None else [float(item) for item in limits]
+
+
+def fix_yaw_limits(vehicle):
+    """Give the complete aim blocks of an older record the gun's sector (23.09, BACKLOG 40); True when it did.
+
+    A block is complete without it - aim_block writes it only for a gun that has one - so it never decides that a
+    block needs the rebuild of fix_aim. Each block gets the sector of its OWN mode: 'aim' the one of vehicleMode (the
+    descriptor the client handed the recorder), the second mode's 'modeAim' (BACKLOG 35 B5) the one of modeAimMode -
+    one attribute of that mode's gun, from the compact descriptor vehicle_descr keeps built. Nothing for a
+    full-circle turret, a descriptor the running client cannot build or one that names another type than the record
+    (ids that moved between clients), so a stranger's sector never stops a chase.
+
+    An exported vehicle file ('exportedAt') carries its gun's sector itself, top level, from the very descriptor its
+    block was built from - the vehicle export has written it since 0.6.35, and only for a gun that has one - so its
+    pair is copied and no descriptor is built: a full-circle vehicle gets nothing filled, and load_vehicles would
+    otherwise rebuild every such descriptor of the catalogue on every start. The raw record of a battle is never
+    touched: it gets the sector again on each publish, where the descriptor is built for the hit's other fixes anyway.
+    """
+    blocks = [(block, mode) for block, mode in ((vehicle.get('aim'), vehicle.get('vehicleMode')),
+                                                (vehicle.get('modeAim'), vehicle.get('modeAimMode')))
+              if isinstance(block, dict) and positive(block.get('dispersion')) and 'turretYawLimits' not in block]
+    if not blocks:
+        return False
+    if 'exportedAt' in vehicle:
+        limits = vehicle.get('turretYawLimits')
+        if not isinstance(limits, (list, tuple)) or len(limits) != 2:
+            return False
+        for block, _ in blocks:
+            block['turretYawLimits'] = [float(item) for item in limits]
+        return True
+    if not vehicle.get('compactDescriptor'):
+        return False
+    try:
+        descr = vehicle_descr(vehicle['compactDescriptor'])
+        if vehicle.get('type') and str(descr.type.name) != str(vehicle.get('type')):
+            return False
+    except Exception:
+        return False
+    filled = False
+    for block, mode in blocks:
+        try:
+            limits = yaw_limits(mode_descr(descr, mode))
+        except Exception:
+            continue
+        if limits is not None:
+            block['turretYawLimits'] = limits
+            filled = True
+    return filled
+
+
+def mode_descr(descr, mode):
+    """The descriptor of one mode of a vehicle built twice (VEHICLE_MODE 0 default, 1 siege), else descr itself.
+
+    The two built descriptors of CompositeVehicleDescriptor (docs/KNOWLEDGE.md 4), read as mode_aim_block of the
+    recorder reads them - onSiegeStateChanged is never called, so the cached descriptor never switches its mode.
+    """
+    if mode in (0, 1) and getattr(descr, 'hasSiegeMode', False):
+        return getattr(descr, 'siegeVehicleDescr' if mode == 1 else 'defaultVehicleDescr', None) or descr
+    return descr
 
 # The first recorder that wrote the shooter's aim block live, from the arena's descriptor (0.7.14).
 LIVE_AIM_SINCE = (0, 7, 14)
@@ -962,6 +1045,29 @@ def compact_factors(vehicle):
 
 
 PARTS = ('chassis', 'hull', 'turret', 'gun')
+# The warning the recorder put on a hit whose target had static collision parts it did not write.
+EXTRA_PARTS_WARNING = 'Additional vehicle parts are not yet rendered'
+
+
+def static_parts(descr):
+    """[(collision index, name, component)] of every static collision part the client builds for a vehicle.
+
+    model_assembler.prepareCollisionAssembler: chassis, hull, turret and gun are parts 0-3
+    (TankPartNames.ALL), and every track pair after the first - chassis.trackPairs[1:], the OUTER pair of the
+    vehicles with double tracks (the Ares, M-II-Y ... M-VII-Y, AHT-7, LTC II) - follows as part
+    len(TankPartNames.ALL) + i. Its component is the pair's chassis_components.TrackPair, which carries
+    hitTesterManager and materials exactly like the four parts. CommonTankAppearance._connectCollider moves
+    those extra parts with the chassis' own matrix, so they sit in the chassis frame (docs/KNOWLEDGE.md 9).
+    Wheels are no static part: they lie beyond maxStaticPartIndex and are not listed here.
+    """
+    parts = [(idx, name, getattr(descr, name, None)) for idx, name in enumerate(PARTS)]
+    try:
+        pairs = tuple(descr.chassis.trackPairs or ())[1:]
+    except Exception:
+        pairs = ()
+    for number, pair in enumerate(pairs):
+        parts.append((len(PARTS)+number, 'trackPair%d' % (number+1), pair))
+    return parts
 
 
 def translation_columns(offset):
@@ -1043,13 +1149,14 @@ def vehicle_descr(compact_descriptor):
 
 
 def parts_from_descr(descr, armor_source='client descriptor rebuilt from the record'):
-    """A vehicle descriptor in, its four collision parts out - no battle record involved.
+    """A vehicle descriptor in, its collision parts out - no battle record involved.
 
     The parts are placed in the rest pose in the chassis frame, the way the client
     itself stacks them (vehicles.py VehicleDescr.__updateAttributes) and the way the
     recorder now writes the shooter's parts: chassis at the origin, hull at
     chassis.hullPosition, turret at hull.turretPositions[0] above it, gun at
-    turret.gunPosition above that, no rotation.
+    turret.gunPosition above that, no rotation. An extra track pair (static_parts)
+    takes the chassis' place, as the client connects it.
 
     Kept as a function of a descriptor alone on purpose: the planned vehicle browser
     (any vehicle of the client, picked by tier / nation / class / role) needs parts for
@@ -1062,8 +1169,7 @@ def parts_from_descr(descr, armor_source='client descriptor rebuilt from the rec
     gun = turret + descr.turret.gunPosition
     offsets = ((0.0, 0.0, 0.0), hull, turret, gun)
     parts = []
-    for idx, name in enumerate(PARTS):
-        component = getattr(descr, name, None)
+    for idx, name, component in static_parts(descr):
         part = {'id':idx, 'name':name}
         try:
             part['armor'] = live_materials(component)
@@ -1072,11 +1178,55 @@ def parts_from_descr(descr, armor_source='client descriptor rebuilt from the rec
             pass
         try:
             part['resource'] = component.hitTesterManager.activeHitTester.bspModelName
-            part['transform'] = translation_columns(offsets[idx])
+            part['transform'] = translation_columns(offsets[idx] if idx < len(offsets) else offsets[0])
         except Exception:
             part['error'] = 'Part model or transform unavailable'
         parts.append(part)
     return parts
+
+
+def fix_extra_parts(hit):
+    """The outer track pair of a double-track target recorded before the recorder wrote it.
+
+    Such a target carries parts 0-3 and the warning EXTRA_PARTS_WARNING, and the page withheld its whole
+    scene. The pair is static and fully known from the recorded compact descriptor (static_parts), and the
+    client moves it with the chassis' own matrix (CommonTankAppearance._connectCollider), so its recorded
+    pose IS the recorded chassis transform: nothing is guessed. A contact the client resolved on that part
+    was kept as 'unsupported-part' with its position already in the part's frame; it becomes 'resolved'.
+    Gated by the warning alone, so no other hit costs a descriptor. The caller passes only hits of the
+    running client's version: a model of another version is never extracted (model_extract). A failure
+    leaves the hit as recorded, warning included.
+    """
+    warnings = hit.get('warnings')
+    target = hit.get('target')
+    if not isinstance(warnings, list) or EXTRA_PARTS_WARNING not in warnings or not isinstance(target, dict):
+        return False
+    parts = target.get('parts')
+    if not isinstance(parts, list) or not target.get('compactDescriptor'):
+        return False
+    chassis = [part for part in parts if isinstance(part, dict) and part.get('id') == 0 and part.get('transform')]
+    if not chassis:
+        return False
+    try:
+        descr = vehicle_descr(target['compactDescriptor'])
+        if str(descr.type.name) != str(target.get('type')):
+            return False
+        known = set(part.get('id') for part in parts if isinstance(part, dict))
+        added = [part for part in parts_from_descr(descr) if part['id'] >= len(PARTS) and part['id'] not in known]
+    except Exception:
+        return False
+    if not added or any('resource' not in part for part in added):
+        return False
+    for part in added:
+        part['transform'] = list(chassis[0]['transform'])
+        parts.append(part)
+    ids = set(part['id'] for part in added)
+    for point in hit.get('points') or []:
+        if (isinstance(point, dict) and point.get('status') == 'unsupported-part' and point.get('part') in ids
+                and point.get('position')):
+            point['status'] = 'resolved'
+    hit['warnings'] = [line for line in warnings if line != EXTRA_PARTS_WARNING]
+    return True
 
 
 def synthesize_parts(vehicle):
@@ -1500,10 +1650,7 @@ def ttx_pair(descr, turret_index, gun_name, top):
     ttx_take(config, 'invisibilityFactorAtShot', lambda: float(gun.invisibilityFactorAtShot), warnings,
              'Concealment at the shot')
 
-    def yaw():
-        limits = getattr(gun, 'turretYawLimits', None)
-        return None if limits is None else [float(item) for item in limits]
-    ttx_take(config, 'turretYawLimits', yaw, warnings, 'Turret yaw limits')
+    ttx_take(config, 'turretYawLimits', lambda: yaw_limits(descr), warnings, 'Turret yaw limits')
     ttx_take(config, 'pitch', lambda: ttx_pitch(gun.pitchLimits), warnings, 'Pitch limits')
     ttx_take(config, 'reloadExtra', lambda: ttx_reload_extra(descr), warnings, 'Mechanics reload')
     return config, warnings
@@ -1949,6 +2096,9 @@ class Exporter(object):
             except Exception:
                 LOG.exception('Vehicle identity unavailable; the hit is published as recorded')
         synthesize_parts(hit.get('attacker'))
+        # Only a battle of the running client: its rebuilt descriptor and extracted model are the recorded ones.
+        if canonical(battle.get('clientVersion') or '') == self.version:
+            fix_extra_parts(hit)
         fix_shells(hit)
         try:
             stamp_aim_origin(hit, raw, battle)
@@ -2422,9 +2572,26 @@ class Exporter(object):
                 if isinstance(aim, dict) and 'aimFrom' not in aim:
                     aim['aimFrom'] = 'compact'
                     filled = True
+                # Exported before an extra track pair was a part (docs/BACKLOG.md 33): checked once, from its own
+                # descriptor. A vehicle that has one is exported again by the replay right after this (its
+                # summary gets no hash), which extracts the one missing model; every other one is marked and
+                # written back with the other fixes, so the check never runs twice for a file.
+                stale = False
+                if record.get('parts') and 'staticParts' not in record:
+                    try:
+                        count = len(static_parts(vehicle_descr(record['compactDescriptor'])))
+                        if count > len(record['parts']):
+                            stale = True
+                        else:
+                            record['staticParts'] = len(record['parts'])
+                            filled = True
+                    except Exception:
+                        pass
                 if filled and identifier and IDENTIFIER.match(identifier):
                     write_data(path, 'vehicle:'+identifier, record)
                 self.remember_vehicle(record)
+                if stale and identifier in self.vehicles:
+                    self.vehicles[identifier]['descriptorHash'] = None
             except Exception:
                 LOG.exception('Could not read an exported vehicle: %s', os.path.basename(path))
 
@@ -2558,8 +2725,8 @@ class Exporter(object):
         except Exception:
             record['warnings'].append('Gun height unavailable')
         try:
-            limits = getattr(descr.gun, 'turretYawLimits', None)
-            if limits is not None: record['turretYawLimits'] = [float(x) for x in limits]
+            limits = yaw_limits(descr)
+            if limits is not None: record['turretYawLimits'] = limits
         except Exception:
             record['warnings'].append('Turret yaw limits unavailable')
         try:
@@ -2579,6 +2746,9 @@ class Exporter(object):
         try:
             record['parts'] = parts_from_descr(descr, 'client vehicle descriptor')
             record['partsFrom'] = 'rest pose'
+            # Every static collision part is listed (static_parts); the count also tells load_vehicles
+            # that this file needs no check for a missing extra track pair.
+            record['staticParts'] = len(record['parts'])
             self.publish_vehicle_parts(record['parts'], record, self.version, extract=True)
         except Exception:
             record['parts'] = []

@@ -74,9 +74,9 @@ def classify(row):
     expected = 'pen' if server in PEN else 'ricochet' if server in RICOCHET else 'no-pen' if server in NOPEN else None
     if expected is None:
         return 'unknown-server-effect'
-    # A pass-through of the tracks or the gun ("penetration without damage" on the chassis or gun part) is not a
-    # verdict on the main armour; the next point of the same hit carries that verdict.
-    if server == 'Penetration_without_damage' and row.get('part') in ('chassis', 'gun'):
+    # A pass-through of the tracks or the gun ("penetration without damage" on the chassis, the outer track pair or
+    # the gun part) is not a verdict on the main armour; the next point of the same hit carries that verdict.
+    if server == 'Penetration_without_damage' and row.get('part') in ('chassis', 'gun', 'trackPair1'):
         return 'pass-through'
     # A module crit without HP damage (crit code 5/6 and 0 HP) against our "no penetration" is not a verdict on the
     # main armour either. Lines without hp= (pages before 22.09) keep their old class.

@@ -224,13 +224,21 @@ class ArmorCatalog(object):
         if not re.match(r'^[a-z]+:[A-Za-z0-9_-]+\Z', vehicle_type): raise ValueError('Invalid vehicle type')
         nation, vehicle = vehicle_type.split(':')
         tree = self.xml('scripts/item_defs/vehicles/'+nation+'/'+vehicle+'.xml')
-        candidates = [node for node in tree.iter() if node.findtext('hitTester/collisionModelClient') == resource]
+        # Every hitTester of a component, not only its first: a chassis with double tracks has one per track
+        # pair (trackPairIdx 0 and 1), and the second is collision part 4 (exporter.static_parts).
+        candidates = [(node, tester) for node in tree.iter() for tester in node.findall('hitTester')
+                      if tester.findtext('collisionModelClient') == resource]
         if len(candidates) != 1: raise ValueError('Armor component cannot be matched unambiguously')
-        component = candidates[0]
-        armor = component.find('armor')
+        component, tester = candidates[0]
+        pair = (tester.findtext('trackPairIdx') or '').strip()
+        armor = component.find('armor') if not pair else None
         if armor is None:
-            tracks = [p.find('armor') for p in component.findall('trackPairParams') if p.findtext('trackPairIdx') == '0']
+            # The armour of a track pair sits in its trackPairParams; a hitTester without an index is pair 0.
+            pair = pair or '0'
+            tracks = [p.find('armor') for p in component.findall('trackPairParams')
+                      if (p.findtext('trackPairIdx') or '').strip() == pair]
             if len(tracks) == 1: armor = tracks[0]
+            if armor is None: armor = component.find('armor')
         if armor is None: raise ValueError('Armor table unavailable for this component')
         common = self.xml('scripts/item_defs/vehicles/common/vehicle.xml').find('materials')
         result = {}

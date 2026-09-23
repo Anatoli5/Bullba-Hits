@@ -2710,9 +2710,13 @@
       aimHeading += aimMove.hullTurn * dt;
       swung = !!(viewer.turnAim && viewer.turnAim(aimMove.hullTurn * dt));
     }
-    var chase = ArmorBallistics.turretChase(viewer.aimGap(), aimMove.hullTurn, a, mods, dt, swung);
+    // The gun turns only within the shooter's horizontal sector (BACKLOG 40): the gap is the one to the point it can
+    // reach, so a gun stopped at its limit has none to close and puts no turret term into the circle - the hull,
+    // turned by A or D, carries it on (viewer.aimReach).
+    var yawLimits = aimYawLimits(a);
+    var chase = ArmorBallistics.turretChase(viewer.aimGap(yawLimits), aimMove.hullTurn, a, mods, dt, swung);
     // `turned`: the gun really moved in this frame (chaseAim says so for anything above a micro-radian).
-    var turned = chase.step > 0 && !!viewer.chaseAim(chase.step);
+    var turned = chase.step > 0 && !!viewer.chaseAim(chase.step, yawLimits);
     var state = {speed: aimMove.speed, hullTurn: aimMove.hullTurn, hullMax: aimMove.hullMax, turretTurn: chase.turretTurn};
     autoHold(a, state);   // ✸: an automatic gun's stream keeps its term in the circle (nothing otherwise)
     aimNow = ArmorBallistics.aimStep(aimNow, state, a, mods, dt);
@@ -2743,6 +2747,16 @@
     // is taken once, when it is really at rest - the coarse one keeps its 120 ms pace meanwhile.
     if (aimHeld() || !aimMove.resting || reloading || !chase.caught || turned || (aimBurst && aimDown && !aimClipDry) || burstLeft > 0 || (aimNow && !aimNow.settled)) startAimLoop();
     else { aimClock = 0; if (reloadJustFinished()) paintAim(state); if (!aimEstFine) { estimateLive(true); paintCircleLines(); } }
+  }
+  // The shooter's horizontal sector, [left, right] radians with the left one negative - gun.turretYawLimits of the
+  // block in force (exporter.aim_block since 23.09; an older record gets it at publish from its compact descriptor) -
+  // or null for a gun that turns all the way round. A pair that spans the whole circle (nine turrets carry -180 180)
+  // is no limit either.
+  function aimYawLimits(a) {
+    var l = a && a.turretYawLimits;
+    if (!Array.isArray(l) || l.length !== 2) return null;
+    var lo = Number(l[0]), hi = Number(l[1]);
+    return isFinite(lo) && isFinite(hi) && hi > lo && hi - lo < 2 * Math.PI - 1e-6 ? l : null;
   }
   // The reload is over: drop it so the ring is drawn whole again.
   function reloadJustFinished() {
@@ -3754,7 +3768,8 @@
     aimKeys = {}; aimMove = null; aimNow = null; aimReload = null;
     aimDown = false; aimBurst = false; aimClipDry = false;
     aimShot = null; aimLastState = null; aimHeading = 0;
-    if (viewer) { viewer.aimHold = false; if (viewer.clearAimShot) viewer.clearAimShot(); }
+    // The hull faces the gun again: its yaw in the shooter's sector starts from the middle (BACKLOG 40).
+    if (viewer) { viewer.aimHold = false; viewer.aimYaw = 0; if (viewer.clearAimShot) viewer.clearAimShot(); }
     aimLoadFull();
     gunHeatReset();   // a new shooter's gun, or the emulation starting over, is cold
   }
@@ -4501,7 +4516,7 @@
     if(fall!==1&&shell.alpha>0){shell.alphaNear=shell.alpha;shell.alpha*=fall;}
     return shell;
   }
-  var totalTimer=null,totalKey=null,totalEngine=null,totalAim=null,totalEstimate=null,verdictKey=null,partNames=['chassis','hull','turret','gun'];
+  var totalTimer=null,totalKey=null,totalEngine=null,totalAim=null,totalEstimate=null,verdictKey=null,partNames=['chassis','hull','turret','gun','trackPair1'];
   // Verdict log (user, 14.09): one console line per recorded contact point - the server's result as a fact next to our
   // estimate along the drawn line. The game writes the page's console into game.log; tools/verdicts_from_log.py
   // tabulates the lines. Once per hit and shell, never on camera moves.
@@ -5263,7 +5278,7 @@
     if(hit.synthetic){$('details').appendChild(node('p','The shooter\u2019s collision model, swapped in from the hit at '+clock(hit.receivedAt)+'. Nothing was fired at this vehicle in the record, so there is no hit line, no reticle and no shell of its own. The \u21c5 button next to the shooter tile goes back to the recorded hit.'));return;}
     detail('Direction',view==='incoming'?'Incoming':view==='outgoing'?'Outgoing':'Not this vehicle',clock(hit.receivedAt));detail('Result',result(hit));var critRow=critDetail(hit);if(critRow)$('details').appendChild(critRow);
     var points=hit.points||[],point=points.find(function(p){return p.status==='resolved';});
-    detail('Point on the model',point?['Chassis','Hull','Turret','Gun'][point.part]:'Not restored',point?'Per the client collision handler':'Segment kept for diagnostics');
+    detail('Point on the model',point?['Chassis','Hull','Turret','Gun','Outer track'][point.part]||'Part '+point.part:'Not restored',point?'Per the client collision handler':'Segment kept for diagnostics');
     detail('Calibre',point&&point.caliber?point.caliber+' mm':'No data',points.length+' points in the event');
     if(hit.rangeAtImpact!=null)detail('To the attacker at impact',hit.rangeAtImpact.toFixed(1)+' m','Position when the hit was received; not a measured flight length.');
   }

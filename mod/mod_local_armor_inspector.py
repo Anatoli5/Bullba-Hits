@@ -13,7 +13,7 @@ try:
 except ImportError:
     import queue
 
-VERSION = '0.7.30'
+VERSION = '0.7.31'
 VIEWER_PATH = os.path.join('mods', 'configs', 'local.armor_inspector', 'Viewer.html')
 LOG = logging.getLogger('local.armor_inspector')
 PARTS = ('chassis', 'hull', 'turret', 'gun')
@@ -302,6 +302,45 @@ def translation_columns(point):
     columns.extend(vector(point))
     columns.append(1.0)
     return columns
+
+
+def extra_part_info(idx, collisions, appearance, root, matrix):
+    """What the client itself knows of a collision part beyond the static ones, for one contact on it.
+
+    Read only with the calls the client makes for such an index (VehicleEffects.parseHitPoints and
+    Vehicle.showDamageFromShot), so nothing here asks the collision component anything new
+    (docs/BACKLOG.md 39): a negative index is a wheel of a wheeled vehicle - the collision component's
+    own part name and the compound model's node of that name, the frame the client lays the hit
+    effect in; an index above maxStaticPartIndex is a CGF prefab (the CAV mod. 71 crest, the AS-XX
+    containers) linked by DynamicCollisionLinker - its parent part and getPartTransform. Both with the
+    part's bounding box. Each read on its own, so one that fails costs only its field. 'matrix' is
+    Math.Matrix; poses are column-major relative to the chassis, as the parts' transforms.
+    """
+    info = {}
+    try:
+        box = collisions.getBoundingBox(idx)
+        info['partBounds'] = [vector(box[0]), vector(box[1])]
+    except Exception:
+        pass
+    if idx < 0:
+        try:
+            name = collisions.getPartName(idx)
+            if name:
+                info['partName'] = str(name)
+                info['partTransform'] = matrix_columns(matrix(appearance.compoundModel.node(name)), root)
+        except Exception:
+            pass
+    elif idx > collisions.maxStaticPartIndex:
+        try:
+            parent = collisions.getParentPartIndex(idx)
+            if parent is not None: info['parentPart'] = int(parent)
+        except Exception:
+            pass
+        try:
+            info['partTransform'] = matrix_columns(matrix(collisions.getPartTransform(idx)), root)
+        except Exception:
+            pass
+    return info
 
 
 def rest_transforms(descr):
@@ -864,10 +903,11 @@ class Recorder(object):
                     # draw his armour. There is no live entity for him here, only the descriptor, so the
                     # parts take the rest pose in the chassis frame instead of a recorded transform.
                     from local_armor_inspector.armor import live_materials
+                    from local_armor_inspector.exporter import static_parts
                     transforms = rest_transforms(attacker)
                     parts = []
-                    for idx, name in enumerate(PARTS):
-                        component = getattr(attacker, name, None)
+                    # Every static collision part: the four, then an extra track pair in the chassis' place.
+                    for idx, name, component in static_parts(attacker):
                         part = {'id':idx, 'name':name}
                         try:
                             part['armor'] = live_materials(component)
@@ -877,7 +917,7 @@ class Recorder(object):
                             pass
                         try:
                             part['resource'] = component.hitTesterManager.activeHitTester.bspModelName
-                            part['transform'] = transforms[idx]
+                            part['transform'] = transforms[idx if idx < len(transforms) else 0]
                         except Exception:
                             part['error'] = 'Part model or transform unavailable'
                             record['warnings'].append('Shooter part unavailable: '+name)
@@ -985,8 +1025,10 @@ class Recorder(object):
                 record['target']['gunPitchLimits'] = gun_limits(descr, compact)
             except Exception:
                 record['warnings'].append('Gun pitch limits unavailable')
-            for idx, name in enumerate(PARTS):
-                component = getattr(descr, name)
+            # Every static collision part (exporter.static_parts): the four, then the outer track pair of a vehicle
+            # with double tracks as part 4. Only an index the list does not know keeps the warning below.
+            from local_armor_inspector.exporter import static_parts, EXTRA_PARTS_WARNING
+            for idx, name, component in static_parts(descr):
                 part = {'id':idx, 'name':name}
                 try:
                     from local_armor_inspector.armor import live_materials
@@ -1002,8 +1044,9 @@ class Recorder(object):
                     part['error'] = 'Part model or transform unavailable'
                     record['warnings'].append('Part unavailable: '+name)
                 record['target']['parts'].append(part)
-            if collisions.maxStaticPartIndex > 3:
-                record['warnings'].append('Additional vehicle parts are not yet rendered')
+            known = set(part['id'] for part in record['target']['parts'])
+            if collisions.maxStaticPartIndex >= len(known):
+                record['warnings'].append(EXTRA_PARTS_WARNING)
             record['aim'] = list(vehicle.getAimParams())
             for hit in hitPoints:
                 point = {'status':'unresolved'}
@@ -1021,8 +1064,11 @@ class Recorder(object):
                     if resolved is None: continue
                     pos, direction, normal = resolved
                     point.update({'position':vector(pos), 'direction':vector(direction), 'normal':vector(normal)})
-                    if idx not in range(4):
+                    if idx not in known:
                         point['status'] = 'unsupported-part'
+                        # A wheel or an armoured prefab: its name, parent and pose at impact, so the part can be
+                        # identified and placed later (docs/BACKLOG.md 39). Only for such a point - rare.
+                        point.update(extra_part_info(idx, collisions, vehicle.appearance, root, Math.Matrix))
                     else: point['status'] = 'resolved'
                 except Exception:
                     LOG.exception('Hit point could not be decoded')

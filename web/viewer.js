@@ -55,6 +55,9 @@
     // 0..1, and it is how much of the live ring is drawn; null = loaded, the whole ring. aimHold says
     // the pointer is down on a shot, not on a drag.
     this.liveRadius100=null;this.liveAimPoint=null;this.aimCursorPoint=null;this.liveAim=null;this.aimChase=false;this.aimProfileName=ArmorBallistics.aimProfileDefault;
+    // aimYaw: the gun's yaw on the emulated hull, radians, right positive - what the chase stops at the shooter's
+    // horizontal sector with (aimReach, BACKLOG 40).
+    this.aimYaw=0;
     // aimPinned: the pinned line on screen is the emulated shot's own, so dropping that shot releases it
     // and the recorded tracer and reticles come back.
     this.aimShotCircle=null;this.aimReloadPart=null;this.aimHold=false;this.aimPinned=false;
@@ -375,10 +378,18 @@
   };
   Viewer.prototype.poseLive=function(){return !!this.poseGeometries&&(this.dragging||clock()-this.poseAt<POSE_SETTLE);};
   // The extra matrix the current turret and gun angles put in front of a part's own transform: the turret turns
-  // about the hull's vertical axis through the turret's origin, the gun pitches about its own axis afterwards.
+  // about its OWN vertical axis through its origin, the gun pitches about its own axis afterwards.
+  // THE TILTED RING (BACKLOG 40, 23.09). Eight vehicles sit their turret on a ring tilted against the hull - Kunze
+  // Panzer 5.26°, Kpz 3 GST Turm 8°, CC 3 and CC 3 7x7 3°, Controcarro 1 Mk. 2 6.47°, CC mod. 64 4°, CC-67 B 11.07°,
+  // Object 168N 1.55° (hull turretPitches, docs/KNOWLEDGE.md 4). The client's collision assembly puts the turret node
+  // at that pitch and turns the turret RotateY(yaw) UNDER it (model_assembler.attachModels), so the turret's recorded
+  // matrix is hull x T x tilt x RotateY(yaw): its own up axis IS the ring's, whatever the yaw, and a turn about it gives
+  // exactly hull x T x tilt x RotateY(yaw + turn). The hull's vertical, used until 23.09, carried the tilt round with
+  // the turret instead - after half a turn it leaned 2 x turretPitch the wrong way. On every other vehicle the two
+  // axes are the same one. A turret with a degenerate matrix falls back to the hull's vertical.
   Viewer.prototype.poseExtra=function(){
     if(!this.loadedData)return null;var T=THREE,source=this.loadedData,parts=source.hit.target.parts,turret=parts.find(function(p){return p.id===2;}),hull=parts.find(function(p){return p.id===1;});if(!turret||!turret.transform)return null;
-    var pivot=new T.Vector3().setFromMatrixPosition(new T.Matrix4().fromArray(turret.transform)),axis=new T.Vector3(0,1,0);if(hull&&hull.transform)axis.transformDirection(new T.Matrix4().fromArray(hull.transform));
+    var own=new T.Matrix4().fromArray(turret.transform),pivot=new T.Vector3().setFromMatrixPosition(own),axis=new T.Vector3(0,1,0).transformDirection(own);if(!(axis.lengthSq()>.5)){axis.set(0,1,0);if(hull&&hull.transform)axis.transformDirection(new T.Matrix4().fromArray(hull.transform));}
     var rotation=new T.Matrix4().makeTranslation(pivot.x,pivot.y,pivot.z).multiply(new T.Matrix4().makeRotationAxis(axis,this.turretAngle*Math.PI/180)).multiply(new T.Matrix4().makeTranslation(-pivot.x,-pivot.y,-pivot.z));
     var gun=parts.find(function(p){return p.id===3;}),gunRotation=null;
     if(gun&&gun.transform){var g=new T.Matrix4().fromArray(gun.transform).premultiply(rotation),gp=new T.Vector3().setFromMatrixPosition(g),ga=new T.Vector3(1,0,0).transformDirection(g);var info=source.hit.target.gunPitchLimits,yaw0=(source.hit.aim||[])[0]||0,yaw=yaw0+this.turretAngle*Math.PI/180;var correction=function(y){y=Math.atan2(Math.sin(y),Math.cos(y));return info?info.hullTurretPitch*(1-2*Math.abs(y)/Math.PI)+info.gunJointPitch:0;};var delta=this.gunAngle*Math.PI/180+correction(yaw0)-correction(yaw);gunRotation=new T.Matrix4().makeTranslation(gp.x,gp.y,gp.z).multiply(new T.Matrix4().makeRotationAxis(ga,delta)).multiply(new T.Matrix4().makeTranslation(-gp.x,-gp.y,-gp.z));}
@@ -959,7 +970,7 @@
   };
   // A new model (clear) or the mode going off drops the points; a hold on the model survives it, but what it
   // would hand back belonged to the previous model, so it forgets that and stays on the centre.
-  Viewer.prototype.clearLiveAim=function(){this.liveRadius100=null;this.liveAimPoint=null;this.aimCursorPoint=null;this.liveAim=null;if(this.aimCentred)this.aimCentred={cursor:null,gun:null,seen:null};this.clearAimShot();this.hideSpread();this.updateAimMarker();};
+  Viewer.prototype.clearLiveAim=function(){this.liveRadius100=null;this.liveAimPoint=null;this.aimCursorPoint=null;this.liveAim=null;this.aimYaw=0;if(this.aimCentred)this.aimCentred={cursor:null,gun:null,seen:null,yaw:0};this.clearAimShot();this.hideSpread();this.updateAimMarker();};
   // THE AIM HELD ON THE MODEL (user, 21.09). While the page's Config popover is open the mouse is on the
   // menu, so the circle would sit behind it and nobody could see what a tile does to it. The aim is parked
   // in the middle of the target instead: the point on the model's surface along the view ray through the
@@ -972,18 +983,19 @@
   Viewer.prototype.setAimCentre=function(on,shape){
     this.aimMarkerShape=shape==='dot'?'dot':'cross';
     if(!!on===!!this.aimCentred){this.updateAimMarker();return;}
-    if(on){this.aimCentred={cursor:this.aimCursorPoint,gun:this.liveAimPoint,seen:null};this.centreAim();}
+    if(on){this.aimCentred={cursor:this.aimCursorPoint,gun:this.liveAimPoint,seen:null,yaw:this.aimYaw||0};this.centreAim();}
     else{
       var held=this.aimCentred,back=held.seen||held.cursor;this.aimCentred=null;
       // Nothing to go back to (the pointer never crossed the scene): the circle stays where it is until it does.
-      if(back){this.aimCursorPoint=back.clone();this.liveAimPoint=(held.seen||held.gun||back).clone();}
+      // The gun given back where it stood keeps its yaw on the hull; one put down on the cursor has the hull facing it.
+      if(back){this.aimCursorPoint=back.clone();this.liveAimPoint=(held.seen||held.gun||back).clone();this.aimYaw=!held.seen&&held.gun?held.yaw||0:0;}
     }
     if(this.liveRadius100)this.drawLiveAim();
     this.updateAimMarker();this.draw();
   };
   Viewer.prototype.centreAim=function(){
     var point=this.aimCentrePoint();
-    if(point){this.aimCursorPoint=point;this.liveAimPoint=point.clone();}
+    if(point){this.aimCursorPoint=point;this.liveAimPoint=point.clone();this.aimYaw=0;}
     return point;
   };
   // The held point is found once, when the hold starts, so an orbit (the arrow keys still turn the camera
@@ -997,7 +1009,7 @@
     var was=this.aimCursorPoint,point=this.aimCentrePoint();
     // The same point: nothing moves, and a gun the hull has swung off it is left to the turret's chase.
     if(!point||(was&&was.distanceToSquared(point)<1e-12))return false;
-    this.aimCursorPoint=point;this.liveAimPoint=point.clone();
+    this.aimCursorPoint=point;this.liveAimPoint=point.clone();this.aimYaw=0;
     this.drawLiveAim();this.updateAimMarker();this.draw();
     if(this.onAimCentre)this.onAimCentre();
     return true;
@@ -1117,7 +1129,7 @@
     // menu, so where it points is only remembered for the moment the hold ends.
     if(this.aimCentred){this.aimCentred.seen=point;return null;}
     this.aimCursorPoint=point;
-    if(!this.aimChase||!this.liveAimPoint)this.liveAimPoint=point.clone();
+    if(!this.aimChase||!this.liveAimPoint){this.liveAimPoint=point.clone();this.aimYaw=0;}
     return this.drawLiveAim();
   };
   // The point a ray aims at: the first surface of the model it meets, or else its crossing with the plane
@@ -1130,28 +1142,56 @@
   // The angle between where the gun points and where the cursor points, seen from the shooter (the
   // camera). Both are points in the scene, so the angle is the one the turret actually has to turn
   // through; the distance to them plays no part in it.
-  Viewer.prototype.aimGap=function(){
+  // `limits`: the shooter's horizontal sector, see aimReach; null or nothing for a turret that turns all the way round.
+  Viewer.prototype.aimGap=function(limits){
     var pin=this.aimPin(),gun=pin||this.liveAimPoint,cursor=this.aimCursorPoint;
     if(!gun||!cursor||pin)return 0; // a pinned centre is not chasing anything
     var eye=this.camera.position,a=gun.clone().sub(eye),b=cursor.clone().sub(eye);
     if(a.lengthSq()<1e-12||b.lengthSq()<1e-12)return 0;
-    return a.normalize().angleTo(b.normalize());
+    a.normalize();b.normalize();
+    return a.angleTo(this.aimReach(a,b,limits));
+  };
+  // THE GUN'S HORIZONTAL SECTOR (BACKLOG 40, 23.09). A turretless tank destroyer or a limited turret turns its gun only
+  // within gun.turretYawLimits of the hull - [left, right] in radians, the left one negative, the client's own pair,
+  // which its gun rotator clamps the turret's yaw to; for more the hull has to turn. The emulated hull is level and turns
+  // about the world's up axis (turnAim), so the gun's yaw on it is one number, aimYaw, right positive: the chase adds
+  // what it turns the gun sideways, the hull's own turn carries the gun and leaves it alone, and a gun put down straight
+  // on the cursor (the first point, the held centre, a new model) has the hull facing it, 0. The camera orbiting the
+  // target moves the shooter, not his gun on the hull, so it leaves the number alone too. The hull never turns on its
+  // own here: past the limit the gun simply stops at the cursor's elevation, and A or D bring the rest.
+  // aimAzimuth is a direction's heading about the world's up axis, right positive (a right turn is -Y, turnAim).
+  Viewer.aimAzimuth=function(d){return Math.atan2(-d.x,d.z);};
+  function wrapAngle(a){return Math.atan2(Math.sin(a),Math.cos(a));}
+  // The direction the gun can reach towards the cursor: the cursor's own - the very object handed in, so a caller can
+  // tell - or, past the sector, the cursor's direction turned back about the up axis onto the limit. `a` and `b` are
+  // the unit directions of the gun and the cursor from the eye.
+  Viewer.prototype.aimReach=function(a,b,limits){
+    if(!limits)return b;
+    var yaw=this.aimYaw||0,want=wrapAngle(Viewer.aimAzimuth(b)-Viewer.aimAzimuth(a)),got=Math.max(limits[0]-yaw,Math.min(limits[1]-yaw,want));
+    if(Math.abs(got-want)<1e-12)return b;
+    return b.clone().applyAxisAngle(new THREE.Vector3(0,1,0),want-got);
   };
   // Turn the gun towards the cursor by at most `step` radians and put the circle where it now points.
   // The new point is picked off the model along the rotated ray so the circle keeps lying on the armour;
   // with nothing under that ray it keeps the range it had, which is all the radius needs. Reaching the
-  // cursor snaps exactly onto it, so a turret that has caught up reads identically to stage 1.
-  Viewer.prototype.chaseAim=function(step){
+  // cursor snaps exactly onto it, so a turret that has caught up reads identically to stage 1. With a
+  // sector (`limits`, aimReach) the gun goes only as far as the limit and stays there.
+  Viewer.prototype.chaseAim=function(step,limits){
     var T=THREE,gun=this.liveAimPoint,cursor=this.aimCursorPoint;
     if(!gun||!cursor||this.aimPin())return false;
     var eye=this.camera.position.clone(),a=gun.clone().sub(eye),range=a.length(),b=cursor.clone().sub(eye);
     if(range<1e-6||b.lengthSq()<1e-12)return false;
     a.divideScalar(range);b.normalize();
-    var gap=a.angleTo(b);
-    if(!(gap>1e-6)||step>=gap){this.liveAimPoint=cursor.clone();this.drawLiveAim();return gap>1e-6;}
-    var axis=new T.Vector3().crossVectors(a,b);
-    if(axis.lengthSq()<1e-14)return false;
-    var moved=a.clone().applyQuaternion(new T.Quaternion().setFromAxisAngle(axis.normalize(),step));
+    var goal=this.aimReach(a,b,limits),free=goal===b,gap=a.angleTo(goal),moved;
+    if(free&&(!(gap>1e-6)||step>=gap)){this.liveAimPoint=cursor.clone();this.aimYaw=wrapAngle(this.aimYaw+wrapAngle(Viewer.aimAzimuth(b)-Viewer.aimAzimuth(a)));this.drawLiveAim();return gap>1e-6;}
+    if(!(gap>1e-6))return false;   // at the limit: nothing to turn
+    if(step>=gap)moved=goal;
+    else{
+      var axis=new T.Vector3().crossVectors(a,goal);
+      if(axis.lengthSq()<1e-14)return false;
+      moved=a.clone().applyQuaternion(new T.Quaternion().setFromAxisAngle(axis.normalize(),step));
+    }
+    this.aimYaw=wrapAngle(this.aimYaw+wrapAngle(Viewer.aimAzimuth(moved)-Viewer.aimAzimuth(a)));
     var objects=this.paintMesh?[this.paintMesh]:[];if(this.trackMesh)objects.push(this.trackMesh);
     var hits=objects.length?new T.Raycaster(eye,moved).intersectObjects(objects):[];
     this.liveAimPoint=hits.length?hits[0].point.clone():eye.clone().addScaledVector(moved,range);
