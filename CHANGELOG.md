@@ -2,6 +2,10 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
+## Unreleased
+
+- **Help:** the words "cyan" and "magenta" in tooltips are shown in those colours.
+
 ## 0.8.1 (2026-09-24)
 
 - **Hit line:** the shot is now drawn along the shell's whole real flight from the tracer: a dashed arc from a dot where it left (the drop of up to a metre at long range included) to an arrowhead at the hit, instead of the short stub; the record view puts the camera at that start. More hits find their tracer (up to 5 m off, when nothing else of that shooter is near).

@@ -53,6 +53,8 @@
     + '#page-tip .tip-li{position:relative;padding-left:13px}'
     + '#page-tip .tip-li::before{content:"\\2022";position:absolute;left:2px;top:0;color:#96a9bd}'
     + '#page-tip .tip-h+div{margin-top:3px}#page-tip div.tip-gap{margin-top:7px}'
+    // A ring's colour named in words is shown in that colour (user, 24.09): the page's --aim-live and --aim-shot.
+    + '#page-tip .tip-cyan{color:#5ee0ff}#page-tip .tip-magenta{color:#ff5ad6}'
     + '#page-tip .tip-row+.tip-row{margin-top:8px}'
     + '#page-tip .tip-glyph{margin-right:7px}'
     // A help bubble ends with how to go on - drawn by CSS, so the bubble's groups stay the elements' own.
@@ -324,9 +326,19 @@
     var div = doc.createElement('div');
     div.className = 'tip-' + l.kind + (l.gap ? ' tip-gap' : '');
     if (mark) div.appendChild(mark);
-    if (l.key) { var k = doc.createElement('b'); k.textContent = l.key; div.appendChild(k); }
-    if (l.text) { var s = doc.createElement('span'); s.textContent = l.text; div.appendChild(s); }
+    if (l.key) { var k = doc.createElement('b'); tinted(k, l.key); div.appendChild(k); }
+    if (l.text) { var s = doc.createElement('span'); tinted(s, l.text); div.appendChild(s); }
     return div;
+  }
+  // The words "cyan" and "magenta" take their colour; the rest stays plain text (textContent, never markup).
+  function tinted(box, text) {
+    var re = /(cyan|magenta)/gi, at = 0, m;
+    while ((m = re.exec(text))) {
+      if (m.index > at) box.appendChild(doc.createTextNode(text.slice(at, m.index)));
+      var c = doc.createElement('span'); c.className = 'tip-' + m[1].toLowerCase(); c.textContent = m[0]; box.appendChild(c);
+      at = m.index + m[0].length;
+    }
+    if (at < text.length) box.appendChild(doc.createTextNode(text.slice(at)));
   }
   function squash(s) { return String(s).replace(/\s+/g, ' ').replace(TRIM, '').toLowerCase(); }
   // A title's lines into a box. In a help group the glyph leads the first line - the heading (left out when it only

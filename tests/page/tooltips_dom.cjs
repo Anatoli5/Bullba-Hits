@@ -149,6 +149,7 @@ html.appendChild(head); html.appendChild(body);
 function walk(el, fn) { fn(el); el.children.forEach(function (c) { walk(c, fn); }); }
 const document = {nodeType: 9, documentElement: html, head: head, body: body, listeners: [], parentNode: null,
   createElement: function (t) { return new El(t); },
+  createTextNode: function (t) { const e = new El('#text'); e.textContent = String(t); return e; },
   getElementById: function (id) { let f = null; walk(html, function (e) { if (!f && e.getAttribute('id') === id) f = e; }); return f; },
   querySelectorAll: function (sel) { const a = /^\[([\w-]+)\]$/.exec(sel), out = []; if (a) walk(html, function (e) { if (e.hasAttribute(a[1])) out.push(e); }); return out; },
   addEventListener: El.prototype.addEventListener, removeEventListener: El.prototype.removeEventListener};
