@@ -404,7 +404,8 @@ function checks(ok, web) {
     ok('viewer-batch: the live ring stays over the pinned shot\'s ring (render order 15 > 14)', line.renderOrder === 15);
   });
 
-  // ---- 9. The shot disc of an own shot (BACKLOG 28 step 2, 24.09) ----------------------------------------------------
+  // ---- 9. The shot ring of an own shot (BACKLOG 28 step 2, 24.09) ----------------------------------------------------
+  // First a filled disc, since the same evening a thick ring of long dashes (user): the frame (discAim) is the same.
   // The circle the server fired from: centre C = I - depth·(dx·e1 + dy·e2), radius angle·depth. For a shell flying in a
   // straight line from its muzzle to the impact point that centre is exactly muzzle + depth·n - the server axis carried
   // to the impact plane - which is what is checked, in the viewer's own frame (z mirrored).
@@ -425,24 +426,61 @@ function checks(ok, web) {
     ok('viewer-batch: disc radius = the update\'s angle × depth', d && near(d.radius, .003 * depth, 1e-12));
     const m = v.shotDisc, pos = new T.Vector3().setFromMatrixPosition(m.matrix), sx = new T.Vector3().setFromMatrixColumn(m.matrix, 0).length();
     ok('viewer-batch: the disc mesh stands at that centre with that radius', pos.distanceTo(d.center) < 1e-9 && near(sx, d.radius, 1e-9));
-    ok('viewer-batch: the disc is blue, translucent (0.2), no depth test, under the tracers (4) and the rings (12)',
-       m.material.color.getHex() === 0x3b82ff && m.material.transparent && m.material.opacity === .2 && !m.material.depthTest && m.renderOrder > 3 && m.renderOrder < 4,
-       '(renderOrder ' + m.renderOrder + ', opacity ' + m.material.opacity + ')');
+    const drawn = {peel: e.count.peel, composite: e.count.composite};   // what drawing the circles cost, before the checks below move the camera
+    const U = m.material.uniforms, rgb = U.uColor.value.toArray().map(function (x) { return Math.round(x * 255); });
+    ok('viewer-batch: the shot ring is blue, translucent (0.6), 6 px, inside, no depth test, under the tracers (4) and the rings (12)',
+       rgb.join() === '59,130,255' && m.material.transparent && U.uOpacity.value === .6 && U.uWidth.value === 6 && U.uPlace.value === 0
+       && !m.material.depthTest && m.renderOrder > 3 && m.renderOrder < 4, '(renderOrder ' + m.renderOrder + ', rgb ' + rgb + ', opacity ' + U.uOpacity.value + ')');
+    // Long dashes: 12 of 80 %, an inner and an outer vertex per step.
+    const sides = m.geometry.getAttribute('side').array, P = m.geometry.getAttribute('position');
+    let covered = 0; for (let i = 0; i + 2 < P.count; i += 2) { const a = Math.atan2(P.getY(i), P.getX(i)), b = Math.atan2(P.getY(i + 2), P.getX(i + 2)); let dA = b - a; if (dA < 0) dA += 2 * Math.PI; if (dA < .07) covered += dA; }
+    ok('viewer-batch: 12 long dashes cover 80 % of the circle, each step an inner and an outer vertex',
+       near(covered / (2 * Math.PI), .8, 1e-6) && sides.length === P.count && Array.prototype.every.call(sides, function (x, i) { return x === i % 2; }), '(' + (covered / 2 / Math.PI).toFixed(4) + ')');
+    // The band's width on screen, the vertex shader's own arithmetic: the widest of 32 directions round the ring.
+    function bandPx() {
+      m.onBeforeRender(); v.scene.updateMatrixWorld(true); v.camera.updateMatrixWorld(true);
+      const mvM = new T.Matrix4().multiplyMatrices(v.camera.matrixWorldInverse, m.matrixWorld), Pm = v.camera.projectionMatrix;
+      let most = 0;
+      for (let k = 0; k < 32; k++) {
+        const a = k / 32 * Math.PI * 2, px = [];
+        [0, 1].forEach(function (side) {
+          const mv = new T.Vector3(Math.cos(a), Math.sin(a), 0).applyMatrix4(mvM), rad = new T.Vector3(Math.cos(a), Math.sin(a), 0).transformDirection(mvM);
+          const perPx = 2 * Math.max(-mv.z, 1e-4) / (Pm.elements[5] * Math.max(U.uViewH.value, 1));
+          mv.addScaledVector(rad, (side - 1 + U.uPlace.value) * U.uWidth.value * perPx);
+          const c = mv.applyMatrix4(Pm); px.push(new T.Vector2((c.x + 1) / 2 * v.viewWidth, (1 - c.y) / 2 * v.viewHeight));
+        });
+        most = Math.max(most, px[0].distanceTo(px[1]));
+      }
+      return most;
+    }
+    const w1 = bandPx(); v.setZoom(v.camera.zoom * 2); e.settle(); const w2 = bandPx(); v.setDistance(v.distance * 3); e.settle(); const w3 = bandPx();
+    ok('viewer-batch: the band is 6 screen pixels wide, and stays so over a 2x zoom and a 3x distance (the shader, no CPU work)',
+       Math.abs(w1 - 6) < .3 && Math.abs(w2 - 6) < .3 && Math.abs(w3 - 6) < .3 && U.uViewH.value === v.viewHeight, '(' + [w1, w2, w3].map(function (x) { return x.toFixed(2); }) + ' px)');
+    v.setZoom(v.camera.zoom / 2); e.settle();
     ok('viewer-batch: the disc belongs to the recorded group (a pin or the first emulated shot hides it with the rings)', v.aimGroup.children.indexOf(m) >= 0);
     ok('viewer-batch: the circle figure is sampled over the disc while it is on; q = the shell offset over the radius', v.savedAim === d && d.kind === 'fired'
        && near(d.q, Math.tan(Math.acos(new T.Vector3().fromArray(vel).normalize().dot(n))) / .003, 1e-6), d ? '(q ' + d.q.toFixed(4) + ')' : '');
-    ok('viewer-batch: drawing the disc and rings on a composed scene peels and composes nothing', e.count.peel === 0 && e.count.composite === 0, '(peel ' + e.count.peel + ', composite ' + e.count.composite + ')');
+    ok('viewer-batch: drawing the shot ring and the outlines on a composed scene peels and composes nothing', drawn.peel === 0 && drawn.composite === 0, '(peel ' + drawn.peel + ', composite ' + drawn.composite + ')');
     e.reset(); v.setShotDisc(true, .35); e.settle();
-    ok('viewer-batch: the opacity slider changes the one material and composes nothing', m.material.opacity === .35 && e.count.peel === 0 && e.count.composite === 0 && e.count.frame === 1,
-       '(opacity ' + m.material.opacity + ', frames ' + e.count.frame + ')');
+    ok('viewer-batch: the opacity slider changes the one material and composes nothing', U.uOpacity.value === .35 && e.count.peel === 0 && e.count.composite === 0 && e.count.frame === 1,
+       '(opacity ' + U.uOpacity.value + ', frames ' + e.count.frame + ')');
     v.setShotDisc(false, .35);
-    ok('viewer-batch: switched off, the disc hides and the figure goes back to the solid ring', !m.visible && v.savedAim === v.ringAim);
-    v.setShotDisc(true, .2);
+    ok('viewer-batch: switched off, the shot ring hides and the figure goes back to the solid ring', !m.visible && v.savedAim === v.ringAim);
+    v.setShotDisc(true, .6);
+    // The lab (temporary): colour, width and placement are uniforms; the dashes make the one geometry again, the old freed.
+    const geo0 = m.geometry; let freed0 = 0; geo0.addEventListener('dispose', function () { freed0++; });
+    e.reset(); v.setShotRingLook({color: [1, 0, 1], width: 10, place: .5}); e.settle();
+    ok('viewer-batch: the lab\'s colour, thickness and placement change uniforms only, compose nothing',
+       U.uColor.value.toArray().join() === '1,0,1' && U.uWidth.value === 10 && U.uPlace.value === .5 && m.geometry === geo0 && e.count.peel === 0 && e.count.composite === 0);
+    v.setShotRingLook({dashes: 6, share: 1});
+    ok('viewer-batch: new dashes make one new geometry for the ring on screen and free the old (share 100 %: one unbroken ring)',
+       m.geometry !== geo0 && freed0 === 1 && m.geometry === v.ringGeom && m.geometry.getAttribute('position').count === 2 * (128 + 1));
+    v.setShotRingLook({color: [59 / 255, 130 / 255, 1], width: 6, place: 0, dashes: 12, share: .8});
     const mat = m.material, geo = m.geometry;
     v.setShotContext(ctx);
     ok('viewer-batch: another hit makes a new mesh on the same geometry and material', v.shotDisc !== m && v.shotDisc.geometry === geo && v.shotDisc.material === mat);
     e.reset(); v.setZoom(v.camera.zoom * 1.1); e.frame();
-    ok('viewer-batch: a 2D zoom frame draws the scene with the disc in it (it follows like the outlines)', e.count.frame === 1 && e.count.peel === 0 && v.shotDisc.parent === v.aimGroup);
+    ok('viewer-batch: a 2D zoom frame draws the scene with the shot ring in it (it follows like the outlines)', e.count.frame === 1 && e.count.peel === 0 && v.shotDisc.parent === v.aimGroup);
     e.settle();
     // An old record: no update in the context, no disc; the solid ring carries the figure as before.
     v.setShotContext({aim: {clientMarker: ring}, tracer: tracer, serverShot: null});
@@ -456,7 +494,7 @@ function checks(ok, web) {
     let freed = 0; geo.addEventListener('dispose', function () { freed++; }); mat.addEventListener('dispose', function () { freed++; });
     v.clear();
     ok('viewer-batch: clear() drops the disc and both circles', !v.discAim && !v.ringAim && !v.shotDisc && !v.savedAim);
-    ok('viewer-batch: and leaves the one disc geometry and material alone (nothing to rebuild or recompile on the next hit)', freed === 0, '(' + freed + ' disposed)');
+    ok('viewer-batch: and leaves the one shot-ring geometry and material alone (nothing to rebuild or recompile on the next hit)', freed === 0, '(' + freed + ' disposed)');
   });
 }
 

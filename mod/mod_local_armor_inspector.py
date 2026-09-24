@@ -637,6 +637,10 @@ class VehicleEvents(object):
         self.arena = None
 
     def on_avatar_become_non_player(self, *args):
+        # The own shot still waiting for its server aim updates (telemetry.gunAfterShot) keeps the ones that came:
+        # the battle's file is still the current one here. The existing exit path, no hook of its own.
+        try: self.recorder.telemetry.flush_after_shot()
+        except Exception: LOG.exception('Pending shot updates could not be written')
         try: self.recorder.in_battle = False
         except Exception: LOG.exception('Battle state could not be noted')
         try: self.recorder.motion.stop()

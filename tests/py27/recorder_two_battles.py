@@ -17,7 +17,8 @@ Checks, by group:
   battle A/B roster, hits in/out/other, tracers, a crit, the motion sampler; per-battle state replaced when
              B starts; arena events unsubscribed on leaving
   gunAfterShot the first two own server gun updates after the own tracer, in one record naming that tracer; a third
-             update and the enemy's tracer add nothing (BACKLOG 28 step 2)
+             update and the enemy's tracer add nothing; a last own shot still waiting when the avatar leaves the
+             battle keeps the one update that came (BACKLOG 28 step 2)
   files      one JSONL file per battle, one header each, first line; only that battle's events; ids unique
   replay     a replay being played writes no battle file (REC-01)
   observer   an observer seat (its vehicle the client's ussr:Observer, tag 'observer') writes no battle file (REC-01)
@@ -367,9 +368,9 @@ class Battle(object):
 
     def gun_marker(self, k):
         """One server gun update of the player's own vehicle (PlayerAvatar.updateGunMarker), origin moving 1 m a tick."""
-        self.avatar.updateGunMarker(self.me, V3(float(k), 1, 0), V3(0, 0, 1), (0.002, 0.004, 0.006, 0.008)[k])
+        self.avatar.updateGunMarker(self.me, V3(float(k), 1, 0), V3(0, 0, 1), (0.002, 0.004, 0.006, 0.008, 0.010)[k])
 
-    def play(self):
+    def play(self, last_shot=False):
         """The events of one battle, each through the client method the recorder hooks."""
         WORLD.pump(3)                                                   # motion sampler ticks
         self.avatar._PlayerAvatar__startWaitingForShot(NS(gunIndexDelayed=0, predictShooting=False))
@@ -386,6 +387,11 @@ class Battle(object):
         self.avatar.showOwnVehicleHitDirection(0.5, self.enemy, 300, 0, False, False, self.me, 0)
         self.entities[self.me].onHealthChanged(700, 1000, self.enemy, 1)
         WORLD.pump(1)
+        # The last own shot of the battle: one server update comes, then the avatar leaves (death at the end, the
+        # battle over) - the wait is written on the way out with what it holds.
+        if last_shot:
+            self.tracer(self.me, self.arena_id % 1000 * 10 + 3)
+            self.gun_marker(4)
 
 
 # ---------------------------------------------------------------------------------------------------------
@@ -502,10 +508,10 @@ def run(temp):
           len(a.arena.onNewVehicleListReceived.handlers) == 1 and len(a.arena.onVehicleAdded.handlers) == 1
           and len(a.arena.onVehicleUpdated.handlers) == 1)
     calls_before = dict(CALLS)
-    a.play()
+    a.play(last_shot=True)
     check('battle A', 'each client original ran once per call (no double wrapper)',
           CALLS['Vehicle.showDamageFromShot'] - calls_before.get('Vehicle.showDamageFromShot', 0) == 3
-          and CALLS['PlayerAvatar.showTracer'] - calls_before.get('PlayerAvatar.showTracer', 0) == 2
+          and CALLS['PlayerAvatar.showTracer'] - calls_before.get('PlayerAvatar.showTracer', 0) == 3
           and CALLS['PlayerAvatar.showOwnVehicleHitDirection'] - calls_before.get('PlayerAvatar.showOwnVehicleHitDirection', 0) == 1,
           dict((k, CALLS[k] - calls_before.get(k, 0)) for k in CALLS))
     check('battle A', 'recorder, telemetry, crit log and motion on arena A',
@@ -540,7 +546,7 @@ def run(temp):
     check('battle B', 'recorder switched to B at the roster (battle, file, seq, mode_blocks)',
           recorder.battle == str(b.arena_id) and recorder.file != file_a and recorder.seq == 0
           and not recorder.mode_blocks, (recorder.battle, recorder.file, recorder.seq, len(recorder.mode_blocks)))
-    b.play()
+    b.play(last_shot=True)
     check('battle B', 'telemetry switched to B, no tracer of A kept',
           recorder.telemetry.arena == str(b.arena_id)
           and not (set(recorder.telemetry.tracers) & a.shot_ids), sorted(recorder.telemetry.tracers))
@@ -638,8 +644,8 @@ def run(temp):
             check(group, 'no dropped record, no write failure',
                   all(x.get('droppedRecords') == 0 and x.get('writeFailures') == 0 for x in hits))
         shots = [r for r in rows if r.get('type') == 'shot']
-        check(group, 'command, two tracers, a stop and the updates after the own shot recorded',
-              sorted(r.get('event') for r in shots) == ['command', 'gunAfterShot', 'stop', 'tracer', 'tracer'],
+        check(group, 'command, three tracers, a stop and the updates after both own shots recorded',
+              sorted(r.get('event') for r in shots) == ['command', 'gunAfterShot', 'gunAfterShot', 'stop', 'tracer', 'tracer', 'tracer'],
               sorted(r.get('event') for r in shots))
         own = [r for r in shots if r.get('event') == 'tracer' and r.get('own')]
         after = [r for r in shots if r.get('event') == 'gunAfterShot']
@@ -649,6 +655,10 @@ def run(temp):
                   after[0].get('tracerId') == own[0].get('id') and [u.get('origin') for u in ups] == [[1.0, 1.0, 0.0], [2.0, 1.0, 0.0]]
                   and [u.get('dispersionAngle') for u in ups] == [0.004, 0.006],
                   (after[0].get('tracerId'), own[0].get('id'), [u.get('origin') for u in ups]))
+            last = after[-1].get('updates') or []
+            check(group, 'leaving the battle mid-wait writes the last own shot with the one update that came',
+                  len(after) == 2 and after[-1].get('tracerId') == own[-1].get('id') and [u.get('origin') for u in last] == [[4.0, 1.0, 0.0]],
+                  (len(after), after[-1].get('tracerId'), own[-1].get('id'), [u.get('origin') for u in last]))
             check(group, 'the own tracer keeps the update before it as lastServerGunUpdate',
                   ((own[0].get('aimAtTracer') or {}).get('lastServerGunUpdate') or {}).get('origin') == [0.0, 1.0, 0.0],
                   (own[0].get('aimAtTracer') or {}).get('lastServerGunUpdate'))

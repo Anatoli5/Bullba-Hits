@@ -196,28 +196,36 @@ async function main() {
        pm3.hp && pm3.hpText === '1 234 / 1 234' && pm3.hpTip.indexOf('• Source: ' + HP.FILE) >= 0, '(shown ' + pm3.hp + ', "' + pm3.hpText + '")');
     await ev('__bt.act.fun(false)'); await ev('__bt.settle()');
 
-    // ---- the shot disc of an own shot (BACKLOG 28 step 2, 24.09) ----------------------------------------------
-    // pm3's hit is the player's own shot with its tracer: two magenta outlines and the filled disc, whose server update
-    // is one tick stale - the ⚠ beside the circle tile. The Settings switch hides the disc and the ⚠, the slider sets
-    // the disc's opacity, both are stored (the first emulated shot hiding it with the outlines: viewer_batch.cjs).
+    // ---- the shot ring of an own shot (BACKLOG 28 step 2, 24.09) ----------------------------------------------
+    // pm3's hit is the player's own shot with its tracer: two thin magenta outlines and the thick long-dashed ring, whose
+    // server update is one tick stale - the ⚠ beside the circle tile. The Settings switch hides the ring and the ⚠, the
+    // slider sets its opacity, the temporary lab its look, all stored (the first emulated shot hiding it with the
+    // outlines: viewer_batch.cjs).
     const disc = () => ev(`(() => { const v = window.__bullbaViewers[window.__bullbaViewers.length - 1], e = document.getElementById('shot-disc-stale');
       let stored = null; try { stored = JSON.parse(localStorage.getItem('bullba-settings')).values; } catch (x) {}
       return {disc: !!(v.discAim && v.shotDisc && v.shotDisc.visible && v.aimGroup && v.aimGroup.visible), ring: !!v.ringAim, stale: !!(v.discAim && v.discAim.stale),
-        figure: v.savedAim === v.discAim ? 'disc' : v.savedAim === v.ringAim ? 'ring' : String(v.savedAim), opacity: v.shotDisc ? v.shotDisc.material.opacity : null,
-        icon: e.getClientRects().length > 0, tip: e.title, stored: stored && [stored['shot-disc'], stored['shot-disc-opacity']]}; })()`);
+        figure: v.savedAim === v.discAim ? 'disc' : v.savedAim === v.ringAim ? 'ring' : String(v.savedAim), opacity: v.shotDisc ? v.shotDisc.material.uniforms.uOpacity.value : null,
+        width: v.shotDisc ? v.shotDisc.material.uniforms.uWidth.value : null,
+        prog: (() => { const p = v.shotDisc && v.renderer.properties.get(v.shotDisc.material).currentProgram; return p ? (p.diagnostics && !p.diagnostics.runnable ? 'failed' : 'ok') : 'none'; })(),
+        icon: e.getClientRects().length > 0, tip: e.title, stored: stored && [stored['shot-ring'], stored['shot-ring-opacity'], stored['ring-width']],
+        legend: document.getElementById('shot-circle-tile').title}; })()`);
     await step('hit(0)');
     let d = await disc();
-    ok('shot disc: an own shot shows both outlines and the filled disc, the figure over the disc', d.disc && d.ring && d.figure === 'disc', JSON.stringify(d));
+    ok('shot ring: an own shot shows both thin outlines and the thick ring (6 px, 60 %), the figure over it; its shader compiled and ran', d.disc && d.ring && d.figure === 'disc' && d.prog === 'ok' && d.width === 6 && Math.abs(d.opacity - .6) < 1e-9, JSON.stringify(d));
     ok('shot disc: a stale update puts the ⚠ beside the circle tile, its words say what and how far', d.stale && d.icon && d.tip.indexOf('one tick uncertain') >= 0 && d.tip.indexOf('1.50 m') >= 0, '(' + d.icon + ', "' + d.tip.slice(0, 80) + '")');
-    await ev("(() => { document.getElementById('shot-disc').click(); return true; })()"); await ev('__bt.settle()');
+    await ev("(() => { document.getElementById('shot-ring').click(); return true; })()"); await ev('__bt.settle()');
     await new Promise((r) => setTimeout(r, 400));
     d = await disc();
     ok('shot disc: switched off in Settings - no disc, no ⚠, the figure back on the solid ring, stored', !d.disc && !d.icon && d.figure === 'ring' && d.stored && d.stored[0] === false, JSON.stringify(d));
-    await ev("(() => { document.getElementById('shot-disc').click(); const s = document.getElementById('shot-disc-opacity'); s.value = '35'; s.dispatchEvent(new Event('input')); return true; })()");
+    ok('shot ring: and the Circle tile names neither the thick ring nor the ⚠ any more (review 24.09)',
+       d.legend.indexOf('Solid') >= 0 && d.legend.indexOf('Thick') < 0 && d.legend.indexOf('⚠') < 0 && d.legend.indexOf('No thick ring') < 0, '("' + d.legend.slice(0, 200) + '")');
+    await ev("(() => { document.getElementById('shot-ring').click(); const s = document.getElementById('shot-ring-opacity'); s.value = '35'; s.dispatchEvent(new Event('input')); const w = document.getElementById('ring-width'); w.value = '9'; w.dispatchEvent(new Event('input')); return true; })()");
     await ev('__bt.settle()'); await new Promise((r) => setTimeout(r, 400));
     d = await disc();
-    ok('shot disc: back on, the slider sets its opacity, both stored', d.disc && d.icon && Math.abs(d.opacity - .35) < 1e-9 && d.stored && d.stored[0] === true && d.stored[1] === '35', JSON.stringify(d));
-    await ev("(() => { const s = document.getElementById('shot-disc-opacity'); s.value = '20'; s.dispatchEvent(new Event('input')); return true; })()");
+    ok('shot ring: back on, the Circle tile names the thick ring again', d.legend.indexOf('Thick') >= 0 && d.legend.indexOf('⚠') >= 0, '("' + d.legend.slice(0, 200) + '")');
+    ok('shot ring: back on, the slider sets its opacity and the lab its thickness, all stored', d.disc && d.icon && Math.abs(d.opacity - .35) < 1e-9 && d.width === 9
+       && d.stored && d.stored[0] === true && d.stored[1] === '35' && d.stored[2] === '9', JSON.stringify(d));
+    await ev("(() => { const s = document.getElementById('shot-ring-opacity'); s.value = '60'; s.dispatchEvent(new Event('input')); const w = document.getElementById('ring-width'); w.value = '6'; w.dispatchEvent(new Event('input')); return true; })()");
     await ev('__bt.settle()');
 
     // ---- a drag over a page with text selected (user, 24.09) --------------------------------------------------

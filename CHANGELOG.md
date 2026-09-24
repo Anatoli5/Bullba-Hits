@@ -4,10 +4,10 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 
 ## Unreleased
 
-- **Circles:** your own recorded shot now also shows the circle the server really fired it from — a filled translucent blue disc (99 shells in 100 land inside it) beside the two outlines of your reticle and the server marker at the press. The Circle figure is taken over the disc.
-- **Circles:** Settings → Shot disc switches the disc on or off and sets its opacity (20 % by default).
-- **Circles:** a ⚠ beside the Circle tile marks a disc that is one server tick uncertain; a click on it says what that means and how far off it may be.
-- **Recorder:** keeps the first two server aim updates after each of your shots (about 0.4 KB a shot), so the disc of new battles is exact in that case too.
+- **Circles:** your own recorded shot now also shows the circle the server really fired it from — a thick, translucent ring of long dashes (99 shells in 100 land inside it) beside the two thin outlines of your reticle and the server marker at the press. The Circle figure is taken over it.
+- **Circles:** Settings → Shot ring switches it on or off and sets its opacity (60 % by default); Settings also has a temporary lab to tune its look (colour, thickness, dashes, placement).
+- **Circles:** a ⚠ beside the Circle tile marks a shot ring that is one server tick uncertain; a click on it says what that means and how far off it may be. Two-gun salvos no longer get a false ⚠.
+- **Recorder:** keeps the first two server aim updates after each of your shots (about 0.4 KB a shot; a two-gun salvo shares one record, and a shot at the very end of the battle keeps what came), so the ring of new battles is exact in that case too.
 - **Scene:** turning the vehicle with the mouse is half as sensitive: about one full turn per 1500 px of drag, and smoother in the game browser.
 - **Scene:** turning the vehicle with the mouse no longer stops after a few degrees when some text on the page is selected.
 

@@ -204,18 +204,28 @@
      gunAfterShot): the one whose origin IS the shell's origin is the state the shell left from, exact. No
      estimate is made for a stale update of an older record: a one-tick turn by the recorded motion made the 26
      stale shots no better (3 of 8 outside either way) and one fresh shot in five worse (the same report,
-     section 14). Returns null without the field (recorder 0.7.6-0.7.12, other shooters' shots). */
-  var STALE_GAP=.05;
+     section 14). Returns null without the field (recorder 0.7.6-0.7.12, other shooters' shots).
+     A TWO-GUN SALVO (review 24.09): both barrels' tracers carry the same gameTime, and the server's origin is the
+     middle between the barrels (0.19-0.20 m from each), so the shell's own origin is the wrong reference - 4 of the 26
+     "stale" shots of 91 battles were salvos of a vehicle standing still. The reference is the MEAN origin of the own
+     tracers of that instant (for one tracer, its own): every salvo then matches (0.003-0.004 m), nothing else changes.
+     The recorder writes one gunAfterShot per salvo, naming its first tracer; it is found through the same group. */
+  var STALE_GAP=.05,SAME_INSTANT=1e-3;
   function serverShot(tracer,events){
     var last=tracer&&tracer.own&&!tracer.isRicochet&&tracer.aimAtTracer&&tracer.aimAtTracer.lastServerGunUpdate;
     function valid(u){return !!(u&&Array.isArray(u.vector)&&Array.isArray(u.origin)&&u.dispersionAngle>0);}
     if(!valid(last)||!Array.isArray(tracer.origin)||!Array.isArray(tracer.velocity))return null;
-    var gap=distance(last.origin,tracer.origin);
-    if(gap<=STALE_GAP)return {update:last,from:'last',stale:false,gap:gap};
-    var after=(events||[]).find(function(e){return e.event==='gunAfterShot'&&e.tracerId===tracer.id;}),
-      exact=after&&(after.updates||[]).find(function(u){return valid(u)&&distance(u.origin,tracer.origin)<=STALE_GAP;});
-    if(exact)return {update:exact,from:'after',stale:false,gap:gap};
-    return {update:last,from:'last',stale:true,gap:gap,afterRecorded:!!after};
+    var salvo=Number.isFinite(tracer.gameTime)?(events||[]).filter(function(e){return e.event==='tracer'&&e.own&&!e.isRicochet&&
+      e.gunInstallationIndex===tracer.gunInstallationIndex&&Array.isArray(e.origin)&&Number.isFinite(e.gameTime)&&Math.abs(e.gameTime-tracer.gameTime)<SAME_INSTANT;}):[];
+    if(salvo.indexOf(tracer)<0)salvo=[tracer].concat(salvo);
+    var origin=[0,1,2].map(function(i){return salvo.reduce(function(s,e){return s+e.origin[i];},0)/salvo.length;}),
+      many=salvo.length>1?salvo.length:0,gap=distance(last.origin,origin);
+    if(gap<=STALE_GAP)return {update:last,from:'last',stale:false,gap:gap,salvo:many};
+    var ids=salvo.map(function(e){return e.id;}),
+      after=(events||[]).find(function(e){return e.event==='gunAfterShot'&&ids.indexOf(e.tracerId)>=0;}),
+      exact=after&&(after.updates||[]).find(function(u){return valid(u)&&distance(u.origin,origin)<=STALE_GAP;});
+    if(exact)return {update:exact,from:'after',stale:false,gap:gap,salvo:many};
+    return {update:last,from:'last',stale:true,gap:gap,salvo:many,afterRecorded:!!after};
   }
   function resolve(hit,events){
     var target=hit.target||{},parts=target.parts||[],points=hit.points||[],world=[];

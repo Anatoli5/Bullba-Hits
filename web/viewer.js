@@ -28,15 +28,28 @@
   // yellow is lost. The line style is what tells the magenta rings apart, not the colour.
   // The reload IS the live ring: while the gun reloads the ring is drawn only as far as the reload has
   // run, so a whole ring means a loaded gun.
-  // The THIRD recorded figure of an own shot (user, 24.09; BACKLOG 28 step 2) stands still too, so it is magenta as
-  // well: a FILLED disc without an outline - the circle the server really fired from (ArmorShotContext.serverShot) -
-  // translucent so the armour reads through it, its opacity a Settings slider. It is drawn under the tracers (4) and
-  // the two recorded outlines (12): renderOrder 3.5, after the heat-map quad (0), the screens (1, 2) and the marks (3).
+  // The THIRD recorded figure of an own shot (user, 24.09; BACKLOG 28 step 2) - the circle the server really fired from
+  // (ArmorShotContext.serverShot) - stands still too. It is a THICK, translucent ring of LONG dashes, so it reads apart
+  // from the two thin outlines (solid: the client reticle, short dashes: the server marker). A filled disc was tried
+  // first and dropped (user, 24.09: "a blotch without an edge, unclear what it means"). Its look - colour, opacity,
+  // thickness in screen pixels, dashes, placement against the true radius - is tuned in a TEMPORARY Settings lab
+  // (setShotRingLook). It is drawn under the tracers (4) and the two outlines (12): renderOrder 3.5, after the heat-map
+  // quad (0), the screens (1, 2) and the marks (3). Internally it keeps the disc's names (discAim, shotDisc).
   var AIM_RING=0xff5ad6;
-  // The shot disc (the circle the server fired from) is a FILL, not a ring: blue, not magenta - magenta over the green of
-  // the heat map mixed to grey (user, 24.09). A deeper blue than the live ring's cyan, so the two are not taken for each other.
-  var AIM_DISC=0x3b82ff;
   var DISC_ORDER=3.5;
+  // The ring's width is in screen pixels: its vertex shader moves each edge vertex along the ring's radius by
+  // width x (world units per pixel at that depth), from the projection the frame is drawn with - so a zoom, the 2D
+  // zoom path included, and a distance change keep the width with no work on the CPU. Each vertex is a point of the
+  // unit circle (the mesh matrix scales it to the true radius R) and `side` says which edge it belongs to: 0 the inner,
+  // 1 the outer. uPlace puts the band against R: 0 inside (outer edge on R), 0.5 centred, 1 outside (inner edge on R).
+  var SHOT_RING_VERTEX='attribute float side;uniform float uWidth;uniform float uPlace;uniform float uViewH;'+
+    'void main(){vec4 mv=modelViewMatrix*vec4(position,1.0);vec3 radial=normalize((modelViewMatrix*vec4(position.xy,0.0,0.0)).xyz);'+
+    'float perPx=2.0*max(-mv.z,1e-4)/(projectionMatrix[1][1]*max(uViewH,1.0));mv.xyz+=radial*(side-1.0+uPlace)*uWidth*perPx;'+
+    'gl_Position=projectionMatrix*mv;}';
+  // The colour is handed over as sRGB and written as is (a ShaderMaterial is not converted), as the page's sliders say it.
+  var SHOT_RING_FRAGMENT='uniform vec3 uColor;uniform float uOpacity;void main(){gl_FragColor=vec4(uColor,uOpacity);}';
+  // The lab's defaults (the page's Settings controls carry the same): blue 0x3b82ff, 6 px, 12 dashes of 80 %, inside.
+  var SHOT_RING_LOOK={color:[59/255,130/255,1],width:6,dashes:12,share:.8,place:0};
   var AIM_LIVE={color:0x5ee0ff,dashed:true,opacity:.95},AIM_FIXED={color:AIM_RING,dashed:false,opacity:1};
   // A press the gun refused (the page's gunBalk, 23.09): the live ring takes the page's red (--red) for a step, then
   // its own colour, twice - the pulse the refused indicator of the page's strip gives at the same time.
@@ -53,7 +66,7 @@
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     container.appendChild(this.renderer.domElement);
     this.reticles=[];this.reticleLayer=document.createElement('div');this.reticleLayer.className='hit-reticle-layer';container.appendChild(this.reticleLayer);
-    this.impactOpacity=.5;this.setImpactOpacity(.5);this.discOn=true;this.discOpacity=.2;this.ringAim=this.discAim=this.shotDisc=null;   // the default of the Settings slider, applied before the first cross exists
+    this.impactOpacity=.5;this.setImpactOpacity(.5);this.discOn=true;this.discOpacity=.6;this.ringLook=Object.assign({},SHOT_RING_LOOK);this.ringAim=this.discAim=this.shotDisc=null;   // the default of the Settings slider, applied before the first cross exists
     this.grid = new T.GridHelper(24, 24, 0x4a5d6f, 0x263746); this.scene.add(this.grid);
     this.root = new T.Group(); this.scene.add(this.root);
     this.target = new T.Vector3(0, 1, 0); this.yaw = 0.7; this.pitch = 0.27; this.distance = 50;
@@ -301,7 +314,7 @@
   Viewer.prototype.setZoom=function(value){if(!Number.isFinite(value)||value<=0)return;this.targetZoom=null;this.targetScale=null;if(this.autoFrame)this.scaleFor(value);this.showZoom(value);};
   Viewer.prototype.setDistance=function(value){if(!Number.isFinite(value))return;this.targetDistance=null;this.distance=Math.max(DISTANCE_MIN,Math.min(DISTANCE_MAX,value));this.render();};
   Viewer.limits={distanceMin:DISTANCE_MIN,distanceMax:DISTANCE_MAX};
-  Viewer.prototype.clear=function(){this.dropTargets();this.clearLiveAim();this.clearHitMarks();this.markDrawn=this.markBuilt=null;this.pinResult=null;this.fitPending=false;this.shotPoints=null;this.recordedDistance=null;this.pinned=null;this.disposePin();this.pinCache=null;this.pinReticles=[];if(this.surface)this.surface.dispose();this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.gunAngle=0;this.savedAim=this.ringAim=this.discAim=this.shotDisc=null;this.aimGroup=null;this.estimateAim=null;window.clearTimeout(this.zoomTimer);this.zoomTimer=null;this.reticles=[];this.reticleLayer.replaceChildren();clearTimeout(this.turretTimer);this.turretTimer=null;this.turretPending=false;this.poseGeometries=null;this.poseBuilt=null;this.poseStale=false;this.spreadAim=null;this.hideSpread();window.clearTimeout(this.aimSettleTimer);this.aimSettleTimer=null;window.cancelAnimationFrame(this.frameId);this.frameId=null;this.cancelHover();this.cancelOrbit();this.pendingPan=null;this.inspectKey=null;this.paintMesh=null;this.outline=null;this.outlineDepth=null;this.engine=null;this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.loadedData=null;this.paintedKey=null;this.samples=[];var disposed=new Set([this.discGeom]),kept=this.discMat;this.root.traverse(function(o){var shared=!!(o.parent&&o.parent.type==='ArrowHelper'&&(o===o.parent.line||o===o.parent.cone));if(o.geometry&&!shared&&!disposed.has(o.geometry)){disposed.add(o.geometry);o.geometry.dispose();}if(o.material){(Array.isArray(o.material)?o.material:[o.material]).forEach(function(m){if(m!==kept)m.dispose();});}});while(this.root.children.length)this.root.remove(this.root.children[0]);this.point=null;this.travel=null;this.draw();};
+  Viewer.prototype.clear=function(){this.dropTargets();this.clearLiveAim();this.clearHitMarks();this.markDrawn=this.markBuilt=null;this.pinResult=null;this.fitPending=false;this.shotPoints=null;this.recordedDistance=null;this.pinned=null;this.disposePin();this.pinCache=null;this.pinReticles=[];if(this.surface)this.surface.dispose();this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.gunAngle=0;this.savedAim=this.ringAim=this.discAim=this.shotDisc=null;this.aimGroup=null;this.estimateAim=null;window.clearTimeout(this.zoomTimer);this.zoomTimer=null;this.reticles=[];this.reticleLayer.replaceChildren();clearTimeout(this.turretTimer);this.turretTimer=null;this.turretPending=false;this.poseGeometries=null;this.poseBuilt=null;this.poseStale=false;this.spreadAim=null;this.hideSpread();window.clearTimeout(this.aimSettleTimer);this.aimSettleTimer=null;window.cancelAnimationFrame(this.frameId);this.frameId=null;this.cancelHover();this.cancelOrbit();this.pendingPan=null;this.inspectKey=null;this.paintMesh=null;this.outline=null;this.outlineDepth=null;this.engine=null;this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.loadedData=null;this.paintedKey=null;this.samples=[];var disposed=new Set([this.ringGeom]),kept=this.ringMat;this.root.traverse(function(o){var shared=!!(o.parent&&o.parent.type==='ArrowHelper'&&(o===o.parent.line||o===o.parent.cone));if(o.geometry&&!shared&&!disposed.has(o.geometry)){disposed.add(o.geometry);o.geometry.dispose();}if(o.material){(Array.isArray(o.material)?o.material:[o.material]).forEach(function(m){if(m!==kept)m.dispose();});}});while(this.root.children.length)this.root.remove(this.root.children[0]);this.point=null;this.travel=null;this.draw();};
   // clear() draws the empty scene and tells the page nothing: the camera has not moved, and the next load() reports once.
   Viewer.prototype.rebuild=function(){
     if(!this.loadedData)return;var T=THREE,self=this;this.samples=[];this.paintedKey=null;
@@ -947,30 +960,62 @@
           depth=this.point.clone().sub(origin).dot(normal);
         if(depth>1e-6){
           var center=this.point.clone().addScaledVector(right,-depth*dx).addScaledVector(up,-depth*dy),radius=shot.update.dispersionAngle*depth;
-          var disc=new T.Mesh(this.discGeometry(),this.discMaterial());disc.matrixAutoUpdate=false;
+          var disc=new T.Mesh(this.ringGeometry(),this.ringMaterial());disc.matrixAutoUpdate=false;disc.onBeforeRender=this.ringBeforeRender;
           disc.matrix.makeBasis(right.clone().multiplyScalar(radius),up.clone().multiplyScalar(radius),normal.clone().multiplyScalar(radius)).setPosition(center);
           disc.renderOrder=DISC_ORDER;disc.frustumCulled=false;disc.visible=this.discOn;this.aimGroup.add(disc);this.shotDisc=disc;
           this.discAim={center:center,normal:normal,right:right,up:up,radius:radius,origin:origin,kind:'fired',
-            q:Math.hypot(dx,dy)/shot.update.dispersionAngle,stale:!!shot.stale,from:shot.from,gap:shot.gap};
+            q:Math.hypot(dx,dy)/shot.update.dispersionAngle,stale:!!shot.stale,from:shot.from,gap:shot.gap,
+            salvo:shot.salvo||0,afterRecorded:!!shot.afterRecorded};
         }
       }
     }
     this.savedAim=this.shotDiscAim();
     this.showSavedAim(aimShown());return !!(this.ringAim||this.discAim);
   };
-  // The circle the figure is sampled over: the disc - the circle the shell really left from - while it is on screen,
-  // the solid ring otherwise (a record before the disc's field, or the disc switched off in Settings).
+  // The circle the figure is sampled over: the shot ring - the circle the shell really left from - while it is on
+  // screen, the solid ring otherwise (a record before the ring's field, or the shot ring switched off in Settings).
   Viewer.prototype.shotDiscAim=function(){return this.discOn&&this.discAim?this.discAim:this.ringAim||null;};
-  // One unit circle and one material for the viewer's life (clear() leaves both alone): a hit click makes a mesh and
-  // nothing else, and the Settings slider changes one number. 64 segments: at the largest disc on screen the facets stay under a pixel.
-  Viewer.prototype.discGeometry=function(){return this.discGeom||(this.discGeom=new THREE.CircleGeometry(1,64));};
-  Viewer.prototype.discMaterial=function(){return this.discMat||(this.discMat=new THREE.MeshBasicMaterial({color:AIM_DISC,transparent:true,opacity:this.discOpacity,depthTest:false,depthWrite:false,side:THREE.DoubleSide}));};
-  // Settings, Shot disc: the switch and the opacity (0..1). The circle figure follows the circle on screen.
+  // One geometry and one material for the viewer's life (clear() leaves both alone): a hit click makes a mesh and
+  // nothing else. The geometry is the dashes of the unit circle, two vertices (inner and outer edge) per step, about
+  // 128 steps round the whole circle; it is made again only when the lab changes the dashes.
+  Viewer.prototype.ringGeometry=function(){
+    var look=this.ringLook,key=look.dashes+'/'+look.share;
+    if(this.ringGeom&&this.ringGeomKey===key)return this.ringGeom;
+    var n=Math.max(1,Math.round(look.dashes)),share=Math.max(.05,Math.min(1,look.share));if(share>.999)n=1;
+    var steps=Math.max(2,Math.round(128*share/n)),pos=[],side=[],index=[];
+    for(var k=0;k<n;k++){
+      var a0=k/n*Math.PI*2,span=share/n*Math.PI*2,base=pos.length/3;
+      for(var i=0;i<=steps;i++){var a=a0+span*i/steps,c=Math.cos(a),s=Math.sin(a);pos.push(c,s,0,c,s,0);side.push(0,1);}
+      for(i=0;i<steps;i++){var v=base+i*2;index.push(v,v+1,v+3,v,v+3,v+2);}
+    }
+    var g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));g.setAttribute('side',new THREE.Float32BufferAttribute(side,1));g.setIndex(index);
+    var old=this.ringGeom;this.ringGeom=g;this.ringGeomKey=key;
+    if(old){if(this.shotDisc&&this.shotDisc.geometry===old)this.shotDisc.geometry=g;old.dispose();}
+    return g;
+  };
+  Viewer.prototype.ringMaterial=function(){
+    if(this.ringMat)return this.ringMat;
+    var self=this,look=this.ringLook;
+    this.ringMat=new THREE.ShaderMaterial({vertexShader:SHOT_RING_VERTEX,fragmentShader:SHOT_RING_FRAGMENT,transparent:true,depthTest:false,depthWrite:false,side:THREE.DoubleSide,
+      uniforms:{uColor:{value:new THREE.Vector3().fromArray(look.color)},uOpacity:{value:this.discOpacity},uWidth:{value:look.width},uPlace:{value:look.place},uViewH:{value:this.viewHeight||1}}});
+    // The CSS height of the view, read when the ring is drawn: one assignment, only on frames that draw the ring.
+    this.ringBeforeRender=function(){self.ringMat.uniforms.uViewH.value=self.viewHeight||1;};
+    return this.ringMat;
+  };
+  // Settings, Shot ring: the switch and the opacity (0..1). The circle figure follows the circle on screen.
   Viewer.prototype.setShotDisc=function(on,opacity){
     this.discOn=!!on;if(Number.isFinite(opacity))this.discOpacity=opacity;
-    if(this.discMat)this.discMat.opacity=this.discOpacity;
+    if(this.ringMat)this.ringMat.uniforms.uOpacity.value=this.discOpacity;
     if(this.shotDisc)this.shotDisc.visible=this.discOn;
     this.savedAim=this.shotDiscAim();this.draw();
+  };
+  // The TEMPORARY lab of Settings (user, 24.09): {color:[r,g,b] sRGB 0..1, width px, dashes, share 0..1, place 0/0.5/1}.
+  // Uniforms for all but the dashes, which make the one geometry again.
+  Viewer.prototype.setShotRingLook=function(look){
+    var l=this.ringLook;Object.keys(look||{}).forEach(function(k){if(look[k]!==undefined&&look[k]!==null)l[k]=look[k];});
+    if(this.ringMat){var u=this.ringMat.uniforms;u.uColor.value.fromArray(l.color);u.uWidth.value=l.width;u.uPlace.value=l.place;}
+    if(this.ringGeom)this.ringGeometry();
+    this.draw();
   };
   // Without a recorded reticle (every incoming hit, own hits without a snapshot) draw the nominal full-aim circle:
   // gun accuracy × range, centred on the hit line. An estimate — it never enters the probability figures.

@@ -382,7 +382,7 @@ class ShotTelemetry(object):
         # this is the tracer bookkeeping already running here, remembering one number more.
         self.last_own_shot = None
         # The own shot still waiting for the server gun updates that come AFTER its tracer (BACKLOG 28 step 2,
-        # 24.09): {'tracerId', 'updates'}, or None. See server_update().
+        # 24.09): {'tracerId', 'updates', 'gameTime', 'player'}, or None. See server_update() and tracer().
         self.after_shot = None
 
     def active(self, player):
@@ -522,9 +522,16 @@ class ShotTelemetry(object):
                 LOG.debug('Own motion history unavailable', exc_info=True)
         record = self.emit(player, 'tracer', values, shot_time)
         if record and 'aimAtTracer' in values:
-            # A shot before the previous one got its two updates (an autocannon): the previous keeps what it has.
-            self.flush_after_shot(player)
-            self.after_shot = {'tracerId':record['id'], 'updates':[]}
+            pending = self.after_shot
+            # A two-gun salvo: the second barrel's tracer comes at the same instant as the first (same gameTime). It
+            # shares the first one's wait - the updates after the salvo belong to both barrels, and a new wait would
+            # drop the first one's with nothing in it (review 24.09) - and the page finds the record through that
+            # instant. A later shot before the previous one got its two updates (an autocannon) closes the previous
+            # with what it has.
+            if not (pending is not None and shot_time is not None and pending['gameTime'] is not None
+                    and abs(shot_time-pending['gameTime']) < 1e-3):
+                self.flush_after_shot(player)
+                self.after_shot = {'tracerId':record['id'], 'updates':[], 'gameTime':shot_time, 'player':player}
         if record:
             self.tracers[str(shotID)] = record
             if len(self.tracers) > 512:
@@ -564,8 +571,12 @@ class ShotTelemetry(object):
                 pending['updates'].append(self.server_vector)
                 if len(pending['updates']) >= 2: self.flush_after_shot(player)
 
-    def flush_after_shot(self, player):
+    def flush_after_shot(self, player=None):
+        """Write the pending after-shot record with whatever updates came. Also called when the avatar leaves the
+        battle (death at the end, the battle over): `player` is then the avatar kept with the wait, whose battle file
+        is still the current one."""
         pending, self.after_shot = self.after_shot, None
+        if player is None and pending: player = pending['player']
         if pending and pending['updates']:
             self.emit(player, 'gunAfterShot', {'tracerId':pending['tracerId'], 'updates':pending['updates']},
                       pending['updates'][-1]['gameTime'])

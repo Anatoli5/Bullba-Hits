@@ -47,27 +47,37 @@ class ShotEvents(unittest.TestCase):
 
     def test_gun_updates_after_own_shot(self):
         # BACKLOG 28 step 2 (24.09): the first two own server gun updates after each own tracer, one record per shot;
-        # a shot before the previous one got two (an autocannon) closes the previous with what it has.
+        # a shot before the previous one got two (an autocannon) closes the previous with what it has; the two tracers
+        # of a salvo (same instant) share one wait; leaving the battle writes a wait that is still open.
         rows=[]
+        clock=[10.0]
         player=types.SimpleNamespace(arena=types.SimpleNamespace(arenaUniqueID=1),playerVehicleID=7)
         recorder=types.SimpleNamespace(enabled=True,file='one',ensure_battle=lambda p:True,
-            bw=types.SimpleNamespace(serverTime=lambda:10),writer=types.SimpleNamespace(put=lambda n,r:rows.append(r)))
+            bw=types.SimpleNamespace(serverTime=lambda:clock[0]),writer=types.SimpleNamespace(put=lambda n,r:rows.append(r)))
         telemetry=ShotTelemetry(recorder)
         telemetry.snapshot=lambda p:{}
         replay=types.SimpleNamespace(g_replayCtrl=types.SimpleNamespace(isPlaying=False))
-        update=lambda k:telemetry.server_update(player,7,[k,0,0],[0,0,1],.001*k)
+        def update(k):
+            clock[0]+=.1
+            telemetry.server_update(player,7,[k,0,0],[0,0,1],.001*k)
+        shoot=lambda shooter,shot,gun=0:telemetry.tracer(player,shooter,shot,False,3,0,0,100,[0,0,0],[0,0,1000],9.81,720,gun,0)
         with patch.dict(sys.modules,{'BattleReplay':replay}):
             update(1)
-            telemetry.tracer(player,7,81,False,3,0,0,100,[0,0,0],[0,0,1000],9.81,720,0,0)
+            shoot(7,81)
             update(2)
-            telemetry.tracer(player,8,90,False,3,0,0,100,[0,0,0],[0,0,1000],9.81,720,0,0)   # another's: nothing
-            telemetry.tracer(player,7,82,False,3,0,0,100,[0,0,0],[0,0,1000],9.81,720,0,0)
+            shoot(8,90)                      # another's tracer: nothing
+            shoot(7,82)                      # before 81 got its second update
             update(3);update(4);update(5)
+            shoot(7,83,0);shoot(7,84,1)      # a two-gun salvo: one instant, one wait
+            update(6);update(7)
+            shoot(7,85)
+            update(8)
+            telemetry.flush_after_shot()     # the avatar leaves the battle with 85 still waiting
         after=[r for r in rows if r['event']=='gunAfterShot']
         tracers=[r for r in rows if r['event']=='tracer' and r['own']]
-        self.assertEqual([a['tracerId'] for a in after],[tracers[0]['id'],tracers[1]['id']])
-        self.assertEqual([[u['origin'][0] for u in a['updates']] for a in after],[[2],[3,4]])
+        self.assertEqual([a['tracerId'] for a in after],[tracers[i]['id'] for i in (0,1,2,4)])
+        self.assertEqual([[u['origin'][0] for u in a['updates']] for a in after],[[2],[3,4],[6,7],[8]])
+        self.assertNotIn('player',after[-1])
         self.assertIsNone(telemetry.after_shot)
-
 
 if __name__=='__main__':unittest.main()

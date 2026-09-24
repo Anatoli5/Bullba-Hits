@@ -46,4 +46,17 @@ withAfter[withAfter.length-1].updates=[L([0,0,-98.1],.009)];c=R(hit,withAfter);a
 assert.equal(R(hit,events({},{aimAtTracer:{clientMarker:marker(99.9)}})).serverShot,null);
 assert.equal(ArmorShotContext.serverShot({...events({},{})[1],own:false,aimAtTracer:{lastServerGunUpdate:L([0,0,-100])}},[]),null);
 assert.equal(ArmorShotContext.serverShot({...events({},{})[1],isRicochet:true,aimAtTracer:{lastServerGunUpdate:L([0,0,-100])}},[]),null);
-console.log(JSON.stringify({passed:true,cases:18}));
+// Review 24.09: a two-gun salvo - both tracers at one gameTime, the server's origin the middle of the barrels. Measured from
+// the middle, not stale; one tracer alone at that origin would be (0.195 m). The salvo's one gunAfterShot names its first
+// tracer and is found for the second too.
+const salvoEvents=function(Lorigin,after){
+  const t=(id,x,gun)=>({event:'tracer',id:id,own:true,shooterId:7,effectsIndex:3,gunInstallationIndex:0,gunIndex:gun,isRicochet:false,receivedAt:99.95,gameTime:50,
+    origin:[x,0,-100],velocity:[0,0,900],aimAtTracer:{clientMarker:marker(99.9),lastServerGunUpdate:L(Lorigin)}});
+  const list=[t('a',.195,0),t('b',-.19,1)];if(after)list.push({event:'gunAfterShot',tracerId:'a',updates:[L([.0025,0,-100],.003)]});return list;};
+let ev2=salvoEvents([.0025,0,-100]),s2=ArmorShotContext.serverShot(ev2[1],ev2);
+assert.equal(s2.stale,false);assert.equal(s2.salvo,2);assert.ok(s2.gap<.01);
+assert.equal(ArmorShotContext.serverShot(ev2[1],[ev2[1]]).stale,true);
+ev2=salvoEvents([1.5,0,-100],true);s2=ArmorShotContext.serverShot(ev2[1],ev2);
+assert.equal(s2.from,'after');assert.equal(s2.stale,false);assert.equal(s2.update.dispersionAngle,.003);
+ev2=salvoEvents([1.5,0,-100],false);s2=ArmorShotContext.serverShot(ev2[0],ev2);assert.equal(s2.stale,true);assert.equal(s2.salvo,2);assert.equal(s2.afterRecorded,false);
+console.log(JSON.stringify({passed:true,cases:22}));

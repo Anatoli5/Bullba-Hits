@@ -233,8 +233,10 @@ function StubViewer() {
   this.flashes = 0;   // strip (23.09): the pulses of the live ring a refused press asked for
   // BACKLOG 28 step 2 (24.09): the shot disc of an own shot - its frame (discAim), the solid ring's (ringAim), the Settings
   // switch and opacity. They must exist from the start, for the same reason as above.
-  this.discAim = null; this.ringAim = null; this.discOn = true; this.discOpacity = null;
+  this.discAim = null; this.ringAim = null; this.discOn = true; this.discOpacity = null; this.ringLook = null;
 }
+// The temporary Shot ring lab hands the look over; the stub keeps what it got.
+StubViewer.prototype.setShotRingLook = function (look) { this.ringLook = look; };
 // The real setShotDisc hands the figure to the circle on screen: the disc while it is on, the solid ring otherwise.
 StubViewer.prototype.setShotDisc = function (on, opacity) { this.discOn = !!on; this.discOpacity = opacity; if (this.discAim) this.savedAim = on ? this.discAim : this.ringAim; };
 StubViewer.prototype.setImpactOpacity = function (v) { this.impact = v; };
@@ -548,8 +550,9 @@ ok('every standing ring takes the one magenta constant',
    && /ring\(context\.aim\.clientMarker,AIM_RING,false\)/.test(viewerSrc)
    && /ring\(server,AIM_RING,true\)/.test(viewerSrc)
    && /LineDashedMaterial\(\{color:AIM_RING/.test(viewerSrc)
-   // the shot disc of an own shot (24.09) is a fill, not a ring: its own blue (magenta over the green map read grey - user, 24.09)
-   && /var AIM_DISC=0x3b82ff;/.test(viewerSrc) && /MeshBasicMaterial\(\{color:AIM_DISC/.test(viewerSrc));
+   // the shot ring of an own shot (24.09): a thick long-dashed band whose colour the TEMPORARY Settings lab sets (blue by
+   // default, magenta a preset), drawn by its own shader
+   && /SHOT_RING_LOOK=\{color:\[59\/255,130\/255,1\]/.test(viewerSrc) && /new THREE\.ShaderMaterial\(\{vertexShader:SHOT_RING_VERTEX/.test(viewerSrc));
 ok('and the live ring is the only cyan one left',
    /AIM_LIVE=\{color:0x5ee0ff/.test(viewerSrc)
    && viewerSrc.indexOf('0x68d7be') < 0 && viewerSrc.indexOf('0xeac36e') < 0
@@ -1223,30 +1226,59 @@ settle(20).then(function () {
   ok('back on the recorded reticle again', shotCircle.textContent === '50 %',
      '(' + shotCircle.textContent + ')');
 
-  // ---- BACKLOG 28 step 2 (24.09): the shot disc of an own shot ----------------------------------------------------
+  // ---- BACKLOG 28 step 2 (24.09): the shot ring of an own shot (a filled disc first: the internal names stay) -------
   // The figure is sampled over the disc and the tile names it; a disc one server tick stale puts the ⚠ beside the tile,
   // which goes with the rings (a pin) and with the disc (the Settings switch); a ring without a disc has none.
-  const staleIcon = document.getElementById('shot-disc-stale'), discBox = document.getElementById('shot-disc'), discSlider = document.getElementById('shot-disc-opacity');
+  const staleIcon = document.getElementById('shot-disc-stale'), discBox = document.getElementById('shot-ring'), discSlider = document.getElementById('shot-ring-opacity');
   ok('shot disc: no ⚠ on a recorded ring without a disc', staleIcon.hidden !== false);
   view.ringAim = {kind: 'saved'}; view.discAim = {kind: 'fired', stale: true, gap: 1.89, q: .5, from: 'last'}; view.savedAim = view.discAim;
   view.onPin(false); tick(0.2);
   ok('shot disc: the figure is the disc\'s and the tile says so', shotTile.title.indexOf('Shot circle') === 0 && shotCircle.textContent === '50 %', '(' + shotTile.title.slice(0, 40) + ')');
   ok('shot disc: a stale disc shows the ⚠, whose words give the tick and how far off', staleIcon.hidden === false
-     && staleIcon.title.indexOf('one tick uncertain') >= 0 && staleIcon.title.indexOf('1.89 m') >= 0 && staleIcon.title.indexOf('outside their disc') >= 0);
+     && staleIcon.title.indexOf('one tick uncertain') >= 0 && staleIcon.title.indexOf('1.89 m') >= 0 && staleIcon.title.indexOf('outside their ring') >= 0);
   view.pinned = {point: {}}; view.onPin(true); tick(0.2);
   ok('shot disc: a pinned point takes the ⚠ away with the rings', staleIcon.hidden === true);
   view.pinned = null; view.onPin(false); tick(0.2);
   ok('shot disc: unpinned, the ⚠ is back', staleIcon.hidden === false);
+  ok('shot disc: a single shot of an old record: the vehicle moved, newer builds usually make it exact',
+     staleIcon.title.indexOf('the vehicle moved 1.89 m') >= 0 && staleIcon.title.indexOf('newer builds') >= 0 && staleIcon.title.indexOf('salvo') < 0);
+  // Review 24.09: a salvo's gap is from the middle of its barrels, never the vehicle's move; a record whose updates after
+  // the shot were kept and none matched is not promised what newer builds give.
+  const single = view.discAim;
+  view.discAim = Object.assign({}, single, {salvo: 2, gap: 1.2, afterRecorded: true}); view.savedAim = view.discAim; view.onPin(false); tick(0.2);
+  ok('shot disc: a stale salvo is measured from the middle of its barrels, and kept updates that did not match are said so',
+     staleIcon.hidden === false && staleIcon.title.indexOf('middle of this salvo’s 2 barrels') >= 0 && staleIcon.title.indexOf('vehicle moved') < 0
+     && staleIcon.title.indexOf('do not match its origin either') >= 0 && staleIcon.title.indexOf('newer builds') < 0);
+  view.discAim = single; view.savedAim = single; view.onPin(false); tick(0.2);
   discBox.checked = false; discSlider.value = '20'; discBox.onchange(); tick(0.2);
   ok('shot disc: the Settings switch off tells the viewer, greys the slider, and the ⚠ goes; the figure takes the solid ring',
      view.discOn === false && discSlider.disabled === true && staleIcon.hidden === true && view.savedAim === view.ringAim && shotTile.title.indexOf('Recorded aiming circle') === 0);
   discBox.checked = true; discBox.onchange(); discSlider.value = '35'; discSlider.oninput(); tick(0.2);
   ok('shot disc: on again, the slider hands its opacity to the viewer', view.discOn === true && view.discOpacity === .35 && staleIcon.hidden === false
-     && document.getElementById('shot-disc-opacity-value').textContent === '35 %' && discSlider.disabled === false);
+     && document.getElementById('shot-ring-opacity-value').textContent === '35 %' && discSlider.disabled === false);
   view.discAim = Object.assign({}, view.discAim, {stale: false, from: 'after'}); view.savedAim = view.discAim; view.onPin(false); tick(0.2);
   ok('shot disc: a disc made exact by the update after the tracer shows no ⚠', staleIcon.hidden === true);
   discSlider.value = '20'; discSlider.oninput();
   view.discAim = null; view.ringAim = null; view.savedAim = {}; view.onPin(false); tick(0.2);
+  // The TEMPORARY Shot ring lab: sliders to the viewer (colour as hue/saturation/lightness in sRGB), tracks painted for the
+  // hue, the two presets set the three colour sliders, its own help dot.
+  const lab = function (id, value) { const el = document.getElementById(id); el.value = String(value); (el.oninput || el.onchange).call(el); };
+  lab('ring-hue', 218); lab('ring-sat', 100); lab('ring-light', 62); lab('ring-width', 9); lab('ring-dashes', 8); lab('ring-share', 70);
+  document.getElementById('ring-place').value = 'centre'; document.getElementById('ring-place').onchange();
+  const lk = view.ringLook || {}, rgb255 = (lk.color || []).map(function (x) { return Math.round(x * 255); });
+  ok('ring lab: the sliders hand the viewer its look (hsl 218/100/62 = the blue 61,132,255; 9 px; 8 dashes of 70 %; centred)',
+     rgb255.join() === '61,132,255' && lk.width === 9 && lk.dashes === 8 && lk.share === .7 && lk.place === .5, JSON.stringify(lk));
+  ok('ring lab: the saturation and lightness tracks show the colours of this hue',
+     String(document.getElementById('ring-sat').style.background).indexOf('hsl(218,100%,62%)') >= 0
+     && String(document.getElementById('ring-light').style.background).indexOf('hsl(218,100%,50%)') >= 0);
+  document.getElementById('ring-preset-magenta').onclick();
+  ok('ring lab: the magenta chip sets the three colour sliders to the outlines\' magenta',
+     document.getElementById('ring-hue').value === '315' && document.getElementById('ring-light').value === '68'
+     && (view.ringLook.color || []).map(function (x) { return Math.round(x * 255); }).join() === '255,92,214');
+  document.getElementById('ring-preset-blue').onclick();
+  ok('ring lab: its own help dot lists the lab\'s controls', document.getElementById('ring-lab-help').children.some(function (c) {
+    return String(c.getAttribute ? c.getAttribute('data-help-for') : c.attributes['data-help-for']).indexOf('ring-hue') >= 0; }));
+  lab('ring-width', 6); lab('ring-dashes', 12); lab('ring-share', 80); document.getElementById('ring-place').value = 'inside'; document.getElementById('ring-place').onchange();
 
   // ---- a shell chosen BY HAND carries the shooter's own alpha (user, 22.09) ---------------------
   // Until now ArmorBallistics.shell() gave a manual shell no alpha at all, so every Circle line read
