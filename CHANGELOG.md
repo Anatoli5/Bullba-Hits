@@ -2,8 +2,9 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
-## Unreleased
+## 0.7.43 (2026-09-24)
 
+- **Emulation:** the target's health bar takes a roster row only when it names the same vehicle, and its tooltip says whether the figure is the server's own (equipment included) or the roster's figure from before the vehicle was seen.
 - **Emulation:** the gun or turret picked on the characteristics panel (or in Config's Turret row) is now the gun the emulation fires: its circle, aiming time, reload, magazine, heat and mode button, and its shells (marked ⇆). The picked gun starts loaded, cool and fully aimed. The recorded ring and the hit's own shell stay the ones that fired. Picking the gun that fired (●) goes back to the recorded gun.
 - **Emulation:** switching to another hit of the same vehicle fired with a different gun also starts the emulation over for that gun.
 - **Emulation:** the live aim ring (cyan, with the reload on it) is drawn over the magenta ring of a pinned shot, so the reload no longer hides under it.
@@ -19,6 +20,8 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 - **Records:** a start of the game on which a saved battle or vehicle file cannot be read (held by an antivirus or a backup, or a battle file copied under another name) no longer deletes collision models; unused ones are cleaned up on the next start that reads everything.
 - **Records:** a battle file that lost its first line, or a battle whose export fails the same way five times in a row, no longer stops new battles, models and characteristics from being exported for the rest of the session; that one battle is skipped with a single log line and read again on the next start.
 - **Records:** watching a replay or spectating no longer creates an empty "live" battle in the list.
+- **Records:** recording no longer stops when you are destroyed in Onslaught (or Steel Hunter): hits, shots and damage between the others are recorded until the battle ends.
+- **Records:** in Onslaught the battle's roster follows each player's vehicle choice and names the enemies once they are known, and every vehicle seen in battle carries its real hit points (equipment included), which the health bar uses.
 - **Installer:** no backup copies any more; installing removes the backup folder earlier versions filled, the previous recorder build and our own files the page no longer uses. Records, settings and other mods are untouched.
 
 ## 0.7.42 (2026-09-24)

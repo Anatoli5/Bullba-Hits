@@ -18,7 +18,7 @@ Checks, by group:
              B starts; arena events unsubscribed on leaving
   files      one JSONL file per battle, one header each, first line; only that battle's events; ids unique
   replay     a replay being played writes no battle file (REC-01)
-  observer   an observer seat writes no battle file (REC-01)
+  observer   an observer seat (its vehicle the client's ussr:Observer, tag 'observer') writes no battle file (REC-01)
   shutdown   Writer thread ended, subscriptions gone, no ERROR logged
 
 Output: a summary line plus one line per failed check, and 'note' lines for things that are known and not
@@ -277,7 +277,7 @@ def component(name):
     return NS(name=name, materials={}, hitTesterManager=NS(activeHitTester=NS(bspModelName='vehicles/t/%s.model' % name)))
 
 
-def descriptor(type_name):
+def descriptor(type_name, tags=('mediumTank',)):
     shell = NS(name='AP', userString='AP', kind='ARMOR_PIERCING', effectsIndex=7, caliber=100.0,
                piercingPowerRandomization=0.25, piercingPowerRandomizationType='NORMAL', armorDamage=(300, 300),
                type=NS(normalizationAngle=0.087, ricochetAngleCos=0.34))
@@ -294,7 +294,7 @@ def descriptor(type_name):
     gun.shots = [NS(shell=shell, piercingPower=(200.0, 180.0), speed=1000.0, gravity=9.81, maxDistance=720.0)]
     gun.turretYawLimits = None
     return NS(type=NS(name=type_name, shortUserString=type_name.split(':')[1], level=8,
-                      tags=frozenset(['mediumTank']), role=0),
+                      tags=frozenset(tags), role=0),
               makeCompactDescr=lambda: b'\x01' + type_name.encode('ascii'),
               chassis=chassis, hull=hull, turret=turret, gun=gun, miscAttrs={}, maxHealth=1000,
               hasSiegeMode=False)
@@ -313,6 +313,7 @@ def make_vehicle(vehicle_id, descr):
     v.matrix = Matrix()
     v.getAimParams = lambda: (0.2, 0.3)
     v.publicStateModifiers = ()
+    v.maxHealth = descr.maxHealth   # Vehicle.maxHealth of the client: publicInfo.maxHealth, the server's figure
     return v
 
 
@@ -324,11 +325,15 @@ class Battle(object):
         self.ids = set([self.me, self.enemy, self.ally])
         infos = {}
         for vid, team in ((self.me, 1), (self.enemy, 2), (self.ally, 1)):
-            infos[vid] = {'vehicleType': descriptor('usa:T%d' % vid), 'team': team, 'name': 'player%d' % vid,
+            # A spectator seat drives the client's ussr:Observer, the one type tagged 'observer' (list.xml).
+            seat = observer and vid == self.me
+            infos[vid] = {'vehicleType': descriptor('ussr:Observer' if seat else 'usa:T%d' % vid,
+                                                    ('observer', 'lightTank') if seat else ('mediumTank',)),
+                          'team': team, 'name': 'player%d' % vid,
                           'avatarSessionID': 'x', 'vehPostProgression': [], 'customRoleSlotTypeId': 0}
         self.arena = NS(arenaUniqueID=arena_id, vehicles=infos, arenaType=NS(name='Map %d' % arena_id),
                         bonusType=1, guiType=1, extraData={}, onNewVehicleListReceived=Event(),
-                        onVehicleAdded=Event())
+                        onVehicleAdded=Event(), onVehicleUpdated=Event())
         self.entities = dict((vid, make_vehicle(vid, infos[vid]['vehicleType'])) for vid in self.ids)
         avatar = PlayerAvatar.__new__(PlayerAvatar)
         avatar.arena = self.arena
@@ -486,7 +491,8 @@ def run(temp):
     a.enter(events)
     check('battle A', 'recorder in battle and motion sampler running', recorder.in_battle and recorder.motion.running)
     check('battle A', 'arena events subscribed once',
-          len(a.arena.onNewVehicleListReceived.handlers) == 1 and len(a.arena.onVehicleAdded.handlers) == 1)
+          len(a.arena.onNewVehicleListReceived.handlers) == 1 and len(a.arena.onVehicleAdded.handlers) == 1
+          and len(a.arena.onVehicleUpdated.handlers) == 1)
     calls_before = dict(CALLS)
     a.play()
     check('battle A', 'each client original ran once per call (no double wrapper)',
@@ -502,8 +508,10 @@ def run(temp):
     file_a = recorder.file
     a.leave(events)
     check('battle A', 'leaving: arena events unsubscribed',
-          not a.arena.onNewVehicleListReceived.handlers and not a.arena.onVehicleAdded.handlers,
-          (len(a.arena.onNewVehicleListReceived.handlers), len(a.arena.onVehicleAdded.handlers)))
+          not a.arena.onNewVehicleListReceived.handlers and not a.arena.onVehicleAdded.handlers
+          and not a.arena.onVehicleUpdated.handlers,
+          (len(a.arena.onNewVehicleListReceived.handlers), len(a.arena.onVehicleAdded.handlers),
+           len(a.arena.onVehicleUpdated.handlers)))
     check('battle A', 'leaving: not in battle, sampler stopped, no callback pending',
           not recorder.in_battle and not recorder.motion.running and not WORLD.callbacks
           and not recorder.motion.buffers, (recorder.in_battle, recorder.motion.running, len(WORLD.callbacks)))
@@ -519,7 +527,8 @@ def run(temp):
     # ---- battle B ---------------------------------------------------------------------------------------
     b.enter(events)
     check('battle B', 'arena events subscribed once',
-          len(b.arena.onNewVehicleListReceived.handlers) == 1 and len(b.arena.onVehicleAdded.handlers) == 1)
+          len(b.arena.onNewVehicleListReceived.handlers) == 1 and len(b.arena.onVehicleAdded.handlers) == 1
+          and len(b.arena.onVehicleUpdated.handlers) == 1)
     check('battle B', 'recorder switched to B at the roster (battle, file, seq, mode_blocks)',
           recorder.battle == str(b.arena_id) and recorder.file != file_a and recorder.seq == 0
           and not recorder.mode_blocks, (recorder.battle, recorder.file, recorder.seq, len(recorder.mode_blocks)))
@@ -534,7 +543,8 @@ def run(temp):
     file_b = recorder.file
     b.leave(events)
     check('battle B', 'leaving: arena events unsubscribed',
-          not b.arena.onNewVehicleListReceived.handlers and not b.arena.onVehicleAdded.handlers)
+          not b.arena.onNewVehicleListReceived.handlers and not b.arena.onVehicleAdded.handlers
+          and not b.arena.onVehicleUpdated.handlers)
 
     # ---- replay and observer (REC-01) -------------------------------------------------------------------
     replay = Battle(5550000000000000001, 21)
@@ -669,4 +679,7 @@ def main():
     return code
 
 
-main()
+# Run as a script (run27.py execs it as __main__); imported, it only lends its stubs and fixtures
+# (tests/py27/recorder_roster_death.py).
+if __name__ == '__main__':
+    main()

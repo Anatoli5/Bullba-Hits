@@ -155,14 +155,17 @@ class RecordingTests(unittest.TestCase):
                 if kwargs.get('fail'):raise RuntimeError('game error')
                 return 87
         with patch.dict(sys.modules,{'Vehicle':types.SimpleNamespace(Vehicle=Vehicle)}),patch.object(mod,'Recorder',return_value=self.recorder):
-            original=Vehicle.showDamageFromShot
+            # By the class dictionary (REC-10): under the client's Python 2 getattr hands out a new unbound method
+            # each time, so an identity test through it proves nothing there; tests/py27/recorder_two_battles.py
+            # checks the same removal under python27.dll.
+            original=vars(Vehicle)['showDamageFromShot']
             mod.init()
             with patch.object(self.recorder,'capture',side_effect=ValueError('record failure')):
                 with self.assertLogs('local.armor_inspector',level='ERROR'):
                     self.assertEqual(Vehicle().showDamageFromShot(),87)
                 with self.assertLogs('local.armor_inspector',level='ERROR'),self.assertRaisesRegex(RuntimeError,'game error'):
                     Vehicle().showDamageFromShot(fail=True)
-            mod.fini();self.assertIs(Vehicle.showDamageFromShot,original)
+            mod.fini();self.assertIs(vars(Vehicle)['showDamageFromShot'],original)
 
 
 class GeometryTests(unittest.TestCase):

@@ -4145,8 +4145,11 @@
   // tooltip says it.
   function targetHp(hit) {
     var row = targetRow(hit), t = hit && hit.target, hp = 0;
-    if (row) hp = Number(row.maxHealth) > 0 ? Number(row.maxHealth) : Number(row.defaultMaxHealth) > 0 ? Number(row.defaultMaxHealth) : 0;
-    if (hp > 0) return {hp: hp, from: 'roster'};
+    // A roster row speaks for this vehicle only when it names the same type: Onslaught records up to 0.7.42 kept an
+    // ally's row on the vehicle he had before switching, with that vehicle's health (recorder fix 24.09).
+    var same = row && (!row.type || !t || !t.type || String(row.type) === String(t.type));
+    if (row && same) hp = Number(row.maxHealth) > 0 ? Number(row.maxHealth) : Number(row.defaultMaxHealth) > 0 ? Number(row.defaultMaxHealth) : 0;
+    if (hp > 0) return {hp: hp, from: row.maxHealthFrom === 'vehicle' ? 'server' : row.maxHealthFrom === 'descriptor' ? 'descriptor' : 'roster'};
     if (t && Number(t.maxHealth) > 0) return {hp: Number(t.maxHealth), from: 'export'};
     hp = t ? ttxHealth(t) : 0;
     return hp > 0 ? {hp: hp, from: 'ttx'} : {hp: 0, from: ''};
@@ -4183,6 +4186,8 @@
     });
   }
   var HP_FROM = {roster: '• Source: this battle’s roster',
+    server: '• Source: this battle, the server’s own figure (equipment included)',
+    descriptor: '• Source: this battle’s roster, before the vehicle was seen - without equipment that adds health',
     export: '• Source: the vehicle’s own export - its figure then, not this battle’s',
     ttx: '• Source: the vehicle’s characteristics, stock - this battle’s own figure is not in the record'};
   // What the Hitmarks are made of, kept so they can be laid again on a scene the viewer has rebuilt under

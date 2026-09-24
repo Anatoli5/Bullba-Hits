@@ -13,7 +13,7 @@ try:
 except ImportError:
     import queue
 
-VERSION = '0.7.42'
+VERSION = '0.7.43'
 VIEWER_PATH = os.path.join('mods', 'configs', 'local.armor_inspector', 'Viewer.html')
 LOG = logging.getLogger('local.armor_inspector')
 PARTS = ('chassis', 'hull', 'turret', 'gun')
@@ -24,8 +24,8 @@ CONTEXT_MENU_LABEL = 'Bullba Hits'
 # covers the gap between two messages and expires on its own afterwards.
 BUSY_SECONDS = 2.0
 _recorder = None
-_original = None
-_wrapper = None
+# The record of the hit hook (telemetry.wrap): the class, the name, its own dictionary entry and the wrapper.
+_hit_hook = None
 _mods_api = None
 _events = None
 _context_menu = None
@@ -204,7 +204,20 @@ def roster_state(info, descr, json_safe):
       isBot                        only when the info carries 'avatarSessionID': True when it is empty
                                    (ClientArena.__preprocessVehicleInfo). A missing key says nothing.
     Game thread, dictionary and attribute reads only; every field on its own.
+
+    The arena's descriptor is built from the compact descriptor, the field modifications, the role slot and the
+    battle modifiers only (ClientArena.getVehicleType): no equipment. Its maxHealth is not always the server's: in
+    the Onslaught battle of 24.09 three of seven allies had 9.7-10.2 % less here than their Vehicle.maxHealth
+    (= publicInfo.maxHealth, the replay's figure) - presumably Improved Hardening, not verified. Recorder.roster_rows
+    puts the server's figure over it wherever the vehicle has been in view (maxHealthFrom 'vehicle').
     """
+    state = descr_state(descr)
+    state.update(seat_state(info, json_safe))
+    return state
+
+
+def descr_state(descr):
+    """The descriptor's half of roster_state: maxHealth, defaultMaxHealth, healthFactor."""
     state = {}
     try: state['maxHealth'] = int(descr.maxHealth)
     except Exception: pass
@@ -212,6 +225,12 @@ def roster_state(info, descr, json_safe):
     except Exception: pass
     try: state['healthFactor'] = float(descr.miscAttrs['healthFactor'])
     except Exception: pass
+    return state
+
+
+def seat_state(info, json_safe):
+    """The arena info's half of roster_state: vehPostProgression, customRoleSlotTypeId, isBot."""
+    state = {}
     try: state['vehPostProgression'] = json_safe(info['vehPostProgression'], 256)
     except Exception: pass
     try: state['customRoleSlotTypeId'] = int(info['customRoleSlotTypeId'])
@@ -354,10 +373,13 @@ class Writer(object):
         self.thread.start()
 
     def put(self, name, record):
+        """Queue one record; False when the queue is full and the record is dropped."""
         try: self.queue.put_nowait((name, record))
         except queue.Full:
             self.dropped += 1
             LOG.error('Record queue full; dropped=%s', self.dropped)
+            return False
+        return True
 
     def put_export(self, name, payload):
         """One message for the export thread. Game thread, never blocking.
@@ -593,7 +615,13 @@ class VehicleEvents(object):
             if arena is self.arena: return
             self.detach_arena()
             arena.onNewVehicleListReceived += self.on_vehicle_list
-            arena.onVehicleAdded += self.on_vehicle_added
+            arena.onVehicleAdded += self.on_vehicle_info
+            # Every change of a vehicle's arena info (AvatarVehiclesInfoBase.setNested_vehiclesInfo ->
+            # ClientArena.updateVehicleInfo, which rebuilds 'vehicleType' from a new compDescr, then
+            # arena.onVehicleUpdated): the Onslaught vehicle choice of the first seconds and the enemy types
+            # the arena learns later. Without it the roster kept what the first list said (24.09).
+            updated = getattr(arena, 'onVehicleUpdated', None)
+            if updated is not None: updated += self.on_vehicle_info
             self.arena = arena
             self.on_vehicle_list()
         except Exception: LOG.exception('Arena vehicle export hooks unavailable')
@@ -602,7 +630,9 @@ class VehicleEvents(object):
         try:
             if self.arena is not None:
                 self.arena.onNewVehicleListReceived -= self.on_vehicle_list
-                self.arena.onVehicleAdded -= self.on_vehicle_added
+                self.arena.onVehicleAdded -= self.on_vehicle_info
+                updated = getattr(self.arena, 'onVehicleUpdated', None)
+                if updated is not None: updated -= self.on_vehicle_info
         except Exception: LOG.exception('Arena hook cleanup failed')
         self.arena = None
 
@@ -638,7 +668,9 @@ class VehicleEvents(object):
             self.write_roster()
         except Exception: LOG.exception('Battle roster unavailable for vehicle export')
 
-    def on_vehicle_added(self, vehicle_id, *args):
+    def on_vehicle_info(self, vehicle_id, *args):
+        """A vehicle added to the arena list or its arena info changed: note it for export, write the roster (the
+        recorder writes it only when a row really changed, so a death or a frag count costs no record)."""
         try:
             if self.arena is None: return
             info = getattr(self.arena, 'vehicles', {}).get(vehicle_id) or {}
@@ -686,6 +718,12 @@ class Recorder(object):
             except Exception: LOG.exception('HTML exporter unavailable; raw recording continues')
         self.writer = Writer(folder, exporter)
         self.last_vehicle = None
+        # The roster of the battle being written (all three emptied by ensure_battle when the battle changes):
+        # the rows of the last roster record, to write a new one only when a row changed (REC-11), and what the
+        # vehicles in view said of themselves - {vehicle id: (key, facts)}, see note_vehicle.
+        self.roster_known = False
+        self.roster_last = None
+        self.roster_seen = {}
         # The reader of the gun mechanics' live state is bound once here, beside the telemetry it lives in,
         # so the hit path does not run an import statement per hit (22.09).
         from local_armor_inspector.telemetry import ShotTelemetry, mechanic_state, designator_mark, recording
@@ -748,9 +786,16 @@ class Recorder(object):
     def note_roster(self, arena, player):
         """The battle's roster as one record: id, player, vehicle and team of every vehicle known so far.
 
-        Written whole each time the arena list changes (a few hundred bytes); the exporter keeps the
-        last one. The viewer lists the allies from it so that the hits can be read from any ally's
-        seat. Game thread: dictionary reads only, no package access.
+        Contract for readers (unchanged since 0.7.9, spelled out 24.09): every roster record is the WHOLE roster
+        as known at that moment and supersedes the ones before it; a reader keeps the last one of the battle
+        (exporter read_battle / apply_record). Rows only gain or correct fields over a battle - the vehicle chosen
+        in an Onslaught battle's first seconds, an enemy type the arena learns later, the server's own maximum
+        health of a vehicle once it has been in view - so the last record is the most complete one.
+
+        Written when the arena list changes, when a vehicle's arena info changes (VehicleEvents) and when a vehicle
+        in view tells something new about itself (note_vehicle) - and only when a row really differs from the last
+        record written (REC-11: up to 39 identical rosters a battle before 24.09). The viewer lists the allies from
+        it and takes the target's health from it. Game thread: dictionary reads only, no package access.
         """
         if arena is None or not self.recording(self, player): return
         player_id = getattr(player, 'playerVehicleID', None)
@@ -759,25 +804,101 @@ class Recorder(object):
         # waits - the next list change or the first recorded hit writes it.
         if not player_id or not getattr(arena, 'vehicles', None): return
         if not self.ensure_battle(player): return
+        vehicles, player_team = self.roster_rows(arena, player_id)
+        if (player_team, vehicles) == self.roster_last:
+            self.roster_known = True
+            return
+        if self.writer.put(self.file, {'schema':1, 'type':'roster', 'receivedAt':time.time(),
+                'playerVehicleId':player_id, 'playerTeam':player_team, 'vehicles':vehicles}):
+            self.roster_last = (player_team, vehicles)
+        self.roster_known = True
+
+    def roster_rows(self, arena, player_id):
+        """The rows of the roster and the player's team: the arena info of every vehicle, and over it what the
+        vehicle itself said when it was in view (note_vehicle).
+
+          arena type          name, type, roster_state (S3) and maxHealthFrom 'descriptor' - the arena
+                              descriptor's figure, which has no equipment in it
+          + the vehicle, same type
+                              maxHealth replaced by the server's figure, maxHealthFrom 'vehicle'
+          + the vehicle, another type
+                              ignored: the arena info is the one the server updates with a new vehicle choice
+                              (compDescr), while the entity's typeDescriptor changes only when the client
+                              redraws it - the next note_vehicle after that brings the matching figure
+          no arena type, the vehicle
+                              name, type, maxHealth (server), defaultMaxHealth and healthFactor of the vehicle's
+                              own descriptor, maxHealthFrom 'vehicle', isBot from the arena info (an Onslaught
+                              enemy before the arena learns its type)
+          neither             id, player, team only
+        """
         vehicles, player_team = [], None
         try: from local_armor_inspector.exporter import json_safe
         except Exception: json_safe = None
+        seen = self.roster_seen
         for vehicle_id, info in list(getattr(arena, 'vehicles', {}).items()):
             try:
-                descr = (info or {}).get('vehicleType')
+                info = info or {}
+                descr = info.get('vehicleType')
                 row = {'id':vehicle_id, 'player':info.get('name'), 'team':info.get('team')}
+                facts = seen.get(vehicle_id)
+                facts = facts[1] if facts is not None else None
                 if descr is not None:
                     row['name'] = descr.type.shortUserString
                     row['type'] = descr.type.name
                     # S3 (22.09): what this battle did to the vehicle, beside who it is.
                     try: row.update(roster_state(info, descr, json_safe))
                     except Exception: pass
+                    if (facts is not None and facts['type'] == row['type']
+                            and facts.get('maxHealthFrom') == 'vehicle'):
+                        row['maxHealth'] = facts['maxHealth']
+                        row['maxHealthFrom'] = 'vehicle'
+                    elif 'maxHealth' in row: row['maxHealthFrom'] = 'descriptor'
+                elif facts is not None:
+                    row.update(facts)
+                    try:
+                        bot = seat_state(info, json_safe).get('isBot')
+                        if bot is not None: row['isBot'] = bot
+                    except Exception: pass
                 vehicles.append(row)
                 if vehicle_id == player_id: player_team = info.get('team')
             except Exception: LOG.exception('Roster vehicle could not be listed')
-        self.writer.put(self.file, {'schema':1, 'type':'roster', 'receivedAt':time.time(),
-            'playerVehicleId':player_id, 'playerTeam':player_team, 'vehicles':vehicles})
-        self.roster_known = True
+        return vehicles, player_team
+
+    def note_vehicle(self, player, vehicle):
+        """A vehicle entity in view: its type and the server's own maximum health (Vehicle.maxHealth, which is
+        publicInfo.maxHealth - the figure the replay and the battle results carry), kept for its roster row.
+        True when something new was kept: the caller then writes the roster once (note_roster) for all the
+        vehicles of its pass, not one record per vehicle.
+
+        Called by the motion sampler for every vehicle it looks at (5 Hz): the fast path is one tuple and one
+        dictionary lookup; only a vehicle that is new or changed (another type after an Onslaught choice, a new
+        maximum) costs the gate and the facts. The key carries the arena id, so nothing of a previous battle can
+        match. Never raises."""
+        try:
+            descr = vehicle.typeDescriptor
+            key = (player.arena.arenaUniqueID, descr.type.name, vehicle.maxHealth)
+            entry = self.roster_seen.get(vehicle.id)
+        except Exception: return False   # an entity still being set up: asked again on the next tick, silently
+        if entry is not None and entry[0] == key: return False
+        try:
+            if not self.recording(self, player) or not getattr(player, 'playerVehicleID', None): return False
+            # Opens (or switches to) this battle BEFORE the facts are kept: a new battle empties roster_seen.
+            if not self.ensure_battle(player): return False
+            facts = {'name':descr.type.shortUserString, 'type':descr.type.name}
+            facts.update(descr_state(descr))
+            try: server = int(key[2])
+            except (TypeError, ValueError): server = 0
+            if server > 0:
+                facts['maxHealth'] = server
+                facts['maxHealthFrom'] = 'vehicle'
+            elif 'maxHealth' in facts: facts['maxHealthFrom'] = 'descriptor'
+            self.roster_seen[vehicle.id] = (key, facts)
+            return True
+        except Exception:
+            # Kept as seen without facts: the same failure is not logged again five times a second.
+            self.roster_seen[vehicle.id] = (key, None)
+            LOG.debug('Roster vehicle facts unavailable', exc_info=True)
+            return False
 
     def ensure_battle(self, player):
         arena = getattr(player, 'arena', None)
@@ -804,6 +925,8 @@ class Recorder(object):
             self.seq = 0
             self.file = filename
             self.roster_known = False
+            self.roster_last = None
+            self.roster_seen = {}
             self.mode_blocks = {}
         return True
 
@@ -1188,60 +1311,65 @@ def install_context_menu():
     Idempotent: a reloaded module finds its own marker and leaves the class alone.
     """
     from gui.Scaleform.daapi.view.lobby.hangar.hangar_cm_handlers import VehicleContextMenuHandler
-    generate, select = VehicleContextMenuHandler._generateOptions, VehicleContextMenuHandler.onOptionSelect
-    if getattr(generate, 'bullba_hits', False): return None
+    from local_armor_inspector.telemetry import wrap
+    if getattr(VehicleContextMenuHandler._generateOptions, 'bullba_hits', False): return None
 
-    def bullba_generate_options(handler, ctx=None):
-        options = generate(handler, ctx)
-        try:
-            options = list(options or [])
-            options.append(VehicleContextMenuHandler._makeItem(CONTEXT_MENU_OPTION, CONTEXT_MENU_LABEL))
-        except Exception:
-            LOG.exception('Bullba Hits context menu entry unavailable; the menu is unchanged')
-        return options
+    def make_generate(generate):
+        def bullba_generate_options(handler, ctx=None):
+            options = generate(handler, ctx)
+            try:
+                options = list(options or [])
+                options.append(VehicleContextMenuHandler._makeItem(CONTEXT_MENU_OPTION, CONTEXT_MENU_LABEL))
+            except Exception:
+                LOG.exception('Bullba Hits context menu entry unavailable; the menu is unchanged')
+            return options
+        bullba_generate_options.bullba_hits = True
+        return bullba_generate_options
 
-    def bullba_option_select(handler, optionId):
-        if optionId != CONTEXT_MENU_OPTION:
-            return select(handler, optionId)
-        try:
-            show_vehicle(handler)
-        except Exception:
-            LOG.exception('Bullba Hits could not open the selected vehicle')
-        return None
+    def make_select(select):
+        def bullba_option_select(handler, optionId):
+            if optionId != CONTEXT_MENU_OPTION:
+                return select(handler, optionId)
+            try:
+                show_vehicle(handler)
+            except Exception:
+                LOG.exception('Bullba Hits could not open the selected vehicle')
+            return None
+        bullba_option_select.bullba_hits = True
+        return bullba_option_select
 
-    bullba_generate_options.bullba_hits = True
-    bullba_option_select.bullba_hits = True
-    VehicleContextMenuHandler._generateOptions = bullba_generate_options
-    VehicleContextMenuHandler.onOptionSelect = bullba_option_select
-    return (VehicleContextMenuHandler, generate, select)
+    # The recorder's one wrapper (telemetry.wrap, REC-10): remove_context_menu puts back the class's own entries -
+    # onOptionSelect is inherited, so it is removed from the subclass rather than copied onto it.
+    hooks = [wrap(VehicleContextMenuHandler, '_generateOptions', make_generate),
+             wrap(VehicleContextMenuHandler, 'onOptionSelect', make_select)]
+    return [hook for hook in hooks if hook is not None]
 
 
 def remove_context_menu(installed):
     if not installed: return
-    handler_class, generate, select = installed
     try:
-        if getattr(handler_class._generateOptions, 'bullba_hits', False):
-            handler_class._generateOptions = generate
-        if getattr(handler_class.onOptionSelect, 'bullba_hits', False):
-            handler_class.onOptionSelect = select
+        from local_armor_inspector.telemetry import unwrap
+        unwrap(installed)
     except Exception: LOG.exception('Context menu cleanup failed')
 
 
 def init():
-    global _recorder, _original, _wrapper, _mods_api, _events, _context_menu
+    global _recorder, _hit_hook, _mods_api, _events, _context_menu
     if _recorder is not None: return
     try:
         from Vehicle import Vehicle
+        from local_armor_inspector.telemetry import wrap
         _recorder = Recorder(os.path.join('mods', 'configs', 'local.armor_inspector', 'battles'))
-        _original = Vehicle.showDamageFromShot
-        original = _original
         recorder = _recorder
-        def wrapper(vehicle, *args, **kwargs):
-            try: recorder.capture(vehicle, *args, **kwargs)
-            except Exception: LOG.exception('Recorder failed; game handler continues')
-            return original(vehicle, *args, **kwargs)
-        _wrapper = wrapper
-        Vehicle.showDamageFromShot = wrapper
+        def make(original):
+            def wrapper(vehicle, *args, **kwargs):
+                try: recorder.capture(vehicle, *args, **kwargs)
+                except Exception: LOG.exception('Recorder failed; game handler continues')
+                return original(vehicle, *args, **kwargs)
+            return wrapper
+        # The same wrapper as every other hook of the recorder (REC-10): fini() puts back the class's own entry.
+        _hit_hook = wrap(Vehicle, 'showDamageFromShot', make)
+        if _hit_hook is None: raise AttributeError('Vehicle.showDamageFromShot is missing')
         try: _recorder.telemetry.install()
         except Exception: LOG.exception('Aim telemetry hooks unavailable; hit recording continues')
         try: _recorder.crits.install()
@@ -1275,7 +1403,7 @@ def init():
 
 
 def fini():
-    global _recorder, _events, _context_menu
+    global _recorder, _hit_hook, _events, _context_menu
     try:
         from local_armor_inspector import presentation
         presentation.set_export_request(None)
@@ -1295,8 +1423,9 @@ def fini():
         try: _recorder.motion.stop()
         except Exception: LOG.exception('Motion sampler stop failed')
         try:
-            from Vehicle import Vehicle
-            if Vehicle.showDamageFromShot is _wrapper: Vehicle.showDamageFromShot = _original
+            from local_armor_inspector.telemetry import unwrap
+            if _hit_hook is not None: unwrap([_hit_hook])
         except Exception: LOG.exception('Hook cleanup failed')
+        _hit_hook = None
         _recorder.writer.close()
         _recorder = None

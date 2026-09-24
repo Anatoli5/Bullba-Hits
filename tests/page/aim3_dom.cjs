@@ -3124,9 +3124,13 @@ settle(20).then(function () {
   ok('fun: the target HP is this battle’s maxHealth of the roster row with the hit’s target id (Onslaught writes its own there)',
      fun.targetMaxHp({targetId: 7, target: {type: 'germany:Alpha'}}) === 1850);
   ok('fun: a row with no battle value of its own falls back to the stock one',
-     fun.targetMaxHp({targetId: 9, target: {type: 'germany:Zulu'}}) === 1400);
+     fun.targetMaxHp({targetId: 9, target: {type: 'germany:Bravo'}}) === 1400);
+  // 24.09 recorder fix: Onslaught records up to 0.7.42 kept a switched ally's row on his previous vehicle - a row
+  // naming another type is not this vehicle's health, and the lookup goes on to the vehicle's own sources.
+  ok('fun: a roster row of another vehicle type (a switched Onslaught ally) is not taken for this one',
+     fun.targetMaxHp({targetId: 7, target: {type: 'germany:Zulu', maxHealth: 999}}) === 999);
   ok('fun: a swapped view has no ids of its own and asks the hit it was made from for its shooter',
-     fun.targetMaxHp({synthetic: true, base: 'h1', target: {type: 'germany:Zulu'}}) === 1400);
+     fun.targetMaxHp({synthetic: true, base: 'h1', target: {type: 'germany:Bravo'}}) === 1400);
   ok('fun: an id the roster does not hold falls back to the ONE row of that vehicle type',
      fun.targetMaxHp({targetId: 99, target: {type: 'germany:Alpha'}}) === 1850);
   ok('fun: and never guesses when two vehicles of that type fought',
@@ -3290,7 +3294,7 @@ settle(20).then(function () {
   fun.funModel();
   ok('fun: a scene shown again without a reload keeps its Hitmarks and does not lay them twice',
      marks.length === 3 && fun.hp().left === wasHp, '(' + marks.length + ' marks)');
-  fun.set(fviewer, FBATTLE, {targetId: 9, target: {type: 'germany:Zulu'}});
+  fun.set(fviewer, FBATTLE, {targetId: 9, target: {type: 'germany:Bravo'}});
   fun.funModel();
   ok('fun: another VEHICLE on screen is full again and carries none of the marks',
      fun.hp().left === 1400 && fun.hp().max === 1400 && marks.length === 0, '(' + fun.hp().left + ' HP)');

@@ -12,6 +12,8 @@ use it - the player's own tracer and a hit on the player's own vehicle.
 Load: one BigWorld callback every PERIOD seconds, a bounded number of entity reads per tick (the
 arena roster, at most thirty), and one small list per vehicle per tick. There is no per-frame work,
 no hook, no subscription and no descriptor work - every value below is one the client already holds.
+Since 24.09 the same loop hands each vehicle in view to Recorder.note_vehicle (its type name and
+Vehicle.maxHealth for the roster), which costs a tuple and a lookup unless the vehicle is new or changed.
 
 Client contract (read from the installed bytecode of 2.4.0.1, no game launch):
 
@@ -137,10 +139,19 @@ class MotionSampler(object):
         rotator = getattr(player, 'gunRotator', None)
         entity = bw.entity
         buffers = self.buffers
+        # The roster's owner hears of every vehicle in view here (24.09): its type and the server's maximum health
+        # go into its roster row. This loop already visits each of them; the call costs a tuple and a lookup
+        # unless the vehicle is new or changed. A wreck too - its figure still names the vehicle that was hit.
+        # One roster record for the whole pass, written after the loop, and only when a vehicle told something new.
+        note = getattr(self.recorder, 'note_vehicle', None)
+        noted = False
         for vehicle_id in list(getattr(arena, 'vehicles', {}).keys()):
             try:
                 vehicle = entity(vehicle_id)
-                if vehicle is None or not vehicle.isStarted or not vehicle.isAlive():
+                if vehicle is None or not vehicle.isStarted:
+                    continue
+                if note is not None and note(player, vehicle): noted = True
+                if not vehicle.isAlive():
                     continue
                 if vehicle_id == own and rotator is not None:
                     # His own angles are the client's own floats, not the packed server pair.
@@ -167,6 +178,9 @@ class MotionSampler(object):
             if buffer is None:
                 buffer = buffers[vehicle_id] = deque(maxlen=DEPTH)
             buffer.append(sample)
+        if noted:
+            try: self.recorder.note_roster(arena, player)
+            except Exception: LOG.debug('Roster record skipped', exc_info=True)
 
     def history(self, vehicle_id):
         """A copy of one shooter's recent motion, or None when nothing was sampled for him.

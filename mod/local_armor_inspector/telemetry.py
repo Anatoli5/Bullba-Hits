@@ -298,18 +298,68 @@ def designator_mark(entity):
         return None
 
 
+# VEHICLE_TAGS.OBSERVER of the client (gui/shared/gui_items/Vehicle.pyc): the tag of the spectator seat's vehicle
+# type (ussr:Observer is the only type carrying it in 2.4.0.1, scripts/item_defs/vehicles/ussr/list.xml).
+OBSERVER_TAG = 'observer'
+
+
+def observer_seat(player):
+    """Whether the player sits in a spectator seat: the client's own first test of it (VehicleArenaInfoVO.isObserver,
+    arena_vos.pyc 734: the seat's vehicle type carries the 'observer' tag).
+
+    NOT player.isObserver() while the seat's type is known: that cached flag is also raised when the player has died.
+    Onslaught and Steel Hunter call BigWorld.player().setIsObserver() on the switch to the post-mortem view
+    (comp7_core ... battle/page.pyc Comp7BattlePage._switchToPostmortem; battle_royale ... page.pyc), and a mode with
+    the bonus cap BECOME_AN_OBSERVER_AFTER_DEATH makes the dead player an observer the same way. Asking that flag
+    stopped every recording path at the player's death in Onslaught (24.09: 46 s, 16 hits lost in one battle).
+    Only while the seat's own type is not known yet (the first arena list of an Onslaught battle, or a player id of
+    0) the flag answers - before his death it is the seat's own. Two dictionary reads and a set lookup."""
+    try: descr = player.arena.vehicles[player.playerVehicleID]['vehicleType']
+    except Exception: descr = None
+    if descr is not None:
+        try: return OBSERVER_TAG in descr.type.tags
+        except Exception: pass
+    return bool(getattr(player, 'isObserver', lambda: False)())
+
+
 def recording(recorder, player):
     """The one gate of every recording path: the recorder is on, the player has an arena, and it is his own live
-    battle - not a replay being played and not a spectated one.
+    battle - not a replay being played and not a spectator seat (observer_seat: the seat, not the player's death).
 
     The hit capture and the roster (Recorder), the shot telemetry (and the motion sampler through it) and the crit
     log all ask here before they write, so a replay or an observer seat never opens a battle file. Before 24.09 the
-    roster path had no such check and a replay wrote a fake live battle (REC-01). Attribute reads only; the import
-    of an already loaded module is a dictionary lookup, as it was in each of the four copies this replaces."""
+    roster path had no such check and a replay wrote a fake live battle (REC-01). A battle is recorded until the
+    avatar leaves it (onAvatarBecomeNonPlayer), the player's death included. Attribute reads only; the import of an
+    already loaded module is a dictionary lookup, as it was in each of the four copies this replaces."""
     if not recorder.enabled or getattr(player, 'arena', None) is None: return False
     import BattleReplay
     if BattleReplay.g_replayCtrl.isPlaying: return False
-    return not getattr(player, 'isObserver', lambda: False)()
+    return not observer_seat(player)
+
+
+def wrap(cls, name, make):
+    """The one way the recorder wraps a client method (REC-10): cls.name becomes make(original).
+
+    `original` is what the class hands out (getattr, inherited or not) and is called as original(instance, ...).
+    What unwrap() puts back is the class's own dictionary entry, None when the method is inherited. Python 2 hands
+    out a new unbound method object on every getattr, so an identity test on it is always false and putting it back
+    leaves an unbound method object in place of the class's function - the hit and telemetry hooks were never
+    removed that way (measured 24.09 under the client's python27.dll: 9 of 25 left wrapped after fini()).
+    Returns the record for unwrap(), or None when the class has no such attribute."""
+    original = getattr(cls, name, None)
+    if original is None: return None
+    saved = vars(cls).get(name)
+    wrapper = make(original)
+    setattr(cls, name, wrapper)
+    return (cls, name, saved, wrapper)
+
+
+def unwrap(hooks):
+    """Put back what wrap() replaced, newest first; a method someone else re-wrapped since is left to its owner."""
+    for cls, name, saved, wrapper in reversed(list(hooks)):
+        if vars(cls).get(name) is not wrapper: continue
+        if saved is not None: setattr(cls, name, saved)
+        else: delattr(cls, name)
 
 
 class ShotTelemetry(object):
@@ -517,16 +567,15 @@ class ShotTelemetry(object):
         from Avatar import PlayerAvatar
         from AvatarInputHandler import AvatarInputHandler
         def hook(cls, name, callback):
-            original = getattr(cls, name, None)
-            if original is None:
-                LOG.warning('Optional telemetry hook missing: %s', name)
-                return
-            def wrapped(instance, *args, **kwargs):
-                try: callback(instance, *args, **kwargs)
-                except Exception: LOG.debug('Optional shot telemetry unavailable: %s', name, exc_info=True)
-                return original(instance, *args, **kwargs)
-            setattr(cls, name, wrapped)
-            self.hooks.append((cls, name, original, wrapped))
+            def make(original):
+                def wrapped(instance, *args, **kwargs):
+                    try: callback(instance, *args, **kwargs)
+                    except Exception: LOG.debug('Optional shot telemetry unavailable: %s', name, exc_info=True)
+                    return original(instance, *args, **kwargs)
+                return wrapped
+            record = wrap(cls, name, make)
+            if record is None: LOG.warning('Optional telemetry hook missing: %s', name)
+            else: self.hooks.append(record)
         for name, callback in (('_PlayerAvatar__startWaitingForShot',self.command),('showTracer',self.tracer),
                                ('stopTracer',self.stop),('explodeProjectile',self.explosion),
                                ('updateGunMarker',self.server_update),('updateTargetingInfo',self.targeting_update)):
@@ -538,6 +587,5 @@ class ShotTelemetry(object):
         hook(AvatarInputHandler, 'updateServerGunMarker', server_marker)
 
     def close(self):
-        for cls, name, original, wrapper in reversed(self.hooks):
-            if getattr(cls, name) is wrapper: setattr(cls, name, original)
+        unwrap(self.hooks)
         self.hooks = []

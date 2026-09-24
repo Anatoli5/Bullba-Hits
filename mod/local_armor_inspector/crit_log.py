@@ -13,7 +13,7 @@ import math
 import numbers
 import re
 import time
-from .telemetry import recording
+from .telemetry import recording, wrap, unwrap
 
 LOG = logging.getLogger('local.armor_inspector')
 # Extras the common map may not list (vehicle-specific ones: wheels, a second pair of tracks), typed by name.
@@ -367,26 +367,25 @@ class CritLog(object):
                 LOG.warning('Optional crit hook class missing: %s.%s', module, name)
                 return None
         def hook(cls, name, callback, mode='before'):
-            original = getattr(cls, name, None) if cls is not None else None
-            if original is None:
-                LOG.warning('Optional crit hook missing: %s', name)
-                return
-            saved = vars(cls).get(name)   # put back as it was; None when inherited
-            def wrapped(instance, *args, **kwargs):
-                if mode == 'after':
-                    result = original(instance, *args, **kwargs)
+            def make(original):
+                def wrapped(instance, *args, **kwargs):
+                    if mode == 'after':
+                        result = original(instance, *args, **kwargs)
+                        try: callback(instance, *args, **kwargs)
+                        except Exception: LOG.debug('Optional crit record unavailable: %s', name, exc_info=True)
+                        return result
+                    # Before the original (corr. 1): its early returns cannot hide an event.
                     try: callback(instance, *args, **kwargs)
                     except Exception: LOG.debug('Optional crit record unavailable: %s', name, exc_info=True)
-                    return result
-                # Before the original (corr. 1): its early returns cannot hide an event.
-                try: callback(instance, *args, **kwargs)
-                except Exception: LOG.debug('Optional crit record unavailable: %s', name, exc_info=True)
-                if mode != 'around': return original(instance, *args, **kwargs)
-                self.in_component = True
-                try: return original(instance, *args, **kwargs)
-                finally: self.in_component = False
-            setattr(cls, name, wrapped)
-            self.hooks.append((cls, name, saved, wrapped))
+                    if mode != 'around': return original(instance, *args, **kwargs)
+                    self.in_component = True
+                    try: return original(instance, *args, **kwargs)
+                    finally: self.in_component = False
+                return wrapped
+            # The recorder's one wrapper (telemetry.wrap): put back by the class dictionary, None when inherited.
+            record = wrap(cls, name, make) if cls is not None else None
+            if record is None: LOG.warning('Optional crit hook missing: %s', name)
+            else: self.hooks.append(record)
         avatar = load('Avatar', 'PlayerAvatar')
         vehicle = load('Vehicle', 'Vehicle')
         component = load('OwnVehicleBase', 'OwnVehicleBase')
@@ -409,9 +408,5 @@ class CritLog(object):
             hook(vehicle, name, callback)
 
     def close(self):
-        for cls, name, saved, wrapper in reversed(self.hooks):
-            # The class dict, not getattr: Python 2 hands out a new unbound method, never the wrapper itself.
-            if vars(cls).get(name) is not wrapper: continue
-            if saved is not None: setattr(cls, name, saved)
-            else: delattr(cls, name)
+        unwrap(self.hooks)
         self.hooks = []
