@@ -298,6 +298,11 @@ StubViewer.prototype.configure = function () {};
 StubViewer.prototype.showSavedAim = function () {};
 StubViewer.prototype.drawLiveAim = function () { return null; };
 StubViewer.prototype.heightRange = function () { return [0, 3]; };
+// viewer-batch (24.09, VIEW-03): the shot range - camera to the hit point - is the viewer's one figure; the stub has no
+// point, so it is its distance, and the Distance slider and field set it.
+StubViewer.prototype.shotRange = function () { return this.distance; };
+StubViewer.prototype.setShotRange = function (value) { this.distance = value; };
+StubViewer.prototype.cameraGliding = function () { return typeof this.targetDistance === 'number' || !!this.dragging; };
 // The real Viewer.clear() - and therefore load() - drops the Hitmarks with everything else it holds,
 // so the stub must too, or a scene rebuilt under the same vehicle would keep them twice over.
 StubViewer.prototype.clear = function () { this.marks = []; };
@@ -1005,7 +1010,7 @@ settle(20).then(function () {
   ok('the ability-gun shell wears the ✦ of the heading list, and it alone',
      gunShells.children.map(function (b) { return b.children.length; }).join(',') === '1,1,2');
   ok('the tooltip of an icon names the shell, its type, its penetration and its alpha',
-     gunShells.children[0].title === 'AP shell\n• Type: AP\n• Penetration: 250 mm\n• Damage: 400 HP\n\n• Click: use this shell',
+     gunShells.children[0].title === 'AP shell\nOne of the gun’s shells: pressed, the scene and the ⌖ shots use it.\n• Type: AP\n• Penetration: 250 mm\n• Damage: 400 HP\n\n• Click: use this shell',
      '(' + gunShells.children[0].title + ')');
   ok('the first AP shell is the one selected, on the icons and on the heading chips alike',
      shellPressed() === 'true,false,false' && chipPressed() === 'true,false,false',
@@ -2418,6 +2423,23 @@ settle(20).then(function () {
   ok('S2: a distance set directly (slider, keys, Fit) is answered at once', configures === 3, '(' + configures + ')');
   cam(180);
   ok('S2: a camera step that keeps the distance does not redo the shell', configures === 3, '(' + configures + ')');
+  // viewer-batch (24.09, VIEW-03, the user's decision): the Distance field and slider show the SHOT range the viewer reports
+  // (camera -> hit point), not the orbit radius; a report whose range is unchanged - the orbit centre switched between the
+  // vehicle and the hit, the orbit radius with it - redoes nothing, and the slider and the field set the shot range.
+  const distField = document.getElementById('camera-distance-field'), distSlider = document.getElementById('camera-distance');
+  view.onCamera({distance: 186.5, zoom: 1, yaw: .2, pitch: .1, range: 180});
+  ok('viewer-batch: a new orbit radius at the same shot range (⊙ Vehicle / ⊙ Hit) does not redo the shell', configures === 3, '(' + configures + ')');
+  ok('viewer-batch: the Distance field shows the shot range, not the orbit radius', String(distField.value) === '180', '(' + distField.value + ')');
+  view.onCamera({distance: 186.5, zoom: 1, yaw: .2, pitch: .1, range: 190});
+  ok('viewer-batch: a new shot range redoes the shell at once', configures === 4 && String(distField.value) === '190', '(' + configures + ', ' + distField.value + ')');
+  let askedRange = null;
+  view.setShotRange = function (value) { askedRange = value; };
+  view.setDistance = function () { askedRange = 'setDistance'; };
+  distSlider.value = '500'; distSlider.oninput();
+  ok('viewer-batch: the Distance slider sets the shot range (the middle of its log scale = √(3 × 1000) m)', typeof askedRange === 'number' && Math.abs(askedRange - Math.sqrt(3000)) < 1e-9, '(' + askedRange + ')');
+  distField.value = '42'; distField.onchange();
+  ok('viewer-batch: and so does the field', askedRange === 42, '(' + askedRange + ')');
+  delete view.setShotRange; delete view.setDistance;
   delete view.configure; delete view.target; delete view.targetDistance;
 
   // ---- stage 11: the hold on the model, on the REAL viewer.js ------------------------------------
@@ -2901,7 +2923,7 @@ settle(20).then(function () {
      && !/\/400/.test(appSrc) && !/\/ ?450/.test(appSrc + ctxSrc + ttxSrc)
      // BACKLOG 38 (23.09): both calls hand on the Borkenkäfer's mark as well (the window's top on a marked target).
      && /assume\(context\.choices,context\.kind,hit\.damage,context\.range,context\.mark\)/.test(appSrc)
-     && /assume\(candidates,shotContext\.kind,hit&&hit\.damage,shotContext\.range,shotContext\.mark\)/.test(appSrc));
+     && /assume\(recorded,shotContext\.kind,hit&&hit\.damage,shotContext\.range,shotContext\.mark\)/.test(appSrc));
   ok('distance: the characteristics panel’s 500 m figure is the garage’s - 194 for 218/194, 199.3 at int(maxDistance) for a shell that flies 400 m',
      (function () { const v = global.BullbaTtx && global.BullbaTtx.values({shells: [APCR218, Object.assign({}, APCR218, {maxDistance: 400})]});
        return !!v && v.shells[0].pen500 === 194 && r1(v.shells[1].pen500) === 199.3; })());
@@ -5905,7 +5927,7 @@ settle(20).then(function () {
        /^Hit points, HP\n• Stock: 2400$/.test(rowOf('maxHealth').title), rowOf('maxHealth').title.slice(0, 60));
     ok('ttx: one pair - the tile is plainly the gun: its glyph, the calibre and the gun\'s tier, with no ▾ and nothing to open',
        pairsBox.getAttribute('data-many') === 'false' && pairTile.children[0].getAttribute('data-glyph') === 'gun' && pairTile.children[1].textContent === '130'
-       && pairTile.children[2].textContent === 'X' && /^Gun: 130 mm S-70\n• Calibre: 130 mm\n• Tier: X\n• Turret: IS-7\n\nThis turret carries no other gun\.$/.test(pairTile.title), pairTile.title);
+       && pairTile.children[2].textContent === 'X' && /^Gun: 130 mm S-70\nThe shooter’s gun: this panel, the ⌖ circle, the reload and the shells follow it\.\n• Calibre: 130 mm\n• Tier: X\n• Turret: IS-7\n\nThis turret carries no other gun\.$/.test(pairTile.title), pairTile.title);
     // The expanded view is built by the click that opens it.
     document.getElementById('ttx-more-button').onclick({}); more.open = true;
     const f = fullRows();
@@ -6057,16 +6079,50 @@ settle(20).then(function () {
        list.children.length === 1 && list.children[0].className === 'aim-pick-row' && tiles.length === 2
        && tiles[1].getAttribute('aria-pressed') === 'true' && tiles[0].getAttribute('aria-pressed') === 'false'
        && tiles[1].children.some(function (c) { return c.textContent === '●'; }) && tiles[0].children.some(function (c) { return c.textContent === '▲'; })
-       && /\n• DPM: \d+ \(stock\)/.test(tiles[0].title) && /\n• ●: the gun on the scene/.test(tiles[1].title));
-    click(tiles[0]);
+       && /\n• DPM: \d+ \(stock\)/.test(tiles[0].title) && /\n• ●: the gun that fired in the record/.test(tiles[1].title));
+    // 24.09 (gun-switch-owner): the user's WZ-55 - a magazine gun and a single-shot one; the picked gun is the EMULATOR's.
+    // Fire the clip gun once first, as the user did - ✸ on with ◔ the real reload: a round gone and the gap running, so
+    // the reset of the run is seen.
+    const gunReload = document.getElementById('aim-gun-reload'), gunShellsBox = document.getElementById('aim-gun-shells');
+    const realBox = document.getElementById('real-reload'), realWas = realBox.checked;
+    click(document.getElementById('fun-mode-toggle'));
+    if (!realBox.checked) click(document.getElementById('real-reload-toggle'));
+    press(); release(); tick(0.05);
+    const beforeMag = magStates(), beforeRunning = gunReload.getAttribute('data-running');
+    click(tiles[0]); tick(0.05);
     ok('ttx: picking the other gun - its figures on the panel, the tile lit, and the choice kept per vehicle type',
        keyOf('reload') === 'reloadTimeSecs' && lineText(compact) === 'c:reloadTimeSecs=' + TX.nice(7 / (0.57 + 0.43 * 1.1)) && pairsBox.getAttribute('data-other') === 'true'
-       && /keep the gun that fired/.test(pairTile.title) && storedAim().pairs && storedAim().pairs['germany:ClipX'] === 'TurretX|_105_single');
-    ok('ttx: the emulator keeps the gun that fired - its reload is still the clip gun’s',
-       document.getElementById('aim-gun-reload').textContent === (9 / (0.57 + 0.43 * 1.1)).toFixed(1) + ' s');
+       && /\nNot the gun that fired \(●\):\n• Its own: the ⌖ circle, the reload, the magazine and the shells\n• The record’s: the recorded ring and the hit’s own shell and result/.test(pairTile.title)
+       && storedAim().pairs && storedAim().pairs['germany:ClipX'] === 'TurretX|_105_single', pairTile.title);
+    ok('gun switch: the emulator fires the picked gun - the single-shot gun\'s reload, one slot in place of the magazine\'s three',
+       gunReload.textContent === (7 / (0.57 + 0.43 * 1.1)).toFixed(1) + ' s' && magStates().split(',').length === 1 && beforeMag.split(',').length === 3,
+       '(' + gunReload.textContent + ' · ' + beforeMag + ' -> ' + magStates() + ')');
+    ok('gun switch: the run starts over for the new gun - the magazine\'s gap that was running is gone, the one round loaded',
+       beforeRunning === '1' && gunReload.getAttribute('data-running') === '0' && magStates() === 'next', beforeRunning + ' ' + beforeMag + ' -> ' + magStates() + ' on=' + onBox.checked + ' live=' + !!(viewerInstance && viewerInstance.liveRadius100));
+    click(document.getElementById('target-hp-reset'));   // the shot's damage off the target, for the checks after
+    click(document.getElementById('fun-mode-toggle'));
+    if (realBox.checked !== realWas) click(document.getElementById('real-reload-toggle'));
+    const pickedShell = document.getElementById('shell-choice').value;
+    ok('gun switch: the picked gun\'s shells come into the list (⇆) and the one on screen is its own - 105 mm, and the gun panel shows only them',
+       /^saved:\d+$/.test(pickedShell) && document.getElementById('caliber').value === 105
+       && gunShellsBox.children.length === 1 && /\n• Gun: 105 mm single/.test(gunShellsBox.children[0].title)
+       && document.getElementById('shell-quick').children.some(function (b) { return / ⇆$/.test(b.textContent) && /the gun the emulation fires/.test(b.title); }),
+       pickedShell + ' ' + document.getElementById('caliber').value + ' ' + gunShellsBox.children.length);
+    ok('gun switch: a picked gun\'s shell writes no Statistics log line - the log keeps one line per point and shell type, and it is the record\'s',
+       /if\(!\(c&&c\.emuGun\)\)logVerdicts\(shell\);/.test(appSrc));
+    // The panel's build figures are read off the emulator's own block (ttxValues live): with ⚙ on they are the picked gun's.
+    click(buildToggle);
+    ok('gun switch: ⚙ on - the build\'s reload is the picked gun\'s, read off the emulator\'s block (not the clip gun\'s)',
+       lineText(compact) === 'c:reloadTimeSecs=' + TX.nice(7 / (0.57 + 0.43 * 1.1)), lineText(compact));
+    click(buildToggle);
     pairTile.onclick({preventDefault: function () {}});
     click(list.children.filter(function (c) { return c.className === 'aim-pick-row'; })[0].children[1]);
     ok('ttx: and back to the fired gun', keyOf('reload') === 'clipFireRate' && pairsBox.getAttribute('data-other') === null);
+    ok('gun switch: back on the gun that fired - the magazine again (3 slots, its reload), no pick kept for the type, no ⇆ shell left',
+       magStates().split(',').length === 3 && gunReload.textContent === (9 / (0.57 + 0.43 * 1.1)).toFixed(1) + ' s'
+       && !(storedAim().pairs && storedAim().pairs['germany:ClipX'])
+       && !document.getElementById('shell-quick').children.some(function (b) { return / ⇆$/.test(b.textContent); }),
+       magStates() + ' ' + gunReload.textContent + ' ' + JSON.stringify(storedAim().pairs || {}));
     ok('ttx v2: one turret - the Turret row of Config is not there', document.getElementById('aim-cfg-turrets').hidden === true);
     // The health of a vehicle without a roster row: its own export (23.09).
     click(document.getElementById('fun-mode-toggle'));
@@ -6176,6 +6232,59 @@ settle(20).then(function () {
         choosePreset('Stock — no equipment');
         click(buildToggle);
       });
+    });
+    // GUN SWITCH (24.09, gun-switch-owner): every pair B of a vehicle with more than one - the Vz. 55's magazine and
+    // single-shot guns, the VK 30.01 P's two turrets x two guns, the M-VI-Yoh whose second turret brings a gun the first
+    // lacks - picked on the hit of ANOTHER pair (Config's Turret row, then the chip's list) under the "fire" build must
+    // print exactly what B's own recorded hit printed under it above (and that was held against the client's strings):
+    // the panel's build figures are read off the emulator's own block, so this is the emulator's gun, not a second copy.
+    const swDiff = [], swPairs = {};
+    stock.forEach(function (r, i) { (swPairs[r.vehicle] = swPairs[r.vehicle] || []).push(i); });
+    const swPick = function (t, r, again) {
+      const row = document.getElementById('aim-cfg-turrets'), ti = t.turrets.map(function (x) { return x.name; }).indexOf(r.turret), info = t.turrets[ti] || {};
+      const pair = t.configs.filter(function (c) { return c.gun === r.gun && c.turret === ti; })[0];
+      if (!row.hidden) {
+        const tt = row.children.filter(function (x) { return x.getAttribute('aria-label') === (info.userString || info.name); })[0];
+        if (tt && tt.getAttribute('aria-pressed') !== 'true') click(tt);
+      }
+      pairTile.onclick({preventDefault: function () {}});
+      const list = document.getElementById('ttx-pair-list'), away = list.children.filter(function (c) { return c.getAttribute('data-turrets') === 'true'; })[0];
+      const at = away ? away.children.filter(function (x) { return x.getAttribute('aria-label') === (info.userString || info.name); })[0] : null;
+      if (at && at.getAttribute('aria-pressed') !== 'true') { click(at); pairTile.onclick({preventDefault: function () {}}); }
+      const guns = list.children.filter(function (c) { return c.className === 'aim-pick-row' && c.getAttribute('data-turrets') === null; })[0];
+      const tile = guns ? guns.children.filter(function (x) { return x.getAttribute('aria-label') === (pair.gunUserString || pair.gun); })[0] : null;
+      if (tile && (again || tile.getAttribute('aria-pressed') !== 'true')) click(tile);
+      pairsBox.open = false;
+    };
+    Object.keys(swPairs).forEach(function (veh) {
+      const idx = swPairs[veh];
+      if (idx.length < 2) return;
+      idx.forEach(function (bi, k) {
+        const ai = idx[k === 0 ? 1 : 0], r = stock[bi], t = files[veh];
+        chain = chain.then(function () { document.getElementById('hits').children[ai].onclick(); return settle(20); }).then(function () {
+          if (buildBox.checked) click(buildToggle);
+          swPick(t, r);
+          click(buildToggle);
+          openConfigMenu();
+          choosePreset('Rammer, stabiliser, vents');
+          everybody('Brothers in Arms, ');
+          const food = consumables.children[0].children[0];
+          if (food.getAttribute('aria-pressed') !== 'true') click(food);
+          read(r, 'switched');
+          const key = [r.vehicle, r.turret, r.gun], got = page[key.concat('switched').join('|')], own = page[key.concat('fire').join('|')];
+          delete page[key.concat('switched').join('|')];
+          const diff = ['compact', 'line', 'full', 'fullLine', 'shells'].filter(function (f) { return JSON.stringify(got[f]) !== JSON.stringify(own[f]); });
+          if (diff.length) swDiff.push(veh.split(':')[1] + ' ' + stock[ai].gun + ' -> ' + r.gun + ' @ ' + r.turret + ': ' + diff.map(function (f) { return f + ' ' + JSON.stringify(got[f]).slice(0, 160) + ' / ' + JSON.stringify(own[f]).slice(0, 160); }).join('; '));
+          swDiff.count = (swDiff.count || 0) + 1;
+          choosePreset('Stock — no equipment');
+          click(buildToggle);
+          swPick(t, stock[ai], true);   // the recorded gun picked back: the choice goes back to the record
+        });
+      });
+    });
+    chain = chain.then(function () {
+      ok('gun switch acceptance: a pair picked on another pair\'s hit prints under the "fire" build exactly what its own recorded hit printed - compact, reload line, expanded view, shells (' + ((swDiff.count || 0) - swDiff.length) + '/' + (swDiff.count || 0) + ')',
+         (swDiff.count || 0) > 0 && swDiff.length === 0, swDiff.join(' || '));
     });
     return chain.then(function () {
       if (process.env.BULLBA_TTX_PAGE_OUT) fs.writeFileSync(process.env.BULLBA_TTX_PAGE_OUT, JSON.stringify(page, null, 1));
@@ -6342,6 +6451,94 @@ settle(20).then(function () {
       page[[r.vehicle, r.turret, r.gun, r.mode].join('|')] = out;
     });
   });
+  // ---- GUN SWITCH ACCEPTANCE (24.09, gun-switch-owner) ----------------------------------------------------------
+  // The user, 24.09: the gun picked on the chip must be the gun the emulation fires. For every pair B of a vehicle with
+  // more than one (Vz. 55 single <-> 2A magazine, the Blesk's two turrets x two automatic guns, ...): its record's hit is
+  // opened on ANOTHER pair A, B is picked (Config's Turret row, then the chip's list), and everything the emulator shows
+  // is read - the reload, the magazine, the live ring, the mode button, the heat bar, the reload's words, the panel's
+  // build line (⚙ on: read off the emulator's own block). Then B's own recorded hit is opened: the two must be the same
+  // screen (one function, no second formula), and the switched build line must print the client's own strings for B.
+  const SW = {rows: [], same: [], shells: [], resets: []};
+  const byVehicle = {};
+  ref.forEach(function (r, i) { (byVehicle[r.vehicle] = byVehicle[r.vehicle] || []).push(i); });
+  const pairTileSw = document.getElementById('ttx-pair'), listSw = document.getElementById('ttx-pair-list'), buildToggleSw = document.getElementById('ttx-build-toggle');
+  const mech = document.getElementById('aim-gun-mech'), heat = document.getElementById('aim-gun-heat'), gunReloadSw = document.getElementById('aim-gun-reload');
+  const snap = function () {
+    tick(0.05);
+    if (!buildBox.checked) click(buildToggleSw);
+    const line = ttxLineOf(lineIn(compact)).map(function (p) { return p.side[0] + ':' + p.key + '=' + p.text; }).join(' ');
+    const rows = ttxRowsIn(compact).map(function (x) { return x.getAttribute('data-key') + '=' + x.ttx.value.textContent; }).join(' ');
+    const lineParts = ttxLineOf(lineIn(compact));
+    click(buildToggleSw);
+    return {reload: gunReloadSw.textContent, mag: magStates(), ring: viewerInstance.liveRadius100 ? viewerInstance.liveRadius100.toFixed(6) : null,
+            mech: mech.hidden ? '' : mech.textContent + '|' + mech.getAttribute('aria-label') + '|' + mech.title,
+            heat: heat.hidden ? '' : heat.title, words: gunReloadSw.parentNode.title, line: line, rows: rows, parts: lineParts};
+  };
+  const pickPair = function (t, pair, again) {
+    const turretName = (t.turrets[pair.turret] || {}), row = document.getElementById('aim-cfg-turrets');
+    if (!row.hidden) {
+      const tt = row.children.filter(function (x) { return x.getAttribute('aria-label') === (turretName.userString || turretName.name); })[0];
+      if (tt && tt.getAttribute('aria-pressed') !== 'true') click(tt);
+    }
+    pairTileSw.onclick({preventDefault: function () {}});
+    const guns = listSw.children.filter(function (c) { return c.className === 'aim-pick-row' && c.getAttribute('data-turrets') === null; })[0];
+    const tile = guns ? guns.children.filter(function (x) { return x.getAttribute('aria-label') === (pair.gunUserString || pair.gun); })[0] : null;
+    if (tile && (again || tile.getAttribute('aria-pressed') !== 'true')) click(tile);
+    document.getElementById('ttx-pairs').open = false;
+  };
+  const onBefore = onBox.checked;
+  switchOn(true);
+  click(document.getElementById('fun-mode-toggle'));   // ✸: the mode button and the heat bar are there only under it
+  Object.keys(byVehicle).forEach(function (veh) {
+    const idx = byVehicle[veh];
+    if (idx.length < 2) return;
+    idx.forEach(function (bi, k) {
+      const ai = idx[k === 0 ? 1 : 0], r = ref[bi], t = files[veh];
+      const ti = t.turrets.map(function (x) { return x.name; }).indexOf(r.turret);
+      const pairB = t.configs.filter(function (c) { return c.gun === r.gun && c.turret === ti; })[0];
+      let switched = null;
+      chain = chain.then(function () { document.getElementById('hits').children[ai].onclick(); return settle(20); }).then(function () {
+        const before = gunReloadSw.textContent + '|' + magStates();
+        pickPair(byId[t.id] || t, pairB);
+        tick(0.05);
+        switched = snap();
+        switched.stored = (storedAim().pairs || {})[veh] || '';
+        switched.gunShells = document.getElementById('aim-gun-shells').children.length;
+        switched.before = before;
+        document.getElementById('hits').children[bi].onclick();
+        return settle(20);
+      }).then(function () {
+        const own = snap(), name = veh.split(':')[1] + ' ' + ref[ai].gun.slice(0, 18) + ' -> ' + r.gun.slice(0, 18) + ' @ ' + r.turret.replace(/^Turret_/, 'T').replace(/_.*$/, '');
+        const diff = ['reload', 'mag', 'ring', 'mech', 'heat', 'words', 'line', 'rows'].filter(function (f) { return switched[f] !== own[f]; });
+        SW.same.push({name: name, diff: diff.map(function (f) { return f + ': ' + String(switched[f]).slice(0, 90) + ' / ' + String(own[f]).slice(0, 90); })});
+        SW.shells.push({name: name, ok: switched.gunShells === ((pairB.shells || (byId[t.id] || t).shells[pairB.gun] || []).length), n: switched.gunShells});
+        SW.resets.push({name: name, ok: switched.stored === r.turret + '|' + r.gun, stored: switched.stored});
+        // The switched build line against the client's own strings for B (the ⚙-on stock: the page's Stock preset).
+        accept.lineRows(function (key, where, client, shown, entry) {
+          const good = client === shown || (entry && entry.ambiguous && entry.modes && Object.keys(entry.modes).some(function (m) { return entry.modes[m] === shown; }));
+          SW.rows.push({vehicle: name, key: key, where: where, client: client, page: shown, ok: !!good});
+        }, r.values, switched.parts, 'switched');
+        // Give the choice back to the record: B's own gun picked on B's own hit.
+        pickPair(byId[t.id] || t, pairB, true);
+      });
+    });
+  });
+  chain = chain.then(function () {
+    click(document.getElementById('fun-mode-toggle'));
+    switchOn(onBefore);
+    const bad = SW.same.filter(function (x) { return x.diff.length; });
+    ok('gun switch acceptance: a pair picked on another pair\'s hit shows exactly what its own recorded hit shows - reload, magazine, live ring, mode button, heat, the reload\'s words, the ⚙ build line and rows (' + (SW.same.length - bad.length) + '/' + SW.same.length + ')',
+       SW.same.length > 0 && bad.length === 0, bad.map(function (x) { return x.name + ': ' + x.diff.join('; '); }).join(' || '));
+    const good = SW.rows.filter(function (x) { return x.ok; }).length, wrong = SW.rows.filter(function (x) { return !x.ok; });
+    ok('gun switch acceptance: the switched gun\'s build line (⚙ on, stock preset) prints the client\'s own strings for that gun (' + good + '/' + SW.rows.length + ')',
+       SW.rows.length > 0 && wrong.length === 0, wrong.map(function (x) { return x.vehicle + ' ' + x.key + ' page ' + x.page + ' client ' + x.client; }).join('; '));
+    const noShell = SW.shells.filter(function (x) { return !x.ok; }), noStore = SW.resets.filter(function (x) { return !x.ok; });
+    ok('gun switch acceptance: the gun panel carries the picked gun\'s own shells, and the pick is kept per type as "turret|gun"',
+       noShell.length === 0 && noStore.length === 0, JSON.stringify(noShell.concat(noStore)).slice(0, 400));
+    const left = Object.keys(storedAim().pairs || {}).filter(function (k) { return byVehicle[k]; });
+    ok('gun switch acceptance: the recorded gun picked back gives the choice back to the record - no pick left for these vehicles', left.length === 0, left.join(', '));
+    console.log('     gun switch: ' + SW.same.length + ' switches over ' + Object.keys(byVehicle).filter(function (v) { return byVehicle[v].length > 1; }).length + ' vehicles');
+  });
   return chain.then(function () {
     if (process.env.BULLBA_TTX_RELOAD_OUT) fs.writeFileSync(process.env.BULLBA_TTX_RELOAD_OUT, JSON.stringify(page, null, 1));
     const rows = [];
@@ -6396,7 +6593,7 @@ settle(20).then(function () {
       pairTile.onclick({preventDefault: function () {}});
       const tiles = list.children[0].children;
       ok('ttx v2: the gun chip of a two-turret vehicle - ▾ for the two guns of ITS turret, and the tooltip sends the turret to Config',
-         pairsBox.getAttribute('data-many') === 'true' && /\n• Click: the other guns of this turret/.test(pairTile.title) && /picked in Config, in its Turret row/.test(pairTile.title));
+         pairsBox.getAttribute('data-many') === 'true' && /\n• Click: another gun of this turret/.test(pairTile.title) && /picked in Config, in its Turret row/.test(pairTile.title));
       ok('ttx v2: the quick list holds only the guns of the turret on the panel - 2 of the 4 pairs, the one shown pressed',
          list.children.length === 1 && tiles.length === 2 && tiles[0].getAttribute('aria-pressed') === 'true'
          && tiles.every(function (t) { return /\n• Turret: /.test(t.title) && /\n• Tier: /.test(t.title); }), tiles.map(function (t) { return t.title.slice(0, 60); }).join(' | '));
@@ -6425,7 +6622,8 @@ settle(20).then(function () {
       TX.match = function () { matches++; return keepMatch.apply(this, arguments); };
       click(document.getElementById('ttx-build-toggle'));
       TX.match = keepMatch;
-      ok('ttx v2: a repaint of the panel counts the emulator\'s pair once - the chip, the Turret row and the rows take it from ttxPaint', matches === 1, '(' + matches + ' TTX.match calls)');
+      // 24.09: the pairs are the owner's (emuIndexes), counted once per file, shooter and pick - a warm repaint asks none.
+      ok('ttx v2: a repaint of the panel counts the emulator\'s pair at most once - the chip, the Turret row and the rows take it from the owner', matches <= 1, '(' + matches + ' TTX.match calls)');
       // Review 23.09: Config away (the aim emulation off; also a record without its block, the parts view) - the turret
       // could not be picked at all; the quick list then carries the turret tiles of Config's Turret row, the same widget.
       switchOn(false);
@@ -6462,6 +6660,83 @@ settle(20).then(function () {
       // Put the page back as the sections before it left it.
       global.ArmorInspectorData.battle = keepBattle; global.ArmorInspectorData.ttx = keepTtx; global.ArmorInspectorData.scene = keepScene;
     });
+  });
+}).then(function () {
+  // ---- GUN SWITCH ON A VEHICLE WITH A SECOND MODE (24.09, gun-switch-owner) --------------------------------------------
+  // No siege vehicle of the offline files carries two guns, so one is made of the Kunze Panzer's own file (its reload is
+  // 9.3 s in travel and 12.3 s in siege): a second pair of the same turret whose gun is the same gun with other numbers
+  // in BOTH mode blocks. Picked on the first pair's hit under ✸, the emulator must run the picked gun in each mode - its
+  // travel block first, and after the mode button its siege block - exactly as that pair's own recorded hit does.
+  const KDIR = process.env.BULLBA_TTX_MODES_DIR || HERE + '../fixtures-local/ttx-offline/out/mod/ttx-modes/';
+  const KFILE = KDIR + 'germany-G147_Kunze_Panzer.js';
+  if (!fs.existsSync(KFILE)) { console.log('SKIP (the Kunze Panzer file is not on this machine: ' + KFILE + ')'); return; }
+  let K = null;
+  new Function('ArmorInspectorData', fs.readFileSync(KFILE, 'utf8'))({receive: function (x) { K = x[1]; }});
+  K.id = 'germany-SwKunze'; K.type = 'germany:SwKunze';
+  const p0 = K.configs.filter(function (c) { return c.top; })[0] || K.configs[0];
+  const other = function (b) { return Object.assign({}, b, {dispersion: b.dispersion * 1.5, aimingTime: b.aimingTime * 0.8, reloadTime: b.reloadTime * 2}); };
+  const p1 = Object.assign({}, p0, {gun: p0.gun + '_B', gunUserString: 'Gun B', top: false, aim: other(p0.aim), modeAim: other(p0.modeAim)});
+  K.configs = [p0, p1];
+  K.shells = Object.assign({}, K.shells);
+  K.shells[p1.gun] = (K.shells[p0.gun] || []).map(function (s) { return Object.assign({}, s, {name: 'B ' + s.name, caliber: s.caliber + 5}); });
+  const tname = K.turrets[p0.turret].name;
+  const parts = function () {
+    return [{id: 0, name: 'chassis', modelKey: 'k0'}, {id: 1, name: 'hull', modelKey: 'k1'}, {id: 2, name: 'turret', modelKey: 'k2'}, {id: 3, name: 'gun', modelKey: 'k3'}];
+  };
+  const hitOf = function (id, p) {
+    return {id: id, attackerId: 40, targetId: 7, direction: 'incoming', damage: 0, receivedAt: 100, points: [],
+            attacker: {name: 'SwKunze', type: K.type, gun: p.gunUserString, gunName: p.gun, turretName: tname, aim: p.aim, vehicleMode: 0,
+                       parts: parts(), gunDispersion: 0.00383},
+            target: {name: 'Beta', type: 'germany:Beta', parts: parts(), maxHealth: 1850}, warnings: []};
+  };
+  const KBATTLE = {id: 't-swk', playerVehicleId: 7, map: 'Test', warnings: [], shotEvents: [], hits: [hitOf('swk-0', p0), hitOf('swk-1', p1)]};
+  const keepBattle = global.ArmorInspectorData.battle, keepTtx = global.ArmorInspectorData.ttx, keepScene = global.ArmorInspectorData.scene;
+  global.ArmorInspectorData.battle = function (id) { return id === 't-swk' ? Promise.resolve(KBATTLE) : keepBattle(id); };
+  global.ArmorInspectorData.scene = function (b, id) { return Promise.resolve({hit: b.hits.filter(function (x) { return x.id === id; })[0], models: {}, warnings: []}); };
+  global.ArmorInspectorData.ttx = function (id) { return id === K.id ? Promise.resolve(K) : keepTtx ? keepTtx(id) : Promise.reject(new Error('none')); };
+  const tb = document.getElementById('battles');
+  tb.value = 't-swk'; tb.onchange.call(tb);
+  const mech = document.getElementById('aim-gun-mech'), reload = document.getElementById('aim-gun-reload');
+  const onBefore = onBox.checked;
+  const state = function () { tick(0.05); return {reload: reload.textContent, ring: viewerInstance.liveRadius100 ? viewerInstance.liveRadius100.toFixed(6) : null, mech: mech.hidden ? '' : mech.getAttribute('aria-pressed') + '|' + mech.title}; };
+  // Both modes of the gun on screen: travel, then the mode button and the switch time run out, siege.
+  const modes = function () {
+    const travel = state();
+    click(mech); tick(6); const siege = state();
+    click(mech); tick(6);
+    return {travel: travel, siege: siege};
+  };
+  let switched = null, own = null, recorded = null;
+  return settle(20).then(function () {
+    switchOn(true);
+    click(document.getElementById('fun-mode-toggle'));
+    document.getElementById('hits').children[0].onclick();
+    return settle(20);
+  }).then(function () {
+    recorded = modes();
+    document.getElementById('ttx-pair').onclick({preventDefault: function () {}});
+    const row = document.getElementById('ttx-pair-list').children.filter(function (c) { return c.className === 'aim-pick-row' && c.getAttribute('data-turrets') === null; })[0];
+    click(row.children.filter(function (x) { return x.getAttribute('aria-label') === 'Gun B'; })[0]);
+    switched = modes();
+    switched.caliber = document.getElementById('caliber').value;
+    document.getElementById('hits').children[1].onclick();
+    return settle(20);
+  }).then(function () {
+    own = modes();
+    ok('gun switch, second mode: the picked gun runs in both modes - its travel reload and circle, and after the mode button its siege ones (not the recorded gun\'s)',
+       switched.travel.reload !== recorded.travel.reload && switched.siege.reload !== recorded.siege.reload && switched.travel.reload !== switched.siege.reload
+       && switched.travel.ring !== recorded.travel.ring && switched.caliber === (K.shells[p1.gun][0] || {}).caliber,
+       JSON.stringify({rec: [recorded.travel.reload, recorded.siege.reload], sw: [switched.travel.reload, switched.siege.reload], cal: switched.caliber}));
+    ok('gun switch, second mode: exactly what the picked pair\'s own recorded hit shows - reload, live ring and the mode button, in travel and in siege',
+       JSON.stringify(switched.travel) === JSON.stringify(own.travel) && JSON.stringify(switched.siege) === JSON.stringify(own.siege),
+       ['travel', 'siege'].map(function (m) { return ['reload', 'ring', 'mech'].filter(function (f) { return switched[m][f] !== own[m][f]; }).map(function (f) { return m + '.' + f + ': ' + switched[m][f] + ' / ' + own[m][f]; }).join(' | '); }).join(' || '));
+    // Give the choice back to the record (Gun B picked on its own hit), and the page back to the sections after.
+    document.getElementById('ttx-pair').onclick({preventDefault: function () {}});
+    const row = document.getElementById('ttx-pair-list').children.filter(function (c) { return c.className === 'aim-pick-row' && c.getAttribute('data-turrets') === null; })[0];
+    click(row.children.filter(function (x) { return x.getAttribute('aria-pressed') === 'true'; })[0]);
+    click(document.getElementById('fun-mode-toggle'));
+    switchOn(onBefore);
+    global.ArmorInspectorData.battle = keepBattle; global.ArmorInspectorData.ttx = keepTtx; global.ArmorInspectorData.scene = keepScene;
   });
 }).then(function () {
   // ---- parts (23.09, BACKLOG 33): the outer track pair of a double-track vehicle is collision part 4 ----------

@@ -252,6 +252,10 @@ void main(){
   function markSource(){
     return `precision highp float; precision highp int;
 uniform highp sampler2D uResult; uniform bool uClassic; uniform vec2 uHatch; uniform bool uDots; uniform bool uEdges; uniform bool uOutline; uniform float uTint;
+// The composed picture as a 2D image while only the zoom changes (Surface.render, ZOOM_SETTLE): the drawing-buffer pixel of
+// the screen maps onto the pixel of the result as src = dst * uView.xy + uView.zw. (1, 1, 0, 0) - the layers' own view - is
+// every other frame, and then p is exactly the screen pixel, as it always was.
+uniform vec4 uView;
 out vec4 outputColor;
 vec3 palette(float p){vec3 lo=uClassic?vec3(.90,.20,.18):vec3(.63,.18,.55),mid=uClassic?vec3(.97,.79,.22):vec3(.95,.75,.31),hi=uClassic?vec3(.20,.79,.35):vec3(.20,.84,.76);return p<.5?mix(lo,mid,p*2.0):mix(mid,hi,p*2.0-1.0);}
 // Blue tint of every ricochet history, uTint from the slider (0 none or unticked, 0.5 default, up to 1.5): red turns crimson,
@@ -261,7 +265,10 @@ vec3 ricochetColor(){return blued(palette(0.0));}
 bool inZone(ivec2 p,ivec2 limit){float a=texelFetch(uResult,clamp(p,ivec2(0),limit),0).a;return a-4.0*floor(a/4.0)>=2.0;}
 int idAt(ivec2 p,ivec2 limit){return int(floor(texelFetch(uResult,clamp(p,ivec2(0),limit),0).a/4.0))-1;}
 void main(){
- ivec2 p=ivec2(gl_FragCoord.xy),limit=textureSize(uResult,0)-ivec2(1);
+ ivec2 q=ivec2(gl_FragCoord.xy),limit=textureSize(uResult,0)-ivec2(1);
+ ivec2 p=ivec2(floor(gl_FragCoord.xy*uView.xy+uView.zw));
+ // Zoomed out past the composed picture: nothing was composed there, so nothing is drawn (the model is inside it).
+ if(p.x<0||p.y<0||p.x>limit.x||p.y>limit.y)discard;
  vec4 src=texelFetch(uResult,p,0);
  int id=int(floor(src.a/4.0))-1;float rest=src.a-4.0*floor(src.a/4.0);bool zone=rest>=2.0;
  vec3 color=src.rgb;float alpha=zone?rest-2.0:rest;bool outlined=false;
@@ -276,7 +283,8 @@ void main(){
    // The zone takes its chance colour with the blue tint; the dots add a staggered grid of ricochet-coloured
    // pixels on top, pitch and size in whole device pixels (a fractional pitch bands against the pixel grid).
    color=blued(color);
-   if(uDots){int pitch=max(2,int(uHatch.x+.5)),size=max(1,int(uHatch.y+.5));int row=p.y/pitch,sx=(p.x+(row%2)*(pitch/2))%pitch,sy=p.y%pitch;if(sx<size&&sy<size)color=ricochet;}
+   // The grid is laid on the SCREEN's pixels (q), so a zoom drawn in 2D keeps one-pixel dots at their pitch.
+   if(uDots){int pitch=max(2,int(uHatch.x+.5)),size=max(1,int(uHatch.y+.5));int row=q.y/pitch,sx=(q.x+(row%2)*(pitch/2))%pitch,sy=q.y%pitch;if(sx<size&&sy<size)color=ricochet;}
   }
  }
  // A seam between two parts or armour groups, drawn on the side with the higher id so it stays one pixel wide.
@@ -302,7 +310,10 @@ void main(){
     // writes, and the drawing-buffer size (renderSignature). A frame that changes none of it - the camera still,
     // the live ring settling - keeps the result and runs only the mark pass. The program and the light map it was
     // made with are held beside it, so a recompiled composite or a new light target is never read as the same.
-    this.signature=new Float64Array(24);this.signatureNext=new Float64Array(24);this.signature[0]=NaN;this.composedMaterial=null;this.composedLight=null;
+    this.signature=new Float64Array(26);this.signatureNext=new Float64Array(26);this.signature[0]=NaN;this.composedMaterial=null;this.composedLight=null;
+    // The zoom drawn in 2D (render, ZOOM_SETTLE): the projection of the last frame and when it last changed, and whether a
+    // sharp composition is still due. bvhStale: the peel geometry has been posed (pose()) since the GPU BVH was built.
+    this.projectionSeen=new Float64Array(16);this.projectionAt=-Infinity;this.zoomPending=false;this.bvhStale=false;
     // The peel geometry as update() built it, so a turret drag can pose it in place (Viewer.previewPose).
     this.poseRuns=null;this.basePosition=null;this.baseNormal=null;
     // Soft lighting. `lighting` is what was asked for, `lit` what actually runs (they differ only when the
@@ -372,7 +383,7 @@ void main(){
     if(!this.compositeScene)this.compositeScene=new T.Scene();
     this.compositeQuad=new T.Mesh(new T.PlaneGeometry(2,2),this.material);this.compositeQuad.frustumCulled=false;this.compositeScene.add(this.compositeQuad);
     // Pass two is the quad the viewer keeps in its scene: the blending, depth state and order of the old composite.
-    this.markMaterial=new T.RawShaderMaterial({glslVersion:T.GLSL3,vertexShader:quadVertex,fragmentShader:markSource(),uniforms:{uResult:{value:null},uClassic:{value:false},uHatch:{value:new T.Vector2(5,1)},uDots:{value:false},uEdges:{value:true},uOutline:{value:false},uTint:{value:.5}},transparent:true,depthWrite:false,depthTest:false,toneMapped:false});
+    this.markMaterial=new T.RawShaderMaterial({glslVersion:T.GLSL3,vertexShader:quadVertex,fragmentShader:markSource(),uniforms:{uResult:{value:null},uClassic:{value:false},uHatch:{value:new T.Vector2(5,1)},uDots:{value:false},uEdges:{value:true},uOutline:{value:false},uTint:{value:.5},uView:{value:new T.Vector4(1,1,0,0)}},transparent:true,depthWrite:false,depthTest:false,toneMapped:false});
     this.quad=new T.Mesh(new T.PlaneGeometry(2,2),this.markMaterial);this.quad.frustumCulled=false;this.quad.renderOrder=0;
     this.quad.visible=visible;if(parent)parent.add(this.quad);
   };
@@ -431,6 +442,7 @@ void main(){
     // untouched and stays the one physical normal per triangle that the whole ballistic path reads.
     this.baseVisual=null;if(this.lit)this.ensureVisual();
     if(this.bounce){try{this.updateBounds(geometry);}catch(e){this.bounce=false;this.bounceReason='bvh: '+(e.message||e);console.warn('Bounced leg disabled:',this.bounceReason);}}
+    this.bvhStale=false;   // the BVH (if any) is this geometry's again
   };
   /* The visual normal, and nothing but the visual normal. Faces are joined by a shared EDGE - two shared
      corners - never by a single shared coordinate, and only inside one material id. That id is `part:name`
@@ -522,9 +534,11 @@ void main(){
   };
   // A display-only pose: the peeled geometry is re-transformed from the base update() kept, by one rigid matrix
   // per moved part, and the layers are declared stale so the next render() peels the new pose. The material
-  // table, the ids and the row order are untouched, and the BVH is deliberately left where it was - the bounced
-  // leg is off while the layers are stale, and rebuilding it is the very cost this avoids. update() puts the
-  // BVH and everything else back in step at the end of the drag.
+  // table, the ids and the row order are untouched, and the BVH is deliberately left where it was - rebuilding it
+  // is the very cost this avoids. It is therefore the OLD pose's BVH, so the bounced leg is off (bvhStale, read by
+  // render) until update() puts the BVH and everything else back in step at the end of the drag. (Before 24.09 the
+  // comment said the leg was off while the layers were stale; it was not - in 'always' mode, the default, the leg
+  // was traced through the old turret for the whole drag. Audit VIEW-01.)
   Surface.prototype.pose=function(delta){
     if(!this.poseRuns||!this.mesh||!this.mesh.geometry)return false;
     var geometry=this.mesh.geometry,position=geometry.getAttribute('position'),normals=geometry.getAttribute('normal');
@@ -548,7 +562,7 @@ void main(){
       touched=true;
     });
     if(!touched)return false;
-    position.needsUpdate=true;normals.needsUpdate=true;if(outVisual)visual.needsUpdate=true;this.key=null;
+    position.needsUpdate=true;normals.needsUpdate=true;if(outVisual)visual.needsUpdate=true;this.key=null;this.bvhStale=true;
     return true;
   };
   // A GPU BVH over the same peel geometry. It gets its own index so the peel keeps its draw order;
@@ -578,7 +592,8 @@ void main(){
     this.lightStrength=s;
     var u=this.material&&this.material.uniforms;
     if(u&&u.uLightRange)u.uLightRange.value.set(this.lightFloor(),LIGHT_MAX);
-    this.key=null;   // the composite is drawn again with the new range; the light map itself is unchanged
+    // The range is part of renderSignature: the next frame composes again with it, and the layers and the light map,
+    // which it does not touch, stay (it used to drop them - nine peels a frame while the slider was dragged; VIEW-15).
     return s;
   };
   Surface.prototype.setLighting=function(enabled){
@@ -693,20 +708,50 @@ void main(){
   // bounceMode: 'always' traces the bounced leg on every draw; 'idle' (default) only once the camera has stood
   // still for SETTLE ms - the caller redraws when bouncePending says the layer is still due. A lighter mode for
   // weaker GPUs: the direct map stays live, the hatched layer catches up after the rotation.
-  var SETTLE=150;
+  // ZOOM_SETTLE: how long the zoom must stand still before the picture drawn in 2D is composed again at its own
+  // resolution (user, 24.09: a zoom changes nothing in 3D, so while it turns the last picture is only scaled). The
+  // caller redraws when zoomPending says the sharp composition is still due, as it does for bouncePending.
+  var SETTLE=150,ZOOM_SETTLE=150;
   // Monotonic: Date.now() can step backwards when the system clock is corrected after a resume, and the settle
   // comparison below would then never be satisfied again - a full-screen composition every 160 ms while idle.
   function clock(){return root.performance&&root.performance.now?root.performance.now():Date.now();}
-  // Has the camera moved since the layers were peeled? Compared element by element; the cache is refreshed
-  // whenever it has, so the next frame compares against what is on screen.
-  Surface.prototype.cameraMoved=function(camera){
-    var cache=this.cameraCache,world=camera.matrixWorld.elements,projection=camera.projectionMatrix.elements,moved=false,i;
-    for(i=0;i<16;i++)if(cache[i]!==world[i]||cache[i+16]!==projection[i]){moved=true;break;}
-    if(moved)for(i=0;i<16;i++){cache[i]=world[i];cache[i+16]=projection[i];}
+  // How the camera differs from the one the layers were peeled with (cameraCache): 0 not at all, 1 by the ZOOM alone,
+  // 2 otherwise. A zoom - camera.zoom, its lens shift, Fit, the Auto-frame scale - moves the eye nowhere: it only changes
+  // the x/y scale and the off-centre terms of the projection (elements 0, 5, 8, 9), and then every pixel of the composed
+  // picture simply lands elsewhere on the screen, by one scale and one shift per axis (zoomView). Anything else - the
+  // eye, the look direction, near/far, the aspect - changes what each layer holds and must be peeled again. Compared
+  // element by element, nothing allocated; the cache is written by keepCamera() when the layers are peeled.
+  Surface.prototype.cameraChange=function(camera){
+    var cache=this.cameraCache,world=camera.matrixWorld.elements,projection=camera.projectionMatrix.elements,zoom=false,i;
+    for(i=0;i<16;i++)if(cache[i]!==world[i])return 2;
+    for(i=0;i<16;i++)if(cache[i+16]!==projection[i]){if(i===0||i===5||i===8||i===9)zoom=true;else return 2;}
+    return zoom?1:0;
+  };
+  Surface.prototype.keepCamera=function(camera){
+    var cache=this.cameraCache,world=camera.matrixWorld.elements,projection=camera.projectionMatrix.elements;
+    for(var i=0;i<16;i++){cache[i]=world[i];cache[i+16]=projection[i];}
+  };
+  // The 2D map from the screen's drawing-buffer pixel to the composed picture's, for a camera that differs from the
+  // layers' by the zoom alone. With the layers' projection L and the current C, a direction u = x/-z lands at
+  // ndc = P0*u - P8 (x) and P5*u - P9 (y) under either, so ndc_L = s*(ndc_C + C8) - L8 with s = L0/C0, and in pixels
+  // (pix = (ndc + 1)/2 * W) src = s*dst + W/2*(1 - s + s*C8 - L8); y the same with 5, 9 and H. Exact: the picture that
+  // is composed again once the zoom stands still lands on the very same pixels, only sharper.
+  Surface.prototype.zoomView=function(camera,out){
+    var L=this.cameraCache,C=camera.projectionMatrix.elements,buffer=this.renderer.getDrawingBufferSize(this.bufferSize);
+    var sx=L[16]/C[0],sy=L[21]/C[5];
+    return out.set(sx,sy,buffer.x/2*(1-sx+sx*C[8]-L[24]),buffer.y/2*(1-sy+sy*C[9]-L[25]));
+  };
+  // Whether the projection moved since the last frame; the moment it last did is kept, so the sharp composition waits
+  // for ZOOM_SETTLE ms of a still zoom.
+  Surface.prototype.projectionMoved=function(camera,now){
+    var seen=this.projectionSeen,projection=camera.projectionMatrix.elements,moved=false;
+    for(var i=0;i<16;i++)if(seen[i]!==projection[i]){seen[i]=projection[i];moved=true;}
+    if(moved)this.projectionAt=now;
     return moved;
   };
   // The composite's own inputs as render() has just written them, compared element by element with the last
-  // frame's and stored in place (the same no-garbage discipline as cameraCache). The layer frame - uOrigin,
+  // frame's and stored in place (the same no-garbage discipline as cameraCache), the Soft lighting depth (uLightRange)
+  // among them. The layer frame - uOrigin,
   // uAnchor, uForward, uCameraWorld, uInvProjection - changes only together with the layers (`stale`), and the
   // textures only in update(), pose() and setLighting(), which all drop the layers too. Returns true on a change.
   Surface.prototype.renderSignature=function(u){
@@ -716,8 +761,9 @@ void main(){
     next[8]=flags[0];next[9]=flags[1];next[10]=flags[2];next[11]=flags[3];
     next[12]=u.uClassic.value?1:0;next[13]=u.uOpacity.value;next[14]=u.uRicochetLoss.value;next[15]=u.uBounce.value;next[16]=u.uTint.value;
     next[17]=damage.x;next[18]=damage.y;next[19]=damage.z;next[20]=damage.w;next[21]=buffer.x;next[22]=buffer.y;
+    var range=u.uLightRange?u.uLightRange.value:null;next[23]=range?range.x:0;next[24]=range?range.y:0;
     // NaN never equals itself, so a value that is not a number keeps the old every-frame composite.
-    for(i=0;i<23;i++)if(sig[i]!==next[i]){sig[i]=next[i];changed=true;}
+    for(i=0;i<25;i++)if(sig[i]!==next[i]){sig[i]=next[i];changed=true;}
     return changed;
   };
   Surface.prototype.render=function(camera,anchor,shell,palette,opacity,quality,width,height,pixelRatio,bounceMode,mode){
@@ -734,11 +780,21 @@ void main(){
     u.uDamage.value.set(mode==='damage'&&s.alpha>0?1:0,s.alpha||0,base,modern?.1*s.spallDamage/(s.liner>0?s.liner:1):1e9);
     var pr=Math.max(1,pixelRatio||1),m=this.markMaterial.uniforms;m.uHatch.value.set(Math.max(2,this.hatch||5)*pr,pr); // dot pitch in CSS px, one CSS px per dot
     m.uDots.value=!!this.dots;m.uEdges.value=this.edges!==false;m.uOutline.value=!!this.outline;var tint=this.tint===undefined?.5:this.tint;m.uTint.value=tint;u.uTint.value=tint;m.uClassic.value=u.uClassic.value;
-    // Stale: the camera has moved, or the layers were dropped (a new pose, a new size, a new model).
-    var stale=this.cameraMoved(camera)||this.key===null,now=clock();
-    if(stale)this.movedAt=now;
+    // Stale: the camera has moved, or the layers were dropped (a new pose, a new size, a new model). A camera that
+    // differs by the zoom alone is not: while the zoom keeps changing (and for ZOOM_SETTLE ms after), the last composed
+    // picture is drawn scaled and shifted in 2D by the mark pass (uView) - no peel, no light pass, no composite - and
+    // the lines, rings, tracers and crosses over it, which are real geometry, stay sharp. Then one full composition.
+    var now=clock(),change=this.cameraChange(camera),zoomMoving=this.projectionMoved(camera,now)||now-this.projectionAt<ZOOM_SETTLE;
+    var zoom2d=change===1&&this.key!==null&&!!this.result&&zoomMoving;
+    var stale=this.key===null||change===2||(change===1&&!zoom2d);
+    this.zoomPending=zoom2d;
+    var view=this.markMaterial.uniforms.uView.value;
+    if(zoom2d)this.zoomView(camera,view);else view.set(1,1,0,0);
+    if(stale){this.movedAt=now;this.keepCamera(camera);}
     var settled=bounceMode==='always'||!(Math.max(0,now-(this.movedAt||0))<SETTLE);
-    u.uBounce.value=this.bounce&&settled?1:0;this.bouncePending=this.bounce&&!settled;
+    // The bounced leg is traced through the GPU BVH, which a previewed pose has left behind (pose(), bvhStale): off
+    // until update() rebuilds it, however long the drag holds still (VIEW-01).
+    u.uBounce.value=this.bounce&&settled&&!this.bvhStale?1:0;this.bouncePending=this.bounce&&!settled;
     if(stale){
       this.captureCamera.copy(camera);var distance=camera.position.distanceTo(anchor),span=Math.max(5,this.radius*3);this.captureCamera.near=Math.max(.01,distance-span);this.captureCamera.far=distance+span;this.captureCamera.updateProjectionMatrix();
       var p=this.peelMaterial.uniforms;p.uOrigin.value.copy(camera.position);p.uAnchor.value.copy(anchor);p.uForward.value.copy(anchor).sub(camera.position).normalize();

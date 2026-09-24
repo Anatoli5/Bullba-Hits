@@ -11,7 +11,9 @@ it before a build and refuses to build on red. Suites (they run side by side, ~1
   pytest    tests/test_*.py under CPython 3 (the exporter, the records, the page channel, the recorder on stubs)
   node      tests/*.cjs: ballistics against the client's functions, shot context, page channel, compact data reader
   page      tests/page/*: aim3_dom (app.js on a stub DOM: wiring, emulation, Config, the path matrix with painter
-            counts), tooltips_dom, gs_page, ttx_samples and ttx_accept (the panel against the client's own strings)
+            counts), tooltips_dom, gs_page, viewer_batch (the real viewer.js + screen-armor.js on a counting fake
+            renderer: passes per zoom/distance notch, shot range, camera reports, picking), ttx_samples and ttx_accept
+            (the panel against the client's own strings)
   browser   tests/page/real_page.cjs: the REAL page in a local headless Chrome/Edge on synthetic data - the path
             matrix on the rendered DOM and a leak counter over 50 scene switches
   py27      tests/py27/*.py under the client's own python27.dll (the recorder through two battles, ...)
@@ -181,7 +183,7 @@ def check_node(result):
 def check_page(result):
     exe = node()
     if not exe: return result.fail('node not found: set BULLBA_NODE to node.exe')
-    for name in ('aim3_dom', 'tooltips_dom', 'gs_page'):
+    for name in ('aim3_dom', 'tooltips_dom', 'gs_page', 'viewer_batch'):
         code, out, _ = run([exe, 'tests/page/%s.cjs' % name])
         harness_lines(result, name, code, out)
     local = os.path.join(ROOT, 'tests', 'fixtures-local')

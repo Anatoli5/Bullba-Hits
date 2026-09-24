@@ -611,57 +611,72 @@
     var browsing=!!(hit&&(hit.vehicle||hit.chosenShooter)),keep=null;
     if(hit&&hit.synthetic&&!browsing){var was=$('shell-choice').value,c0=was.indexOf('saved:')===0?candidates[Number(was.slice(6))]:null;
       keep={kind:c0?c0.kind:was||'ARMOR_PIERCING',penetration:$('penetration').value,caliber:$('caliber').value,alpha:$('alpha').value};}
-    activeHit=hit;shotContext=ArmorShotContext.resolve(hit,hit&&hit.vehicle?[]:(current&&current.shotEvents||[]));candidates=shotContext.choices;var choice=$('shell-choice');choice.replaceChildren();
-    // The list is the one place a word is needed: the five switchers' two sets share the shell's name,
-    // calibre, penetration and speed, so without the mode two entries would read exactly alike.
-    candidates.forEach(function(c,i){var mode=ArmorShotContext.modeLabel?ArmorShotContext.modeLabel(hit,c):'';
-      var o=node('option',(shellNames[c.kind]||c.kind)+' · '+c.name+(mode?' · '+mode:'')+(c.gunInstallation>0?' · ability gun':''));o.value='saved:'+i;choice.appendChild(o);});
-    Object.keys(shellNames).forEach(function(kind){var o=node('option',shellNames[kind]+' — manual');o.value=kind;choice.appendChild(o);});
+    activeHit=hit;shotContext=ArmorShotContext.resolve(hit,hit&&hit.vehicle?[]:(current&&current.shotEvents||[]));
+    // The shooter first (24.09): his gun - the recorded one, or the pair picked for his type (emuSync) - decides which
+    // shells the list carries (emuShellList: the record's, then a picked gun's own), so the list is built after him.
+    syncTargetMods(hit);syncShooterMods(hit);
+    candidates=emuShellList();var choice=$('shell-choice'),recorded=shotContext.choices,value;
     // Nothing determined (139 of 4284 recorded hits, 22.09): the model used to stay grey, which tells the user
     // nothing (owner, 22.09). It is coloured with the likeliest shell instead - one of the shooter's own of the
     // type the hit names, or, when his list holds none of that type, the type itself on manual figures. Every
     // place this shell is shown says "assumed"; it is never counted as the shell that actually flew.
     shellAssumed=-1;shellAssumedWhy='';
-    if(shotContext.index>=0)choice.value='saved:'+shotContext.index;
+    if(shotContext.index>=0)value='saved:'+shotContext.index;
     else{
-      var guess=ArmorShotContext.assume?ArmorShotContext.assume(candidates,shotContext.kind,hit&&hit.damage,shotContext.range,shotContext.mark):{index:-1,reason:''};
+      var guess=ArmorShotContext.assume?ArmorShotContext.assume(recorded,shotContext.kind,hit&&hit.damage,shotContext.range,shotContext.mark):{index:-1,reason:''};
       shellAssumed=guess.index;shellAssumedWhy=guess.reason||'';
       // Why the record could not name the shell comes before how the page picked one: the two reasons the
       // resolver knows (22.09) are worth more than "the deepest penetration" - the shot's own ballistics
       // fit no shell the shooter carries, or the vehicle switches its shell parameters and the record does
       // not say which state was on.
       if(shotContext.unresolvedWhy)shellAssumedWhy=shotContext.unresolvedWhy+(guess.reason?', and of the rest '+guess.reason:'');
-      choice.value=guess.index>=0?'saved:'+guess.index:shotContext.kind||'ARMOR_PIERCING';
+      value=guess.index>=0?'saved:'+guess.index:shotContext.kind||'ARMOR_PIERCING';
     }
     // A browsed vehicle has no hit to identify a shell, so resolve() leaves the index at -1. The shooter's own
     // list is nevertheless the right set of choices: preselect the first AP-like shell so the model is coloured
     // the moment a vehicle is picked, instead of “pick a shell”.
-    if(browsing&&candidates.length){var first=candidates.findIndex(function(c){return c.kind==='ARMOR_PIERCING';});
-      if(first<0)first=candidates.findIndex(function(c){return c.kind==='ARMOR_PIERCING_CR';});if(first<0)first=0;choice.value='saved:'+first;shellAssumed=-1;}
+    if(browsing&&recorded.length){var first=recorded.findIndex(function(c){return c.kind==='ARMOR_PIERCING';});
+      if(first<0)first=recorded.findIndex(function(c){return c.kind==='ARMOR_PIERCING_CR';});if(first<0)first=0;value='saved:'+first;shellAssumed=-1;}
+    paintShellLists(hit);
+    // The shell on screen belongs to the gun the emulation fires (24.09): with a picked gun of the type, its own shell of
+    // the same type, else its first; the record's own stays in the list to compare with.
+    if(!keep&&emuShellGun){var c1=value.indexOf('saved:')===0?candidates[Number(value.slice(6))]:null,pick=emuShellPick(c1,c1?'':value);if(pick)value=pick;}
+    choice.value=value;
+    if(keep){choice.value=keep.kind;manualPen=keep.penetration;manualAlpha=keep.alpha;$('penetration').value=keep.penetration;$('caliber').value=keep.caliber;$('alpha').value=keep.alpha;penLabel(false);updateShell();}
+    else selectShell();
+    // The shooter's chips just changed, so the shell block wants a different width: re-measure the heading.
+    scheduleLayout();
+  }
+  // The shell lists of the scene, all from `candidates`: the heading's select and its chips, and the gun panel's icons
+  // (paintGunShells). A new scene (prepareShell) and a new gun with the scene standing (emuShells) build them here.
+  function paintShellLists(hit){
+    var choice=$('shell-choice');choice.replaceChildren();
+    // The list is the one place a word is needed: the five switchers' two sets share the shell's name,
+    // calibre, penetration and speed, so without the mode two entries would read exactly alike. A picked gun's
+    // shells (24.09) carry its name.
+    candidates.forEach(function(c,i){var mode=ArmorShotContext.modeLabel?ArmorShotContext.modeLabel(hit,c):'';
+      var o=node('option',(shellNames[c.kind]||c.kind)+' · '+c.name+(mode?' · '+mode:'')+(c.gunInstallation>0?' · ability gun':'')+(c.emuGun?' · '+c.emuGunName:''));o.value='saved:'+i;choice.appendChild(o);});
+    Object.keys(shellNames).forEach(function(kind){var o=node('option',shellNames[kind]+' — manual');o.value=kind;choice.appendChild(o);});
     // P2/P4 (22.09): a shooter whose vehicle is built twice brings both sets of shells. The chip of a
     // second-mode shell carries ◐ beside the ● of the shell that flew and the ◌ of an assumed one - no
     // new words on the tile; the client's own name for the state (straight / angled armour, no screen /
-    // screen, the Gorilla's low charge) and what it means are in the tooltip.
+    // screen, the Gorilla's low charge) and what it means are in the tooltip. A picked gun's shell (24.09) wears ⇆.
     $('shell-quick').replaceChildren();candidates.forEach(function(c,i){var actual=i===shotContext.index,assumed=i===shellAssumed,
       second=c.vehicleMode===1,mode=ArmorShotContext.modeLabel?ArmorShotContext.modeLabel(hit,c):'',
-      b=node('button',(actual?'● ':assumed?'◌ ':'')+(second?'◐ ':'')+(shellNames[c.kind]||c.kind)+' '+Math.round(c.penetration100)+(c.gunInstallation>0?' ✦':''),'shell-chip');
+      b=node('button',(actual?'● ':assumed?'◌ ':'')+(second?'◐ ':'')+(shellNames[c.kind]||c.kind)+' '+Math.round(c.penetration100)+(c.gunInstallation>0?' ✦':'')+(c.emuGun?' ⇆':''),'shell-chip');
       // Tooltip markup (tooltips.js): the shell is the heading, then whose it is, then its points.
       b.dataset.shell='saved:'+i;b.title=c.name+', '+c.caliber+' mm\n'
-        +(actual?(second?'The shooter fired in his second mode; the client’s numbers for that mode are used.':'Type from the hit.')
+        +(c.emuGun?'A shell of the gun picked on the characteristics panel - the gun the emulation fires.\n• Gun: '+c.emuGunName
+          :actual?(second?'The shooter fired in his second mode; the client’s numbers for that mode are used.':'Type from the hit.')
           :assumed?'Assumed: the record does not say which shell it was'+(shellAssumedWhy?', so '+shellAssumedWhy+' was taken':'')+'.'
           :second?'The same gun in the vehicle’s second mode.':'Compare with this shell.')
         +(c.gunInstallation>0?'\n• Ability gun'+(c.gun?': '+c.gun:''):'')
         +(mode?'\n• Mode: '+mode:'')
         // The live state of the shooter's gun at the shot, one short line per mechanic the record carries
         // (22.09). It belongs to the shot, not to one shell, so every chip of this hit says the same.
-        +((shotContext.gunNotes||[]).length?'\n\nGun at the shot:\n• '+shotContext.gunNotes.join('\n• '):'');
+        +(!c.emuGun&&(shotContext.gunNotes||[]).length?'\n\nGun at the shot:\n• '+shotContext.gunNotes.join('\n• '):'');
       b.onclick=function(){choice.value='saved:'+i;selectShell();};$('shell-quick').appendChild(b);});
     paintGunShells();
-    syncTargetMods(hit);syncShooterMods(hit);
-    if(keep){choice.value=keep.kind;manualPen=keep.penetration;manualAlpha=keep.alpha;$('penetration').value=keep.penetration;$('caliber').value=keep.caliber;$('alpha').value=keep.alpha;penLabel(false);updateShell();}
-    else selectShell();
-    // The shooter's chips just changed, so the shell block wants a different width: re-measure the heading.
-    scheduleLayout();
   }
   // The spall-liner factor of the vehicle under fire: the hit's target, or the browsed vehicle's own record.
   // Records written before 0.7.13 carry none, and without one the law reads the target as unlined (1.0).
@@ -1818,24 +1833,25 @@
   // on another shooter stays his, and comes back with him.
   function syncShooterMods(hit) {
     var a = hit && hit.attacker || null, type = a && a.type ? String(a.type) : '';
-    // A different shooter is a different gun: the running exponential, the shot fired and the reload
-    // belong to the one that has just left the screen and would otherwise be read as this one's.
-    var changed = type !== shooterType;
     shooterType = type;
     aimRev++; shooterRev++;
     // What he may mount is read before anything is normalised: aimValues drops a device this vehicle
     // cannot take, and it has to know which vehicle that is. So is what the battle and the vehicle's own
-    // locks allow (S3): it decides which kinds of the configuration are applied at all.
+    // locks allow (S3): it decides which kinds of the configuration are applied at all. The fitment is the
+    // vehicle type's (its tags and tier), not the gun's: another gun changes nothing in it.
     shooterFit = aimFitment(a);
     shooterPolicy = aimPolicyFor(hit);
-    paintAimMechanics();
     var name = type && aimStore.chosen[type] ? aimStore.chosen[type] : '';
     var values = name ? aimPreset(name) : null;
     if (!values) { name = AIM_BUILT_IN[0].name; values = aimPreset(name); }
     shooterConfig = values; shooterPreset = name;
-    if (changed) resetAimRun();
-    paintAimConfig();
     ttxSync(hit);   // the characteristics panel follows the shooter (read once per type, painted here)
+    // A different gun - another shooter, another recorded gun of the same type, a pair picked for this type (24.09,
+    // emuSync) - starts the run over: the running exponential, the shot fired and the reload belong to the gun that
+    // has just left the screen. After ttxSync, whose file says which gun a pick is.
+    emuSync();
+    paintAimMechanics();
+    paintAimConfig();
   }
   // --- The Configuration popover ----------------------------------------------------------------
   // The one editor of the configuration, on the page's own popover mechanism: a <details> with a
@@ -2760,7 +2776,7 @@
     var mods = aimBattleModifiers(battle);
     if (!mods.any) return [];
     var mode = battle ? battleModeOf(battle) : null, name = mode && mode.name ? mode.name : 'This mode';
-    var a = activeHit && activeHit.attacker && activeHit.attacker.aim;
+    var at = emuAttacker(activeHit), a = at && at.aim;
     var live = a && a.aimFrom !== 'compact';
     var applied = mods.rules.map(function (r) { return AIM_MODIFIER_WORDS[r.field]; });
     return [name + ' sent this battle ' + (mods.rules.length + mods.unknown.length) + ' modifier'
@@ -2818,6 +2834,139 @@
     });
     return out;
   }
+  // ===== THE SHOOTER'S EMULATED GUN: ONE OWNER (24.09) =====
+  // The user, 24.09: "WZ-55 has two guns, a single-shot one and a magazine one; I change the gun in the middle of the
+  // mode and the gun type does not change... on a gun change everything must be reset and rebuilt for the new gun". The
+  // emulation read the RECORDED gun (hit.attacker) while the characteristics panel's gun chip and Config's Turret row
+  // picked a pair of their own (aimStore.pairs, per type): two sources of one fact. Now the pair picked for this type is
+  // THE input of the emulation - the recorded gun where none is picked, or the pick is the recorded gun itself:
+  //   - emuIndexes(): the recorded pair (TTX.match) and the pair the emulation fires, counted once per file, shooter
+  //     and pick (the panel, the chip, the Turret row and every block read take them from here);
+  //   - emuAttacker(hit): the attacker every emulation reader takes - the record's own, or a view of it carrying the
+  //     picked pair's gun and turret (emuAimView), memoised, so its block is one object until the input changes;
+  //   - emuSync()/emuChanged(): the one door a change comes through - a new shooter (syncShooterMods), his file coming
+  //     (ttxSync, ttxRefresh), a gun or a turret picked (ttxChoose): a new gun starts the run over (resetAimRun: loaded,
+  //     cold, aimed, the mechanic from its record), its shells come into the list (emuShellList) and the one finisher
+  //     paints the scene (sceneShown).
+  // The recorded shot keeps its own figures: the recorded and the nominal ring, the tracer, the hit's shell and result.
+  var emuIdx = {t: null, at: null, key: null, rec: -1, i: -1}, emuMemo = null, emuKey = '';
+  function emuIndexes() {
+    var at = activeHit && activeHit.attacker || null, t = TTX && ttxData && at && String(at.type || '') === ttxType ? ttxData : null;
+    var key = t ? aimStore.pairs[ttxType] || '' : '';
+    if (emuIdx.t !== t || emuIdx.at !== at || emuIdx.key !== key) {
+      var rec = t ? TTX.match(t, at) : -1, i = key && rec >= 0 ? TTX.pairIndex(t, key) : -1;
+      emuIdx = {t: t, at: at, key: key, rec: rec, i: i >= 0 ? i : rec};
+    }
+    return emuIdx;
+  }
+  // The fields of the HULL, not of the gun or the turret: the recorded vehicle's own. It keeps its chassis when its gun
+  // changes (the file's pairs all stand on the best one), and a live block carries the battle's modifiers on them.
+  var EMU_HULL_FIELDS = ['movementFactor', 'rotationFactor', 'hullRotationSpeed', 'speedForward', 'speedBackward', 'hullAiming'];
+  // One block of the picked pair as the emulation reads it: the file's (the gun, the turret, the reload, the mechanics -
+  // aim_block of that very pair), with the record's hull fields (`hull`, when the record has a block of this mode) and
+  // the record's four miscAttrs factors, aimFrom and compactFactors (`rec`) - the field modifications, the devices and the
+  // battle are the vehicle's, not the gun's; the same overlay modeAimOf lays on the file's second block. A live record
+  // already carries the battle's modifiers and aimBlockData adds them only to a rebuilt block, so here they go on the
+  // file's own fields. No second formula: every reader reads this block as it reads a recorded one.
+  function emuAimView(src, rec, hull, mods) {
+    if (!(src && src.dispersion > 0)) return null;
+    var view = Object.assign({}, src);
+    if (hull) EMU_HULL_FIELDS.forEach(function (k) { if (hull[k] !== undefined) view[k] = hull[k]; else delete view[k]; });
+    AIM_BARE_FACTORS.forEach(function (k) { if (rec[k] !== undefined) view[k] = rec[k]; else delete view[k]; });
+    if (rec.aimFrom) view.aimFrom = rec.aimFrom; else delete view.aimFrom;
+    if (rec.compactFactors) view.compactFactors = rec.compactFactors; else delete view.compactFactors;
+    if (mods && rec.aimFrom !== 'compact') mods.rules.forEach(function (r) {
+      if (hull && EMU_HULL_FIELDS.indexOf(r.field) >= 0) return;
+      var v = Number(view[r.field]);
+      if (isFinite(v)) view[r.field] = aimModifierApply(r, v);
+    });
+    return view;
+  }
+  function emuAttacker(hit) {
+    var at = hit && hit.attacker;
+    if (!at || hit !== activeHit || !(at.aim && at.aim.dispersion > 0)) return at;
+    var x = emuIndexes();
+    if (x.i < 0 || x.i === x.rec) return at;
+    var battle = activeHit.vehicle ? null : current, mods = aimBattleModifiers(battle);
+    mods = mods && mods.rules.length ? mods : null;
+    if (!emuMemo || emuMemo.at !== at || emuMemo.t !== x.t || emuMemo.i !== x.i || emuMemo.mods !== mods) {
+      var pair = x.t.configs[x.i], mode = at.vehicleMode === 1 ? 1 : 0, second = pair.modeAim && pair.modeAim.dispersion > 0 ? pair.modeAim : null;
+      // The recorded block is the recorded mode's (vehicleMode), the record's modeAim the other's: the pair's blocks go
+      // the same way, each with the hull of the record's block of its mode. A record without a second block gets none
+      // here either: modeAimOf then takes the pair's from the file under ✸, exactly as it does for the recorded gun.
+      var own = mode === 1 && second ? second : pair.aim, other = second ? (mode === 1 ? pair.aim : second) : null;
+      var recOther = at.modeAim && at.modeAim.dispersion > 0 && (at.modeAimMode === 0 || at.modeAimMode === 1) ? at.modeAim : null;
+      var view = Object.assign({}, at, {aim: emuAimView(own, at.aim, at.aim, mods), gunName: pair.gun, gun: pair.gunUserString || pair.gun,
+        turretName: ((x.t.turrets || [])[pair.turret] || {}).name || at.turretName, emuPair: x.i});
+      var otherView = other && recOther ? emuAimView(other, at.aim, recOther, mods) : null;
+      if (otherView) { view.modeAim = otherView; view.modeAimMode = 1 - mode; }
+      else { delete view.modeAim; delete view.modeAimMode; }
+      emuMemo = {at: at, t: x.t, i: x.i, mods: mods, view: view.aim ? view : at};
+    }
+    return emuMemo.view;
+  }
+  // What the run is for: the shooter's type and the gun it fires - the picked pair, else the recorded gun.
+  function emuKeyNow() {
+    var at = activeHit && activeHit.attacker, x = emuIndexes();
+    if (!at) return '';
+    return String(at.type || '') + '|' + (x.i >= 0 && x.i !== x.rec ? 'pair:' + TTX.pairKey(x.t, x.i)
+      : 'rec:' + String(at.gunName || at.gun || '') + '|' + String(at.turretName || ''));
+  }
+  // A new gun: the run starts over for it, exactly as for a new shooter. True when the gun changed.
+  function emuSync() {
+    var key = emuKeyNow();
+    if (key === emuKey) return false;
+    emuKey = key;
+    resetAimRun();
+    return true;
+  }
+  // The gun changed with the scene standing - a gun or a turret picked, the shooter's file come: the run starts over,
+  // the words of the reload and the shells follow the new gun, and the one finisher paints everything that depends on it.
+  function emuChanged() {
+    if (!activeHit || !emuSync()) { ttxPaint(); return; }
+    sceneBuild = true;
+    try { paintAimMechanics(); emuShells(); }
+    finally { sceneBuild = false; }
+    sceneShown();
+  }
+  // THE SHELLS OF THE EMULATED GUN (24.09). A picked gun that is not the recorded one brings its own shells - the file's
+  // (shells[gun], or the pair's own list), the same objects a record's availableShells are - after the record's in the
+  // list, each tagged with its gun; the record's stay, so the hit's own shell is still there to compare. The same gun on
+  // another turret brings none: it fires the same shells. emuShellGun names the gun whose shells were added ('' none).
+  var emuShellGun = '';
+  function emuShellList() {
+    var base = shotContext ? shotContext.choices : [], x = emuIndexes();
+    var pair = x.i >= 0 && x.i !== x.rec ? x.t.configs[x.i] : null, recPair = pair ? x.t.configs[x.rec] : null;
+    var shells = pair ? ttxShellsOf(x.t, pair) : [];
+    if (!pair || !shells.length || (pair.gun === recPair.gun && shells === ttxShellsOf(x.t, recPair))) { emuShellGun = ''; return base; }
+    emuShellGun = pair.gun;
+    return base.concat(shells.map(function (s) { return Object.assign({}, s, {emuGun: pair.gun, emuGunName: pair.gunUserString || pair.gun}); }));
+  }
+  // The shell on screen belongs to the gun the emulation fires. With another gun's shells in the list, a shell of the
+  // record's gun gives way to that gun's of the same type, else to its first; back on the recorded gun, a shell of the
+  // gun that went gives way to the hit's own, else to the record's of the same type, else to its first. '' when the
+  // shell `was` (or the manual `kind`) already belongs to it, or the gun has no shell to take.
+  function emuShellPick(was, kind) {
+    var gun = emuShellGun, mine = function (c) { return (c.emuGun || '') === gun && !(Number(c.gunInstallation) > 0); };
+    if (was && (was.emuGun || '') === gun) return '';
+    if (!was && !gun) return '';
+    if (!gun && shotContext && shotContext.index >= 0) return 'saved:' + shotContext.index;
+    var want = was ? was.kind : kind, k = candidates.findIndex(function (c) { return mine(c) && c.kind === want; });
+    if (k < 0) k = candidates.findIndex(mine);
+    return k >= 0 ? 'saved:' + k : '';
+  }
+  // The gun changed with the scene standing (emuChanged): the list is taken again and the shell on screen follows it.
+  function emuShells() {
+    var choice = $('shell-choice'), value = choice.value, was = value.indexOf('saved:') === 0 ? candidates[Number(value.slice(6))] || null : null;
+    candidates = emuShellList();
+    paintShellLists(activeHit);
+    var k = was ? candidates.indexOf(was) : -1;
+    if (k < 0 && was && was.emuGun) k = candidates.findIndex(function (c) { return c.emuGun === was.emuGun && c.kind === was.kind && c.name === was.name && c.caliber === was.caliber; });
+    // A manual shell is the user's own figures: it stays whatever the gun.
+    var pick = was ? emuShellPick(k >= 0 ? candidates[k] : was, '') : '';
+    choice.value = pick || (k >= 0 ? 'saved:' + k : was ? (shotContext && shotContext.index >= 0 ? 'saved:' + shotContext.index : candidates.length ? 'saved:0' : 'ARMOR_PIERCING') : value);
+    selectShell();
+  }
   // THE SHOOTER'S CIRCLE IN THE MODE THE SHOT WAS FIRED IN (B5, 23.09). A vehicle built twice changes its circle in
   // the second mode far more often than its shells - 34 of the client's 79 siege files (the Strv 107-12 0.29 -> 0.24
   // m/100 m and 3.0 -> 1.0 s, the Contriver's salvo 0.33 -> 1.1 and afterShot 4 -> 8) - while the recorded block is the
@@ -2829,7 +2978,7 @@
   // block's provenance (aimFrom, compactFactors): both come from the same descriptor and the same devices.
   // `want` (BACKLOG 37): the mode the ✸ layer puts the shooter in - the Strv 107-12's pillbox is the siege mode whatever
   // the shot was recorded in (xiSiegeMode); undefined, the recorded mode decides as before.
-  var aimModeFrom = null, aimModeView = null, modeTtxView = null, modeTtxPair = null;
+  var aimModeFrom = null, aimModeView = null, modeTtxView = null;
   // THE OTHER MODE'S BLOCK (23.09, outputs/second-modes-2026-09-23.md 5.2 p. 3): {block, mode, from}, or null.
   //   1. the record's own attacker.modeAim (the recorder since the build after 0.7.28; an older record gets it at
   //      publish, exporter.fix_mode_blocks);
@@ -2840,13 +2989,12 @@
   // The block carries everything itself - circle, aiming, stabilisation, after-shot term, top speed, hull and turret
   // traverse, reload, burst - so there is no second formula anywhere: whoever reads a block reads this one too.
   function modeAimOf(hit) {
-    var at = hit && hit.attacker, a = at && at.aim, m = at && at.modeAim;
+    var at = emuAttacker(hit), a = at && at.aim, m = at && at.modeAim;
     if (!(a && a.dispersion > 0)) return null;
     if (m && m.dispersion > 0 && (at.modeAimMode === 0 || at.modeAimMode === 1)) return {block: m, mode: at.modeAimMode, from: 'record'};
     if (!funOn() || hit !== activeHit || !ttxData || !TTX) return null;
-    // The pair is looked up once per file and shooter, not on every read of the block (several a frame).
-    if (!modeTtxPair || modeTtxPair.t !== ttxData || modeTtxPair.at !== at) modeTtxPair = {t: ttxData, at: at, i: ttxEmuIndex()};
-    var i = modeTtxPair.i, pair = i >= 0 ? ttxData.configs[i] : null;
+    // The pair is looked up once per file, shooter and pick (emuIndexes), not on every read of the block (several a frame).
+    var i = emuIndexes().i, pair = i >= 0 ? ttxData.configs[i] : null;
     if (!pair || !(pair.modeAim && pair.modeAim.dispersion > 0) || !(pair.aim && pair.aim.dispersion > 0)) return null;
     var own = at.vehicleMode === 1 ? 1 : 0, src = own === 1 ? pair.aim : pair.modeAim;
     if (!modeTtxView || modeTtxView.a !== a || modeTtxView.src !== src) {
@@ -2859,7 +3007,7 @@
     return {block: modeTtxView.view, mode: 1 - own, from: 'ttx'};
   }
   function aimOfHit(hit, want) {
-    var at = hit && hit.attacker, a = at && at.aim, sec = modeAimOf(hit), m = sec && sec.block;
+    var at = emuAttacker(hit), a = at && at.aim, sec = modeAimOf(hit), m = sec && sec.block;
     if (!m || !(m.dispersion > 0) || !(a && a.dispersion > 0)) return a;
     var mode = want;
     if (mode !== 0 && mode !== 1) {
@@ -3082,7 +3230,7 @@
   //     and it stops the moment it is there (autoStop). Measured by the viewer (aimBeyond: two directions, no ray).
   var AIM_NO_KEYS = {}, AIM_AUTO_KEYS = {}, aimAutoTurn = false;
   function aimNoSpotTurn() {
-    var modes = ttxData && ttxData.vehicle && ttxData.vehicle.modes, a = activeHit && activeHit.attacker && activeHit.attacker.aim;
+    var modes = ttxData && ttxData.vehicle && ttxData.vehicle.modes, at = emuAttacker(activeHit), a = at && at.aim;
     if (modes && modes.wheeled !== undefined) return !!modes.wheeled && !modes.onSpotRotation;
     return !!(a && a.siegeMode && a.siegeMode.kind === 'wheeled');
   }
@@ -3264,15 +3412,19 @@
     return c.kind === 'HIGH_EXPLOSIVE' && c.mechanics === 'MODERN' ? 'HIGH_EXPLOSIVE_MODERN' : c.kind;
   }
   function shellIconTitle(c) {
-    return tipJoin([c.name, '• Type: ' + (shellNames[c.kind] || c.kind), '• Penetration: ' + Math.round(c.penetration100) + ' mm',
+    return tipJoin([c.name, 'One of the gun’s shells: pressed, the scene and the ⌖ shots use it.', '• Type: ' + (shellNames[c.kind] || c.kind), '• Penetration: ' + Math.round(c.penetration100) + ' mm',
       c.alpha > 0 ? '• Damage: ' + Math.round(c.alpha) + ' HP' : null,
-      c.gunInstallation > 0 ? '• Ability gun' + (c.gun ? ': ' + c.gun : '') : null, '', '• Click: use this shell']);
+      c.gunInstallation > 0 ? '• Ability gun' + (c.gun ? ': ' + c.gun : '') : null, c.emuGun ? '• Gun: ' + c.emuGunName : null, '', '• Click: use this shell']);
   }
   function paintGunShells() {
     var box = $('aim-gun-shells');
     if (!box) return;
     box.replaceChildren();
+    // The gun the emulation fires (24.09): with a gun picked on the characteristics panel, only its own shells.
+    var shown = 0;
     candidates.forEach(function (c, i) {
+      if ((c.emuGun || '') !== emuShellGun) return;
+      shown++;
       var b = node('button', undefined, 'aim-shell');
       b.type = 'button';
       b.dataset.shell = 'saved:' + i;
@@ -3284,7 +3436,7 @@
       b.onclick = function () { $('shell-choice').value = 'saved:' + i; selectShell(); };
       box.appendChild(b);
     });
-    box.hidden = !candidates.length;
+    box.hidden = !shown;
   }
   // The load state, small and iconic, no prose: the countdown while the next round is loading, otherwise the
   // gun's own reload time, and the magazine beside it. A record with no reload at all says so with a dash - the
@@ -4298,7 +4450,7 @@
   function siegeNum(v, fallback) { var n = Number(v); return v !== null && v !== undefined && isFinite(n) && n >= 0 ? n : fallback; }
   // The mode switch of the shooter: the record's block, else his pair's in the characteristics file, else `base`.
   function siegeModeOf(hit, base) {
-    var at = hit.attacker, sm = at.aim && at.aim.siegeMode;
+    var at = emuAttacker(hit), sm = at.aim && at.aim.siegeMode;
     if (sm && SIEGE_KINDS[sm.kind]) return {sm: sm, a: at.aim, from: 'record'};
     if (ttxData && TTX && hit === activeHit) {
       var i = ttxEmuIndex(), pa = i >= 0 ? ttxData.configs[i].aim : null;
@@ -4363,7 +4515,7 @@
     if (s && s.kind !== 'siege') return s;
     var sg = siegeSpecOf(hit, s);
     if (sg) return sg;
-    var list = at.aim && Array.isArray(at.aim.gunMechanics) ? at.aim.gunMechanics : [];
+    var ea = emuAttacker(hit).aim, list = ea && Array.isArray(ea.gunMechanics) ? ea.gunMechanics : [];
     if (list.indexOf('chargeableBurst') >= 0) return XI_MECHANICS['usa:A179_Black_Rock'];
     return rocketSpecOf(hit);
   }
@@ -4695,6 +4847,8 @@
   // Nothing of it survives ✸ switching, a new shooter or the emulation starting over (circleReset).
   function xiReset() {
     xiMech = null; xiAimView = null; xiMarkState = null; xiSpecHit = null; xiSpecVal = null; xiSpecTtx = null; xiShellBack = '';
+    // The button's words go with the state (24.09): the next shooter or gun of the same kind and state has other numbers.
+    xiPaintKey = ''; xiTitleKey = '';
     xiHoldCancel();
     if (xiTimer) window.clearTimeout(xiTimer);
     xiTimer = 0;
@@ -4939,7 +5093,7 @@
           '\n• Cooldown: ' + s.cooldown + ' s, from the round' +
           stock + '\nThis page’s readings: the marking round itself does not get the ×' + XI_MARK + '; any hit marks, a ricochet too.' + from;
       case 'weapon':
-        var sec = activeHit && activeHit.attacker && activeHit.attacker.aim && activeHit.attacker.aim.secondary;
+        var ea = emuAttacker(activeHit), sec = ea && ea.aim && ea.aim.secondary;
         return head + 'second gun\n• In hand: ' + (m.weapon === 1 ? s.what : 'the main gun') +
           '\n• Press: take up ' + (m.weapon === 1 ? 'the main gun' : s.what) +
           '\nEach gun has its own circle and reload: the one put away goes on loading, and the shell on screen follows the gun.' +
@@ -4977,7 +5131,7 @@
   // The words of a second mode: the state and the switch, what a touch (and the 107-12's hold) does, the client's
   // rules while it switches, the two modes' numbers, and what the page does and does not run.
   function xiSiegeTitle(m, now, head, from) {
-    var s = m.spec, k = SIEGE_KINDS[s.mode] || SIEGE_KINDS.hydraulic, at = activeHit && activeHit.attacker || {}, a = at.aim || {};
+    var s = m.spec, k = SIEGE_KINDS[s.mode] || SIEGE_KINDS.hydraulic, at = emuAttacker(activeHit) || {}, a = at.aim || {};
     var sec = s.second, first = sec && sec.mode === 0 ? sec.block : a, second = sec && sec.mode === 1 ? sec.block : sec ? a : null;
     var words = function (st) { return st === 2 ? 'the pillbox' : st === 1 ? k.on : k.off; }, out;
     if (s.mode === 'auto') {
@@ -5318,14 +5472,20 @@
   }
   // Header line: the verdict log is on, with the count so far; the (i) explains what it is for.
   function verdictStatus(){var e=$('connection');if(!e)return;e.textContent='Statistics log \u00b7 '+verdictLines+' points'+(verdictQueue.length?' \u00b7 checking '+verdictQueue.length+' more':'');}
+  // THE SHOT RANGE (user, 24.09; audit VIEW-03): how far the shell flies - from the camera to the HIT POINT, not to the
+  // orbit centre - which the shell, the panels, the map and the verdict line are all taken at. The viewer owns the figure
+  // (viewer.shotRange); switching the orbit centre keeps the camera and so keeps it.
+  function shotRange(){return viewer?viewer.shotRange():100;}
   function shotStats(){
     if(sceneBuild)return;   // a scene half built: its finisher (sceneShown) takes the figures once
     var choice=$('shell-choice').value,c=choice.indexOf('saved:')===0?candidates[Number(choice.slice(6))]:null;
-    var range=viewer?viewer.distance:100;
+    var range=shotRange();
     var pen=Number($('penetration').value),cal=Number($('caliber').value),alphaValue=$('alpha').value,pool=manualPool();
     var shell=shellAt(c,choice,pen,cal,range,activeHit,pool,alphaValue),r=viewer&&viewer.shotProbability(shell),output=$('shot-chance');
     var pinned=!!(viewer&&viewer.pinned),line=armorLine(r,shell?shell.penetration:null,range);fillPanel('shot',line,shell&&shell.alpha);
-    logVerdicts(shell);
+    // A shell of a gun picked on the characteristics panel (24.09) is not the record's: the Statistics log keeps one
+    // line per point and shell TYPE (tools/verdicts_from_log.py), and another gun's AP would take the recorded AP's place.
+    if(!(c&&c.emuGun))logVerdicts(shell);
     // The tile's own tooltip says what its number is before it says where the line comes from.
     $('shot-panel').title=(damageView?'Expected damage on the hit line\nPer shot, as a share of the shell’s alpha:\n• Penetration: the chance × alpha\n• No penetration: the reconstructed non-penetration damage\nThe expectation the shot had, not the rolled RNG: the record holds what it did.':shotPanelTitle)+markNote(shell&&shell.alpha);
     aimTitle();
@@ -5404,7 +5564,7 @@
     var choice=$('shell-choice').value,c=choice.indexOf('saved:')===0?candidates[Number(choice.slice(6))]:null;
     var penetration=Number($('penetration').value),caliber=Number($('caliber').value),valid=!!choice&&penetration>0&&penetration<=3000&&caliber>0&&caliber<=1000;
     var alphaField=$('alpha').value,alpha=Number(alphaField);
-    var distance=viewer?viewer.distance:100,shell=shellAt(c,choice,penetration,caliber,distance,activeHit,manualPool(),alphaField);
+    var distance=shotRange(),shell=shellAt(c,choice,penetration,caliber,distance,activeHit,manualPool(),alphaField);
     // An edited alpha is an edit like an edited penetration or calibre: the shell stops being the record's.
     var edited=c&&(penetration!==c.penetration100||caliber!==c.caliber||(alpha>0?Math.round(c.alpha)!==Math.round(alpha):c.alpha>0));
     var actual=shotContext&&choice==='saved:'+shotContext.index&&!edited;
@@ -5515,7 +5675,7 @@
     var chance=$(prefix+'-chance');chance.replaceChildren(document.createTextNode(line.label));chance.style.color=line.color;
     if(alpha>0){var a=node('span','/ '+Math.round(alpha),'info-alpha');a.title='The shell’s alpha damage, HP';chance.appendChild(a);}chips($(prefix+'-pen'),{groups:by('pen')});chips($(prefix+'-details'),{groups:by('rest')});chips($(prefix+'-extra'),{groups:by('screen')});}
   function inspectArmor(r){
-    var range=viewer?viewer.distance:100;
+    var range=shotRange();
     fillPanel('probe',armorLine(r,viewer&&viewer.shell?viewer.shell.penetration:null,range),viewer&&viewer.shell&&viewer.shell.alpha);
   }
   // Heading: which battle this is - date and start time, the map, and the vehicle the player was in.
@@ -6215,7 +6375,8 @@
   // Keep a visible reason when the GPU chance map cannot be drawn.
   if(viewer)viewer.onBackend=function(text){backendText=text;frameBadge();var unavailable=/^Estimate unavailable:/.test(text);$('backend-badge').hidden=!unavailable;$('backend-badge').textContent=unavailable?text:'';};
   var shellTimer=0; // the end of a wheel glide (onCamera below)
-  if(viewer)viewer.onCamera=function(state){var changed=lastDistance!==state.distance;lastDistance=state.distance;if(document.activeElement!==$('camera-distance-field'))$('camera-distance-field').value=Math.round(state.distance);if(document.activeElement!==$('camera-zoom-field'))$('camera-zoom-field').value=state.zoom.toFixed(2);$('camera-distance').value=Math.round(distanceSlider(state.distance));$('camera-zoom').value=Math.round(Math.max(0,Math.min(1000,Math.log(state.zoom/.1)/Math.log(1000)*1000)));var hr=viewer.heightRange(),hy=viewer.target.y;$('pivot-height').max=Math.max(1,Math.round((hr[1]-hr[0])*100));$('pivot-height').value=Math.round((hy-hr[0])*100);$('pivot-height-field').min=hr[0].toFixed(2);$('pivot-height-field').max=hr[1].toFixed(2);if(document.activeElement!==$('pivot-height-field'))$('pivot-height-field').value=hy.toFixed(2);var key=[state.distance,state.yaw,state.pitch,viewer.turretAngle,viewer.gunAngle].join(',');if(analysisKey!==null&&analysisKey!==key)staleEstimate();
+  // The Distance slider and field show and set the SHOT RANGE (state.range, viewer.setShotRange): the camera to the hit point.
+  if(viewer)viewer.onCamera=function(state){var range=Number.isFinite(state.range)?state.range:state.distance,changed=lastDistance!==range;lastDistance=range;if(document.activeElement!==$('camera-distance-field'))$('camera-distance-field').value=Math.round(range);if(document.activeElement!==$('camera-zoom-field'))$('camera-zoom-field').value=state.zoom.toFixed(2);$('camera-distance').value=Math.round(distanceSlider(range));$('camera-zoom').value=Math.round(Math.max(0,Math.min(1000,Math.log(state.zoom/.1)/Math.log(1000)*1000)));var hr=viewer.heightRange(),hy=viewer.target.y;$('pivot-height').max=Math.max(1,Math.round((hr[1]-hr[0])*100));$('pivot-height').value=Math.round((hy-hr[0])*100);$('pivot-height-field').min=hr[0].toFixed(2);$('pivot-height-field').max=hr[1].toFixed(2);if(document.activeElement!==$('pivot-height-field'))$('pivot-height-field').value=hy.toFixed(2);var key=[state.distance,state.yaw,state.pitch,viewer.turretAngle,viewer.gunAngle].join(',');if(analysisKey!==null&&analysisKey!==key)staleEstimate();
     // A wheel glide changes the distance on every frame of its way (about sixteen a click). The shell - its
     // penetration at the new distance - and everything built on it are redone once, at the end: the last step
     // clears targetDistance before it renders, so the end runs at once, and a glide cut short (a hidden page)
@@ -6223,7 +6384,9 @@
     // and are answered at once, as before.
     // A slider or a number box turned by the wheel (controlTurning) is a glide too: the picture follows every notch, the shell
     // is redone once the turn stops (user, 24.09: the Distance wheel stalled on the shell pipeline per notch).
-    if(changed&&(typeof viewer.targetDistance==='number'||controlTurning)){window.clearTimeout(shellTimer);shellTimer=window.setTimeout(function(){shellTimer=0;updateShell();},150);}
+    // The shot range (camera -> hit point) also moves while the camera orbits the vehicle or pans (24.09): any camera still on
+    // its way (viewer.cameraGliding) is a glide here.
+    if(changed&&(controlTurning||viewer.cameraGliding())){window.clearTimeout(shellTimer);shellTimer=window.setTimeout(function(){shellTimer=0;updateShell();},150);}
     else if(changed){if(shellTimer){window.clearTimeout(shellTimer);shellTimer=0;}updateShell();}
     else if(totalEngine!==viewer.engine)shotStats();// The circle stands across the line from the camera to the aimed point, so a camera that moved needs it
     // redrawn; only the geometry is rebuilt here, the integral still waits for the cursor to rest.
@@ -6232,8 +6395,8 @@
   var limits=(window.ArmorViewer&&ArmorViewer.limits)||{distanceMin:3,distanceMax:1000},span=Math.log(limits.distanceMax/limits.distanceMin);
   function distanceSlider(d){return Math.log(Math.max(limits.distanceMin,d)/limits.distanceMin)/span*1000;}
   $('camera-distance-field').min=limits.distanceMin;$('camera-distance-field').max=limits.distanceMax;
-  $('camera-distance').oninput=function(){if(viewer)viewer.setDistance(limits.distanceMin*Math.exp(span*Number(this.value)/1000));};
-  $('camera-distance-field').onchange=function(){if(viewer)viewer.setDistance(Number(this.value)||limits.distanceMin);};
+  $('camera-distance').oninput=function(){if(viewer)viewer.setShotRange(limits.distanceMin*Math.exp(span*Number(this.value)/1000));};
+  $('camera-distance-field').onchange=function(){if(viewer)viewer.setShotRange(Number(this.value)||limits.distanceMin);};
   $('camera-zoom').oninput=function(){if(viewer)viewer.setZoom(.1*Math.pow(1000,Number(this.value)/1000));}; // ×0.1 … ×100, ×1 at a third
   // No “back to the recorded shot” button any more (user, 18.09): clicking the hit in the list again
   // re-runs selectHit, which clears the viewer and rebuilds the scene, so the pin and the pose reset with it.
@@ -6610,7 +6773,7 @@
         ArmorInspectorData.ttx(id).then(function (t) {
           if (!ttxUsable(t, id) || !t.armorSchema) throw new Error('Not rebuilt yet');
           if (ttxCache[id] === old) ttxCache[id] = t;
-          if (ttxData === old) { ttxData = t; ttxPaint(); }
+          if (ttxData === old) { ttxData = t; emuChanged(); }
         }).catch(function () { if (Date.now() < deadline) again(); });
       }, TTX_RETRY_MS);
     }
@@ -6631,19 +6794,18 @@
     ttxPaint();
     if (type && !ttxData) readTtx(type).then(function (t) {
       if (!t || ttxType !== type) return;
-      ttxData = t; ttxPaint();
+      // A gun picked for this type earlier becomes the emulator's with its file (emuChanged; the panel otherwise).
+      ttxData = t; emuChanged();
       // The health bar waits for the file of the vehicle on screen on its own (hpAsk): the same read when it is his.
     });
   }
   // --- Which pair -------------------------------------------------------------------------------------------
-  // The emulator's pair: the gun that fired in the record, or the browsed vehicle's exported one (spec 3.1).
-  function ttxEmuIndex() { return ttxData && TTX ? TTX.match(ttxData, activeHit && activeHit.attacker) : -1; }
-  // The pair on the panel: the one the user last picked for this type, or the emulator's (`emu`, when the caller
-  // has counted it already).
-  function ttxPairIndex(emu) {
-    var stored = ttxType && aimStore.pairs[ttxType], i = stored ? TTX.pairIndex(ttxData, stored) : -1;
-    return i >= 0 ? i : emu !== undefined ? emu : ttxEmuIndex();
-  }
+  // The emulator's pair (24.09, one owner - emuIndexes): the one the user picked for this type, else the gun that fired
+  // in the record, or the browsed vehicle's exported one (spec 3.1). The recorded one (ttxRecIndex) wears the ●.
+  function ttxEmuIndex() { return emuIndexes().i; }
+  function ttxRecIndex() { return emuIndexes().rec; }
+  // The pair on the panel IS the emulator's (24.09): the panel explains the gun that fires. `emu` when the caller has it.
+  function ttxPairIndex(emu) { return emu !== undefined ? emu : ttxEmuIndex(); }
   function ttxBuildOn() { var e = $('ttx-build'); return !!(e && e.checked); }
   // The page's own shell when it is one of this gun's, else the gun's first - the garage's active shell.
   function ttxShellOf(shells) {
@@ -6678,7 +6840,7 @@
   // The mode of the block the emulator fires with now: the recorded block is the recorded mode's, the other one the
   // other's (modeAimOf).
   function aimModeNow() {
-    var at = activeHit && activeHit.attacker;
+    var at = emuAttacker(activeHit);
     if (!at) return 0;
     var rec = at.vehicleMode === 1 ? 1 : 0;
     return aimOfHit(activeHit, xiSiegeMode(xiNow())) === at.aim ? rec : 1 - rec;
@@ -6914,12 +7076,12 @@
       return;
     }
     // The emulator's pair and the pair on the panel, counted once a paint and handed to all that follows.
-    var emu = ttxEmuIndex(), index = ttxPairIndex(emu), ctx = ttxContext(index), toggle = $('ttx-build-toggle');
+    var index = ttxEmuIndex(), rec = ttxRecIndex(), ctx = ttxContext(index), toggle = $('ttx-build-toggle');
     if (toggle && toggle.getAttribute('aria-pressed') !== String(ctx.build)) toggle.setAttribute('aria-pressed', String(ctx.build));
     if (toggle) ttxSetTitle(toggle, ttxBuildTitle(ctx));
-    ttxPaintTurrets(index, emu);   // the Turret row of Config follows the same pair
+    ttxPaintTurrets(index, rec);   // the Turret row of Config follows the same pair
     ttxPaintMode(index, ctx);
-    ttxPaintPair(index, emu);
+    ttxPaintPair(index, rec);
     if (ttxLine) ttxPaintLine(ttxLine, ctx);
     Object.keys(ttxRows).forEach(function (slot) { ttxPaintRow(ttxRows[slot], ttxRowKey(slot, ctx.cur), ctx); });
     if ($('ttx-more').open) ttxPaintFull(ctx);
@@ -6954,8 +7116,8 @@
   // where the turret on the panel carries more than one gun. A click opens the quick list of THAT turret's guns, the
   // garage's own pairs only; another turret is picked in Config (the Turret row, ttxPaintTurrets). While Config is not
   // on screen (the aim emulation off, a record without its aim block, the parts view) the list carries the turret
-  // tiles too, or a turret could not be picked at all (review 23.09). Lit when the gun on the panel is not the one the
-  // emulator fires.
+  // tiles too, or a turret could not be picked at all (review 23.09). The gun on the panel is the one the emulator fires
+  // (24.09, emuIndexes); lit when it is not the one that fired in the record.
   // The turrets of the file and the pairs on each, counted once a file (as ttxModeMemo).
   var ttxTurretMemoOf = null;
   function ttxTurretMemo() {
@@ -6972,14 +7134,13 @@
   // The chip again when Config comes or goes (updateAim): its ▾ and its words depend on it.
   function ttxPaintChip() {
     if (!TTX || !ttxData || $('ttx-panel').hidden) return;
-    var emu = ttxEmuIndex();
-    ttxPaintPair(ttxPairIndex(emu), emu);
+    ttxPaintPair(ttxEmuIndex(), ttxRecIndex());
   }
-  function ttxPaintPair(index, emu) {
+  function ttxPaintPair(index, rec) {
     var tile = $('ttx-pair'), box = $('ttx-pairs'), pair = ttxData.configs[index];
     if (!tile || !pair) return;
     var guns = ttxTurretPairs(pair.turret).length, turrets = ttxTurretMemo().count, config = ttxConfigShown();
-    var listTurrets = turrets > 1 && !config, many = guns > 1 || listTurrets, other = index !== emu, turret = (ttxData.turrets || [])[pair.turret] || {};
+    var listTurrets = turrets > 1 && !config, many = guns > 1 || listTurrets, other = index !== rec, turret = (ttxData.turrets || [])[pair.turret] || {};
     var key = [index, many, other, turrets, config, ttxData.id].join('|');
     if (tile.ttxKey === key) return;
     tile.ttxKey = key;
@@ -7002,11 +7163,15 @@
     box.setAttribute('data-many', String(many));
     if (other) box.setAttribute('data-other', 'true'); else box.removeAttribute('data-other');
     tile.title = tipJoin(['Gun: ' + (pair.gunUserString || pair.gun),
+      'The shooter’s gun: this panel, the ⌖ circle, the reload and the shells follow it.',
       cal !== '—' ? '• Calibre: ' + cal + ' mm' : null, '• Tier: ' + (tierRomans[pair.gunLevel] || '?'), '• Turret: ' + (turret.userString || turret.name || ''), '',
-      guns > 1 ? '• Click: the other guns of this turret, to see the difference' : listTurrets ? null : 'This turret carries no other gun.',
+      guns > 1 ? '• Click: another gun of this turret - the emulation starts over with it' : listTurrets ? null : 'This turret carries no other gun.',
       turrets > 1 ? (config ? 'The turret itself is picked in Config, in its Turret row.'
                             : '• Click: the turrets too - Config, where the turret is picked, is not on screen now') : null,
-      other ? 'The circle and the gun panel keep the gun that fired; these numbers are this gun’s.' : null,
+      other ? '' : null,
+      other ? 'Not the gun that fired (●):' : null,
+      other ? '• Its own: the ⌖ circle, the reload, the magazine and the shells' : null,
+      other ? '• The record’s: the recorded ring and the hit’s own shell and result' : null,
       '', notes.length ? 'This vehicle (◐):' : null].concat(notes));
   }
   // The quick list: the guns of the turret on the panel, the one shown pressed, the emulator's marked with a dot and
@@ -7016,11 +7181,11 @@
     var list = $('ttx-pair-list');
     if (!list || !ttxData) return;
     list.replaceChildren();
-    var build = ttxBuildOn(), emu = ttxEmuIndex(), here = ttxPairIndex(emu), pair = ttxData.configs[here];
+    var build = ttxBuildOn(), here = ttxEmuIndex(), rec = ttxRecIndex(), pair = ttxData.configs[here];
     if (ttxTurretMemo().count > 1 && !ttxConfigShown()) {
       var turrets = node('div', undefined, 'aim-pick-row');
       turrets.setAttribute('data-turrets', 'true');
-      ttxTurretTiles(turrets, here, emu);
+      ttxTurretTiles(turrets, here, rec);
       list.appendChild(turrets);
     }
     var info = (ttxData.turrets || [])[pair.turret] || {}, row = node('div', undefined, 'aim-pick-row');
@@ -7033,47 +7198,52 @@
       tile.setAttribute('data-tier', 'plain');
       tile.appendChild(node('b', ttxCaliber(p), 'ttx-cal'));
       tile.appendChild(node('span', tierRomans[p.gunLevel] || '', 'vt-tier'));
-      if (i === emu) tile.appendChild(node('span', '●', 'ttx-mark ttx-emu'));
+      if (i === rec) tile.appendChild(node('span', '●', 'ttx-mark ttx-emu'));
       if (p.top) tile.appendChild(node('span', '▲', 'ttx-mark ttx-top'));
-      tile.title = tipJoin([p.gunUserString || p.gun, '• Tier: ' + (tierRomans[p.gunLevel] || '?'), '• Turret: ' + (info.userString || info.name || ''),
+      tile.title = tipJoin([p.gunUserString || p.gun, i === here ? 'The shooter’s gun now.' : 'Makes it the shooter’s gun: the panel, the ⌖ circle, the reload and the shells.',
+        '• Tier: ' + (tierRomans[p.gunLevel] || '?'), '• Turret: ' + (info.userString || info.name || ''),
         shell ? '• Shell: ' + BullbaTtx.nice(shell.avgDamage) + ' HP, ' + BullbaTtx.nice(shell.avgPiercingPower) + ' mm' : null,
         '• DPM: ' + BullbaTtx.nice(v.avgDamagePerMinute) + (build ? ' (this build)' : ' (stock)'),
-        i === emu ? '• ●: the gun on the scene' : null, p.top ? '• ▲: the top pair' : null, '',
-        i === here ? 'On the panel now.' : '• Click: the panel shows this gun']);
+        i === rec ? '• ●: the gun that fired in the record' : null, p.top ? '• ▲: the top pair' : null, '',
+        i === here ? null : '• Click: the emulation starts over with this gun']);
       tile.onclick = function (e) { e.stopPropagation(); ttxChoose(i); };
       row.appendChild(tile);
     });
     list.appendChild(row);
   }
+  // A gun or a turret picked (24.09): the pair is the EMULATOR's input - the run starts over for the new gun and its
+  // shells come with it (emuChanged). The gun that fired picked back gives the choice back to the record: the next hit
+  // of this type is emulated with its own recorded gun again.
   function ttxChoose(i) {
     if (!ttxData || !ttxType) return;
-    aimStore.pairs[ttxType] = TTX.pairKey(ttxData, i);
+    if (i === ttxRecIndex()) delete aimStore.pairs[ttxType];
+    else aimStore.pairs[ttxType] = TTX.pairKey(ttxData, i);
     persistSettings();
     $('ttx-pairs').open = false;
-    ttxPaint();
+    emuChanged();
   }
   // THE TURRET ROW OF CONFIG (panel v2, user 23.09): the turret is picked where the shooter is set up, not in the quick
   // list of guns. It is the same stored pair (aimStore.pairs, per type), so the tiles of this row are the turrets of the
-  // characteristics file: the one on the panel pressed, ● the emulator's and ▲ the top one, as the gun list marks its
-  // guns. There only for a vehicle with more than one turret and its file read. A turret keeps the gun on the panel
+  // characteristics file: the one on the panel pressed (the emulator's, 24.09), ● the recorded one and ▲ the top one, as
+  // the gun list marks its guns. There only for a vehicle with more than one turret and its file read. A turret keeps the gun on the panel
   // where it carries it, else takes the gun that fired where it is on that turret, else its top pair, else its best
   // gun (the highest tier, the last of equals, as the client's best_component picks).
-  // `index` and `emu` are ttxPaint's; Config built just now (buildAimConfig) calls without them.
-  function ttxPaintTurrets(index, emu) {
+  // `index` and `rec` are ttxPaint's; Config built just now (buildAimConfig) calls without them.
+  function ttxPaintTurrets(index, rec) {
     var c = aimConfigControls, box = c && c.turrets;
     if (!box) return;
-    if (index === undefined && TTX && ttxData && !$('ttx-panel').hidden) { emu = ttxEmuIndex(); index = ttxPairIndex(emu); }
+    if (index === undefined && TTX && ttxData && !$('ttx-panel').hidden) { index = ttxEmuIndex(); rec = ttxRecIndex(); }
     var show = !!(TTX && ttxData && index >= 0 && ttxType && ttxType === shooterType && !$('ttx-panel').hidden && ttxTurretMemo().count > 1);
     if (box.hidden !== !show) { box.hidden = !show; c.turretLabel.hidden = !show; }
     if (!show) { box.ttxKey = ''; return; }
-    var key = [ttxData.id, index, emu].join('|');
+    var key = [ttxData.id, index, rec].join('|');
     if (box.ttxKey === key) return;
     box.ttxKey = key;
-    ttxTurretTiles(box, index, emu);
+    ttxTurretTiles(box, index, rec);
   }
   // The turret tiles - Config's Turret row, and the quick list's while Config is away: one widget either way.
-  function ttxTurretTiles(box, here, emu) {
-    var cur = ttxData.configs[here].turret, emuTurret = emu >= 0 ? ttxData.configs[emu].turret : -1;
+  function ttxTurretTiles(box, here, rec) {
+    var cur = ttxData.configs[here].turret, recTurret = rec >= 0 ? ttxData.configs[rec].turret : -1;
     box.replaceChildren();
     (ttxData.turrets || []).forEach(function (info, t) {
       var guns = ttxTurretPairs(t);
@@ -7085,23 +7255,25 @@
       tile.setAttribute('data-tier', 'plain');
       tile.appendChild(ttxGlyph('turret'));
       tile.appendChild(node('span', tierRomans[info.level] || '', 'vt-tier'));
-      if (t === emuTurret) tile.appendChild(node('span', '●', 'ttx-mark ttx-emu'));
+      if (t === recTurret) tile.appendChild(node('span', '●', 'ttx-mark ttx-emu'));
       if (guns.some(function (i) { return ttxData.configs[i].top; })) tile.appendChild(node('span', '▲', 'ttx-mark ttx-top'));
-      tile.title = tipJoin(['Turret: ' + (info.userString || info.name || ''), '• Tier: ' + (tierRomans[info.level] || '?'),
+      tile.title = tipJoin(['Turret: ' + (info.userString || info.name || ''),
+        t === cur ? 'The shooter’s turret now.' : 'Makes it the shooter’s turret: the panel, the ⌖ circle and the reload follow it.',
+        '• Tier: ' + (tierRomans[info.level] || '?'),
         '• Guns: ' + guns.map(function (i) { return ttxData.configs[i].gunUserString || ttxData.configs[i].gun; }).join(', '),
-        t === emuTurret ? '• ●: the turret of the gun on the scene' : null, '',
-        t === cur ? 'On the characteristics panel now.' : '• Click: the characteristics panel shows this turret; the circle keeps the gun that fired']);
+        t === recTurret ? '• ●: the turret of the gun that fired in the record' : null, '',
+        t === cur ? null : '• Click: the emulation starts over with this turret - the same gun where it carries it']);
       tile.onclick = function (e) { e.stopPropagation(); ttxChooseTurret(t); };
       box.appendChild(tile);
     });
   }
   function ttxChooseTurret(t) {
     if (!ttxData || !ttxType) return;
-    var emu = ttxEmuIndex(), here = ttxPairIndex(emu), guns = ttxTurretPairs(t);
+    var here = ttxEmuIndex(), rec = ttxRecIndex(), guns = ttxTurretPairs(t);
     if (!guns.length || ttxData.configs[here].turret === t) return;
     var gun = ttxData.configs[here].gun, pick = -1;
     guns.forEach(function (i) { if (ttxData.configs[i].gun === gun) pick = i; });
-    if (pick < 0 && guns.indexOf(emu) >= 0) pick = emu;
+    if (pick < 0 && guns.indexOf(rec) >= 0) pick = rec;
     if (pick < 0) guns.forEach(function (i) { if (ttxData.configs[i].top) pick = i; });
     if (pick < 0) guns.forEach(function (i) { if (pick < 0 || (Number(ttxData.configs[i].gunLevel) || 0) >= (Number(ttxData.configs[pick].gunLevel) || 0)) pick = i; });
     ttxChoose(pick);

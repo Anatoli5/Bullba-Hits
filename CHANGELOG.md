@@ -4,7 +4,16 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 
 ## Unreleased
 
+- **Emulation:** the gun or turret picked on the characteristics panel (or in Config's Turret row) is now the gun the emulation fires: its circle, aiming time, reload, magazine, heat and mode button, and its shells (marked ⇆). The picked gun starts loaded, cool and fully aimed. The recorded ring and the hit's own shell stay the ones that fired. Picking the gun that fired (●) goes back to the recorded gun.
+- **Emulation:** switching to another hit of the same vehicle fired with a different gun also starts the emulation over for that gun.
 - **Emulation:** the live aim ring (cyan, with the reload on it) is drawn over the magenta ring of a pinned shot, so the reload no longer hides under it.
+- **Scene:** turning Zoom (its slider, its box, Shift + wheel, Fit) scales the picture at once without redrawing the armour map; the map sharpens a moment after the zoom stops. Lines, rings and tracers stay sharp throughout.
+- **Scene:** the wheel over the scene redraws a few frames less per notch at no cost to the picture.
+- **Distance:** the Distance field and slider are the shot's range, from the camera to the hit point, and penetration is taken at it; switching the orbit centre between the vehicle and the hit no longer changes the range, the penetration or the map. Without a hit point it is the distance to the orbit centre.
+- **Scene:** with Auto-frame on, the zoom Fit picks no longer jumps on the next camera move, and panning no longer changes the size of the vehicle.
+- **Scene:** while the turret or gun is dragged, the ricochet hatching is off until the pose is set, instead of being drawn for the old turret position.
+- **Scene:** hover, pins and the emulated turret find the point under the cursor much faster on heavy models.
+- **Settings:** the Soft lighting depth slider no longer redraws the whole map on every step.
 - **Controls:** every wheel notch over a slider moves it by the same share of its scale, as the wheel over the scene does, whatever the pace of the turn (the step used to grow with fast turning and fall back after a pause, which felt like sticking); Distance works out the shell once the turn stops.
 - **Controls:** the mouse wheel over a slider no longer stalls or slips: the value moves at once, the page redraws once per frame and saves the settings once the turn is over; the number boxes beside the sliders (Distance, Zoom, Height, Pen., Cal., α) take the wheel too, their arrows still work.
 - **Records:** a start of the game on which a saved battle or vehicle file cannot be read (held by an antivirus or a backup, or a battle file copied under another name) no longer deletes collision models; unused ones are cleaned up on the next start that reads everything.
