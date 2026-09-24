@@ -6221,7 +6221,9 @@
     // clears targetDistance before it renders, so the end runs at once, and a glide cut short (a hidden page)
     // is caught by the timer. The slider, the +/- keys, Fit and a restored camera set the distance directly
     // and are answered at once, as before.
-    if(changed&&typeof viewer.targetDistance==='number'){window.clearTimeout(shellTimer);shellTimer=window.setTimeout(function(){shellTimer=0;updateShell();},150);}
+    // A slider or a number box turned by the wheel (controlTurning) is a glide too: the picture follows every notch, the shell
+    // is redone once the turn stops (user, 24.09: the Distance wheel stalled on the shell pipeline per notch).
+    if(changed&&(typeof viewer.targetDistance==='number'||controlTurning)){window.clearTimeout(shellTimer);shellTimer=window.setTimeout(function(){shellTimer=0;updateShell();},150);}
     else if(changed){if(shellTimer){window.clearTimeout(shellTimer);shellTimer=0;}updateShell();}
     else if(totalEngine!==viewer.engine)shotStats();// The circle stands across the line from the camera to the aimed point, so a camera that moved needs it
     // redrawn; only the geometry is rebuilt here, the integral still waits for the cursor to rest.
@@ -7377,6 +7379,9 @@
     });
     if(migrated)persistSettings();
   }
+  // True while the wheel is turning a slider or a number box (from its first notch until the turn's one 'change'); the camera
+  // callback reads it to put the shell off until the turn stops.
+  var controlTurning=false;
   // A slider under the cursor takes the wheel and the arrows (user, 22.09): no click to focus it first, and
   // the step is the slider's own, so 1 % stays 1 % whatever the mouse is set to. Capture phase and
   // stopPropagation, or the same wheel would zoom the scene and the arrows would walk the camera.
@@ -7412,10 +7417,11 @@
       if(pendEl&&pendEl!==el)flushInput();
       pendEl=el;if(pendFrame===null)pendFrame=window.requestAnimationFrame(flushInput);
       if(doneEl&&doneEl!==el)flushChange();
+      controlTurning=true;
       doneEl=el;if(doneTimer!==null)window.clearTimeout(doneTimer);doneTimer=window.setTimeout(flushChange,250);
     }
     function flushInput(){if(pendFrame!==null){window.cancelAnimationFrame(pendFrame);pendFrame=null;}var el=pendEl;pendEl=null;if(el)el.dispatchEvent(new Event('input',{bubbles:true}));}
-    function flushChange(){if(doneTimer!==null){window.clearTimeout(doneTimer);doneTimer=null;}flushInput();var el=doneEl;doneEl=null;if(el)el.dispatchEvent(new Event('change',{bubbles:true}));}
+    function flushChange(){if(doneTimer!==null){window.clearTimeout(doneTimer);doneTimer=null;}flushInput();controlTurning=false;var el=doneEl;doneEl=null;if(el)el.dispatchEvent(new Event('change',{bubbles:true}));}
     // A continuous turn of the wheel steps further and further (user, 22.09: one unit a notch is too fine,
     // and Zoom's own step is smaller than a whole). The run counts the notches that arrive without a pause
     // and its multiplier walks 1, 1, 2, 3, 5, 8 … - each the sum of the two before it - until step() cuts it

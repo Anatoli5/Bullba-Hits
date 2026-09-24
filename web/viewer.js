@@ -964,7 +964,9 @@
   Viewer.prototype.drawCircle=function(center,right,up,radius,style,from,to){
     this.hideSpread();
     this.spreadCircle=aimLine(center,right,up,radius,style,from,to,style===AIM_LIVE?this.liveRing():null);
-    this.spreadCircle.renderOrder=14;this.scene.add(this.spreadCircle);this.draw();
+    // The live ring (cyan, with the reload on it) is drawn over the magenta ring of the pinned shot: the other way round the
+    // reload was hidden whenever the cursor stood still on the pinned circle (user, 24.09).
+    this.spreadCircle.renderOrder=15;this.scene.add(this.spreadCircle);this.draw();
   };
   Viewer.prototype.estimateSpread=function(radius100){
     this.commitPose(); // the rays are cast against the engine, so a pose that is only drawn must be built first
@@ -1080,7 +1082,7 @@
     this.syncRecorded();
     dropLine(this.scene,this.aimShotCircle);
     this.aimShotCircle=aimLine(aim.center,aim.right,aim.up,aim.radius,AIM_FIXED);
-    this.aimShotCircle.renderOrder=15;this.scene.add(this.aimShotCircle);this.draw();
+    this.aimShotCircle.renderOrder=14;this.scene.add(this.aimShotCircle);this.draw();
     return true;
   };
   // The emulated shot is dropped: its ring goes, and with it the reason the recorded markers were
