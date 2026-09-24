@@ -7349,10 +7349,18 @@
     });
     return values;
   }
-  function persistSettings(){
+  // The save is one write a moment after the last change, not one per event: a slider turned by the wheel sends
+  // an 'input' per notch, and serialising every setting and the presets into localStorage (a synchronous disk
+  // write) on each of them made the wheel stall (user, 24.09). Leaving the page writes a pending save at once.
+  var persistTimer=null;
+  function persistNow(){
+    if(persistTimer!==null){window.clearTimeout(persistTimer);persistTimer=null;}
     var values={};settingControls.forEach(function(el){values[el.id]=settingValue(el);});
     try{window.localStorage.setItem(SETTINGS_KEY,JSON.stringify({v:4,values:values,aim:aimStored()}));}catch(e){}
   }
+  function persistSettings(){if(persistTimer===null)persistTimer=window.setTimeout(persistNow,300);}
+  window.addEventListener('pagehide',function(){if(persistTimer!==null)persistNow();});
+  document.addEventListener('visibilitychange',function(){if(document.hidden&&persistTimer!==null)persistNow();});
   function restoreSettings(){
     var stored=settingsStored(),migrated=false;
     if(!stored){stored=settingsLegacy();migrated=!!stored;}
@@ -7374,7 +7382,10 @@
   // stopPropagation, or the same wheel would zoom the scene and the arrows would walk the camera.
   (function(){
     var hovered=null,rolled=0;
-    function under(target){for(var n=target;n;n=n.parentNode)if(n.type==='range')return n.disabled?null:n;return null;}
+    // A slider or a number box (user, 24.09: the box beside a slider takes the wheel the same way).
+    // An empty box (Pen., Cal., α waiting for a manual figure) keeps the page's wheel: a turn over it must not
+    // type a figure the user never asked for.
+    function under(target){for(var n=target;n;n=n.parentNode)if(n.type==='range'||n.type==='number')return n.disabled||n.readOnly||(n.type==='number'&&n.value==='')?null:n;return null;}
     // `mult` is how many of the slider's own steps this one event is worth (the wheel's run below); it is
     // clamped here to a tenth of the slider's range, so however long the wheel is spun one event never
     // crosses the scale. The value stays on the slider's own grid - Zoom's step is smaller than a whole
@@ -7387,10 +7398,24 @@
       now=Math.min(max,Math.max(min,Number(now.toFixed(6))));   // 7 × 0.1 is 0.7000000000000001 without this
       if(!isFinite(now)||now===was)return;
       el.value=String(now);
+      if(coalesce){pendInput(el);return;}
       // The control's own handler draws the change; the shared 'input'/'change' listeners save it.
       el.dispatchEvent(new Event('input',{bubbles:true}));
       el.dispatchEvent(new Event('change',{bubbles:true}));
     }
+    // The wheel moves the value at once but lets the control redraw once per frame (its 'input'), and says
+    // 'change' once the turn is over: notches that arrive faster than the page draws were each running the
+    // control's whole handler (Distance: the shell pipeline) and queued up - the stall and the slip the user
+    // felt (24.09). A key press keeps its immediate pair of events.
+    var coalesce=false,pendEl=null,pendFrame=null,doneEl=null,doneTimer=null;
+    function pendInput(el){
+      if(pendEl&&pendEl!==el)flushInput();
+      pendEl=el;if(pendFrame===null)pendFrame=window.requestAnimationFrame(flushInput);
+      if(doneEl&&doneEl!==el)flushChange();
+      doneEl=el;if(doneTimer!==null)window.clearTimeout(doneTimer);doneTimer=window.setTimeout(flushChange,250);
+    }
+    function flushInput(){if(pendFrame!==null){window.cancelAnimationFrame(pendFrame);pendFrame=null;}var el=pendEl;pendEl=null;if(el)el.dispatchEvent(new Event('input',{bubbles:true}));}
+    function flushChange(){if(doneTimer!==null){window.clearTimeout(doneTimer);doneTimer=null;}flushInput();var el=doneEl;doneEl=null;if(el)el.dispatchEvent(new Event('change',{bubbles:true}));}
     // A continuous turn of the wheel steps further and further (user, 22.09: one unit a notch is too fine,
     // and Zoom's own step is smaller than a whole). The run counts the notches that arrive without a pause
     // and its multiplier walks 1, 1, 2, 3, 5, 8 … - each the sum of the two before it - until step() cuts it
@@ -7399,14 +7424,18 @@
     // each time and keeps the minimal step.
     var runEl=null,runDir=0,runAt=-1,runPrev=0,runStep=1;
     var RUN_FAST=.15,RUN_OVER=.3;   // seconds: under the first the turn is continuous, over the second it is done
-    function runMultiplier(el,dir){
-      var now=aimSeconds(),gap=now-runAt;
+    // Timed by the event's own stamp, when the notch was turned, not by when a busy page got round to it.
+    function runMultiplier(el,dir,at){
+      var now=at,gap=now-runAt;
       if(el!==runEl||dir!==runDir||gap>RUN_OVER){runPrev=0;runStep=1;}
       else if(gap<RUN_FAST&&runStep<1e4){var next=runPrev+runStep;runPrev=runStep;runStep=next;}
       runEl=el;runDir=dir;runAt=now;
       return runStep;
     }
-    function wheelStep(el,dir){step(el,dir,runMultiplier(el,dir));}
+    function wheelStep(el,dir,e){
+      var at=e&&e.timeStamp>0?e.timeStamp/1000:aimSeconds();
+      coalesce=true;try{step(el,dir,runMultiplier(el,dir,at));}finally{coalesce=false;}
+    }
     document.addEventListener('pointerover',function(e){hovered=under(e&&e.target);rolled=0;},true);
     document.addEventListener('pointerout',function(e){if(hovered&&hovered===under(e&&e.target)){hovered=null;rolled=0;}},true);
     document.addEventListener('wheel',function(e){
@@ -7417,10 +7446,10 @@
       e.preventDefault();e.stopPropagation();
       // One notch is one step of the run. A trackpad sends many small deltas instead, so they add up to a
       // notch first - and only a notch counts towards the run, never the deltas that made it.
-      if(e.deltaMode!==0||Math.abs(d)>=40){rolled=0;return wheelStep(el,d<0?1:-1);}
+      if(e.deltaMode!==0||Math.abs(d)>=40){rolled=0;return wheelStep(el,d<0?1:-1,e);}
       rolled+=d;
       if(Math.abs(rolled)<100)return;
-      wheelStep(el,rolled<0?1:-1);rolled=0;
+      wheelStep(el,rolled<0?1:-1,e);rolled=0;
     },{capture:true,passive:false});
     document.addEventListener('keydown',function(e){
       var el=hovered;

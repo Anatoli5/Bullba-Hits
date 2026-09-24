@@ -2,6 +2,10 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
+## Unreleased
+
+- **Controls:** the mouse wheel over a slider no longer stalls or slips: the value moves at once, the page redraws once per frame and saves the settings once the turn is over; the number boxes beside the sliders (Distance, Zoom, Height, Pen., Cal., α) take the wheel too, their arrows still work.
+
 ## 0.7.42 (2026-09-24)
 
 - **Emulation:** the target's health bar shows its figures inside it (left / max); its tooltip says where the figure comes from.
