@@ -66,14 +66,14 @@
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     container.appendChild(this.renderer.domElement);
     this.reticles=[];this.reticleLayer=document.createElement('div');this.reticleLayer.className='hit-reticle-layer';container.appendChild(this.reticleLayer);
-    this.impactOpacity=.5;this.setImpactOpacity(.5);this.discOn=true;this.discOpacity=.6;this.ringLook=Object.assign({},SHOT_RING_LOOK);this.ringAim=this.discAim=this.shotDisc=null;   // the default of the Settings slider, applied before the first cross exists
+    this.impactOpacity=.5;this.setImpactOpacity(.5);this.discOn=true;this.ringAxes=false;this.viewFrom='fired';this.viewPoints=null;this.discOpacity=.6;this.ringLook=Object.assign({},SHOT_RING_LOOK);this.ringAim=this.discAim=this.shotDisc=null;   // the default of the Settings slider, applied before the first cross exists
     this.grid = new T.GridHelper(24, 24, 0x4a5d6f, 0x263746); this.scene.add(this.grid);
     this.root = new T.Group(); this.scene.add(this.root);
     this.target = new T.Vector3(0, 1, 0); this.yaw = 0.7; this.pitch = 0.27; this.distance = 50;
     // The camera defaults are constants (VIEW-18, 24.09): the old 'armor-camera-defaults' key of localStorage had no
     // writer left, and a value from an old build silently set the distance of every hit without a range.
     this.defaults={distance:50,scale:.85};this.pivot='vehicle';this.pivotHeight=null;this.pinned=null;this.pinGroup=null;this.pinReticles=[];this.centre=null;this.pan=new T.Vector2();this.frameCenter=new T.Vector2();this.fitZoom=1;
-    this.point = null; this.travel = null;
+    this.point = null; this.travel = null; this.shotPath = null; this.horizon = null;
     this.shell=null;this.heatmap=true;this.palette='classic';this.paintMesh=null;this.samples=[];this.engine=null;
     // What the page was last told (notifyCamera, backend) and the notifications held while a scene loads (hold): the
     // page is told once per real change, not once per internal step (VIEW-07). engineGen counts the ballistic engines -
@@ -314,7 +314,7 @@
   Viewer.prototype.setZoom=function(value){if(!Number.isFinite(value)||value<=0)return;this.targetZoom=null;this.targetScale=null;if(this.autoFrame)this.scaleFor(value);this.showZoom(value);};
   Viewer.prototype.setDistance=function(value){if(!Number.isFinite(value))return;this.targetDistance=null;this.distance=Math.max(DISTANCE_MIN,Math.min(DISTANCE_MAX,value));this.render();};
   Viewer.limits={distanceMin:DISTANCE_MIN,distanceMax:DISTANCE_MAX};
-  Viewer.prototype.clear=function(){this.dropTargets();this.clearLiveAim();this.clearHitMarks();this.markDrawn=this.markBuilt=null;this.pinResult=null;this.fitPending=false;this.shotPoints=null;this.recordedDistance=null;this.pinned=null;this.disposePin();this.pinCache=null;this.pinReticles=[];if(this.surface)this.surface.dispose();this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.gunAngle=0;this.savedAim=this.ringAim=this.discAim=this.shotDisc=null;this.aimGroup=null;this.estimateAim=null;window.clearTimeout(this.zoomTimer);this.zoomTimer=null;this.reticles=[];this.reticleLayer.replaceChildren();clearTimeout(this.turretTimer);this.turretTimer=null;this.turretPending=false;this.poseGeometries=null;this.poseBuilt=null;this.poseStale=false;this.spreadAim=null;this.hideSpread();window.clearTimeout(this.aimSettleTimer);this.aimSettleTimer=null;window.cancelAnimationFrame(this.frameId);this.frameId=null;this.cancelHover();this.cancelOrbit();this.pendingPan=null;this.inspectKey=null;this.paintMesh=null;this.outline=null;this.outlineDepth=null;this.engine=null;this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.loadedData=null;this.paintedKey=null;this.samples=[];var disposed=new Set([this.ringGeom]),kept=this.ringMat;this.root.traverse(function(o){var shared=!!(o.parent&&o.parent.type==='ArrowHelper'&&(o===o.parent.line||o===o.parent.cone));if(o.geometry&&!shared&&!disposed.has(o.geometry)){disposed.add(o.geometry);o.geometry.dispose();}if(o.material){(Array.isArray(o.material)?o.material:[o.material]).forEach(function(m){if(m!==kept)m.dispose();});}});while(this.root.children.length)this.root.remove(this.root.children[0]);this.point=null;this.travel=null;this.draw();};
+  Viewer.prototype.clear=function(){this.dropTargets();this.clearLiveAim();this.clearHitMarks();this.markDrawn=this.markBuilt=null;this.pinResult=null;this.fitPending=false;this.shotPoints=null;this.shotPath=null;this.horizon=null;this.recordedDistance=null;this.pinned=null;this.disposePin();this.pinCache=null;this.pinReticles=[];if(this.surface)this.surface.dispose();this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.gunAngle=0;this.savedAim=this.ringAim=this.discAim=this.shotDisc=null;this.viewPoints=null;this.aimGroup=null;this.estimateAim=null;window.clearTimeout(this.zoomTimer);this.zoomTimer=null;this.reticles=[];this.reticleLayer.replaceChildren();clearTimeout(this.turretTimer);this.turretTimer=null;this.turretPending=false;this.poseGeometries=null;this.poseBuilt=null;this.poseStale=false;this.spreadAim=null;this.hideSpread();window.clearTimeout(this.aimSettleTimer);this.aimSettleTimer=null;window.cancelAnimationFrame(this.frameId);this.frameId=null;this.cancelHover();this.cancelOrbit();this.pendingPan=null;this.inspectKey=null;this.paintMesh=null;this.outline=null;this.outlineDepth=null;this.engine=null;this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.loadedData=null;this.paintedKey=null;this.samples=[];var disposed=new Set([this.ringGeom]),kept=this.ringMat;this.root.traverse(function(o){var shared=!!(o.parent&&o.parent.type==='ArrowHelper'&&(o===o.parent.line||o===o.parent.cone));if(o.geometry&&!shared&&!disposed.has(o.geometry)){disposed.add(o.geometry);o.geometry.dispose();}if(o.material){(Array.isArray(o.material)?o.material:[o.material]).forEach(function(m){if(m!==kept)m.dispose();});}});while(this.root.children.length)this.root.remove(this.root.children[0]);this.point=null;this.travel=null;this.draw();};
   // clear() draws the empty scene and tells the page nothing: the camera has not moved, and the next load() reports once.
   Viewer.prototype.rebuild=function(){
     if(!this.loadedData)return;var T=THREE,self=this;this.samples=[];this.paintedKey=null;
@@ -605,8 +605,11 @@
     this.loadedData=data;this.posedData=null;this.poseBuilt=null;this.turretAngle=0;this.gunAngle=0;this.rebuild();
     this.root.updateMatrixWorld(true);
     var box=new T.Box3().setFromObject(this.root);this.bounds=box.isEmpty()?null:box;this.centre=this.vehicleCentre();
-    var pts=Viewer.points(hit);pts.forEach(function(p){self.addReticle(p.pos);});
-    this.shotPoints=pts;this.drawTracers(pts);if(pts.length){this.point=pts[0].pos.clone();this.travel=pts[0].line.clone();}
+    var pts=Viewer.points(hit,context);pts.forEach(function(p){self.addReticle(p.pos);});
+    // shotPath: the shell's flight carried onto the first point (Viewer.shellPath), null without a tracer; focus()
+    // stands the camera at its origin, the horizon and the page's marks read it.
+    this.shotPoints=pts;this.shotPath=pts.path||null;this.drawTracers(pts);if(pts.length){this.point=pts[0].pos.clone();this.travel=pts[0].line.clone();}
+    this.drawHorizon(hit.target&&hit.target.worldTransform);
     // The tracers and marks of this hit have just been added to the root: with the aim emulation running
     // they must not be on screen at all, so the recorded rule is applied to them here and not only when
     // the pose or the pin changes.
@@ -723,11 +726,24 @@
   Viewer.prototype.heightRange=function(){var b=this.bounds;return b?[b.min.y,b.max.y]:[0,4];};
   Viewer.prototype.setPivotHeight=function(y){if(!Number.isFinite(y))return;var r=this.heightRange();this.pivotHeight=Math.max(r[0],Math.min(r[1],y));this.target.y=this.pivotHeight;this.render();};
   Viewer.prototype.lookFrom=function(eye){var v=eye.clone().sub(this.target),len=v.length();if(len<1e-6)return;v.divideScalar(len);this.setOrbit(Math.atan2(v.x,v.z),Math.asin(Math.max(-1,Math.min(1,v.y))));this.distance=Math.max(DISTANCE_MIN,Math.min(DISTANCE_MAX,len));};
+  // Where the record view stands: the shell's own origin (shotPath), or - for an own shot, by the lab's View from - the
+  // gun at the press (the solid ring's apex) or the server's gun then (the dashed ring's apex). `picked`: only a point the
+  // pick names, null when it names the shot. Other hits and records without those points: the shot.
+  Viewer.prototype.viewEye=function(picked){
+    var p=this.viewPoints,own=this.viewFrom!=='fired'&&p&&p[this.viewFrom];
+    if(own)return own;if(picked)return null;return this.shotPath?this.shotPath.origin:null;
+  };
+  Viewer.prototype.setViewFrom=function(mode){this.viewFrom=mode==='gun'||mode==='server'?mode:'fired';if(this.point&&this.recordedShown())this.focus();};
   // The recorded view: the camera stands on the shell's axis at the recorded range — where the shooter was — and
   // looks at the orbit centre. With the hit point as centre that is exactly the shell's line of flight; with the
   // vehicle centre the camera still stands on the axis and merely turns towards the hull (no parallel shift).
+  // The axis is the shell's own when the tracer gives it (shotPath): the eye stands where the shell left, carried
+  // onto the hit like the flight itself - on the chord from the hit to that origin (shot-line-true, 24.09: the segment
+  // line at the tracer's range stood 0.49 / 2.42 m off the real origin, median / p90, in the target's server frame of
+  // the replay; this 0.35 / 2.07). Without it the recorded line at the recorded range, as before.
   Viewer.prototype.focus=function(){if(!this.point)return;this.dropTargets();this.pan.set(0,0);this.frameCenter.set(0,0);this.pivotHeight=null;
-    var dir=this.travel.clone().negate().normalize(),range=Math.max(DISTANCE_MIN,Math.min(DISTANCE_MAX,this.recordedDistance||this.defaults.distance));
+    var eye=this.viewEye(),back=eye?eye.clone().sub(this.point):null,far=back?back.length():0;
+    var dir=far>1e-6?back.divideScalar(far):this.travel.clone().negate().normalize(),range=Math.max(DISTANCE_MIN,Math.min(DISTANCE_MAX,far>1e-6?far:this.recordedDistance||this.defaults.distance));
     this.target.copy(this.pivot==='vehicle'?this.pivotCentre():this.point);
     // A point-blank record puts the eye closer to the centre than the orbit allows: it goes further back along
     // the axis itself (the far root of |point + dir*t - target| = DISTANCE_MIN), so it is clamped onto the line.
@@ -770,11 +786,64 @@
   // direction. The first tracer arrives from afar along the first stretch's direction. Single points: as before.
   var CHORD_TOLERANCE=5*Math.PI/180,ARROW_LENGTH=2.3,TRACER=0xa8dfff;
   // The resolved contact points of a hit in the viewer's frame (part transforms applied, z mirrored), as plain data.
-  Viewer.points=function(hit){
+  // `context` (ArmorShotContext.resolve) is optional: with the hit's tracer and its server stop the first point's line
+  // is the shell's own flight (Viewer.shellPath) and pts.path carries it; without them the chain rule alone, as before.
+  // The page's view and its verdict log both come here, so the line drawn and the line judged are one.
+  Viewer.points=function(hit,context){
     var T=THREE,transforms={};((hit&&hit.target||{}).parts||[]).forEach(function(part){if(part.transform)transforms[part.id]=new T.Matrix4().fromArray(part.transform);});
     // pi: the point's index in hit.points (the log's point= counts resolved points only); hitType as recorded.
     var pts=[];((hit&&hit.points)||[]).forEach(function(p,pi){if(p.status!=='resolved'||!transforms[p.part]||!p.position||!p.direction)return;var pos=new T.Vector3().fromArray(p.position).applyMatrix4(transforms[p.part]);pos.z*=-1;var direction=new T.Vector3().fromArray(p.direction).transformDirection(transforms[p.part]).normalize();direction.z*=-1;pts.push({pos:pos,dir:direction,effect:p.effect,part:p.part,pi:pi,hitType:p.hitType,source:'segment',chordDev:null,line:direction.clone(),stretch:null});});
-    return Viewer.chain(pts);
+    Viewer.chain(pts);
+    var path=pts.length?Viewer.shellPath(pts,context,hit&&hit.target&&hit.target.worldTransform):null;
+    if(path){pts[0].line=path.tangent.clone();pts[0].source='tracer';}
+    pts.path=path;
+    return pts;
+  };
+  /* The shell's own flight to the first contact (shot-line-true, user 24.09; outputs/wg-mechanics-check-2026-09-24.md).
+     The server flies a shell on the tracer's parabola X(t) = origin + velocity·t + ½·(0, −gravity, 0)·t², no drag, and
+     stops it at S (stopTracer) 6 mm from that path. The recorded point I is the server's contact laid on the pose the game
+     DREW; on the move that pose stands up to metres from the server's (|I − S|), mostly along the hull - the game's
+     lag, not ours. So the path is carried onto I: every point is I + Rm·(X(t) − S) in the target's frame (I: the contact
+     the shell stopped at, the one nearest S; drawn up to the first contact). The mark stays
+     on the armour where the server hit the part, and the flight reaches it from where the shooter really was.
+     Rm: the drawn pose may also be TURNED against the server's (0.5° median, 4° p90, turning vehicles). The recorded
+     segment is the server's own direction in the part's frame, quantised (0.48° median). Where the tracer's tangent,
+     carried through the drawn pose, and the segment agree within TURN_TRUST (the segment's median quantisation), the
+     tracer is taken as is; beyond that the whole flight is turned about I until it is TURN_TRUST from the segment.
+     Replay of 24.09 (132 hits, server pose known), against the true origin in the target's server frame: camera
+     0.49 / 2.42 m (median / p90, the segment line at the tracer's range) -> 0.35 / 2.07; direction at I 0.52° / 1.54°
+     -> 0.44° / 1.26°; the tracer taken as is would be 0.42 / 6.75 m (a turned pose is carried whole).
+     Built once per hit: PATH_STEPS chords of the arc, no per-frame work. Null without a tracer, its stop or the target's
+     world pose - then the segment line stands, as before. */
+  var TURN_TRUST=.5*Math.PI/180,PATH_STEPS=24;
+  Viewer.shellPath=function(pts,context,worldTransform){
+    var T=THREE,tracer=context&&context.tracer,stop=context&&context.stop,first=pts&&pts[0];
+    if(!first||!tracer||!stop||!Array.isArray(worldTransform)||!Array.isArray(tracer.origin)||!Array.isArray(tracer.velocity)||!Array.isArray(stop.position))return null;
+    var g=Number(tracer.gravity)>0?Number(tracer.gravity):0,o=new T.Vector3().fromArray(tracer.origin),v=new T.Vector3().fromArray(tracer.velocity),S=new T.Vector3().fromArray(stop.position);
+    if(!(v.lengthSq()>1e-6))return null;
+    function at(t){return o.clone().addScaledVector(v,t).add(new T.Vector3(0,-.5*g*t*t,0));}
+    // The flight time of the closest approach to S: Newton on (X(t) − S)·X'(t) = 0 from the straight-line guess.
+    var t=Math.max(0,S.clone().sub(o).dot(v)/v.lengthSq());
+    for(var k=0;k<20;k++){var X=at(t),V=v.clone().add(new T.Vector3(0,-g*t,0)),f=X.clone().sub(S).dot(V),df=V.lengthSq()-X.clone().sub(S).y*g;if(!(Math.abs(df)>1e-12))break;var dt=-f/df;t=Math.max(0,t+dt);if(Math.abs(dt)<1e-9)break;}
+    if(!(t>0))return null;
+    var inverse=new T.Matrix4().fromArray(worldTransform).invert();
+    function local(p){var q=p.clone().applyMatrix4(inverse);q.z*=-1;return q;}
+    var Sl=local(S),tangent=local(S.clone().add(v.clone().add(new T.Vector3(0,-g*t,0)))).sub(Sl).normalize();
+    // The turn that brings the tracer's tangent to within TURN_TRUST of the recorded line (first.line: the segment, or
+    // the chord to the next point where the chain rule took it).
+    var ref=first.line.clone().normalize(),angle=tangent.angleTo(ref),turn=new T.Quaternion(),turned=0;
+    if(angle>TURN_TRUST){var axis=new T.Vector3().crossVectors(tangent,ref);if(axis.lengthSq()>1e-18){turned=angle-TURN_TRUST;turn.setFromAxisAngle(axis.normalize(),turned);}}
+    // S is carried onto the contact the shell stopped at - the point nearest to it (a screen-then-armour hit often stops
+    // at the last; review 24.09) - and the flight is drawn to the FIRST contact, where the arrow and the camera's axis are:
+    // up to the time it reached that one (the stretch between the two at the tangent's speed). The pose gap is measured
+    // at the stop's own contact.
+    var stopAt=pts.reduce(function(b,p){return p.pos.distanceTo(Sl)<b.pos.distanceTo(Sl)?p:b;},first);
+    function carry(p){return local(p).sub(Sl).applyQuaternion(turn).add(stopAt.pos);}
+    var reach=Math.max(0,t-stopAt.pos.distanceTo(first.pos)/Math.max(1e-6,v.clone().add(new T.Vector3(0,-g*t,0)).length()));
+    var points=[];for(var i=0;i<=PATH_STEPS;i++)points.push(i===PATH_STEPS?first.pos.clone():carry(at(reach*i/PATH_STEPS)));
+    var origin=points[0].clone();
+    return {points:points,origin:origin,tangent:tangent.applyQuaternion(turn).normalize(),angle:angle,turned:turned,gap:stopAt.pos.distanceTo(Sl),along:Math.abs(stopAt.pos.z-Sl.z),
+      stopLocal:Sl,time:t,length:origin.distanceTo(first.pos),tracer:tracer};
   };
   // The chain rule, as data: every point gets `line` (the direction drawn through it), `source` (chord / segment /
   // chord-unchecked), `chordDev` (radians) and `stretch` ({from,to,dashed} or null for a first point).
@@ -796,10 +865,74 @@
     }
     return pts;
   };
+  /* The FULL TRACER (user, 24.09): with the tracer's flight known (pts.path) the shell's whole path is drawn in place of the
+     2.3 m stub - a dashed line along the arc from where it left to the first contact (the drop it really had, up to a metre
+     at 300+ m), a dot where it started and an arrowhead at the hit. Made once per hit from the path's PATH_STEPS chords; the
+     dashes scale with the flight's length so a 300 m arc is not thousands of them. Stretches after the first contact
+     (screens, ricochet continuations) stay as they were drawn. Without a path: the stub, as before. */
+  var DOT_PX=7;
   Viewer.prototype.drawTracers=function(pts){
+    var T=THREE,path=pts.path;
+    if(path){var length=Math.max(path.length,1e-3),dash=Math.max(.15,Math.min(5,length/60));
+      var arc=new T.Line(new T.BufferGeometry().setFromPoints(path.points),new T.LineDashedMaterial({color:TRACER,dashSize:dash,gapSize:dash*.6,transparent:true,opacity:.9,depthTest:false,depthWrite:false}));
+      arc.computeLineDistances();arc.renderOrder=4;arc.frustumCulled=false;arc.userData.shotArc=true;this.root.add(arc);
+      var start=startDot(path.origin,new T.Color(TRACER),DOT_PX,false);start.userData.shotArc=true;this.root.add(start);
+      this.root.add(arrowHead(pts[0].pos,pts[0].line,TRACER));}
     for(var i=0;i<pts.length;i++){var p=pts[i];
-      if(!i)this.root.add(this.shotSegment(p.pos.clone().addScaledVector(p.line,-ARROW_LENGTH),p.pos,TRACER,false));
+      if(!i){if(!path)this.root.add(this.shotSegment(p.pos.clone().addScaledVector(p.line,-ARROW_LENGTH),p.pos,TRACER,false));}
       else if(p.stretch)this.root.add(this.shotSegment(p.stretch.from,p.stretch.to,TRACER,p.stretch.dashed));}
+  };
+  // An arrowhead alone at `tip` along `dir` (the full tracer's end): three's ArrowHelper with its shaft hidden, so the head
+  // is the same cone as every other arrow of the scene (its geometry shared, never freed by clear()).
+  function arrowHead(tip,dir,color){
+    var head=.12,arrow=new THREE.ArrowHelper(dir.clone().normalize(),tip.clone().addScaledVector(dir.clone().normalize(),-head),head,color,head,.045);
+    arrow.line.visible=false;[arrow.line.material,arrow.cone.material].forEach(function(m){m.depthTest=false;m.depthWrite=false;m.transparent=true;m.opacity=1;});
+    arrow.cone.renderOrder=4;arrow.cone.frustumCulled=false;arrow.userData.shotArc=true;return arrow;
+  }
+  // A round dot of `px` screen pixels at `at` (a tracer's start, a ring axis' apex): one point with a disc sprite; `hollow`
+  // draws a ring instead (the dashed ring's apex). The two sprites are made once for the page and kept (clear() frees the
+  // materials, never a map). No depth test: a start point stays readable over the model, like the tracers.
+  var dotMaps={};
+  function dotMap(hollow){
+    var key=hollow?'ring':'disc';if(dotMaps[key])return dotMaps[key];
+    var n=32,data=new Uint8Array(n*n*4);
+    for(var y=0;y<n;y++)for(var x=0;x<n;x++){var r=Math.hypot(x+.5-n/2,y+.5-n/2)/(n/2),k=(y*n+x)*4,on=hollow?r<=1&&r>=.55:r<=1;data[k]=data[k+1]=data[k+2]=255;data[k+3]=on?255:0;}
+    var t=new THREE.DataTexture(data,n,n);t.needsUpdate=true;return dotMaps[key]=t;
+  }
+  function startDot(at,colour,px,hollow){
+    var dot=new THREE.Points(new THREE.BufferGeometry().setFromPoints([at.clone()]),new THREE.PointsMaterial({color:colour,size:px,sizeAttenuation:false,map:dotMap(hollow),
+      transparent:true,alphaTest:.5,depthTest:false,depthWrite:false}));
+    dot.renderOrder=4;dot.frustumCulled=false;return dot;
+  }
+  /* The world's horizontal beside the grid (shot-line-true, user 24.09; outputs/wg-mechanics-check-2026-09-24.md §6, §10.2).
+     The grid lies on the target's tracks, so a tilted target tilts the whole scene with it: a shooter below the grid
+     seems to fire "from under the ground" when the target merely stood on a slope. A dashed square of the grid's size,
+     through the grid's centre, level in the world, shows how the target stood. Drawn only where it explains something:
+     with the page's height mark (the shooter HEIGHT_MARK or more below the tracks) and a lean of HORIZON_MIN or more.
+     Not for every lean: 81 % of the hits with a tracer lean 1° or more, 42 % 5° or more (review 24.09), and there the
+     scene misleads nobody. Made once per hit; it belongs to the recorded target's pose, so a pin or a turned turret
+     leaves it where it is (syncRecorded skips it). */
+  var HORIZON_MIN=1*Math.PI/180,HORIZON_COLOR=0xd8b56a,HEIGHT_MARK=.5;
+  Viewer.prototype.drawHorizon=function(worldTransform){
+    this.horizon=null;if(!Array.isArray(worldTransform)||!this.bounds)return;var T=THREE;
+    var up=new T.Vector3(0,1,0).transformDirection(new T.Matrix4().fromArray(worldTransform).invert());up.z*=-1;up.normalize();
+    var base=new T.Vector3(0,this.bounds.min.y-.025,0),tilt=up.angleTo(new T.Vector3(0,1,0));
+    this.horizon={up:up,base:base,tilt:tilt,line:null};
+    var height=this.shooterHeight();if(tilt<HORIZON_MIN||!height||!height.below)return;
+    var e1=new T.Vector3(1,0,0).addScaledVector(up,-up.x);if(e1.lengthSq()<1e-6)e1.set(0,0,1).addScaledVector(up,-up.z);e1.normalize();
+    var e2=new T.Vector3().crossVectors(up,e1),h=12,corners=[[1,1],[-1,1],[-1,-1],[1,-1],[1,1]].map(function(c){return base.clone().addScaledVector(e1,c[0]*h).addScaledVector(e2,c[1]*h);});
+    var line=new T.Line(new T.BufferGeometry().setFromPoints(corners),new T.LineDashedMaterial({color:HORIZON_COLOR,dashSize:.5,gapSize:.35,transparent:true,opacity:.6}));
+    line.computeLineDistances();line.userData.horizon=true;this.root.add(line);this.horizon.line=line;
+  };
+  // Where the shooter stood against the target, from the tracer's origin carried onto the hit (shotPath): `grid` is its
+  // height over the plane of the target's tracks (what the scene shows), `world` over the target's base, straight up in
+  // the world; `tilt` = grid - world is what the target's own lean adds. `below`: HEIGHT_MARK or more under the tracks -
+  // the page's height mark and the level square (smaller depths read as noise: 130 of the 21.8 % below the tracks were
+  // under 0.5 m, 12 would have read "0.0 m"). Null without a tracer. Read on demand, never stored.
+  Viewer.prototype.shooterHeight=function(){
+    var path=this.shotPath,hz=this.horizon;if(!path||!hz)return null;
+    var rel=path.origin.clone().sub(hz.base),grid=rel.y,world=rel.dot(hz.up);
+    return {grid:grid,world:world,tilt:grid-world,angle:hz.tilt,range:path.length,below:grid<=-HEIGHT_MARK};
   };
   // One tracer stretch from one point to another, the head at the end; dashed marks an approximate stretch.
   Viewer.prototype.shotSegment=function(from,to,color,dashed){
@@ -892,7 +1025,7 @@
   // The recorded pose, to the viewer's one threshold: the marks, the line's figure and the ring integrals all ask this.
   Viewer.prototype.recordedPose=function(){return Math.abs(this.turretAngle)<.001&&Math.abs(this.gunAngle)<.001;};
   Viewer.prototype.recordedShown=function(){return aimShown()&&this.recordedPose()&&!this.pinned;};
-  Viewer.prototype.syncRecorded=function(){var show=this.recordedShown();this.root.children.forEach(function(o){if(o!==this.paintMesh&&o!==this.trackGroup&&o!==this.outline&&o!==this.outlineDepth&&o!==this.aimGroup)o.visible=show;},this);};
+  Viewer.prototype.syncRecorded=function(){var show=this.recordedShown();this.root.children.forEach(function(o){if(o!==this.paintMesh&&o!==this.trackGroup&&o!==this.outline&&o!==this.outlineDepth&&o!==this.aimGroup&&!o.userData.horizon)o.visible=show;},this);};
   Viewer.prototype.shotProbability=function(shell){
     if(this.pinned&&this.engine&&shell)return this.engine.ray(this.pinned.origin.toArray(),this.pinned.direction.toArray(),shell);
     if(!this.engine||!this.point||!this.travel||!shell||!this.recordedPose())return null;
@@ -905,7 +1038,7 @@
     // empty group behind, and an empty group that is visible costs nothing.
     // ringAim is the solid ring's frame, discAim the disc's; savedAim - what the circle figure is sampled over - is
     // one of the two (shotDiscAim), never a third copy.
-    this.savedAim=this.ringAim=this.discAim=this.shotDisc=null;this.aimGroup=new T.Group();this.aimGroup.visible=aimShown();this.root.add(this.aimGroup);
+    this.savedAim=this.ringAim=this.discAim=this.shotDisc=null;this.viewPoints=null;this.aimGroup=new T.Group();this.aimGroup.visible=aimShown();this.root.add(this.aimGroup);
     if(!context||!(context.aim||context.serverShot)||!target||!target.worldTransform)return false;
     var inverse=new T.Matrix4().fromArray(target.worldTransform).invert();
     function pos(p){var v=new T.Vector3().fromArray(p).applyMatrix4(inverse);v.z*=-1;return v;}
@@ -935,6 +1068,20 @@
       var options={color:color,depthTest:false,depthWrite:false,transparent:true,opacity:.85},material=dashed?new T.LineDashedMaterial(Object.assign(options,{dashSize:radius*.1,gapSize:radius*.07})):new T.LineBasicMaterial(options);
       var line=new T.Line(new T.BufferGeometry().setFromPoints(points),material);if(dashed)line.computeLineDistances();line.renderOrder=12;line.frustumCulled=false;self.aimGroup.add(line);
       if(!dashed){var size=Math.max(.025,Math.min(.12,radius*.12)),cross=[center.clone().addScaledVector(right,-size),center.clone().addScaledVector(right,size),center.clone().addScaledVector(up,-size),center.clone().addScaledVector(up,size)];var mark=new T.LineSegments(new T.BufferGeometry().setFromPoints(cross),new T.LineBasicMaterial(options));mark.renderOrder=12;self.aimGroup.add(mark);self.ringAim={center:center,normal:normal,right:right,up:up,radius:radius,origin:origin,kind:'saved'};}
+      if(origin){axis(origin,center,new T.Color(color),dashed?.012:0,'thin',dashed,dashed?8:7);self.viewPoints=self.viewPoints||{};self.viewPoints[dashed?'server':'gun']=origin.clone();}
+    }
+    // Ring axes (the lab's switch, user 24.09): each ring's axis from its cone's apex to its centre - the solid ring's
+    // from the gun at the press, the dashed one's from its server update's origin, the thick one's from the shell's own
+    // origin - in the ring's colour and style. They start where the vehicle stood at each moment and meet at the target.
+    // Thin lines in the recorded group (a pin or the first emulated shot hides them with the rings), made with the rings;
+    // the switch only shows or hides them. `dash`: the dash as a share of the length, 0 for a solid line.
+    // Each apex gets a dot in its ring's style (user, 24.09: the three start points side by side - your gun at the press, filled;
+    // the server's gun then, hollow; the shell's real origin, the thick ring's colour and a size up).
+    function axis(from,to,colour,dash,kind,hollow,px){
+      var length=from.distanceTo(to),o={color:colour,depthTest:false,depthWrite:false,transparent:true,opacity:.8};
+      var line=new T.Line(new T.BufferGeometry().setFromPoints([from.clone(),to.clone()]),dash>0?new T.LineDashedMaterial(Object.assign(o,{dashSize:length*dash,gapSize:length*dash*.7})):new T.LineBasicMaterial(o));
+      if(dash>0)line.computeLineDistances();line.renderOrder=12;line.frustumCulled=false;line.userData.ringAxis=kind;line.visible=self.axesShown(kind);self.aimGroup.add(line);
+      var dot=startDot(from,colour.clone(),px,hollow);dot.renderOrder=12;dot.userData.ringAxis=kind;dot.visible=line.visible;self.aimGroup.add(dot);
     }
     // Both recorded reticles stand still, so both are magenta (user, 20.09); solid is the client's,
     // dashed the server's. Both are the snapshot of the PRESS (what the player aimed with), kept beside the disc.
@@ -965,13 +1112,23 @@
           var disc=new T.Mesh(this.ringGeometry(),this.ringMaterial());disc.matrixAutoUpdate=false;disc.onBeforeRender=this.ringBeforeRender;
           disc.matrix.makeBasis(right.clone().multiplyScalar(radius),up.clone().multiplyScalar(radius),normal.clone().multiplyScalar(radius)).setPosition(center);
           disc.renderOrder=DISC_ORDER;disc.frustumCulled=false;disc.visible=this.discOn;this.aimGroup.add(disc);this.shotDisc=disc;
-          this.discAim={center:center,normal:normal,right:right,up:up,radius:radius,origin:origin,kind:'fired',
+          // The cone's apex - where the figure fans its rays from and where Ring axes starts the thick ring's axis - is the
+          // shell's origin as the flight and the camera have it: carried onto the hit (shotPath) when the tracer's stop is
+          // known, so the three start at one point (review 24.09: 0.32 m median, up to 61 m apart before). The ring at the
+          // target is built from `origin` and I as before and does not move.
+          var apex=this.shotPath&&this.shotPath.tracer===tracer?this.shotPath.origin.clone():origin;
+          axis(apex,center,new T.Color().setRGB(this.ringLook.color[0],this.ringLook.color[1],this.ringLook.color[2],T.SRGBColorSpace),.03,'disc',false,9);
+          this.viewPoints=this.viewPoints||{};this.viewPoints.fired=apex.clone();
+          this.discAim={center:center,normal:normal,right:right,up:up,radius:radius,origin:apex,kind:'fired',
             q:Math.hypot(dx,dy)/shot.update.dispersionAngle,stale:!!shot.stale,from:shot.from,gap:shot.gap,
             salvo:shot.salvo||0,afterRecorded:!!shot.afterRecorded};
         }
       }
     }
     this.savedAim=this.shotDiscAim();
+    // View from (the lab, user 24.09): an own shot's record view may stand at the gun at the press or at the server's gun
+    // then; those points are known only now, so the camera owner places it again (load() placed it at the shot).
+    if(this.viewFrom!=='fired'&&this.viewEye(true))this.focus();
     this.showSavedAim(aimShown());return !!(this.ringAim||this.discAim);
   };
   // The circle the figure is sampled over: the shot ring - the circle the shell really left from - while it is on
@@ -1004,11 +1161,16 @@
     this.ringBeforeRender=function(){self.ringMat.uniforms.uViewH.value=self.viewHeight||1;};
     return this.ringMat;
   };
+  // The lab's Ring axes switch (user, 24.09). The thick ring's axis goes with the thick ring (Shot ring off: no axis).
+  Viewer.prototype.axesShown=function(kind){return !!this.ringAxes&&(kind!=='disc'||this.discOn);};
+  Viewer.prototype.ringAxisLines=function(){return this.aimGroup?this.aimGroup.children.filter(function(o){return !!o.userData.ringAxis;}):[];};
+  Viewer.prototype.setRingAxes=function(on){var self=this;this.ringAxes=!!on;this.ringAxisLines().forEach(function(o){o.visible=self.axesShown(o.userData.ringAxis);});this.draw();};
   // Settings, Shot ring: the switch and the opacity (0..1). The circle figure follows the circle on screen.
   Viewer.prototype.setShotDisc=function(on,opacity){
-    this.discOn=!!on;if(Number.isFinite(opacity))this.discOpacity=opacity;
+    var self=this;this.discOn=!!on;if(Number.isFinite(opacity))this.discOpacity=opacity;
     if(this.ringMat)this.ringMat.uniforms.uOpacity.value=this.discOpacity;
     if(this.shotDisc)this.shotDisc.visible=this.discOn;
+    this.ringAxisLines().forEach(function(o){o.visible=self.axesShown(o.userData.ringAxis);});
     this.savedAim=this.shotDiscAim();this.draw();
   };
   // The TEMPORARY lab of Settings (user, 24.09): {color:[r,g,b] sRGB 0..1, width px, dashes, share 0..1, place 0/0.5/1}.
@@ -1016,6 +1178,7 @@
   Viewer.prototype.setShotRingLook=function(look){
     var l=this.ringLook;Object.keys(look||{}).forEach(function(k){if(look[k]!==undefined&&look[k]!==null)l[k]=look[k];});
     if(this.ringMat){var u=this.ringMat.uniforms;u.uColor.value.fromArray(l.color);u.uWidth.value=l.width;u.uPlace.value=l.place;}
+    this.ringAxisLines().forEach(function(o){if(o.userData.ringAxis==='disc')o.material.color.setRGB(l.color[0],l.color[1],l.color[2],THREE.SRGBColorSpace);});
     if(this.ringGeom)this.ringGeometry();
     this.draw();
   };

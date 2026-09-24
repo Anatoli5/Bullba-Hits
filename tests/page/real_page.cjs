@@ -228,6 +228,44 @@ async function main() {
     await ev("(() => { const s = document.getElementById('shot-ring-opacity'); s.value = '60'; s.dispatchEvent(new Event('input')); const w = document.getElementById('ring-width'); w.value = '6'; w.dispatchEvent(new Event('input')); return true; })()");
     await ev('__bt.settle()');
 
+    // ---- the shell's own flight and the game's oddities (shot-line-true, 24.09) ------------------------------------
+    // pm3's own shot carries its tracer and the server's stop 0.8 m along the hull from the recorded point: the page draws the
+    // flight as an arc from the real origin carried onto the point, the camera stands at that origin, and the hit-line panel
+    // shows the pose mark (> 0.5 m) with its words and its own help dot; the shooter stands above the tracks - no height mark.
+    // Ring axes (the lab's switch): three lines, off by default, shown by the switch.
+    await step("battle('pm3')"); await step('hit(0)');
+    const flight = await ev(`(() => { const v = window.__bullbaViewers[window.__bullbaViewers.length - 1], p = v.shotPath, g = document.getElementById('pose-gap'), h = document.getElementById('shooter-height');
+      const dot = document.querySelector('#hit-marks .help-dot'), arc = v.root.children.find((o) => o.userData && o.userData.shotArc);
+      return {path: !!p, gap: p ? p.gap : null, eye: p ? v.camera.position.distanceTo(p.origin) : null, arc: !!arc && arc.visible,
+        pose: g.getClientRects().length > 0, tip: g.title, height: h.getClientRects().length > 0, dot: !!dot && dot.getClientRects().length > 0,
+        axes: v.ringAxisLines().filter((a) => a.type === 'Line').map((a) => a.visible), dots: v.ringAxisLines().filter((a) => a.type === 'Points').length}; })()`);
+    ok('flight: an own shot with its tracer gets the arc from the real origin, and the camera stands there', flight.path && flight.arc && flight.eye < 1e-6, JSON.stringify(flight).slice(0, 200));
+    ok('flight: 0.8 m between the recorded point and the server\'s - the pose mark on the hit-line panel, with its words and its "?"',
+       Math.abs(flight.gap - .8) < 1e-6 && flight.pose && flight.tip.indexOf('Pose diverged: 0.80 m') === 0 && flight.dot && !flight.height, '("' + flight.tip.split('\n')[0] + '")');
+    ok('ring axes: three with their start dots, hidden until the lab\'s switch', flight.axes.length === 3 && flight.axes.every((x) => !x) && flight.dots === 3);
+    await ev("(() => { document.getElementById('ring-axes').click(); return true; })()"); await ev('__bt.settle()'); await new Promise((r) => setTimeout(r, 400));
+    const axesOn = await ev(`(() => { const v = window.__bullbaViewers[window.__bullbaViewers.length - 1]; let st = null; try { st = JSON.parse(localStorage.getItem('bullba-settings')).values['ring-axes']; } catch (x) {} return {vis: v.ringAxisLines().map((a) => a.visible), stored: st}; })()`);
+    ok('ring axes: the switch shows all three and their dots, and is stored', axesOn.vis.length === 6 && axesOn.vis.every((x) => x) && axesOn.stored === true, JSON.stringify(axesOn));
+    await ev("(() => { document.getElementById('ring-axes').click(); return true; })()"); await ev('__bt.settle()');
+
+    // The full tracer: a dashed arc, a dot at its start, an arrowhead - no stub. View from (the lab): your gun at the press
+    // puts the camera at the solid ring's apex, stored; back to the shot, at the carried origin.
+    const tracerLook = await ev(`(() => { const v = window.__bullbaViewers[window.__bullbaViewers.length - 1], k = v.root.children;
+      return {dashed: k.some((o) => o.userData.shotArc && o.type === 'Line' && o.material.type === 'LineDashedMaterial'), dot: k.some((o) => o.userData.shotArc && o.type === 'Points'),
+        head: k.some((o) => o.userData.shotArc && o.type === 'ArrowHelper'), stub: k.some((o) => o.type === 'Group' && o.children.some((a) => a.type === 'ArrowHelper'))}; })()`);
+    ok('full tracer: dashed along the arc, a dot at its start, an arrowhead, no stub', tracerLook.dashed && tracerLook.dot && tracerLook.head && !tracerLook.stub, JSON.stringify(tracerLook));
+    const pick = (value) => ev(`(() => { const s = document.getElementById('view-from'); s.value = '${value}'; s.dispatchEvent(new Event('change')); return true; })()`);
+    const where = () => ev(`(() => { const v = window.__bullbaViewers[window.__bullbaViewers.length - 1]; let st = null; try { st = JSON.parse(localStorage.getItem('bullba-settings')).values['view-from']; } catch (x) {}
+      return {gun: v.viewPoints && v.viewPoints.gun ? v.camera.position.distanceTo(v.viewPoints.gun) : null, shot: v.shotPath ? v.camera.position.distanceTo(v.shotPath.origin) : null, stored: st}; })()`);
+    const pickDefault = await ev(`(() => { const v = window.__bullbaViewers[window.__bullbaViewers.length - 1]; return document.getElementById('view-from').value === 'fired' && v.viewFrom === 'fired' && v.camera.position.distanceTo(v.shotPath.origin) < 1e-3; })()`);
+    ok('view from: the shot by default, the camera at the carried origin', pickDefault);
+    await pick('gun'); await ev('__bt.settle()'); await new Promise((r) => setTimeout(r, 400));
+    const fromGun = await where();
+    await pick('fired'); await ev('__bt.settle()'); await new Promise((r) => setTimeout(r, 400));
+    const fromShot = await where();
+    ok('view from: your gun at the press - the camera at the solid ring\'s apex, stored; back to the shot', fromGun.gun !== null && fromGun.gun < 1e-3 && fromGun.stored === 'gun'
+       && fromShot.shot < 1e-3 && fromShot.stored === 'fired', JSON.stringify([fromGun, fromShot]));
+
     // ---- a drag over a page with text selected (user, 24.09) --------------------------------------------------
     // With a selection on the page (a left-button sweep over the panels selects their text and the scene with it), a
     // press on the scene used to start the browser's own drag of that selection: the page got pointercancel after a

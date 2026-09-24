@@ -5473,7 +5473,7 @@
       var shell=c?shellAt(c,c.kind,c.penetration100,c.caliber,range,hit):null;
       // A flat engine (one leaf, no kd-tree): the tree would cost far more to build than the one to three rays
       // cast through it here save, and the verdicts are the same.
-      if(!shell)return;var engine=ArmorBallistics.build(data,false,true),pts=ArmorViewer.points(hit);
+      if(!shell)return;var engine=ArmorBallistics.build(data,false,true),pts=ArmorViewer.points(hit,context);
       ArmorViewer.verdicts(engine,pts,shell).forEach(function(v){verdictLine(battle.id,hit,v,shell,context.index>=0?'auto':'auto-shell-guess');});
     }).catch(function(e){if(window.console)console.warn('Bullba Hits verdict: hit '+hit.id+' skipped: '+e.message);})
       .then(function(){verdictBusy=false;verdictStatus();if(verdictQueue.length)verdictTimer=setTimeout(drainVerdicts,150);});
@@ -5501,7 +5501,7 @@
     // The ring on screen is part of the key: a pinned point and the user's first emulated shot both take
     // the recorded rings away, and the line that describes them has to go with them.
     var ringShown=!!(viewer&&viewer.savedAimShown&&viewer.savedAimShown());
-    paintDiscNote(ringShown);
+    paintDiscNote(ringShown);paintHitMarks();
     // The STANDING ring is the reticle of a shot that was fired at its OWN range: its figure is taken with
     // the shell at that range, never at the one the Distance slider happens to stand on (user, 22.09 - the
     // tile blinked and was recomputed on every move of a slider that changes nothing for it). Only a saved
@@ -5565,6 +5565,45 @@
         (d.afterRecorded?'\n\nThe updates recorded after this shot do not match its origin either, so it stays uncertain.'
           :'\n\nBattles recorded by newer builds keep the next update, which usually makes the ring exact.');}
     if(show!==discNoteShown){discNoteShown=show;e.hidden=!show;}
+  }
+  // The game's oddities of this hit (shot-line-true, user 24.09; outputs/wg-mechanics-check-2026-09-24.md §4, §6, §10), two
+  // marks on the hit-line panel's title row, from what the viewer built for the hit (shotPath, shooterHeight) - read here,
+  // never kept. Shown with the recorded line only (not over a pinned point, a turned turret or the first emulated shot).
+  // POSE_GAP_MARK: the pose mark shows when the recorded point stands more than this from the server's contact S (metres;
+  // the user's to change after seeing it). 0.5 m (review 24.09): 21 % of the hits with a tracer; 0.3 m marked 32 %,
+  // 0.75 m 13 %, 1 m 9 %. A standing target gives 1-2 cm. The height mark's own threshold is the viewer's (shooterHeight
+  // .below, HEIGHT_MARK), because the world-level square follows it too.
+  // Words composed once per hit, whether or not the line is on screen then; one attribute write per real change.
+  var POSE_GAP_MARK=.5,hitMarksFor=null,hitMarksShown=[null,null];
+  function heightWords(h){
+    var depth=-h.grid,w=h.world,lean=-h.tilt,deg=(h.angle*180/Math.PI).toFixed(1),m=function(x){return Math.abs(x).toFixed(1)+' m';};
+    var out=['Shooter below the tracks: '+m(depth),'The shot came from '+m(depth)+' below the plane this vehicle’s tracks stand on.'];
+    // The depth splits into the shooter's real height against the vehicle's base (world) and what the vehicle's lean adds
+    // (lean = depth + world). Worded so no part ever reads larger than the whole: when the shooter really stood higher,
+    // the lean is all of the depth and the world line says he was higher.
+    if(w>-.05)out.push('• All of it is this vehicle’s lean ('+deg+'°): in the world the shooter stood '+(w<.05?'level with':m(w)+' higher than')+' its base');
+    else{out.push('• In the world: the shooter stood '+m(w)+' lower than this vehicle’s base');
+      if(lean>=.05)out.push('• The vehicle’s lean ('+deg+'°) adds '+m(lean));
+      else if(lean<=-.05)out.push('• The vehicle’s lean ('+deg+'°) hides '+m(lean)+' of that');}
+    if(h.angle>=Math.PI/180)out.push('• Dashed square: the world’s level through the tracks');
+    out.push('','The grid is the vehicle’s own tracks, not the ground: the map’s terrain is not recorded.');
+    return out.join('\n');
+  }
+  function paintHitMarks(){
+    var gapEl=$('pose-gap'),hEl=$('shooter-height');if(!gapEl||!hEl)return;
+    var path=viewer&&viewer.shotPath,shown=!!(path&&viewer.recordedShown()),height=path?viewer.shooterHeight():null;
+    var showGap=shown&&path.gap>POSE_GAP_MARK,showH=!!(shown&&height&&height.below);
+    if(path&&hitMarksFor!==path){hitMarksFor=path;
+      var deg=path.angle*180/Math.PI;
+      gapEl.title='Pose diverged: '+path.gap.toFixed(2)+' m\nThe server hit this vehicle '+path.gap.toFixed(2)+' m from where the game drew it at that moment.'+
+        '\n• Why: the game draws vehicles about 0.2 s late, and the server checked the hit on a pose up to 0.2 s apart'+
+        '\n• Along the hull: '+path.along.toFixed(2)+' m'+(path.along>.7*path.gap?' (it was moving)':'')+
+        (deg>=1.5?'\n• Turned: the drawn vehicle stood about '+deg.toFixed(1)+'° off the server’s':'')+
+        '\n\n• Here: the cross stays on the armour where the server hit; the flight is moved onto it'+
+        '\n• In the game: the hit looked off by as much, and the tracer came from the shooter as drawn, late too';
+      if(height){$('shooter-height-value').textContent=(-height.grid).toFixed(1)+' m';hEl.title=heightWords(height);}}
+    if(showGap!==hitMarksShown[0]){hitMarksShown[0]=showGap;gapEl.hidden=!showGap;}
+    if(showH!==hitMarksShown[1]){hitMarksShown[1]=showH;hEl.hidden=!showH;}
   }
   // BACKLOG 38: the target carried a leKpz Borkenkäfer mark at this hit (ArmorShotContext.markOf, on the resolved
   // context): every shell deals it ×1.1, ×1.15 with the marker's full skill tree - which the record cannot tell. The
@@ -6637,7 +6676,14 @@
   ['ring-hue','ring-sat','ring-light','ring-width','ring-dashes','ring-share'].forEach(function(id){$(id).oninput=ringLab;});$('ring-place').onchange=ringLab;
   Object.keys(RING_PRESETS).forEach(function(name){$('ring-preset-'+name).onclick=function(){var p=RING_PRESETS[name];
     $('ring-hue').value=String(p[0]);$('ring-sat').value=String(p[1]);$('ring-light').value=String(p[2]);ringLab();persistSettings();};});
-  $('ring-lab-help').appendChild(helpDotFor(['ring-hue','ring-sat','ring-light','ring-preset-blue','ring-preset-magenta','ring-width','ring-dashes','ring-share','ring-place']));
+  // Ring axes (user, 24.09): the lab's one developer view - each recorded ring's axis from its apex to its centre.
+  $('ring-axes').onchange=function(){if(viewer)viewer.setRingAxes(this.checked);};
+  // View from (user, 24.09): where the record view of an own shot stands - the shot, your gun at the press, the server's gun
+  // then. The viewer's camera owner (focus) places it; other hits ignore it.
+  $('view-from').onchange=function(){if(viewer)viewer.setViewFrom(this.value);};
+  $('ring-lab-help').appendChild(helpDotFor(['ring-hue','ring-sat','ring-light','ring-preset-blue','ring-preset-magenta','ring-width','ring-dashes','ring-share','ring-axes','view-from','ring-place']));
+  // The hit-line panel's marks (paintHitMarks): their own "?", which stands only while one of them does.
+  $('hit-marks').appendChild(helpDotFor(['pose-gap','shooter-height']));
   // ======================= the characteristics panel (23.09) =======================
   // What the garage would show for the vehicle on the Shooter tile - the one Config sets up and the gun panel
   // belongs to (outputs/ttx-panel-spec-2026-09-22.md section 3.4; the arithmetic is web/ttx.js, the formulas

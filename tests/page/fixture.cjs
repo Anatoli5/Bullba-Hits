@@ -8,6 +8,7 @@
  * file). Battles: pm (two incoming hits), pm2 (one), pm3 (one outgoing on a target whose only figure is in his file).
  * The outgoing hit of pm3 is the player's own shot with its tracer and aim snapshot (BACKLOG 28 step 2, 24.09): the two
  * recorded outlines and the shot disc, whose server update is one tick stale (its origin 1.5 m from the shell's).
+ * Its server stop lies 0.8 m along the hull from the recorded point: the flight is carried onto the point, the pose mark shows.
  *
  *   require('./fixture.cjs').write(folder)   // writes folder/data/**
  */
@@ -123,7 +124,9 @@ function write(folder) {
      aimAtTracer: {source: 'synthetic', clientMarker: marker(T0 + 7249.7), serverMarker: marker(T0 + 7249.7),
        lastServerGunUpdate: {vehicleId: 30, origin: [O[0] + 1.5, O[1], O[2]], vector: toward([0.2, 1.2, 3.0]), dispersionAngle: 0.004,
          receivedAt: T0 + 7249.72, gameTime: 99.7}}},
-    {schema: 1, type: 'shot', event: 'stop', id: 's2', shotId: '501', tracerId: 's1', shooterId: 30, own: true, position: I,
+    // The server's stop 0.8 m along the hull from the recorded point (shot-line-true, 24.09): the game drew the target
+    // 0.8 m off the pose the server hit - the page moves the flight onto the point and shows the pose mark.
+    {schema: 1, type: 'shot', event: 'stop', id: 's2', shotId: '501', tracerId: 's1', shooterId: 30, own: true, position: [I[0], I[1], I[2] + 0.8],
      segmentDistance: len, receivedAt: T0 + 7249.98, gameTime: 99.98}];
   const battles = [BATTLE('pm', 'Synthetic field', T0 + 7200, [HIT('pm-1', 31, 30, 'incoming', T0 + 7260), HIT('pm-2', 32, 30, 'incoming', T0 + 7270)]),
                    BATTLE('pm2', 'Synthetic hills', T0 + 3600, [HIT('pm2-1', 32, 30, 'incoming', T0 + 3660)]),

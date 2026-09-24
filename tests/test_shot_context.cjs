@@ -59,4 +59,28 @@ assert.equal(ArmorShotContext.serverShot(ev2[1],[ev2[1]]).stale,true);
 ev2=salvoEvents([1.5,0,-100],true);s2=ArmorShotContext.serverShot(ev2[1],ev2);
 assert.equal(s2.from,'after');assert.equal(s2.stale,false);assert.equal(s2.update.dispersionAngle,.003);
 ev2=salvoEvents([1.5,0,-100],false);s2=ArmorShotContext.serverShot(ev2[0],ev2);assert.equal(s2.stale,true);assert.equal(s2.salvo,2);assert.equal(s2.afterRecorded,false);
-console.log(JSON.stringify({passed:true,cases:22}));
+// shot-line-true (24.09): the tracer's stop S is handed out (c.stop), the one nearest the hit point. The recorded point lies on
+// the pose the game drew, up to metres from S on the move: a stop 0.75-5 m off is taken when it is the ONLY tracer that can be
+// this hit's; a near one still wins as before, two far ones stay ambiguous, and past 5 m nothing is taken.
+const far=(d,id,cmd)=>[{event:'command',id:cmd||'c1',receivedAt:99.9},{event:'tracer',id:id||'t1',own:false,shooterId:7,effectsIndex:3,gunInstallationIndex:0,isRicochet:false,receivedAt:99.95,origin:[0,0,-100],velocity:[0,0,900]},
+  {event:'stop',tracerId:id||'t1',position:[0,0,d],receivedAt:100.05}];
+c=R(hit,far(2));assert.equal(c.tracer&&c.tracer.id,'t1');assert.deepEqual(c.stop.position,[0,0,2]);
+c=R(hit,far(.1));assert.deepEqual(c.stop.position,[0,0,.1]);
+c=R(hit,far(.1).concat([{event:'stop',tracerId:'t1',position:[0,0,.4],receivedAt:100.06}]));assert.deepEqual(c.stop.position,[0,0,.1],'the nearest of two ends');
+c=R(hit,far(.2).concat(far(2,'t2','c2').slice(1)));assert.equal(c.tracer.id,'t1','a near stop wins over a far one, as before');
+c=R(hit,far(2).concat(far(3,'t2','c2').slice(1)));assert.equal(c.tracer,null);assert.equal(c.stop,null);assert.equal(c.aimReason,'no-endpoint');
+c=R(hit,far(6));assert.equal(c.tracer,null);assert.equal(c.aimReason,'no-endpoint');
+// Review 24.09: in a burst the damage message comes a tick after its own shell stopped - the true tracer (its stop 0.2 s
+// before the message, 0.02 m off) falls out of the 0.1 s window, and the far rule must not hand the hit to a neighbour
+// of the burst; an explosion is no stop for the far rule; the flight range is origin -> S (one owner).
+const burst=far(2).concat([{event:'tracer',id:'t0',own:false,shooterId:7,effectsIndex:3,gunInstallationIndex:0,isRicochet:false,receivedAt:99.7,origin:[0,0,-100],velocity:[0,0,900]},
+  {event:'stop',tracerId:'t0',position:[0,0,.02],receivedAt:99.85}]);
+c=R(hit,burst);assert.equal(c.tracer,null,'a burst neighbour is not taken by the far rule');
+const boom=far(2);boom[2]={...boom[2],event:'explosion'};assert.equal(R(hit,boom).tracer,null,'an explosion is no stop for the far rule');
+c=R(hit,far(2));assert.ok(Math.abs(c.range-102)<1e-9,'range = |origin - S| with the stop known ('+c.range+')');
+// A screen-then-armour hit: the shell stopped at the SECOND contact (z = -1); the stop is carried there, the range is to the
+// first contact: |origin - (S - (P1 - P0))|.
+const two2={...hit,points:[hit.points[0],{...hit.points[0],position:[0,0,1]}]};
+c=R(two2,far(1.05).map((e)=>e.event==='stop'?{...e,position:[0,0,1.05]}:e));
+assert.equal(c.stop.position[2],1.05);assert.ok(Math.abs(c.range-(100+.05))<1e-9,'range to the first contact ('+c.range+')');
+console.log(JSON.stringify({passed:true,cases:33}));

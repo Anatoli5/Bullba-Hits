@@ -230,7 +230,7 @@ function main(argv) {
     }
   };
   const probeViewer = {
-    points: function (hit) { const p = RealViewer.points(hit); if (job) job.points = p.length; return p; },
+    points: function (hit, context) { const p = RealViewer.points(hit, context); if (job) job.points = p.length; return p; },
     verdicts: function (engine, pts, shell) { const v = RealViewer.verdicts(engine, pts, shell); if (job) job.verdicts = v.length; return v; }
   };
 

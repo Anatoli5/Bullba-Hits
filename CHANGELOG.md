@@ -4,6 +4,10 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 
 ## Unreleased
 
+- **Hit line:** the shot is now drawn along the shell's whole real flight from the tracer: a dashed arc from a dot where it left (the drop of up to a metre at long range included) to an arrowhead at the hit, instead of the short stub; the record view puts the camera at that start. More hits find their tracer (up to 5 m off, when nothing else of that shooter is near).
+- **Hit line:** a small mark on the hit-line panel when the game drew the vehicle more than 0.5 m from where the server hit it (the game draws vehicles about 0.2 s late); a click says how far and why.
+- **Hit line:** when the shot seems to come from under the ground (0.5 m or more below the tracks), a mark says how far and how much of it is the vehicle's own lean, with a dashed square for the world's level.
+- **Circles:** temporary lab (Settings → Shot ring lab): Ring axes draws each recorded ring's axis from a dot where its gun stood; View from puts the record view of your own shot at your gun at the press, the server's gun then, or the shot (default).
 - **Scene:** a click on a Circle tile (or the hit-line panel) shows its words instead of firing the emulated gun or pinning a point under it.
 - **Scene:** the Circle tiles have their own "?": what each ring is and what the figures mean.
 - **Circles:** your own recorded shot now also shows the circle the server really fired it from — a thick, translucent ring of long dashes (99 shells in 100 land inside it) beside the two thin outlines of your reticle and the server marker at the press. The Circle figure is taken over it.

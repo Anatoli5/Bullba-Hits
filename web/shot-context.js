@@ -210,7 +210,7 @@
      "stale" shots of 91 battles were salvos of a vehicle standing still. The reference is the MEAN origin of the own
      tracers of that instant (for one tracer, its own): every salvo then matches (0.003-0.004 m), nothing else changes.
      The recorder writes one gunAfterShot per salvo, naming its first tracer; it is found through the same group. */
-  var STALE_GAP=.05,SAME_INSTANT=1e-3;
+  var STALE_GAP=.05,SAME_INSTANT=1e-3,NEAR_END=.75,FAR_END=5,END_WINDOW=.1,BURST_WINDOW=.3;
   function serverShot(tracer,events){
     var last=tracer&&tracer.own&&!tracer.isRicochet&&tracer.aimAtTracer&&tracer.aimAtTracer.lastServerGunUpdate;
     function valid(u){return !!(u&&Array.isArray(u.vector)&&Array.isArray(u.origin)&&u.dispersionAngle>0);}
@@ -233,12 +233,30 @@
     var possible=events.filter(function(e){return e.event==='tracer'&&!e.isRicochet&&e.gunInstallationIndex===0&&e.shooterId===hit.attackerId&&e.effectsIndex===hit.effectsIndex&&e.receivedAt<=hit.receivedAt&&hit.receivedAt-e.receivedAt<10;});
     // Damage callback lacks shotId. Accept only one endpoint close in BOTH space
     // and time; do not associate an arbitrary newest tracer during a burst.
-    var matches=possible.filter(function(t){return events.some(function(e){return e.tracerId===t.id&&e.position&&Math.abs(e.receivedAt-hit.receivedAt)<=.1&&world.some(function(p){return distance(e.position,p)<=.75;});});});
+    // The end of a tracer that can be this hit's: received within `window` s of it (0.1 s), within `gate` metres of a
+    // contact point; of several, the one nearest to a point; `stopOnly`: stopTracer ends only (not explosions).
+    // A tracer whose end lies 0.75-5 m off is taken only when it is the only one (shot-line-true, 24.09): the recorded
+    // point is the server's contact laid on the pose the game DREW, and on the move that pose stands up to 3 m from the
+    // server's (outputs/wg-mechanics-check-2026-09-24.md §4). In a burst the damage message often comes a tick after its
+    // own shell stopped, so the true tracer falls out of the 0.1 s window and a neighbour of the burst is the only one
+    // left (review 24.09: 89 of 794 such picks doubtful, 12 tracers given to two hits): the far rule therefore needs a
+    // stopTracer end and NO other end of this shooter's shells (same effects, no ricochet) within 0.3 s and 5 m.
+    // Past 5 m the report found only mismatches.
+    function endOf(t,gate,window,stopOnly){var best=null,bd=Infinity;events.forEach(function(e){if(e.tracerId!==t.id||!e.position||Math.abs(e.receivedAt-hit.receivedAt)>window||stopOnly&&e.event!=='stop')return;
+      var d=Math.min.apply(null,world.map(function(p){return distance(e.position,p);}));if(d<=gate&&d<bd){bd=d;best=e;}});return best;}
+    var matches=possible.filter(function(t){return !!endOf(t,NEAR_END,END_WINDOW);});
+    if(!matches.length){var far=possible.filter(function(t){return !!endOf(t,FAR_END,END_WINDOW,true);});
+      if(far.length===1&&!events.some(function(t){return t.event==='tracer'&&t!==far[0]&&!t.isRicochet&&t.shooterId===hit.attackerId&&t.effectsIndex===hit.effectsIndex&&t.receivedAt<=hit.receivedAt+BURST_WINDOW&&hit.receivedAt-t.receivedAt<10&&!!endOf(t,FAR_END,BURST_WINDOW);}))matches=far;}
     // A salvo fires several own tracers from one command; the second shell has no command of its own.
     function commandOf(t){if(!t||!t.own)return null;var own=events.find(function(e){return e.event==='command'&&e.id===t.possibleCommandId;});if(own)return own;
       var before=events.filter(function(e){return e.event==='command'&&e.shooterId===t.shooterId&&e.receivedAt<=t.receivedAt&&t.receivedAt-e.receivedAt<=1.5;});return before.length?before[before.length-1]:null;}
     var sameCommand=matches.length>1&&matches.every(function(t){return t.own;})&&matches.every(function(t){var c=commandOf(t);return c&&c===commandOf(matches[0]);});
     var tracer=matches.length===1?matches[0]:sameCommand?matches.slice().sort(function(a,b){return b.receivedAt-a.receivedAt;})[0]:null,command=commandOf(tracer);
+    // Where the server stopped that shell (stopTracer): the world contact S, on the tracer's parabola to 6 mm (explosions
+    // are not measured on it). `stopPoint`: the contact point it stopped at - on a screen-then-armour hit often the last,
+    // not the first (review 24.09: 48 hits) - the one nearest to S; the offset I - S is measured there.
+    var stop=tracer?endOf(tracer,FAR_END,END_WINDOW,true):null,stopPoint=0;
+    if(stop)world.forEach(function(p,i){if(distance(stop.position,p)<distance(stop.position,world[stopPoint]))stopPoint=i;});
     // Each aim snapshot is judged against the receipt time of its own source:
     // a stale or incomplete command snapshot must not hide a usable aimAtTracer.
     function usable(aim,stamp,window){var m=aim&&aim.clientMarker;return !!(m&&m.diameter>0&&m.position&&m.direction&&Number.isFinite(m.receivedAt)&&Number.isFinite(stamp)&&Math.abs(stamp-m.receivedAt)<=window);}
@@ -295,7 +313,10 @@
       shotState=tracer&&tracer.gunState||null,impactState=attacker.gunStateAtImpact||null;
     // The flight range: the tracer's muzzle to the hit, else the one the impact carries. The damage band below
     // and the page's penetration and alpha are taken at it.
-    var range=tracer&&Array.isArray(tracer.origin)&&world.length?distance(tracer.origin,world[0]):null,rangeSource='tracer';
+    // With the server's stop known the flight is the tracer's own (review 24.09, one range owner): origin to S, less the
+    // stretch from the first contact to the one it stopped at, as drawn - |origin - (S - (world[k] - world[0]))|, the
+    // distance the page's camera stands from the first point (Viewer.shellPath carries the flight onto the points).
+    var range=tracer&&Array.isArray(tracer.origin)&&world.length?(stop?distance(tracer.origin,[0,1,2].map(function(i){return stop.position[i]-world[stopPoint][i]+world[0][i];})):distance(tracer.origin,world[0])):null,rangeSource='tracer';
     if(!(Number.isFinite(range)&&range>0)){range=Number.isFinite(hit.rangeAtImpact)&&hit.rangeAtImpact>0?hit.rangeAtImpact:null;rangeSource=range===null?null:'impact';}
     var modeSource='';
     if(hasModes&&matching.length>1){
@@ -341,7 +362,7 @@
     // Why the shell stayed unknown, in the words the shell chips and the tooltip use.
     var why=contradicted?'no shell of this shooter fits the shot’s ballistics'
       :hasModes&&index<0?'this vehicle switches its shell parameters; the record does not say which state was on':'';
-    return {choices:choices,index:index,kind:kindValues.length===1?kindValues[0]:null,tracer:tracer,command:command,aim:aim,aimSource:chosen?chosen.from:null,aimReason:aimReason,
+    return {choices:choices,index:index,kind:kindValues.length===1?kindValues[0]:null,tracer:tracer,stop:stop,command:command,aim:aim,aimSource:chosen?chosen.from:null,aimReason:aimReason,
       serverShot:serverShot(tracer,events),
       range:range,rangeSource:rangeSource,modes:hasModes,unresolvedWhy:why,
       gunState:gunState,gunStateFrom:gunFrom,gunNotes:gunNotes(gunState,gunFrom),chargeFactor:chargeFactor>1?chargeFactor:null,

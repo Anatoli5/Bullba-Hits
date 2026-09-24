@@ -555,6 +555,165 @@ function checks(ok, web) {
     ok('viewer-batch: without aim.gunOrigin the solid ring keeps the marker\'s line, the radius from the shot\'s muzzle',
        v.ringAim && world(v.ringAim.center).distanceTo(want) < 1e-9 && near(v.ringAim.radius, .18 * (spanO + shift) / spanO, 1e-12));
   });
+
+  // ---- 11. The shell's own flight (shot-line-true, 24.09) ---------------------------------------------------------------
+  // A turned, tilted target; the tracer's parabola ends at S, 0.8 m along the hull from the recorded point I (the pose the
+  // game drew lagged the server's). The page must carry the flight onto I: every point I + (X(t) - S) in the target's
+  // frame, the camera at the carried origin, the arc bulging UP over its chord by g·T²/8 (a sign or frame slip fails), the
+  // line at I the tracer's tangent. Then the same shell with the segment turned 3° off (a drawn pose turned against the
+  // server's): the flight is turned about I until it is 0.5° from the segment. Without the stop: the segment line as before.
+  section(function () {
+    const e = env(web), T = e.T, v = e.viewer;
+    v.setLighting(true); v.configure(e.sb.ArmorBallistics.shell('ARMOR_PIERCING', 250, 105), true, 'classic', 'chance');
+    const RT = new T.Matrix4().makeRotationFromEuler(new T.Euler(.07, -2.2, .05)).setPosition(120, 14, -60);
+    const chassisI = new T.Vector3(0.6, 1.2, -1.5), Iw = chassisI.clone().applyMatrix4(RT), Sw = chassisI.clone().add(new T.Vector3(0, 0, .8)).applyMatrix4(RT);
+    const g = 25, time = .4, VS = new T.Vector3(.35, -.05, 1).normalize().multiplyScalar(800), G = new T.Vector3(0, -g, 0);
+    const v0 = VS.clone().addScaledVector(G, -time), O = Sw.clone().addScaledVector(v0, -time).addScaledVector(G, -.5 * time * time);
+    const X = function (t) { return O.clone().addScaledVector(v0, t).addScaledVector(G, .5 * t * t); };
+    function load(dirChassis, stop) {
+      const data = vehicle(); data.hit.target.worldTransform = RT.toArray(); data.hit.points[0].position = chassisI.toArray(); data.hit.points[0].direction = dirChassis.toArray();
+      v.clear(); v.load(data, {range: Iw.distanceTo(O), tracer: {id: 'x', origin: O.toArray(), velocity: v0.toArray(), gravity: g}, stop: stop ? {position: Sw.toArray()} : null}); e.settle();
+    }
+    const inv = RT.clone().invert(), view = function (w) { const p = w.clone().applyMatrix4(inv); p.z *= -1; return p; };
+    const Iv = view(Iw), Sv = view(Sw), trueDir = VS.clone().transformDirection(inv); trueDir.z *= -1;
+    load(VS.clone().transformDirection(inv), true);
+    const P = v.shotPath, want = function (t) { return Iv.clone().add(view(X(t)).sub(Sv)); };
+    ok('viewer-batch: the flight comes from the tracer, carried onto the hit point (every chord point < 1e-6 m)',
+       !!P && P.points.every(function (q, i) { return q.distanceTo(want(time * i / (P.points.length - 1))) < 1e-6; }) && P.points[P.points.length - 1].distanceTo(Iv) < 1e-9,
+       P ? '(' + P.points.length + ' points)' : '(no path)');
+    const upV = new T.Vector3(0, 1, 0).transformDirection(inv); upV.z *= -1;
+    const mid = P && P.points[12], chordMid = P && P.points[0].clone().lerp(P.points[P.points.length - 1], .5), bulge = P ? mid.clone().sub(chordMid).dot(upV) : NaN;
+    ok('viewer-batch: the arc bulges UP over its chord by g·T²/8 in the world (' + (g * time * time / 8).toFixed(3) + ' m) - a flipped gravity or a mirrored frame fails',
+       P && near(bulge, g * time * time / 8, 1e-3), '(' + (P ? bulge.toFixed(4) : '-') + ' m)');
+    ok('viewer-batch: the camera stands at the shell\'s real origin, carried onto the hit (< 1e-6 m)',
+       P && v.camera.position.distanceTo(want(0)) < 1e-6, P ? '(' + v.camera.position.distanceTo(want(0)).toExponential(2) + ' m; the old axis stood ' + Iv.clone().addScaledVector(trueDir, -Iw.distanceTo(O)).distanceTo(want(0)).toFixed(3) + ' m off)' : '');
+    ok('viewer-batch: the line at the hit is the tracer\'s tangent; gap 0.8 m, all of it along the hull',
+       P && v.travel.angleTo(trueDir) < 1e-6 && v.shotPoints[0].source === 'tracer' && near(P.gap, .8, 1e-6) && near(P.along, .8, 1e-6));
+    const arc = v.root.children.find(function (o) { return o.userData && o.userData.shotArc; });
+    ok('viewer-batch: one thin arc line in the recorded root, drawn with the tracer (no depth test, order 4)', !!arc && arc.material.depthTest === false && arc.renderOrder === 4
+       && arc.geometry.attributes.position.count === P.points.length);
+    // The world's level and the shooter's height. Here the shooter is above the tracks: shooterHeight splits the height
+    // over the tracks into the lean and the world, and no square is drawn (it goes only with the height mark, review 24.09).
+    const hz = v.horizon, sh = v.shooterHeight(), rel = want(0).sub(new T.Vector3(0, v.bounds.min.y - .025, 0));
+    ok('viewer-batch: height over the tracks = over the world + the lean; the shooter above the tracks - no mark, no level square',
+       hz && !hz.line && sh && !sh.below && near(sh.grid, rel.y, 1e-9) && near(sh.world, rel.dot(upV), 1e-9) && near(sh.grid - sh.world, sh.tilt, 1e-12),
+       sh ? '(grid ' + sh.grid.toFixed(2) + ' m, world ' + sh.world.toFixed(2) + ' m, lean ' + (hz.tilt * 180 / Math.PI).toFixed(1) + '°)' : '');
+    v.pinned = {origin: new T.Vector3(0, 1, -20), direction: new T.Vector3(0, 0, 1), point: Iv.clone()}; v.syncRecorded();
+    ok('viewer-batch: a pinned point hides the arc with the recorded line', !arc.visible);
+    v.pinned = null; v.syncRecorded();
+    // The thick ring of an own shot on this flight: its cone's apex (the figure's rays, the Ring axes line) is the carried
+    // origin the arc and the camera start from, and the ring itself stands exactly where it stood without the flight.
+    const nS = VS.clone().normalize().applyAxisAngle(new T.Vector3(0, 1, 0), .002), tr = {id: 'x', own: true, origin: O.toArray(), velocity: v0.toArray(), gravity: g};
+    const shotCtx = {aim: null, tracer: tr, serverShot: {update: {origin: O.toArray(), vector: nS.toArray(), dispersionAngle: .004}, from: 'last', stale: false, gap: 0}};
+    const keep = v.shotPath; v.shotPath = null; v.setShotContext(shotCtx); const bare = v.discAim;
+    v.shotPath = Object.assign({}, keep, {tracer: tr}); v.setShotContext(shotCtx); const withPath = v.discAim;
+    const discAxis = v.ringAxisLines().find(function (a) { return a.userData.ringAxis === 'disc'; }), q0 = discAxis && discAxis.geometry.attributes.position;
+    ok('viewer-batch: the thick ring\'s apex and axis start at the carried origin (the arc\'s and the camera\'s), the ring at the target unmoved',
+       bare && withPath && withPath.origin.distanceTo(keep.origin) < 1e-9 && withPath.center.distanceTo(bare.center) < 1e-12 && withPath.radius === bare.radius
+       && withPath.normal.distanceTo(bare.normal) < 1e-12 && new T.Vector3(q0.getX(0), q0.getY(0), q0.getZ(0)).distanceTo(keep.origin) < 1e-3,
+       bare && withPath ? '(apex moved ' + bare.origin.distanceTo(withPath.origin).toFixed(3) + ' m, centre ' + withPath.center.distanceTo(bare.center).toExponential(1) + ' m)' : '');
+    v.shotPath = keep;
+    // The full tracer (user, 24.09): a dashed line along the whole arc, a dot at its start, an arrowhead at the hit - no stub.
+    const kids = v.root.children, dot = kids.find(function (o) { return o.type === 'Points' && o.userData.shotArc; }), head = kids.find(function (o) { return o.type === 'ArrowHelper' && o.userData.shotArc; });
+    const stub = kids.some(function (o) { return o.type === 'Group' && o.children.some(function (a) { return a.type === 'ArrowHelper'; }); });
+    const dq = dot && dot.geometry.attributes.position, headDir = head && new T.Vector3(0, 1, 0).applyQuaternion(head.quaternion);
+    ok('viewer-batch: the full tracer - dashed along the whole arc, a dot at its start, an arrowhead at the hit along the flight, no 2.3 m stub',
+       arc.material.type === 'LineDashedMaterial' && dot && new T.Vector3(dq.getX(0), dq.getY(0), dq.getZ(0)).distanceTo(keep.origin) < 1e-4 && dot.material.sizeAttenuation === false
+       && head && head.position.clone().addScaledVector(headDir, .12).distanceTo(Iv) < 1e-6 && headDir.angleTo(v.travel) < 1e-6 && !stub);
+    // View from (the lab, 24.09): an own shot's record view from the gun at the press (the solid ring's apex), from the
+    // server's gun then (the dashed ring's apex) or from the shot (the carried origin, the default); the camera owner
+    // re-frames on the switch, at the range from that point, looking at the pivot.
+    const lft = new T.Vector3().crossVectors(VS, new T.Vector3(0, 1, 0)).normalize(), Gp = O.clone().addScaledVector(lft, 1.4), Lp = O.clone().addScaledVector(lft, .7);
+    const markFrom = function (gun, t) { const to = Iw.clone().addScaledVector(VS.clone().normalize(), 3); return {position: to.toArray(), direction: to.clone().sub(gun).normalize().toArray(), diameter: .9, receivedAt: t}; };
+    const ownCtx = {aim: {clientMarker: markFrom(Gp, 10), serverMarker: markFrom(Lp, 10.01), gunOrigin: Gp.toArray(), lastServerGunUpdate: {origin: Lp.toArray(), receivedAt: 10.01}}, tracer: tr, serverShot: shotCtx.serverShot};
+    v.setViewFrom('gun'); v.setShotContext(ownCtx); e.settle();
+    const atGun = v.camera.position.distanceTo(view(Gp)), rangeGun = v.camera.position.distanceTo(Iv);
+    v.setViewFrom('server'); e.settle(); const atServer = v.camera.position.distanceTo(view(Lp));
+    v.setViewFrom('fired'); e.settle(); const atShot = v.camera.position.distanceTo(keep.origin);
+    ok('viewer-batch: View from - your gun at the press, the server\'s gun then, the shot: the camera stands at each (< 1e-4 m), the range from that point',
+       atGun < 1e-4 && atServer < 1e-4 && atShot < 1e-6 && near(rangeGun, view(Gp).distanceTo(Iv), 1e-4), '(' + [atGun, atServer, atShot].map(function (x) { return x.toExponential(1); }).join(', ') + ' m)');
+    v.setViewFrom('gun'); v.setShotContext(null); v.focus(); e.settle();
+    ok('viewer-batch: ... a hit that is not your own shot ignores the pick: from the shot', v.camera.position.distanceTo(keep.origin) < 1e-6);
+    v.setViewFrom('fired');
+    // The drawn pose turned 3° against the server's: the segment is 3° off the tracer's tangent.
+    const seg = VS.clone().transformDirection(inv).applyAxisAngle(new T.Vector3(0, 1, 0), 3 * Math.PI / 180);
+    load(seg, true);
+    const segV = seg.clone(); segV.z *= -1; segV.normalize();
+    const P2 = v.shotPath;
+    ok('viewer-batch: turned pose - the flight is turned about the hit until its tangent is 0.5° from the segment (not 0°, not 3°)',
+       P2 && near(v.travel.angleTo(segV) * 180 / Math.PI, .5, 1e-6) && near(P2.turned, trueDir.angleTo(segV) - .5 * Math.PI / 180, 1e-9), P2 ? '(' + (v.travel.angleTo(segV) * 180 / Math.PI).toFixed(4) + '°, turned ' + (P2.turned * 180 / Math.PI).toFixed(3) + '°)' : '');
+    ok('viewer-batch: ... and the camera went with it: the same distance from the hit, turned round it by the same angle',
+       P2 && near(v.camera.position.distanceTo(Iv), want(0).distanceTo(Iv), 1e-6) && near(v.camera.position.clone().sub(Iv).angleTo(want(0).sub(Iv)), P2.turned, 1e-3));
+    // No stop: the old line, the old camera, no arc.
+    load(seg, false);
+    ok('viewer-batch: without the tracer\'s stop - no path, the segment line and the recorded range as before, the 2.3 m stub, no arc',
+       !v.shotPath && v.travel.angleTo(segV) < 1e-9 && near(v.camera.position.distanceTo(Iv), Iw.distanceTo(O), 1e-6) && !v.root.children.some(function (o) { return o.userData && o.userData.shotArc; })
+       && v.root.children.some(function (o) { return o.type === 'Group' && o.children.some(function (a) { return a.type === 'ArrowHelper'; }); }));
+  });
+
+  // ---- 11b. A shooter below the tracks, and a screen-then-armour hit (review 24.09) ---------------------------------------
+  // A rising shell from far below on a leaning target: the height mark's threshold is met and the world's level is drawn.
+  // Two contacts, the stop at the SECOND (0.5 m deeper along the flight, 0.03 m off): the stop is carried onto that one,
+  // the pose gap is 0.03 m (not 0.5), and the arc ends at the first contact, the camera |origin - S| - 0.5 m from it.
+  section(function () {
+    const e = env(web), T = e.T, v = e.viewer;
+    v.setLighting(true); v.configure(e.sb.ArmorBallistics.shell('ARMOR_PIERCING', 250, 105), true, 'classic', 'chance');
+    const RT = new T.Matrix4().makeRotationFromEuler(new T.Euler(.09, .4, .03)).setPosition(-40, 3, 25), inv = RT.clone().invert();
+    const P0c = new T.Vector3(0.6, 1.2, -1.5), g = 9.81, time = .4, VS = new T.Vector3(.2, .05, 1).normalize().multiplyScalar(800), G = new T.Vector3(0, -g, 0);
+    const dirC = VS.clone().transformDirection(inv), P1c = P0c.clone().addScaledVector(dirC, .5);
+    const Sw = P1c.clone().add(new T.Vector3(0, .03, 0)).applyMatrix4(RT), v0 = VS.clone().addScaledVector(G, -time), O = Sw.clone().addScaledVector(v0, -time).addScaledVector(G, -.5 * time * time);
+    const data = vehicle(); data.hit.target.worldTransform = RT.toArray();
+    data.hit.points = [{status: 'resolved', part: 1, position: P0c.toArray(), direction: dirC.toArray(), effect: 0}, {status: 'resolved', part: 1, position: P1c.toArray(), direction: dirC.toArray(), effect: 0}];
+    v.clear(); v.load(data, {tracer: {id: 'y', origin: O.toArray(), velocity: v0.toArray(), gravity: g}, stop: {position: Sw.toArray()}}); e.settle();
+    const view = function (w) { const p = w.clone().applyMatrix4(inv); p.z *= -1; return p; }, P0 = view(P0c.clone().applyMatrix4(RT));
+    const P = v.shotPath, sh = v.shooterHeight();
+    ok('viewer-batch: the stop on the second contact - carried there: gap 0.03 m, not the 0.5 m between the contacts',
+       P && near(P.gap, .03, 1e-6), P ? '(' + P.gap.toFixed(4) + ' m)' : '');
+    ok('viewer-batch: ... the arc ends at the first contact and the camera stands |origin - S| - 0.5 m from it',
+       P && P.points[P.points.length - 1].distanceTo(P0) < 1e-9 && near(v.camera.position.distanceTo(P0), O.distanceTo(Sw) - .5, .01),
+       P ? '(' + v.camera.position.distanceTo(P0).toFixed(3) + ' / ' + (O.distanceTo(Sw) - .5).toFixed(3) + ' m)' : '');
+    ok('viewer-batch: a shooter ' + (sh ? (-sh.grid).toFixed(1) : '?') + ' m below the tracks of a leaning target: the mark\'s threshold met and the world\'s level drawn',
+       sh && sh.below && sh.grid < -10 && v.horizon.line && v.horizon.line.visible);
+  });
+
+  // ---- 12. Ring axes (the lab's switch, 24.09) ---------------------------------------------------------------------------
+  // Each recorded ring's axis from its apex to its centre, in the recorded group; off by default, the switch only shows them;
+  // the thick ring's goes with the Shot ring switch; clear() drops them.
+  section(function () {
+    const e = env(web), v = loaded(e), T = e.T;
+    v.loadedData.hit.target.worldTransform = I;
+    const Iw = [v.point.x, v.point.y, -v.point.z], o = [Iw[0] - 1, Iw[1] - 1, Iw[2] - 50], n = new T.Vector3(0.002, 0.018, 1).normalize();
+    const G = [Iw[0] + .6, Iw[1] - 1, Iw[2] - 50], L0 = [Iw[0] + .3, Iw[1] - 1, Iw[2] - 50];
+    // Each marker lies on its own gun's line, 2 m past the hit, as the game builds it: the cone's apex is then that gun.
+    const mark = function (gun, t) { const g = new T.Vector3().fromArray(gun), to = new T.Vector3(Iw[0], Iw[1], Iw[2] + 2), d = to.clone().sub(g).normalize(); return {position: to.toArray(), direction: d.toArray(), diameter: .9, receivedAt: t}; };
+    const client = mark(G, 10), server = mark(L0, 10.01);
+    const ctx = {aim: {clientMarker: client, serverMarker: server, gunOrigin: G, lastServerGunUpdate: {origin: L0, receivedAt: 10.01}},
+      tracer: {id: 's1', own: true, origin: o, velocity: [0, 1, 2].map(function (i) { return (Iw[i] - o[i]) * 18; })},
+      serverShot: {update: {origin: o, vector: n.toArray(), dispersionAngle: .003}, from: 'last', stale: false, gap: 0}};
+    v.setShotContext(ctx);
+    const all = v.ringAxisLines(), axes = all.filter(function (a) { return a.type === 'Line'; }), dots = all.filter(function (a) { return a.type === 'Points'; }), kinds = axes.map(function (a) { return a.userData.ringAxis; }).sort().join();
+    ok('viewer-batch: three ring axes are made with the rings (two thin, one thick), hidden by default', axes.length === 3 && kinds === 'disc,thin,thin' && axes.every(function (a) { return !a.visible && a.parent === v.aimGroup; }), '(' + kinds + ')');
+    v.setRingAxes(true);
+    const world = function (p) { return new T.Vector3(p.x, p.y, -p.z); };
+    const ends = axes.map(function (a) { const q = a.geometry.attributes.position; return [world(new T.Vector3(q.getX(0), q.getY(0), q.getZ(0))), world(new T.Vector3(q.getX(1), q.getY(1), q.getZ(1)))]; });
+    const at = function (p) { return ends.some(function (x) { return x[0].distanceTo(new T.Vector3().fromArray(p)) < 1e-5; }); };
+    const discEnd = ends[axes.findIndex(function (a) { return a.userData.ringAxis === 'disc'; })][1];
+    ok('viewer-batch: switched on, they start at the gun at the press, the update\'s origin and the shell\'s origin, and end at their ring centres',
+       axes.every(function (a) { return a.visible; }) && at(G) && at(L0) && at(o) && world(v.discAim.center).distanceTo(discEnd) < 1e-5
+       && ends.some(function (x) { return world(v.ringAim.center).distanceTo(x[1]) < 1e-5; }));   // float32 vertices
+    // Each apex has its dot, in the ring's style: filled for your gun, hollow for the server's, the thick ring's colour a size up.
+    const dotAt = function (p) { return dots.find(function (d) { const q = d.geometry.attributes.position; return world(new T.Vector3(q.getX(0), q.getY(0), q.getZ(0))).distanceTo(new T.Vector3().fromArray(p)) < 1e-5; }); };
+    const dG = dotAt(G), dL = dotAt(L0), dO = dotAt(o);
+    ok('viewer-batch: three start dots at the three apexes, visible with the axes, told apart by style (filled 7 px / hollow 8 px / ring colour 9 px)',
+       dots.length === 3 && dG && dL && dO && dots.every(function (d) { return d.visible; }) && dG.material.size === 7 && dL.material.size === 8 && dO.material.size === 9
+       && dG.material.map !== dL.material.map && dO.material.color.getHex() !== dG.material.color.getHex());
+    v.setShotDisc(false, .6);
+    ok('viewer-batch: the thick ring\'s axis and its dot go with the Shot ring switch', axes.filter(function (a) { return a.visible; }).length === 2 && dots.filter(function (a) { return a.visible; }).length === 2);
+    v.setShotDisc(true, .6); v.setRingAxes(false);
+    ok('viewer-batch: switched off, all three hide with their dots', all.every(function (a) { return !a.visible; }));
+    v.clear();
+    ok('viewer-batch: clear() drops them', v.ringAxisLines().length === 0);
+  });
 }
 
 module.exports = {env: env, vehicle: vehicle, loaded: loaded, measure: measure, checks: checks};

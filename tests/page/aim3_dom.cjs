@@ -234,6 +234,9 @@ function StubViewer() {
   // BACKLOG 28 step 2 (24.09): the shot disc of an own shot - its frame (discAim), the solid ring's (ringAim), the Settings
   // switch and opacity. They must exist from the start, for the same reason as above.
   this.discAim = null; this.ringAim = null; this.discOn = true; this.discOpacity = null; this.ringLook = null;
+  // shot-line-true (24.09): the shell's flight carried onto the hit (viewer.shotPath), null without a tracer - the page's
+  // marks of the game's oddities read it. It must exist from the start, for the same reason as above.
+  this.shotPath = null;
 }
 // The temporary Shot ring lab hands the look over; the stub keeps what it got.
 StubViewer.prototype.setShotRingLook = function (look) { this.ringLook = look; };
@@ -1260,6 +1263,46 @@ settle(20).then(function () {
   ok('shot disc: a disc made exact by the update after the tracer shows no ⚠', staleIcon.hidden === true);
   discSlider.value = '20'; discSlider.oninput();
   view.discAim = null; view.ringAim = null; view.savedAim = {}; view.onPin(false); tick(0.2);
+  // ---- shot-line-true (24.09): the game's oddities of a hit, two marks on the hit-line panel's title row ----------------
+  // From the viewer's shotPath and shooterHeight: the pose mark only above 0.5 m between the recorded point and the server's,
+  // the height mark only when the viewer says the shooter is far enough below the tracks (below); both go with the recorded line (a pin) and come back; their
+  // own help dot; words with the figures.
+  const poseMark = document.getElementById('pose-gap'), heightMark = document.getElementById('shooter-height');
+  let heightNow = null; view.recordedShown = function () { return !this.pinned; }; view.shooterHeight = function () { return heightNow; };
+  view.shotPath = {gap: .45, along: .44, angle: .004, turned: 0}; heightNow = {grid: -.3, world: .5, tilt: -.8, angle: .02, below: false}; view.onPin(false); tick(0.2);
+  ok('hit marks: 0.45 m apart and the shooter only 0.3 m below the tracks - no mark', poseMark.hidden === true && heightMark.hidden === true);
+  view.shotPath = {gap: .84, along: .8, angle: .05, turned: .04}; heightNow = {grid: -2.4, world: .6, tilt: -3, angle: .07, below: true}; view.onPin(false); tick(0.2);
+  ok('hit marks: 0.84 m apart - the pose mark, whose words give the gap, the hull and the turn', poseMark.hidden === false
+     && poseMark.title.indexOf('Pose diverged: 0.84 m') === 0 && poseMark.title.split('\n')[1].indexOf('0.84 m from where the game drew it') >= 0
+     && poseMark.title.indexOf('Along the hull: 0.80 m (it was moving)') >= 0 && poseMark.title.indexOf('about 2.9°') >= 0, '(' + poseMark.title.split('\n')[0] + ')');
+  ok('hit marks: the shooter 2.4 m below the tracks - the height mark with its figure; the lean and the world in its words',
+     heightMark.hidden === false && document.getElementById('shooter-height-value').textContent === '2.4 m'
+     && heightMark.title.indexOf('Shooter below the tracks: 2.4 m') === 0 && heightMark.title.indexOf('All of it is this vehicle’s lean (4.0°): in the world the shooter stood 0.6 m higher than its base') >= 0
+     && heightMark.title.indexOf('Dashed square') >= 0, '(' + heightMark.title.split('\n').slice(0, 4).join(' | ') + ')');
+  heightNow = {grid: -2.4, world: -1, tilt: -1.4, angle: .07, below: true}; view.shotPath = Object.assign({}, view.shotPath); view.onPin(false); tick(0.2);
+  ok('hit marks: the shooter really lower - the world part and what the lean adds, never more than the whole',
+     heightMark.title.indexOf('In the world: the shooter stood 1.0 m lower than this vehicle’s base') >= 0 && heightMark.title.indexOf('lean (4.0°) adds 1.4 m') >= 0,
+     '(' + heightMark.title.split('\n').slice(2, 4).join(' | ') + ')');
+  ok('hit marks: their own help dot, listing both', document.getElementById('hit-marks').children.some(function (c) {
+    return String(c.getAttribute ? c.getAttribute('data-help-for') : c.attributes['data-help-for']) === 'pose-gap shooter-height'; }));
+  view.pinned = {point: {}}; view.onPin(true); tick(0.2);
+  ok('hit marks: a pinned point takes both away with the recorded line', poseMark.hidden === true && heightMark.hidden === true);
+  view.pinned = null; view.onPin(false); tick(0.2);
+  ok('hit marks: unpinned, they are back', poseMark.hidden === false && heightMark.hidden === false);
+  view.shotPath = null; view.onPin(false); tick(0.2);
+  ok('hit marks: no tracer (no shotPath) - no marks', poseMark.hidden === true && heightMark.hidden === true);
+  delete view.recordedShown; delete view.shooterHeight;
+  // Ring axes (the lab's switch, 24.09): the checkbox tells the viewer; off by default.
+  const axesBox = document.getElementById('ring-axes'); let axesOn = null; view.setRingAxes = function (on) { axesOn = on; };
+  ok('ring axes: off by default', axesBox.checked === false);
+  axesBox.checked = true; axesBox.onchange();
+  ok('ring axes: the switch tells the viewer', axesOn === true);
+  axesBox.checked = false; axesBox.onchange(); delete view.setRingAxes;
+  // View from (the lab, 24.09): the select tells the viewer (its default and storage: real_page.cjs).
+  const viewFrom = document.getElementById('view-from'); let fromNow = null; view.setViewFrom = function (m) { fromNow = m; };
+  viewFrom.value = 'gun'; viewFrom.onchange();
+  ok('view from: the pick tells the viewer', fromNow === 'gun');
+  viewFrom.value = 'fired'; viewFrom.onchange(); delete view.setViewFrom;
   // The TEMPORARY Shot ring lab: sliders to the viewer (colour as hue/saturation/lightness in sRGB), tracks painted for the
   // hue, the two presets set the three colour sliders, its own help dot.
   const lab = function (id, value) { const el = document.getElementById(id); el.value = String(value); (el.oninput || el.onchange).call(el); };
