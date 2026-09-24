@@ -491,6 +491,22 @@ function checks(ok, web) {
     ok('viewer-batch: the first emulated shot takes the disc away with the outlines', fired && !v.savedAimShown() && v.shotDisc.parent === v.aimGroup);
     v.clearAimShot();
     ok('viewer-batch: and dropping that shot brings the disc back', v.savedAimShown() && v.shotDisc.visible);
+    // The centre's DIRECTION, not only containment (three-rings check 24.09): a turned and moved target, the server axis
+    // 4 mrad left and 1 mrad up of the shell. A flipped sign or a swapped/mirrored e1/e2 would still hold the impact point
+    // inside the ring but put the centre on the other side; here it must be the axis carried to the impact plane.
+    const RT = new T.Matrix4().makeRotationFromEuler(new T.Euler(.1, 2.3, -.05)).setPosition(37, -4, 12);
+    v.loadedData.hit.target.worldTransform = RT.toArray();
+    const Iw2 = new T.Vector3(v.point.x, v.point.y, -v.point.z).applyMatrix4(RT), s2 = new T.Vector3(.3, -.02, 1).normalize();
+    const o2 = Iw2.clone().addScaledVector(s2, -60), left = new T.Vector3().crossVectors(s2, new T.Vector3(0, 1, 0)).normalize(), up2 = new T.Vector3().crossVectors(left, s2);
+    const n2 = s2.clone().addScaledVector(left, .004).addScaledVector(up2, .001).normalize();
+    v.setShotContext({aim: {clientMarker: ring}, tracer: {id: 's2', own: true, origin: o2.toArray(), velocity: s2.clone().multiplyScalar(900).toArray()},
+      serverShot: {update: {origin: o2.toArray(), vector: n2.toArray(), dispersionAngle: .006}, from: 'last', stale: false, gap: 0}});
+    const c2 = v.discAim && v.discAim.center.clone(); if (c2) { c2.z *= -1; c2.applyMatrix4(RT); }
+    const want2 = o2.clone().addScaledVector(n2, Iw2.clone().sub(o2).dot(n2)), off = c2 && c2.clone().sub(Iw2);
+    ok('viewer-batch: turned target - the shot ring centre is the server axis at the impact plane: 4 mrad left, 1 mrad up of the hit (not mirrored)',
+       c2 && c2.distanceTo(want2) < 1e-6 && near(off.dot(left) / 60, .004, 2e-4) && near(off.dot(up2) / 60, .001, 2e-4),
+       c2 ? '(' + c2.distanceTo(want2).toExponential(2) + ' m; left ' + (off.dot(left) / .06).toFixed(2) + ' mrad, up ' + (off.dot(up2) / .06).toFixed(2) + ' mrad)' : '');
+    v.loadedData.hit.target.worldTransform = I; v.setShotContext(ctx);
     let freed = 0; geo.addEventListener('dispose', function () { freed++; }); mat.addEventListener('dispose', function () { freed++; });
     v.clear();
     ok('viewer-batch: clear() drops the disc and both circles', !v.discAim && !v.ringAim && !v.shotDisc && !v.savedAim);
