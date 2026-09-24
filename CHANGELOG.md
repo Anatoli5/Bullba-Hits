@@ -2,6 +2,10 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
+## Unreleased
+
+- **Scene:** turning the vehicle with the mouse no longer stops after a few degrees when some text on the page is selected.
+
 ## 0.8.0 (2026-09-24)
 
 - **Emulation:** the target's health bar takes a roster row only when it names the same vehicle, and its tooltip says whether the figure is the server's own (equipment included) or the roster's figure from before the vehicle was seen.

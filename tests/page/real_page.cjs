@@ -196,6 +196,28 @@ async function main() {
        pm3.hp && pm3.hpText === '1 234 / 1 234' && pm3.hpTip.indexOf('• Source: ' + HP.FILE) >= 0, '(shown ' + pm3.hp + ', "' + pm3.hpText + '")');
     await ev('__bt.act.fun(false)'); await ev('__bt.settle()');
 
+    // ---- a drag over a page with text selected (user, 24.09) --------------------------------------------------
+    // With a selection on the page (a left-button sweep over the panels selects their text and the scene with it), a
+    // press on the scene used to start the browser's own drag of that selection: the page got pointercancel after a
+    // few pixels and the vehicle turned a few degrees and stopped. Real mouse input (CDP), not synthetic events.
+    await step("battle('pm')"); await step('hit(0)');
+    const box = await ev(`(() => { const r = document.getElementById('viewport').getBoundingClientRect(); return {x: r.left + r.width / 2, y: r.top + r.height / 2}; })()`);
+    const yaw = () => ev('window.__bullbaViewers[window.__bullbaViewers.length - 1].targetYaw');
+    const mouse = (type, x, y, extra) => page.send('Input.dispatchMouseEvent', Object.assign({type: type, x: x, y: y, button: 'left', buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1}, extra || {}));
+    for (const selected of [false, true]) {
+      if (selected) await ev('(() => { getSelection().selectAllChildren(document.body); return getSelection().toString().length; })()');
+      await ev(`(() => { const v = window.__bullbaViewers[window.__bullbaViewers.length - 1]; window.__bt.cancels = 0; v.container.addEventListener('pointercancel', () => { window.__bt.cancels++; }); return true; })()`);
+      const y0 = await yaw();
+      await mouse('mousePressed', box.x, box.y);
+      for (let i = 1; i <= 20; i++) await mouse('mouseMoved', box.x + i * 12, box.y, {button: 'left', buttons: 1});
+      await mouse('mouseReleased', box.x + 240, box.y);
+      await ev('__bt.settle()');
+      const turned = Math.abs(await yaw() - y0), cancels = await ev('window.__bt.cancels');
+      ok('a left drag over the scene turns the vehicle all the way' + (selected ? ' with the page’s text selected' : ''), cancels === 0 && turned > 1,
+         '(turned ' + turned.toFixed(3) + ' rad, pointercancel ' + cancels + ')');
+    }
+    await ev('getSelection().removeAllRanges(), true');
+
     // ---- the leak counter ----------------------------------------------------------------------------------
     const CYCLE = ["side('battles')", "battle('pm')", 'hit(0)', 'swap()', 'swap()', 'roster(32)', "battle('pm2')", 'hit(0)',
                    'modelTile()', "list('pm_quebec')", "side('battles')", "battle('pm')", 'hit(1)', "battle('pm3')", 'hit(0)', 'roster(33)'];
