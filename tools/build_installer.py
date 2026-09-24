@@ -3,6 +3,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -17,6 +18,28 @@ import third_party
 
 
 def digest(path): return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+# Files an earlier build of ours put into mods/configs/local.armor_inspector and the current build no longer ships.
+# The installer deletes each before the new files land ([InstallDelete] via generated/retired.iss); one the build
+# ships again is skipped. Only the viewer's own files belong here, never data/, battles/, installer/ or settings:
+# retired_lines() refuses anything else. Append when a file leaves ASSETS (exporter.py) or the extras below; never drop a
+# line - an old game folder may still hold the file. 24.09.2026: the union of installer/upgrades/*.json and every
+# ASSETS in the git history of exporter.py (0.2.0 - 0.7.42), minus what 0.7.42 ships.
+RETIRED_FILES=('web/heatmap-gpu.js',)
+# The viewer's own files only: web/ and licenses/, or a top-level page or document (Viewer.html, README.md, ...).
+RETIRED_SAFE=re.compile(r'^(?:(?:web|licenses)(?:/[A-Za-z0-9_-][A-Za-z0-9_.-]*)+|[A-Za-z0-9_-][A-Za-z0-9_.-]*\.(?:html|md))$')
+
+
+def retired_lines(shipped):
+    """[InstallDelete] lines for RETIRED_FILES, minus every path in `shipped` (relative to our folder, '/')."""
+    lines=[]
+    for relative in RETIRED_FILES:
+        if not RETIRED_SAFE.match(relative) or '..' in relative:
+            raise ValueError('Retired file outside the viewer files: '+relative)
+        if relative in shipped: continue
+        lines.append('Type: files; Name: "{app}\\mods\\configs\\local.armor_inspector\\'+relative.replace('/','\\')+'"')
+    return lines
 
 
 def signature_info(path):
@@ -90,13 +113,16 @@ def build(test=False,sign_command=None,require_signature=False,only=None):
         flags='ignoreversion'+(' uninsneveruninstall' if keep else '')+(' onlyifdoesntexist' if only_new else '')
         lines.append('Source: "'+str(source)+'"; DestDir: "{app}\\'+dest+'"; DestName: "'+name+'"; Flags: '+flags)
         manifest[relative]={'sha256':digest(source),'retainOnUninstall':keep,'onlyIfAbsent':only_new}
-        # Viewer files inside our own folder are replaced (the previous set is backed up by the installer);
+        # Viewer files inside our own folder are replaced (no copy of the previous set is kept, 24.09);
         # only the version-named .wotmod is hash-checked, and a version is never rebuilt under its number.
         if source==mod:
             checks.extend(["  Result := CheckUpgradableFile(AddBackslash(Folder) + '"+relative+"', '"+digest(source)+"', '');","  if Result <> '' then Exit;"])
     checks.append('end;')
     (generated/'files.iss').write_text('\n'.join(lines),encoding='utf-8-sig')
     (generated/'checks.iss').write_text('\n'.join(checks),encoding='utf-8-sig')
+    prefix='mods/configs/local.armor_inspector/'
+    shipped=set(relative[len(prefix):] for _,relative,_,_ in files if relative.startswith(prefix))
+    (generated/'retired.iss').write_text('\n'.join(retired_lines(shipped))+'\n',encoding='utf-8-sig')
     (generated/'build.iss').write_text('#define ProductVersion "'+VERSION+'"\n#define ModName "'+mod.name+'"\n#define ModHash "'+digest(mod)+'"\n',encoding='utf-8-sig')
     (generated/'payload-manifest.json').write_text(json.dumps(manifest,indent=2),encoding='utf-8')
     # Two forms of the same installer from one script and one payload. The single EXE in dist/: Inno's loader

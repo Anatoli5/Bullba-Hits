@@ -78,6 +78,17 @@ FinishedLabel=Installation complete. The mod starts recording hits once the game
 [Tasks]
 Name: desktopicon; Description: "Create a desktop shortcut for the viewer"; GroupDescription: "Shortcut:"
 
+[InstallDelete]
+; No backup copies any more (user's decision 24.09): nobody rolls back, the builds are in git and the releases. What
+; earlier builds left in our own folder goes before the new files land: the backup folder they filled (previous mods,
+; viewer copies, an old desktop shortcut) and our files the current build no longer ships (RETIRED_FILES in
+; tools/build_installer.py, generated into retired.iss). Records, models, settings and other mods are never named here.
+Type: filesandordirs; Name: "{app}\mods\configs\local.armor_inspector\installer\backups"
+; A previous recorder that could not be deleted is renamed .wotmod.removed (RemoveLegacyMod); it goes here next time.
+Type: files; Name: "{app}\mods\2.4.0.1\local.armor_inspector_*.wotmod.removed"
+Type: files; Name: "{app}\mods\2.4.0.0\local.armor_inspector_*.wotmod.removed"
+#include "generated\retired.iss"
+
 [Files]
 #include "generated\files.iss"
 
@@ -99,6 +110,8 @@ function QueryFullProcessImageName(Process: THandle; Flags: LongWord; Buffer: St
   external 'QueryFullProcessImageNameW@kernel32.dll stdcall';
 function CloseHandle(Handle: THandle): Boolean;
   external 'CloseHandle@kernel32.dll stdcall';
+function SetFileAttributes(Path: String; Attributes: LongWord): Boolean;
+  external 'SetFileAttributesW@kernel32.dll stdcall';
 
 function GetDesktopDir(Param: String): String;
 begin
@@ -166,8 +179,10 @@ begin
     (((Name = 'msedge.exe') or (Name = 'chrome.exe')) and (Link.Arguments = AppArguments(Folder)));
 end;
 
+// The shortcut of the Armor Inspector builds is replaced by "Bullba Hits"; it is removed only when it points at our
+// own viewer (IsOurShortcut), without a copy.
 procedure MigrateDesktopShortcut;
-var Shell, Link: Variant; Path, Backup: String;
+var Shell, Link: Variant; Path: String;
 begin
   if not WizardIsTaskSelected('desktopicon') then Exit;
   Path := GetDesktopDir('') + '\Armor Inspector — попадания.lnk';
@@ -176,11 +191,7 @@ begin
     Shell := CreateOleObject('Shell.Application');
     Link := Shell.NameSpace(GetDesktopDir('')).ParseName('Armor Inspector — попадания.lnk').GetLink;
     if not IsOurShortcut(Link, ExpandConstant('{app}')) then Exit;
-    Backup := ExpandConstant('{app}\mods\configs\local.armor_inspector\installer\backups\desktop');
-    if not ForceDirectories(Backup) then Exit;
-    Backup := AddBackslash(Backup) + 'ArmorInspector-' + GetDateTimeString('yyyymmdd-hhnnss', '-', ':') + '.lnk';
-    if FileExists(Backup) then Exit;
-    if FileCopy(Path, Backup, True) then DeleteFile(Path);
+    DeleteFile(Path);
   except
     Log('Legacy shortcut retained: ' + GetExceptionMessage);
   end;
@@ -244,7 +255,7 @@ function IsKnownLegacyMod(const Path: String): Boolean;
 var Name: String;
 begin
   // Every build of our own recorder is named local.armor_inspector_<version>.wotmod.
-  // Any such file is ours, whichever build it is: it is moved to a backup, never refused.
+  // Any such file is ours, whichever build it is: it is removed once the new one is in place, never refused.
   Name := Lowercase(ExtractFileName(Path));
   Result := FileExists(Path) and (Pos('local.armor_inspector_', Name) = 1) and
     (Copy(Name, Length(Name) - 6, 7) = '.wotmod');
@@ -346,8 +357,9 @@ begin
     'mods\configs\local.armor_inspector\Viewer.html' + NewLine + NewLine + MemoTasksInfo;
 end;
 
-procedure BackupLegacyMod(const ModsFolder, Version: String);
-var OldPath, BackupPath, NewPath: String;
+// A previous build of our recorder goes once the new one is in place and verified: no copy is kept (24.09).
+procedure RemoveLegacyMod(const ModsFolder, Version: String);
+var OldPath, NewPath: String;
 begin
   OldPath := ExpandConstant('{app}\mods\') + ModsFolder + '\local.armor_inspector_' + Version + '.wotmod';
   if not FileExists(OldPath) then Exit;
@@ -355,20 +367,20 @@ begin
   if not IsKnownLegacyMod(OldPath) or not FileExists(NewPath) or
       (CheckOwnedFile(NewPath, '{#ModHash}') <> '') then
     RaiseException('Could not verify the update files. The previous version is kept.');
-  BackupPath := ExpandConstant('{app}\mods\configs\local.armor_inspector\installer\backups\') + Version + '\local.armor_inspector_' + Version + '.wotmod';
-  // A different build of the same version number is kept apart under <version>-<hash8>; nothing is deleted unsaved.
-  if FileExists(BackupPath) and (CompareText(GetSHA256OfFile(BackupPath), GetSHA256OfFile(OldPath)) <> 0) then
-    BackupPath := ExpandConstant('{app}\mods\configs\local.armor_inspector\installer\backups\') + Version + '-' +
-      Copy(GetSHA256OfFile(OldPath), 1, 8) + '\local.armor_inspector_' + Version + '.wotmod';
-  if not ForceDirectories(ExtractFileDir(BackupPath)) then
-    RaiseException('Could not create the mod backup folder.');
-  if FileExists(BackupPath) then begin
-    if not DeleteFile(OldPath) then RaiseException('Could not remove the previous mod version after the update.');
-  end else if not RenameFile(OldPath, BackupPath) then
-    RaiseException('Could not move the previous mod version to the backup.');
+  // A read-only file (a mod pack, a copy from a medium) refuses DeleteFile, where the MoveFile of the backups
+  // used to pass; the attribute goes first ($80 = FILE_ATTRIBUTE_NORMAL, review F1 24.09).
+  SetFileAttributes(OldPath, $80);
+  if DeleteFile(OldPath) then Exit;
+  // Still held: renamed out of the game's reach (it loads *.wotmod only), so it cannot run beside the new build;
+  // [InstallDelete] removes the .removed file on the next install. No exception: the other steps still run.
+  if RenameFile(OldPath, OldPath + '.removed') then
+    Log('Previous recorder could not be deleted and was renamed: ' + OldPath)
+  else
+    SuppressibleMsgBox('The previous version of the mod could not be removed. Delete it before starting the game:' + #13#10 +
+      OldPath, mbError, MB_OK, IDOK);
 end;
 
-procedure BackupLegacyModsIn(const ModsFolder: String);
+procedure RemoveLegacyModsIn(const ModsFolder: String);
 var ModPath, Name: String; Find: TFindRec;
 begin
   ModPath := ExpandConstant('{app}\mods\') + ModsFolder + '\';
@@ -377,7 +389,7 @@ begin
     repeat
       Name := Find.Name;
       if (CompareText(Name, '{#ModName}') <> 0) and IsKnownLegacyMod(ModPath + Name) then
-        BackupLegacyMod(ModsFolder, Copy(Name, Length('local.armor_inspector_') + 1, Length(Name) - Length('local.armor_inspector_') - Length('.wotmod')));
+        RemoveLegacyMod(ModsFolder, Copy(Name, Length('local.armor_inspector_') + 1, Length(Name) - Length('local.armor_inspector_') - Length('.wotmod')));
     until not FindNext(Find);
   finally
     FindClose(Find);
@@ -385,48 +397,18 @@ begin
 end;
 
 // The current client folder first, then the previous client's folder (2.4.0.0): a build left there by the
-// 2.4.0.0 installer is ours and goes to the same backups, so the game folder keeps one recorder.
-procedure BackupAllLegacyMods;
+// 2.4.0.0 installer is ours too, so the game folder keeps one recorder.
+procedure RemoveAllLegacyMods;
 begin
-  BackupLegacyModsIn('2.4.0.1');
-  BackupLegacyModsIn('2.4.0.0');
+  RemoveLegacyModsIn('2.4.0.1');
+  RemoveLegacyModsIn('2.4.0.0');
 end;
 
-procedure BackupViewerFolder(const Source, Dest: String);
-var Find: TFindRec;
-begin
-  if not FindFirst(Source + '*', Find) then Exit;
-  try
-    repeat
-      if (Find.Attributes and FILE_ATTRIBUTE_DIRECTORY) = 0 then begin
-        ForceDirectories(Dest);
-        CopyFile(Source + Find.Name, Dest + Find.Name, False);
-      end;
-    until not FindNext(Find);
-  finally
-    FindClose(Find);
-  end;
-end;
-
-// The viewer files in our folder always belong to a previous build of ours. They are copied to a
-// time-stamped backup before the new ones land; nothing is refused and nothing is lost.
-procedure BackupViewerFiles;
-var Base, Dest: String;
-begin
-  Base := ExpandConstant('{app}\mods\configs\local.armor_inspector\');
-  if not FileExists(Base + 'Viewer.html') then Exit;
-  Dest := Base + 'installer\backups\viewer-' + GetDateTimeString('yyyymmdd-hhnnss', '-', ':') + '\';
-  if not ForceDirectories(Dest) then Exit;
-  CopyFile(Base + 'Viewer.html', Dest + 'Viewer.html', False);
-  BackupViewerFolder(Base + 'web\', Dest + 'web\');
-  BackupViewerFolder(Base + 'web\vendor\', Dest + 'web\vendor\');
-end;
-
+// The viewer files in our folder are simply replaced by [Files]; no copy of the previous set is kept (24.09).
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
-  if CurStep = ssInstall then BackupViewerFiles;
   if CurStep <> ssPostInstall then Exit;
-  BackupAllLegacyMods;
+  RemoveAllLegacyMods;
   MigrateDesktopShortcut;
 end;
 

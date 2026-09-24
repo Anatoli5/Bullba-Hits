@@ -112,6 +112,10 @@ TAIL_TIME_BUDGET = 0.02
 # A crit record that moves no tie (a fire tick, an explosion elsewhere: counts only) rides along with the next
 # publish, and alone goes out at most this often, or at once on a battle switch and at the end.
 QUIET_PUBLISH = 10.0
+# Consecutive failed publications of one battle, other than a locked or unwritable output (EnvironmentError),
+# after which that battle is passed over for the session: the same error on every retry is a fault in the data
+# or the code, and retrying it held back every deferred job (EXP-01, second road; review F3, 24.09).
+PUBLISH_GIVE_UP = 5
 JOB_PAGE, JOB_PLAYER, JOB_OTHER, JOB_BULK = 0, 1, 2, 3
 # Where a vehicle request came from decides its turn: the page is waiting for the
 # one it asked for, the hangar vehicle is the player's own, a roster or the
@@ -236,6 +240,14 @@ def read_data_file(path):
     return unpack_battle(value) if str(key).startswith('battle:') else value
 
 
+class HeaderUnavailable(ValueError):
+    """A battle file whose first record is not its header and which has no recovery file (REC-02, 24.09).
+
+    The file itself reads; nothing that follows the lost header can be placed without it. A ValueError, so
+    every caller that already catches one keeps doing so; the tail catches this class by name to leave the
+    file alone for the session instead of retrying it on every tick."""
+
+
 def read_battle(path, return_offset=False, decoder=None):
     header, hits, warnings, shot_events, crit_events, roster = None, [], [], [], [], None
     decoder = decoder or RecordDecoder()
@@ -262,7 +274,7 @@ def read_battle(path, return_offset=False, decoder=None):
         # Explicit, hash-bound metadata can recover the header lost by 0.2.0.
         # Never guess the client version from whatever client is installed now.
         sidecar = path + '.recovery.json'
-        if not os.path.isfile(sidecar): raise ValueError('Battle header unavailable')
+        if not os.path.isfile(sidecar): raise HeaderUnavailable('Battle header unavailable')
         with open(sidecar, 'rb') as stream:
             recovery = json.loads(stream.read(65537).decode('utf-8'))
         digest = hashlib.sha256()
@@ -2213,12 +2225,17 @@ class Exporter(object):
         self.raw_targets = {}
         self.raw_decoders = {}
         self.raw_oversize = {}
+        # Battle files passed over for the rest of the session (skip_battle): no header line, or a publication
+        # that keeps failing the same way. Never retried; the next start reads them again.
+        self.skipped = set()
         # Prepared hits are retained only for the active battle. Each raw hit is
         # copied/enriched once, then selectively invalidated by its model key.
         self.prepared_hits = []
         self.prepared_models = {}
         self.prepared_identity = None
         self.publish_failures = 0
+        # The same count without EnvironmentError: what PUBLISH_GIVE_UP is measured against.
+        self.publish_faults = 0
         self.next_publish_retry = 0
         # The Recorder, when the mod is running: in_battle and busy_until say when
         # a job may run. Outside the game it stays None and everything may run.
@@ -2254,20 +2271,32 @@ class Exporter(object):
                     pass
                 atomic_write(target, z.read(member))
         self.load_settings()
-        self.load_vehicles()
+        complete = self.load_vehicles()
         # Rebuild derived records after an interrupted game. Raw JSONL is untouched.
         # Every battle is republished, so one unreadable file must not stop the rest.
         for path in sorted(glob.glob(os.path.join(self.folder, 'battles', '*.jsonl'))):
+            # A name that is not a battle id ("X - Copy.jsonl" from a file manager or a sync conflict) cannot be
+            # published, and its hits may name models no other battle does: the set is then incomplete (F5, 24.09).
+            if not IDENTIFIER.match(os.path.basename(path)[:-6]):
+                complete = False
+                LOG.warning('Battle file with an unexpected name is not published: %s', os.path.basename(path))
+                continue
             try:
                 decoder = RecordDecoder()
                 battle, offset = read_battle(path, return_offset=True, decoder=decoder)
-                if not IDENTIFIER.match(battle['id']): continue
                 self.publish(battle)
                 self.raw_offsets[battle['id']] = offset
-            except Exception: LOG.exception('Could not rebuild saved battle: %s', os.path.basename(path))
+            except Exception:
+                complete = False
+                LOG.exception('Could not rebuild saved battle: %s', os.path.basename(path))
         self.replay_vehicle_requests()
         self.write_catalogue(force=True)
-        self.write_index(prune=True)
+        # prune() deletes every model no reference names, and a model of an earlier client can never be extracted
+        # again. So it runs only from a complete reference set: one battle or vehicle file that did not read or
+        # publish here - locked by an antivirus or a backup, or broken - keeps every model on disk this session
+        # (EXP-02/DATA-02, 24.09). The unused ones go on the next start that reads everything.
+        if not complete: LOG.warning('Unused models kept this session: a saved battle or vehicle could not be read')
+        self.write_index(prune=complete)
         if self.settings.get('exportAllVehicles'):
             self.queue_catalogue_exports()
 
@@ -2614,7 +2643,7 @@ class Exporter(object):
                 self.pending_quiet = True
                 return
         else:
-            raise ValueError('Battle header unavailable for '+name)
+            raise HeaderUnavailable('Battle header unavailable for '+name)
         self.pending_publish = True
 
     def record(self, name, record):
@@ -2633,19 +2662,42 @@ class Exporter(object):
     def activate_tail(self, name):
         if self.current is not None and self.current.get('id') == name: return True
         if self.current is not None and not self.flush(force=True): return False
-        path = os.path.join(self.folder, 'battles', name+'.jsonl')
         if self.raw_offsets.get(name, 0):
-            decoder = RecordDecoder()
-            battle, offset = read_battle(path, return_offset=True, decoder=decoder)
-            self.current = battle
-            self.raw_offsets[name] = offset
-            self.raw_decoders = {name:decoder}
-            self.reset_prepared()
-            self.pending_publish = True
+            self.load_tail(name)
         else:
             self.current = None
             self.raw_decoders = {name:RecordDecoder()}
         return True
+
+    def load_tail(self, name):
+        """Make the whole battle file the current battle, read by read_battle: the one reader that also restores
+        a lost header from its recovery file. Raises HeaderUnavailable when the file has neither."""
+        decoder = RecordDecoder()
+        battle, offset = read_battle(os.path.join(self.folder, 'battles', name+'.jsonl'), return_offset=True,
+                                     decoder=decoder)
+        self.current = battle
+        self.raw_offsets[name] = offset
+        self.raw_decoders = {name:decoder}
+        self.reset_prepared()
+        self.pending_publish = True
+
+    def skip_battle(self, name, reason):
+        """Pass a battle file over for the rest of the session (EXP-01/REC-02, review F3, 24.09).
+
+        Two cases, both of which used to stall the whole export - a traceback every tick or every second, no other
+        battle published, no model or TTX job run: a file without its header (nothing after it can be placed), and
+        a battle whose publication fails the same way PUBLISH_GIVE_UP times in a row. One warning; everything the
+        recorder appends to the file this session is passed over unread. The raw file stays as it is; the next start
+        reads it again through setup, where a failure also keeps prune() off."""
+        self.skipped.add(name)
+        self.republish.discard(name)
+        self.raw_offsets[name] = max(self.raw_offsets.get(name, 0), self.raw_targets.get(name, 0))
+        self.raw_oversize.pop(name, None)
+        if self.current is not None and self.current.get('id') == name:
+            self.current = None
+            self.reset_prepared()
+            self.pending_publish = self.pending_quiet = False
+        LOG.warning('Battle file skipped this session (%s): %s', reason, name)
 
     def consume_records(self, count_budget=TAIL_RECORD_BUDGET,
                         time_budget=TAIL_TIME_BUDGET, force=False):
@@ -2656,7 +2708,14 @@ class Exporter(object):
                      if self.raw_targets[name] > self.raw_offsets.get(name, 0)]
             if not names: break
             name = sorted(names)[0]
-            if not self.activate_tail(name): break
+            if name in self.skipped:
+                self.raw_offsets[name] = self.raw_targets[name]
+                continue
+            try:
+                if not self.activate_tail(name): break
+            except HeaderUnavailable:
+                self.skip_battle(name, 'no header line')
+                continue
             target = self.raw_targets[name]
             offset = self.raw_offsets.get(name, 0)
             # activate_tail may have read through the advertised target.
@@ -2707,7 +2766,16 @@ class Exporter(object):
                         continue
                     # A battle-switch flush can fail while the output is locked.
                     # Advance only after the decoded row is fully applied.
-                    self.apply_record(name, row)
+                    try:
+                        self.apply_record(name, row)
+                    except HeaderUnavailable:
+                        # The file's first record is not its header (its write was lost, REC-02): the whole file
+                        # goes through read_battle, which restores the header from a recovery file if there is
+                        # one; without one the file is passed over for the session.
+                        try: self.load_tail(name)
+                        except HeaderUnavailable: self.skip_battle(name, 'no header line')
+                        consumed += 1
+                        break
                     self.raw_offsets[name] = next_offset
                     consumed += 1
         return consumed
@@ -2721,13 +2789,24 @@ class Exporter(object):
         try:
             self.publish(self.current)
             self.write_index()
-        except Exception:
+        except Exception as error:
             self.publish_failures += 1
             self.next_publish_retry = now + min(1.0, 0.1 * (2 ** min(self.publish_failures, 4)))
+            # A locked or unwritable output is waited out as before; any other error that repeats is the
+            # battle's own and would repeat all session, so the battle is let go (review F3, 24.09).
+            if not isinstance(error, EnvironmentError) and self.current is not None:
+                self.publish_faults += 1
+                if self.publish_faults >= PUBLISH_GIVE_UP:
+                    self.skip_battle(self.current.get('id'),
+                                     'publication failed %d times in a row: %r' % (self.publish_faults, error))
+                    self.publish_failures = self.publish_faults = 0
+                    self.next_publish_retry = 0
+                    return True
             raise
         self.pending_publish = False
         self.pending_quiet = False
         self.publish_failures = 0
+        self.publish_faults = 0
         self.next_publish_retry = 0
         self.last_published = time.time()
         return True
@@ -2903,6 +2982,9 @@ class Exporter(object):
         if not self.republish: return False
         now = time.time()
         for battle_id in sorted(self.republish):
+            if battle_id in self.skipped:
+                self.republish.discard(battle_id)
+                continue
             if now-self.republished.get(battle_id, 0) < 1: continue
             self.republished[battle_id] = now
             try:
@@ -2968,8 +3050,10 @@ class Exporter(object):
 
         Two things depend on it: the catalogue's 'exported' flags, and prune() -
         a model referenced only by an exported vehicle would otherwise be deleted
-        as unused on the next index write.
+        as unused on the next index write. Returns False when any file did not
+        read: its references are then unknown and setup must not prune.
         """
+        complete = True
         for path in sorted(glob.glob(os.path.join(self.folder, 'data', 'vehicles', '*.js'))):
             try:
                 record = read_data_file(path)
@@ -3006,7 +3090,9 @@ class Exporter(object):
                 if stale and identifier in self.vehicles:
                     self.vehicles[identifier]['descriptorHash'] = None
             except Exception:
+                complete = False
                 LOG.exception('Could not read an exported vehicle: %s', os.path.basename(path))
+        return complete
 
     def remember_vehicle(self, record):
         """Keep the catalogue summary and the model references of one vehicle record."""

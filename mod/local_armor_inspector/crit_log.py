@@ -13,6 +13,7 @@ import math
 import numbers
 import re
 import time
+from .telemetry import recording
 
 LOG = logging.getLogger('local.armor_inspector')
 # Extras the common map may not list (vehicle-specific ones: wheels, a second pair of tracks), typed by name.
@@ -79,13 +80,11 @@ class CritLog(object):
         self.burning = {}
 
     def active(self, player):
-        import BattleReplay
-        arena = getattr(player, 'arena', None)
-        if not self.recorder.enabled or arena is None or BattleReplay.g_replayCtrl.isPlaying: return False
-        if getattr(player, 'isObserver', lambda: False)(): return False
+        # The recorder's one gate (on, an arena, not a replay, not an observer), shared by every recording path.
+        if not recording(self.recorder, player): return False
         # Before the client knows its own vehicle a record would stamp 0 into the battle header.
         if not getattr(player, 'playerVehicleID', None): return False
-        identity = str(arena.arenaUniqueID)
+        identity = str(player.arena.arenaUniqueID)
         if identity != self.arena:
             self.reset()
             self.arena = identity

@@ -115,8 +115,8 @@ class MotionSampler(object):
         """One tick: the values the client already holds for every alive vehicle of the roster."""
         bw = self.recorder.bw
         player = bw.player()
-        # The very same gate the shot telemetry uses - recorder enabled, an arena, not a replay and
-        # not an observer - so the sampler can never run where the telemetry would not record.
+        # The very same gate the shot telemetry uses - Recorder.recording: recorder enabled, an arena, not a
+        # replay and not an observer - so the sampler can never run where the telemetry would not record.
         if player is None or not self.recorder.telemetry.active(player):
             self.idle += 1
             if self.idle > IDLE_LIMIT:

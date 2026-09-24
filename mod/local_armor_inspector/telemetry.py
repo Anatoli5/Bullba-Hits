@@ -298,6 +298,20 @@ def designator_mark(entity):
         return None
 
 
+def recording(recorder, player):
+    """The one gate of every recording path: the recorder is on, the player has an arena, and it is his own live
+    battle - not a replay being played and not a spectated one.
+
+    The hit capture and the roster (Recorder), the shot telemetry (and the motion sampler through it) and the crit
+    log all ask here before they write, so a replay or an observer seat never opens a battle file. Before 24.09 the
+    roster path had no such check and a replay wrote a fake live battle (REC-01). Attribute reads only; the import
+    of an already loaded module is a dictionary lookup, as it was in each of the four copies this replaces."""
+    if not recorder.enabled or getattr(player, 'arena', None) is None: return False
+    import BattleReplay
+    if BattleReplay.g_replayCtrl.isPlaying: return False
+    return not getattr(player, 'isObserver', lambda: False)()
+
+
 class ShotTelemetry(object):
     def __init__(self, recorder):
         self.recorder = recorder
@@ -319,11 +333,8 @@ class ShotTelemetry(object):
         self.last_own_shot = None
 
     def active(self, player):
-        import BattleReplay
-        arena = getattr(player, 'arena', None)
-        if not self.recorder.enabled or arena is None or BattleReplay.g_replayCtrl.isPlaying: return False
-        if getattr(player, 'isObserver', lambda: False)(): return False
-        identity = str(arena.arenaUniqueID)
+        if not recording(self.recorder, player): return False
+        identity = str(player.arena.arenaUniqueID)
         if identity != self.arena:
             self.reset()
             self.arena = identity

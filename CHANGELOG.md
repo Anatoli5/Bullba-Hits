@@ -4,7 +4,13 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 
 ## Unreleased
 
+- **Emulation:** the live aim ring (cyan, with the reload on it) is drawn over the magenta ring of a pinned shot, so the reload no longer hides under it.
+- **Controls:** every wheel notch over a slider moves it by the same share of its scale, as the wheel over the scene does, whatever the pace of the turn (the step used to grow with fast turning and fall back after a pause, which felt like sticking); Distance works out the shell once the turn stops.
 - **Controls:** the mouse wheel over a slider no longer stalls or slips: the value moves at once, the page redraws once per frame and saves the settings once the turn is over; the number boxes beside the sliders (Distance, Zoom, Height, Pen., Cal., α) take the wheel too, their arrows still work.
+- **Records:** a start of the game on which a saved battle or vehicle file cannot be read (held by an antivirus or a backup, or a battle file copied under another name) no longer deletes collision models; unused ones are cleaned up on the next start that reads everything.
+- **Records:** a battle file that lost its first line, or a battle whose export fails the same way five times in a row, no longer stops new battles, models and characteristics from being exported for the rest of the session; that one battle is skipped with a single log line and read again on the next start.
+- **Records:** watching a replay or spectating no longer creates an empty "live" battle in the list.
+- **Installer:** no backup copies any more; installing removes the backup folder earlier versions filled, the previous recorder build and our own files the page no longer uses. Records, settings and other mods are untouched.
 
 ## 0.7.42 (2026-09-24)
 

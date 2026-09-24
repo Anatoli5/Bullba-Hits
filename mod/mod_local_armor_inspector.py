@@ -688,7 +688,10 @@ class Recorder(object):
         self.last_vehicle = None
         # The reader of the gun mechanics' live state is bound once here, beside the telemetry it lives in,
         # so the hit path does not run an import statement per hit (22.09).
-        from local_armor_inspector.telemetry import ShotTelemetry, mechanic_state, designator_mark
+        from local_armor_inspector.telemetry import ShotTelemetry, mechanic_state, designator_mark, recording
+        # The one gate of every recording path (REC-01, 24.09): the hit capture and the roster here, the shot
+        # telemetry, the motion sampler and the crit log there. A replay or a spectated battle opens no file.
+        self.recording = recording
         self.telemetry = ShotTelemetry(self)
         self.mechanic_state = mechanic_state
         self.designator_mark = designator_mark
@@ -749,7 +752,7 @@ class Recorder(object):
         last one. The viewer lists the allies from it so that the hits can be read from any ally's
         seat. Game thread: dictionary reads only, no package access.
         """
-        if not self.enabled or arena is None: return
+        if arena is None or not self.recording(self, player): return
         player_id = getattr(player, 'playerVehicleID', None)
         # The first arena list can arrive before the client knows its own vehicle (playerVehicleID 0, Tundra
         # 18.09): a roster without the player is worthless and would also stamp 0 into the battle header, so it
@@ -807,15 +810,12 @@ class Recorder(object):
     def capture(self, vehicle, attackerID, hitPoints, effectsIndex, prefabEffIndex,
                 damage, damageFactor, lastMaterialIsShield, shellVelocity, gunInstallationIndex):
         if not self.enabled: return
-        import BattleReplay
         import Math
         from VehicleEffects import DamageFromShotDecoder as Decoder
-        if BattleReplay.g_replayCtrl.isPlaying: return
         player = self.bw.player()
-        arena = getattr(player, 'arena', None)
+        if not self.recording(self, player): return
+        arena = player.arena
         player_id = getattr(player, 'playerVehicleID', None)
-        if arena is None: return
-        if getattr(player, 'isObserver', lambda: False)(): return
         if not self.ensure_battle(player): return
         if not getattr(self, 'roster_known', False):
             try: self.note_roster(arena, player)
