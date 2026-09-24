@@ -250,6 +250,30 @@ async function main() {
     }
     await ev('getSelection().removeAllRanges(), true');
 
+    // ---- a click on a circle tile is the tile's, not the scene's (user, 24.09) ------------------------------------
+    // The tiles band lies over the scene: a left click on the Circle tile showed the help cursor and then fired the
+    // emulated gun (or pinned a point) under it. It must show the tile's words and leave the scene alone.
+    await ev('__bt.act.fun(true)'); await ev('__bt.settle()');
+    let tileAt = null;
+    for (let i = 0; i < 6 && !tileAt; i++) {
+      await step('hit(' + i + ')');
+      tileAt = await ev(`(() => { const t = document.getElementById('shot-circle-tile'); if (!t || !t.getClientRects().length) return null; const r = t.getBoundingClientRect(); return {x: r.left + r.width / 2, y: r.top + r.height / 2}; })()`);
+    }
+    ok('a hit with a Circle tile is on screen', !!tileAt);
+    if (tileAt) {
+      const before = await ev(`(() => { const v = window.__bullbaViewers[window.__bullbaViewers.length - 1], t = document.getElementById('shot-circle-tile'); return {pinned: !!v.pinned, tip: t.getAttribute('data-tip') || t.getAttribute('title') || ''}; })()`);
+      await mouse('mousePressed', tileAt.x, tileAt.y); await mouse('mouseReleased', tileAt.x, tileAt.y);
+      await ev('__bt.settle()');
+      const after = await ev(`(() => { const v = window.__bullbaViewers[window.__bullbaViewers.length - 1], t = document.getElementById('shot-circle-tile'), b = document.getElementById('page-tip'); return {pinned: !!v.pinned, tip: t.getAttribute('data-tip') || t.getAttribute('title') || '', bubble: !!b && !b.hidden && b.textContent.length > 0, text: b ? b.textContent.slice(0, 40) : ''}; })()`);
+      ok('a click on the Circle tile shows its words', after.bubble, '(' + after.text + ')');
+      ok('... and fires no shot and pins no point under it', !after.pinned && !before.pinned && after.tip === before.tip && after.tip.indexOf('Last shot') !== 0,
+         '(pinned ' + after.pinned + ', tile "' + after.tip.split('\n')[0] + '")');
+      const dot = await ev(`(() => { const d = document.querySelector('.circle-help'); return !!d && d.getClientRects().length > 0; })()`);
+      ok('the circle tiles have their own "?"', dot);
+      await ev("document.getElementById('page-tip') && (document.getElementById('page-tip').hidden = true), true");
+    }
+    await ev('__bt.act.fun(false)'); await ev('__bt.settle()');
+
     // ---- the leak counter ----------------------------------------------------------------------------------
     const CYCLE = ["side('battles')", "battle('pm')", 'hit(0)', 'swap()', 'swap()', 'roster(32)', "battle('pm2')", 'hit(0)',
                    'modelTile()', "list('pm_quebec')", "side('battles')", "battle('pm')", 'hit(1)', "battle('pm3')", 'hit(0)', 'roster(33)'];

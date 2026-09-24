@@ -525,8 +525,8 @@ if (window.BullbaTips && window.BullbaTips.refresh) {
   const own = window.BullbaTips.refresh;
   window.BullbaTips.refresh = function () { tipRefreshes++; return own.apply(this, arguments); };
 }
-ok('scene-one-path: web/tooltips.js runs beside it and takes the page’s seven static help dots',
-   !tipsError && staticDots.length === 7 && !!(window.BullbaTips && window.BullbaTips.refresh),
+ok('scene-one-path: web/tooltips.js runs beside it and takes the page’s eight static help dots (the circle tiles’ one since 24.09)',
+   !tipsError && staticDots.length === 8 && !!(window.BullbaTips && window.BullbaTips.refresh),
    tipsError ? String(tipsError.stack) : '(' + staticDots.length + ' dots)');
 // Since 22.09 the page keeps listeners of its own on the document from the start (the slider under the
 // cursor takes the wheel and the arrows), so the aim mode's handlers are counted against that baseline.
@@ -560,8 +560,8 @@ ok('and the live ring is the only cyan one left',
 // The controls that sit INSIDE the viewport must not be dragged or pinned through: viewer.js lets a
 // pointerdown on one of them alone, and the gun panel of stage 8 took the deleted switch's place there.
 // TTX (23.09): and on the characteristics panel in the bottom-right corner. Strip (23.09): and on the strip beside ⌖.
-ok('the viewer leaves a press on the gun panel, the strip beside ⌖ and the characteristics panel to the panels themselves',
-   /closest\('\.viewport-tile,\.mod-slot,\.swap-roles,\.aim-gun,\.fun-strip,\.aim-drive,#aim-config,\.ttx-panel'\)/.test(viewerSrc)
+ok('the viewer leaves a press on the gun panel, the strip beside ⌖, the characteristics panel and the tiles band (circle tiles, their ?, the ⚠; 24.09) to the panels themselves',
+   /closest\('\.viewport-tile,\.viewport-tiles,\.mod-slot,\.swap-roles,\.aim-gun,\.fun-strip,\.aim-drive,#aim-config,\.ttx-panel'\)/.test(viewerSrc)
    && viewerSrc.indexOf('aim-switch') < 0);
 // Settings left the scene heading for the header row (user, 20.09): the Statistics log status first, the
 // menu in the corner. Read off the markup, since this harness's querySelector is a stub.
@@ -1210,7 +1210,7 @@ settle(20).then(function () {
      shotTile.hidden === false && shotCircle.textContent === '50 %',
      '(' + shotCircle.textContent + ')');
   ok('and the tooltip says which ring that is',
-     shotTile.title.indexOf('client reticle') >= 0 && shotTile.title.indexOf('share of the shell') >= 0);
+     shotTile.title.indexOf('reticle as the fire key was pressed') >= 0 && shotTile.title.indexOf('share of the shell') >= 0);
   view.savedAim = null; view.estimateAim = {radius: 0.5};
   view.onPin(false);
   tick(0.2);

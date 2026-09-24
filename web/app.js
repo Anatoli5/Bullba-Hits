@@ -3305,14 +3305,14 @@
   var SHARE = '\n• Figure: expected damage of a shot inside it, as a share of the shell’s alpha';
   var NO_ALPHA = '\n• Figure: penetration chance over the circle — this shell has no alpha, so no damage figure';
   var CIRCLE_TITLES = {
-    live: 'Live aiming circle',
-    shot: 'Last shot’s ring\nThe magenta ring the shot left on the model.',
+    live: 'Live aiming circle\nCyan: the emulation’s ring as it is now; the figure is for a shot fired at this moment.',
+    shot: 'Last shot’s ring\nMagenta: the ring your emulated shot left on the model; the figure is for that shot.',
     // The recorded reticle: the circle the shooter's own client had at the instant of the shot, slid
     // along the shot line onto the impact point - the ring drawn solid magenta on the model.
-    saved: 'Recorded aiming circle\nThe shooter’s client reticle at this hit.',
+    saved: 'Recorded aiming circle\nMagenta, this hit’s own: the shooter’s reticle as the fire key was pressed (solid) and the server’s marker then (dashed).',
     // The shot ring of an own shot (BACKLOG 28 step 2, 24.09): the circle the server fired from. The figure is
     // sampled over it while it is on screen (viewer.shotDiscAim), over the solid ring when it is switched off.
-    fired: 'Shot circle\nThe circle the server fired this shot from: the thick long-dashed ring.',
+    fired: 'Shot circle\nThis hit’s three rings: your reticle at the press (thin solid), the server’s marker then (thin dashed) and the circle the server really fired from (thick dashes); the figure is over the thick one.',
     // No recorded reticle: the dashed magenta ring is the nominal full-aim estimate, and the figure is
     // an estimate with it. Said on the line itself, so the number is never read as a recorded one.
     estimate: 'Nominal full-aim circle\nThis hit has no recorded reticle: the figure is for this estimate.'
