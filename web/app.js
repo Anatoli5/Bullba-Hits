@@ -7391,9 +7391,8 @@
     // An empty box (Pen., Cal., α waiting for a manual figure) keeps the page's wheel: a turn over it must not
     // type a figure the user never asked for.
     function under(target){for(var n=target;n;n=n.parentNode)if(n.type==='range'||n.type==='number')return n.disabled||n.readOnly||(n.type==='number'&&n.value==='')?null:n;return null;}
-    // `mult` is how many of the slider's own steps this one event is worth (the wheel's run below); it is
-    // clamped here to a tenth of the slider's range, so however long the wheel is spun one event never
-    // crosses the scale. The value stays on the slider's own grid - Zoom's step is smaller than a whole
+    // `mult` is how many of the slider's own steps this one event is worth (the wheel's notches below); it is
+    // clamped here to a tenth of the slider's range, so one event never crosses the scale. The value stays on the slider's own grid - Zoom's step is smaller than a whole
     // unit, and adding it up would drift off the grid.
     function step(el,dir,mult){
       var s=Math.abs(Number(el.step))||1,min=el.min===''?0:Number(el.min),max=el.max===''?100:Number(el.max);
@@ -7422,25 +7421,27 @@
     }
     function flushInput(){if(pendFrame!==null){window.cancelAnimationFrame(pendFrame);pendFrame=null;}var el=pendEl;pendEl=null;if(el)el.dispatchEvent(new Event('input',{bubbles:true}));}
     function flushChange(){if(doneTimer!==null){window.clearTimeout(doneTimer);doneTimer=null;}flushInput();controlTurning=false;var el=doneEl;doneEl=null;if(el)el.dispatchEvent(new Event('change',{bubbles:true}));}
-    // A continuous turn of the wheel steps further and further (user, 22.09: one unit a notch is too fine,
-    // and Zoom's own step is smaller than a whole). The run counts the notches that arrive without a pause
-    // and its multiplier walks 1, 1, 2, 3, 5, 8 … - each the sum of the two before it - until step() cuts it
-    // to a tenth of the slider's range. A notch after a pause, the other direction or another slider starts
-    // the run over at the smallest step there is. Only the wheel grows: an arrow key is a deliberate press
-    // each time and keeps the minimal step.
-    var runEl=null,runDir=0,runAt=-1,runPrev=0,runStep=1;
-    var RUN_FAST=.15,RUN_OVER=.3;   // seconds: under the first the turn is continuous, over the second it is done
-    // Timed by the event's own stamp, when the notch was turned, not by when a busy page got round to it.
-    function runMultiplier(el,dir,at){
-      var now=at,gap=now-runAt;
-      if(el!==runEl||dir!==runDir||gap>RUN_OVER){runPrev=0;runStep=1;}
-      else if(gap<RUN_FAST&&runStep<1e4){var next=runPrev+runStep;runPrev=runStep;runStep=next;}
-      runEl=el;runDir=dir;runAt=now;
-      return runStep;
+    // One notch moves every control by the same share of its scale, whatever the pace of the turn - the rule the
+    // scene's own wheel follows (distance ×1.22 a notch). The run that grew the step 1, 1, 2, 3, 5 … while
+    // notches came within 0.15 s and fell back to one step after a 0.3 s pause is gone (user, 24.09: "sometimes
+    // responsive, sometimes it sticks"): the game's browser delivers wheel events in bursts, so the run kept
+    // resetting to the smallest step at random. NOTCH_SHARE of the range per notch is the scene's factor on the
+    // logarithmic Distance slider (ln 1.22 / ln(1000/3) ≈ .034). A number box beside a slider turns the slider,
+    // so both follow the same scale; a box of its own (Pen., Cal., α, spread) moves by ~1 % of its figure.
+    var NOTCH_SHARE=.034;
+    function perNotch(el){
+      var s=Math.abs(Number(el.step))||1,min=el.min===''?0:Number(el.min),max=el.max===''?100:Number(el.max);
+      if(el.type==='range')return Math.max(1,Math.round((max-min)*NOTCH_SHARE/s));
+      return Math.max(1,Math.round(Math.abs(Number(el.value))*.01/s));
     }
-    function wheelStep(el,dir,e){
-      var at=e&&e.timeStamp>0?e.timeStamp/1000:aimSeconds();
-      coalesce=true;try{step(el,dir,runMultiplier(el,dir,at));}finally{coalesce=false;}
+    function wheelTarget(el){
+      if(el.type!=='number'||!el.id||!/-field$/.test(el.id))return el;
+      var pair=document.getElementById(el.id.replace(/-field$/,''));
+      return pair&&pair.type==='range'&&!pair.disabled?pair:el;
+    }
+    function wheelStep(el,dir,notches){
+      var target=wheelTarget(el);
+      coalesce=true;try{step(target,dir,perNotch(target)*Math.max(1,notches||1));}finally{coalesce=false;}
     }
     document.addEventListener('pointerover',function(e){hovered=under(e&&e.target);rolled=0;},true);
     document.addEventListener('pointerout',function(e){if(hovered&&hovered===under(e&&e.target)){hovered=null;rolled=0;}},true);
@@ -7450,12 +7451,13 @@
       var d=e.deltaY||e.deltaX||0;
       if(!d)return;
       e.preventDefault();e.stopPropagation();
-      // One notch is one step of the run. A trackpad sends many small deltas instead, so they add up to a
-      // notch first - and only a notch counts towards the run, never the deltas that made it.
-      if(e.deltaMode!==0||Math.abs(d)>=40){rolled=0;return wheelStep(el,d<0?1:-1,e);}
+      // A mouse sends about 100 a notch (a fast spin folds several into one event); a trackpad sends small deltas
+      // that add up to a notch first.
+      if(e.deltaMode!==0){rolled=0;return wheelStep(el,d<0?1:-1,1);}
+      if(Math.abs(d)>=40){rolled=0;return wheelStep(el,d<0?1:-1,Math.round(Math.abs(d)/100)||1);}
       rolled+=d;
       if(Math.abs(rolled)<100)return;
-      wheelStep(el,rolled<0?1:-1,e);rolled=0;
+      wheelStep(el,rolled<0?1:-1,1);rolled=0;
     },{capture:true,passive:false});
     document.addEventListener('keydown',function(e){
       var el=hovered;
