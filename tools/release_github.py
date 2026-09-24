@@ -1,4 +1,11 @@
-"""Publish the built installer as a GitHub release: tag v<VERSION> on HEAD, attach Setup.exe and the sources/manual-install ZIP.
+"""Publish the built installer as a GitHub release: tag v<VERSION> on the commit the build was made from, attach
+Setup.exe and the sources/manual-install ZIP.
+
+The tag goes on dist/build.json's commit (tools/build.py builds only from a clean tree and records it), never on
+whatever HEAD is now: the published files and the tagged sources are one and the same (audit QA-03, 24.09 - v0.7.40
+was tagged on 29ea400 with artefacts built from 2ab4efe). Refused when build.json has no commit (a build of before
+this rule), when that commit is not on the remote yet, when an existing tag points elsewhere, and when the build
+skipped tools/check.py (--allow-unchecked overrides that one, for an emergency build).
 
 Uses the user's Git Credential Manager token like tools/publish_github.py; the token never reaches stdout.
 """
@@ -56,9 +63,9 @@ def digest(path):
     return h.hexdigest()
 
 
-def changelog_section(version):
+def changelog_section(version, text=None):
     """The bullet list under '## <version> (date)' in CHANGELOG.md; the release is refused without it."""
-    lines = (ROOT / 'CHANGELOG.md').read_text(encoding='utf-8').splitlines()
+    lines = (text if text is not None else (ROOT / 'CHANGELOG.md').read_text(encoding='utf-8')).splitlines()
     start = next((i for i, l in enumerate(lines) if l.startswith('## ' + version + ' ') or l.strip() == '## ' + version), None)
     if start is None:
         raise RuntimeError('CHANGELOG.md has no section for ' + version + '; write it (rename Unreleased) before releasing')
@@ -74,10 +81,20 @@ def changelog_section(version):
 
 
 tag = 'v' + VERSION
-changelog = changelog_section(VERSION)
-head = git('rev-parse', 'HEAD')
-if git('status', '--porcelain', '--', 'mod', 'web', 'installer/ArmorInspector.iss'):
-    raise RuntimeError('Uncommitted changes in mod/, web/ or the installer script; commit before releasing')
+report = json.loads((ROOT / 'dist' / 'build.json').read_text(encoding='utf-8'))
+head = report.get('commit')
+if '--notes' in sys.argv:
+    # Only the notes of a release already out are rewritten (below): no tag is made, the build is not checked.
+    changelog = changelog_section(VERSION)
+else:
+    if not head:
+        raise RuntimeError('dist/build.json names no commit (a build of before 24.09); build again with tools/build.py')
+    if (report.get('check') or {}).get('skipped') and '--allow-unchecked' not in sys.argv:
+        raise RuntimeError('This build skipped tools/check.py (--skip-check); build again with the check, or pass --allow-unchecked')
+    if not git('branch', '-r', '--contains', head):
+        raise RuntimeError('The build commit ' + head[:10] + ' is not on the remote; push it before releasing')
+    # The notes are the CHANGELOG of the build commit, not of the working copy.
+    changelog = changelog_section(VERSION, git('show', head + ':CHANGELOG.md'))
 # Two files, named so that GitHub's alphabetical asset list shows the installer first ("Setup" < "Sources").
 # The bare .wotmod is inside the ZIP; it is not attached on its own any more (user, 19.09: a pile of files nobody
 # can explain).
@@ -86,7 +103,6 @@ wotmod = ROOT / 'dist' / ('local.armor_inspector_' + VERSION + '.wotmod')
 for asset in assets + [wotmod]:
     if not asset.is_file():
         raise RuntimeError('Missing build artifact: ' + asset.name)
-report = json.loads((ROOT / 'dist' / 'build.json').read_text(encoding='utf-8'))
 if digest(wotmod) != report['sha256']:
     raise RuntimeError('dist/*.wotmod does not match dist/build.json; rebuild first')
 
@@ -97,8 +113,14 @@ notes = ['Bullba Hits ' + VERSION + u' \u2014 WoT PC NA 2.4.0.1 #950.', '', chan
          'SHA-256:']
 notes += ['- `' + a.name + '`: `' + digest(a) + '`' for a in assets]
 notes += ['- `' + wotmod.name + '` (inside the archive): `' + report['sha256'] + '`']
-if api(repo + '/git/ref/tags/' + tag, missing=True) is None:
+existing_tag = None if '--notes' in sys.argv else api(repo + '/git/ref/tags/' + tag, missing=True)
+if '--notes' in sys.argv:
+    pass
+elif existing_tag is None:
     api(repo + '/git/refs', 'POST', {'ref': 'refs/tags/' + tag, 'sha': head})
+elif (existing_tag.get('object') or {}).get('sha') != head:
+    raise RuntimeError('Tag ' + tag + ' already points at ' + str((existing_tag.get('object') or {}).get('sha'))[:10]
+                       + ', the artefacts were built from ' + head[:10] + '; refusing to publish them under it')
 existing = api(repo + '/releases/tags/' + tag, missing=True)
 if '--notes' in sys.argv:
     # Rewrite the notes of the published release from the current CHANGELOG section; assets and tag stay.

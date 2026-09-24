@@ -11,6 +11,7 @@
 !/licenses/
 !/installer/
 !/tools/
+!/tests/
 
 __pycache__/
 *.pyc
@@ -45,3 +46,9 @@ __pycache__/
 !/tools/shot_spread_from_records.py
 !/tools/build_equipment_catalogue.py
 !/tools/build_vehicle_modes.py
+!/tools/check.py
+
+# Tests are code and are tracked (24.09, audit QA-06). What is NOT: fixtures extracted from the client or from the
+# player's records (tests/fixtures-local/: TTX files and references, the client's penetration figures, one-off stands
+# under the game's python27.dll, retired tests). A check that needs them says SKIP where they are absent.
+/tests/fixtures-local/
