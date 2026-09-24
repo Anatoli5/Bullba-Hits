@@ -2,7 +2,7 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
-## 0.7.43 (2026-09-24)
+## 0.8.0 (2026-09-24)
 
 - **Emulation:** the target's health bar takes a roster row only when it names the same vehicle, and its tooltip says whether the figure is the server's own (equipment included) or the roster's figure from before the vehicle was seen.
 - **Emulation:** the gun or turret picked on the characteristics panel (or in Config's Turret row) is now the gun the emulation fires: its circle, aiming time, reload, magazine, heat and mode button, and its shells (marked ⇆). The picked gun starts loaded, cool and fully aimed. The recorded ring and the hit's own shell stay the ones that fired. Picking the gun that fired (●) goes back to the recorded gun.
@@ -23,8 +23,6 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 - **Records:** recording no longer stops when you are destroyed in Onslaught (or Steel Hunter): hits, shots and damage between the others are recorded until the battle ends.
 - **Records:** in Onslaught the battle's roster follows each player's vehicle choice and names the enemies once they are known, and every vehicle seen in battle carries its real hit points (equipment included), which the health bar uses.
 - **Installer:** no backup copies any more; installing removes the backup folder earlier versions filled, the previous recorder build and our own files the page no longer uses. Records, settings and other mods are untouched.
-
-## 0.7.42 (2026-09-24)
 
 - **Emulation:** the target's health bar shows its figures inside it (left / max); its tooltip says where the figure comes from.
 - **Emulation:** ⇅ in an Onslaught battle, or in a battle recorded before 0.7.20, keeps the health bar: a vehicle with no hit points in the roster takes its stock figure from its characteristics file. A browsed vehicle uses its own export, not the battle open beside it.
