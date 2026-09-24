@@ -512,6 +512,49 @@ function checks(ok, web) {
     ok('viewer-batch: clear() drops the disc and both circles', !v.discAim && !v.ringAim && !v.shotDisc && !v.savedAim);
     ok('viewer-batch: and leaves the one shot-ring geometry and material alone (nothing to rebuild or recompile on the next hit)', freed === 0, '(' + freed + ' disposed)');
   });
+
+  // ---- 10. The thin rings of a MOVING own shot (thin-rings-press, 24.09) -----------------------------------------------
+  // The reticle at the press stood on the line the game drew its marker on: through the marker point, along the
+  // marker's own direction, from the gun as it was at the press. Between the press and the shot the vehicle drove
+  // 1.2 m sideways; the marker lies 9 m short of the armour. The old ray from the shell's origin at the SHOT through
+  // the marker pivoted about the marker and put the centre to the side; here the centre must stand on the marker's
+  // own line, at its signed offset from the hit (a position check, not a distance: the old ray fails it).
+  section(function () {
+    const e = env(web), v = loaded(e), T = e.T;
+    const RT = new T.Matrix4().makeRotationFromEuler(new T.Euler(-.08, 1.1, .04)).setPosition(-15, 2, 30);
+    v.loadedData.hit.target.worldTransform = RT.toArray();
+    const Iw = new T.Vector3(v.point.x, v.point.y, -v.point.z).applyMatrix4(RT), s = new T.Vector3(-.4, -.03, 1).normalize();
+    const left = new T.Vector3().crossVectors(s, new T.Vector3(0, 1, 0)).normalize(), up = new T.Vector3().crossVectors(left, s);
+    const G = Iw.clone().addScaledVector(s, -50).addScaledVector(left, .3);                     // the gun at the press
+    const d = Iw.clone().addScaledVector(left, .25).addScaledVector(up, .06).sub(G).normalize();   // the marker's own direction
+    const M = G.clone().addScaledVector(d, 41), o = G.clone().addScaledVector(left, -1.2).addScaledVector(s, .4);   // marker; muzzle at the shot
+    const L0 = G.clone().addScaledVector(left, .05), dS = Iw.clone().addScaledVector(left, -.1).sub(L0).normalize(), Ms = L0.clone().addScaledVector(dS, 44);
+    const client = {position: M.toArray(), direction: d.toArray(), diameter: .36, receivedAt: 20};
+    const server = {position: Ms.toArray(), direction: dS.toArray(), diameter: .4, receivedAt: 20.01};
+    const aim = {clientMarker: client, serverMarker: server, gunOrigin: G.toArray(), lastServerGunUpdate: {origin: L0.toArray(), vector: dS.clone().multiplyScalar(800).toArray(), dispersionAngle: .004, receivedAt: 20.01}};
+    v.setShotContext({aim: aim, tracer: {id: 'm1', own: true, origin: o.toArray(), velocity: s.clone().multiplyScalar(900).toArray()}, serverShot: null});
+    function world(p) { const w = p.clone(); w.z *= -1; return w.applyMatrix4(RT); }
+    const r = v.ringAim, c = r && world(r.center), shift = Iw.clone().sub(M).dot(d), want = M.clone().addScaledVector(d, shift), span = M.distanceTo(G);
+    const R = .18 * (span + shift) / span, old = o.clone().addScaledVector(M.clone().sub(o).normalize(), Iw.clone().sub(o).dot(M.clone().sub(o).normalize()));
+    ok('viewer-batch: moving shot - the solid ring stands on the marker\'s own line from the gun at the press (< 1e-9 m), not on the ray from the shot\'s muzzle (' + (old.distanceTo(want) / R).toFixed(2) + ' R away)',
+       c && c.distanceTo(want) < 1e-9 && old.distanceTo(want) > .5 * R, c ? '(' + c.distanceTo(want).toExponential(2) + ' m)' : '');
+    const offL = c && c.clone().sub(Iw).dot(left), wantL = want.clone().sub(Iw).dot(left);
+    ok('viewer-batch: and at its signed offset from the hit: ' + wantL.toFixed(3) + ' m along "left" (the old ray: ' + old.clone().sub(Iw).dot(left).toFixed(3) + ')',
+       c && near(offL, wantL, 1e-9) && Math.abs(wantL - old.clone().sub(Iw).dot(left)) > .1);
+    ok('viewer-batch: its radius grows from the gun at the press, its cone\'s apex is that gun on the marker\'s line',
+       r && near(r.radius, R, 1e-12) && world(r.origin).distanceTo(M.clone().addScaledVector(d, -span)) < 1e-9 && world(r.origin).distanceTo(G) < 1e-9);
+    const dashed = v.aimGroup.children.find(function (x) { return x.type === 'Line' && x.material.type === 'LineDashedMaterial'; });
+    function centreOf(line) { const p = line.geometry.attributes.position, sum = new T.Vector3(); for (let i = 0; i < 96; i++) sum.add(new T.Vector3(p.getX(i), p.getY(i), p.getZ(i))); return sum.divideScalar(96); }
+    const cs = dashed && centreOf(dashed), sS = Iw.clone().sub(Ms).dot(dS), wantS = Ms.clone().addScaledVector(dS, sS), spanS = Ms.distanceTo(L0);
+    const rS = dashed && new T.Vector3(dashed.geometry.attributes.position.getX(0), dashed.geometry.attributes.position.getY(0), dashed.geometry.attributes.position.getZ(0)).distanceTo(cs);
+    ok('viewer-batch: the dashed ring stands on the server marker\'s own line, its radius from the update\'s own origin',
+       cs && world(cs).distanceTo(wantS) < 1e-6 && near(rS, .2 * (spanS + sS) / spanS, 1e-6), cs ? '(' + world(cs).distanceTo(wantS).toExponential(2) + ' m)' : '');
+    // An old record without the gun's origin: the same line, the radius from the shell's origin (the only gun there is).
+    v.setShotContext({aim: {clientMarker: client}, tracer: {id: 'm2', own: true, origin: o.toArray(), velocity: s.clone().multiplyScalar(900).toArray()}, serverShot: null});
+    const spanO = M.distanceTo(o);
+    ok('viewer-batch: without aim.gunOrigin the solid ring keeps the marker\'s line, the radius from the shot\'s muzzle',
+       v.ringAim && world(v.ringAim.center).distanceTo(want) < 1e-9 && near(v.ringAim.radius, .18 * (spanO + shift) / spanO, 1e-12));
+  });
 }
 
 module.exports = {env: env, vehicle: vehicle, loaded: loaded, measure: measure, checks: checks};

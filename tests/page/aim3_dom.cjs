@@ -547,8 +547,8 @@ const viewerSrc = fs.readFileSync(path + 'viewer.js', 'utf8');
 ok('every standing ring takes the one magenta constant',
    /var AIM_RING=0xff5ad6;/.test(viewerSrc)
    && /AIM_FIXED=\{color:AIM_RING/.test(viewerSrc)
-   && /ring\(context\.aim\.clientMarker,AIM_RING,false\)/.test(viewerSrc)
-   && /ring\(server,AIM_RING,true\)/.test(viewerSrc)
+   && /ring\(context\.aim\.clientMarker,AIM_RING,false,gun\)/.test(viewerSrc)
+   && /ring\(server,AIM_RING,true,/.test(viewerSrc)
    && /LineDashedMaterial\(\{color:AIM_RING/.test(viewerSrc)
    // the shot ring of an own shot (24.09): a thick long-dashed band whose colour the TEMPORARY Settings lab sets (blue by
    // default, magenta a preset), drawn by its own shader

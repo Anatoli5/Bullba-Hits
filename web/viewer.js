@@ -910,26 +910,24 @@
     var inverse=new T.Matrix4().fromArray(target.worldTransform).invert();
     function pos(p){var v=new T.Vector3().fromArray(p).applyMatrix4(inverse);v.z*=-1;return v;}
     function dir(p){var v=new T.Vector3().fromArray(p).transformDirection(inverse);v.z*=-1;return v;}
-    // The recorded marker sits wherever the client put it on the aim ray, short of or past the armour it was
-    // aimed at: 0.02-0.49 m along the ray on the stage battle, up to metres on the records measured on 14.09.
-    // Drawn there with depthTest off, the hoop reads as "floating away from the tank". The reticle is a solid
-    // angle out of the muzzle, so the honest place to draw it is where the shell met the armour: slide the
-    // centre along the ray from tracer.origin through marker.position onto the plane through the impact point
-    // perpendicular to that ray, and scale the radius by the same distance ratio (the circle grows linearly
-    // with distance): r' = r · |origin→plane| / |origin→marker|. The cone is unchanged, so savedAim keeps the
-    // moved centre and radius with the unchanged origin and savedAimProbability still fans its rays over the
-    // identical solid angle. Without a tracer origin the marker is drawn exactly as recorded.
-    function ring(marker,color,dashed){
+    // A thin ring is where the reticle stood at the PRESS (user, 24.09: what he judges his own aim by). The recorded
+    // marker sits wherever the game's trajectory met something, short of or past the armour (up to metres), so it
+    // is slid to the plane through the impact point - along the line the game drew that marker on: through its
+    // point, along its own direction (the flight's tangent there). The radius grows with the distance from the gun
+    // the marker was aimed from (`from`: the gun at the press, or the server update's own origin):
+    // r' = r · (span + shift) / span. That gun is also the cone's apex (origin: the figure fans its rays from it).
+    // outputs/thin-rings-2026-09-24.md: the ray from the shell's origin at the SHOT through the marker at the
+    // press pivoted about the marker by the ~1 m the vehicle drove between the two - 16 % of the solid rings
+    // at >= 3 m/s stood > 0.5 R off; along the marker's own line none. Without any origin, as recorded.
+    function ring(marker,color,dashed,from){
       if(!marker||!marker.position||!marker.direction||!(marker.diameter>0))return;
-      var center=pos(marker.position),normal=dir(marker.direction),radius=marker.diameter/2;
-      var origin=context.tracer&&Array.isArray(context.tracer.origin)?pos(context.tracer.origin):null;
-      if(origin&&self.point){
-        var ray=center.clone().sub(origin),span=ray.length();
-        if(span>1e-6){
-          ray.divideScalar(span);
-          var depth=self.point.clone().sub(origin).dot(ray);
-          if(depth>1e-6){center=origin.clone().addScaledVector(ray,depth);radius*=depth/span;normal=ray;}
-        }
+      var at=pos(marker.position),normal=dir(marker.direction),center=at,radius=marker.diameter/2,origin=null;
+      if(!Array.isArray(from))from=context.tracer&&Array.isArray(context.tracer.origin)?context.tracer.origin:null;
+      var span=from?at.distanceTo(pos(from)):0;
+      if(span>1e-6){
+        origin=at.clone().addScaledVector(normal,-span);
+        var shift=self.point?self.point.clone().sub(at).dot(normal):0;
+        if(span+shift>1e-6){center=at.clone().addScaledVector(normal,shift);radius*=(span+shift)/span;}
       }
       var up=new T.Vector3(0,1,0);if(Math.abs(up.dot(normal))>.98)up.set(1,0,0);
       var right=new T.Vector3().crossVectors(normal,up).normalize();up.crossVectors(right,normal).normalize();var points=[];
@@ -940,10 +938,14 @@
     }
     // Both recorded reticles stand still, so both are magenta (user, 20.09); solid is the client's,
     // dashed the server's. Both are the snapshot of the PRESS (what the player aimed with), kept beside the disc.
+    // The solid ring's gun is the client's at the press (aim.gunOrigin, every record); the dashed one's is the server
+    // update the server marker was made from (the same receipt), else that gun too.
     if(context.aim){
-      ring(context.aim.clientMarker,AIM_RING,false);
+      var gun=context.aim.gunOrigin,update=context.aim.lastServerGunUpdate;
+      ring(context.aim.clientMarker,AIM_RING,false,gun);
       var server=context.aim.serverMarker,client=context.aim.clientMarker;
-      if(server&&client&&Number.isFinite(server.receivedAt)&&Math.abs(server.receivedAt-client.receivedAt)<.5)ring(server,AIM_RING,true);
+      if(server&&client&&Number.isFinite(server.receivedAt)&&Math.abs(server.receivedAt-client.receivedAt)<.5)
+        ring(server,AIM_RING,true,update&&Array.isArray(update.origin)&&Math.abs(update.receivedAt-server.receivedAt)<.02?update.origin:gun);
     }
     // The disc (outputs/own-shot-centre-2026-09-24.md section 9.1): the shell's angular offset from the server's axis
     // n, dx = (v·e1)/(v·n), dy = (v·e2)/(v·n) with e1 = n × up, e2 = e1 × n (world frame, the offline tool's axes),
