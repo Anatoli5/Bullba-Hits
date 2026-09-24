@@ -213,7 +213,7 @@ async function main() {
       await mouse('mouseReleased', box.x + 240, box.y);
       await ev('__bt.settle()');
       const turned = Math.abs(await yaw() - y0), cancels = await ev('window.__bt.cancels');
-      ok('a left drag over the scene turns the vehicle all the way' + (selected ? ' with the page’s text selected' : ''), cancels === 0 && turned > 1,
+      ok('a left drag over the scene turns the vehicle all the way' + (selected ? ' with the page’s text selected' : ''), cancels === 0 && turned > .8,   // 240 px at 0.004 rad/px = 0.96 rad; the cut-short drag turned 0.1
          '(turned ' + turned.toFixed(3) + ' rad, pointercancel ' + cancels + ')');
     }
     await ev('getSelection().removeAllRanges(), true');

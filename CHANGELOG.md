@@ -4,6 +4,7 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 
 ## Unreleased
 
+- **Scene:** turning the vehicle with the mouse is half as sensitive: about one full turn per 1500 px of drag, and smoother in the game browser.
 - **Scene:** turning the vehicle with the mouse no longer stops after a few degrees when some text on the page is selected.
 
 ## 0.8.0 (2026-09-24)
