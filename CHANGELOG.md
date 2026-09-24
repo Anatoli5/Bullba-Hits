@@ -2,7 +2,7 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
-## Unreleased
+## 0.8.1 (2026-09-24)
 
 - **Hit line:** the shot is now drawn along the shell's whole real flight from the tracer: a dashed arc from a dot where it left (the drop of up to a metre at long range included) to an arrowhead at the hit, instead of the short stub; the record view puts the camera at that start. More hits find their tracer (up to 5 m off, when nothing else of that shooter is near).
 - **Hit line:** a small mark on the hit-line panel when the game drew the vehicle more than 0.5 m from where the server hit it (the game draws vehicles about 0.2 s late); a click says how far and why.
@@ -12,14 +12,12 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 - **Scene:** the Circle tiles have their own "?": what each ring is and what the figures mean.
 - **Circles:** your own recorded shot now also shows the circle the server really fired it from — a thick, translucent ring of long dashes (99 shells in 100 land inside it) beside the two thin outlines of your reticle and the server marker at the press. The Circle figure is taken over it.
 - **Circles:** on the move the two thin rings now stand where your reticle and the server marker really were when you pressed fire (they used to swing aside by the distance the vehicle drove before the shell left).
-- **Circles:** Settings → Shot ring switches it on or off and sets its opacity (60 % by default); Settings also has a temporary lab to tune its look (colour, thickness, dashes, placement).
+- **Circles:** Settings → Shot ring switches it on or off and sets its opacity (25 % by default, pale cyan); Settings also has a lab to tune its look (colour, thickness, dashes, placement).
+- **Settings:** Screen opacity is 20 % by default.
 - **Circles:** a ⚠ beside the Circle tile marks a shot ring that is one server tick uncertain; a click on it says what that means and how far off it may be. Two-gun salvos no longer get a false ⚠.
 - **Recorder:** keeps the first two server aim updates after each of your shots (about 0.4 KB a shot; a two-gun salvo shares one record, and a shot at the very end of the battle keeps what came), so the ring of new battles is exact in that case too.
 - **Scene:** turning the vehicle with the mouse is half as sensitive: about one full turn per 1500 px of drag, and smoother in the game browser.
 - **Scene:** turning the vehicle with the mouse no longer stops after a few degrees when some text on the page is selected.
-
-## 0.8.0 (2026-09-24)
-
 - **Emulation:** the target's health bar takes a roster row only when it names the same vehicle, and its tooltip says whether the figure is the server's own (equipment included) or the roster's figure from before the vehicle was seen.
 - **Emulation:** the gun or turret picked on the characteristics panel (or in Config's Turret row) is now the gun the emulation fires: its circle, aiming time, reload, magazine, heat and mode button, and its shells (marked ⇆). The picked gun starts loaded, cool and fully aimed. The recorded ring and the hit's own shell stay the ones that fired. Picking the gun that fired (●) goes back to the recorded gun.
 - **Emulation:** switching to another hit of the same vehicle fired with a different gun also starts the emulation over for that gun.
@@ -31,7 +29,7 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 - **Scene:** while the turret or gun is dragged, the ricochet hatching is off until the pose is set, instead of being drawn for the old turret position.
 - **Scene:** hover, pins and the emulated turret find the point under the cursor much faster on heavy models.
 - **Settings:** the Soft lighting depth slider no longer redraws the whole map on every step.
-- **Controls:** every wheel notch over a slider moves it by the same share of its scale, as the wheel over the scene does, whatever the pace of the turn (the step used to grow with fast turning and fall back after a pause, which felt like sticking); Distance works out the shell once the turn stops.
+- **Controls:** every wheel notch over a slider or a number box moves it by one step of its own (Distance 1 m in its box, Zoom 0.1), whatever the pace of the turn: the wheel is for the fine value, dragging for the coarse one; Distance works out the shell once the turn stops.
 - **Controls:** the mouse wheel over a slider no longer stalls or slips: the value moves at once, the page redraws once per frame and saves the settings once the turn is over; the number boxes beside the sliders (Distance, Zoom, Height, Pen., Cal., α) take the wheel too, their arrows still work.
 - **Records:** a start of the game on which a saved battle or vehicle file cannot be read (held by an antivirus or a backup, or a battle file copied under another name) no longer deletes collision models; unused ones are cleaned up on the next start that reads everything.
 - **Records:** a battle file that lost its first line, or a battle whose export fails the same way five times in a row, no longer stops new battles, models and characteristics from being exported for the rest of the session; that one battle is skipped with a single log line and read again on the next start.
@@ -39,7 +37,6 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 - **Records:** recording no longer stops when you are destroyed in Onslaught (or Steel Hunter): hits, shots and damage between the others are recorded until the battle ends.
 - **Records:** in Onslaught the battle's roster follows each player's vehicle choice and names the enemies once they are known, and every vehicle seen in battle carries its real hit points (equipment included), which the health bar uses.
 - **Installer:** no backup copies any more; installing removes the backup folder earlier versions filled, the previous recorder build and our own files the page no longer uses. Records, settings and other mods are untouched.
-
 - **Emulation:** the target's health bar shows its figures inside it (left / max); its tooltip says where the figure comes from.
 - **Emulation:** ⇅ in an Onslaught battle, or in a battle recorded before 0.7.20, keeps the health bar: a vehicle with no hit points in the roster takes its stock figure from its characteristics file. A browsed vehicle uses its own export, not the battle open beside it.
 - **Scene:** every way of showing a scene (a hit, ⇅ and back, another shooter, the vehicle browser, another battle or seat, switching the side panel) now draws the tiles, the ⌖ strip, the health bar, the characteristics panel and the "?" icons the same way; an emptied scene no longer keeps the previous hit's strip or controls.

@@ -211,7 +211,7 @@ async function main() {
         legend: document.getElementById('shot-circle-tile').title}; })()`);
     await step('hit(0)');
     let d = await disc();
-    ok('shot ring: an own shot shows both thin outlines and the thick ring (6 px, 60 %), the figure over it; its shader compiled and ran', d.disc && d.ring && d.figure === 'disc' && d.prog === 'ok' && d.width === 6 && Math.abs(d.opacity - .6) < 1e-9, JSON.stringify(d));
+    ok('shot ring: an own shot shows both thin outlines and the thick ring (6 px, 25 %), the figure over it; its shader compiled and ran', d.disc && d.ring && d.figure === 'disc' && d.prog === 'ok' && d.width === 6 && Math.abs(d.opacity - .25) < 1e-9, JSON.stringify(d));
     ok('shot disc: a stale update puts the ⚠ beside the circle tile, its words say what and how far', d.stale && d.icon && d.tip.indexOf('one tick uncertain') >= 0 && d.tip.indexOf('1.50 m') >= 0, '(' + d.icon + ', "' + d.tip.slice(0, 80) + '")');
     await ev("(() => { document.getElementById('shot-ring').click(); return true; })()"); await ev('__bt.settle()');
     await new Promise((r) => setTimeout(r, 400));

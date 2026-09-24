@@ -553,9 +553,9 @@ ok('every standing ring takes the one magenta constant',
    && /ring\(context\.aim\.clientMarker,AIM_RING,false,gun\)/.test(viewerSrc)
    && /ring\(server,AIM_RING,true,/.test(viewerSrc)
    && /LineDashedMaterial\(\{color:AIM_RING/.test(viewerSrc)
-   // the shot ring of an own shot (24.09): a thick long-dashed band whose colour the TEMPORARY Settings lab sets (blue by
-   // default, magenta a preset), drawn by its own shader
-   && /SHOT_RING_LOOK=\{color:\[59\/255,130\/255,1\]/.test(viewerSrc) && /new THREE\.ShaderMaterial\(\{vertexShader:SHOT_RING_VERTEX/.test(viewerSrc));
+   // the shot ring of an own shot (24.09): a thick long-dashed band whose colour the Settings lab sets (the user's default
+   // hsl(180, 100 %, 80 %), blue and magenta presets), drawn by its own shader
+   && /SHOT_RING_LOOK=\{color:\[\.6,1,1\]/.test(viewerSrc) && /new THREE\.ShaderMaterial\(\{vertexShader:SHOT_RING_VERTEX/.test(viewerSrc));
 ok('and the live ring is the only cyan one left',
    /AIM_LIVE=\{color:0x5ee0ff/.test(viewerSrc)
    && viewerSrc.indexOf('0x68d7be') < 0 && viewerSrc.indexOf('0xeac36e') < 0
@@ -621,18 +621,18 @@ function keyAt(key) {
   return e;
 }
 const notch = wheelAt(impact, -100);
-// 24.09: a notch moves a slider by the same share of its scale every time (NOTCH_SHARE .034 - 3 of this 0…100).
-ok('a wheel notch over a slider moves it by one notch of its scale and is kept from the scene',
-   impact.value === '93' && viewerInstance.impact === 0.93 && notch.prevented && notch.stopped,
+// 24.09 evening (user): one notch is one step of the control - the wheel is for the fine value, dragging for the coarse.
+ok('a wheel notch over a slider moves it by one step of its own and is kept from the scene',
+   impact.value === '91' && viewerInstance.impact === 0.91 && notch.prevented && notch.stopped,
    '(' + impact.value + ')');
 wheelAt(impact, 100);
 ok('and the other way back', impact.value === '90', '(' + impact.value + ')');
 [-25, -25, -25].forEach(function (d) { wheelAt(impact, d); });
 ok('a trackpad glide under a notch does not move it yet', impact.value === '90', '(' + impact.value + ')');
 wheelAt(impact, -25);
-ok('and moves it one notch once the glide adds up to a notch', impact.value === '93', '(' + impact.value + ')');
+ok('and moves it one notch once the glide adds up to a notch', impact.value === '91', '(' + impact.value + ')');
 const elsewhere = wheelAt(new Element('div'), -100);
-ok('a wheel away from any slider is left alone', !elsewhere.prevented && !elsewhere.stopped && impact.value === '93');
+ok('a wheel away from any slider is left alone', !elsewhere.prevented && !elsewhere.stopped && impact.value === '91');
 // 24.09 (user: the wheel stalls and slips; the number box should take it too): a number box steps like a
 // slider, an empty one (a manual figure not typed yet) is left alone, notches inside one frame redraw the
 // control once, 'change' comes once when the turn is over, and the settings are written once after it.
@@ -654,16 +654,16 @@ ok('a wheel away from any slider is left alone', !elsewhere.prevented && !elsewh
 })();
 document.fire('pointerover', {target: impact});
 keyAt('ArrowUp');
-ok('an arrow over a slider steps it by its own step', impact.value === '94', '(' + impact.value + ')');
+ok('an arrow over a slider steps it by its own step', impact.value === '92', '(' + impact.value + ')');
 const down = keyAt('ArrowLeft');
-ok('and the other arrow back, kept from the camera', impact.value === '93' && down.prevented && down.stopped, '(' + impact.value + ')');
+ok('and the other arrow back, kept from the camera', impact.value === '91' && down.prevented && down.stopped, '(' + impact.value + ')');
 document.activeElement = impact;
 keyAt('ArrowUp');
-ok('a focused slider is left to the browser', impact.value === '93', '(' + impact.value + ')');
+ok('a focused slider is left to the browser', impact.value === '91', '(' + impact.value + ')');
 document.activeElement = null;
 document.fire('pointerout', {target: impact});
 keyAt('ArrowUp');
-ok('and the arrows do nothing once the cursor has left it', impact.value === '93', '(' + impact.value + ')');
+ok('and the arrows do nothing once the cursor has left it', impact.value === '91', '(' + impact.value + ')');
 const coarse = new Element('input');
 coarse.type = 'range'; coarse.min = '0'; coarse.max = '150'; coarse.step = '5'; coarse.value = '145';
 wheelAt(coarse, -100);
@@ -682,15 +682,15 @@ const spin = new Element('input');
 spin.type = 'range'; spin.min = '0'; spin.max = '1000'; spin.step = '1'; spin.value = '0';
 const spun = [];
 for (let i = 0; i < 6; i++) { wheelAt(spin, -100); spun.push(Number(spin.value)); }
-ok('every notch of a turn moves the same share of the scale',
-   spun.join(',') === '34,68,102,136,170,204', '(' + spun.join(',') + ')');
+ok('every notch of a turn moves one step, whatever the pace',
+   spun.join(',') === '1,2,3,4,5,6', '(' + spun.join(',') + ')');
 clock += 0.5;
 wheelAt(spin, -100);
-ok('a pause changes nothing about the next notch', spin.value === '238', '(' + spin.value + ')');
+ok('a pause changes nothing about the next notch', spin.value === '7', '(' + spin.value + ')');
 wheelAt(spin, 100);
-ok('the other direction is one notch back', spin.value === '204', '(' + spin.value + ')');
+ok('the other direction is one notch back', spin.value === '6', '(' + spin.value + ')');
 wheelAt(spin, -300);
-ok('a fast spin folded into one event counts its notches, cut to a tenth of the scale', spin.value === '304', '(' + spin.value + ')');
+ok('a fast spin folded into one event counts its notches', spin.value === '9', '(' + spin.value + ')');
 const tiny = new Element('input');
 tiny.type = 'range'; tiny.min = '0'; tiny.max = '20'; tiny.step = '1'; tiny.value = '0';
 for (let i = 0; i < 8; i++) wheelAt(tiny, -100);
@@ -700,13 +700,13 @@ ok('a short scale still moves at least its own step a notch', tiny.value === '8'
 const fine = new Element('input');
 fine.type = 'range'; fine.min = '0'; fine.max = '10'; fine.step = '0.1'; fine.value = '0';
 wheelAt(fine, -100);
-ok('a step below one whole moves by whole steps of it', fine.value === '0.3', '(' + fine.value + ')');
+ok('a step below one whole moves by exactly that step', fine.value === '0.1', '(' + fine.value + ')');
 wheelAt(fine, -100); wheelAt(fine, -100); wheelAt(fine, -100);
-ok('and stays on the slider’s own grid', fine.value === '1.2', '(' + fine.value + ')');
+ok('and stays on the slider’s own grid', fine.value === '0.4', '(' + fine.value + ')');
 // The arrows are a deliberate press each: they keep the minimal step whatever the wheel was doing.
 document.fire('pointerover', {target: fine});
 keyAt('ArrowUp'); keyAt('ArrowUp'); keyAt('ArrowUp');
-ok('the arrow keys never grow their step', fine.value === '1.5', '(' + fine.value + ')');
+ok('the arrow keys never grow their step', fine.value === '0.7', '(' + fine.value + ')');
 document.fire('pointerout', {target: fine});
 
 impact.value = '90';

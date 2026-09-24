@@ -5542,7 +5542,7 @@
       else if(disc.stale)out.push('• Thick ring: one tick uncertain (⚠ beside this tile)');
       if(ring)out.push('','Outside both thin outlines but inside the thick ring: the aim was right, the delay moved the shot.');
     }else if(ring&&!(viewer&&viewer.discAim))out.push('','No thick ring: this record does not hold the server’s aim at the shot.');
-    out.push('','All slid along the shot line to the impact point; only the live emulation ring is cyan.');
+    out.push('','All slid along the shot line to the impact point; the live emulation ring is the only one that moves.');
     return out.join('\n');
   }
   // The ⚠ beside the circle tile (user, 24.09): the shot ring of this own shot is one server tick uncertain - the shell
@@ -7715,27 +7715,12 @@
     }
     function flushInput(){if(pendFrame!==null){window.cancelAnimationFrame(pendFrame);pendFrame=null;}var el=pendEl;pendEl=null;if(el)el.dispatchEvent(new Event('input',{bubbles:true}));}
     function flushChange(){if(doneTimer!==null){window.clearTimeout(doneTimer);doneTimer=null;}flushInput();controlTurning=false;var el=doneEl;doneEl=null;if(el)el.dispatchEvent(new Event('change',{bubbles:true}));}
-    // One notch moves every control by the same share of its scale, whatever the pace of the turn - the rule the
-    // scene's own wheel follows (distance ×1.22 a notch). The run that grew the step 1, 1, 2, 3, 5 … while
-    // notches came within 0.15 s and fell back to one step after a 0.3 s pause is gone (user, 24.09: "sometimes
-    // responsive, sometimes it sticks"): the game's browser delivers wheel events in bursts, so the run kept
-    // resetting to the smallest step at random. NOTCH_SHARE of the range per notch is the scene's factor on the
-    // logarithmic Distance slider (ln 1.22 / ln(1000/3) ≈ .034). A number box beside a slider turns the slider,
-    // so both follow the same scale; a box of its own (Pen., Cal., α, spread) moves by ~1 % of its figure.
-    var NOTCH_SHARE=.034;
-    function perNotch(el){
-      var s=Math.abs(Number(el.step))||1,min=el.min===''?0:Number(el.min),max=el.max===''?100:Number(el.max);
-      if(el.type==='range')return Math.max(1,Math.round((max-min)*NOTCH_SHARE/s));
-      return Math.max(1,Math.round(Math.abs(Number(el.value))*.01/s));
-    }
-    function wheelTarget(el){
-      if(el.type!=='number'||!el.id||!/-field$/.test(el.id))return el;
-      var pair=document.getElementById(el.id.replace(/-field$/,''));
-      return pair&&pair.type==='range'&&!pair.disabled?pair:el;
-    }
+    // ONE NOTCH = ONE STEP of the control under the pointer (user, 24.09): the coarse move is the drag, the wheel is
+    // for catching the fine value - Distance 1 m in its box, one position of the slider, Zoom 0.1 in its box, and so
+    // on - so a number box turns itself by its own step instead of its slider. A fast turn still moves several steps
+    // (notches). The share-of-scale rule (NOTCH_SHARE, 24.09 morning) is gone with it.
     function wheelStep(el,dir,notches){
-      var target=wheelTarget(el);
-      coalesce=true;try{step(target,dir,perNotch(target)*Math.max(1,notches||1));}finally{coalesce=false;}
+      coalesce=true;try{step(el,dir,Math.max(1,notches||1));}finally{coalesce=false;}
     }
     document.addEventListener('pointerover',function(e){hovered=under(e&&e.target);rolled=0;},true);
     document.addEventListener('pointerout',function(e){if(hovered&&hovered===under(e&&e.target)){hovered=null;rolled=0;}},true);

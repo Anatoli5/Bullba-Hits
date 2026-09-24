@@ -428,8 +428,8 @@ function checks(ok, web) {
     ok('viewer-batch: the disc mesh stands at that centre with that radius', pos.distanceTo(d.center) < 1e-9 && near(sx, d.radius, 1e-9));
     const drawn = {peel: e.count.peel, composite: e.count.composite};   // what drawing the circles cost, before the checks below move the camera
     const U = m.material.uniforms, rgb = U.uColor.value.toArray().map(function (x) { return Math.round(x * 255); });
-    ok('viewer-batch: the shot ring is blue, translucent (0.6), 6 px, inside, no depth test, under the tracers (4) and the rings (12)',
-       rgb.join() === '59,130,255' && m.material.transparent && U.uOpacity.value === .6 && U.uWidth.value === 6 && U.uPlace.value === 0
+    ok('viewer-batch: the shot ring is pale cyan hsl(180, 100 %, 80 %), translucent (0.25), 6 px, inside, no depth test, under the tracers (4) and the rings (12)',
+       rgb.join() === '153,255,255' && m.material.transparent && U.uOpacity.value === .25 && U.uWidth.value === 6 && U.uPlace.value === 0
        && !m.material.depthTest && m.renderOrder > 3 && m.renderOrder < 4, '(renderOrder ' + m.renderOrder + ', rgb ' + rgb + ', opacity ' + U.uOpacity.value + ')');
     // Long dashes: 12 of 80 %, an inner and an outer vertex per step.
     const sides = m.geometry.getAttribute('side').array, P = m.geometry.getAttribute('position');

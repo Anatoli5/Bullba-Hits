@@ -49,7 +49,7 @@
   // The colour is handed over as sRGB and written as is (a ShaderMaterial is not converted), as the page's sliders say it.
   var SHOT_RING_FRAGMENT='uniform vec3 uColor;uniform float uOpacity;void main(){gl_FragColor=vec4(uColor,uOpacity);}';
   // The lab's defaults (the page's Settings controls carry the same): blue 0x3b82ff, 6 px, 12 dashes of 80 %, inside.
-  var SHOT_RING_LOOK={color:[59/255,130/255,1],width:6,dashes:12,share:.8,place:0};
+  var SHOT_RING_LOOK={color:[.6,1,1],width:6,dashes:12,share:.8,place:0};
   var AIM_LIVE={color:0x5ee0ff,dashed:true,opacity:.95},AIM_FIXED={color:AIM_RING,dashed:false,opacity:1};
   // A press the gun refused (the page's gunBalk, 23.09): the live ring takes the page's red (--red) for a step, then
   // its own colour, twice - the pulse the refused indicator of the page's strip gives at the same time.
@@ -66,7 +66,7 @@
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     container.appendChild(this.renderer.domElement);
     this.reticles=[];this.reticleLayer=document.createElement('div');this.reticleLayer.className='hit-reticle-layer';container.appendChild(this.reticleLayer);
-    this.impactOpacity=.5;this.setImpactOpacity(.5);this.discOn=true;this.ringAxes=false;this.viewFrom='fired';this.viewPoints=null;this.discOpacity=.6;this.ringLook=Object.assign({},SHOT_RING_LOOK);this.ringAim=this.discAim=this.shotDisc=null;   // the default of the Settings slider, applied before the first cross exists
+    this.impactOpacity=.5;this.setImpactOpacity(.5);this.discOn=true;this.ringAxes=false;this.viewFrom='fired';this.viewPoints=null;this.discOpacity=.25;this.ringLook=Object.assign({},SHOT_RING_LOOK);this.ringAim=this.discAim=this.shotDisc=null;   // the default of the Settings slider, applied before the first cross exists
     this.grid = new T.GridHelper(24, 24, 0x4a5d6f, 0x263746); this.scene.add(this.grid);
     this.root = new T.Group(); this.scene.add(this.root);
     this.target = new T.Vector3(0, 1, 0); this.yaw = 0.7; this.pitch = 0.27; this.distance = 50;
@@ -114,7 +114,7 @@
     // Layout read once per resize instead of once per frame, and the geometry of the drawn pose.
     this.viewWidth=0;this.viewHeight=0;this.viewRect=null;this.poseGeometries=null;this.poseBuilt=null;this.poseStale=false;this.poseAt=0;
     this.quality='auto';this.bounceMode='always';this.bounceTimer=null;this.dots=true;this.dotSpacing=3;this.tint=.5;this.partEdges=true;this.zoneOutline=false;this.turretAngle=0;this.turretTimer=null;this.turretPending=false;
-    this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.trackOpacity=.12;this.trackKey=null;this.pinCache=null;this.liveRingMaterial=null;this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.lighting=false;this.gunAngle=0;this.autoFrame=true;this.frameScale=this.defaults.scale;this.outline=null;this.outlineDepth=null;this.outlineStyle={brightness:.8,opacity:.06};this.showOutline=false;
+    this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.trackOpacity=.2;this.trackKey=null;this.pinCache=null;this.liveRingMaterial=null;this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.lighting=false;this.gunAngle=0;this.autoFrame=true;this.frameScale=this.defaults.scale;this.outline=null;this.outlineDepth=null;this.outlineStyle={brightness:.8,opacity:.06};this.showOutline=false;
     var drag = null;
     container.addEventListener('contextmenu', function(e) { e.preventDefault(); });
     /* A selection on the page (a left-button sweep over the panels selects their text, and the scene with it) made a
