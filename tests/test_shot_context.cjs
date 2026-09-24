@@ -30,4 +30,20 @@ c=R(hit,salvo);assert.ok(c.aim);assert.equal(c.tracer.id,'t2');assert.equal(c.ai
 const foreign=events({},{});foreign[1]={...foreign[1],own:false};assert.equal(R(hit,foreign).aimReason,'foreign');assert.equal(R(hit,foreign).aim,null);
 // Timestamps stay bound to the source: tracer aim judged by tracer time, not command time.
 c=R(hit,events({receivedAt:50,aim:null},{aimAtTracer:{clientMarker:marker(99.9)}}));assert.equal(c.aimSource,'tracer');
-console.log(JSON.stringify({passed:true,cases:11}));
+// BACKLOG 28 step 2 (24.09): the circle the server fired from. The last update as is when its origin is the shell's;
+// a stale one (origin 1.9 m off) marked, unless a gunAfterShot update names the shell's origin - then that one, exact.
+const L=(o,a)=>({origin:o,vector:[0,0,1],dispersionAngle:a||.002,receivedAt:99.9,gameTime:1});
+c=R(hit,events({},{aimAtTracer:{clientMarker:marker(99.9),lastServerGunUpdate:L([0,0,-100.01])}}));
+assert.equal(c.serverShot.from,'last');assert.equal(c.serverShot.stale,false);assert.ok(c.serverShot.gap<.05);
+c=R(hit,events({},{aimAtTracer:{clientMarker:marker(99.9),lastServerGunUpdate:L([0,0,-101.9])}}));
+assert.equal(c.serverShot.stale,true);assert.equal(c.serverShot.update.origin[2],-101.9);assert.equal(c.serverShot.afterRecorded,false);
+const withAfter=events({},{aimAtTracer:{clientMarker:marker(99.9),lastServerGunUpdate:L([0,0,-101.9])}});
+withAfter.push({event:'gunAfterShot',tracerId:'t1',updates:[L([0,0,-100],.003),L([0,0,-98.1],.009)]});
+c=R(hit,withAfter);assert.equal(c.serverShot.from,'after');assert.equal(c.serverShot.stale,false);assert.equal(c.serverShot.update.dispersionAngle,.003);
+// Updates after the shot that do not name the shell's origin leave it stale, and say they were looked at.
+withAfter[withAfter.length-1].updates=[L([0,0,-98.1],.009)];c=R(hit,withAfter);assert.equal(c.serverShot.stale,true);assert.equal(c.serverShot.afterRecorded,true);
+// No field (recorder 0.7.6-0.7.12), another's tracer, a ricochet: no disc.
+assert.equal(R(hit,events({},{aimAtTracer:{clientMarker:marker(99.9)}})).serverShot,null);
+assert.equal(ArmorShotContext.serverShot({...events({},{})[1],own:false,aimAtTracer:{lastServerGunUpdate:L([0,0,-100])}},[]),null);
+assert.equal(ArmorShotContext.serverShot({...events({},{})[1],isRicochet:true,aimAtTracer:{lastServerGunUpdate:L([0,0,-100])}},[]),null);
+console.log(JSON.stringify({passed:true,cases:18}));

@@ -3310,6 +3310,9 @@
     // The recorded reticle: the circle the shooter's own client had at the instant of the shot, slid
     // along the shot line onto the impact point - the ring drawn solid magenta on the model.
     saved: 'Recorded aiming circle\nThe shooter’s client reticle at this hit.',
+    // The filled disc of an own shot (BACKLOG 28 step 2, 24.09): the circle the server fired from. The figure is
+    // sampled over it while it is on screen (viewer.shotDiscAim), over the solid ring when it is switched off.
+    fired: 'Shot circle\nThe circle the server fired this shot from: the filled blue disc.',
     // No recorded reticle: the dashed magenta ring is the nominal full-aim estimate, and the figure is
     // an estimate with it. Said on the line itself, so the number is never read as a recorded one.
     estimate: 'Nominal full-aim circle\nThis hit has no recorded reticle: the figure is for this estimate.'
@@ -3340,7 +3343,7 @@
     tile.hidden = !text;
     // The sampling sentence of the recorded ring (it used to hang on the toolbar's reticle box, removed on
     // 22.09) is composed by aimTitle() once per hit, not here per frame.
-    var extra = kind === 'saved' || kind === 'estimate' ? aimExtra : '';
+    var extra = kind === 'saved' || kind === 'fired' || kind === 'estimate' ? aimExtra : '';
     tile.title = text ? (CIRCLE_TITLES[kind] || CIRCLE_TITLES.live) + (figure.alpha ? SHARE : NO_ALPHA) + extra : '';
     if (!text) return;
     var rgb = circleColor(figure);
@@ -5498,6 +5501,7 @@
     // The ring on screen is part of the key: a pinned point and the user's first emulated shot both take
     // the recorded rings away, and the line that describes them has to go with them.
     var ringShown=!!(viewer&&viewer.savedAimShown&&viewer.savedAimShown());
+    paintDiscNote(ringShown);
     // The STANDING ring is the reticle of a shot that was fired at its OWN range: its figure is taken with
     // the shell at that range, never at the one the Distance slider happens to stand on (user, 22.09 - the
     // tile blinked and was recomputed on every move of a slider that changes nothing for it). Only a saved
@@ -5518,12 +5522,43 @@
       // counted as 0, divided by what one shot of this shell can do.
       if(!(ringShell&&ringShown&&(viewer.savedAim||viewer.estimateAim))){if(aimRecorded){aimRecorded=null;paintCircleLines();}}
       else if(viewer.savedAim)totalTimer=window.setTimeout(function(){var v=viewer.savedAimProbability(ringShell);
-        aimRecorded=v?Object.assign(circleFigure(v,ringShell),{kind:'saved'}):null;paintCircleLines();},100);
+        aimRecorded=v?Object.assign(circleFigure(v,ringShell),{kind:viewer.savedAim&&viewer.savedAim.kind==='fired'?'fired':'saved'}):null;paintCircleLines();},100);
       // A hit with no reticle of its own: the dashed nominal ring is the one on the model, so the figure is
       // printed for THAT ring and its tooltip says it is an estimate with it.
       else totalTimer=window.setTimeout(function(){var v=viewer.estimateAimProbability(ringShell);
         aimRecorded=v?Object.assign(circleFigure(v,ringShell),{kind:'estimate'}):null;paintCircleLines();},100);
     }
+  }
+  // The legend of an own shot's recorded circles (user, 24.09): up to three, each named by how it differs. `ring` and
+  // `disc` are the viewer's (setShotContext); the words are composed once per hit, in display().
+  function ringLegend(ring,disc){
+    var out=[];
+    if(ring)out.push('• ● Solid: where you aimed on screen when you pressed fire','• ◌ Dashed: the server’s marker at that press');
+    if(disc){
+      out.push('• ⬤ Filled: where the server’s gun really pointed as the shell left; the shell falls inside it');
+      out.push('• This shell: '+disc.q.toFixed(2)+' of the disc’s radius from its centre');
+      if(disc.from==='after')out.push('• Disc: the server’s next update; the last one before the tracer was a tick old');
+      else if(disc.stale)out.push('• Disc: one tick uncertain (⚠ beside this tile)');
+      if(ring)out.push('','Outside both outlines but inside the fill: the aim was right, the delay moved the shot.');
+    }else if(ring)out.push('','No filled disc: this record does not hold the server’s aim at the shot.');
+    out.push('','All slid along the shot line to the impact point; only the live emulation ring is cyan.');
+    return out.join('\n');
+  }
+  // The ⚠ beside the circle tile (user, 24.09): the disc of this own shot is one server tick uncertain - the shell
+  // left by an aim update the record does not hold (ArmorShotContext.serverShot, stale). Shown with the disc only:
+  // not with the recorded rings away (a pinned point, the first emulated shot), not with the disc switched off.
+  // One attribute write per real change; the words are composed once per hit, not per call.
+  var discNoteShown=null,discNoteFor=null;   // null: the first call writes the state, whatever the markup said
+  function paintDiscNote(ringShown){
+    var e=$('shot-disc-stale');if(!e)return;
+    var d=viewer&&viewer.discAim,show=!!(ringShown&&d&&d.stale&&viewer.discOn);
+    if(show&&discNoteFor!==d){discNoteFor=d;
+      e.title='Shot disc: one tick uncertain\nThe server fired this shot one tick after the last aim update the record holds.'+
+        '\n\n• Known: the vehicle moved '+d.gap.toFixed(2)+' m in that tick; the disc starts at the shell’s real origin'+
+        '\n• Not known: how far the gun turned in that tick; the disc keeps the older aim as is'+
+        '\n• How far off: 4 such shells in 10 land outside their disc (26 recorded shots): half of those within 2 radii, the rest up to 6'+
+        '\n\nNew battles keep the next update, and their disc is exact.';}
+    if(show!==discNoteShown){discNoteShown=show;e.hidden=!show;}
   }
   // BACKLOG 38: the target carried a leKpz Borkenkäfer mark at this hit (ArmorShotContext.markOf, on the resolved
   // context): every shell deals it ×1.1, ×1.15 with the marker's full skill tree - which the record cannot tell. The
@@ -6209,7 +6244,7 @@
     // What the circles mean and where this one came from is the tooltip of the Circle tile at the right edge
     // of the scene (the toolbar's own reticle box went with its figure on 22.09).
     // Tooltip markup (tooltips.js): one point per ring on the model.
-    var status=aimReady?'• ● Solid magenta: the client reticle at the shot\n• ◌ Dashed magenta: the server reticle\nBoth slid along the shot line to the impact point; only the live emulation ring is cyan.':estimate?'• ◌ Dashed magenta: '+(estimate.gun||'mounted gun')+', '+(estimate.dispersion*100).toFixed(2)+' m at 100 m × '+Math.round(estimate.range)+' m ('+(estimate.source==='tracer'?'tracer range':'approximate range at impact')+') = ⌀ '+(estimate.radius*2).toFixed(2)+' m\nWithout crew or equipment, centred on the hit line.':'No reticle for this hit: '+reason+'.';
+    var status=aimReady?ringLegend(viewer.ringAim,viewer.discAim):estimate?'• ◌ Dashed magenta: '+(estimate.gun||'mounted gun')+', '+(estimate.dispersion*100).toFixed(2)+' m at 100 m × '+Math.round(estimate.range)+' m ('+(estimate.source==='tracer'?'tracer range':'approximate range at impact')+') = ⌀ '+(estimate.radius*2).toFixed(2)+' m\nWithout crew or equipment, centred on the hit line.':'No reticle for this hit: '+reason+'.';
     // One line per hit in the page console; the game writes page console lines into game.log, so an in-game
     // report about missing rings can be read there instead of guessed at.
     if(window.console)console.info('Bullba Hits aim: hit '+hit.id+' '+(view||'other')+' saved='+!!aimReady+' estimate='+!!estimate+' reason='+reason);
@@ -6567,6 +6602,11 @@
   document.querySelectorAll('[data-filter]').forEach(function(b){b.onclick=function(){filter=b.dataset.filter;document.querySelectorAll('[data-filter]').forEach(function(x){x.setAttribute('aria-pressed',String(x===b));});renderHits();};});
   $('wireframe').onchange=function(){if(viewer)viewer.wireframe(this.checked);outlineState();};
   $('soft-lighting').onchange=function(){if(viewer)viewer.setLighting(this.checked);lightStrengthState();};
+  // Shot disc (user, 24.09): the switch and the opacity of the filled disc of an own shot, one row like Soft lighting.
+  // The circle figure is sampled over the circle on screen, so a switch recomputes it (shotStats) once a hit is shown.
+  function shotDisc(){var o=$('shot-disc-opacity');if(viewer)viewer.setShotDisc($('shot-disc').checked,Number(o.value)/100);
+    $('shot-disc-opacity-value').textContent=o.value+' %';rowState('shot-disc',['shot-disc-opacity']);}
+  $('shot-disc').onchange=function(){shotDisc();if(activeHit)shotStats();};$('shot-disc-opacity').oninput=shotDisc;
   // ======================= the characteristics panel (23.09) =======================
   // What the garage would show for the vehicle on the Shooter tile - the one Config sets up and the gun panel
   // belongs to (outputs/ttx-panel-spec-2026-09-22.md section 3.4; the arithmetic is web/ttx.js, the formulas

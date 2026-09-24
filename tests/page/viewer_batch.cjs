@@ -403,6 +403,61 @@ function checks(ok, web) {
     ok('viewer-batch: the reload arc is a draw range over it, half the ring at half the reload', line.geometry.drawRange.count === 49, '(' + line.geometry.drawRange.count + ')');
     ok('viewer-batch: the live ring stays over the pinned shot\'s ring (render order 15 > 14)', line.renderOrder === 15);
   });
+
+  // ---- 9. The shot disc of an own shot (BACKLOG 28 step 2, 24.09) ----------------------------------------------------
+  // The circle the server fired from: centre C = I - depth·(dx·e1 + dy·e2), radius angle·depth. For a shell flying in a
+  // straight line from its muzzle to the impact point that centre is exactly muzzle + depth·n - the server axis carried
+  // to the impact plane - which is what is checked, in the viewer's own frame (z mirrored).
+  section(function () {
+    const e = env(web), v = loaded(e), T = e.T;
+    v.loadedData.hit.target.worldTransform = I;
+    const Iw = [v.point.x, v.point.y, -v.point.z], o = [Iw[0], Iw[1] - 1, Iw[2] - 50], n = new T.Vector3(0.002, 0.018, 1).normalize();
+    const vel = [0, 1, 2].map(function (i) { return (Iw[i] - o[i]) * 18; });
+    const tracer = {id: 's1', own: true, origin: o, velocity: vel};
+    const ring = {position: [Iw[0], Iw[1], Iw[2] + 2], direction: [0, 0, 1], diameter: .9, receivedAt: 10};
+    const ctx = {aim: {clientMarker: ring}, tracer: tracer, serverShot: {update: {origin: o, vector: n.toArray(), dispersionAngle: .003}, from: 'last', stale: false, gap: 0}};
+    e.settle(); e.reset();
+    const drew = v.setShotContext(ctx); e.settle();
+    const d = v.discAim, depth = new T.Vector3().fromArray(Iw).sub(new T.Vector3().fromArray(o)).dot(n);
+    const want = new T.Vector3().fromArray(o).addScaledVector(n, depth); want.z *= -1;
+    ok('viewer-batch: the disc is drawn beside the solid ring', drew && !!d && !!v.ringAim && !!v.shotDisc);
+    ok('viewer-batch: disc centre = the server axis at the impact plane (< 1e-9 m)', d && d.center.distanceTo(want) < 1e-9, d ? '(' + d.center.distanceTo(want).toExponential(2) + ' m)' : '');
+    ok('viewer-batch: disc radius = the update\'s angle × depth', d && near(d.radius, .003 * depth, 1e-12));
+    const m = v.shotDisc, pos = new T.Vector3().setFromMatrixPosition(m.matrix), sx = new T.Vector3().setFromMatrixColumn(m.matrix, 0).length();
+    ok('viewer-batch: the disc mesh stands at that centre with that radius', pos.distanceTo(d.center) < 1e-9 && near(sx, d.radius, 1e-9));
+    ok('viewer-batch: the disc is blue, translucent (0.2), no depth test, under the tracers (4) and the rings (12)',
+       m.material.color.getHex() === 0x3b82ff && m.material.transparent && m.material.opacity === .2 && !m.material.depthTest && m.renderOrder > 3 && m.renderOrder < 4,
+       '(renderOrder ' + m.renderOrder + ', opacity ' + m.material.opacity + ')');
+    ok('viewer-batch: the disc belongs to the recorded group (a pin or the first emulated shot hides it with the rings)', v.aimGroup.children.indexOf(m) >= 0);
+    ok('viewer-batch: the circle figure is sampled over the disc while it is on; q = the shell offset over the radius', v.savedAim === d && d.kind === 'fired'
+       && near(d.q, Math.tan(Math.acos(new T.Vector3().fromArray(vel).normalize().dot(n))) / .003, 1e-6), d ? '(q ' + d.q.toFixed(4) + ')' : '');
+    ok('viewer-batch: drawing the disc and rings on a composed scene peels and composes nothing', e.count.peel === 0 && e.count.composite === 0, '(peel ' + e.count.peel + ', composite ' + e.count.composite + ')');
+    e.reset(); v.setShotDisc(true, .35); e.settle();
+    ok('viewer-batch: the opacity slider changes the one material and composes nothing', m.material.opacity === .35 && e.count.peel === 0 && e.count.composite === 0 && e.count.frame === 1,
+       '(opacity ' + m.material.opacity + ', frames ' + e.count.frame + ')');
+    v.setShotDisc(false, .35);
+    ok('viewer-batch: switched off, the disc hides and the figure goes back to the solid ring', !m.visible && v.savedAim === v.ringAim);
+    v.setShotDisc(true, .2);
+    const mat = m.material, geo = m.geometry;
+    v.setShotContext(ctx);
+    ok('viewer-batch: another hit makes a new mesh on the same geometry and material', v.shotDisc !== m && v.shotDisc.geometry === geo && v.shotDisc.material === mat);
+    e.reset(); v.setZoom(v.camera.zoom * 1.1); e.frame();
+    ok('viewer-batch: a 2D zoom frame draws the scene with the disc in it (it follows like the outlines)', e.count.frame === 1 && e.count.peel === 0 && v.shotDisc.parent === v.aimGroup);
+    e.settle();
+    // An old record: no update in the context, no disc; the solid ring carries the figure as before.
+    v.setShotContext({aim: {clientMarker: ring}, tracer: tracer, serverShot: null});
+    ok('viewer-batch: without the server update (records 0.7.6-0.7.12) no disc, the ring as before', !v.discAim && !v.shotDisc && v.savedAim === v.ringAim);
+    // ⌖: the user's first emulated shot takes the recorded circles away - the disc with them - and dropping it brings them back.
+    v.setShotContext(ctx); v.setLiveAim(.4); v.liveAimPoint = v.point.clone(); v.aimCursorPoint = v.point.clone(); v.drawLiveAim();
+    const fired = v.setAimShot();
+    ok('viewer-batch: the first emulated shot takes the disc away with the outlines', fired && !v.savedAimShown() && v.shotDisc.parent === v.aimGroup);
+    v.clearAimShot();
+    ok('viewer-batch: and dropping that shot brings the disc back', v.savedAimShown() && v.shotDisc.visible);
+    let freed = 0; geo.addEventListener('dispose', function () { freed++; }); mat.addEventListener('dispose', function () { freed++; });
+    v.clear();
+    ok('viewer-batch: clear() drops the disc and both circles', !v.discAim && !v.ringAim && !v.shotDisc && !v.savedAim);
+    ok('viewer-batch: and leaves the one disc geometry and material alone (nothing to rebuild or recompile on the next hit)', freed === 0, '(' + freed + ' disposed)');
+  });
 }
 
 module.exports = {env: env, vehicle: vehicle, loaded: loaded, measure: measure, checks: checks};

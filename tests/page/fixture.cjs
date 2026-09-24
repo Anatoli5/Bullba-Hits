@@ -6,6 +6,8 @@
  * the same case - the user's own of 24.09: an Onslaught battle where the enemy's roster row names neither his vehicle
  * nor its health, and ⇅ on an incoming hit puts that enemy on screen (his figure then comes from his characteristics
  * file). Battles: pm (two incoming hits), pm2 (one), pm3 (one outgoing on a target whose only figure is in his file).
+ * The outgoing hit of pm3 is the player's own shot with its tracer and aim snapshot (BACKLOG 28 step 2, 24.09): the two
+ * recorded outlines and the shot disc, whose server update is one tick stale (its origin 1.5 m from the shell's).
  *
  *   require('./fixture.cjs').write(folder)   // writes folder/data/**
  */
@@ -109,9 +111,23 @@ function write(folder) {
       recorderVersion: 'synthetic', playerVehicleId: 30, playerTeam: 2, roster: ROSTER, shotEvents: [], critEvents: [], warnings: [], hits: hits};
   };
   const pm3hit = HIT('pm3-1', 30, 34, 'outgoing', T0 + 7250);
+  // The own shot of pm3: muzzle 117 m out, the shell straight at the contact point; the server's aim 0.2 m right and
+  // 0.1 m up of it at the target, its origin a tick behind the shell's.
+  const I = [0, 1.1, 3.0], O = [0.3, 2.1, 120], len = Math.hypot(I[0] - O[0], I[1] - O[1], I[2] - O[2]);
+  const toward = function (p) { const d = [p[0] - O[0], p[1] - O[1], p[2] - O[2]], l = Math.hypot(d[0], d[1], d[2]); return d.map(function (x) { return x / l; }); };
+  const marker = function (t) { return {position: [0.1, 1.2, 3.0], direction: toward([0.1, 1.2, 3.0]), diameter: 0.9, receivedAt: t}; };
+  const pm3shots = [
+    {schema: 1, type: 'shot', event: 'tracer', id: 's1', shooterId: 30, shotId: '501', isRicochet: false, effectsIndex: 11, shellTypeIdx: 2,
+     caliber: 105, origin: O, velocity: toward(I).map(function (x) { return x * 900; }), gravity: 9.81, maxDistance: 720, gunIndex: 0,
+     gunInstallationIndex: 0, own: true, source: 'synthetic', receivedAt: T0 + 7249.8, gameTime: 99.8,
+     aimAtTracer: {source: 'synthetic', clientMarker: marker(T0 + 7249.7), serverMarker: marker(T0 + 7249.7),
+       lastServerGunUpdate: {vehicleId: 30, origin: [O[0] + 1.5, O[1], O[2]], vector: toward([0.2, 1.2, 3.0]), dispersionAngle: 0.004,
+         receivedAt: T0 + 7249.72, gameTime: 99.7}}},
+    {schema: 1, type: 'shot', event: 'stop', id: 's2', shotId: '501', tracerId: 's1', shooterId: 30, own: true, position: I,
+     segmentDistance: len, receivedAt: T0 + 7249.98, gameTime: 99.98}];
   const battles = [BATTLE('pm', 'Synthetic field', T0 + 7200, [HIT('pm-1', 31, 30, 'incoming', T0 + 7260), HIT('pm-2', 32, 30, 'incoming', T0 + 7270)]),
                    BATTLE('pm2', 'Synthetic hills', T0 + 3600, [HIT('pm2-1', 32, 30, 'incoming', T0 + 3660)]),
-                   BATTLE('pm3', 'Synthetic coast', T0, [pm3hit])];
+                   Object.assign(BATTLE('pm3', 'Synthetic coast', T0, [pm3hit]), {shotEvents: pm3shots})];
   battles.forEach(function (b) { put('battles/' + b.id + '.js', 'battle:' + b.id, b); });
   put('index.js', 'index', {application: 'local.armor_inspector', version: 'synthetic', updatedAt: T0 + 9000,
     battles: battles.map(function (b) {

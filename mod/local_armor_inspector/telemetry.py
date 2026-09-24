@@ -381,6 +381,9 @@ class ShotTelemetry(object):
         # decays from it, and the offline calibration needs the instant, not a hook of its own:
         # this is the tracer bookkeeping already running here, remembering one number more.
         self.last_own_shot = None
+        # The own shot still waiting for the server gun updates that come AFTER its tracer (BACKLOG 28 step 2,
+        # 24.09): {'tracerId', 'updates'}, or None. See server_update().
+        self.after_shot = None
 
     def active(self, player):
         if not recording(self.recorder, player): return False
@@ -518,6 +521,10 @@ class ShotTelemetry(object):
             except Exception:
                 LOG.debug('Own motion history unavailable', exc_info=True)
         record = self.emit(player, 'tracer', values, shot_time)
+        if record and 'aimAtTracer' in values:
+            # A shot before the previous one got its two updates (an autocannon): the previous keeps what it has.
+            self.flush_after_shot(player)
+            self.after_shot = {'tracerId':record['id'], 'updates':[]}
         if record:
             self.tracers[str(shotID)] = record
             if len(self.tracers) > 512:
@@ -548,6 +555,20 @@ class ShotTelemetry(object):
             self.server_vector = {'vehicleId':int(vehicleID), 'origin':vec(shotPos), 'vector':vec(shotVec),
                                   'dispersionAngle':number(dispersionAngle), 'receivedAt':time.time(),
                                   'gameTime':number(self.recorder.bw.serverTime())}
+            # The shell leaves by the server aim of the tick before it (outputs/own-shot-centre-2026-09-24.md), but in
+            # 2.7 % of own shots the client did not hold that update yet when the tracer came - the record then holds
+            # an aim one tick too old. So the first two updates after each own tracer are kept, in one short record per
+            # shot (~0.45 KB): the same dict this update already built, no copy, no hook, nothing per frame.
+            pending = self.after_shot
+            if pending is not None:
+                pending['updates'].append(self.server_vector)
+                if len(pending['updates']) >= 2: self.flush_after_shot(player)
+
+    def flush_after_shot(self, player):
+        pending, self.after_shot = self.after_shot, None
+        if pending and pending['updates']:
+            self.emit(player, 'gunAfterShot', {'tracerId':pending['tracerId'], 'updates':pending['updates']},
+                      pending['updates'][-1]['gameTime'])
 
     def targeting_update(self, player, entityId, *values):
         if self.active(player) and entityId == player.playerVehicleID:

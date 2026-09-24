@@ -16,6 +16,8 @@ Checks, by group:
              every original back (by the class dict - Python 2 hands out a new unbound method per read)
   battle A/B roster, hits in/out/other, tracers, a crit, the motion sampler; per-battle state replaced when
              B starts; arena events unsubscribed on leaving
+  gunAfterShot the first two own server gun updates after the own tracer, in one record naming that tracer; a third
+             update and the enemy's tracer add nothing (BACKLOG 28 step 2)
   files      one JSONL file per battle, one header each, first line; only that battle's events; ids unique
   replay     a replay being played writes no battle file (REC-01)
   observer   an observer seat (its vehicle the client's ussr:Observer, tag 'observer') writes no battle file (REC-01)
@@ -363,12 +365,18 @@ class Battle(object):
         self.avatar.showTracer(shooter, shot_id, False, effects, 0, 2, 100.0, V3(shooter, 1, 0), V3(0, 0, 900),
                                9.81, 720.0, 0, 0)
 
+    def gun_marker(self, k):
+        """One server gun update of the player's own vehicle (PlayerAvatar.updateGunMarker), origin moving 1 m a tick."""
+        self.avatar.updateGunMarker(self.me, V3(float(k), 1, 0), V3(0, 0, 1), (0.002, 0.004, 0.006, 0.008)[k])
+
     def play(self):
         """The events of one battle, each through the client method the recorder hooks."""
         WORLD.pump(3)                                                   # motion sampler ticks
         self.avatar._PlayerAvatar__startWaitingForShot(NS(gunIndexDelayed=0, predictShooting=False))
+        self.gun_marker(0)                                              # the server aim the shot leaves by
         self.tracer(self.me, self.arena_id % 1000 * 10 + 1)             # own shot
         self.tracer(self.enemy, self.arena_id % 1000 * 10 + 2)          # the enemy's shot
+        for k in (1, 2, 3): self.gun_marker(k)                          # two kept after the own tracer, a third not
         self.avatar.stopTracer(self.arena_id % 1000 * 10 + 1, V3(0, 0, 50))
         self.avatar.inputHandler.updateClientGunMarker(NS(position=V3(1, 2, 3), direction=V3(0, 0, 1), size=2.5),
                                                        None, 0.1)
@@ -630,9 +638,20 @@ def run(temp):
             check(group, 'no dropped record, no write failure',
                   all(x.get('droppedRecords') == 0 and x.get('writeFailures') == 0 for x in hits))
         shots = [r for r in rows if r.get('type') == 'shot']
-        check(group, 'command, two tracers and a stop recorded',
-              sorted(r.get('event') for r in shots) == ['command', 'stop', 'tracer', 'tracer'],
+        check(group, 'command, two tracers, a stop and the updates after the own shot recorded',
+              sorted(r.get('event') for r in shots) == ['command', 'gunAfterShot', 'stop', 'tracer', 'tracer'],
               sorted(r.get('event') for r in shots))
+        own = [r for r in shots if r.get('event') == 'tracer' and r.get('own')]
+        after = [r for r in shots if r.get('event') == 'gunAfterShot']
+        if own and after:
+            ups = after[0].get('updates') or []
+            check(group, 'gunAfterShot: the own tracer, the first two updates after it (BACKLOG 28 step 2)',
+                  after[0].get('tracerId') == own[0].get('id') and [u.get('origin') for u in ups] == [[1.0, 1.0, 0.0], [2.0, 1.0, 0.0]]
+                  and [u.get('dispersionAngle') for u in ups] == [0.004, 0.006],
+                  (after[0].get('tracerId'), own[0].get('id'), [u.get('origin') for u in ups]))
+            check(group, 'the own tracer keeps the update before it as lastServerGunUpdate',
+                  ((own[0].get('aimAtTracer') or {}).get('lastServerGunUpdate') or {}).get('origin') == [0.0, 1.0, 0.0],
+                  (own[0].get('aimAtTracer') or {}).get('lastServerGunUpdate'))
         crits = [r for r in rows if r.get('type') == 'crit']
         check(group, 'the hit direction and the health change recorded',
               sorted(r.get('event') for r in crits) == ['health', 'hitDirection'], sorted(r.get('event') for r in crits))

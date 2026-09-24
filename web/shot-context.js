@@ -195,6 +195,28 @@
     if(kind==='ARMOR_PIERCING'||kind==='ARMOR_PIERCING_CR')return shell.vehicleMode===MODE_SIEGE?'angled armour':'straight armour';
     return shell.vehicleMode===MODE_SIEGE?'siege':'';
   }
+  /* --- The circle the server fired the player's own shot from (BACKLOG 28 step 2, user 24.09) ----------------
+     outputs/own-shot-centre-2026-09-24.md: the shell leaves by the server's aim of the tick BEFORE the shot - the
+     last server gun update the client held when the tracer came (aimAtTracer.lastServerGunUpdate), taken as is,
+     with its own dispersion angle. The update is a tick STALE when the shell's origin is not its origin (more than
+     STALE_GAP apart: the vehicle moved on a tick); then 38 % of the shells fall outside it (0.3 % otherwise).
+     From the build after 0.8.0 the recorder also keeps the first two updates AFTER each own tracer (event
+     gunAfterShot): the one whose origin IS the shell's origin is the state the shell left from, exact. No
+     estimate is made for a stale update of an older record: a one-tick turn by the recorded motion made the 26
+     stale shots no better (3 of 8 outside either way) and one fresh shot in five worse (the same report,
+     section 14). Returns null without the field (recorder 0.7.6-0.7.12, other shooters' shots). */
+  var STALE_GAP=.05;
+  function serverShot(tracer,events){
+    var last=tracer&&tracer.own&&!tracer.isRicochet&&tracer.aimAtTracer&&tracer.aimAtTracer.lastServerGunUpdate;
+    function valid(u){return !!(u&&Array.isArray(u.vector)&&Array.isArray(u.origin)&&u.dispersionAngle>0);}
+    if(!valid(last)||!Array.isArray(tracer.origin)||!Array.isArray(tracer.velocity))return null;
+    var gap=distance(last.origin,tracer.origin);
+    if(gap<=STALE_GAP)return {update:last,from:'last',stale:false,gap:gap};
+    var after=(events||[]).find(function(e){return e.event==='gunAfterShot'&&e.tracerId===tracer.id;}),
+      exact=after&&(after.updates||[]).find(function(u){return valid(u)&&distance(u.origin,tracer.origin)<=STALE_GAP;});
+    if(exact)return {update:exact,from:'after',stale:false,gap:gap};
+    return {update:last,from:'last',stale:true,gap:gap,afterRecorded:!!after};
+  }
   function resolve(hit,events){
     var target=hit.target||{},parts=target.parts||[],points=hit.points||[],world=[];
     if(target.worldTransform)points.forEach(function(p){var part=parts.find(function(v){return v.id===p.part;});if(p.status==='resolved'&&p.position&&part&&part.transform)world.push(point(target.worldTransform,point(part.transform,p.position)));});
@@ -310,6 +332,7 @@
     var why=contradicted?'no shell of this shooter fits the shot’s ballistics'
       :hasModes&&index<0?'this vehicle switches its shell parameters; the record does not say which state was on':'';
     return {choices:choices,index:index,kind:kindValues.length===1?kindValues[0]:null,tracer:tracer,command:command,aim:aim,aimSource:chosen?chosen.from:null,aimReason:aimReason,
+      serverShot:serverShot(tracer,events),
       range:range,rangeSource:rangeSource,modes:hasModes,unresolvedWhy:why,
       gunState:gunState,gunStateFrom:gunFrom,gunNotes:gunNotes(gunState,gunFrom),chargeFactor:chargeFactor>1?chargeFactor:null,
       treeSpeed:byTree?treeDv:null,mark:markOf(hit),
@@ -346,5 +369,5 @@
     return {index:best.i,reason:(could.length>1?'the deepest penetration of the shells that fit':
       same.length>1?'the deepest penetration of this type':'the only shell of this type the record lists')+marked};
   }
-  root.ArmorShotContext={resolve:resolve,assume:assume,modeLabel:modeLabel,identical:identical,gunNotes:gunNotes,markOf:markOf};
+  root.ArmorShotContext={resolve:resolve,serverShot:serverShot,assume:assume,modeLabel:modeLabel,identical:identical,gunNotes:gunNotes,markOf:markOf};
 }(typeof window==='undefined'?globalThis:window));
