@@ -2,6 +2,10 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
+## Unreleased
+
+- **Camera:** a clinch hit keeps the camera on the shell's line at the recorded range; Fit only zooms and no longer backs the camera off to the side.
+
 ## 0.7.40 (2026-09-23)
 
 - **Emulation:** a crosshair switch ⌖ beside the collision-model tile turns on Target HP, the RNG shot and Hitmarks together; it is off each time the page opens, so a hit shows as it was recorded. With it on, an emulated shot lands at a random point inside the aiming circle, by the same distribution the circle's percentage uses, and the shot line and the panel follow it.

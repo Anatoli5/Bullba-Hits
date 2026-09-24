@@ -514,13 +514,11 @@
   // middle of the armour 11.5 % of the height below the screen centre, and the tank looked dropped every time
   // Fit ran and on the first render of a hit. Equal bands leave centreY at 0, so the middle lands mid-screen
   // exactly as it does when the pivot is switched; the top-left tiles may now cover the upper corner of a wide
-  // vehicle. A clinch record (5 m) first backs off along the view line to twice the model's radius about the
-  // orbit centre.
+  // vehicle. Fit never moves the camera, a clinch record included: it only zooms (user, 23.09 - backing a 5 m
+  // record off to twice the model's radius along the view line took the camera off the shell's axis).
   var FIT_TOP_BAND=.12,FIT_BOTTOM_BAND=.12,FIT_MARGIN=.08;
   Viewer.prototype.fit=function(){this.dropTargets();
-    var tris=(this.engine||{}).triangles||[];if(!tris.length)return;var cam=this.camera,v=new THREE.Vector3(),local=new THREE.Vector3(),radius=0,i,k,t;
-    for(i=0;i<tris.length;i++){t=tris[i];for(k=0;k<3;k++)radius=Math.max(radius,v.fromArray(k===0?t.a:k===1?t.b:t.c).distanceTo(this.target));}
-    var minDistance=Math.min(DISTANCE_MAX,radius*2+1);if(this.distance<minDistance){this.distance=minDistance;this.render();}
+    var tris=(this.engine||{}).triangles||[];if(!tris.length)return;var cam=this.camera,v=new THREE.Vector3(),local=new THREE.Vector3(),i,k,t;
     cam.zoom=1;this.frameCenter.set(0,0);this.placeCamera();
     var all=[Infinity,-Infinity,Infinity,-Infinity],main=[Infinity,-Infinity,Infinity,-Infinity];
     function grow(box,x,y){if(x<box[0])box[0]=x;if(x>box[1])box[1]=x;if(y<box[2])box[2]=y;if(y>box[3])box[3]=y;}
@@ -584,7 +582,12 @@
   // vehicle centre the camera still stands on the axis and merely turns towards the hull (no parallel shift).
   Viewer.prototype.focus=function(){if(!this.point)return;this.dropTargets();this.pan.set(0,0);this.frameCenter.set(0,0);this.pivotHeight=null;
     var dir=this.travel.clone().negate().normalize(),range=Math.max(DISTANCE_MIN,Math.min(DISTANCE_MAX,this.recordedDistance||this.defaults.distance));
-    var eye=this.point.clone().addScaledVector(dir,range);this.target.copy(this.pivot==='vehicle'?this.pivotCentre():this.point);this.lookFrom(eye);this.distanceSet=true;this.fitPending=true;this.render();};
+    this.target.copy(this.pivot==='vehicle'?this.pivotCentre():this.point);
+    // A point-blank record puts the eye closer to the centre than the orbit allows: it goes further back along
+    // the axis itself (the far root of |point + dir*t - target| = DISTANCE_MIN), so it is clamped onto the line.
+    var w=this.point.clone().sub(this.target),b=w.dot(dir),disc=b*b-(w.lengthSq()-DISTANCE_MIN*DISTANCE_MIN);
+    if(w.clone().addScaledVector(dir,range).length()<DISTANCE_MIN&&disc>=0)range=Math.max(range,-b+Math.sqrt(disc));
+    var eye=this.point.clone().addScaledVector(dir,range);this.lookFrom(eye);this.distanceSet=true;this.fitPending=true;this.render();};
   // The vehicle browser can change the shooter alone: the collision model on screen and the orbit centre
   // stay as they are, so the camera must not move either. load() always re-frames (reset() sets fitPending,
   // the next frame runs fit()), so the state is read before the reload and put back straight after it -
