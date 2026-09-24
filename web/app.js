@@ -3,9 +3,9 @@
   var $=function(id){return document.getElementById(id);},viewer=null,current=null,selected=null,filter='all',generation=0,battleGeneration=0;
   var effects={0:'Penetration without damage',1:'Intermediate ricochet',2:'Ricochet',3:'No penetration',4:'Penetration',5:'Critical hit',6:'Penetration with module damage'};
   var shellNames={ARMOR_PIERCING:'AP',ARMOR_PIERCING_CR:'APCR',HOLLOW_CHARGE:'HEAT',HIGH_EXPLOSIVE:'HE'},candidates=[],activeHit=null,shotContext=null,manualPen='',manualAlpha='',lastDistance=null,analysisKey=null,recordsVersion='';
-  // Fingerprint of the hit record the scene was built from, so an index bump that changed nothing does not
-  // rebuild it. Set by selectHit, cleared by display() so that every other scene (a browsed vehicle, a
-  // swapped shooter) counts as “not the recorded hit”.
+  // Fingerprint of the RECORDED hit the scene was built from - the hit, or the hit a swapped view or a picked
+  // shooter was made from - so an index bump that changed nothing does not rebuild it. Set by the scene's one
+  // finisher (sceneShown); null for a browsed vehicle, a seat's model and an empty scene.
   var currentHitKey=null;
   // The five parts of the layout pass (scheduleLayout, near the end of this file): the heading row, the toolbar
   // row, the top band over the scene (the model row with the strip beside ⌖, and the modifier group beside it; 23.09),
@@ -19,6 +19,8 @@
   function fragment(){return host.params?host.params():{};}
   var aimReasons={'no-tracer':'No own tracer','no-endpoint':'Tracer did not match the hit point','ambiguous':'Several tracers — the link is ambiguous','foreign':'Someone else’s shot','no-snapshot':'Reticle snapshot not recorded','stale':'Reticle snapshot is stale'};
   function staleEstimate(){if(analysisKey!==null){$('spread-result').textContent='Conditions changed. Press “Estimate” again.';analysisKey=null;}if(viewer)viewer.hideSpread();}
+  // An element shown or hidden, written only when that changes (a write of the same value is still a mutation).
+  function showEl(el,on){if(el&&el.hidden===!!on)el.hidden=!on;}
   function node(tag,text,cls){var e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e;}
   // Vehicle tile: tier, name, nation flag, class and role. Any field may be missing in
   // records written before the recorder saved them; missing slots stay empty and keep their size.
@@ -385,11 +387,15 @@
     var waiting=!v.exported,options=waiting?{deadline:Date.now()+30000,waiting:'Exporting the model\u2026'}:{};
     if(waiting)requestExport(v);
     pickVehicle(v.id,activeRole,options).catch(function(e){
+      if(e&&e.superseded)return;   // another pick or scene took its place (audit APP1-02): nothing to say over it
       var text=waiting?EXPORT_TIMEOUT:e.message;message(text);warnings([text]);});
   }
   function requestExport(v){sendCommand('exportVehicle',{vehicleType:String(v.type||'')});}
   // The export of a vehicle may still be running when the in-game window opens: retry until the deadline.
-  function readVehicle(id,deadline){
+  // `alive` (optional, audits APP1-02/APP2-02): a wait another pick or scene has overtaken stops - no spinner over
+  // that scene - and ends with an error marked `superseded`, which its callers leave unsaid.
+  function superseded(){var e=new Error('Superseded by another scene');e.superseded=true;return e;}
+  function readVehicle(id,deadline,alive){
     if(!VEHICLE_ID.test(String(id)))return Promise.reject(new Error('Invalid vehicle identifier'));
     var row=catalogueRow(id),key=id+'@'+(row?row.exportedAt:'');
     if(vehicleCache[key])return Promise.resolve(vehicleCache[key]);
@@ -399,9 +405,12 @@
       while(vehicleOrder.length>8)delete vehicleCache[vehicleOrder.shift()];
       return record;
     },function(e){
+      if(alive&&!alive())throw superseded();
       if(!deadline||Date.now()>=deadline)throw e;
       message('Exporting the model\u2026');
-      return new Promise(function(resolve){window.setTimeout(resolve,2000);}).then(function(){return readVehicle(id,deadline);});
+      return new Promise(function(resolve){window.setTimeout(resolve,2000);}).then(function(){
+        if(alive&&!alive())throw superseded();
+        return readVehicle(id,deadline,alive);});
     });
   }
   // A browsed vehicle as a hit the scene loader and the viewer already understand: the model is the target
@@ -422,17 +431,16 @@
     // adoptHitVehicles() hands over catalogue rows, and a catalogue row carries no collision parts: the
     // target of the scene must be the vehicle's own export, or the viewer is given an empty model. One step
     // only - readVehicle() rejects anything without parts.
-    if(!modelVehicle.parts)return readVehicle(modelVehicle.id).then(function(record){modelVehicle=record;return showVehicleScene(false);});
+    // The camera rule goes through it (audit APP1-06: a shooter picked in the list lost the camera here).
+    if(!modelVehicle.parts)return readVehicle(modelVehicle.id).then(function(record){modelVehicle=record;return showVehicleScene(keepCamera);});
     var hit=vehicleHit(modelVehicle,shooterVehicle||modelVehicle);
     var camera=keepCamera&&viewer&&viewer.cameraState?viewer.cameraState():null,token=++generation;
     message('Preparing the model\u2026');if(viewer)viewer.clear();
     return ArmorInspectorData.sceneFor({warnings:[]},hit).then(function(data){
       if(token!==generation)return null;
-      vehicleScene=data;display(data,false);
-      if(camera&&viewer)viewer.restoreCamera(camera);
-      renderVehicleHeading();renderVehicles(true);
+      vehicleScene=data;display(data,false,camera);   // the finisher paints the panel's heading and list too
       return data;
-    }).catch(function(e){if(token===generation){message(e.message);warnings([e.message]);}throw e;});
+    }).catch(function(e){if(token===generation){sceneCleared();message(e.message);warnings([e.message]);}throw e;});
   }
   // Changing the model is an ordinary load (camera as for any new hit). Changing the shooter alone leaves the
   // model and the orbit centre where they are, so the camera is taken before the reload and put back after it.
@@ -440,7 +448,7 @@
     role=role==='shooter'?'shooter':'model';options=options||{};
     var token=++vehicleGeneration;
     message(options.waiting||'Preparing the model\u2026');
-    return readVehicle(id,options.deadline).then(function(record){
+    return readVehicle(id,options.deadline,function(){return token===vehicleGeneration;}).then(function(record){
       if(token!==vehicleGeneration)return null;
       var keepCamera=false;
       if(role==='shooter'){
@@ -476,30 +484,40 @@
     if(mode==='vehicles'){
       loadCatalogue();
       if(!changed)return Promise.resolve();
-      // A recorded hit on screen stays there (user, 19.09: switching the side panel must not reset the scene).
-      // Its two tiles become the role controls, the list adopts its vehicles as the current model and shooter.
-      if(activeHit&&!activeHit.vehicle){adoptHitVehicles();sceneTiles(activeHit,false);renderVehicleHeading();renderVehicles(true);return Promise.resolve();}
-      if(vehicleScene&&modelVehicle){display(vehicleScene,false);renderVehicleHeading();renderVehicles(true);return Promise.resolve();}
+      // ANY scene on screen stays there (user, 19.09: switching the side panel must not reset the scene; audit APP1-03:
+      // a browsed vehicle or a seat's model was built again, or replaced by the vehicle browsed long before). Its two
+      // tiles become the role controls - laid again, the ⇅ of two browsed vehicles belongs to this panel - and the one
+      // finisher paints the rest, the panel's heading and list with the scene's vehicles in their roles.
+      if(activeHit){sceneTiles(activeHit,false);sceneShown();return Promise.resolve();}
+      // Nothing on screen: the vehicle this panel showed last, or the list.
+      if(vehicleScene&&modelVehicle){display(vehicleScene,false);return Promise.resolve();}
       if(modelVehicle)return showVehicleScene(false).catch(function(){});
-      ++generation;if(viewer)viewer.clear();sceneTiles(null,false);renderVehicleHeading();renderVehicles(true);
+      ++generation;if(!sceneCleared()){renderVehicleHeading();renderVehicles(true);}
       message('Pick a vehicle from the list.');warnings([]);
       return Promise.resolve();
     }
     ++vehicleGeneration;
     if(!changed)return Promise.resolve();
-    if(battlesDirty||!current){battlesDirty=false;indexStamp=null;return refresh();}
     // Back to the battles: the scene stays as it is - the hit that was on screen, or the browsed vehicle until
-    // a hit is clicked. Nothing is reloaded.
-    renderHits();sceneTiles(activeHit,false);
+    // a hit is clicked, or nothing (activeHit is null on an empty scene). The tiles are laid again for this panel
+    // and the one finisher paints the rest; a battle list that went stale meanwhile is read again, and that read
+    // keeps a view the user built (loadBattle).
+    sceneTiles(activeHit,false);sceneShown();
+    if(battlesDirty||!current){battlesDirty=false;indexStamp=null;return refresh();}
+    renderHits();
     return Promise.resolve();
   }
   // The catalogue rows of the hit's target and attacker (matched by the client's vehicle type name), so the
   // Vehicles list highlights them and a click on a row replaces one of them.
+  // Every scene's (audit APP1-04, 24.09): run by the finisher in this panel, so after ⇅ the heading and the marks show
+  // the roles on screen. A role the catalogue has no row for is empty - not the vehicle browsed before; a role held
+  // by a vehicle of the same type keeps it (the browser's own record, with its parts).
   function adoptHitVehicles(){
-    var rows=(catalogue&&catalogue.vehicles)||[],hit=activeHit;if(!hit||hit.vehicle||!rows.length)return;
+    var rows=(catalogue&&catalogue.vehicles)||[],hit=activeHit;if(!hit||!rows.length)return;
     function byType(v){var type=v&&v.type;if(!type)return null;var i;for(i=0;i<rows.length;i++)if(rows[i].type===type)return rows[i];return null;}
-    var model=byType(hit.target),shooter=byType(hit.attacker);
-    if(model)modelVehicle=model;if(shooter)shooterVehicle=shooter;
+    function same(held,v){return !!(held&&v&&held.type&&held.type===v.type);}
+    if(!same(modelVehicle,hit.target))modelVehicle=byType(hit.target);
+    if(!same(shooterVehicle,hit.attacker))shooterVehicle=byType(hit.attacker);
   }
   // #host=game&vehicle=<id>: open the Vehicles mode on that vehicle. The game window may also be navigated to a
   // new fragment while it is open, so the same path serves 'hashchange'.
@@ -509,7 +527,7 @@
     if(!initial&&id===lastFragment)return;
     lastFragment=id;loadCatalogue();setMode('vehicles');shooterPicked=false;
     pickVehicle(id,'model',{deadline:Date.now()+30000,waiting:'Exporting the model\u2026'})
-      .catch(function(){message('The model of this vehicle was not exported. See game.log.');});
+      .catch(function(e){if(!(e&&e.superseded))message('The model of this vehicle was not exported. See game.log.');});
   }
   function restoreSidebar(){
     buildFilters();buildInfo();
@@ -704,6 +722,7 @@
   // The switches have something to change only while a model is on screen and the map is drawn in damage: in
   // chance mode the factor is a no-op, so they leave with the damage caption instead of sitting dead.
   function modsVisible(){
+    if(sceneBuild)return;   // a scene half built: its finisher (sceneShown) decides it once
     var slot=$('target-mods-slot');
     if(!slot||!targetMods)return;
     // ...and only for a shell whose non-penetration damage the factor divides: modern HE. For AP/APCR/HEAT the
@@ -2902,6 +2921,8 @@
   // reload running - and stops itself as soon as everything is at rest. It never touches the GPU
   // composition: only the circle's line and the figures on the two info panels are redrawn.
   var aimOn = false, aimKeys = {}, aimFrame = 0, aimClock = 0, aimMove = null, aimNow = null;
+  // The aim block the ring was last computed on (sceneShown compares it with the block of a new scene, audit PD-03).
+  var aimNowBlock = null;
   var aimReload = null, aimClip = 0, aimClipSize = 1, aimShot = null, aimLastState = null;
   // The virtual hull heading, in radians, kept for this session only (user, 20.09): A and D turn it,
   // the gun goes with it and the turret chases back to the crosshair. Reset whenever the run is reset.
@@ -3002,7 +3023,7 @@
     var turned = chase.step > 0 && !!viewer.chaseAim(chase.step, yawLimits);
     var state = {speed: aimMove.speed, hullTurn: aimMove.hullTurn, hullMax: aimMove.hullMax, turretTurn: chase.turretTurn};
     autoHold(a, state);   // ✸: an automatic gun's stream keeps its term in the circle (nothing otherwise)
-    aimNow = ArmorBallistics.aimStep(aimNow, state, a, mods, dt);
+    aimNow = ArmorBallistics.aimStep(aimNow, state, a, mods, dt); aimNowBlock = a;
     // ✸: the rest of a gun's burst goes out on its own, one round per burst interval, button down or not.
     if (burstLeft > 0) { if (aimReloadLeft() <= 0 && !heatLocked()) burstNext(); }
     // The next shot of a held burst, the moment the cooldown is over. The recoil of the shot just fired is
@@ -3440,7 +3461,7 @@
     // next round of a held burst leaves a wider circle unless the gun had time to settle. Under ✸ the term is
     // the one the client takes for this round (roundState: an automatic gun's stream, a round inside a burst).
     var state = roundState(a, aimLastState || aimState(), more);
-    aimNow = ArmorBallistics.aimShot(aimNow, state, a, mods);
+    aimNow = ArmorBallistics.aimShot(aimNow, state, a, mods); aimNowBlock = a;
     // The round heats an Ares gun under ✸ (gunHeat below) - after the recoil, which is taken in the band
     // the gun was in when it fired; the new band shows from the next frame. Nothing off the ✸ layer.
     heatShot();
@@ -3936,13 +3957,16 @@
   // modifiers - and `defaultMaxHealth` the stock one. The row is found, in this order:
   //   - a recorded hit names the vehicle outright (targetId);
   //   - a shooter picked from the roster leaves the model where it is, and pickShooter carries the id of
-  //     the vehicle already on screen over on the synthetic hit (modelVehicleId);
+  //     the vehicle already on screen over on the synthetic hit (modelVehicleId); so does the model of a seat
+  //     with no hits (showFocusEmpty);
   //   - a swapped view has no ids of its own and names the hit it was made from: the vehicle now on
   //     screen is that hit's SHOOTER;
-  //   - failing all of them, the roster row of the same vehicle type when the battle holds exactly one.
-  // With no row at all - a browsed vehicle, a battle without a roster - the vehicle's OWN export gives the
-  // figure since the characteristics build (23.09, spec 2.3): `maxHealth` of the configuration it was exported
-  // in (targetMaxHp). An older export has none, and then there is no bar rather than a made-up number.
+  //   - failing all of them, for a recorded hit only, the roster row of the same vehicle type when the battle
+  //     holds exactly one (a browsed vehicle is no seat of the battle beside it).
+  // ONE ORDER FOR EVERY PATH (targetHp, 24.09): the row's figure; with no row, or a row WITHOUT a figure (the
+  // enemies of an Onslaught battle, every row before 0.7.20), the vehicle's OWN export (`maxHealth` of the
+  // configuration it was exported in), then its characteristics file - read for the TARGET too (hpAsk), not only
+  // for the shooter. Neither: no bar rather than a made-up number.
   function targetRow(hit) {
     var rows = current && Array.isArray(current.roster) ? current.roster : null;
     if (!rows || !hit) return null;
@@ -3954,16 +3978,28 @@
     }
     var row = id === undefined || id === null ? null : rows.find(function (r) { return r.id === id; });
     if (row) return row;
+    // A browsed vehicle is no seat of the battle open beside it (audit PD-01 г, 24.09): it took the Onslaught figure
+    // of a same-type row of whatever battle was loaded. The model of a seat with no hits names its row by id
+    // (showFocusEmpty: modelVehicleId) and keeps it.
+    if (hit.vehicle) return null;
     var type = String((hit.target || {}).type || '');
     var same = type ? rows.filter(function (r) { return String(r.type || '') === type; }) : [];
     return same.length === 1 ? same[0] : null;
   }
-  function targetMaxHp(hit) {
-    var row = targetRow(hit);
-    if (!row) { var own = hit && hit.target ? Number(hit.target.maxHealth) || ttxHealth(hit.target) : 0; return own > 0 ? own : 0; }
-    var hp = Number(row.maxHealth) > 0 ? Number(row.maxHealth) : Number(row.defaultMaxHealth);
-    return hp > 0 ? hp : 0;
+  // The figure and where it came from: the battle's roster row first; a row WITHOUT a figure (the enemy team of an
+  // Onslaught battle is listed with its id, player and team only - the client does not tell the vehicle; every row of
+  // a record before 0.7.20, audit PD-01) no longer ends the search (user 24.09: after ⇅ the bar went). Then the
+  // vehicle's own export and its characteristics file, not this battle's figure: `from` says which, and the bar's
+  // tooltip says it.
+  function targetHp(hit) {
+    var row = targetRow(hit), t = hit && hit.target, hp = 0;
+    if (row) hp = Number(row.maxHealth) > 0 ? Number(row.maxHealth) : Number(row.defaultMaxHealth) > 0 ? Number(row.defaultMaxHealth) : 0;
+    if (hp > 0) return {hp: hp, from: 'roster'};
+    if (t && Number(t.maxHealth) > 0) return {hp: Number(t.maxHealth), from: 'export'};
+    hp = t ? ttxHealth(t) : 0;
+    return hp > 0 ? {hp: hp, from: 'ttx'} : {hp: 0, from: ''};
   }
+  function targetMaxHp(hit) { return targetHp(hit).hp; }
   // What the health belongs to, so a NEW vehicle can be told from the same one under another shooter:
   // the battle plus the roster row, or the vehicle's own type and name when the record has no row for it.
   function targetKey(hit) {
@@ -3971,7 +4007,32 @@
     return (current ? String(current.id) : '-') + '|' +
       (row ? 'r' + row.id : 't' + String(t.type || '') + '/' + String(t.name || ''));
   }
-  var hpMax = 0, hpLeft = 0, hpRoll = '', hpTitleKey = '', hpKey = '', hpPressed = '';
+  var hpMax = 0, hpLeft = 0, hpRoll = '', hpTitleKey = '', hpKey = '', hpPressed = '', hpFrom = '', hpText = '';
+  // Whether the kept Hitmarks are on the viewer's scene: display() clears it with viewer.load(), funModel lays them.
+  var funLaid = true;
+  // The health of the vehicle on screen, full: a new vehicle, ↺, the switch going on. When only its characteristics
+  // file can tell the figure and the page has not read that file yet, it is asked for (hpAsk).
+  function hpFill() {
+    var h = targetHp(activeHit);
+    hpKey = targetKey(activeHit); hpMax = h.hp; hpFrom = h.from; hpLeft = hpMax; hpRoll = '';
+    if (!(hpMax > 0)) hpAsk();
+  }
+  // Under ⌖ only - off it nobody reads the figure. The file is read once per type (readTtx: the shooter's own read is
+  // the same promise), and the bar is filled when it comes, if the same vehicle is still on screen without a figure.
+  function hpAsk() {
+    var t = activeHit && activeHit.target, type = t && t.type ? String(t.type) : '', key = hpKey;
+    if (!type || !funOn()) return;
+    readTtx(type).then(function (file) {
+      if (!file || hpKey !== key || hpMax > 0) return;
+      var h = targetHp(activeHit);
+      if (!(h.hp > 0)) return;
+      hpMax = h.hp; hpFrom = h.from; hpLeft = hpMax; hpRoll = '';
+      paintFun();
+    });
+  }
+  var HP_FROM = {roster: '• Source: this battle’s roster',
+    export: '• Source: the vehicle’s own export - its figure then, not this battle’s',
+    ttx: '• Source: the vehicle’s characteristics, stock - this battle’s own figure is not in the record'};
   // What the Hitmarks are made of, kept so they can be laid again on a scene the viewer has rebuilt under
   // the SAME vehicle: viewer.load() drops everything the viewer holds, and picking another shooter loads
   // the model again although the target has not changed. ONE record per SHOT (funMark) - every plate it
@@ -4053,27 +4114,29 @@
     var cap = viewer.hitMarkLimit ? viewer.hitMarkLimit() : funMarks.length;
     while (funMarks.length > cap) funMarks.shift();
   }
-  // The bar is graphics and nothing else (the owner's rule: no words on a tile) - every number is in its
-  // tooltip. Called on a shot, on a reset, on a model change and when the switch moves; never per frame.
   // THE STRIP BESIDE ⌖ (23.09): the emulated gun - its load, magazine, heat and mode button (#fun-gun, while the aim
   // emulation runs: updateAim) - ◔, the target's health bar and ↺, ONLY under ⌖ (the user's word, 23.09: "only in the
   // emulation mode, otherwise they are not needed" - off ⌖ nothing blocks a shot, gunBlock, so a reload count there
   // would explain nothing). The top band is laid out again only when it comes or goes (the full pass of updateAim
-  // covers #fun-gun). Called by paintFun and updateAim, never per frame.
+  // covers #fun-gun). Called by paintFun alone - the switch, a shot, ↺ and every scene (sceneShown) - never per frame.
   function paintStrip() {
     var strip = $('fun-strip');
     if (!strip) return;
     var show = !$('model-tile').hidden && funOn();
     if (strip.hidden !== !show) { strip.hidden = !show; scheduleLayout(LAYOUT_MODS); }
   }
+  // THE BAR (24.09, user: "is there no way to get the number?"): the fill and, inside it as the game's own health bars
+  // carry it, the figure - "left / max", plain numbers and no word; the details stay in its tooltip. Called on a shot,
+  // on a reset, on a model change and when the switch moves; never per frame. Every write only when its value changes.
   function paintFun() {
+    if (sceneBuild) return;   // a scene half built: its finisher (sceneShown -> funModel) paints the layer once
     var bar = $('target-hp'), fill = $('target-hp-fill'), reset = $('target-hp-reset'), toggle = $('fun-mode-toggle');
     if (!bar || !fill || !reset) return;
     var on = funOn(), model = !$('model-tile').hidden, show = on && model && hpMax > 0;
     // The switch lives with the model: it is there whenever there is something to shoot at, and it is lit
     // while the mode is on. One attribute write, and only when the state has really changed.
     if (toggle) {
-      toggle.hidden = !model;
+      if (toggle.hidden !== !model) toggle.hidden = !model;
       var pressed = String(on);
       if (pressed !== hpPressed) { hpPressed = pressed; toggle.setAttribute('aria-pressed', pressed); }
     }
@@ -4095,36 +4158,42 @@
     if (fill.style.width !== width) fill.style.width = width;
     var rgb = chanceRgb({chance: Math.round(share * 100), expectedShare: share});
     if (fill.style.backgroundColor !== rgb) fill.style.backgroundColor = rgb;
+    var figures = hpNumber(hpLeft) + ' / ' + hpNumber(hpMax), text = $('target-hp-text');
+    if (text && figures !== hpText) { hpText = figures; text.textContent = figures; }
     // The sentence is long and paintFun runs on every shell or distance step too: it is composed only when
-    // one of the four things in it has really changed.
+    // one of the things in it has really changed.
     var mark = xiMarkNow();
-    var key = hpLeft + '/' + hpMax + '|' + hpRoll + '|' + funRandomization(viewer && viewer.shell) + '|' + (mark ? Math.ceil(mark.left) + mark.from : '');
+    var key = hpLeft + '/' + hpMax + '|' + hpFrom + '|' + hpRoll + '|' + funRandomization(viewer && viewer.shell) + '|' + (mark ? Math.ceil(mark.left) + mark.from : '');
     if (key === hpTitleKey) return;
     hpTitleKey = key;
-    bar.title = hpNumber(hpLeft) + ' / ' + hpNumber(hpMax) + ' HP' +
-      (hpLeft <= 0 ? '\n• Destroyed: further shots still leave Hitmarks' : '') + '\n' + (hpRoll || '• Last shot: nothing fired yet') +
-      '\n• Damage roll: alpha × (1 ± ' + Math.round(funRandomization(viewer && viewer.shell) * 100) +
-      ' %), the shell’s spread; a non-penetration rolls its reconstructed damage alike' +
-      (mark ? '\n• leKpz Borkenkäfer mark' + (mark.from === 'record' ? ' (the record’s, at this hit)' : '') + ': ' + Math.ceil(mark.left) +
-        ' s left — every hit on it rolls ×' + mark.factor + ' (×1.15 with the marker’s full skill tree, which the record cannot tell)' : '') +
-      '\nThe uniform shape of the roll is this page’s assumption.';
+    // Tooltip markup (tooltips.js): the heading, the one line of what it shows, then the figures and the roll.
+    bar.title = tipJoin(['Target HP', 'Health of the vehicle on screen; every ⌖ shot takes its rolled damage off.',
+      hpLeft <= 0 ? '• Destroyed: ' + figures + ' HP - further shots still leave Hitmarks' : '• Left: ' + figures + ' HP',
+      HP_FROM[hpFrom] || null, hpRoll || '• Last shot: nothing fired yet', '',
+      '• Damage roll: alpha × (1 ± ' + Math.round(funRandomization(viewer && viewer.shell) * 100) +
+        ' %), the shell’s spread; a non-penetration rolls its reconstructed damage alike',
+      mark ? '• leKpz Borkenkäfer mark' + (mark.from === 'record' ? ' (the record’s, at this hit)' : '') + ': ' + Math.ceil(mark.left) +
+        ' s left — every hit on it rolls ×' + mark.factor + ' (×1.15 with the marker’s full skill tree, which the record cannot tell)' : null,
+      'The uniform shape of the roll is this page’s assumption.']);
   }
   // Full health again and no Hitmarks: the ↺ button, and every change of the vehicle on screen. The
   // health is looked up for the vehicle ON SCREEN, so ↺ brings the bar back whenever the record knows it.
   function funReset() {
-    hpKey = targetKey(activeHit);
-    hpMax = targetMaxHp(activeHit); hpLeft = hpMax; hpRoll = '';
+    hpFill();
     xiMarkState = null;   // an emulated Borkenkäfer mark goes with the health; the record's own comes back (BACKLOG 38)
-    funMarks.length = 0;
+    funMarks.length = 0; funLaid = true;
     if (viewer && viewer.clearHitMarks) viewer.clearHitMarks();
     paintFun();
   }
-  // The scene has just been rebuilt (display()). A DIFFERENT vehicle starts at full health with no marks;
-  // the SAME vehicle under another shooter keeps both - the target did not change (user, 22.09) - and its
-  // Hitmarks are laid on the new model again, because viewer.load() clears everything the viewer held.
+  // A scene is on screen (sceneShown, every path). A DIFFERENT vehicle starts at full health with no marks; the
+  // SAME vehicle under another shooter keeps both - the target did not change (user, 22.09) - and its Hitmarks are
+  // laid on the new model again when the viewer was reloaded under it (viewer.load() clears everything the viewer
+  // held; a scene shown again without a reload - the side panel switched - keeps the ones it has). A vehicle whose
+  // figure was not known yet gets it now if the page has come to know it since.
   function funModel() {
     if (targetKey(activeHit) !== hpKey) { funReset(); return; }
-    funMarks.forEach(function (m) { if (viewer && viewer.addHitMark) viewer.addHitMark(m); });
+    if (!funLaid) { funLaid = true; funMarks.forEach(function (m) { if (viewer && viewer.addHitMark) viewer.addHitMark(m); }); }
+    if (!(hpMax > 0)) hpFill();
     paintFun();
   }
   // The switch moved: the viewer is told whether an emulated shot leaves a dot or the big cross, the marks
@@ -4136,7 +4205,7 @@
       if (!on && viewer.clearHitMarks) viewer.clearHitMarks();
     }
     if (!on) funMarks.length = 0;
-    if (on && !(hpMax > 0)) { hpKey = targetKey(activeHit); hpMax = targetMaxHp(activeHit); hpLeft = hpMax; hpRoll = ''; }
+    if (on && !(hpMax > 0)) hpFill();
     // The gun under the other rule starts over: cold, loaded, a full clip - and the loop is woken, so the
     // circle drops the heat band it may have been drawn in.
     gunHeatReset();
@@ -4738,7 +4807,7 @@
     if (back) { aimReload = back.reload; aimClip = back.clip; aimClipSize = back.size; aimRefill = back.refill; }
     else { aimReload = null; aimLoadFull(); }
     var a = aimBlockData();
-    if (a) aimNow = ArmorBallistics.aimStep(null, aimLastState || aimState(), a, aimHeated(aimModifiers()), 0);
+    if (a) { aimNow = ArmorBallistics.aimStep(null, aimLastState || aimState(), a, aimHeated(aimModifiers()), 0); aimNowBlock = a; }
     aimEstAt = 0; aimEstFine = false;
     xiWeaponShell(m.weapon);
   }
@@ -5041,27 +5110,29 @@
   // One pass over everything the mode owns: what is on screen, the circle in the scene and the figures
   // on the two info panels. Cheap - no ray is cast here.
   function updateAim() {
+    if (sceneBuild) return;   // a scene half built: its finisher (sceneShown) runs this pass once
     var tile = $('aim-drive'); if (!tile) return;
     var a = aimBlockData(), mode = $('armor-mode').value, modelled = mode !== 'parts' && !$('model-tile').hidden;
     var live = !!(a && modelled && viewer && aimOn);
     // What the layout pass measures here is which of the four is on screen; it runs again only when that
     // changes (updateAim runs on every shell, distance or pose step, and each pass forces a page layout).
     var shownBefore = [$('aim-config').hidden, tile.hidden, $('aim-gun').hidden, $('aim-block').hidden, $('fun-gun').hidden].join(), configWas = $('aim-config').hidden;
-    $('aim-config').hidden = !live;
+    // Each `hidden` is written only when it changes (24.09): this pass runs on every shell, distance or pose step,
+    // and a write of the same value is still a mutation for the help dots' observer (web/tooltips.js).
+    showEl($('aim-config'), live);
     if (!live) $('aim-config').open = false;   // aimConfigListen below takes the sub-panel and the Escape key with it
-    tile.hidden = !live;
+    showEl(tile, live);
     // The gun panel rides with the mode, exactly as the speed tile and Config do, and the heading shell list carries
     // the shells when the mode is off. Since 23.09 it holds the shells alone (an empty one is no panel at all); the
-    // load state - the emulation's own - is the part of the strip beside ⌖ that needs a live emulation (#fun-gun),
-    // and it is there whenever the emulation runs, ⌖ or not, as it was down here: paintStrip shows the strip with it.
-    $('aim-gun').hidden = !live || !candidates.length;
-    $('fun-gun').hidden = !live;
-    paintStrip();
+    // load state - the emulation's own - is the part of the strip beside ⌖ that needs a live emulation (#fun-gun).
+    // The strip itself stands with ⌖ and a model (paintStrip, from paintFun: the scene's finisher and the switch).
+    showEl($('aim-gun'), live && !!candidates.length);
+    showEl($('fun-gun'), live);
     paintGunLoad();
     // The manual estimate of 0.7.13 is the fallback and nothing more: it appears exactly when the user
     // asked for the emulation and this record cannot give it.
     var fallback = !!(modelled && aimOn && !a), wasHidden = $('aim-block').hidden;
-    $('aim-block').hidden = !fallback;
+    showEl($('aim-block'), fallback);
     if ([$('aim-config').hidden, tile.hidden, $('aim-gun').hidden, $('aim-block').hidden, $('fun-gun').hidden].join() !== shownBefore) scheduleLayout();
     // The gun chip of the characteristics panel lists the turrets itself while Config is away (ttxPaintPair).
     if ($('aim-config').hidden !== configWas) ttxPaintChip();
@@ -5084,7 +5155,7 @@
     }
     if (!aimNow) {
       aimLoadFull();
-      aimNow = ArmorBallistics.aimStep(null, aimState(), a, aimModifiers(), 0);
+      aimNow = ArmorBallistics.aimStep(null, aimState(), a, aimModifiers(), 0); aimNowBlock = a;
     }
     if (!aimNow) { viewer.clearLiveAim(); return; }
     paintAim(aimState());
@@ -5248,6 +5319,7 @@
   // Header line: the verdict log is on, with the count so far; the (i) explains what it is for.
   function verdictStatus(){var e=$('connection');if(!e)return;e.textContent='Statistics log \u00b7 '+verdictLines+' points'+(verdictQueue.length?' \u00b7 checking '+verdictQueue.length+' more':'');}
   function shotStats(){
+    if(sceneBuild)return;   // a scene half built: its finisher (sceneShown) takes the figures once
     var choice=$('shell-choice').value,c=choice.indexOf('saved:')===0?candidates[Number(choice.slice(6))]:null;
     var range=viewer?viewer.distance:100;
     var pen=Number($('penetration').value),cal=Number($('caliber').value),alphaValue=$('alpha').value,pool=manualPool();
@@ -5636,12 +5708,12 @@
     if(focusSceneKey===key&&focusScene&&activeHit&&activeHit.id===focusScene.hit.id){renderHits();return Promise.resolve();}
     var token=++generation;
     focusScene=null;focusSceneKey=null;focusNote='';
-    if(viewer)viewer.clear();sceneTiles(null,false);warnings([]);$('details').replaceChildren();
+    sceneCleared();warnings([]);$('details').replaceChildren();
     var type=row&&row.type?String(row.type):'';
     function fallback(reason){
       if(token!==generation)return;
       focusScene=null;focusSceneKey=null;focusNote='';
-      if(viewer)viewer.clear();sceneTiles(null,false);message(reason);renderHits();
+      sceneCleared();message(reason);renderHits();
     }
     // No roster row, so no vehicle type to look up: the old battles' own wording, unchanged.
     if(!type){fallback(current&&current.hits.length?'No hits of this vehicle in the record. Shot details are available below.':'No hits recorded in this battle yet. Shot details are available below.');return Promise.resolve();}
@@ -5652,14 +5724,15 @@
       if(!entry)throw new Error('not in the catalogue');
       return readVehicle(entry.id,0);
     }).then(function(record){
-      if(token!==generation)return;
-      var hit=vehicleHit(record,record);
-      return ArmorInspectorData.sceneFor({warnings:[]},hit).then(function(data){
-        if(token!==generation)return;
-        focusScene=data;focusSceneKey=key;focusNote=base+' · model shown with its own gun';
-        display(data,false);renderHits();
-      });
-    }).catch(function(){fallback(base+' · model not exported yet');});
+      if(token!==generation)return null;
+      // His model is a seat of THIS battle: its roster row goes with it by id, so the health bar has the battle's figure.
+      var hit=vehicleHit(record,record);if(row&&row.id!==undefined&&row.id!==null)hit.modelVehicleId=row.id;
+      return ArmorInspectorData.sceneFor({warnings:[]},hit);
+    }).then(function(data){
+      if(!data||token!==generation)return;
+      focusScene=data;focusSceneKey=key;focusNote=base+' · model shown with its own gun';
+      renderHits();displayOr(data,false);   // the list says what is on screen; the scene's finisher marks the roster
+    },function(){fallback(base+' · model not exported yet');});   // a read that failed - never a fault of the page (PD-11)
   }
   // Another seat in the same battle: the list is rebuilt around that vehicle and a hit of his is opened at
   // once - a pick never leaves the scene empty (user, 19.09). With no hits at all his model is shown instead.
@@ -5668,8 +5741,8 @@
     var wanted=!current||id==null||id===playerId()?null:id;
     if(wanted===focusVehicle)return; // the row already in focus: the camera and the open hit stay
     focusVehicle=wanted;
-    selected=null;currentHitKey=null;++generation;swapped=null;focusScene=null;focusSceneKey=null;focusNote='';
-    if(viewer)viewer.clear();sceneTiles(null,false);warnings([]);$('details').replaceChildren();
+    selected=null;++generation;focusScene=null;focusSceneKey=null;focusNote='';
+    sceneCleared();warnings([]);$('details').replaceChildren();
     renderHits();
     var first=current?current.hits.find(function(h){return !!viewDirection(h);}):null;
     if(first)return void selectHit(first.id).catch(function(){});
@@ -5725,12 +5798,12 @@
       // roster row travels with the synthetic hit, and the health bar stays on the same target instead of
       // hunting for it in the hit (user, 22.09 - the bar used to go and the ↺ to do nothing).
       var onScreen=targetRow(hit);if(onScreen&&onScreen.id!==undefined&&onScreen.id!==null)synthetic.modelVehicleId=onScreen.id;
-      return ArmorInspectorData.sceneFor(current||{warnings:[]},synthetic).then(function(data){
-        if(token!==generation)return null;
-        display(data,false);if(camera&&viewer)viewer.restoreCamera(camera);renderHits();
-        return data;
-      });
-    }).catch(function(){if(token===generation){message(NO_GUN_DATA);warnings([NO_GUN_DATA]);}});
+      return ArmorInspectorData.sceneFor(current||{warnings:[]},synthetic);
+    }).then(function(data){
+      if(!data||token!==generation)return null;
+      displayOr(data,false,camera);   // the hit list is unchanged; the finisher marks the new shooter in the roster
+      return data;
+    },function(){if(token===generation){message(NO_GUN_DATA);warnings([NO_GUN_DATA]);}});   // a read that failed (PD-11)
   }
   function renderHeading(){
     var stamp=current?battleStamp(current.startedAt):'',own=ownVehicle();
@@ -5790,13 +5863,15 @@
   // queue and the battle is read again until they land (the page's own 2 s / 30 s wait, the one a browsed
   // vehicle uses); no parts at all are replaced by the shooter's own vehicle export - the same file and the
   // same reader showVehicleScene() uses - so his recorded name and gun stay and only the parts come from it.
-  function swapScene(hit,deadline){
+  // `alive` (the click's own token, audit APP2-02): a wait that another scene has overtaken stops there - it neither
+  // writes its spinner over that scene nor reads the battle again.
+  function swapScene(hit,deadline,alive){
     var parts=swapParts(hit);
     if(parts.key)return Promise.resolve(swapHit(hit));
-    if(parts.pending&&current)return swapExtracting(hit,deadline);
+    if(parts.pending&&current)return swapExtracting(hit,deadline,alive);
     var row=swapVehicleRow(hit);
     if(!row)return Promise.reject(new Error('The shooter’s collision model is not exported yet.'));
-    return readVehicle(row.id,deadline).then(function(record){
+    return readVehicle(row.id,deadline,alive).then(function(record){
       var synthetic=swapHit(hit);
       synthetic.target.parts=(record.parts||[]).slice();
       if(record.exportedAt!==undefined)synthetic.target.exportedAt=record.exportedAt;
@@ -5804,7 +5879,8 @@
       return synthetic;
     });
   }
-  function swapExtracting(hit,deadline){
+  function swapExtracting(hit,deadline,alive){
+    if(alive&&!alive())return Promise.reject(superseded());
     var type=String((hit.attacker||{}).type||'');
     if(type)sendCommand('prioritise',{vehicleTypes:[type]});
     message(EXTRACTING,true);
@@ -5812,7 +5888,7 @@
       var fresh=((b&&b.hits)||[]).find(function(h){return h.id===hit.id;});
       if(fresh&&swapParts(fresh).key)return swapHit(fresh);
       if(!deadline||Date.now()>=deadline)throw new Error('The shooter’s collision model is still being extracted.');
-      return new Promise(function(r){window.setTimeout(r,2000);}).then(function(){return swapExtracting(hit,deadline);});
+      return new Promise(function(r){window.setTimeout(r,2000);}).then(function(){return swapExtracting(hit,deadline,alive);});
     });
   }
   function sceneTiles(hit,reference){
@@ -5829,7 +5905,62 @@
     model.disabled=false;button.disabled=false;
     model.title=roleHint('model',target);button.title=roleHint('shooter',attacker);
     swapTile(hit);roleTiles();
-    ttxPaint();   // no Shooter tile, no characteristics panel
+    // What reads the tiles (the characteristics panel: no Shooter tile, no panel; the ⌖ switch, the strip, the
+    // emulation's controls) is painted by the scene's one finisher, sceneShown(), which every caller ends with.
+  }
+  // ===================== THE ONE SCENE FINISHER (24.09) =====================
+  // The user, 24.09: "there must be ONE procedure that builds the screen by the same rules; instead, depending on
+  // where the call came from, something is drawn or not". Every path that changes what is on screen ends HERE:
+  // a hit clicked (selectHit -> display), a browsed vehicle (showVehicleScene), the ⇅ swap and its way back, another
+  // shooter from the roster (pickShooter), a seat with no hits (showFocusEmpty), the side panel switched (setMode)
+  // and every scene that is cleared (sceneCleared). The tiles are decided first (sceneTiles), because what follows
+  // reads them; then everything that depends on the scene is painted, by the same rules and once:
+  //   - the target's switches (modsVisible) and the hit line's figures (shotStats);
+  //   - the emulation's controls: the speed tile, the gun panel, Config and the gun strip (updateAim);
+  //   - the ⌖ layer: the health of the vehicle now on screen, its Hitmarks, the switch, the strip and the bar (funModel);
+  //   - the characteristics panel (ttxPaint);
+  //   - the roster's mark of the shooter on screen (renderFocus);
+  //   - which help dots stand (web/tooltips.js, BullbaTips.refresh).
+  // While display() builds a scene, those painters stay quiet (sceneBuild): updateShell, the characteristics file, a
+  // camera put back and the viewer's own callbacks ask for them on the way, and a scene half built is not painted.
+  // The live ring of ⌖ belongs to the shooter's aim BLOCK (audit PD-03, 24.09; BACKLOG 47): a scene whose block is
+  // not the one the ring was last computed on (aimNowBlock) - another hit of the same vehicle type from another
+  // battle, the other mode's block of the same shooter - gets a ring of its own block (syncShooterMods drops it for
+  // another TYPE only). The same block keeps the running ring. Either way the ring's figure over the new model is
+  // taken at once, not at the 120 ms pace of a moving ring (display used to run updateAim twice, the first before
+  // viewer.load, and the pace cut the second).
+  var sceneBuild=false;
+  // Each painter on its own (audit APP2 §3.7): one that throws is told in the console and in the host's breadcrumb,
+  // and the others still paint - a half-painted scene is exactly the unevenness this finisher is for.
+  var SCENE_PAINTERS=[['target switches',function(){modsVisible();}],['hit line',function(){shotStats();}],
+    ['emulation',function(){updateAim();}],['target HP',function(){funModel();}],['characteristics',function(){ttxPaint();}],
+    ['roster',function(){renderFocus();}],
+    ['vehicle list',function(){if(sidebarMode==='vehicles'){adoptHitVehicles();renderVehicleHeading();renderVehicles();}}],['help dots',function(){if(window.BullbaTips&&window.BullbaTips.refresh)window.BullbaTips.refresh();}]];
+  function sceneShown(){
+    sceneBuild=false;
+    // The key the index poll compares (loadBattle): the RECORDED hit the view is built from - the hit itself, the
+    // hit a swapped view or a roster shooter was made from (audit APP2-01: a poll with a new stamp used to put the
+    // recorded hit back over a swap or a picked shooter, because only selectHit set the key). None for a browsed
+    // vehicle, a seat's model or an empty scene.
+    var baseId=activeHit?(activeHit.synthetic?activeHit.base:activeHit.id):null;
+    currentHitKey=baseId!=null&&current?hitFingerprint(current.hits.find(function(h){return h.id===baseId;})):null;
+    if(aimNow&&aimNowBlock!==aimBlockData())aimNow=null;
+    aimEstAt=0;aimEstFine=false;
+    SCENE_PAINTERS.forEach(function(p){
+      try{p[1]();}
+      catch(e){if(window.console)console.error('Bullba Hits scene painter “'+p[0]+'”: '+(e&&e.stack||e));if(host.mark)host.mark('Scene: '+p[0],'error: '+(e&&e.message));}
+    });
+  }
+  // Nothing on screen: the viewer is cleared and no hit is on it (a seat with no model, a battle with no hits, the
+  // Vehicles panel with nothing picked). The same finisher paints it, so no tile, switch, bar or dot of the scene
+  // that went stays behind - and none is brought back later by a path that shows the tiles of the hit that went
+  // (setMode used to put them over the empty scene). Already empty: nothing to paint again.
+  function sceneCleared(){
+    if(viewer)viewer.clear();
+    var shown=!!activeHit||!$('model-tile').hidden||!$('shooter-tile').hidden;
+    activeHit=null;swapped=null;currentHitKey=null;
+    if(shown){sceneTiles(null,false);sceneShown();}
+    return shown;
   }
   // What a click on this tile does: it opens the vehicle list on the vehicle that is in this role, in either
   // mode, and the next row clicked there fills it. The tile inside is bare: its vehicle's words come in here.
@@ -5871,18 +6002,32 @@
     b.hidden=!(browsed||recorded||(!!current&&back));
     b.title=back?'Back to the recorded hit and its shot line':'Swap the model and the shooter';
   }
-  function display(data,reference){
+  // A scene that was read but could not be put on screen says so in its own words (audit PD-11, 24.09): the catch
+  // of a read (showFocusEmpty, pickShooter) must not report a fault of the page as "model not exported yet" or
+  // "no gun data". The real text goes to the scene and to the console (game.log in the game).
+  function displayOr(data,reference,camera){
+    try{display(data,reference,camera);}
+    catch(e){var text='The scene could not be shown: '+(e&&e.message||e);message(text);warnings([text]);
+      if(window.console)console.error('Bullba Hits display: '+(e&&e.stack||e));}
+  }
+  // A scene put on screen. `camera` (optional) is a camera to keep - only the shooter changed (showVehicleScene,
+  // pickShooter) - put back before the finisher, so the figures are taken once, on the camera the scene keeps.
+  function display(data,reference,camera){
+    var hit=data.hit;
+    sceneBuild=true;
+    try{
     // The emulated circle of the previous hit goes first: prepareShell() below rebuilds it for the new
     // shooter, and clearing it afterwards would throw that away.
     // aimShot goes with the ring: the figure of a shot fired at the previous hit must not sit on the
     // panel of the new one, where it also hides that hit's own reticle figure (inspection, 20.09).
-    currentHitKey=null;aimShot=null;if(viewer)viewer.clearLiveAim();
-    var hit=data.hit;swapped=hit.synthetic&&!hit.vehicle?hit:null;sceneTiles(hit,reference);
+    aimShot=null;if(viewer)viewer.clearLiveAim();
+    swapped=hit.synthetic&&!hit.vehicle?hit:null;sceneTiles(hit,reference);
     var pend=pendingParts(hit);noteModelsPending(hit,pend);
-    // The roster's shooter mark reads activeHit, which prepareShell() has only just moved to this hit: every
-    // renderHits() before it (selectHit calls one before the scene arrives) still marked the previous
-    // hit's shooter, and nothing repainted the roster after a click (optimisation plan 21.09, §8.4).
-    $('shot-source').textContent=hit.synthetic?'No recorded shot':'Hit line';prepareShell(hit);renderFocus();var drawn=viewer&&viewer.load(data,shotContext);
+    // The roster's shooter mark reads activeHit, which prepareShell() moves to this hit: the finisher paints it
+    // (every renderHits() before it - selectHit calls one before the scene arrives - still marked the previous
+    // hit's shooter; optimisation plan 21.09, §8.4).
+    // viewer.load() drops everything the viewer held, the Hitmarks too: funModel lays them again (funLaid).
+    $('shot-source').textContent=hit.synthetic?'No recorded shot':'Hit line';prepareShell(hit);var drawn=viewer&&viewer.load(data,shotContext);funLaid=false;
     // A part on its way is not a missing model: the spinner outranks both the empty
     // message and the “geometry unavailable” one, which belongs to a broken record.
     if(pend.target)message(EXTRACTING,true);else message(drawn?'':data.geometryError||'Geometry unavailable. The original event is kept.');
@@ -5903,12 +6048,13 @@
     // One line per hit in the page console; the game writes page console lines into game.log, so an in-game
     // report about missing rings can be read there instead of guessed at.
     if(window.console)console.info('Bullba Hits aim: hit '+hit.id+' '+(view||'other')+' saved='+!!aimReady+' estimate='+!!estimate+' reason='+reason);
-    aimStatus=status;aimTitle();
-    shotStats();updateAim();
-    // The scene has just been rebuilt. Another VEHICLE on screen is full again with no Hitmarks; the same
-    // vehicle under another shooter keeps its health and gets its Hitmarks back (user, 22.09 - the target
-    // did not change). Every branch below has already passed through here.
-    funModel();
+    aimStatus=status;   // shotStats() composes the tile's words with it (aimTitle), in the finisher
+    if(camera&&viewer)viewer.restoreCamera(camera);
+    }finally{sceneBuild=false;}
+    // The scene has just been rebuilt: the one finisher paints what depends on it. Another VEHICLE on screen is
+    // full again with no Hitmarks; the same vehicle under another shooter keeps its health and gets its Hitmarks
+    // back (user, 22.09 - the target did not change). Every branch below has already passed through here.
+    sceneShown();
     if(reference){$('details').appendChild(node('p','The model is extracted from the installed client. There are no invented hits here. Once the recorder is installed, new battles appear in the list on the left.'));return;}
     if(hit.vehicle){
       var mv=hit.target||{},sv=hit.attacker||{},when=Number.isFinite(hit.receivedAt)?new Date(hit.receivedAt*1000).toLocaleDateString('en-GB'):'an unknown date';
@@ -5949,7 +6095,7 @@
       var any=!!current&&current.hits.some(function(h){return !!viewDirection(h);});
       container.appendChild(node('p',!current?'No records yet. Start the game with the recorder and play a battle. The viewer can stay open.':any?'No hits for the chosen filter.':focusNote||'No hits for '+focusName()+' in this battle','empty'));
       return;}
-    hits.forEach(function(h){var hasDamage=h.damage>0,view=viewDirection(h),b=node('button',undefined,'hit');b.setAttribute('aria-pressed',String(selected===h.id));b.setAttribute('data-direction',view);b.setAttribute('data-result',hasDamage?'damage':'none');
+    hits.forEach(function(h){var hasDamage=h.damage>0,view=viewDirection(h),b=node('button',undefined,'hit');b.setAttribute('aria-pressed',String(selected===h.id));b.setAttribute('data-hit',String(h.id));b.setAttribute('data-direction',view);b.setAttribute('data-result',hasDamage?'damage':'none');
       // One tooltip for the whole row (the tile inside is bare): who, then the result and the critical damage.
       // result() speaks for a details row labelled Result: after the key its own leading "Result" goes.
       var critWords=ArmorCrits.describe(h,true),said=result(h).replace(/^Result (\d)/,'Effect $1').replace(/^Result not/,'Not');
@@ -5969,10 +6115,14 @@
       outcome.appendChild(line);outcome.appendChild(node('span',clock(h.receivedAt),'hit-time'));b.appendChild(outcome);
       b.onclick=function(){selectHit(h.id).catch(function(){});};container.appendChild(b);});
   }
+  // The pressed row of the list, without building the list again (audit APP1-08: opening a battle built it twice).
+  function markHits(){var rows=$('hits').children||[];for(var i=0;i<rows.length;i++){var id=rows[i].getAttribute&&rows[i].getAttribute('data-hit');if(id!==null&&id!==undefined)rows[i].setAttribute('aria-pressed',String(id===String(selected)));}}
   function selectHit(id){
     if(!current||!current.hits.some(function(h){return h.id===id;}))return Promise.reject(new Error('Hit not found'));
-    selected=id;renderHits();var token=++generation;message('Preparing the model…');if(viewer)viewer.clear();
-    return ArmorInspectorData.scene(current,id).then(function(data){if(token!==generation)return;display(data,false);currentHitKey=hitFingerprint(current.hits.find(function(h){return h.id===id;}));return {battleId:current.id,hitId:id};}).catch(function(e){if(token===generation){message(e.message);warnings([e.message]);}throw e;});
+    selected=id;markHits();var token=++generation;message('Preparing the model…');if(viewer)viewer.clear();
+    // A scene that could not be read or shown leaves an empty scene painted as one (sceneCleared, audit APP2-03),
+    // not the tiles and the strip of the hit before over a cleared viewer.
+    return ArmorInspectorData.scene(current,id).then(function(data){if(token!==generation)return;display(data,false);return {battleId:current.id,hitId:id};}).catch(function(e){if(token===generation){sceneCleared();message(e.message);warnings([e.message]);}throw e;});
   }
   // The exporter bumps one shared index timestamp on every publish, so a shot in another battle used to reload
   // this battle, re-select the same hit and rebuild the scene from scratch - losing the camera, the pinned line
@@ -5997,7 +6147,11 @@
     return ArmorInspectorData.battle(id).then(function(b){
       if(request!==battleGeneration)return;
       var sameBattle=!!current&&current.id===b.id,kept=keep&&selected?b.hits.find(function(h){return h.id===selected;}):null;
-      var unchanged=!!kept&&sameBattle&&currentHitKey!==null&&hitFingerprint(kept)===currentHitKey;
+      // A view the user built is kept whatever the record did (audit APP1-01/APP2-01): ⇅, a roster shooter, a browsed
+      // vehicle - a poll with a new stamp put the recorded hit back over them, with its camera, pin and pose. The
+      // recorded hit itself is rebuilt only when its own record changed (currentHitKey, set by the finisher).
+      var built=!!activeHit&&(activeHit.synthetic||activeHit.id!==selected);
+      var unchanged=!!kept&&sameBattle&&(built||(currentHitKey!==null&&hitFingerprint(kept)===currentHitKey));
       // Another battle is read from its own player's seat again, and the model of a vehicle without hits in
       // the battle that is being left goes with it.
       if(!sameBattle){focusVehicle=null;focusStamp=null;focusScene=null;focusSceneKey=null;focusNote='';}
@@ -6014,7 +6168,9 @@
       // The first hit of the list, which is the first hit the focused vehicle took part in: a record also
       // holds the hits between two other vehicles, and those are not on the list.
       var first=b.hits.find(function(h){return !!viewDirection(h);});
-      if(existing||first)return selectHit(existing?selected:first.id);
+      // selectHit has said what went wrong with the scene itself (its message and warnings): it is not a battle
+      // that could not be read, which is what refresh() reports for an error that reaches it (audit PD-11).
+      if(existing||first)return selectHit(existing?selected:first.id).catch(function(){});
       // No hit of the focused vehicle in this record: his own collision model takes the place of the empty
       // scene, and only a vehicle the exporter never wrote falls back to a message.
       return showFocusEmpty();
@@ -6032,7 +6188,7 @@
       if(!battles.length){current=null;selected=null;++battleGeneration;$('battles').appendChild(node('option','No battles yet'));
         renderBattleList();syncBattlePick();
         if(sidebarMode!=='battles'){battlesDirty=true;return;}
-        ++generation;if(viewer)viewer.clear();sceneTiles(null,false);renderHits();message('New hits appear here after a battle.');warnings([]);return;}
+        ++generation;sceneCleared();renderHits();message('New hits appear here after a battle.');warnings([]);return;}
       battles.forEach(function(b){var option=node('option',new Date(b.startedAt*1000).toLocaleDateString('en-GB')+' \u00b7 '+b.map+' \u00b7 '+b.hits);option.value=b.id;$('battles').appendChild(option);});var id=battles.some(function(b){return b.id===prior;})?prior:battles[0].id;$('battles').value=id;
       renderBattleList();syncBattlePick();
       // The battle list stays fresh while the Vehicles mode is on screen, but the scene there belongs to a
@@ -6178,10 +6334,10 @@
     var token=++generation;message('Preparing the model\u2026');if(viewer)viewer.clear();
     // In the game the model can still be on its way: the same 30 s the vehicle browser waits. Outside it
     // there is nobody to extract anything, so what is published is all there will be.
-    swapScene(hit,host.game?Date.now()+30000:0).then(function(synthetic){
+    swapScene(hit,host.game?Date.now()+30000:0,function(){return token===generation;}).then(function(synthetic){
       if(token!==generation)return null;
       return ArmorInspectorData.sceneFor(current,synthetic).then(function(data){if(token!==generation)return;display(data,false);});
-    }).catch(function(e){if(token===generation){message(e.message);warnings([e.message]);}});
+    }).catch(function(e){if(token===generation){sceneCleared();message(e.message);warnings([e.message]);}});
   };
   if(viewer)viewer.onAim=function(text){analysisKey=null;$('spread-result').textContent=text;};
   // Releasing the pinned centre: the manual estimate goes stale as before, the emulated circle simply
@@ -6474,8 +6630,7 @@
     if (type && !ttxData) readTtx(type).then(function (t) {
       if (!t || ttxType !== type) return;
       ttxData = t; ttxPaint();
-      // The health bar of a vehicle whose export has no hit points waits for this file too (its own type's).
-      if (funOn() && !(hpMax > 0)) { hpMax = targetMaxHp(activeHit); hpLeft = hpMax; paintFun(); }
+      // The health bar waits for the file of the vehicle on screen on its own (hpAsk): the same read when it is his.
     });
   }
   // --- Which pair -------------------------------------------------------------------------------------------
@@ -6746,6 +6901,7 @@
   }
   function mulOf(input) { var e = shooterEffects(false).e; return aimMul({mul: e.dev}, input); }
   function ttxPaint() {
+    if (sceneBuild) return;   // a scene half built: its finisher (sceneShown) paints the panel once
     var panel = $('ttx-panel');
     if (!panel) return;
     var show = !!(TTX && ttxData && ttxData.configs && ttxData.configs.length && !$('shooter-tile').hidden);

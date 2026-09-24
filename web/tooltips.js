@@ -224,33 +224,40 @@
   // A help dot stands only while something it explains does: while every element it lists is hidden (the model row
   // with no model on screen), so is the dot. An element counts as hidden when it or a box around it below the one it
   // shares with the dot carries `hidden` (the gun's shells inside the hidden gun panel); a box around both hides the
-  // dot with them anyway. The dots of the page are taken once, at start, and the observer follows the page's own
-  // `hidden` writes on those few boxes - no layout is read for it.
+  // dot with them anyway. No layout is read for it.
+  // LIVE, NOT REMEMBERED (24.09): the ids and the boxes around them are looked up again on every pass. Until 0.7.41 the
+  // chains of boxes were taken once at start, so a control the page moved later (the toolbar's groups going into its
+  // “More” popover and back) or made anew kept a chain of boxes it was no longer in, and the dot stood or vanished by
+  // them for good (user 24.09: “the help icons disappeared”). The dots too are taken again on every refresh(), so a
+  // dot the page adds later is one of them. The observer follows the `hidden` of the boxes the last pass walked
+  // through; app.js calls refresh() once every scene it puts on screen (sceneShown), whatever the observer saw.
   function adopt() {
     var found = doc.querySelectorAll ? doc.querySelectorAll('[' + HELP + ']') : [];
-    for (var i = 0; i < found.length; i++) {
-      var dot = found[i], els = listed(dot), chains = [];
-      for (var k = 0; k < els.length; k++) {
-        var chain = [];
-        for (var el = els[k]; el && el.nodeType === 1 && !within(el, dot); el = el.parentNode) {
-          chain.push(el);
-          if (boxes.indexOf(el) < 0) boxes.push(el);
-        }
-        chains.push(chain);
-      }
-      dots.push({dot: dot, chains: chains});
-    }
-    present();
+    dots = [];
+    for (var i = 0; i < found.length; i++) dots.push(found[i]);
+    return present();
   }
+  // Stands (and hides) every dot; returns true when the boxes to watch are not the ones watched.
   function present() {
+    var walked = [];
     for (var i = 0; i < dots.length; i++) {
-      var on = false, chains = dots[i].chains;
-      for (var c = 0; c < chains.length && !on; c++) {
-        on = true;
-        for (var b = 0; b < chains[c].length && on; b++) on = !chains[c][b].hidden;
+      var dot = dots[i], els = listed(dot), on = false;
+      if (!within(doc.documentElement, dot)) continue;      // a dot the page has taken away (a popover rebuilt)
+      for (var k = 0; k < els.length; k++) {
+        var shown = true;
+        for (var el = els[k]; el && el.nodeType === 1 && !within(el, dot); el = el.parentNode) {
+          if (walked.indexOf(el) < 0) walked.push(el);   // the whole chain, so the watched set stays put
+          if (el.hidden) shown = false;
+        }
+        if (shown) on = true;
       }
-      if (dots[i].dot.hidden === on) dots[i].dot.hidden = !on;
+      if (dot.hidden === on) dot.hidden = !on;
+      if (!on && dot === helpDot) helpOff();                 // its cluster left the screen: so does its help mode
     }
+    var same = walked.length === boxes.length;
+    for (var b = 0; same && b < walked.length; b++) same = boxes.indexOf(walked[b]) >= 0;
+    boxes = walked;
+    return !same;
   }
 
   // --- The one observer ------------------------------------------------------------------------------------
@@ -275,7 +282,7 @@
       else if (r.attributeName === 'hidden') hid = true;
       else words = true;
     }
-    if (hid) present();
+    if (hid && present()) watch();
     if (!shownEl || !(words || hid)) return;
     if (hid && !onScreen(shownEl)) hide(); else refresh();
   }
@@ -486,5 +493,6 @@
   // The window's own resize and blur only: in the capture phase every control losing focus would close the bubble.
   win.addEventListener('resize', away);
   win.addEventListener('blur', away);
-  win.BullbaTips = {close: function () { helpOff(); hide(); }};
+  // refresh(): the page has put another scene on screen (app.js sceneShown) - the dots are taken and stood again.
+  win.BullbaTips = {close: function () { helpOff(); hide(); }, refresh: function () { if (adopt()) watch(); }};
 })();

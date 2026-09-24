@@ -2,6 +2,14 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
+## Unreleased
+
+- **Emulation:** the target's health bar shows its figures inside it (left / max); its tooltip says where the figure comes from.
+- **Emulation:** ⇅ in an Onslaught battle, or in a battle recorded before 0.7.20, keeps the health bar: a vehicle with no hit points in the roster takes its stock figure from its characteristics file. A browsed vehicle uses its own export, not the battle open beside it.
+- **Scene:** every way of showing a scene (a hit, ⇅ and back, another shooter, the vehicle browser, another battle or seat, switching the side panel) now draws the tiles, the ⌖ strip, the health bar, the characteristics panel and the "?" icons the same way; an emptied scene no longer keeps the previous hit's strip or controls.
+- **Help:** the "?" icons no longer disappear for good after the toolbar reflows or the scene changes; the help mode ends when its "?" leaves the screen.
+- **Scene:** the battle-list refresh no longer puts the recorded hit back over a ⇅ view, a picked shooter or a browsed vehicle; switching the side panel keeps a browsed vehicle and its camera; another hit of the same vehicle from another battle gets its own aiming circle at once; a model still exporting stops writing "Exporting…" once you open something else.
+
 ## 0.7.41 (2026-09-23)
 
 - **Camera:** a clinch hit keeps the camera on the shell's line at the recorded range; Fit only zooms and no longer backs the camera off to the side.

@@ -100,8 +100,10 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 /* Target HP (user, 22.09): the health bar of the vehicle on screen stands in the model tile's own row, with
    the ↺ that fills it again and clears the Hitmarks - the same button as the swap (.swap-roles), because it
    is the same kind of control. The row takes over the tile's placing exactly as the shooter row does below.
-   The bar is graphics only: the figures live in its tooltip. Its fill colour is written by the page from the
-   very chance/damage scale the armour is drawn with, so full and empty read as green and red of one palette. */
+   Its fill colour is written by the page from the very chance/damage scale the armour is drawn with, so full and
+   empty read as green and red of one palette. 24.09 (user: "is there no way to get the number?"): the figure "left /
+   max" stands inside the bar as in the game's own health bars - plain numbers, no word, legible over any fill by
+   its shadow; the details stay in the tooltip. The bar is 16 px high for it (it was 12). */
 /* 23.09: the row is the tile's head (the tile, ⌖ and the help dot) and the strip (.fun-strip, below): the emulated
    gun's load whenever the aim emulation runs, and under ⌖ also ◔, the target's health and ↺. `width:max-content`: a
    row centred from left:50% would otherwise be squeezed to half the scene before it ever reached its max-width. The
@@ -116,9 +118,10 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
    lit in the accent with the switch like every glyph of a .swap-roles button, at the glyph's own size. */
 .fun-icon{display:block;width:1em;height:1em;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;filter:drop-shadow(0 1px 1px rgba(0,0,0,.7))}
 .fun-icon .fun-icon-dot{fill:currentColor;stroke:none}
-.target-hp{flex:0 1 140px;width:140px;min-width:64px;height:12px;padding:2px;border:1px solid rgba(157,174,191,.55);border-radius:6px;background:rgba(23,35,48,.35);box-shadow:0 1px 2px rgba(0,0,0,.7)}
+.target-hp{position:relative;flex:0 1 140px;width:140px;min-width:64px;height:16px;padding:2px;border:1px solid rgba(157,174,191,.55);border-radius:6px;background:rgba(23,35,48,.35);box-shadow:0 1px 2px rgba(0,0,0,.7)}
 .target-hp[hidden]{display:none}
 .target-hp-fill{display:block;height:100%;width:100%;border-radius:4px;background:#5ac8a0}
+.target-hp-text{position:absolute;left:0;top:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;padding:0 4px;overflow:hidden;white-space:nowrap;font-size:11px;font-weight:600;line-height:1;color:#fff;font-variant-numeric:tabular-nums;text-shadow:0 0 2px #000,0 0 2px #000,0 1px 1px #000;pointer-events:none}
 /* The swap left the shooter tile for a button of its own (19.09): the tile picks the role now. The two share
    one row so the button keeps to the left of the tile, and the row takes over the tile's own placing. */
 .shooter-row{position:absolute;left:50%;bottom:12px;transform:translateX(-50%);z-index:7;display:flex;flex-wrap:nowrap;align-items:center;gap:8px;max-width:calc(100% - 24px)}
