@@ -384,9 +384,10 @@ const SHELLS = [
   {kind: 'HIGH_EXPLOSIVE', name: 'HE shell', caliber: 120, penetration100: 60, penetration500: 60,
    alpha: 500, mechanics: 'MODERN', gunInstallation: 1, gun: '120 mm ability'}
 ];
+const REAL_SHOT_CONTEXT = new Function('window', fs.readFileSync(path + 'shot-context.js', 'utf8') + ';return window.ArmorShotContext;')({});
 global.ArmorShotContext = {resolve: function () { return {choices: SHELLS, index: -1, kind: 'ARMOR_PIERCING', source: 'stub', aimReason: 'no-snapshot'}; },
-  // resolve() is stubbed, but which shell the page assumes when nothing is determined is the real rule.
-  assume: new Function('window', fs.readFileSync(path + 'shot-context.js', 'utf8') + ';return window.ArmorShotContext;')({}).assume};
+  // resolve() is stubbed, but which shell the page assumes when nothing is determined is the real rule (pick, 25.09).
+  assume: REAL_SHOT_CONTEXT.assume, pick: REAL_SHOT_CONTEXT.pick};
 global.ArmorShotTelemetry = {load: function () {}, shots: function () { return []; }};
 
 require(path + 'ballistics.js');
@@ -2954,8 +2955,8 @@ settle(20).then(function () {
      realShot.assume(two, 'ARMOR_PIERCING', 0).index === -1);
   const appSrc = fs.readFileSync(path + 'app.js', 'utf8');
   ok('shells: the page assumes a shell of the hit’s type when nothing is determined, and marks it',
-     /shellAssumed=guess\.index/.test(appSrc) && /'◌ Assumed shell'/.test(appSrc)
-     && /Assumed: the record does not say which shell it was/.test(appSrc)
+     /shellAssumed=guess\.index/.test(appSrc) && /'◌ Assumed shell/.test(appSrc)
+     && /Assumed: the record does not name this shot’s shell/.test(appSrc)
      && appSrc.indexOf('Pick a shell — several matches') < 0);
 
   // ---- distance laws (23.09, BACKLOG № 32): penetration and damage over the flight ----------------------
@@ -3033,9 +3034,10 @@ settle(20).then(function () {
      /ArmorBallistics\.penetrationAt\(c,distance\)/.test(appSrc) && /ArmorBallistics\.alphaAt\(c,distance\)/.test(appSrc)
      && /B\.alphaAt\(c,range\)/.test(ctxSrc) && /R\.atDistance\(P, far, d\)/.test(ttxSrc)
      && !/\/400/.test(appSrc) && !/\/ ?450/.test(appSrc + ctxSrc + ttxSrc)
-     // BACKLOG 38 (23.09): both calls hand on the Borkenkäfer's mark as well (the window's top on a marked target).
-     && /assume\(context\.choices,context\.kind,hit\.damage,context\.range,context\.mark\)/.test(appSrc)
-     && /assume\(recorded,shotContext\.kind,hit&&hit\.damage,shotContext\.range,shotContext\.mark\)/.test(appSrc));
+     // BACKLOG 38 (23.09): both calls hand on the Borkenkäfer's mark as well (the window's top on a marked target) - since
+     // 25.09 through the one owner, ArmorShotContext.pick, which both the scene and the Statistics log call.
+     && /assume\(choices,ctx\.kind,hit&&hit\.damage,ctx\.range,ctx\.mark\)/.test(ctxSrc)
+     && /ArmorShotContext\.pick\(context,hit\)/.test(appSrc) && /ArmorShotContext\.pick\(shotContext,hit\)/.test(appSrc));
   ok('distance: the characteristics panel’s 500 m figure is the garage’s - 194 for 218/194, 199.3 at int(maxDistance) for a shell that flies 400 m',
      (function () { const v = global.BullbaTtx && global.BullbaTtx.values({shells: [APCR218, Object.assign({}, APCR218, {maxDistance: 400})]});
        return !!v && v.shells[0].pen500 === 194 && r1(v.shells[1].pen500) === 199.3; })());
@@ -5504,7 +5506,8 @@ settle(20).then(function () {
   ok('mark: the bottom of the window stays (whether the marking shot itself gets the bonus is not known) - 250 HP fits the 320 either way',
      realShot.assume(PAIR, 'ARMOR_PIERCING', 250, 100, on).index === 0 && realShot.assume(PAIR, 'ARMOR_PIERCING', 250, 100).index === 0);
   ok('mark: resolve() hands the mark on with the context, and the page passes it to assume() at both calls',
-     /mark:markOf\(hit\)/.test(fs.readFileSync(path + 'shot-context.js', 'utf8')) && /,context\.mark\)/.test(appSrc) && /,shotContext\.mark\)/.test(appSrc));
+     /mark:markOf\(hit\)/.test(fs.readFileSync(path + 'shot-context.js', 'utf8')) && /ArmorShotContext\.pick\(context,hit\)/.test(appSrc) && /ArmorShotContext\.pick\(shotContext,hit\)/.test(appSrc)
+     && /assume\(choices,ctx\.kind,hit&&hit\.damage,ctx\.range,ctx\.mark\)/.test(fs.readFileSync(path + 'shot-context.js', 'utf8')));
 
   // ---- 3. through the page ------------------------------------------------------------------------------------------------
   // The stubbed resolve() hands the page the recorded gun state and the mark, the two things the real one reads here.
@@ -6583,6 +6586,84 @@ settle(20).then(function () {
   }).then(function () {
     global.BullbaHost.game = false;
     global.ArmorInspectorData.battle = keepBattle; global.ArmorInspectorData.ttx = keepTtx; global.ArmorInspectorData.scene = keepScene;
+  });
+}).then(function () {
+  // ---- unknown-shell-grey (25.09): a hit whose shell the record does not name ------------------------------------------
+  // The user's case: the White Tiger boss's special shot (effects 89, the stun shell HE 128 mm that no gun of the client
+  // fires) with only his AP 128 on the list - the page fell to "HE - manual" on empty fields (a grey model), or, after
+  // another hit, on that hit's figures (pen 999: a wrong manual HE). Now the real resolver and ArmorShotContext.pick: his
+  // shell of the same calibre, else his first, marked assumed with why; the bare type only with no list at all, and then
+  // on empty fields.
+  const CTX = global.ArmorShotContext, keepResolve = CTX.resolve;
+  CTX.resolve = REAL_SHOT_CONTEXT.resolve;
+  const keepBattle = global.ArmorInspectorData.battle, keepScene = global.ArmorInspectorData.scene;
+  const parts = function () {
+    return [{id: 0, name: 'chassis', modelKey: 'k0'}, {id: 1, name: 'hull', modelKey: 'k1'}, {id: 2, name: 'turret', modelKey: 'k2'}, {id: 3, name: 'gun', modelKey: 'k3'}];
+  };
+  const GUNGNIR = {kind: 'ARMOR_PIERCING', name: 'Gungnir', caliber: 128, penetration100: 999, penetration500: 999, alpha: 750, effectsIndex: 90,
+                   damageRandomization: .25, speed: 1440, gravity: 6.2784, gunInstallation: 0, gun: 'Railgun'};
+  const APCR105 = {kind: 'ARMOR_PIERCING_CR', name: 'APCR 105', caliber: 105, penetration100: 278, penetration500: 269, alpha: 400, effectsIndex: 34,
+                   damageRandomization: .25, speed: 800, gravity: 6.2784, gunInstallation: 0, gun: 'Railgun E1'};
+  const EVENT_TAGS = ['AT-SPG', 'event_battles', 'special', 'wt_boss'];
+  const UHIT = function (id, eff, kind, cal, shells, attacker, extra) {
+    return Object.assign({id: id, attackerId: 51, targetId: 7, direction: 'outgoing', damage: 15, receivedAt: 100, gameTime: 500, effectsIndex: eff,
+      points: [{status: 'resolved', part: 1, position: [0, 0, 0], shellKind: kind, caliber: cal}, {status: 'resolved', part: 1, position: [0, 0, .1], caliber: 0}],
+      shellCandidates: [], availableShells: shells, shellStatus: 'no matching shell effects',
+      attacker: Object.assign({parts: parts(), gunDispersion: 0.003}, attacker),
+      target: {name: 'Bot', type: 'germany:Bot', parts: parts()}, warnings: []}, extra || {});
+  };
+  const BOSS = {name: 'BT E 110', type: 'germany:Boss_WT', tags: EVENT_TAGS, gun: 'Railgun'};
+  const UBATTLE = {id: 't-unknown-shell', playerVehicleId: 51, map: 'Test', warnings: [], shotEvents: [], hits: [
+    UHIT('us-89', 89, 'HIGH_EXPLOSIVE', 128, [GUNGNIR], BOSS),
+    UHIT('us-ap', 90, 'ARMOR_PIERCING', 128, [GUNGNIR], BOSS, {shellCandidates: [GUNGNIR], shellStatus: 'matched', damage: 205}),
+    UHIT('us-89b', 89, 'HIGH_EXPLOSIVE', 128, [GUNGNIR], BOSS),
+    UHIT('us-mini', 89, 'HIGH_EXPLOSIVE', 128, [APCR105], {name: 'Mini boss', type: 'germany:Mini_WT', tags: ['mediumTank', 'event_battles']}),
+    UHIT('us-none', 31, 'HIGH_EXPLOSIVE', 128, [], {name: '', type: ''}, {shellStatus: 'attacker descriptor unavailable'})]};
+  global.ArmorInspectorData.battle = function (id) { return id === UBATTLE.id ? Promise.resolve(UBATTLE) : keepBattle(id); };
+  global.ArmorInspectorData.scene = function (b, id) { return Promise.resolve({hit: b.hits.filter(function (x) { return x.id === id; })[0], models: {}, warnings: []}); };
+  const row = function (id) { return document.getElementById('hits').children.filter(function (c) { return c.getAttribute('data-hit') === id; })[0]; };
+  const choice = document.getElementById('shell-choice'), pen = document.getElementById('penetration');
+  const chip = function () { return document.getElementById('shell-quick').children.filter(function (b) { return b.dataset.shell === choice.value; })[0]; };
+  const tb = document.getElementById('battles');
+  tb.value = UBATTLE.id; tb.onchange.call(tb);
+  const seen = function () { const c = chip(); return choice.value + ' pen ' + pen.value + ' | ' + (c ? c.textContent + ' | ' + c.title : 'no chip') + ' | ' + choice.title.slice(0, 160); };
+  return settle(20).then(function () { row('us-89').onclick(); return settle(20); }).then(function () {
+    const c = chip();
+    ok('unknown shell: the boss’s special shot on a fresh battle is coloured with his own shell of the same calibre, not a manual HE',
+       choice.value === 'saved:0' && Number(pen.value) === 999 && !!c && c.textContent.indexOf('◌ ') === 0, seen());
+    ok('unknown shell: its chip says it is assumed, why, and that it was the event vehicle’s special shot',
+       !!c && c.title.indexOf('Gungnir, 128 mm\nAssumed: the record does not name this shot’s shell, so his shell of the same calibre was taken.') === 0
+       && c.title.indexOf('\n• The shot: HE, 128 mm - none of his shells is HE') > 0
+       && c.title.indexOf('\n• An event vehicle’s special shot (an ability): the server sets its shell, his gun does not fire it') > 0
+       && c.title.indexOf('\n• The figures are this shell’s, not the shot’s') > 0, seen());
+    ok('unknown shell: the shell group’s tooltip opens with the assumed shell and the same points',
+       choice.title.indexOf('◌ Assumed shell\nThe record does not name this shot’s shell.\n• The shot: HE, 128 mm') === 0, seen());
+    row('us-ap').onclick(); return settle(20);
+  }).then(function () {
+    ok('unknown shell: (the next hit names its AP, pen 999)', choice.value === 'saved:0' && Number(pen.value) === 999 && chip().textContent.indexOf('● ') === 0, seen());
+    row('us-89b').onclick(); return settle(20);
+  }).then(function () {
+    ok('unknown shell: after that hit the special shot is the assumed AP again, never a manual HE on the previous hit’s figures',
+       choice.value === 'saved:0' && chip().textContent.indexOf('◌ ') === 0, seen());
+    row('us-mini').onclick(); return settle(20);
+  }).then(function () {
+    ok('unknown shell: no shell of the shot’s type or calibre - his first shell, assumed, and why',
+       choice.value === 'saved:0' && Number(pen.value) === 278 && chip().textContent.indexOf('◌ ') === 0
+       && chip().title.indexOf('so his first shell was taken.') > 0 && chip().title.indexOf('An event vehicle’s special shot') > 0, seen());
+    // The user's own manual HE on a named hit, then a hit whose record has no shooter at all: the bare type is left, on
+    // EMPTY fields - neither his typed figure nor the AP's 999.
+    row('us-ap').onclick(); return settle(20);
+  }).then(function () {
+    choice.value = 'HIGH_EXPLOSIVE'; choice.onchange.call(choice);
+    pen.value = '333'; pen.oninput.call(pen);
+    const typed = String(pen.value);
+    row('us-none').onclick(); return settle(20).then(function () {
+      ok('unknown shell: a record with no shooter’s shells leaves the bare type on empty fields, not the figures of the hit before',
+         typed === '333' && choice.value === 'HIGH_EXPLOSIVE' && String(pen.value) === '' && String(document.getElementById('alpha').value) === '', seen());
+    });
+  }).then(function () {
+    CTX.resolve = keepResolve;
+    global.ArmorInspectorData.battle = keepBattle; global.ArmorInspectorData.scene = keepScene;
   });
 }).then(function () {
   // ---- TTX panel v2 (23.09): the reload line against the client's own lines for every kind of loading ----------

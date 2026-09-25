@@ -83,4 +83,26 @@ c=R(hit,far(2));assert.ok(Math.abs(c.range-102)<1e-9,'range = |origin - S| with 
 const two2={...hit,points:[hit.points[0],{...hit.points[0],position:[0,0,1]}]};
 c=R(two2,far(1.05).map((e)=>e.event==='stop'?{...e,position:[0,0,1.05]}:e));
 assert.equal(c.stop.position[2],1.05);assert.ok(Math.abs(c.range-(100+.05))<1e-9,'range to the first contact ('+c.range+')');
-console.log(JSON.stringify({passed:true,cases:33}));
+// unknown-shell-grey (25.09): a shot whose effects id is none of the shooter's shells (the White Tiger boss's stun shell,
+// effects 89, HE 128 mm, with only his AP 128 on the list). resolve() names nothing; pick() takes his shell of the shot's
+// calibre, else his first, says why and that it was an event vehicle's special shot; an empty list stays -1 (bare type).
+const P=ArmorShotContext.pick;
+const AP128={kind:'ARMOR_PIERCING',name:'Gungnir',caliber:128,penetration100:999,alpha:750,effectsIndex:90,speed:1440,gravity:6.2784};
+const APCR105={kind:'ARMOR_PIERCING_CR',name:'APCR',caliber:105,penetration100:278,alpha:400,effectsIndex:34,speed:800,gravity:6.2784};
+const special=(shells,tags)=>({...hit,effectsIndex:89,damage:15,shellCandidates:[],availableShells:shells,attacker:{type:'germany:Boss',tags:tags||['event_battles']},
+  points:[{part:1,status:'resolved',position:[0,0,0],shellKind:'HIGH_EXPLOSIVE',caliber:128},{part:1,status:'resolved',position:[0,0,.1],caliber:0}]});
+let h89=special([APCR105,AP128]);c=R(h89,[]);
+assert.equal(c.index,-1);assert.equal(c.kind,'HIGH_EXPLOSIVE');assert.equal(c.caliber,128,'the shot’s calibre, the blast point’s 0 left out');
+let g=P(c,h89);
+assert.equal(g.index,1,'his shell of the same calibre, not the first');assert.equal(g.fallback,'caliber');assert.equal(g.reason,'his shell of the same calibre');
+assert.equal(g.shotKind,'HIGH_EXPLOSIVE');assert.equal(g.shotCaliber,128);assert.equal(g.special,true);assert.equal(g.event,true);
+h89=special([APCR105],['mediumTank']);g=P(R(h89,[]),h89);
+assert.equal(g.index,0);assert.equal(g.fallback,'first');assert.equal(g.reason,'his first shell');assert.equal(g.special,true);assert.equal(g.event,false);
+h89=special([]);g=P(R(h89,[]),h89);assert.equal(g.index,-1,'no list: the bare type is left to the page');assert.equal(g.special,false);
+// A shot of a type he carries is assume()'s as before, and is no special shot when its effects are his.
+const heShot={...hit,effectsIndex:48,damage:0,shellCandidates:[],availableShells:[AP128,{...AP128,kind:'HIGH_EXPLOSIVE',name:'HE',penetration100:65,effectsIndex:48}],
+  points:[{part:1,status:'resolved',position:[0,0,0],shellKind:'HIGH_EXPLOSIVE',caliber:128}]};
+c=R(heShot,[]);g=P(c,heShot);
+if(c.index<0){assert.equal(g.index,1);assert.equal(g.fallback,'');}
+assert.equal(g.special,false);
+console.log(JSON.stringify({passed:true,cases:37}));

@@ -623,8 +623,17 @@
   function clock(seconds){if(!Number.isFinite(seconds))return '—';var d=new Date(seconds*1000);return d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'});}
   function detail(label,value,small){var e=node('div');e.appendChild(node('div',label,'detail-label'));e.appendChild(node('div',String(value),'detail-value'));if(small)e.appendChild(node('div',small,'detail-small'));$('details').appendChild(e);}
   // Which of the candidates the page assumed when the record does not say (22.09); -1 when it does say, or
-  // when the assumption is the bare type rather than one of the shooter's shells.
-  var shellAssumed=-1,shellAssumedWhy='';
+  // when the shooter's list is empty and only the bare type is left. shellAssumedNotes: the points of its tooltip.
+  var shellAssumed=-1,shellAssumedWhy='',shellAssumedNotes=[];
+  // The tooltip's points on a shell assumed past the hit's own type (ArmorShotContext.pick, 25.09): what the shot was,
+  // and when its effects are none of the shooter's shells, that it was an ability's special shot.
+  function assumedNotes(g){
+    var out=[];
+    if(g.fallback)out.push('The shot: '+(shellNames[g.shotKind]||'type unknown')+(g.shotCaliber?', '+g.shotCaliber+' mm':'')+' - none of his shells is '+(shellNames[g.shotKind]||'of it'));
+    if(g.special)out.push(g.event?'An event vehicle’s special shot (an ability): the server sets its shell, his gun does not fire it':'Its effects match none of his shells: an ability’s or another gun’s shot');
+    if(g.fallback)out.push('The figures are this shell’s, not the shot’s');
+    return out;
+  }
   function prepareShell(hit){
     // A swapped view has no shot and therefore no shells: keep the shell that is on screen - type,
     // penetration and calibre - instead of falling back to the empty manual defaults. A browsed vehicle and a
@@ -638,20 +647,18 @@
     syncTargetMods(hit);syncShooterMods(hit);
     candidates=emuShellList();var choice=$('shell-choice'),recorded=shotContext.choices,value;
     // Nothing determined (139 of 4284 recorded hits, 22.09): the model used to stay grey, which tells the user
-    // nothing (owner, 22.09). It is coloured with the likeliest shell instead - one of the shooter's own of the
-    // type the hit names, or, when his list holds none of that type, the type itself on manual figures. Every
-    // place this shell is shown says "assumed"; it is never counted as the shell that actually flew.
-    shellAssumed=-1;shellAssumedWhy='';
+    // nothing (owner, 22.09). It is coloured with the likeliest of the shooter's own shells instead - of the type
+    // the hit names, else of its calibre, else his first (ArmorShotContext.pick, the one owner; 25.09: the event's
+    // special shots fell to a manual type on empty or the previous hit's figures). Every place this shell is shown
+    // says "assumed"; it is never counted as the shell that actually flew.
+    shellAssumed=-1;shellAssumedWhy='';shellAssumedNotes=[];var autoManual=false;
     if(shotContext.index>=0)value='saved:'+shotContext.index;
     else{
-      var guess=ArmorShotContext.assume?ArmorShotContext.assume(recorded,shotContext.kind,hit&&hit.damage,shotContext.range,shotContext.mark):{index:-1,reason:''};
-      shellAssumed=guess.index;shellAssumedWhy=guess.reason||'';
-      // Why the record could not name the shell comes before how the page picked one: the two reasons the
-      // resolver knows (22.09) are worth more than "the deepest penetration" - the shot's own ballistics
-      // fit no shell the shooter carries, or the vehicle switches its shell parameters and the record does
-      // not say which state was on.
-      if(shotContext.unresolvedWhy)shellAssumedWhy=shotContext.unresolvedWhy+(guess.reason?', and of the rest '+guess.reason:'');
-      value=guess.index>=0?'saved:'+guess.index:shotContext.kind||'ARMOR_PIERCING';
+      var guess=ArmorShotContext.pick(shotContext,hit);
+      shellAssumed=guess.index;shellAssumedWhy=guess.reason;shellAssumedNotes=assumedNotes(guess);
+      // An empty list (no shooter in the record) leaves the bare type: on empty fields, never the figures of the hit
+      // before - a manual shell is only ever the user's own.
+      autoManual=guess.index<0;value=guess.index>=0?'saved:'+guess.index:shotContext.kind||'ARMOR_PIERCING';
     }
     // A browsed vehicle has no hit to identify a shell, so resolve() leaves the index at -1. The shooter's own
     // list is nevertheless the right set of choices: preselect the first AP-like shell so the model is coloured
@@ -663,6 +670,8 @@
     // the same type, else its first; the record's own stays in the list to compare with.
     if(!keep&&emuShellGun){var c1=value.indexOf('saved:')===0?candidates[Number(value.slice(6))]:null,pick=emuShellPick(c1,c1?'':value);if(pick)value=pick;}
     choice.value=value;
+    // selectShell keeps the figures on screen for a manual type the USER picks; an automatic one starts from nothing.
+    if(autoManual&&!keep&&value.indexOf('saved:')!==0){manualPen='';manualAlpha='';$('penetration').value='';$('alpha').value='';}
     if(keep){choice.value=keep.kind;manualPen=keep.penetration;manualAlpha=keep.alpha;$('penetration').value=keep.penetration;$('caliber').value=keep.caliber;$('alpha').value=keep.alpha;penLabel(false);updateShell();}
     else selectShell();
     // The shooter's chips just changed, so the shell block wants a different width: re-measure the heading.
@@ -689,7 +698,8 @@
       b.dataset.shell='saved:'+i;b.title=c.name+', '+c.caliber+' mm\n'
         +(c.emuGun?'A shell of the gun picked on the characteristics panel - the gun the emulation fires.\n• Gun: '+c.emuGunName
           :actual?(second?'The shooter fired in his second mode; the client’s numbers for that mode are used.':'Type from the hit.')
-          :assumed?'Assumed: the record does not say which shell it was'+(shellAssumedWhy?', so '+shellAssumedWhy+' was taken':'')+'.'
+          :assumed?'Assumed: the record does not name this shot’s shell'+(shellAssumedWhy?', so '+shellAssumedWhy+' was taken':'')+'.'
+            +shellAssumedNotes.map(function(n){return '\n• '+n;}).join('')
           :second?'The same gun in the vehicle’s second mode.':'Compare with this shell.')
         +(c.gunInstallation>0?'\n• Ability gun'+(c.gun?': '+c.gun:''):'')
         +(mode?'\n• Mode: '+mode:'')
@@ -5494,8 +5504,8 @@
       // too: a Polish APCR's alpha falls off with it, and the window at the muzzle threw the right shell out.
       var context=ArmorShotContext.resolve(hit,battle.shotEvents||[]),c=context.choices[context.index]||null;
       var range=context.range>0?context.range:hit.rangeAtImpact>0?hit.rangeAtImpact:100;
-      if(!c&&ArmorShotContext.assume){var picked=ArmorShotContext.assume(context.choices,context.kind,hit.damage,context.range,context.mark);c=context.choices[picked.index]||null;}
-      if(!c)c=context.choices[0]||null;
+      // ArmorShotContext.pick: the same shell prepareShell shows - of the hit's type, else of its calibre, else the first.
+      if(!c)c=context.choices[ArmorShotContext.pick(context,hit).index]||null;
       var shell=c?shellAt(c,c.kind,c.penetration100,c.caliber,range,hit):null;
       // A flat engine (one leaf, no kd-tree): the tree would cost far more to build than the one to three rays
       // cast through it here save, and the verdicts are the same.
@@ -5692,7 +5702,7 @@
     // the damage side is the shooter's own shell of that type (user, 22.09).
     // Tooltip markup (tooltips.js): the shell's source is the heading, its figures are points.
     var lent=!c&&shell&&shell.alpha>0?'\n• Alpha: of the shooter’s '+(shell.alphaFrom||'shell'):'';
-    var source=!choice?'Pick a shell':!valid?'No penetration in the record':(actual?'● From the hit':assumed?'◌ Assumed shell':c?(browsing?'● Shooter’s shell':'◇ Comparison'):'◇ Manual')+'\n• Penetration: '+Math.round(shell.penetration)+' mm at target, ±'+Math.round(shell.randomization*100)+'%'+lent+(shell.alphaNear>0?'\n• Alpha at target: '+Math.round(shell.alpha)+' HP':'');
+    var source=!choice?'Pick a shell':!valid?'No penetration in the record':(actual?'● From the hit':assumed?'◌ Assumed shell\nThe record does not name this shot’s shell.'+shellAssumedNotes.map(function(n){return '\n• '+n;}).join(''):c?(browsing?'● Shooter’s shell':'◇ Comparison'):'◇ Manual')+'\n• Penetration: '+Math.round(shell.penetration)+' mm at target, ±'+Math.round(shell.randomization*100)+'%'+lent+(shell.alphaNear>0?'\n• Alpha at target: '+Math.round(shell.alpha)+' HP':'');
     // The alpha field says the same about a shell whose damage falls off with the distance (damageMutable).
     var alphaTitle='Shell alpha, HP\nThe damage figures are shares of it.'+(shell&&shell.alphaNear>0?'\n• Falls off with the distance: the field holds it up to 50 m; '+Math.round(shell.alpha)+' HP at '+Math.round(distance)+' m':'');
     $('alpha-label').title=alphaTitle;$('alpha').title=alphaTitle;

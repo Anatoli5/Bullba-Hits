@@ -266,6 +266,8 @@
     var chosen=sources.find(function(s){return usable(s.aim,s.stamp,s.window);})||null,aim=chosen?chosen.aim:null;
     var aimReason=aim?null:!possible.length?'no-tracer':!matches.length?'no-endpoint':!tracer?'ambiguous':!tracer.own?'foreign':!sources.length?'no-snapshot':'stale';
     var kindValues=Array.from(new Set(points.map(function(p){return p.shellKind||kinds[p.shellType];}).filter(Boolean)));
+    // The shot's own calibre, when its points agree (a spall or blast point carries 0): pick() below falls back on it.
+    var calibers=Array.from(new Set(points.map(function(p){return Number(p.caliber);}).filter(function(c){return c>0;})));
     // shellCandidates is what the record narrowed down; when it is empty (39 of 181 unresolved hits in the
     // 60 recorded battles, 22.09) the shells the shooter could load are the only list there is, and a single
     // one of them that agrees with the hit is an answer, not a blank.
@@ -362,7 +364,7 @@
     // Why the shell stayed unknown, in the words the shell chips and the tooltip use.
     var why=contradicted?'no shell of this shooter fits the shot’s ballistics'
       :hasModes&&index<0?'this vehicle switches its shell parameters; the record does not say which state was on':'';
-    return {choices:choices,index:index,kind:kindValues.length===1?kindValues[0]:null,tracer:tracer,stop:stop,command:command,aim:aim,aimSource:chosen?chosen.from:null,aimReason:aimReason,
+    return {choices:choices,index:index,kind:kindValues.length===1?kindValues[0]:null,caliber:calibers.length===1?calibers[0]:null,tracer:tracer,stop:stop,command:command,aim:aim,aimSource:chosen?chosen.from:null,aimReason:aimReason,
       serverShot:serverShot(tracer,events),
       range:range,rangeSource:rangeSource,modes:hasModes,unresolvedWhy:why,
       gunState:gunState,gunStateFrom:gunFrom,gunNotes:gunNotes(gunState,gunFrom),chargeFactor:chargeFactor>1?chargeFactor:null,
@@ -400,5 +402,31 @@
     return {index:best.i,reason:(could.length>1?'the deepest penetration of the shells that fit':
       same.length>1?'the deepest penetration of this type':'the only shell of this type the record lists')+marked};
   }
-  root.ArmorShotContext={resolve:resolve,serverShot:serverShot,assume:assume,modeLabel:modeLabel,identical:identical,gunNotes:gunNotes,markOf:markOf};
+  /* THE SHELL SHOWN FOR A HIT WHOSE SHELL THE RECORD DOES NOT NAME (unknown-shell-grey, 25.09) - one owner for the
+     scene (app.js prepareShell) and the Statistics log (drainVerdicts). assume() over the shells of the type the hit
+     names first; when the shooter's list holds none of that type, his shell of the shot's calibre, else his first -
+     never a manual figure: a manual type is only ever the user's own choice. The case: the White Tiger event's special
+     shots - effects 89 is the stun shell `_128mm_HE_Waffentrager_E100_WT` (HE 128 mm, stun), which no gun of the client
+     fires (docs/KNOWLEDGE.md section 3); the page left such a hit on the manual HE with empty or the previous hit's
+     figures. Over the owner's 102 battles of 25.09: 167 such hits, all coloured now; 28 more have no shooter's list at
+     all. Returns {index, reason, fallback, shotKind, shotCaliber, special, event}: index -1 only for an empty list;
+     `reason` ends the sentence "…, so <reason> was taken"; `fallback` 'caliber' | 'first' when the type found nothing;
+     `special` when the hit's effects id is none of his shells' (an ability's shot), `event` when he is an event vehicle. */
+  function pick(context,hit){
+    var ctx=context||{},choices=ctx.choices||[],attacker=(hit&&hit.attacker)||{};
+    var guess=assume(choices,ctx.kind,hit&&hit.damage,ctx.range,ctx.mark),fallback='',index=guess.index,reason=guess.reason||'';
+    if(index<0&&choices.length){
+      var cal=Number(ctx.caliber),k=cal>0?choices.findIndex(function(c){return Math.abs(Number(c.caliber)-cal)<.1;}):-1;
+      fallback=k>=0?'caliber':'first';index=k>=0?k:0;
+      reason=k>=0?'his shell of the same calibre':'his first shell';
+    }
+    // Why the record could not name it comes before how one was picked (22.09): the shot's ballistics fit none of his
+    // shells, or the vehicle switches its shell parameters and the record does not say which state was on.
+    if(ctx.unresolvedWhy)reason=ctx.unresolvedWhy+(reason?', and of the rest '+reason:'');
+    var effects=hit?Number(hit.effectsIndex):NaN;
+    var special=Number.isFinite(effects)&&choices.length>0&&choices.every(function(c){return Number.isFinite(Number(c.effectsIndex))&&Number(c.effectsIndex)!==effects;});
+    return {index:index,reason:reason,fallback:fallback,shotKind:ctx.kind||null,shotCaliber:Number(ctx.caliber)>0?Number(ctx.caliber):null,
+      special:special,event:Array.isArray(attacker.tags)&&attacker.tags.indexOf('event_battles')>=0};
+  }
+  root.ArmorShotContext={resolve:resolve,serverShot:serverShot,assume:assume,pick:pick,modeLabel:modeLabel,identical:identical,gunNotes:gunNotes,markOf:markOf};
 }(typeof window==='undefined'?globalThis:window));

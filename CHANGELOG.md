@@ -9,6 +9,7 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 - **Vehicles:** outside the game the list shows every vehicle. A vehicle without a model opens with its characteristics panel, Config and gun/turret pick; the scene says the model is not exported yet. The "Exported" flag filter narrows the list to vehicles with a model.
 - **Characteristics:** the panel is now a compact two-column table. ⚙, ▴ and "?" sit on a row of their own above it; under them the HP and the gun. Firepower: the DPM with the reload beside it (for a magazine or autoloader: the time between rounds beside the DPM, the magazine reload — per shell for an autoloader — and the rounds under them), then dispersion | aiming and the stabilisation figures. Stabilisation, Mobility (speed above specific power, turret traverse above hull traverse) and Concealment (view range; standing above moving) stand as column blocks. The second-mode switch (siege, turbine…) sits at the left of the controls row; specific power has an engine icon.
 - **Help:** a tooltip or "?" in the lower half of the window opens upward, so the characteristics panel's help no longer covers the panel.
+- **Shells:** a hit whose shell the record does not name (e.g. the White Tiger boss's stun shot) is no longer grey or left on the previous hit's figures: it takes the shooter's own shell of the same type, else calibre, else his first, marked ◌ assumed with the reason.
 
 ## 0.8.1 (2026-09-24)
 
