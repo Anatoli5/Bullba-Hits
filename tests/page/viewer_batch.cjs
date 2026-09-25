@@ -714,6 +714,36 @@ function checks(ok, web) {
     v.clear();
     ok('viewer-batch: clear() drops them', v.ringAxisLines().length === 0);
   });
+
+  // ---- a damage event on screen (25.09, BACKLOG 3): no penetration map, the ram's touched part red, a burnt fire ---
+  section(function () {
+    const e = env(web), v = loaded(e);
+    const colours = function () {
+      const c = v.paintMesh.geometry.attributes.color.array, out = [];
+      for (let n = 0; n < v.samples.length; n++) out.push({part: v.samples[n].part, rgb: [c[n * 9], c[n * 9 + 1], c[n * 9 + 2]]});
+      return out;
+    };
+    ok('viewer-batch: before a look the map is composed', !!v.surface && v.surface.quad.visible === true);
+    // The contact on the turret's roof (turret box: top at y 2.9; the hull's roof 0.9 m below).
+    const part = v.setLook({kind: 'ram', point: [0.3, 2.9, -0.2]});
+    e.settle();
+    const c = colours(), red = c.filter(function (t) { return t.part === 2; }), rest = c.filter(function (t) { return t.part !== 2; });
+    ok('viewer-batch: a ram: the touched part is the one nearest the contact (the turret), with the contact mark',
+       part === 2 && v.look.part === 2 && v.reticles[v.reticles.length - 1].position.distanceTo(new e.T.Vector3(0.3, 2.9, -0.2)) < 1e-9, '(' + part + ')');
+    ok('viewer-batch: and no map: the composition hidden, the parts drawn - the turret red, the rest one plain grey',
+       v.surface.quad.visible === false && v.paintMesh.visible === true && red.length > 0
+       && red.every(function (t) { return t.rgb[0] > .6 && t.rgb[1] < .1 && t.rgb[2] < .1; })
+       && rest.length > 0 && rest.every(function (t) { return t.rgb.join() === rest[0].rgb.join(); }) && rest[0].rgb[0] < red[0].rgb[0],
+       '(' + JSON.stringify(red[0]) + ' ' + JSON.stringify(rest[0]) + ')');
+    v.setLook({kind: 'fire'});
+    e.settle();
+    const f = colours(), dark = f.filter(function (t) { return Math.max.apply(null, t.rgb) < .05; }), ember = f.filter(function (t) { return t.rgb[0] > .3; });
+    ok('viewer-batch: a fire: the model burnt - charcoal, a few embers, the same on every paint',
+       dark.length > .7 * f.length && ember.length > 0 && ember.length < .25 * f.length,
+       '(' + dark.length + ' dark, ' + ember.length + ' embers of ' + f.length + ')');
+    v.clear(); v.load(vehicle(), {range: 5}); e.settle();
+    ok('viewer-batch: the next hit loads without the look, the map composed again', !v.look && v.surface && v.surface.quad.visible === true);
+  });
 }
 
 module.exports = {env: env, vehicle: vehicle, loaded: loaded, measure: measure, checks: checks};

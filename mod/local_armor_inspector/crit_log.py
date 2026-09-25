@@ -13,7 +13,7 @@ import math
 import numbers
 import re
 import time
-from .telemetry import recording, wrap, unwrap
+from .telemetry import recording, wrap, unwrap, matrix_columns
 
 LOG = logging.getLogger('local.armor_inspector')
 # Extras the common map may not list (vehicle-specific ones: wheels, a second pair of tracks), typed by name.
@@ -23,6 +23,15 @@ WHEEL = re.compile(r'^wheel\d+$')
 CREW = re.compile(r'^(radioman|gunner|loader)\d*$')
 # BattleFeedbackCommon.BATTLE_EVENT_TYPE.CRIT / RECEIVED_CRIT in NA 2.4.0.1, used when the import fails.
 CRIT_EVENTS = (6, 9)
+# ATTACK_REASON_INDICES['ramming'] of NA 2.4.0.1, used when the constant is missing (outputs/ram-damage-findings.md 1.1).
+RAM_REASON = 2
+# Ram contacts (25.09): the client physics reports a touching pair up to five times a second (PlayerAvatar.
+# handleVehicleCollidedVehicle, its own 0.2 s pace per pair). The last contact of each pair is kept in memory (at most
+# one read per CONTACT_PACE, the client's own pace; only the world point and the two chassis frames - the parts' poses
+# are read when a contact is written) and written only near a ram's damage: a contact up to CONTACT_WINDOW before a ram tick of
+# the pair, or the first one after it; at most one written per pair per window. A touch without damage writes nothing.
+CONTACT_PACE = 0.2
+CONTACT_WINDOW = 1.0
 
 
 def num(value):
@@ -71,6 +80,7 @@ class CritLog(object):
         self.crit_events = CRIT_EVENTS
         self.common = None
         self.mask_parser = None
+        self.ram_reason = RAM_REASON
         self.reset()
 
     def reset(self):
@@ -78,6 +88,10 @@ class CritLog(object):
         # Damage-info list positions already logged, per vehicle, and the last fire state per vehicle.
         self.seen = {}
         self.burning = {}
+        # Ram contacts per unordered pair of vehicle ids: the last contact, the last ram tick, the last one written.
+        self.contacts = {}
+        self.rams = {}
+        self.written = {}
 
     def active(self, player):
         # The recorder's one gate (on, an arena, not a replay, not an observer), shared by every recording path.
@@ -325,12 +339,82 @@ class CritLog(object):
                                        'extraType':kind, 'point':vec(hitPoint)})
 
     def health(self, vehicle, newHealth, oldHealth, attackerID, attackReasonID, attackReasonExtID=0):
-        if not attackReasonID: return   # index 0 of ATTACK_REASONS is SHOT: the hits already have those
+        # Index 0 of ATTACK_REASONS is SHOT: the hits already carry that damage. Only the shot that destroys the
+        # vehicle is written (25.09): its HP after, 0 or below, closes the page's damage check of that vehicle.
+        if not attackReasonID and int(newHealth) > 0: return
         player = self.player()
         if player is None: return
         self.emit(player, 'health', {'vehicleId':vehicle.id, 'newHealth':int(newHealth), 'oldHealth':int(oldHealth),
             'attackerId':int(attackerID), 'attackReasonId':int(attackReasonID),
             'attackReason':self.constant('ATTACK_REASONS', attackReasonID), 'attackReasonExtId':int(attackReasonExtID or 0)})
+        if int(attackReasonID) == self.ram_reason and attackerID and attackerID != vehicle.id:
+            pair = frozenset((vehicle.id, int(attackerID)))
+            now = float(self.recorder.bw.serverTime())
+            self.rams[pair] = now
+            contact = self.contacts.get(pair)
+            if contact is not None and now - contact['at'] <= CONTACT_WINDOW: self.write_contact(player, pair, contact, now)
+
+    # ---- ram contacts (25.09): where two vehicles touched, for the page's ram tile -------------------------------
+    def contact_side(self, vehicle, point):
+        """One vehicle at a contact, as cheaply as it can be kept: copies of its chassis frame (collision part 0, the
+        frame of a hit's points and parts) and of its parts' matrices, its turret and gun, and its speed toward the
+        point. Turned into numbers (side_record) only when the contact is written - most touches never are."""
+        side = {'vehicleId':vehicle.id}
+        try:
+            import Math
+            from .exporter import static_parts
+            collisions = vehicle.appearance.collisions
+            side['frames'] = [(idx, Math.Matrix(collisions.getPartTransform(idx)))
+                              for idx, _, _ in static_parts(vehicle.typeDescriptor)]
+            side['aim'] = [num(a) for a in vehicle.getAimParams()]
+        except Exception:
+            LOG.debug('Ram contact frame unavailable', exc_info=True)
+        try:
+            velocity, position = vehicle.filter.velocity, vehicle.position
+            toward = [float(point[i]) - float(position[i]) for i in range(3)]
+            length = math.sqrt(sum(x * x for x in toward))
+            if length > 1e-6: side['approach'] = num(sum(float(velocity[i]) * toward[i] for i in range(3)) / length)
+        except Exception: pass
+        return side
+
+    def side_record(self, side, point):
+        """The written side: the point in the chassis frame and every part's pose in that frame (telemetry.matrix_columns,
+        the writer of a hit's part poses)."""
+        out = dict((k, v) for k, v in side.items() if k != 'frames')
+        frames = side.get('frames') or []
+        try:
+            import Math
+            root = Math.Matrix(frames[0][1])
+            root.invertOrthonormal()
+            out['local'] = vec(root.applyPoint(Math.Vector3(point[0], point[1], point[2])))   # the API takes a Vector3
+            out['parts'] = [{'id':idx, 'transform':matrix_columns(matrix, root)} for idx, matrix in frames]
+        except Exception:
+            LOG.debug('Ram contact frame unavailable', exc_info=True)
+        return out
+
+    def collided(self, avatar, vehA, vehB, hitPt, *args):
+        player = self.player()
+        if player is None: return
+        pair = frozenset((vehA.id, vehB.id))
+        now = float(self.recorder.bw.serverTime())
+        last = self.contacts.get(pair)
+        if last is not None and 0 <= now - last['at'] < CONTACT_PACE: return
+        contact = {'at':now, 'point':vec(hitPt), 'source':'client physics',
+                   'sides':[self.contact_side(vehA, hitPt), self.contact_side(vehB, hitPt)]}
+        try: contact['closingSpeed'] = num((vehA.filter.velocity - vehB.filter.velocity).length)
+        except Exception: pass
+        self.contacts[pair] = contact
+        ram = self.rams.get(pair)
+        if ram is not None and 0 <= now - ram <= CONTACT_WINDOW: self.write_contact(player, pair, contact, now)
+
+    def write_contact(self, player, pair, contact, now):
+        if contact.get('written') or now - self.written.get(pair, -1e9) <= CONTACT_WINDOW: return
+        contact['written'] = True
+        self.written[pair] = now
+        values = dict((k, v) for k, v in contact.items() if k not in ('written', 'sides'))
+        values['sides'] = [self.side_record(side, contact['point']) for side in contact['sides']]
+        values['pair'] = sorted(pair)
+        self.emit(player, 'collision', values)
 
     def ammo_bay(self, vehicle, mode, fireballVolume, *args):
         player = self.player()
@@ -357,6 +441,8 @@ class CritLog(object):
         self.flag_bits = tuple(sorted(((str(name), int(value)) for name, value in vars(flags).items()
                                        if not name.startswith('_') and isinstance(value, numbers.Integral) and not isinstance(value, bool)
                                        and value > 0 and value & (value - 1) == 0), key=lambda item: item[1])) if flags else ()
+        try: self.ram_reason = int(constants.ATTACK_REASON_INDICES['ramming'])
+        except Exception: LOG.debug('Crit log: ramming index of NA 2.4.0.1', exc_info=True)
         try:
             from BattleFeedbackCommon import BATTLE_EVENT_TYPE
             self.crit_events = (int(BATTLE_EVENT_TYPE.CRIT), int(BATTLE_EVENT_TYPE.RECEIVED_CRIT))
@@ -399,8 +485,11 @@ class CritLog(object):
         hook(fire, 'set_fireInfo', self.fire_info)
         hook(fire, '__init__', self.fire_appeared, 'after')   # the entity is set by the original
         hook(fire, 'onDestroy', self.fire_removed)
+        # The client binds this method once per vehicle (CompoundAppearance.__linkCompound: filter.vehicleCollisionCallback
+        # = player.handleVehicleCollidedVehicle), after this class-level wrapper is in place.
         for name, callback in (('showShotResults', self.shot_results), ('showOtherVehicleDamagedDevices', self.damaged_devices),
-                               ('updateIsOtherVehicleDamagedDevicesVisible', self.devices_visible)):
+                               ('updateIsOtherVehicleDamagedDevicesVisible', self.devices_visible),
+                               ('handleVehicleCollidedVehicle', self.collided)):
             hook(avatar, name, callback)
         for name, callback in (('set_publicStateModifiers', self.public_state), ('onExtraHitted', self.extra_hit),
                                ('onHealthChanged', self.health), ('showAmmoBayEffect', self.ammo_bay),

@@ -28,6 +28,7 @@ from .armor import ArmorCatalog
 from .records import RecordDecoder, pack_battle, stamp_snapshot, unpack_battle
 from .telemetry import mechanics_params
 from .crit_tie import attach_crits, moves_tie
+from .damage_log import damage_log
 
 LOG = logging.getLogger('local.armor_inspector')
 VERSION = '0.8.1'
@@ -2689,6 +2690,20 @@ class Exporter(object):
         # JSONL and the page reads only the ties.
         try: result['critStats'] = attach_crits(result['hits'], battle.get('critEvents') or [], battle.get('playerVehicleId'))
         except Exception: LOG.exception('Crit ties failed; hits are published without them')
+        # Every HP no shell took (25.09): one event per ram, fire and other episode from the same crit records, after
+        # the ties (a fire names the hit they marked), and the battle's damage check. Rebuilt on every publish too.
+        # An episode still ticking is held back and this battle published again at the quiet pace (flush) until it is over.
+        # Only the active battle's own publish decides it (a model's republish of another battle must not drop it).
+        if active: self.damage_held = False
+        try:
+            # A forced publish (a battle switch, the game closing) is the battle's last: it counts as finished, so an
+            # episode still ticking goes out as it stands instead of asking for yet another publish (review 25.09 #2).
+            now = None if getattr(self, 'publishing_final', False) else time.time()
+            events, check, held = damage_log(result['hits'], battle.get('critEvents') or [], battle.get('roster'), now)
+            if events: result['damageEvents'] = events
+            if check: result['damageCheck'] = check
+            if active: self.damage_held = bool(held)
+        except Exception: LOG.exception('Damage events failed; hits are published without them')
         result.pop('critEvents', None)
         write_data(os.path.join(self.folder, 'data', 'battles', battle['id']+'.js'), 'battle:'+battle['id'], result)
         # The shooter's models count as referenced too, or prune() would delete them as unused.
@@ -2877,13 +2892,19 @@ class Exporter(object):
     def flush(self, force=False):
         pending = getattr(self, 'pending_publish', False)
         if not pending and not getattr(self, 'pending_quiet', False): return True
+        if self.current is None:
+            # Nothing to publish (activate_tail may drop the battle right after its forced publish): no publish(None).
+            self.pending_publish = self.pending_quiet = False
+            return True
         now = time.time()
         if now < self.next_publish_retry: return False
         if not force and now-getattr(self, 'last_published', 0) < (1 if pending else QUIET_PUBLISH): return False
+        self.publishing_final = bool(force)
         try:
             self.publish(self.current)
             self.write_index()
         except Exception as error:
+            self.publishing_final = False
             self.publish_failures += 1
             self.next_publish_retry = now + min(1.0, 0.1 * (2 ** min(self.publish_failures, 4)))
             # A locked or unwritable output is waited out as before; any other error that repeats is the
@@ -2897,8 +2918,10 @@ class Exporter(object):
                     self.next_publish_retry = 0
                     return True
             raise
+        self.publishing_final = False
         self.pending_publish = False
-        self.pending_quiet = False
+        # A damage episode held back (a fire still burning) asks for one more publish at the quiet pace.
+        self.pending_quiet = bool(getattr(self, 'damage_held', False))
         self.publish_failures = 0
         self.publish_faults = 0
         self.next_publish_retry = 0

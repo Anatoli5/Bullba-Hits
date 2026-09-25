@@ -8221,6 +8221,19 @@ function pathMatrix() {
   const BATTLES = {pm: BATTLE('pm', [PMHIT('pm-1', 31, 30), PMHIT('pm-2', 32, 30)]), pm2: BATTLE('pm2', [PMHIT('pm2-1', 32, 30)]),
                    pm3: BATTLE('pm3', [PMHIT('pm3-1', 30, 34)])};
   BATTLES.pm3.hits[0].direction = 'outgoing';
+  // Damage no shell dealt (25.09, BACKLOG 3): a ram of the enemy into the player (contact on record), a fire the ally
+  // set on him, and his own fall; his damage check does not add up once.
+  const PMEVENT = function (id, kind, reason, attackerId, extra) {
+    return Object.assign({id: id, kind: kind, reason: reason, attackerId: attackerId, targetId: 30, damage: 150, ticks: 1,
+      start: 200, end: 200, gameTime: 200, receivedAt: 120}, extra || {});
+  };
+  BATTLES.pm.damageEvents = [
+    PMEVENT('ram:c1', 'ram', 'ramming', 31, {selfDamage: 20, rammerFrom: 'contact', contact: {at: 199.9, dt: -0.1, closingSpeed: 5,
+      source: 'client physics', sides: {30: {local: [1.2, 2.0, 0.2], parts: [], aim: [0, 0]}}}}),
+    PMEVENT('fire:c5', 'fire', 'fire', 32, {ticks: 6, start: 210, end: 213, gameTime: 213, receivedAt: 133, out: 'extinguished', cause: {hitId: 'pm-2', from: 'crit'}}),
+    PMEVENT('other:c9', 'other', 'world_collision', 30, {damage: 60, gameTime: 230, receivedAt: 150, killed: true})];
+  BATTLES.pm.damageCheck = {schema: 1, rows: [{vehicleId: 30, from: null, to: 190, lost: 900, logged: 750, at: 'start'},
+                                              {vehicleId: 31, from: null, to: 190, lost: 10, logged: 0, at: 'start'}]};
   // The characteristics files: each type's stock figure (Romeo's is the one the swapped enemy gets, Tango's is read
   // only for the vehicle on screen - he never is a shooter).
   const TTXOF = function (type, hp) {
@@ -8249,7 +8262,7 @@ function pathMatrix() {
     // 24.09: a catalogue row without a model - in the browser it opens with its characteristics file alone.
     {id: 'germany-Uniform', type: 'germany:Uniform', name: 'Uniform', level: 10, 'class': 'heavyTank', nation: 'germany', exported: false, exportedAt: null}];
   const D = global.ArmorInspectorData;
-  const keep = {battle: D.battle, scene: D.scene, ttx: D.ttx, vehicles: D.vehicles, vehicle: D.vehicle, sceneFor: D.sceneFor};
+  const keep = {battle: D.battle, scene: D.scene, ttx: D.ttx, vehicles: D.vehicles, vehicle: D.vehicle, sceneFor: D.sceneFor, index: D.index};
   // web/local-data.js's rule for a vehicle without its model (tested on the real reader below, 'noModel'): no geometry,
   // its words as the reason, no warning.
   D.sceneFor = function (b, hit) {
@@ -8263,6 +8276,8 @@ function pathMatrix() {
   D.vehicle = function (id) { return EXPORTS[id] ? Promise.resolve(EXPORTS[id]) : id === VEHICLE.id ? Promise.resolve(VEHICLE) : Promise.reject(new Error('no vehicle')); };
 
   const hitRows = function () { return $('hits').children.filter(function (c) { return c.getAttribute('data-hit') !== null; }); };
+  let pollStamp = 5000;
+  const eventRows = function () { return $('hits').children.filter(function (c) { return c.getAttribute('data-event') !== null; }); };
   const rosterRow = function (id) { return $('focus-list').children.filter(function (c) { return c.getAttribute('data-id') === String(id); })[0]; };
   const listRow = function (id) { return $('vehicles').children.filter(function (c) { return c.getAttribute('data-vehicle') === id; })[0]; };
   const scopeTo = function (scope) { document.querySelectorAll('#vehicle-scope [data-scope]').forEach(function (b) { if (b.getAttribute('data-scope') === scope) b.onclick(); }); };
@@ -8320,6 +8335,39 @@ function pathMatrix() {
       return step(function () { hitRows()[0].onclick(); });
     }).then(function () {
       expectScene('a hit clicked', fun, {model: true, shooter: true, hp: '2 750 / 2 750', source: ROSTER_HP}, delta(was));
+      return step(function () { eventRows()[0].onclick(); });
+    }).then(function () {
+      // 25.09: a ram tile - the damaged vehicle on screen (his roster figure), the rammer in the shooter's role.
+      expectScene('a ram tile clicked', fun, {model: true, shooter: true, hp: '2 750 / 2 750', source: ROSTER_HP}, delta(was));
+      ok('matrix, ⌖ ' + (fun ? 'on' : 'off') + ': (the ram tile is pressed, the hit is not; the details name the contact)',
+         eventRows()[0].getAttribute('aria-pressed') === 'true' && hitRows()[0].getAttribute('aria-pressed') === 'false'
+         && $('details').children.some(function (c) { return c.children && c.children[0] && c.children[0].textContent === 'Contact'; }));
+      // Review 25.09 #1: a shooter picked from the roster on the event's scene outlives the next index poll.
+      // The shooter's role first (its tile opens Vehicles; back to Hits keeps the scene), then the roster row.
+      $('shooter-tile').onclick();
+      return settle(10).then(function () { sidebarModes[0].onclick(); return settle(20); }).then(function () {
+        rosterRow(32).onclick();
+        return settle(20);
+      }).then(function () {
+        const stamp = ++pollStamp;
+        D.index = function () { return Promise.resolve({application: 'local.armor_inspector', version: 'test', updatedAt: stamp,
+          battles: ['pm', 'pm2', 'pm3'].map(function (id) { return {id: id, startedAt: 1, map: 'Test', hits: BATTLES[id].hits.length}; })}); };
+        tick(5.1); return settle(30);
+      }).then(function () {
+        ok('matrix, ⌖ ' + (fun ? 'on' : 'off') + ': (a shooter picked on the event scene stays through an index poll, the event still pressed)',
+           !!rosterRow(32) && rosterRow(32).getAttribute('data-role') === 'shooter' && eventRows()[0].getAttribute('aria-pressed') === 'true',
+           '(' + (rosterRow(32) && rosterRow(32).getAttribute('data-role')) + ' ' + $('hits').children.map(function (c) { return (c.getAttribute('data-event') || c.getAttribute('data-hit')) + '=' + c.getAttribute('aria-pressed'); }).join() + ')');
+        return step(function () { eventRows()[1].onclick(); });
+      });
+    }).then(function () {
+      expectScene('a fire tile clicked', fun, {model: true, shooter: true, hp: '2 750 / 2 750', source: ROSTER_HP}, delta(was));
+      return step(function () { eventRows()[2].onclick(); });
+    }).then(function () {
+      // His own fall: nobody in the shooter's role.
+      expectScene('a tile of damage the vehicle did itself', fun, {model: true, shooter: false, hp: '2 750 / 2 750', source: ROSTER_HP}, delta(was));
+      return step(function () { hitRows()[0].onclick(); });
+    }).then(function () {
+      expectScene('a hit clicked after the tiles', fun, {model: true, shooter: true, hp: '2 750 / 2 750', source: ROSTER_HP}, delta(was));
       return step(function () { $('swap-roles').onclick(); });
     }).then(function () {
       // THE USER'S CASE (24.09): the enemy's row has no figure - his characteristics file gives it now.
@@ -8414,6 +8462,19 @@ function pathMatrix() {
     $('swap-roles').onclick();
     return settle(30);
   }).then(function () {
+    // 25.09: the list of battle pm - its hits, then its three damage events with a glyph each, the check's mark.
+    const ev = eventRows(), glyphs = ev.map(function (r) { const g = r.children.filter(function (c) { return c.className === 'event-glyph'; })[0]; return g ? g.getAttribute('data-glyph') : null; });
+    ok('events: the damage no shell dealt stands in the hit list, one row each, its own glyph (ram, fire, fall)',
+       ev.length === 3 && glyphs.join() === 'ram,fire,fall' && ev.map(function (r) { return r.getAttribute('data-direction'); }).join() === 'incoming,incoming,incoming', glyphs.join());
+    const tipLines = ev.map(function (r) { return r.title.split('\n'); });
+    ok('events: each tooltip is a heading, one sentence of what happened, then points (the fire names the hit that set it)',
+       tipLines.every(function (l) { return l.length > 3 && !/[.]$/.test(l[0]) && /[.]$/.test(l[1]) && l[2].indexOf('• ') === 0; })
+       && tipLines[0][0] === 'Ram' && tipLines[1][0] === 'Fire' && tipLines[1].join('\n').indexOf('• Set by: Quebec’s hit at') >= 0
+       && tipLines[2][1] === 'Papa lost 60 HP on its own.', tipLines.map(function (l) { return l.slice(0, 2).join(' / '); }).join(' | '));
+    const mark = $('hit-count').children.filter(function (c) { return c.className === 'damage-check'; })[0];
+    ok('events: the count says them and the damage check marks the player’s own gap quietly (≠, its words in the tooltip)',
+       /^2 hits · 3 other damage/.test($('hit-count').textContent) && !!mark && mark.title.indexOf('Damage log incomplete\n') === 0
+       && mark.title.indexOf('lost 900 HP, logged 750') > 0 && mark.title.indexOf('lost 10 HP') < 0, $('hit-count').textContent);
     ok('matrix: (the three shooters’ characteristics files are read once before the matrix)',
        ['germany-Romeo', 'germany-Quebec', 'germany-Papa'].every(function (id) { return ttxAsked.indexOf(id) >= 0; }), '(' + ttxAsked.join(', ') + ')');
     return loop(false);

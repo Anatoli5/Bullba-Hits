@@ -20,6 +20,19 @@ def vec(value):
     return [number(value[i]) for i in range(3)]
 
 
+def matrix_columns(matrix, root_inverse):
+    """Column-major affine transform of matrix in the frame root_inverse leads into, using the API's own operations
+    instead of layout guesses. The one writer of every recorded part pose: the hit (mod_local_armor_inspector) and
+    the ram contact (crit_log.contact, 25.09)."""
+    columns = []
+    for axis in ((1, 0, 0), (0, 1, 0), (0, 0, 1)):
+        v = root_inverse.applyVector(matrix.applyVector(axis))
+        columns.extend([float(v[0]), float(v[1]), float(v[2]), 0.0])
+    p = root_inverse.applyPoint(matrix.applyPoint((0, 0, 0)))
+    columns.extend([float(p[0]), float(p[1]), float(p[2]), 1.0])
+    return columns
+
+
 def marker(info):
     return {'position':vec(info.position), 'direction':vec(info.direction),
             'diameter':number(info.size), 'receivedAt':time.time()}

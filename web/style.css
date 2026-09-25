@@ -777,3 +777,11 @@ header>.settings-menu>.settings-content{top:calc(100% + 8px);right:0;max-height:
 .ttx-mark{position:absolute;top:3px;font-size:9px;line-height:1;color:var(--gold)}
 .ttx-emu{left:4px}
 .ttx-top{right:4px}
+/* Damage no shell dealt (25.09): a row of the hit list with its own glyph; the glyph in the direction's colour, quiet */
+.event-glyph{flex:0 0 auto;display:flex;align-items:center;justify-content:center;width:20px;height:20px;color:var(--muted)}
+.event-glyph svg{display:block;width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+.hit.event[data-direction=incoming] .event-glyph{color:#e7a39f}.hit.event[data-direction=outgoing] .event-glyph{color:#8fd8c6}
+.hit.event .event-self{height:40px}
+.hit.event[data-killed=true] .hit-damage::after{content:" \2715";font-size:11px;opacity:.8}
+.damage-check{margin-left:6px;padding:0 4px;border:1px solid #5a4a2c;border-radius:3px;color:var(--warn);cursor:help;font-weight:600}
+.hit-reticle.contact .reticle-stroke{stroke:#ff5a4f}

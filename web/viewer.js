@@ -314,7 +314,7 @@
   Viewer.prototype.setZoom=function(value){if(!Number.isFinite(value)||value<=0)return;this.targetZoom=null;this.targetScale=null;if(this.autoFrame)this.scaleFor(value);this.showZoom(value);};
   Viewer.prototype.setDistance=function(value){if(!Number.isFinite(value))return;this.targetDistance=null;this.distance=Math.max(DISTANCE_MIN,Math.min(DISTANCE_MAX,value));this.render();};
   Viewer.limits={distanceMin:DISTANCE_MIN,distanceMax:DISTANCE_MAX};
-  Viewer.prototype.clear=function(){this.dropTargets();this.clearLiveAim();this.clearHitMarks();this.markDrawn=this.markBuilt=null;this.pinResult=null;this.fitPending=false;this.shotPoints=null;this.shotPath=null;this.horizon=null;this.recordedDistance=null;this.pinned=null;this.disposePin();this.pinCache=null;this.pinReticles=[];if(this.surface)this.surface.dispose();this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.gunAngle=0;this.savedAim=this.ringAim=this.discAim=this.shotDisc=null;this.viewPoints=null;this.aimGroup=null;this.estimateAim=null;window.clearTimeout(this.zoomTimer);this.zoomTimer=null;this.reticles=[];this.reticleLayer.replaceChildren();clearTimeout(this.turretTimer);this.turretTimer=null;this.turretPending=false;this.poseGeometries=null;this.poseBuilt=null;this.poseStale=false;this.spreadAim=null;this.hideSpread();window.clearTimeout(this.aimSettleTimer);this.aimSettleTimer=null;window.cancelAnimationFrame(this.frameId);this.frameId=null;this.cancelHover();this.cancelOrbit();this.pendingPan=null;this.inspectKey=null;this.paintMesh=null;this.outline=null;this.outlineDepth=null;this.engine=null;this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.loadedData=null;this.paintedKey=null;this.samples=[];var disposed=new Set([this.ringGeom]),kept=this.ringMat;this.root.traverse(function(o){var shared=!!(o.parent&&o.parent.type==='ArrowHelper'&&(o===o.parent.line||o===o.parent.cone));if(o.geometry&&!shared&&!disposed.has(o.geometry)){disposed.add(o.geometry);o.geometry.dispose();}if(o.material){(Array.isArray(o.material)?o.material:[o.material]).forEach(function(m){if(m!==kept)m.dispose();});}});while(this.root.children.length)this.root.remove(this.root.children[0]);this.point=null;this.travel=null;this.draw();};
+  Viewer.prototype.clear=function(){this.dropTargets();this.clearLiveAim();this.clearHitMarks();this.look=null;this.markDrawn=this.markBuilt=null;this.pinResult=null;this.fitPending=false;this.shotPoints=null;this.shotPath=null;this.horizon=null;this.recordedDistance=null;this.pinned=null;this.disposePin();this.pinCache=null;this.pinReticles=[];if(this.surface)this.surface.dispose();this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.gunAngle=0;this.savedAim=this.ringAim=this.discAim=this.shotDisc=null;this.viewPoints=null;this.aimGroup=null;this.estimateAim=null;window.clearTimeout(this.zoomTimer);this.zoomTimer=null;this.reticles=[];this.reticleLayer.replaceChildren();clearTimeout(this.turretTimer);this.turretTimer=null;this.turretPending=false;this.poseGeometries=null;this.poseBuilt=null;this.poseStale=false;this.spreadAim=null;this.hideSpread();window.clearTimeout(this.aimSettleTimer);this.aimSettleTimer=null;window.cancelAnimationFrame(this.frameId);this.frameId=null;this.cancelHover();this.cancelOrbit();this.pendingPan=null;this.inspectKey=null;this.paintMesh=null;this.outline=null;this.outlineDepth=null;this.engine=null;this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.loadedData=null;this.paintedKey=null;this.samples=[];var disposed=new Set([this.ringGeom]),kept=this.ringMat;this.root.traverse(function(o){var shared=!!(o.parent&&o.parent.type==='ArrowHelper'&&(o===o.parent.line||o===o.parent.cone));if(o.geometry&&!shared&&!disposed.has(o.geometry)){disposed.add(o.geometry);o.geometry.dispose();}if(o.material){(Array.isArray(o.material)?o.material:[o.material]).forEach(function(m){if(m!==kept)m.dispose();});}});while(this.root.children.length)this.root.remove(this.root.children[0]);this.point=null;this.travel=null;this.draw();};
   // clear() draws the empty scene and tells the page nothing: the camera has not moved, and the next load() reports once.
   Viewer.prototype.rebuild=function(){
     if(!this.loadedData)return;var T=THREE,self=this;this.samples=[];this.paintedKey=null;
@@ -386,11 +386,11 @@
   // The colours depend on the map switch and the track opacity alone - not on the shell or the distance - so a
   // buffer already filled for both is left as it is (configure() runs on every shell or distance change).
   Viewer.prototype.updateTrackAppearance=function(){
-    if(!this.trackMesh)return;var key=(this.heatmap?'map':'parts')+'|'+this.trackOpacity;if(this.trackKey===key)return;this.trackKey=key;
-    var self=this,attribute=this.trackMesh.geometry.attributes.color,buffer=attribute.array;
+    if(!this.trackMesh)return;var key=(this.look?'look:'+this.look.kind+':'+this.look.part:this.heatmap?'map':'parts')+'|'+this.trackOpacity;if(this.trackKey===key)return;this.trackKey=key;
+    var self=this,attribute=this.trackMesh.geometry.attributes.color,buffer=attribute.array,map=this.heatmap&&!this.look;
     this.trackTriangles.forEach(function(t,i){
-      var opacity=self.heatmap?self.trackOpacity:1;
-      var color=self.heatmap?baseColors[0]:baseColors[t.part%4];
+      var opacity=map?self.trackOpacity:1;
+      var color=self.look?self.lookColor(t,i+LOOK_TRACKS):map?baseColors[0]:baseColors[t.part%4];
       for(var j=0;j<3;j++){var offset=(i*3+j)*4;for(var k=0;k<3;k++)buffer[offset+k]=color[k];buffer[offset+3]=opacity;}
     });
     attribute.needsUpdate=true;
@@ -1224,7 +1224,7 @@
   Viewer.prototype.paint=function(){
     if(!this.paintMesh)return;
     var composed=false;
-    if(this.heatmap){
+    if(this.heatmap&&!this.look){
       if(!this.surfaceAttempted){this.surfaceAttempted=true;try{this.surface=new BullbaScreenArmor(this.renderer,this.engine);this.scene.add(this.surface.quad);
         // A fresh composition starts unlit, so the switch is re-applied here - the one path every new
         // instance goes through: the first paint, a new model, a quality change and a restored context.
@@ -1246,14 +1246,69 @@
     this.paintMesh.visible=!composed;this.trackGroup.visible=!composed;
     if(composed)return;
     // An unavailable GPU map stays neutral; it never switches to triangle estimates.
-    this.backend(this.heatmap?'Estimate unavailable: '+(this.surfaceError||'GPU-composition did not run'):'Vehicle parts · estimate off');
-    var key=this.heatmap?'neutral':'parts';if(this.paintedKey===key)return;
+    this.backend(this.look?'Damage event · no penetration map':this.heatmap?'Estimate unavailable: '+(this.surfaceError||'GPU-composition did not run'):'Vehicle parts · estimate off');
+    var key=this.look?'look:'+this.look.kind+':'+this.look.part:this.heatmap?'neutral':'parts';if(this.paintedKey===key)return;
     var buffer=this.paintMesh.geometry.attributes.color.array;
     for(var n=0;n<this.samples.length;n++){
-      var color=this.heatmap?baseColors[0]:baseColors[this.samples[n].part%4];
+      var color=this.look?this.lookColor(this.samples[n],n):this.heatmap?baseColors[0]:baseColors[this.samples[n].part%4];
       for(var j=0;j<3;j++)for(var k=0;k<3;k++)buffer[n*9+j*3+k]=color[k];
     }
     this.paintedKey=key;this.paintMesh.geometry.attributes.color.needsUpdate=true;
+  };
+  // ===== A damage event on screen (25.09, BACKLOG 3) =====
+  // No penetration map: the damaged vehicle plain grey; after a ram the part that was touched red and a mark (the hit
+  // cross, red) at the recorded contact; after a fire a burnt look - charcoal with a few embers, the same on every paint
+  // (a hash of the triangle, not a random draw). load() drops the look (clear); the page sets it after load, before the
+  // first frame is drawn, so the map never shows under it. The touched part is the one whose triangle lies nearest the
+  // contact - the recorded point is the client physics' contact, not a hit point on a part.
+  var LOOK_PLAIN=linear([.42,.47,.52]),LOOK_RED=linear([.88,.17,.13]),LOOK_CHAR=linear([.13,.11,.1]),LOOK_EMBER=linear([.66,.22,.06]),LOOK_TRACKS=1000003;
+  function lookNoise(i){var s=(i+1)>>>0;s=Math.imul(s^(s>>>16),0x45d9f3b)>>>0;s=Math.imul(s^(s>>>16),0x45d9f3b)>>>0;return ((s^(s>>>16))>>>0)/4294967296;}
+  Viewer.prototype.lookColor=function(t,i){
+    var look=this.look;
+    if(look.kind==='fire'){if(lookNoise(i)<.07)return LOOK_EMBER;var k=.55+.9*lookNoise(i+7919);return [LOOK_CHAR[0]*k,LOOK_CHAR[1]*k,LOOK_CHAR[2]*k];}
+    return look.kind==='ram'&&look.part!=null&&t.part===look.part?LOOK_RED:LOOK_PLAIN;
+  };
+  // Squared distance from p to the triangle (a, b, c) - the closest point by the triangle's regions (Ericson 5.1.5).
+  function triangleDistance(p,a,b,c){
+    var ab=[b[0]-a[0],b[1]-a[1],b[2]-a[2]],ac=[c[0]-a[0],c[1]-a[1],c[2]-a[2]],ap=[p[0]-a[0],p[1]-a[1],p[2]-a[2]];
+    var dot=function(u,v){return u[0]*v[0]+u[1]*v[1]+u[2]*v[2];},at=function(o,u,s,v,t){return [o[0]+u[0]*s+v[0]*t,o[1]+u[1]*s+v[1]*t,o[2]+u[2]*s+v[2]*t];};
+    var d1=dot(ab,ap),d2=dot(ac,ap),q;
+    if(d1<=0&&d2<=0)q=a;else{
+      var bp=[p[0]-b[0],p[1]-b[1],p[2]-b[2]],d3=dot(ab,bp),d4=dot(ac,bp);
+      if(d3>=0&&d4<=d3)q=b;else{
+        var vc=d1*d4-d3*d2;
+        if(vc<=0&&d1>=0&&d3<=0)q=at(a,ab,d1/(d1-d3),ac,0);else{
+          var cp=[p[0]-c[0],p[1]-c[1],p[2]-c[2]],d5=dot(ab,cp),d6=dot(ac,cp);
+          if(d6>=0&&d5<=d6)q=c;else{
+            var vb=d5*d2-d1*d6;
+            if(vb<=0&&d2>=0&&d6<=0)q=at(a,ab,0,ac,d2/(d2-d6));else{
+              var va=d3*d6-d5*d4;
+              if(va<=0&&d4-d3>=0&&d5-d6>=0){var w=(d4-d3)/((d4-d3)+(d5-d6));q=[b[0]+(c[0]-b[0])*w,b[1]+(c[1]-b[1])*w,b[2]+(c[2]-b[2])*w];}
+              else{var den=1/(va+vb+vc);q=at(a,ab,vb*den,ac,vc*den);}
+            }
+          }
+        }
+      }
+    }
+    return (p[0]-q[0])*(p[0]-q[0])+(p[1]-q[1])*(p[1]-q[1])+(p[2]-q[2])*(p[2]-q[2]);
+  }
+  // The collision part whose triangle lies nearest the point (scene frame), over the armour and the outer layer (tracks,
+  // screens); null for a model without triangles. Once per event scene, not per frame.
+  Viewer.prototype.nearestPart=function(point){
+    var best=Infinity,part=null,p=[point.x,point.y,point.z];
+    [this.samples||[],this.trackTriangles||[]].forEach(function(list){list.forEach(function(t){var d=triangleDistance(p,t.a,t.b,t.c);if(d<best){best=d;part=t.part;}});});
+    return part;
+  };
+  // look: null (a hit: the map as set), {kind:'plain'|'fire'} or {kind:'ram', point:[x,y,z] in the scene frame}.
+  // Returns the touched part of a ram (null without a point).
+  Viewer.prototype.setLook=function(look){
+    this.look=look?{kind:look.kind==='ram'||look.kind==='fire'?look.kind:'plain',part:null}:null;
+    if(this.look&&look.point&&look.point.length===3){
+      var at=new THREE.Vector3().fromArray(look.point);this.look.part=this.nearestPart(at);this.look.point=at;
+      this.addReticle(at);this.reticles[this.reticles.length-1].element.classList.add('contact');
+    }
+    this.paintedKey=null;this.trackKey=null;this.updateTrackAppearance();this.draw();
+    return this.look?this.look.part:null;
   };
   // The status line goes to the page when it changes, not on every frame (VIEW-16); the frame rate beside it is the page's
   // own poll's to refresh.

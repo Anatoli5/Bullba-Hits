@@ -285,14 +285,10 @@ def mode_aim_block(descr):
 
 
 def matrix_columns(matrix, root_inverse):
-    """Column-major affine transform, using API operations instead of layout guesses."""
-    columns = []
-    for axis in ((1, 0, 0), (0, 1, 0), (0, 0, 1)):
-        columns.extend(vector(root_inverse.applyVector(matrix.applyVector(axis))))
-        columns.append(0.0)
-    columns.extend(vector(root_inverse.applyPoint(matrix.applyPoint((0, 0, 0)))))
-    columns.append(1.0)
-    return columns
+    """Column-major affine transform: telemetry.matrix_columns, the one writer (the crit log's ram contacts use it too,
+    25.09). Kept under this name for the recorder's callers."""
+    from local_armor_inspector.telemetry import matrix_columns as columns
+    return columns(matrix, root_inverse)
 
 
 def extra_part_info(idx, collisions, appearance, root, matrix):

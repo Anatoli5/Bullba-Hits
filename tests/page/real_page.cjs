@@ -88,6 +88,7 @@ const DRIVER = `(() => {
   const must = (el, what) => { if (!el) throw new Error('not on the page: ' + what); return el; };
   const act = {
     hit: (i) => must(document.querySelectorAll('#hits [data-hit]')[i], 'hit row ' + i).click(),
+    event: (i) => must(document.querySelectorAll('#hits [data-event]')[i], 'damage event row ' + i).click(),
     swap: () => $('swap-roles').click(),
     shooterTile: () => $('shooter-tile').click(),
     modelTile: () => $('model-tile').click(),
@@ -131,8 +132,26 @@ const DRIVER = `(() => {
       three: info ? {geometries: info.memory.geometries, textures: info.memory.textures, programs: info.programs ? info.programs.length : null} : null,
       elements: document.getElementsByTagName('*').length};
   }
-  window.__bt = {act, settle, sig, counters, panelRects};
+  // The page's data reads (local-data.js: a <script> in <head> per file, with its onload and onerror, removed when done):
+  // how many were started, or null while one is in flight. The leak counter's GC must not straddle one (the index poll).
+  let started = 0;
+  new MutationObserver((ms) => ms.forEach((m) => m.addedNodes.forEach((n) => { if (n.tagName === 'SCRIPT') started++; }))).observe(document.head, {childList: true});
+  const reads = () => document.head.querySelector('script[src*="?read="]') ? null : started;
+  window.__bt = {act, settle, sig, counters, panelRects, reads};
   return true;
+})()`;
+
+// What the viewer paints for a damage event (25.09): its look, the part it lit, the map, the contact cross, the colours.
+const LOOK = `(() => {
+  const v = window.__bullbaViewers[window.__bullbaViewers.length - 1], look = v.look || null;
+  const rows = [].slice.call(document.querySelectorAll('#hits > .hit')).map((r) => r.hasAttribute('data-event') ? 'event' : 'hit').join();
+  const cross = v.reticles.filter((m) => m.element.classList.contains('contact'));
+  let red = 0, dark = 0, n = 0;
+  if (v.paintMesh) { const c = v.paintMesh.geometry.attributes.color.array; n = v.samples.length;
+    for (let i = 0; i < n; i++) { const r = c[i * 9], g = c[i * 9 + 1], b = c[i * 9 + 2]; if (r > .6 && g < .1) red++; if (Math.max(r, g, b) < .05) dark++; } }
+  return {order: rows, kind: look ? look.kind : null, part: look ? look.part : null, map: !!(v.surface && v.surface.quad.visible),
+    contact: cross.length > 0 && !cross[0].element.hidden, red: red, dark: n ? dark / n : 0,
+    details: [].slice.call(document.querySelectorAll('#details > div')).map((d) => d.textContent).join(' | ')};
 })()`;
 
 const HP = {ROSTER: 'this battle’s roster', FILE: 'the vehicle’s characteristics, stock', OWN: 'the vehicle’s own export'};
@@ -187,6 +206,18 @@ async function main() {
     async function loop(fun) {
       await ev('__bt.act.fun(' + fun + ')'); await ev('__bt.settle()');
       expectScene('a hit clicked', fun, {model: true, shooter: true, hp: '2 750 / 2 750', source: HP.ROSTER}, await step('hit(0)'));
+      // 25.09: the damage no shell dealt - its rows among the hits by time, and a scene with no penetration map.
+      expectScene('a ram tile clicked', fun, {model: true, shooter: true, hp: '2 750 / 2 750', source: HP.ROSTER}, await step('event(0)'));
+      const ram = await ev(LOOK);
+      ok('matrix, ⌖ ' + (fun ? 'on' : 'off') + ': (the ram: rows in time order, no map, the turret it touched red, the red cross on the contact, drawn)',
+         ram.order === 'event,hit,hit,event' && ram.kind === 'ram' && ram.part === 2 && ram.map === false && ram.contact === true
+         && ram.red > 0 && ram.details.indexOf('ContactTurret') >= 0, JSON.stringify(ram));
+      expectScene('a fire tile clicked', fun, {model: true, shooter: true, hp: '2 750 / 2 750', source: HP.ROSTER}, await step('event(1)'));
+      const fire = await ev(LOOK);
+      ok('matrix, ⌖ ' + (fun ? 'on' : 'off') + ': (the fire: the model burnt, no map, no contact cross)',
+         fire.kind === 'fire' && fire.map === false && fire.contact === false && fire.dark > .7, JSON.stringify(fire));
+      expectScene('a hit clicked after the tiles', fun, {model: true, shooter: true, hp: '2 750 / 2 750', source: HP.ROSTER}, await step('hit(0)'));
+      ok('matrix, ⌖ ' + (fun ? 'on' : 'off') + ': (a hit after them: the look gone, the map back)', (await ev(LOOK)).kind === null);
       expectScene('⇅ puts the Onslaught enemy on screen', fun, {model: true, shooter: true, hp: '1 950 / 1 950', source: HP.FILE}, await step('swap()'));
       expectScene('⇅ back', fun, {model: true, shooter: true, hp: '2 750 / 2 750', source: HP.ROSTER}, await step('swap()'));
       expectScene('the side panel to Vehicles, the scene kept', fun, {model: true, shooter: true, hp: '2 750 / 2 750', source: HP.ROSTER}, await step('shooterTile()'));
@@ -385,15 +416,24 @@ async function main() {
 
     // ---- the leak counter ----------------------------------------------------------------------------------
     const CYCLE = ["side('battles')", "battle('pm')", 'hit(0)', 'swap()', 'swap()', 'roster(32)', "battle('pm2')", 'hit(0)',
-                   'modelTile()', "list('pm_quebec')", "side('battles')", "battle('pm')", 'hit(1)', "battle('pm3')", 'hit(0)', 'roster(33)'];
+                   'modelTile()', "list('pm_quebec')", "side('battles')", "battle('pm')", 'hit(1)', 'event(0)', 'event(1)', "battle('pm3')", 'hit(0)', 'roster(33)'];
     const home = async () => { await step("side('battles')"); await step("battle('pm')"); await step('hit(0)'); };
+    // Counted at a quiet moment: the page settled, and no data read in flight or started between the GC and the count -
+    // the 5-second index poll's two reads (two <script>s, four listeners) caught by the GC were counted as growth.
     const measure = async () => {
       await home();
-      await page.send('HeapProfiler.collectGarbage'); await page.send('HeapProfiler.collectGarbage');
-      await ev('__bt.settle(3000)');
-      const dom = await page.send('Memory.getDOMCounters');
-      const c = await ev('__bt.counters()');
-      return {nodes: dom.nodes, listeners: dom.jsEventListeners, documents: dom.documents, elements: c.elements, gl: c.gl, three: c.three, viewers: c.viewers};
+      for (let tries = 0; tries < 50; tries++) {
+        await ev('__bt.settle(3000)');
+        const reads = await ev('__bt.reads()');
+        if (reads !== null) {
+          await page.send('HeapProfiler.collectGarbage'); await page.send('HeapProfiler.collectGarbage');
+          const dom = await page.send('Memory.getDOMCounters');
+          const c = await ev('__bt.counters()');
+          if (await ev('__bt.reads()') === reads) return {nodes: dom.nodes, listeners: dom.jsEventListeners, documents: dom.documents, elements: c.elements, gl: c.gl, three: c.three, viewers: c.viewers};
+        }
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      throw new Error('leak counter: the page never stood still between its data reads');
     };
     for (let i = 0; i < CYCLE.length; i++) await step(CYCLE[i], 3000);   // one round of warm-up
     const before = await measure();

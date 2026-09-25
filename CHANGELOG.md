@@ -10,6 +10,10 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 - **Characteristics:** the panel is now a compact two-column table. ⚙, ▴ and "?" sit on a row of their own above it; under them the HP and the gun. Firepower: the DPM with the reload beside it (for a magazine or autoloader: the time between rounds beside the DPM, the magazine reload — per shell for an autoloader — and the rounds under them), then dispersion | aiming and the stabilisation figures. Stabilisation, Mobility (speed above specific power, turret traverse above hull traverse) and Concealment (view range; standing above moving) stand as column blocks. The second-mode switch (siege, turbine…) sits at the left of the controls row; specific power has an engine icon.
 - **Help:** a tooltip or "?" in the lower half of the window opens upward, so the characteristics panel's help no longer covers the panel.
 - **Shells:** a hit whose shell the record does not name (e.g. the White Tiger boss's stun shot) is no longer grey or left on the previous hit's figures: it takes the shooter's own shell of the same type, else calibre, else his first, marked ◌ assumed with the reason.
+- **Hits:** the list now holds all damage, not only shots: rams, fires, artillery strikes, falls and event abilities stand among the hits at their time, each with its own glyph, filtered like the hits. A fire is one row at its end with its total; its tooltip names the hit that set it.
+- **Hits:** such a row opens the damaged vehicle without the penetration map: after a ram the touched part red with a red cross at the contact, after a fire a burnt look.
+- **Hits:** a small ≠ beside the hit count when this vehicle's logged damage does not add up to the HP it lost; a click says where and by how much.
+- **Recorder:** records where two vehicles touched around a ram, and the shot that destroys a vehicle. Battles recorded since 0.7.20 get their rams, fires and other damage after the next game start; older ones have none.
 
 ## 0.8.1 (2026-09-24)
 

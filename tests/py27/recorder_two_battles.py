@@ -137,6 +137,7 @@ class PlayerAvatar(object):
     showShotResults = original('PlayerAvatar.showShotResults')
     showOtherVehicleDamagedDevices = original('PlayerAvatar.showOtherVehicleDamagedDevices')
     updateIsOtherVehicleDamagedDevicesVisible = original('PlayerAvatar.updateIsOtherVehicleDamagedDevicesVisible')
+    handleVehicleCollidedVehicle = original('PlayerAvatar.handleVehicleCollidedVehicle')
 
     def isObserver(self): return self.observer
 
@@ -181,7 +182,7 @@ EXPECTED_HOOKS = set([
     ('OwnVehicleBase', 'onBattleEvents'),
     ('PlayerAvatar', 'showOwnVehicleHitDirection'), ('PlayerAvatar', 'onBattleEvents'),
     ('PlayerAvatar', 'showShotResults'), ('PlayerAvatar', 'showOtherVehicleDamagedDevices'),
-    ('PlayerAvatar', 'updateIsOtherVehicleDamagedDevicesVisible'),
+    ('PlayerAvatar', 'updateIsOtherVehicleDamagedDevicesVisible'), ('PlayerAvatar', 'handleVehicleCollidedVehicle'),
     ('Fire', 'set_fireInfo'), ('Fire', '__init__'), ('Fire', 'onDestroy'),
     ('Vehicle', 'set_publicStateModifiers'), ('Vehicle', 'onExtraHitted'), ('Vehicle', 'onHealthChanged'),
     ('Vehicle', 'showAmmoBayEffect'), ('Vehicle', 'showDamageFromExplosion'),
@@ -307,13 +308,17 @@ def make_vehicle(vehicle_id, descr):
     v = Vehicle.__new__(Vehicle)
     v.id = vehicle_id
     v.typeDescriptor = descr
-    v.appearance = NS(collisions=NS(getPartTransform=lambda i: Matrix(), maxStaticPartIndex=3))
+    # The chassis frame stands at the vehicle's position turned a quarter round, so a world point has to be carried
+    # into it (the ram contact's 'local'); every part shares it (rest pose).
+    frame = NS(angle=math.pi / 2, translation=(vehicle_id * 10.0, 0.0, 0.0))
+    v.appearance = NS(collisions=NS(getPartTransform=lambda i: Matrix(frame), maxStaticPartIndex=3))
     v.position = V3(vehicle_id * 10.0, 0.0, 0.0)
     v.isStarted = True
     v.isAlive = lambda: True
     v.getServerGunAngles = lambda: (0.1, -0.05)
     v.speedInfo = NS(value=(1.0, 0.1, 5.0, 0.2))
     v.matrix = Matrix()
+    v.filter = NS(velocity=V3(0.0, 0.0, 5.0 if vehicle_id % 3 == 0 else 0.0))
     v.getAimParams = lambda: (0.2, 0.3)
     v.publicStateModifiers = ()
     v.maxHealth = descr.maxHealth   # Vehicle.maxHealth of the client: publicInfo.maxHealth, the server's figure
@@ -386,6 +391,15 @@ class Battle(object):
         self.hit(self.ally, self.enemy)                                 # other
         self.avatar.showOwnVehicleHitDirection(0.5, self.enemy, 300, 0, False, False, self.me, 0)
         self.entities[self.me].onHealthChanged(700, 1000, self.enemy, 1)
+        # A ram (25.09): the client physics' contact of the pair, then the server's damage to both - one contact
+        # record near the damage; a second tick of the same ram writes none, a shot that leaves HP writes nothing.
+        me, enemy = self.entities[self.me], self.entities[self.enemy]
+        self.avatar.handleVehicleCollidedVehicle(me, enemy, V3(self.me * 10.0 + 2.0, 0.5, 1.0), 1.0)
+        self.entities[self.enemy].onHealthChanged(950, 1000, self.me, 2)
+        self.entities[self.me].onHealthChanged(690, 700, self.enemy, 2)
+        self.entities[self.me].onHealthChanged(680, 690, self.enemy, 2)
+        self.entities[self.ally].onHealthChanged(500, 800, self.enemy, 0)
+        self.entities[self.ally].onHealthChanged(-1, 500, self.enemy, 0)   # the shot that destroys: written (HP 0)
         WORLD.pump(1)
         # The last own shot of the battle: one server update comes, then the avatar leaves (death at the end, the
         # battle over) - the wait is written on the way out with what it holds.
@@ -441,6 +455,8 @@ def foreign_events(rows, own_ids, other_ids, other_shots):
         if row.get('shotId') in other_shots: found.append((row.get('type'), 'shotId'))
         for vehicle in row.get('vehicles') or ():
             if vehicle.get('id') in other_ids: found.append(('roster', 'vehicles.id'))
+        for vehicle in row.get('pair') or ():
+            if vehicle in other_ids and vehicle not in own_ids: found.append((row.get('type'), 'pair'))
     return found
 
 
@@ -663,8 +679,26 @@ def run(temp):
                   ((own[0].get('aimAtTracer') or {}).get('lastServerGunUpdate') or {}).get('origin') == [0.0, 1.0, 0.0],
                   (own[0].get('aimAtTracer') or {}).get('lastServerGunUpdate'))
         crits = [r for r in rows if r.get('type') == 'crit']
-        check(group, 'the hit direction and the health change recorded',
-              sorted(r.get('event') for r in crits) == ['health', 'hitDirection'], sorted(r.get('event') for r in crits))
+        check(group, 'the hit direction, the fire tick, three ram ticks, the destroying shot and ONE ram contact recorded (a shot that leaves HP: none)',
+              sorted(r.get('event') for r in crits) == ['collision', 'health', 'health', 'health', 'health', 'health', 'hitDirection'],
+              sorted(r.get('event') for r in crits))
+        shots = [r for r in crits if r.get('event') == 'health' and r.get('attackReasonId') == 0]
+        check(group, 'the destroying shot: reason 0, its HP before and after, on the vehicle it destroyed',
+              [(r.get('vehicleId'), r.get('oldHealth'), r.get('newHealth'), r.get('attackerId')) for r in shots] == [(battle.ally, 500, -1, battle.enemy)],
+              shots)
+        contact = [r for r in crits if r.get('event') == 'collision']
+        if contact:
+            c, sides = contact[0], contact[0].get('sides') or []
+            by = dict((x.get('vehicleId'), x) for x in sides)
+            mine = by.get(battle.me) or {}
+            check(group, 'ram contact: both vehicles, the point in each chassis frame, the parts pose, turret and gun',
+                  c.get('pair') == sorted([battle.me, battle.enemy]) and set(by) == set([battle.me, battle.enemy])
+                  and [round(x, 6) for x in mine.get('local') or ()] == [-1.0, 0.5, 2.0] and [p.get('id') for p in mine.get('parts') or []] == [0, 1, 2, 3]
+                  and all(len(p.get('transform') or ()) == 16 for p in mine.get('parts') or []) and mine.get('aim') == [0.2, 0.3]
+                  and c.get('source') == 'client physics' and isinstance(c.get('at'), float), c)
+            check(group, 'ram contact: the speed toward the point and the closing speed',
+                  all(isinstance(x.get('approach'), float) for x in sides) and c.get('closingSpeed') is not None,
+                  [(x.get('vehicleId'), x.get('approach')) for x in sides])
 
     # ---- log --------------------------------------------------------------------------------------------
     errors = [r for r in capture.records if r.levelno >= logging.ERROR]

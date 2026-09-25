@@ -128,7 +128,17 @@ function write(folder) {
     // 0.8 m off the pose the server hit - the page moves the flight onto the point and shows the pose mark.
     {schema: 1, type: 'shot', event: 'stop', id: 's2', shotId: '501', tracerId: 's1', shooterId: 30, own: true, position: [I[0], I[1], I[2] + 0.8],
      segmentDistance: len, receivedAt: T0 + 7249.98, gameTime: 99.98}];
-  const battles = [BATTLE('pm', 'Synthetic field', T0 + 7200, [HIT('pm-1', 31, 30, 'incoming', T0 + 7260), HIT('pm-2', 32, 30, 'incoming', T0 + 7270)]),
+  // Damage no shell dealt (25.09, BACKLOG 3): before the hits the enemy rams the player - the contact on his turret's
+  // side (the chassis frame of Papa: turret x ±1.1 m, 1.7-2.6 m up) - after them the ally's hit sets him on fire.
+  const pmEvents = [
+    {id: 'ram:c1', kind: 'ram', reason: 'ramming', attackerId: 31, targetId: 30, damage: 150, selfDamage: 20, ticks: 2, start: 95, end: 95.1,
+     gameTime: 95, receivedAt: T0 + 7255, rammerFrom: 'contact',
+     contact: {at: 94.9, dt: -0.1, closingSpeed: 5, source: 'client physics', sides: {30: {local: [1.1, 2.2, -0.2], aim: [0, 0], approach: -0.2},
+       31: {local: [-1.3, 2.0, 0.4], aim: [0, 0], approach: 5}}}},
+    {id: 'fire:c5', kind: 'fire', reason: 'fire', attackerId: 32, targetId: 30, damage: 240, ticks: 6, start: 105, end: 108, gameTime: 108,
+     receivedAt: T0 + 7278, out: 'extinguished', cause: {hitId: 'pm-2', from: 'crit'}}];
+  const battles = [Object.assign(BATTLE('pm', 'Synthetic field', T0 + 7200, [HIT('pm-1', 31, 30, 'incoming', T0 + 7260), HIT('pm-2', 32, 30, 'incoming', T0 + 7270)]),
+                                 {damageEvents: pmEvents, damageCheck: {schema: 1, rows: []}}),
                    BATTLE('pm2', 'Synthetic hills', T0 + 3600, [HIT('pm2-1', 32, 30, 'incoming', T0 + 3660)]),
                    Object.assign(BATTLE('pm3', 'Synthetic coast', T0, [pm3hit]), {shotEvents: pm3shots})];
   battles.forEach(function (b) { put('battles/' + b.id + '.js', 'battle:' + b.id, b); });
