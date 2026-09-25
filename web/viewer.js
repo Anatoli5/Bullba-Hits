@@ -8,9 +8,6 @@
   // FRAME_STALL: ms after which a scheduled frame that never fired counts as lost (kick()).
   // FRAME_SAMPLES: frames kept for the rate readout; FRAME_WINDOW: how fresh they must be.
   var POSE_SETTLE=200,FRAME_STALL=2000,FRAME_SAMPLES=30,FRAME_WINDOW=2000;
-  // ZOOM_WAIT: ms after the last zoom-only frame before the frame that composes the picture sharp again is asked for
-  // (the composition itself waits for its own ZOOM_SETTLE of a still zoom; screen-armor.js).
-  var ZOOM_WAIT=160;
   function clampZoom(value){return Math.max(.1,Math.min(150,value));}
   // A monotonic clock. Date.now() steps backwards when the system clock is corrected after a resume, which used
   // to leave the settle comparisons below permanently unsatisfied.
@@ -77,10 +74,10 @@
     this.shell=null;this.heatmap=true;this.palette='classic';this.paintMesh=null;this.samples=[];this.engine=null;
     // What the page was last told (notifyCamera, backend) and the notifications held while a scene loads (hold): the
     // page is told once per real change, not once per internal step (VIEW-07). engineGen counts the ballistic engines -
-    // a committed pose is a new one, and the page's figures follow it through the camera report. zoomTimer asks for the
-    // sharp frame after a zoom drawn in 2D; liveRingLine is the live ring's one line for the viewer's life (drawCircle).
-    this.cameraSeen=new Float64Array(11);this.cameraSeen[0]=NaN;this.engineGen=0;this.hold=0;this.heldCamera=false;this.heldPose=null;this.backendShown=null;this.zoomTimer=null;this.liveRingLine=null;
-    this.frameId=null;this.fitPending=false;this.recordedDistance=null;this.estimateAim=null;this.paintedKey=null;this.distanceSet=false;
+    // a committed pose is a new one, and the page's figures follow it through the camera report.
+    // liveRingLine is the live ring's one line for the viewer's life (drawCircle).
+    this.cameraSeen=new Float64Array(11);this.cameraSeen[0]=NaN;this.engineGen=0;this.hold=0;this.heldCamera=false;this.heldPose=null;this.backendShown=null;this.liveRingLine=null;
+    this.frameId=null;this.fitPending=false;this.zoomLock=false;this.recordedDistance=null;this.estimateAim=null;this.paintedKey=null;this.distanceSet=false;
     // Aim emulation: the circle that follows the cursor. liveRadius100 is the radius at 100 m the page
     // computes from the shooter's state (null = the feature is off and the manual estimate stands),
     // liveAimPoint the centre it was last drawn at, liveAim the drawn circle the integral samples.
@@ -181,7 +178,7 @@
     window.dispatchEvent(new Event('armor-context-restored'));
   };
   // Coalesce input and color updates into one draw at the next browser frame.
-  Viewer.prototype.draw=function(){if(this.contextLost||this.frameId!==null)return;var self=this;this.frameAt=clock();this.frameId=window.requestAnimationFrame(function(){try{self.countFrame();if(self.turretPending&&(!self.poseLive()||!self.previewPose()))self.applyTurret();if(self.fitPending){self.fitPending=false;self.resize();self.fit();}if(self.paintMesh)self.paint();self.renderer.render(self.scene,self.camera);self.updateReticles();}finally{self.frameId=null;}});};
+  Viewer.prototype.draw=function(){if(this.contextLost||this.frameId!==null)return;var self=this;this.frameAt=clock();this.frameId=window.requestAnimationFrame(function(){try{self.countFrame();if(self.turretPending&&(!self.poseLive()||!self.previewPose()))self.applyTurret();if(self.fitPending){self.fitPending=false;self.resize();self.fit(self.zoomLock);}if(self.paintMesh)self.paint();self.renderer.render(self.scene,self.camera);self.updateReticles();}finally{self.frameId=null;}});};
   // The real cadence of the frames that ran, for the status line: the game's browser pumps its own BeginFrames
   // and the figure there is neither 60 nor the desktop browser's rate.
   Viewer.prototype.countFrame=function(){var ring=this.frameTimes;ring.push(clock());if(ring.length>FRAME_SAMPLES)ring.shift();};
@@ -314,7 +311,7 @@
   Viewer.prototype.setZoom=function(value){if(!Number.isFinite(value)||value<=0)return;this.targetZoom=null;this.targetScale=null;if(this.autoFrame)this.scaleFor(value);this.showZoom(value);};
   Viewer.prototype.setDistance=function(value){if(!Number.isFinite(value))return;this.targetDistance=null;this.distance=Math.max(DISTANCE_MIN,Math.min(DISTANCE_MAX,value));this.render();};
   Viewer.limits={distanceMin:DISTANCE_MIN,distanceMax:DISTANCE_MAX};
-  Viewer.prototype.clear=function(){this.dropTargets();this.clearLiveAim();this.clearHitMarks();this.look=null;this.markDrawn=this.markBuilt=null;this.pinResult=null;this.fitPending=false;this.shotPoints=null;this.shotPath=null;this.horizon=null;this.recordedDistance=null;this.pinned=null;this.disposePin();this.pinCache=null;this.pinReticles=[];if(this.surface)this.surface.dispose();this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.gunAngle=0;this.savedAim=this.ringAim=this.discAim=this.shotDisc=null;this.viewPoints=null;this.aimGroup=null;this.estimateAim=null;window.clearTimeout(this.zoomTimer);this.zoomTimer=null;this.reticles=[];this.reticleLayer.replaceChildren();clearTimeout(this.turretTimer);this.turretTimer=null;this.turretPending=false;this.poseGeometries=null;this.poseBuilt=null;this.poseStale=false;this.spreadAim=null;this.hideSpread();window.clearTimeout(this.aimSettleTimer);this.aimSettleTimer=null;window.cancelAnimationFrame(this.frameId);this.frameId=null;this.cancelHover();this.cancelOrbit();this.pendingPan=null;this.inspectKey=null;this.paintMesh=null;this.outline=null;this.outlineDepth=null;this.engine=null;this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.loadedData=null;this.paintedKey=null;this.samples=[];var disposed=new Set([this.ringGeom]),kept=this.ringMat;this.root.traverse(function(o){var shared=!!(o.parent&&o.parent.type==='ArrowHelper'&&(o===o.parent.line||o===o.parent.cone));if(o.geometry&&!shared&&!disposed.has(o.geometry)){disposed.add(o.geometry);o.geometry.dispose();}if(o.material){(Array.isArray(o.material)?o.material:[o.material]).forEach(function(m){if(m!==kept)m.dispose();});}});while(this.root.children.length)this.root.remove(this.root.children[0]);this.point=null;this.travel=null;this.draw();};
+  Viewer.prototype.clear=function(){this.dropTargets();this.clearLiveAim();this.clearHitMarks();this.look=null;this.markDrawn=this.markBuilt=null;this.pinResult=null;this.fitPending=false;this.shotPoints=null;this.shotPath=null;this.horizon=null;this.recordedDistance=null;this.pinned=null;this.disposePin();this.pinCache=null;this.pinReticles=[];if(this.surface)this.surface.dispose();this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.gunAngle=0;this.savedAim=this.ringAim=this.discAim=this.shotDisc=null;this.viewPoints=null;this.aimGroup=null;this.estimateAim=null;this.reticles=[];this.reticleLayer.replaceChildren();clearTimeout(this.turretTimer);this.turretTimer=null;this.turretPending=false;this.poseGeometries=null;this.poseBuilt=null;this.poseStale=false;this.spreadAim=null;this.hideSpread();window.clearTimeout(this.aimSettleTimer);this.aimSettleTimer=null;window.cancelAnimationFrame(this.frameId);this.frameId=null;this.cancelHover();this.cancelOrbit();this.pendingPan=null;this.inspectKey=null;this.paintMesh=null;this.outline=null;this.outlineDepth=null;this.engine=null;this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.loadedData=null;this.paintedKey=null;this.samples=[];var disposed=new Set([this.ringGeom]),kept=this.ringMat;this.root.traverse(function(o){var shared=!!(o.parent&&o.parent.type==='ArrowHelper'&&(o===o.parent.line||o===o.parent.cone));if(o.geometry&&!shared&&!disposed.has(o.geometry)){disposed.add(o.geometry);o.geometry.dispose();}if(o.material){(Array.isArray(o.material)?o.material:[o.material]).forEach(function(m){if(m!==kept)m.dispose();});}});while(this.root.children.length)this.root.remove(this.root.children[0]);this.point=null;this.travel=null;this.draw();};
   // clear() draws the empty scene and tells the page nothing: the camera has not moved, and the next load() reports once.
   Viewer.prototype.rebuild=function(){
     if(!this.loadedData)return;var T=THREE,self=this;this.samples=[];this.paintedKey=null;
@@ -666,15 +663,17 @@
   // exactly as it does when the pivot is switched; the top-left tiles may now cover the upper corner of a wide
   // vehicle. Fit never moves the camera, a clinch record included: it only zooms (user, 23.09 - backing a 5 m
   // record off to twice the model's radius along the view line took the camera off the shell's axis).
+  // keepZoom: the framing of a newly shown shot under Zoom lock (user, 25.09) - the vehicle is centred as always, the
+  // zoom the user set stays. The Fit button always picks the zoom.
   var FIT_TOP_BAND=.12,FIT_BOTTOM_BAND=.12,FIT_MARGIN=.08;
-  Viewer.prototype.fit=function(){this.dropTargets();
-    var tris=(this.engine||{}).triangles||[];if(!tris.length)return;var cam=this.camera,v=new THREE.Vector3(),local=new THREE.Vector3(),i,k,t;
+  Viewer.prototype.fit=function(keepZoom){this.dropTargets();
+    var tris=(this.engine||{}).triangles||[];if(!tris.length)return;var cam=this.camera,held=cam.zoom,v=new THREE.Vector3(),local=new THREE.Vector3(),i,k,t;
     cam.zoom=1;this.frameCenter.set(0,0);this.placeCamera();
     var all=[Infinity,-Infinity,Infinity,-Infinity],main=[Infinity,-Infinity,Infinity,-Infinity];
     function grow(box,x,y){if(x<box[0])box[0]=x;if(x>box[1])box[1]=x;if(y<box[2])box[2]=y;if(y>box[3])box[3]=y;}
     for(i=0;i<tris.length;i++){t=tris[i];var isMain=!!(t.armor&&t.armor.vehicleDamageFactor>0);
       for(k=0;k<3;k++){v.fromArray(k===0?t.a:k===1?t.b:t.c);local.copy(v).applyMatrix4(cam.matrixWorldInverse);if(local.z>-.5)continue;v.project(cam);grow(all,v.x,v.y);if(isMain)grow(main,v.x,v.y);}}
-    if(all[0]===Infinity)return;if(main[0]===Infinity)main=all;
+    if(all[0]===Infinity){if(keepZoom)this.showZoom(held);return;}if(main[0]===Infinity)main=all;
     // Horizontally the orbit centre stays on the screen's vertical axis. Vertically the view is shifted so that the
     // middle of the main armour's height sits mid-way in the usable band (user, 13.09): the orbit centre then lands
     // above or below the screen centre by however much it is above or below the vehicle's middle, and the tank sits
@@ -685,7 +684,7 @@
     // Largest zoom at which a box stays inside the usable area with the given margin, measured from the pivot axis
     // horizontally and from the main armour's middle vertically.
     function limit(box,margin){var z=150,w=Math.max(-box[0],box[1]),h=Math.max(midY-box[2],box[3]-midY);if(w>0)z=Math.min(z,(1-margin)/w);if(h>0)z=Math.min(z,(halfUsable-margin)/h);return z;}
-    var zoom=Math.max(.1,Math.min(150,Math.min(limit(main,FIT_MARGIN),limit(all,0))));
+    var zoom=keepZoom?held:Math.max(.1,Math.min(150,Math.min(limit(main,FIT_MARGIN),limit(all,0))));
     this.frameCenter.set(midY*this.distance,centreY);
     this.scaleFor(zoom);this.showZoom(zoom);
   };
@@ -1236,9 +1235,6 @@
         composed=true;this.surfaceError=null;
         // The hatched layer is due once the camera has stood still: one redraw later, not a loop.
         if(this.surface.bouncePending&&this.bounceTimer===null){var self=this;this.bounceTimer=setTimeout(function(){self.bounceTimer=null;self.draw();},160);}
-        // A zoom drawn in 2D (screen-armor.js): the frame that composes it sharp is asked for once the zoom has stood still,
-        // the wait pushed on by every frame of the zoom.
-        if(this.surface.zoomPending){var me=this;window.clearTimeout(this.zoomTimer);this.zoomTimer=window.setTimeout(function(){me.zoomTimer=null;me.draw();},ZOOM_WAIT);}
         this.backend('GPU · layers at window size · '+size);
       }catch(e){this.surfaceError=e.message;this.surface.dispose();this.surface=null;console.warn('Screen composition disabled:',e.message);if(window.BullbaHost)window.BullbaHost.mark('Layer composition','error: '+e.message);}}
     }

@@ -5,6 +5,8 @@
 // - an element that does nothing on a left click (a figure, a tile of the scene, a line of a popover): a click shows
 //   its words by the pointer; a second click on it, a press elsewhere, Escape, a scroll or a resize close them;
 // - an element that acts on a click (a button, a tile of Config, a shell chip) is reached through the HELP MODE.
+//   An icon inside a control that marks itself data-tip-own (a crit icon on a shot tile, 25.09) is a picture of its
+//   own: a click on it shows its words, and the control around it does not see that click.
 //   A help dot (<button class="help-dot" data-help-for="id id ...">?</button>, one per cluster of controls) shows the
 //   short summary of its cluster - one group per element it lists that is on screen, led by the element's glyph -
 //   and turns the mode on: the dot lit, the help cursor over the page. In the mode a press on ANY element with words
@@ -31,7 +33,7 @@
   if (win.BullbaTips || !doc || !doc.addEventListener) return;
 
   var GAP_X = 12, GAP_Y = 18, ABOVE = 8, EDGE = 6;
-  var HELP = 'data-help-for', TIP = 'data-tip', MODE = 'data-help-mode';
+  var HELP = 'data-help-for', TIP = 'data-tip', MODE = 'data-help-mode', OWN = 'data-tip-own';
   // The bubble wears the page's own panel - the choice lists' background and border, 13 px text - and nothing more:
   // no accent edge, no shade (user 23.09: they drew the eye). The markup: a bold heading, items hanging off a grey
   // bullet with a bold key, a gap between groups; a help bubble is wider and gives each group its element's glyph.
@@ -141,6 +143,7 @@
   // element, and a pointer cursor on the target (the stylesheet marks what is pressable with it). The scene
   // (#viewport, focusable) is above the tiles in it, so a tile of the scene with words still counts as a picture.
   function interactive(target, holder) {
+    if (holder && holder.hasAttribute(OWN)) return false;   // an icon with words of its own inside a control
     var inside = true;
     for (var el = target; el && el.nodeType === 1; el = el.parentNode) {
       if (ACTIVE_TAGS[String(el.tagName).toUpperCase()] === 1) return true;
@@ -498,6 +501,7 @@
     if (helpDot) return;                                  // a key in the mode: the control acts, as keys always do
     var el = holderOf(t);
     if (!el || interactive(t, el)) return;
+    if (el.hasAttribute(OWN)) e.stopPropagation();        // the control around the icon keeps out of it
     if (el === shownEl) { hide(); return; }
     var at = pointOf(e, el);
     show(el, at[0], at[1]);

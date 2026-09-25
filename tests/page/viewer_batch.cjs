@@ -226,45 +226,23 @@ function checks(ok, web) {
   const section = function (fn) { try { fn(); } catch (e) { ok('viewer-batch: a block threw', false, String(e && e.message)); } };
   const near = function (a, b, eps) { return Math.abs(a - b) <= (eps || 1e-9); };
 
-  // ---- 1. ZOOM is a 2D change of the last composed picture ------------------------------------------------------
+  // ---- 1. ZOOM is composed anew like any camera change (user, 25.09: the 2D-scaled picture of 24.09 was dropped) --
   section(function () {
     const e = env(web), v = loaded(e), s = v.surface;
     ok('viewer-batch: the composition is up after a load (the fake renderer took peels and a composite)', !!s && !!s.result);
+    e.reset(); e.frame(); e.settle();
+    ok('viewer-batch: a still frame composes nothing', e.count.peel === 0 && e.count.composite === 0);
     e.reset();
     for (let i = 0; i < 10; i++) { v.setZoom(v.camera.zoom * 1.1); e.frame(); }
-    ok('viewer-batch: ten notches of the Zoom slider, one per frame, peel and compose nothing', e.count.peel === 0 && e.count.composite === 0 && e.count.light === 0,
-       '(peel ' + e.count.peel + ', composite ' + e.count.composite + ', light ' + e.count.light + ')');
-    ok('viewer-batch: and every one of those frames was drawn (the map is scaled, not frozen)', e.count.frame === 10, '(' + e.count.frame + ')');
-    ok('viewer-batch: the picture is scaled in 2D meanwhile (uView is not the identity)', s.markMaterial.uniforms.uView && s.markMaterial.uniforms.uView.value.x !== 1);
-    // The 2D transform maps a pixel of the current view onto the pixel of the SAME world point in the layers' view.
-    const T = e.T, layerCam = new T.PerspectiveCamera();
-    const L = s.cameraCache, P = new T.Matrix4().fromArray(Array.prototype.slice.call(L, 16, 32)), M = new T.Matrix4().fromArray(Array.prototype.slice.call(L, 0, 16));
-    layerCam.projectionMatrix.copy(P); layerCam.projectionMatrixInverse.copy(P).invert(); layerCam.matrixWorld.copy(M); layerCam.matrixWorldInverse.copy(M).invert();
-    const uv = s.markMaterial.uniforms.uView.value, pts = [new T.Vector3(0.6, 1.2, -1.5), new T.Vector3(3, 2, 1.5), new T.Vector3(-2.9, .1, -1.6)];
-    let worst = 0;
-    pts.forEach(function (p) {
-      const now = p.clone().project(v.camera), then = p.clone().project(layerCam);
-      const px = (now.x + 1) / 2 * e.W, py = (now.y + 1) / 2 * e.H, lx = (then.x + 1) / 2 * e.W, ly = (then.y + 1) / 2 * e.H;
-      worst = Math.max(worst, Math.hypot(px * uv.x + uv.z - lx, py * uv.y + uv.w - ly));
-    });
-    ok('viewer-batch: the 2D transform puts every world point on the layer pixel it was composed at (< 1e-6 px)', worst < 1e-6, '(' + worst.toExponential(2) + ' px)');
-    e.reset();
-    const after = e.settle();
-    ok('viewer-batch: once the zoom has stood still, ONE full composition sharpens it', e.count.peel === 9 && e.count.composite === 1 && e.count.light === 1,
-       '(peel ' + e.count.peel + ', composite ' + e.count.composite + ', light ' + e.count.light + ', frames ' + after + ')');
-    ok('viewer-batch: and the picture is the layers\' own again (uView back to the identity)', uv.x === 1 && uv.y === 1 && uv.z === 0 && uv.w === 0);
-    e.reset(); e.frame(); e.settle();
-    ok('viewer-batch: a still frame after that composes nothing', e.count.peel === 0 && e.count.composite === 0);
-    // A camera move while the 2D zoom is pending is a real move: it peels at once.
-    v.setZoom(v.camera.zoom * 1.1); e.frame(); e.reset();
-    v.orbitTo(v.targetYaw + .1, v.targetPitch); e.frame(); e.frame();
-    ok('viewer-batch: an orbit during the 2D zoom peels at once (the camera really moved)', e.count.peel >= 9, '(' + e.count.peel + ')');
+    ok('viewer-batch: ten notches of the Zoom slider, one per frame, compose ten pictures', e.count.frame === 10 && e.count.composite === 10 && e.count.peel >= 10,
+       '(frames ' + e.count.frame + ', peel ' + e.count.peel + ', composite ' + e.count.composite + ')');
+    ok('viewer-batch: the mark pass reads the composed picture pixel for pixel (no 2D scaling left)', !('uView' in s.markMaterial.uniforms) && !('zoomPending' in s));
     e.settle();
-    // Auto frame: the wheel with a modifier glides the frame scale - the same zoom-only change.
+    // Auto frame: the wheel with a modifier glides the frame scale - composed anew each frame, like the zoom.
     v.setAutoFrame(true); e.settle(); e.reset();
     v.scaleTo(v.frameScale * 1.3);
-    let peelsDuring = 0; for (let i = 0; i < 8; i++) { e.frame(); peelsDuring += e.count.peel; e.count.peel = 0; }
-    ok('viewer-batch: the Auto-frame scale glide is a 2D zoom too (no peel while it glides)', peelsDuring === 0, '(' + peelsDuring + ')');
+    let composedDuring = 0; for (let i = 0; i < 8; i++) { e.frame(); composedDuring += e.count.composite; e.count.composite = 0; }
+    ok('viewer-batch: the Auto-frame scale glide composes as it goes (no 2D picture left)', composedDuring >= 6, '(' + composedDuring + ')');
     e.settle(); v.setAutoFrame(false); e.settle();
     // A resize is not a zoom: the layers go.
     e.reset(); s.renderer.getDrawingBufferSize = function (vec) { return vec.set(1200, 900); };
@@ -480,7 +458,7 @@ function checks(ok, web) {
     v.setShotContext(ctx);
     ok('viewer-batch: another hit makes a new mesh on the same geometry and material', v.shotDisc !== m && v.shotDisc.geometry === geo && v.shotDisc.material === mat);
     e.reset(); v.setZoom(v.camera.zoom * 1.1); e.frame();
-    ok('viewer-batch: a 2D zoom frame draws the scene with the shot ring in it (it follows like the outlines)', e.count.frame === 1 && e.count.peel === 0 && v.shotDisc.parent === v.aimGroup);
+    ok('viewer-batch: a zoom frame draws the scene with the shot ring in it (it follows like the outlines)', e.count.frame === 1 && v.shotDisc.parent === v.aimGroup);
     e.settle();
     // An old record: no update in the context, no disc; the solid ring carries the figure as before.
     v.setShotContext({aim: {clientMarker: ring}, tracer: tracer, serverShot: null});

@@ -2,6 +2,13 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
+## Unreleased
+
+- **Hits:** a click on a critical-damage icon of a hit tile shows what it means instead of opening the hit.
+- **Scene:** Zoom redraws the map at once, like Distance (no blurred scaled picture while it changes).
+- **Scene:** Lock beside Zoom keeps the zoom you set while you switch between hits.
+- **Emulation:** holding the button fires a burst only in the ⌖ mode (target HP); otherwise a held button is a plain click and a hesitant turn of the vehicle no longer fires a shot.
+
 ## 0.8.2 (2026-09-25)
 
 - **Help:** the words "cyan" and "magenta" in tooltips are shown in those colours.

@@ -464,6 +464,16 @@ r = press(fit, 700, 20);
 ok('controls: a button\'s click keeps its action, untouched', fitClicks === fitBefore + 1 && bubble.hidden && untouched(r));
 press(nestBtn, 10, 10);
 ok('controls: a button in a titled group still gets its click, and the group\'s words do not show', groupBtnClicks === groupBefore + 1 && bubble.hidden);
+// 25.09: an icon inside a control that marks itself data-tip-own (a crit icon on a shot tile) shows its words, and the
+// control does not act on that click; the rest of the control still does.
+const ownIcon = node('img', fit, {title: 'Engine damaged', 'data-tip-own': ''});
+const fitBeforeOwn = fitClicks;
+press(ownIcon, 700, 20);
+ok('own icon: a click on an icon with data-tip-own shows its words and the button around it does not act',
+   !bubble.hidden && bubble.textContent === 'Engine damaged' && fitClicks === fitBeforeOwn);
+press(ownIcon, 700, 20);
+ok('own icon: a second click closes them, still without the button', bubble.hidden && fitClicks === fitBeforeOwn);
+fit.removeChild(ownIcon);
 press(row2, 300, 300);
 const fitBefore2 = fitClicks;
 press(fit, 700, 20);

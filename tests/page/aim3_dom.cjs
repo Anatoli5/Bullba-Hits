@@ -1478,7 +1478,16 @@ settle(20).then(function () {
   ok('the reload over, the ring is whole again and the loop stopped',
      view.reloadPart === null && loopFrames() === 0, '(' + view.reloadPart + ')');
 
-  // ---- holding the button: a burst on the gun's own cooldown ------------------------------------
+  // ---- with ✸ off a held button is no burst (user, 25.09): a hesitant orbit must not shoot ----------
+  press(); tick(0.5);
+  ok('with the ✸ mode off a held button fires nothing', view.pinnedPoints === 2);
+  ok('and a move after the pause is still a drag', dragAway() === true && view.aimHold === false);
+  release();
+  ok('which fires nothing on the release either', view.pinnedPoints === 2);
+  // The burst tests below run in the ✸ mode; the fun section further down starts from a fresh, unticked box.
+  const burstMode = new Element('input'); burstMode.id = 'fun-mode'; burstMode.checked = true;
+
+  // ---- holding the button (✸ mode): a burst on the gun's own cooldown ---------------------------
   press();
   tick(0.3);                             // past the 250 ms hold
   ok('holding fires the first shot at the hold threshold', view.pinnedPoints === 3);
@@ -1563,6 +1572,7 @@ settle(20).then(function () {
   release();
   AIM_BLOCK.clip = [1, 0];
   run(30);
+  burstMode.checked = false; delete byId['fun-mode'];   // the ✸ mode of the burst tests off again
 
   // ---- the turret chasing the cursor -----------------------------------------------------------
   view.gap = 60 * Math.PI / 180;

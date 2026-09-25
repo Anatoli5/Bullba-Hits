@@ -3121,8 +3121,9 @@
   var aimLive = false, aimCursor = '';
   // aimCentred: the Config popover is open and the viewer holds the aim on the middle of the model.
   var aimCentred = false;
-  // A press longer than this is a burst, a shorter one a single shot (user, 20.09). Milliseconds of wall
-  // clock through window.setTimeout, not a count of frames, so a slow scene does not lengthen the tap.
+  // A press longer than this is a burst, a shorter one a single shot (user, 20.09) - in the ✸ mode only: with it
+  // off a held button never fires, so a hesitant orbit does not shoot and move the tracer (user, 25.09). Milliseconds
+  // of wall clock through window.setTimeout, not a count of frames, so a slow scene does not lengthen the tap.
   var AIM_HOLD_MS = 250;
   var AIM_KEYS = {KeyW: 'forward', KeyS: 'back', KeyA: 'left', KeyD: 'right'};
   // The game's CEF and a non-Latin keyboard layout both have to work, so the physical key is preferred
@@ -3698,7 +3699,7 @@
     var rounds = aimClipRounds();
     if (!(burstLeft > 0) && (!realReload() || rounds !== aimClipSize)) aimLoadFull(rounds);
     aimAutoRounds = 0;   // ✸: an automatic gun's stream starts with the press
-    aimHoldTimer = window.setTimeout(holdFire, AIM_HOLD_MS);
+    if (funOn()) aimHoldTimer = window.setTimeout(holdFire, AIM_HOLD_MS);
     return true;
   }
   // Held long enough without moving: the burst starts with its first shot at this instant - or, when the
@@ -6551,10 +6552,10 @@
       b.title=(view==='incoming'?'Incoming from '+((h.attacker||{}).name||'?'):'Outgoing at '+((h.target||{}).name||'?'))+'\n• Result: '+said+(critWords?'\n• Critical damage: '+critWords:'');
       b.appendChild(vehicleTile(view==='incoming'?h.attacker:h.target,true));
       // Critical damage (22.09): the client's own icons of the damaged modules and injured crew, up to four in a
-      // 2x2 grid, every word in the icon's title. Nothing known about the crits of this hit - no element at all.
+      // 2x2 grid, every word in the icon's title - a click on an icon shows it, not the shot (data-tip-own, 25.09). Nothing known about the crits of this hit - no element at all.
       // An icon that fails to load (not extracted yet) takes itself away, and the empty box with it.
       var crit=ArmorCrits.badges(h);
-      if(crit.length){var box=node('span',undefined,'hit-crits');crit.slice(0,4).forEach(function(c){var i=node('img',undefined,'crit-icon');i.alt='';i.title=c.title;i.onerror=function(){i.remove();if(!box.children.length)box.remove();};i.src=c.src;box.appendChild(i);});b.appendChild(box);}
+      if(crit.length){var box=node('span',undefined,'hit-crits');crit.slice(0,4).forEach(function(c){var i=node('img',undefined,'crit-icon');i.alt='';i.title=c.title;i.setAttribute('data-tip-own','');i.onerror=function(){i.remove();if(!box.children.length)box.remove();};i.src=c.src;box.appendChild(i);});b.appendChild(box);}
       // Outcome column: damage in the direction colour, or the muted result icon; the full result text stays in the button title.
       // Outcome widget: direction arrow in the top-left corner, the figure (damage, or the no-damage result icon)
       // in the top-right, the time underneath - the arrow never glues to the figure.
@@ -6656,6 +6657,7 @@
   }
   try{viewer=new ArmorViewer($('viewport'));}catch(e){message('WebGL unavailable: '+e.message);}
   if(viewer)viewer.setAutoFrame($('auto-frame').checked); // OFF by default (user, 22.09; it was on since 18.09)
+  if(viewer)viewer.zoomLock=$('zoom-lock').checked;
   if(viewer)viewer.setLighting($('soft-lighting').checked); // on by default (user, 19.09); the checkbox is the switch
   if(viewer)viewer.setLightStrength(Number($('light-strength').value)/100);
   if(viewer)viewer.onInspect=inspectArmor;
@@ -6699,6 +6701,7 @@
   // re-runs selectHit, which clears the viewer and rebuilds the scene, so the pin and the pose reset with it.
   if(viewer)viewer.onPin=function(on){$('shot-source').textContent=on?'Pinned point':activeHit&&activeHit.synthetic?'No recorded shot':'Hit line';shotStats();};
   $('auto-frame').onchange=function(){if(viewer)viewer.setAutoFrame(this.checked);};
+  $('zoom-lock').onchange=function(){if(viewer)viewer.zoomLock=this.checked;};
   $('track-opacity').oninput=function(){if(viewer)viewer.setTrackOpacity(Number(this.value)/100);$('track-opacity-value').textContent=this.value+' %';};
   // The cross at the impact point only (user, 20.09). Stored and restored with every other setting in the
   // menu, so this one line is the whole wiring.
