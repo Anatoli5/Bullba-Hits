@@ -11,6 +11,7 @@
     if(/^vehicle:[-a-zA-Z0-9_]{1,100}$/.test(key))return 'data/vehicles/'+key.slice(8)+'.js';
     // The characteristics of a vehicle type (23.09): every turret and gun on the top modules, one file per type.
     if(/^ttx:[-a-zA-Z0-9_]{1,100}$/.test(key))return 'data/ttx/'+key.slice(4)+'.js';
+    if(key==='ttxSweep')return 'data/ttx-sweep.js';
     throw new Error('Invalid record identifier');
   }
   function read(key,retryCount){
@@ -139,6 +140,8 @@
   function sceneFor(battle,hit){
     if(!hit)return Promise.reject(new Error('Hit not found'));
     var result={hit:hit,models:{},warnings:(battle.warnings||[]).concat(hit.warnings||[])},parts=(hit.target||{}).parts||[];
+    // A vehicle browsed without its model (the page's ttxRecord, 24.09): no geometry by design - its words, no warning.
+    if(hit.target&&hit.target.noModel){result.geometryIncomplete=true;result.geometryError=String(hit.target.noModel);return Promise.resolve(result);}
     return Promise.all(parts.map(function(part){
       if(part.modelError||!part.modelKey||!part.transform){result.warnings.push(part.name+': '+(part.modelError||'Model or part position not saved'));return;}
       return model(part.modelKey).then(function(data){
@@ -164,5 +167,5 @@
   // expandBattle is published so the offline tools that read a battle file straight from disk
   // (tools/make_gpu_fixtures.cjs, verify_gpu_browser.cjs, check_shot_selection.cjs) use this one
   // reader instead of a second copy of the rules.
-  window.ArmorInspectorData={receive:receive,index:function(){return read('index');},battle:function(id){return read('battle:'+id);},vehicles:function(){return read('vehicles');},vehicle:function(id){return read('vehicle:'+id);},ttx:function(id){return read('ttx:'+id);},scene:scene,sceneFor:sceneFor,expandBattle:expandBattle};
+  window.ArmorInspectorData={receive:receive,index:function(){return read('index');},battle:function(id){return read('battle:'+id);},vehicles:function(){return read('vehicles');},vehicle:function(id){return read('vehicle:'+id);},ttx:function(id){return read('ttx:'+id);},ttxSweep:function(){return read('ttxSweep');},scene:scene,sceneFor:sceneFor,expandBattle:expandBattle};
 }());

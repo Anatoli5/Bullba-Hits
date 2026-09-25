@@ -7,6 +7,7 @@ channel itself cannot be exercised outside the game; what is tested is that the
 handler we register routes a page command to exactly one recorder request.
 """
 import sys
+import time
 import types
 import unittest
 import urllib
@@ -127,6 +128,21 @@ class WebCommandTests(unittest.TestCase):
         with patch.object(modmain, '_recorder', None):
             modmain.page_ttx('czech:Cz17_Vz_55')
         self.assertEqual(requests, ['czech:Cz17_Vz_55'])
+
+    def test_open_command_marks_the_page_open_for_the_ttx_sweep(self):
+        # 24.09: the page, open in the game, says so every few seconds; the recorder holds it open for 12 s.
+        opened = []
+        presentation.set_open_request(lambda: opened.append(1))
+        self.addCleanup(presentation.set_open_request, None)
+        presentation.web_handlers()[0].handler(Command(action='open'), {})
+        self.assertEqual((opened, self.calls), ([1], []))
+        recorder = modmain.Recorder.__new__(modmain.Recorder)
+        recorder.page_open_until = 0.0
+        with patch.object(modmain, '_recorder', recorder):
+            modmain.page_open()
+        self.assertAlmostEqual(recorder.page_open_until - time.time(), modmain.PAGE_OPEN_SECONDS, delta=1)
+        with patch.object(modmain, '_recorder', None):
+            modmain.page_open()
 
 
 class PickerDescriptorTests(unittest.TestCase):

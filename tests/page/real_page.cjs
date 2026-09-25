@@ -97,6 +97,7 @@ const DRIVER = `(() => {
       must($('focus-list').querySelector('[data-id="' + id + '"]'), 'roster row ' + id).click();
     },
     list: (id) => must(document.querySelector('#vehicles [data-vehicle="' + id + '"]'), 'vehicle row ' + id).click(),
+    scope: (s) => must(document.querySelector('#vehicle-scope [data-scope="' + s + '"]'), 'scope ' + s).click(),
     battle: (id) => {
       if ($('battle-list').hidden) $('battle-pick').click();
       must(document.querySelector('#battle-list [data-id="' + id + '"]'), 'battle ' + id).click();
@@ -116,7 +117,13 @@ const DRIVER = `(() => {
       hp: shown($('target-hp')), hpText: words($('target-hp-text').textContent), hpTip: words(tip($('target-hp'))),
       drive: shown($('aim-drive')), config: shown($('aim-config')), gun: shown($('aim-gun')), funGun: shown($('fun-gun')),
       dots: dots.length, dotsShown: dots.filter(shown).length, wrong: wrong, funDot: funDot ? shown(funDot) : null,
-      message: words(shown($('scene-message')) ? $('scene-message').textContent : '')};
+      message: words(shown($('scene-message')) ? $('scene-message').textContent : ''), panel: shown($('ttx-panel'))};
+  }
+  // The compact characteristics panel as laid out (24.09): each row's box by its key.
+  function panelRects() {
+    const out = {};
+    document.querySelectorAll('#ttx-compact .ttx-row, #ttx-hp .ttx-row').forEach((r) => { const b = r.getBoundingClientRect(); out[r.getAttribute('data-key')] = {l: b.left, r: b.right, t: b.top, b: b.bottom}; });
+    return out;
   }
   function counters() {
     const v = window.__bullbaViewers[window.__bullbaViewers.length - 1], info = v && v.renderer && v.renderer.info;
@@ -124,7 +131,7 @@ const DRIVER = `(() => {
       three: info ? {geometries: info.memory.geometries, textures: info.memory.textures, programs: info.programs ? info.programs.length : null} : null,
       elements: document.getElementsByTagName('*').length};
   }
-  window.__bt = {act, settle, sig, counters};
+  window.__bt = {act, settle, sig, counters, panelRects};
   return true;
 })()`;
 
@@ -144,22 +151,32 @@ async function main() {
     const ready = await ev(`(async () => { for (let i = 0; i < 100; i++) { if (document.querySelector('#hits [data-hit]') && window.__bullbaViewers.length) break; await new Promise((r) => setTimeout(r, 100)); } await __bt.settle(); return {hits: document.querySelectorAll('#hits [data-hit]').length, viewers: window.__bullbaViewers.length, webgl: !!(window.__bullbaViewers[0] && window.__bullbaViewers[0].renderer)}; })()`);
     ok('the page starts on the synthetic data: hits listed, the viewer made with WebGL', ready.hits > 0 && ready.webgl, JSON.stringify(ready));
     if (!ready.webgl) throw new Error('no WebGL viewer - the matrix would mean nothing');
+    // The sweep of every vehicle's characteristics (24.09): the mod's progress file drawn beside the Statistics log.
+    const sweep = await ev(`(() => { const b = document.getElementById('ttx-sweep'), f = document.getElementById('ttx-sweep-fill');
+      return {shown: b.getClientRects().length > 0, text: document.getElementById('ttx-sweep-count').textContent, fill: f.style.width,
+        tip: b.getAttribute('data-tip') || b.title, left: b.getBoundingClientRect().right <= document.querySelector('header .connection').getBoundingClientRect().left}; })()`);
+    ok('sweep indicator: the progress file drawn in the header - 340 / 1343, the bar a quarter full, left of the Statistics log, its words in the tooltip',
+       sweep.shown && sweep.text === '340 / 1343' && sweep.fill === '25.3%' && sweep.left
+       && sweep.tip.indexOf('Characteristics of every vehicle\nThe game writes the characteristics file of every vehicle, once per game update.\n• Now: 340 of 1343\n') === 0, JSON.stringify(sweep).slice(0, 300));
     const step = async (js, max) => { await ev('__bt.act.' + js); await ev('__bt.settle(' + (max || 6000) + ')'); return ev('__bt.sig()'); };
 
     function expectScene(label, fun, want, s) {
       const tag = 'matrix, ⌖ ' + (fun ? 'on' : 'off') + ', ' + label + ': ';
       ok(tag + 'the tiles show the scene', s.model === want.model && s.shooter === want.shooter, '(model ' + s.model + ', shooter ' + s.shooter + ')');
+      // A model DRAWN: the tile, unless it is a vehicle browsed without its model (want.drawn false, 24.09).
+      const drawn = s.model && want.drawn !== false;
       ok(tag + 'the ⌖ switch stands with a model, lit with the mode; the strip and ↺ only under ⌖ with a model',
-         s.funToggle === s.model && s.funPressed === String(fun) && s.strip === (fun && s.model) && s.reset === (fun && s.model),
+         s.funToggle === drawn && s.funPressed === String(fun) && s.strip === (fun && drawn) && s.reset === (fun && drawn),
          '(switch ' + s.funToggle + ' pressed ' + s.funPressed + ', strip ' + s.strip + ', ↺ ' + s.reset + ')');
-      const bar = fun && s.model && !!want.hp;
+      const bar = fun && drawn && !!want.hp;
       ok(tag + (bar ? 'the health bar stands with ' + want.hp + ' inside it, from ' + want.source : 'no health bar'),
          s.hp === bar && (!bar || (s.hpText === want.hp && s.hpTip.indexOf('• Left: ' + want.hp + ' HP • Source: ' + want.source) >= 0)),
          '(shown ' + s.hp + ', "' + s.hpText + '", tip "' + s.hpTip.slice(0, 160) + '")');
-      ok(tag + 'the emulation’s controls go with the model', s.model || (!s.drive && !s.config && !s.gun && !s.funGun),
+      ok(tag + 'the emulation’s controls go with the model' + (want.drawn === false ? ' - Config stays for the panel’s build' : ''),
+         drawn || (!s.drive && !s.gun && !s.funGun && s.config === (want.drawn === false)),
          '(drive ' + s.drive + ', config ' + s.config + ', gun ' + s.gun + ', strip gun ' + s.funGun + ')');
       ok(tag + 'every help dot is laid out iff a control it lists is (the ⌖ one with the model)',
-         s.wrong.length === 0 && s.funDot === s.model, '(' + s.dotsShown + '/' + s.dots + ' shown; wrong: ' + s.wrong.join(', ') + ')');
+         s.wrong.length === 0 && s.funDot === drawn, '(' + s.dotsShown + '/' + s.dots + ' shown; wrong: ' + s.wrong.join(', ') + ')');
       ok(tag + 'no uncaught exception in the page', page.errors.length === 0, page.errors.slice(0, 3).join(' | '));
       page.errors.length = 0;
     }
@@ -180,6 +197,58 @@ async function main() {
       await step('shooterTile()');   // the shooter's role in the list: no scene of its own
       expectScene('another shooter from the Vehicles list', fun, {model: true, shooter: true, hp: '1 600 / 1 600', source: HP.OWN}, await step("list('pm_papa')"));
       expectScene('⇅ of two browsed vehicles', fun, {model: true, shooter: true, hp: '2 200 / 2 200', source: HP.OWN}, await step('swap()'));
+      // 24.09: a catalogue row without a model (not in this battle: the list on "All vehicles"). In the shooter's role its
+      // file's gun fires at the model on screen; in the model's role it is its characteristics alone, and the scene says so.
+      await step("scope('all')");
+      expectScene('a shooter without a model from the Vehicles list', fun, {model: true, shooter: true, hp: '2 200 / 2 200', source: HP.OWN}, await step("list('germany-Uniform')"));
+      await step('modelTile()');
+      const bare = await step("list('germany-Uniform')");
+      expectScene('a vehicle without a model browsed', fun, {model: true, drawn: false, shooter: true, hp: null}, bare);
+      ok('matrix, ⌖ ' + (fun ? 'on' : 'off') + ': (a vehicle without a model - the scene says so and the panel shows its file)',
+         bare.message === 'Model not exported yet. In the game, one click on this vehicle opens it.' && bare.panel, '("' + bare.message + '", panel ' + bare.panel + ')');
+      if (!fun) {
+        // The compact panel as the user laid it out (24.09, two columns), on the rendered page: ⚙ ▴ ? on a row of their own;
+        // the HP beside the gun chip under them; the DPM first with the reload beside it (a single-shot gun); dispersion |
+        // aiming; the stabilisation three two and one; speed | specific power; hull | turret; view range; standing | moving.
+        const R = await ev('__bt.panelRects()'), row = (a, b) => !!(R[a] && R[b]) && Math.abs(R[a].t - R[b].t) < 2;
+        const col = (a, b) => !!(R[a] && R[b]) && Math.abs(R[a].l - R[b].l) < 1;
+        const box = (sel) => ev(`(() => { const b = document.querySelector('${sel}').getBoundingClientRect(); return {l: b.left, r: b.right, t: b.top, b: b.bottom}; })()`);
+        const tools = await box('#ttx-panel .ttx-tools'), chip = await box('#ttx-pair');
+        ok('panel layout: the controls on a row of their own above the HP and the gun chip, and the HP and the chip above every figure',
+           tools.b <= R.maxHealth.t && tools.b <= chip.t && Math.abs((R.maxHealth.t + R.maxHealth.b) / 2 - (chip.t + chip.b) / 2) < 4 && R.maxHealth.r < chip.l
+           && R.maxHealth.b <= R.avgDamagePerMinute.t, JSON.stringify([tools, R.maxHealth, chip]));
+        ok('panel layout: two columns - the DPM first, the reload beside it; dispersion | aiming under them',
+           row('avgDamagePerMinute', 'reloadTimeSecs') && R.avgDamagePerMinute.r < R.reloadTimeSecs.l && row('shotDispersionAngle', 'aimingTime')
+           && col('avgDamagePerMinute', 'shotDispersionAngle') && col('reloadTimeSecs', 'aimingTime') && R.shotDispersionAngle.t > R.avgDamagePerMinute.b - 1,
+           JSON.stringify([R.avgDamagePerMinute, R.reloadTimeSecs]));
+        ok('panel layout: the stabilisation three in two columns - two on a row under dispersion | aiming, the third below',
+           row('stabMovement', 'stabRotation') && col('stabMovement', 'shotDispersionAngle') && col('stabRotation', 'aimingTime')
+           && col('stabTurret', 'stabMovement') && R.stabTurret.t > R.stabMovement.b - 1 && R.stabMovement.t > R.shotDispersionAngle.b - 1, JSON.stringify([R.stabMovement, R.stabTurret]));
+        ok('panel layout: Mobility in two rows - speed | specific power, hull | turret traverse',
+           row('speedLimits', 'enginePowerPerTon') && row('hull', 'turretRotationSpeed') && R.hull.t > R.speedLimits.b - 1
+           && col('hull', 'speedLimits') && col('turretRotationSpeed', 'enginePowerPerTon') && col('speedLimits', 'avgDamagePerMinute'), JSON.stringify([R.speedLimits, R.hull, R.turretRotationSpeed]));
+        ok('panel layout: Concealment - the view range on its own row, standing | moving under it',
+           col('circularVisionRadius', 'invisibilityStillFactor') && row('invisibilityStillFactor', 'invisibilityMovingFactor') && R.invisibilityStillFactor.t > R.circularVisionRadius.b - 1
+           && col('invisibilityMovingFactor', 'turretRotationSpeed') && R.circularVisionRadius.t > R.hull.b - 1, JSON.stringify([R.circularVisionRadius, R.invisibilityStillFactor]));
+        // The panel's help opens UPWARD, over the empty scene (user 24.09): the "?" and a figure's own words, both above the panel.
+        // Real clicks (the page's own tooltips.js takes trusted presses only): the "?", then again to leave the help mode,
+        // then a figure's own words.
+        const centre = (sel) => ev(`(() => { const b = document.querySelector('${sel}').getBoundingClientRect(); return [b.left + b.width / 2, b.top + b.height / 2]; })()`);
+        const press = async (xy) => { for (const type of ['mousePressed', 'mouseReleased']) await page.send('Input.dispatchMouseEvent', {type, x: xy[0], y: xy[1], button: 'left', clickCount: 1}); await ev('__bt.settle(1500)'); };
+        const tipBox = () => ev(`(() => { const t = document.getElementById('page-tip'); if (!t || t.hidden) return null; const b = t.getBoundingClientRect(); return {t: b.top, b: b.bottom}; })()`);
+        const panelTop = await ev("document.getElementById('ttx-panel').getBoundingClientRect().top");
+        await press(await centre('#ttx-panel .help-dot'));
+        const dotTip = await tipBox();
+        await press(await centre('#ttx-panel .help-dot'));
+        await press(await centre('#ttx-compact .ttx-row[data-key=stabTurret] .ttx-val'));
+        const figTip = await tipBox();
+        await press([700, 300]);
+        const help = {panel: panelTop, dot: dotTip, figure: figTip};
+        ok('panel help: the "?" and a figure\'s words open above the panel, not over it',
+           !!help.dot && !!help.figure && help.dot.b <= help.panel && help.figure.b <= help.panel, JSON.stringify(help));
+      }
+      expectScene('a vehicle with a model after one without', fun, {model: true, shooter: true, hp: '2 200 / 2 200', source: HP.OWN}, await step("list('pm_papa')"));
+      await step("scope('battle')");
       const back = await step("side('battles')");
       expectScene('back to Hits with the browsed vehicle kept', fun, {model: true, shooter: true, hp: '2 200 / 2 200', source: HP.OWN}, back);
       ok('matrix, ⌖ ' + (fun ? 'on' : 'off') + ': (no ⇅ for browsed vehicles in the Hits panel)', !(await ev("(() => { const e = document.getElementById('swap-roles'); return e.getClientRects().length > 0; })()")));

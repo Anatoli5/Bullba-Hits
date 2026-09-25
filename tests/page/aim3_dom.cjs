@@ -446,6 +446,8 @@ document.querySelectorAll = function (sel) {
   if (sel === '.toolbar-more[open]') return byId['aim-config'] && byId['aim-config'].open ? [byId['aim-config']] : [];
   // Crits (22.09): the side panel's two mode buttons, so that a check can go back to Battles, where the poll reloads.
   if (sel === '#sidebar-mode [data-mode]') return sidebarModes;
+  // 24.09: the list's two scopes, so the path matrix can list a vehicle that is not in the battle (a row without a model).
+  if (sel === '#vehicle-scope [data-scope]') return scopeButtons;
   if (sel !== '[data-shell]') return [];
   const out = [];
   ['shell-quick', 'aim-gun-shells'].forEach(function (id) {
@@ -455,6 +457,7 @@ document.querySelectorAll = function (sel) {
 };
 
 const sidebarModes = ['battles', 'vehicles'].map(function (m) { const e = new Element('button'); e.setAttribute('data-mode', m); return e; });
+const scopeButtons = ['battle', 'all'].map(function (m) { const e = new Element('button'); e.setAttribute('data-scope', m); return e; });
 let failures = 0, thrown = [];
 process.on('uncaughtException', function (e) { thrown.push(e); });
 function ok(name, cond, extra) {
@@ -738,10 +741,12 @@ function ttxFind(el, test, out) {
   (el.children || []).forEach(function (c) { if (test(c)) out.push(c); ttxFind(c, test, out); });
   return out;
 }
+// The parts by side, left, centre, right - the compact view lays its sides in another order for its two columns (24.09).
+const SIDE_ORDER = ['left', 'center', 'right'];
 function ttxLineOf(line) {
   const out = [];
   if (!line) return out;
-  line.children.forEach(function (side) {
+  line.children.slice().sort(function (a, b) { return SIDE_ORDER.indexOf(a.getAttribute('data-side')) - SIDE_ORDER.indexOf(b.getAttribute('data-side')); }).forEach(function (side) {
     side.children.forEach(function (r) {
       out.push({side: side.getAttribute('data-side'), key: r.getAttribute('data-key'), text: r.ttx.value.textContent, title: r.title,
                 cmp: r.getAttribute('data-cmp'), glyph: r.ttx.glyph});
@@ -3181,6 +3186,10 @@ settle(20).then(function () {
      && modelRow.indexOf('Hit marks') < 0 && modelRow.indexOf('outcome colour') < 0);
   ok('fun: a .swap-roles that is a switch is LIT in the page’s own accent, the very state the chips and pills wear',
      /\.swap-roles\[aria-pressed=true\]\{border-color:var\(--gold\);color:var\(--gold\);background:#302b23\}/.test(styleSrc));
+  ok('sweep (24.09): every poll tells the mod the page is open in the game (at most every 4 s) and reads the progress file until it says done',
+     /refresh\(\);if\(sidebarMode==='vehicles'\)loadCatalogue\(\);\n    sweepTick\(\);/.test(appSrc)
+     && /if\(host\.game\)\{var now=Date\.now\(\);if\(now-openSentAt>=4000\)\{openSentAt=now;sendCommand\('open',null\);\}\}/.test(appSrc)
+     && /if\(sweepDone\|\|!ArmorInspectorData\.ttxSweep\)return;/.test(appSrc) && /if\(s&&s\.done\)sweepDone=true;/.test(appSrc));
   ok('fun: the stored values of the two old rows are dropped when a store from 0.7.25 is read',
      /delete box\.values\['target-hp-on'\];delete box\.values\['hit-marks-on'\];/.test(appSrc));
 
@@ -5978,7 +5987,7 @@ settle(20).then(function () {
   };
   // The reload line of a view and its centre part (the reload itself).
   const lineIn = function (el) { return ttxFind(el, function (c) { return c.className === 'ttx-reload'; })[0] || null; };
-  const centreOf = function (el) { const l = lineIn(el); return l ? l.children[1].children[0] || null : null; };
+  const centreOf = function (el) { const l = lineIn(el), c = l && l.children.filter(function (x) { return x.getAttribute('data-side') === 'center'; })[0]; return c ? c.children[0] || null : null; };
   const val = function (slot) { const r = rowOf(slot); return r ? r.ttx.value.textContent : null; };
   const glyphOf = function (slot) { const r = rowOf(slot); return r ? r.ttx.glyph : null; };
   const keyOf = function (slot) { const r = rowOf(slot); return r ? r.getAttribute('data-key') : null; };
@@ -6006,27 +6015,34 @@ settle(20).then(function () {
   }).then(function () {
     const want = {avgDamagePerMinute: '2238', reload: '13.14', maxHealth: '2400', shotDispersionAngle: '0.38', aimingTime: '2.78',
                   turretRotationSpeed: '26.07', hull: '29.2', speedLimits: '59.6/15', enginePowerPerTon: '17.6',
-                  stabMovement: '0.18', stabRotation: '0.18', stabTurret: '0.1'};
+                  stabMovement: '0.18', stabRotation: '0.18', stabTurret: '0.1',
+                  circularVisionRadius: '400', invisibilityStillFactor: '6.61', invisibilityMovingFactor: '3.31'};
     const bad = Object.keys(want).filter(function (k) { return val(k) !== want[k]; });
     ok('ttx: IS-7 with its file - the panel shows, and the compact list prints the stock of ttx-formulas section 10',
        panel.hidden === false && bad.length === 0, bad.map(function (k) { return k + ' ' + val(k); }).join(', '));
-    // Panel v2 (23.09): the compact view is the garage's Firepower - the reload line on top, then the DPM first (the
-    // user, 23.09; the expanded view keeps the garage's order, the DPM last), dispersion, aiming, the stabilisation
-    // three, the turret - and its Mobility three (specific power, speed, hull), each under a thin rule with the group's
-    // glyph; the hit points in the head. One grid of three columns for all of it (user 23.09): one box of rows a section.
-    const secs = compact.children, grid0 = secs[0] && secs[0].children[2], move0 = secs[1] && secs[1].children[1];
-    ok('ttx v2: the compact view - Firepower (the reload line on top, then the DPM (the user, 23.09), dispersion, aiming, the stabilisation three, the turret) and Mobility (specific power, speed, hull), the HP in the head; glyphs and figures only',
-       secs.length === 2 && secs[0].getAttribute('data-group') === 'relativePower' && secs[1].getAttribute('data-group') === 'relativeMobility'
-       && secs[0].children.length === 3 && secs[0].children[0].className === 'ttx-rule' && secs[0].children[1].className === 'ttx-reload'
-       && grid0.className === 'ttx-rows' && grid0.children.map(function (r) { return r.getAttribute('data-key'); }).join() === 'avgDamagePerMinute,shotDispersionAngle,aimingTime,stabMovement,stabRotation,stabTurret,turretRotationSpeed'
-       && secs[1].children.length === 2 && secs[1].children[0].className === 'ttx-rule' && move0.className === 'ttx-rows' && move0.children.map(function (r) { return r.getAttribute('data-key'); }).join() === 'enginePowerPerTon,speedLimits,hull'
+    // The compact view, the user's layout of 24.09 (TTX_COMPACT): the HP in the head; Firepower - the DPM first, the
+    // reload sector beside it, then dispersion and aiming right above the stabilisation three; Mobility - the speed and
+    // the specific power, then the hull and the turret; Concealment's three (view range, standing, moving). A line of
+    // rows is a box of its own, which starts a row of the view's grid (style.css .ttx-body).
+    const secs = compact.children, keysOf = function (box) { return box && box.className === 'ttx-rows' ? box.children.map(function (r) { return r.getAttribute('data-key'); }).join() : null; };
+    const layout = secs.map(function (sec) { return sec.getAttribute('data-group') + '[' + sec.children.map(function (c) { return c.className === 'ttx-rows' ? keysOf(c) : c.className; }).join(' | ') + ']'; }).join(' ');
+    ok('ttx 24.09: the compact view - Firepower (the DPM first, the reload line after it, dispersion and aiming, the stabilisation three), Mobility (speed and specific power; the hull and the turret), Concealment (view range; standing and moving); the HP in the head; glyphs and figures only',
+       layout === 'relativePower[ttx-rule | avgDamagePerMinute | ttx-reload | shotDispersionAngle,aimingTime | stabMovement,stabRotation,stabTurret] '
+         + 'relativeMobility[ttx-rule | speedLimits,enginePowerPerTon | hull,turretRotationSpeed] relativeCamouflage[ttx-rule | circularVisionRadius | invisibilityStillFactor,invisibilityMovingFactor]'
        && rowOf('maxHealth').getAttribute('data-key') === 'maxHealth' && rowOf('maxHealth').ttx.glyph === 'maxHealth'
        && ttxRowsIn(compact).concat([rowOf('maxHealth')]).every(function (r) { return r.children.length === 2 && r.children[0].className === 'ttx-icon'; }),
-       lineText(compact));
+       layout);
+    const ruled = secs;
     ok('ttx v2: a section is a thin rule with the group\'s glyph and no word; its name (the garage\'s own) is the rule\'s tooltip',
-       secs.every(function (sec) { const r = sec.children[0]; return r.children.length === 1 && r.children[0].className === 'ttx-icon' && r.children[0].getAttribute('data-glyph') === sec.getAttribute('data-group') && !r.textContent; })
-       && /^Firepower\nThe garage’s own group/.test(secs[0].children[0].title) && /^Mobility\n/.test(secs[1].children[0].title)
-       && secs[0].children[0].getAttribute('role') === 'separator' && secs[0].children[0].getAttribute('aria-label') === 'Firepower');
+       ruled.length === 3 && ruled.every(function (sec) { const r = sec.children[0]; return r.className === 'ttx-rule' && r.children.length === 1 && r.children[0].className === 'ttx-icon' && r.children[0].getAttribute('data-glyph') === sec.getAttribute('data-group') && !r.textContent; })
+       && /^Firepower\nThe garage’s own group/.test(ruled[0].children[0].title) && /^Mobility\n/.test(ruled[1].children[0].title)
+       && /^Concealment and spotting\nThe garage’s two groups in one row/.test(ruled[2].children[0].title)
+       && ruled[0].children[0].getAttribute('role') === 'separator' && ruled[0].children[0].getAttribute('aria-label') === 'Firepower');
+    ok('ttx 24.09: Concealment in the compact view - the garage\'s view range and concealment, standing with its figure after a shot in the tooltip',
+       /^View range, standing, m\n• Stock: 400\n\n• Moving: 400 m/.test(rowOf('circularVisionRadius').title)
+       && /^Concealment standing, %\n• Stock: 6\.61\n\n• After a shot: 1\.01 %$/.test(rowOf('invisibilityStillFactor').title)
+       && /^Concealment moving, %\n• Stock: 3\.31$/.test(rowOf('invisibilityMovingFactor').title),
+       rowOf('invisibilityStillFactor').title);
     ok('ttx v2: a single-shot gun\'s reload line is one figure in its middle - Gun Loading, 13.14',
        lineText(compact) === 'c:reloadTimeSecs=13.14' && glyphOf('reload') === 'reload', lineText(compact));
     ok('ttx: the stock by default - ⚙ is off, no colours, and the tooltip names the stock and where the figure comes from',
@@ -6108,8 +6124,16 @@ settle(20).then(function () {
        && /\.ttx-rule\{grid-column:1\/-1;/.test(cssT) && /\.ttx-shells\{grid-column:1\/-1;/.test(cssT)
        && !/\.ttx-(?:rows|reload|sec)\{display:(?:grid|flex)/.test(cssT) && cssT.indexOf('.ttx-line') < 0 && !/data-side=\w+\]\{justify-content/.test(cssT)
        && /<div id="ttx-compact" class="ttx-body"><\/div>/.test(pageSrc) && /<div class="toolbar-popover ttx-full" id="ttx-full"><\/div>/.test(pageSrc)
-       && onGrid(compact) && onGrid(full) && ttxRowsIn(compact).length === 11 && ttxFind(full, function (c) { return c.className === 'ttx-rows'; }).length === 5,
+       && onGrid(compact) && onGrid(full) && ttxRowsIn(compact).length === 14 && ttxFind(full, function (c) { return c.className === 'ttx-rows'; }).length === 5,
        ttxRowsIn(compact).length + ' compact rows');
+    // The compact view's own grid (24.09): two columns, a line of rows starting a grid row; the reload line's sides placed
+    // by its shape - a magazine's interval beside the DPM, its reload and rounds under them; any other gun's reload beside it.
+    ok('ttx 24.09: the compact grid - two columns, every line starts a row, the reload line\'s sides in their columns by its shape',
+       /\.ttx-body\{grid-template-columns:repeat\(2,auto\)\}/.test(cssT) && /\.ttx-body \.ttx-rows>\.ttx-row:first-child\{grid-column-start:1\}/.test(cssT)
+       && /\.ttx-body \.ttx-reload-side:empty\{display:none\}/.test(cssT)
+       && /\.ttx-reload\[data-shape=mag\]>\.ttx-reload-side\[data-side=right\],[^{]*\[data-shape=mag\]>\.ttx-reload-side\[data-side=left\],\s*\.ttx-body \.ttx-reload\[data-shape=one\]>\.ttx-reload-side\[data-side=center\]\{grid-column:2\}/.test(cssT)
+       && /\.ttx-reload\[data-shape=mag\]>\.ttx-reload-side\[data-side=center\],\.ttx-body \.ttx-reload\[data-shape=one\]>\.ttx-reload-side\[data-side=right\]\{grid-column:1\}/.test(cssT)
+       && lineIn(compact).getAttribute('data-shape') === 'one' && lineIn(compact).children.map(function (x) { return x.getAttribute('data-side'); }).join() === 'center,right,left');
     // ⚙: this build against the stock.
     click(buildToggle);
     ok('ttx: ⚙ turns on this build - lit, kept in the hidden settings control, and every equal figure stays uncoloured',
@@ -6163,7 +6187,8 @@ settle(20).then(function () {
     ok('ttx v2: a magazine\'s reload line grows both ways - its 3 rounds to the left, the magazine\'s reload in the middle, the 2 s between rounds to the right',
        lineText(compact) === 'l:shellsCount=3 c:clipFireRate=' + TX.nice(9 / (0.57 + 0.43 * 1.1)) + ' r:shellReloadingTime=2'
        && ttxLineOf(lineIn(compact)).map(function (p) { return p.glyph; }).join() === 'clip,reload,interval'
-       && /^Shells in the magazine, rounds\n/.test(rowOf('reload').parentNode.parentNode.children[0].children[0].title)
+       && /^Shells in the magazine, rounds\n/.test(rowOf('reload').parentNode.parentNode.children.filter(function (x) { return x.getAttribute('data-side') === 'left'; })[0].children[0].title)
+       && lineIn(compact).getAttribute('data-shape') === 'mag' && lineIn(compact).children.map(function (x) { return x.getAttribute('data-side'); }).join() === 'right,center,left'
        && /\nAs the garage prints it:\n• Reload \(the magazine \/ between the shells \/ shells\): 8\.63\/2\/3\n/.test(rowOf('reload').title), lineText(compact));
     const stockClip = val('reload');
     openConfigMenu();
@@ -6536,15 +6561,18 @@ settle(20).then(function () {
   const tb = document.getElementById('battles');
   tb.value = 't-reload'; tb.onchange.call(tb);
   const compact = document.getElementById('ttx-compact'), full = document.getElementById('ttx-full'), more = document.getElementById('ttx-more');
-  const buildBox = document.getElementById('ttx-build'), hp = document.getElementById('ttx-hp');
+  const buildBox = document.getElementById('ttx-build');
+  const hpRow = function () { return document.getElementById('ttx-hp').children[0] || null; };
   const lineIn = function (el) { return ttxFind(el, function (c) { return c.className === 'ttx-reload'; })[0] || null; };
   const page = {};
   let chain = settle(20);
   hits.forEach(function (h, i) {
     chain = chain.then(function () { document.getElementById('hits').children[i].onclick(); return settle(20); }).then(function () {
       if (buildBox.checked) click(document.getElementById('ttx-build-toggle'));
-      const r = ref[i], out = {compact: {maxHealth: hp.children[0] ? hp.children[0].ttx.value.textContent : null}};
+      const r = ref[i], out = {compact: {maxHealth: hpRow() ? hpRow().ttx.value.textContent : null}};
       out.line = ttxLineOf(lineIn(compact));
+      // The compact line's shape and its sides' order (24.09, two columns): a magazine's - the interval, the reload, the rounds.
+      out.shape = lineIn(compact).getAttribute('data-shape') + ':' + lineIn(compact).children.map(function (x) { return x.getAttribute('data-side'); }).join();
       more.open = false; document.getElementById('ttx-more-button').onclick({}); more.open = true;
       out.fullLine = ttxLineOf(lineIn(full));
       more.open = false;
@@ -6673,6 +6701,10 @@ settle(20).then(function () {
     const total = rows.length, good = rows.filter(function (x) { return x.ok; }).length;
     ok('ttx v2 reload: all ' + ref.length + ' pairs of the ten vehicles compared (' + good + '/' + total + ')', Object.keys(by).length === ref.length && good === total);
     const kinds = {};
+    const badShape = ref.map(function (r) { const P = page[[r.vehicle, r.turret, r.gun, r.mode].join('|')], mag = P.line.some(function (p) { return p.side === 'left'; });
+      return P.shape === (mag ? 'mag:right,center,left' : 'one:center,right,left') ? null : r.vehicle + ' ' + r.gun + ' ' + P.shape; }).filter(Boolean);
+    ok('ttx 24.09: the compact line of every reference gun is shaped for the two columns - a magazine, autoloader, dual or automatic gun (it has the rounds): interval, reload, rounds; the rest: reload first',
+       badShape.length === 0, badShape.join('; '));
     ref.forEach(function (r) { const P = page[[r.vehicle, r.turret, r.gun, r.mode].join('|')]; kinds[r.vehicle.split(':')[1] + ' ' + r.gun.slice(0, 12)] = P.line.map(function (p) { return p.side[0] + ':' + p.text; }).join(' '); });
     console.log('     reload lines: ' + JSON.stringify(kinds));
     ok('ttx v2: the gun\'s sector where the garage prints it - after the turret\'s traverse on a real turret (vehicle.hasTurret), after the pitch limits with none, and with none in an older file (232 of 266)',
@@ -6712,11 +6744,12 @@ settle(20).then(function () {
          turrets.hidden === false && turrets.children.length === 2 && turrets.children[0].getAttribute('aria-pressed') === 'true'
          && turrets.children[0].children[0].getAttribute('data-glyph') === 'turret' && turrets.children[0].children.some(function (c) { return c.textContent === '●'; })
          && turrets.children[1].children.some(function (c) { return c.textContent === '▲'; }) && /^Turret: /.test(turrets.children[1].title));
-      const hp0 = document.getElementById('ttx-hp').children[0].ttx.value.textContent;
+      const hpOf = function () { return document.getElementById('ttx-hp').children[0].ttx.value.textContent; };
+      const hp0 = hpOf();
       click(turrets.children[1]);
       const stored = storedAim().pairs['czech:Cz24_Vz_64_Blesk'];
       ok('ttx v2: a turret picked in Config changes the pair on the panel - the same gun on the other turret, its HP (1350 -> 1400), kept per type, the gun chip lit',
-         hp0 === '1350' && document.getElementById('ttx-hp').children[0].ttx.value.textContent === '1400'
+         hp0 === '1350' && hpOf() === '1400'
          && stored === 'Turret_2_Cz24_Vz_64_Blesk|_30_mm_protiletadlovy_dvojkanon_vz_53' && turrets.children[1].getAttribute('aria-pressed') === 'true'
          && pairsBox.getAttribute('data-other') === 'true', hp0 + ' ' + stored);
       pairTile.onclick({preventDefault: function () {}});
@@ -6755,13 +6788,19 @@ settle(20).then(function () {
       ok('ttx v2: Config back - the chip sends the turret to Config again and the list holds the guns only',
          /picked in Config, in its Turret row/.test(pairTile.title) && list.children.length === 1 && list.children[0].getAttribute('data-turrets') === null);
       click(turrets.children[0]);
-      // The markup of the head: one help dot for its clickable elements, in their order, each of them there.
-      const m = /<div class="ttx-head">(.*?)<\/div><div id="ttx-compact" class="ttx-body">/.exec(pageSrc), head = m ? m[1] : '';
-      const dot = /<button type="button" class="help-dot" data-help-for="([^"]+)" aria-label="Help">\?<\/button>/.exec(head);
-      const ids = dot ? dot[1].split(' ') : [], at = ids.map(function (id) { return head.indexOf('id="' + id + '"'); });
-      ok('ttx v2: the head has one help dot naming its clickable elements in their order - the gun chip, ⚙, the mode switch, ▴',
-         !!dot && ids.join(' ') === 'ttx-pair ttx-build-toggle ttx-mode ttx-more-button' && at.every(function (x, k) { return x >= 0 && (k === 0 || x > at[k - 1]); })
-         && head.indexOf('<span id="ttx-hp" class="ttx-hp"></span>') === head.indexOf('<') , head.slice(0, 80));
+      // The markup of the panel (24.09): the mode switch on its left; then the row of the panel's controls (⚙, ▴ and the
+      // one help dot, which names the panel's clickable elements in their order), the head (HP, the gun chip) and the table.
+      const m = /<div id="ttx-inner" class="ttx-inner">(.*?)<div id="ttx-compact" class="ttx-body">/.exec(pageSrc), inner = m ? m[1] : '';
+      const tm = /<div class="ttx-tools">(.*?)<\/div><div class="ttx-head">(.*)$/.exec(inner), tools = tm ? tm[1] : '', head = tm ? tm[2] : '';
+      const dot = /<button type="button" class="help-dot" data-help-for="([^"]+)" aria-label="Help">\?<\/button>/.exec(tools);
+      const ids = dot ? dot[1].split(' ') : [], at = ids.map(function (id) { return inner.indexOf('id="' + id + '"'); });
+      ok('ttx v2: the controls row has one help dot naming the panel\'s clickable elements in their order - the mode switch, ⚙, ▴, the gun chip',
+         !!dot && ids.join(' ') === 'ttx-mode ttx-build-toggle ttx-more-button ttx-pair' && at.every(function (x, k) { return x >= 0 && (k === 0 || x > at[k - 1]); }),
+         inner.slice(0, 80));
+      ok('ttx 24.09: the mode switch on the panel\'s left; ⚙, ▴ and "?" on a row of their own above the head; the head is the HP and the gun chip',
+         inner.indexOf('<button type="button" id="ttx-mode" class="swap-roles"') === 0 && inner.indexOf('<div class="ttx-main"><div class="ttx-tools">') > 0
+         && /^<button type="button" id="ttx-build-toggle"/.test(tools) && tools.indexOf('id="ttx-more"') > 0 && tools.indexOf('id="ttx-pair"') < 0
+         && /^<span id="ttx-hp" class="ttx-hp"><\/span><details id="ttx-pairs"[^]*<\/details><\/div>$/.test(head), inner.slice(0, 120));
       // Review 23.09: every "?" of the page is the one help dot - no ⓘ left: the Statistics log's is a .help-dot on its
       // words, the vehicle list's summary wears the dot (its own box of help opens under it).
       ok('help marks: one look - no ⓘ left in the page; the Statistics log has a help dot on its words, the vehicle list\'s help is a .help-dot summary',
@@ -6900,8 +6939,12 @@ settle(20).then(function () {
     scene({id: 'p1', target: target(), points: [], warnings: []}),
     scene({id: 'p2', target: target(function (p) { p.pop(); }), points: [], warnings: [WARN]}),
     scene({id: 'p3', target: target(function (p) { delete p[4].modelKey; p[4].modelPending = true; }), points: [], warnings: []}),
-    scene({id: 'p4', target: target(function (p) { p.pop(); }), points: [], warnings: []})
+    scene({id: 'p4', target: target(function (p) { p.pop(); }), points: [], warnings: []}),
+    // 24.09: a vehicle browsed without its model (app.js ttxRecord): no parts by design.
+    scene({id: 'p5', target: {name: 'X', parts: [], noModel: 'Model not exported yet.'}, points: [], warnings: []})
   ]).then(function (s) {
+    ok('noModel: a vehicle without its model gets no geometry, its own words as the reason and no warning (web/local-data.js sceneFor)',
+       s[4].geometryIncomplete === true && s[4].geometryError === 'Model not exported yet.' && !s[4].warnings.length && !Object.keys(s[4].models).length);
     ok('outer track: a record with part 4 loads its model like the four, and the scene is complete',
        Object.keys(s[0].models).sort().join() === '0,1,2,3,4' && !s[0].geometryError && !s[0].warnings.length,
        '(' + Object.keys(s[0].models).join() + ' ' + s[0].warnings.join('; ') + ')');
@@ -7992,6 +8035,8 @@ settle(20).then(function () {
 //   - the ⌖ switch stands with a model, lit with the mode; the strip and ↺ only under ⌖ and with a model;
 //   - the health bar iff ⌖, a model and a known figure - the figure INSIDE it, and the tooltip's source line;
 //   - the emulation's controls (speed tile, gun panel, Config) go with the model;
+//   - a vehicle browsed without its model (24.09, the browser): its tile stays, but nothing is drawn - no ⌖, no strip,
+//     no bar, no emulation; Config stays (its build is the ⚙ of the panel), the panel shows its file, the scene says why;
 //   - every static help dot stands iff one of the controls it lists does - tooltips.js runs here without an observer,
 //     so only the finisher's BullbaTips.refresh() can stand them;
 //   - each scene painter ran ONCE for the scene (counted at the head of each function), the help dots refreshed once,
@@ -8036,7 +8081,8 @@ function pathMatrix() {
                  pitch: {absolute: [-0.35, 0.14]}, invisibilityFactorAtShot: 0.2}]};
   };
   const TTXS = {'germany-Papa': TTXOF('germany:Papa', 2100), 'germany-Romeo': TTXOF('germany:Romeo', 1950),
-                'germany-Quebec': TTXOF('germany:Quebec', 1400), 'germany-Tango': TTXOF('germany:Tango', 1234)};
+                'germany-Quebec': TTXOF('germany:Quebec', 1400), 'germany-Tango': TTXOF('germany:Tango', 1234),
+                'germany-Uniform': TTXOF('germany:Uniform', 1111)};   // 24.09: the row without a model
   const ttxAsked = [];
   // Two browsed vehicles for the Vehicles panel's ⇅: their exports carry their own figure.
   const EXPORT = function (id, type, name, hp) {
@@ -8046,9 +8092,17 @@ function pathMatrix() {
   const EXPORTS = {pm_papa: EXPORT('pm_papa', 'germany:Papa', 'Papa', 2200), pm_quebec: EXPORT('pm_quebec', 'germany:Quebec', 'Quebec', 1600)};
   const CATALOGUE = [VEHICLE,
     {id: 'pm_papa', type: 'germany:Papa', name: 'Papa', level: 10, 'class': 'heavyTank', nation: 'germany', exported: true, exportedAt: 1},
-    {id: 'pm_quebec', type: 'germany:Quebec', name: 'Quebec', level: 10, 'class': 'heavyTank', nation: 'germany', exported: true, exportedAt: 1}];
+    {id: 'pm_quebec', type: 'germany:Quebec', name: 'Quebec', level: 10, 'class': 'heavyTank', nation: 'germany', exported: true, exportedAt: 1},
+    // 24.09: a catalogue row without a model - in the browser it opens with its characteristics file alone.
+    {id: 'germany-Uniform', type: 'germany:Uniform', name: 'Uniform', level: 10, 'class': 'heavyTank', nation: 'germany', exported: false, exportedAt: null}];
   const D = global.ArmorInspectorData;
-  const keep = {battle: D.battle, scene: D.scene, ttx: D.ttx, vehicles: D.vehicles, vehicle: D.vehicle};
+  const keep = {battle: D.battle, scene: D.scene, ttx: D.ttx, vehicles: D.vehicles, vehicle: D.vehicle, sceneFor: D.sceneFor};
+  // web/local-data.js's rule for a vehicle without its model (tested on the real reader below, 'noModel'): no geometry,
+  // its words as the reason, no warning.
+  D.sceneFor = function (b, hit) {
+    return hit && hit.target && hit.target.noModel ? Promise.resolve({hit: hit, models: {}, warnings: [], geometryIncomplete: true, geometryError: String(hit.target.noModel)})
+      : keep.sceneFor(b, hit);
+  };
   D.battle = function (id) { return BATTLES[id] ? Promise.resolve(BATTLES[id]) : Promise.reject(new Error('no battle')); };
   D.scene = function (b, id) { return Promise.resolve({hit: b.hits.filter(function (h) { return h.id === id; })[0], models: {}, warnings: []}); };
   D.ttx = function (id) { ttxAsked.push(id); return TTXS[id] ? Promise.resolve(TTXS[id]) : Promise.reject(new Error('Not found data/ttx/' + id + '.js')); };
@@ -8058,6 +8112,7 @@ function pathMatrix() {
   const hitRows = function () { return $('hits').children.filter(function (c) { return c.getAttribute('data-hit') !== null; }); };
   const rosterRow = function (id) { return $('focus-list').children.filter(function (c) { return c.getAttribute('data-id') === String(id); })[0]; };
   const listRow = function (id) { return $('vehicles').children.filter(function (c) { return c.getAttribute('data-vehicle') === id; })[0]; };
+  const scopeTo = function (scope) { document.querySelectorAll('#vehicle-scope [data-scope]').forEach(function (b) { if (b.getAttribute('data-scope') === scope) b.onclick(); }); };
   const setFun = function (on) { if ($('fun-mode').checked !== on) click($('fun-mode-toggle')); };
   const pickBattle = function (id) { const s = $('battles'); s.value = id; s.onchange.call(s); };
   const counted = function () { const c = Object.assign({}, paints); c.refresh = tipRefreshes; return c; };
@@ -8079,8 +8134,10 @@ function pathMatrix() {
   const ROSTER_HP = 'this battle’s roster', FILE_HP = 'the vehicle’s characteristics, stock', OWN_HP = 'the vehicle’s own export';
   function expectScene(label, fun, want, d) {
     const tag = 'matrix, ⌖ ' + (fun ? 'on' : 'off') + ', ' + label + ': ';
-    const model = !$('model-tile').hidden, shooter = !$('shooter-tile').hidden;
-    ok(tag + 'the tiles show the scene', model === want.model && shooter === want.shooter, '(model ' + model + ', shooter ' + shooter + ')');
+    const tile = !$('model-tile').hidden, shooter = !$('shooter-tile').hidden;
+    // A model DRAWN: the tile, and not a vehicle browsed without its model (want.drawn false: the tile alone).
+    const model = tile && want.drawn !== false;
+    ok(tag + 'the tiles show the scene', tile === want.model && shooter === want.shooter, '(model ' + tile + ', shooter ' + shooter + ')');
     ok(tag + 'the ⌖ switch stands with a model, lit with the mode; the strip and ↺ only under ⌖ with a model',
        $('fun-mode-toggle').hidden === !model && $('fun-mode-toggle').getAttribute('aria-pressed') === String(fun)
        && $('fun-strip').hidden === !(fun && model) && $('target-hp-reset').hidden === !(fun && model),
@@ -8090,8 +8147,8 @@ function pathMatrix() {
        $('target-hp').hidden === !bar
        && (!bar || ($('target-hp-text').textContent === fig(want.hp) && $('target-hp').title.indexOf('\n• Left: ' + fig(want.hp) + ' HP\n• Source: ' + want.source) > 0)),
        '(hidden ' + $('target-hp').hidden + ', "' + $('target-hp-text').textContent + '")');
-    ok(tag + 'the emulation’s controls go with the model',
-       model || ($('aim-drive').hidden && $('aim-config').hidden && $('aim-gun').hidden && $('fun-gun').hidden),
+    ok(tag + 'the emulation’s controls go with the model' + (want.drawn === false ? ' - Config stays for the panel\'s build' : ''),
+       model || ($('aim-drive').hidden && $('aim-gun').hidden && $('fun-gun').hidden && $('aim-config').hidden === (want.drawn !== false)),
        '(drive ' + $('aim-drive').hidden + ', config ' + $('aim-config').hidden + ', gun ' + $('aim-gun').hidden + ')');
     const wrong = staticDots.filter(function (dt) { return dt.hidden !== !dotShouldStand(dt); });
     ok(tag + 'every static help dot stands iff a control it lists does (the ⌖ one with the model)',
@@ -8142,6 +8199,32 @@ function pathMatrix() {
       return step(function () { $('swap-roles').onclick(); });
     }).then(function () {
       expectScene('⇅ of two browsed vehicles', fun, {model: true, shooter: true, hp: '2 200 / 2 200', source: OWN_HP}, delta(was));
+      // 24.09: a row without a model, in the shooter's role - its file's gun fires at the model on screen. It is not in
+      // this battle, so the list is put on "All vehicles" first (and back after).
+      scopeTo('all');
+      ok('matrix: (the browser lists the row without a model too, marked)', !!listRow('germany-Uniform') && listRow('germany-Uniform').getAttribute('data-exported') === 'false',
+         $('vehicles').children.map(function (c) { return c.getAttribute('data-vehicle') || c.className; }).join() + ' | ' + $('vehicle-count').textContent);
+      return step(function () { listRow('germany-Uniform').onclick(); });
+    }).then(function () {
+      expectScene('a shooter without a model from the Vehicles list', fun, {model: true, shooter: true, hp: '2 200 / 2 200', source: OWN_HP}, delta(was));
+      ok('matrix, ⌖ ' + (fun ? 'on' : 'off') + ': (the shooter is the file\'s top pair - the panel shows it, the scene keeps its model)',
+         $('ttx-panel').hidden === false && $('scene-message').textContent.indexOf('not exported') < 0 && ttxAsked.indexOf('germany-Uniform') >= 0,
+         '(panel hidden ' + $('ttx-panel').hidden + ', "' + $('scene-message').textContent + '")');
+      $('model-tile').onclick();   // the model's role: no scene of its own
+      return settle(10).then(function () { return step(function () { listRow('germany-Uniform').onclick(); }); });
+    }).then(function () {
+      // THE PATH OF 24.09: a vehicle without a model browsed - its tile and its characteristics, nothing drawn.
+      expectScene('a vehicle without a model browsed', fun, {model: true, drawn: false, shooter: true, hp: null}, delta(was));
+      const hp = $('ttx-hp').children[0];
+      ok('matrix, ⌖ ' + (fun ? 'on' : 'off') + ': (a vehicle without a model - the scene says so, the panel shows its file, both tiles are it)',
+         /^Model not exported yet\. In the game, one click on this vehicle opens it\.$/.test($('scene-message').textContent)
+         && $('ttx-panel').hidden === false && !!hp && hp.ttx.value.textContent === '1111'
+         && $('model-tile').title.indexOf('Uniform') >= 0 && $('shooter-tile').title.indexOf('Uniform') >= 0,
+         '"' + $('scene-message').textContent + '" ' + (hp ? hp.ttx.value.textContent : 'no HP row'));
+      return step(function () { listRow('pm_papa').onclick(); });
+    }).then(function () {
+      expectScene('a vehicle with a model after one without', fun, {model: true, shooter: true, hp: '2 200 / 2 200', source: OWN_HP}, delta(was));
+      scopeTo('battle');
       return step(function () { sidebarModes[0].onclick(); });
     }).then(function () {
       expectScene('back to Hits with the browsed vehicle kept', fun, {model: true, shooter: true, hp: '2 200 / 2 200', source: OWN_HP}, delta(was));

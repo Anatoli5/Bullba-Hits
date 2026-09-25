@@ -5,6 +5,10 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 ## Unreleased
 
 - **Help:** the words "cyan" and "magenta" in tooltips are shown in those colours.
+- **Vehicles:** the mod now writes the characteristics of every vehicle of the client once per game update (about 9 MB): fast while the viewer is open in the game (about a minute), otherwise slowly in the hangar (one vehicle a second), never in battle; a run cut short goes on next time. A small bar with "done / total" beside the Statistics log shows the progress. Models still come on demand.
+- **Vehicles:** outside the game the list shows every vehicle. A vehicle without a model opens with its characteristics panel, Config and gun/turret pick; the scene says the model is not exported yet. The "Exported" flag filter narrows the list to vehicles with a model.
+- **Characteristics:** the panel is now a compact two-column table. ⚙, ▴ and "?" sit on a row of their own above it; under them the HP and the gun. Firepower: the DPM with the reload beside it (for a magazine or autoloader: the time between rounds beside the DPM, the magazine reload — per shell for an autoloader — and the rounds under them), then dispersion | aiming and the stabilisation figures. Mobility: speed | specific power, hull | turret traverse. New: view range, and concealment standing | moving. The second-mode switch (siege, turbine…) sits on the panel's left; specific power has an engine icon.
+- **Help:** a tooltip or "?" in the lower half of the window opens upward, so the characteristics panel's help no longer covers the panel.
 
 ## 0.8.1 (2026-09-24)
 

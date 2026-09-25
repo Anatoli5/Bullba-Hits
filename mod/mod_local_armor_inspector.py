@@ -23,6 +23,9 @@ CONTEXT_MENU_LABEL = 'Bullba Hits'
 # repeats it at most once a second while the user drags or zooms, so two seconds
 # covers the gap between two messages and expires on its own afterwards.
 BUSY_SECONDS = 2.0
+# How long one 'open' message from the page counts it open (24.09, the fast TTX sweep). The page sends one with every
+# poll of its data, every 2-5 s; a page closed or navigated away stops sending and the sweep goes slow again.
+PAGE_OPEN_SECONDS = 12.0
 _recorder = None
 # The record of the hit hook (telemetry.wrap): the class, the name, its own dictionary entry and the wrapper.
 _hit_hook = None
@@ -708,6 +711,8 @@ class Recorder(object):
         # says the user is working in it. Written here, on the game thread, only.
         self.in_battle = False
         self.busy_until = 0.0
+        # The page is open in the game until then (note_page_open): the TTX sweep runs fast meanwhile.
+        self.page_open_until = 0.0
         self.version = 'unknown'
         try:
             with open('version.xml', 'rb') as stream:
@@ -772,6 +777,10 @@ class Recorder(object):
         under it. It expires by itself - a page that stops asking is not busy.
         """
         self.busy_until = time.time()+float(seconds)
+
+    def note_page_open(self, seconds=PAGE_OPEN_SECONDS):
+        """The page is open in the game right now: one float, read by the export thread's TTX sweep."""
+        self.page_open_until = time.time()+float(seconds)
 
     def prioritise(self, types):
         """The page opened a hit: its vehicles' models go before everything else.
@@ -1264,6 +1273,12 @@ def page_busy():
     _recorder.note_busy()
 
 
+def page_open():
+    """The page reports it is open in the game. Game thread, a float."""
+    if _recorder is None: return
+    _recorder.note_page_open()
+
+
 def page_prioritise(types):
     """The page opened a hit whose collision models are not extracted yet."""
     if _recorder is None: return
@@ -1390,6 +1405,7 @@ def init():
             presentation.set_busy_request(page_busy)
             presentation.set_prioritise_request(page_prioritise)
             presentation.set_ttx_request(page_ttx)
+            presentation.set_open_request(page_open)
         except Exception: LOG.exception('Page export command unavailable; hit recording continues')
         try:
             from gui.modsListApi import g_modsListApi
@@ -1414,6 +1430,7 @@ def fini():
         presentation.set_busy_request(None)
         presentation.set_prioritise_request(None)
         presentation.set_ttx_request(None)
+        presentation.set_open_request(None)
     except Exception: LOG.exception('Page export command cleanup failed')
     remove_context_menu(_context_menu)
     _context_menu = None

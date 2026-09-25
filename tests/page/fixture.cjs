@@ -150,10 +150,14 @@ function write(folder) {
       configs: [{turret: 0, gun: '_105_single', gunUserString: '105 mm single', gunLevel: 8, top: true, aim: aim, maxHealth: hp, weight: 40000,
                  pitch: {absolute: [-0.35, 0.14]}, invisibilityFactorAtShot: 0.2}]};
   };
-  [['germany:Papa', 2100], ['germany:Romeo', 1950], ['germany:Quebec', 1400], ['germany:Tango', 1234]].forEach(function (t) {
+  // Uniform (24.09): a catalogue row with no model at all - only its characteristics file; the browser opens it from that.
+  [['germany:Papa', 2100], ['germany:Romeo', 1950], ['germany:Quebec', 1400], ['germany:Tango', 1234], ['germany:Uniform', 1111]].forEach(function (t) {
     const id = t[0].replace(':', '-');
     put('ttx/' + id + '.js', 'ttx:' + id, TTX(t[0], t[1]));
   });
+
+  // The mod's sweep of every vehicle's characteristics, a third of the way (24.09): the page's indicator reads it.
+  put('ttx-sweep.js', 'ttxSweep', {stamp: {clientVersion: 'synthetic', schema: 1}, startedAt: T0, done: false, count: 340, total: 1343, failed: [], updatedAt: T0});
 
   // The vehicle browser: a catalogue and three exported vehicles, each carrying its own health figure.
   const EXPORT = function (id, type, name, hp, scale) {
@@ -169,7 +173,8 @@ function write(folder) {
     vehicles: exports_.map(function (e) {
       return {id: e.id, type: e.type, name: e.name, level: 10, 'class': 'heavyTank', nation: 'germany', role: e.role, premium: false,
               special: false, collector: false, exported: true, exportedAt: T0, source: 'synthetic'};
-    })});
+    }).concat([{id: 'germany-Uniform', type: 'germany:Uniform', name: 'Uniform', level: 10, 'class': 'heavyTank', nation: 'germany',
+                role: 'role_HT_break', premium: false, special: false, collector: false, exported: false, exportedAt: null, source: null}])});
   return data;
 }
 

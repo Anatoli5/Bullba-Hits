@@ -79,7 +79,9 @@
   var FLAG_ICONS={premium:true,collector:true,special:true};
   var SOURCE_TAG={hangar:'from the hangar',battle:'from a battle',catalogue:'from the catalogue',picker:'from this list'};
   var SOURCE_TEXT={hangar:'the hangar',battle:'a battle',catalogue:'the catalogue',picker:'this list'};
-  var NO_VEHICLE_MODEL='No collision model of this vehicle yet. Select it in the hangar, meet it in a battle, or right-click it in the hangar and pick Bullba Hits.';
+  // A vehicle without a model outside the game (24.09): the scene says so, the characteristics panel shows its file.
+  var NO_VEHICLE_MODEL='Model not exported yet. In the game, one click on this vehicle opens it.';
+  var NO_VEHICLE_TTX='No characteristics of this vehicle yet: the game writes them in the hangar, in the background.';
   var EXPORT_TIMEOUT='The model did not arrive in 30 s. See game.log.';
   // The help of the pane, as the gold badge's popover shows it: three headings, a few lines each. It used to
   // be a paragraph under the count and a two-line foot under the list; both are gone (user, 19.09: the pane
@@ -93,7 +95,7 @@
       'In the game, a dimmed row exports first.']],
     ['Models come from',['The vehicle you select in the hangar.',
       'Every vehicle of a battle you play, after it.']],
-    ['In a browser',['Only exported models can be drawn.']]];
+    ['In a browser',['Every vehicle: its characteristics.','The model only where the game exported it.']]];
   var sidebarMode='battles',battlesDirty=false;
   var catalogue=null,catalogueStamp=null,catalogueError=null,cataloguePending=false;
   var vehicleFilters={tier:[],nation:[],'class':[],role:[],flag:[],text:''},vehicleScope='battle';
@@ -199,8 +201,8 @@
     var pop=node('div',undefined,'toolbar-popover');fold.appendChild(pop);
     pop.appendChild(filterRow('role','Role',Object.keys(roleNames).map(function(f){
       var mark=node('span',undefined,'vt-role');mark.setAttribute('data-role',f);return {value:f,label:roleNames[f],mark:mark};})));
-    var flags=host.game?FLAG_KEYS:FLAG_KEYS.filter(function(f){return f!=='exported';});
-    pop.appendChild(filterRow('flag','Flags',flags.map(function(f){
+    // "Exported" is the switch "only with a model" in both hosts (24.09: the browser lists every vehicle too).
+    pop.appendChild(filterRow('flag','Flags',FLAG_KEYS.map(function(f){
       return {value:f,label:FLAG_NAMES[f],title:FLAG_TITLES[f],mark:FLAG_ICONS[f]?flagMark(f):null};})));
     return fold;
   }
@@ -294,9 +296,8 @@
   }
   function catalogueGroups(){
     var all=(catalogue&&catalogue.vehicles)||[];
-    // In the game the mod is running, so every catalogue row is offered and an unexported one exports on
-    // click. In the browser nothing can be exported, so only the rows that already have a model are listed.
-    if(!host.game)all=all.filter(function(v){return v.exported;});
+    // Every catalogue row in both hosts (24.09). In the game an unexported one exports on click; in the browser it
+    // opens with its characteristics file alone (chooseVehicle). "Exported" among the flags narrows to the models.
     var shown=all.filter(vehicleMatches),out=[];
     CLASS_ORDER.forEach(function(cls){
       var group=shown.filter(function(v){return v['class']===cls;});
@@ -382,8 +383,11 @@
   // In the game the mod is right here: a row without a model is a request, not a dead end. The export runs
   // on the mod's own thread, so the page waits for data/vehicles/<id>.js exactly as the '#vehicle=' fragment
   // does - 'Exporting the model…', a retry every 2 s for up to 30 s.
+  // In the browser a row without a model is its characteristics alone (24.09): the same pick with the record built
+  // from its file (ttxRecord), and the scene says the model is not there.
   function chooseVehicle(v){
-    if(!v.exported&&!host.game)return void message(NO_VEHICLE_MODEL);
+    if(!v.exported&&!host.game)return void pickVehicle(v.id,activeRole,{row:v}).catch(function(e){
+      if(e&&e.superseded)return;message(e.message);warnings([e.message]);});
     var waiting=!v.exported,options=waiting?{deadline:Date.now()+30000,waiting:'Exporting the model\u2026'}:{};
     if(waiting)requestExport(v);
     pickVehicle(v.id,activeRole,options).catch(function(e){
@@ -411,6 +415,20 @@
       return new Promise(function(resolve){window.setTimeout(resolve,2000);}).then(function(){
         if(alive&&!alive())throw superseded();
         return readVehicle(id,deadline,alive);});
+    });
+  }
+  // A catalogue row without a model, outside the game (24.09): its characteristics file stands in for the export - the
+  // top pair's aim block, shells and health, the gun and turret names that pick that pair - with no parts, and noModel
+  // (the words the scene shows; local-data.js sceneFor gives such a hit no geometry and no warning). The page never
+  // stores it: it is built again from the file, which readTtx keeps.
+  function ttxRecord(row){
+    return readTtx(row.type).then(function(t){
+      if(!t)throw new Error(NO_VEHICLE_TTX);
+      var pair=t.configs[TTX.match(t,{})],turret=(t.turrets||[])[pair.turret]||{};
+      return {id:row.id,type:row.type,name:row.name,level:row.level,'class':row['class'],role:row.role,nation:row.nation,
+        premium:row.premium,collector:row.collector,special:row.special,source:null,noModel:NO_VEHICLE_MODEL,parts:[],warnings:[],
+        shells:ttxShellsOf(t,pair).slice(),aim:pair.aim,gun:pair.gunUserString||pair.gun,gunName:pair.gun,turretName:turret.name,
+        gunDispersion:pair.aim&&pair.aim.dispersion,maxHealth:pair.maxHealth};
     });
   }
   // A browsed vehicle as a hit the scene loader and the viewer already understand: the model is the target
@@ -444,11 +462,13 @@
   }
   // Changing the model is an ordinary load (camera as for any new hit). Changing the shooter alone leaves the
   // model and the orbit centre where they are, so the camera is taken before the reload and put back after it.
+  // options.row: a catalogue row without a model, read from its characteristics file (the browser only).
   function pickVehicle(id,role,options){
     role=role==='shooter'?'shooter':'model';options=options||{};
     var token=++vehicleGeneration;
     message(options.waiting||'Preparing the model\u2026');
-    return readVehicle(id,options.deadline,function(){return token===vehicleGeneration;}).then(function(record){
+    var read=options.row?ttxRecord(options.row):readVehicle(id,options.deadline,function(){return token===vehicleGeneration;});
+    return read.then(function(record){
       if(token!==vehicleGeneration)return null;
       var keepCamera=false;
       if(role==='shooter'){
@@ -456,7 +476,8 @@
         shooterVehicle=record;shooterPicked=true;
       }else{
         modelVehicle=record;
-        if(!shooterPicked||!shooterVehicle)shooterVehicle=record;
+        // A vehicle without a model is shown through its characteristics - the shooter's panel: it is its own shooter.
+        if(!shooterPicked||!shooterVehicle||record.noModel){shooterVehicle=record;shooterPicked=false;}
       }
       return showVehicleScene(keepCamera);
     });
@@ -743,7 +764,7 @@
     // ...and only for a shell whose non-penetration damage the factor divides: modern HE. For AP/APCR/HEAT the
     // switches would change nothing on screen.
     var s=viewer&&viewer.shell,he=!!(s&&s.kind==='HIGH_EXPLOSIVE'&&s.spallDamage>0);
-    var show=!!(damageView&&he&&modsType&&!$('model-tile').hidden);
+    var show=!!(damageView&&he&&modsType&&modelOnScreen());
     if(slot.hidden===!show)return;
     slot.hidden=!show;if(!show)targetMods.close();
     layoutMods(); // placed in the same task it appears in, so it is never painted at the unpositioned corner
@@ -4279,10 +4300,13 @@
   // emulation mode, otherwise they are not needed" - off ⌖ nothing blocks a shot, gunBlock, so a reload count there
   // would explain nothing). The top band is laid out again only when it comes or goes (the full pass of updateAim
   // covers #fun-gun). Called by paintFun alone - the switch, a shot, ↺ and every scene (sceneShown) - never per frame.
+  // A model drawn on screen - what ⌖, its strip and bar, the target's switches and the emulation stand with. The model
+  // tile stays for a browsed vehicle without a model (it is the role control), but there is nothing to shoot at.
+  function modelOnScreen() { var t = activeHit && activeHit.target; return !$('model-tile').hidden && !(t && t.noModel); }
   function paintStrip() {
     var strip = $('fun-strip');
     if (!strip) return;
-    var show = !$('model-tile').hidden && funOn();
+    var show = modelOnScreen() && funOn();
     if (strip.hidden !== !show) { strip.hidden = !show; scheduleLayout(LAYOUT_MODS); }
   }
   // THE BAR (24.09, user: "is there no way to get the number?"): the fill and, inside it as the game's own health bars
@@ -4292,7 +4316,7 @@
     if (sceneBuild) return;   // a scene half built: its finisher (sceneShown -> funModel) paints the layer once
     var bar = $('target-hp'), fill = $('target-hp-fill'), reset = $('target-hp-reset'), toggle = $('fun-mode-toggle');
     if (!bar || !fill || !reset) return;
-    var on = funOn(), model = !$('model-tile').hidden, show = on && model && hpMax > 0;
+    var on = funOn(), model = modelOnScreen(), show = on && model && hpMax > 0;
     // The switch lives with the model: it is there whenever there is something to shoot at, and it is lit
     // while the mode is on. One attribute write, and only when the state has really changed.
     if (toggle) {
@@ -5274,15 +5298,17 @@
   function updateAim() {
     if (sceneBuild) return;   // a scene half built: its finisher (sceneShown) runs this pass once
     var tile = $('aim-drive'); if (!tile) return;
-    var a = aimBlockData(), mode = $('armor-mode').value, modelled = mode !== 'parts' && !$('model-tile').hidden;
+    var a = aimBlockData(), mode = $('armor-mode').value, modelled = mode !== 'parts' && modelOnScreen();
     var live = !!(a && modelled && viewer && aimOn);
+    // A browsed vehicle without a model (24.09): no emulation, but Config stays - its build is the ⚙ of the panel.
+    var bare = !!(a && aimOn && !live && activeHit && activeHit.target && activeHit.target.noModel);
     // What the layout pass measures here is which of the four is on screen; it runs again only when that
     // changes (updateAim runs on every shell, distance or pose step, and each pass forces a page layout).
     var shownBefore = [$('aim-config').hidden, tile.hidden, $('aim-gun').hidden, $('aim-block').hidden, $('fun-gun').hidden].join(), configWas = $('aim-config').hidden;
     // Each `hidden` is written only when it changes (24.09): this pass runs on every shell, distance or pose step,
     // and a write of the same value is still a mutation for the help dots' observer (web/tooltips.js).
-    showEl($('aim-config'), live);
-    if (!live) $('aim-config').open = false;   // aimConfigListen below takes the sub-panel and the Escape key with it
+    showEl($('aim-config'), live || bare);
+    if (!live && !bare) $('aim-config').open = false;   // aimConfigListen below takes the sub-panel and the Escape key with it
     showEl(tile, live);
     // The gun panel rides with the mode, exactly as the speed tile and Config do, and the heading shell list carries
     // the shells when the mode is off. Since 23.09 it holds the shells alone (an empty one is no panel at all); the
@@ -6279,6 +6305,9 @@
     // A part on its way is not a missing model: the spinner outranks both the empty
     // message and the “geometry unavailable” one, which belongs to a broken record.
     if(pend.target)message(EXTRACTING,true);else message(drawn?'':data.geometryError||'Geometry unavailable. The original event is kept.');
+    // Nothing drawn (a vehicle without its model, a broken record): the viewer notified no pose, so the pose tile of the
+    // scene before would stay - its owner reads the empty viewer and puts it away.
+    if(!drawn)poseChanged();
     pivotButtons();warnings(pendingWarnings(data.warnings||[],hit));$('details').replaceChildren();
     // The saved reticle exists only for the player's own shots: with an ally in focus his gun has no
     // telemetry at all, so his outgoing hit reads exactly like an incoming one does today - no recorded
@@ -6304,6 +6333,10 @@
     // back (user, 22.09 - the target did not change). Every branch below has already passed through here.
     sceneShown();
     if(reference){$('details').appendChild(node('p','The model is extracted from the installed client. There are no invented hits here. Once the recorder is installed, new battles appear in the list on the left.'));return;}
+    if(hit.vehicle&&hit.target&&hit.target.noModel){
+      $('details').appendChild(node('p','Characteristics of '+(hit.target.name||'this vehicle')+' from its file: the top modules, the gun and turret picked on the panel. Its collision model was not exported yet - in the game one click on it in the Vehicles list exports it.'));
+      return;
+    }
     if(hit.vehicle){
       var mv=hit.target||{},sv=hit.attacker||{},when=Number.isFinite(hit.receivedAt)?new Date(hit.receivedAt*1000).toLocaleDateString('en-GB'):'an unknown date';
       $('details').appendChild(node('p','Client collision model of '+(mv.name||'this vehicle')+', exported from '+(SOURCE_TEXT[mv.source]||'the client')+' on '+when+', rest pose. Shooter: '+(sv.name||'\u2014')+', '+(sv.gun||'gun not recorded')+'. Nothing was fired here: pin a point on the armour to read a line, or Alt + click to estimate a reticle.'));
@@ -6721,8 +6754,10 @@
     chassisRotationSpeed: '<rect x="4.6" y="4.5" width="6.8" height="10" rx="1"/><path d="M1.8 6.6A6.6 6.6 0 0 1 12.6 2.4"/><path d="M13.2 .6v2.4h-2.4"/>',
     maxSteeringLockAngle: '<circle cx="8" cy="8" r="5.6"/><circle cx="8" cy="8" r="1.4"/><path d="M8 2.4v4.2M3.4 11l3.3-2.1M12.6 11 9.3 8.9"/>',
     speedLimits: '<path d="M2.3 12.2a5.7 5.7 0 1 1 11.4 0"/><path d="M8 12.2l3.2-4.2"/>',
-    enginePower: '<path d="M9.2 1.3 3.8 9h4.3l-1.2 5.7 5.3-7.9H7.9z"/>',
-    enginePowerPerTon: '<path d="M7.2 1.3 3 7.5h3.2l-.9 4.5L9.5 6H6.3z"/><path d="M14 2.5l-3 11.5"/>',
+    // The engine (user 24.09: a lightning bolt reads as electric power): a cylinder with its piston, rod and crank; the
+    // specific power - the same engine and the slash of "per".
+    enginePower: '<path d="M3.5 1.8v6.6M12.5 1.8v6.6M3.5 1.8h9"/><rect x="4.7" y="4.2" width="6.6" height="2.4" rx=".4"/><path d="M8 6.6v4.7"/><circle cx="8" cy="12.9" r="1.8"/>',
+    enginePowerPerTon: '<path d="M1.8 1.8v6.6M9 1.8v6.6M1.8 1.8h7.2"/><rect x="3" y="4.2" width="4.8" height="2.4" rx=".4"/><path d="M5.4 6.6v4.7"/><circle cx="5.4" cy="12.9" r="1.8"/><path d="M14.6 2.2l-3 11.6"/>',
     vehicleWeight: '<path d="M4.8 6.2h6.4l2.3 7.8h-11z"/><circle cx="8" cy="4" r="1.8"/>',
     maxHealth: '<path d="M8 14s-5.6-3.4-5.6-7.3A3 3 0 0 1 8 5a3 3 0 0 1 5.6 1.7C13.6 10.6 8 14 8 14z"/>',
     // Survivability (23.09): a hull and a turret, each with its front plate drawn thick; a spanner over a track.
@@ -6827,9 +6862,18 @@
   // the three stabilisation factors (a row of their own in both views), the turret; Mobility's three under them.
   var TTX_GROUP_NAMES = {};
   (TTX ? TTX.GROUPS : []).forEach(function (g) { TTX_GROUP_NAMES[g[0]] = g[1]; });
-  var TTX_COMPACT = [{group: 'relativePower', line: true, rows: ['avgDamagePerMinute', 'shotDispersionAngle', 'aimingTime',
-                      'stabMovement', 'stabRotation', 'stabTurret', 'turretRotationSpeed']},
-                     {group: 'relativeMobility', rows: ['enginePowerPerTon', 'speedLimits', 'hull']}];
+  // THE COMPACT VIEW, 24.09 (the user's own layout; it replaces the paragraph above for this view): one grid of TWO
+  // columns, a line of rows (lines) starts a grid row; the panel's controls on a row above, the HP and the gun chip in the
+  // head. Firepower: the DPM first and the reload line after it (`line` - web/ttx.js reloadLine, the garage's own parts
+  // of the gun's loading), shaped into the two columns by ttxPaintLine: a magazine's (or an autoloader's) time between
+  // rounds beside the DPM, its reload ("a/b/c" per shell for an autoloader) and rounds under them; then dispersion and
+  // aiming, then the stabilisation three (two and one). Mobility: speed and specific power, the hull and the turret (a
+  // turret slower than the hull lets the aim drift while the hull turns). Concealment: the view range, then standing and
+  // moving. The second mode's switch stands on the panel's left.
+  var TTX_COMPACT = [{group: 'relativePower', lead: ['avgDamagePerMinute'], line: true,
+                      lines: [['shotDispersionAngle', 'aimingTime'], ['stabMovement', 'stabRotation', 'stabTurret']]},
+                     {group: 'relativeMobility', lines: [['speedLimits', 'enginePowerPerTon'], ['hull', 'turretRotationSpeed']]},
+                     {group: 'relativeCamouflage', lines: [['circularVisionRadius'], ['invisibilityStillFactor', 'invisibilityMovingFactor']]}];
   // ⚙'S TOOLTIP holds the words every row shares, once (23.09; they used to close every row's tooltip): what the stock
   // and the build are, what the build holds now, where its figures come from, and its field modification - the build
   // counts Config's by the client's law, in the same pass as the equipment (aimEffects), and then leaves the record's
@@ -7103,6 +7147,14 @@
       line.ttxSig = sig;
       Object.keys(line.ttxSides).forEach(function (side) { line.ttxSides[side].replaceChildren(); });
       parts.forEach(function (p) { line.ttxSides[p.side].appendChild(line.ttxParts[p.key] || (line.ttxParts[p.key] = ttxRow(p.key))); });
+      // The compact view's two columns (user 24.09): a gun with a magazine (it has the rounds, the left side) puts the time
+      // between rounds beside the DPM and the reload and the rounds under them; any other gun its reload beside the DPM.
+      // The sides are laid in that order and style.css (.ttx-body) gives each its column.
+      if (line.ttxShaped) {
+        var shape = parts.some(function (p) { return p.side === 'left'; }) ? 'mag' : 'one';
+        line.replaceChildren.apply(line, (shape === 'mag' ? ['right', 'center', 'left'] : ['center', 'right', 'left']).map(function (side) { return line.ttxSides[side]; }));
+        line.setAttribute('data-shape', shape);
+      }
     }
     parts.forEach(function (p) {
       var s = ttxPartOf(ctx.lineS, p.key), f = ctx.mode ? ttxPartOf(ctx.lineF, p.key) : null;
@@ -7158,6 +7210,9 @@
         pair && !pair.reloadExtra ? 'What the gun’s mechanics add to the reload was not exported, so it is not counted.' : null]);
     }
     if (key === 'circularVisionRadius') return ['• Moving: ' + nice(v.circularVisionRadiusMoving) + ' m (binoculars work only standing)'];
+    // The garage prints "standing / after a shot" (params __getInvisibilityValues): the second figure goes here.
+    if (key === 'invisibilityStillFactor' && v.invisibilityAfterShot !== null && v.invisibilityAfterShot !== undefined)
+      return ['• After a shot: ' + nice(v.invisibilityAfterShot) + ' %'];
     if (key === 'pitchLimits') {
       // With the hull aiming the garage counts the hull's tilt in (23.09): the gun's own limits go to the tooltip.
       if (v.gunPitchOwn) return ['With the hull’s tilt, as the garage counts it.', '• Gun alone: ' + v.gunPitchOwn.map(nice).join('/') + '°', 'The hull tilts only in the second mode.'];
@@ -7482,19 +7537,26 @@
     rows(ttxSection(box, 'relativeVisibility'), ['circularVisionRadius']);
   }
   // The panel's controls, wired once (index.html holds the markup; the settings menu keeps ⚙'s state). The compact
-  // view: the hit points on the head's left, then Firepower (the reload line and its rows) and Mobility (its three) -
-  // every figure a row of the one widget, on the view's one grid.
+  // view (TTX_COMPACT): the hit points in the head, then Firepower, Mobility and Concealment - every figure a row of the
+  // one widget, on the view's one grid.
   var ttxLine = null;
   function buildTtxPanel() {
     var compact = $('ttx-compact');
     if (!compact) return;
     compact.replaceChildren();
     ttxRows = {};
-    TTX_COMPACT.forEach(function (s) {
-      var sec = ttxSection(compact, s.group), box = node('div', undefined, 'ttx-rows');
-      if (s.line) { ttxLine = ttxReloadLine(); sec.appendChild(ttxLine); }
-      s.rows.forEach(function (slot) { ttxRows[slot] = ttxRow(slot); box.appendChild(ttxRows[slot]); });
+    function rows(sec, keys) {
+      var box = node('div', undefined, 'ttx-rows');
+      keys.forEach(function (slot) { ttxRows[slot] = ttxRow(slot); box.appendChild(ttxRows[slot]); });
       sec.appendChild(box);
+    }
+    TTX_COMPACT.forEach(function (s) {
+      var sec = ttxSection(compact, s.group);
+      // The view range is the garage's Spotting, the concealments its Concealment: one row here, under one rule.
+      if (s.group === 'relativeCamouflage') sec.children[0].title = tipJoin(['Concealment and spotting', 'The garage’s two groups in one row: the view range, then the concealment standing and moving.']);
+      if (s.lead) rows(sec, s.lead);
+      if (s.line) { ttxLine = ttxReloadLine(); ttxLine.ttxShaped = true; sec.appendChild(ttxLine); }
+      s.lines.forEach(function (keys) { rows(sec, keys); });
     });
     var hp = $('ttx-hp');
     if (hp) { ttxRows.maxHealth = ttxRow('maxHealth'); hp.replaceChildren(ttxRows.maxHealth); }
@@ -7889,7 +7951,7 @@
     layoutModelRow();   // first: whether the strip stands beside the tile or under it decides the row's edge
     // Measured against the model tile's whole ROW since 22.09: the health bar and its ↺ stand in it, so
     // the room left for the group starts to the right of them, not of the tile.
-    placeMods(targetMods,$('target-mods-slot'),$('model-tile').hidden?null:$('model-row')||$('model-tile'));
+    placeMods(targetMods,$('target-mods-slot'),modelOnScreen()?$('model-row')||$('model-tile'):null);
   }
   // One rAF debounce for all three: the heading is measured first, because stacking it changes nothing the
   // toolbar measures but a toolbar fold must not race the heading's own reflow.
@@ -7956,8 +8018,33 @@
     pollTimer=null;
     if(viewer){if(viewer.kick)viewer.kick();frameBadge();}
     refresh();if(sidebarMode==='vehicles')loadCatalogue();
+    sweepTick();
     schedulePoll();
   }
+  // THE SWEEP OF EVERY VEHICLE'S CHARACTERISTICS (24.09). In the game the page tells the mod, with every poll, that it is
+  // open ('open', at most every 4 s; the mod counts it open for 12 s): the mod then writes the files fast. The mod's own
+  // progress file (data/ttx-sweep.js) is read with the poll until it says done, and drawn beside the Statistics log.
+  var sweepDone=false,openSentAt=0,sweepKey='';
+  function sweepTick(){
+    if(host.game){var now=Date.now();if(now-openSentAt>=4000){openSentAt=now;sendCommand('open',null);}}
+    if(sweepDone||!ArmorInspectorData.ttxSweep)return;
+    ArmorInspectorData.ttxSweep().then(paintSweep,function(){paintSweep(null);});
+  }
+  function paintSweep(s){
+    var box=$('ttx-sweep');if(!box)return;
+    if(s&&s.done)sweepDone=true;
+    var total=s?Math.max(0,Number(s.total)||0):0,count=s?Math.min(total,Math.max(0,Number(s.count)||0)):0,show=!!(s&&!s.done&&total>0);
+    if(box.hidden!==!show)box.hidden=!show;
+    var key=show?count+'/'+total:'';
+    if(!show||key===sweepKey)return;
+    sweepKey=key;
+    $('ttx-sweep-count').textContent=count+' / '+total;
+    $('ttx-sweep-fill').style.width=(100*count/total).toFixed(1)+'%';
+    box.title=tipJoin(['Characteristics of every vehicle','The game writes the characteristics file of every vehicle, once per game update.',
+      '• Now: '+count+' of '+total,'','• Fast: while this page is open in the game','• Slow, one a second: in the hangar with the page closed',
+      '• Never in a battle','','Stops when all are written; a run cut short goes on next time.']);
+  }
+  sweepTick();
   function schedulePoll(){if(pollTimer)window.clearTimeout(pollTimer);pollTimer=window.setTimeout(pollTick,modelsPending?2000:5000);}
   schedulePoll();
   if(document.modelContext&&document.modelContext.registerTool){try{document.modelContext.registerTool({name:'select_saved_hit',description:'Open an existing recorded hit in the local 3D viewer.',inputSchema:{type:'object',properties:{battleId:{type:'string'},hitId:{type:'string'}},required:['battleId','hitId'],additionalProperties:false},execute:function(input){if(!input||!/^[-a-zA-Z0-9_]{1,100}$/.test(input.battleId)||!/^\d+$/.test(input.hitId))throw new Error('Invalid record identifiers');return loadBattle(input.battleId,true).then(function(){return selectHit(input.hitId);});}});}catch(e){console.warn('WebMCP unavailable',e);}}

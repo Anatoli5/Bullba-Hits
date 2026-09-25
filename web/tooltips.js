@@ -387,7 +387,23 @@
     watch();
     return true;
   }
-  // Below and right of the pointer; to its left when the right edge is near, above it when the bottom is.
+  // Right of the pointer, to its left when the right edge is near. Below it in the upper half of the window, ABOVE it in
+  // the lower half (user 24.09: the characteristics panel's help opened down over the panel itself): there the bubble
+  // clears the whole box the element stands in when that box - the nearest absolute or fixed one, a panel at the scene's
+  // bottom or a popover - lies in the lower half too, so it covers the empty scene, not the figures around the click.
+  // Where it does not fit above, the old rule: below, and above only when the bottom is near.
+  function ceiling(el, vh) {
+    var top = anchorY - ABOVE;
+    for (var e = el; e && e.nodeType === 1 && e !== doc.body; e = e.parentNode) {
+      var pos = '';
+      try { pos = win.getComputedStyle(e).position || ''; } catch (x) { pos = ''; }
+      if (pos !== 'absolute' && pos !== 'fixed') continue;
+      var r = typeof e.getBoundingClientRect === 'function' ? e.getBoundingClientRect() : null;
+      if (r && r.top >= vh / 2) top = Math.min(top, r.top - ABOVE);
+      break;
+    }
+    return top;
+  }
   function place() {
     var root = doc.documentElement;
     var vw = root.clientWidth || win.innerWidth || 0, vh = root.clientHeight || win.innerHeight || 0;
@@ -396,7 +412,9 @@
     var w = bubble.offsetWidth, h = bubble.offsetHeight;
     var left = anchorX + GAP_X, top = anchorY + GAP_Y;
     if (left + w > vw - EDGE) left = anchorX - GAP_X - w;
-    if (top + h > vh - EDGE) top = anchorY - ABOVE - h;
+    var up = anchorY > vh / 2 ? ceiling(shownEl, vh) - h : -1;
+    if (up >= EDGE) top = up;
+    else if (top + h > vh - EDGE) top = anchorY - ABOVE - h;
     left = Math.max(EDGE, Math.min(left, vw - EDGE - w));
     top = Math.max(EDGE, Math.min(top, vh - EDGE - h));
     bubble.style.left = Math.round(left) + 'px';

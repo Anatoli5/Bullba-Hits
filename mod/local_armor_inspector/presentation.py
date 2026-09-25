@@ -14,6 +14,7 @@ _export_request = None
 _busy_request = None
 _prioritise_request = None
 _ttx_request = None
+_open_request = None
 _warned = set()
 
 
@@ -97,6 +98,12 @@ def set_ttx_request(handler):
     _ttx_request = handler
 
 
+def set_open_request(handler):
+    """The page says it is open in the game (every few seconds while it is): the TTX sweep may go fast."""
+    global _open_request
+    _open_request = handler
+
+
 def _warn_once(key, message, *args):
     """A page command that keeps failing must not fill game.log line by line.
 
@@ -112,11 +119,12 @@ def _warn_once(key, message, *args):
 def _handle_web_command(command, ctx):
     """One w2c command from the page, on the game thread. Only the request is done here.
 
-    Four fire-and-forget actions: 'exportVehicle' asks for one vehicle type,
+    Five fire-and-forget actions: 'exportVehicle' asks for one vehicle type,
     'exportTtx' for the characteristics file of one type (no collision models),
-    'busy' says the user is dragging or zooming the page right now, and
+    'busy' says the user is dragging or zooming the page right now,
     'prioritise' names the vehicle types whose collision models the page is
-    waiting for. None of them may cost the game thread more than a flag.
+    waiting for, and 'open' says the page is open (the TTX sweep may go fast).
+    None of them may cost the game thread more than a flag.
     """
     try:
         action = getattr(command, 'action', None)
@@ -125,6 +133,12 @@ def _handle_web_command(command, ctx):
                 _warn_once('busy', 'Bullba Hits page command: the recorder is not running')
                 return
             _busy_request()
+            return
+        if action == 'open':
+            if _open_request is None:
+                _warn_once('open', 'Bullba Hits page command: the recorder is not running')
+                return
+            _open_request()
             return
         if action == 'prioritise':
             types = getattr(command, 'vehicleTypes', None)

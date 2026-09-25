@@ -682,13 +682,27 @@ header>.settings-menu>.settings-content{top:calc(100% + 8px);right:0;max-height:
 .hit-crits{flex:0 0 auto;display:grid;grid-template-columns:repeat(2,16px);grid-auto-rows:16px;gap:2px;align-content:center}
 .crit-icon{width:16px;height:16px;display:block}
 
+/* The sweep of every vehicle's characteristics (24.09): a quiet bar and "done / total" beside the Statistics log, while
+   the mod writes them; the words in its tooltip. */
+.ttx-sweep{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
+.ttx-sweep[hidden]{display:none}
+.ttx-sweep-bar{position:relative;width:54px;height:4px;border-radius:2px;background:rgba(157,174,191,.25);overflow:hidden}
+.ttx-sweep-fill{position:absolute;left:0;top:0;bottom:0;width:0;background:var(--gold)}
+.ttx-sweep b{font-weight:600}
+
 /* The characteristics panel (23.09, outputs/ttx-panel-spec-2026-09-22.md 3.4): the bottom-right corner of the scene,
    the mirror of the pose tile, on the gun panel's own backdrop. Glyphs and figures only - every word is in a
    tooltip. A figure of the build better than the stock is mint, a worse one red, as the garage's arrows are. */
 .ttx-panel{position:absolute;right:14px;bottom:12px;z-index:5;display:flex;align-items:flex-end;padding:4px 8px;border-radius:5px;background:rgba(23,35,48,.55);color:#e5edf5;font-size:13px;line-height:1.1;font-variant-numeric:tabular-nums;text-shadow:0 1px 2px rgba(0,0,0,.7)}
 .ttx-panel[hidden],.ttx-fold[hidden]{display:none}
-.ttx-inner{display:flex;flex-direction:column;align-items:stretch;gap:5px}
-.ttx-head{display:flex;align-items:center;justify-content:flex-end;gap:6px}
+/* The second mode's switch stands on the panel's left, outside the figures (user 24.09); the head and the figures to its
+   right. The gun chip leads the head, the glyph buttons keep to the right. */
+.ttx-inner{display:flex;align-items:center;gap:7px}
+.ttx-main{display:flex;flex-direction:column;align-items:stretch;gap:5px}
+/* The panel's own controls on a row of their own above the figures (user 24.09); under them the head - the HP and the
+   gun chip - and the table. */
+.ttx-tools{display:flex;align-items:center;justify-content:flex-end;gap:6px}
+.ttx-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
 /* Panel v2 (23.09): the garage's own groups (params_helper PARAMS_GROUPS) - a thin rule with the group's glyph over its
    figures, the group's name in the rule's tooltip - in both views. ONE GRID OF THREE COLUMNS per view (user 23.09: the
    columns of the rows did not line up): the sections, their rows and the reload line hand their cells to the view's
@@ -707,7 +721,18 @@ header>.settings-menu>.settings-content{top:calc(100% + 8px);right:0;max-height:
 .ttx-reload-side[data-side=right]{grid-column:3}
 .ttx-row[data-key=stabMovement]{grid-column-start:1}
 /* The hit points sit on the head's empty left side in the compact view (Survivability is one figure here). */
-.ttx-hp{display:flex;align-items:center;margin-right:auto;padding-right:6px}
+.ttx-hp{display:flex;align-items:center}
+/* THE COMPACT VIEW (user 24.09, two columns): a line of rows starts a grid row of its own and a longer one wraps (the
+   stabilisation three: two, then one). The reload line's sides go into the cells after the DPM by its shape (app.js
+   ttxPaintLine puts them in that order): a gun with a magazine ('mag') - the time between rounds beside the DPM, the
+   reload under the DPM and the rounds under that time; any other ('one') - the reload beside the DPM and what it has
+   besides (a twin gun's switch, continuous fire) under the DPM. */
+.ttx-body{grid-template-columns:repeat(2,auto)}
+.ttx-body .ttx-rows>.ttx-row:first-child{grid-column-start:1}
+.ttx-body .ttx-reload-side:empty{display:none}
+.ttx-body .ttx-reload[data-shape=mag]>.ttx-reload-side[data-side=right],.ttx-body .ttx-reload[data-shape=mag]>.ttx-reload-side[data-side=left],
+.ttx-body .ttx-reload[data-shape=one]>.ttx-reload-side[data-side=center]{grid-column:2}
+.ttx-body .ttx-reload[data-shape=mag]>.ttx-reload-side[data-side=center],.ttx-body .ttx-reload[data-shape=one]>.ttx-reload-side[data-side=right]{grid-column:1}
 .ttx-row{display:flex;align-items:center;gap:5px;white-space:nowrap}
 .ttx-icon{display:inline-flex;flex:0 0 auto;width:15px;height:15px;color:var(--muted)}
 .ttx-icon svg{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round}
@@ -715,10 +740,10 @@ header>.settings-menu>.settings-content{top:calc(100% + 8px);right:0;max-height:
 .ttx-row[data-cmp=better] .ttx-val{color:var(--mint)}
 .ttx-row[data-cmp=worse] .ttx-val{color:var(--red)}
 /* The head: the pair tile and the glyph buttons are the .swap-roles widget at the panel's size. */
-.ttx-panel .toolbar-more>summary,.ttx-panel .ttx-head>.swap-roles{display:flex;align-items:center;gap:5px;min-height:0;padding:3px 7px;font-size:13px;line-height:1;border:1px solid rgba(157,174,191,.55);border-radius:6px;background:rgba(23,35,48,.15);color:inherit;white-space:nowrap}
-.ttx-panel .ttx-head>.swap-roles[aria-pressed=true],.ttx-more[open]>summary.swap-roles{border-color:var(--gold);color:var(--gold);background:#302b23}
+.ttx-panel .toolbar-more>summary,.ttx-panel .ttx-tools>.swap-roles,.ttx-panel .ttx-inner>.swap-roles{display:flex;align-items:center;gap:5px;min-height:0;padding:3px 7px;font-size:13px;line-height:1;border:1px solid rgba(157,174,191,.55);border-radius:6px;background:rgba(23,35,48,.15);color:inherit;white-space:nowrap}
+.ttx-panel .ttx-tools>.swap-roles[aria-pressed=true],.ttx-panel .ttx-inner>.swap-roles[aria-pressed=true],.ttx-more[open]>summary.swap-roles{border-color:var(--gold);color:var(--gold);background:#302b23}
 /* The second mode's switch (#ttx-mode, 23.09) is there only for a pair with a second mode. */
-.ttx-panel .ttx-head>.swap-roles[hidden]{display:none}
+.ttx-panel .ttx-tools>.swap-roles[hidden],.ttx-panel .ttx-inner>.swap-roles[hidden]{display:none}
 .ttx-panel .toolbar-more>summary::after,.ttx-pairs[data-many=false]>summary::after{content:none}
 .ttx-pairs[data-many=true]>summary::after{content:'\25be';color:var(--muted)}
 .ttx-pairs[data-many=false]>summary{cursor:default}
