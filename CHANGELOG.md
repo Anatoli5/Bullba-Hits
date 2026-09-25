@@ -5,6 +5,8 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 ## Unreleased
 
 - **Hits:** a click on a critical-damage icon of a hit tile shows what it means instead of opening the hit.
+- **Hits:** critical-damage and damage-source icons are the game's own 16 px icons: yellow/red modules, a yellow/red track instead of the white picture, and the damage log's crit, fire, ram, fall and strike icons (green for damage dealt, red for damage taken, as in the game).
+- **Hits:** the icons sit in a fixed column on every row, so the flags line up.
 - **Scene:** Zoom redraws the map at once, like Distance (no blurred scaled picture while it changes).
 - **Scene:** Lock beside Zoom keeps the zoom you set while you switch between hits.
 - **Emulation:** holding the button fires a burst only in the ⌖ mode (target HP); otherwise a held button is a plain click and a hesitant turn of the vehicle no longer fires a shot.

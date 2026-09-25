@@ -77,9 +77,12 @@ ICON_FILES = tuple('web/icons/%s.png' % name for name in (
     'fm_improvedSpeedIndicatorBackwards', 'fm_improvedTurretRingStability', 'fm_improvedTurretTurningWheels',
     'fm_increasedSensitivityOptics', 'fm_increasedThickness', 'fm_reinforcedInteriorModules', 'fm_reinforcedStructure',
     'fm_level_2', 'fm_level_4', 'fm_level_5', 'fm_level_7', 'fm_level_8'))
-# The client's own 16 px icons of damaged modules and injured crew for the hit tiles (22.09), plus the generic
-# crit, chassis-crit, fire and module pictures. tools/extract_crit_icons.py copies them out of the installed
-# client: the user runs it once before a build, and tools/build.py stops with its name while one is missing.
+# The client's own 16 px icons of damaged modules and injured crew for the hit tiles (22.09), and the battle damage
+# log's own 16 px icons of the damage source (25.09: a generic crit, fire, ram, a fall, a strike ...; the plain one for
+# damage the player dealt, *_enemy for damage he took - web/crits.js picks them). tools/extract_crit_icons.py copies
+# them out of the installed client (the damage-log ones cut out of battleAtlas.dds) and writes exactly this list
+# (tools/check.py compares the two): the user runs it once before a build, and tools/build.py stops with its name
+# while one is missing.
 CRIT_ICON_FILES = tuple('web/icons/crits/%s.png' % name for name in (
     'engineCriticalSmall', 'engineDestroyedSmall', 'ammoBayCriticalSmall', 'ammoBayDestroyedSmall',
     'fuelTankCriticalSmall', 'fuelTankDestroyedSmall', 'radioCriticalSmall', 'radioDestroyedSmall',
@@ -87,7 +90,12 @@ CRIT_ICON_FILES = tuple('web/icons/crits/%s.png' % name for name in (
     'gunCriticalSmall', 'gunDestroyedSmall', 'turretRotatorCriticalSmall', 'turretRotatorDestroyedSmall',
     'surveyingDeviceCriticalSmall', 'surveyingDeviceDestroyedSmall',
     'commanderDestroyedSmall', 'driverDestroyedSmall', 'radiomanDestroyedSmall', 'gunnerDestroyedSmall',
-    'loaderDestroyedSmall', 'hit_critical', 'hit_critical_track', 'fire', 'module'))
+    'loaderDestroyedSmall')) + tuple('web/icons/crits/damageLog_%s_16x16.png' % name for name in (
+    'critical', 'critical_enemy', 'fire', 'fire_enemy', 'ram', 'ram_enemy', 'damage', 'damage_enemy',
+    'artillery_eq', 'artillery_eq_enemy', 'airstrike_eq', 'airstrike_eq_enemy', 'airstrike_enemy',
+    'artillery', 'artillery_enemy', 'mine_field', 'by_mine_field', 'spawned_bot', 'by_spawned_bot', 'by_smoke',
+    'berserker', 'corroding_shot', 'corroding_shot_enemy', 'fire_circle', 'fire_circle_enemy', 'cling_brander',
+    'cling_brander_enemy', 'thunder_strike', 'thunder_strike_enemy', 'he_rocket', 'he_rocket_enemy'))
 # web/modifiers.js is the Target modifier group beside the Collision model tile; the page has loaded it
 # since 0.7.12 but the package never carried it, so the group silently stayed away (found 20.09).
 # web/vehicle-modes.js (S3, 22.09) is the table of vehicle types this client lists for its event modes,

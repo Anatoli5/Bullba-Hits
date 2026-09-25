@@ -6409,6 +6409,16 @@
     var name=eventReason(e).glyph,box=node('span',undefined,'event-glyph');box.setAttribute('data-glyph',name);box.setAttribute('aria-hidden','true');
     box.innerHTML='<svg viewBox="0 0 20 20" focusable="false"><path d="'+EVENT_GLYPHS[name]+'"/></svg>';return box;
   }
+  // The icon column of a list row (25.09): one fixed width on every hit and event row, so the flags of the vehicle
+  // tiles stand in one line. Up to four icons ({src,title} - web/crits.js decides every file), centred: one alone,
+  // two side by side, three or four 2x2. An icon's words are its own: a click shows them, not the row (data-tip-own).
+  // An icon that fails to load takes itself away; the column stays.
+  function iconColumn(list){
+    var box=node('span',undefined,'hit-crits');box.setAttribute('data-n',String(list.length));
+    list.forEach(function(c){var i=node('img',undefined,'crit-icon');i.alt='';i.title=c.title;i.setAttribute('data-tip-own','');
+      i.onerror=function(){i.remove();box.setAttribute('data-n',String(box.children.length));};i.src=c.src;box.appendChild(i);});
+    return box;
+  }
   // The other party of an event, as a tile knows a vehicle: his roster row with what the catalogue or this battle's
   // hits know of his type, else the block of a hit he took part in. Null for none (a fall, the vehicle's own overload).
   function vehicleInfo(id){
@@ -6450,9 +6460,13 @@
     var b=node('button',undefined,'hit event'),other=view==='incoming'?(selfDamage(e)?null:e.attackerId):e.targetId,info=vehicleInfo(other);
     b.setAttribute('aria-pressed',String(selected===e.id));b.setAttribute('data-event',e.id);b.setAttribute('data-kind',e.kind);
     b.setAttribute('data-direction',view);b.setAttribute('data-result',e.damage>0?'damage':'none');if(e.killed)b.setAttribute('data-killed','true');
-    b.title=tipJoin(eventLines(e));
+    var lines=eventLines(e),src=ArmorCrits.eventIcon(e.reason,view),mark;
+    b.title=tipJoin(lines);
     b.appendChild(info?vehicleTile(info,true):node('span',undefined,'vehicle-tile event-self'));
-    b.appendChild(eventGlyph(e));
+    // The game's damage-log icon of the reason in the row's direction, titled with the row's heading and sentence;
+    // a reason the client has no icon for keeps the page's glyph - in the same column.
+    if(src)mark=iconColumn([{src:src,title:tipJoin(lines.slice(0,2))}]);else{mark=iconColumn([]);mark.setAttribute('data-n','1');mark.appendChild(eventGlyph(e));}
+    b.appendChild(mark);
     var outcome=node('span',undefined,'hit-outcome'),line=node('span',undefined,'outcome-line');
     line.appendChild(node('span',view==='incoming'?'↙':'↗','outcome-dir'));
     line.appendChild(node('span',String(e.damage),'hit-damage'));
@@ -6551,11 +6565,9 @@
       var critWords=ArmorCrits.describe(h,true),said=result(h).replace(/^Result (\d)/,'Effect $1').replace(/^Result not/,'Not');
       b.title=(view==='incoming'?'Incoming from '+((h.attacker||{}).name||'?'):'Outgoing at '+((h.target||{}).name||'?'))+'\n• Result: '+said+(critWords?'\n• Critical damage: '+critWords:'');
       b.appendChild(vehicleTile(view==='incoming'?h.attacker:h.target,true));
-      // Critical damage (22.09): the client's own icons of the damaged modules and injured crew, up to four in a
-      // 2x2 grid, every word in the icon's title - a click on an icon shows it, not the shot (data-tip-own, 25.09). Nothing known about the crits of this hit - no element at all.
-      // An icon that fails to load (not extracted yet) takes itself away, and the empty box with it.
-      var crit=ArmorCrits.badges(h);
-      if(crit.length){var box=node('span',undefined,'hit-crits');crit.slice(0,4).forEach(function(c){var i=node('img',undefined,'crit-icon');i.alt='';i.title=c.title;i.setAttribute('data-tip-own','');i.onerror=function(){i.remove();if(!box.children.length)box.remove();};i.src=c.src;box.appendChild(i);});b.appendChild(box);}
+      // Critical damage (22.09): the client's own icons of the damaged modules and injured crew, up to four, every
+      // word in the icon's title. The column is on every row, empty when nothing is known about the crits (25.09).
+      b.appendChild(iconColumn(ArmorCrits.badges(h,view).slice(0,4)));
       // Outcome column: damage in the direction colour, or the muted result icon; the full result text stays in the button title.
       // Outcome widget: direction arrow in the top-left corner, the figure (damage, or the no-damage result icon)
       // in the top-right, the time underneath - the arrow never glues to the figure.

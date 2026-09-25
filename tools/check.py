@@ -5,7 +5,8 @@ it before a build and refuses to build on red. Suites (they run side by side, ~1
 
   lists     the build lists against the disk and the page: ASSETS entries exist and are well-formed; every web/ file
             and every script/stylesheet index.html loads is in ASSETS (web/modifiers.js once shipped without it);
-            the icons on disk = ICON_FILES + CRIT_ICON_FILES; the icon names of web/equipment.js are in ICON_FILES
+            the icons on disk = ICON_FILES + CRIT_ICON_FILES; CRIT_ICON_FILES = what tools/extract_crit_icons.py
+            writes; the icon names of web/equipment.js are in ICON_FILES
   version   VERSION equal in exporter.py and mod_local_armor_inspector.py; CHANGELOG.md has its section and no
             heading twice
   pytest    tests/test_*.py under CPython 3 (the exporter, the records, the page channel, the recorder on stubs)
@@ -108,6 +109,13 @@ def check_lists(result):
     for missing in sorted(wanted - on_disk): result.fail('icon listed but missing: ' + missing)
     for extra in sorted(on_disk - wanted): result.fail('icon on disk but not listed (would not ship): ' + extra)
     result.passed += len(wanted & on_disk)
+    # The crit icons have one list: tools/extract_crit_icons.py writes exactly what CRIT_ICON_FILES ships (25.09).
+    sys.path.insert(0, os.path.join(ROOT, 'tools'))
+    import extract_crit_icons
+    extracted = extract_crit_icons.outputs()
+    if sorted(extracted) == sorted(crit_icons) and len(set(extracted)) == len(extracted): result.passed += 1
+    else: result.fail('tools/extract_crit_icons.py writes other files than CRIT_ICON_FILES: only extracted %s; only listed %s'
+                      % (sorted(set(extracted) - set(crit_icons)), sorted(set(crit_icons) - set(extracted))))
     names = set(os.path.basename(p)[:-4] for p in icons)
     for icon in sorted(set(re.findall(r'"icon":\s*"([^"]+)"', read('web/equipment.js')))):
         if icon in names: result.passed += 1

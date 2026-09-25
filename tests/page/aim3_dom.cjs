@@ -2847,28 +2847,69 @@ settle(20).then(function () {
        && icons(0)[0].title === 'Left track destroyed\n• From: the vehicle’s damage report\n• Matched: by shooter and time'
        && /^Gunner 2 injured/.test(icons(0)[1].title), icons(0).map(function (c) { return c.title; }).join(' | '));
     ok('crits: the tile title names them too', /^Incoming from Bravo\n• Result: Damage 100 HP\n• Critical damage: Left track destroyed, Gunner 2 injured$/.test(rows[0].title), '(' + rows[0].title + ')');
-    ok('crits: a crit code alone gives the one generic icon',
-       icons(1).length === 1 && iconOnly(1) && icons(1)[0].src === 'web/icons/crits/hit_critical.png'
+    ok('crits: a crit code alone gives the one generic icon - the damage log’s crit icon, the taken variant on an incoming row',
+       icons(1).length === 1 && iconOnly(1) && icons(1)[0].src === 'web/icons/crits/damageLog_critical_enemy_16x16.png'
        && icons(1)[0].title === 'Critical hit\nA module or crew member was damaged; which one was not reported.', '(' + (icons(1)[0] || {}).title + ')');
-    ok('crits: nothing known gives no crit element at all', box(2) === null && !/[Cc]rit/.test(rows[2].title), '(' + rows[2].title + ')');
+    ok('crits: nothing known gives an empty icon column (the column stands on every row) and no word',
+       box(2) !== null && icons(2).length === 0 && box(2).getAttribute('data-n') === '0' && !/[Cc]rit/.test(rows[2].title), '(' + rows[2].title + ')');
+    ok('crits: every row has the one icon column right after the vehicle tile, so the flags line up',
+       rows.every(function (r) { const c = r.children.filter(function (x) { return x.className === 'hit-crits'; }); return c.length === 1 && r.children.indexOf(c[0]) === 1; }));
     ok('crits: more than four items give three icons and the generic one listing all five',
-       icons(3).length === 4 && iconOnly(3) && icons(3)[3].src === 'web/icons/crits/hit_critical.png'
+       icons(3).length === 4 && iconOnly(3) && icons(3)[3].src === 'web/icons/crits/damageLog_critical_enemy_16x16.png'
        && /^Critical damage\n• /.test(icons(3)[3].title)
        && ['Left track destroyed', 'Gunner 2 injured', 'Engine damaged (critical)', 'Radio damaged (critical)', 'Fire started (engine)']
             .every(function (t) { return icons(3)[3].title.indexOf('\n• ' + t) >= 0; })
        && /\n• Radio damaged \(critical\): from [^\n]+/.test(icons(3)[3].title)
        && /\n• Engine damaged \(critical\)\n/.test(icons(3)[3].title)
-       && icons(3).slice(0, 3).every(function (c) { return c.src !== 'web/icons/crits/hit_critical.png'; }), '(' + (icons(3)[3] || {}).title + ')');
-    ok('crits: code 5 on the chassis with nothing named takes the chassis crit icon',
-       icons(4).length === 1 && icons(4)[0].src === 'web/icons/crits/hit_critical_track.png' && /on the chassis/.test(icons(4)[0].title));
+       && icons(3).slice(0, 3).every(function (c) { return !/damageLog_critical/.test(c.src); }), '(' + (icons(3)[3] || {}).title + ')');
+    ok('crits: code 5 on the chassis with nothing named takes the yellow (damaged) track icon',
+       icons(4).length === 1 && icons(4)[0].src === 'web/icons/crits/trackCriticalSmall.png' && /on the chassis/.test(icons(4)[0].title));
     // Tooltip markup (23.09): the row's tooltip is the one bubble of the row - its vehicle tile is bare, so it does
     // not cover the row's words with its own; a crit code alone reads "Not named" after the key.
     ok('crits: the row is one bubble - the vehicle tile in it carries no tooltip of its own; an unnamed crit says so',
        rows[0].children[0].className === 'vehicle-tile' && !rows[0].children[0].title
        && /\n• Critical damage: Not named$/.test(rows[1].title) && /\n• Critical damage: Not named, on the chassis$/.test(rows[4].title),
        '(' + rows[1].title + ' | ' + rows[4].title + ')');
-    ok('crits: an icon that fails to load takes itself away, and the empty box with it',
-       (function () { const b = box(1), i = b.children[0]; i.onerror(); return b.children.length === 0 && rows[1].children.indexOf(b) < 0; }()));
+    ok('crits: an icon that fails to load takes itself away; the column stays',
+       (function () { const b = box(1), i = b.children[0]; i.onerror(); return b.children.length === 0 && rows[1].children.indexOf(b) === 1 && b.getAttribute('data-n') === '0'; }()));
+    // One owner of every icon file (25.09): crits.js. Chassis by state and running gear, the damage log's variants by
+    // direction, the event reasons as the client's damage log maps them; every file it can name is on disk (and the
+    // lists suite of tools/check.py holds the disk to CRIT_ICON_FILES and to the extractor).
+    const C = global.ArmorCrits, B = 'web/icons/crits/';
+    const one = function (it, view, target) { const h = CHIT('m', 2, 6, 1, {schema: 1, code: 6, items: [it], conflicts: []}); if (target) h.target = target; return C.badges(h, view)[0].src; };
+    const wheeled = {name: 'EBR', parts: [], aim: {siegeMode: {kind: 'wheeled'}}};
+    const fire = {kind: 'fire', type: 'fire', extra: 'engine', state: 'started', from: 'fireInfo', tie: 'unique'};
+    ok('crits: chassis crit - the track by its state, the wheel on a wheeled vehicle; a generic module and a fire take the damage log’s icon by direction',
+       one(item('device', 'chassis', 'chassis', 'destroyed'), 'incoming') === B + 'trackDestroyedSmall.png'
+       && one(item('device', 'chassis', 'chassis', 'damaged'), 'outgoing') === B + 'trackCriticalSmall.png'
+       && one(item('device', 'chassis', 'chassis', 'damaged'), 'incoming', wheeled) === B + 'wheelCriticalSmall.png'
+       && one(item('device', 'device', 'device', 'critical'), 'outgoing') === B + 'damageLog_critical_16x16.png'
+       && one(item('device', 'device', 'device', 'critical'), 'incoming') === B + 'damageLog_critical_enemy_16x16.png'
+       && one(fire, 'outgoing') === B + 'damageLog_fire_16x16.png' && one(fire, 'incoming') === B + 'damageLog_fire_enemy_16x16.png'
+       && one(item('device', 'engine', 'engine', 'critical'), 'incoming') === B + 'engineCriticalSmall.png');
+    ok('crits: event icons - the client’s damage-log pair by reason and direction; no game icon for an event ability',
+       C.eventIcon('ramming', 'incoming') === B + 'damageLog_ram_enemy_16x16.png' && C.eventIcon('ramming', 'outgoing') === B + 'damageLog_ram_16x16.png'
+       && C.eventIcon('fire', 'incoming') === B + 'damageLog_fire_enemy_16x16.png' && C.eventIcon('world_collision', 'incoming') === B + 'damageLog_damage_enemy_16x16.png'
+       && C.eventIcon('artillery_eq', 'outgoing') === B + 'damageLog_artillery_eq_16x16.png' && C.eventIcon('ultimate', 'incoming') === ''
+       && C.eventIcon('circuit_overload', 'outgoing') === '' && C.eventIcon('toString', 'incoming') === '');
+    // constants.ATTACK_REASON of NA 2.4.0.1, plus circuit_overload the records carry.
+    const REASONS = ['shot', 'fire', 'ramming', 'world_collision', 'death_zone', 'drowning', 'gas_attack', 'overturn', 'manual', 'artillery_protection',
+      'artillery_sector', 'bombers', 'recovery', 'artillery_eq', 'bomber_eq', 'minefield_eq', 'spawned_bot_explosion', 'berserker_eq', 'smoke',
+      'corrodingShot', 'AdaptationHealthRestore', 'thunderStrike', 'fireCircle', 'clingBrander', 'ram_cling_brander', 'ram_brander', 'fort_artillery_eq',
+      'static_deathzone', 'cgf_world', 'vehicle_explosion', 'bunker_destroyed', 'minefield_zone', 'battleship', 'destroyer', 'damage_zone', 'ultimate',
+      'overheat_execute', 'he_rocket', 'none', 'circuit_overload'];
+    const named = [];
+    ['incoming', 'outgoing'].forEach(function (v) {
+      REASONS.forEach(function (r) { const f = C.eventIcon(r, v); if (f) named.push(f); });
+      named.push(one(fire, v));
+      ['engine', 'ammoBay', 'fuelTank', 'radio', 'track', 'wheel', 'gun', 'turretRotator', 'surveyingDevice', 'chassis', 'device'].forEach(function (t) {
+        ['critical', 'destroyed'].forEach(function (st) { named.push(one(item(t === 'ammoBay' ? 'ammoBay' : 'device', t, t, st), v)); named.push(one(item('device', t, t, st), v, wheeled)); });
+      });
+      ['commander', 'driver', 'radioman', 'gunner', 'loader'].forEach(function (t) { named.push(one(item('crew', t, t + '1', 'injured'), v)); });
+    });
+    const root = require('path').join(__dirname, '..', '..');
+    const absent = named.filter(function (f, i) { return named.indexOf(f) === i && !fs.existsSync(require('path').join(root, f)); });
+    ok('crits: every icon file crits.js can name is on disk (the extracted list)', named.length > 100 && absent.length === 0, '(' + absent.join(', ') + ')');
     const details = document.getElementById('details').children;
     const critRow = details.filter(function (d) { return d.getAttribute && d.getAttribute('data-detail') === 'crits'; })[0];
     ok('crits: the details pane of the open hit has a Critical damage row right after Result',
@@ -8472,10 +8513,17 @@ function pathMatrix() {
     $('swap-roles').onclick();
     return settle(30);
   }).then(function () {
-    // 25.09: the list of battle pm - its hits, then its three damage events with a glyph each, the check's mark.
-    const ev = eventRows(), glyphs = ev.map(function (r) { const g = r.children.filter(function (c) { return c.className === 'event-glyph'; })[0]; return g ? g.getAttribute('data-glyph') : null; });
-    ok('events: the damage no shell dealt stands in the hit list, one row each, its own glyph (ram, fire, fall)',
-       ev.length === 3 && glyphs.join() === 'ram,fire,fall' && ev.map(function (r) { return r.getAttribute('data-direction'); }).join() === 'incoming,incoming,incoming', glyphs.join());
+    // 25.09: the list of battle pm - its hits, then its three damage events with the damage log's icon each (in the
+    // icon column every row has, right after the vehicle tile), the check's mark.
+    const ev = eventRows(), cols = ev.map(function (r) { return r.children.filter(function (c) { return c.className === 'hit-crits'; }); });
+    const marks = cols.map(function (c) { const m = c.length === 1 ? c[0].children[0] : null; return !m ? null : m.tagName === 'IMG' ? m.src.replace(/^.*\//, '') : m.getAttribute('data-glyph'); });
+    ok('events: the damage no shell dealt stands in the hit list, one row each, the game\u2019s damage-log icon of its reason, the taken variant (ram, fire, fall)',
+       ev.length === 3 && marks.join() === 'damageLog_ram_enemy_16x16.png,damageLog_fire_enemy_16x16.png,damageLog_damage_enemy_16x16.png'
+       && ev.every(function (r, i) { return cols[i].length === 1 && r.children.indexOf(cols[i][0]) === 1; })
+       && ev.map(function (r) { return r.getAttribute('data-direction'); }).join() === 'incoming,incoming,incoming', marks.join());
+    ok('events: the icon is titled with the row\u2019s own heading and sentence, and a click shows it (data-tip-own)',
+       ev.every(function (r, i) { const m = cols[i][0].children[0]; return m.hasAttribute('data-tip-own') && m.title === r.title.split('\n').slice(0, 2).join('\n'); }),
+       ev.map(function (r, i) { return cols[i][0].children[0].title; }).join(' | '));
     const tipLines = ev.map(function (r) { return r.title.split('\n'); });
     ok('events: each tooltip is a heading, one sentence of what happened, then points (the fire names the hit that set it)',
        tipLines.every(function (l) { return l.length > 3 && !/[.]$/.test(l[0]) && /[.]$/.test(l[1]) && l[2].indexOf('• ') === 0; })

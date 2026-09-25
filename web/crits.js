@@ -1,10 +1,31 @@
 /* Critical damage of a hit (22.09): the crit code of the hit record and what the exporter tied to it (hit.crits).
    Icons are the client's own; every word goes into the hover title, in the page's tooltip markup (a heading
    line, then bullet points "Key: text"; web/tooltips.js). Nothing known about a hit's crits gives nothing at all -
-   a missing crit code does not mean "no crit" (a splash crit comes without one). */
+   a missing crit code does not mean "no crit" (a splash crit comes without one).
+   This file decides every icon file of the hit list (25.09): a named module or crew member takes the client's 16 px
+   library icon (yellow damaged, red destroyed; a chassis crit a track, or a wheel on a wheeled vehicle); everything
+   else - an unnamed crit, a fire, and the damage no shell dealt (eventIcon) - the battle damage log's own 16 px icon,
+   in the variant the client's damage log gives it: plain for damage the player dealt, *_enemy for damage he took
+   (gui/Scaleform/daapi/view/battle/shared/damage_log_panel.pyc, _ETYPE_TO_RECORD_VO_BUILDER; docs/KNOWLEDGE.md). In the
+   hit list that is the row's direction: incoming (the vehicle in focus took it) or outgoing. app.js only places them. */
 (function(root){
   'use strict';
   var BASE='web/icons/crits/';
+  // The damage log's icon pairs [dealt, taken] by attack reason (constants.ATTACK_REASON), as the client's two
+  // _DamageActionImgVOBuilder rows and their _getImage order give them: a fall, a death zone, a minefield zone and a
+  // fortification strike take the plain damage icon; a reason with no icon for the dealt side (the client's builder
+  // has none) takes the taken one both ways. A reason missing here (an event ability, a circuit overload: the client
+  // would fall back to the ram icon) has no game icon; the page draws its own glyph.
+  var CRIT_LOG=['critical','critical_enemy'],DAMAGE=['damage','damage_enemy'],ARTILLERY=['artillery','artillery_enemy'],CLING=['cling_brander','cling_brander_enemy'];
+  var EVENT_LOG={ramming:['ram','ram_enemy'],fire:['fire','fire_enemy'],world_collision:DAMAGE,death_zone:DAMAGE,static_deathzone:DAMAGE,
+    minefield_zone:DAMAGE,fort_artillery_eq:DAMAGE,artillery_eq:['artillery_eq','artillery_eq_enemy'],bomber_eq:['airstrike_eq','airstrike_eq_enemy'],
+    bombers:['airstrike_enemy','airstrike_enemy'],artillery_protection:['artillery_enemy','artillery_enemy'],battleship:ARTILLERY,destroyer:ARTILLERY,
+    minefield_eq:['mine_field','by_mine_field'],spawned_bot_explosion:['spawned_bot','by_spawned_bot'],berserker_eq:['berserker','berserker'],
+    smoke:['by_smoke','by_smoke'],corrodingShot:['corroding_shot','corroding_shot_enemy'],fireCircle:['fire_circle','fire_circle_enemy'],
+    clingBrander:CLING,ram_cling_brander:CLING,thunderStrike:['thunder_strike','thunder_strike_enemy'],he_rocket:['he_rocket','he_rocket_enemy']};
+  function logIcon(pair,view){return BASE+'damageLog_'+pair[view==='incoming'?1:0]+'_16x16.png';}
+  // The icon of a damage event of that reason in that direction, or '' when the client has none for it.
+  function eventIcon(reason,view){return Object.prototype.hasOwnProperty.call(EVENT_LOG,reason)?logIcon(EVENT_LOG[reason],view):'';}
   var DEVICES={engine:'Engine',ammoBay:'Ammo rack',fuelTank:'Fuel tanks',radio:'Radio',track:'Track',wheel:'Wheel',gun:'Gun',turretRotator:'Turret ring',surveyingDevice:'Vision devices'};
   var CREW={commander:'Commander',driver:'Driver',radioman:'Radio operator',gunner:'Gunner',loader:'Loader'};
   var STATES={damaged:'damaged',critical:'damaged (critical)',destroyed:'destroyed',injured:'injured',detonated:'detonated',burnOff:'burned off',started:'started'};
@@ -50,13 +71,16 @@
     var from=origin(it),tie=tieText(it);
     return phrase(it)+(from?'\n\u2022 From: '+from:'')+(tie?'\n\u2022 Matched: '+tie:'');
   }
-  function icon(it){
-    if(it.kind==='fire')return 'fire.png';
-    if(it.kind==='ammoBay')return 'ammoBayDestroyedSmall.png';
-    if(it.kind==='crew')return it.type+'DestroyedSmall.png';   // the client has only this state for crew
-    if(it.type==='chassis')return 'hit_critical_track.png';
-    if(it.type==='device'||!DEVICES[it.type])return 'module.png';
-    return it.type+(it.state==='destroyed'||it.state==='detonated'||it.state==='burnOff'?'DestroyedSmall.png':'CriticalSmall.png');
+  function broken(state){return state==='destroyed'||state==='detonated'||state==='burnOff';}
+  // Tracks or wheels: the vehicle's second mode says a wheeled one (the French wheeled vehicles); else tracks.
+  function running(hit){var m=hit&&hit.target&&hit.target.aim&&hit.target.aim.siegeMode;return m&&m.kind==='wheeled'?'wheel':'track';}
+  function icon(it,hit,view){
+    if(it.kind==='fire')return logIcon(EVENT_LOG.fire,view);
+    if(it.kind==='ammoBay')return BASE+'ammoBayDestroyedSmall.png';
+    if(it.kind==='crew')return BASE+it.type+'DestroyedSmall.png';   // the client has only this state for crew
+    if(it.type==='chassis')return BASE+running(hit)+(broken(it.state)?'DestroyedSmall.png':'CriticalSmall.png');
+    if(it.type==='device'||!DEVICES[it.type])return logIcon(CRIT_LOG,view);
+    return BASE+it.type+(broken(it.state)?'DestroyedSmall.png':'CriticalSmall.png');
   }
   function count(hit){return hit&&hit.crits&&hit.crits.count>0?hit.crits.count:0;}
   // A crit without an identified module: the crit code of the record, or a count from the battle feedback.
@@ -69,13 +93,15 @@
   // The same in one line, after "Critical damage:" in the hit row's tooltip.
   function unnamed(hit){var n=count(hit);return 'Not named'+(n>1?' ('+n+' modules or crew members)':'')+(chassis(hit)?', on the chassis':'');}
   // The tile's icons, at most four: more than four items give three and the generic crit icon listing them all.
-  function badges(hit){
+  // view: the row's direction ('incoming' takes the damage log's *_enemy variant). A crit code on the chassis with
+  // nothing named is a damaged track (or wheel): the yellow icon, its state unknown.
+  function badges(hit,view){
     var list=items(hit);
-    if(!list.length)return lastCode(hit)||count(hit)?[{src:BASE+(chassis(hit)?'hit_critical_track.png':'hit_critical.png'),title:generic(hit)}]:[];
-    var all=list.map(function(it){return {src:BASE+icon(it),title:title(it)};});
+    if(!list.length)return lastCode(hit)||count(hit)?[{src:chassis(hit)?BASE+running(hit)+'CriticalSmall.png':logIcon(CRIT_LOG,view),title:generic(hit)}]:[];
+    var all=list.map(function(it){return {src:icon(it,hit,view),title:title(it)};});
     // The fourth icon lists every item (23.09: five full titles in a row were a wall of text): the first three by name
     // only - their own icons carry the source and the tie - the rest with theirs after the name.
-    return all.length<=4?all:all.slice(0,3).concat([{src:BASE+'hit_critical.png',title:'Critical damage'+list.map(function(it,i){
+    return all.length<=4?all:all.slice(0,3).concat([{src:logIcon(CRIT_LOG,view),title:'Critical damage'+list.map(function(it,i){
       var more=i<3?'':[origin(it)&&'from '+origin(it),tieText(it)&&'matched: '+tieText(it)].filter(Boolean).join('; ');
       return '\n\u2022 '+phrase(it)+(more?': '+more:'');}).join('')}]);
   }
@@ -115,5 +141,5 @@
     var c=hit&&hit.crits;if(!c)return '';
     return [c.code||'',c.mask==null?'':c.mask,c.flags||'',c.count||''].concat(raw(hit).map(function(it){return (it.extra||it.type)+':'+it.state+':'+it.tie;})).join('|');
   }
-  root.ArmorCrits={lastCode:lastCode,items:items,badges:badges,describe:describe,sources:sources,columns:columns,key:key};
+  root.ArmorCrits={lastCode:lastCode,items:items,badges:badges,eventIcon:eventIcon,describe:describe,sources:sources,columns:columns,key:key};
 }(typeof window==='undefined'?globalThis:window));

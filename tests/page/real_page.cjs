@@ -203,6 +203,22 @@ async function main() {
     // Warm up as the stub matrix does: every shooter's characteristics file read once.
     await step("side('battles')"); await step("battle('pm')"); await step('hit(1)'); await step('swap()'); await step('swap()');
 
+    // 25.09: the icon column stands on every row of the list (hits and damage events) at one width, so the vehicle
+    // tiles and their flags end in one line; at the narrowest list (250 px, a window under 900 px) no row overflows.
+    for (const w of [1600, 800]) {
+      if (w !== 1600) await page.send('Emulation.setDeviceMetricsOverride', {width: w, height: 1000, deviceScaleFactor: 1, mobile: false});
+      await ev('__bt.settle()');
+      const rows = await ev(`(() => [].slice.call(document.querySelectorAll('#hits > .hit')).map((r) => {
+        const c = r.querySelector(':scope > .hit-crits'), t = r.querySelector(':scope > .vehicle-tile'), b = c && c.getBoundingClientRect();
+        return {event: r.hasAttribute('data-event'), left: b ? Math.round(b.left) : null, width: b ? Math.round(b.width) : null,
+          tile: t ? Math.round(t.getBoundingClientRect().right) : null, list: Math.round(r.getBoundingClientRect().width), over: r.scrollWidth > r.clientWidth};
+      }))()`);
+      const same = (k) => rows.every((r) => r[k] !== null && r[k] === rows[0][k]);
+      ok('list at ' + w + ' px: every hit and event row has the icon column at one place and width, the vehicle tiles end in one line, nothing overflows',
+         rows.length >= 4 && rows.some((r) => r.event) && same('left') && same('tile') && rows.every((r) => r.width === 34 && !r.over), JSON.stringify(rows));
+    }
+    await page.send('Emulation.clearDeviceMetricsOverride'); await ev('__bt.settle()');
+
     async function loop(fun) {
       await ev('__bt.act.fun(' + fun + ')'); await ev('__bt.settle()');
       expectScene('a hit clicked', fun, {model: true, shooter: true, hp: '2 750 / 2 750', source: HP.ROSTER}, await step('hit(0)'));
