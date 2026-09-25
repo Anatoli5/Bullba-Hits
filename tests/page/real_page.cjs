@@ -154,10 +154,10 @@ async function main() {
     // The sweep of every vehicle's characteristics (24.09): the mod's progress file drawn beside the Statistics log.
     const sweep = await ev(`(() => { const b = document.getElementById('ttx-sweep'), f = document.getElementById('ttx-sweep-fill');
       return {shown: b.getClientRects().length > 0, text: document.getElementById('ttx-sweep-count').textContent, fill: f.style.width,
-        tip: b.getAttribute('data-tip') || b.title, left: b.getBoundingClientRect().right <= document.querySelector('header .connection').getBoundingClientRect().left}; })()`);
-    ok('sweep indicator: the progress file drawn in the header - 340 / 1343, the bar a quarter full, left of the Statistics log, its words in the tooltip',
-       sweep.shown && sweep.text === '340 / 1343' && sweep.fill === '25.3%' && sweep.left
-       && sweep.tip.indexOf('Characteristics of every vehicle\nThe game writes the characteristics file of every vehicle, once per game update.\n• Now: 340 of 1343\n') === 0, JSON.stringify(sweep).slice(0, 300));
+        tip: b.getAttribute('data-tip') || b.title, quiet: document.getElementById('ttx-sweep-ask').hidden && document.getElementById('ttx-sweep-stop').hidden, left: b.getBoundingClientRect().right <= document.querySelector('header .connection').getBoundingClientRect().left}; })()`);
+    ok('sweep indicator: the progress file drawn in the header - 340 / 1343, the bar a quarter full, left of the Statistics log, its words in the tooltip; outside the game no question and no ■',
+       sweep.shown && sweep.quiet && sweep.text === '340 / 1343' && sweep.fill === '25.3%' && sweep.left
+       && sweep.tip.indexOf('Characteristics of every vehicle\nThe game prepares the characteristics files once after a game update, only of the vehicles that changed.\n• Now: 340 of 1343\n') === 0, JSON.stringify(sweep).slice(0, 300));
     const step = async (js, max) => { await ev('__bt.act.' + js); await ev('__bt.settle(' + (max || 6000) + ')'); return ev('__bt.sig()'); };
 
     function expectScene(label, fun, want, s) {
@@ -221,15 +221,17 @@ async function main() {
            row('avgDamagePerMinute', 'reloadTimeSecs') && R.avgDamagePerMinute.r < R.reloadTimeSecs.l && row('shotDispersionAngle', 'aimingTime')
            && col('avgDamagePerMinute', 'shotDispersionAngle') && col('reloadTimeSecs', 'aimingTime') && R.shotDispersionAngle.t > R.avgDamagePerMinute.b - 1,
            JSON.stringify([R.avgDamagePerMinute, R.reloadTimeSecs]));
-        ok('panel layout: the stabilisation three in two columns - two on a row under dispersion | aiming, the third below',
-           row('stabMovement', 'stabRotation') && col('stabMovement', 'shotDispersionAngle') && col('stabRotation', 'aimingTime')
-           && col('stabTurret', 'stabMovement') && R.stabTurret.t > R.stabMovement.b - 1 && R.stabMovement.t > R.shotDispersionAngle.b - 1, JSON.stringify([R.stabMovement, R.stabTurret]));
-        ok('panel layout: Mobility in two rows - speed | specific power, hull | turret traverse',
-           row('speedLimits', 'enginePowerPerTon') && row('hull', 'turretRotationSpeed') && R.hull.t > R.speedLimits.b - 1
-           && col('hull', 'speedLimits') && col('turretRotationSpeed', 'enginePowerPerTon') && col('speedLimits', 'avgDamagePerMinute'), JSON.stringify([R.speedLimits, R.hull, R.turretRotationSpeed]));
-        ok('panel layout: Concealment - the view range on its own row, standing | moving under it',
-           col('circularVisionRadius', 'invisibilityStillFactor') && row('invisibilityStillFactor', 'invisibilityMovingFactor') && R.invisibilityStillFactor.t > R.circularVisionRadius.b - 1
-           && col('invisibilityMovingFactor', 'turretRotationSpeed') && R.circularVisionRadius.t > R.hull.b - 1, JSON.stringify([R.circularVisionRadius, R.invisibilityStillFactor]));
+        const above = (top, low) => col(top, low) && R[low].t > R[top].b - 1 && R[low].t - R[top].b < 10;
+        ok('panel layout: the stabilisation as column blocks - on the move above on hull traverse, on turret traverse beside them, under dispersion | aiming',
+           above('stabMovement', 'stabRotation') && row('stabMovement', 'stabTurret') && col('stabMovement', 'shotDispersionAngle') && col('stabTurret', 'aimingTime')
+           && R.stabMovement.t > R.shotDispersionAngle.b - 1, JSON.stringify([R.stabMovement, R.stabRotation, R.stabTurret]));
+        ok('panel layout: Mobility as column blocks - speed above specific power, turret traverse above hull traverse',
+           above('speedLimits', 'enginePowerPerTon') && above('turretRotationSpeed', 'hull') && row('speedLimits', 'turretRotationSpeed')
+           && col('speedLimits', 'avgDamagePerMinute') && col('turretRotationSpeed', 'aimingTime'), JSON.stringify([R.speedLimits, R.enginePowerPerTon, R.turretRotationSpeed, R.hull]));
+        ok('panel layout: Concealment - view range on the left, standing above moving on the right',
+           row('circularVisionRadius', 'invisibilityStillFactor') && above('invisibilityStillFactor', 'invisibilityMovingFactor')
+           && col('invisibilityStillFactor', 'aimingTime') && col('circularVisionRadius', 'avgDamagePerMinute') && R.circularVisionRadius.t > R.hull.b - 1,
+           JSON.stringify([R.circularVisionRadius, R.invisibilityStillFactor, R.invisibilityMovingFactor]));
         // The panel's help opens UPWARD, over the empty scene (user 24.09): the "?" and a figure's own words, both above the panel.
         // Real clicks (the page's own tooltips.js takes trusted presses only): the "?", then again to leave the help mode,
         // then a figure's own words.

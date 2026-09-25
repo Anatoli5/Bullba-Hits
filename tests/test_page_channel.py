@@ -137,12 +137,42 @@ class WebCommandTests(unittest.TestCase):
         presentation.web_handlers()[0].handler(Command(action='open'), {})
         self.assertEqual((opened, self.calls), ([1], []))
         recorder = modmain.Recorder.__new__(modmain.Recorder)
-        recorder.page_open_until = 0.0
+        recorder.page_open_until, recorder.frames_wanted, recorder.frame_loop = 0.0, False, False
         with patch.object(modmain, '_recorder', recorder):
             modmain.page_open()
         self.assertAlmostEqual(recorder.page_open_until - time.time(), modmain.PAGE_OPEN_SECONDS, delta=1)
         with patch.object(modmain, '_recorder', None):
             modmain.page_open()
+
+    def test_sweep_start_and_stop_reach_the_recorder_and_its_frames(self):
+        # 24.09: Start and Stop of the characteristics sweep; Start begins the frame callback that paces its slices.
+        asked = []
+        presentation.set_sweep_request(lambda start: asked.append(start))
+        self.addCleanup(presentation.set_sweep_request, None)
+        handler = presentation.web_handlers()[0].handler
+        handler(Command(action='sweepStart'), {})
+        handler(Command(action='sweepStop'), {})
+        self.assertEqual((asked, self.calls), ([True, False], []))
+        callbacks, exports = [], []
+        bigworld = types.ModuleType('BigWorld')
+        bigworld.callback = lambda delay, fn: callbacks.append(fn)
+        recorder = modmain.Recorder.__new__(modmain.Recorder)
+        recorder.page_open_until, recorder.frames_wanted, recorder.frame_loop = time.time() + 10, False, False
+        recorder.frame_event = modmain.threading.Event()
+        recorder.writer = types.SimpleNamespace(put_export=lambda name, payload: exports.append(name))
+        with patch.dict(sys.modules, {'BigWorld': bigworld}):
+            with patch.object(modmain, '_recorder', recorder):
+                modmain.page_sweep(True)
+            self.assertEqual((exports, recorder.frames_wanted, recorder.frame_loop, len(callbacks)), (['sweepStart'], True, True, 1))
+            callbacks.pop()()   # one frame: the event is set and the next frame asked for
+            self.assertTrue(recorder.frame_event.is_set())
+            self.assertEqual(len(callbacks), 1)
+            recorder.note_page_open()   # the page's own signal while the chain runs starts no second chain
+            self.assertEqual(len(callbacks), 1)
+            with patch.object(modmain, '_recorder', recorder):
+                modmain.page_sweep(False)
+            callbacks.pop()()   # the chain ends on the next frame
+            self.assertEqual((exports, recorder.frames_wanted, recorder.frame_loop, callbacks), (['sweepStart', 'sweepStop'], False, False, []))
 
 
 class PickerDescriptorTests(unittest.TestCase):

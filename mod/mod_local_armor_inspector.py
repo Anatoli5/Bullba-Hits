@@ -475,7 +475,11 @@ class Writer(object):
             return
         while True:
             message = None
-            try: message = self.export_queue.get(timeout=0.05)
+            # While the TTX sweep's slices run, no wait here: it waits one frame of the game between two slices itself.
+            hurry = False
+            try: hurry = bool(getattr(self.exporter, 'ttx_hurry', None) and self.exporter.ttx_hurry())
+            except Exception: hurry = False
+            try: message = self.export_queue.get_nowait() if hurry else self.export_queue.get(timeout=0.05)
             except queue.Empty: pass
             if message is not None:
                 name, payload = message
@@ -483,6 +487,8 @@ class Writer(object):
                     if name == 'vehicle': self.exporter.request_vehicle_export(payload)
                     elif name == 'prioritise': self.exporter.prioritise(payload)
                     elif name == 'ttx': self.exporter.request_ttx(payload)
+                    elif name == 'sweepStart': self.exporter.confirm_ttx_sweep()
+                    elif name == 'sweepStop': self.exporter.stop_ttx_sweep()
                 except Exception: LOG.exception('HTML export command failed')
                 finally: self.export_queue.task_done()
             dirty = self.take_dirty()
@@ -510,6 +516,10 @@ class Writer(object):
 
     def close(self):
         self.export_deadline = time.time() + 2.0
+        # The characteristics sweep builds nothing more (review #6): the drain below is the records' only.
+        if self.exporter is not None:
+            try: self.exporter.ttx_stopped = True
+            except Exception: pass
         self.stopping.set()
         self.thread.join(2.0)
         if self.thread.is_alive(): LOG.warning('Writer still draining at shutdown')
@@ -711,8 +721,13 @@ class Recorder(object):
         # says the user is working in it. Written here, on the game thread, only.
         self.in_battle = False
         self.busy_until = 0.0
-        # The page is open in the game until then (note_page_open): the TTX sweep runs fast meanwhile.
+        # The page is open in the game until then (note_page_open): the TTX sweep may run meanwhile. While its slices run
+        # (frames_wanted, written by the export thread) a callback on every frame sets frame_event, which the export
+        # thread waits for between two slices (wait_frame): the game gets one whole frame between them.
         self.page_open_until = 0.0
+        self.frames_wanted = False
+        self.frame_loop = False
+        self.frame_event = threading.Event()
         self.version = 'unknown'
         try:
             with open('version.xml', 'rb') as stream:
@@ -779,8 +794,42 @@ class Recorder(object):
         self.busy_until = time.time()+float(seconds)
 
     def note_page_open(self, seconds=PAGE_OPEN_SECONDS):
-        """The page is open in the game right now: one float, read by the export thread's TTX sweep."""
+        """The page is open in the game right now: one float, read by the export thread's TTX sweep. Game thread."""
         self.page_open_until = time.time()+float(seconds)
+        self.start_frames()
+
+    def sweep_request(self, start):
+        """The page's Start or Stop of the characteristics sweep: the export thread runs or stops it, the frames begin here."""
+        self.writer.put_export('sweepStart' if start else 'sweepStop', None)
+        self.frames_wanted = bool(start)
+        if start: self.start_frames()
+
+    def start_frames(self):
+        """Game thread: the frame callback, while the sweep's slices want it and the page is open; one chain at a time."""
+        if self.frame_loop or not self.frames_wanted: return
+        try:
+            import BigWorld
+            BigWorld.callback(0, self.on_frame)
+            self.frame_loop = True
+        except Exception:
+            self.frame_loop = False
+
+    def on_frame(self):
+        """One frame of the game has passed: the export thread's next slice may start."""
+        self.frame_event.set()
+        if self.frames_wanted and self.page_open_until > time.time():
+            try:
+                import BigWorld
+                BigWorld.callback(0, self.on_frame)
+                return
+            except Exception:
+                pass
+        self.frame_loop = False
+
+    def wait_frame(self, timeout=0.1):
+        """Export thread: until the next frame of the game (or `timeout` s, when the frame callback is not running)."""
+        self.frame_event.clear()
+        self.frame_event.wait(timeout)
 
     def prioritise(self, types):
         """The page opened a hit: its vehicles' models go before everything else.
@@ -1279,6 +1328,12 @@ def page_open():
     _recorder.note_page_open()
 
 
+def page_sweep(start):
+    """The page's Start or Stop of the characteristics sweep. Game thread: the request only."""
+    if _recorder is None: return
+    _recorder.sweep_request(start)
+
+
 def page_prioritise(types):
     """The page opened a hit whose collision models are not extracted yet."""
     if _recorder is None: return
@@ -1406,6 +1461,7 @@ def init():
             presentation.set_prioritise_request(page_prioritise)
             presentation.set_ttx_request(page_ttx)
             presentation.set_open_request(page_open)
+            presentation.set_sweep_request(page_sweep)
         except Exception: LOG.exception('Page export command unavailable; hit recording continues')
         try:
             from gui.modsListApi import g_modsListApi
@@ -1431,6 +1487,7 @@ def fini():
         presentation.set_prioritise_request(None)
         presentation.set_ttx_request(None)
         presentation.set_open_request(None)
+        presentation.set_sweep_request(None)
     except Exception: LOG.exception('Page export command cleanup failed')
     remove_context_menu(_context_menu)
     _context_menu = None

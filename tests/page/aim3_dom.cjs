@@ -3186,10 +3186,81 @@ settle(20).then(function () {
      && modelRow.indexOf('Hit marks') < 0 && modelRow.indexOf('outcome colour') < 0);
   ok('fun: a .swap-roles that is a switch is LIT in the page’s own accent, the very state the chips and pills wear',
      /\.swap-roles\[aria-pressed=true\]\{border-color:var\(--gold\);color:var\(--gold\);background:#302b23\}/.test(styleSrc));
-  ok('sweep (24.09): every poll tells the mod the page is open in the game (at most every 4 s) and reads the progress file until it says done',
-     /refresh\(\);if\(sidebarMode==='vehicles'\)loadCatalogue\(\);\n    sweepTick\(\);/.test(appSrc)
-     && /if\(host\.game\)\{var now=Date\.now\(\);if\(now-openSentAt>=4000\)\{openSentAt=now;sendCommand\('open',null\);\}\}/.test(appSrc)
-     && /if\(sweepDone\|\|!ArmorInspectorData\.ttxSweep\)return;/.test(appSrc) && /if\(s&&s\.done\)sweepDone=true;/.test(appSrc));
+  // ---- the sweep of every vehicle's characteristics (24.09): its block of app.js cut out and run on stubs -------------
+  (function sweepChecks() {
+    const from = appSrc.indexOf("  // THE SWEEP OF EVERY VEHICLE'S CHARACTERISTICS"), to = appSrc.indexOf('  sweepTick();\n', from);
+    ok('sweep: its block of app.js can be cut out, and the poll runs it', from > 0 && to > from
+       && /refresh\(\);if\(sidebarMode==='vehicles'\)loadCatalogue\(\);\n    sweepTick\(\);/.test(appSrc) && /modelsPending\|\|sweepRunning\?2000:5000/.test(appSrc));
+    const tipJoinCut = (/\n  function tipJoin\(lines\) \{[\s\S]*?\n  \}\n/.exec(appSrc) || [''])[0];
+    function page(game, file, hidden) {
+      const els = {}, sent = [], reads = {n: 0};
+      const $ = function (id) { return els[id] || (els[id] = {id: id, hidden: true, textContent: '', title: '', style: {}, onclick: null}); };
+      const host = {game: game}, doc = {hidden: !!hidden};
+      const data = {ttxSweep: function () { reads.n++; const f = file(); return f ? Promise.resolve(f) : Promise.reject(new Error('Not found data/ttx-sweep.js')); }};
+      const run = new Function('$', 'host', 'sendCommand', 'ArmorInspectorData', 'document', tipJoinCut + appSrc.slice(from, to)
+        + 'return {tick: sweepTick, paint: paintSweep, running: function () { return sweepRunning; }};');
+      const api = run($, host, function (action) { sent.push(action); }, data, doc);
+      api.tick();   // the block's own first call at load (left out of the cut)
+      return {$: $, sent: sent, reads: reads, api: api, doc: doc, host: host};
+    }
+    const settleMicro = function () { return new Promise(function (r) { setImmediate(r); }); };
+    let file = {done: false, count: 0, total: 1343, catalogue: 1343, confirmed: false, built: 0, builtMs: 0};
+    const g = page(true, function () { return file; });
+    return settleMicro().then(function () {
+      const ask = g.$('ttx-sweep-ask');
+      ok('sweep: in the game the page tells the mod it is open, and reads the progress file',
+         g.sent[0] === 'open' && g.reads.n === 1 && g.$('ttx-sweep').hidden === false && g.$('ttx-sweep-count').textContent === '0 / 1343');
+      ok('sweep: a first sweep asks - heading, one sentence with the estimate (40 ms a vehicle before this machine has built any), Start and Later',
+         ask.hidden === false && g.$('ttx-sweep-ask-head').textContent === 'First start after a game update'
+         && g.$('ttx-sweep-ask-text').textContent === 'Preparing the characteristics of all 1343 vehicles takes about 70 s (an estimate); the hangar stutters meanwhile.'
+         && g.$('ttx-sweep-go').textContent === 'Start' && g.$('ttx-sweep-stop').hidden === true, g.$('ttx-sweep-ask-text').textContent);
+      g.$('ttx-sweep-go').onclick();
+      ok('sweep: Start - the question goes, the mod is told, the ■ Stop stands', ask.hidden === true && g.sent.indexOf('sweepStart') >= 0
+         && g.$('ttx-sweep-stop').hidden === false && g.api.running());
+      file = {done: false, count: 340, total: 1343, catalogue: 1343, confirmed: false, built: 340, builtMs: 6800};
+      g.api.paint(file);
+      ok('sweep: a read of the file from before the mod took the Start does not bring the question back', ask.hidden === true && g.$('ttx-sweep-stop').hidden === false);
+      g.$('ttx-sweep-stop').onclick();
+      ok('sweep: ■ Stop - the mod is told at once, the ■ goes, and this page asks no more', g.sent.indexOf('sweepStop') >= 0
+         && g.$('ttx-sweep-stop').hidden === true && ask.hidden === true && g.$('ttx-sweep').hidden === false);
+      // The next open of the page: the sweep that was stopped asks again, with how far it got.
+      const n = page(true, function () { return file; });
+      return settleMicro().then(function () {
+        const ask2 = n.$('ttx-sweep-ask');
+        ok('sweep: the next open asks again - how far it got and the time left at this machine\'s own pace, Continue and Later',
+           ask2.hidden === false && n.$('ttx-sweep-ask-head').textContent === 'Preparation not finished'
+           && n.$('ttx-sweep-ask-text').textContent === '340 of 1343 vehicles done (25 %), about 27 s left (an estimate).'
+           && n.$('ttx-sweep-go').textContent === 'Continue', n.$('ttx-sweep-ask-text').textContent);
+        n.$('ttx-sweep-later').onclick();
+        n.api.paint(file);
+        ok('sweep: Later - the question goes for this open of the page, nothing is sent', ask2.hidden === true && n.sent.indexOf('sweepStart') < 0);
+        // A game update that changed twelve vehicles.
+        const u = page(true, function () { return {done: false, count: 0, total: 12, catalogue: 1343, confirmed: false, built: 1343, builtMs: 26860}; });
+        return settleMicro().then(function () {
+          ok('sweep: after an update only the vehicles that changed - "12 vehicles changed", about 1 s',
+             u.$('ttx-sweep-ask-head').textContent === 'The game was updated'
+             && u.$('ttx-sweep-ask-text').textContent === '12 vehicles changed: preparing their characteristics takes about 1 s (an estimate); the hangar stutters meanwhile.',
+             u.$('ttx-sweep-ask-text').textContent);
+          const d = page(true, function () { return {done: true, count: 0, total: 0, catalogue: 1343}; });
+          return settleMicro().then(function () {
+            d.api.tick(); d.api.tick();
+            ok('sweep: done - no question, no bar, no "open", the file is not read again', d.$('ttx-sweep-ask').hidden === true && d.$('ttx-sweep').hidden === true
+               && d.reads.n === 1 && d.sent.length === 1, d.reads.n + ' reads, ' + d.sent.join());
+            const b = page(false, function () { return null; });
+            return settleMicro().then(function () {
+              b.api.tick(); b.api.tick();
+              ok('sweep: outside the game - no "open", no question, and a missing file is not read again (review #9)',
+                 b.sent.length === 0 && b.reads.n === 1 && b.$('ttx-sweep-ask').hidden === true);
+              const h = page(true, function () { return file; }, true);
+              return settleMicro().then(function () {
+                ok('sweep: a page not on screen does not say it is open (review #9)', h.sent.indexOf('open') < 0);
+              });
+            });
+          });
+        });
+      });
+    });
+  })();
   ok('fun: the stored values of the two old rows are dropped when a store from 0.7.25 is read',
      /delete box\.values\['target-hp-on'\];delete box\.values\['hit-marks-on'\];/.test(appSrc));
 
@@ -6027,8 +6098,8 @@ settle(20).then(function () {
     const secs = compact.children, keysOf = function (box) { return box && box.className === 'ttx-rows' ? box.children.map(function (r) { return r.getAttribute('data-key'); }).join() : null; };
     const layout = secs.map(function (sec) { return sec.getAttribute('data-group') + '[' + sec.children.map(function (c) { return c.className === 'ttx-rows' ? keysOf(c) : c.className; }).join(' | ') + ']'; }).join(' ');
     ok('ttx 24.09: the compact view - Firepower (the DPM first, the reload line after it, dispersion and aiming, the stabilisation three), Mobility (speed and specific power; the hull and the turret), Concealment (view range; standing and moving); the HP in the head; glyphs and figures only',
-       layout === 'relativePower[ttx-rule | avgDamagePerMinute | ttx-reload | shotDispersionAngle,aimingTime | stabMovement,stabRotation,stabTurret] '
-         + 'relativeMobility[ttx-rule | speedLimits,enginePowerPerTon | hull,turretRotationSpeed] relativeCamouflage[ttx-rule | circularVisionRadius | invisibilityStillFactor,invisibilityMovingFactor]'
+       layout === 'relativePower[ttx-rule | avgDamagePerMinute | ttx-reload | shotDispersionAngle,aimingTime | stabMovement,stabTurret | stabRotation] '
+         + 'relativeMobility[ttx-rule | speedLimits,turretRotationSpeed | enginePowerPerTon,hull] relativeCamouflage[ttx-rule | circularVisionRadius,invisibilityStillFactor | ,invisibilityMovingFactor]'
        && rowOf('maxHealth').getAttribute('data-key') === 'maxHealth' && rowOf('maxHealth').ttx.glyph === 'maxHealth'
        && ttxRowsIn(compact).concat([rowOf('maxHealth')]).every(function (r) { return r.children.length === 2 && r.children[0].className === 'ttx-icon'; }),
        layout);
@@ -6129,7 +6200,7 @@ settle(20).then(function () {
     // The compact view's own grid (24.09): two columns, a line of rows starting a grid row; the reload line's sides placed
     // by its shape - a magazine's interval beside the DPM, its reload and rounds under them; any other gun's reload beside it.
     ok('ttx 24.09: the compact grid - two columns, every line starts a row, the reload line\'s sides in their columns by its shape',
-       /\.ttx-body\{grid-template-columns:repeat\(2,auto\)\}/.test(cssT) && /\.ttx-body \.ttx-rows>\.ttx-row:first-child\{grid-column-start:1\}/.test(cssT)
+       /\.ttx-body\{grid-template-columns:repeat\(2,auto\)\}/.test(cssT) && /\.ttx-body \.ttx-rows>:first-child\{grid-column-start:1\}/.test(cssT)
        && /\.ttx-body \.ttx-reload-side:empty\{display:none\}/.test(cssT)
        && /\.ttx-reload\[data-shape=mag\]>\.ttx-reload-side\[data-side=right\],[^{]*\[data-shape=mag\]>\.ttx-reload-side\[data-side=left\],\s*\.ttx-body \.ttx-reload\[data-shape=one\]>\.ttx-reload-side\[data-side=center\]\{grid-column:2\}/.test(cssT)
        && /\.ttx-reload\[data-shape=mag\]>\.ttx-reload-side\[data-side=center\],\.ttx-body \.ttx-reload\[data-shape=one\]>\.ttx-reload-side\[data-side=right\]\{grid-column:1\}/.test(cssT)
@@ -6797,15 +6868,16 @@ settle(20).then(function () {
       ok('ttx v2: the controls row has one help dot naming the panel\'s clickable elements in their order - the mode switch, ⚙, ▴, the gun chip',
          !!dot && ids.join(' ') === 'ttx-mode ttx-build-toggle ttx-more-button ttx-pair' && at.every(function (x, k) { return x >= 0 && (k === 0 || x > at[k - 1]); }),
          inner.slice(0, 80));
-      ok('ttx 24.09: the mode switch on the panel\'s left; ⚙, ▴ and "?" on a row of their own above the head; the head is the HP and the gun chip',
-         inner.indexOf('<button type="button" id="ttx-mode" class="swap-roles"') === 0 && inner.indexOf('<div class="ttx-main"><div class="ttx-tools">') > 0
-         && /^<button type="button" id="ttx-build-toggle"/.test(tools) && tools.indexOf('id="ttx-more"') > 0 && tools.indexOf('id="ttx-pair"') < 0
+      ok('ttx 24.09: the panel\'s controls on a row of their own above the head - the mode switch at its left end, then ⚙, ▴ and "?"; the head is the HP and the gun chip',
+         inner.indexOf('<div class="ttx-main"><div class="ttx-tools"><button type="button" id="ttx-mode" class="swap-roles"') === 0
+         && /^<button type="button" id="ttx-mode"[^>]*>◐<\/button><button type="button" id="ttx-build-toggle"/.test(tools) && tools.indexOf('id="ttx-more"') > 0 && tools.indexOf('id="ttx-pair"') < 0
+         && /\.ttx-tools>#ttx-mode\{margin-right:auto\}/.test(fs.readFileSync(path + 'style.css', 'utf8'))
          && /^<span id="ttx-hp" class="ttx-hp"><\/span><details id="ttx-pairs"[^]*<\/details><\/div>$/.test(head), inner.slice(0, 120));
       // Review 23.09: every "?" of the page is the one help dot - no ⓘ left: the Statistics log's is a .help-dot on its
       // words, the vehicle list's summary wears the dot (its own box of help opens under it).
       ok('help marks: one look - no ⓘ left in the page; the Statistics log has a help dot on its words, the vehicle list\'s help is a .help-dot summary',
          pageSrc.indexOf('\u24d8') < 0 && pageSrc.indexOf('info-mark') < 0
-         && /<span id="connection">Statistics log<\/span><button type="button" class="help-dot" data-help-for="connection" aria-label="Help"[^>]*>\?<\/button>/.test(pageSrc)
+         && /<span id="connection">Statistics log<\/span><button type="button" class="help-dot" data-help-for="ttx-sweep ttx-sweep-stop connection" aria-label="Help"[^>]*>\?<\/button>/.test(pageSrc)
          && /<summary id="vehicle-info" class="help-dot"[^>]*>\?<\/summary>/.test(pageSrc));
       // Put the page back as the sections before it left it.
       global.ArmorInspectorData.battle = keepBattle; global.ArmorInspectorData.ttx = keepTtx; global.ArmorInspectorData.scene = keepScene;

@@ -15,6 +15,7 @@ _busy_request = None
 _prioritise_request = None
 _ttx_request = None
 _open_request = None
+_sweep_request = None
 _warned = set()
 
 
@@ -104,6 +105,12 @@ def set_open_request(handler):
     _open_request = handler
 
 
+def set_sweep_request(handler):
+    """The page's Start (True) or Stop (False) of the characteristics sweep of this client version."""
+    global _sweep_request
+    _sweep_request = handler
+
+
 def _warn_once(key, message, *args):
     """A page command that keeps failing must not fill game.log line by line.
 
@@ -119,11 +126,12 @@ def _warn_once(key, message, *args):
 def _handle_web_command(command, ctx):
     """One w2c command from the page, on the game thread. Only the request is done here.
 
-    Five fire-and-forget actions: 'exportVehicle' asks for one vehicle type,
+    Seven fire-and-forget actions: 'exportVehicle' asks for one vehicle type,
     'exportTtx' for the characteristics file of one type (no collision models),
     'busy' says the user is dragging or zooming the page right now,
     'prioritise' names the vehicle types whose collision models the page is
-    waiting for, and 'open' says the page is open (the TTX sweep may go fast).
+    waiting for, 'open' says the page is open (the TTX sweep may run) and
+    'sweepStart'/'sweepStop' are the user's Start and Stop of that sweep.
     None of them may cost the game thread more than a flag.
     """
     try:
@@ -133,6 +141,13 @@ def _handle_web_command(command, ctx):
                 _warn_once('busy', 'Bullba Hits page command: the recorder is not running')
                 return
             _busy_request()
+            return
+        if action in ('sweepStart', 'sweepStop'):
+            if _sweep_request is None:
+                _warn_once('sweep', 'Bullba Hits page command: the recorder is not running')
+                return
+            LOG.info('Bullba Hits page command: characteristics sweep %s', 'started' if action == 'sweepStart' else 'stopped')
+            _sweep_request(action == 'sweepStart')
             return
         if action == 'open':
             if _open_request is None:

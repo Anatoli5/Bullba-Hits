@@ -176,6 +176,28 @@ PACKAGE_RESCAN_PAUSE = 300
 ZIP_LOCAL_HEADER = struct.Struct('<4sHHHHHIIIHH')
 
 
+ZIP_END = struct.Struct('<4s4H2LH')
+TTX_SOURCE_MARKS = (b'scripts/item_defs/vehicles/', b'scripts/common/items/')
+
+
+def zip_directory(path):
+    """The raw central directory of a zip (a package), or None when it cannot be found simply (a comment longer than
+    64 KB, zip64): the caller then parses the package as usual. Read-only, one seek and one read."""
+    with open(path, 'rb') as stream:
+        stream.seek(0, 2)
+        size = stream.tell()
+        tail_size = min(size, 65536 + ZIP_END.size)
+        stream.seek(size - tail_size)
+        tail = stream.read(tail_size)
+        at = tail.rfind(b'PK')
+        if at < 0 or at + ZIP_END.size > len(tail): return None
+        fields = ZIP_END.unpack(tail[at:at + ZIP_END.size])
+        length, offset = fields[5], fields[6]
+        if length == 0xffffffff or offset == 0xffffffff or offset + length > size: return None
+        stream.seek(offset)
+        return stream.read(length)
+
+
 def read_package_entry(path, name, entry):
     """One ZIP entry read at the offset its central-directory record gave.
 
@@ -1812,23 +1834,36 @@ TTX_TIMER = getattr(time, 'perf_counter', None) or time.clock
 # list on the type). The turret and gun come per pair.
 TTX_TOP_MODULES = (('chassis', 'chassis'), ('engine', 'engines'), ('radio', 'radios'), ('fuelTank', 'fuelTanks'))
 # THE SWEEP (24.09, user: the characteristics of every catalogue vehicle, also for the page outside the game). Every
-# type of the catalogue goes through build_ttx - the one path of a TTX file - only when the job queue is empty and
-# jobs_allowed() (never in a battle, never while the page is being dragged). Two paces (user's decision, 24.09):
-#   - FAST while the page is open in the game (the recorder's page_open_until, from the page's 'open' command): builds
-#     back to back for up to TTX_SWEEP_SLICE seconds a tick; the export thread's own wait between ticks (50 ms) is the
-#     yield that keeps the game and the page's channel going - the user is looking at the page then, not playing;
-#   - SLOW otherwise (the page closed, the hangar alone): one build per TTX_SWEEP_PACE seconds, the cheap checks of files
-#     already current (ttx_known, a stat, a read) up to TTX_SWEEP_BUDGET seconds a tick. It is kept rather than paused:
-#     at <=3 % of one core it finishes a run the page started, and the next session need not start it again.
+# type of the catalogue goes through build_ttx - the one path of a TTX file - and ONLY while the page is open in the game
+# and the user has said Start (user's decision, 24.09, after a background pace was tried the same day):
+#   - the page, open in the game, says so with every poll ('open'; the recorder's page_open_until). When the sweep of
+#     this client version is not done and not running, it asks the user on every open of the page (Start - or Continue
+#     with how far it got - / Later, with an estimate from this machine's own ms per vehicle); Start ('sweepStart') runs it
+#     until the page closes or the user presses Stop ('sweepStop' - after the current slice), and the next open asks again;
+#   - confirmed and the page open: builds back to back for TTX_SWEEP_SLICE seconds, then ONE frame of the game (the
+#     recorder's frame callback, wait_frame) and the next slice; the export loop does not wait its 50 ms meanwhile
+#     (ttx_hurry). Never in a battle, never while the page is being dragged, and every queued job (a clicked vehicle's
+#     export) first. The page closed: nothing runs, and the next open of the page asks again.
 # Measured on the client's own python27.dll and items.vehicles (offline stand, 1251 types): a build 26 ms median, most of
-# it the stand's own XML reader (native in the game), the client's parsing ~24 %, ours <1 %; the whole catalogue at the
-# fast pace 27-29 s of work. Once per client version and file schema: the progress file TTX_SWEEP_DATA (data/ttx-sweep.js,
-# which the page reads for its indicator) holds that stamp, when the sweep began (a file written after it is current
-# without a read - the resume of an interrupted sweep), how far it got and, when done, the types that failed (tried again
-# once a session, the rest never). One log line when a sweep ends, none per type.
-TTX_SWEEP_PACE = 1.0
-TTX_SWEEP_BUDGET = 0.005
+# it the stand's own XML reader (native in the game), the client's parsing ~24 %, ours <1 %. Once per client version and
+# file schema: the progress file TTX_SWEEP_DATA (data/ttx-sweep.js, which the page reads for its indicator and its
+# question) holds that stamp, whether it runs now (confirmed), when the sweep began (a file written after it is current without a read
+# - the resume), how far it got, the build time so far (the page's estimate) and, when done, the types that failed
+# (tried again once a session while the page is open, without asking). One log line when a sweep ends, none per type.
+try: basestring_type = basestring
+except NameError: basestring_type = str
 TTX_SWEEP_SLICE = 0.06
+# THE SOURCES' KEYS (24.09, user: do not build again what did not change). The client reads the characteristics from its
+# packages: scripts.pkg (scripts/item_defs/vehicles/<nation>/<vehicle>.xml, <nation>/components/*.xml, <nation>/list.xml,
+# vehicles/common/*, the items code scripts/common/items/*.pyc) and an event's own package (<event>/scripts/item_defs/...,
+# last_stand, story_mode, white_tiger, comp7...). A type's key is the CRC-32 of those members' CRCs (the packages' central
+# directories, no unpacking) with TTX_FORMAT, which is raised whenever ttx_block writes anything different. The .pyc carry
+# a zero time stamp, so an unchanged module keeps its CRC. TTX_SOURCE_SKIP: common files no characteristic is read from.
+TTX_FORMAT = 1
+TTX_SOURCE = re.compile(r'^(?:[^/]+/)?scripts/(?:item_defs/vehicles/|common/items/)')
+TTX_SOURCE_SKIP = re.compile(r'item_defs/vehicles/common/(?:customization|damage_stickers|player_emblems|'
+                             r'forbidden_vehicles_to_battle_config|equipments|optional_devices|post_progression|prefab_effects)'
+                             r'|item_defs/vehicles/common/[^/]*effects\.xml$|item_defs/vehicles/[^/]+/customization\.xml$')
 TTX_SWEEP_REPORT = 2.0
 TTX_SWEEP_DATA = ('data', 'ttx-sweep.js')
 TTX_SWEEP_KEY = 'ttxSweep'
@@ -2287,8 +2322,12 @@ class Exporter(object):
         # or written this session, TTX_FAILED after a build failed. Filled lazily on the first request of a
         # type - setup reads nothing for it. Export thread only.
         self.ttx_known = {}
-        # The background sweep of every catalogue type (TTX_SWEEP_PACE), None when there is none this session.
+        # The sweep of every catalogue type (TTX_SWEEP_SLICE), None when there is none this session; ttx_stopped - the mod
+        # is shutting down (Writer.close), no build after it.
         self.ttx_sweep = None
+        self.ttx_stopped = False
+        # The progress file's state this session (start_ttx_sweep): the sources' keys now and those of the current files.
+        self.ttx_state = None
 
     def setup(self):
         archive = self.archive
@@ -2344,11 +2383,15 @@ class Exporter(object):
         self.write_index(prune=complete)
         if self.settings.get('exportAllVehicles'):
             self.queue_catalogue_exports()
-        self.start_ttx_sweep(rows)
+        # The sweep is optional: whatever goes wrong with it leaves the export alone (review #1).
+        try:
+            self.start_ttx_sweep(rows)
+        except Exception:
+            self.ttx_sweep = None
+            LOG.exception('TTX sweep unavailable this session; the export goes on')
 
-    def _index_resources(self):
-        # Event/shared models are mounted outside vehicles*.pkg. Read only ZIP
-        # directories here; decode one selected model later on the idle worker.
+    def mounted_packages(self):
+        """The client's packages in the order paths.xml mounts them (the collision index and the TTX sources' keys)."""
         package_root = os.path.normcase(os.path.abspath(os.path.join(self.game, 'res', 'packages')))
         manifest = os.path.join(self.game, 'paths.xml')
         if os.path.isfile(manifest):
@@ -2359,9 +2402,14 @@ class Exporter(object):
                 if (os.path.normcase(path).startswith(package_root + os.sep)
                         and path.lower().endswith('.pkg') and os.path.isfile(path)):
                     if path not in paths: paths.append(path)
-        else:
-            # Offline fixtures/older layouts without a mounting manifest.
-            paths = sorted(glob.glob(os.path.join(self.game, 'res', 'packages', '*.pkg')))
+            return paths
+        # Offline fixtures/older layouts without a mounting manifest.
+        return sorted(glob.glob(os.path.join(self.game, 'res', 'packages', '*.pkg')))
+
+    def _index_resources(self):
+        # Event/shared models are mounted outside vehicles*.pkg. Read only ZIP
+        # directories here; decode one selected model later on the idle worker.
+        paths = self.mounted_packages()
         packages, signatures, conflicts, overrides, entries = {}, {}, set(), set(), {}
         for path in paths:
             with zipfile.ZipFile(path) as archive:
@@ -3326,8 +3374,10 @@ class Exporter(object):
             value = read_data_file(path)
         except Exception:
             return False
-        if not (isinstance(value, dict) and value.get('schema') == TTX_SCHEMA
-                and canonical(value.get('clientVersion') or '') == self.version):
+        if not (isinstance(value, dict) and value.get('schema') == TTX_SCHEMA):
+            return False
+        # Another client version: current only when the progress file says its sources did not change (the keys).
+        if canonical(value.get('clientVersion') or '') != self.version and type_name not in ((self.ttx_state or {}).get('keys') or {}):
             return False
         # Any file that predates the armour and the suspension's repair (23.09) is built again, once.
         if value.get('armorSchema') != TTX_ARMOR_SCHEMA:
@@ -3377,10 +3427,25 @@ class Exporter(object):
         except Exception as error:
             self.ttx_known[type_name] = TTX_FAILED
             if sweep is None: LOG.exception('TTX %s could not be built; nothing else is affected', type_name)
-            else: sweep['error'] = sweep['error'] or '%s: %r' % (type_name, error)
+            else:
+                sweep['error'] = sweep['error'] or '%s: %r' % (type_name, error)
+                self.ttx_key_done(type_name, False)
             return False
-        write_data(self.ttx_path(type_name), 'ttx:'+vehicle_id(type_name), block)
+        try:
+            write_data(self.ttx_path(type_name), 'ttx:'+vehicle_id(type_name), block)
+        except Exception as error:
+            # The sweep's own: an ordinary failure of this vehicle, the sweep goes on (review #2). The page's request
+            # raises as before, into run_job's own guard.
+            if sweep is None: raise
+            self.ttx_known[type_name] = TTX_FAILED
+            self.ttx_key_done(type_name, False)
+            sweep['error'] = sweep['error'] or '%s: %r' % (type_name, error)
+            return False
         self.ttx_known[type_name] = TTX_CURRENT
+        self.ttx_key_done(type_name, True)
+        # A page's own build with no sweep running: the progress file keeps its key now.
+        if sweep is None and self.ttx_sweep is None and self.ttx_state is not None and self.ttx_state['now'] is not None:
+            self.write_ttx_sweep(done=True)
         return True
 
     def run_ttx_job(self, payload):
@@ -3397,50 +3462,140 @@ class Exporter(object):
             raise ValueError('Invalid vehicle type')
         self.ensure_ttx(type_name, inline=False, priority=JOB_PAGE)
 
-    # The background sweep (TTX_SWEEP_PACE). Its state is ttx_known and the files, as for every other TTX request; the
-    # sweep only walks the catalogue through build_ttx, and its marker says which client version it has covered.
+    # The sweep (TTX_SWEEP_SLICE). Its state is ttx_known, the files and the progress file (the one owner of the sources'
+    # keys, how far a sweep got, whether it runs); the sweep only walks the changed types through build_ttx.
     def ttx_sweep_stamp(self):
         return {'clientVersion': self.version, 'schema': TTX_SCHEMA, 'modesSchema': TTX_MODES_SCHEMA,
-                'armorSchema': TTX_ARMOR_SCHEMA}
+                'armorSchema': TTX_ARMOR_SCHEMA, 'format': TTX_FORMAT}
 
     def ttx_sweep_path(self):
         return os.path.join(self.folder, *TTX_SWEEP_DATA)
 
     def ttx_sweep_marker(self):
-        """The progress file of the last sweep, or None (none yet, unreadable: then the sweep simply runs)."""
+        """The progress file, or None (none yet, unreadable, or of another shape - then everything counts as changed)."""
         try:
             marker = read_data_file(self.ttx_sweep_path())
-            return marker if isinstance(marker, dict) else None
         except Exception:
             return None
+        # A file of another shape (edited, another build of the mod) is no file at all (review #1).
+        try:
+            if not isinstance(marker, dict) or not isinstance(marker.get('stamp'), dict): return None
+            for field in ('keys', 'failed', 'packages'):
+                value = marker.get(field, {})
+                if not isinstance(value, dict): return None
+                if field != 'packages' and not all(isinstance(k, basestring_type) and isinstance(v, basestring_type) for k, v in value.items()): return None
+            float(marker.get('startedAt') or 0); int(marker.get('built') or 0); float(marker.get('builtMs') or 0)
+        except Exception:
+            return None
+        return marker
 
-    def write_ttx_sweep(self, done):
-        """The progress file: the stamp and the resume point for the mod, count/total/done for the page's indicator.
+    def write_ttx_sweep(self, done=False):
+        """The progress file. For the mod: the stamp, the keys of the sources every current file was built from, the
+        failures (by the key they failed with), the packages' cache. For the page: count/total/done, whether it runs
+        (confirmed), how many of the catalogue changed, the build time so far (builtMs over built, this machine's own).
         A sweep of the failed types alone is a completed one to the page (done from the start)."""
-        sweep = self.ttx_sweep
-        done = bool(done or sweep.get('retry'))
-        total = len(sweep['catalogue'])
-        count = total if done else min(total, sweep['next'])
-        marker = {'stamp': self.ttx_sweep_stamp(), 'startedAt': sweep['started'], 'done': done, 'count': count,
-                  'total': total, 'failed': sorted(sweep['failed']) if done else [], 'updatedAt': time.time()}
-        sweep['reported'] = time.time()
+        sweep, state = self.ttx_sweep, self.ttx_state
+        if state is None: return
+        if sweep is not None:
+            done = bool(done or sweep['retry'])
+            total = len(sweep['types']) if not sweep['retry'] else 0
+            count = total if done else min(total, sweep['next'])
+        else:
+            done, total, count = True, 0, 0
+        marker = {'stamp': self.ttx_sweep_stamp(), 'startedAt': state['started'], 'done': done, 'count': count,
+                  'total': total, 'catalogue': state['catalogue'], 'confirmed': bool(sweep and sweep['confirmed']),
+                  'retrying': bool(sweep and sweep['retry']), 'built': state['built'], 'builtMs': round(state['builtMs'], 1),
+                  'keys': state['keys'], 'failed': state['failed'], 'packages': state['packages'],
+                  'incremental': state['now'] is not None, 'updatedAt': time.time()}
+        if sweep is not None: sweep['reported'] = time.time()
         try:
             write_data(self.ttx_sweep_path(), TTX_SWEEP_KEY, marker)
         except Exception:
-            LOG.exception('TTX sweep progress could not be written; the sweep runs again next time')
+            LOG.exception('TTX sweep progress could not be written; the sweep starts over next time')
 
     def page_open(self):
-        """The page is open in the game (the recorder's flag, set by the page's 'open' command): the fast pace."""
+        """The page is open in the game (the recorder's flag, set by the page's 'open' command)."""
         try:
             return float(getattr(self.recorder, 'page_open_until', 0) or 0) > time.time()
         except Exception:
             return False
 
+    # ---- The sources' keys (24.09, user: "do not do the work twice"): a type is built again only when a file it is read
+    # from changed. The client's files sit in its packages (zip); each member's CRC-32 and size are in the package's
+    # central directory, read without unpacking anything (TTX_SOURCE). One pass, read-only.
+    def ttx_sources(self, cached):
+        """({member: crc}, {package: [size, mtime, has]}): the CRC of every file the characteristics are read from, over
+        the packages the client mounts, the first package that has a member winning (as the client reads it). `cached`
+        is the progress file's package list: a package with the same size and time that had no such file is not opened."""
+        crcs, packages = {}, {}
+        for path in self.mounted_packages():
+            stat = os.stat(path)
+            base, size, mtime = os.path.basename(path), int(stat.st_size), int(stat.st_mtime)
+            old = (cached or {}).get(base)
+            if isinstance(old, list) and len(old) == 3 and old[0] == size and old[1] == mtime and old[2] is False:
+                packages[base] = old
+                continue
+            has = False
+            # The central directory's bytes first, one C-level search: the ~120 packages of models, maps and sounds
+            # have no characteristics file, and are passed without parsing their tens of thousands of entries.
+            directory = zip_directory(path)
+            if directory is not None and not any(mark in directory for mark in TTX_SOURCE_MARKS):
+                packages[base] = [size, mtime, False]
+                continue
+            with zipfile.ZipFile(path) as archive:
+                for info in archive.infolist():
+                    name = info.filename
+                    if name.endswith('/') or not TTX_SOURCE.match(name) or TTX_SOURCE_SKIP.search(name): continue
+                    has = True
+                    crcs.setdefault(name, '%08x' % (info.CRC & 0xffffffff))
+            packages[base] = [size, mtime, has]
+        if not any(name.startswith('scripts/') for name in crcs): raise ValueError('No characteristics sources in the client packages')
+        return crcs, packages
+
+    def ttx_source_keys(self, types, crcs):
+        """{type: key}: TTX_FORMAT, the files every type is read with (the client's items code, the vehicles' common
+        files - TTX_SOURCE_SKIP leaves out what no characteristic depends on), its nation's (components, list.xml) and
+        its own XML (every file of its nation whose name begins with its own - a variant too: more rebuilds, never fewer).
+        A type from an extension package (an event's) takes that package's common and nation files too."""
+        shared, nation_files, own = {}, {}, {}
+        for name in sorted(crcs):
+            at = name.index('scripts/')
+            root, rest = name[:at], name[at + len('scripts/'):]
+            line = rest + '=' + crcs[name]
+            if not rest.startswith('item_defs/vehicles/'):
+                shared.setdefault(root, []).append(line)
+                continue
+            parts = rest[len('item_defs/vehicles/'):].split('/')
+            if len(parts) == 1 or parts[0] == 'common':
+                shared.setdefault(root, []).append(line)
+            elif len(parts) == 2 and parts[1] != 'list.xml':
+                own.setdefault(parts[0], []).append((parts[1], root, line))
+            else:
+                nation_files.setdefault((root, parts[0]), []).append(line)
+        keys, bases = {}, {}
+        for type_name in types:
+            nation, _, name = type_name.partition(':')
+            mine = [(root, line) for base, root, line in own.get(nation, ()) if base.startswith(name) and base[len(name):len(name) + 1] in ('.', '_')]
+            roots = tuple(sorted(set([''] + [root for root, line in mine])))
+            # The shared part of a nation's types is the same text: its CRC once, the start value of each type's own.
+            if (roots, nation) not in bases:
+                text = ['format=%s' % TTX_FORMAT]
+                for root in roots:
+                    text.extend(shared.get(root, ()))
+                    text.extend(nation_files.get((root, nation), ()))
+                bases[(roots, nation)] = zlib.crc32('\n'.join(text).encode('utf-8'))
+            own_text = '\n'.join(sorted(line for root, line in mine)).encode('utf-8')
+            keys[type_name] = '%08x' % (zlib.crc32(own_text, bases[(roots, nation)]) & 0xffffffff)
+        return keys
+
     def start_ttx_sweep(self, rows):
-        """Setup: the sweep of this session, over the catalogue rows just written. Nothing outside the game (no client
-        item modules), nothing when the marker covers this client version and schema and no type failed; only the failed
-        ones when it does; the rest of an interrupted sweep, from its own start, otherwise."""
+        """Setup: which catalogue types need their file built, and the sweep over them - not running until the page's
+        Start of this session. Nothing outside the game (no client item modules). The same client and format as the
+        progress file, done: nothing is read at all. Otherwise the sources' keys (ttx_sources, a few ms a package): a type
+        whose key and file are unchanged is current; one that failed with the same key is retried without asking; the
+        rest is the sweep. Keys unavailable (a package unreadable...): every type of a new client version, one log line."""
         self.ttx_sweep = None
+        self.ttx_state = None
         old = os.path.join(self.folder, TTX_SWEEP_OLD)
         if os.path.isfile(old):
             try: os.remove(old)
@@ -3450,74 +3605,165 @@ class Exporter(object):
             client_vehicles.g_list
         except Exception:
             return None
-        types, seen = [], set()
+        catalogue, seen = [], set()
         for row in rows or ():
             type_name = str(row.get('type') or '')
             if ':' in type_name and IDENTIFIER.match(vehicle_id(type_name)) and type_name not in seen:
                 seen.add(type_name)
-                types.append(type_name)
-        marker = self.ttx_sweep_marker()
-        started, catalogue, retry = time.time(), types, False
-        if marker and marker.get('stamp') == self.ttx_sweep_stamp():
-            if marker.get('done'):
-                failed = set(str(name) for name in marker.get('failed') or ())
-                types, retry = [name for name in types if name in failed], True
-            else:
-                try: started = float(marker.get('startedAt'))
+                catalogue.append(type_name)
+        marker = self.ttx_sweep_marker() or {}
+        same = marker.get('stamp') == self.ttx_sweep_stamp()
+        state = {'catalogue': len(catalogue), 'started': time.time(), 'built': 0, 'builtMs': 0.0, 'now': None,
+                 'keys': dict(marker.get('keys') or {}), 'failed': dict(marker.get('failed') or {}),
+                 'packages': dict(marker.get('packages') or {})}
+        try: state['built'], state['builtMs'] = int(marker.get('built') or 0), float(marker.get('builtMs') or 0)
+        except (TypeError, ValueError): pass
+        self.ttx_state = state
+        if same and marker.get('done') and not marker.get('failed'): return None
+        started = TTX_TIMER()
+        try:
+            crcs, state['packages'] = self.ttx_sources(state['packages'])
+            state['now'] = self.ttx_source_keys(catalogue, crcs)
+        except Exception as error:
+            state['now'], state['keys'] = None, {}
+            LOG.warning('TTX sources unreadable (%r): every vehicle of this client version is built again', error)
+        if state['now'] is not None:
+            now, keys, failed = state['now'], state['keys'], state['failed']
+            # Only what this client still has; a failure with another key is a change like any other.
+            state['keys'] = keys = dict((t, k) for t, k in keys.items() if now.get(t) == k)
+            state['failed'] = failed = dict((t, k) for t, k in failed.items() if now.get(t) == k and t not in keys)
+            types = [t for t in catalogue if t not in failed and (t not in keys or not os.path.isfile(self.ttx_path(t)))]
+            retry = [t for t in catalogue if t in failed]
+            if not same and marker.get('startedAt') and not marker.get('done'):
+                try: state['started'] = float(marker['startedAt'])
                 except (TypeError, ValueError): pass
-        if not types: return None
-        self.ttx_sweep = {'types': types, 'catalogue': catalogue, 'retry': retry, 'next': 0, 'started': started,
-                          'clock': time.time(), 'built': 0, 'current': 0, 'failed': [], 'error': None, 'buildMs': 0.0,
-                          'fastMs': 0.0, 'reported': 0.0}
+        else:
+            # The fallback: the client version decides, as before the keys; a sweep cut short goes on by its files' times.
+            types, retry = catalogue, []
+            if same and not marker.get('done'):
+                try: state['started'] = float(marker.get('startedAt'))
+                except (TypeError, ValueError): pass
+            elif same:
+                types, retry = [], [t for t in catalogue if t in set(marker.get('failed') or {})]
+        LOG.info('TTX sources: %d of %d types to build, %d to retry (%s, %.0f ms)', len(types), len(catalogue), len(retry),
+                 'by their files' if state['now'] is not None else 'all of this client version', (TTX_TIMER() - started) * 1000.0)
+        if not types and not retry:
+            self.write_ttx_sweep(done=True)
+            return None
+        # A sweep the page asks for takes the failed types along; the failed types alone are retried without asking.
+        self.ttx_sweep = {'types': types + retry if types else retry, 'retry': not types, 'confirmed': not types, 'next': 0, 'clock': None,
+                          'built': 0, 'current': 0, 'failed': [], 'error': None, 'buildMs': 0.0, 'workMs': 0.0,
+                          'reported': 0.0, 'sliced': False}
         self.write_ttx_sweep(done=False)
         return self.ttx_sweep
 
+    def ttx_key_done(self, type_name, ok):
+        """The file of a type was just written (ok) or failed: its key goes to the progress file's keys or failures."""
+        state = self.ttx_state
+        if state is None or state['now'] is None or type_name not in state['now']: return
+        key = state['now'][type_name]
+        if ok:
+            state['keys'][type_name] = key
+            state['failed'].pop(type_name, None)
+        else:
+            state['failed'][type_name] = key
+
+    def confirm_ttx_sweep(self):
+        """The page's Start ('sweepStart', export thread): the sweep runs while the page is open."""
+        sweep = self.ttx_sweep
+        if sweep is None or sweep['confirmed']: return False
+        sweep['confirmed'] = True
+        self.write_ttx_sweep(done=False)
+        return True
+
+    def stop_ttx_sweep(self):
+        """The page's Stop ('sweepStop', export thread; the page closed comes to the same): what is done stays and the next
+        open of the page asks again. The retry of the failed types alone is not the page's to stop."""
+        sweep = self.ttx_sweep
+        if sweep is None or not sweep['confirmed'] or sweep['retry']: return False
+        sweep['confirmed'] = False
+        sweep['sliced'] = False
+        if self.recorder is not None:
+            try: self.recorder.frames_wanted = False
+            except Exception: pass
+        self.write_ttx_sweep(done=False)
+        return True
+
+    def ttx_sweep_ready(self):
+        """A slice may run now: confirmed, the page open, nothing queued before it, jobs allowed, not shutting down.
+        A page that has closed stops the sweep (stop_ttx_sweep)."""
+        sweep = self.ttx_sweep
+        if sweep is None or not sweep['confirmed'] or self.ttx_stopped: return False
+        if not self.page_open():
+            self.stop_ttx_sweep()
+            return False
+        return bool(not self.jobs and self.jobs_allowed())
+
+    def ttx_hurry(self):
+        """The export loop's wait: none while the sweep's slices run - between two of them it waits one frame itself."""
+        ready = self.ttx_sweep_ready()
+        recorder = self.recorder
+        if recorder is not None:
+            try: recorder.frames_wanted = ready
+            except Exception: pass
+        return ready
+
+    def wait_frame(self):
+        """One frame of the game between two slices: the recorder's frame callback, 0.1 s at most. None offline."""
+        wait = getattr(self.recorder, 'wait_frame', None)
+        if wait is None: return
+        try: wait(0.1)
+        except Exception: pass
+
     def ttx_fresh(self, type_name, started):
-        """A file written since this sweep began is current without a read: this client and schema built it."""
+        """The fallback's resume: a file written since this sweep began is current without a read."""
         try:
             return os.path.getmtime(self.ttx_path(type_name)) >= started
         except OSError:
             return False
 
     def run_ttx_sweep(self):
-        """One step of the sweep, when nothing else is queued. Page open in the game: builds back to back for up to
-        TTX_SWEEP_SLICE seconds. Otherwise: the checks of files already current for up to TTX_SWEEP_BUDGET seconds and at
-        most one build (or failure), which the pace then counts. True when it built at least one."""
-        sweep = self.ttx_sweep
-        if sweep is None or not self.jobs_allowed(): return False
-        fast = self.page_open()
-        if not fast and time.time()-self.last_job < TTX_SWEEP_PACE: return False
+        """One slice of the sweep when it is ready (ttx_sweep_ready): after one frame of the game since the slice before,
+        builds back to back for up to TTX_SWEEP_SLICE seconds, every build behind the gates. True when it built one."""
+        if not self.ttx_sweep_ready(): return False
+        sweep, state = self.ttx_sweep, self.ttx_state
+        if sweep['sliced']: self.wait_frame()
+        sweep['sliced'] = True
+        if sweep['clock'] is None: sweep['clock'] = time.time()
         built_any = False
         try:
             began, types = TTX_TIMER(), sweep['types']
-            budget = TTX_SWEEP_SLICE if fast else TTX_SWEEP_BUDGET
             while sweep['next'] < len(types):
                 type_name = types[sweep['next']]
+                state_now = self.ttx_known.get(type_name)
+                if state_now is None and state['now'] is None and self.ttx_fresh(type_name, state['started']):
+                    self.ttx_known[type_name] = state_now = TTX_CURRENT
+                # Every build behind the gates, not only the slice (review #5): a battle, a drag, a closing page or the
+                # mod shutting down (#6) ends the slice before the next build.
+                if state_now is None and (self.ttx_stopped or not self.jobs_allowed() or not self.page_open()): break
                 sweep['next'] += 1
-                state = self.ttx_known.get(type_name)
-                if state is None and self.ttx_fresh(type_name, sweep['started']):
-                    self.ttx_known[type_name] = state = TTX_CURRENT
-                if state is None:
+                if state_now is None:
                     started = TTX_TIMER()
                     built = self.build_ttx(type_name, sweep)
-                    state = self.ttx_known.get(type_name)
+                    state_now = self.ttx_known.get(type_name)
                     if built:
+                        ms = (TTX_TIMER() - started) * 1000.0
                         sweep['built'] += 1
-                        sweep['buildMs'] += (TTX_TIMER() - started) * 1000.0
+                        sweep['buildMs'] += ms
+                        state['built'] += 1
+                        state['builtMs'] += ms
                         built_any = True
-                    elif state == TTX_FAILED: sweep['failed'].append(type_name)
+                    elif state_now == TTX_FAILED: sweep['failed'].append(type_name)
                     else: sweep['current'] += 1
-                    # A failed build cost about what a build costs: the pace counts it too.
                     self.last_job = time.time()
-                    if not fast: break
-                elif state == TTX_FAILED: sweep['failed'].append(type_name)
+                elif state_now == TTX_FAILED: sweep['failed'].append(type_name)
                 else: sweep['current'] += 1
-                if TTX_TIMER() - began >= budget: break
+                if TTX_TIMER() - began >= TTX_SWEEP_SLICE: break
             else:
-                if fast: sweep['fastMs'] += (TTX_TIMER() - began) * 1000.0
+                sweep['workMs'] += (TTX_TIMER() - began) * 1000.0
                 self.finish_ttx_sweep()
                 return built_any
-            if fast: sweep['fastMs'] += (TTX_TIMER() - began) * 1000.0
+            sweep['workMs'] += (TTX_TIMER() - began) * 1000.0
             if time.time() - sweep['reported'] >= TTX_SWEEP_REPORT: self.write_ttx_sweep(done=False)
         except Exception:
             self.ttx_sweep = None
@@ -3526,12 +3772,18 @@ class Exporter(object):
 
     def finish_ttx_sweep(self):
         sweep = self.ttx_sweep
-        self.write_ttx_sweep(done=True)
         self.ttx_sweep = None
-        LOG.info('TTX sweep: %d types - %d built (%.0f ms), %d current, %d failed%s; %.0f s, %.0f s of it fast',
+        if self.ttx_state is not None and self.ttx_state['now'] is None:
+            # The fallback keeps its failures by name, with no key.
+            self.ttx_state['failed'] = dict((t, '') for t in sweep['failed'])
+        self.write_ttx_sweep(done=True)
+        if self.recorder is not None:
+            try: self.recorder.frames_wanted = False
+            except Exception: pass
+        LOG.info('TTX sweep: %d types - %d built (%.0f ms), %d current, %d failed%s; %.0f s of work, %.0f s from its start this session',
                  len(sweep['types']), sweep['built'], sweep['buildMs'], sweep['current'], len(sweep['failed']),
-                 ' (first: %s)' % sweep['error'] if sweep['error'] else '', time.time() - sweep['clock'],
-                 sweep['fastMs'] / 1000.0)
+                 ' (first: %s)' % sweep['error'] if sweep['error'] else '', sweep['workMs'] / 1000.0,
+                 time.time() - (sweep['clock'] or time.time()))
 
     def catalogue_rows(self):
         """Every vehicle of the client, with the exported ones flagged.

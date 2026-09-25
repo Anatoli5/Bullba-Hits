@@ -6870,10 +6870,13 @@
   // aiming, then the stabilisation three (two and one). Mobility: speed and specific power, the hull and the turret (a
   // turret slower than the hull lets the aim drift while the hull turns). Concealment: the view range, then standing and
   // moving. The second mode's switch stands on the panel's left.
+  // Related figures stand as column blocks, one above the other (user 24.09): the stabilisation - on the move above on
+  // hull traverse, on turret traverse beside them; Mobility - speed above specific power, turret traverse above hull
+  // traverse; Concealment - view range, and standing above moving beside it. A null is an empty cell.
   var TTX_COMPACT = [{group: 'relativePower', lead: ['avgDamagePerMinute'], line: true,
-                      lines: [['shotDispersionAngle', 'aimingTime'], ['stabMovement', 'stabRotation', 'stabTurret']]},
-                     {group: 'relativeMobility', lines: [['speedLimits', 'enginePowerPerTon'], ['hull', 'turretRotationSpeed']]},
-                     {group: 'relativeCamouflage', lines: [['circularVisionRadius'], ['invisibilityStillFactor', 'invisibilityMovingFactor']]}];
+                      lines: [['shotDispersionAngle', 'aimingTime'], ['stabMovement', 'stabTurret'], ['stabRotation']]},
+                     {group: 'relativeMobility', lines: [['speedLimits', 'turretRotationSpeed'], ['enginePowerPerTon', 'hull']]},
+                     {group: 'relativeCamouflage', lines: [['circularVisionRadius', 'invisibilityStillFactor'], [null, 'invisibilityMovingFactor']]}];
   // ⚙'S TOOLTIP holds the words every row shares, once (23.09; they used to close every row's tooltip): what the stock
   // and the build are, what the build holds now, where its figures come from, and its field modification - the build
   // counts Config's by the client's law, in the same pass as the equipment (aimEffects), and then leaves the record's
@@ -7547,7 +7550,10 @@
     ttxRows = {};
     function rows(sec, keys) {
       var box = node('div', undefined, 'ttx-rows');
-      keys.forEach(function (slot) { ttxRows[slot] = ttxRow(slot); box.appendChild(ttxRows[slot]); });
+      keys.forEach(function (slot) {
+        if (!slot) { box.appendChild(node('span', undefined, 'ttx-gap')); return; }
+        ttxRows[slot] = ttxRow(slot); box.appendChild(ttxRows[slot]);
+      });
       sec.appendChild(box);
     }
     TTX_COMPACT.forEach(function (s) {
@@ -8021,31 +8027,62 @@
     sweepTick();
     schedulePoll();
   }
-  // THE SWEEP OF EVERY VEHICLE'S CHARACTERISTICS (24.09). In the game the page tells the mod, with every poll, that it is
-  // open ('open', at most every 4 s; the mod counts it open for 12 s): the mod then writes the files fast. The mod's own
-  // progress file (data/ttx-sweep.js) is read with the poll until it says done, and drawn beside the Statistics log.
-  var sweepDone=false,openSentAt=0,sweepKey='';
+  // THE SWEEP OF EVERY VEHICLE'S CHARACTERISTICS (24.09, the user's decisions of that day). The mod builds the
+  // characteristics files of the vehicles whose client files changed, only while this page is open in the game and after
+  // the user's Start. Its progress file (data/ttx-sweep.js) is read with the poll while a sweep is pending: drawn beside
+  // the Statistics log (a bar, "done / total", ■ Stop while it runs), and in the game a pending sweep that does not run
+  // asks - on every open of the page, until Later. The page tells the mod it is open ('open', at most every 4 s, only while
+  // a sweep is pending and the page is on screen; the mod counts it open for 12 s). Outside the game nothing runs: the
+  // file is read, and not read again after it is missing once. Block of its own: tests/page/aim3_dom.cjs cuts it out.
+  var SWEEP_MS=40,SWEEP_OVERHEAD=1.3;   // ms a vehicle before this machine has built any; the frames between slices
+  var sweepState,sweepAsked=false,sweepRunning=false,sweepGone=false,openSentAt=0,sweepKey='',sweepSaidAt=0;
+  function sweepPending(s){return s===undefined||!!(s&&(!s.done||s.retrying));}
   function sweepTick(){
-    if(host.game){var now=Date.now();if(now-openSentAt>=4000){openSentAt=now;sendCommand('open',null);}}
-    if(sweepDone||!ArmorInspectorData.ttxSweep)return;
-    ArmorInspectorData.ttxSweep().then(paintSweep,function(){paintSweep(null);});
+    if(host.game&&sweepPending(sweepState)&&!document.hidden){var now=Date.now();if(now-openSentAt>=4000){openSentAt=now;sendCommand('open',null);}}
+    if(sweepGone||!ArmorInspectorData.ttxSweep||(sweepState&&!sweepPending(sweepState)))return;
+    ArmorInspectorData.ttxSweep().then(paintSweep,function(){if(!host.game)sweepGone=true;paintSweep(null);});
   }
+  // The seconds left, from this machine's own build time when it has one (an estimate, and said so).
+  function sweepSeconds(s,left){var per=s.built>0&&s.builtMs>0?s.builtMs/s.built:SWEEP_MS;return Math.max(1,Math.ceil(left*per*SWEEP_OVERHEAD/1000));}
   function paintSweep(s){
     var box=$('ttx-sweep');if(!box)return;
-    if(s&&s.done)sweepDone=true;
+    sweepState=s||null;
     var total=s?Math.max(0,Number(s.total)||0):0,count=s?Math.min(total,Math.max(0,Number(s.count)||0)):0,show=!!(s&&!s.done&&total>0);
+    // The file's word on whether it runs, once the mod has had the time to take the user's own Start or Stop (a read
+    // just after the click may still be the file before it).
+    if(s&&s.done)sweepRunning=false;
+    else if(s&&Date.now()-sweepSaidAt>6000)sweepRunning=!!s.confirmed;
     if(box.hidden!==!show)box.hidden=!show;
+    var stop=$('ttx-sweep-stop'),running=show&&host.game&&sweepRunning;
+    if(stop.hidden!==!running)stop.hidden=!running;
+    var ask=show&&host.game&&!sweepRunning&&!sweepAsked;
+    sweepAsk(ask?s:null,count,total);
     var key=show?count+'/'+total:'';
     if(!show||key===sweepKey)return;
     sweepKey=key;
     $('ttx-sweep-count').textContent=count+' / '+total;
     $('ttx-sweep-fill').style.width=(100*count/total).toFixed(1)+'%';
-    box.title=tipJoin(['Characteristics of every vehicle','The game writes the characteristics file of every vehicle, once per game update.',
-      '• Now: '+count+' of '+total,'','• Fast: while this page is open in the game','• Slow, one a second: in the hangar with the page closed',
-      '• Never in a battle','','Stops when all are written; a run cut short goes on next time.']);
+    box.title=tipJoin(['Characteristics of every vehicle','The game prepares the characteristics files once after a game update, only of the vehicles that changed.',
+      '• Now: '+count+' of '+total,'','• Runs: while this page is open in the game, after your Start','• ■: stops it; what is done stays',
+      '• Never in a battle']);
   }
+  // The question (short, per the rules of the page's words): its heading, one sentence, Start or Continue and Later.
+  function sweepAsk(s,count,total){
+    var box=$('ttx-sweep-ask');
+    if(!s){if(!box.hidden)box.hidden=true;return;}
+    var left=total-count,secs=sweepSeconds(s,left),all=Number(s.catalogue)||total;
+    $('ttx-sweep-ask-head').textContent=count>0?'Preparation not finished':total>=all?'First start after a game update':'The game was updated';
+    $('ttx-sweep-ask-text').textContent=count>0?count+' of '+total+' vehicles done ('+Math.floor(100*count/total)+' %), about '+secs+' s left (an estimate).'
+      :(total>=all?'Preparing the characteristics of all '+total+' vehicles':total+(total===1?' vehicle changed: preparing its characteristics':' vehicles changed: preparing their characteristics'))
+        +' takes about '+secs+' s (an estimate); the hangar stutters meanwhile.';
+    $('ttx-sweep-go').textContent=count>0?'Continue':'Start';
+    if(box.hidden)box.hidden=false;
+  }
+  $('ttx-sweep-go').onclick=function(){sweepRunning=true;sweepSaidAt=Date.now();$('ttx-sweep-ask').hidden=true;openSentAt=0;sweepTick();sendCommand('sweepStart',null);paintSweep(sweepState);};
+  $('ttx-sweep-later').onclick=function(){sweepAsked=true;$('ttx-sweep-ask').hidden=true;};
+  $('ttx-sweep-stop').onclick=function(){sweepRunning=false;sweepSaidAt=Date.now();sweepAsked=true;sendCommand('sweepStop',null);paintSweep(sweepState);};
   sweepTick();
-  function schedulePoll(){if(pollTimer)window.clearTimeout(pollTimer);pollTimer=window.setTimeout(pollTick,modelsPending?2000:5000);}
+  function schedulePoll(){if(pollTimer)window.clearTimeout(pollTimer);pollTimer=window.setTimeout(pollTick,modelsPending||sweepRunning?2000:5000);}
   schedulePoll();
   if(document.modelContext&&document.modelContext.registerTool){try{document.modelContext.registerTool({name:'select_saved_hit',description:'Open an existing recorded hit in the local 3D viewer.',inputSchema:{type:'object',properties:{battleId:{type:'string'},hitId:{type:'string'}},required:['battleId','hitId'],additionalProperties:false},execute:function(input){if(!input||!/^[-a-zA-Z0-9_]{1,100}$/.test(input.battleId)||!/^\d+$/.test(input.hitId))throw new Error('Invalid record identifiers');return loadBattle(input.battleId,true).then(function(){return selectHit(input.hitId);});}});}catch(e){console.warn('WebMCP unavailable',e);}}
 }());
