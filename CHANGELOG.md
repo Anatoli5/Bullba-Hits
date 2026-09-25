@@ -2,7 +2,7 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
-## Unreleased
+## 0.8.2 (2026-09-25)
 
 - **Help:** the words "cyan" and "magenta" in tooltips are shown in those colours.
 - **Vehicles:** the mod prepares the characteristics of every vehicle of the client (about 9 MB), and after a game update only of the vehicles whose game files changed. It asks first when the viewer is open in the game (Start / Later, with an estimated time), runs only while the viewer stays open, never in battle, and a vehicle you click still goes first. A small bar with "done / total" beside the Statistics log shows the progress, ■ stops it; an unfinished run asks to continue the next time. Models still come on demand.
