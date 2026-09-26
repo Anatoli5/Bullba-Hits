@@ -133,7 +133,7 @@ const storage = {};
 // a crew that has him, and a key that is nobody's name (bogus), which must go.
 storage['bullba-settings'] = JSON.stringify({v: 1, values: {}, aim: {v: 3, chosen: {}, presets: {
   'Old whole crew': {slots: ['', '', ''], directive: '', food: false, fuel: '', skills: {brotherhood: true, gunner_smoothTurret: true}},
-  'Old partial': {slots: ['', '', ''], directive: '', food: false, fuel: '', skills: {}, bia: {gunner: true, loader2: true, bogus: true}}}}});
+  'Old partial': {slots: ['', '', ''], directive: '', food: true, fuel: 'excellentFuel', skills: {}, bia: {gunner: true, loader2: true, bogus: true}}}}});
 // S4 (22.09): the reload check. The run below starts this same harness again in a child process with the store
 // the first run left behind, and that second page has to come back on the vehicle's Custom build from the
 // store alone. In the child, everything after the load is skipped: only the reload checks run.
@@ -938,6 +938,15 @@ function crewChips() {
   return out;
 }
 function crewChip(name) { return crewChips().filter(function (c) { return tileName(c) === name; })[0]; }
+// 26.09 (config-menu-redesign): the consumables are three slots with a picker each, the paint a tile beside them.
+function consSlots() { return consumables.children[0].children.slice(0, 3); }
+function consNames() { return consSlots().map(function (t) { return tileName(t).replace(/^Consumable slot \d\. /, ''); }).join(','); }
+// Combat rations fitted in the first free slot, unless a slot has them already.
+function fitFood() {
+  if (consSlots().some(function (t) { return /\. Combat rations$/.test(tileName(t)); })) return;
+  click(consSlots().filter(function (t) { return /\. Empty$/.test(tileName(t)); })[0]);
+  click(pick('Combat rations'));
+}
 const CREW_ORDER = ['Commander', 'Gunner', 'Driver', 'Loader', 'Radio Operator'];
 function biaMarks() {
   return CREW_ORDER.map(function (r) {
@@ -1876,9 +1885,55 @@ settle(20).then(function () {
      picker.hidden === true && directive.children[0].getAttribute('data-tier') === 'none' && Math.abs(view.liveRadius100 - beforeDirective) < 1e-12);
   click(directive.children[0]); click(pick('Polished Lens'));
   const beforeRations = view.liveRadius100;
-  click(consumables.children[0].children[0]);   // Combat rations, +10 crew levels
-  ok('combat rations tighten the circle through the crew', view.liveRadius100 < beforeRations - 1e-9,
+  const consBefore = consumables.children[0];
+  ok('config-menu-redesign: the consumables are three empty slot tiles and the paint tile beside them, not one word on a tile',
+     consNames() === 'Empty,Empty,Empty' && consBefore.className === 'aim-slots' && consBefore.children.length === 4
+     && consSlots().every(function (t) { return t.className === 'aim-tile aim-slot' && t.getAttribute('data-tier') === 'none' && tileWords(t) === ''
+       && iconOf(t).children[0].src === 'web/icons/empty_slot.png' && /^Empty slot\n• Click: fit a consumable in slot \d$/.test(t.title); })
+     && tileName(consBefore.children[3]) === 'Camouflage' && / aim-paint$/.test(consBefore.children[3].className), '(' + consNames() + ')');
+  click(consSlots()[0]);
+  const consTiles = pickTiles().map(tileName);
+  // Nine for this vehicle: its tags hold neither removedRpmLimiter_user nor afterburning_user, which the governor and the
+  // turbocharger ask for (their own vehicleFilter).
+  ok('config-menu-redesign: a slot opens the picker of the client’s consumables under it, lit - the empty slot first, then the nine this vehicle may carry (food, the two fuels, the kits and extinguishers)',
+     layer.hidden === false && consSlots()[0].getAttribute('aria-expanded') === 'true' && consumables.getAttribute('data-owner') === 'true'
+     && !!clearTile() && clearTile().getAttribute('aria-pressed') === 'true'
+     && consTiles.join(',') === 'Combat rations,Quality Fuel,Excellent Fuel,Manual Fire Extinguisher,Automatic Fire Extinguisher,Small First Aid Kit,Large First Aid Kit,Small Repair Kit,Large Repair Kit'
+     && pickTiles().every(function (t) { return !t.disabled && t.getAttribute('aria-pressed') === 'false' && tileWords(t) === ''; }),
+     consTiles.join(','));
+  ok('config-menu-redesign: one that changes nothing says so in its tooltip; food and fuel say theirs',
+     /^Small Repair Kit\nChanges no characteristic\.\n• Repairs the modules when used\.$/.test(pick('Small Repair Kit').title)
+     && /^Combat rations\nFood: one per vehicle, for the whole battle\.\n• \+10 /.test(pick('Combat rations').title)
+     && /^Quality Fuel\nFuel: one per vehicle, for the whole battle\.\n• ×1\.05 on /.test(pick('Quality Fuel').title),
+     pick('Small Repair Kit').title + ' | ' + pick('Quality Fuel').title);
+  click(pick('Combat rations'));
+  ok('combat rations tighten the circle through the crew', view.liveRadius100 < beforeRations - 1e-9 && layer.hidden === true,
      '(' + beforeRations.toFixed(4) + ' -> ' + view.liveRadius100.toFixed(4) + ')');
+  click(consSlots()[1]);
+  ok('config-menu-redesign: no item twice - the rations of slot 1 are offered in slot 2 disabled, and say where they are',
+     pick('Combat rations').disabled === true && /\nAlready in slot 1\.$/.test(pick('Combat rations').title) && !pick('Quality Fuel').disabled,
+     pick('Combat rations').title);
+  click(pick('Quality Fuel'));
+  click(consSlots()[2]);
+  ok('config-menu-redesign: one fuel - Excellent Fuel is disabled while slot 2 has Quality Fuel, the kits are not',
+     consNames() === 'Combat rations,Quality Fuel,Empty' && pick('Excellent Fuel').disabled === true
+     && /\nOne fuel per vehicle: slot 2 has Quality Fuel\.$/.test(pick('Excellent Fuel').title)
+     && !pick('Small Repair Kit').disabled && !pick('Large Repair Kit').disabled, consNames());
+  const withFuel = view.liveRadius100;
+  click(pick('Small Repair Kit'));
+  ok('config-menu-redesign: a repair kit fills the third slot and moves no figure of the circle, and Custom keeps the slots',
+     consNames() === 'Combat rations,Quality Fuel,Small Repair Kit' && Math.abs(view.liveRadius100 - withFuel) < 1e-12
+     && (storedCustom() || {}).consumables.join(',') === 'food,qualityFuel,smallRepairkit' && (storedCustom() || {}).food === undefined,
+     consNames() + ' / ' + JSON.stringify(storedCustom()));
+  click(consSlots()[0]);
+  click(clearTile());
+  ok('config-menu-redesign: the empty slot tile takes the rations out, the other slots stay where they are',
+     consNames() === 'Empty,Quality Fuel,Small Repair Kit' && Math.abs(view.liveRadius100 - beforeRations) < 1e-12, consNames());
+  click(consSlots()[1]); click(pick('Quality Fuel'));
+  click(consSlots()[2]); click(pick('Small Repair Kit'));
+  fitFood();
+  ok('config-menu-redesign: a click on the fitted piece takes it out; the rations back in slot 1',
+     consNames() === 'Combat rations,Empty,Empty' && view.liveRadius100 < beforeRations - 1e-9, consNames());
   // ---- stage 11: Brothers in Arms, one tile per crew member ------------------------------------
   // The client's law (outputs/brothers-in-arms-2026-09-21.md, checked on its own bytecode): every tankman
   // who has it adds 5/N crew levels to everybody, and a role held by a non-commander gets the commander's
@@ -1952,7 +2007,7 @@ settle(20).then(function () {
   ok('it is stored in the page one settings object as the client’s own entry ids, at v3',
      !!(stored.aim && stored.aim.v === 3 && mine
         && mine.slots.join(',') === 'aimingStabilizer_tier1,trophyUpgradedTankRammer,improvedSights_tier1'
-        && mine.directive === 'improvedSightsBattleBooster' && mine.food === true
+        && mine.directive === 'improvedSightsBattleBooster' && mine.consumables.join(',') === 'food,,' && mine.food === undefined
         && mine.skills.brotherhood === true && mine.skills.gunner_smoothTurret === true
         && mine.slotCat === undefined
         && stored.aim.chosen['germany:Test'] === 'Custom'),
@@ -1966,7 +2021,10 @@ settle(20).then(function () {
   const oldWhole = stored.aim.presets['Old whole crew'], oldPartial = stored.aim.presets['Old partial'];
   ok('the old store’s presets are carried over, nothing the user saved is dropped',
      !!oldWhole && oldWhole.skills.brotherhood === true && oldWhole.skills.gunner_smoothTurret === true && oldWhole.bia === undefined
-     && !!oldPartial && JSON.stringify(oldPartial.bia) === '{"gunner":true,"loader2":true}' && oldPartial.skills.brotherhood === undefined,
+     && !!oldPartial && JSON.stringify(oldPartial.bia) === '{"gunner":true,"loader2":true}' && oldPartial.skills.brotherhood === undefined
+     // config-menu-redesign (26.09): the consumables of before (food: bool, fuel: id) become the slots once, food first
+     && oldPartial.consumables.join(',') === 'food,excellentFuel,' && oldPartial.food === undefined && oldPartial.fuel === undefined
+     && oldWhole.consumables.join(',') === ',,' && oldWhole.food === undefined,
      '\n     ' + JSON.stringify(oldWhole) + '\n     ' + JSON.stringify(oldPartial));
   // S4: a name that cannot be taken keeps the field open, outlined red, with the reason in its tooltip - there
   // is no warning paragraph any more. "Custom" is the page's own entry and is refused like a built-in name.
@@ -2037,6 +2095,7 @@ settle(20).then(function () {
   choosePreset('Old partial');
   ok('a partial one gives it to the members of this crew it names (loader2 waits for a crew that has him)',
      biaPressed() === 'false,true,false,false,false' && presetName() === 'Old partial', '(' + biaPressed() + ')');
+  ok('config-menu-redesign: its food and fuel of before are the first two consumable slots', consNames() === 'Combat rations,Excellent Fuel,Empty', consNames());
   choosePreset('Rammer, stabiliser, vents');
   ok('a built-in preset with Brothers in Arms gives it to every member',
      biaPressed() === 'true,true,true,true,true', '(' + biaPressed() + ')');
@@ -3333,20 +3392,21 @@ settle(20).then(function () {
        && /refresh\(\);if\(sidebarMode==='vehicles'\)loadCatalogue\(\);\n    sweepTick\(\);/.test(appSrc) && /modelsPending\|\|sweepRunning\(\)\?2000:5000/.test(appSrc));
     const page = function (game, file, hidden) { return sweepPage(game, file, hidden, null); };
     const settleMicro = function () { return new Promise(function (r) { setImmediate(r); }); };
-    let file = {done: false, count: 0, total: 1343, catalogue: 1343, confirmed: false, built: 0, builtMs: 0};
+    // 'estimate': the mod's wall-clock seconds for what is left (26.09, write_sweep: 1343 at 14 ms a vehicle, half the time).
+    let file = {done: false, count: 0, total: 1343, catalogue: 1343, confirmed: false, built: 0, builtMs: 0, estimate: 38};
     const g = page(true, function () { return file; });
     return settleMicro().then(function () {
       const ask = g.$('ttx-sweep-ask');
       ok('sweep: in the game the page tells the mod it is open, and reads the progress file',
          g.sent[0] === 'open' && g.reads.n === 1 && g.$('ttx-sweep').hidden === false && g.$('ttx-sweep-count').textContent === '0 / 1343');
-      ok('sweep: a first sweep asks - heading, one sentence with the estimate (40 ms a vehicle before this machine has built any), Start and Later',
+      ok('sweep: a first sweep asks - heading, one sentence with the mod\'s estimate, Start and Later',
          ask.hidden === false && g.$('ttx-sweep-ask-head').textContent === 'First start after a game update'
-         && g.$('ttx-sweep-ask-text').textContent === 'Preparing the characteristics of all 1343 vehicles takes about 70 s (an estimate); the hangar stutters meanwhile.'
+         && g.$('ttx-sweep-ask-text').textContent === 'Preparing the characteristics of all 1343 vehicles takes about 38 s (an estimate); the hangar stutters meanwhile.'
          && g.$('ttx-sweep-go').textContent === 'Start' && g.$('ttx-sweep-stop').hidden === true, g.$('ttx-sweep-ask-text').textContent);
       g.$('ttx-sweep-go').onclick();
       ok('sweep: Start - the question goes, the mod is told, the ■ Stop stands', ask.hidden === true && g.sent.indexOf('sweepStart') >= 0
          && g.$('ttx-sweep-stop').hidden === false && g.api.running());
-      file = {done: false, count: 340, total: 1343, catalogue: 1343, confirmed: false, built: 340, builtMs: 6800};
+      file = {done: false, count: 340, total: 1343, catalogue: 1343, confirmed: false, built: 340, builtMs: 6800, estimate: 76};
       g.api.paint(file);
       ok('sweep: a read of the file from before the mod took the Start does not bring the question back', ask.hidden === true && g.$('ttx-sweep-stop').hidden === false);
       g.$('ttx-sweep-stop').onclick();
@@ -3356,20 +3416,26 @@ settle(20).then(function () {
       const n = page(true, function () { return file; });
       return settleMicro().then(function () {
         const ask2 = n.$('ttx-sweep-ask');
-        ok('sweep: the next open asks again - how far it got and the time left at this machine\'s own pace, Continue and Later',
+        ok('sweep: the next open asks again - how far it got and the time left the mod estimates, in minutes and seconds, Continue and Later',
            ask2.hidden === false && n.$('ttx-sweep-ask-head').textContent === 'Preparation not finished'
-           && n.$('ttx-sweep-ask-text').textContent === '340 of 1343 vehicles done (25 %), about 27 s left (an estimate).'
+           && n.$('ttx-sweep-ask-text').textContent === '340 of 1343 vehicles done (25 %), about 1 min 15 s left (an estimate).'
            && n.$('ttx-sweep-go').textContent === 'Continue', n.$('ttx-sweep-ask-text').textContent);
         n.$('ttx-sweep-later').onclick();
         n.api.paint(file);
         ok('sweep: Later - the question goes for this open of the page, nothing is sent', ask2.hidden === true && n.sent.indexOf('sweepStart') < 0);
         // A game update that changed twelve vehicles.
-        const u = page(true, function () { return {done: false, count: 0, total: 12, catalogue: 1343, confirmed: false, built: 1343, builtMs: 26860}; });
+        const u = page(true, function () { return {done: false, count: 0, total: 12, catalogue: 1343, confirmed: false, built: 1343, builtMs: 26860, estimate: 1}; });
         return settleMicro().then(function () {
           ok('sweep: after an update only the vehicles that changed - "12 vehicles changed", about 1 s',
              u.$('ttx-sweep-ask-head').textContent === 'The game was updated'
              && u.$('ttx-sweep-ask-text').textContent === '12 vehicles changed: preparing their characteristics takes about 1 s (an estimate); the hangar stutters meanwhile.',
              u.$('ttx-sweep-ask-text').textContent);
+          // A progress file of a mod before 26.09 has no 'estimate': the page makes up none of its own.
+          const o = page(true, function () { return {done: false, count: 0, total: 12, catalogue: 1343, confirmed: false, built: 1343, builtMs: 26860}; });
+          return settleMicro().then(function () {
+          ok('sweep: no estimate from the mod - the question says no time rather than one of the page\'s own',
+             o.$('ttx-sweep-ask-text').textContent === '12 vehicles changed: preparing their characteristics; the hangar stutters meanwhile.',
+             o.$('ttx-sweep-ask-text').textContent);
           const d = page(true, function () { return {done: true, count: 0, total: 0, catalogue: 1343}; });
           return settleMicro().then(function () {
             d.api.tick(); d.api.tick();
@@ -3386,6 +3452,7 @@ settle(20).then(function () {
               });
             });
           });
+          });
         });
       });
     });
@@ -3395,7 +3462,8 @@ settle(20).then(function () {
     const done = function () { return {done: true, count: 0, total: 0, catalogue: 1343}; };
     const settle = function () { return new Promise(function (r) { setImmediate(r); }); };
     // Never started: no question by itself, the button in the Vehicles list asks with the offline estimate.
-    let models = {done: false, count: 0, total: 1107, catalogue: 1107, confirmed: false, opted: false, built: 0, builtMs: 0, bytes: 0, failed: {}};
+    // 'estimate' as the mod writes it before any vehicle of this machine: 1107 at 0.89 s of work, half the time (26.09).
+    let models = {done: false, count: 0, total: 1107, catalogue: 1107, confirmed: false, opted: false, built: 0, builtMs: 0, bytes: 0, failed: {}, estimate: 1971};
     const g = sweepPage(true, done, false, function () { return models; });
     return settle().then(function () {
       const ask = g.$('models-sweep-ask'), button = g.$('models-all');
@@ -3404,9 +3472,9 @@ settle(20).then(function () {
          ask.hidden === true && button.hidden === false && button.textContent === 'Export all models' && g.$('models-sweep').hidden === true
          && g.reads.models === 1, button.textContent + ' | bar hidden ' + g.$('models-sweep').hidden);
       button.onclick();
-      ok('models: Export all models asks - how many, MB and minutes from the offline figures (0.89 s, 175 KB a vehicle), Start and Later',
+      ok('models: Export all models asks - how many, MB from the offline figure (175 KB a vehicle) and the mod\'s time, Start and Later',
          ask.hidden === false && g.$('models-sweep-ask-head').textContent === 'Export all models'
-         && g.$('models-sweep-ask-text').textContent === 'All 1107 regular vehicles: about 194 MB, about 18 min (an estimate). Runs while this page stays open; the hangar stutters meanwhile.'
+         && g.$('models-sweep-ask-text').textContent === 'All 1107 regular vehicles: about 194 MB, about 33 min (an estimate). Runs while this page stays open; the hangar stutters meanwhile.'
          && g.$('models-sweep-go').textContent === 'Start' && g.$('models-sweep-go').hidden === false && g.$('models-sweep-later').textContent === 'Later',
          g.$('models-sweep-ask-text').textContent);
       g.$('models-sweep-go').onclick();
@@ -3423,12 +3491,12 @@ settle(20).then(function () {
       ok('models: ■ Stop - the mod is told which sweep, the button is back', st >= 0 && g.params[st].kind === 'models' && button.disabled === false
          && button.textContent === 'Export all models' && g.$('models-sweep-stop').hidden === true);
       // Started before (opted): the next open after a game update asks by itself, once the characteristics have no question.
-      models = {done: false, count: 0, total: 12, catalogue: 1107, confirmed: false, opted: true, built: 1107, builtMs: 763830, bytes: 166000000, failed: {}};
+      models = {done: false, count: 0, total: 12, catalogue: 1107, confirmed: false, opted: true, built: 1107, builtMs: 763830, bytes: 166000000, failed: {}, estimate: 17};
       const u = sweepPage(true, done, false, function () { return models; });
       return settle().then(function () {
         ok('models: after a game update - "12 vehicles changed", at this machine\'s own pace',
            u.$('models-sweep-ask').hidden === false && u.$('models-sweep-ask-head').textContent === 'The game was updated'
-           && u.$('models-sweep-ask-text').textContent === '12 vehicles changed: exporting their models takes about 1 min (an estimate); the hangar stutters meanwhile.',
+           && u.$('models-sweep-ask-text').textContent === '12 vehicles changed: exporting their models takes about 17 s (an estimate); the hangar stutters meanwhile.',
            u.$('models-sweep-ask-text').textContent);
         const ttxAsking = {done: false, count: 0, total: 1343, catalogue: 1343, confirmed: false, built: 0, builtMs: 0};
         const both = sweepPage(true, function () { return ttxAsking; }, false, function () { return models; });
@@ -3437,11 +3505,11 @@ settle(20).then(function () {
           both.$('models-all').onclick();
           ok('models: Export all models - the characteristics\' question gives way to it', both.$('ttx-sweep-ask').hidden === true && both.$('models-sweep-ask').hidden === false);
           const half = sweepPage(true, done, false, function () { return {done: false, count: 300, total: 1107, catalogue: 1107, confirmed: false, opted: true,
-            built: 300, builtMs: 210000, bytes: 45000000, failed: {}}; });
+            built: 300, builtMs: 210000, bytes: 45000000, failed: {}, estimate: 1130}; });
           return settle().then(function () {
             ok('models: cut short - how far it got, the time and MB left at this machine\'s pace, Continue',
                half.$('models-sweep-ask-head').textContent === 'Model export not finished'
-               && half.$('models-sweep-ask-text').textContent === '300 of 1107 vehicles done (27 %), about 10 min and 121 MB left (an estimate).'
+               && half.$('models-sweep-ask-text').textContent === '300 of 1107 vehicles done (27 %), about 19 min and 121 MB left (an estimate).'
                && half.$('models-sweep-go').textContent === 'Continue', half.$('models-sweep-ask-text').textContent);
             const all = sweepPage(true, done, false, function () { return {done: true, count: 0, total: 0, catalogue: 1107, opted: true, failed: {}}; });
             return settle().then(function () {
@@ -6663,8 +6731,7 @@ settle(20).then(function () {
         openConfigMenu();
         choosePreset('Rammer, stabiliser, vents');
         everybody('Brothers in Arms, ');
-        const food = consumables.children[0].children[0];
-        if (food.getAttribute('aria-pressed') !== 'true') click(food);
+        fitFood();
         fitted[r.vehicle + '|' + r.gun + '|fire'] = slotNames();
         read(r, 'fire');
         choosePreset('Stock — no equipment');
@@ -6713,8 +6780,7 @@ settle(20).then(function () {
           openConfigMenu();
           choosePreset('Rammer, stabiliser, vents');
           everybody('Brothers in Arms, ');
-          const food = consumables.children[0].children[0];
-          if (food.getAttribute('aria-pressed') !== 'true') click(food);
+          fitFood();
           read(r, 'switched');
           const key = [r.vehicle, r.turret, r.gun], got = page[key.concat('switched').join('|')], own = page[key.concat('fire').join('|')];
           delete page[key.concat('switched').join('|')];
@@ -8343,7 +8409,12 @@ settle(20).then(function () {
   };
   const fm = function (level, k) { return document.getElementById('aim-fm-' + level + '-' + k); };
   const pressed = function (t) { return t.getAttribute('aria-pressed') === 'true'; };
-  const fmClick = function (level, k) { click(fm(level, k)); run(20); };
+  // config-menu-redesign (26.09): the section is one tile; its levels open in the sub-panel under it and stay open while
+  // modifications are set there.
+  const fieldTile = function () { return fieldBox.children[0]; };
+  const openLevels = function () { if (layer.hidden || fieldTile().getAttribute('aria-expanded') !== 'true') click(fieldTile()); };
+  const levelCols = function () { openLevels(); return picker.children[0].children; };
+  const fmClick = function (level, k) { openLevels(); click(fm(level, k)); run(20); };
   const fieldStored = function () { return ((storedCustom('france:FM_Arty') || {}).field || []).join(','); };
   const bb = document.getElementById('battles');
   bb.value = 'fm1'; bb.onchange.call(bb);
@@ -8352,11 +8423,28 @@ settle(20).then(function () {
        fieldBox.hidden === true && fieldBox.children.length === 0 && document.getElementById('aim-fm-2-b').parentNode === null);
     return openF('fm-x');
   }).then(function () {
-    const view = viewerInstance, cols = fieldBox.children;
+    const view = viewerInstance;
     const r0 = view.liveRadius100;
+    if (!layer.hidden) click(scrim);   // a picker an earlier check left open
+    const sum0 = fieldTile();
+    ok('config-menu-redesign: the section is collapsed - one tile like a slot, the empty slot’s art while nothing is on, no word on it, the levels closed',
+       fieldBox.hidden === false && fieldBox.children.length === 1 && sum0.className === 'aim-tile aim-slot aim-fm-sum' && layer.hidden === true
+       && sum0.getAttribute('aria-expanded') === 'false' && sum0.getAttribute('data-tier') === 'none' && tileWords(sum0) === ''
+       && iconOf(sum0).children[0].src === 'web/icons/empty_slot.png'
+       && /^Field modification\nNothing on: the bare vehicle\.\n\n• Click: open the levels$/.test(sum0.title), sum0.title);
+    const cols = levelCols();
+    ok('config-menu-redesign: a click opens the levels in the sub-panel under it, the tile lit and lifted',
+       layer.hidden === false && fieldTile().getAttribute('aria-expanded') === 'true' && fieldBox.getAttribute('data-owner') === 'true'
+       && picker.children[0].className === 'aim-fm');
     ok('fieldmods: a tier-X SPG naming tree 5106 - the block is there, one column per level 2, 4, 5, 7, 8, in the tree’s order',
        fieldBox.hidden === false && cols.length === 5 && cols.map(function (c) { return c.getAttribute('data-level'); }).join(',') === '2,4,5,7,8' && r0 > 0,
        '(' + cols.map(function (c) { return c.getAttribute('data-level'); }).join(',') + ')');
+    ok('config-menu-redesign: a level’s numeral (a standard modification’s hexagon) is marked as level art, muted by the stylesheet; a pair side’s art is not',
+       cols.every(function (c) { return iconOf(c.children[0]).getAttribute('data-level-art') === '1' && iconOf(c.children[1].children[0]).getAttribute('data-level-art') === null; })
+       && /\.aim-icon\[data-level-art\] img\{filter:grayscale\(1\)[^}]*opacity:\.45\}/.test(fs.readFileSync(path + 'style.css', 'utf8')));
+    ok('config-menu-redesign: a neutral pair is both sides dim, a chosen side bright and the other dim - one rule for every pair, not only a set one',
+       /\n\.aim-fm-pair \.aim-pick\[aria-pressed=false\]\{opacity:\.55\}/.test(fs.readFileSync(path + 'style.css', 'utf8'))
+       && !/data-set\] \.aim-pick/.test(fs.readFileSync(path + 'style.css', 'utf8')));
     const shape = cols.every(function (c) {
       const lv = c.getAttribute('data-level'), base = c.children[0], frame = c.children[1], dot = c.children[2];
       return c.children.length === 3 && base.id === 'aim-fm-' + lv + '-b' && iconOf(base).children[0].src === 'web/icons/fm_level_' + lv + '.png'
@@ -8377,6 +8465,15 @@ settle(20).then(function () {
     ok('fieldmods: a standard modification on - lit, the circle ×0.99, and it lands in Custom under the type',
        pressed(fm(7, 'b')) && near(view.liveRadius100 / r0, 0.99) && presetName() === 'Custom' && fieldStored() === 'role_SPG_base_4',
        '(' + (view.liveRadius100 / r0) + ' / ' + fieldStored() + ')');
+    const sum1 = fieldTile();
+    ok('config-menu-redesign: the levels stay open after a click there, and the tile shows what is on - the level’s hexagon, muted - and lists it',
+       layer.hidden === false && sum1.getAttribute('aria-expanded') === 'true' && sum1.children.length === 1
+       && iconOf(sum1).children[0].src === 'web/icons/fm_level_7.png' && iconOf(sum1).getAttribute('data-level-art') === '1' && tileWords(sum1) === ''
+       && /^Field modification\nWhat is on in this vehicle’s tree\.\n• VII: Barrel Rifling Cleaning \(Type 1\)\n\n• Click: open the levels$/.test(sum1.title),
+       sum1.title);
+    click(document.getElementById('aim-cfg-scrim'));
+    ok('config-menu-redesign: the scrim closes the levels, the tile keeps what is on', layer.hidden === true && fieldTile().getAttribute('aria-expanded') === 'false'
+       && fieldTile().children.length === 1);
     fmClick(7, 'b');
     ok('fieldmods: and off again - the circle back, nothing stored', !pressed(fm(7, 'b')) && near(view.liveRadius100, r0) && fieldStored() === '',
        '(' + fieldStored() + ')');
@@ -8448,7 +8545,7 @@ settle(20).then(function () {
     ok('fieldmods: BACKLOG 47 - another hit of the same vehicle with another aim block has that block’s ring at once, nothing chosen again',
        near(early, 0.93), '(' + early + ')');
     choosePreset('Custom'); run(20);
-    const view = viewerInstance, cols = fieldBox.children;
+    const view = viewerInstance, cols = levelCols();
     ok('fieldmods: the same vehicle at tier VIII - levels 2, 4, 5 only (level 7 from tier IX, 8 at X), and Custom’s level-7/8 entries are not in force: only Improved Aiming’s x0.93',
        cols.map(function (c) { return c.getAttribute('data-level'); }).join(',') === '2,4,5'
        && near(view.liveRadius100 / (Math.atan(0.1) * 100 / 1.043), 0.93), '(' + (view.liveRadius100 / (Math.atan(0.1) * 100 / 1.043)) + ')');
@@ -8557,6 +8654,8 @@ function pathMatrix() {
   const TTXS = {'germany-Papa': TTXOF('germany:Papa', 2100), 'germany-Romeo': TTXOF('germany:Romeo', 1950),
                 'germany-Quebec': TTXOF('germany:Quebec', 1400), 'germany-Tango': TTXOF('germany:Tango', 1234),
                 'germany-Uniform': TTXOF('germany:Uniform', 1111)};   // 24.09: the row without a model
+  // 26.09 (TTX_FORMAT 4): the file carries what the vehicle may mount - its tags and its field modification tree.
+  TTXS['germany-Uniform'].vehicle.fitment = {tagsRead: true, tags: ['heavyTank'], postProgressionTree: '1106'};
   const ttxAsked = [];
   // Two browsed vehicles for the Vehicles panel's ⇅: their exports carry their own figure.
   const EXPORT = function (id, type, name, hp) {
@@ -8719,6 +8818,12 @@ function pathMatrix() {
       ok('matrix, ⌖ ' + (fun ? 'on' : 'off') + ': (the shooter is the file\'s top pair - the panel shows it, the scene keeps its model)',
          $('ttx-panel').hidden === false && $('scene-message').textContent.indexOf('not exported') < 0 && ttxAsked.indexOf('germany-Uniform') >= 0,
          '(panel hidden ' + $('ttx-panel').hidden + ', "' + $('scene-message').textContent + '")');
+      // config-menu-redesign (26.09, the user's Obj. 430 under a Waffentraeger battle): a shooter known only from his
+      // characteristics file gets his field modification tree and, a standard vehicle outside a battle, the garage's rules.
+      openConfigMenu();
+      ok('matrix, ⌖ ' + (fun ? 'on' : 'off') + ': (a shooter without a model has his tree from his file - the Field modification tile - and the garage rules: nothing "offered beyond what the game allowed")',
+         $('aim-cfg-field').hidden === false && $('aim-cfg-field').children.length === 1 && !/Everything is offered/.test(cfgSummary.title),
+         '(field hidden ' + $('aim-cfg-field').hidden + ') ' + cfgSummary.title);
       $('model-tile').onclick();   // the model's role: no scene of its own
       return settle(10).then(function () { return step(function () { listRow('germany-Uniform').onclick(); }); });
     }).then(function () {

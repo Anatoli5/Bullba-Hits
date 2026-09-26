@@ -433,10 +433,15 @@
     return readTtx(row.type).then(function(t){
       if(!t)throw new Error(NO_VEHICLE_TTX);
       var pair=t.configs[TTX.match(t,{})],turret=(t.turrets||[])[pair.turret]||{};
-      return {id:row.id,type:row.type,name:row.name,level:row.level,'class':row['class'],role:row.role,nation:row.nation,
+      var record={id:row.id,type:row.type,name:row.name,level:row.level,'class':row['class'],role:row.role,nation:row.nation,
         premium:row.premium,collector:row.collector,special:row.special,source:null,noModel:NO_VEHICLE_MODEL,parts:[],warnings:[],
         shells:ttxShellsOf(t,pair).slice(),aim:pair.aim,gun:pair.gunUserString||pair.gun,gunName:pair.gun,turretName:turret.name,
         gunDispersion:pair.aim&&pair.aim.dispersion,maxHealth:pair.maxHealth};
+      // What he may mount, as an export carries it (TTX_FORMAT 4, 26.09): the tags - the device eligibility and the garage's
+      // rules for a standard vehicle outside a battle (aimPolicyFor) - and his field modification tree (aimFitment).
+      var fit=(t.vehicle&&t.vehicle.fitment)||{};
+      ['tagsRead','tags','supplySlots','postProgressionTree','eliteByProgression'].forEach(function(k){if(fit[k]!==undefined)record[k]=fit[k];});
+      return record;
     });
   }
   // A browsed vehicle as a hit the scene loader and the viewer already understand: the model is the target
@@ -905,8 +910,9 @@
   var AIM_DIRECTIVES = CATALOGUE.directives || [];
   var AIM_CONSUMABLES = CATALOGUE.consumables || [];
   var AIM_SLOTS = [0, 1, 2];               // three plain slots, the most any vehicle in the client has
-  var DEVICE_BY_ID = {}, TIER_BY_ID = {}, FAMILY_BY_ID = {}, SKILL_BY_ID = {}, DIRECTIVE_BY_ID = {};
+  var DEVICE_BY_ID = {}, TIER_BY_ID = {}, FAMILY_BY_ID = {}, SKILL_BY_ID = {}, DIRECTIVE_BY_ID = {}, CONSUMABLE_BY_ID = {};
   AIM_DEVICES.forEach(function (d) { DEVICE_BY_ID[d.id] = d; });
+  AIM_CONSUMABLES.forEach(function (c) { CONSUMABLE_BY_ID[c.id] = c; });
   AIM_TIERS.forEach(function (t) { TIER_BY_ID[t.id] = t; });
   AIM_FAMILIES.forEach(function (f) { FAMILY_BY_ID[f.id] = f; });
   AIM_SKILLS.forEach(function (s) { SKILL_BY_ID[s.id] = s; });
@@ -1135,6 +1141,34 @@
     });
     Object.keys(dev).forEach(function (k) { out[k] = ['mul', dev[k] + 1]; });
     Object.keys(add).forEach(function (k) { out[k] = ['add', add[k]]; });
+    return out;
+  }
+  // THE CONSUMABLE SLOTS (user, 26.09): three, as in the garage, and the garage's one rule of what may stand together -
+  // no item twice, one food (the eleven are one item here: one effect, one per nation) and one fuel (the client's own
+  // incompatibleTags installed=fuel; nothing else in vehicle_equipments.xml excludes another consumable). The slot of
+  // `list` that `c` clashes with, skipping slot `index`, or -1.
+  function aimConsClash(c, list, index) {
+    for (var i = 0; i < list.length; i++) {
+      var other = i === index ? null : CONSUMABLE_BY_ID[list[i]];
+      if (other && (other.id === c.id || (c.slot && other.slot === c.slot))) return i;
+    }
+    return -1;
+  }
+  // The slots of a configuration from whatever holds them - the one door for the rule above. A configuration of before
+  // 26.09 (food: bool, fuel: id) becomes slots here, food first, then the fuel; the next save writes the slots. `fits`:
+  // only what this shooter may carry (a consumable's own vehicleFilter: the governor, the turbocharger, the large repair
+  // kit), else the catalogue alone - a stored preset keeps what another vehicle may carry.
+  function aimConsList(base, fits) {
+    var raw = base.consumables, out = ['', '', ''];
+    if (!Array.isArray(raw)) {
+      raw = [];
+      if (base.food === true || base.food === '1' || base.food === 1) raw.push('food');
+      if (base.fuel) raw.push(String(base.fuel));
+    }
+    AIM_SLOTS.forEach(function (i) {
+      var c = CONSUMABLE_BY_ID[String(raw[i] || '')];
+      if (c && (!fits || aimFits(c)) && aimConsClash(c, out, i) < 0) out[i] = c.id;
+    });
     return out;
   }
   // The recorded tag list, or null when the record does not know it. Since S3 (22.09) the exporter writes
@@ -1467,7 +1501,8 @@
   // --- The configuration object -----------------------------------------------------------------
   // {slots: [device id, '', ''],      one device id per optional-device slot, '' = empty
   //  directive: '',                   one directive id
-  //  food: false, fuel: '',           the consumables
+  //  consumables: ['food', '', ''],  the three consumable slots, one consumable id each, '' = empty (26.09; until then
+  //                                   food: bool and fuel: id, turned into slots once - food first - by aimConsList)
   //  skills: {gunner_smoothTurret: true},  the crew skills and perks that are on, Brothers in Arms apart
   //  bia: {commander: true, gunner: true},  the crew members who have Brothers in Arms, by aimCrewKeys()
   //  camo: {gunner: true},             the crew members who have Concealment, the same way (23.09)
@@ -1504,7 +1539,7 @@
   // click or a built-in build. A device the vehicle cannot mount and a device whose archetype another
   // slot already holds are both dropped here and nowhere else.
   function aimValues(base) {
-    var out = {slots: ['', '', ''], directive: '', food: false, fuel: '', skills: {}, bia: {}, camo: {}, paint: false, field: []};
+    var out = {slots: ['', '', ''], directive: '', consumables: ['', '', ''], skills: {}, bia: {}, camo: {}, paint: false, field: []};
     if (!base) return out;
     // The field modifications this shooter's tree offers, one side of a pair (23.09); the rest wait in the preset.
     out.field = aimFieldList(base.field, true);
@@ -1518,9 +1553,7 @@
       out.slots[i] = id;
     });
     if (DIRECTIVE_BY_ID[String(base.directive || '')]) out.directive = String(base.directive);
-    out.food = base.food === true || base.food === '1' || base.food === 1;
-    var fuel = String(base.fuel || '');
-    if (fuel === 'qualityFuel' || fuel === 'excellentFuel') out.fuel = fuel;
+    out.consumables = aimConsList(base, true);
     function flag(v) { return v === true || v === '1'; }
     var skills = base.skills && typeof base.skills === 'object' ? base.skills : {};
     AIM_SKILLS.forEach(function (s) {
@@ -1548,7 +1581,7 @@
   function aimPresetValues(cfg) {
     var skills = {}, keys = aimCrewKeys(aimCrew());
     Object.keys(cfg.skills).forEach(function (id) { if (cfg.skills[id]) skills[id] = true; });
-    var out = {slots: cfg.slots.slice(), directive: cfg.directive, food: cfg.food, fuel: cfg.fuel, skills: skills};
+    var out = {slots: cfg.slots.slice(), directive: cfg.directive, consumables: cfg.consumables.slice(), skills: skills};
     var bia = {}, some = false;
     Object.keys(cfg.bia || {}).sort().forEach(function (k) { if (cfg.bia[k]) { bia[k] = true; some = true; } });
     if (keys.length && keys.every(function (k) { return bia[k]; })) skills.brotherhood = true;
@@ -1577,7 +1610,7 @@
               skills: {brotherhood: true, gunner_smoothTurret: true, gunner_armorer: true}}},
     {name: 'Bounty — rammer, stabiliser, vents',
      values: {slots: ['trophyUpgradedTankRammer', 'trophyUpgradedAimingStabilizer', 'trophyUpgradedImprovedVentilation'],
-              food: true,
+              consumables: ['food'],
               skills: {brotherhood: true, gunner_smoothTurret: true, driver_smoothDriving: true}}}];
   shooterPreset = AIM_BUILT_IN[0].name;   // the stock build, until a shooter is on screen
   function aimBuiltIn(name) {
@@ -1657,15 +1690,12 @@
   // this shooter may mount - that, and the crew, are aimValues' business when the preset is APPLIED.
   function aimStoredPreset(row) {
     function flag(v) { return v === true || v === '1'; }
-    var out = {slots: ['', '', ''], directive: '', food: false, fuel: '', skills: {}};
+    var out = {slots: ['', '', ''], directive: '', consumables: aimConsList(row, false), skills: {}};
     AIM_SLOTS.forEach(function (i) {
       var id = row.slots && row.slots[i] ? String(row.slots[i]) : '';
       if (DEVICE_BY_ID[id]) out.slots[i] = id;
     });
     if (DIRECTIVE_BY_ID[String(row.directive || '')]) out.directive = String(row.directive);
-    out.food = row.food === true || row.food === '1' || row.food === 1;
-    var fuel = String(row.fuel || '');
-    if (fuel === 'qualityFuel' || fuel === 'excellentFuel') out.fuel = fuel;
     var skills = row.skills && typeof row.skills === 'object' ? row.skills : {};
     AIM_SKILLS.forEach(function (s) {
       if (s.role !== 'each' && flag(skills[s.id])) out.skills[s.id] = true;
@@ -1821,7 +1851,7 @@
     var level = devices ? aimDirectiveLevel(DIRECTIVE_BY_ID[cfg.directive], cfg) : null;
     if (level && level.eff) Object.keys(level.eff).forEach(function (input) { apply(input, level.eff[input], false); });
     if (!aimForbidden('consumables')) AIM_CONSUMABLES.forEach(function (c) {
-      if (!(c.slot === 'food' ? cfg.food : cfg.fuel === c.id)) return;
+      if (!c.eff || cfg.consumables.indexOf(c.id) < 0) return;
       Object.keys(c.eff).forEach(function (input) { apply(input, c.eff[input], false); });
     });
     return {mul: mul, add: add, dev: dev, devAdd: devAdd, perk: perk, perkAdd: perkAdd, devices: fitted, weight: weight,
@@ -1927,10 +1957,9 @@
     }
     item('Field modification', aimFieldOn() ? shooterConfig.field.map(function (id) { return FIELD_MODS[id].name; }) : []);
     var cons = [];
-    if (!aimForbidden('consumables')) {
-      if (shooterConfig.food) cons.push('Combat rations');
-      AIM_CONSUMABLES.forEach(function (c) { if (c.slot === 'fuel' && shooterConfig.fuel === c.id) cons.push(c.name); });
-    }
+    if (!aimForbidden('consumables')) shooterConfig.consumables.forEach(function (id) {
+      if (CONSUMABLE_BY_ID[id]) cons.push(CONSUMABLE_BY_ID[id].name);
+    });
     item('Consumables', cons);
     item('Paint', shooterConfig.paint && AIM_PAINT ? [AIM_PAINT.name] : []);
     if (!aimForbidden('crew')) {
@@ -1982,7 +2011,7 @@
   // preset list open OVER the popover, on a light scrim, and the element they belong to - the slot row, the
   // preset control - is lifted above the scrim and lit (its aria-expanded, in the stylesheet). No heading:
   // the lit element says what the panel is for. aimLayer is which one is open: 'slot0'..'slot2',
-  // 'directive', 'presets' or ''.
+  // 'directive', 'field' (the levels of the field modification), 'cons0'..'cons2' (a consumable slot), 'presets' or ''.
   var aimConfigControls = {}, aimLayer = '';
   // The icons ship with the page in web/icons (user, 20.09: interface art belongs to the page, a fresh
   // install must look right before the first game start). A missing file still falls back to a short
@@ -2073,8 +2102,10 @@
   }
   // A click on the element a sub-panel belongs to: its panel opens, or closes when it is the one open. A
   // click on another slot of the lifted row moves the panel - and the light - to that slot.
+  // The kind of the configuration a sub-panel sets (aimForbidden): the consumable slots theirs, the preset list none.
+  function aimLayerKind(key) { return key === 'presets' || !key ? '' : /^cons/.test(key) ? 'consumables' : 'devices'; }
   function aimOpenLayer(key) {
-    if (aimForbidden('devices') && key !== 'presets') key = '';   // nothing to pick for a vehicle whose devices the game fixes (S3)
+    if (aimForbidden(aimLayerKind(key))) key = '';   // nothing to pick for a vehicle whose devices the game fixes (S3)
     var next = aimLayer === key ? '' : key;
     aimDropLayer(!next); aimLayer = next;
     paintAimConfig(true);
@@ -2258,25 +2289,73 @@
     chip.onclick = function (e) { e.stopPropagation(); onclick(); };
     return chip;
   }
-  function aimConsumableChips() {
-    var row = node('div', undefined, 'aim-chips');
+  // THE CONSUMABLES ARE THREE SLOTS (user, 26.09), as in the garage: the equipment slots' own widget - a slot tile, a
+  // click opens the picker of the client's consumables under it (aimConsPicker), the empty slot's tile heads it. What
+  // may stand together is aimConsClash's rule; a consumable that changes nothing the page draws is offered too, and its
+  // tooltip says so.
+  function aimConsTitle(c) {
+    var effs = Object.keys(c.eff || {});
+    return tipJoin([c.name, c.slot === 'food' ? 'Food: one per vehicle, for the whole battle.'
+                            : c.slot === 'fuel' ? 'Fuel: one per vehicle, for the whole battle.' : 'Changes no characteristic.']
+      .concat(effs.map(function (input) { var eff = c.eff[input]; return '• ' + aimEffText(eff[0], Number(eff[1]), input); }),
+              aimNoteLines(c.note).map(function (line) { return '• ' + line; })));
+  }
+  function aimConsTile(index) {
+    var c = CONSUMABLE_BY_ID[shooterConfig.consumables[index]], key = 'cons' + index, n = index + 1;
+    var tile = node('button', undefined, 'aim-tile aim-slot');
+    tile.type = 'button';
+    if (aimForbidden('consumables')) {
+      tile.setAttribute('aria-label', 'Consumable slot ' + n + ': not offered for this vehicle');
+      tile.appendChild(aimIcon('empty_slot', '—'));
+      return aimLockTile(tile, 'consumables', 'Consumable slot ' + n);
+    }
+    tile.setAttribute('data-tier', c ? 'plain' : 'none');
+    tile.setAttribute('aria-expanded', String(aimLayer === key));
+    tile.title = c ? tipJoin([aimConsTitle(c), '', '• Click: change it or take it out of slot ' + n])
+                   : tipJoin(['Empty slot', '• Click: fit a consumable in slot ' + n]);
+    tile.setAttribute('aria-label', 'Consumable slot ' + n + '. ' + (c ? c.name : 'Empty'));
+    tile.appendChild(c ? aimIcon(c.icon, aimShort(c.name)) : aimIcon('empty_slot', '—'));
+    tile.onclick = function (e) { e.stopPropagation(); aimOpenLayer(key); };
+    return tile;
+  }
+  // The client's consumables this vehicle may carry, in the catalogue's order (food, the fuels, then the rest). One that
+  // clashes with another slot is shown disabled with the reason, as a device is; the one in this slot is the pressed tile
+  // and a click on it takes it out.
+  function aimConsPicker(index) {
+    var box = node('div', undefined, 'aim-picker'), list = shooterConfig.consumables, here = list[index], n = index + 1;
+    box.appendChild(aimEmptyPick(!here, 'consumable slot ' + n, function () { aimSetCons(index, ''); }));
+    var row = node('div', undefined, 'aim-pick-row');
     AIM_CONSUMABLES.forEach(function (c) {
-      var on = c.slot === 'food' ? !!shooterConfig.food : shooterConfig.fuel === c.id;
-      var title = tipJoin([c.name].concat(aimNoteLines(c.note),
-        Object.keys(c.eff).map(function (input) { var eff = c.eff[input]; return '• ' + aimEffText(eff[0], Number(eff[1]), input); }),
-        ['', c.slot === 'fuel' ? '• Click: switch it on or off; one fuel at a time' : null]));
-      var chip = aimChip(c.icon, c.name, title, on, function () {
-        if (c.slot === 'food') shooterConfig.food = !shooterConfig.food;
-        else shooterConfig.fuel = shooterConfig.fuel === c.id ? '' : c.id;
-        aimEdited();
-      }, false);
-      row.appendChild(aimForbidden('consumables') ? aimLockTile(chip, 'consumables', c.name) : chip);
+      if (!aimFits(c)) return;
+      var mine = here === c.id, clash = aimConsClash(c, list, index), other = clash >= 0 ? CONSUMABLE_BY_ID[list[clash]] : null;
+      var tile = aimPickTile({icon: c.icon, label: c.name}, tipJoin([aimConsTitle(c), '',
+        !other ? null : other.id === c.id ? 'Already in slot ' + (clash + 1) + '.' : 'One ' + c.slot + ' per vehicle: slot ' + (clash + 1) + ' has ' + other.name + '.',
+        mine ? '• Click: take it out of slot ' + n : null]), mine, !!other, 'plain');
+      tile.onclick = function (e) { e.stopPropagation(); aimSetCons(index, mine ? '' : c.id); };
+      row.appendChild(tile);
     });
-    // The paint (23.09): not a consumable, but a switch of the vehicle's look that the garage counts - one tile
-    // beside them rather than a section of its own.
-    if (AIM_PAINT) row.appendChild(aimChip(AIM_PAINT.icon, AIM_PAINT.name,
-      tipJoin([AIM_PAINT.name].concat(aimNoteLines(AIM_PAINT.note), ['It moves nothing in the circle; the characteristics panel shows it.'])),
-      !!shooterConfig.paint, function () { shooterConfig.paint = !shooterConfig.paint; aimEdited(); }, false));
+    box.appendChild(row);
+    return box;
+  }
+  function aimSetCons(index, id) {
+    var next = shooterConfig.consumables.slice();
+    next[index] = id;
+    shooterConfig.consumables = aimConsList({consumables: next}, true);
+    aimDropLayer(true);
+    aimEdited();
+  }
+  // The consumable row: the three slots, and the paint beside them (23.09; user 26.09: it stays here, on its own). It is
+  // no consumable - a switch of the vehicle's look that the garage counts - so it is a tile of its own, on or off.
+  function aimConsumableRow() {
+    var row = node('div', undefined, 'aim-slots');
+    AIM_SLOTS.forEach(function (i) { row.appendChild(aimConsTile(i)); });
+    if (AIM_PAINT) {
+      var paint = aimChip(AIM_PAINT.icon, AIM_PAINT.name,
+        tipJoin([AIM_PAINT.name].concat(aimNoteLines(AIM_PAINT.note), ['It moves nothing in the circle; the characteristics panel shows it.'])),
+        !!shooterConfig.paint, function () { shooterConfig.paint = !shooterConfig.paint; aimEdited(); }, false);
+      paint.className += ' aim-paint';
+      row.appendChild(paint);
+    }
     return row;
   }
   // A skill whose catalogue note mostly repeats its effect item: null drops the note, a string keeps only what the
@@ -2404,6 +2483,7 @@
     var m = FIELD_MODS[id], on = shooterConfig.field.indexOf(id) >= 0;
     var tile = aimChip(m.icon || 'fm_level_' + row.level, m.name, aimFieldTitle(id, row), on, function () { aimFieldSet(id); }, false);
     tile.id = 'aim-fm-' + row.level + '-' + key;
+    if (!m.icon) tile.children[0].setAttribute('data-level-art', '1');   // the level's numeral: muted (user, 26.09)
     if (!aimForbidden('devices')) return tile;
     // Where the game fixes the equipment the record's own figures stay whole, the field modification with them.
     aimLockTile(tile, 'devices', '');
@@ -2416,6 +2496,38 @@
     if (shooterConfig.field.indexOf(id) < 0) list.push(id);
     shooterConfig.field = aimFieldList(list, true);
     aimEdited();
+  }
+  // THE SECTION IS ONE TILE (user, 26.09), as Equipment and Directive are slot tiles: what is on, as the modifications'
+  // own icons in the tree's order (a standard one wears its level's hexagon), the empty slot's art while nothing is; a
+  // click opens the levels in a sub-panel under it (aimFieldSection, the layer 'field'). A click there sets a modification
+  // and the panel stays, so a level after level is one click each.
+  function aimFieldSummary() {
+    var offer = aimFieldOffer(), on = [];
+    offer.levels.forEach(function (l) {
+      [l.base].concat(l.pair || []).forEach(function (id) { if (id && shooterConfig.field.indexOf(id) >= 0) on.push({id: id, level: l.level}); });
+    });
+    var tile = node('button', undefined, 'aim-tile aim-slot aim-fm-sum');
+    tile.type = 'button'; tile.id = 'aim-fm-summary';
+    if (aimForbidden('devices')) {
+      tile.setAttribute('aria-label', 'Field modification: not set here');
+      tile.appendChild(aimIcon('empty_slot', '—'));
+      aimLockTile(tile, 'devices', '');
+      tile.title = tipJoin(['Field modification', 'Not set here: the game fixes this vehicle’s equipment, so the record’s own figures - its field modification with them - stay as they are.']);
+      return tile;
+    }
+    tile.setAttribute('data-tier', on.length ? 'plain' : 'none');
+    tile.setAttribute('aria-expanded', String(aimLayer === 'field'));
+    tile.setAttribute('aria-label', 'Field modification. ' + (on.length ? on.length + ' on' : 'Nothing on'));
+    tile.title = tipJoin(['Field modification', on.length ? 'What is on in this vehicle’s tree.' : 'Nothing on: the bare vehicle.']
+      .concat(on.map(function (x) { return '• ' + (tierRomans[x.level] || x.level) + ': ' + FIELD_MODS[x.id].name; }), ['', '• Click: open the levels']));
+    if (!on.length) tile.appendChild(aimIcon('empty_slot', '—'));
+    on.forEach(function (x) {
+      var art = aimIcon(FIELD_MODS[x.id].icon || 'fm_level_' + x.level, aimShort(FIELD_MODS[x.id].name));
+      if (!FIELD_MODS[x.id].icon) art.setAttribute('data-level-art', '1');
+      tile.appendChild(art);
+    });
+    tile.onclick = function (e) { e.stopPropagation(); aimOpenLayer('field'); };
+    return tile;
   }
   function aimFieldSection(box) {
     aimFieldOffer().levels.forEach(function (row) {
@@ -2485,9 +2597,10 @@
     var directive = node('div', undefined, 'aim-slots'); directive.id = 'aim-cfg-directive';
     main.appendChild(directive);
 
-    // The field modification (23.09), there only for a shooter whose record names his tree.
+    // The field modification (23.09), there only for a shooter whose record names his tree: one tile (26.09), its levels
+    // in a sub-panel.
     var fieldHead = node('div', 'Field modification', 'aim-config-head');
-    var field = node('div', undefined, 'aim-fm'); field.id = 'aim-cfg-field';
+    var field = node('div', undefined, 'aim-slots'); field.id = 'aim-cfg-field';
     fieldHead.hidden = field.hidden = true;
     main.appendChild(fieldHead); main.appendChild(field);
 
@@ -2531,7 +2644,8 @@
     $('aim-config').querySelector('summary').title = aimConfigTitle();
     if (!force && !$('aim-config').open) { aimConfigDirty = true; return; }
     aimConfigDirty = false;
-    if (aimForbidden('devices') && aimLayer !== 'presets') aimDropLayer();   // a picker left open on the previous shooter goes (S3)
+    // A picker left open on the previous shooter goes (S3), and the levels of a tree this shooter does not have.
+    if (aimForbidden(aimLayerKind(aimLayer)) || (aimLayer === 'field' && !aimFieldOffer().levels.length)) aimDropLayer();
     c.preset.textContent = shooterPreset;
     c.preset.title = aimPresetTitle(shooterPreset);
     c.preset.setAttribute('aria-expanded', String(aimLayer === 'presets'));
@@ -2540,13 +2654,13 @@
     c.directive.replaceChildren();
     c.directive.appendChild(aimDirectiveTile());
     c.consumables.replaceChildren();
-    c.consumables.appendChild(aimConsumableChips());
+    c.consumables.appendChild(aimConsumableRow());
     c.crew.replaceChildren();
     aimCrewSection(c.crew);
     c.field.replaceChildren();
     var fieldShown = aimFieldOffer().levels.length > 0;
     c.field.hidden = c.fieldHead.hidden = !fieldShown;
-    if (fieldShown) aimFieldSection(c.field);
+    if (fieldShown) c.field.appendChild(aimFieldSummary());
     aimPaintLayer();
   }
   // The layer's own state beside aimLayer: the name of a preset being renamed in place ({from, draft, error})
@@ -2583,15 +2697,18 @@
   // owner is the whole slot row, so the other slots stay clickable and move the panel to themselves.
   function aimPaintLayer() {
     var c = aimConfigControls, key = aimLayer;
-    var owner = key === 'presets' ? c.preset : key === 'directive' ? c.directive : key ? c.slots : null;
-    [c.preset, c.slots, c.directive].forEach(function (el) {
+    var owner = key === 'presets' ? c.preset : key === 'directive' ? c.directive : key === 'field' ? c.field
+      : /^cons/.test(key) ? c.consumables : key ? c.slots : null;
+    [c.preset, c.slots, c.directive, c.field, c.consumables].forEach(function (el) {
       if (el === owner) el.setAttribute('data-owner', 'true'); else el.removeAttribute('data-owner');
     });
     c.scrim.hidden = c.layer.hidden = c.picker.hidden = !key;
     c.picker.replaceChildren(); aimNameInput = null;
     if (!key) return;
-    c.picker.appendChild(key === 'presets' ? aimPresetList()
-      : key === 'directive' ? aimDirectivePicker() : aimPicker(Number(key.slice(4))));
+    var levels = key === 'field' ? node('div', undefined, 'aim-fm') : null;
+    if (levels) aimFieldSection(levels);
+    c.picker.appendChild(key === 'presets' ? aimPresetList() : key === 'directive' ? aimDirectivePicker() : levels
+      || (/^cons/.test(key) ? aimConsPicker(Number(key.slice(4))) : aimPicker(Number(key.slice(4)))));
     aimPlaceLayer(owner);
     if (aimNameInput) { aimNameInput.focus(); if (aimRenaming.draft === aimRenaming.from) aimNameInput.select(); }
   }
@@ -8409,11 +8526,11 @@
   // the mod it is open ('open', at most every 4 s, only while a sweep may run and the page is on screen; the mod counts it
   // open for 12 s). Outside the game nothing runs: a file is read, and not read again after it is missing once.
   // Block of its own: tests/page/aim3_dom.cjs cuts it out.
-  var SWEEP_MS=40,SWEEP_OVERHEAD=1.3;   // ms a vehicle before this machine has built any; the frames between slices
-  // The model sweep's own before this machine has exported any (offline stand of the client's python27.dll, 25.09,
-  // docs/KNOWLEDGE.md 14): a vehicle 0.89 s of work on average (1107 in 986 s), ~175 KB on disk (the offline files and
-  // the pitch table they lack there); the frames between its steps (1087 s from Start to the end).
-  var MODELS_MS=890,MODELS_BYTES=175000,MODELS_OVERHEAD=1.1;
+  // The time is the mod's own estimate (26.09, the progress file's 'estimate': wall-clock seconds of what is left at this
+  // machine's measured pace and the share of the time the sweep gets - exporter.py write_sweep); the page only prints it.
+  // The model sweep's MB before this machine has exported any (offline stand of the client's python27.dll, 25.09,
+  // docs/KNOWLEDGE.md 14): ~175 KB a vehicle on disk (the offline files and the pitch table they lack there).
+  var MODELS_BYTES=175000;
   var openSentAt=0;
   function sweepPending(s){return s===undefined||!!(s&&(!s.done||s.retrying));}
   function sweepWidget(kind,spec){
@@ -8463,19 +8580,25 @@
     $(id+'-stop').onclick=function(){w.running=false;w.saidAt=Date.now();w.asked=true;sendCommand('sweepStop',spec.command);w.paint(w.state);};
     return w;
   }
-  // The seconds left, from this machine's own build time when it has one (an estimate, and said so).
-  function sweepSeconds(s,left,ms,overhead){var per=s.built>0&&s.builtMs>0?s.builtMs/s.built:ms;return Math.max(1,Math.ceil(left*per*overhead/1000));}
+  // The mod's estimate of the time left, in words ("about 1 min 15 s"); '' from a mod that sends none.
+  function sweepTime(s){
+    var t=Math.round(Number(s&&s.estimate));if(!(t>0))return '';
+    if(t<60)return 'about '+t+' s';
+    if(t<600){var m=Math.floor(t/60),r=Math.round((t-60*m)/5)*5;if(r===60){m++;r=0;}return 'about '+m+' min'+(r?' '+r+' s':'');}
+    if(t<3600)return 'about '+Math.round(t/60)+' min';
+    var h=Math.floor(t/3600),mm=Math.round((t-3600*h)/60);if(mm===60){h++;mm=0;}return 'about '+h+' h'+(mm?' '+mm+' min':'');
+  }
   var ttxSweep=sweepWidget('ttx',{id:'ttx-sweep',command:null,read:ArmorInspectorData.ttxSweep,
     mayAsk:function(){return $('models-sweep-ask').hidden;},   // never over the models question (review 25.09)
     tip:function(count,total){return ['Characteristics of every vehicle','The game prepares the characteristics files once after a game update, only of the vehicles that changed.',
       '• Now: '+count+' of '+total,'','• Runs: while this page is open in the game, after your Start','• ■: stops it; what is done stays',
       '• Never in a battle'];},
     words:function(s,count,total){
-      var secs=sweepSeconds(s,total-count,SWEEP_MS,SWEEP_OVERHEAD),all=Number(s.catalogue)||total;
+      var time=sweepTime(s),all=Number(s.catalogue)||total;
       return [count>0?'Preparation not finished':total>=all?'First start after a game update':'The game was updated',
-        count>0?count+' of '+total+' vehicles done ('+Math.floor(100*count/total)+' %), about '+secs+' s left (an estimate).'
+        count>0?count+' of '+total+' vehicles done ('+Math.floor(100*count/total)+' %)'+(time?', '+time+' left (an estimate).':'.')
         :(total>=all?'Preparing the characteristics of all '+total+' vehicles':total+(total===1?' vehicle changed: preparing its characteristics':' vehicles changed: preparing their characteristics'))
-          +' takes about '+secs+' s (an estimate); the hangar stutters meanwhile.',count>0?'Continue':'Start'];}});
+          +(time?' takes '+time+' (an estimate)':'')+'; the hangar stutters meanwhile.',count>0?'Continue':'Start'];}});
   // The models: asked by themselves only once the user has started them before (opted), never over the characteristics'
   // question, never for the failures alone; Export all models asks for them at any time (forced).
   var modelsSweep=sweepWidget('models',{id:'models-sweep',command:{kind:'models'},read:ArmorInspectorData.modelsSweep,
@@ -8490,13 +8613,12 @@
       var all=Number(s.catalogue)||total,left=total-count,failed=Object.keys(s.failed||{}).length;
       if(s.done||!total)return failed?[failed+' vehicles failed',failed+' vehicles could not be exported (python.log names the first); the rest are current.','']
         :['All models exported','All '+all+' regular vehicles have their models; after a game update only the changed ones are exported.',''];
-      var per=s.built>0&&s.bytes>0?s.bytes/s.built:MODELS_BYTES,mb=Math.max(1,Math.round(left*per/1e6));
-      var time=Math.max(1,Math.round(sweepSeconds(s,left,MODELS_MS,MODELS_OVERHEAD)/60))+' min';
-      if(count>0)return ['Model export not finished',count+' of '+total+' vehicles done ('+Math.floor(100*count/total)+' %), about '+time+' and '+mb+' MB left (an estimate).','Continue'];
-      if(s.failedOnly)return [total+' vehicles failed',total+' vehicles could not be exported last time: about '+time+' to try them again.','Start'];
-      if(!s.opted)return ['Export all models',(total>=all?'All '+all+' regular vehicles':total+' of '+all+' regular vehicles')+': about '+mb+' MB, about '+time
+      var per=s.built>0&&s.bytes>0?s.bytes/s.built:MODELS_BYTES,mb=Math.max(1,Math.round(left*per/1e6)),time=sweepTime(s);
+      if(count>0)return ['Model export not finished',count+' of '+total+' vehicles done ('+Math.floor(100*count/total)+' %), '+(time?time+' and ':'about ')+mb+' MB left (an estimate).','Continue'];
+      if(s.failedOnly)return [total+' vehicles failed',total+' vehicles could not be exported last time'+(time?': '+time+' to try them again.':'.'),'Start'];
+      if(!s.opted)return ['Export all models',(total>=all?'All '+all+' regular vehicles':total+' of '+all+' regular vehicles')+': about '+mb+' MB'+(time?', '+time:'')
         +' (an estimate). Runs while this page stays open; the hangar stutters meanwhile.','Start'];
-      return ['The game was updated',total+(total===1?' vehicle changed: exporting its model':' vehicles changed: exporting their models')+' takes about '+time+' (an estimate); the hangar stutters meanwhile.','Start'];},
+      return ['The game was updated',total+(total===1?' vehicle changed: exporting its model':' vehicles changed: exporting their models')+(time?' takes '+time+' (an estimate)':'')+'; the hangar stutters meanwhile.','Start'];},
     after:function(w,s,count,total){
       // Export all models in the Vehicles list: in the game, once the mod's progress file is there.
       var b=$('models-all');if(!b)return;

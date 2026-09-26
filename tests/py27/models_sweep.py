@@ -1,14 +1,15 @@
 # -*- coding: utf-8 -*-
 """The model sweep of the exporter (25.09, models-sweep; BACKLOG 51): every regular vehicle of the catalogue exported by the
 one vehicle export (export_vehicle) in its top configuration, only after the page's Start (Export all models), only while the
-page is open in the game, in 60 ms slices with one frame of the game between them, one unit of work (a vehicle's plan, one
+page is open in the game, in 60 ms slices with the game alone between them (a frame at least, SWEEP_SHARE of the time) and
+the mod's own wall-clock estimate from the measured pace, one unit of work (a vehicle's plan, one
 collision model, its file) at a time, and on the next run only the vehicles whose sources or collision models changed (CRCs
 from the packages' directories). Inside the client's own python27.dll; temp folders only; the client's descriptors and the
 model reader are stand-ins (the offline stand measures the real ones: tests/fixtures-local/ttx-offline/models_sweep_run.py).
 
     python tests/py27/run27.py tests/py27/models_sweep.py
 Verdict through BULLBA_PY27_RESULT (see run27.py). The same report and failure rules as ttx_sweep.py."""
-import json, logging, os, shutil, sys, tempfile, time, types, zipfile
+import json, logging, math, os, shutil, sys, tempfile, time, types, zipfile
 REPO = os.environ.get('BULLBA_REPO') or os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(REPO, 'mod'))
 sys.dont_write_bytecode = True
@@ -172,6 +173,7 @@ try:
 
         def wait_frame(self, timeout):
             self.frames += 1
+            clock[0] += 0.016   # a frame of the game on the same fake clock (26.09)
 
     current = [None]
 
@@ -225,6 +227,8 @@ try:
     os.remove(locked)
     for _ in range(5): first.run_job()
     check(not extracted and not built, 'no Start: nothing is read or exported, whatever the page')
+    check(marker['estimate'] == int(math.ceil(5 * ex.SWEEP_MS['models'] / ex.SWEEP_SHARE / 1000.0)) and marker['pace'] == {'target': ex.SWEEP_SHARE},
+          'the estimate before any measurement: 5 x %.0f ms over a share of %.2f = %s s (26.09)' % (ex.SWEEP_MS['models'], ex.SWEEP_SHARE, marker['estimate']))
     check(first.confirm_sweep('models') and progress()['confirmed'] is True and progress()['opted'] is True, 'Start: running, and from now on the user has opted in')
     check(first.sweep_hurry() and first.recorder.frames_wanted, 'running: the export loop does not wait, the frame callback is wanted')
     # --- slices: one unit of work at a time, a frame between slices ------------------------------------------------------
@@ -234,7 +238,7 @@ try:
     check(built == ['germany:G1_A'] and len(extracted) == 2 and first.recorder.frames == 0,
           'one slice: the plan and two models (%d), no frame before the first' % len(extracted))
     first.run_job()
-    check(first.recorder.frames == 1 and len(extracted) == 4, 'the next slice waits one frame of the game first, then the next two models (%d)' % len(extracted))
+    check(first.recorder.frames == 5 and len(extracted) == 4, 'the next slice waits for the game first - frames of 16 ms until as long as the slice took (70 ms, SWEEP_SHARE 0.5): 5 (%d) - then the next two models (%d)' % (first.recorder.frames, len(extracted)))
     first.run_job()
     check(os.path.isfile(vehicle_file('germany:G1_A')) and built[-1] == 'germany:G2_B' and len(extracted) == 6,
           'the vehicle\'s file follows its models, then the next vehicle\'s plan and models (%s, %d)' % (built, len(extracted)))
@@ -292,8 +296,15 @@ try:
     check(planned(second) == sorted(t for t in REGULAR if not os.path.isfile(vehicle_file(t)))
           and progress()['confirmed'] is False and progress()['opted'] is True, 'next session: what is not exported yet, waiting for Continue (%s)' % planned(second))
     second.confirm_sweep('models')
+    saved_items, ex.SWEEP_PACE_ITEMS = ex.SWEEP_PACE_ITEMS, 2
+    delay[0] = 0.035
     drain(second)
+    delay[0] = 0.0
+    ex.SWEEP_PACE_ITEMS = saved_items
     marker = progress()
+    pace = marker['pace']
+    check(marker['estimate'] == 0 and pace['target'] == ex.SWEEP_SHARE and 35 <= pace['ms'] <= 5 * 35 and 0.3 < pace['share'] <= 0.55,
+          'done: nothing left to estimate; the measured pace kept for the next run (%.0f ms a vehicle, a share of %.2f)' % (pace['ms'], pace['share']))
     check(second.sweeps['models'] is None and marker['done'] is True, 'resume: the sweep ends')
     check(sorted(marker['keys']) == sorted(set(REGULAR) - set(['germany:G4_Broken', 'germany:G2_B'])) and list(marker['failed']) == ['germany:G4_Broken'],
           'progress file: the keys of the vehicles it exported, the failure by its key (%s / %s)' % (sorted(marker['keys']), list(marker['failed'])))

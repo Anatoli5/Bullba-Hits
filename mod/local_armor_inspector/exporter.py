@@ -67,6 +67,9 @@ ICON_FILES = tuple('web/icons/%s.png' % name for name in (
     'driver_badRoadsKing', 'driver_motorExpert', 'extraHealthReserve', 'grousers', 'improvedConfiguration',
     'improvedRadioCommunication', 'modernizedExtraHealthReserveAntifragmentationLining', 'radioman_finder',
     'stereoscope', 'turbochargerBattleBooster',
+    # The consumables that move no characteristic (26.09: three slots, any consumable of the game)
+    'afterburning', 'autoExtinguishers', 'handExtinguishers', 'largeMedkit', 'largeRepairkit', 'removedRpmLimiter',
+    'smallMedkit', 'smallRepairkit',
     # Field modification (23.09): the garage's own art, copied by tools/build_equipment_catalogue.py - a pair
     # side's icon, and the level's hexagon for a standard modification
     'fm_additionalGrousers', 'fm_betterFriction', 'fm_improvedAimingHandling', 'fm_improvedCamouflage',
@@ -2100,12 +2103,13 @@ TTX_TOP_MODULES = (('chassis', 'chassis'), ('engine', 'engines'), ('radio', 'rad
 # and the user has said Start (user's decision, 24.09, after a background pace was tried the same day):
 #   - the page, open in the game, says so with every poll ('open'; the recorder's page_open_until). When the sweep of
 #     this client version is not done and not running, it asks the user on every open of the page (Start - or Continue
-#     with how far it got - / Later, with an estimate from this machine's own ms per vehicle); Start ('sweepStart') runs it
+#     with how far it got - / Later, with the mod's own estimate, write_sweep); Start ('sweepStart') runs it
 #     until the page closes or the user presses Stop ('sweepStop' - after the current slice), and the next open asks again;
-#   - confirmed and the page open: builds back to back for TTX_SWEEP_SLICE seconds, then ONE frame of the game (the
-#     recorder's frame callback, wait_frame) and the next slice; the export loop does not wait its 50 ms meanwhile
-#     (sweep_hurry). Never in a battle, never while the page is being dragged, and every queued job (a clicked vehicle's
-#     export) first. The page closed: nothing runs, and the next open of the page asks again.
+#   - confirmed and the page open: builds back to back for a slice (TTX_SWEEP_SLICE seconds, longer when the game's frames
+#     are slow - SWEEP_SLICE_MAX), then rests (sweep_rest): at least ONE frame of the game (the recorder's frame callback,
+#     wait_frame) and as long as the game's share of the time asks (SWEEP_SHARE); the export loop does not wait its 50 ms
+#     meanwhile (sweep_hurry). Never in a battle, never while the page is being dragged, and every queued job (a clicked
+#     vehicle's export) first. The page closed: nothing runs, and the next open of the page asks again.
 # Measured on the client's own python27.dll and items.vehicles (offline stand, 1251 types): a build 26 ms median, most of
 # it the stand's own XML reader (native in the game), the client's parsing ~24 %, ours <1 %. Once per client version and
 # file schema: the progress file TTX_SWEEP_DATA (data/ttx-sweep.js, which the page reads for its indicator and its
@@ -2115,6 +2119,24 @@ TTX_TOP_MODULES = (('chassis', 'chassis'), ('engine', 'engines'), ('radio', 'rad
 try: basestring_type = basestring
 except NameError: basestring_type = str
 TTX_SWEEP_SLICE = 0.06
+# THE SWEEP'S SHARE OF THE TIME (26.09, user: "about half" while the page is open; THE knob, tune it here). A slice of
+# work, then the game alone for slice * (1 - SWEEP_SHARE) / SWEEP_SHARE (at least one frame, at most SWEEP_REST_MAX). The
+# game's frames take their own time anyway (0.8.6 in the game: 60 ms slices with one frame between them came to 23 % -
+# 17 s of work in 74 s, 1202 types at 13.7 ms): when one frame lasts longer than that rest, the next slice grows to keep
+# the share (the frame's time * SWEEP_SHARE / (1 - SWEEP_SHARE)), never beyond SWEEP_SLICE_MAX - the longest hitch.
+SWEEP_SHARE = 0.5
+SWEEP_SLICE_MAX = 0.15
+SWEEP_REST_MAX = 1.0
+# Waits of one frame (0.1 s at most each) in one rest: a bound, whatever the clock does.
+SWEEP_REST_WAITS = 100
+# THE ESTIMATE (26.09, user: the page's question said ~9 s, the sweep took 74 s): the wall-clock time of what is left =
+# items left * ms of work an item / the share of the time the work got (write_sweep, the one owner; the page prints it).
+# Both are measured while the sweep runs - the work of its slices over the vehicles it built, and those slices over the
+# time from the first to the last with the rests between them (a gap over SWEEP_GAP_CAP is the gates closed - a drag, a
+# click, a battle - not the sweep's pace) - and kept in the progress file ('pace') once a session has SWEEP_PACE_ITEMS
+# vehicles and slices; until then the last kept figures, and before any: SWEEP_MS (below) and SWEEP_SHARE.
+SWEEP_GAP_CAP = 1.0
+SWEEP_PACE_ITEMS = 10
 # THE SOURCES' KEYS (24.09, user: do not build again what did not change). The client reads the characteristics from its
 # packages: scripts.pkg (scripts/item_defs/vehicles/<nation>/<vehicle>.xml, <nation>/components/*.xml, <nation>/list.xml,
 # vehicles/common/*, the items code scripts/common/items/*.pyc) and an event's own package (<event>/scripts/item_defs/...,
@@ -2157,6 +2179,10 @@ SWEEP_CATALOGUE_PAUSE = 5.0
 SWEEP_ORDER = ('ttx', 'models')
 SWEEP_FILES = {'ttx': (TTX_SWEEP_DATA, TTX_SWEEP_KEY), 'models': (MODELS_SWEEP_DATA, MODELS_SWEEP_KEY)}
 SWEEP_LABELS = {'ttx': 'TTX', 'models': 'Model'}
+# Ms of work a vehicle before this machine has measured its own (SWEEP_PACE_ITEMS): the characteristics as measured in the
+# game (0.8.6, 26.09: 17 s of slices for 1202 built types, 14.1 ms), the models on the offline stand (25.09: 986 s for
+# 1107 vehicles, 0.89 s; docs/KNOWLEDGE.md 14).
+SWEEP_MS = {'ttx': 14.0, 'models': 890.0}
 # The marker before the page's progress file (24.09, earlier the same day): removed when found.
 TTX_SWEEP_OLD = 'ttx-sweep.json'
 # The mode flags of a vehicle, by name in the file and the descriptor property (vehicles.pyc 2.4.0.1). The second
@@ -2570,6 +2596,9 @@ class Exporter(object):
         self.republish = set()
         self.republished = {}
         self.last_job = 0
+        # Seconds after last_job before the next job that the page is not waiting for (run_job): PACE after a model or
+        # a vehicle, a characteristics file's own share of the time after one.
+        self.job_rest = PACE
         # Durable JSONL cursors. The writer only raises targets after a complete
         # line has closed successfully; consumption is bounded on every tick.
         self.raw_offsets = {}
@@ -3302,8 +3331,9 @@ class Exporter(object):
         index = self.best_job()
         # What the page is waiting for runs at once; everything else keeps PACE
         # seconds between two extractions, which halves the load on the hangar.
-        if self.jobs[index][0] > JOB_PAGE and time.time()-self.last_job < PACE: return False
+        if self.jobs[index][0] > JOB_PAGE and time.time()-self.last_job < self.job_rest: return False
         job = self.take_job(index)
+        started = TTX_TIMER()
         try:
             if job[2] == 'model': self.run_model_job(job[3])
             elif job[2] == 'ttx': self.run_ttx_job(job[3])
@@ -3311,6 +3341,12 @@ class Exporter(object):
         except Exception:
             LOG.exception('Deferred %s job failed; the rest of the queue continues', job[2])
         self.last_job = time.time()
+        # A characteristics file is no extraction (26.09): the exported vehicles' files after a format change took 0.5 ms
+        # each and waited PACE between them - 141 of them 47 s, the TTX sweep behind them. After one: the game's share of
+        # the time its build took (SWEEP_SHARE, as between two slices of the sweep, at most SWEEP_REST_MAX); the export
+        # loop's own wait for a message (50 ms) comes between two jobs anyway.
+        spent = max(0.0, TTX_TIMER() - started)
+        self.job_rest = min(SWEEP_REST_MAX, spent * (1.0 - SWEEP_SHARE) / SWEEP_SHARE) if job[2] == 'ttx' else PACE
         return True
 
     def run_model_job(self, payload):
@@ -3803,9 +3839,10 @@ class Exporter(object):
         """The progress file. For the mod: the stamp, the keys of the sources every current file was built from, the
         failures (by the key they failed with), and the kind's own (TTX: the packages' cache; models: each built type's
         collision resources, the event packages' types). For the page: count/total/done, whether it runs (confirmed), how
-        many of the catalogue it covers, the build time and bytes so far (the estimate at this machine's own pace; models:
-        whether the user ever started it - 'opted' - and whether only failures are left). A sweep of the failed types alone
-        is a completed one to the page (TTX: done from the start)."""
+        many of the catalogue it covers, the build time and bytes so far (models: the MB left from them; whether the user
+        ever started it - 'opted' - and whether only failures are left), and 'estimate': the wall-clock seconds of what is
+        left at this machine's measured pace ('pace', sweep_pace) - the one estimate, the page prints it. A sweep of the
+        failed types alone is a completed one to the page (TTX: done from the start)."""
         sweep, state = self.sweeps[kind], self.sweep_states[kind]
         if state is None: return
         if sweep is not None:
@@ -3818,6 +3855,9 @@ class Exporter(object):
                   'total': total, 'catalogue': state['catalogue'], 'confirmed': bool(sweep and sweep['confirmed']),
                   'retrying': bool(sweep and sweep['retry']), 'built': state['built'], 'builtMs': round(state['builtMs'], 1),
                   'keys': state['keys'], 'failed': state['failed'], 'incremental': state['now'] is not None, 'updatedAt': time.time()}
+        ms, share = self.sweep_pace(kind)
+        marker['pace'] = dict(state['pace'], target=SWEEP_SHARE)
+        marker['estimate'] = 0 if done else int(math.ceil(max(0, total - count) * ms / share / 1000.0))
         if kind == 'ttx':
             marker['packages'] = state['packages']
         else:
@@ -3875,22 +3915,70 @@ class Exporter(object):
         return bool(not self.jobs and self.jobs_allowed())
 
     def sweep_hurry(self):
-        """The export loop's wait: none while a sweep's slices run - between two of them it waits one frame itself."""
-        ready = False
+        """The export loop's wait: none while a sweep's slices run - between two of them it rests itself (sweep_rest).
+        The game's frame callback is wanted while a sweep is started and the page open, even when no slice may run this
+        very moment (a drag, a click's job, 26.09): a chain that stops comes back only with the page's next 'open' (every
+        4 s), and until then every frame waited for would be wait_frame's 0.1 s timeout."""
+        ready = wanted = False
         for kind in SWEEP_ORDER:
             ready = self.sweep_ready(kind) or ready
+            sweep = self.sweeps.get(kind)
+            wanted = wanted or bool(sweep is not None and sweep['confirmed'])
         recorder = self.recorder
         if recorder is not None:
-            try: recorder.frames_wanted = ready
+            try:
+                wanted = wanted and not self.ttx_stopped and not getattr(recorder, 'in_battle', False) and self.page_open()
+                recorder.frames_wanted = bool(ready or wanted)
             except Exception: pass
         return ready
 
     def wait_frame(self):
-        """One frame of the game between two slices: the recorder's frame callback, 0.1 s at most. None offline."""
+        """One frame of the game: the recorder's frame callback, 0.1 s at most. None offline."""
         wait = getattr(self.recorder, 'wait_frame', None)
         if wait is None: return
         try: wait(0.1)
         except Exception: pass
+
+    def sweep_rest(self, sweep):
+        """Between two slices, the game alone (SWEEP_SHARE): one frame of the game at least, then more frames while the
+        game's share of the time since the slice ended asks for it (the slice * (1 - share) / share, SWEEP_REST_MAX at
+        most); a gate that closes ends the rest (the next slice checks them anyway). How long that first frame took says
+        how slow the game's frames are now: the next slice is made long enough that such a frame alone leaves the sweep
+        its share, from TTX_SWEEP_SLICE up to SWEEP_SLICE_MAX."""
+        end = sweep['sliceEnd']
+        if end is None: end = TTX_TIMER()
+        self.wait_frame()
+        frame = max(0.0, TTX_TIMER() - end)
+        sweep['frame'] = frame if sweep['frame'] is None else 0.8 * sweep['frame'] + 0.2 * frame
+        until = end + min(SWEEP_REST_MAX, sweep['last'] * (1.0 - SWEEP_SHARE) / SWEEP_SHARE)
+        for _ in range(SWEEP_REST_WAITS):
+            if TTX_TIMER() >= until or not self.sweep_gates_open(): break
+            self.wait_frame()
+        sweep['slice'] = min(SWEEP_SLICE_MAX, max(TTX_SWEEP_SLICE, sweep['frame'] * SWEEP_SHARE / (1.0 - SWEEP_SHARE)))
+
+    def sweep_measure(self, kind, sweep, began):
+        """A slice has ended (began: its TTX_TIMER start): its work, and the time since the slice before - the rest
+        between them, unless the gates were closed meanwhile (a gap over SWEEP_GAP_CAP) - for the measured pace. From
+        SWEEP_PACE_ITEMS built vehicles and slices of this session on, the progress file keeps this session's figures."""
+        now = TTX_TIMER()
+        spent = max(0.0, now - began)
+        gap = began - sweep['sliceEnd'] if sweep['sliceEnd'] is not None else None
+        sweep['workMs'] += spent * 1000.0
+        sweep['wallMs'] += (spent + (gap if gap is not None and 0 <= gap <= SWEEP_GAP_CAP else 0.0)) * 1000.0
+        sweep['slices'] += 1
+        sweep['last'] = spent
+        sweep['sliceEnd'] = now
+        state = self.sweep_states.get(kind)
+        if state is None: return
+        if sweep['built'] >= SWEEP_PACE_ITEMS: state['pace']['ms'] = round(sweep['workMs'] / sweep['built'], 2)
+        if sweep['slices'] >= SWEEP_PACE_ITEMS and sweep['wallMs'] > 0:
+            state['pace']['share'] = round(min(1.0, max(0.02, sweep['workMs'] / sweep['wallMs'])), 3)
+
+    def sweep_pace(self, kind):
+        """(ms of work a vehicle, share of the time the work gets) for the estimate: this machine's measured figures
+        (the progress file's 'pace', sweep_measure), else SWEEP_MS and SWEEP_SHARE."""
+        pace = (self.sweep_states.get(kind) or {}).get('pace') or {}
+        return pace.get('ms') or SWEEP_MS[kind], pace.get('share') or SWEEP_SHARE
 
     def run_sweeps(self):
         """One slice of the first sweep that is ready (SWEEP_ORDER: the characteristics before the models). Shutting down:
@@ -3904,13 +3992,13 @@ class Exporter(object):
         return False
 
     def run_sweep(self, kind):
-        """One slice: after one frame of the game since the slice before, steps back to back for up to TTX_SWEEP_SLICE seconds,
+        """One slice: after the rest since the slice before (sweep_rest), steps back to back for up to a slice's seconds,
         every step behind the gates (review #5: a battle, a drag, a closing page or the mod shutting down (#6) ends the slice
         before the next one). A step is the kind's own unit of work on the type at 'next' (ttx_step, models_step); it says
         'built', 'current' or 'failed' when it is done with the type, 'partial' when the type needs more steps, None when
         the gates closed before it did anything. True when it did any work."""
         sweep = self.sweeps[kind]
-        if sweep['sliced']: self.wait_frame()
+        if sweep['sliced']: self.sweep_rest(sweep)
         sweep['sliced'] = True
         if sweep['clock'] is None: sweep['clock'] = time.time()
         step = self.ttx_step if kind == 'ttx' else self.models_step
@@ -3924,18 +4012,18 @@ class Exporter(object):
                 if outcome in ('built', 'partial'):
                     worked = True
                     sweep['dirty'] = True
-                    self.last_job = time.time()
+                    self.last_job, self.job_rest = time.time(), PACE
                 if outcome != 'partial':
                     sweep['next'] += 1
                     if outcome == 'built': sweep['built'] += 1
                     elif outcome == 'failed': sweep['failed'].append(type_name)
                     else: sweep['current'] += 1
-                if TTX_TIMER() - began >= TTX_SWEEP_SLICE: break
+                if TTX_TIMER() - began >= sweep['slice']: break
             else:
-                sweep['workMs'] += (TTX_TIMER() - began) * 1000.0
+                self.sweep_measure(kind, sweep, began)
                 self.finish_sweep(kind)
                 return worked
-            sweep['workMs'] += (TTX_TIMER() - began) * 1000.0
+            self.sweep_measure(kind, sweep, began)
             if time.time() - sweep['reported'] >= TTX_SWEEP_REPORT: self.write_sweep(kind, done=False)
         except Exception:
             self.sweeps[kind] = None
@@ -3954,18 +4042,26 @@ class Exporter(object):
         if self.recorder is not None:
             try: self.recorder.frames_wanted = False
             except Exception: pass
-        LOG.info('%s sweep: %d types - %d built (%.0f ms), %d current, %d failed%s; %.0f s of work, %.0f s from its start this session',
+        # The pace too (26.09): what the estimate of the next run starts from, and what SWEEP_SHARE is tuned by.
+        LOG.info('%s sweep: %d types - %d built (%.0f ms), %d current, %d failed%s; %.0f s of work, %.0f s from its start this session; '
+                 '%.1f ms of work a built vehicle, the work %.0f %% of the time while it ran (SWEEP_SHARE %.0f %%), %d slices, '
+                 'the last %.0f ms long, a frame %.0f ms',
                  SWEEP_LABELS[kind], len(sweep['types']), sweep['built'], sweep['buildMs'], sweep['current'], len(sweep['failed']),
                  ' (first: %s)' % sweep['error'] if sweep['error'] else '', sweep['workMs'] / 1000.0,
-                 time.time() - (sweep['clock'] or time.time()))
+                 time.time() - (sweep['clock'] or time.time()), sweep['workMs'] / max(1, sweep['built']),
+                 100.0 * sweep['workMs'] / max(1e-9, sweep['wallMs']), 100.0 * SWEEP_SHARE, sweep['slices'],
+                 1000.0 * sweep['last'], 1000.0 * (sweep['frame'] or 0.0))
 
     def new_sweep(self, types, retry=False, confirmed=False):
         """The run state of a sweep over `types` (the progress file's count is 'next')."""
         return {'types': types, 'retry': retry, 'confirmed': confirmed, 'next': 0, 'clock': None, 'built': 0, 'current': 0,
-                'failed': [], 'error': None, 'buildMs': 0.0, 'workMs': 0.0, 'reported': 0.0, 'sliced': False, 'dirty': False}
+                'failed': [], 'error': None, 'buildMs': 0.0, 'workMs': 0.0, 'reported': 0.0, 'sliced': False, 'dirty': False,
+                # The pace (sweep_rest, sweep_measure): the slices' time with the rests between them, how many, the last
+                # slice's length and its end, the game's frame (smoothed) and the length of the next slice.
+                'wallMs': 0.0, 'slices': 0, 'sliceEnd': None, 'last': 0.0, 'frame': None, 'slice': TTX_SWEEP_SLICE}
 
     def sweep_state(self, kind, marker, catalogue):
-        """The progress file's state this session, from its marker (keys, failures, build time so far)."""
+        """The progress file's state this session, from its marker (keys, failures, build time so far, the pace)."""
         state = {'catalogue': catalogue, 'started': time.time(), 'built': 0, 'builtMs': 0.0, 'now': None,
                  'keys': dict(marker.get('keys') or {}), 'failed': dict(marker.get('failed') or {}),
                  'packages': dict(marker.get('packages') or {}), 'parts': dict(marker.get('parts') or {}),
@@ -3975,6 +4071,17 @@ class Exporter(object):
             state['bytes'] = int(marker.get('bytes') or 0)
         except (TypeError, ValueError):
             pass
+        # The measured pace of an earlier session (sweep_measure); a share measured under another SWEEP_SHARE is not
+        # this build's, and a value of another shape is none.
+        state['pace'] = {}
+        pace = marker.get('pace')
+        if isinstance(pace, dict):
+            try:
+                ms, share = float(pace.get('ms') or 0), float(pace.get('share') or 0)
+                if 0 < ms < 1e6: state['pace']['ms'] = ms
+                if 0 < share <= 1 and pace.get('target') == SWEEP_SHARE: state['pace']['share'] = share
+            except (TypeError, ValueError):
+                pass
         self.sweep_states[kind] = state
         return state
 

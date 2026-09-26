@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
 """The characteristics sweep of the exporter (24.09, ttx-all-layout): every catalogue type's TTX file, built through
-build_ttx only while the page is open in the game and the user said Start, in 60 ms slices with one frame of the game
-between them, and only for the types whose source files changed (their CRCs in the client's packages). Inside the
+build_ttx only while the page is open in the game and the user said Start, in 60 ms slices with the game alone between
+them (at least one frame, and SWEEP_SHARE of the time), with the mod's own wall-clock estimate from the measured pace, and
+only for the types whose source files changed (their CRCs in the client's packages). Inside the
 client's own python27.dll; temp folders only; ttx_block is a stand-in (the real one needs the client's items.vehicles -
 the offline stand measures it).
 
     python tests/py27/run27.py tests/py27/ttx_sweep.py
 Verdict through BULLBA_PY27_RESULT (see run27.py). The same report and failure rules as exporter_safety.py."""
-import json, logging, os, shutil, sys, tempfile, time, types, zipfile
+import json, logging, math, os, shutil, sys, tempfile, time, types, zipfile
 REPO = os.environ.get('BULLBA_REPO') or os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(REPO, 'mod'))
 sys.dont_write_bytecode = True
@@ -100,6 +101,10 @@ try:
     clock = [0.0]
     SAVED_TIMER[:] = [ex.TTX_TIMER]
     ex.TTX_TIMER = lambda: clock[0]
+    # A frame of the game on the same fake clock (26.09): 16 ms unless a check says otherwise. The measured pace counts from
+    # two vehicles and slices here (the mod: SWEEP_PACE_ITEMS, a session's first vehicles are not its pace).
+    frame = [0.016]
+    ex.SWEEP_PACE_ITEMS = 2
 
     class Recorder(object):
         def __init__(self):
@@ -107,6 +112,7 @@ try:
 
         def wait_frame(self, timeout):
             self.frames += 1
+            clock[0] += frame[0]
 
     battle_on_call = [0]
 
@@ -154,6 +160,10 @@ try:
     check(marker['done'] is False and marker['confirmed'] is False and marker['count'] == 0 and marker['total'] == 6
           and marker['incremental'] is True and marker['catalogue'] == 6, 'progress file: 0 of 6, not running, by the sources\' keys')
     check(not os.path.exists(os.path.join(folder, 'ttx-sweep.json')), 'the old marker beside the settings is gone')
+    # 26.09 (user: the question said ~9 s, the sweep took 74 s): the mod's estimate is the wall-clock time - before this
+    # machine has measured anything, SWEEP_MS a vehicle over SWEEP_SHARE of the time.
+    check(marker['estimate'] == int(math.ceil(6 * ex.SWEEP_MS['ttx'] / ex.SWEEP_SHARE / 1000.0)) and marker['pace'] == {'target': ex.SWEEP_SHARE},
+          'the estimate before any measurement: 6 x %.0f ms over a share of %.2f = %s s' % (ex.SWEEP_MS['ttx'], ex.SWEEP_SHARE, marker['estimate']))
     for _ in range(5): first.run_job()
     check(not calls, 'no Start yet: nothing is built, whatever the page')
     check(first.confirm_sweep('ttx') and progress()['confirmed'] is True, 'Start: running, and the progress file says so')
@@ -163,19 +173,60 @@ try:
     check(first.sweep_hurry() and first.recorder.frames_wanted, 'running: the export loop does not wait, the frame callback is wanted')
     first.run_job()
     check(len(calls) == 2 and first.recorder.frames == 0, 'one slice: builds back to back for 60 ms (%d), no frame before the first' % len(calls))
+    at = clock[0]
     first.run_job()
-    check(first.recorder.frames == 1, 'the next slice waits one frame of the game first')
-    delay[0] = 0.0
+    check(first.recorder.frames == 5 and len(calls) == 4, 'the next slice waits for the game first: frames of 16 ms until as long as the slice took (70 ms, SWEEP_SHARE 0.5) - 5 (%d)' % first.recorder.frames)
+    # --- the rest between two slices (SWEEP_SHARE, the knob; 26.09) --------------------------------------------------------
+    def rest(last, frame_s, share=None):
+        """One rest after a slice of `last` seconds with frames of `frame_s`: (frames waited, seconds, next slice)."""
+        saved = ex.SWEEP_SHARE
+        if share is not None: ex.SWEEP_SHARE = share
+        probe = first.new_sweep([])
+        probe['sliceEnd'], probe['last'], frame[0] = clock[0], last, frame_s
+        frames0, start = first.recorder.frames, clock[0]
+        first.sweep_rest(probe)
+        ex.SWEEP_SHARE, frame[0] = saved, 0.016
+        result = first.recorder.frames - frames0, clock[0] - start, probe['slice']
+        clock[0] = start   # a probe, not the sweep's own time
+        return result
+    waited, spent, next_slice = rest(0.07, 0.016)
+    check(waited == 5 and spent >= 0.07 and next_slice == ex.TTX_SWEEP_SLICE, 'rest: as long as the slice at a share of 0.5, frames of 16 ms - 5 frames, %.0f ms; the next slice stays %.0f ms' % (spent * 1000, next_slice * 1000))
+    waited, spent, next_slice = rest(0.06, 0.016, share=0.25)
+    check(waited == 12 and spent >= 0.18, 'rest: the share constant is the knob - at 0.25 three times the slice (12 frames, %.0f ms)' % (spent * 1000))
+    waited, spent, next_slice = rest(0.07, 0.2)
+    check(waited == 1 and next_slice == ex.SWEEP_SLICE_MAX, 'slow frames (200 ms): one frame is the rest, the next slice grows to keep the share - up to SWEEP_SLICE_MAX (%.0f ms)' % (next_slice * 1000))
+    waited, spent, next_slice = rest(0.07, 0.08)
+    check(waited == 1 and abs(next_slice - 0.08) < 1e-9, 'frames of 80 ms: the next slice 80 ms, a share of 0.5 with one frame (%.0f ms)' % (next_slice * 1000))
     # --- queued jobs, battle, drag, shutdown ---------------------------------------------------------------------------
+    delay[0] = 0.0
     before = len(calls)
     first.queue_job(ex.JOB_BULK, 'ttx', {'vehicleType': 'usa:A9_Queued'})
-    check(not first.sweep_hurry(), 'a queued job: the export loop waits as usual')
+    check(not first.sweep_hurry() and first.recorder.frames_wanted, 'a queued job: the export loop waits as usual; the frame callback goes on (a chain that stops returns only with the page\'s next open)')
     first.last_job = 0   # the models' PACE after the sweep's last build
     first.run_job()
     check(calls[-1] == 'usa:A9_Queued' and len(calls) == before + 1, 'a queued job (a clicked vehicle) runs before the sweep')
+    # 26.09: the exported vehicles' characteristics after a format change waited PACE (0.3 s) each for 0.5 ms of work.
+    first.queue_job(ex.JOB_BULK, 'ttx', {'vehicleType': 'usa:A10_Paced'})
+    first.queue_job(ex.JOB_BULK, 'ttx', {'vehicleType': 'usa:A11_Paced'})
+    delay[0] = 0.035
+    first.run_job()
+    rested = first.job_rest
+    time.sleep(0.05)
+    first.run_job()
+    check(calls[-2:] == ['usa:A10_Paced', 'usa:A11_Paced'] and abs(rested - 0.035) < 1e-9,
+          'characteristics jobs: no PACE between them - after one, the game\'s share of its build time (35 ms at 0.5)')
+    first.queue_job(ex.JOB_BULK, 'vehicle', {'vehicleType': 'usa:A12_Model'})
+    real_export = first.export_vehicle
+    first.export_vehicle = lambda request, **named: None
+    first.last_job = 0
+    first.run_job()
+    first.export_vehicle = real_export
+    check(first.job_rest == ex.PACE, 'a vehicle (models: an extraction) keeps PACE after it')
+    delay[0] = 0.0
+    before = len(calls) - 1
     first.recorder.in_battle = True
     first.run_job()
-    check(len(calls) == before + 1 and not first.sweep_hurry(), 'in a battle: nothing')
+    check(len(calls) == before + 1 and not first.sweep_hurry() and not first.recorder.frames_wanted, 'in a battle: nothing, and no frame callback')
     first.recorder.in_battle = False
     first.recorder.busy_until = time.time() + 60
     first.run_job()
@@ -197,8 +248,17 @@ try:
     first.ttx_stopped = False
     # --- Stop, the page closed -------------------------------------------------------------------------------------------
     done_so_far = first.ttx_sweep['next']
+    measured = first.ttx_sweep
     check(first.stop_sweep('ttx') and progress()['confirmed'] is False and progress()['count'] == done_so_far,
           'Stop: not running, what is done stays (%d)' % done_so_far)
+    marker = progress()
+    pace = marker['pace']
+    check(abs(pace['ms'] - measured['workMs'] / measured['built']) < 0.01 and pace['ms'] != ex.SWEEP_MS['ttx'] and pace['target'] == ex.SWEEP_SHARE,
+          'the measured pace: the slices\' work over the vehicles built (%.1f ms)' % pace['ms'])
+    check(0.3 < pace['share'] < 1 and abs(pace['share'] - measured['workMs'] / measured['wallMs']) < 0.001,
+          'and the share of the time the work got, the rests between slices counted (%.2f)' % pace['share'])
+    check(marker['estimate'] == int(math.ceil((marker['total'] - marker['count']) * pace['ms'] / pace['share'] / 1000.0)),
+          'the estimate: what is left x the measured ms over the measured share (%s s)' % marker['estimate'])
     first.run_job()
     check(len(calls) == at, 'stopped: nothing')
     first.confirm_sweep('ttx')
@@ -216,6 +276,8 @@ try:
     second = session()
     check(planned(second) == sorted(set(TYPES) - set(written)) and progress()['confirmed'] is False,
           'next session: the types not built yet, not running until Start again')
+    check(progress()['pace'] == pace and progress()['estimate'] == int(math.ceil(len(planned(second)) * pace['ms'] / pace['share'] / 1000.0)),
+          'and its first estimate is at the pace measured the session before')
     second.confirm_sweep('ttx')
     drain(second)
     marker = progress()
@@ -292,6 +354,14 @@ try:
     ex.write_data = real_write
     check(locked.ttx_sweep is None and len(calls) == 6 and list(progress()['failed']) == ['germany:G1_A'],
           'a file that cannot be written: that vehicle failed, the other five built (review #2)')
+    # --- the kept pace: a share measured under another SWEEP_SHARE is not this build's -------------------------------------
+    real_write(os.path.join(folder, 'data', 'ttx-sweep.js'), ex.TTX_SWEEP_KEY, {'stamp': {}, 'pace': {'ms': 2000, 'share': 0.3, 'target': 0.25}})
+    retuned = session('client 12\n')
+    check(progress()['pace'] == {'ms': 2000.0, 'target': ex.SWEEP_SHARE} and progress()['estimate'] == int(math.ceil(6 * 2000 / ex.SWEEP_SHARE / 1000.0)),
+          'a share measured under another SWEEP_SHARE is dropped, the ms a vehicle kept (%s)' % progress()['pace'])
+    real_write(os.path.join(folder, 'data', 'ttx-sweep.js'), ex.TTX_SWEEP_KEY, {'stamp': {}, 'pace': {'ms': 'fast', 'share': 7}})
+    session('client 13\n')
+    check(progress()['pace'] == {'target': ex.SWEEP_SHARE}, 'a pace of another shape is none')
     # --- review #1: a progress file of another shape, and a sweep that throws, never cost the export -------------------
     real_write(os.path.join(folder, 'data', 'ttx-sweep.js'), ex.TTX_SWEEP_KEY, {'stamp': {}, 'failed': 5, 'keys': []})
     odd = session('client 11\n')

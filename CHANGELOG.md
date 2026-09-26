@@ -2,6 +2,11 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
+## Unreleased
+
+- **Characteristics / Export all models:** the time the question gives is now the real wall-clock time at this PC's measured pace (it said ~9 s for a characteristics sweep that took 74 s), in minutes and seconds ("about 1 min 15 s").
+- **Characteristics / Export all models:** while the page is open a sweep now gets about half of the time (it got about a quarter); after a game update the characteristics of your exported vehicles are ready in seconds instead of ~50 s.
+
 ## 0.8.6 (2026-09-26)
 
 - **Shooter:** another shooter picked through the Shooter tile keeps the model on screen - the battle's own record - instead of re-reading the vehicle's export (event vehicles such as the Waffenträger Panther II showed "Complete vehicle model unavailable"); its pose, pinned point, ⌖ shot and health stay.
