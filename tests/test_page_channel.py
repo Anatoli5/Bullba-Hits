@@ -147,19 +147,24 @@ class WebCommandTests(unittest.TestCase):
     def test_sweep_start_and_stop_reach_the_recorder_and_its_frames(self):
         # 24.09: Start and Stop of the characteristics sweep; Start begins the frame callback that paces its slices.
         asked = []
-        presentation.set_sweep_request(lambda start: asked.append(start))
+        presentation.set_sweep_request(lambda start, kind: asked.append((start, kind)))
         self.addCleanup(presentation.set_sweep_request, None)
         handler = presentation.web_handlers()[0].handler
         handler(Command(action='sweepStart'), {})
         handler(Command(action='sweepStop'), {})
-        self.assertEqual((asked, self.calls), ([True, False], []))
+        # 25.09: the model sweep is the same pair of commands with its kind; an unknown kind is refused.
+        handler(Command(action='sweepStart', kind='models'), {})
+        handler(Command(action='sweepStop', kind='models'), {})
+        handler(Command(action='sweepStart', kind='other'), {})
+        self.assertEqual((asked, self.calls), ([(True, 'ttx'), (False, 'ttx'), (True, 'models'), (False, 'models')], []))
         callbacks, exports = [], []
         bigworld = types.ModuleType('BigWorld')
         bigworld.callback = lambda delay, fn: callbacks.append(fn)
         recorder = modmain.Recorder.__new__(modmain.Recorder)
         recorder.page_open_until, recorder.frames_wanted, recorder.frame_loop = time.time() + 10, False, False
         recorder.frame_event = modmain.threading.Event()
-        recorder.writer = types.SimpleNamespace(put_export=lambda name, payload: exports.append(name))
+        kinds = []
+        recorder.writer = types.SimpleNamespace(put_export=lambda name, payload: exports.append(name) or kinds.append(payload))
         with patch.dict(sys.modules, {'BigWorld': bigworld}):
             with patch.object(modmain, '_recorder', recorder):
                 modmain.page_sweep(True)
@@ -173,6 +178,9 @@ class WebCommandTests(unittest.TestCase):
                 modmain.page_sweep(False)
             callbacks.pop()()   # the chain ends on the next frame
             self.assertEqual((exports, recorder.frames_wanted, recorder.frame_loop, callbacks), (['sweepStart', 'sweepStop'], False, False, []))
+            with patch.object(modmain, '_recorder', recorder):
+                modmain.page_sweep(True, 'models')
+            self.assertEqual((exports[-1], kinds), ('sweepStart', ['ttx', 'ttx', 'models']))
 
 
 class PickerDescriptorTests(unittest.TestCase):

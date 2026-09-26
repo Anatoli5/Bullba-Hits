@@ -207,6 +207,39 @@ def zip_directory(path):
         return stream.read(length)
 
 
+# One central-directory record (PKZIP APPNOTE 4.3.12): signature, versions, flags, method, time, date, CRC-32, sizes,
+# name/extra/comment lengths, disk, attributes, the local header's offset.
+ZIP_ENTRY = struct.Struct('<4s6H3L5H2L')
+COLLISION_MARK = b'/collision_client/'
+
+
+def collision_members(path):
+    """[(name, (header_offset, method, compressed, size, crc))] of the collision models (.havok) of one package, in the
+    directory's order - the index zipfile gave, without building an object for every one of its ~20 000 entries: one
+    C-level search of the raw central directory for the folder name, then the record around each hit (5 364 of 568 840
+    entries in all the client's packages). A package with no such folder costs one search. None when the directory
+    cannot be read that way or a record does not add up: the caller parses the package with zipfile instead."""
+    directory = zip_directory(path)
+    if directory is None: return None
+    found, end = [], len(directory)
+    at = directory.find(COLLISION_MARK)
+    while at >= 0:
+        # The record's own signature is the nearest one before its name: a name is text and holds none.
+        start = directory.rfind(b'PK\x01\x02', max(0, at - ZIP_ENTRY.size - 1024), at)
+        if start < 0 or start + ZIP_ENTRY.size > end: return None
+        fields = ZIP_ENTRY.unpack_from(directory, start)
+        name_end = start + ZIP_ENTRY.size + fields[10]
+        if not start + ZIP_ENTRY.size <= at < name_end <= end: return None
+        if 0xffffffff in (fields[8], fields[9], fields[16]): return None   # zip64: zipfile's own reading
+        try:
+            name = directory[start + ZIP_ENTRY.size:name_end].decode('ascii')
+        except UnicodeDecodeError:
+            name = ''
+        if name.endswith('.havok'): found.append((name, (fields[16], fields[4], fields[8], fields[9], fields[7])))
+        at = directory.find(COLLISION_MARK, name_end + fields[11] + fields[12])
+    return found
+
+
 def read_package_entry(path, name, entry):
     """One ZIP entry read at the offset its central-directory record gave.
 
@@ -1471,6 +1504,11 @@ def rest_columns(descr):
     return columns
 
 
+def part_resource(component):
+    """The collision model of one static part: the resource its active hit tester reads (parts_from_descr, the model sweep)."""
+    return component.hitTesterManager.activeHitTester.bspModelName
+
+
 def parts_from_descr(descr, armor_source='client descriptor rebuilt from the record'):
     """A vehicle descriptor in, its collision parts out - no battle record involved.
 
@@ -1497,7 +1535,7 @@ def parts_from_descr(descr, armor_source='client descriptor rebuilt from the rec
         except Exception:
             pass
         try:
-            part['resource'] = component.hitTesterManager.activeHitTester.bspModelName
+            part['resource'] = part_resource(component)
             part['transform'] = list(transforms[idx] if idx < len(transforms) else transforms[0])
         except Exception:
             part['error'] = 'Part model or transform unavailable'
@@ -1571,8 +1609,30 @@ VEHICLE_TAG_PREMIUM_IGR = 'premiumIGR'
 VEHICLE_TAG_COLLECTOR = 'collectorVehicle'
 VEHICLE_TAG_SPECIAL = 'special'
 CATALOGUE_SKIP_TAGS = ('observer', 'bot')
-DEFAULT_SETTINGS = {'exportAllVehicles': False}
+# settings.json: no setting is read today. exportAllVehicles (the hidden bulk export until 25.09) is replaced by the
+# page's Export all models (the model sweep); a file that still sets it is left as it is and one line says so.
+DEFAULT_SETTINGS = {}
 NON_IDENTIFIER = re.compile(r'[^-a-zA-Z0-9_]')
+# constants.BATTLE_MODE_VEHICLE_TAGS of client 2.4.0.1, the fallback when the client's own set cannot be
+# read, plus maps_training, which gui Vehicle.isOnlyForMapsTrainingBattles reads outside that set
+# (outputs/vehicle-classes-modes-2026-09-21.md, summary point 6). One owner: the recorder's groupTags and the
+# catalogue's modeOnly flag (the model sweep leaves those vehicles out) both read group_mode_tags().
+DEFAULT_MODE_TAGS = ('event_battles', 'comp7', 'comp7_light', 'epic_battles', 'battle_royale', 'fun_random',
+                     'fallout', 'bob', 'clanWarsBattles', 'maps_training')
+_mode_tags = []
+
+
+def group_mode_tags():
+    """The battle-mode vehicle tags of the running client, read once; the known set when it has none."""
+    if not _mode_tags:
+        names = set(DEFAULT_MODE_TAGS)
+        try:
+            from constants import BATTLE_MODE_VEHICLE_TAGS
+            names.update(str(tag) for tag in BATTLE_MODE_VEHICLE_TAGS)
+        except Exception:
+            pass
+        _mode_tags.append(frozenset(names))
+    return _mode_tags[0]
 
 
 def vehicle_id(type_name):
@@ -1778,6 +1838,13 @@ def catalogue_entry(nation, item, labels):
     entry['premium'] = VEHICLE_TAG_PREMIUM in tags or VEHICLE_TAG_PREMIUM_IGR in tags
     entry['collector'] = VEHICLE_TAG_COLLECTOR in tags
     entry['special'] = VEHICLE_TAG_SPECIAL in tags
+    # A vehicle made for a battle mode (event, Frontline, Steel Hunter, Onslaught's rentals...): the model sweep leaves
+    # it out. Only written when true.
+    modes = group_mode_tags()
+    if any(tag in modes for tag in tags): entry['modeOnly'] = True
+    # An internet-café copy (premiumIGR): the original's model under another name - the model sweep leaves it out too
+    # (review 25.09: 47 of them). Only written when true.
+    if VEHICLE_TAG_PREMIUM_IGR in tags: entry['igr'] = True
     return entry
 
 
@@ -1793,8 +1860,8 @@ def best_component(components):
 def top_descriptor(type_name):
     """The client's stock descriptor of a vehicle type, raised to its top configuration.
 
-    Deliberately a simple heuristic, and only used for the optional bulk export of
-    the whole catalogue: the highest-level chassis, then the highest-level turret
+    Deliberately a simple heuristic, used for a vehicle the player does not own
+    (a click in the page's list) and by the model sweep: the highest-level chassis, then the highest-level turret
     of turret position 0 with that turret's highest-level gun. The hull is not an
     installable component in this client - the hull variant follows from the
     installed components - so the chassis is what a 'top hull' means here. Engine,
@@ -1851,7 +1918,7 @@ TTX_TOP_MODULES = (('chassis', 'chassis'), ('engine', 'engines'), ('radio', 'rad
 #     until the page closes or the user presses Stop ('sweepStop' - after the current slice), and the next open asks again;
 #   - confirmed and the page open: builds back to back for TTX_SWEEP_SLICE seconds, then ONE frame of the game (the
 #     recorder's frame callback, wait_frame) and the next slice; the export loop does not wait its 50 ms meanwhile
-#     (ttx_hurry). Never in a battle, never while the page is being dragged, and every queued job (a clicked vehicle's
+#     (sweep_hurry). Never in a battle, never while the page is being dragged, and every queued job (a clicked vehicle's
 #     export) first. The page closed: nothing runs, and the next open of the page asks again.
 # Measured on the client's own python27.dll and items.vehicles (offline stand, 1251 types): a build 26 ms median, most of
 # it the stand's own XML reader (native in the game), the client's parsing ~24 %, ours <1 %. Once per client version and
@@ -1876,6 +1943,22 @@ TTX_SOURCE_SKIP = re.compile(r'item_defs/vehicles/common/(?:customization|damage
 TTX_SWEEP_REPORT = 2.0
 TTX_SWEEP_DATA = ('data', 'ttx-sweep.js')
 TTX_SWEEP_KEY = 'ttxSweep'
+# THE MODEL SWEEP (25.09, user: a visible Export all models, every regular vehicle, only what changed on the next run).
+# The second kind of the same machinery (Exporter.run_sweep): the same Start, Stop, gates, slices, resume and progress file
+# shape (MODELS_SWEEP_DATA). MODELS_FORMAT is raised whenever export_vehicle or a model file changes so that every vehicle
+# of the sweep must be written again. Measured on the offline stand (docs/KNOWLEDGE.md 14): 1107 regular vehicles, a vehicle
+# 0.74 s median of work (0.89 s mean), a collision model 0.11 s median and 1.6 s p99; 986 s of work, ~190 MB in all.
+MODELS_FORMAT = 1
+MODELS_SWEEP_DATA = ('data', 'models-sweep.js')
+MODELS_SWEEP_KEY = 'modelsSweep'
+# Base-list copies made for the onboarding and Story Mode (no battle-mode tag on them) and the client's test vehicles:
+# not regular vehicles, left out of the model sweep by name (outputs/vehicle-classes-modes-2026-09-21.md section 4).
+MODELS_SKIP_NAME = re.compile(r'_(?:StoryMode\w*|NewOnBoarding|test|TEST)$|^Env_')
+# The catalogue while the model sweep writes vehicle after vehicle: at most every 5 s (the page polls every 2-5 s).
+SWEEP_CATALOGUE_PAUSE = 5.0
+SWEEP_ORDER = ('ttx', 'models')
+SWEEP_FILES = {'ttx': (TTX_SWEEP_DATA, TTX_SWEEP_KEY), 'models': (MODELS_SWEEP_DATA, MODELS_SWEEP_KEY)}
+SWEEP_LABELS = {'ttx': 'TTX', 'models': 'Model'}
 # The marker before the page's progress file (24.09, earlier the same day): removed when found.
 TTX_SWEEP_OLD = 'ttx-sweep.json'
 # The mode flags of a vehicle, by name in the file and the descriptor property (vehicles.pyc 2.4.0.1). The second
@@ -2119,32 +2202,12 @@ def rocket_block(params):
     return block
 
 
-def ttx_evicting(build):
-    """build(), then drop from the client's vehicle-type cache (items.vehicles g_cache) the types it added.
-
-    VehicleDescr(typeID) parses the type and keeps it in g_cache for the session: ~120 KB a type, ~150 MB for the whole
-    catalogue of the background sweep (measured offline, 24.09), for vehicles the player never opens. Only the keys
-    that were not there before are dropped - a type the game holds stays - and a game read of the same type meanwhile
-    only parses it again. Without that private dict nothing is dropped."""
-    try:
-        from items import vehicles as client_vehicles
-        cache = getattr(client_vehicles.g_cache, '_Cache__vehicles', None)
-        before = set(cache) if isinstance(cache, dict) else None
-    except Exception:
-        cache = before = None
-    try:
-        return build()
-    finally:
-        if before is not None:
-            for key in [key for key in list(cache) if key not in before]: cache.pop(key, None)
-
-
 def ttx_block(type_name, version, log=True):
     """The characteristics of one vehicle type, the value of data/ttx/<id>.js (spec section 2.1).
 
     A fresh VehicleDescr(typeID) of the running client - never the memo of vehicle_descr: its modules are
     replaced here - raised to the best chassis, engine, radio and fuel tank (best_component, the rule of
-    top_descriptor, which itself stays as it is: it decides the compact descriptor of the bulk export). Then
+    top_descriptor, which itself stays as it is: it decides the compact descriptor of the model sweep). Then
     one installTurret per pair of vtype.turrets[0][i].guns: the client applies the turret's own overrides of
     the gun (reload, aiming, dispersion factors, pitch limits) and picks the hull variant itself. The shells
     are read once per gun, the modules once per type. Every field is read on its own; a refusal is a line in
@@ -2274,6 +2337,10 @@ def ttx_block(type_name, version, log=True):
 
 
 class Exporter(object):
+    # The TTX sweep's run state and progress state, by the names its code has always used.
+    ttx_sweep = property(lambda self: self.sweeps['ttx'], lambda self, value: self.sweeps.__setitem__('ttx', value))
+    ttx_state = property(lambda self: self.sweep_states['ttx'], lambda self, value: self.sweep_states.__setitem__('ttx', value))
+
     def __init__(self, game, folder, version, archive=None):
         self.game = os.path.abspath(game)
         self.folder = os.path.abspath(folder)
@@ -2292,7 +2359,6 @@ class Exporter(object):
         self.armor = ArmorCatalog(self.game)
         self.settings = dict(DEFAULT_SETTINGS)
         self.vehicles = {}
-        self.bulk = []
         self.catalogue_dirty = False
         self.catalogue_written = 0
         # The one queue of deferred work: [priority, order, kind, payload], lowest
@@ -2331,12 +2397,14 @@ class Exporter(object):
         # or written this session, TTX_FAILED after a build failed. Filled lazily on the first request of a
         # type - setup reads nothing for it. Export thread only.
         self.ttx_known = {}
-        # The sweep of every catalogue type (TTX_SWEEP_SLICE), None when there is none this session; ttx_stopped - the mod
-        # is shutting down (Writer.close), no build after it.
-        self.ttx_sweep = None
+        # The sweeps over the catalogue (SWEEP_ORDER: 'ttx', 'models'), None when there is none this session; ttx_stopped -
+        # the mod is shutting down (Writer.close), no step of any sweep after it.
+        self.sweeps = dict((kind, None) for kind in SWEEP_ORDER)
         self.ttx_stopped = False
-        # The progress file's state this session (start_ttx_sweep): the sources' keys now and those of the current files.
-        self.ttx_state = None
+        # Each progress file's state this session (start_*_sweep): the sources' keys now and those of the current files.
+        self.sweep_states = dict((kind, None) for kind in SWEEP_ORDER)
+        # The CRCs of the characteristics' sources, read once a session for both sweeps (source_crcs).
+        self.crcs = None
 
     def setup(self):
         archive = self.archive
@@ -2383,21 +2451,24 @@ class Exporter(object):
                 complete = False
                 LOG.exception('Could not rebuild saved battle: %s', os.path.basename(path))
         self.replay_vehicle_requests()
-        rows = self.write_catalogue(force=True)
+        rows = self.catalogue_rows()
         # prune() deletes every model no reference names, and a model of an earlier client can never be extracted
         # again. So it runs only from a complete reference set: one battle or vehicle file that did not read or
         # publish here - locked by an antivirus or a backup, or broken - keeps every model on disk this session
         # (EXP-02/DATA-02, 24.09). The unused ones go on the next start that reads everything.
         if not complete: LOG.warning('Unused models kept this session: a saved battle or vehicle could not be read')
         self.write_index(prune=complete)
-        if self.settings.get('exportAllVehicles'):
-            self.queue_catalogue_exports()
-        # The sweep is optional: whatever goes wrong with it leaves the export alone (review #1).
-        try:
-            self.start_ttx_sweep(rows)
-        except Exception:
-            self.ttx_sweep = None
-            LOG.exception('TTX sweep unavailable this session; the export goes on')
+        # The sweeps are optional: whatever goes wrong with one leaves the export alone (review #1).
+        for kind, start in (('ttx', self.start_ttx_sweep), ('models', self.start_models_sweep)):
+            try:
+                start(rows)
+            except Exception:
+                self.sweeps[kind] = None
+                LOG.exception('%s sweep unavailable this session; the export goes on', SWEEP_LABELS[kind])
+        # The catalogue once the model sweep's keys are known: a file of an earlier client whose sources did not change
+        # is this client's too ('exported').
+        self.flag_rows(rows)
+        self.write_catalogue(force=True, rows=rows)
 
     def mounted_packages(self):
         """The client's packages in the order paths.xml mounts them (the collision index and the TTX sources' keys)."""
@@ -2421,24 +2492,28 @@ class Exporter(object):
         paths = self.mounted_packages()
         packages, signatures, conflicts, overrides, entries = {}, {}, set(), set(), {}
         for path in paths:
-            with zipfile.ZipFile(path) as archive:
-                for info in archive.infolist():
-                    name = info.filename
-                    if ('/collision_client/' not in name or not name.endswith('.havok')
-                            or not RESOURCE.match(name) or '..' in name): continue
-                    signature = (info.file_size, info.CRC)
-                    if name in signatures and signatures[name] != signature:
-                        # Do not silently choose a different physical surface by
-                        # guessing archive priority when two resources disagree.
-                        conflicts.add(name)
-                    else:
-                        signatures[name] = signature
-                        if name not in packages:
-                            packages[name] = path
-                            # Where the chosen copy sits in its package, so a model is later read
-                            # with one seek instead of parsing this whole directory again.
-                            entries[name] = (info.header_offset, info.compress_type, info.compress_size,
-                                             info.file_size, info.CRC)
+            # The raw directory (collision_members, 25.09): the same names, places and CRCs as zipfile's, in ~1/20 of
+            # the time; any doubt about a package reads it through zipfile as before.
+            members = collision_members(path)
+            if members is None:
+                with zipfile.ZipFile(path) as archive:
+                    members = [(info.filename, (info.header_offset, info.compress_type, info.compress_size,
+                                                info.file_size, info.CRC)) for info in archive.infolist()]
+            for name, entry in members:
+                if ('/collision_client/' not in name or not name.endswith('.havok')
+                        or not RESOURCE.match(name) or '..' in name): continue
+                signature = (entry[3], entry[4])
+                if name in signatures and signatures[name] != signature:
+                    # Do not silently choose a different physical surface by
+                    # guessing archive priority when two resources disagree.
+                    conflicts.add(name)
+                else:
+                    signatures[name] = signature
+                    if name not in packages:
+                        packages[name] = path
+                        # Where the chosen copy sits in its package, so a model is later read
+                        # with one seek instead of parsing this whole directory again.
+                        entries[name] = entry
         for path in glob.glob(os.path.join(self.game, 'mods', '*', '*.wotmod')):
             with zipfile.ZipFile(path) as archive:
                 for name in archive.namelist():
@@ -3023,8 +3098,8 @@ class Exporter(object):
             return True
 
     def run_job(self):
-        """One job per call, the lowest priority number first; with none queued, one step of the TTX sweep."""
-        if not self.jobs: return self.run_ttx_sweep()
+        """One job per call, the lowest priority number first; with none queued, one slice of a sweep (run_sweeps)."""
+        if not self.jobs: return self.run_sweeps()
         if not self.jobs_allowed(): return False
         index = self.best_job()
         # What the page is waiting for runs at once; everything else keeps PACE
@@ -3051,20 +3126,7 @@ class Exporter(object):
         self.republish.update(self.waiting.pop(key, ()))
 
     def run_vehicle_job(self, request):
-        """One vehicle record, exported exactly as before - only its turn has changed.
-
-        A request of the optional bulk export carries the type alone; its top
-        configuration is built here, on this thread, as drain_bulk always did.
-        """
-        type_name = str((request or {}).get('vehicleType') or '')
-        if request.get('bulk'):
-            try: self.bulk.remove(type_name)
-            except ValueError: pass
-            if not request.get('compactDescriptor'):
-                import base64
-                request = dict(request)
-                request['compactDescriptor'] = base64.b64encode(
-                    top_descriptor(type_name).makeCompactDescr()).decode('ascii')
+        """One vehicle record, exported exactly as before - only its turn has changed."""
         self.export_vehicle(request)
 
     def request_vehicle_export(self, request):
@@ -3152,8 +3214,9 @@ class Exporter(object):
         """mods/configs/local.armor_inspector/settings.json, read once at setup.
 
         Written with the defaults when it is absent; a malformed file leaves the
-        defaults in place with a warning rather than stopping the export. There is
-        no interface for it yet - that is a later step.
+        defaults in place with a warning rather than stopping the export. No setting
+        is read today (exportAllVehicles, the hidden bulk export, gave way to the
+        page's Export all models on 25.09); a file that still sets it is not rewritten.
         """
         path = os.path.join(self.folder, 'settings.json')
         self.settings = dict(DEFAULT_SETTINGS)
@@ -3164,6 +3227,8 @@ class Exporter(object):
                 if not isinstance(stored, dict): raise ValueError('Settings must be a JSON object')
                 for key in DEFAULT_SETTINGS:
                     if key in stored: self.settings[key] = stored[key]
+                if stored.get('exportAllVehicles'):
+                    LOG.info('settings.json exportAllVehicles is no longer read: Export all models in the Vehicles list does it')
             else:
                 atomic_write(path, json.dumps(DEFAULT_SETTINGS, sort_keys=True, indent=2).encode('ascii'))
         except Exception:
@@ -3269,7 +3334,10 @@ class Exporter(object):
                         row = json.loads(line.decode('utf-8'))
                     except ValueError:
                         continue
-                    if row.get('schema') == 1 and row.get('type') == 'vehicle' and row.get('vehicleType'):
+                    # 'catalogue' rows (the bulk export's until 25.09) belong to the model sweep and its keys: replaying
+                    # them re-exported every such vehicle here, at setup, after every game update.
+                    if (row.get('schema') == 1 and row.get('type') == 'vehicle' and row.get('vehicleType')
+                            and row.get('source') != 'catalogue'):
                         requests[str(row['vehicleType'])] = row
         except Exception:
             LOG.exception('Vehicle request log unreadable; exported vehicles are kept as they are')
@@ -3280,12 +3348,15 @@ class Exporter(object):
             except Exception:
                 LOG.exception('Could not rebuild an exported vehicle: %s', type_name)
 
-    def export_vehicle(self, request, replay=False):
+    def export_vehicle(self, request, replay=False, sweep=False, descr=None):
         """One vehicle of the client, exported from its compact descriptor.
 
         Export thread only: rebuilding the descriptor, reading collision models out
         of the client packages and collecting armour tables is exactly the work the
         game thread must never do. Returns False when the request was a duplicate.
+        `sweep` (the model sweep): no line in the request log - the sweep's keys own
+        such a file - and the catalogue is written by the idle tick, not per vehicle;
+        `descr` is the descriptor the sweep built the request from.
         """
         type_name = str(request.get('vehicleType') or '')
         compact = request.get('compactDescriptor')
@@ -3305,8 +3376,8 @@ class Exporter(object):
         known = self.vehicles.get(identifier)
         if known and known.get('descriptorHash') == digest and os.path.isfile(path):
             return False
-        if not replay: self.append_vehicle_request(request)
-        descr = vehicle_descr(compact)
+        if not replay and not sweep: self.append_vehicle_request(request)
+        if descr is None: descr = vehicle_descr(compact)
         record = {'schema':1, 'warnings':[]}
         record.update(descr_identity(descr))
         for key in ('name', 'level', 'class', 'role', 'nation'):
@@ -3389,7 +3460,8 @@ class Exporter(object):
             LOG.exception('Collision parts unavailable for %s', type_name)
         write_data(path, 'vehicle:'+identifier, record)
         self.remember_vehicle(record)
-        self.write_catalogue()
+        if sweep: self.catalogue_dirty = True
+        else: self.write_catalogue()
         return True
 
     # ------------------------------------------------------- characteristics (TTX)
@@ -3441,14 +3513,14 @@ class Exporter(object):
     def build_ttx(self, type_name, sweep=None):
         """Check the file of one type and build it when it is missing or outdated.
 
-        `sweep` (the background sweep's state): the build logs nothing and gives back to the client's cache the type it
-        parsed (ttx_evicting); a failure is counted in the sweep, whose one line names the first, instead of a traceback."""
+        `sweep` (the background sweep's state): the build logs nothing; a failure is counted in the sweep, whose one line
+        names the first, instead of a traceback. The type it parsed stays in the client's cache (no eviction, 25.09): a
+        type parsed twice in one session raises in the client."""
         if self.ttx_current(type_name):
             self.ttx_known[type_name] = TTX_CURRENT
             return False
         try:
-            if sweep is None: block = ttx_block(type_name, self.version)
-            else: block = ttx_evicting(lambda: ttx_block(type_name, self.version, log=False))
+            block = ttx_block(type_name, self.version, log=sweep is None)
         except ImportError:
             # Outside the game: the client's item modules do not exist.
             self.ttx_known[type_name] = TTX_FAILED
@@ -3476,7 +3548,7 @@ class Exporter(object):
         self.ttx_key_done(type_name, True)
         # A page's own build with no sweep running: the progress file keeps its key now.
         if sweep is None and self.ttx_sweep is None and self.ttx_state is not None and self.ttx_state['now'] is not None:
-            self.write_ttx_sweep(done=True)
+            self.write_sweep('ttx', done=True)
         return True
 
     def run_ttx_job(self, payload):
@@ -3493,39 +3565,47 @@ class Exporter(object):
             raise ValueError('Invalid vehicle type')
         self.ensure_ttx(type_name, inline=False, priority=JOB_PAGE)
 
-    # The sweep (TTX_SWEEP_SLICE). Its state is ttx_known, the files and the progress file (the one owner of the sources'
-    # keys, how far a sweep got, whether it runs); the sweep only walks the changed types through build_ttx.
-    def ttx_sweep_stamp(self):
-        return {'clientVersion': self.version, 'schema': TTX_SCHEMA, 'modesSchema': TTX_MODES_SCHEMA,
-                'armorSchema': TTX_ARMOR_SCHEMA, 'format': TTX_FORMAT}
+    # THE SWEEPS (TTX_SWEEP_SLICE): 'ttx' (24.09) and 'models' (25.09), one machinery, in SWEEP_ORDER. Each kind has its
+    # progress file (the one owner of its sources' keys, how far it got, whether it runs), the same gates, slices, Start,
+    # Stop and resume; a kind brings its stamp, its start (which types) and its step (one unit of work on one type).
+    def sweep_stamp(self, kind):
+        if kind == 'ttx':
+            return {'clientVersion': self.version, 'schema': TTX_SCHEMA, 'modesSchema': TTX_MODES_SCHEMA,
+                    'armorSchema': TTX_ARMOR_SCHEMA, 'format': TTX_FORMAT}
+        return {'clientVersion': self.version, 'format': MODELS_FORMAT}
 
-    def ttx_sweep_path(self):
-        return os.path.join(self.folder, *TTX_SWEEP_DATA)
+    def sweep_path(self, kind):
+        return os.path.join(self.folder, *SWEEP_FILES[kind][0])
 
-    def ttx_sweep_marker(self):
+    def sweep_marker(self, kind):
         """The progress file, or None (none yet, unreadable, or of another shape - then everything counts as changed)."""
         try:
-            marker = read_data_file(self.ttx_sweep_path())
+            marker = read_data_file(self.sweep_path(kind))
         except Exception:
             return None
         # A file of another shape (edited, another build of the mod) is no file at all (review #1).
         try:
             if not isinstance(marker, dict) or not isinstance(marker.get('stamp'), dict): return None
-            for field in ('keys', 'failed', 'packages'):
+            for field in ('keys', 'failed', 'packages', 'parts'):
                 value = marker.get(field, {})
                 if not isinstance(value, dict): return None
-                if field != 'packages' and not all(isinstance(k, basestring_type) and isinstance(v, basestring_type) for k, v in value.items()): return None
+                if field in ('keys', 'failed') and not all(isinstance(k, basestring_type) and isinstance(v, basestring_type) for k, v in value.items()): return None
+                if field == 'parts' and not all(isinstance(v, list) for v in value.values()): return None
+            if not isinstance(marker.get('extension', []), list): return None
             float(marker.get('startedAt') or 0); int(marker.get('built') or 0); float(marker.get('builtMs') or 0)
+            int(marker.get('bytes') or 0)
         except Exception:
             return None
         return marker
 
-    def write_ttx_sweep(self, done=False):
+    def write_sweep(self, kind, done=False):
         """The progress file. For the mod: the stamp, the keys of the sources every current file was built from, the
-        failures (by the key they failed with), the packages' cache. For the page: count/total/done, whether it runs
-        (confirmed), how many of the catalogue changed, the build time so far (builtMs over built, this machine's own).
-        A sweep of the failed types alone is a completed one to the page (done from the start)."""
-        sweep, state = self.ttx_sweep, self.ttx_state
+        failures (by the key they failed with), and the kind's own (TTX: the packages' cache; models: each built type's
+        collision resources, the event packages' types). For the page: count/total/done, whether it runs (confirmed), how
+        many of the catalogue it covers, the build time and bytes so far (the estimate at this machine's own pace; models:
+        whether the user ever started it - 'opted' - and whether only failures are left). A sweep of the failed types alone
+        is a completed one to the page (TTX: done from the start)."""
+        sweep, state = self.sweeps[kind], self.sweep_states[kind]
         if state is None: return
         if sweep is not None:
             done = bool(done or sweep['retry'])
@@ -3533,16 +3613,22 @@ class Exporter(object):
             count = total if done else min(total, sweep['next'])
         else:
             done, total, count = True, 0, 0
-        marker = {'stamp': self.ttx_sweep_stamp(), 'startedAt': state['started'], 'done': done, 'count': count,
+        marker = {'stamp': self.sweep_stamp(kind), 'startedAt': state['started'], 'done': done, 'count': count,
                   'total': total, 'catalogue': state['catalogue'], 'confirmed': bool(sweep and sweep['confirmed']),
                   'retrying': bool(sweep and sweep['retry']), 'built': state['built'], 'builtMs': round(state['builtMs'], 1),
-                  'keys': state['keys'], 'failed': state['failed'], 'packages': state['packages'],
-                  'incremental': state['now'] is not None, 'updatedAt': time.time()}
-        if sweep is not None: sweep['reported'] = time.time()
+                  'keys': state['keys'], 'failed': state['failed'], 'incremental': state['now'] is not None, 'updatedAt': time.time()}
+        if kind == 'ttx':
+            marker['packages'] = state['packages']
+        else:
+            marker.update({'parts': state['parts'], 'extension': state['extension'], 'bytes': state['bytes'],
+                           'opted': state['opted'], 'failedOnly': bool(sweep and sweep.get('failedOnly'))})
+        if sweep is not None:
+            sweep['reported'] = time.time()
+            sweep['dirty'] = False
         try:
-            write_data(self.ttx_sweep_path(), TTX_SWEEP_KEY, marker)
+            write_data(self.sweep_path(kind), SWEEP_FILES[kind][1], marker)
         except Exception:
-            LOG.exception('TTX sweep progress could not be written; the sweep starts over next time')
+            LOG.exception('%s sweep progress could not be written; the sweep starts over next time', SWEEP_LABELS[kind])
 
     def page_open(self):
         """The page is open in the game (the recorder's flag, set by the page's 'open' command)."""
@@ -3550,6 +3636,146 @@ class Exporter(object):
             return float(getattr(self.recorder, 'page_open_until', 0) or 0) > time.time()
         except Exception:
             return False
+
+    def confirm_sweep(self, kind='ttx'):
+        """The page's Start ('sweepStart' with its kind, export thread): the sweep runs while the page is open."""
+        sweep = self.sweeps.get(kind)
+        if sweep is None or sweep['confirmed']: return False
+        sweep['confirmed'] = True
+        if kind == 'models': self.sweep_states[kind]['opted'] = True
+        self.write_sweep(kind, done=False)
+        return True
+
+    def stop_sweep(self, kind='ttx'):
+        """The page's Stop ('sweepStop', export thread; the page closed comes to the same): what is done stays and the next
+        open of the page asks again. The retry of the failed types alone is not the page's to stop."""
+        sweep = self.sweeps.get(kind)
+        if sweep is None or not sweep['confirmed'] or sweep['retry']: return False
+        sweep['confirmed'] = False
+        sweep['sliced'] = False
+        if self.recorder is not None:
+            try: self.recorder.frames_wanted = False
+            except Exception: pass
+        self.write_sweep(kind, done=False)
+        return True
+
+    def sweep_gates_open(self):
+        """Work of a sweep may start now: no battle, no drag of the page, the page open, the mod not shutting down."""
+        return not self.ttx_stopped and self.jobs_allowed() and self.page_open()
+
+    def sweep_ready(self, kind):
+        """A slice may run now: confirmed, the page open, nothing queued before it, jobs allowed, not shutting down.
+        A page that has closed stops the sweep (stop_sweep)."""
+        sweep = self.sweeps.get(kind)
+        if sweep is None or not sweep['confirmed'] or self.ttx_stopped: return False
+        if not self.page_open():
+            self.stop_sweep(kind)
+            return False
+        return bool(not self.jobs and self.jobs_allowed())
+
+    def sweep_hurry(self):
+        """The export loop's wait: none while a sweep's slices run - between two of them it waits one frame itself."""
+        ready = False
+        for kind in SWEEP_ORDER:
+            ready = self.sweep_ready(kind) or ready
+        recorder = self.recorder
+        if recorder is not None:
+            try: recorder.frames_wanted = ready
+            except Exception: pass
+        return ready
+
+    def wait_frame(self):
+        """One frame of the game between two slices: the recorder's frame callback, 0.1 s at most. None offline."""
+        wait = getattr(self.recorder, 'wait_frame', None)
+        if wait is None: return
+        try: wait(0.1)
+        except Exception: pass
+
+    def run_sweeps(self):
+        """One slice of the first sweep that is ready (SWEEP_ORDER: the characteristics before the models). Shutting down:
+        the progress a sweep made since its last report is written once (the resume after the next start)."""
+        if self.ttx_stopped:
+            for kind in SWEEP_ORDER:
+                if self.sweeps[kind] is not None and self.sweeps[kind].get('dirty'): self.write_sweep(kind)
+            return False
+        for kind in SWEEP_ORDER:
+            if self.sweep_ready(kind): return self.run_sweep(kind)
+        return False
+
+    def run_sweep(self, kind):
+        """One slice: after one frame of the game since the slice before, steps back to back for up to TTX_SWEEP_SLICE seconds,
+        every step behind the gates (review #5: a battle, a drag, a closing page or the mod shutting down (#6) ends the slice
+        before the next one). A step is the kind's own unit of work on the type at 'next' (ttx_step, models_step); it says
+        'built', 'current' or 'failed' when it is done with the type, 'partial' when the type needs more steps, None when
+        the gates closed before it did anything. True when it did any work."""
+        sweep = self.sweeps[kind]
+        if sweep['sliced']: self.wait_frame()
+        sweep['sliced'] = True
+        if sweep['clock'] is None: sweep['clock'] = time.time()
+        step = self.ttx_step if kind == 'ttx' else self.models_step
+        worked = False
+        try:
+            began, types = TTX_TIMER(), sweep['types']
+            while sweep['next'] < len(types):
+                type_name = types[sweep['next']]
+                outcome = step(type_name, sweep)
+                if outcome is None: break
+                if outcome in ('built', 'partial'):
+                    worked = True
+                    sweep['dirty'] = True
+                    self.last_job = time.time()
+                if outcome != 'partial':
+                    sweep['next'] += 1
+                    if outcome == 'built': sweep['built'] += 1
+                    elif outcome == 'failed': sweep['failed'].append(type_name)
+                    else: sweep['current'] += 1
+                if TTX_TIMER() - began >= TTX_SWEEP_SLICE: break
+            else:
+                sweep['workMs'] += (TTX_TIMER() - began) * 1000.0
+                self.finish_sweep(kind)
+                return worked
+            sweep['workMs'] += (TTX_TIMER() - began) * 1000.0
+            if time.time() - sweep['reported'] >= TTX_SWEEP_REPORT: self.write_sweep(kind, done=False)
+        except Exception:
+            self.sweeps[kind] = None
+            LOG.exception('%s sweep stopped; the page still asks for each vehicle it opens', SWEEP_LABELS[kind])
+        return worked
+
+    def finish_sweep(self, kind):
+        sweep = self.sweeps[kind]
+        self.sweeps[kind] = None
+        state = self.sweep_states[kind]
+        if kind == 'ttx' and state is not None and state['now'] is None:
+            # The fallback keeps its failures by name, with no key.
+            state['failed'] = dict((t, '') for t in sweep['failed'])
+        if kind == 'models': self.catalogue_dirty = True
+        self.write_sweep(kind, done=True)
+        if self.recorder is not None:
+            try: self.recorder.frames_wanted = False
+            except Exception: pass
+        LOG.info('%s sweep: %d types - %d built (%.0f ms), %d current, %d failed%s; %.0f s of work, %.0f s from its start this session',
+                 SWEEP_LABELS[kind], len(sweep['types']), sweep['built'], sweep['buildMs'], sweep['current'], len(sweep['failed']),
+                 ' (first: %s)' % sweep['error'] if sweep['error'] else '', sweep['workMs'] / 1000.0,
+                 time.time() - (sweep['clock'] or time.time()))
+
+    def new_sweep(self, types, retry=False, confirmed=False):
+        """The run state of a sweep over `types` (the progress file's count is 'next')."""
+        return {'types': types, 'retry': retry, 'confirmed': confirmed, 'next': 0, 'clock': None, 'built': 0, 'current': 0,
+                'failed': [], 'error': None, 'buildMs': 0.0, 'workMs': 0.0, 'reported': 0.0, 'sliced': False, 'dirty': False}
+
+    def sweep_state(self, kind, marker, catalogue):
+        """The progress file's state this session, from its marker (keys, failures, build time so far)."""
+        state = {'catalogue': catalogue, 'started': time.time(), 'built': 0, 'builtMs': 0.0, 'now': None,
+                 'keys': dict(marker.get('keys') or {}), 'failed': dict(marker.get('failed') or {}),
+                 'packages': dict(marker.get('packages') or {}), 'parts': dict(marker.get('parts') or {}),
+                 'extension': list(marker.get('extension') or []), 'bytes': 0, 'opted': bool(marker.get('opted')), 'bases': None}
+        try:
+            state['built'], state['builtMs'] = int(marker.get('built') or 0), float(marker.get('builtMs') or 0)
+            state['bytes'] = int(marker.get('bytes') or 0)
+        except (TypeError, ValueError):
+            pass
+        self.sweep_states[kind] = state
+        return state
 
     # ---- The sources' keys (24.09, user: "do not do the work twice"): a type is built again only when a file it is read
     # from changed. The client's files sit in its packages (zip); each member's CRC-32 and size are in the package's
@@ -3583,11 +3809,22 @@ class Exporter(object):
         if not any(name.startswith('scripts/') for name in crcs): raise ValueError('No characteristics sources in the client packages')
         return crcs, packages
 
-    def ttx_source_keys(self, types, crcs):
-        """{type: key}: TTX_FORMAT, the files every type is read with (the client's items code, the vehicles' common
-        files - TTX_SOURCE_SKIP leaves out what no characteristic depends on), its nation's (components, list.xml) and
-        its own XML (every file of its nation whose name begins with its own - a variant too: more rebuilds, never fewer).
-        A type from an extension package (an event's) takes that package's common and nation files too."""
+    def source_crcs(self):
+        """The CRCs of the characteristics' sources (ttx_sources), read once a session for both sweeps; the packages' cache
+        goes to the TTX progress file. Raises when the packages cannot be read."""
+        if self.crcs is None:
+            state = self.ttx_state
+            cached = state['packages'] if state is not None else (self.sweep_marker('ttx') or {}).get('packages')
+            crcs, packages = self.ttx_sources(cached)
+            self.crcs = crcs
+            if state is not None: state['packages'] = packages
+        return self.crcs
+
+    @staticmethod
+    def split_sources(crcs):
+        """The source files by what they are to a type: (shared {root: [line]}, the nations' {(root, nation): [line]}, each
+        nation's own vehicle files {nation: [(file, root, line)]}). A root is '' for the client's scripts.pkg, '<event>/'
+        for an event's own package."""
         shared, nation_files, own = {}, {}, {}
         for name in sorted(crcs):
             at = name.index('scripts/')
@@ -3603,6 +3840,15 @@ class Exporter(object):
                 own.setdefault(parts[0], []).append((parts[1], root, line))
             else:
                 nation_files.setdefault((root, parts[0]), []).append(line)
+        return shared, nation_files, own
+
+    def ttx_source_keys(self, types, crcs, format_tag=None):
+        """{type: key}: the format (TTX_FORMAT; the model sweep passes its own), the files every type is read with (the
+        client's items code, the vehicles' common files - TTX_SOURCE_SKIP leaves out what no characteristic depends on), its
+        nation's (components, list.xml) and its own XML (every file of its nation whose name begins with its own - a variant
+        too: more rebuilds, never fewer). A type from an extension package (an event's) takes that package's common and
+        nation files too. The model sweep's keys start from these (models_key)."""
+        shared, nation_files, own = self.split_sources(crcs)
         keys, bases = {}, {}
         for type_name in types:
             nation, _, name = type_name.partition(':')
@@ -3610,7 +3856,7 @@ class Exporter(object):
             roots = tuple(sorted(set([''] + [root for root, line in mine])))
             # The shared part of a nation's types is the same text: its CRC once, the start value of each type's own.
             if (roots, nation) not in bases:
-                text = ['format=%s' % TTX_FORMAT]
+                text = ['format=%s' % (TTX_FORMAT if format_tag is None else format_tag)]
                 for root in roots:
                     text.extend(shared.get(root, ()))
                     text.extend(nation_files.get((root, nation), ()))
@@ -3619,6 +3865,18 @@ class Exporter(object):
             keys[type_name] = '%08x' % (zlib.crc32(own_text, bases[(roots, nation)]) & 0xffffffff)
         return keys
 
+    def extension_types(self, types, crcs):
+        """The types whose own XML exists only in an event's package (Story Mode, Last Stand, White Tiger...): the model
+        sweep leaves them out, tagged or not (nine Story Mode vehicles carry no mode tag)."""
+        own = self.split_sources(crcs)[2]
+        found = []
+        for type_name in types:
+            nation, _, name = type_name.partition(':')
+            roots = set(root for base, root, line in own.get(nation, ()) if base == name + '.xml')
+            if roots and '' not in roots: found.append(type_name)
+        return found
+
+    # ---- the characteristics (TTX)
     def start_ttx_sweep(self, rows):
         """Setup: which catalogue types need their file built, and the sweep over them - not running until the page's
         Start of this session. Nothing outside the game (no client item modules). The same client and format as the
@@ -3642,19 +3900,13 @@ class Exporter(object):
             if ':' in type_name and IDENTIFIER.match(vehicle_id(type_name)) and type_name not in seen:
                 seen.add(type_name)
                 catalogue.append(type_name)
-        marker = self.ttx_sweep_marker() or {}
-        same = marker.get('stamp') == self.ttx_sweep_stamp()
-        state = {'catalogue': len(catalogue), 'started': time.time(), 'built': 0, 'builtMs': 0.0, 'now': None,
-                 'keys': dict(marker.get('keys') or {}), 'failed': dict(marker.get('failed') or {}),
-                 'packages': dict(marker.get('packages') or {})}
-        try: state['built'], state['builtMs'] = int(marker.get('built') or 0), float(marker.get('builtMs') or 0)
-        except (TypeError, ValueError): pass
-        self.ttx_state = state
+        marker = self.sweep_marker('ttx') or {}
+        same = marker.get('stamp') == self.sweep_stamp('ttx')
+        state = self.sweep_state('ttx', marker, len(catalogue))
         if same and marker.get('done') and not marker.get('failed'): return None
         started = TTX_TIMER()
         try:
-            crcs, state['packages'] = self.ttx_sources(state['packages'])
-            state['now'] = self.ttx_source_keys(catalogue, crcs)
+            state['now'] = self.ttx_source_keys(catalogue, self.source_crcs())
         except Exception as error:
             state['now'], state['keys'] = None, {}
             LOG.warning('TTX sources unreadable (%r): every vehicle of this client version is built again', error)
@@ -3679,13 +3931,11 @@ class Exporter(object):
         LOG.info('TTX sources: %d of %d types to build, %d to retry (%s, %.0f ms)', len(types), len(catalogue), len(retry),
                  'by their files' if state['now'] is not None else 'all of this client version', (TTX_TIMER() - started) * 1000.0)
         if not types and not retry:
-            self.write_ttx_sweep(done=True)
+            self.write_sweep('ttx', done=True)
             return None
         # A sweep the page asks for takes the failed types along; the failed types alone are retried without asking.
-        self.ttx_sweep = {'types': types + retry if types else retry, 'retry': not types, 'confirmed': not types, 'next': 0, 'clock': None,
-                          'built': 0, 'current': 0, 'failed': [], 'error': None, 'buildMs': 0.0, 'workMs': 0.0,
-                          'reported': 0.0, 'sliced': False}
-        self.write_ttx_sweep(done=False)
+        self.ttx_sweep = self.new_sweep(types + retry if types else retry, retry=not types, confirmed=not types)
+        self.write_sweep('ttx', done=False)
         return self.ttx_sweep
 
     def ttx_key_done(self, type_name, ok):
@@ -3699,53 +3949,6 @@ class Exporter(object):
         else:
             state['failed'][type_name] = key
 
-    def confirm_ttx_sweep(self):
-        """The page's Start ('sweepStart', export thread): the sweep runs while the page is open."""
-        sweep = self.ttx_sweep
-        if sweep is None or sweep['confirmed']: return False
-        sweep['confirmed'] = True
-        self.write_ttx_sweep(done=False)
-        return True
-
-    def stop_ttx_sweep(self):
-        """The page's Stop ('sweepStop', export thread; the page closed comes to the same): what is done stays and the next
-        open of the page asks again. The retry of the failed types alone is not the page's to stop."""
-        sweep = self.ttx_sweep
-        if sweep is None or not sweep['confirmed'] or sweep['retry']: return False
-        sweep['confirmed'] = False
-        sweep['sliced'] = False
-        if self.recorder is not None:
-            try: self.recorder.frames_wanted = False
-            except Exception: pass
-        self.write_ttx_sweep(done=False)
-        return True
-
-    def ttx_sweep_ready(self):
-        """A slice may run now: confirmed, the page open, nothing queued before it, jobs allowed, not shutting down.
-        A page that has closed stops the sweep (stop_ttx_sweep)."""
-        sweep = self.ttx_sweep
-        if sweep is None or not sweep['confirmed'] or self.ttx_stopped: return False
-        if not self.page_open():
-            self.stop_ttx_sweep()
-            return False
-        return bool(not self.jobs and self.jobs_allowed())
-
-    def ttx_hurry(self):
-        """The export loop's wait: none while the sweep's slices run - between two of them it waits one frame itself."""
-        ready = self.ttx_sweep_ready()
-        recorder = self.recorder
-        if recorder is not None:
-            try: recorder.frames_wanted = ready
-            except Exception: pass
-        return ready
-
-    def wait_frame(self):
-        """One frame of the game between two slices: the recorder's frame callback, 0.1 s at most. None offline."""
-        wait = getattr(self.recorder, 'wait_frame', None)
-        if wait is None: return
-        try: wait(0.1)
-        except Exception: pass
-
     def ttx_fresh(self, type_name, started):
         """The fallback's resume: a file written since this sweep began is current without a read."""
         try:
@@ -3753,68 +3956,219 @@ class Exporter(object):
         except OSError:
             return False
 
-    def run_ttx_sweep(self):
-        """One slice of the sweep when it is ready (ttx_sweep_ready): after one frame of the game since the slice before,
-        builds back to back for up to TTX_SWEEP_SLICE seconds, every build behind the gates. True when it built one."""
-        if not self.ttx_sweep_ready(): return False
-        sweep, state = self.ttx_sweep, self.ttx_state
-        if sweep['sliced']: self.wait_frame()
-        sweep['sliced'] = True
-        if sweep['clock'] is None: sweep['clock'] = time.time()
-        built_any = False
-        try:
-            began, types = TTX_TIMER(), sweep['types']
-            while sweep['next'] < len(types):
-                type_name = types[sweep['next']]
-                state_now = self.ttx_known.get(type_name)
-                if state_now is None and state['now'] is None and self.ttx_fresh(type_name, state['started']):
-                    self.ttx_known[type_name] = state_now = TTX_CURRENT
-                # Every build behind the gates, not only the slice (review #5): a battle, a drag, a closing page or the
-                # mod shutting down (#6) ends the slice before the next build.
-                if state_now is None and (self.ttx_stopped or not self.jobs_allowed() or not self.page_open()): break
-                sweep['next'] += 1
-                if state_now is None:
-                    started = TTX_TIMER()
-                    built = self.build_ttx(type_name, sweep)
-                    state_now = self.ttx_known.get(type_name)
-                    if built:
-                        ms = (TTX_TIMER() - started) * 1000.0
-                        sweep['built'] += 1
-                        sweep['buildMs'] += ms
-                        state['built'] += 1
-                        state['builtMs'] += ms
-                        built_any = True
-                    elif state_now == TTX_FAILED: sweep['failed'].append(type_name)
-                    else: sweep['current'] += 1
-                    self.last_job = time.time()
-                elif state_now == TTX_FAILED: sweep['failed'].append(type_name)
-                else: sweep['current'] += 1
-                if TTX_TIMER() - began >= TTX_SWEEP_SLICE: break
-            else:
-                sweep['workMs'] += (TTX_TIMER() - began) * 1000.0
-                self.finish_ttx_sweep()
-                return built_any
-            sweep['workMs'] += (TTX_TIMER() - began) * 1000.0
-            if time.time() - sweep['reported'] >= TTX_SWEEP_REPORT: self.write_ttx_sweep(done=False)
-        except Exception:
-            self.ttx_sweep = None
-            LOG.exception('TTX sweep stopped; the page still asks for each vehicle it opens')
-        return built_any
+    def ttx_step(self, type_name, sweep):
+        """The TTX sweep's step: one type's file checked and, when needed, built (build_ttx)."""
+        state = self.ttx_state
+        known = self.ttx_known.get(type_name)
+        if known is None and state['now'] is None and self.ttx_fresh(type_name, state['started']):
+            self.ttx_known[type_name] = known = TTX_CURRENT
+        if known == TTX_FAILED: return 'failed'
+        if known == TTX_CURRENT: return 'current'
+        if not self.sweep_gates_open(): return None
+        started = TTX_TIMER()
+        if self.build_ttx(type_name, sweep):
+            ms = (TTX_TIMER() - started) * 1000.0
+            sweep['buildMs'] += ms
+            state['built'] += 1
+            state['builtMs'] += ms
+            return 'built'
+        return 'failed' if self.ttx_known.get(type_name) == TTX_FAILED else 'current'
 
-    def finish_ttx_sweep(self):
-        sweep = self.ttx_sweep
-        self.ttx_sweep = None
-        if self.ttx_state is not None and self.ttx_state['now'] is None:
-            # The fallback keeps its failures by name, with no key.
-            self.ttx_state['failed'] = dict((t, '') for t in sweep['failed'])
-        self.write_ttx_sweep(done=True)
-        if self.recorder is not None:
-            try: self.recorder.frames_wanted = False
-            except Exception: pass
-        LOG.info('TTX sweep: %d types - %d built (%.0f ms), %d current, %d failed%s; %.0f s of work, %.0f s from its start this session',
-                 len(sweep['types']), sweep['built'], sweep['buildMs'], sweep['current'], len(sweep['failed']),
-                 ' (first: %s)' % sweep['error'] if sweep['error'] else '', sweep['workMs'] / 1000.0,
-                 time.time() - (sweep['clock'] or time.time()))
+    # ---- the collision models (25.09, BACKLOG 51). Every regular vehicle of the catalogue - no battle-mode vehicle
+    # (modeOnly), no event package's, no onboarding or Story Mode copy (MODELS_SKIP_NAME) - exported by the one vehicle
+    # export (export_vehicle) in its top configuration, as the per-click path exports a vehicle the player does not own.
+    # Only after the user's Start (the page's Export all models); from then on a game update asks, like the TTX sweep, for
+    # the vehicles whose sources changed. A file of the player's own (the hangar, a battle, a click: any other source) is
+    # never touched. A type's key: the TTX sources' key with MODELS_FORMAT, and the CRC-32 of the collision models its last
+    # export used (parts), from the packages' directories (the collision index) - nothing is unpacked to key it.
+    def models_bases(self):
+        """{type: TTX-source key with MODELS_FORMAT} of the regular types, once a session (needs the sources' CRCs)."""
+        state = self.sweep_states['models']
+        if state['bases'] is None:
+            state['bases'] = self.ttx_source_keys(state['regular'], self.source_crcs(), 'models-%d' % MODELS_FORMAT)
+        return state['bases']
+
+    def models_key(self, type_name, resources):
+        """The key of one type's export: its base (models_bases) and each collision model's CRC in the package index."""
+        base = self.models_bases().get(type_name)
+        self.ensure_packages()
+        if base is None: return None
+        entries, lines = self.package_entries or {}, []
+        for resource in sorted(set(resources or ())):
+            havok = str(resource).rsplit('.', 1)[0] + '.havok'
+            entry = entries.get(havok)
+            lines.append('%s=%s' % (havok, '%08x' % (entry[4] & 0xffffffff) if entry else '-'))
+        return '%08x' % (zlib.crc32('\n'.join(lines).encode('utf-8'), int(base, 16)) & 0xffffffff)
+
+    def vehicle_current(self, summary):
+        """An exported vehicle file the page may show as this client's: written by this client version, or a sweep's file
+        whose key says nothing it was built from changed (the catalogue's 'exported')."""
+        if not summary: return False
+        if canonical(summary.get('clientVersion') or '') == self.version: return True
+        state = self.sweep_states.get('models')
+        return bool(state is not None and summary.get('source') == 'catalogue' and summary.get('type') in state['keys'])
+
+    def models_current(self, type_name):
+        """The model sweep has nothing to do for this type: not failed, and its file is the player's own (any source but
+        the sweep's - its own path keeps it) or current (vehicle_current)."""
+        state = self.sweep_states['models']
+        if type_name in state['failed']: return False
+        identifier = vehicle_id(type_name)
+        summary = self.vehicles.get(identifier)
+        # A file on disk that setup could not read (a lock of an antivirus or a backup) may be the player's own: it is
+        # left alone this session rather than overwritten with the top configuration (review 25.09).
+        if not summary: return os.path.exists(os.path.join(self.folder, 'data', 'vehicles', identifier + '.js'))
+        return summary.get('source') != 'catalogue' or self.vehicle_current(summary)
+
+    def start_models_sweep(self, rows):
+        """Setup: the plan of the model sweep - never running before the page's Start. Nothing outside the game. The same
+        client and format, done, nothing failed: nothing is read. Otherwise the regular types (event packages from the
+        sources' CRCs, once a client version) and, once the user has started a sweep before (opted), their keys: a type
+        whose key did not change keeps its file. Keys unavailable: every type of a new client version."""
+        self.sweeps['models'] = None
+        self.sweep_states['models'] = None
+        try:
+            from items import vehicles as client_vehicles
+            client_vehicles.g_list
+        except Exception:
+            return None
+        marker = self.sweep_marker('models') or {}
+        same = marker.get('stamp') == self.sweep_stamp('models')
+        state = self.sweep_state('models', marker, int(marker.get('catalogue') or 0) if same else 0)
+        state['regular'] = []
+        if same and marker.get('done') and not marker.get('failed'): return None
+        started = TTX_TIMER()
+        if not same:
+            state['keys'], state['failed'], state['extension'] = {}, {}, []
+        catalogue = [row for row in rows or () if ':' in str(row.get('type') or '') and IDENTIFIER.match(vehicle_id(row['type']))]
+        crcs = None
+        if not same:
+            try:
+                crcs = self.source_crcs()
+                state['extension'] = self.extension_types([str(row['type']) for row in catalogue], crcs)
+            except Exception as error:
+                LOG.warning('Model sweep: the client packages could not be read (%r); event vehicles are told by their tags only', error)
+        extension = set(state['extension'])
+        seen = set()
+        for row in catalogue:
+            type_name = str(row['type'])
+            if (type_name in seen or row.get('modeOnly') or row.get('igr') or type_name in extension
+                    or MODELS_SKIP_NAME.search(type_name.split(':', 1)[1])): continue
+            seen.add(type_name)
+            state['regular'].append(type_name)
+        state['catalogue'] = len(state['regular'])
+        if not same and crcs is not None and state['opted'] and (marker.get('keys') or marker.get('failed')):
+            # A new client or format: a type keeps its file when its sources and its collision models did not change.
+            try:
+                parts, now = dict(marker.get('parts') or {}), {}
+                for type_name in set(marker.get('keys') or {}) | set(marker.get('failed') or {}):
+                    if type_name in seen and type_name in parts: now[type_name] = self.models_key(type_name, parts[type_name])
+                state['now'] = now
+                state['keys'] = dict((t, k) for t, k in (marker.get('keys') or {}).items() if now.get(t) == k)
+                state['failed'] = dict((t, k) for t, k in (marker.get('failed') or {}).items() if now.get(t) == k and t not in state['keys'])
+            except Exception as error:
+                state['now'], state['keys'], state['failed'] = None, {}, {}
+                LOG.warning('Model sweep keys unavailable (%r): every vehicle of this client version is exported again', error)
+        state['parts'] = dict((t, v) for t, v in state['parts'].items() if t in state['keys'] or t in state['failed'])
+        types = [t for t in state['regular'] if not self.models_current(t)]
+        failed_only = bool(types) and all(t in state['failed'] for t in types)
+        if not same and marker.get('startedAt') and not marker.get('done'):
+            try: state['started'] = float(marker['startedAt'])
+            except (TypeError, ValueError): pass
+        LOG.info('Model sweep: %d of %d regular vehicles to export%s (%.0f ms)', len(types), len(state['regular']),
+                 ', all of them failed before' if failed_only else '', (TTX_TIMER() - started) * 1000.0)
+        if not types:
+            self.write_sweep('models', done=True)
+            return None
+        self.sweeps['models'] = sweep = self.new_sweep(types)
+        sweep['failedOnly'] = failed_only
+        sweep['work'] = None
+        self.write_sweep('models', done=False)
+        return sweep
+
+    def models_step(self, type_name, sweep):
+        """The model sweep's step on one type, one unit of work at a time so that a frame of the game passes between two of
+        them: the plan (its top configuration's descriptor and collision resources), each collision model (model_extract,
+        the one extraction; 0.11 s median, 1.6 s p99 offline), then the vehicle file itself (export_vehicle, which finds its models
+        written). A failure of any unit is this vehicle's (by its key), the sweep goes on."""
+        state = self.sweep_states['models']
+        work = sweep.get('work')
+        if work is not None and work['type'] != type_name: work = sweep['work'] = None
+        # Current by now - a click exported it meanwhile, the player's own configuration: nothing more, never overwritten.
+        if self.models_current(type_name):
+            sweep['work'] = None
+            return 'current'
+        if work is None:
+            if not self.sweep_gates_open(): return None
+            started = TTX_TIMER()
+            try:
+                import base64
+                descr = top_descriptor(type_name)
+                compact = base64.b64encode(descr.makeCompactDescr()).decode('ascii')
+                resources = [r for r in (part_resource(component) for _, _, component in static_parts(descr)) if r]
+            except Exception as error:
+                return self.models_failed(type_name, sweep, error, None)
+            sweep['work'] = {'type': type_name, 'descr': descr, 'resources': resources, 'next': 0, 'bytes': 0,
+                             'ms': (TTX_TIMER() - started) * 1000.0,
+                             'request': {'schema': 1, 'type': 'vehicle', 'vehicleType': type_name, 'source': 'catalogue',
+                                         'compactDescriptor': compact, 'requestedAt': time.time()}}
+            return 'partial'
+        if not self.sweep_gates_open(): return None
+        started = TTX_TIMER()
+        if work['next'] < len(work['resources']):
+            resource = work['resources'][work['next']]
+            work['next'] += 1
+            try:
+                key = model_key(resource, self.version)
+                path = os.path.join(self.folder, 'data', 'models', key + '.js')
+                existed = os.path.isfile(path)
+                self.model_extract(resource, self.version)
+                if not existed and os.path.isfile(path): work['bytes'] += os.path.getsize(path)
+            except Exception:
+                pass   # an invalid resource: export_vehicle names it on its part
+            work['ms'] += (TTX_TIMER() - started) * 1000.0
+            return 'partial'
+        sweep['work'] = None
+        try:
+            self.export_vehicle(work['request'], sweep=True, descr=work['descr'])
+            identifier = vehicle_id(type_name)
+            record_path = os.path.join(self.folder, 'data', 'vehicles', identifier + '.js')
+            work['bytes'] += os.path.getsize(record_path)
+        except Exception as error:
+            return self.models_failed(type_name, sweep, error, work['resources'])
+        ms = work['ms'] + (TTX_TIMER() - started) * 1000.0
+        sweep['buildMs'] += ms
+        state['built'] += 1
+        state['builtMs'] += ms
+        state['bytes'] += work['bytes']
+        errors = [] if work['resources'] else ['no collision parts']
+        for resource in work['resources']:
+            try: error = self.attempts.get(model_key(resource, self.version), 'not extracted')
+            except Exception as exc: error = str(exc)
+            if error: errors.append(error)
+        if errors: return self.models_failed(type_name, sweep, errors[0], work['resources'])
+        key = self.models_key_safe(type_name, work['resources'])
+        state['parts'][type_name] = list(work['resources'])
+        state['failed'].pop(type_name, None)
+        if key is not None: state['keys'][type_name] = key
+        return 'built'
+
+    def models_key_safe(self, type_name, resources):
+        try:
+            return self.models_key(type_name, resources)
+        except Exception:
+            return None
+
+    def models_failed(self, type_name, sweep, error, resources):
+        """One vehicle of the model sweep failed: by its key (tried again when the user starts the sweep again), the first
+        error named in the sweep's one log line."""
+        state = self.sweep_states['models']
+        sweep['error'] = sweep['error'] or '%s: %s' % (type_name, error)
+        key = self.models_key_safe(type_name, resources) if resources else None
+        state['failed'][type_name] = key or ''
+        state['keys'].pop(type_name, None)
+        if resources: state['parts'][type_name] = list(resources)
+        return 'failed'
 
     def catalogue_rows(self):
         """Every vehicle of the client, with the exported ones flagged.
@@ -3852,63 +4206,37 @@ class Exporter(object):
                               'premium', 'collector', 'special')))
             seen.add(identifier)
         for entry in rows:
-            summary = self.vehicles.get(entry['id'])
-            current = bool(summary) and canonical(summary.get('clientVersion') or '') == self.version
-            entry['exported'] = current
-            entry['exportedAt'] = summary.get('exportedAt') if summary else None
-            entry['source'] = summary.get('source') if summary else None
             if entry.get('role') is None: entry.pop('role', None)
+        self.flag_rows(rows)
         rows.sort(key=lambda e:(e.get('nation') or '', -(e.get('level') or 0), e.get('name') or ''))
         return rows
 
-    def write_catalogue(self, force=False):
+    def flag_rows(self, rows):
+        """The export flags of catalogue rows: 'exported' when the vehicle's file is this client's (vehicle_current)."""
+        for entry in rows:
+            summary = self.vehicles.get(entry['id'])
+            entry['exported'] = self.vehicle_current(summary)
+            entry['exportedAt'] = summary.get('exportedAt') if summary else None
+            entry['source'] = summary.get('source') if summary else None
+        return rows
+
+    def write_catalogue(self, force=False, rows=None):
         """data/vehicles.js. Rebuilt at setup and after every vehicle export.
 
         The rebuild walks the whole client list, which is fine once per exported
-        vehicle but not a thousand times in a row: while the optional bulk export
-        is running it is deferred by at most a second and written by the idle tick,
-        well inside the page's 5 s poll. A hangar or battle export writes at once.
-        Returns the rows written (setup hands them to the TTX sweep), None when the write was deferred.
+        vehicle but not a thousand times in a row: while the model sweep runs it is
+        written by the idle tick at most every SWEEP_CATALOGUE_PAUSE seconds, inside
+        the page's poll. A hangar or battle export writes at once. `rows`: setup's,
+        already built. Returns the rows written, None when the write was deferred.
         """
         self.catalogue_dirty = True
-        if not force and self.bulk and time.time()-self.catalogue_written < 1: return None
-        rows = self.catalogue_rows()
+        sweep = self.sweeps.get('models')
+        if (not force and sweep is not None and sweep['confirmed']
+                and time.time()-self.catalogue_written < SWEEP_CATALOGUE_PAUSE): return None
+        if rows is None: rows = self.catalogue_rows()
         write_data(os.path.join(self.folder, 'data', 'vehicles.js'), 'vehicles',
                    {'application':'local.armor_inspector', 'clientVersion':self.version,
                     'updatedAt':time.time(), 'vehicles':rows})
         self.catalogue_dirty = False
         self.catalogue_written = time.time()
         return rows
-
-    def queue_catalogue_exports(self):
-        """settings.json exportAllVehicles: every catalogue vehicle in its top configuration.
-
-        A one-time bulk export of hundreds of megabytes, so it is off by default and
-        queued at the lowest priority - a recorded hit's model always goes first.
-        """
-        try:
-            self.bulk = [entry['type'] for entry in self.catalogue_rows() if not entry.get('exported')]
-            for type_name in self.bulk:
-                self.queue_job(JOB_BULK, 'vehicle', {'schema':1, 'type':'vehicle', 'vehicleType':type_name,
-                                                     'source':'catalogue', 'bulk':True, 'requestedAt':time.time()})
-            LOG.info('Bulk vehicle export queued: %s vehicles', len(self.bulk))
-        except Exception:
-            self.bulk = []
-            LOG.exception('Bulk vehicle export could not be queued')
-
-    def drain_bulk(self):
-        """One queued catalogue vehicle; failures drop that vehicle only.
-
-        The bulk export is no longer a queue of its own (0.7.11): its vehicles wait
-        in self.jobs with everything else, and idle() drains them through run_job().
-        This stays the entry point for running exactly one of them.
-        """
-        for index in range(len(self.jobs)):
-            job = self.jobs[index]
-            if job[2] != 'vehicle' or not (job[3] or {}).get('bulk'): continue
-            self.take_job(index)
-            try:
-                self.run_vehicle_job(job[3])
-            except Exception:
-                LOG.exception('Bulk vehicle export failed: %s', (job[3] or {}).get('vehicleType'))
-            return

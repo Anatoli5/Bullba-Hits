@@ -252,7 +252,7 @@ async function main() {
       const bare = await step("list('germany-Uniform')");
       expectScene('a vehicle without a model browsed', fun, {model: true, drawn: false, shooter: true, hp: null}, bare);
       ok('matrix, ⌖ ' + (fun ? 'on' : 'off') + ': (a vehicle without a model - the scene says so and the panel shows its file)',
-         bare.message === 'Model not exported yet. In the game, one click on this vehicle opens it.' && bare.panel, '("' + bare.message + '", panel ' + bare.panel + ')');
+         bare.message === 'No model yet: models come from the game. Open this viewer in the game and click the vehicle, or use Export all models there.' && bare.panel, '("' + bare.message + '", panel ' + bare.panel + ')');
       if (!fun) {
         // The compact panel as the user laid it out (24.09, two columns), on the rendered page: ⚙ ▴ ? on a row of their own;
         // the HP beside the gun chip under them; the DPM first with the reload beside it (a single-shot gun); dispersion |

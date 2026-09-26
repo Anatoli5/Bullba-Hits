@@ -241,37 +241,50 @@ class VehicleExportTests(unittest.TestCase):
     def test_settings_defaults_are_written_and_malformed_ones_ignored(self):
         self.setup_exporter()
         path = self.folder/'settings.json'
-        self.assertEqual(json.loads(path.read_text(encoding='ascii')), {'exportAllVehicles':False})
+        self.assertEqual(json.loads(path.read_text(encoding='ascii')), {})
         path.write_text('{ not json', encoding='ascii')
-        self.assertEqual(self.build().load_settings(), {'exportAllVehicles':False})
-        path.write_text('{"exportAllVehicles": true}', encoding='ascii')
-        self.assertEqual(self.build().load_settings(), {'exportAllVehicles':True})
+        self.assertEqual(self.build().load_settings(), {})
 
-    def test_bulk_export_is_queued_by_the_setting_and_drained_on_idle(self):
-        (self.folder/'settings.json').write_text('{"exportAllVehicles": true}', encoding='ascii')
+    def test_the_old_bulk_setting_queues_nothing_and_is_left_in_the_file(self):
+        # 25.09: exportAllVehicles gave way to the page's Export all models (the model sweep of the exporter).
+        path = self.folder/'settings.json'
+        path.write_text('{"exportAllVehicles": true}', encoding='ascii')
         rows = [{'id':IDENTIFIER, 'type':TYPE, 'exported':False}]
         exporter = self.build()
-        with patch.object(ex.Exporter, 'catalogue_rows', return_value=rows):
+        with patch.object(ex.Exporter, 'catalogue_rows', return_value=rows), self.assertLogs('local.armor_inspector', 'INFO') as logs:
             self.setup_exporter(exporter)
-        self.assertEqual(exporter.bulk, [TYPE])
-        patches = self.client() + [patch.object(ex, 'top_descriptor', return_value=FakeDescriptor())]
+        self.assertEqual(exporter.settings, {})
+        self.assertEqual([job for job in exporter.jobs if job[2] == 'vehicle'], [])
+        self.assertEqual(sum('exportAllVehicles is no longer read' in line for line in logs.output), 1)
+        self.assertEqual(json.loads(path.read_text(encoding='ascii')), {'exportAllVehicles':True})
+        self.assertFalse(hasattr(exporter, 'bulk'))
+
+    def test_a_setup_replays_no_catalogue_request(self):
+        # The bulk export's lines in the request log ('catalogue') belong to the model sweep's keys now: a setup after a
+        # game update used to re-export every such vehicle synchronously.
+        self.export()
+        path = self.folder/'vehicles/exports.jsonl'
+        with path.open('a', encoding='ascii') as stream:
+            stream.write(json.dumps({'schema':1, 'type':'vehicle', 'vehicleType':'ussr:R45_IS-7', 'source':'catalogue',
+                                     'compactDescriptor':'dG9w', 'requestedAt':1.0}) + '\n')
+        exporter = self.build()
+        exported = []
+        with patch.object(ex.Exporter, 'export_vehicle', side_effect=lambda request, replay=False: exported.append(request['vehicleType'])):
+            exporter.replay_vehicle_requests()
+        self.assertEqual(exported, [TYPE])
+
+    def test_a_sweep_export_writes_no_request_line_and_defers_the_catalogue(self):
+        exporter = self.build()
+        request = dict(self.request, source='catalogue')
+        patches = self.client()
         for item in patches: item.start()
         try:
-            exporter.idle()
+            self.assertTrue(exporter.export_vehicle(request, sweep=True))
         finally:
             for item in patches: item.stop()
-        self.assertEqual(exporter.bulk, [])
-        record = read_data(self.folder/'data/vehicles'/(IDENTIFIER+'.js'))[1]
-        self.assertEqual(record['source'], 'catalogue')
-        self.assertEqual(record['compactDescriptor'], 'dG9w')
-        self.assertEqual(self.raw_requests()[0]['source'], 'catalogue')
-
-    def test_bulk_export_stays_off_by_default(self):
-        rows = [{'id':IDENTIFIER, 'type':TYPE, 'exported':False}]
-        exporter = self.build()
-        with patch.object(ex.Exporter, 'catalogue_rows', return_value=rows):
-            self.setup_exporter(exporter)
-        self.assertEqual(exporter.bulk, [])
+        self.assertEqual(self.raw_requests(), [])
+        self.assertTrue(exporter.catalogue_dirty)
+        self.assertEqual(read_data(self.folder/'data/vehicles'/(IDENTIFIER+'.js'))[1]['source'], 'catalogue')
 
     def test_vehicle_id_is_safe_and_invalid_types_are_rejected(self):
         self.assertEqual(ex.vehicle_id('ussr:R45_IS-7'), 'ussr-R45_IS-7')

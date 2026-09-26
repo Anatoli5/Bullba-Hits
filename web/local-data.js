@@ -12,6 +12,8 @@
     // The characteristics of a vehicle type (23.09): every turret and gun on the top modules, one file per type.
     if(/^ttx:[-a-zA-Z0-9_]{1,100}$/.test(key))return 'data/ttx/'+key.slice(4)+'.js';
     if(key==='ttxSweep')return 'data/ttx-sweep.js';
+    // The model sweep's progress (25.09): the page's Export all models and its bar.
+    if(key==='modelsSweep')return 'data/models-sweep.js';
     throw new Error('Invalid record identifier');
   }
   function read(key,retryCount){
@@ -167,5 +169,5 @@
   // expandBattle is published so the offline tools that read a battle file straight from disk
   // (tools/make_gpu_fixtures.cjs, verify_gpu_browser.cjs, check_shot_selection.cjs) use this one
   // reader instead of a second copy of the rules.
-  window.ArmorInspectorData={receive:receive,index:function(){return read('index');},battle:function(id){return read('battle:'+id);},vehicles:function(){return read('vehicles');},vehicle:function(id){return read('vehicle:'+id);},ttx:function(id){return read('ttx:'+id);},ttxSweep:function(){return read('ttxSweep');},scene:scene,sceneFor:sceneFor,expandBattle:expandBattle};
+  window.ArmorInspectorData={receive:receive,index:function(){return read('index');},battle:function(id){return read('battle:'+id);},vehicles:function(){return read('vehicles');},vehicle:function(id){return read('vehicle:'+id);},ttx:function(id){return read('ttx:'+id);},ttxSweep:function(){return read('ttxSweep');},modelsSweep:function(){return read('modelsSweep');},scene:scene,sceneFor:sceneFor,expandBattle:expandBattle};
 }());

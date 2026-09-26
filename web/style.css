@@ -702,6 +702,11 @@ header>.settings-menu>.settings-content{top:calc(100% + 8px);right:0;max-height:
 .sweep-ask>b{color:var(--gold)}
 .sweep-ask-buttons{display:flex;gap:8px;justify-content:flex-end;margin-top:4px}
 .sweep-ask-buttons button{min-height:0;padding:5px 12px;font-size:13px}
+/* Export all models (25.09): the Vehicles list's own button of the model sweep, in the game only. */
+.models-all{display:block;width:100%;margin:8px 0 4px;min-height:0;padding:6px 10px;font-size:13px;border-color:var(--gold);color:var(--gold)}
+.models-all[hidden]{display:none}
+.models-all:disabled{border-color:var(--line);color:var(--muted);cursor:default}
+.sweep-ask button[hidden]{display:none}
 
 /* The characteristics panel (23.09, outputs/ttx-panel-spec-2026-09-22.md 3.4): the bottom-right corner of the scene,
    the mirror of the pose tile, on the gun panel's own backdrop. Glyphs and figures only - every word is in a

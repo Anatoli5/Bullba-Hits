@@ -4,6 +4,11 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 
 ## Unreleased
 
+- **Vehicles:** Export all models in the Vehicles list (in the game) exports the collision model of every regular vehicle - no event or special-mode vehicles - for viewing outside the game too: about 190 MB and 20 min the first time (it asks first, with the estimate). It runs only while the viewer stays open, never in battle, a vehicle you click still goes first; the bar beside the Statistics log shows it and ■ stops it. After a game update only the vehicles whose game files changed are exported again. Your own vehicles keep your configuration.
+- **Vehicles:** outside the game a vehicle without a model says where models come from: the game, by a click on the vehicle there or Export all models.
+- **Settings:** `exportAllVehicles` in settings.json is no longer read; Export all models replaces it.
+- **Fix:** after the characteristics were prepared, exporting the model of a vehicle they had read failed for the rest of the session (the game refuses to read a vehicle twice); they now stay read.
+- **Speed:** the first model exported in a session starts about 3 s sooner (the game's model index is read about 30 times faster).
 - **Game:** the mods list button opens the viewer in the Vehicles mode on the vehicle selected in the hangar; the battles are one click away (Hits).
 - **Hits:** a click on a critical-damage icon of a hit tile shows what it means instead of opening the hit.
 - **Hits:** critical-damage and damage-source icons are the game's own 16 px icons: yellow/red modules, a yellow/red track instead of the white picture, and the damage log's crit, fire, ram, fall and strike icons (green for damage dealt, red for damage taken, as in the game).

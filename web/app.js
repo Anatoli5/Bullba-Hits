@@ -80,7 +80,7 @@
   var SOURCE_TAG={hangar:'from the hangar',battle:'from a battle',catalogue:'from the catalogue',picker:'from this list'};
   var SOURCE_TEXT={hangar:'the hangar',battle:'a battle',catalogue:'the catalogue',picker:'this list'};
   // A vehicle without a model outside the game (24.09): the scene says so, the characteristics panel shows its file.
-  var NO_VEHICLE_MODEL='Model not exported yet. In the game, one click on this vehicle opens it.';
+  var NO_VEHICLE_MODEL='No model yet: models come from the game. Open this viewer in the game and click the vehicle, or use Export all models there.';
   var NO_VEHICLE_TTX='No characteristics of this vehicle yet: the game writes them in the hangar, in the background.';
   var EXPORT_TIMEOUT='The model did not arrive in 30 s. See game.log.';
   // The help of the pane, as the gold badge's popover shows it: three headings, a few lines each. It used to
@@ -93,9 +93,10 @@
     ['A click on a row',['Shows it as the model.',
       'After a click on the Shooter tile: as the shooter.',
       'In the game, a dimmed row exports first.']],
-    ['Models come from',['The vehicle you select in the hangar.',
-      'Every vehicle of a battle you play, after it.']],
-    ['In a browser',['Every vehicle: its characteristics.','The model only where the game exported it.']]];
+    ['Models come from the game',['The vehicle you select in the hangar.',
+      'Every vehicle of a battle you play, after it.',
+      'Export all models: every regular vehicle; after a game update only the changed ones.']],
+    ['In a browser',['Every vehicle: its characteristics.','The model only where the game exported it: open this viewer in the game for more.']]];
   var sidebarMode='battles',battlesDirty=false;
   var catalogue=null,catalogueStamp=null,catalogueError=null,cataloguePending=false;
   var vehicleFilters={tier:[],nation:[],'class':[],role:[],flag:[],text:''},vehicleScope='battle';
@@ -6356,7 +6357,7 @@
     sceneShown();
     if(reference){$('details').appendChild(node('p','The model is extracted from the installed client. There are no invented hits here. Once the recorder is installed, new battles appear in the list on the left.'));return;}
     if(hit.vehicle&&hit.target&&hit.target.noModel){
-      $('details').appendChild(node('p','Characteristics of '+(hit.target.name||'this vehicle')+' from its file: the top modules, the gun and turret picked on the panel. Its collision model was not exported yet - in the game one click on it in the Vehicles list exports it.'));
+      $('details').appendChild(node('p','Characteristics of '+(hit.target.name||'this vehicle')+' from its file: the top modules, the gun and turret picked on the panel. Its collision model was not exported yet: models come from the game - one click on it in the Vehicles list there, or Export all models.'));
       return;
     }
     if(hit.vehicle){
@@ -8226,62 +8227,124 @@
     sweepTick();
     schedulePoll();
   }
-  // THE SWEEP OF EVERY VEHICLE'S CHARACTERISTICS (24.09, the user's decisions of that day). The mod builds the
-  // characteristics files of the vehicles whose client files changed, only while this page is open in the game and after
-  // the user's Start. Its progress file (data/ttx-sweep.js) is read with the poll while a sweep is pending: drawn beside
-  // the Statistics log (a bar, "done / total", ■ Stop while it runs), and in the game a pending sweep that does not run
-  // asks - on every open of the page, until Later. The page tells the mod it is open ('open', at most every 4 s, only while
-  // a sweep is pending and the page is on screen; the mod counts it open for 12 s). Outside the game nothing runs: the
-  // file is read, and not read again after it is missing once. Block of its own: tests/page/aim3_dom.cjs cuts it out.
+  // THE SWEEPS OF EVERY VEHICLE: the characteristics (24.09) and the collision models (25.09), the user's decisions of
+  // those days. The mod works through the catalogue only while this page is open in the game and after the user's Start,
+  // and only on the vehicles whose client files changed. One widget per kind (sweepWidget), the same parts: the progress
+  // file (data/ttx-sweep.js, data/models-sweep.js) read with the poll while a sweep is pending, a bar beside the
+  // Statistics log ("done / total", ■ Stop while it runs), and in the game a question - Start or Continue with an estimate,
+  // or Later. The characteristics ask on every open of the page while pending; the models only once the user has started
+  // them before (after a game update, or to finish), else through Export all models in the Vehicles list. The page tells
+  // the mod it is open ('open', at most every 4 s, only while a sweep may run and the page is on screen; the mod counts it
+  // open for 12 s). Outside the game nothing runs: a file is read, and not read again after it is missing once.
+  // Block of its own: tests/page/aim3_dom.cjs cuts it out.
   var SWEEP_MS=40,SWEEP_OVERHEAD=1.3;   // ms a vehicle before this machine has built any; the frames between slices
-  var sweepState,sweepAsked=false,sweepRunning=false,sweepGone=false,openSentAt=0,sweepKey='',sweepSaidAt=0;
+  // The model sweep's own before this machine has exported any (offline stand of the client's python27.dll, 25.09,
+  // docs/KNOWLEDGE.md 14): a vehicle 0.89 s of work on average (1107 in 986 s), ~175 KB on disk (the offline files and
+  // the pitch table they lack there); the frames between its steps (1087 s from Start to the end).
+  var MODELS_MS=890,MODELS_BYTES=175000,MODELS_OVERHEAD=1.1;
+  var openSentAt=0;
   function sweepPending(s){return s===undefined||!!(s&&(!s.done||s.retrying));}
-  function sweepTick(){
-    if(host.game&&sweepPending(sweepState)&&!document.hidden){var now=Date.now();if(now-openSentAt>=4000){openSentAt=now;sendCommand('open',null);}}
-    if(sweepGone||!ArmorInspectorData.ttxSweep||(sweepState&&!sweepPending(sweepState)))return;
-    ArmorInspectorData.ttxSweep().then(paintSweep,function(){if(!host.game)sweepGone=true;paintSweep(null);});
+  function sweepWidget(kind,spec){
+    var w={state:undefined,asked:false,running:false,gone:false,key:'',saidAt:0,forced:false},id=spec.id;
+    w.pending=function(){return sweepPending(w.state);};
+    w.tick=function(){
+      if(w.gone||!spec.read||(w.state&&!sweepPending(w.state)))return;
+      spec.read().then(w.paint,function(){if(!host.game)w.gone=true;w.paint(null);});
+    };
+    w.paint=function(s){
+      var box=$(id);if(!box)return;
+      w.state=s||null;
+      // The file's word on whether it runs, once the mod has had the time to take the user's own Start or Stop (a read
+      // just after the click may still be the file before it).
+      if(s&&s.done)w.running=false;
+      else if(s&&Date.now()-w.saidAt>6000)w.running=!!s.confirmed;
+      // A kind's quiet plan (spec.quiet: models never started, or only failures left) shows no bar unless it runs.
+      var total=s?Math.max(0,Number(s.total)||0):0,count=s?Math.min(total,Math.max(0,Number(s.count)||0)):0,
+        show=!!(s&&!s.done&&total>0&&(w.running||!spec.quiet||!spec.quiet(s)));
+      if(box.hidden!==!show)box.hidden=!show;
+      var stop=$(id+'-stop'),running=show&&host.game&&w.running;
+      if(stop.hidden!==!running)stop.hidden=!running;
+      var ask=host.game&&!w.running&&(w.forced||show&&!w.asked&&spec.mayAsk(s));
+      w.ask(ask?s:null,count,total);
+      if(spec.after)spec.after(w,s,count,total);
+      var key=show?count+'/'+total:'';
+      if(!show||key===w.key)return;
+      w.key=key;
+      $(id+'-count').textContent=count+' / '+total;
+      $(id+'-fill').style.width=(100*count/total).toFixed(1)+'%';
+      box.title=tipJoin(spec.tip(count,total));
+    };
+    // The question (short, per the rules of the page's words): its heading, one sentence, Start or Continue and Later.
+    w.ask=function(s,count,total){
+      var box=$(id+'-ask');
+      if(!s){if(!box.hidden)box.hidden=true;return;}
+      var words=spec.words(s,count,total);
+      $(id+'-ask-head').textContent=words[0];
+      $(id+'-ask-text').textContent=words[1];
+      var go=$(id+'-go');go.textContent=words[2]||'';go.hidden=!words[2];
+      $(id+'-later').textContent=words[2]?'Later':'OK';
+      if(box.hidden)box.hidden=false;
+    };
+    $(id+'-go').onclick=function(){w.running=true;w.forced=false;w.saidAt=Date.now();$(id+'-ask').hidden=true;openSentAt=0;sweepTick();
+      sendCommand('sweepStart',spec.command);w.paint(w.state);};
+    $(id+'-later').onclick=function(){w.asked=true;w.forced=false;$(id+'-ask').hidden=true;w.paint(w.state);};
+    $(id+'-stop').onclick=function(){w.running=false;w.saidAt=Date.now();w.asked=true;sendCommand('sweepStop',spec.command);w.paint(w.state);};
+    return w;
   }
   // The seconds left, from this machine's own build time when it has one (an estimate, and said so).
-  function sweepSeconds(s,left){var per=s.built>0&&s.builtMs>0?s.builtMs/s.built:SWEEP_MS;return Math.max(1,Math.ceil(left*per*SWEEP_OVERHEAD/1000));}
-  function paintSweep(s){
-    var box=$('ttx-sweep');if(!box)return;
-    sweepState=s||null;
-    var total=s?Math.max(0,Number(s.total)||0):0,count=s?Math.min(total,Math.max(0,Number(s.count)||0)):0,show=!!(s&&!s.done&&total>0);
-    // The file's word on whether it runs, once the mod has had the time to take the user's own Start or Stop (a read
-    // just after the click may still be the file before it).
-    if(s&&s.done)sweepRunning=false;
-    else if(s&&Date.now()-sweepSaidAt>6000)sweepRunning=!!s.confirmed;
-    if(box.hidden!==!show)box.hidden=!show;
-    var stop=$('ttx-sweep-stop'),running=show&&host.game&&sweepRunning;
-    if(stop.hidden!==!running)stop.hidden=!running;
-    var ask=show&&host.game&&!sweepRunning&&!sweepAsked;
-    sweepAsk(ask?s:null,count,total);
-    var key=show?count+'/'+total:'';
-    if(!show||key===sweepKey)return;
-    sweepKey=key;
-    $('ttx-sweep-count').textContent=count+' / '+total;
-    $('ttx-sweep-fill').style.width=(100*count/total).toFixed(1)+'%';
-    box.title=tipJoin(['Characteristics of every vehicle','The game prepares the characteristics files once after a game update, only of the vehicles that changed.',
+  function sweepSeconds(s,left,ms,overhead){var per=s.built>0&&s.builtMs>0?s.builtMs/s.built:ms;return Math.max(1,Math.ceil(left*per*overhead/1000));}
+  var ttxSweep=sweepWidget('ttx',{id:'ttx-sweep',command:null,read:ArmorInspectorData.ttxSweep,
+    mayAsk:function(){return $('models-sweep-ask').hidden;},   // never over the models question (review 25.09)
+    tip:function(count,total){return ['Characteristics of every vehicle','The game prepares the characteristics files once after a game update, only of the vehicles that changed.',
       '• Now: '+count+' of '+total,'','• Runs: while this page is open in the game, after your Start','• ■: stops it; what is done stays',
-      '• Never in a battle']);
+      '• Never in a battle'];},
+    words:function(s,count,total){
+      var secs=sweepSeconds(s,total-count,SWEEP_MS,SWEEP_OVERHEAD),all=Number(s.catalogue)||total;
+      return [count>0?'Preparation not finished':total>=all?'First start after a game update':'The game was updated',
+        count>0?count+' of '+total+' vehicles done ('+Math.floor(100*count/total)+' %), about '+secs+' s left (an estimate).'
+        :(total>=all?'Preparing the characteristics of all '+total+' vehicles':total+(total===1?' vehicle changed: preparing its characteristics':' vehicles changed: preparing their characteristics'))
+          +' takes about '+secs+' s (an estimate); the hangar stutters meanwhile.',count>0?'Continue':'Start'];}});
+  // The models: asked by themselves only once the user has started them before (opted), never over the characteristics'
+  // question, never for the failures alone; Export all models asks for them at any time (forced).
+  var modelsSweep=sweepWidget('models',{id:'models-sweep',command:{kind:'models'},read:ArmorInspectorData.modelsSweep,
+    mayAsk:function(s){return !!(s&&s.opted&&!s.failedOnly)&&ttxSweep.state!==undefined&&!ttxSweep.running&&$('ttx-sweep-ask').hidden;},
+    // No bar for a plan the user never started, nor for the failures alone (J29/J30 have no collision model in the client:
+    // they fail on every run, and a "0 / 2" bar would stand in the header every session); Export all models still asks.
+    quiet:function(s){return !s.opted||!!s.failedOnly;},
+    tip:function(count,total){return ['Collision models of every vehicle','The game exports the model of every regular vehicle, then after a game update only of the vehicles that changed.',
+      '• Now: '+count+' of '+total,'','• Runs: while this page is open in the game, after your Start','• ■: stops it; what is done stays',
+      '• Never in a battle'];},
+    words:function(s,count,total){
+      var all=Number(s.catalogue)||total,left=total-count,failed=Object.keys(s.failed||{}).length;
+      if(s.done||!total)return failed?[failed+' vehicles failed',failed+' vehicles could not be exported (python.log names the first); the rest are current.','']
+        :['All models exported','All '+all+' regular vehicles have their models; after a game update only the changed ones are exported.',''];
+      var per=s.built>0&&s.bytes>0?s.bytes/s.built:MODELS_BYTES,mb=Math.max(1,Math.round(left*per/1e6));
+      var time=Math.max(1,Math.round(sweepSeconds(s,left,MODELS_MS,MODELS_OVERHEAD)/60))+' min';
+      if(count>0)return ['Model export not finished',count+' of '+total+' vehicles done ('+Math.floor(100*count/total)+' %), about '+time+' and '+mb+' MB left (an estimate).','Continue'];
+      if(s.failedOnly)return [total+' vehicles failed',total+' vehicles could not be exported last time: about '+time+' to try them again.','Start'];
+      if(!s.opted)return ['Export all models',(total>=all?'All '+all+' regular vehicles':total+' of '+all+' regular vehicles')+': about '+mb+' MB, about '+time
+        +' (an estimate). Runs while this page stays open; the hangar stutters meanwhile.','Start'];
+      return ['The game was updated',total+(total===1?' vehicle changed: exporting its model':' vehicles changed: exporting their models')+' takes about '+time+' (an estimate); the hangar stutters meanwhile.','Start'];},
+    after:function(w,s,count,total){
+      // Export all models in the Vehicles list: in the game, once the mod's progress file is there.
+      var b=$('models-all');if(!b)return;
+      var show=host.game&&!!s;if(b.hidden!==!show)b.hidden=!show;if(!show)return;
+      var running=w.running&&!!s&&!s.done;
+      b.disabled=running;
+      b.textContent=running?'Exporting models… '+count+' / '+total:s.done&&!Object.keys(s.failed||{}).length?'All models exported ✓':'Export all models';
+      b.setAttribute('aria-pressed',String(running));}});
+  // The user's own question: the characteristics' one, if it stands, gives way to it (it asks again on the next open).
+  $('models-all').onclick=function(){if(modelsSweep.running)return;
+    if(!$('ttx-sweep-ask').hidden){ttxSweep.asked=true;$('ttx-sweep-ask').hidden=true;}
+    modelsSweep.forced=true;modelsSweep.asked=false;modelsSweep.paint(modelsSweep.state);};
+  function sweepTick(){
+    var open=ttxSweep.pending()||modelsSweep.running;
+    if(host.game&&open&&!document.hidden){var now=Date.now();if(now-openSentAt>=4000){openSentAt=now;sendCommand('open',null);}}
+    ttxSweep.tick();modelsSweep.tick();
   }
-  // The question (short, per the rules of the page's words): its heading, one sentence, Start or Continue and Later.
-  function sweepAsk(s,count,total){
-    var box=$('ttx-sweep-ask');
-    if(!s){if(!box.hidden)box.hidden=true;return;}
-    var left=total-count,secs=sweepSeconds(s,left),all=Number(s.catalogue)||total;
-    $('ttx-sweep-ask-head').textContent=count>0?'Preparation not finished':total>=all?'First start after a game update':'The game was updated';
-    $('ttx-sweep-ask-text').textContent=count>0?count+' of '+total+' vehicles done ('+Math.floor(100*count/total)+' %), about '+secs+' s left (an estimate).'
-      :(total>=all?'Preparing the characteristics of all '+total+' vehicles':total+(total===1?' vehicle changed: preparing its characteristics':' vehicles changed: preparing their characteristics'))
-        +' takes about '+secs+' s (an estimate); the hangar stutters meanwhile.';
-    $('ttx-sweep-go').textContent=count>0?'Continue':'Start';
-    if(box.hidden)box.hidden=false;
-  }
-  $('ttx-sweep-go').onclick=function(){sweepRunning=true;sweepSaidAt=Date.now();$('ttx-sweep-ask').hidden=true;openSentAt=0;sweepTick();sendCommand('sweepStart',null);paintSweep(sweepState);};
-  $('ttx-sweep-later').onclick=function(){sweepAsked=true;$('ttx-sweep-ask').hidden=true;};
-  $('ttx-sweep-stop').onclick=function(){sweepRunning=false;sweepSaidAt=Date.now();sweepAsked=true;sendCommand('sweepStop',null);paintSweep(sweepState);};
+  function sweepRunning(){return ttxSweep.running||modelsSweep.running;}
   sweepTick();
-  function schedulePoll(){if(pollTimer)window.clearTimeout(pollTimer);pollTimer=window.setTimeout(pollTick,modelsPending||sweepRunning?2000:5000);}
+  function schedulePoll(){if(pollTimer)window.clearTimeout(pollTimer);pollTimer=window.setTimeout(pollTick,modelsPending||sweepRunning()?2000:5000);}
   schedulePoll();
   if(document.modelContext&&document.modelContext.registerTool){try{document.modelContext.registerTool({name:'select_saved_hit',description:'Open an existing recorded hit in the local 3D viewer.',inputSchema:{type:'object',properties:{battleId:{type:'string'},hitId:{type:'string'}},required:['battleId','hitId'],additionalProperties:false},execute:function(input){if(!input||!/^[-a-zA-Z0-9_]{1,100}$/.test(input.battleId)||!/^\d+$/.test(input.hitId))throw new Error('Invalid record identifiers');return loadBattle(input.battleId,true).then(function(){return selectHit(input.hitId);});}});}catch(e){console.warn('WebMCP unavailable',e);}}
 }());

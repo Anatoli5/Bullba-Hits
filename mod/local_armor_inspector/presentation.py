@@ -106,7 +106,8 @@ def set_open_request(handler):
 
 
 def set_sweep_request(handler):
-    """The page's Start (True) or Stop (False) of the characteristics sweep of this client version."""
+    """The page's Start (True) or Stop (False) of a sweep: handler(start, kind), kind 'ttx' (the characteristics of
+    this client version) or 'models' (the collision models of every regular vehicle)."""
     global _sweep_request
     _sweep_request = handler
 
@@ -130,8 +131,9 @@ def _handle_web_command(command, ctx):
     'exportTtx' for the characteristics file of one type (no collision models),
     'busy' says the user is dragging or zooming the page right now,
     'prioritise' names the vehicle types whose collision models the page is
-    waiting for, 'open' says the page is open (the TTX sweep may run) and
-    'sweepStart'/'sweepStop' are the user's Start and Stop of that sweep.
+    waiting for, 'open' says the page is open (a sweep may run) and
+    'sweepStart'/'sweepStop' are the user's Start and Stop of a sweep, its
+    'kind' - 'ttx' when absent, or 'models'.
     None of them may cost the game thread more than a flag.
     """
     try:
@@ -146,8 +148,12 @@ def _handle_web_command(command, ctx):
             if _sweep_request is None:
                 _warn_once('sweep', 'Bullba Hits page command: the recorder is not running')
                 return
-            LOG.info('Bullba Hits page command: characteristics sweep %s', 'started' if action == 'sweepStart' else 'stopped')
-            _sweep_request(action == 'sweepStart')
+            kind = getattr(command, 'kind', None) or 'ttx'
+            if kind not in ('ttx', 'models'):
+                _warn_once('sweep-kind', 'Bullba Hits page command: unknown sweep %r', kind)
+                return
+            LOG.info('Bullba Hits page command: %s sweep %s', kind, 'started' if action == 'sweepStart' else 'stopped')
+            _sweep_request(action == 'sweepStart', str(kind))
             return
         if action == 'open':
             if _open_request is None:
@@ -232,6 +238,8 @@ def web_handlers():
             # client's own WebCommandSchema declares a dict field the same way, so
             # a JSON array is an ordinary field type here, not a special case.
             vehicleTypes = Field(type=list)
+            # 'sweepStart'/'sweepStop': which sweep ('ttx' when absent, 'models').
+            kind = Field(type=basestring)
         return [createCommandHandler(WEB_COMMAND, BullbaHitsSchema, _handle_web_command, None)]
     except Exception:
         LOG.exception('Bullba Hits page command could not be registered')

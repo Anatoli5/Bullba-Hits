@@ -3254,23 +3254,28 @@ settle(20).then(function () {
      && modelRow.indexOf('Hit marks') < 0 && modelRow.indexOf('outcome colour') < 0);
   ok('fun: a .swap-roles that is a switch is LIT in the page’s own accent, the very state the chips and pills wear',
      /\.swap-roles\[aria-pressed=true\]\{border-color:var\(--gold\);color:var\(--gold\);background:#302b23\}/.test(styleSrc));
-  // ---- the sweep of every vehicle's characteristics (24.09): its block of app.js cut out and run on stubs -------------
+  // ---- the sweeps of every vehicle (24.09 characteristics, 25.09 models): their block of app.js cut out and run on stubs
+  const sweepFrom = appSrc.indexOf("  // THE SWEEPS OF EVERY VEHICLE"), sweepTo = appSrc.indexOf('  sweepTick();\n', sweepFrom);
+  const sweepTipJoin = (/\n  function tipJoin\(lines\) \{[\s\S]*?\n  \}\n/.exec(appSrc) || [''])[0];
+  // One page of the block: `file` the TTX progress file, `models` the model sweep's (null: none), `hidden` the page off screen.
+  function sweepPage(game, file, hidden, models) {
+    const els = {}, sent = [], params = [], reads = {n: 0, models: 0};
+    const $ = function (id) { return els[id] || (els[id] = {id: id, hidden: true, disabled: false, textContent: '', title: '', style: {}, onclick: null,
+      attrs: {}, setAttribute: function (k, v) { this.attrs[k] = v; }}); };
+    const host = {game: game}, doc = {hidden: !!hidden};
+    const data = {ttxSweep: function () { reads.n++; const f = file(); return f ? Promise.resolve(f) : Promise.reject(new Error('Not found data/ttx-sweep.js')); },
+      modelsSweep: function () { reads.models++; const f = models ? models() : null; return f ? Promise.resolve(f) : Promise.reject(new Error('Not found data/models-sweep.js')); }};
+    const run = new Function('$', 'host', 'sendCommand', 'ArmorInspectorData', 'document', sweepTipJoin + appSrc.slice(sweepFrom, sweepTo)
+      + 'return {tick: sweepTick, paint: ttxSweep.paint, running: function () { return ttxSweep.running; }, models: modelsSweep, anyRunning: sweepRunning};');
+    const api = run($, host, function (action, p) { sent.push(action); params.push(p); }, data, doc);
+    api.tick();   // the block's own first call at load (left out of the cut)
+    return {$: $, sent: sent, params: params, reads: reads, api: api, doc: doc, host: host};
+  }
   (function sweepChecks() {
-    const from = appSrc.indexOf("  // THE SWEEP OF EVERY VEHICLE'S CHARACTERISTICS"), to = appSrc.indexOf('  sweepTick();\n', from);
+    const from = sweepFrom, to = sweepTo;
     ok('sweep: its block of app.js can be cut out, and the poll runs it', from > 0 && to > from
-       && /refresh\(\);if\(sidebarMode==='vehicles'\)loadCatalogue\(\);\n    sweepTick\(\);/.test(appSrc) && /modelsPending\|\|sweepRunning\?2000:5000/.test(appSrc));
-    const tipJoinCut = (/\n  function tipJoin\(lines\) \{[\s\S]*?\n  \}\n/.exec(appSrc) || [''])[0];
-    function page(game, file, hidden) {
-      const els = {}, sent = [], reads = {n: 0};
-      const $ = function (id) { return els[id] || (els[id] = {id: id, hidden: true, textContent: '', title: '', style: {}, onclick: null}); };
-      const host = {game: game}, doc = {hidden: !!hidden};
-      const data = {ttxSweep: function () { reads.n++; const f = file(); return f ? Promise.resolve(f) : Promise.reject(new Error('Not found data/ttx-sweep.js')); }};
-      const run = new Function('$', 'host', 'sendCommand', 'ArmorInspectorData', 'document', tipJoinCut + appSrc.slice(from, to)
-        + 'return {tick: sweepTick, paint: paintSweep, running: function () { return sweepRunning; }};');
-      const api = run($, host, function (action) { sent.push(action); }, data, doc);
-      api.tick();   // the block's own first call at load (left out of the cut)
-      return {$: $, sent: sent, reads: reads, api: api, doc: doc, host: host};
-    }
+       && /refresh\(\);if\(sidebarMode==='vehicles'\)loadCatalogue\(\);\n    sweepTick\(\);/.test(appSrc) && /modelsPending\|\|sweepRunning\(\)\?2000:5000/.test(appSrc));
+    const page = function (game, file, hidden) { return sweepPage(game, file, hidden, null); };
     const settleMicro = function () { return new Promise(function (r) { setImmediate(r); }); };
     let file = {done: false, count: 0, total: 1343, catalogue: 1343, confirmed: false, built: 0, builtMs: 0};
     const g = page(true, function () { return file; });
@@ -3322,6 +3327,97 @@ settle(20).then(function () {
               const h = page(true, function () { return file; }, true);
               return settleMicro().then(function () {
                 ok('sweep: a page not on screen does not say it is open (review #9)', h.sent.indexOf('open') < 0);
+              });
+            });
+          });
+        });
+      });
+    });
+  })();
+  // ---- the model sweep (25.09): the same widget, its own words; Export all models in the Vehicles list -------------
+  (function modelSweepChecks() {
+    const done = function () { return {done: true, count: 0, total: 0, catalogue: 1343}; };
+    const settle = function () { return new Promise(function (r) { setImmediate(r); }); };
+    // Never started: no question by itself, the button in the Vehicles list asks with the offline estimate.
+    let models = {done: false, count: 0, total: 1107, catalogue: 1107, confirmed: false, opted: false, built: 0, builtMs: 0, bytes: 0, failed: {}};
+    const g = sweepPage(true, done, false, function () { return models; });
+    return settle().then(function () {
+      const ask = g.$('models-sweep-ask'), button = g.$('models-all');
+      // Review 25.09: a plan the user never started stands in no bar (it read "0 / 1107" in the header on every open).
+      ok('models: never started - no question by itself, no bar, the button stands in the Vehicles list',
+         ask.hidden === true && button.hidden === false && button.textContent === 'Export all models' && g.$('models-sweep').hidden === true
+         && g.reads.models === 1, button.textContent + ' | bar hidden ' + g.$('models-sweep').hidden);
+      button.onclick();
+      ok('models: Export all models asks - how many, MB and minutes from the offline figures (0.89 s, 175 KB a vehicle), Start and Later',
+         ask.hidden === false && g.$('models-sweep-ask-head').textContent === 'Export all models'
+         && g.$('models-sweep-ask-text').textContent === 'All 1107 regular vehicles: about 194 MB, about 18 min (an estimate). Runs while this page stays open; the hangar stutters meanwhile.'
+         && g.$('models-sweep-go').textContent === 'Start' && g.$('models-sweep-go').hidden === false && g.$('models-sweep-later').textContent === 'Later',
+         g.$('models-sweep-ask-text').textContent);
+      g.$('models-sweep-go').onclick();
+      const at = g.sent.lastIndexOf('sweepStart');
+      ok('models: Start - the mod is told which sweep, the ■ Stop stands, the button shows the progress and is off, the poll runs every 2 s',
+         at >= 0 && g.params[at] && g.params[at].kind === 'models' && ask.hidden === true && g.$('models-sweep-stop').hidden === false
+         && button.disabled === true && button.textContent === 'Exporting models\u2026 0 / 1107' && g.api.anyRunning() === true
+         && g.$('models-sweep').hidden === false && g.$('models-sweep-count').textContent === '0 / 1107', button.textContent);
+      const opens = g.sent.filter(function (a) { return a === 'open'; }).length;
+      g.api.tick();
+      ok('models: while it runs the page keeps saying it is open', g.sent.filter(function (a) { return a === 'open'; }).length >= opens);
+      g.$('models-sweep-stop').onclick();
+      const st = g.sent.lastIndexOf('sweepStop');
+      ok('models: ■ Stop - the mod is told which sweep, the button is back', st >= 0 && g.params[st].kind === 'models' && button.disabled === false
+         && button.textContent === 'Export all models' && g.$('models-sweep-stop').hidden === true);
+      // Started before (opted): the next open after a game update asks by itself, once the characteristics have no question.
+      models = {done: false, count: 0, total: 12, catalogue: 1107, confirmed: false, opted: true, built: 1107, builtMs: 763830, bytes: 166000000, failed: {}};
+      const u = sweepPage(true, done, false, function () { return models; });
+      return settle().then(function () {
+        ok('models: after a game update - "12 vehicles changed", at this machine\'s own pace',
+           u.$('models-sweep-ask').hidden === false && u.$('models-sweep-ask-head').textContent === 'The game was updated'
+           && u.$('models-sweep-ask-text').textContent === '12 vehicles changed: exporting their models takes about 1 min (an estimate); the hangar stutters meanwhile.',
+           u.$('models-sweep-ask-text').textContent);
+        const ttxAsking = {done: false, count: 0, total: 1343, catalogue: 1343, confirmed: false, built: 0, builtMs: 0};
+        const both = sweepPage(true, function () { return ttxAsking; }, false, function () { return models; });
+        return settle().then(function () {
+          ok('models: never over the characteristics\' question', both.$('ttx-sweep-ask').hidden === false && both.$('models-sweep-ask').hidden === true);
+          both.$('models-all').onclick();
+          ok('models: Export all models - the characteristics\' question gives way to it', both.$('ttx-sweep-ask').hidden === true && both.$('models-sweep-ask').hidden === false);
+          const half = sweepPage(true, done, false, function () { return {done: false, count: 300, total: 1107, catalogue: 1107, confirmed: false, opted: true,
+            built: 300, builtMs: 210000, bytes: 45000000, failed: {}}; });
+          return settle().then(function () {
+            ok('models: cut short - how far it got, the time and MB left at this machine\'s pace, Continue',
+               half.$('models-sweep-ask-head').textContent === 'Model export not finished'
+               && half.$('models-sweep-ask-text').textContent === '300 of 1107 vehicles done (27 %), about 10 min and 121 MB left (an estimate).'
+               && half.$('models-sweep-go').textContent === 'Continue', half.$('models-sweep-ask-text').textContent);
+            const all = sweepPage(true, done, false, function () { return {done: true, count: 0, total: 0, catalogue: 1107, opted: true, failed: {}}; });
+            return settle().then(function () {
+              const b = all.$('models-all');
+              ok('models: all exported - no bar, no question, the button says so', all.$('models-sweep').hidden === true && all.$('models-sweep-ask').hidden === true
+                 && b.hidden === false && b.textContent === 'All models exported \u2713');
+              b.onclick();
+              ok('models: and its click says what is current, OK only',
+                 all.$('models-sweep-ask').hidden === false && all.$('models-sweep-ask-head').textContent === 'All models exported'
+                 && all.$('models-sweep-go').hidden === true && all.$('models-sweep-later').textContent === 'OK');
+              all.$('models-sweep-later').onclick();
+              ok('models: OK closes it', all.$('models-sweep-ask').hidden === true);
+              const out = sweepPage(false, function () { return null; }, false, function () { return models; });
+              return settle().then(function () {
+                ok('models: outside the game - no button, no question, nothing sent', out.$('models-all').hidden === true
+                   && out.$('models-sweep-ask').hidden === true && out.sent.length === 0);
+                const old = sweepPage(true, done, false, null);
+                return settle().then(function () {
+                  ok('models: a mod without the model sweep (no progress file) - no button', old.$('models-all').hidden === true);
+                  // Review 25.09: only failures left (J29/J30 have no collision model in the client: every run) - no bar in the
+                  // header, no question by itself; Export all models offers the retry.
+                  const failing = sweepPage(true, done, false, function () { return {done: false, count: 0, total: 2, catalogue: 1107, confirmed: false,
+                    opted: true, failedOnly: true, built: 1107, builtMs: 763830, bytes: 166000000, failed: {'japan:J29_Nameless': '', 'japan:J30_Edelweiss': ''}}; });
+                  return settle().then(function () {
+                    ok('models: only failures left - no bar, no question by itself', failing.$('models-sweep').hidden === true
+                       && failing.$('models-sweep-ask').hidden === true && failing.$('models-all').textContent === 'Export all models');
+                    failing.$('models-all').onclick();
+                    ok('models: and Export all models offers to try them again', failing.$('models-sweep-ask').hidden === false
+                       && failing.$('models-sweep-ask-head').textContent === '2 vehicles failed' && failing.$('models-sweep-go').textContent === 'Start',
+                       failing.$('models-sweep-ask-head').textContent);
+                  });
+                });
               });
             });
           });
@@ -7024,7 +7120,7 @@ settle(20).then(function () {
       // words, the vehicle list's summary wears the dot (its own box of help opens under it).
       ok('help marks: one look - no ⓘ left in the page; the Statistics log has a help dot on its words, the vehicle list\'s help is a .help-dot summary',
          pageSrc.indexOf('\u24d8') < 0 && pageSrc.indexOf('info-mark') < 0
-         && /<span id="connection">Statistics log<\/span><button type="button" class="help-dot" data-help-for="ttx-sweep ttx-sweep-stop connection" aria-label="Help"[^>]*>\?<\/button>/.test(pageSrc)
+         && /<span id="connection">Statistics log<\/span><button type="button" class="help-dot" data-help-for="ttx-sweep ttx-sweep-stop models-sweep models-sweep-stop connection" aria-label="Help"[^>]*>\?<\/button>/.test(pageSrc)
          && /<summary id="vehicle-info" class="help-dot"[^>]*>\?<\/summary>/.test(pageSrc));
       // Put the page back as the sections before it left it.
       global.ArmorInspectorData.battle = keepBattle; global.ArmorInspectorData.ttx = keepTtx; global.ArmorInspectorData.scene = keepScene;
@@ -8484,7 +8580,7 @@ function pathMatrix() {
       expectScene('a vehicle without a model browsed', fun, {model: true, drawn: false, shooter: true, hp: null}, delta(was));
       const hp = $('ttx-hp').children[0];
       ok('matrix, ⌖ ' + (fun ? 'on' : 'off') + ': (a vehicle without a model - the scene says so, the panel shows its file, both tiles are it)',
-         /^Model not exported yet\. In the game, one click on this vehicle opens it\.$/.test($('scene-message').textContent)
+         /^No model yet: models come from the game\. Open this viewer in the game and click the vehicle, or use Export all models there\.$/.test($('scene-message').textContent)
          && $('ttx-panel').hidden === false && !!hp && hp.ttx.value.textContent === '1111'
          && $('model-tile').title.indexOf('Uniform') >= 0 && $('shooter-tile').title.indexOf('Uniform') >= 0,
          '"' + $('scene-message').textContent + '" ' + (hp ? hp.ttx.value.textContent : 'no HP row'));

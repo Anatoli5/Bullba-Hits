@@ -79,32 +79,12 @@ def vehicle_identity(descr):
         # event, and the exporter's fitment backfill (full 'tags') lives only in the published copy, so this
         # short list is what a record made today keeps of them. Written even when empty: that it was read
         # is the point. vtype.tags is a small frozenset; one pass over it per recorded vehicle.
+        from local_armor_inspector.exporter import group_mode_tags
         modes = group_mode_tags()
         identity['groupTags'] = sorted(str(tag) for tag in vtype.tags if str(tag).startswith('lock') or str(tag) in modes)
     except Exception:
         pass
     return identity
-
-
-# constants.BATTLE_MODE_VEHICLE_TAGS of client 2.4.0.1, the fallback when the client's own set cannot be
-# read, plus maps_training, which gui Vehicle.isOnlyForMapsTrainingBattles reads outside that set
-# (outputs/vehicle-classes-modes-2026-09-21.md, summary point 6).
-DEFAULT_MODE_TAGS = ('event_battles', 'comp7', 'comp7_light', 'epic_battles', 'battle_royale', 'fun_random',
-                     'fallout', 'bob', 'clanWarsBattles', 'maps_training')
-_mode_tags = []
-
-
-def group_mode_tags():
-    """The battle-mode vehicle tags of the running client, read once; the known set when it has none."""
-    if not _mode_tags:
-        names = set(DEFAULT_MODE_TAGS)
-        try:
-            from constants import BATTLE_MODE_VEHICLE_TAGS
-            names.update(str(tag) for tag in BATTLE_MODE_VEHICLE_TAGS)
-        except Exception:
-            pass
-        _mode_tags.append(frozenset(names))
-    return _mode_tags[0]
 
 
 def constant_name(table, value):
@@ -471,9 +451,9 @@ class Writer(object):
             return
         while True:
             message = None
-            # While the TTX sweep's slices run, no wait here: it waits one frame of the game between two slices itself.
+            # While a sweep's slices run, no wait here: it waits one frame of the game between two slices itself.
             hurry = False
-            try: hurry = bool(getattr(self.exporter, 'ttx_hurry', None) and self.exporter.ttx_hurry())
+            try: hurry = bool(getattr(self.exporter, 'sweep_hurry', None) and self.exporter.sweep_hurry())
             except Exception: hurry = False
             try: message = self.export_queue.get_nowait() if hurry else self.export_queue.get(timeout=0.05)
             except queue.Empty: pass
@@ -483,8 +463,8 @@ class Writer(object):
                     if name == 'vehicle': self.exporter.request_vehicle_export(payload)
                     elif name == 'prioritise': self.exporter.prioritise(payload)
                     elif name == 'ttx': self.exporter.request_ttx(payload)
-                    elif name == 'sweepStart': self.exporter.confirm_ttx_sweep()
-                    elif name == 'sweepStop': self.exporter.stop_ttx_sweep()
+                    elif name == 'sweepStart': self.exporter.confirm_sweep(payload or 'ttx')
+                    elif name == 'sweepStop': self.exporter.stop_sweep(payload or 'ttx')
                 except Exception: LOG.exception('HTML export command failed')
                 finally: self.export_queue.task_done()
             dirty = self.take_dirty()
@@ -512,7 +492,7 @@ class Writer(object):
 
     def close(self):
         self.export_deadline = time.time() + 2.0
-        # The characteristics sweep builds nothing more (review #6): the drain below is the records' only.
+        # No sweep works any more (review #6): the drain below is the records' only.
         if self.exporter is not None:
             try: self.exporter.ttx_stopped = True
             except Exception: pass
@@ -794,9 +774,10 @@ class Recorder(object):
         self.page_open_until = time.time()+float(seconds)
         self.start_frames()
 
-    def sweep_request(self, start):
-        """The page's Start or Stop of the characteristics sweep: the export thread runs or stops it, the frames begin here."""
-        self.writer.put_export('sweepStart' if start else 'sweepStop', None)
+    def sweep_request(self, start, kind='ttx'):
+        """The page's Start or Stop of a sweep ('ttx' the characteristics, 'models' the collision models): the export
+        thread runs or stops it, the frames begin here."""
+        self.writer.put_export('sweepStart' if start else 'sweepStop', kind)
         self.frames_wanted = bool(start)
         if start: self.start_frames()
 
@@ -1297,7 +1278,7 @@ def picker_descriptor(type_name):
     items.makeIntCompactDescrByID('vehicle', nationID, innationID) builds the int
     compact descriptor, IItemsCache.items.getItemByCD returns the gui Vehicle and
     its .descriptor is FittingItem._descriptor, a VehicleDescr - otherwise the top
-    configuration of the catalogue, exactly as the optional bulk export uses it.
+    configuration of the catalogue, exactly as the model sweep uses it.
     """
     from local_armor_inspector.exporter import top_descriptor
     try:
@@ -1340,10 +1321,10 @@ def page_open():
     _recorder.note_page_open()
 
 
-def page_sweep(start):
-    """The page's Start or Stop of the characteristics sweep. Game thread: the request only."""
+def page_sweep(start, kind='ttx'):
+    """The page's Start or Stop of a sweep ('ttx' or 'models'). Game thread: the request only."""
     if _recorder is None: return
-    _recorder.sweep_request(start)
+    _recorder.sweep_request(start, kind)
 
 
 def page_prioritise(types):

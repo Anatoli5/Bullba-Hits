@@ -150,12 +150,12 @@ try:
     check(not os.path.exists(os.path.join(folder, 'ttx-sweep.json')), 'the old marker beside the settings is gone')
     for _ in range(5): first.run_job()
     check(not calls, 'no Start yet: nothing is built, whatever the page')
-    check(first.confirm_ttx_sweep() and progress()['confirmed'] is True, 'Start: running, and the progress file says so')
+    check(first.confirm_sweep('ttx') and progress()['confirmed'] is True, 'Start: running, and the progress file says so')
     # --- slices and frames -----------------------------------------------------------------------------------------
     # 35 ms a build: two builds a 60 ms slice whatever the system timer (25 ms gave three once Chrome of the browser
     # suite had set the 1 ms timer, and the six types were all built before the Stop below - a flake, 25.09).
     delay[0] = 0.035
-    check(first.ttx_hurry() and first.recorder.frames_wanted, 'running: the export loop does not wait, the frame callback is wanted')
+    check(first.sweep_hurry() and first.recorder.frames_wanted, 'running: the export loop does not wait, the frame callback is wanted')
     first.run_job()
     check(2 <= len(calls) <= 4 and first.recorder.frames == 0, 'one slice: builds back to back for 60 ms (%d), no frame before the first' % len(calls))
     first.run_job()
@@ -164,13 +164,13 @@ try:
     # --- queued jobs, battle, drag, shutdown ---------------------------------------------------------------------------
     before = len(calls)
     first.queue_job(ex.JOB_BULK, 'ttx', {'vehicleType': 'usa:A9_Queued'})
-    check(not first.ttx_hurry(), 'a queued job: the export loop waits as usual')
+    check(not first.sweep_hurry(), 'a queued job: the export loop waits as usual')
     first.last_job = 0   # the models' PACE after the sweep's last build
     first.run_job()
     check(calls[-1] == 'usa:A9_Queued' and len(calls) == before + 1, 'a queued job (a clicked vehicle) runs before the sweep')
     first.recorder.in_battle = True
     first.run_job()
-    check(len(calls) == before + 1 and not first.ttx_hurry(), 'in a battle: nothing')
+    check(len(calls) == before + 1 and not first.sweep_hurry(), 'in a battle: nothing')
     first.recorder.in_battle = False
     first.recorder.busy_until = time.time() + 60
     first.run_job()
@@ -188,19 +188,21 @@ try:
     first.ttx_stopped = True
     at = len(calls)
     first.run_job()
-    check(len(calls) == at and not first.ttx_hurry(), 'the mod shutting down: no build after it (review #6)')
+    check(len(calls) == at and not first.sweep_hurry(), 'the mod shutting down: no build after it (review #6)')
     first.ttx_stopped = False
     # --- Stop, the page closed -------------------------------------------------------------------------------------------
     done_so_far = first.ttx_sweep['next']
-    check(first.stop_ttx_sweep() and progress()['confirmed'] is False and progress()['count'] == done_so_far,
+    check(first.stop_sweep('ttx') and progress()['confirmed'] is False and progress()['count'] == done_so_far,
           'Stop: not running, what is done stays (%d)' % done_so_far)
     first.run_job()
     check(len(calls) == at, 'stopped: nothing')
-    first.confirm_ttx_sweep()
+    first.confirm_sweep('ttx')
     first.recorder.page_open_until = time.time() - 1
     first.run_job()
     check(len(calls) == at and progress()['confirmed'] is False, 'the page closed: stopped the same way')
-    check(('held', 0) in CACHE and not [k for k in CACHE if k[0] in TYPES], 'types parsed by the sweep dropped from g_cache, the held one kept')
+    # 25.09: no eviction - the client raises when a type it parsed once is parsed again ("the component is already
+    # defined somewhere", items/vehicles.pyc _readInstallableComponents), so a type the sweep parsed stays parsed.
+    check(('held', 0) in CACHE and [k for k in CACHE if k[0] in TYPES], 'types parsed by the sweep stay in g_cache (a second parse raises in the client)')
     check(logged('TTX germany:') == 0 and logged('TTX sweep:') == 0, 'no log line per type')
 
     # --- the next session goes on where this one stopped (asked again), one vehicle failing stops nothing ----------------
@@ -209,7 +211,7 @@ try:
     second = session()
     check(planned(second) == sorted(set(TYPES) - set(written)) and progress()['confirmed'] is False,
           'next session: the types not built yet, not running until Start again')
-    second.confirm_ttx_sweep()
+    second.confirm_sweep('ttx')
     drain(second)
     marker = progress()
     check(not [t for t in calls if t in written] and second.ttx_sweep is None, 'resume: nothing built twice, the sweep ends')
@@ -256,7 +258,7 @@ try:
     check(planned(session('client 7\n')) == sorted(TYPES), 'the client\'s items code changed: every type')
     SOURCES = changed
     drain_all = session('client 7\n')
-    drain_all.confirm_ttx_sweep()
+    drain_all.confirm_sweep('ttx')
     drain(drain_all)
     check(session('client 8\n').ttx_sweep is None, 'all built: the next client with the same sources has nothing to build')
     real_format = ex.TTX_FORMAT
@@ -280,7 +282,7 @@ try:
     ex.write_data = failing
     calls[:] = []
     locked = session('client 10\n')
-    locked.confirm_ttx_sweep()
+    locked.confirm_sweep('ttx')
     drain(locked)
     ex.write_data = real_write
     check(locked.ttx_sweep is None and len(calls) == 6 and list(progress()['failed']) == ['germany:G1_A'],
