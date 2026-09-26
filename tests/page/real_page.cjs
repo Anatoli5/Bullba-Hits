@@ -335,6 +335,26 @@ async function main() {
        && viewA2.eye.every((x, i) => close(x, viewA.eye[i])) && viewA2.shell === viewA.shell && viewA.shell === 'saved:1', JSON.stringify([viewA, viewA2]));
     ok('target picked by hand: no uncaught exception in the page', page.errors.length === 0, page.errors.slice(0, 3).join(' | '));
     page.errors.length = 0;
+    // The wheel over the Distance and Zoom sliders (user, 26.09): the scene's own eased glide (viewer.wheel) at the slider's
+    // gain - real wheel events at the slider, a burst of 20 notches - and the shell redone once at its end, not per notch.
+    const at = (sel) => ev(`(() => { const b = document.querySelector('${sel}').getBoundingClientRect(); return [b.left + b.width / 2, b.top + b.height / 2]; })()`);
+    const roll = async (sel, n, dy) => { const xy = await at(sel); for (let i = 0; i < n; i++) await page.send('Input.dispatchMouseEvent', {type: 'mouseWheel', x: xy[0], y: xy[1], deltaX: 0, deltaY: dy});
+      // The glide ends in the viewer's own frame loop (the page's words do not change on the way), then the shell's 150 ms.
+      await ev(`(async () => { const v = window.__bullbaViewers[window.__bullbaViewers.length - 1]; for (let i = 0; i < 300 && v.cameraGliding(); i++) await new Promise((r) => setTimeout(r, 20));
+        await new Promise((r) => setTimeout(r, 400)); })()`); await ev('__bt.settle()'); };
+    const W0 = await ev(`(() => { const v = window.__bullbaViewers[window.__bullbaViewers.length - 1]; v.__shells = 0; const c = v.configure; v.configure = function () { v.__shells++; return c.apply(this, arguments); };
+      v.setAutoFrame(false); document.getElementById('auto-frame').checked = false; return {d: v.distance, z: v.camera.zoom}; })()`);
+    await roll('#camera-distance', 20, 100);
+    const W1 = await ev(`(() => { const v = window.__bullbaViewers[window.__bullbaViewers.length - 1]; return {d: v.distance, z: v.camera.zoom, shells: v.__shells, gliding: v.cameraGliding(),
+      field: document.getElementById('camera-distance-field').value}; })()`);
+    ok('slider wheel: 20 notches over Distance - the scene\'s glide at half its step (x e^2), the box following, the shell redone once at the end',
+       Math.abs(W1.d / W0.d - Math.exp(2)) < 1e-6 && !W1.gliding && W1.shells === 1 && W1.field === String(Math.round(W1.d)), JSON.stringify([W0, W1]));
+    await roll('#camera-zoom', 1, -100);
+    const W2 = await ev(`(() => { const v = window.__bullbaViewers[window.__bullbaViewers.length - 1], z = v.camera.zoom; delete v.configure; return {z: z}; })()`);
+    ok('slider wheel: a notch over Zoom zooms by the scene\'s Ctrl + wheel step (x1.221), no modifier needed', Math.abs(W2.z / W1.z - Math.exp(.2)) < 1e-6, JSON.stringify([W1, W2]));
+    await roll('#camera-distance-field', 3, -100);
+    const W3 = await ev(`(() => { const v = window.__bullbaViewers[window.__bullbaViewers.length - 1]; return {range: v.shotRange(), field: document.getElementById('camera-distance-field').value}; })()`);
+    ok('box wheel: three notches over the Distance box - three whole metres, on the metre grid', W3.range === Math.floor(W1.d + 1e-6) + 3 && W3.field === String(W3.range), JSON.stringify([W1, W3]));
     await step("side('battles')"); await ev('__bt.act.fun(true)'); await ev('__bt.settle()');
     // A target whose only figure is in his own characteristics file: that file is read for him and the bar comes with it.
     const pm3 = await step("battle('pm3')");

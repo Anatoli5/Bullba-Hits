@@ -8007,6 +8007,14 @@
   // True while the wheel is turning a slider or a number box (from its first notch until the turn's one 'change'); the camera
   // callback reads it to put the shell off until the turn stops.
   var controlTurning=false;
+  // THE WHEEL OVER THE CAMERA'S CONTROLS (user, 26.09) - the tuning in one place. SLIDER_WHEEL: the share of the scene
+  // wheel's step a notch over the slider is worth (the scene's: x1.22 of the distance a notch). Distance 0.5 - finer than
+  // the scene, it complements it; Zoom 1 - the scene's Ctrl + wheel step, the only zoom wheel in the game's browser (it
+  // passes no Ctrl/Shift/Alt). CAMERA_BOX: the boxes' notch in the unit they show. WHEEL_UNITS: slider steps per notch.
+  var SLIDER_WHEEL={'camera-distance':.5,'camera-zoom':1};
+  var CAMERA_BOX={'camera-distance-field':{unit:1,digits:0,value:function(){return viewer.shotRange();},set:function(v){viewer.setShotRange(v);}},
+    'camera-zoom-field':{unit:.1,digits:1,value:function(){return viewer.camera.zoom;},set:function(v){viewer.setZoom(v);}}};
+  var WHEEL_UNITS={'pivot-height':5};
   // A slider under the cursor takes the wheel and the arrows (user, 22.09): no click to focus it first, and
   // the step is the slider's own, so 1 % stays 1 % whatever the mouse is set to. Capture phase and
   // stopPropagation, or the same wheel would zoom the scene and the arrows would walk the camera.
@@ -8050,8 +8058,23 @@
     // for catching the fine value - Distance 1 m in its box, one position of the slider, Zoom 0.1 in its box, and so
     // on - so a number box turns itself by its own step instead of its slider. A fast turn still moves several steps
     // (notches). The share-of-scale rule (NOTCH_SHARE, 24.09 morning) is gone with it.
+    // A few sliders are finer than their figure (26.09): the Height slider moves in centimetres, its box in 5 cm - a notch
+    // is the box's step. Every other slider's own step already is its figure's unit (1 %, 5 %, 1 px, 1°).
     function wheelStep(el,dir,notches){
-      coalesce=true;try{step(el,dir,Math.max(1,notches||1));}finally{coalesce=false;}
+      var box=CAMERA_BOX[el.id];
+      if(box){boxStep(box,el,dir,Math.max(1,notches||1));return;}
+      coalesce=true;try{step(el,dir,Math.max(1,notches||1)*(WHEEL_UNITS[el.id]||1));}finally{coalesce=false;}
+    }
+    // THE CAMERA'S NUMBER BOXES (26.09): a notch is one unit of the figure they show - Distance 1 m, Zoom 0.1 - to the next
+    // value on that grid (a figure between two goes to the next one first), set at once through the viewer's own setter
+    // (the one a typed figure goes through). The turn is a turn (controlTurning): the shell is redone once it stops.
+    var turnTimer=null;
+    function boxStep(box,el,dir,notches){
+      if(!viewer||!viewer.loadedData)return;
+      var min=Number(el.min),max=Number(el.max),u=box.unit,g=box.value()/u,now=(dir>0?Math.floor(g+1e-6):Math.ceil(g-1e-6))*u+dir*u*notches;
+      now=Number(Math.min(max,Math.max(min,now)).toFixed(box.digits));
+      controlTurning=true;window.clearTimeout(turnTimer);turnTimer=window.setTimeout(function(){turnTimer=null;if(!doneEl)controlTurning=false;},250);
+      el.value=String(now);box.set(now);
     }
     document.addEventListener('pointerover',function(e){hovered=under(e&&e.target);rolled=0;},true);
     document.addEventListener('pointerout',function(e){if(hovered&&hovered===under(e&&e.target)){hovered=null;rolled=0;}},true);
@@ -8061,6 +8084,10 @@
       var d=e.deltaY||e.deltaX||0;
       if(!d)return;
       e.preventDefault();e.stopPropagation();
+      // The Distance and Zoom sliders turn the camera the scene's way (viewer.wheel: the same eased glide, the shell redone
+      // at its end), each with its own gain (SLIDER_WHEEL); the slider only shows where the camera is (onCamera).
+      var gain=SLIDER_WHEEL[el.id];
+      if(gain){rolled=0;if(viewer&&viewer.wheel)viewer.wheel(e,el.id==='camera-zoom',gain);return;}
       // A mouse sends about 100 a notch (a fast spin folds several into one event); a trackpad sends small deltas
       // that add up to a notch first.
       if(e.deltaMode!==0){rolled=0;return wheelStep(el,d<0?1:-1,1);}

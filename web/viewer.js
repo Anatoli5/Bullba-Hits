@@ -141,7 +141,7 @@
     /* A pointer that is taken away never sends its pointerup, so a burst has to be ENDED here, not
        cancelled: onShotCancel refuses a running burst (false) and the release path stops it instead. */
     container.addEventListener('pointercancel', function() { var d=drag;drag=null;self.dragging=false;if(self.aimHold){self.aimHold=false;if(self.onShotCancel&&self.onShotCancel()===false&&self.onShotUp)self.onShotUp();}self.cancelHover();self.commitPose();self.draw();if(d&&d.moved)self.settleAim(); });
-    container.addEventListener('wheel', function(e) {e.preventDefault();var delta=e.deltaY||e.deltaX,amount=Math.max(-200,Math.min(200,delta*(e.deltaMode===1?16:e.deltaMode===2?300:1)));if(!(e.shiftKey||e.ctrlKey||e.altKey))self.distanceTo((self.targetDistance!==null?self.targetDistance:self.distance)*Math.exp(amount*.002));else if(self.autoFrame)self.scaleTo((self.targetScale!==null?self.targetScale:self.frameScale)*Math.exp(-amount*.002));else self.zoomTo((self.targetZoom!==null?self.targetZoom:self.camera.zoom)*Math.exp(-amount*.002));}, {passive:false});
+    container.addEventListener('wheel', function(e) {e.preventDefault();self.wheel(e,!!(e.shiftKey||e.ctrlKey||e.altKey),1);}, {passive:false});
     container.addEventListener('keydown',function(e){var used=true,orbit=true;if(e.key==='ArrowLeft')self.orbitTo(self.targetYaw-.1,self.targetPitch);else if(e.key==='ArrowRight')self.orbitTo(self.targetYaw+.1,self.targetPitch);else if(e.key==='ArrowUp')self.orbitTo(self.targetYaw,self.targetPitch+.1);else if(e.key==='ArrowDown')self.orbitTo(self.targetYaw,self.targetPitch-.1);else{orbit=false;if(e.key==='+'||e.key==='='){if(e.shiftKey)self.setZoom(self.camera.zoom*1.1);else self.setDistance(Math.max(1,self.distance/1.1));}else if(e.key==='-'){if(e.shiftKey)self.setZoom(self.camera.zoom/1.1);else self.setDistance(Math.min(1500,self.distance*1.1));}else used=false;}if(used){e.preventDefault();if(!orbit&&self.aimCentred)self.settleAimSoon();}}); /* setDistance and setZoom render and report themselves */
     // A lost context stops the frame loop: three ignores render() while the context is gone, but a pending
     // frame of ours would still walk the whole paint path. Restoring clears the flag and redraws once.
@@ -251,6 +251,19 @@
   Viewer.prototype.distanceTo=function(value){if(!Number.isFinite(value))return;this.targetDistance=Math.max(DISTANCE_MIN,Math.min(DISTANCE_MAX,value));this.startOrbit();};
   Viewer.prototype.scaleTo=function(value){if(!Number.isFinite(value))return;this.targetScale=Math.max(.1,Math.min(10,value));this.startOrbit();};
   Viewer.prototype.zoomTo=function(value){if(!Number.isFinite(value)||value<=0)return;this.targetZoom=Math.max(.1,Math.min(150,value));this.startOrbit();};
+  // THE WHEEL -> CAMERA RULE (one owner, 26.09): the scene's wheel and the wheel over the Distance and Zoom sliders (the
+  // page, with a gain of its own per slider) both come through here, so a notch is the same eased glide wherever it is
+  // turned. One event is worth its wheel pixels (a mouse notch is about 100; a fast spin folded into one event is capped
+  // at two notches); `zoom` false moves the orbit distance, true the zoom (the frame scale under Auto frame); `gain` is
+  // the share of the scene's own step (1). The glide continues from the target a glide still running is heading for.
+  var WHEEL_RATE=.002;
+  Viewer.prototype.wheel=function(e,zoom,gain){
+    var delta=e.deltaY||e.deltaX||0,amount=Math.max(-200,Math.min(200,delta*(e.deltaMode===1?16:e.deltaMode===2?300:1))),k=amount*WHEEL_RATE*(gain>0?gain:1);
+    if(!k)return;
+    if(!zoom)this.distanceTo((this.targetDistance!==null?this.targetDistance:this.distance)*Math.exp(k));
+    else if(this.autoFrame)this.scaleTo((this.targetScale!==null?this.targetScale:this.frameScale)*Math.exp(-k));
+    else this.zoomTo((this.targetZoom!==null?this.targetZoom:this.camera.zoom)*Math.exp(-k));
+  };
   Viewer.prototype.dropTargets=function(){this.targetDistance=null;this.targetScale=null;this.targetZoom=null;};
   // Whether the camera is on its way somewhere: a drag, a wheel glide or an orbit still easing. The page puts the shell off
   // while it is (the shot range now changes as the camera orbits the vehicle or pans, not only with the distance), and the

@@ -5,6 +5,7 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 ## Unreleased
 
 - **Vehicles:** picking another collision model keeps the view - camera angle, distance, zoom, turret and gun (clamped to the new vehicle's limits) - and the shooter's shell; going back gives the same picture.
+- **Camera:** the wheel over the Distance and Zoom sliders now glides the camera smoothly like the scene wheel (Distance at half its step, Zoom at the Ctrl + wheel step, no modifier needed); over their boxes one notch is 1 m / 0.1. The Height slider moves 5 cm a notch.
 
 ## 0.8.4 (2026-09-26)
 

@@ -754,6 +754,32 @@ function checks(ok, web) {
     ok('viewer-batch: clear() forgets the recorded barrel', v.recordedOffset === null);
   });
 
+  // ---- the wheel -> camera rule has one owner (user, 26.09): the scene's wheel and the sliders' both go through wheel() --
+  section(function () {
+    const ev = function (dy, mods) { return Object.assign({deltaY: dy, deltaX: 0, deltaMode: 0, preventDefault: function () {}}, mods || {}); };
+    const e1 = env(web), v1 = loaded(e1), e2 = env(web), v2 = loaded(e2);
+    v1.setAutoFrame(false); v2.setAutoFrame(false); e1.settle(); e2.settle();
+    const d0 = v1.distance, z0 = v1.camera.zoom;
+    e1.handlers.wheel(ev(-100)); e1.handlers.wheel(ev(-100)); e1.settle();
+    v2.wheel(ev(-100), false, 1); v2.wheel(ev(-100), false, 1); e2.settle();
+    ok('viewer-batch: two scene notches and two wheel() notches of gain 1 land on the same distance (x0.819)',
+       near(v1.distance, v2.distance, 1e-9) && near(v1.distance, d0 * Math.exp(-.4), 1e-9), '(' + v1.distance + ' / ' + v2.distance + ')');
+    const d1 = v2.distance; v2.wheel(ev(100), false, .5); e2.settle();
+    ok('viewer-batch: a notch of gain 0.5 (the Distance slider) is half the scene\'s step, eased like it', near(v2.distance, d1 * Math.exp(.1), 1e-9), '(' + v2.distance + ')');
+    e1.handlers.wheel(ev(-100, {ctrlKey: true})); e1.settle(); v2.wheel(ev(-100), true, 1); e2.settle();
+    ok('viewer-batch: Ctrl + scene wheel and wheel(zoom) give the same zoom', near(v1.camera.zoom, z0 * Math.exp(.2), 1e-9) && near(v2.camera.zoom, v1.camera.zoom, 1e-9),
+       '(' + v1.camera.zoom + ' / ' + v2.camera.zoom + ')');
+    v2.setAutoFrame(true); e2.settle(); const s0 = v2.frameScale; v2.wheel(ev(-100), true, 1); e2.settle();
+    ok('viewer-batch: under Auto frame wheel(zoom) glides the frame scale, as the scene\'s Ctrl + wheel does', near(v2.frameScale, s0 * Math.exp(.2), 1e-9), '(' + v2.frameScale + ')');
+    // A burst: twenty notches before a frame are one glide that ends where twenty single notches end.
+    const e3 = env(web), v3 = loaded(e3); v3.setAutoFrame(false); e3.settle(); const d3 = v3.distance; let reports = 0, gliding = 0;
+    v3.onCamera = function () { reports++; if (v3.cameraGliding()) gliding++; };
+    for (let i = 0; i < 20; i++) v3.wheel(ev(100), false, .5);
+    e3.settle();
+    ok('viewer-batch: twenty notches in a burst: one glide to x' + Math.exp(2).toFixed(2) + ', every report but the last one "still gliding"',
+       near(v3.distance, d3 * Math.exp(2), 1e-9) && reports > 0 && gliding === reports - 1, '(' + v3.distance + ', ' + reports + ' / ' + gliding + ')');
+  });
+
   // ---- a target picked by hand inherits the view (user, 26.09): A -> B -> A gives A's picture back ---------------------
   section(function () {
     // Browsed vehicles: no shot, the rest pose (aim [0, 0]). B is bigger, its turret limited to +-0.5 rad, its gun to

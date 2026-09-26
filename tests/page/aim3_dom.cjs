@@ -2592,6 +2592,45 @@ settle(20).then(function () {
   ok('viewer-batch: the Distance slider sets the shot range (the middle of its log scale = √(3 × 1000) m)', typeof askedRange === 'number' && Math.abs(askedRange - Math.sqrt(3000)) < 1e-9, '(' + askedRange + ')');
   distField.value = '42'; distField.onchange();
   ok('viewer-batch: and so does the field', askedRange === 42, '(' + askedRange + ')');
+  // 26.09 (user: the wheel over Distance and Zoom stalled, the scene's is smooth): over the two sliders the wheel is the
+  // scene's own rule (viewer.wheel) with each slider's gain - the page steps nothing and runs no handler per notch; over
+  // their boxes a notch is one unit of the figure (1 m, 0.1), to the next value on that grid, the shell redone once.
+  (function () {
+    const zoomSlider = document.getElementById('camera-zoom'), zoomField = document.getElementById('camera-zoom-field');
+    [[distSlider, 'range', '0', '1000', '500'], [zoomSlider, 'range', '0', '1000', '333'], [distField, 'number', '3', '1000', '50'], [zoomField, 'number', '0.1', '150', '1.3']]
+      .forEach(function (r) { r[0].type = r[1]; r[0].min = r[2]; r[0].max = r[3]; r[0].value = r[4]; r[0].disabled = false; });
+    const wheels = [], inputs = [0];
+    // wheelAt of this block is S4's (the Config popover): the document's wheel is fired here directly.
+    const spin = function (target, deltaY) { document.fire('wheel', {target: target, deltaY: deltaY, deltaX: 0, deltaMode: 0, preventDefault: function () {}, stopPropagation: function () {}}); runNamed('flushInput'); };
+    view.wheel = function (e, zoom, gain) { wheels.push([e.deltaY, zoom, gain]); };
+    const oi = distSlider.oninput; distSlider.oninput = function () { inputs[0]++; };
+    const before = configures;
+    for (let i = 0; i < 20; i++) spin(distSlider, -100);
+    spin(zoomSlider, 100);
+    tick(0.5);
+    ok('slider wheel: 20 notches over Distance go to viewer.wheel (distance, gain 0.5), Zoom\'s to its zoom at gain 1; the slider itself is not stepped',
+       wheels.length === 21 && wheels.slice(0, 20).every(function (w) { return w[0] === -100 && w[1] === false && w[2] === .5; })
+       && wheels[20][1] === true && wheels[20][2] === 1 && distSlider.value === '500' && inputs[0] === 0 && configures === before,
+       '(' + wheels.length + ', ' + JSON.stringify(wheels[20]) + ', ' + distSlider.value + ', inputs ' + inputs[0] + ', shells ' + (configures - before) + ')');
+    distSlider.oninput = oi; delete view.wheel;
+    // The boxes: the figure the viewer holds, stepped on its grid; each set goes through the viewer's own setter.
+    let range = 50.4, zoom = 1.25; const asked = [];
+    view.loadedData = {}; view.shotRange = function () { return range; }; view.camera = {zoom: 1.25};
+    view.setShotRange = function (v) { asked.push(v); range = v; view.onCamera({distance: v, zoom: 1, yaw: .2, pitch: .1, range: v}); };
+    view.setZoom = function (v) { asked.push('z' + v); zoom = v; view.camera.zoom = v; };
+    const shells0 = configures;
+    spin(distField, -100); range = 50.4; spin(distField, 100);
+    view.camera.zoom = 1.25; spin(zoomField, -100); view.camera.zoom = 1.25; spin(zoomField, 100); spin(zoomField, 100);
+    ok('box wheel: Distance 50.4 m -> 51 up, 50 down; Zoom 1.25 -> 1.3 up, 1.2 down, then 1.1 on the grid',
+       asked.join() === '51,50,z1.3,z1.2,z1.1', '(' + asked.join() + ')');
+    asked.length = 0; range = 50;
+    for (let i = 0; i < 20; i++) spin(distField, -100);
+    const during = configures - shells0;
+    tick(0.5);
+    ok('box wheel: 20 notches over the Distance box - 20 metres, the shell not redone per notch, once after the turn',
+       asked.length === 20 && range === 70 && during === 0 && configures - shells0 === 1, '(' + asked.length + ', ' + range + ', during ' + during + ', after ' + (configures - shells0) + ')');
+    delete view.loadedData; delete view.shotRange; delete view.camera; delete view.setZoom;
+  })();
   delete view.setShotRange; delete view.setDistance;
   delete view.configure; delete view.target; delete view.targetDistance;
 
