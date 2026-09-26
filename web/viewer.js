@@ -663,6 +663,8 @@
   // exactly as it does when the pivot is switched; the top-left tiles may now cover the upper corner of a wide
   // vehicle. Fit never moves the camera, a clinch record included: it only zooms (user, 23.09 - backing a 5 m
   // record off to twice the model's radius along the view line took the camera off the shell's axis).
+  // The zoom Fit picks is never below ×1 (user, 25.09): a wider view than the game's own lens looks unnatural - no
+  // battle shows it; Zoom and Ctrl + wheel still go below it by hand.
   // keepZoom: the framing of a newly shown shot under Zoom lock (user, 25.09) - the vehicle is centred as always, the
   // zoom the user set stays. The Fit button always picks the zoom.
   var FIT_TOP_BAND=.12,FIT_BOTTOM_BAND=.12,FIT_MARGIN=.08;
@@ -684,7 +686,7 @@
     // Largest zoom at which a box stays inside the usable area with the given margin, measured from the pivot axis
     // horizontally and from the main armour's middle vertically.
     function limit(box,margin){var z=150,w=Math.max(-box[0],box[1]),h=Math.max(midY-box[2],box[3]-midY);if(w>0)z=Math.min(z,(1-margin)/w);if(h>0)z=Math.min(z,(halfUsable-margin)/h);return z;}
-    var zoom=keepZoom?held:Math.max(.1,Math.min(150,Math.min(limit(main,FIT_MARGIN),limit(all,0))));
+    var zoom=keepZoom?held:Math.max(1,Math.min(150,Math.min(limit(main,FIT_MARGIN),limit(all,0))));
     this.frameCenter.set(midY*this.distance,centreY);
     this.scaleFor(zoom);this.showZoom(zoom);
   };

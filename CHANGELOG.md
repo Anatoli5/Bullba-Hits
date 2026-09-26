@@ -9,6 +9,7 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 - **Hits:** the icons sit in a fixed column on every row, so the flags line up.
 - **Circles:** the "?" of the circle tiles stands at the right end of the top row (the shell row's own "?" is gone) and no longer jumps with "Under the cursor"; the Cyan and Magenta tiles' tooltips share one short layout, name their colour and show their heading in it.
 - **Scene:** Zoom redraws the map at once, like Distance (no blurred scaled picture while it changes).
+- **Scene:** Fit and the framing of a newly shown hit never zoom out below ×1 (a wider view than any in battle); the Zoom slider and Ctrl + wheel still can.
 - **Scene:** Lock beside Zoom keeps the zoom you set while you switch between hits.
 - **Emulation:** holding the button fires a burst only in the ⌖ mode (target HP); otherwise a held button is a plain click and a hesitant turn of the vehicle no longer fires a shot.
 

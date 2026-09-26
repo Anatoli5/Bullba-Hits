@@ -238,6 +238,13 @@ function checks(ok, web) {
        '(frames ' + e.count.frame + ', peel ' + e.count.peel + ', composite ' + e.count.composite + ')');
     ok('viewer-batch: the mark pass reads the composed picture pixel for pixel (no 2D scaling left)', !('uView' in s.markMaterial.uniforms) && !('zoomPending' in s));
     e.settle();
+    // 25.09 (user): Fit never picks a zoom below x1 - close up it would open a wider view than any battle shows; by hand
+    // the slider still goes below.
+    const keptDistance = v.distance; v.distance = 3; v.placeCamera(); v.fit();
+    ok('viewer-batch: Fit close up stops at x1, not below', v.camera.zoom === 1, '(' + v.camera.zoom + ')');
+    v.setZoom(.5);
+    ok('viewer-batch: and the Zoom slider still goes below x1 by hand', v.camera.zoom === .5, '(' + v.camera.zoom + ')');
+    v.distance = keptDistance; v.placeCamera(); v.setZoom(1); e.settle();
     // Auto frame: the wheel with a modifier glides the frame scale - composed anew each frame, like the zoom.
     v.setAutoFrame(true); e.settle(); e.reset();
     v.scaleTo(v.frameScale * 1.3);

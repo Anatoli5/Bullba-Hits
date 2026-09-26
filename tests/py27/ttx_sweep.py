@@ -152,7 +152,9 @@ try:
     check(not calls, 'no Start yet: nothing is built, whatever the page')
     check(first.confirm_ttx_sweep() and progress()['confirmed'] is True, 'Start: running, and the progress file says so')
     # --- slices and frames -----------------------------------------------------------------------------------------
-    delay[0] = 0.025
+    # 35 ms a build: two builds a 60 ms slice whatever the system timer (25 ms gave three once Chrome of the browser
+    # suite had set the 1 ms timer, and the six types were all built before the Stop below - a flake, 25.09).
+    delay[0] = 0.035
     check(first.ttx_hurry() and first.recorder.frames_wanted, 'running: the export loop does not wait, the frame callback is wanted')
     first.run_job()
     check(2 <= len(calls) <= 4 and first.recorder.frames == 0, 'one slice: builds back to back for 60 ms (%d), no frame before the first' % len(calls))
