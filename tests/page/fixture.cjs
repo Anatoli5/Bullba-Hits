@@ -9,6 +9,7 @@
  * The outgoing hit of pm3 is the player's own shot with its tracer and aim snapshot (BACKLOG 28 step 2, 24.09): the two
  * recorded outlines and the shot disc, whose server update is one tick stale (its origin 1.5 m from the shell's).
  * Its server stop lies 0.8 m along the hull from the recorded point: the flight is carried onto the point, the pose mark shows.
+ * pm4: an event's vehicle whose record has the complete model and whose export does not (the gun's model missing).
  *
  *   require('./fixture.cjs').write(folder)   // writes folder/data/**
  */
@@ -83,7 +84,7 @@ function write(folder) {
   }
   const VEHICLES = {30: {name: 'Papa', type: 'germany:Papa', scale: 1}, 31: {name: 'Romeo', type: 'germany:Romeo', scale: 1.15},
                     32: {name: 'Quebec', type: 'germany:Quebec', scale: 0.9}, 33: {name: 'Sierra', type: 'germany:Sierra', scale: 0.8},
-                    34: {name: 'Tango', type: 'germany:Tango', scale: 1.05}};
+                    34: {name: 'Tango', type: 'germany:Tango', scale: 1.05}, 35: {name: 'Victor', type: 'germany:Victor_WT', scale: 1.1}};
   const side = function (id, withAim) {
     const v = VEHICLES[id];
     const out = {name: v.name, type: v.type, nation: 'germany', level: 10, 'class': 'heavyTank', role: 'role_HT_break',
@@ -148,6 +149,12 @@ function write(folder) {
                                  {damageEvents: pmEvents, damageCheck: {schema: 1, rows: []}}),
                    BATTLE('pm2', 'Synthetic hills', T0 + 3600, [HIT('pm2-1', 32, 30, 'incoming', T0 + 3660)]),
                    Object.assign(BATTLE('pm3', 'Synthetic coast', T0, [pm3hit]), {shotEvents: pm3shots})];
+  // pm4 (keep-onscreen-model, 26.09): an event's vehicle, Victor, hit by the player - his record carries the complete model,
+  // standing in the record's pose (turret 0.3 rad, gun 0.05 rad down), while his export (pm_victor, below) was made in the
+  // hangar without the event's packages: its gun has no collision model. Another shooter must keep the model on screen.
+  const pm4hit = Object.assign(HIT('pm4-1', 30, 35, 'outgoing', T0 - 3500), {aim: [0.3, -0.05]});
+  battles.push(Object.assign(BATTLE('pm4', 'Synthetic event', T0 - 3600, [pm4hit]),
+    {roster: ROSTER.concat([{id: 35, name: 'Victor', type: 'germany:Victor_WT', team: 1, player: 'bot', maxHealth: 3000, defaultMaxHealth: 3000}])}));
   battles.forEach(function (b) { put('battles/' + b.id + '.js', 'battle:' + b.id, b); });
   put('index.js', 'index', {application: 'local.armor_inspector', version: 'synthetic', updatedAt: T0 + 9000,
     battles: battles.map(function (b) {
@@ -185,6 +192,9 @@ function write(folder) {
   };
   const exports_ = [EXPORT('test_vehicle', 'germany:Test', 'Test vehicle', 2000, 1), EXPORT('pm_papa', 'germany:Papa', 'Papa', 2200, 1),
                     EXPORT('pm_quebec', 'germany:Quebec', 'Quebec', 1600, 0.9)];
+  const victor = EXPORT('pm_victor', 'germany:Victor_WT', 'Victor', 2600, 1.1);
+  victor.parts.forEach(function (p) { if (p.name === 'gun') { delete p.modelKey; p.modelError = 'Collision model not found in client'; } });
+  exports_.push(victor);
   exports_.forEach(function (e) { put('vehicles/' + e.id + '.js', 'vehicle:' + e.id, e); });
   put('vehicles.js', 'vehicles', {application: 'local.armor_inspector', clientVersion: 'synthetic', updatedAt: T0,
     vehicles: exports_.map(function (e) {

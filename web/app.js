@@ -444,13 +444,17 @@
   // shells are the available ones. No points, so no hit line and no reticle - an inspector without a shot.
   function vehicleHit(model,shooter){
     var target=shallow(model),attacker=shallow(shooter);
-    ['shells','warnings','schema'].forEach(function(k){delete target[k];});
-    ['parts','shells','warnings','schema','gunPitchLimits','turretYawLimits'].forEach(function(k){delete attacker[k];});
-    // partsFrom is the rest pose, so the recorded turret yaw and gun pitch are both zero: that is the zero
-    // the viewer measures turretYawLimits and gunPitchLimits from, and the Turret/Gun readout needs it.
-    return {id:'vehicle:'+model.id+'/'+shooter.id,synthetic:true,vehicle:true,direction:'outgoing',aim:[0,0],
+    ['shells','warnings','schema','partsAim','seat'].forEach(function(k){delete target[k];});
+    ['parts','shells','warnings','schema','gunPitchLimits','turretYawLimits','partsAim','seat'].forEach(function(k){delete attacker[k];});
+    // An export's partsFrom is the rest pose, so the turret yaw and gun pitch its parts stand in are both zero: that is the
+    // zero the viewer measures turretYawLimits and gunPitchLimits from, and the Turret/Gun readout needs it. The model
+    // handed over from a recorded hit on screen (onScreenModel) stands in the record's pose: its partsAim.
+    return {id:'vehicle:'+model.id+'/'+shooter.id,synthetic:true,vehicle:true,direction:'outgoing',aim:(model.partsAim||[0,0]).slice(),
       target:target,attacker:attacker,points:[],rawHitPoints:[],warnings:(model.warnings||[]).slice(),
-      shellCandidates:[],availableShells:(shooter.shells||[]).slice(),shellStatus:'vehicle browser',receivedAt:model.exportedAt};
+      shellCandidates:[],availableShells:(shooter.shells||[]).slice(),shellStatus:'vehicle browser',receivedAt:model.exportedAt,
+      // The model on screen of a recorded hit is still that battle's seat: its health stays (targetRow), as under a shooter
+      // picked from the roster (pickShooter: modelVehicleId).
+      modelVehicleId:model.seat&&current&&current.id===model.seat.battle?model.seat.id:undefined};
   }
   // keepCamera: true - the same model under another shooter: the camera and the pose kept as they stand, and with them
   // what belongs to that model (viewer.cameraState('same'): the pinned point, the ⌖ aim on it); 'view' - ANOTHER model
@@ -458,16 +462,22 @@
   // centre, the pose clamped to its limits), or of the last scene; nothing to inherit - the default view.
   function showVehicleScene(keepCamera){
     if(!modelVehicle)return Promise.resolve(null);
-    // adoptHitVehicles() hands over catalogue rows, and a catalogue row carries no collision parts: the
-    // target of the scene must be the vehicle's own export, or the viewer is given an empty model. One step
-    // only - readVehicle() rejects anything without parts.
+    // A catalogue row carries no collision parts (adoptHitVehicles hands one over for a role the scene on screen cannot
+    // give - a model still being extracted): the target of the scene is then the vehicle's own export, or the viewer is
+    // given an empty model. One step only - readVehicle() rejects anything without parts. The model on screen handed over
+    // by adoptHitVehicles has its parts and is never read again (keep-onscreen-model, 26.09).
     // The camera rule goes through it (audit APP1-06: a shooter picked in the list lost the camera here).
     if(!modelVehicle.parts)return readVehicle(modelVehicle.id).then(function(record){modelVehicle=record;return showVehicleScene(keepCamera);});
-    // The shooter inherited from a hit on screen (inherit sweep, 26.09) is a catalogue row too, without his shells: his own
-    // export, else his characteristics file (ttxRecord), else - nothing of his to be had - the model is its own shooter.
-    if(shooterVehicle&&!shooterVehicle.parts){var row=shooterVehicle;
+    // The shooter inherited from a hit on screen (inherit sweep, 26.09) comes without his shells - a catalogue row, or the
+    // recorded model on screen after the Vehicles ⇅: his shells from his own export, else his characteristics file
+    // (ttxRecord), else - nothing of his to be had - the model's. A shooter with parts (the model on screen) keeps his record
+    // and takes only the shells, so ⇅ back puts the same model on screen again, not the export.
+    if(shooterVehicle&&!Array.isArray(shooterVehicle.shells)){var row=shooterVehicle;
       return readVehicle(row.id).catch(function(){return ttxRecord(row);}).catch(function(){return modelVehicle;})
-        .then(function(record){if(shooterVehicle===row)shooterVehicle=record;return showVehicleScene(keepCamera);});}
+        .then(function(record){
+          var full=row.parts||!Array.isArray(record.shells)?shallow(row.parts?row:record):record;
+          if(!Array.isArray(full.shells))full.shells=(record.shells||[]).slice();
+          if(shooterVehicle===row)shooterVehicle=full;return showVehicleScene(keepCamera);});}
     var hit=vehicleHit(modelVehicle,shooterVehicle||modelVehicle);
     var camera=keepCamera&&viewer&&viewer.cameraState?viewer.cameraState(keepCamera==='view'?true:'same'):null,token=++generation;
     // The same model stays on screen until the new scene replaces it (as another shooter from the roster does): what it
@@ -571,14 +581,32 @@
   // The catalogue rows of the hit's target and attacker (matched by the client's vehicle type name), so the
   // Vehicles list highlights them and a click on a row replaces one of them.
   // Every scene's (audit APP1-04, 24.09): run by the finisher in this panel, so after ⇅ the heading and the marks show
-  // the roles on screen. A role the catalogue has no row for is empty - not the vehicle browsed before; a role held
-  // by a vehicle of the same type keeps it (the browser's own record, with its parts).
+  // the roles on screen. A role the catalogue has no row for is empty - not the vehicle browsed before; in a browsed
+  // vehicle's scene a role held by a vehicle of the same type keeps it (the browser's own record, with its parts).
+  // The model of a recorded hit - or of a view made from one: another shooter from the roster, the ⇅ swap - is the model ON
+  // SCREEN (keep-onscreen-model, 26.09): the target record itself is handed over, its parts, poses and models, not the
+  // catalogue row, whose export may be another model (an event's vehicle exported in the hangar without the event's
+  // packages: the gun without its collision model, "Complete vehicle model unavailable"). So another shooter picked in
+  // the Vehicles list keeps what is on screen, and with it the pin and the ⌖ shot (viewer.keepSame).
   function adoptHitVehicles(){
     var rows=(catalogue&&catalogue.vehicles)||[],hit=activeHit;if(!hit||!rows.length)return;
     function byType(v){return catalogueByType(v&&v.type?String(v.type):'');}
     function same(held,v){return !!(held&&v&&held.type&&held.type===v.type);}
-    if(!same(modelVehicle,hit.target))modelVehicle=byType(hit.target);
+    if(hit.vehicle){if(!same(modelVehicle,hit.target))modelVehicle=byType(hit.target);}
+    else if(!(modelVehicle&&hit.target&&modelVehicle.parts===hit.target.parts))modelVehicle=onScreenModel(hit,byType(hit.target));
     if(!same(shooterVehicle,hit.attacker))shooterVehicle=byType(hit.attacker);
+  }
+  // The target on screen as a browsed vehicle: its catalogue row's id (the list marks it), the record's own data over
+  // the row's, the parts in the pose the scene draws them (partsAim = the hit's aim; vehicleHit keeps it). A model still
+  // being extracted is not complete on screen: the row, read from its export as before.
+  function onScreenModel(hit,row){
+    var t=hit.target,parts=(t&&t.parts)||[];
+    if(!parts.length||parts.some(function(p){return p.modelPending;}))return row;
+    var v=shallow(row);Object.keys(t).forEach(function(k){v[k]=t[k];});
+    v.id=row?row.id:null;v.source='battle';v.exportedAt=hit.receivedAt;
+    v.partsAim=Array.isArray(hit.aim)?hit.aim.slice():[0,0];
+    var seat=targetRow(hit);if(seat&&current&&seat.id!==undefined&&seat.id!==null)v.seat={battle:current.id,id:seat.id};
+    return v;
   }
   // #host=game&vehicle=<id>: open the Vehicles mode on that vehicle. The game window may also be navigated to a
   // new fragment while it is open, so the same path serves 'hashchange'.

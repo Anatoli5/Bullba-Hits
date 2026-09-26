@@ -443,6 +443,32 @@ async function main() {
     ok('inherit: the last shooter used is stored (' + kept + ') and a page opened on a vehicle from the game shoots with him',
        kept === 'germany:Papa' && who(fresh.model, 'Quebec') && who(fresh.shooter, 'Papa') && page2.errors.length === 0, JSON.stringify([kept, fresh, page2.errors.slice(0, 2)]));
     await browser.send('Target.closeTarget', {targetId: page2.targetId});
+    // keep-onscreen-model (26.09, the Panther II of the Waffenträger event): pm4's target Victor has the complete model in
+    // the record, while his export lacks the gun's model. Hits -> the Shooter tile -> another shooter in "This battle": the
+    // model ON SCREEN stays (no re-read of the export), in the record's pose with the user's turn, the pinned point kept;
+    // the Vehicles ⇅ there and back puts the same model on screen again.
+    const KEEP = `(() => { const v = ${LV}, h = v.loadedData ? v.loadedData.hit : {target: {}}, p = v.loadedData ? v.poseNow() : {}; return {vehicle: !!h.vehicle,
+      keys: (h.target.parts || []).map((x) => x.modelKey || 'none').join(), yaw: p.yaw, pitch: p.pitch, pinned: !!v.pinned,
+      source: document.getElementById('shot-source').textContent, message: document.getElementById('scene-message').textContent,
+      warnings: document.getElementById('warnings').textContent, model: document.getElementById('model-tile').title,
+      shooter: document.getElementById('shooter-tile').title}; })()`;
+    await step("side('battles')"); await step("battle('pm4')"); await step('hit(0)');
+    await ev(`(() => { const v = ${LV}; v.setTurret(10); })()`); await ev('__bt.settle()');
+    const pinnedK = await ev(PIN); await ev('__bt.settle()');
+    const K0 = await ev(KEEP);
+    await step('shooterTile()'); await step("scope('battle')"); await step("list('pm_quebec')");
+    const K1 = await ev(KEEP);
+    const whole = (k) => k.keys !== '' && k.keys.indexOf('none') < 0 && !/Complete vehicle model unavailable/.test(k.message) && !/not found in client/.test(k.warnings);
+    ok('keep on-screen model: another shooter via the Shooter tile keeps the recorded model (not its export without the gun model)',
+       pinnedK && whole(K0) && K1.vehicle && whole(K1) && K1.keys === K0.keys && who(K1.model, 'Victor') && who(K1.shooter, 'Quebec'), JSON.stringify([K0, K1]));
+    ok('keep on-screen model: ... in the recorded pose with the turn on it, and the pinned point stays',
+       close(K1.yaw, K0.yaw) && close(K1.pitch, K0.pitch) && close(K0.yaw, .3 + 10 * Math.PI / 180) && K1.pinned && K1.source === 'Pinned point', JSON.stringify([K0, K1]));
+    await step('swap()'); await step('swap()');
+    const K2 = await ev(KEEP);
+    ok('keep on-screen model: the Vehicles ⇅ there and back puts the same recorded model on screen, shot by Quebec',
+       whole(K2) && K2.keys === K0.keys && who(K2.model, 'Victor') && who(K2.shooter, 'Quebec'), JSON.stringify(K2));
+    await ev('__bt.act.fun(true)'); const K3 = await ev('__bt.settle().then(() => __bt.sig())'); await ev('__bt.act.fun(false)'); await ev('__bt.settle()');
+    ok('keep on-screen model: ... still that battle’s seat - its health is the roster’s figure', K3.hpText.indexOf('3 000 / 3 000') >= 0 && K3.hpTip.indexOf(HP.ROSTER) >= 0, JSON.stringify([K3.hpText, K3.hpTip]));
     ok('inherit: no uncaught exception in the page', page.errors.length === 0, page.errors.slice(0, 3).join(' | '));
     page.errors.length = 0;
     await step("side('battles')"); await ev('__bt.act.fun(true)'); await ev('__bt.settle()');
