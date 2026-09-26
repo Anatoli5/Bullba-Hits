@@ -2,12 +2,11 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
-## Unreleased
+## 0.8.3 (2026-09-26)
 
 - **Vehicles:** Export all models in the Vehicles list (in the game) exports the collision model of every regular vehicle - no event or special-mode vehicles - for viewing outside the game too: about 190 MB and 20 min the first time (it asks first, with the estimate). It runs only while the viewer stays open, never in battle, a vehicle you click still goes first; the bar beside the Statistics log shows it and ■ stops it. After a game update only the vehicles whose game files changed are exported again. Your own vehicles keep your configuration.
 - **Vehicles:** outside the game a vehicle without a model says where models come from: the game, by a click on the vehicle there or Export all models.
 - **Settings:** `exportAllVehicles` in settings.json is no longer read; Export all models replaces it.
-- **Fix:** after the characteristics were prepared, exporting the model of a vehicle they had read failed for the rest of the session (the game refuses to read a vehicle twice); they now stay read.
 - **Speed:** the first model exported in a session starts about 3 s sooner (the game's model index is read about 30 times faster).
 - **Vehicles:** the list of all vehicles shows only the vehicles a player can have in the hangar: no event, Story Mode, onboarding, battle-mode (Onslaught) or internet-cafe copies. "This battle" still lists the battle's own vehicles.
 - **Game:** the mods list button opens the viewer in the Vehicles mode on the vehicle selected in the hangar; the battles are one click away (Hits).
@@ -21,9 +20,6 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 - **Emulation:** a tank destroyer's hull turns by itself towards a cursor past the gun's sector with the ⌖ mode off too, as in the game; the ring no longer stops at an invisible wall.
 - **Emulation:** without the ⌖ mode a shot whose circle centre is off the vehicle is not fired: no tracer into empty space (in the ⌖ mode shots still miss).
 - **Emulation:** holding the button fires a burst only in the ⌖ mode (target HP); otherwise a held button is a plain click and a hesitant turn of the vehicle no longer fires a shot.
-
-## 0.8.2 (2026-09-25)
-
 - **Help:** the words "cyan" and "magenta" in tooltips are shown in those colours.
 - **Vehicles:** the mod prepares the characteristics of every vehicle of the client (about 9 MB), and after a game update only of the vehicles whose game files changed. It asks first when the viewer is open in the game (Start / Later, with an estimated time), runs only while the viewer stays open, never in battle, and a vehicle you click still goes first. A small bar with "done / total" beside the Statistics log shows the progress, ■ stops it; an unfinished run asks to continue the next time. Models still come on demand.
 - **Vehicles:** outside the game the list shows every vehicle. A vehicle without a model opens with its characteristics panel, Config and gun/turret pick; the scene says the model is not exported yet. The "Exported" flag filter narrows the list to vehicles with a model.
