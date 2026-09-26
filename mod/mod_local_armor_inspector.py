@@ -1267,11 +1267,27 @@ class Recorder(object):
 
 
 def open_viewer():
+    """The mods list button: the Vehicles mode on the vehicle selected in the hangar (user, 25.09), whose model the
+    hangar hook has already asked for (on_hangar_vehicle); the Hits mode is one click away on the page. No vehicle
+    in the hangar - the page as before, on the battles."""
     try:
         from local_armor_inspector.presentation import open_in_game
-        open_in_game(VIEWER_PATH)
+        open_in_game(VIEWER_PATH, hangar_fragment())
     except Exception:
         LOG.exception('Could not open local HTML viewer')
+
+
+def hangar_fragment():
+    """'host=game&vehicle=<id>' of the vehicle selected in the hangar, else 'host=game'."""
+    try:
+        from CurrentVehicle import g_currentVehicle
+        from local_armor_inspector.exporter import vehicle_id
+        item = g_currentVehicle.item if g_currentVehicle.isPresent() else None
+        if item is not None and item.descriptor is not None:
+            return 'host=game&vehicle=' + vehicle_id(item.descriptor.type.name)
+    except Exception:
+        LOG.exception('Hangar vehicle unavailable; the viewer opens on the battles')
+    return 'host=game'
 
 
 def picker_descriptor(type_name):

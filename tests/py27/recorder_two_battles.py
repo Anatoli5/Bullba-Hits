@@ -485,6 +485,13 @@ def run(temp):
     hangar = sys.modules['CurrentVehicle'].g_currentVehicle
 
     # ---- hooks ------------------------------------------------------------------------------------------
+    # The mods list button (25.09, user): the Vehicles mode on the hangar's vehicle; none in the hangar - the battles.
+    check('entry', 'no vehicle in the hangar: the button opens the page on the battles', mod.hangar_fragment() == 'host=game')
+    hangar.isPresent, hangar.item = (lambda: True), NS(descriptor=NS(type=NS(name='usa:A1_Entry')))
+    want = 'host=game&vehicle=' + sys.modules['local_armor_inspector.exporter'].vehicle_id('usa:A1_Entry')         if 'local_armor_inspector.exporter' in sys.modules else None
+    got = mod.hangar_fragment()
+    check('entry', 'a vehicle in the hangar: the button opens the Vehicles mode on it', got == want or (want is None and got.startswith('host=game&vehicle=')), got)
+    hangar.isPresent, hangar.item = (lambda: False), None
     before = hooked_attrs()
     mod.init()
     first = hooked_attrs()

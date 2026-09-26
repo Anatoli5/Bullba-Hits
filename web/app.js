@@ -560,8 +560,9 @@
     // 'filtersOpen' of an older state is ignored: the fold it belonged to is gone.
     if(saved&&(saved.scope==='battle'||saved.scope==='all'))vehicleScope=saved.scope;
     syncFilters();
-    // The page always opens on the battles and their hits (user, 14.09: a newcomer must not think the viewer is
-    // empty); only a fragment naming a vehicle opens the Vehicles mode. The filters are remembered, the mode is not.
+    // The page opens on the battles and their hits (user, 14.09: a newcomer must not think the viewer is empty);
+    // a fragment naming a vehicle opens the Vehicles mode - the game's mods list button names the hangar's vehicle
+    // (user, 25.09), the context menu the vehicle clicked. The filters are remembered, the mode is not.
   }
   document.querySelectorAll('#sidebar-mode [data-mode]').forEach(function(b){
     b.onclick=host.guard('Side panel mode',function(){setMode(b.getAttribute('data-mode'));});});
