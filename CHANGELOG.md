@@ -6,6 +6,9 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 
 - **Characteristics / Export all models:** the time the question gives is now the real wall-clock time at this PC's measured pace (it said ~9 s for a characteristics sweep that took 74 s), in minutes and seconds ("about 1 min 15 s").
 - **Characteristics / Export all models:** while the page is open a sweep now gets about half of the time (it got about a quarter); after a game update the characteristics of your exported vehicles are ready in seconds instead of ~50 s.
+- **Config / Consumables:** three slots as in the game - a click opens the list of the game's consumables; no item twice, one food, one fuel. Repair kits, first aid kits, extinguishers and the rest can be fitted too (they change no characteristic). Saved builds keep their food and fuel. Camouflage stays a tile of its own beside the slots.
+- **Config / Field modification:** one tile showing what is on; a click opens the levels under it. A pair with no side chosen shows both sides dim, as in the game; the level numerals are muted.
+- **Field modification:** a shooter picked from the Vehicles list without an exported model (known only from his characteristics) now gets his field modification and the garage's equipment rules (the characteristics files are rebuilt once at the next game start).
 
 ## 0.8.6 (2026-09-26)
 

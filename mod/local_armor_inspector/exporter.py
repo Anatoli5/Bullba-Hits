@@ -2145,8 +2145,9 @@ SWEEP_PACE_ITEMS = 10
 # a zero time stamp, so an unchanged module keeps its CRC. TTX_SOURCE_SKIP: common files no characteristic is read from.
 # The file carries its format too ('format'): ttx_current takes a file of another format as missing, so a raise reaches the
 # page's own per-type request as well as the sweep (whose keys it changes). 2 (26.09): the shells' traceRicochet.
-# 3 (26.09): the aim blocks' gunPitchSpeed and shotOffsets (gun_statics).
-TTX_FORMAT = 3
+# 3 (26.09): the aim blocks' gunPitchSpeed and shotOffsets (gun_statics). 4 (26.09): vehicle.fitment (fitment_block: the
+# tags and the field modification tree), so a shooter known only from this file gets his tree and the garage's rules.
+TTX_FORMAT = 4
 TTX_SOURCE = re.compile(r'^(?:[^/]+/)?scripts/(?:item_defs/vehicles/|common/items/)')
 TTX_SOURCE_SKIP = re.compile(r'item_defs/vehicles/common/(?:customization|damage_stickers|player_emblems|'
                              r'forbidden_vehicles_to_battle_config|equipments|optional_devices|post_progression|prefab_effects)'
@@ -2457,6 +2458,14 @@ def ttx_block(type_name, version, log=True):
              'Camouflage bonus')
     ttx_take(vehicle, 'optDevsOverrides', lambda: ttx_overrides(vtype.optDevsOverrides), warnings,
              'Device overrides')
+    # What the vehicle may mount (26.09): the vehicle exports' own fitment block - the tags (eligibility, the mode group)
+    # and the field modification tree - so a shooter the page knows only from this file is offered what an export offers.
+    tags, tags_read = (), False
+    try:
+        tags, tags_read = tuple(vtype.tags), True
+    except Exception:
+        pass
+    vehicle['fitment'] = fitment_block(vtype, tags, tags_read)
     # The factor the client multiplies every shell speed by when it reads it (vehicles.pyc _readShot 9060):
     # the garage shows shell.speed / projectileSpeedFactor, the XML speed.
     ttx_take(vehicle, 'projectileSpeedFactor',

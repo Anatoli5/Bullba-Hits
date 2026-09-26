@@ -326,6 +326,39 @@ CONSUMABLES = [
      'eff': {'turretRotationSpeed': ['mul', 1.1], 'enginePower': ['mul', 1.1]},
      'note': 'Fuel.updateVehicleAttrFactorsForAspect writes turret/rotationSpeed as well as engine/power.'},
 ]
+# Every other consumable of the client (26.09, user: three slots as in the garage, any consumable of the game in them).
+# They move nothing the page draws, so they carry no `eff`; `note` is what they do in a battle, for the tooltip. The rows
+# are the client's own (vehicle_equipments.xml through the research file): name, icon, <vehicleFilter>. The garage's
+# rules for three slots are the page's: no item twice, one food (the eleven are one effect, one per nation), and one fuel
+# (the client's own incompatibleTags installed=fuel); nothing else in the client excludes another consumable.
+PLAIN_CONSUMABLE_NOTES = {
+    'handExtinguishers': 'Puts out a fire when used.',
+    'autoExtinguishers': 'Puts out a fire by itself; fewer fires start.',
+    'smallMedkit': 'Heals the crew when used.',
+    'largeMedkit': 'Heals the crew when used.',
+    'smallRepairkit': 'Repairs the modules when used.',
+    'largeRepairkit': 'Repairs the modules when used; they are repaired faster.',
+    'removedRpmLimiter': 'More engine power for a while when used.',
+    'afterburning': 'More engine power and speed for a while when used.'}
+
+
+def consumable_rows(data):
+    """The Consumables of the page: food and fuel (CONSUMABLES, what reaches the maths), then the client's other
+    consumables in its own order - the stimulators are the food row and the fuels are listed above."""
+    rows = [dict(row) for row in CONSUMABLES]
+    for entry, row in data['consumables'].items():
+        if entry in FOOD or entry in ('qualityFuel', 'excellentFuel'):
+            continue
+        if entry not in PLAIN_CONSUMABLE_NOTES:
+            raise SystemExit('The client has a consumable %s the catalogue does not describe: add its note.' % entry)
+        item = {'id': entry, 'name': row.get('name_en') or entry, 'icon': entry, 'note': PLAIN_CONSUMABLE_NOTES[entry]}
+        fit = parse_filter(row.get('vehicleFilter'))
+        if fit:
+            item['fit'] = fit
+        rows.append(item)
+    return rows
+
+
 # The paint (23.09): every one of the client's 3318 camouflages has invisibilityFactor 1, so ONE switch says
 # whether the vehicle wears a camouflage with its bonus - the figure itself is the vehicle's own,
 # type.invisibilityDeltas['camouflageBonus'], and the page reads it from the characteristics file
@@ -761,6 +794,7 @@ def main(argv):
     art = copy_field_icons(game, field_icons)
     devices = device_rows(data, client)
     directives = directive_rows(data, boosters)
+    consumables = consumable_rows(data)
     lines = [
         '// The client\'s own equipment, crew skills, directives and consumables — everything in the game',
         '// that moves a number the aiming maths reads, and nothing else.',
@@ -806,7 +840,7 @@ def main(argv):
         lines.append('      %s,' % dump(directive, 6))
     lines.append('    ],')
     lines.append('    consumables: [')
-    for consumable in CONSUMABLES:
+    for consumable in consumables:
         lines.append('      %s,' % dump(consumable, 6))
     lines.append('    ],')
     lines.append('    paint: %s,' % dump(PAINT, 4))
@@ -844,13 +878,13 @@ def main(argv):
         elif isinstance(value, (list, tuple)):
             for item in value:
                 walk(item)
-    walk([devices, families(devices), skills, directives, CONSUMABLES, PAINT, FOOD])
+    walk([devices, families(devices), skills, directives, consumables, PAINT, FOOD])
     config_art = copy_config_icons(game, named, set(r['icon'] for r in skills))
     if config_art:
         print('web/icons: copied the Config art it lacked - %s' % ', '.join(config_art))
     print('web/equipment.js: %d devices, %d families, %d skills, %d directives, %d consumables, '
           '%d field modification trees with %d modifications; %d icons in web/icons (%s)'
-          % (len(devices), len(families(devices)), len(SKILLS), len(directives), len(CONSUMABLES),
+          % (len(devices), len(families(devices)), len(SKILLS), len(directives), len(consumables),
              len(field['trees']), len(field['mods']), len(art), ', '.join(art)))
 
 

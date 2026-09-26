@@ -178,6 +178,19 @@ class TtxBlockTests(unittest.TestCase):
         turretless.fakeTurrets = (0,)
         self.assertIs(self.build(turretless)['vehicle']['hasTurret'], False)
 
+    def test_the_fitment_is_in_the_file(self):
+        # 26.09 (TTX_FORMAT 4): the vehicle exports' fitment block - a shooter known only from this file gets his field
+        # modification tree and his tags; a type whose tags cannot be read says so instead of an empty list.
+        vtype = fake_type()
+        vtype.tags, vtype.postProgressionTree = frozenset(('mediumTank', 'tankRammer_class1_user')), 1106
+        fit = self.build(vtype)['vehicle']['fitment']
+        self.assertEqual(fit['postProgressionTree'], '1106')
+        self.assertEqual(fit['tags'], ['mediumTank', 'tankRammer_class1_user'])
+        self.assertIs(fit['tagsRead'], True)
+        blind = self.build(fake_type())['vehicle']['fitment']
+        self.assertEqual((blind['tagsRead'], blind['postProgressionTree']), (False, ''))
+        self.assertNotIn('tags', blind)
+
     def test_the_garage_s_survivability_is_in_the_file(self):
         # 23.09: the hull's armour per pair, each turret's, the suspension's repair times of the top chassis in its own
         # order (the garage reverses them after dividing), the marker and the track-within-track flag.
