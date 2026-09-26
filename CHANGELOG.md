@@ -2,7 +2,7 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
-## Unreleased
+## 0.8.4 (2026-09-26)
 
 - **Fix:** the armour map no longer paints false "bounced shell penetrates" patches where a track lies flush with a side plate (seen on one side of Obj. 430U).
 - **Ricochet:** after a ricochet an AP/APCR shell flies on with 75 % of the penetration it had left, so screens before the ricochet now count (Obj. 430U side: 160 mm instead of 186). The ricochet chip shows both figures, e.g. "pen 214 → 160 mm".
