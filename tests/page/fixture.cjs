@@ -184,7 +184,10 @@ function write(folder) {
       return {id: e.id, type: e.type, name: e.name, level: 10, 'class': 'heavyTank', nation: 'germany', role: e.role, premium: false,
               special: false, collector: false, exported: true, exportedAt: T0, source: 'synthetic'};
     }).concat([{id: 'germany-Uniform', type: 'germany:Uniform', name: 'Uniform', level: 10, 'class': 'heavyTank', nation: 'germany',
-                role: 'role_HT_break', premium: false, special: false, collector: false, exported: false, exportedAt: null, source: null}])});
+                role: 'role_HT_break', premium: false, special: false, collector: false, exported: false, exportedAt: null, source: null},
+               // 25.09: a Story Mode copy the mod marks regular:false - never in the list of all vehicles
+               {id: 'germany-Uniform_SM', type: 'germany:Uniform_SM', name: 'Uniform', level: 10, 'class': 'heavyTank', nation: 'germany',
+                role: 'role_HT_break', premium: false, special: false, collector: false, exported: false, exportedAt: null, source: null, regular: false}])});
   return data;
 }
 

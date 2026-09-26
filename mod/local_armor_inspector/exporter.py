@@ -1954,6 +1954,15 @@ MODELS_SWEEP_KEY = 'modelsSweep'
 # Base-list copies made for the onboarding and Story Mode (no battle-mode tag on them) and the client's test vehicles:
 # not regular vehicles, left out of the model sweep by name (outputs/vehicle-classes-modes-2026-09-21.md section 4).
 MODELS_SKIP_NAME = re.compile(r'_(?:StoryMode\w*|NewOnBoarding|test|TEST)$|^Env_')
+
+
+def regular_vehicle(row, extension=()):
+    """A vehicle a player can have in the hangar - the one rule of the model sweep and of the page's vehicle list (user,
+    25.09: no event, battle-mode, internet-cafe, onboarding or Story Mode copy in the picker). `extension`: the types of
+    the event packages (Exporter.extension_types)."""
+    type_name = str(row.get('type') or '')
+    return not (row.get('modeOnly') or row.get('igr') or type_name in extension
+                or MODELS_SKIP_NAME.search(type_name.split(':', 1)[-1]))
 # The catalogue while the model sweep writes vehicle after vehicle: at most every 5 s (the page polls every 2-5 s).
 SWEEP_CATALOGUE_PAUSE = 5.0
 SWEEP_ORDER = ('ttx', 'models')
@@ -4052,8 +4061,7 @@ class Exporter(object):
         seen = set()
         for row in catalogue:
             type_name = str(row['type'])
-            if (type_name in seen or row.get('modeOnly') or row.get('igr') or type_name in extension
-                    or MODELS_SKIP_NAME.search(type_name.split(':', 1)[1])): continue
+            if type_name in seen or not regular_vehicle(row, extension): continue
             seen.add(type_name)
             state['regular'].append(type_name)
         state['catalogue'] = len(state['regular'])
@@ -4212,8 +4220,12 @@ class Exporter(object):
         return rows
 
     def flag_rows(self, rows):
-        """The export flags of catalogue rows: 'exported' when the vehicle's file is this client's (vehicle_current)."""
+        """The export flags of catalogue rows: 'exported' when the vehicle's file is this client's (vehicle_current), and
+        'regular': false on a vehicle no player has in the hangar (regular_vehicle) - the page's list leaves it out."""
+        extension = set((self.sweep_states.get('models') or {}).get('extension') or ())
         for entry in rows:
+            if regular_vehicle(entry, extension): entry.pop('regular', None)
+            else: entry['regular'] = False
             summary = self.vehicles.get(entry['id'])
             entry['exported'] = self.vehicle_current(summary)
             entry['exportedAt'] = summary.get('exportedAt') if summary else None

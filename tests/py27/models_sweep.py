@@ -208,6 +208,10 @@ try:
     check(marker['done'] is False and marker['confirmed'] is False and marker['opted'] is False and marker['total'] == 5
           and marker['catalogue'] == 6 and marker['extension'] == ['ussr:R9_Event'], 'progress file: 0 of 5, 6 regular, never started, the event package\'s vehicle named')
     check('germany:G8_Copy_IGR' not in planned(first), 'an internet-cafe copy (premiumIGR) is left out (review 25.09)')
+    # 25.09 (user): the same rule marks the catalogue - the page's list of all vehicles leaves these rows out.
+    flagged = dict((row['type'], row.get('regular', True)) for row in first.flag_rows([dict(row) for row in ROWS if row.get('id')]))
+    check(flagged['germany:G1_A'] is True and not any(flagged[t] for t in ('germany:G6_Rental_7x7', 'germany:G7_Tiger_NewOnBoarding',
+          'ussr:R9_Event', 'germany:G8_Copy_IGR')), 'the catalogue: regular:false on the battle-mode, onboarding, event and internet-cafe copies (%s)' % flagged)
     # Review 25.09: a file setup could not read may be the player's own - left alone, never overwritten this session.
     locked = vehicle_file('usa:A1_E')
     with open(locked, 'wb') as stream: stream.write(b'not readable as a record')

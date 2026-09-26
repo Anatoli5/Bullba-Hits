@@ -9,6 +9,7 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 - **Settings:** `exportAllVehicles` in settings.json is no longer read; Export all models replaces it.
 - **Fix:** after the characteristics were prepared, exporting the model of a vehicle they had read failed for the rest of the session (the game refuses to read a vehicle twice); they now stay read.
 - **Speed:** the first model exported in a session starts about 3 s sooner (the game's model index is read about 30 times faster).
+- **Vehicles:** the list of all vehicles shows only the vehicles a player can have in the hangar: no event, Story Mode, onboarding, battle-mode (Onslaught) or internet-cafe copies. "This battle" still lists the battle's own vehicles.
 - **Game:** the mods list button opens the viewer in the Vehicles mode on the vehicle selected in the hangar; the battles are one click away (Hits).
 - **Hits:** a click on a critical-damage icon of a hit tile shows what it means instead of opening the hit.
 - **Hits:** critical-damage and damage-source icons are the game's own 16 px icons: yellow/red modules, a yellow/red track instead of the white picture, and the damage log's crit, fire, ram, fall and strike icons (green for damage dealt, red for damage taken, as in the game).

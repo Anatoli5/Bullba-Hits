@@ -296,7 +296,9 @@
     return out;
   }
   function catalogueGroups(){
-    var all=(catalogue&&catalogue.vehicles)||[];
+    // Only the vehicles a player can have in the hangar (user, 25.09): the mod marks every event, battle-mode, internet-cafe
+    // and onboarding copy regular:false (exporter.regular_vehicle); "This battle" still lists the battle's own vehicles.
+    var all=((catalogue&&catalogue.vehicles)||[]).filter(function(v){return v.regular!==false;});
     // Every catalogue row in both hosts (24.09). In the game an unexported one exports on click; in the browser it
     // opens with its characteristics file alone (chooseVehicle). "Exported" among the flags narrows to the models.
     var shown=all.filter(vehicleMatches),out=[];

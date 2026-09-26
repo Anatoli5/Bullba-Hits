@@ -247,6 +247,10 @@ async function main() {
       // 24.09: a catalogue row without a model (not in this battle: the list on "All vehicles"). In the shooter's role its
       // file's gun fires at the model on screen; in the model's role it is its characteristics alone, and the scene says so.
       await step("scope('all')");
+      if (!fun) {
+        const listed = await ev(`(() => ({plain: !!document.querySelector('#vehicles [data-vehicle="germany-Uniform"]'), copy: !!document.querySelector('#vehicles [data-vehicle="germany-Uniform_SM"]')}))()`);
+        ok('the list of all vehicles leaves out a copy the mod marks regular:false (25.09: no event or Story Mode copy)', listed.plain && !listed.copy, JSON.stringify(listed));
+      }
       expectScene('a shooter without a model from the Vehicles list', fun, {model: true, shooter: true, hp: '2 200 / 2 200', source: HP.OWN}, await step("list('germany-Uniform')"));
       await step('modelTile()');
       const bare = await step("list('germany-Uniform')");
