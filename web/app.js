@@ -447,6 +447,9 @@
       target:target,attacker:attacker,points:[],rawHitPoints:[],warnings:(model.warnings||[]).slice(),
       shellCandidates:[],availableShells:(shooter.shells||[]).slice(),shellStatus:'vehicle browser',receivedAt:model.exportedAt};
   }
+  // keepCamera: true - the same model under another shooter, the camera kept as it stands; 'view' - ANOTHER model picked
+  // by hand (user, 26.09): it inherits the view on screen (viewer.cameraState(true): the camera round its own centre, the
+  // pose clamped to its limits), or of the last scene; nothing to inherit - the default view.
   function showVehicleScene(keepCamera){
     if(!modelVehicle)return Promise.resolve(null);
     // adoptHitVehicles() hands over catalogue rows, and a catalogue row carries no collision parts: the
@@ -455,7 +458,7 @@
     // The camera rule goes through it (audit APP1-06: a shooter picked in the list lost the camera here).
     if(!modelVehicle.parts)return readVehicle(modelVehicle.id).then(function(record){modelVehicle=record;return showVehicleScene(keepCamera);});
     var hit=vehicleHit(modelVehicle,shooterVehicle||modelVehicle);
-    var camera=keepCamera&&viewer&&viewer.cameraState?viewer.cameraState():null,token=++generation;
+    var camera=keepCamera&&viewer&&viewer.cameraState?viewer.cameraState(keepCamera==='view'):null,token=++generation;
     message('Preparing the model\u2026');if(viewer)viewer.clear();
     return ArmorInspectorData.sceneFor({warnings:[]},hit).then(function(data){
       if(token!==generation)return null;
@@ -463,8 +466,8 @@
       return data;
     }).catch(function(e){if(token===generation){sceneCleared();message(e.message);warnings([e.message]);}throw e;});
   }
-  // Changing the model is an ordinary load (camera as for any new hit). Changing the shooter alone leaves the
-  // model and the orbit centre where they are, so the camera is taken before the reload and put back after it.
+  // Changing the model carries the view on screen over to it (showVehicleScene 'view'). Changing the shooter alone leaves
+  // the model and the orbit centre where they are, so the camera is taken before the reload and put back after it.
   // options.row: a catalogue row without a model, read from its characteristics file (the browser only).
   function pickVehicle(id,role,options){
     role=role==='shooter'?'shooter':'model';options=options||{};
@@ -473,7 +476,7 @@
     var read=options.row?ttxRecord(options.row):readVehicle(id,options.deadline,function(){return token===vehicleGeneration;});
     return read.then(function(record){
       if(token!==vehicleGeneration)return null;
-      var keepCamera=false;
+      var keepCamera='view';
       if(role==='shooter'){
         if(modelVehicle)keepCamera=true;else modelVehicle=record;
         shooterVehicle=record;shooterPicked=true;
@@ -643,6 +646,8 @@
     // penetration and calibre - instead of falling back to the empty manual defaults. A browsed vehicle and a
     // shooter picked from the roster do carry a gun of their own, so they take their own shells instead.
     var browsing=!!(hit&&(hit.vehicle||hit.chosenShooter)),keep=null;
+    // What the scene before stood on (26.09): the same shooter over a model picked by hand keeps his shell, below.
+    var prev=activeHit,was0=$('shell-choice').value,held=was0.indexOf('saved:')===0?candidates[Number(was0.slice(6))]||null:null;
     if(hit&&hit.synthetic&&!browsing){var was=$('shell-choice').value,c0=was.indexOf('saved:')===0?candidates[Number(was.slice(6))]:null;
       keep={kind:c0?c0.kind:was||'ARMOR_PIERCING',penetration:$('penetration').value,caliber:$('caliber').value,alpha:$('alpha').value};}
     activeHit=hit;shotContext=ArmorShotContext.resolve(hit,hit&&(hit.vehicle||hit.damageEvent)?[]:(current&&current.shotEvents||[]));
@@ -669,6 +674,14 @@
     // the moment a vehicle is picked, instead of “pick a shell”.
     if(browsing&&recorded.length){var first=recorded.findIndex(function(c){return c.kind==='ARMOR_PIERCING';});
       if(first<0)first=recorded.findIndex(function(c){return c.kind==='ARMOR_PIERCING_CR';});if(first<0)first=0;value='saved:'+first;shellAssumed=-1;}
+    // ANOTHER MODEL, THE SAME SHOOTER (user, 26.09: a new target inherits what it can from the scene before): his list is
+    // the same, so the shell on screen stays - the same entry of it, or the same manual type with its figures - instead
+    // of the first AP. Another shooter (his own list) still starts from his first AP.
+    var pa=prev&&prev.attacker,na=hit&&hit.attacker;
+    if(hit&&hit.vehicle&&pa&&na&&pa.type&&pa.type===na.type){
+      var same=held?candidates.findIndex(function(c){return c.kind===held.kind&&c.name===held.name&&(c.emuGun||'')===(held.emuGun||'')&&(c.vehicleMode||0)===(held.vehicleMode||0);}):-1;
+      if(same>=0){value='saved:'+same;shellAssumed=-1;}else if(!held&&shellNames[was0]){value=was0;shellAssumed=-1;autoManual=false;}
+    }
     paintShellLists(hit);
     // The shell on screen belongs to the gun the emulation fires (24.09): with a picked gun of the type, its own shell of
     // the same type, else its first; the record's own stays in the list to compare with.
@@ -6354,7 +6367,8 @@
       if(window.console)console.error('Bullba Hits display: '+(e&&e.stack||e));}
   }
   // A scene put on screen. `camera` (optional) is a camera to keep - only the shooter changed (showVehicleScene,
-  // pickShooter) - put back before the finisher, so the figures are taken once, on the camera the scene keeps.
+  // pickShooter) - put back before the finisher, so the figures are taken once, on the camera the scene keeps; or the view
+  // carried to a model picked by hand (cameraState(true)), whose pose load() puts on the new vehicle.
   function display(data,reference,camera){
     var hit=data.hit;
     sceneBuild=true;
@@ -6370,7 +6384,7 @@
     // (every renderHits() before it - selectHit calls one before the scene arrives - still marked the previous
     // hit's shooter; optimisation plan 21.09, §8.4).
     // viewer.load() drops everything the viewer held, the Hitmarks too: funModel lays them again (funLaid).
-    $('shot-source').textContent=hit.synthetic?'No recorded shot':'Hit line';prepareShell(hit);var drawn=viewer&&viewer.load(data,shotContext);funLaid=false;
+    $('shot-source').textContent=hit.synthetic?'No recorded shot':'Hit line';prepareShell(hit);var drawn=viewer&&viewer.load(data,shotContext,camera);funLaid=false;
     if(drawn&&viewer.setRecordedOffset)viewer.setRecordedOffset(recordedOffset(hit));   // the record view's camera stands at this shot's barrel (aimMuzzle)
     // A damage event's own look, set before the first frame is drawn, so no penetration map shows under it.
     if(drawn&&hit.damageEvent)viewer.setLook(eventLook(hit));
@@ -6863,7 +6877,7 @@
   $('shooter-tile').onclick=function(){chooseRole('shooter');};
   $('swap-roles').onclick=function(){
     // Two BROWSED vehicles simply change places; a recorded hit below takes its own path in either panel.
-    if(sidebarMode==='vehicles'&&activeHit&&activeHit.vehicle){if(!modelVehicle||!shooterVehicle)return;var m=modelVehicle;modelVehicle=shooterVehicle;shooterVehicle=m;shooterPicked=true;showVehicleScene(false).catch(function(){});return;}
+    if(sidebarMode==='vehicles'&&activeHit&&activeHit.vehicle){if(!modelVehicle||!shooterVehicle)return;var m=modelVehicle;modelVehicle=shooterVehicle;shooterVehicle=m;shooterPicked=true;showVehicleScene('view').catch(function(){});return;}
     if(swapped){if(swapped.base)selectHit(swapped.base).catch(function(){});return;}
     var hit=activeHit;if(!hit||hit.synthetic||!swapReady(hit)||!current)return;
     var token=++generation;message('Preparing the model\u2026');if(viewer)viewer.clear();

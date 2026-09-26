@@ -312,6 +312,30 @@ async function main() {
     }
     await loop(false);
     await loop(true);
+    // A target picked by hand inherits the view (user, 26.09): Papa shoots, Papa -> Quebec -> Papa as the model by clicks
+    // in the Vehicles list. The camera, the pose and the shooter's shell carry over, and Papa comes back as he was.
+    await ev('__bt.act.fun(false)'); await ev('__bt.settle()');
+    await step('shooterTile()'); await step("list('pm_papa')"); await step('modelTile()'); await step("list('pm_papa')");
+    const VIEW = `(() => { const v = window.__bullbaViewers[window.__bullbaViewers.length - 1], p = v.camera.position;
+      return {yaw: v.yaw, pitch: v.pitch, distance: v.distance, zoom: v.camera.zoom, turret: v.turretAngle, gun: v.gunAngle, eye: [p.x, p.y, p.z],
+        shell: document.getElementById('shell-choice').value, tile: document.getElementById('pose-turret').textContent}; })()`;
+    await ev(`(() => { const v = window.__bullbaViewers[window.__bullbaViewers.length - 1]; v.setTurret(100); v.setGun(4); v.setOrbit(1.2, .35);
+      v.setDistance(21); v.setZoom(1.7); const c = document.getElementById('shell-choice'); c.value = 'saved:1'; c.dispatchEvent(new Event('change')); })()`);
+    await ev('__bt.settle()');
+    const viewA = await ev(VIEW);
+    await step("list('pm_quebec')");
+    const viewB = await ev(VIEW);
+    await step("list('pm_papa')");
+    const viewA2 = await ev(VIEW);
+    const close = (a, b) => Math.abs(a - b) < 1e-6;
+    ok('target picked by hand: Quebec keeps the camera angles, the distance, the zoom, the turret 100° and the gun, and the shooter\'s APCR',
+       close(viewB.yaw, 1.2) && close(viewB.pitch, .35) && close(viewB.distance, 21) && close(viewB.zoom, 1.7) && close(viewB.turret, 100) && close(viewB.gun, 4)
+       && viewB.shell === 'saved:1' && viewB.tile.indexOf('+100°') >= 0, JSON.stringify([viewA, viewB]));
+    ok('target picked by hand: back to Papa - the very first picture', ['yaw', 'pitch', 'distance', 'zoom', 'turret', 'gun'].every((k) => close(viewA2[k], viewA[k]))
+       && viewA2.eye.every((x, i) => close(x, viewA.eye[i])) && viewA2.shell === viewA.shell && viewA.shell === 'saved:1', JSON.stringify([viewA, viewA2]));
+    ok('target picked by hand: no uncaught exception in the page', page.errors.length === 0, page.errors.slice(0, 3).join(' | '));
+    page.errors.length = 0;
+    await step("side('battles')"); await ev('__bt.act.fun(true)'); await ev('__bt.settle()');
     // A target whose only figure is in his own characteristics file: that file is read for him and the bar comes with it.
     const pm3 = await step("battle('pm3')");
     ok('matrix, ⌖ on: a target whose only figure is in his own characteristics file gets the bar from it',

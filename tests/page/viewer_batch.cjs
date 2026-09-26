@@ -754,6 +754,63 @@ function checks(ok, web) {
     ok('viewer-batch: clear() forgets the recorded barrel', v.recordedOffset === null);
   });
 
+  // ---- a target picked by hand inherits the view (user, 26.09): A -> B -> A gives A's picture back ---------------------
+  section(function () {
+    // Browsed vehicles: no shot, the rest pose (aim [0, 0]). B is bigger, its turret limited to +-0.5 rad, its gun to
+    // -0.3 .. +0.1 rad (pitch positive = down) at every yaw; C holds its turret and gun still (a static tank destroyer).
+    const browsed = function (edit) { const d = vehicle(); d.hit.points = []; d.hit.aim = [0, 0]; if (edit) edit(d); return d; };
+    const A = function () { return browsed(); };
+    const B = function () { return browsed(function (d) { d.models[1] = box(.5, 1.5, .3, 8, 2.2, 3.6); d.hit.target.turretYawLimits = [-.5, .5];
+      d.hit.target.gunPitchLimits = {samples: [[-Math.PI, -.3, .1], [Math.PI, -.3, .1]], hullTurretPitch: 0, gunJointPitch: 0}; }); };
+    const C = function () { return browsed(function (d) { d.hit.target.gunPitchLimits = {samples: [[-Math.PI, -.3, .3], [Math.PI, -.3, .3]], hullTurretPitch: 0, gunJointPitch: 0, staticTurretYaw: 0, staticPitch: 0}; }); };
+    const pick = function (e, v, data) { const keep = v.cameraState(true); v.clear(); v.load(data, {}, keep); v.restoreCamera(keep); e.settle(); return keep; };
+    const snap = function (v) { return {yaw: v.yaw, pitch: v.pitch, distance: v.distance, zoom: v.camera.zoom, turret: v.turretAngle, gun: v.gunAngle,
+      target: v.target.clone(), eye: v.camera.position.clone(), pan: v.pan.clone(), lens: v.frameCenter.clone()}; };
+    const same = function (a, b) { return near(a.yaw, b.yaw) && near(a.pitch, b.pitch) && near(a.distance, b.distance) && near(a.zoom, b.zoom, 1e-9)
+      && near(a.turret, b.turret, 1e-9) && near(a.gun, b.gun, 1e-9) && a.target.distanceTo(b.target) < 1e-9 && a.eye.distanceTo(b.eye) < 1e-9
+      && a.pan.distanceTo(b.pan) < 1e-12 && a.lens.distanceTo(b.lens) < 1e-12; };
+    [false, true].forEach(function (auto) {
+      const e = env(web), v = e.viewer, tag = 'viewer-batch: target picked by hand' + (auto ? ', Auto frame on' : '') + ': ';
+      v.configure(e.sb.ArmorBallistics.shell('ARMOR_PIERCING', 250, 105), true, 'classic', 'chance');
+      v.setAutoFrame(auto);
+      v.load(A(), {}); e.settle();
+      v.setTurret(120); v.setGun(10); v.setOrbit(1.1, .4); v.setDistance(17); v.setZoom(2.3); v.pan.set(.4, -.2); v.render(); e.settle();
+      const first = snap(v);
+      let poses = 0; v.onTurret = function () { poses++; };
+      pick(e, v, B());
+      const onB = snap(v);
+      ok(tag + 'B keeps the camera angles, the distance and the pan, round its own centre',
+         near(onB.yaw, 1.1) && near(onB.pitch, .4) && near(onB.distance, 17) && onB.pan.distanceTo(first.pan) < 1e-12 && onB.target.distanceTo(v.pivotCentre()) < 1e-9
+         && onB.target.distanceTo(first.target) > .01, JSON.stringify([onB.target, first.target]));
+      ok(tag + 'the turret clamped to B\'s limits (+0.5 rad), the gun (10 deg down) to B\'s pitch at that yaw (0.1 rad down)',
+         near(onB.turret, .5 * 180 / Math.PI, 1e-9) && near(onB.gun, .1 * 180 / Math.PI, 1e-9) && !!v.posedData, '(' + onB.turret + ', ' + onB.gun + ')');
+      ok(tag + 'the pose reported once for the load', poses === 1, '(' + poses + ')');
+      if (!auto) ok(tag + 'the zoom kept as it was', near(onB.zoom, 2.3, 1e-9), '(' + onB.zoom + ')');
+      else ok(tag + 'the zoom is B\'s framing x the carried frame scale (the same relative size)', near(onB.zoom, v.framing().zoom * v.frameScale, 1e-9) && !near(onB.zoom, first.zoom, 1e-6), '(' + onB.zoom + ' vs ' + first.zoom + ')');
+      pick(e, v, A());
+      ok(tag + 'back on A: exactly the first picture - camera, eye, zoom, pan, lens, turret 120 deg and gun 10 deg (B\'s clamps not kept)', same(snap(v), first), JSON.stringify([snap(v), first]));
+      // A static turret and gun keep their own angle, and the wish passes through them.
+      pick(e, v, C());
+      ok(tag + 'C, whose turret and gun the client holds still, keeps them in its own pose', v.turretAngle === 0 && v.gunAngle === 0, '(' + v.turretAngle + ', ' + v.gunAngle + ')');
+      pick(e, v, A());
+      ok(tag + 'and A after C gets its pose back', near(v.turretAngle, 120, 1e-9) && near(v.gunAngle, 10, 1e-9), '(' + v.turretAngle + ', ' + v.gunAngle + ')');
+      // A turn by hand on B makes B's pose the one carried on.
+      pick(e, v, B()); v.setTurret(-10); e.settle(); pick(e, v, A());
+      ok(tag + 'a turret turned by hand on B is what A gets; the untouched gun still its wish', near(v.turretAngle, -10, 1e-9) && near(v.gunAngle, 10, 1e-9), '(' + v.turretAngle + ', ' + v.gunAngle + ')');
+    });
+    // A recorded hit is not a pick: the record's pose and the camera on the shell's axis, whatever was on screen.
+    const e = env(web), v = e.viewer;
+    v.configure(e.sb.ArmorBallistics.shell('ARMOR_PIERCING', 250, 105), true, 'classic', 'chance');
+    v.load(A(), {}); e.settle(); v.setTurret(60); e.settle();
+    v.clear(); v.load(vehicle(), {range: 5}); e.settle();
+    ok('viewer-batch: a recorded hit after a browsed vehicle: the recorded pose and the shot range, no wish carried',
+       v.turretAngle === 0 && v.gunAngle === 0 && v.poseWish === null && near(v.shotRange(), 5, 1e-3), '(' + v.turretAngle + ', ' + v.shotRange() + ')');
+    // Nothing on screen: the view of the last scene.
+    v.setOrbit(.7, .3); v.render(); e.settle(); v.clear();
+    const last = v.cameraState(true);
+    ok('viewer-batch: nothing on screen - the view carried is the last scene\'s', !!last && near(last.yaw, .7) && !!last.pose, JSON.stringify(last && {yaw: last.yaw}));
+  });
+
   // ---- the Statistics log's point after a recorded ricochet (review 26.09): Viewer.verdicts walks it as the bounced leg ----
   // of the one law (engine.bounced), from what OUR ray to the ricochet point had left there - no second copy of the rule.
   section(function () {

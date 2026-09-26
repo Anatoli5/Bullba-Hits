@@ -78,6 +78,8 @@
     // liveRingLine is the live ring's one line for the viewer's life (drawCircle).
     this.cameraSeen=new Float64Array(11);this.cameraSeen[0]=NaN;this.engineGen=0;this.hold=0;this.heldCamera=false;this.heldPose=null;this.backendShown=null;this.liveRingLine=null;
     this.frameId=null;this.fitPending=false;this.zoomLock=false;this.recordedDistance=null;this.estimateAim=null;this.paintedKey=null;this.distanceSet=false;
+    // The view carried to another vehicle (cameraState(true), 26.09): the pose asked for and the last scene's view.
+    this.poseWish=null;this.lastView=null;
     // Aim emulation: the circle that follows the cursor. liveRadius100 is the radius at 100 m the page
     // computes from the shooter's state (null = the feature is off and the manual estimate stands),
     // liveAimPoint the centre it was last drawn at, liveAim the drawn circle the integral samples.
@@ -128,7 +130,7 @@
        once the first round is away, moving the mouse AIMS the burst (the turret chases the cursor) and only
        the release stops it. onShotCancel says which it is: false = the burst goes on, so the press is never
        handed to the orbit or the turret drag and the pointer goes back to plain hovering. */
-    container.addEventListener('pointermove', function(e) { if (!drag){self.hover(e);return;}if(Math.abs(e.clientX-drag.sx)+Math.abs(e.clientY-drag.sy)>3)drag.moved=true;if(!drag.moved)return;if(self.aimHold){if(self.onShotCancel&&self.onShotCancel()===false){drag=null;self.dragging=false;self.hover(e);return;}self.aimHold=false;}if(drag.pan){/* the pan is accumulated and applied once in the camera's own frame loop, not per event */var p=self.pendingPan||(self.pendingPan={x:0,y:0});p.x+=e.clientX-drag.x;p.y+=e.clientY-drag.y;drag.x=e.clientX;drag.y=e.clientY;self.startOrbit();return;}if(drag.part===2||drag.part===3){/* turret and gun are one module: left/right turns the turret, up/down moves the gun - both applied first, then one markPose and one notification for the step */var dx=drag.locks&&drag.locks.turret?0:e.clientX-drag.x,dy=drag.locks&&drag.locks.gun?0:e.clientY-drag.y;if(self.loadedData&&(dx||dy)){var turned=dx?self.turretTo(self.turretAngle-dx*.5):null,gun=dy?self.gunTo(self.gunAngle+dy*.16):null;self.markPose();if(turned){if(self.onTurret)self.onTurret(turned);}else if(self.onGun)self.onGun(gun);}}else{self.orbitTo(self.targetYaw-(e.clientX-drag.x)*ORBIT_PER_PX,self.targetPitch+(e.clientY-drag.y)*ORBIT_PER_PX);}drag.x=e.clientX;drag.y=e.clientY; });
+    container.addEventListener('pointermove', function(e) { if (!drag){self.hover(e);return;}if(Math.abs(e.clientX-drag.sx)+Math.abs(e.clientY-drag.sy)>3)drag.moved=true;if(!drag.moved)return;if(self.aimHold){if(self.onShotCancel&&self.onShotCancel()===false){drag=null;self.dragging=false;self.hover(e);return;}self.aimHold=false;}if(drag.pan){/* the pan is accumulated and applied once in the camera's own frame loop, not per event */var p=self.pendingPan||(self.pendingPan={x:0,y:0});p.x+=e.clientX-drag.x;p.y+=e.clientY-drag.y;drag.x=e.clientX;drag.y=e.clientY;self.startOrbit();return;}if(drag.part===2||drag.part===3){/* turret and gun are one module: left/right turns the turret, up/down moves the gun - both applied first, then one markPose and one notification for the step */var dx=drag.locks&&drag.locks.turret?0:e.clientX-drag.x,dy=drag.locks&&drag.locks.gun?0:e.clientY-drag.y;if(self.loadedData&&(dx||dy)){var turned=dx?self.turretTo(self.turretAngle-dx*.5):null,gun=dy?self.gunTo(self.gunAngle+dy*.16):null;self.poseMoved(!!dx,!!dy);self.markPose();if(turned){if(self.onTurret)self.onTurret(turned);}else if(self.onGun)self.onGun(gun);}}else{self.orbitTo(self.targetYaw-(e.clientX-drag.x)*ORBIT_PER_PX,self.targetPitch+(e.clientY-drag.y)*ORBIT_PER_PX);}drag.x=e.clientX;drag.y=e.clientY; });
     // The end of a drag: the pose the drag only previewed is rebuilt in full, and one frame is asked for so the
     // map comes back at full quality with the ricochet trace (paint() draws a drag at half resolution).
     // The end of a press: a press the emulation claimed is handed back to it (a tap fires one shot, a
@@ -311,7 +313,7 @@
   Viewer.prototype.setZoom=function(value){if(!Number.isFinite(value)||value<=0)return;this.targetZoom=null;this.targetScale=null;if(this.autoFrame)this.scaleFor(value);this.showZoom(value);};
   Viewer.prototype.setDistance=function(value){if(!Number.isFinite(value))return;this.targetDistance=null;this.distance=Math.max(DISTANCE_MIN,Math.min(DISTANCE_MAX,value));this.render();};
   Viewer.limits={distanceMin:DISTANCE_MIN,distanceMax:DISTANCE_MAX};
-  Viewer.prototype.clear=function(){this.dropTargets();this.clearLiveAim();this.clearHitMarks();this.look=null;this.markDrawn=this.markBuilt=null;this.pinResult=null;this.fitPending=false;this.shotPoints=null;this.shotPath=null;this.horizon=null;this.recordedDistance=null;this.pinned=null;this.disposePin();this.pinCache=null;this.pinReticles=[];if(this.surface)this.surface.dispose();this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.gunAngle=0;this.savedAim=this.ringAim=this.discAim=this.shotDisc=null;this.viewPoints=null;this.recordedOffset=null;this.aimGroup=null;this.estimateAim=null;this.reticles=[];this.reticleLayer.replaceChildren();clearTimeout(this.turretTimer);this.turretTimer=null;this.turretPending=false;this.poseGeometries=null;this.poseBuilt=null;this.poseStale=false;this.spreadAim=null;this.hideSpread();window.clearTimeout(this.aimSettleTimer);this.aimSettleTimer=null;window.cancelAnimationFrame(this.frameId);this.frameId=null;this.cancelHover();this.cancelOrbit();this.pendingPan=null;this.inspectKey=null;this.paintMesh=null;this.outline=null;this.outlineDepth=null;this.engine=null;this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.loadedData=null;this.paintedKey=null;this.samples=[];var disposed=new Set([this.ringGeom]),kept=this.ringMat;this.root.traverse(function(o){var shared=!!(o.parent&&o.parent.type==='ArrowHelper'&&(o===o.parent.line||o===o.parent.cone));if(o.geometry&&!shared&&!disposed.has(o.geometry)){disposed.add(o.geometry);o.geometry.dispose();}if(o.material){(Array.isArray(o.material)?o.material:[o.material]).forEach(function(m){if(m!==kept)m.dispose();});}});while(this.root.children.length)this.root.remove(this.root.children[0]);this.point=null;this.travel=null;this.draw();};
+  Viewer.prototype.clear=function(){if(this.loadedData)this.lastView=this.cameraState(true);this.dropTargets();this.clearLiveAim();this.clearHitMarks();this.look=null;this.markDrawn=this.markBuilt=null;this.pinResult=null;this.fitPending=false;this.shotPoints=null;this.shotPath=null;this.horizon=null;this.recordedDistance=null;this.pinned=null;this.disposePin();this.pinCache=null;this.pinReticles=[];if(this.surface)this.surface.dispose();this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.gunAngle=0;this.savedAim=this.ringAim=this.discAim=this.shotDisc=null;this.viewPoints=null;this.recordedOffset=null;this.aimGroup=null;this.estimateAim=null;this.reticles=[];this.reticleLayer.replaceChildren();clearTimeout(this.turretTimer);this.turretTimer=null;this.turretPending=false;this.poseGeometries=null;this.poseBuilt=null;this.poseStale=false;this.spreadAim=null;this.hideSpread();window.clearTimeout(this.aimSettleTimer);this.aimSettleTimer=null;window.cancelAnimationFrame(this.frameId);this.frameId=null;this.cancelHover();this.cancelOrbit();this.pendingPan=null;this.inspectKey=null;this.paintMesh=null;this.outline=null;this.outlineDepth=null;this.engine=null;this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.loadedData=null;this.paintedKey=null;this.samples=[];var disposed=new Set([this.ringGeom]),kept=this.ringMat;this.root.traverse(function(o){var shared=!!(o.parent&&o.parent.type==='ArrowHelper'&&(o===o.parent.line||o===o.parent.cone));if(o.geometry&&!shared&&!disposed.has(o.geometry)){disposed.add(o.geometry);o.geometry.dispose();}if(o.material){(Array.isArray(o.material)?o.material:[o.material]).forEach(function(m){if(m!==kept)m.dispose();});}});while(this.root.children.length)this.root.remove(this.root.children[0]);this.point=null;this.travel=null;this.draw();};
   // clear() draws the empty scene and tells the page nothing: the camera has not moved, and the next load() reports once.
   Viewer.prototype.rebuild=function(){
     if(!this.loadedData)return;var T=THREE,self=this;this.samples=[];this.paintedKey=null;
@@ -505,7 +507,7 @@
     return {angle:this.turretAngle,min:lo,max:hi,limited:limited};
   };
   Viewer.prototype.setTurret=function(degrees){
-    if(!this.loadedData)return;var state=this.turretTo(degrees);this.markPose();if(this.onTurret)this.onTurret(state);
+    if(!this.loadedData)return;var state=this.turretTo(degrees);this.poseMoved(true,false);this.markPose();if(this.onTurret)this.onTurret(state);
   };
   // The pose the viewer holds is a delta from the recorded one, so gunRange() reports the vertical limits in
   // that same delta - setGun() clamps against them. gunRangeAbsolute() is the very same interpolation with the
@@ -522,8 +524,27 @@
   Viewer.prototype.gunRange=function(){return this.gunSpan(false);};
   Viewer.prototype.gunRangeAbsolute=function(){return this.gunSpan(true);};
   Viewer.prototype.gunTo=function(degrees){var limits=this.gunRange();this.gunAngle=Math.max(limits.min,Math.min(limits.max,degrees));return {angle:this.gunAngle,known:limits.known};};
-  Viewer.prototype.setGun=function(degrees){if(!this.loadedData)return;var state=this.gunTo(degrees);this.markPose();if(this.onGun)this.onGun(state);};
+  Viewer.prototype.setGun=function(degrees){if(!this.loadedData)return;var state=this.gunTo(degrees);this.poseMoved(false,true);this.markPose();if(this.onGun)this.onGun(state);};
   Viewer.prototype.resetPose=function(){this.turretAngle=0;this.gunAngle=0;this.setTurret(0);};
+  // THE POSE CARRIED TO ANOTHER VEHICLE (user, 26.09): a target picked by hand stands in the pose of the one before it -
+  // the turret's yaw on the hull and the gun's pitch, both absolute (the record's aim plus the viewer's delta; a browsed
+  // vehicle's aim is [0, 0]). The new vehicle clamps them to its own limits, and a turret or gun the client holds still
+  // (poseLocks) keeps its own angle; the angles asked for stay the wish (poseWish), so A -> B -> A gives A its pose back
+  // even where B clamped it. A hand on an axis (a drag, setTurret, setGun) makes what is on screen the wish of that axis.
+  Viewer.prototype.poseMoved=function(turret,gun){var w=this.poseWish;if(!w)return;if(turret)w.yaw=null;if(gun)w.pitch=null;};
+  Viewer.prototype.poseHeld=function(){
+    var aim=(this.loadedData.hit||{}).aim||[],R=Math.PI/180,w=this.poseWish||{};
+    var yaw=(Number.isFinite(aim[0])?aim[0]:0)+this.turretAngle*R,pitch=(Number.isFinite(aim[1])?aim[1]:0)+this.gunAngle*R;
+    return {yaw:w.yaw!==null&&w.yaw!==undefined?w.yaw:yaw,pitch:w.pitch!==null&&w.pitch!==undefined?w.pitch:pitch};
+  };
+  // The carried pose put on the vehicle just loaded (loadScene; the angles only - the caller builds the posed model).
+  Viewer.prototype.poseCarry=function(pose){
+    var aim=this.loadedData.hit.aim||[],R=180/Math.PI,locks=this.poseLocks();
+    this.poseWish={yaw:pose.yaw,pitch:pose.pitch};
+    var state=this.turretTo(locks.turret?0:(pose.yaw-(Number.isFinite(aim[0])?aim[0]:0))*R);
+    if(!locks.gun)this.gunTo((pose.pitch-(Number.isFinite(aim[1])?aim[1]:0))*R);
+    state.known=this.gunRange().known;return state;
+  };
   // A pose change asks for a frame and starts the settle timer: while the drag lasts the frame only re-transforms
   // the drawn geometry, and POSE_SETTLE ms after the last change (or at the end of the drag) everything else
   // catches up in one full rebuild.
@@ -594,14 +615,19 @@
   };
   // One report of the camera and one of the pose for the whole load, sent at its end (release): the rebuild inside used
   // to report the camera with the OLD orbit centre, and the pose was reported twice unchanged (VIEW-07).
-  Viewer.prototype.load=function(data,context){this.hold++;try{return this.loadScene(data,context);}finally{this.release();}};
-  Viewer.prototype.loadScene=function(data,context){
-    this.clear();if(data.geometryIncomplete){this.bounds=null;this.render();return false;}var T=THREE,self=this;var hit=data.hit, parts=(hit.target||{}).parts||[], transforms={};
+  // keep (optional): the view carried from the scene before (cameraState(true), a target picked by hand): its pose is put
+  // on the new vehicle here, its camera by restoreCamera; a load without it starts from the record's pose.
+  Viewer.prototype.load=function(data,context,keep){this.hold++;try{return this.loadScene(data,context,keep);}finally{this.release();}};
+  Viewer.prototype.loadScene=function(data,context,keep){
+    this.clear();var carry=keep&&keep.pose?keep.pose:null;this.poseWish=carry?{yaw:carry.yaw,pitch:carry.pitch}:null;if(data.geometryIncomplete){this.bounds=null;this.render();return false;}var T=THREE,self=this;var hit=data.hit, parts=(hit.target||{}).parts||[], transforms={};
     parts.forEach(function(part){if(part.transform)transforms[part.id]=new T.Matrix4().fromArray(part.transform);});
     var range=context&&context.range;this.recordedDistance=Number.isFinite(range)&&range>0?range:Number.isFinite(hit.rangeAtImpact)&&hit.rangeAtImpact>0?hit.rangeAtImpact:null;
     this.loadedData=data;this.posedData=null;this.poseBuilt=null;this.turretAngle=0;this.gunAngle=0;this.rebuild();
     this.root.updateMatrixWorld(true);
     var box=new T.Box3().setFromObject(this.root);this.bounds=box.isEmpty()?null:box;this.centre=this.vehicleCentre();
+    // The bounds and the centre are the rest pose's, as for any load (a drag never re-measures them), so a carried pose
+    // goes on after them: one more build of the posed model, exactly the one a drag ends with (applyTurret).
+    var posed=carry?this.poseCarry(carry):null;if(posed&&(this.turretAngle||this.gunAngle))this.applyTurret();
     var pts=Viewer.points(hit,context);pts.forEach(function(p){self.addReticle(p.pos);});
     // shotPath: the shell's flight carried onto the first point (Viewer.shellPath), null without a tracer; focus()
     // stands the camera at its origin, the horizon and the page's marks read it.
@@ -611,7 +637,7 @@
     // they must not be on screen at all, so the recorded rule is applied to them here and not only when
     // the pose or the pin changes.
     this.syncRecorded();
-    if(this.bounds)this.grid.position.y=this.bounds.min.y-.025;if(this.point)this.focus();else this.reset();this.notifyPose({angle:0,min:-180,max:180,known:this.gunRange().known});return !!this.bounds;
+    if(this.bounds)this.grid.position.y=this.bounds.min.y-.025;if(this.point)this.focus();else this.reset();this.notifyPose(posed||{angle:0,min:-180,max:180,known:this.gunRange().known});return !!this.bounds;
   };
   Viewer.prototype.addReticle=function(position){
     var element=document.createElement('span');element.className='hit-reticle';element.hidden=true;
@@ -755,11 +781,23 @@
   // stay as they are, so the camera must not move either. load() always re-frames (reset() sets fitPending,
   // the next frame runs fit()), so the state is read before the reload and put back straight after it -
   // still inside the same task, before the pending animation frame fires, so no fit is ever seen.
-  Viewer.prototype.cameraState=function(){return {yaw:this.yaw,pitch:this.pitch,distance:this.distance,zoom:this.camera.zoom,
-    target:this.target.clone(),pan:this.pan.clone(),frameCenter:this.frameCenter.clone(),frameScale:this.frameScale,pivotHeight:this.pivotHeight};};
+  // carry (user, 26.09): the view handed to ANOTHER vehicle - a target picked by hand. The angles, the distance, the zoom,
+  // the pan and the lens shift go as they are; the orbit centre is the new vehicle's own (its size differs), with the
+  // Height slider's lift over it (`lift`); and the pose (poseHeld). Nothing on screen: the view of the last scene
+  // (lastView, kept by clear()), or null - the new vehicle starts from the default view.
+  Viewer.prototype.cameraState=function(carry){
+    if(carry&&!this.loadedData)return this.lastView;
+    var s={yaw:this.yaw,pitch:this.pitch,distance:this.distance,zoom:this.camera.zoom,
+    target:this.target.clone(),pan:this.pan.clone(),frameCenter:this.frameCenter.clone(),frameScale:this.frameScale,pivotHeight:this.pivotHeight};
+    if(carry){s.relative=true;s.lift=this.pivotHeight!==null&&this.pivotHeight!==undefined?this.target.y-this.pivotCentre().y:null;s.pose=this.poseHeld();}
+    return s;};
+  // A carried view (relative) stands round the new vehicle's centre; under Auto frame the zoom is then that vehicle's
+  // framing x the carried frame scale (autoFit, on the render below) - the same relative size, the distance kept.
   Viewer.prototype.restoreCamera=function(state){
-    if(!state)return;this.setOrbit(state.yaw,state.pitch);this.distance=state.distance;this.target.copy(state.target);
-    this.dropTargets();this.pan.copy(state.pan);this.frameCenter.copy(state.frameCenter);this.frameScale=state.frameScale;this.pivotHeight=state.pivotHeight;
+    if(!state)return;this.setOrbit(state.yaw,state.pitch);this.distance=state.distance;
+    if(state.relative){this.target.copy(this.pivotCentre());this.pivotHeight=null;if(state.lift!==null){var r=this.heightRange();this.target.y=this.pivotHeight=Math.max(r[0],Math.min(r[1],this.target.y+state.lift));}this.distanceSet=true;}
+    else{this.target.copy(state.target);this.pivotHeight=state.pivotHeight;}
+    this.dropTargets();this.pan.copy(state.pan);this.frameCenter.copy(state.frameCenter);this.frameScale=state.frameScale;
     this.fitPending=false;this.camera.zoom=Math.max(.1,Math.min(150,state.zoom));this.projection();this.render();};
   // 'mode' is the Display setting: 'chance' or 'damage' (expected damage per shot). Both colour the armour on
   // the same palette, so 'heatmap' stays the single "is the map on" flag.

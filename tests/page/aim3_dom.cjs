@@ -3855,7 +3855,7 @@ settle(20).then(function () {
        && /point=circlePoint\(center,right,up,radius,\(i\+\.5\)\/count/.test(viewerSrc)
        && /return circlePoint\(aim\.center,aim\.right,aim\.up,aim\.radius,r\(\),r\(\)\*Math\.PI\*2,this\.aimQuantile\(\)\)/.test(viewerSrc));
     ok('fun: a new model in the viewer clears the marks with everything else',
-       /Viewer\.prototype\.clear=function\(\)\{this\.dropTargets\(\);this\.clearLiveAim\(\);this\.clearHitMarks\(\);/.test(viewerSrc));
+       /Viewer\.prototype\.clear=function\(\)\{if\(this\.loadedData\)this\.lastView=this\.cameraState\(true\);this\.dropTargets\(\);this\.clearLiveAim\(\);this\.clearHitMarks\(\);/.test(viewerSrc));
 
     const rv2 = Object.create(RealViewer.prototype);
     rv2.scene = new THREE.Scene(); rv2.root = new THREE.Group(); rv2.scene.add(rv2.root);
@@ -4818,7 +4818,7 @@ settle(20).then(function () {
     const SIEGE = {aim: {shotOffsets: [[0, 0, 0.3]]}, vehicleMode: 0, modeAim: {shotOffsets: [[0, 0, 0.9]]}, modeAimMode: 1};
     ok('record view: a shot fired in the other mode (siege state 2) takes that mode\'s block', RO({attacker: SIEGE}, {tracer: {siegeState: 2}})[2] === 0.9 && RO({attacker: SIEGE}, {tracer: {siegeState: 0}})[2] === 0.3);
     ok('record view: no tracer, no offsets or no shooter - nothing to take off', RO({attacker: ST2}, {tracer: null}) === null && RO({attacker: {aim: {}}}, {tracer: {}}) === null && RO({}, {tracer: {}}) === null);
-    ok('record view: the scene finisher hands it to the viewer right after load', /viewer\.load\(data,shotContext\);funLaid=false;\s*if\(drawn&&viewer\.setRecordedOffset\)viewer\.setRecordedOffset\(recordedOffset\(hit\)\)/.test(appSrc));
+    ok('record view: the scene finisher hands it to the viewer right after load', /viewer\.load\(data,shotContext,camera\);funLaid=false;\s*if\(drawn&&viewer\.setRecordedOffset\)viewer\.setRecordedOffset\(recordedOffset\(hit\)\)/.test(appSrc));
   }
   // Ten rounds 0.3 s apart from cold: no cooling between them (the rest is longer than the gap).
   hNow = 10; const t0 = hNow; let lockedAt = -1;
