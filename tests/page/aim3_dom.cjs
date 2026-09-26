@@ -391,7 +391,9 @@ const SHELLS = [
 const REAL_SHOT_CONTEXT = new Function('window', fs.readFileSync(path + 'shot-context.js', 'utf8') + ';return window.ArmorShotContext;')({});
 global.ArmorShotContext = {resolve: function () { return {choices: SHELLS, index: -1, kind: 'ARMOR_PIERCING', source: 'stub', aimReason: 'no-snapshot'}; },
   // resolve() is stubbed, but which shell the page assumes when nothing is determined is the real rule (pick, 25.09).
-  assume: REAL_SHOT_CONTEXT.assume, pick: REAL_SHOT_CONTEXT.pick};
+  assume: REAL_SHOT_CONTEXT.assume, pick: REAL_SHOT_CONTEXT.pick,
+  // The swapped view's start from the record (26.09) is the real rule too.
+  swapStart: REAL_SHOT_CONTEXT.swapStart};
 global.ArmorShotTelemetry = {load: function () {}, shots: function () { return []; }};
 
 require(path + 'ballistics.js');

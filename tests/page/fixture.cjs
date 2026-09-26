@@ -112,6 +112,13 @@ function write(folder) {
       recorderVersion: 'synthetic', playerVehicleId: 30, playerTeam: 2, roster: ROSTER, shotEvents: [], critEvents: [], warnings: [], hits: hits};
   };
   const pm3hit = HIT('pm3-1', 30, 34, 'outgoing', T0 + 7250);
+  // The shooter's motion at the shot (26.09, the swapped view's start): pm-1's enemy stands 120 m out on +z facing the
+  // player (hull yaw pi), his turret 0.2 rad right on the hull, his gun 0.02 rad up - two samples round the shot (100 - 120/900 s).
+  const withMotion = function (hit) {
+    hit.attacker.motion = {fields: ['gameTime', 'x', 'y', 'z', 'speed', 'hullYawRate', 'hullYaw', 'turretYaw', 'gunPitch'],
+      samples: [[99.8, 0, 0, 120, 0, 0, Math.PI, 0.2, -0.02], [100.0, 0, 0, 120, 0, 0, Math.PI, 0.2, -0.02]]};
+    return hit;
+  };
   // The own shot of pm3: muzzle 117 m out, the shell straight at the contact point; the server's aim 0.2 m right and
   // 0.1 m up of it at the target, its origin a tick behind the shell's.
   const I = [0, 1.1, 3.0], O = [0.3, 2.1, 120], len = Math.hypot(I[0] - O[0], I[1] - O[1], I[2] - O[2]);
@@ -137,7 +144,7 @@ function write(folder) {
        31: {local: [-1.3, 2.0, 0.4], aim: [0, 0], approach: 5}}}},
     {id: 'fire:c5', kind: 'fire', reason: 'fire', attackerId: 32, targetId: 30, damage: 240, ticks: 6, start: 105, end: 108, gameTime: 108,
      receivedAt: T0 + 7278, out: 'extinguished', cause: {hitId: 'pm-2', from: 'crit'}}];
-  const battles = [Object.assign(BATTLE('pm', 'Synthetic field', T0 + 7200, [HIT('pm-1', 31, 30, 'incoming', T0 + 7260), HIT('pm-2', 32, 30, 'incoming', T0 + 7270)]),
+  const battles = [Object.assign(BATTLE('pm', 'Synthetic field', T0 + 7200, [withMotion(HIT('pm-1', 31, 30, 'incoming', T0 + 7260)), HIT('pm-2', 32, 30, 'incoming', T0 + 7270)]),
                                  {damageEvents: pmEvents, damageCheck: {schema: 1, rows: []}}),
                    BATTLE('pm2', 'Synthetic hills', T0 + 3600, [HIT('pm2-1', 32, 30, 'incoming', T0 + 3660)]),
                    Object.assign(BATTLE('pm3', 'Synthetic coast', T0, [pm3hit]), {shotEvents: pm3shots})];

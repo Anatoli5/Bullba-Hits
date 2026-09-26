@@ -428,5 +428,43 @@
     return {index:index,reason:reason,fallback:fallback,shotKind:ctx.kind||null,shotCaliber:Number(ctx.caliber)>0?Number(ctx.caliber):null,
       special:special,event:Array.isArray(attacker.tags)&&attacker.tags.indexOf('event_battles')>=0};
   }
-  root.ArmorShotContext={resolve:resolve,serverShot:serverShot,assume:assume,pick:pick,modeLabel:modeLabel,identical:identical,gunNotes:gunNotes,markOf:markOf};
+  /* --- THE SWAPPED VIEW STARTS FROM THE SHOT (⇅ of a recorded hit, user 26.09) ------------------------------------
+     The shooter's vehicle on screen stands where the shot has it: the eye at the hit point, looking back along the line
+     to him at the recorded range, and his turret and gun as they were. What the record holds for it: the shooter's world
+     position and hull heading at the shot, and his turret yaw and gun pitch on the hull (radians, the client's own
+     angles) - in `motion` (fields gameTime, x, y, z, speed, hullYawRate, hullYaw, turretYaw, gunPitch; 0.2 s apart):
+     the linked own tracer's for an own shot, `attacker.motion` for an incoming one. His hull's pitch and roll are in no
+     record, so the hull is taken level. Other hits carry none of it (no world transform of the shooter, his parts in the
+     rest pose): null, and the page keeps the camera on screen instead. 124 battles, 10460 hits (read 26.09): 456 of 1128
+     incoming and 988 of 1545 outgoing have it; none of the 7781 others.
+     The client's yaw turns +z (forward) towards +x: forward = (sin yaw, 0, cos yaw). The eye is in the shooter's own
+     frame (the record's, not the viewer's mirrored one). */
+  function motionAt(m,t){
+    if(!m||!Array.isArray(m.fields)||!Array.isArray(m.samples)||!m.samples.length||!Number.isFinite(t))return null;
+    var f={};m.fields.forEach(function(k,i){f[k]=i;});
+    if(!(f.gameTime>=0&&f.x>=0&&f.hullYaw>=0&&f.turretYaw>=0&&f.gunPitch>=0))return null;
+    var s=m.samples.filter(function(r){return Array.isArray(r)&&Number.isFinite(r[f.gameTime]);}).sort(function(a,b){return a[f.gameTime]-b[f.gameTime];});
+    var i,lo=null,hi=null;for(i=0;i<s.length;i++){if(s[i][f.gameTime]<=t)lo=s[i];if(s[i][f.gameTime]>=t){hi=s[i];break;}}
+    lo=lo||hi;hi=hi||lo;
+    if(!lo||Math.min(Math.abs(lo[f.gameTime]-t),Math.abs(hi[f.gameTime]-t))>.5)return null;
+    var span=hi[f.gameTime]-lo[f.gameTime],k=span>1e-9?(t-lo[f.gameTime])/span:0;
+    function lin(key){return lo[f[key]]+(hi[f[key]]-lo[f[key]])*k;}
+    function ang(key){var a=lo[f[key]],d=hi[f[key]]-a;return a+Math.atan2(Math.sin(d),Math.cos(d))*k;}
+    var out={position:[lin('x'),lin('y'),lin('z')],hullYaw:ang('hullYaw'),turretYaw:ang('turretYaw'),gunPitch:lin('gunPitch')};
+    return [out.position[0],out.position[1],out.position[2],out.hullYaw,out.turretYaw,out.gunPitch].every(Number.isFinite)?out:null;
+  }
+  function swapStart(hit,ctx){
+    var target=(hit&&hit.target)||{},W=target.worldTransform,parts=target.parts||[];
+    var p=((hit&&hit.points)||[]).find(function(q){return q.status==='resolved'&&Array.isArray(q.position);});
+    var part=p&&parts.find(function(v){return v.id===p.part;});
+    if(!Array.isArray(W)||!part||!Array.isArray(part.transform))return null;
+    var own=hit.direction==='outgoing',tracer=ctx&&ctx.tracer,at=null,from='';
+    if(own&&tracer&&tracer.motion){at=motionAt(tracer.motion,Number(tracer.gameTime));from='own tracer';}
+    else if(hit.attacker&&hit.attacker.motion){var fly=Number(hit.rangeAtImpact)>0&&Number(hit.shellVelocity)>0?hit.rangeAtImpact/hit.shellVelocity:0;
+      at=motionAt(hit.attacker.motion,Number(hit.gameTime)-fly);from='shooter motion';}
+    if(!at)return null;
+    var w=point(W,point(part.transform,p.position)),dx=w[0]-at.position[0],dz=w[2]-at.position[2],c=Math.cos(at.hullYaw),s=Math.sin(at.hullYaw);
+    return {eye:[c*dx-s*dz,w[1]-at.position[1],s*dx+c*dz],pose:{yaw:at.turretYaw,pitch:at.gunPitch},from:from};
+  }
+  root.ArmorShotContext={resolve:resolve,serverShot:serverShot,assume:assume,pick:pick,modeLabel:modeLabel,identical:identical,gunNotes:gunNotes,markOf:markOf,swapStart:swapStart};
 }(typeof window==='undefined'?globalThis:window));

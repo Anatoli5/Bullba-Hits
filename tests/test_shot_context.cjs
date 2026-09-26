@@ -105,4 +105,22 @@ const heShot={...hit,effectsIndex:48,damage:0,shellCandidates:[],availableShells
 c=R(heShot,[]);g=P(c,heShot);
 if(c.index<0){assert.equal(g.index,1);assert.equal(g.fallback,'');}
 assert.equal(g.special,false);
-console.log(JSON.stringify({passed:true,cases:37}));
+// The swapped view's start (26.09): the hit point in the shooter's hull frame at the shot, his turret and gun from motion.
+{
+  const S=ArmorShotContext.swapStart,F=['gameTime','x','y','z','speed','hullYawRate','hullYaw','turretYaw','gunPitch'];
+  const at=(yaw,t)=>({fields:F,samples:[[t-.1,100,0,0,0,0,yaw,.1,-.03],[t+.1,100,0,0,0,0,yaw,.3,-.01]]});
+  const near=(a,b)=>a.every((x,i)=>Math.abs(x-b[i])<1e-9);
+  // The target at the origin, the point 1 m up; the shooter 100 m out on +x facing it (forward -x: hull yaw -pi/2).
+  const base={direction:'incoming',gameTime:10,rangeAtImpact:100,shellVelocity:1000,target:{worldTransform:target.worldTransform,parts:[{id:1,transform:target.parts[0].transform}]},
+    points:[{part:1,status:'resolved',position:[0,1,0]}]};
+  let st=S({...base,attacker:{motion:at(-Math.PI/2,9.9)}},null);
+  assert.ok(st&&near(st.eye,[0,1,100])&&Math.abs(st.pose.yaw-.2)<1e-9&&Math.abs(st.pose.pitch+.02)<1e-9&&st.from==='shooter motion',JSON.stringify(st));
+  // An own shot: the linked tracer's motion at the tracer's time (the attacker block's is not read).
+  st=S({...base,direction:'outgoing',attacker:{motion:at(0,9.9)}},{tracer:{gameTime:5,motion:at(-Math.PI/2,5)}});
+  assert.ok(st&&near(st.eye,[0,1,100])&&st.from==='own tracer',JSON.stringify(st));
+  // Nothing of the shooter at the shot: no motion, samples too far in time, no world transform of the target.
+  assert.equal(S({...base,attacker:{}},null),null);
+  assert.equal(S({...base,attacker:{motion:at(0,20)}},null),null);
+  assert.equal(S({...base,target:{parts:base.target.parts},attacker:{motion:at(0,9.9)}},null),null);
+}
+console.log(JSON.stringify({passed:true,cases:42}));

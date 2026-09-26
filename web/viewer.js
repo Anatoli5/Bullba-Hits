@@ -546,9 +546,37 @@
   // even where B clamped it. A hand on an axis (a drag, setTurret, setGun) makes what is on screen the wish of that axis.
   Viewer.prototype.poseMoved=function(turret,gun){var w=this.poseWish;if(!w)return;if(turret)w.yaw=null;if(gun)w.pitch=null;};
   Viewer.prototype.poseHeld=function(){
-    var aim=(this.loadedData.hit||{}).aim||[],R=Math.PI/180,w=this.poseWish||{};
-    var yaw=(Number.isFinite(aim[0])?aim[0]:0)+this.turretAngle*R,pitch=(Number.isFinite(aim[1])?aim[1]:0)+this.gunAngle*R;
-    return {yaw:w.yaw!==null&&w.yaw!==undefined?w.yaw:yaw,pitch:w.pitch!==null&&w.pitch!==undefined?w.pitch:pitch};
+    var p=this.poseNow(),w=this.poseWish||{};
+    return {yaw:w.yaw!==null&&w.yaw!==undefined?w.yaw:p.yaw,pitch:w.pitch!==null&&w.pitch!==undefined?w.pitch:p.pitch};
+  };
+  // The pose on screen, absolute (the record's aim plus the viewer's delta), without the wish.
+  Viewer.prototype.poseNow=function(){
+    var aim=(this.loadedData.hit||{}).aim||[],R=Math.PI/180;
+    return {yaw:(Number.isFinite(aim[0])?aim[0]:0)+this.turretAngle*R,pitch:(Number.isFinite(aim[1])?aim[1]:0)+this.gunAngle*R};
+  };
+  // The model a scene draws, as one string: the same vehicle under another shooter gives the same key (keepSame).
+  Viewer.targetKey=function(data){var t=(data&&data.hit&&data.hit.target)||{};return String(t.type||'')+'|'+(t.parts||[]).map(function(p){return p.id+':'+(p.modelKey||'');}).join(',');};
+  // WHAT THE SAME MODEL KEEPS (inherit sweep, 26.09): a load of the model already on screen - only the shooter changed
+  // (keep.same, cameraState('same')) - takes over what belongs to the model and to the shooter's aim on it: the pinned line
+  // (a point the user chose on THIS model), the emulated shot's ring and its pin (unless the page reset the run for
+  // another gun before - then there is none), and the gun's aim point with its yaw on the hull. Taken before clear() -
+  // the ring out of its reach - and put back by keptSame() once the new model stands, only if the pose is the same;
+  // another model or another pose drops them as any load does.
+  Viewer.prototype.keepSame=function(data,keep){
+    if(!keep||!keep.same||!this.loadedData||data.geometryIncomplete||Viewer.targetKey(this.loadedData)!==Viewer.targetKey(data))return null;
+    var held={pose:this.poseNow(),pinned:this.pinned,aimPinned:this.aimPinned,ring:this.aimShotCircle,fired:aimFired,
+      live:this.liveAimPoint,cursor:this.aimCursorPoint,yaw:this.aimYaw};
+    this.aimShotCircle=null;this.aimPinned=false;this.pinned=null;   // clear() neither drops the ring nor releases the pin
+    return held;
+  };
+  Viewer.prototype.keptSame=function(held){
+    var now=this.poseNow(),same=Math.abs(now.yaw-held.pose.yaw)<1e-9&&Math.abs(now.pitch-held.pose.pitch)<1e-9;
+    if(!same){if(held.ring)dropLine(this.scene,held.ring);return false;}
+    this.liveAimPoint=held.live;this.aimCursorPoint=held.cursor;this.aimYaw=held.yaw;
+    if(held.ring){this.aimShotCircle=held.ring;aimFired=held.fired;}
+    if(held.pinned&&(!held.aimPinned||held.ring)){this.pinned=held.pinned;this.aimPinned=held.aimPinned;this.refreshPin();}
+    this.syncRecorded();
+    return true;
   };
   // The carried pose put on the vehicle just loaded (loadScene; the angles only - the caller builds the posed model).
   Viewer.prototype.poseCarry=function(pose){
@@ -632,7 +660,7 @@
   // on the new vehicle here, its camera by restoreCamera; a load without it starts from the record's pose.
   Viewer.prototype.load=function(data,context,keep){this.hold++;try{return this.loadScene(data,context,keep);}finally{this.release();}};
   Viewer.prototype.loadScene=function(data,context,keep){
-    this.clear();var carry=keep&&keep.pose?keep.pose:null;this.poseWish=carry?{yaw:carry.yaw,pitch:carry.pitch}:null;if(data.geometryIncomplete){this.bounds=null;this.render();return false;}var T=THREE,self=this;var hit=data.hit, parts=(hit.target||{}).parts||[], transforms={};
+    var held=this.keepSame(data,keep);this.clear();var carry=keep&&keep.pose?keep.pose:null;this.poseWish=carry?{yaw:carry.yaw,pitch:carry.pitch}:null;if(data.geometryIncomplete){this.bounds=null;this.render();return false;}var T=THREE,self=this;var hit=data.hit, parts=(hit.target||{}).parts||[], transforms={};
     parts.forEach(function(part){if(part.transform)transforms[part.id]=new T.Matrix4().fromArray(part.transform);});
     var range=context&&context.range;this.recordedDistance=Number.isFinite(range)&&range>0?range:Number.isFinite(hit.rangeAtImpact)&&hit.rangeAtImpact>0?hit.rangeAtImpact:null;
     this.loadedData=data;this.posedData=null;this.poseBuilt=null;this.turretAngle=0;this.gunAngle=0;this.rebuild();
@@ -641,6 +669,7 @@
     // The bounds and the centre are the rest pose's, as for any load (a drag never re-measures them), so a carried pose
     // goes on after them: one more build of the posed model, exactly the one a drag ends with (applyTurret).
     var posed=carry?this.poseCarry(carry):null;if(posed&&(this.turretAngle||this.gunAngle))this.applyTurret();
+    if(held)this.keptSame(held);   // the same model under another shooter: its pin, the shot's ring, the gun's aim point
     var pts=Viewer.points(hit,context);pts.forEach(function(p){self.addReticle(p.pos);});
     // shotPath: the shell's flight carried onto the first point (Viewer.shellPath), null without a tracer; focus()
     // stands the camera at its origin, the horizon and the page's marks read it.
@@ -798,16 +827,25 @@
   // the pan and the lens shift go as they are; the orbit centre is the new vehicle's own (its size differs), with the
   // Height slider's lift over it (`lift`); and the pose (poseHeld). Nothing on screen: the view of the last scene
   // (lastView, kept by clear()), or null - the new vehicle starts from the default view.
+  // carry 'same' (inherit sweep, 26.09): the SAME model comes back under another shooter - the camera as it stands, the
+  // pose as it stands (with its wish), and `same`, which lets loadScene keep what belongs to this model and this shooter's
+  // aim on it (keepSame): the pinned line, the emulated shot's ring, the gun's aim point.
   Viewer.prototype.cameraState=function(carry){
-    if(carry&&!this.loadedData)return this.lastView;
+    if(carry===true&&!this.loadedData)return this.lastView;
     var s={yaw:this.yaw,pitch:this.pitch,distance:this.distance,zoom:this.camera.zoom,
     target:this.target.clone(),pan:this.pan.clone(),frameCenter:this.frameCenter.clone(),frameScale:this.frameScale,pivotHeight:this.pivotHeight};
-    if(carry){s.relative=true;s.lift=this.pivotHeight!==null&&this.pivotHeight!==undefined?this.target.y-this.pivotCentre().y:null;s.pose=this.poseHeld();}
+    if(carry===true){s.relative=true;s.lift=this.pivotHeight!==null&&this.pivotHeight!==undefined?this.target.y-this.pivotCentre().y:null;s.pose=this.poseHeld();}
+    else if(carry==='same'&&this.loadedData){s.pose=this.poseHeld();s.same=true;}
     return s;};
   // A carried view (relative) stands round the new vehicle's centre; under Auto frame the zoom is then that vehicle's
   // framing x the carried frame scale (autoFit, on the render below) - the same relative size, the distance kept.
+  // state.eye (the swapped view of a recorded hit, ArmorShotContext.swapStart): a point in the model's own record frame the
+  // camera stands at, looking at the model's centre - the record view's focus() from the other end of the shot line.
   Viewer.prototype.restoreCamera=function(state){
-    if(!state)return;this.setOrbit(state.yaw,state.pitch);this.distance=state.distance;
+    if(!state)return;
+    if(state.eye){this.dropTargets();this.pan.set(0,0);this.frameCenter.set(0,0);this.pivotHeight=null;this.target.copy(this.pivotCentre());
+      this.lookFrom(new THREE.Vector3(state.eye[0],state.eye[1],-state.eye[2]));this.distanceSet=true;this.fitPending=true;this.render();return;}
+    this.setOrbit(state.yaw,state.pitch);this.distance=state.distance;
     if(state.relative){this.target.copy(this.pivotCentre());this.pivotHeight=null;if(state.lift!==null){var r=this.heightRange();this.target.y=this.pivotHeight=Math.max(r[0],Math.min(r[1],this.target.y+state.lift));}this.distanceSet=true;}
     else{this.target.copy(state.target);this.pivotHeight=state.pivotHeight;}
     this.dropTargets();this.pan.copy(state.pan);this.frameCenter.copy(state.frameCenter);this.frameScale=state.frameScale;

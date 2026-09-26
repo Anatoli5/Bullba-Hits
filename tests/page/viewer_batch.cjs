@@ -837,6 +837,48 @@ function checks(ok, web) {
     ok('viewer-batch: nothing on screen - the view carried is the last scene\'s', !!last && near(last.yaw, .7) && !!last.pose, JSON.stringify(last && {yaw: last.yaw}));
   });
 
+  // ---- the same model under another shooter keeps what is its own (inherit sweep, 26.09) ----------------------------------
+  // cameraState('same'): the camera and the pose as they stand; the load keeps the pinned point, the ⌖ shot's ring with its
+  // pin and the gun's aim point - only for the same model in the same pose. Another model drops them as any load does.
+  section(function () {
+    const browsed = function (type) { const d = vehicle(); d.hit.points = []; d.hit.aim = [0, 0]; d.hit.target.type = type || 'A'; return d; };
+    const e = env(web), v = e.viewer, T = e.T, tag = 'viewer-batch: the same model under another shooter: ';
+    v.configure(e.sb.ArmorBallistics.shell('ARMOR_PIERCING', 250, 105), true, 'classic', 'chance');
+    v.load(browsed(), {}); e.settle();
+    v.setTurret(30); v.setGun(3); v.setOrbit(.9, .3); v.setDistance(14); v.render(); e.settle();
+    const aimAt = new T.Vector3(0, 1.4, 1.2), eye = v.camera.position.clone();
+    v.pinned = {origin: eye.clone(), direction: aimAt.clone().sub(eye).normalize(), point: aimAt.clone(), normal: null}; v.refreshPin();
+    const pin = v.pinned;
+    const shooterChange = function (data) { const keep = v.cameraState('same'); v.load(data, {}, keep); v.restoreCamera(keep); e.settle(); return keep; };
+    const keep = shooterChange(browsed());
+    ok(tag + 'cameraState(\'same\') carries the pose and says so', keep.same === true && !keep.relative && !!keep.pose);
+    ok(tag + 'the camera, the turret 30 deg and the gun 3 deg stay', near(v.yaw, .9) && near(v.pitch, .3) && near(v.distance, 14) && near(v.turretAngle, 30, 1e-9) && near(v.gunAngle, 3, 1e-9),
+       '(' + v.turretAngle + ', ' + v.gunAngle + ')');
+    ok(tag + 'the pinned point stays, cast again on the new engine', v.pinned === pin && !!v.pinGroup && v.pinResult !== null);
+    // A shot of the emulation: its ring, its pin, the gun's aim point and yaw on the hull.
+    v.unpin(); v.setAimEmulation(true); v.setLiveAim(.4); v.liveAimPoint = aimAt.clone(); v.aimCursorPoint = aimAt.clone(); v.aimYaw = .05; v.drawLiveAim();
+    v.pinAtPoint(aimAt); v.setAimShot();
+    const ring = v.aimShotCircle, shotPin = v.pinned;
+    shooterChange(browsed());
+    ok(tag + 'the ⌖ shot keeps its ring and its pin, the gun its aim point and its yaw on the hull',
+       !!ring && v.aimShotCircle === ring && ring.parent === v.scene && v.pinned === shotPin && v.aimPinned === true
+       && !!v.liveAimPoint && v.liveAimPoint.distanceTo(aimAt) < 1e-9 && v.aimYaw === .05 && !v.savedAimShown());
+    // The page reset the run for another gun first (resetAimRun -> clearAimShot): nothing of the shot is left to keep.
+    v.clearAimShot(); shooterChange(browsed());
+    ok(tag + 'a shot the page dropped before (another gun) is not brought back', !v.aimShotCircle && !v.pinned && !v.aimPinned);
+    // Another model: the pin and the shot go, as for any load.
+    v.pinned = {origin: eye.clone(), direction: aimAt.clone().sub(eye).normalize(), point: aimAt.clone(), normal: null}; v.refreshPin();
+    v.setLiveAim(.4); v.liveAimPoint = aimAt.clone(); v.drawLiveAim(); v.pinAtPoint(aimAt); v.setAimShot();
+    const ring2 = v.aimShotCircle;
+    shooterChange(browsed('B'));
+    ok(tag + 'another model drops the pin, the shot\'s ring (freed from the scene) and the aim point', !v.pinned && !v.aimShotCircle && !!ring2 && ring2.parent !== v.scene && !v.liveAimPoint);
+    // The same model in another pose (the record's aim moved): the pin goes.
+    v.pinned = {origin: eye.clone(), direction: aimAt.clone().sub(eye).normalize(), point: aimAt.clone(), normal: null}; v.refreshPin();
+    const keep2 = v.cameraState('same'); keep2.pose = {yaw: keep2.pose.yaw + .2, pitch: keep2.pose.pitch};
+    const moved = browsed('B'); v.load(moved, {}, keep2); e.settle();
+    ok(tag + 'the same model in another pose drops the pin', !v.pinned);
+  });
+
   // ---- the Statistics log's point after a recorded ricochet (review 26.09): Viewer.verdicts walks it as the bounced leg ----
   // of the one law (engine.bounced), from what OUR ray to the ricochet point had left there - no second copy of the rule.
   section(function () {

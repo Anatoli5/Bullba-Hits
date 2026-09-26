@@ -355,6 +355,96 @@ async function main() {
     await roll('#camera-distance-field', 3, -100);
     const W3 = await ev(`(() => { const v = window.__bullbaViewers[window.__bullbaViewers.length - 1]; return {range: v.shotRange(), field: document.getElementById('camera-distance-field').value}; })()`);
     ok('box wheel: three notches over the Distance box - three whole metres, on the metre grid', W3.range === Math.floor(W1.d + 1e-6) + 3 && W3.field === String(W3.range), JSON.stringify([W1, W3]));
+
+    // ---- the inherit sweep (26.09): what the user did not change is not reset ------------------------------------------
+    // State now: the Vehicles panel, Papa shoots Papa, ⌖ off.
+    const LV = 'window.__bullbaViewers[window.__bullbaViewers.length - 1]';
+    const STATE = `(() => { const v = ${LV}, c = document.getElementById('shell-choice'); return {yaw: v.yaw, pitch: v.pitch, distance: v.distance,
+      turret: v.turretAngle, gun: v.gunAngle, pinned: !!v.pinned, ring: !!v.aimShotCircle, source: document.getElementById('shot-source').textContent,
+      shell: c.value, shells: [].filter.call(c.options, (o) => o.value.indexOf('saved:') === 0).length, figure: document.getElementById('shot-circle').textContent,
+      model: document.getElementById('model-tile').title, shooter: document.getElementById('shooter-tile').title}; })()`;
+    // A point pinned by a click in the middle of the scene (the viewer's own pinAt, the ray through the screen centre).
+    const PIN = `(() => { const v = ${LV}, r = v.container.getBoundingClientRect(); v.pinAt({clientX: r.left + r.width / 2, clientY: r.top + r.height / 2}); return !!v.pinned; })()`;
+    const ORBIT = (yaw, pitch, dist) => ev(`(() => { const v = ${LV}; v.setOrbit(${yaw}, ${pitch}); v.setDistance(${dist}); v.render(); })()`);
+    const who = (title, name) => title.indexOf('Vehicle: ' + name) >= 0;
+    // 2, 3, 7: another shooter from the Vehicles list - the camera, the pose, the pinned point and the shell's type stay.
+    await ev(`(() => { const v = ${LV}; v.setTurret(35); v.setGun(2); const c = document.getElementById('shell-choice'); c.value = 'saved:1'; c.dispatchEvent(new Event('change')); })()`);
+    await ORBIT(.9, .3, 18); await ev('__bt.settle()');
+    const pinned0 = await ev(PIN); await ev('__bt.settle()');
+    await step('shooterTile()'); await step("list('pm_quebec')");
+    const I1 = await ev(STATE);
+    ok('inherit: another shooter from the Vehicles list keeps the camera, the turret 35° and the gun 2°', close(I1.yaw, .9) && close(I1.pitch, .3) && close(I1.distance, 18)
+       && close(I1.turret, 35) && close(I1.gun, 2) && who(I1.shooter, 'Quebec'), JSON.stringify(I1));
+    ok('inherit: ... the pinned point stays (the model did not change), and the shell is his of the same type (APCR, not his first AP)',
+       pinned0 && I1.pinned && I1.source === 'Pinned point' && I1.shell === 'saved:1', JSON.stringify(I1));
+    // 5: the fragment from the game names the model; the shooter picked stays.
+    await ev("location.hash = '#vehicle=test_vehicle'"); await ev('__bt.settle()');
+    const I2 = await ev(STATE);
+    ok('inherit: #vehicle= from the game puts its vehicle on screen and keeps the shooter picked (Quebec), with the camera', who(I2.model, 'Test vehicle') && who(I2.shooter, 'Quebec')
+       && close(I2.yaw, .9) && close(I2.distance, 18) && I2.shells === 2, JSON.stringify(I2));
+    await ev("history.replaceState(null, '', location.pathname + location.search)");
+    // 1: a model picked in the list after a hit: the hit's shooter (Papa, pm3) goes on shooting, read from his own export.
+    await step("side('battles')"); await step("battle('pm3')"); await step('hit(0)');
+    await step('modelTile()'); await step("list('pm_quebec')");
+    const I3 = await ev(STATE);
+    ok('inherit: a model picked after a hit keeps the hit\'s shooter (Papa) with his shells - not the model as its own shooter', who(I3.model, 'Quebec') && who(I3.shooter, 'Papa') && I3.shells === 2, JSON.stringify(I3));
+    // 6: ⇅ of a recorded hit - the shooter's vehicle in the camera on screen, round its own centre.
+    await step("side('battles')"); await step("battle('pm')"); await step('hit(1)');
+    await ORBIT(.8, .25, 25); await ev('__bt.settle()');
+    await step('swap()');
+    const I4 = await ev(STATE);
+    ok('inherit: ⇅ of a recorded hit opens the shooter\'s vehicle in the camera on screen', close(I4.yaw, .8) && close(I4.pitch, .25) && close(I4.distance, 25) && who(I4.model, 'Quebec'), JSON.stringify(I4));
+    await step('swap()');
+    // ... and where the record has the shooter at the shot (pm-1: his motion - 120 m out facing the player, turret 0.2 rad
+    // right, gun 0.02 rad up), the view starts from the shot: the eye at the hit point looking back at him, his pose.
+    await step('hit(0)'); await step('swap()');
+    const I4b = await ev(STATE);
+    ok('inherit: ⇅ of a recorded hit with the shooter\'s motion - the camera from the hit point back at him (117 m), his turret 11.5° and gun 1.1° up',
+       Math.abs(Math.cos(I4b.yaw) + 1) < 1e-3 && Math.abs(I4b.distance - 117) < 1.5 && close(I4b.turret, .2 * 180 / Math.PI) && close(I4b.gun, -.02 * 180 / Math.PI) && who(I4b.model, 'Romeo'),
+       JSON.stringify(I4b));
+    await step('swap()');
+    // 2 in Hits: another shooter from the roster over a recorded hit - the record's pose with the user's turn on it, the pin.
+    await step('hit(0)'); await step('shooterTile()'); await step("side('battles')");
+    await ev(`(() => { const v = ${LV}; v.setTurret(20); v.setGun(1); })()`); await ORBIT(1.1, .2, 16); await ev('__bt.settle()');
+    const pinned1 = await ev(PIN); await ev('__bt.settle()');
+    await step('roster(32)');
+    const I5 = await ev(STATE);
+    ok('inherit: another shooter from the roster keeps the camera, the turret 20° and the gun 1° on the record\'s pose, and the pinned point',
+       pinned1 && close(I5.yaw, 1.1) && close(I5.distance, 16) && close(I5.turret, 20) && close(I5.gun, 1) && I5.pinned && I5.source === 'Pinned point' && who(I5.shooter, 'Quebec'), JSON.stringify(I5));
+    // 4: the Vehicles panel over an empty scene brings its vehicle back in the view of the last scene, not the default one.
+    await step('modelTile()'); await step("side('battles')"); await ORBIT(.6, .15, 22); await ev('__bt.settle()');
+    await step('roster(33)');   // Sierra: no hits, no model - the scene emptied
+    await step("side('vehicles')");
+    const I6 = await ev(STATE);
+    ok('inherit: the Vehicles panel over an empty scene - its vehicle in the last scene\'s view', close(I6.yaw, .6) && close(I6.pitch, .15) && close(I6.distance, 22), JSON.stringify(I6));
+    // 8: an emulated shot, then the same model under the same gun again - its ring, its pin and its figure stay; another model
+    // takes the shot away, while the run (the reload of that shot) goes on for the shooter.
+    const FIRE = `(() => { const v = ${LV}, r = v.container.getBoundingClientRect(), caster = v.pointerRay({clientX: r.left + r.width / 2, clientY: r.top + r.height / 2}),
+      hit = v.pick(caster.ray.origin, caster.ray.direction); if (!hit) return 'no model under the centre';
+      v.liveAimPoint = hit.point.clone(); v.aimCursorPoint = hit.point.clone(); v.drawLiveAim();
+      const down = v.onShotDown({}); v.onShotUp({}); return down && !!v.aimShotCircle; })()`;
+    const shooterNow = I6.shooter.indexOf('Vehicle: Papa') >= 0 ? 'pm_papa' : 'pm_quebec';
+    const fired = await ev(FIRE); await ev('__bt.settle(1500)');
+    const I7a = await ev(STATE);
+    await step('shooterTile()', 1500); await step("list('" + shooterNow + "')", 1500);
+    const I7 = await ev(STATE);
+    ok('inherit: the same model under the same gun again keeps the ⌖ shot - its ring, its pin and its figure', fired === true && I7a.ring && I7.ring && I7.pinned && I7.figure !== '' && I7.figure === I7a.figure,
+       JSON.stringify([fired, I7a, I7]));
+    await step('modelTile()', 1500); await step("list('pm_papa')", 1500);
+    const I8 = await ev(`(() => { const v = ${LV}; return {ring: !!v.aimShotCircle, pinned: !!v.pinned, live: v.liveRadius100 > 0, reload: v.aimReloadPart}; })()`);
+    ok('inherit: another model takes the shot away (its ring and pin), the shooter\'s ⌖ ring stands on', !I8.ring && !I8.pinned && I8.live, JSON.stringify(I8));
+    // 1: the last shooter used is kept with the side panel's state; a page opened on a vehicle from the game (nothing on
+    // screen) gives it to him - not the model as its own shooter.
+    const kept = await ev("(() => { try { return JSON.parse(localStorage.getItem('bullba-sidebar')).shooter; } catch (e) { return null; } })()");
+    const page2 = await browser.open(url.pathToFileURL(path.join(folder, 'Viewer.html')).href + '#vehicle=pm_quebec', INIT);
+    const fresh = await page2.evaluate(`(async () => { const t = (id) => document.getElementById(id).title;
+      for (let i = 0; i < 100 && t('model-tile').indexOf('Vehicle: Quebec') < 0; i++) await new Promise((r) => setTimeout(r, 100));
+      await new Promise((r) => setTimeout(r, 500)); return {model: t('model-tile'), shooter: t('shooter-tile')}; })()`);
+    ok('inherit: the last shooter used is stored (' + kept + ') and a page opened on a vehicle from the game shoots with him',
+       kept === 'germany:Papa' && who(fresh.model, 'Quebec') && who(fresh.shooter, 'Papa') && page2.errors.length === 0, JSON.stringify([kept, fresh, page2.errors.slice(0, 2)]));
+    await browser.send('Target.closeTarget', {targetId: page2.targetId});
+    ok('inherit: no uncaught exception in the page', page.errors.length === 0, page.errors.slice(0, 3).join(' | '));
+    page.errors.length = 0;
     await step("side('battles')"); await ev('__bt.act.fun(true)'); await ev('__bt.settle()');
     // A target whose only figure is in his own characteristics file: that file is read for him and the bar comes with it.
     const pm3 = await step("battle('pm3')");

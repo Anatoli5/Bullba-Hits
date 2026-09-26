@@ -5,6 +5,10 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 ## Unreleased
 
 - **Vehicles:** picking another collision model keeps the view - camera angle, distance, zoom, turret and gun (clamped to the new vehicle's limits) - and the shooter's shell; going back gives the same picture.
+- **Shooter:** a model picked without choosing a shooter is shot by the shooter on screen, else by the last shooter used (remembered across restarts) - no longer by itself; opening a vehicle from the game keeps the shooter too.
+- **Shooter:** another shooter (Vehicles list or the battle's roster) keeps the camera, the turret and gun pose, a pinned point and the ⌖ shot on the model, and takes his shell of the same type (AP ↔ APCR nearest) instead of his first AP.
+- **⇅ of a recorded hit:** the shooter's vehicle opens from the shot itself - looking back from the hit point at the recorded range, his turret and gun as recorded (own shots and incoming hits with the shooter's movement); other hits keep the camera on screen.
+- **Vehicles:** switching to the Vehicles panel over an empty scene, or a roster seat's model, keeps the last view instead of the default one.
 - **Camera:** the wheel over the Distance and Zoom sliders now glides the camera smoothly like the scene wheel (Distance at half its step, Zoom at the Ctrl + wheel step, no modifier needed); over their boxes one notch is 1 m / 0.1. The Height slider moves 5 cm a notch.
 
 ## 0.8.4 (2026-09-26)
