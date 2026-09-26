@@ -1189,6 +1189,13 @@ settle(20).then(function () {
     view.gapLimits = 'unset'; view.chaseLimits = 'unset'; view.gap = 5 * Math.PI / 180; view.onAimMove(); run(0.1);
     return {gap: view.gapLimits, chase: view.chaseLimits, want: c[1] === 'pair' ? c[0] : null};
   });
+  // 25.09 (user): the hull turns itself towards a cursor past the sector with the ⌖ mode off too - the game's own
+  // autorotation; before, off ⌖ the gun stood at its limit and the ring stopped short of the cursor.
+  AIM_BLOCK.turretYawLimits = [-0.0524, 0.0524]; view.aimBeyond = function () { return 0.2; };
+  const turnedBefore = view.turned.length; run(0.5);
+  ok('sector: off the ⌖ mode the hull turns itself towards a cursor past the sector (autorotation)', view.turned.length > turnedBefore,
+     '(' + (view.turned.length - turnedBefore) + ' turns)');
+  view.aimBeyond = function () { return 0; }; run(2);
   delete AIM_BLOCK.turretYawLimits;
   run(25); view.gap = 0;
   ok('sector: a limited gun hands its turretYawLimits to the gap and the chase, a full circle or no pair hands none',

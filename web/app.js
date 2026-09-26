@@ -3249,8 +3249,9 @@
     var lo = Number(l[0]), hi = Number(l[1]);
     return isFinite(lo) && isFinite(hi) && hi > lo && hi - lo < 2 * Math.PI - 1e-6 ? l : null;
   }
-  // THE KEYS THE VEHICLE DRIVES BY, under ✸ (23.09, outputs/second-modes-2026-09-23.md 5.2 p. 4, 6, 10); off ✸ the held
-  // keys themselves, as before.
+  // THE KEYS THE VEHICLE DRIVES BY (23.09, outputs/second-modes-2026-09-23.md 5.2 p. 4, 6, 10). The second modes' rules
+  // are ✸ only; the autorotation is the game's own mechanic and runs with ✸ off too (user, 25.09: off ✸ the gun stopped at
+  // its sector and the ring stood still against an invisible wall while the cursor went on).
   //   - a mode switch with stopEngineOnSwitch stops the vehicle: no key at all (the speed dies by the brake, the turn by
   //     its own ramp) - updateSiegeStateStatus drops the movement keys;
   //   - a French wheeled vehicle that cannot turn on the spot does not turn standing (below 0.1 km/h A and D do nothing,
@@ -3267,11 +3268,10 @@
     return !!(a && a.siegeMode && a.siegeMode.kind === 'wheeled');
   }
   function aimKeysNow(limits) {
-    if (!funOn()) return aimKeys;
-    var m = xiMech ? xiNow() : null;
+    var fun = funOn(), m = fun && xiMech ? xiNow() : null;
     if (m && m.spec.kind === 'siege' && m.to !== null && m.spec.stop) { aimAutoTurn = false; return AIM_NO_KEYS; }
     var turn = !!(aimKeys.left || aimKeys.right), keys = aimKeys;
-    if (turn && !(aimMove && Math.abs(Number(aimMove.speed) || 0) >= 0.1 * KMH_TO_MS) && aimNoSpotTurn()) turn = false;
+    if (fun && turn && !(aimMove && Math.abs(Number(aimMove.speed) || 0) >= 0.1 * KMH_TO_MS) && aimNoSpotTurn()) turn = false;
     if (!turn && limits && viewer && viewer.aimBeyond) {
       var over = Number(viewer.aimBeyond(limits)) || 0;
       if (Math.abs(over) > 1e-4) aimAutoTurn = true;

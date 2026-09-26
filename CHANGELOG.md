@@ -11,6 +11,7 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 - **Scene:** Zoom redraws the map at once, like Distance (no blurred scaled picture while it changes).
 - **Scene:** Fit and the framing of a newly shown hit never zoom out below ×1 (a wider view than any in battle); the Zoom slider and Ctrl + wheel still can.
 - **Scene:** Lock beside Zoom keeps the zoom you set while you switch between hits.
+- **Emulation:** a tank destroyer's hull turns by itself towards a cursor past the gun's sector with the ⌖ mode off too, as in the game; the ring no longer stops at an invisible wall.
 - **Emulation:** without the ⌖ mode a shot whose circle centre is off the vehicle is not fired: no tracer into empty space (in the ⌖ mode shots still miss).
 - **Emulation:** holding the button fires a burst only in the ⌖ mode (target HP); otherwise a held button is a plain click and a hesitant turn of the vehicle no longer fires a shot.
 
