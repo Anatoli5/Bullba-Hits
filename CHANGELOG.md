@@ -2,6 +2,10 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
+## Unreleased
+
+- **Fix:** the armour map no longer paints false "bounced shell penetrates" patches where a track lies flush with a side plate (seen on one side of Obj. 430U).
+
 ## 0.8.3 (2026-09-26)
 
 - **Vehicles:** Export all models in the Vehicles list (in the game) exports the collision model of every regular vehicle - no event or special-mode vehicles - for viewing outside the game too: about 190 MB and 20 min the first time (it asks first, with the estimate). It runs only while the viewer stays open, never in battle, a vehicle you click still goes first; the bar beside the Statistics log shows it and ■ stops it. After a game update only the vehicles whose game files changed are exported again. Your own vehicles keep your configuration.

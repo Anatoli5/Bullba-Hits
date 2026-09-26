@@ -113,22 +113,55 @@ void main(){vUV=position.xy*.5+.5;gl_Position=vec4(position.xy,0.0,1.0);}`;
     var lib=root.MeshBVHLib;
     var traversal=bounce?lib.shaderStructs+lib.shaderIntersectFunction+'\nuniform BVH uBVH; uniform highp sampler2D uFaceMaterial;\n':'';
     var bounceLeg=bounce?`
+// The next contact of the bounced ray in the order (distance, material id): the nearest triangle whose key comes
+// after (lastDist, lastId). Two surfaces within TIE_EPS of each other are one depth and go by material id, the
+// order the peel gives coincident depths (26.09: on Obj. 430U the inner face of the track lies in the plane of the
+// 90 mm lower side; the library's first hit returned one of the pair, which one by the traversal order, and the
+// leg stepped past the other - the side plate dropped out on one side of the hull only). A repeat of the same
+// material at the same depth (a ray through a shared edge) is not after its own key, so it counts once, as on the
+// CPU. The origin stays fixed, so the distances are the leg's own and nothing accumulates. The traversal is the
+// library's _bvhIntersectFirstHit with the key in place of the plain distance; a box that ends before the last
+// contact or begins past the best candidate is not opened.
+#define TIE_EPS 1e-4
+bool nextContact(vec3 origin,vec3 direction,float lastDist,int lastId,out float dist,out int id,out vec3 normal){
+ dist=INFINITY;id=0x7fffffff;normal=vec3(0.0);bool found=false;
+ vec3 invDir=1.0/direction;
+ int ptr=0;uint stack[BVH_STACK_DEPTH];stack[0]=0u;
+ while(ptr>-1&&ptr<BVH_STACK_DEPTH){
+  uint node=stack[ptr];ptr--;
+  vec3 lo=invDir*(texelFetch1D(uBVH.bvhBounds,node*2u).xyz-origin),hi=invDir*(texelFetch1D(uBVH.bvhBounds,node*2u+1u).xyz-origin);
+  vec3 near=min(lo,hi),far=max(lo,hi);
+  float enter=max(max(near.x,near.y),max(near.z,0.0)),leave=min(min(far.x,far.y),far.z);
+  if(leave<enter||leave<lastDist-TIE_EPS||enter>dist+TIE_EPS)continue;
+  uvec2 info=uTexelFetch1D(uBVH.bvhContents,node).xy;
+  if(bool(info.x&0xffff0000u)){
+   for(uint i=info.y,l=info.y+(info.x&0x0000ffffu);i<l;i++){
+    uvec3 v=uTexelFetch1D(uBVH.index,i).xyz;vec3 barycoord,n;float t,side;
+    if(!intersectsTriangle(origin,direction,texelFetch1D(uBVH.position,v.x).rgb,texelFetch1D(uBVH.position,v.y).rgb,texelFetch1D(uBVH.position,v.z).rgb,barycoord,n,t,side))continue;
+    if(t<lastDist-TIE_EPS||t>dist+TIE_EPS)continue;
+    int k=int(texelFetch1D(uFaceMaterial,v.x).r+.5)-1;
+    bool after=t>lastDist+TIE_EPS||k>lastId,before=t<dist-TIE_EPS||k<id;
+    if(after&&before){dist=t;id=k;normal=n;found=true;}
+   }
+  }else{
+   uint left=node+1u,right=info.y;bool leftToRight=direction[info.x&0x0000ffffu]>=0.0;
+   ptr++;stack[ptr]=leftToRight?right:left;ptr++;stack[ptr]=leftToRight?left:right;
+  }
+ }
+ return found;
+}
 // The leg after a ricochet: the same law walked along the mirrored ray with the reduced penetration.
 // -4 = a second ricochet (the shell is lost), -2 = flies past, -1 = unknown, 0..1 = chance on main armour.
 float bounceLeg(vec3 origin,vec3 direction,float nominal){
  Walk w;w.remaining=nominal;w.nominal=nominal;w.jetStart=0.0;w.jetRate=0.0;w.jet=false;w.screens=0;w.gate=1.0;
  int ignored[${COUNT}];int ignoredCount=0;
- vec3 from=origin;float travelled=0.0,seen=-1.0;int last=-1;
+ float at=-1.0;int id=-1; // the key of the last contact; (-1, -1) lets the first one be anything the triangle test accepts
  for(int i=0;i<${COUNT};i++){
-  uvec4 faceIndices=uvec4(0u);vec3 faceNormal=vec3(0.0),barycoord=vec3(0.0);float side=0.0,reach=0.0;
-  if(!bvhIntersectFirstHit(uBVH,from,direction,faceIndices,faceNormal,barycoord,side,reach))return -2.0;
-  float march=max(reach,0.0),at=travelled+march;
-  from+=direction*(march+2e-4);travelled=at+2e-4;
-  int id=int(texelFetch1D(uFaceMaterial,faceIndices.x).r+.5)-1;
-  if(id==last&&at-seen<5e-4)continue; // a coincident repeat of the same surface counts once, as on the CPU
-  last=id;seen=at;
+  vec3 faceNormal;float next;int nextId;
+  if(!nextContact(origin,direction,at,id,next,nextId,faceNormal))return -2.0;
+  at=next;id=nextId;
   bool skip=false;for(int j=0;j<${COUNT};j++){if(j>=ignoredCount)break;if(ignored[j]==id)skip=true;}if(skip)continue;
-  float value=0.0;int status=contact(id,abs(dot(direction,faceNormal)),at,w,value);
+  float value=0.0;int status=contact(id,abs(dot(direction,faceNormal)),max(at,0.0),w,value);
   if(status>=3){if(ignoredCount<${COUNT}){ignored[ignoredCount]=id;ignoredCount++;}continue;}
   if(status==2)return -4.0;
   if(status==1)return value;
