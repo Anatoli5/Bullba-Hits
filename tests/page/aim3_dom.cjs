@@ -275,6 +275,8 @@ StubViewer.prototype.setAimProfile = function (name) { this.profile = name; };
 // BACKLOG 40 (23.09): the page hands both the shooter's horizontal sector (or null); the stub only keeps what it got.
 StubViewer.prototype.aimGap = function (limits) { this.gapLimits = limits; return this.gap; };
 StubViewer.prototype.chaseAim = function (step, limits) { this.chaseLimits = limits; this.chased++; this.gap = Math.max(0, this.gap - step); return true; };
+StubViewer.prototype.offModel = false;   // the stub's proxy answers a missing name with a function
+StubViewer.prototype.onModel = function () { return !this.offModel; };
 StubViewer.prototype.pinAtPoint = function (point) { this.pinnedPoints++; this.pinnedAt = point; this.pinned = {point: point, normal: this.pinNormal}; this.aimPinned = true; return true; };
 // The fun layer: the page draws its impact point from the viewer (the same law the ring's figure is
 // integrated with) and asks for a dot on the armour. Both are recorded, nothing is computed here.
@@ -1477,6 +1479,12 @@ settle(20).then(function () {
   run(20);
   ok('the reload over, the ring is whole again and the loop stopped',
      view.reloadPart === null && loopFrames() === 0, '(' + view.reloadPart + ')');
+
+  // ---- with ✸ off a shot whose centre is off the vehicle is not fired (user, 25.09): no tracer into empty space --
+  view.offModel = true;
+  press(); tick(0.05); release();
+  ok('with the ⌖ mode off a tap whose circle centre misses the vehicle fires nothing', view.pinnedPoints === 2 && view.shotsDrawn === 2);
+  view.offModel = false;
 
   // ---- with ✸ off a held button is no burst (user, 25.09): a hesitant orbit must not shoot ----------
   press(); tick(0.5);

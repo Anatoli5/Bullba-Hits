@@ -3619,6 +3619,9 @@
     if (!aimLive || !a || !viewer || !viewer.liveRadius100) return false;
     var centre = viewer.spreadAim || viewer.liveAimPoint;
     if (!centre) return false;
+    // Off the ⌖ mode a shot is the centre shot, and one whose centre is off the model is not fired at all: no tracer
+    // into empty space, no reload, the last shot stays (user, 25.09). In the ⌖ mode shots miss as in a battle.
+    if (!funOn() && viewer.onModel && !viewer.onModel(centre)) return false;
     var now = aimSeconds();
     dualShot(a, now);   // ✸: a dual-accuracy gun is wider from this very round on (nothing otherwise)
     var mods = aimHeated(aimModifiers()), shell = viewer.shell;

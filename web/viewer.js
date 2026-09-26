@@ -1737,6 +1737,14 @@
     this.drawLiveAim();
     return true;
   };
+  // Whether the line from the eye through `point` meets the model: an emulated shot off the ⌖ mode goes nowhere else
+  // (user, 25.09 - a tracer into empty space shows nothing). One BVH ray.
+  Viewer.prototype.onModel=function(point){
+    if(!this.engine||!point)return false;
+    var origin=this.camera.position,direction=point.clone().sub(origin);
+    if(direction.lengthSq()<1e-12)return false;
+    return !!this.pick(origin,direction.normalize());
+  };
   // A shot: pin the line the gun is actually pointing along, not the one under the cursor. Same record
   // as a click on the armour (pinAt), so the "Pinned point" panel reads the shot exactly as before.
   Viewer.prototype.pinAtPoint=function(point){
