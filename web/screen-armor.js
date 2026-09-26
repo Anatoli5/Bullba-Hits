@@ -7,6 +7,9 @@
 (function(root){
   'use strict';
   var COUNT=8,T=root.THREE;
+  // The coincidence tolerance of the peel and the bounced leg: ArmorBallistics.TIE, the CPU's own (one owner, review
+  // 26.09 R3), written into both shaders as a GLSL float literal.
+  var TIE_EPS='#define TIE_EPS '+root.ArmorBallistics.TIE.toExponential();
   /* Soft lighting (optional, off by default). It is a display feature and nothing else: a second, smoothed
      VISUAL normal per vertex record, used by one extra pass and by no part of the ballistics. The physical
      normal below stays exactly what it is - one flat vector per triangle, the plane of the face - because the
@@ -35,6 +38,7 @@ ${peelDeclarations}
 uniform vec3 uOrigin; uniform vec3 uAnchor; uniform vec3 uForward;
 in vec3 vPosition; flat in vec3 vNormal; flat in float vMaterial;
 out vec4 outputLayer;
+${TIE_EPS}
 // The flat normal rides along with the layer: the bounced leg needs the whole vector, not just |cos|.
 vec2 octEncode(vec3 n){n/=abs(n.x)+abs(n.y)+abs(n.z);return n.z>=0.0?n.xy:(1.0-abs(n.yx))*vec2(n.x>=0.0?1.0:-1.0,n.y>=0.0?1.0:-1.0);}
 float earlier(int index,ivec2 p){${peelFetches}return 0.0;}
@@ -43,7 +47,7 @@ void main(){
  // Depth is relative to the target plane, avoiding subtraction of 1500 m values.
  float d=dot(vPosition-uAnchor,uForward)/max(.001,dot(ray,uForward));
  if(!uFirst){ivec2 p=ivec2(gl_FragCoord.xy);vec2 prev=texelFetch(uPrevious,p,0).rg;
-  if(prev.y<.5||d<prev.x-.00001||(abs(d-prev.x)<=.00001&&vMaterial<=floor(prev.y)))discard;
+  if(prev.y<.5||d<prev.x-TIE_EPS||(abs(d-prev.x)<=TIE_EPS&&vMaterial<=floor(prev.y)))discard;
   // A collide-once material (tracks, screens) counts once per ray: its further surfaces take no layer,
   // exactly as the ballistic law ignores them. Otherwise a track seen along its length eats every layer.
   int id=int(floor(vMaterial))-1;
@@ -122,7 +126,7 @@ void main(){vUV=position.xy*.5+.5;gl_Position=vec4(position.xy,0.0,1.0);}`;
 // CPU. The origin stays fixed, so the distances are the leg's own and nothing accumulates. The traversal is the
 // library's _bvhIntersectFirstHit with the key in place of the plain distance; a box that ends before the last
 // contact or begins past the best candidate is not opened.
-#define TIE_EPS 1e-4
+${TIE_EPS}
 bool nextContact(vec3 origin,vec3 direction,float lastDist,int lastId,out float dist,out int id,out vec3 normal){
  dist=INFINITY;id=0x7fffffff;normal=vec3(0.0);bool found=false;
  vec3 invDir=1.0/direction;
@@ -175,7 +179,8 @@ float bounceLeg(vec3 origin,vec3 direction,float remaining,float nominal){
   vec3 n=dot(ray,face)>0.0?-face:face;
   vec3 mirrored=normalize(ray-2.0*dot(ray,n)*n);
   float keep=1.0-uRicochetLoss;
-  float after=bounceLeg(spot+n*.002+mirrored*.001,mirrored,leftPen*keep,uPen.x*keep);
+  // Never below zero, as the CPU's carried(): screens thicker than the shell leave the leg nothing, not a debt.
+  float after=bounceLeg(spot+n*.002+mirrored*.001,mirrored,max(leftPen,0.0)*keep,uPen.x*keep);
   // A bounced shell that still penetrates is painted in its own chance colour and the pixel is flagged for the
   // mark pass. The flag rides in alpha because this composite goes into a float target with blending off; a
   // single pass could never draw the zone's contour, which needs to know whether the neighbour is in the zone.
@@ -449,9 +454,13 @@ void main(){
     if(error)throw new Error(error);
   };
   Surface.prototype.update=function(engine){
-    var keys=Object.create(null),mats=[],rows=[],position=[],normal=[],ids=[];
-    engine.triangles.forEach(function(t){var key=t.part+':'+t.name,id=keys[key],a=t.armor;if(a&&a.armor===null)return; // 0 mm devices stay: the law starts a HEAT jet on them exactly as the CPU path does
-      if(id===undefined){id=mats.length/8;keys[key]=id;mats.push(a?(a.armor==null?-1:a.armor):-2,a?a.vehicleDamageFactor:0,a&&a.useHitAngle?1:0,a&&a.mayRicochet?1:0,a&&a.collideOnceOnly?1:0,a&&a.checkCaliberForRicochet?1:0,a&&a.checkCaliberForHitAngleNorm?1:0,0);}
+    // The material ids are the engine's own (ArmorBallistics engine.materialId, review 26.09 R4): the CPU breaks a tie in
+    // distance by the same ids. A triangle with armour null takes none; 0 mm devices stay: the law starts a HEAT jet on
+    // them exactly as the CPU path does.
+    var mats=new Array(engine.materialCount*8),rows=[],position=[],normal=[],ids=[];
+    engine.triangles.forEach(function(t){var id=engine.materialId(t),a=t.armor;if(id===undefined)return;
+      if(mats[id*8]===undefined){var row=[a?(a.armor==null?-1:a.armor):-2,a?a.vehicleDamageFactor:0,a&&a.useHitAngle?1:0,a&&a.mayRicochet?1:0,a&&a.collideOnceOnly?1:0,a&&a.checkCaliberForRicochet?1:0,a&&a.checkCaliberForHitAngleNorm?1:0,0];
+        for(var k=0;k<8;k++)mats[id*8+k]=row[k];}
       rows.push({t:t,id:id});
     });
     if(mats.length/8>this.renderer.capabilities.maxTextureSize)throw new Error('too many materials');

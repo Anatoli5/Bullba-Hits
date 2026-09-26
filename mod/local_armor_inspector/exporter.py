@@ -409,6 +409,78 @@ def fix_shells(hit):
             target['linerFactor'] = float(descr.miscAttrs.get('antifragmentationLiningFactor', 1.0))
         except Exception:
             pass
+    try:
+        fix_trace_ricochet(hit)
+    except Exception:
+        pass
+
+
+TRACE_RICOCHET = 'traceRicochet'
+
+
+def fix_trace_ricochet(hit):
+    """The shells' traceRicochet (enableTraceRicochet) for records written before 26.09 (b197550); True when it wrote one.
+
+    A shell without the key reads as the client default True on the page, so the 28 shells that lose themselves at the
+    first ricochet (AAAC, Charlie 3/Delta 6, JPNh, PG70) flew on in every older record. The flag is a property of the
+    shell type the battle's modifiers never touch (docs/KNOWLEDGE.md 5, vehicle_modifications.pyc), so the stock
+    descriptor of the shooter gives it exactly - but only BY POSITION: a live list is shot_candidates of the live
+    descriptor, the stock list the same walk over the same guns and shots, and modifiers change a shell's figures (its
+    effectsIndex among them), never the list. A list whose length, kinds or calibres differ from the stock one gets
+    nothing; a shell is never matched by its name. A match candidate (shellCandidates) takes the flag of the live shell
+    it equals (every key but 'source'); the other mode's shells (modeShells) are read off that mode's descriptor. Only
+    a missing key is written - a recorded one stays as it is.
+    """
+    attacker = hit.get('attacker') or {}
+    available, candidates, mode_shells = hit.get('availableShells'), hit.get('shellCandidates'), attacker.get('modeShells')
+
+    def missing(shells):
+        return isinstance(shells, list) and any(isinstance(s, dict) and TRACE_RICOCHET not in s for s in shells)
+
+    if not attacker.get('compactDescriptor') or not (missing(available) or missing(candidates) or missing(mode_shells)):
+        return False
+    from .armor import shot_candidates as stock_shells
+    descr = vehicle_descr(attacker['compactDescriptor'])
+    if attacker.get('type') and str(descr.type.name) != str(attacker.get('type')):
+        return False
+
+    def flags(live, stock):
+        if not isinstance(live, list) or len(live) != len(stock): return None
+        for a, b in zip(live, stock):
+            if not isinstance(a, dict) or a.get('kind') != b.get('kind'): return None
+            try:
+                if abs(float(a.get('caliber')) - float(b.get('caliber'))) > 1e-6: return None
+            except Exception:
+                return None
+            if 'gunInstallation' in a and a['gunInstallation'] != b.get('gunInstallation'): return None
+        return [bool(b.get(TRACE_RICOCHET, True)) for b in stock]
+
+    wrote = False
+    mode = attacker.get('vehicleMode')
+    live_flags = flags(available, stock_shells(mode_descr(descr, mode)))
+    if live_flags:
+        for shell, flag in zip(available, live_flags):
+            if TRACE_RICOCHET not in shell:
+                shell[TRACE_RICOCHET] = flag
+                wrote = True
+        if isinstance(candidates, list):
+            def body(shell):
+                return dict((k, v) for k, v in shell.items() if k not in ('source', TRACE_RICOCHET))
+            bodies = [body(s) for s in available]
+            for shell in candidates:
+                if not isinstance(shell, dict) or TRACE_RICOCHET in shell: continue
+                own = body(shell)
+                matches = [i for i, other in enumerate(bodies) if other == own]
+                if matches and len(set(live_flags[i] for i in matches)) == 1:
+                    shell[TRACE_RICOCHET] = live_flags[matches[0]]
+                    wrote = True
+    if missing(mode_shells) and attacker.get('modeShellsMode') in (0, 1):
+        mode_flags = flags(mode_shells, stock_shells(mode_descr(descr, attacker['modeShellsMode'])))
+        for shell, flag in zip(mode_shells, mode_flags or []):
+            if TRACE_RICOCHET not in shell:
+                shell[TRACE_RICOCHET] = flag
+                wrote = True
+    return wrote
 
 
 def player_vehicle(battle):
@@ -611,8 +683,6 @@ def aim_block(descr):
       gunPitchSpeed         rad/s      gun.rotationSpeed - the gun's elevation speed, which the client's gun rotator
                                        moves the pitch at (getNextGunPitch) and which never enters the circle: the
                                        turret term is |d yaw| / dt alone (VehicleGunRotator.__rotate) - gun_statics
-      whileGunDamagedFactor -          gun.shotDispersionFactors['whileGunDamaged'] - the circle's multiplier while the
-                                       gun is damaged (2.0 for most guns) - gun_statics
       shotOffsets           [[m,m,m]]  where the shell leaves, from the gun's joint (turret.gunPosition) in the turret's
                                        frame: one entry per barrel of a multi-barrel gun, else gun.shotOffset - written
                                        only where it is not zero (shot_offsets)
@@ -926,7 +996,7 @@ def secondary_aim(descr):
 
       installation 1; name (the gun's XML name); dispersion, aimingTime, turretRotationFactor, afterShotFactor,
       afterShotInBurstFactor (only where it differs), reloadTime, clip, burst (only with a count above 1), gunTags,
-      and gun_statics of this gun (gunPitchSpeed, whileGunDamagedFactor, shotOffsets from the main gun's joint)
+      and gun_statics of this gun (gunPitchSpeed, shotOffsets from the main gun's joint)
 
     The vehicle's own factors (miscAttrs, the chassis, the crew) are the main block's and are not repeated. Raises on
     a malformed gun list; the caller guards it.
@@ -1138,13 +1208,14 @@ def yaw_limits(descr):
     return None if limits is None else [float(item) for item in limits]
 
 
-# The two fields gun_statics writes for every gun; 'shotOffsets' comes with them where it is not zero. A block that has
-# neither and does not name them in 'unavailable' was written before 26.09 and gets them from fix_gun_statics.
-GUN_STATIC_KEYS = ('gunPitchSpeed', 'whileGunDamagedFactor')
+# The field gun_statics writes for every gun; 'shotOffsets' comes with it where it is not zero. A block that has it not
+# and does not name it in 'unavailable' was written before 26.09 and gets it from fix_gun_statics. (The damaged gun's
+# whileGunDamaged is not exported: damaged guns are not emulated - user's decision 26.09, docs/KNOWLEDGE.md 6.)
+GUN_STATIC_KEYS = ('gunPitchSpeed',)
 
 
 def gun_statics(descr, gun=None):
-    """The gun's elevation speed, its circle multiplier while damaged and its shells' start points (26.09, P2-P4).
+    """The gun's elevation speed and its shells' start points (26.09, P2 and P4).
 
     `gun`: another gun of the descriptor's turret than the mounted one (secondary_aim's), else descr.gun. Each read on
     its own; a field the client refuses is left out (the caller names it). The one reader for aim_block, secondary_aim
@@ -1152,19 +1223,13 @@ def gun_statics(descr, gun=None):
       gunPitchSpeed          gun.rotationSpeed, rad/s (vehicles.pyc _readGun: radians of the XML's degrees). The client
                              moves the pitch at the server's maxGunRotationSpeed, which is this with the gunner's factor
                              (VehicleDescrCrew._updateGunnerFactors scales turret/rotationSpeed and gun/rotationSpeed
-                             alike), and falls back to it when the server sent none (getNextGunPitch).
-      whileGunDamagedFactor  gun.shotDispersionFactors['whileGunDamaged'] (_readGunShotDispersionFactors). The server
-                             multiplies the circle's shotDispMultiplierFactor by it while the gun is damaged - measured
-                             in the owner's records: x2.000 after an own gun crit on two vehicles, back at the repair.
-                             A field modification may scale it (miscAttrs 'gun/shotDispersionFactors/whileGunDamaged'),
-                             which the page does not model; this is the gun's own figure.
+                             alike). With no server speed the pitch stands still (getNextGunPitch 899-903: shotAngle =
+                             curAngle); gun.rotationSpeed alone only brings the gun back inside its pitch limits.
       shotOffsets            shot_offsets
     """
     out = {}
     gun = descr.gun if gun is None else gun
     try: out['gunPitchSpeed'] = float(gun.rotationSpeed)
-    except Exception: pass
-    try: out['whileGunDamagedFactor'] = float(gun.shotDispersionFactors['whileGunDamaged'])
     except Exception: pass
     try:
         offsets = shot_offsets(descr, gun)
@@ -1186,14 +1251,20 @@ def shot_offsets(descr, gun=None):
     by its yaw only - the gun's pitch does not move it - where gunOffset is descr.activeGunShotPosition =
     turret.gunPosition + gun.shotOffset (VehicleDescriptor.__set_activeTurretPos), or, while one barrel of a
     multi-barrel gun is the active one, that barrel's multiGun[i].shotPosition = position + shotOffset
-    (switchActiveGun; _readMultiGun). So the offset from the joint is gun.shotOffset for a gun of one barrel - written
-    only when it is not zero (212 vehicles of client 2.4.0.1, up to 0.88 m) - and shotPosition - turret.gunPosition for
-    each barrel of gun.multiGun (72 guns: the dual guns, the twin guns, the twin automatic guns), in their order.
+    (switchActiveGun; _readMultiGun). The client makes a barrel the active one only on a vehicle flagged
+    isDualgunVehicle or isTwinGunVehicle (switchActiveGun 1163-1167, multiGunCurrentShotPosition) and for a gun that
+    is not the main one (__getGunInstallationShotsInfo); the twin AUTOMATIC guns (Tesak, Blesk, Squall, Selma, PGZ-70)
+    and the SH copies of KV-13 / AMX 35 have a multiGun but fire from the joint + gun.shotOffset (review 26.09 D1: all
+    629 Tesak tracers of the owner's records carry gunIndex 0 and start where the one before did). So: one offset per
+    barrel, shotPosition - turret.gunPosition, in their order, for those guns; gun.shotOffset otherwise - written only
+    when it is not zero (212 vehicles of client 2.4.0.1, up to 0.88 m ahead of the joint; a barrel of a multi-barrel
+    gun sits up to 2.07 m from it, J48 Saryuda's 127 mm pair behind the trunnions).
     """
+    main = gun is None or gun is descr.gun
     gun = descr.gun if gun is None else gun
     joint = descr.turret.gunPosition
     barrels = getattr(gun, 'multiGun', None)
-    if barrels:
+    if barrels and (not main or getattr(descr, 'isDualgunVehicle', False) or getattr(descr, 'isTwinGunVehicle', False)):
         return [[metres(p.x - joint.x), metres(p.y - joint.y), metres(p.z - joint.z)]
                 for p in (barrel.shotPosition for barrel in barrels)]
     offset = gun.shotOffset
@@ -2052,7 +2123,7 @@ TTX_SWEEP_SLICE = 0.06
 # a zero time stamp, so an unchanged module keeps its CRC. TTX_SOURCE_SKIP: common files no characteristic is read from.
 # The file carries its format too ('format'): ttx_current takes a file of another format as missing, so a raise reaches the
 # page's own per-type request as well as the sweep (whose keys it changes). 2 (26.09): the shells' traceRicochet.
-# 3 (26.09): the aim blocks' gunPitchSpeed, whileGunDamagedFactor and shotOffsets (gun_statics).
+# 3 (26.09): the aim blocks' gunPitchSpeed and shotOffsets (gun_statics).
 TTX_FORMAT = 3
 TTX_SOURCE = re.compile(r'^(?:[^/]+/)?scripts/(?:item_defs/vehicles/|common/items/)')
 TTX_SOURCE_SKIP = re.compile(r'item_defs/vehicles/common/(?:customization|damage_stickers|player_emblems|'

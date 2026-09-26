@@ -4774,7 +4774,7 @@ settle(20).then(function () {
   ok('heat: it casts no ray, touches no shell and no armour', !/engine\.ray|liveAimProbability|pinAtPoint|\.shell\b|penetration/.test(hSrc));
   const hx = {}, h$ = function (id) { return hx[id] || (hx[id] = new Element('div')); };
   const hwin = {timers: [], setTimeout: function (fn) { hwin.timers.push(fn); return hwin.timers.length; }, clearTimeout: function () {}};
-  let hNow = 0, hFun = true, hBlock = null, hWakes = 0, hDamage = 1;
+  let hNow = 0, hFun = true, hBlock = null, hWakes = 0;
   const HT = new Function('$', 'window', 'env',
     'var aimReload=null,aimClipDry=false,aimClipSize=1,aimClip=1,aimLive=true,aimNow=null,aimLastState=null;' +
     'function funOn(){return env.fun();}function aimBlockData(){return env.block();}function aimSeconds(){return env.now();}' +
@@ -4783,12 +4783,9 @@ settle(20).then(function () {
     // BACKLOG 37 (23.09): the tier-XI block stands outside this one; cut out alone, no vehicle has a mechanic.
     'function xiApply(m){return m;}function xiReset(){}function paintXi(){}function xiBurstOn(){return false;}function xiSwitching(){return false;}' +
     // Final review (23.09): the heat bar coming or going asks the strip's layout pass; cut out alone, a no-op.
-    'function stripLayout(){}' +
-    // P3 (26.09): the recorded shot's damaged gun stands outside this block (aimGunDamage); here the harness says it.
-    'function aimGunDamage(a){return env.damage(a);}\n' + hSrc +
+    'function stripLayout(){}\n' + hSrc +
     '\nreturn {now:heatNow,shot:heatShot,heated:aimHeated,free:gunFree,reset:gunHeatReset,unlockIn:function(){return heatUnlockIn(heatNow());},tick:panelTick,band:heatBand};')(
-    h$, hwin, {fun: function () { return hFun; }, block: function () { return hBlock; }, now: function () { return hNow; }, wake: function () { hWakes++; },
-      damage: function () { return hDamage; }});
+    h$, hwin, {fun: function () { return hFun; }, block: function () { return hBlock; }, now: function () { return hNow; }, wake: function () { hWakes++; }});
   const MUL = function (v) { return [{op: 'mul', name: 'dynAttrs/multShotDispersionFactor', value: v}]; };
   const ARES = {
     temperatureGun: {heatingPerShot: 11, coolingDelay: 2, coolingPerSec: 10.9, maxTemperature: 100, thermalStateHysteresis: 1,
@@ -4806,22 +4803,22 @@ settle(20).then(function () {
   ok('heat: then it falls by coolingPerSec (10.9) a second', near(h.t, 11 - 10.9 * 0.5));
   hNow = 4; h = HT.now();
   ok('heat: and stops at 0', h.t === 0);
-  // P3 (26.09): the recorded shot's damaged gun goes on the same `mult` (aimGunDamage, outside this block), under ⌖ only.
-  hDamage = 2;
-  ok('P3: under ⌖ a shot recorded with the gun damaged keeps the gun\'s whileGunDamaged on the circle (×2.0)', near(HT.heated({mult: 1}).mult, 2));
-  hFun = false;
-  ok('P3: off ⌖ the circle is the clean build\'s, as for every other recorded state', HT.heated({mult: 1}).mult === 1);
-  hFun = true; hDamage = 1;
+  // A damaged gun is not emulated (user's decision 26.09): nothing on the page reads the gun's state or its factor.
+  ok('damaged gun: not emulated - no gunDevice, no aimGunDamage, no whileGunDamagedFactor on the page', !/gunDevice|aimGunDamage|whileGunDamagedFactor/.test(appSrc));
+  // The record view (26.09): which barrel the recorded shot left from, handed to the viewer's aimMuzzle.
   {
-    const gdStart = appSrc.indexOf('  function aimGunDamage(a) {'), gdEnd = appSrc.indexOf('  // What the configuration KEEPS', gdStart);
-    ok('P3: aimGunDamage is one function beside aimBlockData', gdStart > appSrc.indexOf('  function aimBlockData() {') && gdEnd > gdStart);
-    const GD = function (hit, ctx, a) { return new Function('env', 'var activeHit=env.hit,shotContext=env.ctx;' + appSrc.slice(gdStart, gdEnd) + 'return aimGunDamage(env.a);')({hit: hit, ctx: ctx, a: a}); };
-    const VK = {whileGunDamagedFactor: 3.0}, hit = {id: 'h'};
-    ok('P3: the record says critical - the gun\'s own factor (VK 30.01 H: ×3.0); destroyed the same',
-       GD(hit, {gunDevice: 'critical'}, VK) === 3 && GD(hit, {gunDevice: 'destroyed'}, VK) === 3);
-    ok('P3: a whole gun, no state recorded (a foreign shot, an older record), no hit or no figure in the block: ×1, never an invented 2.0',
-       GD(hit, {gunDevice: 'normal'}, VK) === 1 && GD(hit, {gunDevice: null}, VK) === 1 && GD(hit, {}, VK) === 1
-       && GD(null, {gunDevice: 'critical'}, VK) === 1 && GD(hit, {gunDevice: 'critical'}, {}) === 1 && GD(hit, {gunDevice: 'critical'}, null) === 1);
+    const roStart = appSrc.indexOf('  function recordedMode(hit, at) {'), roEnd = appSrc.indexOf('  function aimOfHit(hit, want) {', roStart);
+    ok('record view: recordedMode and recordedOffset are one block before aimOfHit, which asks recordedMode', roStart > 0 && roEnd > roStart
+       && /mode = recordedMode\(hit, at\)/.test(appSrc.slice(roEnd, roEnd + 600)));
+    const RO = function (hit, ctx) { return new Function('env', 'var activeHit=env.hit,shotContext=env.ctx;' + appSrc.slice(roStart, roEnd) + 'return recordedOffset(env.hit);')({hit: hit, ctx: ctx}); };
+    const ST2 = {aim: {shotOffsets: [[-0.118, 0, 0], [0.217, 0, 0]], secondary: {shotOffsets: [[0.5, 0.5, 0]]}}, vehicleMode: 0};
+    ok('record view: the tracer\'s gunIndex names the barrel (ST-II: 0 -> -0.118, 1 -> +0.217), none -> barrel 0',
+       RO({attacker: ST2}, {tracer: {gunIndex: 1}})[0] === 0.217 && RO({attacker: ST2}, {tracer: {gunIndex: 0}})[0] === -0.118 && RO({attacker: ST2}, {tracer: {}})[0] === -0.118);
+    ok('record view: a round of the second gun takes the second gun\'s block', RO({attacker: ST2}, {tracer: {gunIndex: 0, gunInstallationIndex: 1}})[0] === 0.5);
+    const SIEGE = {aim: {shotOffsets: [[0, 0, 0.3]]}, vehicleMode: 0, modeAim: {shotOffsets: [[0, 0, 0.9]]}, modeAimMode: 1};
+    ok('record view: a shot fired in the other mode (siege state 2) takes that mode\'s block', RO({attacker: SIEGE}, {tracer: {siegeState: 2}})[2] === 0.9 && RO({attacker: SIEGE}, {tracer: {siegeState: 0}})[2] === 0.3);
+    ok('record view: no tracer, no offsets or no shooter - nothing to take off', RO({attacker: ST2}, {tracer: null}) === null && RO({attacker: {aim: {}}}, {tracer: {}}) === null && RO({}, {tracer: {}}) === null);
+    ok('record view: the scene finisher hands it to the viewer right after load', /viewer\.load\(data,shotContext\);funLaid=false;\s*if\(drawn&&viewer\.setRecordedOffset\)viewer\.setRecordedOffset\(recordedOffset\(hit\)\)/.test(appSrc));
   }
   // Ten rounds 0.3 s apart from cold: no cooling between them (the rest is longer than the gap).
   hNow = 10; const t0 = hNow; let lockedAt = -1;

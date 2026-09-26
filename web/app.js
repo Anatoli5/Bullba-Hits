@@ -1266,9 +1266,6 @@
     if (a && Array.isArray(a.gunMechanics) && a.gunMechanics.indexOf('chargeableBurst') >= 0) {
       extra += (extra ? '\n' : '\n\n') + '• Burst: only in the Burst mode; under ⌖ the mode button switches it';
     }
-    // The recorded shot's damaged gun (P3, aimGunDamage): said where the circle's other gun states are said.
-    var damage = aimGunDamage(a);
-    if (damage !== 1) extra += (extra ? '\n' : '\n\n') + '• Gun damaged at this shot: circle ×' + aimNum(damage) + ' (the gun’s own penalty); ⌖ keeps it on the circle';
     if (a && a.secondaryFrom) extra += (extra ? '\n' : '\n\n') + 'This is the vehicle’s second gun, taken up with the ⌖ mode button.';
     load.title = AIM_GUN_LOAD_TITLE + extra;
     load.setAttribute('data-mechanics', kind || 'unknown');
@@ -3045,16 +3042,33 @@
     }
     return {block: modeTtxView.view, mode: 1 - own, from: 'ttx'};
   }
+  // The shooter's mode at the recorded shot: the tracer's siege state, else the one at the impact; null unknown.
+  // VEHICLE_SIEGE_STATE: 0 and 1 are the default mode, 2 and up the siege one (constants.pyc 4166-4182).
+  function recordedMode(hit, at) {
+    var tracer = hit === activeHit && shotContext ? shotContext.tracer : null;
+    var siege = tracer && Number.isFinite(tracer.siegeState) ? tracer.siegeState : at && at.siegeStateAtImpact;
+    return Number.isFinite(siege) ? (siege <= 1 ? 0 : 1) : null;
+  }
+  // Where the RECORDED shot left from the recorded shooter's joint: the block of its mode then (the record's 'aim' or
+  // its 'modeAim'), the second gun's block for a round of installation 1, the barrel of the tracer's gunIndex (0
+  // without one). The record view's camera stands at that shot's position; the viewer takes this off it (aimMuzzle).
+  function recordedOffset(hit) {
+    var at = hit && hit.attacker, tracer = hit === activeHit && shotContext ? shotContext.tracer : null;
+    if (!at || !tracer) return null;
+    var mode = recordedMode(hit, at), block = at.aim;
+    if (mode !== null && mode !== at.vehicleMode && at.modeAimMode === mode && at.modeAim) block = at.modeAim;
+    if (block && Number(tracer.gunInstallationIndex) === 1) block = block.secondary;
+    var list = block && Array.isArray(block.shotOffsets) && block.shotOffsets.length ? block.shotOffsets : null;
+    var i = Number.isFinite(Number(tracer.gunIndex)) ? Number(tracer.gunIndex) : 0;
+    return list ? list[((i % list.length) + list.length) % list.length] : null;
+  }
   function aimOfHit(hit, want) {
     var at = emuAttacker(hit), a = at && at.aim, sec = modeAimOf(hit), m = sec && sec.block;
     if (!m || !(m.dispersion > 0) || !(a && a.dispersion > 0)) return a;
     var mode = want;
     if (mode !== 0 && mode !== 1) {
-      var tracer = hit === activeHit && shotContext ? shotContext.tracer : null;
-      var siege = tracer && Number.isFinite(tracer.siegeState) ? tracer.siegeState : at.siegeStateAtImpact;
-      if (!Number.isFinite(siege)) return a;
-      // VEHICLE_SIEGE_STATE: 0 and 1 are the default mode, 2 and up the siege one (constants.pyc 4166-4182).
-      mode = siege <= 1 ? 0 : 1;
+      mode = recordedMode(hit, at);
+      if (mode === null) return a;
     }
     if (mode !== sec.mode || mode === at.vehicleMode) return a;
     if (aimModeFrom !== m || !aimModeView || aimModeView.base !== a) {
@@ -3086,21 +3100,6 @@
       });
     }
     return aimBare;
-  }
-  // THE RECORDED SHOT'S DAMAGED GUN (26.09, fields audit P3). The server multiplies the circle by the gun's
-  // shotDispersionFactors/whileGunDamaged while the gun is damaged - measured in the owner's records: the own
-  // shotDispMultiplierFactor went x2.000 right after a gun crit (AMX M4 54, Pojistka) and back at the repair; x1.600 on
-  // a K-91, whose gun has 2.0 and whose field modification of medium tanks (Module Durability Increase) takes -20 % of
-  // it. The recorder writes the own gun's device state with every own shot since the build after 0.8.3
-  // (shotContext.gunDevice); under ✸ the emulation continuing from such a shot keeps the multiplier - the recorded
-  // rings carry it already, being the server's. Nothing for a foreign shot (its gun's state is not sent), an older
-  // record, a block without the figure (no invented 2.0), or once the view is not that shot. No switch of its own: the
-  // record says it. The field modification's share is not modelled (Config has no such effect).
-  function aimGunDamage(a) {
-    var d = activeHit && shotContext ? shotContext.gunDevice : null;
-    if (d !== 'critical' && d !== 'destroyed') return 1;
-    var f = Number(a && a.whileGunDamagedFactor);
-    return f > 0 && isFinite(f) ? f : 1;
   }
   // What the configuration KEEPS of the record's own four factors - the field modifications it does not set
   // itself (aimBaseFactors above) - in words, for the Config button's tooltip, or ''. Nothing when the game
@@ -3213,7 +3212,7 @@
     // 20.09: 'a shot without a shot, exactly when it had settled and I moved the mouse'). Count that frame
     // as one nominal frame instead.
     if (!dt) dt = 1 / 60;   // one nominal frame, never a zero step
-    var mods = aimHeated(aimModifiers(), a);
+    var mods = aimHeated(aimModifiers());
     // The gun's sector of this frame (under ✸ a static gun is held on the hull's axis while driving or switching the
     // mode) and the keys the vehicle drives by (aimKeysNow: the second modes' rules and the autorotation past the sector).
     var yawLimits = aimYawLimits(a);
@@ -3660,7 +3659,7 @@
     var now = aimSeconds();
     if (viewer.setAimOffset) viewer.setAimOffset(aimOffsetNow(a));   // this round's barrel (P4)
     dualShot(a, now);   // ✸: a dual-accuracy gun is wider from this very round on (nothing otherwise)
-    var mods = aimHeated(aimModifiers(), a), shell = viewer.shell;
+    var mods = aimHeated(aimModifiers()), shell = viewer.shell;
     var chance = shell ? viewer.liveAimProbability(shell, 1024) : null;
     // The fun layer (user, 22.09): with the mode on the shot lands at a point DRAWN inside
     // the live circle instead of at its middle, and the shot line, the pinned panel and the reticle then
@@ -3993,11 +3992,11 @@
   }
   // The circle's multiplier of the present band, applied where the client applies it: on the full-aim factor
   // (the `mult` of ArmorBallistics.aimFactor). The same object comes back untouched off ✸ or for a cold band.
-  // The dual-accuracy factor (dualNow, below) is a factor on the same ideal and goes on the same `mult`, and so does
-  // the recorded shot's damaged gun (aimGunDamage). `a`: the block in force, which every caller holds already.
-  function aimHeated(mods, a) {
+  // The dual-accuracy factor (dualNow, below) is a factor on the same ideal and goes on the same `mult`. A damaged gun's
+  // whileGunDamaged is not emulated (user's decision 26.09: damaged guns are not emulated, now or likely ever).
+  function aimHeated(mods) {
     if (!funOn()) return mods;
-    var h = heatNow(), f = (h && h.band >= 0 ? h.p.states[h.band].factor : 1) * dualNow() * aimGunDamage(a);
+    var h = heatNow(), f = (h && h.band >= 0 ? h.p.states[h.band].factor : 1) * dualNow();
     if (f !== 1 && mods) mods.mult *= f;
     return xiApply(mods);   // a tier-XI mode or ability in force (BACKLOG 37); nothing for every other vehicle
   }
@@ -4518,9 +4517,9 @@
   var XI_SECONDARY_CLEAR = {afterShotInBurstFactor: undefined, burst: undefined, autoreload: undefined, autoShoot: undefined,
     dualAccuracy: undefined, dualGun: undefined, twinGun: undefined, temperatureGun: undefined, overheatGun: undefined,
     heatingZonesGun: undefined, gunMechanics: undefined, clip: [1, 0],
-    // The main gun's elevation speed, damaged-gun factor and barrels are not the second gun's (26.09): a block that has
-    // its own brings them (exporter.secondary_aim), an older one moves its pitch at once and leaves from the joint.
-    gunPitchSpeed: undefined, whileGunDamagedFactor: undefined, shotOffsets: undefined};
+    // The main gun's elevation speed and barrels are not the second gun's (26.09): a block that has its own brings
+    // them (exporter.secondary_aim), an older one moves its pitch at once and leaves from the joint.
+    gunPitchSpeed: undefined, shotOffsets: undefined};
   var xiMech = null, xiTimer = 0, xiAimView = null, xiShellBack = '', xiPaintKey = '', xiTitleKey = '', xiSpecHit = null, xiSpecVal = null, xiSpecTtx = null;
   // The words of the button's aria-label, by kind (the three the emulation does not run carry their own).
   var XI_LABEL = {stance: 'Stance', ability: 'Gyro-stabiliser', designator: 'Target designator', weapon: 'Second gun',
@@ -5052,7 +5051,7 @@
     if (back) { aimReload = back.reload; aimClip = back.clip; aimClipSize = back.size; aimRefill = back.refill; }
     else { aimReload = null; aimLoadFull(); }
     var a = aimBlockData();
-    if (a) { aimNow = ArmorBallistics.aimStep(null, aimLastState || aimState(), a, aimHeated(aimModifiers(), a), 0); aimNowBlock = a; }
+    if (a) { aimNow = ArmorBallistics.aimStep(null, aimLastState || aimState(), a, aimHeated(aimModifiers()), 0); aimNowBlock = a; }
     aimEstAt = 0; aimEstFine = false;
     xiWeaponShell(m.weapon);
   }
@@ -5830,8 +5829,9 @@
     var prefix=[],hp=damageView&&r.expected!==null&&r.expected!==undefined;
     // After a ricochet (ballistics.js engine.bounced): the chip names what the shell had left at the ricochet and what the
     // bounced leg starts with; `pen` below becomes the leg's own scale, (1 - loss) of the shell's, which `eff` is read against.
-    if(r.bounce){var b=r.bounce,carried=b.loss&&b.remaining>=0&&b.carried>=0;pen=b.penetration;
-      var spent=b.shell>0&&b.remaining>=0?b.shell-b.remaining:0,firstScreens=(b.layers||[]).filter(function(l){return !l.main;});
+    // A negative remainder (screens thicker than the shell) is a figure too: "pen −1 → 0 mm"; only a missing one hides it.
+    if(r.bounce){var b=r.bounce,known=typeof b.remaining==='number'&&typeof b.carried==='number',carried=b.loss&&known;pen=b.penetration;
+      var spent=b.shell>0&&known?b.shell-b.remaining:0,firstScreens=(b.layers||[]).filter(function(l){return !l.main;});
       prefix.push({kind:'ricochet',text:'ricochet '+Math.round(b.nominal)+' mm – '+Math.round(b.angle)+'°'+(carried?' · pen '+Math.round(b.remaining)+' → '+Math.round(b.carried)+' mm':''),
         title:'Ricochet\nThe shell flies on along the mirrored line'+(b.loss?' with '+Math.round((1-b.loss)*100)+' % of the penetration it had left.':', penetration unchanged (HEAT).')+
           '\n• Plate: '+Math.round(b.nominal)+' mm at '+Math.round(b.angle)+'°'+
@@ -6371,6 +6371,7 @@
     // hit's shooter; optimisation plan 21.09, §8.4).
     // viewer.load() drops everything the viewer held, the Hitmarks too: funModel lays them again (funLaid).
     $('shot-source').textContent=hit.synthetic?'No recorded shot':'Hit line';prepareShell(hit);var drawn=viewer&&viewer.load(data,shotContext);funLaid=false;
+    if(drawn&&viewer.setRecordedOffset)viewer.setRecordedOffset(recordedOffset(hit));   // the record view's camera stands at this shot's barrel (aimMuzzle)
     // A damage event's own look, set before the first frame is drawn, so no penetration map shows under it.
     if(drawn&&hit.damageEvent)viewer.setLook(eventLook(hit));
     // A part on its way is not a missing model: the spinner outranks both the empty

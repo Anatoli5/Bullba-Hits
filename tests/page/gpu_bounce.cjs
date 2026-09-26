@@ -48,9 +48,9 @@ window.__gpuBounce = function (sign, trackFirst, options) {
   const armor = {
     floor: Object.assign({}, main, {armor: 60}),
     track: {armor: 20, vehicleDamageFactor: 0, useHitAngle: false, mayRicochet: false, checkCaliberForRicochet: false, checkCaliberForHitAngleNorm: false, collideOnceOnly: true},
-    side: Object.assign({}, main, {armor: 90}),
+    side: Object.assign({}, main, {armor: options.side || 90}),
     back: Object.assign({}, main, {armor: 20}),
-    skirt: {armor: 30, vehicleDamageFactor: 0, useHitAngle: false, mayRicochet: false, checkCaliberForRicochet: false, checkCaliberForHitAngleNorm: false, collideOnceOnly: true}
+    skirt: {armor: options.skirt || 30, vehicleDamageFactor: 0, useHitAngle: false, mayRicochet: false, checkCaliberForRicochet: false, checkCaliberForHitAngleNorm: false, collideOnceOnly: true}
   };
   const tris = [];
   function quad(part, name, a, b, c, d) { const m = function (p) { return [p[0] * sign, p[1], p[2]]; };
@@ -58,8 +58,10 @@ window.__gpuBounce = function (sign, trackFirst, options) {
   // A wall at x, split into strips so the BVH has several leaves along it.
   function wall(part, name, x) { for (let z = -2; z < 2; z += .5) quad(part, name, [x, 0, z], [x, 3, z], [x, 3, z + .5], [x, 0, z + .5]); }
   const hull = function () { quad(1, 'floor', [-3, 0, -2], [-3, 0, 2], [1.2, 0, 2], [1.2, 0, -2]); wall(1, 'side', 1.6); wall(1, 'back', 2.2); };
-  const chassis = function () { wall(2, 'track', 1.3); wall(2, 'track', 1.6); };
-  if (trackFirst) { chassis(); hull(); } else { hull(); chassis(); }
+  // options.tieGap: one track wall only, that far BEHIND the side plate - inside the old CPU tie window (1e-4), outside
+  // the peel's (1e-5).
+  const chassis = options.tieGap ? function () { wall(2, 'track', 1.6 + options.tieGap); } : function () { wall(2, 'track', 1.3); wall(2, 'track', 1.6); };
+  if (options.noTrack) hull(); else if (trackFirst) { chassis(); hull(); } else { hull(); chassis(); }
   // options.screen: a 30 mm skirt across the first leg, in front of the floor (the mirrored leg never comes back to it):
   // the bounced leg must start with 0.75 x what was left behind it, as the CPU's engine.bounced does.
   if (options.screen) wall(3, 'skirt', -3.5);
@@ -71,12 +73,16 @@ window.__gpuBounce = function (sign, trackFirst, options) {
   try { surface = new BullbaScreenArmor(renderer, engine); } finally { window.MeshBVHLib = hidden; }
   const out = {bounce: surface.bounce, reason: surface.bounceReason, lit: null, compared: 0, zone: 0, mismatches: [], cpuZone: 0};
   if (options.lit) out.lit = surface.setLighting(true);
-  const camera = new T.PerspectiveCamera(40, W / H, .1, 100), anchor = new T.Vector3(0, 0, 0);
-  camera.position.set(-8 * sign, 1.8, .4); camera.lookAt(anchor); camera.updateMatrixWorld(); camera.updateProjectionMatrix();
+  // options.far: the same view from 200 m through a narrow lens - the capture's near plane then sits far from the eye
+  // and the depth buffer parts faces 50 um apart (at 8 m, with the near plane at 0.01 m, its pick there is noise).
+  const k = options.far ? 25 : 1, camera = new T.PerspectiveCamera(options.far ? 1.6 : 40, W / H, options.far ? 150 : .1, options.far ? 300 : 100), anchor = new T.Vector3(0, 0, 0);
+  camera.position.set(-8 * sign * k, 1.8 * k, .4 * k); camera.lookAt(anchor); camera.updateMatrixWorld(); camera.updateProjectionMatrix();
   const shell = B.shell('ARMOR_PIERCING', options.pen || 140, 100);
   if (options.noTrace) shell.traceRicochet = false;
-  out.carryMatters = 0; out.ricochetColour = 0;
-  surface.render(camera, anchor, shell, 'accessible', .35, 'high', W, H, 1, 'always', 'chance');
+  // options.damage: the expected-damage map - an alpha and a non-penetration damage, so the share differs from the chance.
+  if (options.damage) { shell.alpha = 300; shell.nonPiercingArmorDamage = 90; }
+  out.carryMatters = 0; out.ricochetColour = 0; out.direct = 0; out.directBad = 0;
+  surface.render(camera, anchor, shell, 'accessible', .35, 'high', W, H, 1, 'always', options.damage ? 'damage' : 'chance');
   const data = new Float32Array(W * H * 4); renderer.readRenderTargetPixels(surface.result, 0, 0, W, H, data);
   // The accessible palette's inverse: g rises to .75 on the lower half, only the upper half goes past it.
   const chanceOf = function (r, g) { return g > .75 + 1e-6 ? .5 + (.95 - r) / 1.5 : (g - .18) / 1.14; };
@@ -90,6 +96,14 @@ window.__gpuBounce = function (sign, trackFirst, options) {
     const lost = r.reason === 'ricochet' && r.hit && !r.bounce, dir = r.direction || d;
     const first = r.bounce ? r.bounce.point : lost ? [o[0] + dir[0] * r.hit.distance, o[1] + dir[1] * r.hit.distance, o[2] + dir[2] * r.hit.distance] : null;
     const part = r.bounce ? r.bounce.part : lost ? r.hit.triangle.part : -1;
+    // options.tieGap: the direct pixels on the side plate - the first leg's peel against the CPU's tie order.
+    if (options.tieGap && !r.bounce && r.reason === 'penetration' && r.layers && r.layers.length && r.layers[r.layers.length - 1].material === 'side') {
+      // Behind a screen in front the composite greys the colour by the opacity (as for the skirt below).
+      const j = (py * W + px) * 4, c = paletteOf(r.chance / 100), e = r.layers[0].main ? c : c.map(function (v, q) { return v + ([.45, .50, .55][q] - v) * .35; });
+      out.direct++; out.directLayers = Math.max(out.directLayers || 0, r.layers.length);
+      if (Math.abs(data[j] - e[0]) > .02 || Math.abs(data[j + 1] - e[1]) > .02 || Math.abs(data[j + 2] - e[2]) > .02) { out.directBad++; if ((out.dbg = out.dbg || []).length < 3) out.dbg.push({cpu: r.chance, layers: r.layers.map(function (l) { return l.material; }).join('+'), gpu: Array.from(data.slice(j, j + 3))}); }
+      continue;
+    }
     // Only pixels that ricochet off the floor well inside its edges: the case under test, never a silhouette texel.
     if (!first || part !== 1 || first[1] > 1e-6 || Math.abs(first[2]) > 1.5 || first[0] * sign < -2.5 || first[0] * sign > 1) continue;
     const i = (py * W + px) * 4, a = data[i + 3], zone = a - 4 * Math.floor(a / 4) >= 2;
@@ -97,8 +111,9 @@ window.__gpuBounce = function (sign, trackFirst, options) {
     // Where the carried remaining changes the answer: the same leg restarted from 0.75 x P (the rule before 26.09).
     if (r.bounce && r.reason === 'penetration') { const b = r.bounce, restart = engine.bounced([b.point[0] + b.direction[0] * 1e-3, b.point[1] + b.direction[1] * 1e-3, b.point[2] + b.direction[2] * 1e-3], b.direction, shell, shell.penetration);
       if (Math.abs((restart.chance || 0) - r.chance) >= 5) out.carryMatters++; }
-    const cpuZone = r.reason === 'penetration', cpu = cpuZone ? r.chance / 100 : null;
-    out.compared++; if (zone) out.zone++; if (cpuZone) out.cpuZone++;
+    const cpuZone = r.reason === 'penetration', cpu = cpuZone ? (options.damage ? r.expectedShare : r.chance / 100) : null;
+    if (options.damage && cpuZone && Math.abs(r.expectedShare - r.chance / 100) > .05) out.damageMatters = (out.damageMatters || 0) + 1;
+    out.compared++; if (zone) out.zone++; if (cpuZone) { out.cpuZone++; out.cpuMax = Math.max(out.cpuMax || 0, r.chance); }
     const gpu = zone ? chanceOf(data[i], data[i + 1]) : null;
     // Behind a skirt the composite greys the colour (the front layer is a screen: mix with (.45,.50,.55) by the opacity),
     // so there the CPU chance is turned into that colour instead of the colour into a chance.
@@ -135,6 +150,23 @@ async function main() {
       const sc = await page.evaluate('__gpuBounce(' + sign + ',false,{screen:true,pen:200})');
       ok('skirt before the ricochet, ' + (sign > 0 ? '+x' : '-x') + ': GPU zone and chance equal the CPU walk with the carried remaining', sc.compared > 200 && !sc.bad, '(' + (sc.bad || 0) + ' of ' + sc.compared + ' differ, e.g. ' + JSON.stringify(sc.mismatches) + ')');
       ok('skirt before the ricochet, ' + (sign > 0 ? '+x' : '-x') + ': the carried remaining changes the chance on many pixels', sc.carryMatters > 50, '(' + sc.carryMatters + ')');
+    }
+    // Review 26.09: the second leg in the expected-damage map - CPU withDamage on the leg's result, GPU uDamage at the leg's
+    // main plate (the gate is 1 on the leg: only HE changes it, and HE does not ricochet).
+    for (const sign of [1, -1]) {
+      const dm = await page.evaluate('__gpuBounce(' + sign + ',false,{damage:true})');
+      ok('damage map, ' + (sign > 0 ? '+x' : '-x') + ': the expected share of the bounced leg equals the CPU on every pixel', dm.compared > 200 && dm.cpuZone > 200 && dm.damageMatters > 50 && !dm.bad, '(compared ' + dm.compared + ', share differs from chance on ' + dm.damageMatters + ', ' + (dm.bad || 0) + ' differ, e.g. ' + JSON.stringify(dm.mismatches) + ')');
+    }
+    // Review 26.09 D1: a 101 mm skirt before the ricochet leaves a 100 mm shell -1 mm; the leg starts from max(0, -1) x 0.75
+    // = 0 and a 50 mm wall behind is not pierced - on both sides (the CPU used to restart from 0.75 x P: 100 %).
+    const neg = await page.evaluate('__gpuBounce(1,false,{screen:true,pen:100,skirt:101,side:50,noTrack:true})');
+    ok('skirt thicker than the shell: the leg starts from nothing, GPU equals CPU and the 50 mm wall stays 0 %', neg.compared > 200 && neg.cpuZone > 200 && !neg.cpuMax && !neg.bad, '(compared ' + neg.compared + ', CPU zone ' + neg.cpuZone + ', CPU max ' + neg.cpuMax + ', ' + (neg.bad || 0) + ' differ, e.g. ' + JSON.stringify(neg.mismatches) + ')');
+    // Review 26.09 R3: one coincidence tolerance (ArmorBallistics.TIE). A track face 50 um behind the side plate, seen from
+    // 200 m: the peel meets the plate first whatever the ids and stops there; the CPU's old 0.1 mm tie put the track's
+    // 20 mm in front of the plate when the track had the lower id.
+    for (const trackFirst of [true, false]) {
+      const tie = await page.evaluate('__gpuBounce(1,' + trackFirst + ',{tieGap:5e-5,far:true})');
+      ok('a track face 50 um behind a main plate, ' + (trackFirst ? 'track' : 'hull') + ' ids first: the peel and the CPU meet the plate alone', tie.direct > 200 && tie.directLayers === 1 && !tie.directBad, '(direct ' + tie.direct + ', CPU layers ' + tie.directLayers + ', ' + tie.directBad + ' differ, e.g. ' + JSON.stringify(tie.dbg) + ')');
     }
     // A shell with enableTraceRicochet false: lost at the ricochet - no zone, the plain ricochet colour, no leg on the CPU.
     const nt = await page.evaluate('__gpuBounce(1,false,{noTrace:true})');

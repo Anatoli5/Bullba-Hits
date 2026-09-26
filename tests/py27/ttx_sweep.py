@@ -60,6 +60,7 @@ TYPES = ['germany:G1_A', 'germany:G2_B', 'germany:G3_Broken', 'ussr:R1_C', 'ussr
 ROWS = [{'type': name} for name in TYPES] + [{'type': 'ussr:R1_C'}, {'type': 'bad type'}]
 
 temp = tempfile.mkdtemp()
+SAVED_TIMER = []
 try:
     from local_armor_inspector import exporter as ex
     game = os.path.join(temp, 'game')
@@ -94,6 +95,11 @@ try:
     calls = []
     broken = set(['germany:G3_Broken'])
     delay = [0.0]
+    # A fake clock for the sweep's slice (review 26.09): time.sleep under the browser suite's load overslept past 60 ms, one
+    # build filled a slice and the checks below failed in a cascade. run_sweep reads the module's TTX_TIMER on every call.
+    clock = [0.0]
+    SAVED_TIMER[:] = [ex.TTX_TIMER]
+    ex.TTX_TIMER = lambda: clock[0]
 
     class Recorder(object):
         def __init__(self):
@@ -108,7 +114,7 @@ try:
         """What the real ttx_block leaves behind: a parsed type in g_cache, a log line unless told not to."""
         calls.append(type_name)
         CACHE[(type_name, len(calls))] = 'parsed'
-        if delay[0]: time.sleep(delay[0])
+        clock[0] += delay[0]  # the fake clock moves by the build's cost: no real sleep, no scheduler in the slice
         if battle_on_call[0] and len(calls) == battle_on_call[0]: current.recorder.in_battle = True
         if type_name in broken: raise ValueError('the client refused this type')
         if log: ex.LOG.info('TTX %s: 1 pairs, 1.0 ms', type_name)
@@ -152,12 +158,11 @@ try:
     check(not calls, 'no Start yet: nothing is built, whatever the page')
     check(first.confirm_sweep('ttx') and progress()['confirmed'] is True, 'Start: running, and the progress file says so')
     # --- slices and frames -----------------------------------------------------------------------------------------
-    # 35 ms a build: two builds a 60 ms slice whatever the system timer (25 ms gave three once Chrome of the browser
-    # suite had set the 1 ms timer, and the six types were all built before the Stop below - a flake, 25.09).
+    # 35 ms a build on the fake clock: exactly two builds a 60 ms slice (35 < 60, 70 >= 60).
     delay[0] = 0.035
     check(first.sweep_hurry() and first.recorder.frames_wanted, 'running: the export loop does not wait, the frame callback is wanted')
     first.run_job()
-    check(2 <= len(calls) <= 4 and first.recorder.frames == 0, 'one slice: builds back to back for 60 ms (%d), no frame before the first' % len(calls))
+    check(len(calls) == 2 and first.recorder.frames == 0, 'one slice: builds back to back for 60 ms (%d), no frame before the first' % len(calls))
     first.run_job()
     check(first.recorder.frames == 1, 'the next slice waits one frame of the game first')
     delay[0] = 0.0
@@ -316,6 +321,7 @@ except Exception:
     report.append('FAIL exception\n' + traceback.format_exc())
     failures.append('exception')
 finally:
+    if SAVED_TIMER: ex.TTX_TIMER = SAVED_TIMER[0]
     shutil.rmtree(temp, ignore_errors=True)
 report.append('ALL OK' if not failures else 'FAILED: %d' % len(failures))
 text = 'exit %d\n%s\n' % (1 if failures else 0, '\n'.join(report))

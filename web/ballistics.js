@@ -2,9 +2,14 @@
 (function(root){
   'use strict';
   var EPS=1e-5, RAD=Math.PI/180;
-  // Two contacts closer than TIE metres along a ray are one depth: they go in the order of their material id (below),
-  // the order the GPU depth peel and its bounced leg (web/screen-armor.js, nextContact TIE_EPS) give coincident surfaces.
-  var TIE=1e-4;
+  // Two contacts closer than TIE metres along a ray are one depth: they go in the order of their material id (below).
+  // THE one coincidence tolerance (review 26.09 R3): the GPU depth peel and its bounced leg (web/screen-armor.js, TIE_EPS
+  // of both shaders) are generated from ArmorBallistics.TIE. 10 um, the peel's figure (the CPU and the leg had 0.1 mm):
+  // the peel's first layer is the depth test's nearest face, so a face 50 um behind a main plate with the lower id came
+  // first on the CPU (a 0.1 mm tie) and never on the GPU (tests/page/gpu_bounce.cjs, a camera at 200 m). 10 um is still
+  // ten float32 steps above the noise of coplanar faces at vehicle size. Limit: at a close camera (the capture near
+  // plane at 0.01 m) the depth buffer cannot part faces ~0.4 mm apart and its pick there is noise - a GPU matter.
+  var TIE=1e-5;
   function clamp(x,a,b){return Math.max(a,Math.min(b,x));}
   function sub(a,b){return [a[0]-b[0],a[1]-b[1],a[2]-b[2]];}
   function dot(a,b){return a[0]*b[0]+a[1]*b[1]+a[2]*b[2];}
@@ -472,11 +477,17 @@
   // `start`: the penetration the shell has left on entering this walk, when it is not the nominal - the leg after a
   // ricochet (engine.bounced). s.penetration stays the walk's NOMINAL: the scale of the chance and of `effective`.
   function evaluate(hits,s,start){var r=walk(hits,s,start);return s&&s.alpha>0?withDamage(r,s):r;}
+  function known(x){return typeof x==='number'&&isFinite(x);}
+  // What the leg after a ricochet starts with (variant B): (1 - loss) x what the first leg had left there, never below
+  // zero - screens thicker than the shell leave it nothing to carry (review 26.09 D1: a negative remainder used to read
+  // as "unknown" and restart the leg from 0.75 x P). Unknown (no number): the nominal. The GPU leg clamps the same way.
+  function carried(s,remaining){return (known(remaining)?Math.max(0,Math.min(remaining,s.penetration)):s.penetration)*(1-(s.ricochetLoss||0));}
   // Every result carries `remaining`: what the shell had left on reaching the contact it ended on (a ricochet, the main
   // plate - before that plate) or after its last screen (no-hull). The leg after a ricochet starts from it.
   function walk(hits,s,start){
     if(!s||!(s.penetration>0)||!(s.caliber>0))return {chance:null,reason:'parameters',layers:[]};
-    var remaining=start>=0?start:s.penetration,ignored={},layers=[],jet=false,jetStart=0,jetRate=0,seen={},screenPass=1;
+    // `start` unknown is the absence of a number, never its sign: a leg after a ricochet may start with nothing left.
+    var remaining=known(start)?start:s.penetration,ignored={},layers=[],jet=false,jetStart=0,jetRate=0,seen={},screenPass=1;
     for(var i=0;i<hits.length;i++){
       var hit=hits[i],t=hit.triangle,a=t.armor,key=t.part+':'+t.name;
       if(seen[key]!==undefined&&Math.abs(hit.distance-seen[key])<EPS)continue;
@@ -539,11 +550,13 @@
   }
   function fromTriangles(tris,flat){
     var acceleration=flat?leaf(tris):tree(tris.slice());
-    // The material id of every part:material, in the order they first appear - the id the GPU surface gives the same
-    // triangles (Surface.update: the ones with armour null take none). It orders contacts that tie in distance.
+    // THE material id of every part:material (review 26.09 R4: one owner), in the order they first appear; triangles
+    // with armour null take none. It orders contacts that tie in distance here, and the GPU surface takes the same ids
+    // from engine.materialId (Surface.update) for its peel and bounced leg - so both sides break a tie alike.
     var order=Object.create(null),count=0;
     tris.forEach(function(t){var key=t.part+':'+t.name;if(order[key]===undefined&&!(t.armor&&t.armor.armor===null))order[key]=count++;});
-    function id(h){var v=order[h.triangle.part+':'+h.triangle.name];return v===undefined?count:v;}
+    function materialId(t){return order[t.part+':'+t.name];}
+    function id(h){var v=materialId(h.triangle);return v===undefined?count:v;}
     // By distance; contacts within TIE of the first of a run are one depth and go by material id (stable within one id).
     // Before 26.09 a tie went by the order the tree was walked in: coincident plates of two materials (a track face in
     // the plane of a side plate) could come either way round, and CPU and GPU could disagree.
@@ -562,7 +575,8 @@
       d=unit(d);var hits=[];collisions(acceleration,o,d,hits,{best:Infinity});
       var r=evaluate(ordered(hits),s,start);r.origin=o;r.direction=d;return r;
     }
-    var engine={triangles:tris,acceleration:acceleration};
+    // materialId(triangle): its id, undefined for one that takes none; materialCount: how many ids there are.
+    var engine={triangles:tris,acceleration:acceleration,materialId:materialId,materialCount:count};
     // THE LEG AFTER A RICOCHET (user's decision 26.09, variant B of outputs/ricochet-second-leg-2026-09-26.md): the shell
     // flies on from the ricochet point with 75 % of what it had LEFT there - the first leg's screens stay spent -
     // remaining2 = (1 - ricochetLoss) * remaining1, and the chance is scaled by (1 - ricochetLoss) * P, P the shell's
@@ -574,7 +588,7 @@
     engine.bounced=function(o,d,s,remaining){
       if(!s||!(s.penetration>0)||!(s.caliber>0))return evaluate([],s);
       var keep=1-(s.ricochetLoss||0),next=Object.assign({},s,{penetration:s.penetration*keep,ricocheted:true});
-      return cast(o,d,next,(remaining>=0?Math.min(remaining,s.penetration):s.penetration)*keep);
+      return cast(o,d,next,carried(s,remaining));
     };
     engine.ray=function(o,d,s){
       if(!s||!(s.penetration>0)||!(s.caliber>0))return evaluate([],s);
@@ -591,7 +605,7 @@
         // first leg had left at the ricochet; carried: what the second leg starts with.
         var keep=1-s.ricochetLoss;
         second.bounce={point:point,normal:n,direction:out,nominal:r.nominal,angle:r.angle,penetration:s.penetration*keep,remaining:r.remaining,
-          carried:r.remaining*keep,shell:s.penetration,loss:s.ricochetLoss,layers:r.layers,part:h.triangle.part};
+          carried:carried(s,r.remaining),shell:s.penetration,loss:s.ricochetLoss,layers:r.layers,part:h.triangle.part};
         return second;
       }
       return r;
@@ -626,7 +640,7 @@
     var stops=palettes[palette]||palettes.accessible,p=share*2,i=Math.min(1,Math.floor(p)),f=p-i;
     return stops[i].map(function(v,k){return v+(stops[i+1][k]-v)*f;});
   }
-  root.ArmorBallistics={build:build,fromTriangles:fromTriangles,triangle:triangle,subdivide:subdivide,evaluate:evaluate,shell:shell,atDistance:atDistance,penetrationAt:penetrationAt,alphaAt:alphaAt,chance:chance,effective:effective,ricochet:ricochet,color:color,value:value,nonPenetration:nonPenetration,transform:transform,unit:unit,sub:sub,aimFactor:aimFactor,
+  root.ArmorBallistics={TIE:TIE,build:build,fromTriangles:fromTriangles,triangle:triangle,subdivide:subdivide,evaluate:evaluate,shell:shell,atDistance:atDistance,penetrationAt:penetrationAt,alphaAt:alphaAt,chance:chance,effective:effective,ricochet:ricochet,color:color,value:value,nonPenetration:nonPenetration,transform:transform,unit:unit,sub:sub,aimFactor:aimFactor,
     aimStep:aimStep,aimShot:aimShot,shotTerm:shotTerm,reloadSeconds:reloadSeconds,autoreloadScaled:autoreloadScaled,moveStep:moveStep,turretChase:turretChase,
     aimProfiles:AIM_PROFILES,aimProfile:aimProfile,aimProfileDefault:DEFAULT_PROFILE,moveDefaults:MOVE};
 }(typeof window==='undefined'?globalThis:window));

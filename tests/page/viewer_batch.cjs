@@ -729,6 +729,56 @@ function checks(ok, web) {
     v.clear(); v.load(vehicle(), {range: 5}); e.settle();
     ok('viewer-batch: the next hit loads without the look, the map composed again', !v.look && v.surface && v.surface.quad.visible === true);
   });
+
+  // ---- the emulated shell's start from the record view (26.09, hand-back of P2-P4) -----------------------------------
+  // The record view's camera stands at the recorded SHOT position, the joint plus the barrel that fired; aimMuzzle takes
+  // that barrel off before it adds the current one - no second offset. FV226 (one barrel 0.88 m ahead), ST-II (dual gun,
+  // barrels -0.118 / +0.217 m across).
+  section(function () {
+    const e = env(web), v = loaded(e), T = e.T;
+    const eye = new T.Vector3(3, 1.5, -40), at = new T.Vector3(3, 1.5, 0);   // looking along +z: right is -x here
+    v.camera.position.copy(eye);
+    v.viewEye = function () { return eye; };
+    const off = function (m) { return m.clone().sub(eye); };
+    v.setAimOffset([0, 0, 0.88]); v.setRecordedOffset([0, 0, 0.88]);
+    ok('viewer-batch: record view, FV226: the same barrel leaves exactly where the recorded shot did (was 0.88 m ahead of it)', off(v.aimMuzzle(at)).length() < 1e-9, '(' + off(v.aimMuzzle(at)).toArray().map(function (x) { return x.toFixed(3); }) + ')');
+    v.setAimOffset([0.217, 0, 0]); v.setRecordedOffset([-0.118, 0, 0]);
+    const d = off(v.aimMuzzle(at)), right = new T.Vector3(0, 0, 1).cross(new T.Vector3(0, 1, 0));
+    ok('viewer-batch: record view, ST-II: the other barrel leaves the whole spacing (0.335 m) to the right of the recorded shot', near(d.dot(right), 0.335, 1e-9) && near(d.length(), 0.335, 1e-9), '(' + d.toArray().map(function (x) { return x.toFixed(3); }) + ')');
+    v.camera.position.set(3, 1.5, -39);
+    const free = v.aimMuzzle(at).sub(v.camera.position);
+    ok('viewer-batch: off the recorded point the camera is the joint again: only the current barrel', near(free.dot(right), 0.217, 1e-9) && near(free.length(), 0.217, 1e-9), '(' + free.toArray().map(function (x) { return x.toFixed(3); }) + ')');
+    v.camera.position.copy(eye); v.setRecordedOffset(null);
+    ok('viewer-batch: a record without an offset: the camera is the joint, as before', near(off(v.aimMuzzle(at)).length(), 0.217, 1e-9));
+    v.clear();
+    ok('viewer-batch: clear() forgets the recorded barrel', v.recordedOffset === null);
+  });
+
+  // ---- the Statistics log's point after a recorded ricochet (review 26.09): Viewer.verdicts walks it as the bounced leg ----
+  // of the one law (engine.bounced), from what OUR ray to the ricochet point had left there - no second copy of the rule.
+  section(function () {
+    const e = env(web), T = e.T, B = e.sb.ArmorBallistics, V = e.sb.ArmorViewer;
+    const main = {vehicleDamageFactor: 1, useHitAngle: true, mayRicochet: true, checkCaliberForRicochet: true, checkCaliberForHitAngleNorm: true, collideOnceOnly: false};
+    const s75 = Math.sin(75 * Math.PI / 180), c75 = Math.cos(75 * Math.PI / 180);
+    const floor = B.triangle([-5, -5, 0], [5, -5, 0], [0, 5, 0], 1, 'armor_1', Object.assign({}, main, {armor: 100}));
+    const wall = B.triangle([2, -5, -5], [2, 5, -5], [2, 0, 5], 1, 'armor_3', Object.assign({}, main, {armor: 50}));
+    const skirtOf = function (mm) { return B.triangle([-1, -5, -5], [-1, 5, -5], [-1, 0, 5], 2, 'skirt', {armor: mm, vehicleDamageFactor: 0, useHitAngle: false, mayRicochet: false, checkCaliberForRicochet: false, checkCaliberForHitAngleNorm: false, collideOnceOnly: true}); };
+    const line0 = new T.Vector3(s75, 0, -c75), line1 = new T.Vector3(s75, 0, c75), hit1 = new T.Vector3(2, 0, 2 * c75 / s75);
+    const pts = [{pos: new T.Vector3(0, 0, 0), line: line0, effect: 1, part: 1}, {pos: hit1, line: line1, effect: 3, part: 1}];
+    for (const [mm, pen, left] of [[30, 200, 170], [99, 100, 1], [101, 100, -1]]) {
+      const engine = B.fromTriangles([skirtOf(mm), floor, wall]), shell = B.shell('ARMOR_PIERCING', pen, 100);
+      const out = V.verdicts(engine, pts, shell), r0 = out[0].result, r1 = out[1].result;
+      const before = r0 && (r0.bounce ? r0.bounce.remaining : r0.remaining);
+      const leg = engine.bounced(pts[0].pos.clone().addScaledVector(line1, .02).toArray(), line1.toArray(), shell, left);
+      ok('viewer-batch: Statistics log, ' + mm + ' mm skirt, ' + pen + ' mm shell: the point after the ricochet starts from what our ray had left (' + left + ' mm)',
+         out.length === 2 && near(before, left) && r1 && r1.reason === 'penetration' && near(r1.remaining, Math.max(0, left) * .75) && r1.chance === leg.chance,
+         '(before ' + before + ', remaining ' + (r1 && r1.remaining) + ', chance ' + (r1 && r1.chance) + ' vs ' + leg.chance + ')');
+      if (left < 0) ok('viewer-batch: Statistics log, screens thicker than the shell: nothing is carried, the 50 mm plate is not pierced (was 100 %)', r1.chance === 0, '(' + r1.chance + ')');
+    }
+    // A point that is not after a ricochet is its own ray from afar, with the shell's full penetration.
+    const plain = V.verdicts(B.fromTriangles([floor, wall]), [{pos: hit1, line: new T.Vector3(1, 0, 0), effect: 3, part: 1}], B.shell('ARMOR_PIERCING', 100, 100));
+    ok('viewer-batch: Statistics log, a point with no ricochet before it: its own ray, full penetration', plain[0].result && plain[0].result.remaining === 100 && !plain[0].result.bounce, '(' + (plain[0].result && plain[0].result.remaining) + ')');
+  });
 }
 
 module.exports = {env: env, vehicle: vehicle, loaded: loaded, measure: measure, checks: checks};

@@ -140,8 +140,6 @@ class PlayerAvatar(object):
     handleVehicleCollidedVehicle = original('PlayerAvatar.handleVehicleCollidedVehicle')
 
     def isObserver(self): return self.observer
-    # The client's own property (Avatar.pyc: deviceStates = property(lambda self: self.__deviceStates), 2.4.0.1).
-    deviceStates = property(lambda self: self._PlayerAvatar__deviceStates)
 
 
 class AvatarInputHandler(object):
@@ -351,8 +349,6 @@ class Battle(object):
         avatar.observer = observer
         avatar.inputHandler = AvatarInputHandler.__new__(AvatarInputHandler)
         avatar.gunRotator = None
-        # The own devices' states PlayerAvatar.deviceStates reads (26.09): all whole until the last shot below.
-        avatar._PlayerAvatar__deviceStates = {}
         self.avatar = avatar
         self.shot_ids = set()
 
@@ -408,8 +404,6 @@ class Battle(object):
         # The last own shot of the battle: one server update comes, then the avatar leaves (death at the end, the
         # battle over) - the wait is written on the way out with what it holds.
         if last_shot:
-            # The gun is hit before it (26.09, fields audit P3): the client keeps 'critical' under 'gun' till the repair.
-            self.avatar._PlayerAvatar__deviceStates['gun'] = 'critical'
             self.tracer(self.me, self.arena_id % 1000 * 10 + 3)
             self.gun_marker(4)
 
@@ -677,7 +671,6 @@ def run(temp):
               sorted(r.get('event') for r in shots) == ['command', 'gunAfterShot', 'gunAfterShot', 'stop', 'tracer', 'tracer', 'tracer'],
               sorted(r.get('event') for r in shots))
         own = [r for r in shots if r.get('event') == 'tracer' and r.get('own')]
-        commands = [r for r in shots if r.get('event') == 'command']
         after = [r for r in shots if r.get('event') == 'gunAfterShot']
         if own and after:
             ups = after[0].get('updates') or []
@@ -689,11 +682,6 @@ def run(temp):
             check(group, 'leaving the battle mid-wait writes the last own shot with the one update that came',
                   len(after) == 2 and after[-1].get('tracerId') == own[-1].get('id') and [u.get('origin') for u in last] == [[4.0, 1.0, 0.0]],
                   (len(after), after[-1].get('tracerId'), own[-1].get('id'), [u.get('origin') for u in last]))
-            check(group, 'the own gun state at the press and at each own shot: whole, then damaged before the last (P3)',
-                  (commands[0].get('aim') or {}).get('gunDevice') == 'normal'
-                  and (own[0].get('aimAtTracer') or {}).get('gunDevice') == 'normal'
-                  and (own[-1].get('aimAtTracer') or {}).get('gunDevice') == 'critical' and len(own) == 2,
-                  ([(c.get('aim') or {}).get('gunDevice') for c in commands], [(o.get('aimAtTracer') or {}).get('gunDevice') for o in own]))
             check(group, 'the own tracer keeps the update before it as lastServerGunUpdate',
                   ((own[0].get('aimAtTracer') or {}).get('lastServerGunUpdate') or {}).get('origin') == [0.0, 1.0, 0.0],
                   (own[0].get('aimAtTracer') or {}).get('lastServerGunUpdate'))

@@ -66,6 +66,19 @@ assert.ok(result.effective>190&&result.effective<210);
   r=B.fromTriangles([floor,wall]).ray(origin,direction,{...ap,traceRicochet:false});
   assert.equal(r.reason,'ricochet');assert.equal(r.final,true);assert.equal(r.bounce,undefined,'no second leg for a no-trace shell');
   assert.equal(B.shell('ARMOR_PIERCING',200,100).traceRicochet,true,'the client default: the shell flies on');
+  // Review 26.09 D1: screens thicker than the shell leave a NEGATIVE remainder at the ricochet. That is a figure, not
+  // "unknown": the leg starts from max(0, remainder) x 0.75 = 0 and a 50 mm wall behind is not pierced (before: the
+  // negative sign read as unknown and the leg restarted from 0.75 x P - 99 mm of screen gave 0 %, 101 mm gave 100 %).
+  const p100=B.shell('ARMOR_PIERCING',100,100),wall50=B.triangle([2,-5,-5],[2,5,-5],[2,0,5],1,'armor_3',{...main,armor:50});
+  for(const [screenMm,left] of [[99,1],[101,-1],[120,-20]]){
+    const sk=B.triangle([-1,-5,-5],[-1,5,-5],[-1,0,5],2,'skirt',{armor:screenMm,vehicleDamageFactor:0,useHitAngle:false,mayRicochet:false,collideOnceOnly:true});
+    const e=B.fromTriangles([sk,floor,wall50]),q=e.ray(origin,direction,p100);
+    assert.ok(q.bounce&&Math.abs(q.bounce.remaining-left)<1e-9,'screen '+screenMm+': '+left+' mm left at the ricochet');
+    assert.equal(q.bounce.carried,Math.max(0,left)*.75,'screen '+screenMm+': the leg starts from max(0, left) x 0.75');
+    assert.equal(q.reason,'penetration');assert.equal(q.chance,0,'screen '+screenMm+': the 50 mm wall behind is not pierced');
+    assert.equal(e.bounced([q.bounce.point[0]+q.bounce.direction[0]*1e-3,q.bounce.point[1]+q.bounce.direction[1]*1e-3,q.bounce.point[2]+q.bounce.direction[2]*1e-3],q.bounce.direction,p100,left).chance,0,'screen '+screenMm+': the Statistics log leg agrees');
+  }
+  assert.equal(eng.bounced([0,0,1],[1,0,0],p248,null).remaining,186,'null is unknown too: the nominal');
 }
 // Ties (26.09): two materials met at the same distance go by material id - the order of first appearance, the id the GPU
 // surface gives them - whatever order the tree is walked in. Here the tree's leaf holds the screen before the plate (by the

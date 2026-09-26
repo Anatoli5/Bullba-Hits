@@ -105,9 +105,4 @@ const heShot={...hit,effectsIndex:48,damage:0,shellCandidates:[],availableShells
 c=R(heShot,[]);g=P(c,heShot);
 if(c.index<0){assert.equal(g.index,1);assert.equal(g.fallback,'');}
 assert.equal(g.special,false);
-// P3 (26.09): the own gun's device state at the shot - the tracer's snapshot first (the shell leaving), else the press's.
-assert.equal(R(hit,events({aim:{clientMarker:marker(99.9),gunDevice:'normal'}},{aimAtTracer:{clientMarker:marker(99.9),gunDevice:'critical'}})).gunDevice,'critical');
-assert.equal(R(hit,events({aim:{clientMarker:marker(99.9),gunDevice:'critical'}},{aimAtTracer:{clientMarker:marker(99.9)}})).gunDevice,'critical','the press, when the tracer has none');
-assert.equal(R(hit,events({aim:{clientMarker:marker(99.9)}},{aimAtTracer:{clientMarker:marker(99.9)}})).gunDevice,null,'an older record: not known');
-assert.equal(R(hit,events({},{own:false,aimAtTracer:{gunDevice:'critical'}})).gunDevice,null,'a foreign tracer never says it');
-console.log(JSON.stringify({passed:true,cases:41}));
+console.log(JSON.stringify({passed:true,cases:37}));

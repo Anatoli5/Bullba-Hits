@@ -311,7 +311,7 @@
   Viewer.prototype.setZoom=function(value){if(!Number.isFinite(value)||value<=0)return;this.targetZoom=null;this.targetScale=null;if(this.autoFrame)this.scaleFor(value);this.showZoom(value);};
   Viewer.prototype.setDistance=function(value){if(!Number.isFinite(value))return;this.targetDistance=null;this.distance=Math.max(DISTANCE_MIN,Math.min(DISTANCE_MAX,value));this.render();};
   Viewer.limits={distanceMin:DISTANCE_MIN,distanceMax:DISTANCE_MAX};
-  Viewer.prototype.clear=function(){this.dropTargets();this.clearLiveAim();this.clearHitMarks();this.look=null;this.markDrawn=this.markBuilt=null;this.pinResult=null;this.fitPending=false;this.shotPoints=null;this.shotPath=null;this.horizon=null;this.recordedDistance=null;this.pinned=null;this.disposePin();this.pinCache=null;this.pinReticles=[];if(this.surface)this.surface.dispose();this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.gunAngle=0;this.savedAim=this.ringAim=this.discAim=this.shotDisc=null;this.viewPoints=null;this.aimGroup=null;this.estimateAim=null;this.reticles=[];this.reticleLayer.replaceChildren();clearTimeout(this.turretTimer);this.turretTimer=null;this.turretPending=false;this.poseGeometries=null;this.poseBuilt=null;this.poseStale=false;this.spreadAim=null;this.hideSpread();window.clearTimeout(this.aimSettleTimer);this.aimSettleTimer=null;window.cancelAnimationFrame(this.frameId);this.frameId=null;this.cancelHover();this.cancelOrbit();this.pendingPan=null;this.inspectKey=null;this.paintMesh=null;this.outline=null;this.outlineDepth=null;this.engine=null;this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.loadedData=null;this.paintedKey=null;this.samples=[];var disposed=new Set([this.ringGeom]),kept=this.ringMat;this.root.traverse(function(o){var shared=!!(o.parent&&o.parent.type==='ArrowHelper'&&(o===o.parent.line||o===o.parent.cone));if(o.geometry&&!shared&&!disposed.has(o.geometry)){disposed.add(o.geometry);o.geometry.dispose();}if(o.material){(Array.isArray(o.material)?o.material:[o.material]).forEach(function(m){if(m!==kept)m.dispose();});}});while(this.root.children.length)this.root.remove(this.root.children[0]);this.point=null;this.travel=null;this.draw();};
+  Viewer.prototype.clear=function(){this.dropTargets();this.clearLiveAim();this.clearHitMarks();this.look=null;this.markDrawn=this.markBuilt=null;this.pinResult=null;this.fitPending=false;this.shotPoints=null;this.shotPath=null;this.horizon=null;this.recordedDistance=null;this.pinned=null;this.disposePin();this.pinCache=null;this.pinReticles=[];if(this.surface)this.surface.dispose();this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.gunAngle=0;this.savedAim=this.ringAim=this.discAim=this.shotDisc=null;this.viewPoints=null;this.recordedOffset=null;this.aimGroup=null;this.estimateAim=null;this.reticles=[];this.reticleLayer.replaceChildren();clearTimeout(this.turretTimer);this.turretTimer=null;this.turretPending=false;this.poseGeometries=null;this.poseBuilt=null;this.poseStale=false;this.spreadAim=null;this.hideSpread();window.clearTimeout(this.aimSettleTimer);this.aimSettleTimer=null;window.cancelAnimationFrame(this.frameId);this.frameId=null;this.cancelHover();this.cancelOrbit();this.pendingPan=null;this.inspectKey=null;this.paintMesh=null;this.outline=null;this.outlineDepth=null;this.engine=null;this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.loadedData=null;this.paintedKey=null;this.samples=[];var disposed=new Set([this.ringGeom]),kept=this.ringMat;this.root.traverse(function(o){var shared=!!(o.parent&&o.parent.type==='ArrowHelper'&&(o===o.parent.line||o===o.parent.cone));if(o.geometry&&!shared&&!disposed.has(o.geometry)){disposed.add(o.geometry);o.geometry.dispose();}if(o.material){(Array.isArray(o.material)?o.material:[o.material]).forEach(function(m){if(m!==kept)m.dispose();});}});while(this.root.children.length)this.root.remove(this.root.children[0]);this.point=null;this.travel=null;this.draw();};
   // clear() draws the empty scene and tells the page nothing: the camera has not moved, and the next load() reports once.
   Viewer.prototype.rebuild=function(){
     if(!this.loadedData)return;var T=THREE,self=this;this.samples=[];this.paintedKey=null;
@@ -1760,18 +1760,28 @@
   // THE EMULATED SHELL'S START (26.09, fields audit P4): one owner for the live ring's apex, the shot's line and its
   // verdict ray. The camera is the shooter's gun JOINT - the point the turret turns the gun about - and the shell
   // leaves the gun's shotOffset from it: VehicleGunRotator.__getShotPosition turns that offset with the turret's yaw
-  // only (the gun's pitch does not move it), one barrel's for a multi-barrel gun (exporter.shot_offsets: up to 0.88 m,
-  // 9 cm median over the 376 guns that have one). The page hands the round's offset in (setAimOffset: [x right, y up,
-  // z forward] of the turret, metres, or null); the turret faces where the gun points - `at`, by default the ring's
-  // centre - on the level emulated hull. Without an offset the shell leaves the camera itself, as before.
+  // only (the gun's pitch does not move it), one barrel's for a dual- or twin-gun vehicle (exporter.shot_offsets: a
+  // single barrel's up to 0.88 m ahead, 9 cm median over the 376 guns that have one; a barrel of a multi-barrel gun up
+  // to 2.07 m from the joint). The page hands the round's offset in (setAimOffset: [x right, y up, z forward] of the
+  // turret, metres, or null); the turret faces where the gun points - `at`, by default the ring's centre - on the level
+  // emulated hull. Without an offset the shell leaves the camera itself, as before.
+  // THE RECORD VIEW (26.09, hand-back of P2-P4): there the camera stands at a recorded SHOT position (viewEye: the
+  // tracer's origin, or the gun at the press / the server's gun) - the joint PLUS the barrel that fired it. The page
+  // hands that barrel's offset in (setRecordedOffset); while the camera stands on that point the joint is the camera
+  // less it, so a round from the same barrel leaves exactly where the recorded one did and the other barrel of a dual
+  // gun leaves the whole spacing away (before: the offset was added a second time, up to 0.88 m off, 2 m on J48). The
+  // camera stays on the shell's axis; off that point (orbited, moved) the camera is the joint again.
   Viewer.prototype.setAimOffset=function(offset){this.aimOffset=Array.isArray(offset)&&offset.length===3?offset:null;};
+  Viewer.prototype.setRecordedOffset=function(offset){this.recordedOffset=Array.isArray(offset)&&offset.length===3?offset:null;};
   Viewer.prototype.aimMuzzle=function(at){
     var eye=this.camera.position.clone(),o=this.aimOffset,to=at||this.aimPin()||this.liveAimPoint;
-    if(!o||!to)return eye;
+    var rec=this.recordedOffset,stand=rec&&this.viewEye(),r=stand&&stand.distanceToSquared(eye)<1e-6?rec:null;
+    if(!(o||r)||!to)return eye;
     var fx=to.x-eye.x,fz=to.z-eye.z,len=Math.hypot(fx,fz);
     if(len<1e-9)return eye;
     fx/=len;fz/=len;   // forward on the level hull; right = forward x up = (-fz, 0, fx)
-    eye.x+=-fz*o[0]+fx*o[2];eye.y+=o[1];eye.z+=fx*o[0]+fz*o[2];
+    var x=(o?o[0]:0)-(r?r[0]:0),y=(o?o[1]:0)-(r?r[1]:0),z=(o?o[2]:0)-(r?r[2]:0);
+    eye.x+=-fz*x+fx*z;eye.y+=y;eye.z+=fx*x+fz*z;
     return eye;
   };
   // Whether the shell's line through `point` meets the model: an emulated shot off the ⌖ mode goes nowhere else

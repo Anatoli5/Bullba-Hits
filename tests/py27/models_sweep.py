@@ -99,6 +99,7 @@ class Descriptor(object):
 
 MODEL = {'kind': 'client-shot-collision', 'groups': [{'material': 'armor', 'vertices': [[0, 0, 0], [1, 0, 0], [0, 1, 0]], 'indices': [0, 1, 2]}]}
 temp = tempfile.mkdtemp()
+SAVED_TIMER = []
 try:
     from local_armor_inspector import exporter as ex
     game = os.path.join(temp, 'game')
@@ -130,12 +131,17 @@ try:
 
     write_packages(SOURCES, HAVOK)
     delay = [0.0]
+    # A fake clock for the sweep's slice (review 26.09): time.sleep under the browser suite's load overslept past 60 ms, one
+    # build filled a slice and the checks below failed in a cascade. run_sweep reads the module's TTX_TIMER on every call.
+    clock = [0.0]
+    SAVED_TIMER[:] = [ex.TTX_TIMER]
+    ex.TTX_TIMER = lambda: clock[0]
     extracted = []
     battle_on = [0]
 
     def fake_extract(data):
         extracted.append(data)
-        if delay[0]: time.sleep(delay[0])
+        clock[0] += delay[0]  # the fake clock moves by the build's cost: no real sleep, no scheduler in the slice
         if battle_on[0] and len(extracted) == battle_on[0]: current[0].recorder.in_battle = True
         return dict(MODEL)
 
@@ -222,8 +228,7 @@ try:
     check(first.confirm_sweep('models') and progress()['confirmed'] is True and progress()['opted'] is True, 'Start: running, and from now on the user has opted in')
     check(first.sweep_hurry() and first.recorder.frames_wanted, 'running: the export loop does not wait, the frame callback is wanted')
     # --- slices: one unit of work at a time, a frame between slices ------------------------------------------------------
-    # 35 ms a model: the plan (instant), then two models make a slice past 60 ms whatever the system timer (1 ms or 15.6 ms:
-    # 35 or 47 ms a sleep, 70 or 94 ms after two) - the third unit never fits (25.09: ttx_sweep flaked at 25 ms).
+    # 35 ms a model on the fake clock: the plan (instant), then exactly two models make a slice (35 < 60, 70 >= 60).
     delay[0] = 0.035
     first.run_job()
     check(built == ['germany:G1_A'] and len(extracted) == 2 and first.recorder.frames == 0,
@@ -375,6 +380,7 @@ except Exception:
     report.append('FAIL exception\n' + traceback.format_exc())
     failures.append('exception')
 finally:
+    if SAVED_TIMER: ex.TTX_TIMER = SAVED_TIMER[0]
     shutil.rmtree(temp, ignore_errors=True)
 report.append('ALL OK' if not failures else 'FAILED: %d' % len(failures))
 text = 'exit %d\n%s\n' % (1 if failures else 0, '\n'.join(report))
