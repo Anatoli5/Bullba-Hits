@@ -532,8 +532,8 @@ if (window.BullbaTips && window.BullbaTips.refresh) {
   const own = window.BullbaTips.refresh;
   window.BullbaTips.refresh = function () { tipRefreshes++; return own.apply(this, arguments); };
 }
-ok('scene-one-path: web/tooltips.js runs beside it and takes the page’s eight static help dots (the circle tiles’ one since 24.09)',
-   !tipsError && staticDots.length === 8 && !!(window.BullbaTips && window.BullbaTips.refresh),
+ok('scene-one-path: web/tooltips.js runs beside it and takes the page’s seven static help dots (the circle tiles’ one since 24.09; the shell row’s gone 25.09)',
+   !tipsError && staticDots.length === 7 && !!(window.BullbaTips && window.BullbaTips.refresh),
    tipsError ? String(tipsError.stack) : '(' + staticDots.length + ' dots)');
 // Since 22.09 the page keeps listeners of its own on the document from the start (the slider under the
 // cursor takes the wheel and the arrows), so the aim mode's handlers are counted against that baseline.
@@ -1219,7 +1219,7 @@ settle(20).then(function () {
      shotTile.hidden === false && shotCircle.textContent === '50 %',
      '(' + shotCircle.textContent + ')');
   ok('and the tooltip says which ring that is',
-     shotTile.title.indexOf('reticle as the fire key was pressed') >= 0 && shotTile.title.indexOf('share of the shell') >= 0);
+     shotTile.title.indexOf('Magenta: this hit’s own circles at the press') >= 0 && shotTile.title.indexOf('share of the shell') >= 0);
   view.savedAim = null; view.estimateAim = {radius: 0.5};
   view.onPin(false);
   tick(0.2);

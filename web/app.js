@@ -3335,19 +3335,21 @@
     return (figure.unknown ? Math.round(figure.low) + '–' + Math.round(figure.high) : Math.round(figure.low)) + ' %';
   }
   var SHARE = '\n• Figure: expected damage of a shot inside it, as a share of the shell’s alpha';
-  var NO_ALPHA = '\n• Figure: penetration chance over the circle — this shell has no alpha, so no damage figure';
+  var NO_ALPHA = '\n• Figure: penetration chance over the circle (this shell has no alpha)';
+  // Every circle's words have one shape (user, 25.09): a heading, its colour word and what it is, then the figure and
+  // the model; a recorded circle adds the legend of its rings. The heading takes the tile's colour (data-tip-tint).
   var CIRCLE_TITLES = {
-    live: 'Live aiming circle\nCyan: the emulation’s ring as it is now; the figure is for a shot fired at this moment.',
-    shot: 'Last shot’s ring\nMagenta: the ring your emulated shot left on the model; the figure is for that shot.',
+    live: 'Live aiming circle\nCyan: the emulation’s circle as it is now; the figure is for a shot fired at this moment.',
+    shot: 'Last shot’s circle\nMagenta: the circle your emulated shot left on the model; the figure is for that shot.',
     // The recorded reticle: the circle the shooter's own client had at the instant of the shot, slid
     // along the shot line onto the impact point - the ring drawn solid magenta on the model.
-    saved: 'Recorded aiming circle\nMagenta, this hit’s own: the shooter’s reticle as the fire key was pressed (solid) and the server’s marker then (dashed).',
+    saved: 'Recorded aiming circle\nMagenta: this hit’s own circles at the press; the figure is over the solid one.',
     // The shot ring of an own shot (BACKLOG 28 step 2, 24.09): the circle the server fired from. The figure is
     // sampled over it while it is on screen (viewer.shotDiscAim), over the solid ring when it is switched off.
-    fired: 'Shot circle\nThis hit’s three rings: your reticle at the press (thin solid), the server’s marker then (thin dashed) and the circle the server really fired from (thick dashes); the figure is over the thick one.',
+    fired: 'Shot circle\nMagenta: this hit’s own circles; the figure is over the thick one, the circle the server fired from.',
     // No recorded reticle: the dashed magenta ring is the nominal full-aim estimate, and the figure is
     // an estimate with it. Said on the line itself, so the number is never read as a recorded one.
-    estimate: 'Nominal full-aim circle\nThis hit has no recorded reticle: the figure is for this estimate.'
+    estimate: 'Nominal full-aim circle\nMagenta: this hit has no recorded reticle, so the circle and its figure are an estimate.'
   };
   // One tile per ring, in the colour of the ring it belongs to (user, 20.09; a column of its own at the top
   // RIGHT of the scene since 22.09, each tile on the row of the panel it belongs to): the live cyan one
@@ -3376,12 +3378,14 @@
     // The sampling sentence of the recorded ring (it used to hang on the toolbar's reticle box, removed on
     // 22.09) is composed by aimTitle() once per hit, not here per frame.
     var extra = kind === 'saved' || kind === 'fired' || kind === 'estimate' ? aimExtra : '';
-    tile.title = text ? (CIRCLE_TITLES[kind] || CIRCLE_TITLES.live) + (figure.alpha ? SHARE : NO_ALPHA) + extra : '';
+    tile.title = text ? (CIRCLE_TITLES[kind] || CIRCLE_TITLES.live) + (figure.alpha ? SHARE : NO_ALPHA) + aimModel + extra : '';
     if (!text) return;
     var rgb = circleColor(figure);
     if (circleRgb[id] !== rgb) { circleRgb[id] = rgb; e.style.color = rgb; }
     var cls = kind === 'live' ? 'aim-circle-tile live' : 'aim-circle-tile shot';
     if (tile.className !== cls) tile.className = cls;
+    var tint = kind === 'live' ? 'cyan' : 'magenta';
+    if (tile.getAttribute('data-tip-tint') !== tint) tile.setAttribute('data-tip-tint', tint);
   }
   function paintCircleLines() {
     circleLine('probe-circle', aimLive ? aimEst : null, 'live');
@@ -5571,15 +5575,15 @@
   // (review 24.09): with the ring off, `disc` is null here and neither the thick ring nor the ⚠ is named.
   function ringLegend(ring,disc){
     var out=[];
-    if(ring)out.push('• ● Solid: where you aimed on screen when you pressed fire','• ◌ Dashed: the server’s marker at that press');
+    if(ring)out.push('• ● Solid: your reticle as you pressed fire','• ◌ Dashed: the server’s marker at that press');
     if(disc){
-      out.push('• ◯ Thick, long dashes: where the server’s gun really pointed as the shell left; the shell falls inside it');
-      out.push('• This shell: '+disc.q.toFixed(2)+' of that circle’s radius from its centre');
-      if(disc.from==='after')out.push('• Thick ring: the server’s next update; the last one before the tracer was a tick old');
-      else if(disc.stale)out.push('• Thick ring: one tick uncertain (⚠ beside this tile)');
-      if(ring)out.push('','Outside both thin outlines but inside the thick ring: the aim was right, the delay moved the shot.');
-    }else if(ring&&!(viewer&&viewer.discAim))out.push('','No thick ring: this record does not hold the server’s aim at the shot.');
-    out.push('','All slid along the shot line to the impact point; the live emulation ring is the only one that moves.');
+      out.push('• ◯ Thick dashes: where the server’s gun pointed as the shell left; the shell falls inside it');
+      out.push('• This shell: '+disc.q.toFixed(2)+' of the thick circle’s radius from its centre');
+      if(disc.from==='after')out.push('• Thick: the server’s next update; the last one before the tracer was a tick old');
+      else if(disc.stale)out.push('• Thick: one tick uncertain (⚠ beside this tile)');
+      if(ring)out.push('• Outside the thin, inside the thick: the aim was right, the delay moved the shot');
+    }else if(ring&&!(viewer&&viewer.discAim))out.push('• No thick ring: the record does not hold the server’s aim at the shot');
+    out.push('• All at the impact point; only the Cyan circle moves');
     return out.join('\n');
   }
   // The ⚠ beside the circle tile (user, 24.09): the shot ring of this own shot is one server tick uncertain - the shell
@@ -5660,12 +5664,12 @@
   // the Display setting - composed HERE, once, because the tile's tooltip is rewritten on every repaint.
   // aimLegend: the hit on screen has recorded circles, whose legend (ringLegend) aimTitle composes; aimStatus the
   // words of a hit without them (the nominal estimate, or why there is no circle).
-  var aimStatus='',aimLegend=false,aimExtra='',shotPanelTitle=$('shot-panel').title;
+  var aimStatus='',aimLegend=false,aimExtra='',aimModel='',shotPanelTitle=$('shot-panel').title;
   function aimTitle(){
     var status=aimLegend&&viewer?ringLegend(viewer.ringAim,viewer.discOn?viewer.discAim:null):aimStatus;
-    aimExtra=(status?'\n\n'+status:'')+'\n\n• Sampling: '+ArmorBallistics.aimProfile().label+', 256 rays, misses = 0'+
-      '\n• Not modelled: map obstacles, target motion, '+(damageView?'splash onto other parts':'blast damage')+
-      '\nServer formula not confirmed'+(damageView?'; the non-penetration part is a reconstruction (ratio law).':'.');
+    aimExtra=status?'\n\n'+status:'';
+    aimModel='\n• Model: '+ArmorBallistics.aimProfile().label+', 256 rays, misses = 0; no map obstacles, target motion or '+
+      (damageView?'splash onto other parts':'blast damage')+'; server formula not confirmed'+(damageView?', the non-penetration part a reconstruction':'');
   }
   // The heading row has no space for the full wording: the label reads “Pen.” and the sentence lives in its title.
   // A saved shell's field holds the client's first value, which holds up to 50 m and falls off beyond (BACKLOG № 32).

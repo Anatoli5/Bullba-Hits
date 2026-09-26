@@ -426,6 +426,15 @@ async function main() {
          '(pinned ' + after.pinned + ', tile "' + after.tip.split('\n')[0] + '")');
       const dot = await ev(`(() => { const d = document.querySelector('.circle-help'); return !!d && d.getClientRects().length > 0; })()`);
       ok('the circle tiles have their own "?"', dot);
+      // 25.09 (user): that "?" stands at the right end of the heading row, clear of the shell fields, and the Circle
+      // tile's bubble draws its heading in the tile's own colour.
+      const place = await ev(`(() => { const d = document.querySelector('.circle-help').getBoundingClientRect(), h = document.querySelector('.scene-heading').getBoundingClientRect();
+        const clear = [].slice.call(document.querySelectorAll('.shell-fields *')).every(function (e) { const r = e.getBoundingClientRect(); return !r.width || r.right <= d.left || r.left >= d.right || r.bottom <= d.top || r.top >= d.bottom; });
+        return {inRow: d.top >= h.top && d.bottom <= h.bottom, atEnd: h.right - d.right < 20, clear: clear, shellDot: !!document.querySelector('#shell-types .help-dot')}; })()`);
+      ok('... at the right end of the heading row, over none of the shell fields; the shell row has no "?" of its own', place.inRow && place.atEnd && place.clear && !place.shellDot, JSON.stringify(place));
+      const tint = await ev(`(() => { const t = document.getElementById('shot-circle-tile'), r = t.getBoundingClientRect(); t.dispatchEvent(new MouseEvent('click', {bubbles: true, clientX: r.left + 5, clientY: r.top + 5}));
+        const h = document.querySelector('#page-tip .tip-h'); const out = {attr: t.getAttribute('data-tip-tint'), cls: h ? h.className : ''}; document.getElementById('page-tip').hidden = true; return out; })()`);
+      ok('... and the Circle tile\'s heading is drawn in its ring colour', /tip-(magenta|cyan)/.test(tint.cls) && tint.cls.indexOf('tip-' + tint.attr) >= 0, JSON.stringify(tint));
       await ev("document.getElementById('page-tip') && (document.getElementById('page-tip').hidden = true), true");
     }
     await ev('__bt.act.fun(false)'); await ev('__bt.settle()');

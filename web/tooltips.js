@@ -5,6 +5,8 @@
 // - an element that does nothing on a left click (a figure, a tile of the scene, a line of a popover): a click shows
 //   its words by the pointer; a second click on it, a press elsewhere, Escape, a scroll or a resize close them;
 // - an element that acts on a click (a button, a tile of Config, a shell chip) is reached through the HELP MODE.
+//   An element with data-tip-tint="cyan|magenta" (a Circle tile, 25.09) draws the heading of its words in that colour,
+//   in its own bubble and in its group of a help dot.
 //   An icon inside a control that marks itself data-tip-own (a crit icon on a shot tile, 25.09) is a picture of its
 //   own: a click on it shows its words, and the control around it does not see that click.
 //   A help dot (<button class="help-dot" data-help-for="id id ...">?</button>, one per cluster of controls) shows the
@@ -205,7 +207,7 @@
     function add(el, holder) {
       if (seen.indexOf(holder) >= 0) return;
       seen.push(holder);
-      rows.push({glyph: glyphOf(el) || (holder !== el ? glyphOf(holder) : ''), text: gist(tipOf(holder))});
+      rows.push({glyph: glyphOf(el) || (holder !== el ? glyphOf(holder) : ''), text: gist(tipOf(holder)), tint: tintOf(holder)});
     }
     for (var i = 0; i < els.length; i++) {
       var el = els[i];
@@ -222,7 +224,7 @@
     var parts = [];
     for (var i = 0; i < rows.length; i++) {
       var g = rows[i].glyph;
-      parts.push((typeof g === 'string' ? g : 'img ' + g.getAttribute('src')) + '\u0001' + rows[i].text);
+      parts.push((typeof g === 'string' ? g : 'img ' + g.getAttribute('src')) + '\u0001' + rows[i].tint + '\u0001' + rows[i].text);
     }
     return parts.join('\u0002');
   }
@@ -325,9 +327,11 @@
     }
     return out;
   }
-  function lineOf(l, mark) {
+  // The colour a heading takes from its element (data-tip-tint): one of the two ring colours, else none.
+  function tintOf(el) { var t = el.getAttribute('data-tip-tint'); return t === 'cyan' || t === 'magenta' ? t : ''; }
+  function lineOf(l, mark, tint) {
     var div = doc.createElement('div');
-    div.className = 'tip-' + l.kind + (l.gap ? ' tip-gap' : '');
+    div.className = 'tip-' + l.kind + (l.gap ? ' tip-gap' : '') + (tint && l.kind === 'h' ? ' tip-' + tint : '');
     if (mark) div.appendChild(mark);
     if (l.key) { var k = doc.createElement('b'); tinted(k, l.key); div.appendChild(k); }
     if (l.text) { var s = doc.createElement('span'); tinted(s, l.text); div.appendChild(s); }
@@ -346,7 +350,7 @@
   function squash(s) { return String(s).replace(/\s+/g, ' ').replace(TRIM, '').toLowerCase(); }
   // A title's lines into a box. In a help group the glyph leads the first line - the heading (left out when it only
   // repeats the glyph's caption: Auto-frame) or a lone sentence; before an item it stands on a line of its own.
-  function draw(box, text, glyph) {
+  function draw(box, text, glyph, tint) {
     var list = parse(text), from = 0;
     if (glyph) {
       var mark = doc.createElement('b'), l0 = list[0], head = {kind: 'h', key: '', text: ''};
@@ -356,28 +360,28 @@
         from = 1;
         if (!(l0.kind === 'h' && typeof glyph === 'string' && squash(glyph) === squash(l0.text))) head = l0;
       }
-      box.appendChild(lineOf(head, mark));
+      box.appendChild(lineOf(head, mark, tint));
     }
-    for (var i = from; i < list.length; i++) box.appendChild(lineOf(list[i]));
+    for (var i = from; i < list.length; i++) box.appendChild(lineOf(list[i], null, tint));
   }
   // The bubble's words: the element's own, or the groups a help dot gathers. 0 - nothing to show, 1 - the bubble
   // already shows exactly this, 2 - written.
   function paint(el) {
-    var rows = isHelp(el) ? helpRows(el) : null, key = rows ? rowsKey(rows) : tipOf(el);
-    if (!/\S/.test(key)) return 0;
+    var rows = isHelp(el) ? helpRows(el) : null, tint = rows ? '' : tintOf(el), key = rows ? rowsKey(rows) : tint + '\u0001' + tipOf(el);
+    if (!/\S/.test(rows ? key : tipOf(el))) return 0;
     if (key === shownKey) return 1;
     shownKey = key;
     bubble.textContent = '';
     if (!rows) {
       if (bubble.hasAttribute('data-help')) bubble.removeAttribute('data-help');
-      draw(bubble, key, '');
+      draw(bubble, tipOf(el), '', tint);
       return 2;
     }
     bubble.setAttribute('data-help', '');
     for (var i = 0; i < rows.length; i++) {
       var row = doc.createElement('div');
       row.className = 'tip-row';
-      draw(row, rows[i].text, rows[i].glyph);
+      draw(row, rows[i].text, rows[i].glyph, rows[i].tint);
       bubble.appendChild(row);
     }
     return 2;
