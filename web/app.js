@@ -5410,7 +5410,7 @@
     // `damageRandomization` rides along for the damage roll of the fun layer (22.09), the same field a
     // manual shell already borrows through MANUAL_DAMAGE_KEYS: the ballistics never read it, so the
     // chances, the colours and the verdict lines are untouched by its being there.
-    if(c){['normalization','ricochetCos','jetLossPerMeter','randomization','randomizationType','shieldPenetration',
+    if(c){['normalization','ricochetCos','jetLossPerMeter','traceRicochet','randomization','randomizationType','shieldPenetration',
       'alpha','spallDamage','spallAbsorption','mechanics','nonPiercingArmorDamage','vehicleMode','damageRandomization'].forEach(function(k){if(c[k]!==undefined)shell[k]=c[k];});
       // The penetration at this distance is the client's law in ballistics.js, never a copy of it here (BACKLOG
       // № 32): the field holds the shell's first value (up to 50 m) and falls off by the record's own factor, so
@@ -5791,11 +5791,20 @@
   function armorLine(r,pen,range){
     if(!r)return {label:'—',color:'',groups:[]};
     var prefix=[],hp=damageView&&r.expected!==null&&r.expected!==undefined;
-    if(r.bounce){var b=r.bounce;pen=b.penetration;prefix.push({kind:'ricochet',text:'ricochet '+Math.round(b.nominal)+' mm – '+Math.round(b.angle)+'°'+(b.loss?' · pen −'+Math.round(b.loss*100)+'%':'')});}
+    // After a ricochet (ballistics.js engine.bounced): the chip names what the shell had left at the ricochet and what the
+    // bounced leg starts with; `pen` below becomes the leg's own scale, (1 - loss) of the shell's, which `eff` is read against.
+    if(r.bounce){var b=r.bounce,carried=b.loss&&b.remaining>=0&&b.carried>=0;pen=b.penetration;
+      var spent=b.shell>0&&b.remaining>=0?b.shell-b.remaining:0,firstScreens=(b.layers||[]).filter(function(l){return !l.main;});
+      prefix.push({kind:'ricochet',text:'ricochet '+Math.round(b.nominal)+' mm – '+Math.round(b.angle)+'°'+(carried?' · pen '+Math.round(b.remaining)+' → '+Math.round(b.carried)+' mm':''),
+        title:'Ricochet\nThe shell flies on along the mirrored line'+(b.loss?' with '+Math.round((1-b.loss)*100)+' % of the penetration it had left.':', penetration unchanged (HEAT).')+
+          '\n• Plate: '+Math.round(b.nominal)+' mm at '+Math.round(b.angle)+'°'+
+          (carried?'\n\n• Shell: '+Math.round(b.shell)+' mm'+(firstScreens.length?'\n• Screens before it: '+firstScreens.map(function(l){return Math.round(l.nominal)+' mm';}).join(' + ')+' (−'+Math.round(spent)+' mm)':'')+
+            '\n• Left at the ricochet: '+Math.round(b.remaining)+' mm\n• After it: '+Math.round(b.carried)+' mm (×'+(1-b.loss).toFixed(2)+')'+
+            '\n\n• The chance is scaled by '+Math.round(b.penetration)+' mm ('+Math.round((1-b.loss)*100)+' % of the shell)':'')});}
     var layers=r.layers||[],screens=layers.filter(function(l){return !l.main;}),extra=screens.length?[{kind:'screen',text:'+ '+screens.map(function(s){return Math.round(s.nominal)+' mm';}).join(' + ')+' screen'}]:[];
     var shell=pen?[{kind:'pen',text:'pen '+Math.round(pen)+' mm'+(range?' / '+Math.round(range)+' m':'')}]:[];
     var zero=chanceRgb({chance:0,expectedShare:0}),bounced=chanceRgb({chance:0,expectedShare:0,reason:'ricochet'});
-    if(r.reason==='ricochet')return {label:'Ricochet',color:bounced,groups:prefix.concat([{kind:'armor',text:(r.final?'again, shell lost: ':'')+Math.round(r.nominal)+' mm – '+Math.round(r.angle)+'°'}],shell,extra)};
+    if(r.reason==='ricochet')return {label:'Ricochet',color:bounced,groups:prefix.concat([{kind:'armor',text:(r.final?(r.bounce?'again, shell lost: ':'shell lost: '):'')+Math.round(r.nominal)+' mm – '+Math.round(r.angle)+'°'}],shell,extra)};
     if(r.reason==='screen')return {label:hp?'0 %':'0%',color:zero,groups:prefix.concat([{kind:'armor',text:'explodes on the screen (this HE cannot pass screens)'}],shell,extra)};
     if(r.reason==='no-hull')return r.bounce?{label:hp?'0 %':'0%',color:bounced,groups:prefix.concat(shell)}:{label:'—',color:'',groups:[{kind:'armor',text:'no main armour on this line'}]};
     if(r.reason==='parameters')return {label:'—',color:'',groups:[{kind:'armor',text:'set penetration and calibre'}]};

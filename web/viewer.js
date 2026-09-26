@@ -946,14 +946,23 @@
     return group;
   };
   // Our verdict at every recorded contact point along the drawn line, for the verdict log (server fact vs our
-  // estimate). After a ricochet the ray starts at the ricochet point; otherwise it comes from afar, so screens and
-  // the gun in front of the point count as the server counted them.
+  // estimate). A point's own ray comes from afar, so screens and the gun in front of the point count as the server
+  // counted them. The point after a recorded ricochet is the bounced leg of the one law, engine.bounced (ballistics.js):
+  // from the ricochet point with (1 - loss) times what our ray to the ricochet point had left there, and a further
+  // ricochet ends it. Before 26.09 that ray started with the shell's FULL penetration and flew on past a second
+  // ricochet - 21 lines "server no penetration, we penetrate" of the 26.09 log came from there
+  // (outputs/ricochet-second-leg-2026-09-26.md §3.1).
   Viewer.verdicts=function(engine,pts,shell){
     if(!engine||!shell||!pts)return [];
-    return pts.map(function(p,i){var prev=i?pts[i-1]:null,afterRicochet=prev&&(prev.effect===1||prev.effect===2);
+    var out=[];
+    pts.forEach(function(p,i){var prev=i?pts[i-1]:null,afterRicochet=prev&&(prev.effect===1||prev.effect===2);
       var origin=afterRicochet?prev.pos.clone().addScaledVector(p.line,.02):p.pos.clone().addScaledVector(p.line,-60);
-      var result=null;try{result=engine.ray(origin.toArray(),p.line.toArray(),shell);}catch(e){result=null;}
-      return {index:i,part:p.part,effect:p.effect,pi:p.pi,hitType:p.hitType,prevEffect:prev?prev.effect:null,source:p.source,chordDev:p.chordDev,result:result};});
+      // What the shell had left on reaching the ricochet point, by our ray to it: at our own ricochet there (the first
+      // leg's figure when our ray flew on), at the main plate we met instead, or after its screens.
+      var r0=afterRicochet?out[i-1].result:null,before=r0?(r0.bounce?r0.bounce.remaining:r0.remaining):undefined;
+      var result=null;try{result=afterRicochet?engine.bounced(origin.toArray(),p.line.toArray(),shell,before):engine.ray(origin.toArray(),p.line.toArray(),shell);}catch(e){result=null;}
+      out.push({index:i,part:p.part,effect:p.effect,pi:p.pi,hitType:p.hitType,prevEffect:prev?prev.effect:null,source:p.source,chordDev:p.chordDev,result:result});});
+    return out;
   };
   Viewer.prototype.pointVerdicts=function(shell){return Viewer.verdicts(this.engine,this.shotPoints,shell);};
   Viewer.prototype.shotArrow=function(direction,tip,color){
@@ -1323,7 +1332,7 @@
     var r=result||{},b=r.bounce,round=function(v){return v===undefined||v===null?'-':Math.round(v);};
     return [sample?sample.part:'-',sample?sample.name||'':'',r.reason||'',r.chance===null||r.chance===undefined?'-':r.chance,
       round(r.nominal),round(r.effective),round(r.angle),r.final?'f':'',
-      b?[round(b.nominal),round(b.angle),round(b.penetration),round((b.loss||0)*100)].join('/'):'-',
+      b?[round(b.nominal),round(b.angle),round(b.penetration),round(b.remaining),round(b.carried),round((b.loss||0)*100)].join('/'):'-',
       (r.layers||[]).map(function(l){return (l.main?'m':'s')+round(l.nominal)+'@'+round(l.angle);}).join('+')].join('|');
   };
   Viewer.prototype.inspect=function(event){

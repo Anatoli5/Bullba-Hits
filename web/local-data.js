@@ -167,7 +167,7 @@
     return sceneFor(battle,(battle.hits||[]).find(function(h){return h.id===id;}));
   }
   // expandBattle is published so the offline tools that read a battle file straight from disk
-  // (tools/make_gpu_fixtures.cjs, verify_gpu_browser.cjs, check_shot_selection.cjs) use this one
+  // (tools/check_shot_selection.cjs, tests/test_ballistics.cjs) use this one
   // reader instead of a second copy of the rules.
   window.ArmorInspectorData={receive:receive,index:function(){return read('index');},battle:function(id){return read('battle:'+id);},vehicles:function(){return read('vehicles');},vehicle:function(id){return read('vehicle:'+id);},ttx:function(id){return read('ttx:'+id);},ttxSweep:function(){return read('ttxSweep');},modelsSweep:function(){return read('modelsSweep');},scene:scene,sceneFor:sceneFor,expandBattle:expandBattle};
 }());

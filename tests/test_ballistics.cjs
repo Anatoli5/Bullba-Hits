@@ -45,6 +45,39 @@ assert.ok(result.effective>190&&result.effective<210);
   const s87=Math.sin(87*Math.PI/180),c87=Math.cos(87*Math.PI/180);
   r=B.fromTriangles([floor,wall]).ray([-3*s87,0,3*c87],[s87,0,-c87],B.shell('HOLLOW_CHARGE',200,100));
   assert.ok(r.bounce&&r.bounce.loss===0&&Math.abs(r.bounce.penetration-200)<1e-9,'HEAT keeps its penetration');
+  // 26.09 (user's decision, variant B): the bounced leg carries what the first leg had LEFT - a screen before the ricochet
+  // stays spent: remaining2 = 0.75 x remaining1, the chance scaled by 0.75 x P. Obj. 430U's pinned point: 248 mm, a 30 mm
+  // skirt worth 34 mm -> 214 mm at the ricochet -> 160.5 mm on the second leg (186 before 26.09).
+  const skirt=B.triangle([-1,-5,-5],[-1,5,-5],[-1,0,5],2,'skirt',{armor:34,vehicleDamageFactor:0,useHitAngle:false,mayRicochet:false,collideOnceOnly:true});
+  const p248=B.shell('ARMOR_PIERCING',248,122),thick={...main,armor:150},wall150=B.triangle([2,-5,-5],[2,5,-5],[2,0,5],1,'armor_2',thick);
+  r=B.fromTriangles([skirt,floor,wall150]).ray(origin,direction,p248);
+  assert.ok(r.bounce&&Math.abs(r.bounce.remaining-214)<1e-9&&Math.abs(r.bounce.carried-160.5)<1e-9&&Math.abs(r.bounce.penetration-186)<1e-9&&r.bounce.shell===248,'430U: 214 left at the ricochet, 160.5 carried, chance scaled by 186');
+  assert.equal(r.bounce.layers.length,1,'the skirt is the first leg\'s layer');
+  const wallEff=B.effective(thick,Math.cos(15*Math.PI/180),p248);
+  assert.equal(r.reason,'penetration');assert.equal(r.remaining,160.5);
+  assert.equal(r.chance,B.chance(160.5,wallEff,186,.25,'NORMAL'),'the wall is judged with 160.5 left against a scale of 186');
+  assert.ok(Math.abs(r.effective-(186-160.5+wallEff))<1e-9,'eff: the carried loss is part of what the leg must beat');
+  assert.ok(r.chance<B.chance(186,wallEff,186,.25,'NORMAL'),'lower than the old restart from 186');
+  // The same leg through the one owner the Statistics log uses for the point after a recorded ricochet.
+  const eng=B.fromTriangles([skirt,floor,wall150]),again=eng.bounced([r.bounce.point[0]+r.bounce.direction[0]*1e-3,r.bounce.point[1]+r.bounce.direction[1]*1e-3,r.bounce.point[2]+r.bounce.direction[2]*1e-3],r.bounce.direction,p248,214);
+  assert.equal(again.chance,r.chance);assert.equal(again.remaining,160.5);
+  assert.equal(eng.bounced([0,0,1],[1,0,0],p248).remaining,186,'remaining unknown: the leg starts from 0.75 x P');
+  // A shell with enableTraceRicochet false (AAAC, Charlie 3/Delta 6, JPNh, PG70) is lost at its first ricochet.
+  r=B.fromTriangles([floor,wall]).ray(origin,direction,{...ap,traceRicochet:false});
+  assert.equal(r.reason,'ricochet');assert.equal(r.final,true);assert.equal(r.bounce,undefined,'no second leg for a no-trace shell');
+  assert.equal(B.shell('ARMOR_PIERCING',200,100).traceRicochet,true,'the client default: the shell flies on');
+}
+// Ties (26.09): two materials met at the same distance go by material id - the order of first appearance, the id the GPU
+// surface gives them - whatever order the tree is walked in. Here the tree's leaf holds the screen before the plate (by the
+// triangles' centres), the flat engine the other way round; before, the two engines disagreed.
+{
+  const plate={...main},skin={armor:20,vehicleDamageFactor:0,useHitAngle:false,mayRicochet:false,collideOnceOnly:true};
+  const P=B.triangle([0,-5,0],[22,-5,0],[0,5,0],1,'armor_1',plate),S=B.triangle([-20,-5,0],[2,-5,0],[2,5,0],2,'track',skin);
+  const far=Array.from({length:11},(_,i)=>B.triangle([50+i,-5,0],[51+i,-5,0],[50+i,5,0],3,'armor_1',plate));
+  for(const [list,eff,name] of [[[P,S,...far],100,'plate first'],[[S,P,...far],120,'screen first']]){
+    const a=B.fromTriangles(list).ray([1,0,5],[0,0,-1],shell),b=B.fromTriangles(list,true).ray([1,0,5],[0,0,-1],shell);
+    assert.equal(a.effective,eff,'tree, '+name);assert.equal(b.effective,eff,'flat, '+name);
+  }
 }
 assert.equal(B.chance(100,100,100,0,'NORMAL'),100);
 assert.equal(B.chance(100,100,100,.25,'UNKNOWN'),null);

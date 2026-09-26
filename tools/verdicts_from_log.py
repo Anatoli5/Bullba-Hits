@@ -227,7 +227,9 @@ def ricochet_tables(rows):
     print('')
     print('Hits by chain of effects (%d hits, pages from 22.09): %s' % (len(hits), dict(Counter(r.get('chain', '-') for r in hits).most_common())))
     after = [r for r in rows if r.get('prev') == '1']
-    print('After an intermediate ricochet (prev=1, our ray starts at the ricochet point with the full penetration): %d lines' % len(after))
+    # Page lines before 26.09 started this ray with the shell's full penetration; from 26.09 it is the bounced leg of the
+    # page's one law (0.75 x what the ray to the ricochet point had left there, a further ricochet ends it).
+    print('After an intermediate ricochet (prev=1, our bounced leg from the ricochet point): %d lines' % len(after))
     if after:
         print('  %s' % dict(Counter(classify(r) for r in after)))
         print('  by server effect: %s' % dict(Counter((r.get('server', '?'), ours_class(r)) for r in after)))

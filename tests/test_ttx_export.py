@@ -274,6 +274,20 @@ class EnsureTtxTests(unittest.TestCase):
         self.assertTrue(self.build(lambda: again.ensure_ttx('germany:G1_Test', inline=True)))
         self.assertTrue(fresh.ttx_current('germany:G1_Test'))
 
+    def test_a_file_of_an_older_format_is_built_again_once(self):
+        # 26.09: TTX_FORMAT 2 (the shells' traceRicochet) - a file without the field is format 1 and is built again.
+        self.assertTrue(self.build(lambda: self.exporter.ensure_ttx('germany:G1_Test', inline=True)))
+        key, value = json.loads(self.path.read_text(encoding='ascii')[len('ArmorInspectorData.receive('):-3])
+        self.assertEqual(value['format'], ex.TTX_FORMAT)
+        fresh = ex.Exporter(self.temp.name, self.temp.name, 'version\n')
+        self.assertTrue(fresh.ttx_current('germany:G1_Test'))
+        del value['format']
+        ex.write_data(str(self.path), key, value)
+        self.assertFalse(fresh.ttx_current('germany:G1_Test'))
+        again = ex.Exporter(self.temp.name, self.temp.name, 'version\n')
+        self.assertTrue(self.build(lambda: again.ensure_ttx('germany:G1_Test', inline=True)))
+        self.assertTrue(fresh.ttx_current('germany:G1_Test'))
+
     def test_without_the_client_the_type_fails_once_and_is_not_retried(self):
         with patch.dict(sys.modules, {'items': None}):
             self.assertFalse(self.exporter.ensure_ttx('germany:G1_Test', inline=True))

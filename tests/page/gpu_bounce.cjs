@@ -10,7 +10,9 @@
  * paints ~100 % where the CPU gives ~20 %. Which surface the old first-hit traversal returned depended on the sign of
  * the direction on the BVH split axis, so the scene is run in both x directions and with both material id orders.
  * Also: the composite without the bounced leg (library hidden) and with Soft lighting still compile and render (lit: the
- * zone flag only, the light scales the colour).
+ * zone flag only, the light scales the colour). 26.09: a 30 mm skirt across the first leg - the bounced leg starts with
+ * 0.75 x what was left behind it (variant B, engine.bounced), both x directions; a shell with traceRicochet false paints
+ * the plain ricochet colour and no zone.
  *
  * Test seam: an init script hides WEBGL_debug_renderer_info, so the Surface's software-WebGL guard (a performance
  * gate, not a correctness one) lets SwiftShader run the real program. Nothing in web/ is changed for the test.
@@ -47,7 +49,8 @@ window.__gpuBounce = function (sign, trackFirst, options) {
     floor: Object.assign({}, main, {armor: 60}),
     track: {armor: 20, vehicleDamageFactor: 0, useHitAngle: false, mayRicochet: false, checkCaliberForRicochet: false, checkCaliberForHitAngleNorm: false, collideOnceOnly: true},
     side: Object.assign({}, main, {armor: 90}),
-    back: Object.assign({}, main, {armor: 20})
+    back: Object.assign({}, main, {armor: 20}),
+    skirt: {armor: 30, vehicleDamageFactor: 0, useHitAngle: false, mayRicochet: false, checkCaliberForRicochet: false, checkCaliberForHitAngleNorm: false, collideOnceOnly: true}
   };
   const tris = [];
   function quad(part, name, a, b, c, d) { const m = function (p) { return [p[0] * sign, p[1], p[2]]; };
@@ -57,6 +60,9 @@ window.__gpuBounce = function (sign, trackFirst, options) {
   const hull = function () { quad(1, 'floor', [-3, 0, -2], [-3, 0, 2], [1.2, 0, 2], [1.2, 0, -2]); wall(1, 'side', 1.6); wall(1, 'back', 2.2); };
   const chassis = function () { wall(2, 'track', 1.3); wall(2, 'track', 1.6); };
   if (trackFirst) { chassis(); hull(); } else { hull(); chassis(); }
+  // options.screen: a 30 mm skirt across the first leg, in front of the floor (the mirrored leg never comes back to it):
+  // the bounced leg must start with 0.75 x what was left behind it, as the CPU's engine.bounced does.
+  if (options.screen) wall(3, 'skirt', -3.5);
   const engine = B.fromTriangles(tris);
   const canvas = document.createElement('canvas'); document.body.appendChild(canvas);
   const renderer = new T.WebGLRenderer({canvas: canvas, antialias: false}); renderer.setPixelRatio(1); renderer.setSize(W, H, false);
@@ -67,23 +73,39 @@ window.__gpuBounce = function (sign, trackFirst, options) {
   if (options.lit) out.lit = surface.setLighting(true);
   const camera = new T.PerspectiveCamera(40, W / H, .1, 100), anchor = new T.Vector3(0, 0, 0);
   camera.position.set(-8 * sign, 1.8, .4); camera.lookAt(anchor); camera.updateMatrixWorld(); camera.updateProjectionMatrix();
-  const shell = B.shell('ARMOR_PIERCING', 140, 100);
+  const shell = B.shell('ARMOR_PIERCING', options.pen || 140, 100);
+  if (options.noTrace) shell.traceRicochet = false;
+  out.carryMatters = 0; out.ricochetColour = 0;
   surface.render(camera, anchor, shell, 'accessible', .35, 'high', W, H, 1, 'always', 'chance');
   const data = new Float32Array(W * H * 4); renderer.readRenderTargetPixels(surface.result, 0, 0, W, H, data);
   // The accessible palette's inverse: g rises to .75 on the lower half, only the upper half goes past it.
   const chanceOf = function (r, g) { return g > .75 + 1e-6 ? .5 + (.95 - r) / 1.5 : (g - .18) / 1.14; };
+  const paletteOf = function (p) { const lo = [.63, .18, .55], mid = [.95, .75, .31], hi = [.20, .84, .76];
+    return p < .5 ? lo.map(function (c, k) { return c + (mid[k] - c) * p * 2; }) : mid.map(function (c, k) { return c + (hi[k] - c) * (p * 2 - 1); }); };
   const o = [camera.position.x, camera.position.y, camera.position.z], v = new T.Vector3();
   for (let py = 0; py < H; py += 2) for (let px = 0; px < W; px += 2) {
     v.set((px + .5) / W * 2 - 1, (py + .5) / H * 2 - 1, -1).unproject(camera).sub(camera.position).normalize();
     const d = [v.x, v.y, v.z], r = engine.ray(o, d, shell);
-    const first = r.bounce ? r.bounce.point : null;
+    // A no-trace shell has no bounce on record: its ricochet contact is the result's own hit.
+    const lost = r.reason === 'ricochet' && r.hit && !r.bounce, dir = r.direction || d;
+    const first = r.bounce ? r.bounce.point : lost ? [o[0] + dir[0] * r.hit.distance, o[1] + dir[1] * r.hit.distance, o[2] + dir[2] * r.hit.distance] : null;
+    const part = r.bounce ? r.bounce.part : lost ? r.hit.triangle.part : -1;
     // Only pixels that ricochet off the floor well inside its edges: the case under test, never a silhouette texel.
-    if (!first || r.bounce.part !== 1 || first[1] > 1e-6 || Math.abs(first[2]) > 1.5 || first[0] * sign < -2.5 || first[0] * sign > 1) continue;
+    if (!first || part !== 1 || first[1] > 1e-6 || Math.abs(first[2]) > 1.5 || first[0] * sign < -2.5 || first[0] * sign > 1) continue;
     const i = (py * W + px) * 4, a = data[i + 3], zone = a - 4 * Math.floor(a / 4) >= 2;
+    if (lost && !zone && Math.abs(data[i] - .567) < .02 && Math.abs(data[i + 1] - .1755) < .02 && Math.abs(data[i + 2] - .55) < .02) out.ricochetColour++;
+    // Where the carried remaining changes the answer: the same leg restarted from 0.75 x P (the rule before 26.09).
+    if (r.bounce && r.reason === 'penetration') { const b = r.bounce, restart = engine.bounced([b.point[0] + b.direction[0] * 1e-3, b.point[1] + b.direction[1] * 1e-3, b.point[2] + b.direction[2] * 1e-3], b.direction, shell, shell.penetration);
+      if (Math.abs((restart.chance || 0) - r.chance) >= 5) out.carryMatters++; }
     const cpuZone = r.reason === 'penetration', cpu = cpuZone ? r.chance / 100 : null;
     out.compared++; if (zone) out.zone++; if (cpuZone) out.cpuZone++;
     const gpu = zone ? chanceOf(data[i], data[i + 1]) : null;
-    if (zone !== cpuZone || (zone && !options.lit && Math.abs(gpu - cpu) > .02)) { if (out.mismatches.length < 5) out.mismatches.push({px: px, py: py, cpu: cpu, gpu: gpu, layers: (r.layers || []).map(function (l) { return l.material; }).join('+')}); out.bad = (out.bad || 0) + 1; }
+    // Behind a skirt the composite greys the colour (the front layer is a screen: mix with (.45,.50,.55) by the opacity),
+    // so there the CPU chance is turned into that colour instead of the colour into a chance.
+    let off = zone && !options.lit && Math.abs(gpu - cpu) > .02;
+    if (options.screen && zone) { const e = paletteOf(cpu).map(function (c, k) { return c + ([.45, .50, .55][k] - c) * .35; });
+      off = Math.abs(data[i] - e[0]) > .02 || Math.abs(data[i + 1] - e[1]) > .02 || Math.abs(data[i + 2] - e[2]) > .02; }
+    if (zone !== cpuZone || off) { if (out.mismatches.length < 5) out.mismatches.push({px: px, py: py, cpu: cpu, gpu: gpu, layers: (r.layers || []).map(function (l) { return l.material; }).join('+')}); out.bad = (out.bad || 0) + 1; }
   }
   surface.dispose(); renderer.dispose(); canvas.remove();
   return out;
@@ -108,6 +130,15 @@ async function main() {
     }
     const off = await page.evaluate('__gpuBounce(1,false,{noBounce:true})');
     ok('without three-mesh-bvh: the composite compiles without the leg and paints no zone', off.bounce === false && off.zone === 0 && off.compared > 200, '(' + off.reason + ', zone ' + off.zone + ')');
+    // 26.09: the leg carries what the first leg left behind a screen (variant B), in both x directions.
+    for (const sign of [1, -1]) {
+      const sc = await page.evaluate('__gpuBounce(' + sign + ',false,{screen:true,pen:200})');
+      ok('skirt before the ricochet, ' + (sign > 0 ? '+x' : '-x') + ': GPU zone and chance equal the CPU walk with the carried remaining', sc.compared > 200 && !sc.bad, '(' + (sc.bad || 0) + ' of ' + sc.compared + ' differ, e.g. ' + JSON.stringify(sc.mismatches) + ')');
+      ok('skirt before the ricochet, ' + (sign > 0 ? '+x' : '-x') + ': the carried remaining changes the chance on many pixels', sc.carryMatters > 50, '(' + sc.carryMatters + ')');
+    }
+    // A shell with enableTraceRicochet false: lost at the ricochet - no zone, the plain ricochet colour, no leg on the CPU.
+    const nt = await page.evaluate('__gpuBounce(1,false,{noTrace:true})');
+    ok('no-trace shell: no second leg on either side, the ricochet colour everywhere', nt.compared > 200 && nt.zone === 0 && nt.cpuZone === 0 && nt.ricochetColour === nt.compared, '(compared ' + nt.compared + ', zone ' + nt.zone + ', CPU zone ' + nt.cpuZone + ', ricochet colour ' + nt.ricochetColour + ')');
     const lit = await page.evaluate('__gpuBounce(-1,true,{lit:true})');
     ok('Soft lighting with the leg: the lit composite compiles and flags the same zone as the CPU (the light scales the colour)', lit.lit === true && lit.bounce === true && !lit.bad, '(lit ' + lit.lit + ', ' + (lit.bad || 0) + ' differ)');
     ok('no uncaught exception in the page', page.errors.length === 0, page.errors.slice(0, 3).join(' | '));

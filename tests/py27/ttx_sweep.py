@@ -112,7 +112,7 @@ try:
         if battle_on_call[0] and len(calls) == battle_on_call[0]: current.recorder.in_battle = True
         if type_name in broken: raise ValueError('the client refused this type')
         if log: ex.LOG.info('TTX %s: 1 pairs, 1.0 ms', type_name)
-        return {'schema': ex.TTX_SCHEMA, 'modesSchema': ex.TTX_MODES_SCHEMA, 'armorSchema': ex.TTX_ARMOR_SCHEMA,
+        return {'schema': ex.TTX_SCHEMA, 'modesSchema': ex.TTX_MODES_SCHEMA, 'armorSchema': ex.TTX_ARMOR_SCHEMA, 'format': ex.TTX_FORMAT,
                 'id': ex.vehicle_id(type_name), 'type': type_name, 'clientVersion': version,
                 'vehicle': {'hasTurret': True, 'modes': {}}, 'configs': [{'turret': 0, 'gun': 'g'}], 'warnings': []}
 

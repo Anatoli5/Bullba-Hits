@@ -192,6 +192,9 @@ def shot_parameters(shot, source):
             'normalization':float(getattr(shell_type, 'normalizationAngle', 0)),
             'ricochetCos':float(getattr(shell_type, 'ricochetAngleCos', -1)),
             'jetLossPerMeter':float(getattr(shell_type, 'piercingPowerLossFactorByDistance', 0)),
+            # enableTraceRicochet (shell_components ArmorPiercingType/HollowChargeType, client default True; false on 28
+            # shells): False = the shell is lost at its first ricochet, the page draws no leg after it (26.09).
+            'traceRicochet':bool(getattr(shell_type, 'enableTraceRicochet', True)),
             'randomization':float(shell.piercingPowerRandomization),
             'randomizationType':shell.piercingPowerRandomizationType,
             'shieldPenetration':bool(getattr(shell_type, 'shieldPenetration', False)),

@@ -1,6 +1,6 @@
 /* A local headless Chrome (or Edge) driven over the DevTools protocol on a pipe - no npm package, no port, no window.
  *
- * The approach of tools/verify_gpu_browser.cjs: a temporary profile of its own, --remote-debugging-pipe (fd 3/4),
+ * A temporary profile of its own, --remote-debugging-pipe (fd 3/4),
  * nothing of the user's browser profile is read. Network is cut off with a resolver rule, so a page can reach nothing
  * but file:// - the product is a local page and must work that way.
  *

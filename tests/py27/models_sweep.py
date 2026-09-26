@@ -140,7 +140,7 @@ try:
         return dict(MODEL)
 
     def fake_ttx(type_name, version, log=True):
-        return {'schema': ex.TTX_SCHEMA, 'modesSchema': ex.TTX_MODES_SCHEMA, 'armorSchema': ex.TTX_ARMOR_SCHEMA,
+        return {'schema': ex.TTX_SCHEMA, 'modesSchema': ex.TTX_MODES_SCHEMA, 'armorSchema': ex.TTX_ARMOR_SCHEMA, 'format': ex.TTX_FORMAT,
                 'id': ex.vehicle_id(type_name), 'type': type_name, 'clientVersion': version,
                 'vehicle': {'hasTurret': True, 'modes': {}}, 'configs': [], 'warnings': []}
 

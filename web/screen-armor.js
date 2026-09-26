@@ -150,10 +150,12 @@ bool nextContact(vec3 origin,vec3 direction,float lastDist,int lastId,out float 
  }
  return found;
 }
-// The leg after a ricochet: the same law walked along the mirrored ray with the reduced penetration.
+// The leg after a ricochet: the same law walked along the mirrored ray, ArmorBallistics engine.bounced - it starts with
+// (1-loss) times what the first leg had LEFT at the ricochet (its screens stay spent) and its chance is scaled by
+// (1-loss) times the shell's penetration (user's decision 26.09, variant B). The collide-once list starts afresh, as on the CPU.
 // -4 = a second ricochet (the shell is lost), -2 = flies past, -1 = unknown, 0..1 = chance on main armour.
-float bounceLeg(vec3 origin,vec3 direction,float nominal){
- Walk w;w.remaining=nominal;w.nominal=nominal;w.jetStart=0.0;w.jetRate=0.0;w.jet=false;w.screens=0;w.gate=1.0;
+float bounceLeg(vec3 origin,vec3 direction,float remaining,float nominal){
+ Walk w;w.remaining=remaining;w.nominal=nominal;w.jetStart=0.0;w.jetRate=0.0;w.jet=false;w.screens=0;w.gate=1.0;
  int ignored[${COUNT}];int ignoredCount=0;
  float at=-1.0;int id=-1; // the key of the last contact; (-1, -1) lets the first one be anything the triangle test accepts
  for(int i=0;i<${COUNT};i++){
@@ -172,7 +174,8 @@ float bounceLeg(vec3 origin,vec3 direction,float nominal){
  if(bounced&&uBounce!=0){
   vec3 n=dot(ray,face)>0.0?-face:face;
   vec3 mirrored=normalize(ray-2.0*dot(ray,n)*n);
-  float after=bounceLeg(spot+n*.002+mirrored*.001,mirrored,uPen.x*(1.0-uRicochetLoss));
+  float keep=1.0-uRicochetLoss;
+  float after=bounceLeg(spot+n*.002+mirrored*.001,mirrored,leftPen*keep,uPen.x*keep);
   // A bounced shell that still penetrates is painted in its own chance colour and the pixel is flagged for the
   // mark pass. The flag rides in alpha because this composite goes into a float target with blending off; a
   // single pass could never draw the zone's contour, which needs to know whether the neighbour is in the zone.
@@ -229,9 +232,9 @@ int contact(int id,float cosine,float along,inout Walk w,out float result){
  return flags.x>.5?3:0;
 }
 // The direct result: -3 = nothing on this pixel, -2 = no main armour, -1 = unknown, 0..1 = chance.
-// On a ricochet it also reports the contact, so the bounced leg can start there.
-float evaluate(vec2 uv,vec3 ray,out vec4 front,out bool screen,out int screens,out bool bounced,out vec3 spot,out vec3 face){
- vec4 first=layer(0,uv);front=vec4(-2.0);screen=false;screens=0;bounced=false;spot=uOrigin;face=uForward;
+// On a ricochet it also reports the contact and what the shell had left there (leftPen), so the bounced leg starts there.
+float evaluate(vec2 uv,vec3 ray,out vec4 front,out bool screen,out int screens,out bool bounced,out vec3 spot,out vec3 face,out float leftPen){
+ vec4 first=layer(0,uv);front=vec4(-2.0);screen=false;screens=0;bounced=false;spot=uOrigin;face=uForward;leftPen=uPen.x;
  if(first.y<.5)return -3.0;
  front=material(int(floor(first.y))-1,0);screen=front.y<=EPS;
  if(uFlags.w==0){return -1.0;}
@@ -246,7 +249,7 @@ float evaluate(vec2 uv,vec3 ray,out vec4 front,out bool screen,out int screens,o
   if(status==0)continue;
   result=value;finished=true;
   // The peel keeps the depth relative to the target plane: P = origin + ray * (d - offset).
-  if(status==2){spot=uOrigin+ray*(hit.x-dot(uOrigin-uAnchor,uForward)/max(.001,dot(ray,uForward)));face=octDecode(hit.zw);bounced=true;}
+  if(status==2){spot=uOrigin+ray*(hit.x-dot(uOrigin-uAnchor,uForward)/max(.001,dot(ray,uForward)));face=octDecode(hit.zw);bounced=true;leftPen=w.remaining;}
   break;
  }
  screens=w.screens;
@@ -254,9 +257,9 @@ float evaluate(vec2 uv,vec3 ray,out vec4 front,out bool screen,out int screens,o
  return result;
 }${bounceLeg}
 void main(){
- vec4 front;bool screen;int screens;bool bounced;vec3 spot,face;bool zone=false;
+ vec4 front;bool screen;int screens;bool bounced;vec3 spot,face;float leftPen;bool zone=false;
  vec2 texel=1.0/vec2(textureSize(uLayer0,0));vec3 ray=pixelRay((floor(vUV/texel)+.5)*texel); // the peeled texel's own ray, so the contact point sits on the plate even when layers are smaller than the window
- float result=evaluate(vUV,ray,front,screen,screens,bounced,spot,face);
+ float result=evaluate(vUV,ray,front,screen,screens,bounced,spot,face,leftPen);
  // Every screen layer on the ray adds its own share of grey: two screens read darker than one.
  float share=1.0-pow(1.0-uOpacity,float(max(1,screens)));
  if(result<-2.5){outputColor=vec4(0.0);return;}
@@ -789,7 +792,10 @@ void main(){
     var settled=bounceMode==='always'||!(Math.max(0,now-(this.movedAt||0))<SETTLE);
     // The bounced leg is traced through the GPU BVH, which a previewed pose has left behind (pose(), bvhStale): off
     // until update() rebuilds it, however long the drag holds still (VIEW-01).
-    u.uBounce.value=this.bounce&&settled&&!this.bvhStale?1:0;this.bouncePending=this.bounce&&!settled;
+    // A shell with traceRicochet false (enableTraceRicochet, ballistics.js shell) is lost at its ricochet: no leg at all, the
+    // plain ricochet colour and no zone - the same as the CPU walk's final ricochet.
+    var trace=this.bounce&&s.traceRicochet!==false;
+    u.uBounce.value=trace&&settled&&!this.bvhStale?1:0;this.bouncePending=trace&&!settled;
     if(stale){
       this.captureCamera.copy(camera);var distance=camera.position.distanceTo(anchor),span=Math.max(5,this.radius*3);this.captureCamera.near=Math.max(.01,distance-span);this.captureCamera.far=distance+span;this.captureCamera.updateProjectionMatrix();
       var p=this.peelMaterial.uniforms;p.uOrigin.value.copy(camera.position);p.uAnchor.value.copy(anchor);p.uForward.value.copy(anchor).sub(camera.position).normalize();

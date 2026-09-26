@@ -1935,7 +1935,9 @@ TTX_SWEEP_SLICE = 0.06
 # last_stand, story_mode, white_tiger, comp7...). A type's key is the CRC-32 of those members' CRCs (the packages' central
 # directories, no unpacking) with TTX_FORMAT, which is raised whenever ttx_block writes anything different. The .pyc carry
 # a zero time stamp, so an unchanged module keeps its CRC. TTX_SOURCE_SKIP: common files no characteristic is read from.
-TTX_FORMAT = 1
+# The file carries its format too ('format'): ttx_current takes a file of another format as missing, so a raise reaches the
+# page's own per-type request as well as the sweep (whose keys it changes). 2 (26.09): the shells' traceRicochet.
+TTX_FORMAT = 2
 TTX_SOURCE = re.compile(r'^(?:[^/]+/)?scripts/(?:item_defs/vehicles/|common/items/)')
 TTX_SOURCE_SKIP = re.compile(r'item_defs/vehicles/common/(?:customization|damage_stickers|player_emblems|'
                              r'forbidden_vehicles_to_battle_config|equipments|optional_devices|post_progression|prefab_effects)'
@@ -2336,7 +2338,7 @@ def ttx_block(type_name, version, log=True):
     if modes.get('rocketAcceleration'):
         ttx_take(vehicle, 'rocketAcceleration', lambda: rocket_block(vtype.rocketAccelerationParams), warnings,
                  'Rocket acceleration')
-    result = {'schema': TTX_SCHEMA, 'modesSchema': TTX_MODES_SCHEMA, 'armorSchema': TTX_ARMOR_SCHEMA,
+    result = {'schema': TTX_SCHEMA, 'modesSchema': TTX_MODES_SCHEMA, 'armorSchema': TTX_ARMOR_SCHEMA, 'format': TTX_FORMAT,
               'id': vehicle_id(type_name), 'type': str(type_name),
               'clientVersion': version, 'producedAt': time.time(), 'buildMs': round((TTX_TIMER() - started) * 1000.0, 1),
               'vehicle': vehicle, 'modules': modules, 'turrets': turrets, 'shells': shells,
@@ -3493,6 +3495,9 @@ class Exporter(object):
             return False
         # Any file that predates the armour and the suspension's repair (23.09) is built again, once.
         if value.get('armorSchema') != TTX_ARMOR_SCHEMA:
+            return False
+        # So is a file of another TTX_FORMAT (a file without the field is format 1: before the shells' traceRicochet).
+        if value.get('format', 1) != TTX_FORMAT:
             return False
         # A vehicle with a second mode or a rocket booster whose file predates their fields is built again, once.
         vehicle = value.get('vehicle') or {}
