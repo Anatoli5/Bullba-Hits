@@ -1266,6 +1266,9 @@
     if (a && Array.isArray(a.gunMechanics) && a.gunMechanics.indexOf('chargeableBurst') >= 0) {
       extra += (extra ? '\n' : '\n\n') + '• Burst: only in the Burst mode; under ⌖ the mode button switches it';
     }
+    // The recorded shot's damaged gun (P3, aimGunDamage): said where the circle's other gun states are said.
+    var damage = aimGunDamage(a);
+    if (damage !== 1) extra += (extra ? '\n' : '\n\n') + '• Gun damaged at this shot: circle ×' + aimNum(damage) + ' (the gun’s own penalty); ⌖ keeps it on the circle';
     if (a && a.secondaryFrom) extra += (extra ? '\n' : '\n\n') + 'This is the vehicle’s second gun, taken up with the ⌖ mode button.';
     load.title = AIM_GUN_LOAD_TITLE + extra;
     load.setAttribute('data-mechanics', kind || 'unknown');
@@ -1779,6 +1782,7 @@
             aimingTime: aimMul(e, 'aimingTimeFactor') / g, // gunAimingTimeFactor and the gunner
             reload: aimMul(e, 'reloadTimeFactor') / l,     // gunReloadTimeFactor and the loader
             turretSpeed: aimMul(e, 'turretRotationSpeed') * g,  // miscAttrs/turretRotationSpeed
+            gunSpeed: g,                                   // gun/rotationSpeed, the elevation: the gunner alone (no device)
             hullSpeed: aimMul(e, 'hullRotationSpeed'),     // Clutch Braking and the hull part of the rotation mechanism
             magazineReload: aimMul(e, 'magazineReload'),   // Mag Mastery: the whole magazine (ballistics.js reloadSeconds)
             // miscAttrs gunShotDispersionFactorsAfterShot, a field modification (23.09): its own key, not the tier-XI
@@ -3083,6 +3087,21 @@
     }
     return aimBare;
   }
+  // THE RECORDED SHOT'S DAMAGED GUN (26.09, fields audit P3). The server multiplies the circle by the gun's
+  // shotDispersionFactors/whileGunDamaged while the gun is damaged - measured in the owner's records: the own
+  // shotDispMultiplierFactor went x2.000 right after a gun crit (AMX M4 54, Pojistka) and back at the repair; x1.600 on
+  // a K-91, whose gun has 2.0 and whose field modification of medium tanks (Module Durability Increase) takes -20 % of
+  // it. The recorder writes the own gun's device state with every own shot since the build after 0.8.3
+  // (shotContext.gunDevice); under ✸ the emulation continuing from such a shot keeps the multiplier - the recorded
+  // rings carry it already, being the server's. Nothing for a foreign shot (its gun's state is not sent), an older
+  // record, a block without the figure (no invented 2.0), or once the view is not that shot. No switch of its own: the
+  // record says it. The field modification's share is not modelled (Config has no such effect).
+  function aimGunDamage(a) {
+    var d = activeHit && shotContext ? shotContext.gunDevice : null;
+    if (d !== 'critical' && d !== 'destroyed') return 1;
+    var f = Number(a && a.whileGunDamagedFactor);
+    return f > 0 && isFinite(f) ? f : 1;
+  }
   // What the configuration KEEPS of the record's own four factors - the field modifications it does not set
   // itself (aimBaseFactors above) - in words, for the Config button's tooltip, or ''. Nothing when the game
   // fixes this vehicle's equipment: the record's own then stays in whole, and the tooltip says so already.
@@ -3107,6 +3126,9 @@
   // The aim block the ring was last computed on (sceneShown compares it with the block of a new scene, audit PD-03).
   var aimNowBlock = null;
   var aimReload = null, aimClip = 0, aimClipSize = 1, aimShot = null, aimLastState = null;
+  // The barrel the next round leaves (26.09, fields audit P4): a multi-barrel gun's rounds take its barrels in turn
+  // (the records' own tracers: gunIndex 0, 1, 0, 1 - 100 of 127 successive pairs, the rest a tracer not seen), from 0.
+  var aimBarrel = 0;
   // The virtual hull heading, in radians, kept for this session only (user, 20.09): A and D turn it,
   // the gun goes with it and the turret chases back to the crosshair. Reset whenever the run is reset.
   var aimHeading = 0;
@@ -3166,10 +3188,17 @@
     return {speed: aimMove ? aimMove.speed : 0, hullTurn: aimMove ? aimMove.hullTurn : 0,
             hullMax: aimMove ? aimMove.hullMax : 0, turretTurn: 0};
   }
+  // Where the next round leaves, from the gun's joint (the camera): the block's shotOffsets, one per barrel, taken in
+  // turn (aimBarrel) - the viewer's aimMuzzle turns it with the turret. null for a gun without one (exporter.shot_offsets).
+  function aimOffsetNow(a) {
+    var list = a && Array.isArray(a.shotOffsets) && a.shotOffsets.length ? a.shotOffsets : null;
+    return list ? list[aimBarrel % list.length] : null;
+  }
   function aimTick() {
     aimFrame = 0;
     var a = aimBlockData();
     if (!aimLive || !a || !viewer || !viewer.liveRadius100) { aimClock = 0; return; }
+    if (viewer.setAimOffset) viewer.setAimOffset(aimOffsetNow(a));
     // A DRAG PAUSES THE EMULATION (user, 20.09). While the user turns the model, the turret or the gun,
     // no time passes for the shooter: no key is acted on, the turret does not chase and the circle is
     // left alone. The keys themselves are still tracked, or a key released during the drag would stay
@@ -3184,7 +3213,7 @@
     // 20.09: 'a shot without a shot, exactly when it had settled and I moved the mouse'). Count that frame
     // as one nominal frame instead.
     if (!dt) dt = 1 / 60;   // one nominal frame, never a zero step
-    var mods = aimHeated(aimModifiers());
+    var mods = aimHeated(aimModifiers(), a);
     // The gun's sector of this frame (under ✸ a static gun is held on the hull's axis while driving or switching the
     // mode) and the keys the vehicle drives by (aimKeysNow: the second modes' rules and the autorotation past the sector).
     var yawLimits = aimYawLimits(a);
@@ -3202,9 +3231,11 @@
     // The gun turns only within the shooter's horizontal sector (BACKLOG 40): the gap is the one to the point it can
     // reach, so a gun stopped at its limit has none to close and puts no turret term into the circle - the hull,
     // turned by A or D, carries it on (viewer.aimReach), under ✸ the autorotation too.
+    // The yaw is the turret's and the only part the circle's turret term sees; the elevation goes at the gun's own
+    // speed (26.09, fields audit P2: VehicleGunRotator.__rotate, getNextGunPitch).
     var chase = ArmorBallistics.turretChase(viewer.aimGap(yawLimits), aimMove.hullTurn, a, mods, dt, swung);
     // `turned`: the gun really moved in this frame (chaseAim says so for anything above a micro-radian).
-    var turned = chase.step > 0 && !!viewer.chaseAim(chase.step, yawLimits);
+    var turned = (chase.step > 0 || chase.pitchStep > 0) && !!viewer.chaseAim(chase.step, yawLimits, chase.pitchStep);
     var state = {speed: aimMove.speed, hullTurn: aimMove.hullTurn, hullMax: aimMove.hullMax, turretTurn: chase.turretTurn};
     autoHold(a, state);   // ✸: an automatic gun's stream keeps its term in the circle (nothing otherwise)
     aimNow = ArmorBallistics.aimStep(aimNow, state, a, mods, dt); aimNowBlock = a;
@@ -3627,8 +3658,9 @@
     // into empty space, no reload, the last shot stays (user, 25.09). In the ⌖ mode shots miss as in a battle.
     if (!funOn() && viewer.onModel && !viewer.onModel(centre)) return false;
     var now = aimSeconds();
+    if (viewer.setAimOffset) viewer.setAimOffset(aimOffsetNow(a));   // this round's barrel (P4)
     dualShot(a, now);   // ✸: a dual-accuracy gun is wider from this very round on (nothing otherwise)
-    var mods = aimHeated(aimModifiers()), shell = viewer.shell;
+    var mods = aimHeated(aimModifiers(), a), shell = viewer.shell;
     var chance = shell ? viewer.liveAimProbability(shell, 1024) : null;
     // The fun layer (user, 22.09): with the mode on the shot lands at a point DRAWN inside
     // the live circle instead of at its middle, and the shot line, the pinned panel and the reticle then
@@ -3638,6 +3670,7 @@
     // A pin that refused (no engine, no point) left no verdict of its own, and a shot no line was cast for
     // must not roll damage off the stale one.
     var pinned = viewer.pinAtPoint(point);
+    aimBarrel++;   // the next round leaves the next barrel; the live ring takes it from the next frame
     var landed = fun && pinned ? funShot(shell) : null;
     if (viewer.setAimShot) viewer.setAimShot();   // the ring left behind, drawn before the recoil widens the live one
     // The shot's own figure, on the pinned-shot panel and in the colour of its ring (user, 20.09): the
@@ -3960,10 +3993,11 @@
   }
   // The circle's multiplier of the present band, applied where the client applies it: on the full-aim factor
   // (the `mult` of ArmorBallistics.aimFactor). The same object comes back untouched off ✸ or for a cold band.
-  // The dual-accuracy factor (dualNow, below) is a factor on the same ideal and goes on the same `mult`.
-  function aimHeated(mods) {
+  // The dual-accuracy factor (dualNow, below) is a factor on the same ideal and goes on the same `mult`, and so does
+  // the recorded shot's damaged gun (aimGunDamage). `a`: the block in force, which every caller holds already.
+  function aimHeated(mods, a) {
     if (!funOn()) return mods;
-    var h = heatNow(), f = (h && h.band >= 0 ? h.p.states[h.band].factor : 1) * dualNow();
+    var h = heatNow(), f = (h && h.band >= 0 ? h.p.states[h.band].factor : 1) * dualNow() * aimGunDamage(a);
     if (f !== 1 && mods) mods.mult *= f;
     return xiApply(mods);   // a tier-XI mode or ability in force (BACKLOG 37); nothing for every other vehicle
   }
@@ -4426,7 +4460,7 @@
     cancelHoldTimer();
     aimKeys = {}; aimMove = null; aimNow = null; aimReload = null;
     aimDown = false; aimBurst = false; aimClipDry = false;
-    aimShot = null; aimLastState = null; aimHeading = 0;
+    aimShot = null; aimLastState = null; aimHeading = 0; aimBarrel = 0;
     // The hull faces the gun again: its yaw in the shooter's sector starts from the middle (BACKLOG 40).
     if (viewer) { viewer.aimHold = false; viewer.aimYaw = 0; if (viewer.clearAimShot) viewer.clearAimShot(); }
     aimLoadFull();
@@ -4483,7 +4517,10 @@
   };
   var XI_SECONDARY_CLEAR = {afterShotInBurstFactor: undefined, burst: undefined, autoreload: undefined, autoShoot: undefined,
     dualAccuracy: undefined, dualGun: undefined, twinGun: undefined, temperatureGun: undefined, overheatGun: undefined,
-    heatingZonesGun: undefined, gunMechanics: undefined, clip: [1, 0]};
+    heatingZonesGun: undefined, gunMechanics: undefined, clip: [1, 0],
+    // The main gun's elevation speed, damaged-gun factor and barrels are not the second gun's (26.09): a block that has
+    // its own brings them (exporter.secondary_aim), an older one moves its pitch at once and leaves from the joint.
+    gunPitchSpeed: undefined, whileGunDamagedFactor: undefined, shotOffsets: undefined};
   var xiMech = null, xiTimer = 0, xiAimView = null, xiShellBack = '', xiPaintKey = '', xiTitleKey = '', xiSpecHit = null, xiSpecVal = null, xiSpecTtx = null;
   // The words of the button's aria-label, by kind (the three the emulation does not run carry their own).
   var XI_LABEL = {stance: 'Stance', ability: 'Gyro-stabiliser', designator: 'Target designator', weapon: 'Second gun',
@@ -5015,7 +5052,7 @@
     if (back) { aimReload = back.reload; aimClip = back.clip; aimClipSize = back.size; aimRefill = back.refill; }
     else { aimReload = null; aimLoadFull(); }
     var a = aimBlockData();
-    if (a) { aimNow = ArmorBallistics.aimStep(null, aimLastState || aimState(), a, aimHeated(aimModifiers()), 0); aimNowBlock = a; }
+    if (a) { aimNow = ArmorBallistics.aimStep(null, aimLastState || aimState(), a, aimHeated(aimModifiers(), a), 0); aimNowBlock = a; }
     aimEstAt = 0; aimEstFine = false;
     xiWeaponShell(m.weapon);
   }

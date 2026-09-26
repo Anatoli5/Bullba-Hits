@@ -101,7 +101,9 @@
   // page's Config block. CLIENT RULE (Avatar.getOwnVehicleShotDispersionAngle 3310-3318): only the plain after-shot
   // term (withShot 1) reads that copy; an automatic gun's controller term and a burst's afterShotInBurst (the gun
   // component's own) never do - so it goes on the recorded afterShot alone, never on a shotTerm handed in.
-  var NO_MODS={mult:1,additive:1,movement:1,rotation:1,turret:1,aimingTime:1,turretSpeed:1,hullSpeed:1,reload:1,magazineReload:1,afterShot:1,afterShotField:1,speed:1,forwardSpeed:1,backwardSpeed:1};
+  // `gunSpeed` (26.09): the gun's elevation speed, gun/rotationSpeed - the gunner scales it with the turret's
+  // (VehicleDescrCrew._updateGunnerFactors); no device of the page's catalogue touches it.
+  var NO_MODS={mult:1,additive:1,movement:1,rotation:1,turret:1,aimingTime:1,turretSpeed:1,hullSpeed:1,reload:1,magazineReload:1,afterShot:1,afterShotField:1,speed:1,forwardSpeed:1,backwardSpeed:1,gunSpeed:1};
   var ZERO_MODS={movement:1,rotation:1,turret:1,speed:1};
   function aimMods(mods){
     var out={},keys=Object.keys(NO_MODS);
@@ -307,24 +309,36 @@
   // factors['turret/rotationSpeed'] = f). OUR APPROXIMATION is what the turret spends that speed on:
   // while the hull turns, holding the aim already costs |hullTurn| of the budget, so only what is
   // left chases the cursor - which is why turretTurn is never below |hullTurn| while A or D is held,
-  // and why a fast hull rotation can make the gun fall behind the cursor altogether. `gap` is the
-  // angle between where the gun points and where the cursor points, in radians.
+  // and why a fast hull rotation can make the gun fall behind the cursor altogether.
+  // `gap` is how far the gun is from where it can point at the cursor, in radians: {yaw, pitch} - the turn about
+  // the world's up axis and the elevation (viewer.aimGap) - or a bare number, which is a yaw alone.
+  // CLIENT RULE (26.09, fields audit P2): the gun rotator moves the two apart - the yaw at the turret's speed
+  // (getNextTurretYaw), the pitch at the gun's own elevation speed gun.rotationSpeed (getNextGunPitch, the server's
+  // maxGunRotationSpeed: the same with the gunner's factor) - and the circle's turret term is |d yaw| / dt ALONE
+  // (VehicleGunRotator.__rotate: turretRotationSpeed = |estimatedTurretYaw - prevTurretYaw| / timeDiff). So a cursor
+  // going straight up blooms nothing (×1.0; the full angle at the turret's speed gave ×1.41 at 10 °/s with a factor of
+  // 0.1 per °/s), and the pitch only takes its time. A block without gunPitchSpeed (a record before 26.09 the
+  // exporter could not complete) moves the pitch at once, as a block without a turret speed moves the gun at once:
+  // no invented speed, and the circle is the same either way. `pitchStep` is the elevation of this frame.
   function turretChase(gap,hullTurn,aim,mods,dt,swung){
     var m=aimMods(mods),limit=(aim&&aim.turretRotationSpeed>0?aim.turretRotationSpeed:0)*m.turretSpeed;
     var step=Math.max(1e-4,Math.min(.25,Number(dt)||0)),hull=Math.abs(Number(hullTurn)||0);
-    var want=Math.max(0,Number(gap)||0)/step;
+    var yaw=Math.max(0,Number(gap&&typeof gap==='object'?gap.yaw:gap)||0),pitch=Math.max(0,Number(gap&&typeof gap==='object'?gap.pitch:0)||0);
+    var up=(aim&&aim.gunPitchSpeed>0?aim.gunPitchSpeed:0)*m.gunSpeed,pitchStep=up>0?Math.min(pitch,up*step):pitch;
+    var pitchCaught=pitchStep>=pitch-1e-12,want=yaw/step,out;
     // No turret speed in the record: the gun is simply where the cursor is, and the formula sees the
     // hull's own rotation only. Better than pretending the turret cannot move at all.
-    if(!(limit>0))return {rate:want,turretTurn:hull,step:Math.max(0,Number(gap)||0),caught:true};
+    if(!(limit>0))out={rate:want,turretTurn:hull,step:yaw,caught:true};
     // `swung`: the caller has ALREADY carried the aim point around with the hull (stage 6, user 20.09),
     // so the gap handed in contains the hull's own turn. The whole relative budget is then free to close
     // it, and the relative turret speed - the one the dispersion formula asks for - is exactly the rate
     // the gun is pulled back at. Holding the aim against a turning hull therefore still costs |hullTurn|
     // of the budget and leaves limit - |hullTurn| to gain on the cursor, as it did before; counting the
     // hull twice would instead push the ring away faster than the turret could ever fetch it back.
-    if(swung){var rel=Math.min(want,limit);return {rate:rel,turretTurn:rel,step:rel*step,caught:rel>=want-1e-9};}
-    var budget=Math.max(0,limit-hull),rate=Math.min(want,budget);
-    return {rate:rate,turretTurn:Math.min(limit,hull+rate),step:rate*step,caught:rate>=want-1e-9};
+    else if(swung){var rel=Math.min(want,limit);out={rate:rel,turretTurn:rel,step:rel*step,caught:rel>=want-1e-9};}
+    else{var budget=Math.max(0,limit-hull),rate=Math.min(want,budget);out={rate:rate,turretTurn:Math.min(limit,hull+rate),step:rate*step,caught:rate>=want-1e-9};}
+    out.pitchStep=pitchStep;out.caught=out.caught&&pitchCaught;
+    return out;
   }
   // --- Where a shot lands inside the circle -----------------------------------------------------
   // A profile is one radial CDF, inverted: quantile(u) is r/R for a uniform u in [0,1). The circle

@@ -608,6 +608,14 @@ def aim_block(descr):
       rotationFactor        per rad/s  chassis.shotDispersionFactors[1]
       turretRotationSpeed   rad/s      turret.rotationSpeed
       hullRotationSpeed     rad/s      chassis.rotationSpeed
+      gunPitchSpeed         rad/s      gun.rotationSpeed - the gun's elevation speed, which the client's gun rotator
+                                       moves the pitch at (getNextGunPitch) and which never enters the circle: the
+                                       turret term is |d yaw| / dt alone (VehicleGunRotator.__rotate) - gun_statics
+      whileGunDamagedFactor -          gun.shotDispersionFactors['whileGunDamaged'] - the circle's multiplier while the
+                                       gun is damaged (2.0 for most guns) - gun_statics
+      shotOffsets           [[m,m,m]]  where the shell leaves, from the gun's joint (turret.gunPosition) in the turret's
+                                       frame: one entry per barrel of a multi-barrel gun, else gun.shotOffset - written
+                                       only where it is not zero (shot_offsets)
       speedForward/Backward m/s        speed_limits(descr)
       turretYawLimits       [rad, rad] yaw_limits(descr): the gun's sector on the hull, left negative -
                                        written only for a gun that has one (turretless tank destroyers,
@@ -707,6 +715,11 @@ def aim_block(descr):
     take('rotationFactor', lambda: float(descr.chassis.shotDispersionFactors[1]))
     take('turretRotationSpeed', lambda: float(descr.turret.rotationSpeed))
     take('hullRotationSpeed', lambda: float(descr.chassis.rotationSpeed))
+    # The gun's own elevation speed, its circle multiplier while damaged and where its shells leave (26.09, fields
+    # audit P2-P4): one reader, gun_statics, for this block and for fix_gun_statics of an older record.
+    statics = gun_statics(descr)
+    aim.update(statics)
+    aim['unavailable'].extend(key for key in GUN_STATIC_KEYS if key not in statics)
     # The gun's horizontal sector on the hull (23.09, BACKLOG 40): the page's turret chase stops at it, as the
     # client's gun rotator does. Written only for a gun that has one - a turret that turns all the way round has
     # none, so its absence says nothing and 'unavailable' never names it, like 'burst'. Static per configuration.
@@ -912,7 +925,8 @@ def secondary_aim(descr):
     and the units of aim_block's own gun fields, so the page lays the block over the main one to fire that gun:
 
       installation 1; name (the gun's XML name); dispersion, aimingTime, turretRotationFactor, afterShotFactor,
-      afterShotInBurstFactor (only where it differs), reloadTime, clip, burst (only with a count above 1), gunTags
+      afterShotInBurstFactor (only where it differs), reloadTime, clip, burst (only with a count above 1), gunTags,
+      and gun_statics of this gun (gunPitchSpeed, whileGunDamagedFactor, shotOffsets from the main gun's joint)
 
     The vehicle's own factors (miscAttrs, the chassis, the crew) are the main block's and are not repeated. Raises on
     a malformed gun list; the caller guards it.
@@ -950,6 +964,8 @@ def secondary_aim(descr):
         except Exception:
             pass
         put('gunTags', lambda: sorted(str(tag) for tag in gun.tags))
+        # Its own elevation speed, damaged-gun factor and barrels (26.09), so none of the main gun's is laid under it.
+        block.update(gun_statics(descr, gun))
         block = block if positive(block.get('dispersion')) else None
         if len(_SECONDARY_CACHE) > 64:
             _SECONDARY_CACHE.clear()
@@ -1075,7 +1091,8 @@ def fix_aim(vehicle):
     complete = isinstance(existing, dict) and positive(existing.get('dispersion'))
     known = list(existing.get('unavailable') or []) if complete else []
     if complete and not [k for k in AIM_COMPLETION_KEYS if k not in existing and k not in known]:
-        return fix_yaw_limits(vehicle)
+        statics = fix_gun_statics(vehicle)
+        return fix_yaw_limits(vehicle) or statics
     if not vehicle.get('compactDescriptor'):
         return False
     try:
@@ -1086,6 +1103,7 @@ def fix_aim(vehicle):
         return False
     if not complete:
         vehicle['aim'] = block
+        fix_gun_statics(vehicle)   # an older second-mode block beside the rebuilt one
         return True
     # Only the missing keys are copied over: whatever the old block holds stays byte for byte,
     # so a record is never silently rewritten by a later change to an unrelated field.
@@ -1102,8 +1120,9 @@ def fix_aim(vehicle):
             known.append(key)
     if known:
         existing['unavailable'] = known
-    # The sector of the block's own mode, not the default one the rebuild above was made from (BACKLOG 40).
+    # The sector and the gun's statics of the block's own mode, not the default one the rebuild above was made from.
     fix_yaw_limits(vehicle)
+    fix_gun_statics(vehicle)
     return True
 
 
@@ -1117,6 +1136,102 @@ def yaw_limits(descr):
     """
     limits = getattr(descr.gun, 'turretYawLimits', None)
     return None if limits is None else [float(item) for item in limits]
+
+
+# The two fields gun_statics writes for every gun; 'shotOffsets' comes with them where it is not zero. A block that has
+# neither and does not name them in 'unavailable' was written before 26.09 and gets them from fix_gun_statics.
+GUN_STATIC_KEYS = ('gunPitchSpeed', 'whileGunDamagedFactor')
+
+
+def gun_statics(descr, gun=None):
+    """The gun's elevation speed, its circle multiplier while damaged and its shells' start points (26.09, P2-P4).
+
+    `gun`: another gun of the descriptor's turret than the mounted one (secondary_aim's), else descr.gun. Each read on
+    its own; a field the client refuses is left out (the caller names it). The one reader for aim_block, secondary_aim
+    and fix_gun_statics:
+      gunPitchSpeed          gun.rotationSpeed, rad/s (vehicles.pyc _readGun: radians of the XML's degrees). The client
+                             moves the pitch at the server's maxGunRotationSpeed, which is this with the gunner's factor
+                             (VehicleDescrCrew._updateGunnerFactors scales turret/rotationSpeed and gun/rotationSpeed
+                             alike), and falls back to it when the server sent none (getNextGunPitch).
+      whileGunDamagedFactor  gun.shotDispersionFactors['whileGunDamaged'] (_readGunShotDispersionFactors). The server
+                             multiplies the circle's shotDispMultiplierFactor by it while the gun is damaged - measured
+                             in the owner's records: x2.000 after an own gun crit on two vehicles, back at the repair.
+                             A field modification may scale it (miscAttrs 'gun/shotDispersionFactors/whileGunDamaged'),
+                             which the page does not model; this is the gun's own figure.
+      shotOffsets            shot_offsets
+    """
+    out = {}
+    gun = descr.gun if gun is None else gun
+    try: out['gunPitchSpeed'] = float(gun.rotationSpeed)
+    except Exception: pass
+    try: out['whileGunDamagedFactor'] = float(gun.shotDispersionFactors['whileGunDamaged'])
+    except Exception: pass
+    try:
+        offsets = shot_offsets(descr, gun)
+        if offsets: out['shotOffsets'] = offsets
+    except Exception:
+        pass
+    return out
+
+
+def metres(value):
+    """A length to 0.1 mm, never -0.0."""
+    return round(float(value), 4) + 0.0
+
+
+def shot_offsets(descr, gun=None):
+    """Where the shells leave, from the gun's joint, in the turret's frame (metres, x right, y up, z forward), or None.
+
+    VehicleGunRotator.__getShotPosition puts the shell's start at turretMatrix.applyPoint(gunOffset): the turret turned
+    by its yaw only - the gun's pitch does not move it - where gunOffset is descr.activeGunShotPosition =
+    turret.gunPosition + gun.shotOffset (VehicleDescriptor.__set_activeTurretPos), or, while one barrel of a
+    multi-barrel gun is the active one, that barrel's multiGun[i].shotPosition = position + shotOffset
+    (switchActiveGun; _readMultiGun). So the offset from the joint is gun.shotOffset for a gun of one barrel - written
+    only when it is not zero (212 vehicles of client 2.4.0.1, up to 0.88 m) - and shotPosition - turret.gunPosition for
+    each barrel of gun.multiGun (72 guns: the dual guns, the twin guns, the twin automatic guns), in their order.
+    """
+    gun = descr.gun if gun is None else gun
+    joint = descr.turret.gunPosition
+    barrels = getattr(gun, 'multiGun', None)
+    if barrels:
+        return [[metres(p.x - joint.x), metres(p.y - joint.y), metres(p.z - joint.z)]
+                for p in (barrel.shotPosition for barrel in barrels)]
+    offset = gun.shotOffset
+    values = [metres(offset.x), metres(offset.y), metres(offset.z)]
+    return [values] if any(values) else None
+
+
+def fix_gun_statics(vehicle):
+    """Give the aim blocks of an older record the fields of gun_statics (26.09); True when it did.
+
+    Each block gets them from ITS mode's descriptor, as fix_yaw_limits gives it the sector: 'aim' the one of
+    vehicleMode, 'modeAim' the one of modeAimMode, both off the compact descriptor vehicle_descr keeps built - a few
+    attribute reads per block. Nothing without a compact descriptor, for a descriptor the running client cannot build or
+    one of another type. The raw record is never touched: a battle gets them again on each publish; an exported
+    vehicle file is written back by its caller once (load_vehicles).
+    """
+    blocks = [(block, mode) for block, mode in ((vehicle.get('aim'), vehicle.get('vehicleMode')),
+                                                (vehicle.get('modeAim'), vehicle.get('modeAimMode')))
+              if isinstance(block, dict) and positive(block.get('dispersion'))
+              and not [key for key in GUN_STATIC_KEYS if key in block or key in (block.get('unavailable') or ())]]
+    if not blocks or not vehicle.get('compactDescriptor'):
+        return False
+    try:
+        descr = vehicle_descr(vehicle['compactDescriptor'])
+        if vehicle.get('type') and str(descr.type.name) != str(vehicle.get('type')):
+            return False
+    except Exception:
+        return False
+    filled = False
+    for block, mode in blocks:
+        try:
+            statics = gun_statics(mode_descr(descr, mode))
+        except Exception:
+            continue
+        if statics:
+            block.update(statics)
+            filled = True
+    return filled
 
 
 def fix_yaw_limits(vehicle):
@@ -1937,7 +2052,8 @@ TTX_SWEEP_SLICE = 0.06
 # a zero time stamp, so an unchanged module keeps its CRC. TTX_SOURCE_SKIP: common files no characteristic is read from.
 # The file carries its format too ('format'): ttx_current takes a file of another format as missing, so a raise reaches the
 # page's own per-type request as well as the sweep (whose keys it changes). 2 (26.09): the shells' traceRicochet.
-TTX_FORMAT = 2
+# 3 (26.09): the aim blocks' gunPitchSpeed, whileGunDamagedFactor and shotOffsets (gun_statics).
+TTX_FORMAT = 3
 TTX_SOURCE = re.compile(r'^(?:[^/]+/)?scripts/(?:item_defs/vehicles/|common/items/)')
 TTX_SOURCE_SKIP = re.compile(r'item_defs/vehicles/common/(?:customization|damage_stickers|player_emblems|'
                              r'forbidden_vehicles_to_battle_config|equipments|optional_devices|post_progression|prefab_effects)'

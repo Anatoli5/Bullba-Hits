@@ -1621,7 +1621,7 @@
   Viewer.prototype.drawLiveAim=function(){
     var center=this.aimPin()||this.liveAimPoint;
     if(!this.liveRadius100||!center){this.liveAim=null;return null;}
-    var origin=this.camera.position.clone(),range=origin.distanceTo(center),frame=circleFrame(origin,center);
+    var origin=this.aimMuzzle(center),range=origin.distanceTo(center),frame=circleFrame(origin,center);
     var radius=range*this.liveRadius100/100;
     this.liveAim={center:center.clone(),right:frame.right,up:frame.up,radius:radius,origin:origin,range:range};
     // The reload as the game draws it, on the ring itself (user, 20.09): while it runs the ring is only
@@ -1659,17 +1659,24 @@
     var T=THREE,plane=new T.Plane().setFromNormalAndCoplanarPoint(this.target.clone().sub(this.camera.position).normalize(),this.target),p=new T.Vector3();
     return caster.ray.intersectPlane(plane,p)?p:null;
   };
-  // The angle between where the gun points and where the cursor points, seen from the shooter (the
-  // camera). Both are points in the scene, so the angle is the one the turret actually has to turn
-  // through; the distance to them plays no part in it.
+  // How far the gun is from where it can point at the cursor, seen from the shooter (the camera): {yaw, pitch}, both
+  // radians and never negative - the turn about the world's up axis and the change of elevation. The emulated hull is
+  // level, so the first is the turret's own yaw on it and the second the gun's pitch, the two the client's gun rotator
+  // moves apart (26.09, fields audit P2: only the yaw is the circle's turret term, the pitch goes at the gun's own
+  // speed - ArmorBallistics.turretChase). Both are points in the scene; the distance to them plays no part.
   // `limits`: the shooter's horizontal sector, see aimReach; null or nothing for a turret that turns all the way round.
+  // The object is this viewer's own and is overwritten by the next call.
   Viewer.prototype.aimGap=function(limits){
-    var pin=this.aimPin(),gun=pin||this.liveAimPoint,cursor=this.aimCursorPoint;
-    if(!gun||!cursor||pin)return 0; // a pinned centre is not chasing anything
+    var out=this.aimGapOut||(this.aimGapOut={yaw:0,pitch:0}),pin=this.aimPin(),gun=pin||this.liveAimPoint,cursor=this.aimCursorPoint;
+    out.yaw=0;out.pitch=0;
+    if(!gun||!cursor||pin)return out; // a pinned centre is not chasing anything
     var eye=this.camera.position,a=gun.clone().sub(eye),b=cursor.clone().sub(eye);
-    if(a.lengthSq()<1e-12||b.lengthSq()<1e-12)return 0;
+    if(a.lengthSq()<1e-12||b.lengthSq()<1e-12)return out;
     a.normalize();b.normalize();
-    return a.angleTo(this.aimReach(a,b,limits));
+    var goal=this.aimReach(a,b,limits);
+    out.yaw=Math.abs(wrapAngle(Viewer.aimAzimuth(goal)-Viewer.aimAzimuth(a)));
+    out.pitch=Math.abs(aimElevation(goal)-aimElevation(a));
+    return out;
   };
   // THE GUN'S HORIZONTAL SECTOR (BACKLOG 40, 23.09). A turretless tank destroyer or a limited turret turns its gun only
   // within gun.turretYawLimits of the hull - [left, right] in radians, the left one negative, the client's own pair,
@@ -1682,6 +1689,10 @@
   // aimAzimuth is a direction's heading about the world's up axis, right positive (a right turn is -Y, turnAim).
   Viewer.aimAzimuth=function(d){return Math.atan2(-d.x,d.z);};
   function wrapAngle(a){return Math.atan2(Math.sin(a),Math.cos(a));}
+  // A unit direction's elevation above the horizon, radians, up positive; and back: the unit direction of a heading
+  // (aimAzimuth's) and an elevation - the two angles the chase moves the gun by (26.09).
+  function aimElevation(d){return Math.asin(Math.max(-1,Math.min(1,d.y)));}
+  function aimDirection(azimuth,elevation){var c=Math.cos(elevation);return new THREE.Vector3(-Math.sin(azimuth)*c,Math.sin(elevation),Math.cos(azimuth)*c);}
   // The direction the gun can reach towards the cursor: the cursor's own - the very object handed in, so a caller can
   // tell - or, past the sector, the cursor's direction turned back about the up axis onto the limit. `a` and `b` are
   // the unit directions of the gun and the cursor from the eye.
@@ -1703,27 +1714,27 @@
     var yaw=this.aimYaw||0,want=wrapAngle(Math.atan2(-bx,bz)-Math.atan2(-ax,az)),got=Math.max(limits[0]-yaw,Math.min(limits[1]-yaw,want));
     return want-got;
   };
-  // Turn the gun towards the cursor by at most `step` radians and put the circle where it now points.
-  // The new point is picked off the model along the rotated ray so the circle keeps lying on the armour;
-  // with nothing under that ray it keeps the range it had, which is all the radius needs. Reaching the
-  // cursor snaps exactly onto it, so a turret that has caught up reads identically to stage 1. With a
+  // Turn the gun towards the cursor - its yaw by at most `step` radians, its elevation by at most `pitchStep` (26.09:
+  // the turret and the gun move apart, ArmorBallistics.turretChase; left out, the elevation goes all the way at once) -
+  // and put the circle where it now points. The new point is picked off the model along the rotated ray so the circle
+  // keeps lying on the armour; with nothing under that ray it keeps the range it had, which is all the radius needs.
+  // Reaching the cursor snaps exactly onto it, so a turret that has caught up reads identically to stage 1. With a
   // sector (`limits`, aimReach) the gun goes only as far as the limit and stays there.
-  Viewer.prototype.chaseAim=function(step,limits){
-    var T=THREE,gun=this.liveAimPoint,cursor=this.aimCursorPoint;
+  Viewer.prototype.chaseAim=function(step,limits,pitchStep){
+    var gun=this.liveAimPoint,cursor=this.aimCursorPoint;
     if(!gun||!cursor||this.aimPin())return false;
     var eye=this.camera.position.clone(),a=gun.clone().sub(eye),range=a.length(),b=cursor.clone().sub(eye);
     if(range<1e-6||b.lengthSq()<1e-12)return false;
     a.divideScalar(range);b.normalize();
-    var goal=this.aimReach(a,b,limits),free=goal===b,gap=a.angleTo(goal),moved;
-    if(free&&(!(gap>1e-6)||step>=gap)){this.liveAimPoint=cursor.clone();this.aimYaw=wrapAngle(this.aimYaw+wrapAngle(Viewer.aimAzimuth(b)-Viewer.aimAzimuth(a)));this.drawLiveAim();return gap>1e-6;}
-    if(!(gap>1e-6))return false;   // at the limit: nothing to turn
-    if(step>=gap)moved=goal;
-    else{
-      var axis=new T.Vector3().crossVectors(a,goal);
-      if(axis.lengthSq()<1e-14)return false;
-      moved=a.clone().applyQuaternion(new T.Quaternion().setFromAxisAngle(axis.normalize(),step));
-    }
-    this.aimYaw=wrapAngle(this.aimYaw+wrapAngle(Viewer.aimAzimuth(moved)-Viewer.aimAzimuth(a)));
+    var goal=this.aimReach(a,b,limits),free=goal===b,from=Viewer.aimAzimuth(a),up=aimElevation(a);
+    var yaw=wrapAngle(Viewer.aimAzimuth(goal)-from),pitch=aimElevation(goal)-up;
+    var y=Math.max(0,Number(step)||0),p=pitchStep===undefined||pitchStep===null?Infinity:Math.max(0,Number(pitchStep)||0);
+    var yawDone=Math.abs(yaw)<=1e-9||y>=Math.abs(yaw),pitchDone=Math.abs(pitch)<=1e-9||p>=Math.abs(pitch);
+    if(free&&yawDone&&pitchDone){var moves=Math.abs(yaw)>1e-6||Math.abs(pitch)>1e-6;this.liveAimPoint=cursor.clone();this.aimYaw=wrapAngle(this.aimYaw+yaw);this.drawLiveAim();return moves;}
+    var turn=yawDone?yaw:(yaw<0?-y:y),lift=pitchDone?pitch:(pitch<0?-p:p);
+    if(!(Math.abs(turn)>1e-12)&&!(Math.abs(lift)>1e-12))return false;   // at the limit: nothing to turn
+    var moved=aimDirection(from+turn,up+lift);
+    this.aimYaw=wrapAngle(this.aimYaw+turn);
     var met=this.pick(eye,moved);
     this.liveAimPoint=met?met.point.clone():eye.clone().addScaledVector(moved,range);
     this.drawLiveAim();
@@ -1746,11 +1757,28 @@
     this.drawLiveAim();
     return true;
   };
-  // Whether the line from the eye through `point` meets the model: an emulated shot off the ⌖ mode goes nowhere else
-  // (user, 25.09 - a tracer into empty space shows nothing). One BVH ray.
+  // THE EMULATED SHELL'S START (26.09, fields audit P4): one owner for the live ring's apex, the shot's line and its
+  // verdict ray. The camera is the shooter's gun JOINT - the point the turret turns the gun about - and the shell
+  // leaves the gun's shotOffset from it: VehicleGunRotator.__getShotPosition turns that offset with the turret's yaw
+  // only (the gun's pitch does not move it), one barrel's for a multi-barrel gun (exporter.shot_offsets: up to 0.88 m,
+  // 9 cm median over the 376 guns that have one). The page hands the round's offset in (setAimOffset: [x right, y up,
+  // z forward] of the turret, metres, or null); the turret faces where the gun points - `at`, by default the ring's
+  // centre - on the level emulated hull. Without an offset the shell leaves the camera itself, as before.
+  Viewer.prototype.setAimOffset=function(offset){this.aimOffset=Array.isArray(offset)&&offset.length===3?offset:null;};
+  Viewer.prototype.aimMuzzle=function(at){
+    var eye=this.camera.position.clone(),o=this.aimOffset,to=at||this.aimPin()||this.liveAimPoint;
+    if(!o||!to)return eye;
+    var fx=to.x-eye.x,fz=to.z-eye.z,len=Math.hypot(fx,fz);
+    if(len<1e-9)return eye;
+    fx/=len;fz/=len;   // forward on the level hull; right = forward x up = (-fz, 0, fx)
+    eye.x+=-fz*o[0]+fx*o[2];eye.y+=o[1];eye.z+=fx*o[0]+fz*o[2];
+    return eye;
+  };
+  // Whether the shell's line through `point` meets the model: an emulated shot off the ⌖ mode goes nowhere else
+  // (user, 25.09 - a tracer into empty space shows nothing). One BVH ray, from where the shot leaves (aimMuzzle).
   Viewer.prototype.onModel=function(point){
     if(!this.engine||!point)return false;
-    var origin=this.camera.position,direction=point.clone().sub(origin);
+    var origin=this.aimMuzzle(),direction=point.clone().sub(origin);
     if(direction.lengthSq()<1e-12)return false;
     return !!this.pick(origin,direction.normalize());
   };
@@ -1758,7 +1786,7 @@
   // as a click on the armour (pinAt), so the "Pinned point" panel reads the shot exactly as before.
   Viewer.prototype.pinAtPoint=function(point){
     if(!this.engine||!point)return false;
-    var T=THREE,origin=this.camera.position.clone(),direction=point.clone().sub(origin);
+    var T=THREE,origin=this.aimMuzzle(),direction=point.clone().sub(origin);
     if(direction.lengthSq()<1e-12)return false;
     direction.normalize();
     var hit=this.pick(origin,direction);

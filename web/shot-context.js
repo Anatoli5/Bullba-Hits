@@ -360,6 +360,10 @@
     // whose state says "not charged" answers exactly as a record without the state at all. The spall
     // damage of HE is left alone: the client's own law for it is not this factor.
     var charge=chargeStateOf(gunState),chargeFactor=charge?CHARGE_SHOT_FACTORS[Number(charge.level)]:null;
+    // The own gun's device state at the shot (26.09, fields audit P3; recorder after 0.8.3): 'normal', 'critical' or
+    // 'destroyed' - the snapshot as the shell left (aimAtTracer), else the press's. null: not recorded (every foreign
+    // shot, every older record). While damaged the server widens the circle by the gun's whileGunDamaged.
+    var gunDevice=(tracer&&tracer.own&&tracer.aimAtTracer&&tracer.aimAtTracer.gunDevice)||(command&&command.aim&&command.aim.gunDevice)||null;
     if(chargeFactor>1)choices=choices.map(function(c){return withCharge(c,chargeFactor);});
     // Why the shell stayed unknown, in the words the shell chips and the tooltip use.
     var why=contradicted?'no shell of this shooter fits the shot’s ballistics'
@@ -367,7 +371,7 @@
     return {choices:choices,index:index,kind:kindValues.length===1?kindValues[0]:null,caliber:calibers.length===1?calibers[0]:null,tracer:tracer,stop:stop,command:command,aim:aim,aimSource:chosen?chosen.from:null,aimReason:aimReason,
       serverShot:serverShot(tracer,events),
       range:range,rangeSource:rangeSource,modes:hasModes,unresolvedWhy:why,
-      gunState:gunState,gunStateFrom:gunFrom,gunNotes:gunNotes(gunState,gunFrom),chargeFactor:chargeFactor>1?chargeFactor:null,
+      gunState:gunState,gunStateFrom:gunFrom,gunNotes:gunNotes(gunState,gunFrom),chargeFactor:chargeFactor>1?chargeFactor:null,gunDevice:gunDevice,
       treeSpeed:byTree?treeDv:null,mark:markOf(hit),
       source:index<0?'Shell not determined unambiguously'
         :modeSource?'The shooter’s second mode: '+modeSource

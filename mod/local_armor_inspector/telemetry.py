@@ -450,6 +450,11 @@ class ShotTelemetry(object):
         get('gunPitch', lambda: number(rotator.gunPitch))
         get('turretRotationSpeed', lambda: number(rotator.turretRotationSpeed))
         get('vehicleSpeeds', lambda: [number(v) for v in player.getOwnVehicleSpeeds(True)])
+        # The own gun's device state (26.09, fields audit P3): PlayerAvatar.deviceStates holds 'critical' or 'destroyed'
+        # under the device's name while it is damaged (__showDamageIconAndPlaySound) and drops it at the repair, so
+        # 'normal' when absent. The server widens the circle by gun.shotDispersionFactors['whileGunDamaged'] meanwhile
+        # (measured: shotDispMultiplierFactor x2.0 after a gun crit); the page's emulation continues such a shot so.
+        get('gunDevice', lambda: str(player.deviceStates.get('gun', 'normal')))
         if self.client_marker is not None: result['clientMarker'] = copy.deepcopy(self.client_marker)
         else:
             def current_marker():

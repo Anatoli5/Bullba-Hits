@@ -207,7 +207,7 @@ function StubViewer() {
   // The range the recorded shot was fired at (viewer.setShotContext reads it off the record). The figure of
   // the STANDING ring is taken with the shell at THAT range, not at the one the Distance slider stands on.
   this.recordedDistance = null;
-  this.gap = 0; this.profile = null; this.chased = 0; this.pinnedPoints = 0;
+  this.gap = 0; this.profile = null; this.chased = 0; this.pinnedPoints = 0; this.pinOffsets = []; this.aimOffset = null;
   this.aimHold = false; this.dragging = false; this.emulation = null;
   // recordedHidden: whether the battle's own reticles and tracers are off the scene. Since stage 6 that
   // is NOT the mode but the first shot: setAimShot hides them, clearAimShot (mode on, mode off, a reset)
@@ -277,7 +277,9 @@ StubViewer.prototype.aimGap = function (limits) { this.gapLimits = limits; retur
 StubViewer.prototype.chaseAim = function (step, limits) { this.chaseLimits = limits; this.chased++; this.gap = Math.max(0, this.gap - step); return true; };
 StubViewer.prototype.offModel = false;   // the stub's proxy answers a missing name with a function
 StubViewer.prototype.onModel = function () { return !this.offModel; };
-StubViewer.prototype.pinAtPoint = function (point) { this.pinnedPoints++; this.pinnedAt = point; this.pinned = {point: point, normal: this.pinNormal}; this.aimPinned = true; return true; };
+// P4 (26.09): the round's barrel the page hands over before it fires; pinAtPoint keeps the one it was fired with.
+StubViewer.prototype.setAimOffset = function (offset) { this.aimOffset = offset || null; };
+StubViewer.prototype.pinAtPoint = function (point) { this.pinnedPoints++; this.pinnedAt = point; this.pinOffsets.push(this.aimOffset || null); this.pinned = {point: point, normal: this.pinNormal}; this.aimPinned = true; return true; };
 // The fun layer: the page draws its impact point from the viewer (the same law the ring's figure is
 // integrated with) and asks for a dot on the armour. Both are recorded, nothing is computed here.
 StubViewer.prototype.liveAimSample = function (random) { this.sampled++; this.sampleDraws.push(random(), random()); return {drawn: this.sampled}; };
@@ -1486,6 +1488,19 @@ settle(20).then(function () {
   run(20);
   ok('the reload over, the ring is whole again and the loop stopped',
      view.reloadPart === null && loopFrames() === 0, '(' + view.reloadPart + ')');
+  // ---- P4 (26.09): each round leaves where the gun's shotOffsets say, the barrels of a twin gun in turn -------------
+  {
+    const firstTwo = view.pinOffsets.slice();
+    AIM_BLOCK.shotOffsets = [[-0.19, 0, 0], [0.191, 0, 0]];
+    for (let i = 0; i < 3; i++) { press(); tick(0.05); release(); }   // a press fires at once, reload or not
+    run(20);   // the reload over and the loop stopped, as the sequence below starts from
+    const barrels = view.pinOffsets.slice(-3).map(function (o) { return o ? o[0] : null; });
+    ok('P4: a gun without shotOffsets fires from the camera (no offset handed over)', firstTwo.length === 2 && firstTwo.every(function (o) { return o === null; }));
+    ok('P4: a two-barrel gun\'s rounds take its barrels in turn - the run had fired two rounds, so barrel 0, 1, 0',
+       JSON.stringify(barrels) === JSON.stringify([-0.19, 0.191, -0.19]), '(' + JSON.stringify(barrels) + ')');
+    delete AIM_BLOCK.shotOffsets;
+    view.pinnedPoints -= 3; view.shotsDrawn -= 3;   // the counts the sequence below goes on from
+  }
 
   // ---- with ✸ off a shot whose centre is off the vehicle is not fired (user, 25.09): no tracer into empty space --
   view.offModel = true;
@@ -2628,9 +2643,9 @@ settle(20).then(function () {
      && rv.liveAimPoint.distanceTo(onFace) < 1e-9 && rv.aimCursorPoint.distanceTo(onFace) < 1e-9);
   // The hull still swings the gun and the turret still brings it back to the held crosshair.
   ok('real viewer: a hull turn swings the gun off the centre while held',
-     rv.turnAim(0.05) === true && rv.liveAimPoint.distanceTo(onFace) > 0.1 && rv.aimGap() > 0.04);
+     rv.turnAim(0.05) === true && rv.liveAimPoint.distanceTo(onFace) > 0.1 && rv.aimGap().yaw > 0.04);
   rv.chaseAim(1);
-  ok('real viewer: and the chase brings it back onto the held point', rv.liveAimPoint.distanceTo(onFace) < 1e-9 && rv.aimGap() < 1e-6);
+  ok('real viewer: and the chase brings it back onto the held point', rv.liveAimPoint.distanceTo(onFace) < 1e-9 && rv.aimGap().yaw < 1e-6 && rv.aimGap().pitch < 1e-6);
   // An Alt + click pin is outranked while the hold lasts and in force again after it.
   rv.spreadAim = new THREE.Vector3(-2, 1, 1.5); rv.drawLiveAim();
   ok('real viewer: the hold outranks a pinned centre', rv.liveAim.center.distanceTo(onFace) < 1e-9);
@@ -4759,7 +4774,7 @@ settle(20).then(function () {
   ok('heat: it casts no ray, touches no shell and no armour', !/engine\.ray|liveAimProbability|pinAtPoint|\.shell\b|penetration/.test(hSrc));
   const hx = {}, h$ = function (id) { return hx[id] || (hx[id] = new Element('div')); };
   const hwin = {timers: [], setTimeout: function (fn) { hwin.timers.push(fn); return hwin.timers.length; }, clearTimeout: function () {}};
-  let hNow = 0, hFun = true, hBlock = null, hWakes = 0;
+  let hNow = 0, hFun = true, hBlock = null, hWakes = 0, hDamage = 1;
   const HT = new Function('$', 'window', 'env',
     'var aimReload=null,aimClipDry=false,aimClipSize=1,aimClip=1,aimLive=true,aimNow=null,aimLastState=null;' +
     'function funOn(){return env.fun();}function aimBlockData(){return env.block();}function aimSeconds(){return env.now();}' +
@@ -4768,9 +4783,12 @@ settle(20).then(function () {
     // BACKLOG 37 (23.09): the tier-XI block stands outside this one; cut out alone, no vehicle has a mechanic.
     'function xiApply(m){return m;}function xiReset(){}function paintXi(){}function xiBurstOn(){return false;}function xiSwitching(){return false;}' +
     // Final review (23.09): the heat bar coming or going asks the strip's layout pass; cut out alone, a no-op.
-    'function stripLayout(){}\n' + hSrc +
+    'function stripLayout(){}' +
+    // P3 (26.09): the recorded shot's damaged gun stands outside this block (aimGunDamage); here the harness says it.
+    'function aimGunDamage(a){return env.damage(a);}\n' + hSrc +
     '\nreturn {now:heatNow,shot:heatShot,heated:aimHeated,free:gunFree,reset:gunHeatReset,unlockIn:function(){return heatUnlockIn(heatNow());},tick:panelTick,band:heatBand};')(
-    h$, hwin, {fun: function () { return hFun; }, block: function () { return hBlock; }, now: function () { return hNow; }, wake: function () { hWakes++; }});
+    h$, hwin, {fun: function () { return hFun; }, block: function () { return hBlock; }, now: function () { return hNow; }, wake: function () { hWakes++; },
+      damage: function () { return hDamage; }});
   const MUL = function (v) { return [{op: 'mul', name: 'dynAttrs/multShotDispersionFactor', value: v}]; };
   const ARES = {
     temperatureGun: {heatingPerShot: 11, coolingDelay: 2, coolingPerSec: 10.9, maxTemperature: 100, thermalStateHysteresis: 1,
@@ -4788,6 +4806,23 @@ settle(20).then(function () {
   ok('heat: then it falls by coolingPerSec (10.9) a second', near(h.t, 11 - 10.9 * 0.5));
   hNow = 4; h = HT.now();
   ok('heat: and stops at 0', h.t === 0);
+  // P3 (26.09): the recorded shot's damaged gun goes on the same `mult` (aimGunDamage, outside this block), under ⌖ only.
+  hDamage = 2;
+  ok('P3: under ⌖ a shot recorded with the gun damaged keeps the gun\'s whileGunDamaged on the circle (×2.0)', near(HT.heated({mult: 1}).mult, 2));
+  hFun = false;
+  ok('P3: off ⌖ the circle is the clean build\'s, as for every other recorded state', HT.heated({mult: 1}).mult === 1);
+  hFun = true; hDamage = 1;
+  {
+    const gdStart = appSrc.indexOf('  function aimGunDamage(a) {'), gdEnd = appSrc.indexOf('  // What the configuration KEEPS', gdStart);
+    ok('P3: aimGunDamage is one function beside aimBlockData', gdStart > appSrc.indexOf('  function aimBlockData() {') && gdEnd > gdStart);
+    const GD = function (hit, ctx, a) { return new Function('env', 'var activeHit=env.hit,shotContext=env.ctx;' + appSrc.slice(gdStart, gdEnd) + 'return aimGunDamage(env.a);')({hit: hit, ctx: ctx, a: a}); };
+    const VK = {whileGunDamagedFactor: 3.0}, hit = {id: 'h'};
+    ok('P3: the record says critical - the gun\'s own factor (VK 30.01 H: ×3.0); destroyed the same',
+       GD(hit, {gunDevice: 'critical'}, VK) === 3 && GD(hit, {gunDevice: 'destroyed'}, VK) === 3);
+    ok('P3: a whole gun, no state recorded (a foreign shot, an older record), no hit or no figure in the block: ×1, never an invented 2.0',
+       GD(hit, {gunDevice: 'normal'}, VK) === 1 && GD(hit, {gunDevice: null}, VK) === 1 && GD(hit, {}, VK) === 1
+       && GD(null, {gunDevice: 'critical'}, VK) === 1 && GD(hit, {gunDevice: 'critical'}, {}) === 1 && GD(hit, {gunDevice: 'critical'}, null) === 1);
+  }
   // Ten rounds 0.3 s apart from cold: no cooling between them (the rest is longer than the gap).
   hNow = 10; const t0 = hNow; let lockedAt = -1;
   for (let i = 1; i <= 10; i++) {
@@ -7313,17 +7348,19 @@ settle(20).then(function () {
   const eye = w.camera.position, L = [-3 * D, 3 * D], start = new T3.Vector3(0, 1, .5), far = new T3.Vector3(5, 1, .5);
   w.liveAimPoint = start.clone(); w.aimCursorPoint = far.clone();
   const cursorOff = turnOf(start, far, eye);
-  const g0 = w.aimGap(null), g1 = w.aimGap(L), plain = start.clone().sub(eye).normalize().angleTo(far.clone().sub(eye).normalize());
-  ok('sector: without a sector the gap is the whole angle to the cursor, exactly as before',
-     g0 === plain && Math.abs(cursorOff - Math.atan(5 / 19.5)) < 1e-12, '(' + (g0 / D).toFixed(3) + '°)');
-  ok('sector: with ±3° the gap is only the way to the limit - the cursor 14.4° to the right is out of reach',
-     Math.abs(g1 - 3 * D) < 0.02 * D, '(' + (g1 / D).toFixed(4) + '°)');
+  // The gap is two angles since 26.09 (fields audit P2): the turret's yaw and the gun's elevation, moved apart.
+  const g0 = Object.assign({}, w.aimGap(null)), g1 = Object.assign({}, w.aimGap(L));
+  ok('sector: without a sector the yaw gap is the whole turn to the cursor and the pitch gap the elevation between them',
+     Math.abs(g0.yaw - cursorOff) < 1e-12 && Math.abs(cursorOff - Math.atan(5 / 19.5)) < 1e-12
+     && Math.abs(g0.pitch - Math.abs(elevationOf(far, eye) - elevationOf(start, eye))) < 1e-12, '(' + (g0.yaw / D).toFixed(3) + '°, ' + (g0.pitch / D).toFixed(4) + '°)');
+  ok('sector: with ±3° the yaw gap is only the way to the limit - the cursor 14.4° to the right is out of reach',
+     Math.abs(g1.yaw - 3 * D) < 1e-9 && g1.pitch === g0.pitch, '(' + (g1.yaw / D).toFixed(4) + '°)');
   const moved1 = w.chaseAim(1, L), at1 = w.liveAimPoint.clone();
   ok('sector: the chase takes the gun to the right limit and no further - its yaw on the hull is exactly +3° - and the point stays on the armour',
      moved1 === true && Math.abs(w.aimYaw - 3 * D) < 1e-9 && Math.abs(turnOf(start, at1, eye) - 3 * D) < 1e-9 && Math.abs(at1.z - .5) < 1e-9,
      '(yaw ' + (w.aimYaw / D).toFixed(6) + '°, turned ' + (turnOf(start, at1, eye) / D).toFixed(6) + '°)');
   ok('sector: at the limit there is nothing left to turn: no gap, no move, the ring stays where it is',
-     w.aimGap(L) < 1e-9 && w.chaseAim(1, L) === false && w.liveAimPoint.distanceTo(at1) === 0 && w.aimGap(null) > 11 * D);
+     w.aimGap(L).yaw < 1e-9 && w.aimGap(L).pitch < 1e-9 && w.chaseAim(1, L) === false && w.liveAimPoint.distanceTo(at1) === 0 && w.aimGap(null).yaw > 11 * D);
   const chaseStopped = B.turretChase(w.aimGap(L), 20 * D, {turretRotationSpeed: 30 * D}, null, 1 / 60, true);
   ok('sector: and the circle gets no turret term from it - the formula sees the hull turning and the turret still (caught, rate 0)',
      chaseStopped.turretTurn === 0 && chaseStopped.rate === 0 && chaseStopped.caught === true);
@@ -7355,7 +7392,7 @@ settle(20).then(function () {
   w.liveAimPoint = start.clone(); w.aimYaw = 0; w.aimCursorPoint = far.clone();
   w.chaseAim(1 * D, L);
   ok('sector: a step shorter than the way to the limit turns the gun by just that step',
-     Math.abs(start.clone().sub(eye).angleTo(w.liveAimPoint.clone().sub(eye)) - 1 * D) < 1e-9 && Math.abs(w.aimYaw - turnOf(start, w.liveAimPoint, eye)) < 1e-12);
+     Math.abs(turnOf(start, w.liveAimPoint, eye) - 1 * D) < 1e-9 && Math.abs(w.aimYaw - turnOf(start, w.liveAimPoint, eye)) < 1e-12);
   // No sector: the gun goes all the way, as before.
   w.liveAimPoint = start.clone(); w.aimYaw = 0; w.aimCursorPoint = far.clone();
   ok('sector: without a sector the chase reaches the cursor as before',
@@ -7388,6 +7425,77 @@ settle(20).then(function () {
     ok('sector ±15°: six more degrees of hull and the turret catches the cursor 2° back at its full 30°/s term (yaw +13°)',
        Math.abs(back2.turretTurn - 30 * D) < 1e-12 && w.liveAimPoint.distanceTo(wide) < 1e-9 && Math.abs(w.aimYaw - 13 * D) < 1e-9,
        '(yaw ' + (w.aimYaw / D).toFixed(6) + '°, turret term ' + (back2.turretTurn / D).toFixed(2) + '°/s)');
+  }
+  // P2 (26.09, outputs/mechanics-fields-audit-2026-09-26.md): the circle's turret term is |d yaw| / dt alone
+  // (VehicleGunRotator.__rotate); the pitch goes at the gun's own gun.rotationSpeed (getNextGunPitch) and blooms nothing.
+  // A turret of 30 °/s, a gun of 20 °/s, a turret factor of 0.1 per °/s: a cursor at 10 °/s, 60 frames a second.
+  {
+    const dirAt = function (az, el) { const c = Math.cos(el); return new T3.Vector3(-Math.sin(az) * c, Math.sin(el), Math.cos(az) * c); };
+    const aimP = {dispersion: 0.004, aimingTime: 2, turretRotationSpeed: 30 * D, gunPitchSpeed: 20 * D, turretRotationFactor: 0.1 / D};
+    const az0 = azimuthOf(start, eye), el0 = elevationOf(start, eye), range = start.distanceTo(eye), dt = 1 / 60;
+    const run = function (dAz, dEl, frames, block) {
+      w.liveAimPoint = start.clone(); w.aimYaw = 0; let worstIdeal = 0, terms = 0, full = 0, last = null;
+      for (let f = 1; f <= frames; f++) {
+        w.aimCursorPoint = eye.clone().addScaledVector(dirAt(az0 + dAz * f * dt, el0 + dEl * f * dt), range);
+        const whole = w.liveAimPoint.clone().sub(eye).normalize().angleTo(w.aimCursorPoint.clone().sub(eye).normalize());
+        last = B.turretChase(w.aimGap(null), 0, block, null, dt, false);
+        w.chaseAim(last.step, null, last.pitchStep);
+        worstIdeal = Math.max(worstIdeal, B.aimFactor(block, {turretTurn: last.turretTurn}).ideal);
+        terms = Math.max(terms, last.turretTurn);
+        // The reading until 26.09: the whole angle to the cursor, at the turret's speed, into the term.
+        full = Math.max(full, B.aimFactor(block, {turretTurn: B.turretChase(whole, 0, block, null, dt, false).turretTurn}).ideal);
+      }
+      return {ideal: worstIdeal, term: terms, full: full, last: last};
+    };
+    const up = run(0, 10 * D, 60, aimP);
+    ok('P2: a cursor going straight up at 10 °/s puts no turret term into the circle - ×1.0 as in the game (the whole angle read ×1.41)',
+       up.term === 0 && Math.abs(up.ideal - 1) < 1e-12 && Math.abs(up.full - Math.SQRT2) < 1e-3 && Math.abs(elevationOf(w.liveAimPoint, eye) - (el0 + 10 * D)) < 1e-9,
+       '(×' + up.ideal.toFixed(4) + ', whole angle ×' + up.full.toFixed(4) + ')');
+    const side = run(-10 * D, 0, 60, aimP);
+    ok('P2: the same 10 °/s sideways is the turret\'s own: ×1.414, as before',
+       Math.abs(side.ideal - Math.SQRT2) < 1e-6 && Math.abs(side.term - 10 * D) < 1e-9, '(×' + side.ideal.toFixed(4) + ')');
+    // A cursor 10° higher at once: the gun takes it at its own 20 °/s - half a second - and the circle stays ×1.0.
+    w.liveAimPoint = start.clone(); w.aimYaw = 0; w.aimCursorPoint = eye.clone().addScaledVector(dirAt(az0, el0 + 10 * D), range);
+    let frames = 0, c = null, bloom = 0;
+    for (; frames < 120; frames++) {
+      c = B.turretChase(w.aimGap(null), 0, aimP, null, dt, false);
+      if (c.caught && !(c.pitchStep > 0)) break;
+      w.chaseAim(c.step, null, c.pitchStep);
+      bloom = Math.max(bloom, B.aimFactor(aimP, {turretTurn: c.turretTurn}).ideal);
+    }
+    ok('P2: a cursor 10° higher at once: the gun climbs at its own 20 °/s (30 frames), no turret term, the circle ×1.0',
+       frames === 30 && bloom === 1 && Math.abs(elevationOf(w.liveAimPoint, eye) - (el0 + 10 * D)) < 1e-9, '(' + frames + ' frames, ×' + bloom + ')');
+    const bare = Object.assign({}, aimP); delete bare.gunPitchSpeed;
+    w.liveAimPoint = start.clone(); w.aimYaw = 0;
+    c = B.turretChase(w.aimGap(null), 0, bare, null, dt, false); w.chaseAim(c.step, null, c.pitchStep);
+    ok('P2: a block without the gun\'s speed (an older record) takes the elevation at once - no invented speed',
+       c.caught === true && Math.abs(elevationOf(w.liveAimPoint, eye) - (el0 + 10 * D)) < 1e-9 && c.turretTurn === 0);
+    ok('P2: the gunner scales the elevation speed as he scales the turret (gunSpeed)',
+       Math.abs(B.turretChase({yaw: 0, pitch: 1}, 0, aimP, {gunSpeed: 1.1}, dt, false).pitchStep - 20 * D * 1.1 * dt) < 1e-12);
+  }
+  // P4 (26.09): the shell leaves the gun's shotOffset from the joint (the camera), turned with the turret's yaw only
+  // (VehicleGunRotator.__getShotPosition). The gun points down -z here, so x right is +x, z forward is -z.
+  {
+    w.liveAimPoint = start.clone(); w.aimCursorPoint = start.clone(); w.spreadAim = null; w.aimYaw = 0;
+    w.setAimOffset([0.1, 0.3, 0.88]);
+    const muzzle = w.aimMuzzle(), want = eye.clone().add(new T3.Vector3(0.1, 0.3, -0.88));
+    w.drawLiveAim();
+    ok('P4: the shell leaves 0.1 m right, 0.3 m up and 0.88 m ahead of the joint along the gun\'s heading, and the live ring stands on that apex',
+       muzzle.distanceTo(want) < 1e-12 && w.liveAim.origin.distanceTo(want) < 1e-12 && Math.abs(w.liveAim.range - start.distanceTo(want)) < 1e-12,
+       '(' + muzzle.toArray().map(function (v) { return v.toFixed(4); }).join(', ') + ')');
+    // Turned 90° to the right (from -z that is +x) the offset turns with the turret: ahead is +x, right is +z.
+    const right90 = eye.clone().add(new T3.Vector3(10, 0, 0));
+    const turned = w.aimMuzzle(right90), want90 = eye.clone().add(new T3.Vector3(0.88, 0.3, 0.1));
+    ok('P4: the offset turns with the turret\'s yaw (the gun 90° to the right: ahead is +x, right is +z), never with the pitch',
+       turned.distanceTo(want90) < 1e-12 && w.aimMuzzle(eye.clone().add(new T3.Vector3(10, 8, 0))).distanceTo(want90) < 1e-12,
+       '(' + turned.toArray().map(function (v) { return v.toFixed(4); }).join(', ') + ')');
+    w.setAimOffset(null);
+    ok('P4: no offset - the shell leaves the camera, as before', w.aimMuzzle().distanceTo(eye) === 0);
+    ok('P4: one owner - the shot\'s line, the on-model test and the live ring all start at aimMuzzle',
+       /Viewer\.prototype\.pinAtPoint=function\(point\)\{[^}]*origin=this\.aimMuzzle\(\)/.test(viewerSrc)
+       && /Viewer\.prototype\.onModel=function\(point\)\{[^}]*origin=this\.aimMuzzle\(\)/.test(viewerSrc)
+       && /var origin=this\.aimMuzzle\(center\),range=origin\.distanceTo\(center\)/.test(viewerSrc)
+       && (viewerSrc.match(/this\.camera\.position\.clone\(\),direction=point/g) || []).length === 0);
   }
   // The gun put down straight on a point has the hull facing it: the held centre, and the hold let go gives the old yaw back.
   w.liveAimPoint = at1.clone(); w.aimCursorPoint = far.clone(); w.aimYaw = 3 * D;

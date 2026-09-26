@@ -9,6 +9,10 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 - **Ricochet:** shells the game never lets fly on after a ricochet (AAAC, Charlie 3, Delta 6, JPNh, PG70 autocannons) now stop there, on the panels and on the map. Needs a new recording or a characteristics file written by this build; older data keeps the default.
 - **Statistics log:** the point after a recorded ricochet uses the same rule (it used the full penetration).
 - **Armour map:** two different plates at exactly the same depth are taken in one fixed order, the same on the panels and on the map.
+- **Emulation:** moving the aim up or down no longer widens the circle - only turning the turret does, as in the game (a cursor going up at 10 °/s gave ×1.41, now ×1.0). The gun follows vertically at its own elevation speed.
+- **Emulation:** the shell leaves the gun's real firing point (up to 0.9 m from the gun's pivot), and twin- and dual-gun barrels alternate.
+- **Emulation:** continuing from your own shot fired with a damaged gun, the ⌖ circle is widened by that gun's penalty (×2.0 for most, ×3.0 VK 30.01 H / VK 36.01 H, ×1.6 French wheeled). Needs a battle recorded by this build.
+- **Recording:** your own shots record whether your gun was damaged.
 
 ## 0.8.3 (2026-09-26)
 
