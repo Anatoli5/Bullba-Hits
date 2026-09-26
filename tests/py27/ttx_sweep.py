@@ -177,12 +177,13 @@ try:
     first.run_job()
     check(first.recorder.frames == 5 and len(calls) == 4, 'the next slice waits for the game first: frames of 16 ms until as long as the slice took (70 ms, SWEEP_SHARE 0.5) - 5 (%d)' % first.recorder.frames)
     # --- the rest between two slices (SWEEP_SHARE, the knob; 26.09) --------------------------------------------------------
-    def rest(last, frame_s, share=None):
-        """One rest after a slice of `last` seconds with frames of `frame_s`: (frames waited, seconds, next slice)."""
+    def rest(last, frame_s, share=None, ago=0.0, smoothed=None):
+        """One rest after a slice of `last` seconds that ended `ago` s back, with frames of `frame_s`: (frames waited,
+        seconds, next slice)."""
         saved = ex.SWEEP_SHARE
         if share is not None: ex.SWEEP_SHARE = share
         probe = first.new_sweep([])
-        probe['sliceEnd'], probe['last'], frame[0] = clock[0], last, frame_s
+        probe['sliceEnd'], probe['last'], probe['frame'], frame[0] = clock[0] - ago, last, smoothed, frame_s
         frames0, start = first.recorder.frames, clock[0]
         first.sweep_rest(probe)
         ex.SWEEP_SHARE, frame[0] = saved, 0.016
@@ -197,6 +198,28 @@ try:
     check(waited == 1 and next_slice == ex.SWEEP_SLICE_MAX, 'slow frames (200 ms): one frame is the rest, the next slice grows to keep the share - up to SWEEP_SLICE_MAX (%.0f ms)' % (next_slice * 1000))
     waited, spent, next_slice = rest(0.07, 0.08)
     check(waited == 1 and abs(next_slice - 0.08) < 1e-9, 'frames of 80 ms: the next slice 80 ms, a share of 0.5 with one frame (%.0f ms)' % (next_slice * 1000))
+    # After a pause (a drag, a queued job; review 26.09): the frame is not the pause - the slice stays, the rest is over.
+    waited, spent, next_slice = rest(0.07, 0.016, ago=5.0, smoothed=0.016)
+    check(waited == 1 and next_slice == ex.TTX_SWEEP_SLICE, 'after a pause of 5 s (a drag): one frame, the frame is 16 ms not the pause - the next slice stays %.0f ms (%.0f)' % (ex.TTX_SWEEP_SLICE * 1000, next_slice * 1000))
+    waited, spent, next_slice = rest(0.07, 0.016, ago=60.0, smoothed=0.016)
+    check(next_slice == ex.TTX_SWEEP_SLICE, 'after a pause of 60 s: the next slice still %.0f ms (%.0f)' % (ex.TTX_SWEEP_SLICE * 1000, next_slice * 1000))
+    # A command of the page waiting (a vehicle, Stop): the rest ends at its first frame, and no slice starts before it is read.
+    class Commands(object):
+        def __init__(self): self.items = []
+        def empty(self): return not self.items
+    class Writer(object): pass
+    first.recorder.writer = Writer()
+    first.recorder.writer.export_queue = Commands()
+    first.recorder.writer.export_queue.items.append(('sweepStop', 'ttx'))
+    waited, spent, next_slice = rest(0.5, 0.016)
+    check(waited == 1, 'a command of the page waiting: the rest ends after one frame (%d), not after the 500 ms of the slice' % waited)
+    running = first.sweeps['ttx']
+    was_sliced, before = running['sliced'], len(calls)
+    running['sliced'] = True
+    check(first.run_sweep('ttx') is False and len(calls) == before and not running['sliced'],
+          'a command waiting after the rest: no slice before the export loop reads it; the next call slices at once')
+    first.recorder.writer.export_queue.items[:] = []
+    running['sliced'] = was_sliced
     # --- queued jobs, battle, drag, shutdown ---------------------------------------------------------------------------
     delay[0] = 0.0
     before = len(calls)

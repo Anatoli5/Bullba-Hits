@@ -794,7 +794,7 @@ class Recorder(object):
     def on_frame(self):
         """One frame of the game has passed: the export thread's next slice may start."""
         self.frame_event.set()
-        if self.frames_wanted and self.page_open_until > time.time():
+        if self.frames_wanted and not getattr(self, 'in_battle', False) and self.page_open_until > time.time():
             try:
                 import BigWorld
                 BigWorld.callback(0, self.on_frame)

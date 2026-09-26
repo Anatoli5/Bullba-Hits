@@ -2134,8 +2134,9 @@ SWEEP_REST_WAITS = 100
 # Both are measured while the sweep runs - the work of its slices over the vehicles it built, and those slices over the
 # time from the first to the last with the rests between them (a gap over SWEEP_GAP_CAP is the gates closed - a drag, a
 # click, a battle - not the sweep's pace) - and kept in the progress file ('pace') once a session has SWEEP_PACE_ITEMS
-# vehicles and slices; until then the last kept figures, and before any: SWEEP_MS (below) and SWEEP_SHARE.
-SWEEP_GAP_CAP = 1.0
+# vehicles and slices; until then the last kept figures, and before any: SWEEP_MS (below) and SWEEP_SHARE. The cap is
+# above the longest rest (SWEEP_REST_MAX and its last frame), else a model slice's full rest would count as a pause.
+SWEEP_GAP_CAP = 2.0
 SWEEP_PACE_ITEMS = 10
 # THE SOURCES' KEYS (24.09, user: do not build again what did not change). The client reads the characteristics from its
 # packages: scripts.pkg (scripts/item_defs/vehicles/<nation>/<vehicle>.xml, <nation>/components/*.xml, <nation>/list.xml,
@@ -3953,17 +3954,30 @@ class Exporter(object):
         game's share of the time since the slice ended asks for it (the slice * (1 - share) / share, SWEEP_REST_MAX at
         most); a gate that closes ends the rest (the next slice checks them anyway). How long that first frame took says
         how slow the game's frames are now: the next slice is made long enough that such a frame alone leaves the sweep
-        its share, from TTX_SWEEP_SLICE up to SWEEP_SLICE_MAX."""
+        its share, from TTX_SWEEP_SLICE up to SWEEP_SLICE_MAX. After a pause (the gates closed, a queued job: the slice
+        ended over SWEEP_GAP_CAP ago) the frame is timed from now - timed from that slice it would be the pause, and the
+        slices would grow to their maximum (review 26.09) - and the rest is already over. A command of the page waiting
+        ends the rest too (sweep_waiting)."""
+        start = TTX_TIMER()
         end = sweep['sliceEnd']
-        if end is None: end = TTX_TIMER()
+        if end is None: end = start
+        base = end if start - end <= SWEEP_GAP_CAP else start
         self.wait_frame()
-        frame = max(0.0, TTX_TIMER() - end)
+        frame = max(0.0, TTX_TIMER() - base)
         sweep['frame'] = frame if sweep['frame'] is None else 0.8 * sweep['frame'] + 0.2 * frame
         until = end + min(SWEEP_REST_MAX, sweep['last'] * (1.0 - SWEEP_SHARE) / SWEEP_SHARE)
         for _ in range(SWEEP_REST_WAITS):
-            if TTX_TIMER() >= until or not self.sweep_gates_open(): break
+            if TTX_TIMER() >= until or not self.sweep_gates_open() or self.sweep_waiting(): break
             self.wait_frame()
         sweep['slice'] = min(SWEEP_SLICE_MAX, max(TTX_SWEEP_SLICE, sweep['frame'] * SWEEP_SHARE / (1.0 - SWEEP_SHARE)))
+
+    def sweep_waiting(self):
+        """A command of the page (a vehicle, Stop) waits in the export loop's queue: the rest ends and no slice starts
+        before it is read."""
+        try:
+            commands = self.recorder.writer.export_queue
+            return not commands.empty()
+        except Exception: return False
 
     def sweep_measure(self, kind, sweep, began):
         """A slice has ended (began: its TTX_TIMER start): its work, and the time since the slice before - the rest
@@ -4007,7 +4021,13 @@ class Exporter(object):
         'built', 'current' or 'failed' when it is done with the type, 'partial' when the type needs more steps, None when
         the gates closed before it did anything. True when it did any work."""
         sweep = self.sweeps[kind]
-        if sweep['sliced']: self.sweep_rest(sweep)
+        if sweep['sliced']:
+            self.sweep_rest(sweep)
+            # A gate closed or a command came during the rest (review 26.09): no slice now - it would read a file behind
+            # a closed gate, or keep the page's click waiting a slice more. The rest is done; the next call slices at once.
+            if not self.sweep_gates_open() or self.sweep_waiting():
+                sweep['sliced'] = False
+                return False
         sweep['sliced'] = True
         if sweep['clock'] is None: sweep['clock'] = time.time()
         step = self.ttx_step if kind == 'ttx' else self.models_step
