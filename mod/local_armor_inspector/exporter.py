@@ -220,16 +220,17 @@ ZIP_ENTRY = struct.Struct('<4s6H3L5H2L')
 COLLISION_MARK = b'/collision_client/'
 
 
-def collision_members(path):
+def collision_members(path, mark=COLLISION_MARK, suffix='.havok'):
     """[(name, (header_offset, method, compressed, size, crc))] of the collision models (.havok) of one package, in the
     directory's order - the index zipfile gave, without building an object for every one of its ~20 000 entries: one
     C-level search of the raw central directory for the folder name, then the record around each hit (5 364 of 568 840
     entries in all the client's packages). A package with no such folder costs one search. None when the directory
-    cannot be read that way or a record does not add up: the caller parses the package with zipfile instead."""
+    cannot be read that way or a record does not add up: the caller parses the package with zipfile instead.
+    `mark` and `suffix` name other members the same way (the vehicles' prefabs, 27.09: PREFAB_ROOT, '.prefab')."""
     directory = zip_directory(path)
     if directory is None: return None
     found, end = [], len(directory)
-    at = directory.find(COLLISION_MARK)
+    at = directory.find(mark)
     while at >= 0:
         # The record's own signature is the nearest one before its name: a name is text and holds none.
         start = directory.rfind(b'PK\x01\x02', max(0, at - ZIP_ENTRY.size - 1024), at)
@@ -242,8 +243,8 @@ def collision_members(path):
             name = directory[start + ZIP_ENTRY.size:name_end].decode('ascii')
         except UnicodeDecodeError:
             name = ''
-        if name.endswith('.havok'): found.append((name, (fields[16], fields[4], fields[8], fields[9], fields[7])))
-        at = directory.find(COLLISION_MARK, name_end + fields[11] + fields[12])
+        if name.endswith(suffix): found.append((name, (fields[16], fields[4], fields[8], fields[9], fields[7])))
+        at = directory.find(mark, name_end + fields[11] + fields[12])
     return found
 
 
@@ -1749,6 +1750,243 @@ def fill_wheels(vehicle, shapes):
     return filled
 
 
+# ARMOURED PREFABS (27.09, task prefab-parts; docs/KNOWLEDGE.md 9). Two of the client's 287 vehicle prefabs carry armour
+# and a collider of their own: the CAV mod. 71's crest (its gun's slotPrefabs/crest_module ->
+# content/CGFPrefabs/Vehicle/dynamic_parts/italy/it43_CAV_mod_71_crest.prefab) and the AS-XX 40 t's containers (the hull's
+# slotPrefabs/HP_pod -> .../france/F135_stationary_reload.prefab). A prefab is a JSON tree of CGF objects: the one with
+# BW::Colliders (MeshColliderDesc.modelName - a collision_client model like any part's), BW::ArmorComponent (its own
+# materials by numeric kind, every field written out) and the client's BW::DynamicCollisionLinker (which gives the collider
+# a collision index above maxStaticPartIndex - DamageFromShotDecoder.getPartIndexByNetworkID) is the armoured part, in the
+# prefab's 'normal' state (BW::StateSwitcherComponent; the 'crash' one is the same model and armour). Its place: the parent
+# part x the slot (the component's objectSlots/slot of that name: a position, no rotation on either carrier) x the
+# TransformComponents from the prefab's root down to the collider, each at the end of the root's active SequenceComponent
+# layer where a track moves it - the crest's four "N position layer"s turn it 0, 3.3, 6.6, 9.9 degrees about x, the
+# containers' 'closing' ends at 0 and 'opening' at 70. Degrees; a positive turn about x lowers +z and lifts -z, the sense of
+# the client's own gun pitch (rest_columns) and the one that lifts the containers when they open (their "pods_move_up"
+# sound) - inferred. A node turned about another axis, or scaled, on that path is refused, never guessed.
+PREFAB_ROOT = 'content/CGFPrefabs/Vehicle/'
+PREFAB_MARK = PREFAB_ROOT.encode('ascii')
+PREFAB_LIMIT = 1024*1024
+PREFAB_KINDS = (('script::CrestMovingSequenceParamsComponent', 'crest'),
+                ('script::StationaryReloadSequenceParamsComponent', 'containers'))
+PREFAB_FLAGS = ('useHitAngle', 'mayRicochet', 'collideOnceOnly', 'checkCaliberForRicochet', 'checkCaliberForHitAngleNorm')
+PREFAB_ARMOR_SOURCE = 'client prefab (ArmorComponent)'
+
+
+def rotation_x_columns(degrees):
+    """A turn of `degrees` about x in translation_columns' layout: +y towards +z for a positive angle (rest_columns' gun pitch)."""
+    a = math.radians(degrees)
+    c, s = math.cos(a), math.sin(a)
+    return [1.0, 0.0, 0.0, 0.0, 0.0, c, s, 0.0, 0.0, -s, c, 0.0, 0.0, 0.0, 0.0, 1.0]
+
+
+def multiply_columns(a, b):
+    """a x b of two column-major 4x4 matrices (translation_columns' layout): b applied first."""
+    return [sum(a[k*4+row] * b[col*4+k] for k in range(4)) for col in range(4) for row in range(4)]
+
+
+def turn_x(matrix):
+    """The turn about x (degrees) of a matrix whose rotation is one."""
+    return math.degrees(math.atan2(matrix[6], matrix[5]))
+
+
+def prefab_objects(data):
+    """{uuid: (object, parent uuid)} of a prefab's JSON tree, and its root's uuid."""
+    found = {}
+
+    def walk(node, parent):
+        if isinstance(node, dict):
+            if 'components' in node:
+                found[node.get('uuid')] = (node, parent)
+                parent = node.get('uuid')
+            for key, value in node.items():
+                if key != 'components': walk(value, parent)
+        elif isinstance(node, list):
+            for value in node: walk(value, parent)
+    root = data.get('objects') or {}
+    walk(root, None)
+    return found, root.get('uuid')
+
+
+def sequence_end(root, layer_name=None):
+    """What the root's SequenceComponent sets at the end of a layer - the active one, or the one named - as {object uuid:
+    {'rotation'|'position': {axis: value}}}, and the layer's name. TransformComponent tracks only."""
+    sequence = (root.get('components') or {}).get('BW::SequenceComponent') or {}
+    layers = sequence.get('layers') or []
+    index = None
+    if layer_name is None:
+        index = int(sequence.get('activeLayer') or 0)
+    else:
+        for number, layer in enumerate(layers):
+            if layer.get('name') == layer_name: index = number
+    if index is None or not 0 <= index < len(layers): return {}, None
+    state = {}
+    for track in layers[index].get('tracks') or []:
+        for parameter in track.get('parameters') or []:
+            if parameter.get('component') != 'cgf::TransformComponent' or not parameter.get('keys'): continue
+            path = [p.get('__cvalue__') if isinstance(p, dict) else p for p in parameter.get('property') or []]
+            if not path or path[0] not in ('rotation', 'position'): continue
+            value = parameter['keys'][-1].get('value')
+            value = value.get('__cvalue__', value) if isinstance(value, dict) else value
+            slot = state.setdefault(track.get('object'), {}).setdefault(path[0], {})
+            if len(path) == 1 and isinstance(value, dict):
+                slot.update(dict((axis, float(value.get(axis) or 0.0)) for axis in 'xyz'))
+            elif len(path) == 2 and path[1] in ('x', 'y', 'z'):
+                slot[path[1]] = float(value)
+    return state, layers[index].get('name')
+
+
+def prefab_local(node, moved):
+    """One object's local matrix: its TransformComponent with what the sequence set over it."""
+    transform = (node.get('components') or {}).get('cgf::TransformComponent') or {}
+    position = dict((axis, float((transform.get('position') or {}).get(axis) or 0.0)) for axis in 'xyz')
+    rotation = dict((axis, float((transform.get('rotation') or {}).get(axis) or 0.0)) for axis in 'xyz')
+    position.update((moved or {}).get('position') or {})
+    rotation.update((moved or {}).get('rotation') or {})
+    if abs(rotation['y']) > 1e-9 or abs(rotation['z']) > 1e-9: raise ValueError('Prefab node turned about y or z')
+    if any(abs(float(v) - 1.0) > 1e-9 for v in (transform.get('scale') or {}).values()): raise ValueError('Scaled prefab node')
+    return multiply_columns(translation_columns([position['x'], position['y'], position['z']]), rotation_x_columns(rotation['x']))
+
+
+def prefab_spec(data, names_by_ids):
+    """The armoured part of one prefab (its parsed JSON), or None when it has none: {'resource', 'armor', 'kind', 'transform'
+    (the collider in the prefab root's frame at the default layer), 'layer' (that layer's name), 'layers': [{'name', 'angle'}]
+    (every named layer's turn about x against the default)}. Raises on what it does not understand."""
+    objects, root_id = prefab_objects(data)
+    root = objects.get(root_id, (None, None))[0]
+    if root is None: return None
+    components = root.get('components') or {}
+
+    def armoured(node):
+        found = node.get('components') or {}
+        linker = found.get('BW::DynamicCollisionLinker')
+        return ('BW::Colliders' in found and 'BW::ArmorComponent' in found and linker is not None
+                and 'Client' not in (linker.get('disabledDomains') or ()))
+
+    def under(uuid, ancestor):
+        while uuid is not None:
+            if uuid == ancestor: return True
+            uuid = objects.get(uuid, (None, None))[1]
+        return False
+    colliders = [uuid for uuid, (node, _) in objects.items() if armoured(node)]
+    normal = (components.get('BW::StateSwitcherComponent') or {}).get('normal')
+    if normal and any(under(uuid, normal) for uuid in colliders):
+        colliders = [uuid for uuid in colliders if under(uuid, normal)]
+    if not colliders: return None
+    if len(colliders) != 1: raise ValueError('Several armoured colliders in one prefab')
+    found = objects[colliders[0]][0]['components']
+    models = [(c.get('__cvalue__') or {}).get('modelName') for c in (found['BW::Colliders'].get('colliders') or [])
+              if isinstance(c, dict)]
+    if len(models) != 1 or not RESOURCE.match(str(models[0] or '')): raise ValueError('Prefab collider model not understood')
+    armour = {}
+    for material in found['BW::ArmorComponent'].get('materials') or []:
+        name = names_by_ids.get(int(material['kind']))
+        if not name: raise ValueError('Unknown prefab material kind %s' % material.get('kind'))
+        value = dict((flag, str(material.get(flag, '0')).strip().lower() in ('1', 'true')) for flag in PREFAB_FLAGS)
+        value['useArmorHomogenization'] = False
+        # A device (the containers' ammoBay, 0 mm) is walked through, as every device of a hull is: no armour of its own.
+        value['armor'] = None if str(material.get('damageKind') or '').upper() == 'DEVICE' else float(material['armor'])
+        value['vehicleDamageFactor'] = float(material.get('vehicleDamageFactor') or 0.0)
+        value['chanceToHitByProjectile'] = float(material.get('chanceToHitByProjectile') or 1.0)
+        armour[str(name)] = value
+    path, uuid = [], colliders[0]
+    while uuid is not None:
+        path.append(uuid)
+        uuid = objects[uuid][1]
+    path.reverse()
+
+    def placed(layer_name=None):
+        moved, name = sequence_end(root, layer_name)
+        matrix = translation_columns([0.0, 0.0, 0.0])
+        for step in path: matrix = multiply_columns(matrix, prefab_local(objects[step][0], moved.get(step)))
+        return matrix, name
+    transform, layer = placed()
+    base = turn_x(transform)
+    layers = []
+    for entry in (components.get('BW::SequenceComponent') or {}).get('layers') or []:
+        if entry.get('name'): layers.append({'name':entry['name'], 'angle':round(turn_x(placed(entry['name'])[0]) - base, 4)})
+    kind = next((label for component, label in PREFAB_KINDS if component in components), None)
+    return {'resource':str(models[0]), 'armor':armour, 'kind':kind, 'transform':transform, 'layer':layer, 'layers':layers}
+
+
+def slot_prefabs(tree):
+    """[(parent part index, component name, slot, prefab path, slot matrix or None)] of a vehicle XML: every slotPrefabs entry
+    of its hull, chassis, turrets and guns with the place its objectSlots/slot gives (None when the slot has no place or
+    a turned one - that prefab is then left out, never placed by guess)."""
+    found = []
+
+    def scan(node, parent, name):
+        prefabs = node.find('slotPrefabs') if node is not None else None
+        if prefabs is None: return
+        slots = dict(((s.findtext('name') or '').strip(), s) for s in node.findall('objectSlots/slot'))
+        for entry in prefabs:
+            path, slot, place = (entry.text or '').strip(), slots.get(entry.tag), None
+            try:
+                position = [float(x) for x in slot.findtext('position').split()]
+                rotation = [float(x) for x in (slot.findtext('rotation') or '0 0 0').split()]
+                if len(position) == 3 and not any(abs(r) > 1e-9 for r in rotation): place = translation_columns(position)
+            except (AttributeError, ValueError):
+                place = None
+            found.append((parent, name, entry.tag, path, place))
+    scan(tree.find('hull'), 1, 'hull')
+    for group, parent in (('chassis', 0), ('turrets0', 2)):
+        for node in (tree.find(group) if tree.find(group) is not None else ()):
+            scan(node, parent, node.tag)
+            if parent == 2:
+                for gun in (node.find('guns') if node.find('guns') is not None else ()): scan(gun, 3, gun.tag)
+    return found
+
+
+def descriptor_slots(descr):
+    """[(parent part index, slot, prefab path)] of the slotPrefabs of a descriptor's mounted chassis, hull, turret and gun -
+    attribute reads only (the recorder names a prefab contact with it; a vehicle export reads the XML only when it has any)."""
+    found = []
+    for index, name in ((0, 'chassis'), (1, 'hull'), (2, 'turret'), (3, 'gun')):
+        try:
+            for slot, prefab in tuple(getattr(getattr(descr, name), 'slotPrefabs', ()) or ()):
+                found.append((index, str(slot), str(prefab)))
+        except Exception:
+            pass
+    return found
+
+
+def prefab_components(descr):
+    """{parent part index: the name its XML component has} of a descriptor: which gun, turret and chassis are mounted."""
+    names = {1:'hull'}
+    for index, attribute in ((0, 'chassis'), (2, 'turret'), (3, 'gun')):
+        try:
+            names[index] = str(getattr(descr, attribute).name)
+        except Exception:
+            pass
+    return names
+
+
+def prefab_statics(entry):
+    """What a prefab part has whatever its pose: its slot, prefab, parent, model, armour, layers and `prefabBase` - the slot x
+    the collider at the default layer, in the parent part's frame. The page turns a recorded pose into a layer and an angle
+    against it (ArmorInspectorData.prefabPose); nothing of the pose is kept here, so every hit shares one static block."""
+    spec = entry['spec']
+    return {'name':entry['slot'], 'prefab':entry['prefab'], 'prefabKind':spec['kind'], 'parentPart':entry['parent'],
+            'resource':spec['resource'], 'armor':copy.deepcopy(spec['armor']), 'armorSource':PREFAB_ARMOR_SOURCE,
+            'prefabLayers':[dict(layer) for layer in spec['layers']], 'prefabDefault':spec['layer'],
+            'prefabBase':multiply_columns(entry['place'], spec['transform'])}
+
+
+def prefab_part(entry, parent_transform, part_id):
+    """A prefab part at its default layer on a parent placed at `parent_transform` (a vehicle export)."""
+    part = {'id':part_id}
+    part.update(prefab_statics(entry))
+    part['poseFrom'] = 'default'
+    part['transform'] = multiply_columns(list(parent_transform), part['prefabBase'])
+    return part
+
+
+def fill_prefab(part, entry):
+    """A prefab part the recorder wrote (its collision index, slot, parent and pose at the hit) gets the rest."""
+    part.update(prefab_statics(entry))
+    return part
+
+
 def translation_columns(offset):
     """The column-major layout the recorder's matrix_columns writes, without rotation.
 
@@ -2742,6 +2980,7 @@ class Exporter(object):
         self.packages = None
         self.package_entries = None
         self.package_scan_failed = None
+        self.prefab_entries = None
         self.package_conflicts = set()
         self.overrides = None
         self.attempts = {}
@@ -2811,6 +3050,7 @@ class Exporter(object):
         # in fix_wheels (logged once). Export thread only.
         self.extras_cache = {}
         self.extras_logged = set()
+        self.prefab_cache = {}
         # Wheeled vehicles' files from before the wheels that load_vehicles found: exported again in the background, and
         # the catalogue written once after the last of them (replay_vehicle_requests, run_vehicle_job).
         self.migrating = set()
@@ -2900,15 +3140,24 @@ class Exporter(object):
         # directories here; decode one selected model later on the idle worker.
         paths = self.mounted_packages()
         packages, signatures, conflicts, overrides, entries = {}, {}, set(), set(), {}
+        # The vehicles' CGF prefabs too (27.09): an armoured one's JSON is read for its collider and armour (type_extras).
+        # The first package that has one wins, as for the models; they are few (two armoured of 287).
+        prefabs = {}
         for path in paths:
             # The raw directory (collision_members, 25.09): the same names, places and CRCs as zipfile's, in ~1/20 of
             # the time; any doubt about a package reads it through zipfile as before.
             members = collision_members(path)
-            if members is None:
+            prefab_members = collision_members(path, PREFAB_MARK, '.prefab') if members is not None else None
+            if members is None or prefab_members is None:
                 with zipfile.ZipFile(path) as archive:
                     members = [(info.filename, (info.header_offset, info.compress_type, info.compress_size,
                                                 info.file_size, info.CRC)) for info in archive.infolist()]
+            else:
+                members = members + prefab_members
             for name, entry in members:
+                if name.startswith(PREFAB_ROOT) and name.endswith('.prefab') and '..' not in name:
+                    if name not in prefabs: prefabs[name] = (path, entry)
+                    continue
                 if ('/collision_client/' not in name or not name.endswith('.havok')
                         or not RESOURCE.match(name) or '..' in name): continue
                 signature = (entry[3], entry[4])
@@ -2927,11 +3176,12 @@ class Exporter(object):
             with zipfile.ZipFile(path) as archive:
                 for name in archive.namelist():
                     resource = name[4:] if name.startswith('res/') else ''
-                    if RESOURCE.match(resource) and '..' not in resource:
+                    if (RESOURCE.match(resource) or resource.startswith(PREFAB_ROOT)) and '..' not in resource:
                         overrides.add(resource)
         # Publish the index only after a complete successful scan.
         self.packages, self.package_conflicts, self.overrides = packages, conflicts, overrides
         self.package_entries = entries
+        self.prefab_entries = prefabs
 
     def ensure_packages(self):
         """The package index, built on first need. A failed scan (an unreadable package or .wotmod)
@@ -2967,6 +3217,20 @@ class Exporter(object):
         with zipfile.ZipFile(path) as z:
             if z.getinfo(name).file_size > MODEL_LIMIT: raise ValueError('Model too large')
             return z.read(name)
+
+    def read_prefab(self, name):
+        """One vehicle prefab's JSON (type_extras), from the package index; one a mod replaces is refused, as a model is."""
+        self.ensure_packages()
+        if name in (self.overrides or ()): raise ValueError('Prefab overridden by a mod')
+        found = (getattr(self, 'prefab_entries', None) or {}).get(name)
+        if found is None: raise ValueError('Prefab not found in the client packages')
+        path, entry = found
+        if entry[2] > PREFAB_LIMIT or entry[3] > PREFAB_LIMIT: raise ValueError('Prefab too large')
+        try:
+            data = read_package_entry(path, name, entry)
+        except Exception:
+            with zipfile.ZipFile(path) as z: data = z.read(name)
+        return json.loads(data.decode('utf-8'))
 
     def model(self, resource, version):
         """The cache-or-extract call of every explicit request.
@@ -3117,9 +3381,10 @@ class Exporter(object):
             return True
 
     def type_extras(self, type_name, defer=None):
-        """{'wheels': {chassis name: wheel_shapes}} of one type of the running client, None while it may not be read (a
-        battle: `defer`, a set, gets the key the hit waits under and the extras job is queued). Raises ExtrasUnavailable
-        when the XML did not read (the reason is kept for the session)."""
+        """{'wheels': {chassis name: wheel_shapes}, 'prefabs': [armoured prefab entry], 'prefabErrors': [reason]} of one
+        type of the running client, None while it may not be read (a battle: `defer`, a set, gets the key the hit waits
+        under and the extras job is queued). Raises ExtrasUnavailable when the XML did not read (the reason is kept for the
+        session). A prefab entry: {'parent', 'component', 'slot', 'prefab', 'place' (the slot's matrix), 'spec' (prefab_spec)}."""
         cache = self.extras_cache
         key = str(type_name)
         entry = cache.get(key)
@@ -3139,13 +3404,37 @@ class Exporter(object):
             nation, name = key.split(':')
             tree = self.armor.xml('scripts/item_defs/vehicles/'+nation+'/'+name+'.xml')
             chassis = tree.find('chassis')
-            entry = {'wheels':dict((node.tag, wheel_shapes(tree, node.tag)) for node in (chassis if chassis is not None else ()))}
+            entry = {'wheels':dict((node.tag, wheel_shapes(tree, node.tag)) for node in (chassis if chassis is not None else ())),
+                     'prefabs':[], 'prefabErrors':[]}
+            # The armoured prefabs of its slots (27.09): the JSON of each named prefab, once; one that does not read or that
+            # has no place is left out and named in prefabErrors (a vehicle file then does not count its prefabs as done).
+            for parent, component, slot, path, place in slot_prefabs(tree):
+                try:
+                    spec = self.prefab_spec(path)
+                    if spec is None: continue
+                    if place is None: raise ValueError('slot %s has no place' % slot)
+                    entry['prefabs'].append({'parent':parent, 'component':component, 'slot':slot, 'prefab':path,
+                                             'place':place, 'spec':spec})
+                except Exception as exc:
+                    LOG.warning('Prefab %s of %s left out: %s', path, key, exc)
+                    entry['prefabErrors'].append('%s: %s' % (slot, exc))
         except Exception as exc:
-            LOG.warning('Vehicle XML unavailable for %s (its wheels are published without bodies): %s', key, exc)
+            LOG.warning('Vehicle XML unavailable for %s (its wheels and armoured prefabs are left out): %s', key, exc)
             entry = {'error':str(exc) or type(exc).__name__}
         if len(self.extras_cache) >= 256: self.extras_cache.clear()
         self.extras_cache[key] = entry
         return entry
+
+    def prefab_spec(self, path):
+        """prefab_spec of one prefab of the client packages, kept for the session (several types may share one)."""
+        cache = self.prefab_cache
+        if path not in cache:
+            try:
+                from material_kinds import NAMES_BY_IDS
+            except Exception:
+                NAMES_BY_IDS = {}
+            cache[path] = prefab_spec(self.read_prefab(path), NAMES_BY_IDS)
+        return cache[path]
 
     def run_extras_job(self, payload):
         """After a battle: read the type's XML (unless the vehicle export already did) and publish again what waited for it."""
@@ -3153,6 +3442,35 @@ class Exporter(object):
         if key not in self.extras_cache: self.read_type_extras(key)
         self.invalidate_model(EXTRAS_KEY + key)
         self.republish.update(self.waiting.pop(EXTRAS_KEY + key, ()))
+
+    def run_prefab_check(self):
+        """The exported files from before the armoured prefabs: which of them to export again. The client's armoured
+        prefabs are the dynamic parts with a collider and armour (two in 2.4.0.1, both in content/CGFPrefabs/Vehicle/
+        dynamic_parts); a file whose parts' models lie in the folder of such a prefab's collider is that vehicle's, and is
+        exported again in the background (its own request, replay). Every other file is left as it is - nothing written;
+        the check is two small JSON reads a session. A failure leaves them all for the next start."""
+        unchecked, self.prefab_unchecked = getattr(self, 'prefab_unchecked', None) or {}, {}
+        if not unchecked: return
+        self.ensure_packages()
+        folders = set()
+        for name in sorted(self.prefab_entries or ()):
+            if not name.startswith(PREFAB_ROOT + 'dynamic_parts/'): continue
+            try:
+                spec = self.prefab_spec(name)
+            except Exception as exc:
+                LOG.warning('Prefab %s not read for the check: %s', name, exc)
+                continue
+            if spec: folders.add(spec['resource'].rsplit('/collision_client/', 1)[0] + '/collision_client/')
+        for type_name, record in sorted(unchecked.items()):
+            resources = [str(p.get('resource') or '') for p in record.get('parts') or () if isinstance(p, dict)]
+            if not type_name or not record.get('compactDescriptor') or not any(r.startswith(f) for r in resources for f in folders):
+                continue
+            summary = self.vehicles.get(str(record.get('id') or ''))
+            if summary is not None: summary['descriptorHash'] = None
+            self.migrating.add(type_name)
+            self.queue_job(JOB_BULK, 'vehicle', {'vehicleType':type_name, 'compactDescriptor':record['compactDescriptor'],
+                                                 'source':record.get('source'), 'replay':True, 'identity':dict(
+                                                     (key, record.get(key)) for key in ('name', 'level', 'class', 'role', 'nation'))})
 
     def fix_wheels(self, vehicle, defer=None):
         """Body and rest place for the wheel parts of one vehicle block that has any without them (the recorder's). Its own
@@ -3175,6 +3493,27 @@ class Exporter(object):
                 self.extras_logged.add(name)
                 LOG.exception('Wheel bodies unavailable for %s; the wheels are published without them', name)
             return 0
+
+    def fix_prefabs(self, vehicle, defer=None):
+        """The armoured prefab part the recorder wrote (its collision index, slot, parent and pose at the hit; no model yet)
+        gets its model, armour, layers and base from this client's prefab (fill_prefab); the page reads the layer its pose
+        stands in. The type names the XML, no descriptor is built. A failure leaves it as recorded: the page leaves it out and says so."""
+        parts = vehicle.get('parts') if isinstance(vehicle, dict) else None
+        todo = [p for p in parts or () if isinstance(p, dict) and p.get('prefab') and 'resource' not in p]
+        if not todo: return 0
+        try:
+            extras = self.type_extras(str(vehicle.get('type') or ''), defer)
+        except ExtrasUnavailable:
+            return 0
+        if extras is None: return 0
+        filled = 0
+        for part in todo:
+            entry = next((e for e in extras['prefabs'] if e['slot'] == part.get('name') and e['prefab'] == part.get('prefab')
+                          and e['parent'] == part.get('parentPart')), None)
+            if entry is None: continue
+            fill_prefab(part, entry)
+            filled += 1
+        return filled
 
     def reset_prepared(self):
         self.prepared_hits = [None] * len((self.current or {}).get('hits') or [])
@@ -3208,6 +3547,8 @@ class Exporter(object):
             # is read the hit goes out without them and waits (`deferred`) like one waiting for a model.
             for side in ('target', 'attacker'):
                 self.fix_wheels(hit.get(side), deferred)
+            # The armoured prefab part the recorder wrote for the target (27.09): its model, armour and layers.
+            self.fix_prefabs(hit.get('target'), deferred)
         fix_shells(hit)
         try:
             stamp_aim_origin(hit, raw, battle)
@@ -3614,6 +3955,7 @@ class Exporter(object):
             if job[2] == 'model': self.run_model_job(job[3])
             elif job[2] == 'ttx': self.run_ttx_job(job[3])
             elif job[2] == 'extras': self.run_extras_job(job[3])
+            elif job[2] == 'prefabs': self.run_prefab_check()
             else: self.run_vehicle_job(job[3], page)
         except Exception:
             LOG.exception('Deferred %s job failed; the rest of the queue continues', job[2])
@@ -3687,7 +4029,7 @@ class Exporter(object):
         moved = 0
         for job in self.jobs:
             if job[0] == JOB_PAGE: continue
-            if job[2] in ('vehicle', 'ttx', 'extras'):
+            if job[2] in ('vehicle', 'ttx', 'extras', 'prefabs'):
                 match = str((job[3] or {}).get('vehicleType') or '') in wanted
             else:
                 match = bool(self.job_types.get(job[3][0], ()) and self.job_types[job[3][0]] & wanted)
@@ -3786,6 +4128,8 @@ class Exporter(object):
         self.stale_vehicles = {}
         # Which types are wheeled: the client's own list (its tags), read once here - no descriptor per file.
         wheeled = wheeled_types()
+        # Files from before the armoured prefabs (27.09), by type: the prefab check job picks the few to export again.
+        self.prefab_unchecked = {}
         for path in sorted(glob.glob(os.path.join(self.folder, 'data', 'vehicles', '*.js'))):
             try:
                 record = read_data_file(path)
@@ -3830,6 +4174,8 @@ class Exporter(object):
                             self.stale_vehicles[type_name] = record
                     except Exception:
                         pass
+                if record.get('parts') and 'prefabParts' not in record and not stale:
+                    self.prefab_unchecked[str(record.get('type') or '')] = record
                 if filled and identifier and IDENTIFIER.match(identifier):
                     write_data(path, 'vehicle:'+identifier, record)
                 self.remember_vehicle(record)
@@ -3909,6 +4255,8 @@ class Exporter(object):
             if request is None: continue
             self.migrating.add(type_name)
             self.queue_job(JOB_BULK, 'vehicle', dict(request, replay=True))
+        # Files from before the armoured prefabs: one background check, not a descriptor per file (run_prefab_check).
+        if getattr(self, 'prefab_unchecked', None): self.queue_job(JOB_BULK, 'prefabs', {'vehicleType':''})
         for type_name in sorted(requests):
             try:
                 self.export_vehicle(requests[type_name], replay=True)
@@ -4036,6 +4384,27 @@ class Exporter(object):
             record['parts'].extend(wheels)
             if wheels or not listed: record['wheelParts'] = len(wheels)
             else: record['warnings'].append('Wheel bodies unavailable')
+            # Then the armoured prefabs of its mounted components (27.09: the CAV mod. 71's crest, the AS-XX 40 t's
+            # containers) at their default layer on the rest pose of their parent part. The count, as the wheels', only when
+            # the XML and every prefab it names were read: a failure of this session is looked at again at the next start.
+            prefabs = []
+            try:
+                # No slot on a mounted component: nothing to read (the XML costs 50-90 ms; most vehicles have none).
+                extras = self.type_extras(descr.type.name) if descriptor_slots(descr) else {'prefabs':[], 'prefabErrors':[]}
+                if extras is None: raise ExtrasUnavailable('not read during a battle')
+                names = prefab_components(descr)
+                placed = dict((p['id'], p.get('transform')) for p in record['parts'] if isinstance(p.get('id'), int))
+                number = max([key for key in placed if key >= 0] or [3]) + 1
+                for entry in extras['prefabs']:
+                    if names.get(entry['parent']) != entry['component']: continue
+                    if not placed.get(entry['parent']): raise ValueError('parent part %d has no place' % entry['parent'])
+                    prefabs.append(prefab_part(entry, placed[entry['parent']], number))
+                    number += 1
+                if extras['prefabErrors']: raise ValueError('; '.join(extras['prefabErrors']))
+                record['prefabParts'] = len(prefabs)
+            except Exception as exc:
+                record['warnings'].append('Armoured prefabs unavailable: %s' % exc)
+            record['parts'].extend(prefabs)
             self.publish_vehicle_parts(record['parts'], record, self.version, extract=True)
         except Exception:
             record['parts'] = []

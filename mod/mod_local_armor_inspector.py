@@ -348,6 +348,48 @@ def wheel_names_agree(names, parts):
         -part['id'] <= len(names) and names[-part['id']-1] == part['name'] for part in parts)
 
 
+# ARMOURED PREFABS OF A TARGET (27.09, task prefab-parts; exporter.prefab_spec). The CAV mod. 71's crest and the AS-XX
+# 40 t's containers are CGF prefabs in a slot of their gun / hull (descr.<part>.slotPrefabs: (slot, prefab path)); the
+# client's DynamicCollisionLinker gives the collider a collision index above maxStaticPartIndex, known to the recorder
+# only from a contact on it (DamageFromShotDecoder.getPartIndexByNetworkID). Such a contact is recorded on a part of that
+# index with its slot, parent and pose at the hit (collisions.getPartTransform - the call the client makes for it in
+# Vehicle.showDamageFromShot), and the index is remembered for the collision component: every later hit on that vehicle
+# records the part's pose too (one getPartTransform), whatever it strikes - the crest moves with the charges, the
+# containers when they open. Its model and armour come from the prefab on the export thread; nothing is read here.
+_PREFAB_INDEX = {}
+
+
+def prefab_slot(descr, parent):
+    """(parent part index, slot, prefab path) of the target's prefab slot a dynamic collision part belongs to: the one slot
+    of its recorded parent's component, else the vehicle's only slot, else None (the contact then stays unsupported)."""
+    from local_armor_inspector.exporter import descriptor_slots
+    found = descriptor_slots(descr)
+    own = [entry for entry in found if entry[0] == parent]
+    if len(own) == 1: return own[0]
+    return found[0] if len(found) == 1 else None
+
+
+def prefab_part(idx, descr, collisions, root, matrix):
+    """The target's prefab part at collision index `idx`, posed now; None when it cannot be named or placed."""
+    try:
+        parent = collisions.getParentPartIndex(idx)
+        parent = int(parent) if parent is not None else None
+    except Exception:
+        parent = None
+    slot = prefab_slot(descr, parent)
+    if slot is None: return None
+    try:
+        transform = matrix_columns(matrix(collisions.getPartTransform(idx)), root)
+    except Exception:
+        return None
+    return {'id':int(idx), 'name':slot[1], 'prefab':slot[2], 'parentPart':slot[0], 'transform':transform}
+
+
+def remember_prefab(collisions, descr, idx):
+    if len(_PREFAB_INDEX) >= 64: _PREFAB_INDEX.clear()
+    _PREFAB_INDEX[id(collisions)] = (str(descr.type.name), int(idx))
+
+
 def rest_transforms(descr):
     """Collision-part transforms of a vehicle descriptor in its rest pose.
 
@@ -1234,6 +1276,16 @@ class Recorder(object):
                     known.update(part['id'] for part in wheels)
             except Exception:
                 LOG.exception('Wheel parts unavailable; the hit is recorded without them')
+            # An armoured prefab a contact met before on this collision component: its pose at this hit.
+            try:
+                seen = _PREFAB_INDEX.get(id(collisions))
+                if seen is not None and seen[0] == str(descr.type.name) and seen[1] not in known:
+                    part = prefab_part(seen[1], descr, collisions, root, Math.Matrix)
+                    if part:
+                        record['target']['parts'].append(part)
+                        known.add(part['id'])
+            except Exception:
+                LOG.exception('Prefab part unavailable; the hit is recorded without it')
             record['aim'] = list(vehicle.getAimParams())
             for hit in hitPoints:
                 point = {'status':'unresolved'}
@@ -1251,6 +1303,13 @@ class Recorder(object):
                     if resolved is None: continue
                     pos, direction, normal = resolved
                     point.update({'position':vector(pos), 'direction':vector(direction), 'normal':vector(normal)})
+                    # A contact on an armoured prefab (an index above the static parts): the part, posed at this hit.
+                    if idx not in known and idx > collisions.maxStaticPartIndex:
+                        part = prefab_part(idx, descr, collisions, root, Math.Matrix)
+                        if part:
+                            record['target']['parts'].append(part)
+                            known.add(idx)
+                            remember_prefab(collisions, descr, idx)
                     if idx not in known:
                         point['status'] = 'unsupported-part'
                         # A wheel or an armoured prefab: its name, parent and pose at impact, so the part can be
@@ -1258,8 +1317,10 @@ class Recorder(object):
                         point.update(extra_part_info(idx, collisions, vehicle.appearance, root, Math.Matrix))
                     else:
                         point['status'] = 'resolved'
-                        # A contact on a wheel keeps what the collision says of it (its name, box and node) - rare.
-                        if idx < 0: point.update(extra_part_info(idx, collisions, vehicle.appearance, root, Math.Matrix))
+                        # A contact on a wheel or a prefab keeps what the collision says of it (its name or parent, box and
+                        # pose) - rare.
+                        if idx < 0 or idx > collisions.maxStaticPartIndex:
+                            point.update(extra_part_info(idx, collisions, vehicle.appearance, root, Math.Matrix))
                 except Exception:
                     LOG.exception('Hit point could not be decoded')
         except Exception:

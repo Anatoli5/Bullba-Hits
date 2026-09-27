@@ -337,6 +337,30 @@ async function main() {
       ok('wheels, ⌖ ' + (fun ? 'on' : 'off') + ': the browsed export draws its four wheels', four(browsed), JSON.stringify(browsed.parts));
       await step("side('battles')"); await step("battle('pm')"); await step('hit(0)');
     }
+    // Armoured prefabs (27.09, prefab-parts): a hit on Xray's crest - part 4 of its own model on the gun, recorded in its
+    // "1 position layer". The scene has it, the contact resolves on it and its verdict ends on its 150 mm; the details call
+    // it the crest and say where it stood; the browsed export puts it at the default layer and turns it with the gun.
+    const CREST = `(() => { const v = window.__bullbaViewers[window.__bullbaViewers.length - 1], parts = {};
+      ((v.engine && v.engine.triangles) || []).forEach((t) => { parts[t.part] = (parts[t.part] || 0) + 1; });
+      const r = v.engine && v.shotPoints ? v.pointVerdicts(ArmorBallistics.shell('ARMOR_PIERCING', 250, 105)) : [], first = r[0] && r[0].result;
+      const last = first && first.layers && first.layers[first.layers.length - 1];
+      return {crest: parts[4] || 0, points: (v.shotPoints || []).map((p) => p.part), end: last ? [last.part, last.material, last.nominal] : null,
+        follows: ((e) => !!(e && e[4] && e[4] === e[3]))(v.poseExtra()),
+        details: [].slice.call(document.querySelectorAll('#details > div')).map((d) => d.textContent).join(' | ')}; })()`;
+    for (const fun of [false, true]) {
+      await ev('__bt.act.fun(' + fun + ')'); await ev('__bt.settle()');
+      await step("battle('pm6')");
+      expectScene('a hit on an armoured crest (pm6)', fun, {model: true, shooter: true, hp: '1 900 / 1 900', source: HP.ROSTER}, await step('hit(0)'));
+      const onCrest = await ev(CREST);
+      ok('prefabs, ⌖ ' + (fun ? 'on' : 'off') + ': the crest is in the scene, the contact on it, its verdict ends on its own 150 mm; the details say Crest, position 1 at the hit',
+         onCrest.crest === 12 && onCrest.points[0] === 4 && JSON.stringify(onCrest.end) === '[4,"armor_1",150]' && onCrest.follows
+         && onCrest.details.indexOf('Crest') >= 0 && onCrest.details.indexOf('at the hit: position 1 (0–3) (3.3°)') >= 0, JSON.stringify(onCrest).slice(0, 400));
+      await step('modelTile()');
+      expectScene('the crested vehicle browsed', fun, {model: true, shooter: true, hp: '1 900 / 1 900', source: HP.OWN}, await step("list('pm_xray')"));
+      const browsed = await ev(CREST);
+      ok('prefabs, ⌖ ' + (fun ? 'on' : 'off') + ': the browsed export draws its crest and turns it with the gun', browsed.crest === 12 && browsed.follows, JSON.stringify(browsed).slice(0, 300));
+      await step("side('battles')"); await step("battle('pm')"); await step('hit(0)');
+    }
     // A target picked by hand inherits the view (user, 26.09): Papa shoots, Papa -> Quebec -> Papa as the model by clicks
     // in the Vehicles list. The camera, the pose and the shooter's shell carry over, and Papa comes back as he was.
     await ev('__bt.act.fun(false)'); await ev('__bt.settle()');

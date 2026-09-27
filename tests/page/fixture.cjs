@@ -11,6 +11,8 @@
  * Its server stop lies 0.8 m along the hull from the recorded point: the flight is carried onto the point, the pose mark shows.
  * pm4: an event's vehicle whose record has the complete model and whose export does not (the gun's model missing).
  * pm5 (26.09, BACKLOG 39): a wheeled vehicle, Whiskey, hit on its wheel -3; its export pm_whiskey carries the wheels too.
+ * pm6 (27.09, prefab-parts): Xray, a vehicle with an armoured crest on its gun (part 4, a prefab: its own 150 mm box model
+ * and armour, parent 3), hit on the crest raised to its "1 position layer" (3.3 degrees).
  *
  *   require('./fixture.cjs').write(folder)   // writes folder/data/**
  */
@@ -96,7 +98,7 @@ function write(folder) {
   const VEHICLES = {30: {name: 'Papa', type: 'germany:Papa', scale: 1}, 31: {name: 'Romeo', type: 'germany:Romeo', scale: 1.15},
                     32: {name: 'Quebec', type: 'germany:Quebec', scale: 0.9}, 33: {name: 'Sierra', type: 'germany:Sierra', scale: 0.8},
                     34: {name: 'Tango', type: 'germany:Tango', scale: 1.05}, 35: {name: 'Victor', type: 'germany:Victor_WT', scale: 1.1},
-                    36: {name: 'Whiskey', type: 'france:Whiskey', scale: 1, wheels: true}};
+                    36: {name: 'Whiskey', type: 'france:Whiskey', scale: 1, wheels: true}, 37: {name: 'Xray', type: 'italy:Xray', scale: 1}};
   const side = function (id, withAim) {
     const v = VEHICLES[id];
     const out = {name: v.name, type: v.type, nation: 'germany', level: 10, 'class': 'heavyTank', role: 'role_HT_break',
@@ -173,6 +175,28 @@ function write(folder) {
     start: [-0.5, 0.2, 0.1], end: [0.5, 0.2, 0.1], position: [-0.175, 0.2, 0.1], direction: [1, 0, 0], normal: [-1, 0, 0], partName: 'W_L1'}];
   battles.push(Object.assign(BATTLE('pm5', 'Synthetic plain', T0 - 7200, [pm5hit]),
     {roster: ROSTER.concat([{id: 36, name: 'Whiskey', type: 'france:Whiskey', team: 1, player: 'bot2', maxHealth: 1400, defaultMaxHealth: 1400}])}));
+  // pm6 (prefab-parts, 27.09): the player's shot on Xray's crest - a prefab part (exporter.prefab_statics) at index 4 on the
+  // gun, recorded turned 3.3 degrees about x from its default place: its "1 position layer". The contact on its top.
+  const crestModel = {kind: 'client-shot-collision', resource: 'vehicles/synthetic/collision_client/crest.model',
+    groups: [box([-0.3, 0, -0.6], [0.3, 0.25, 0.6], 'armor_1')]};
+  const crestKey = crypto.createHash('sha256').update(JSON.stringify(crestModel)).digest('hex');
+  crestModel.sha256 = crestKey;
+  put('models/' + crestKey + '.js', 'model:' + crestKey, crestModel);
+  const rx = function (deg) { const a = deg * D0, c = Math.cos(a), s = Math.sin(a); return [1, 0, 0, 0, 0, c, s, 0, 0, -s, c, 0, 0, 0, 0, 1]; };
+  const mul = function (a, b) { const o = []; for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) { let v = 0; for (let k = 0; k < 4; k++) v += a[k * 4 + r] * b[c * 4 + k]; o[c * 4 + r] = v; } return o; };
+  const crestPart = function (turn) {
+    const base = translate(0, 0.3, -0.5), gun = translate(0, 2.15, 1.0);
+    return {id: 4, name: 'crest_module', prefab: 'content/CGFPrefabs/Vehicle/dynamic_parts/italy/xray_crest.prefab', prefabKind: 'crest',
+      parentPart: 3, modelKey: crestKey, resource: crestModel.resource, armor: {armor_1: MATERIAL(150)}, armorSource: 'synthetic',
+      prefabBase: base, prefabDefault: '0 position layer', prefabLayers: [0, 1, 2, 3].map(function (k) { return {name: k + ' position layer', angle: 3.3 * k}; }),
+      transform: turn === null ? mul(gun, base) : mul(mul(gun, base), rx(turn))};
+  };
+  const pm6hit = HIT('pm6-1', 30, 37, 'outgoing', T0 - 10700);
+  pm6hit.target.parts.push(crestPart(3.3));
+  pm6hit.points = [{status: 'resolved', part: 4, effect: 3, hitType: 0, shellType: 2, shellKind: 'ARMOR_PIERCING', caliber: 105,
+    start: [0, 0.6, 0], end: [0, -0.6, 0], position: [0, 0.25, 0], direction: [0, -1, 0], normal: [0, 1, 0], parentPart: 3}];
+  battles.push(Object.assign(BATTLE('pm6', 'Synthetic ridge', T0 - 10800, [pm6hit]),
+    {roster: ROSTER.concat([{id: 37, name: 'Xray', type: 'italy:Xray', team: 1, player: 'bot3', maxHealth: 1900, defaultMaxHealth: 1900}])}));
   battles.forEach(function (b) { put('battles/' + b.id + '.js', 'battle:' + b.id, b); });
   put('index.js', 'index', {application: 'local.armor_inspector', version: 'synthetic', updatedAt: T0 + 9000,
     battles: battles.map(function (b) {
@@ -217,6 +241,11 @@ function write(folder) {
   whiskey.parts = whiskey.parts.concat(wheelParts());
   whiskey.wheelParts = 4;
   exports_.push(whiskey);
+  // Xray's export: the crest at its default layer (poseFrom 'default'), as exporter.prefab_part writes it.
+  const xray = EXPORT('pm_xray', 'italy:Xray', 'Xray', 1900, 1);
+  xray.parts = xray.parts.concat([Object.assign(crestPart(null), {poseFrom: 'default'})]);
+  xray.prefabParts = 1;
+  exports_.push(xray);
   exports_.forEach(function (e) { put('vehicles/' + e.id + '.js', 'vehicle:' + e.id, e); });
   put('vehicles.js', 'vehicles', {application: 'local.armor_inspector', clientVersion: 'synthetic', updatedAt: T0,
     vehicles: exports_.map(function (e) {

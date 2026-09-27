@@ -19,7 +19,8 @@ it before a build and refuses to build on red. Suites (they run side by side, ~1
             matrix on the rendered DOM and a leak counter over 50 scene switches; tests/page/gpu_bounce.cjs: the real
             screen-armor.js composite on software WebGL against the CPU walk, pixel by pixel, on the bounced leg
             (coincident plates, both directions), and the composite without the leg and with Soft lighting;
-            tests/page/gpu_wheels.cjs: the same for the wheels of a wheeled vehicle (synthetic, and the bench's EBRs)
+            tests/page/gpu_wheels.cjs: the same for the wheels of a wheeled vehicle (synthetic, and the bench's EBRs);
+            tests/page/gpu_prefabs.cjs: the armoured prefabs (the CAV mod. 71's crest, the AS-XX 40 t's containers)
   py27      tests/py27/*.py under the client's own python27.dll (the recorder through two battles, ...)
   installer (only with --installer) tests/installer_cleanup_check.py: a test build of the installer into a fake game
 
@@ -229,6 +230,12 @@ def check_browser(result):
     code, out, _ = run([exe, 'tests/page/gpu_wheels.cjs'], timeout=300)
     passed = result.passed
     harness_lines(result, 'gpu_wheels', code, out)
+    total = re.search(r'(\d+) checks, (\d+) failed', out)
+    if total: result.passed = passed + int(total.group(1)) - int(total.group(2))
+    # The armoured prefabs (27.09): the scene, the pose read back, the contact and CPU = GPU on the crest and the containers.
+    code, out, _ = run([exe, 'tests/page/gpu_prefabs.cjs'], timeout=300)
+    passed = result.passed
+    harness_lines(result, 'gpu_prefabs', code, out)
     total = re.search(r'(\d+) checks, (\d+) failed', out)
     if total: result.passed = passed + int(total.group(1)) - int(total.group(2))
 

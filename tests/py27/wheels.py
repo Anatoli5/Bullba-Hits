@@ -275,8 +275,9 @@ def exporter_checks(ex, records, temp):
         e.catalogue_dirty = False
         e.replay_vehicle_requests()
         check(group, 'setup exports nothing inline: the wheeled file is a background job at the bulk pace',
-              exported == [] and [(j[0], j[2], j[3].get('vehicleType'), j[3].get('replay')) for j in e.jobs] ==
+              exported == [] and [(j[0], j[2], j[3].get('vehicleType'), j[3].get('replay')) for j in e.jobs if j[2] == 'vehicle'] ==
               [(ex.JOB_BULK, 'vehicle', 'france:W_Test', True)], [(j[0], j[2], j[3]) for j in e.jobs])
+        e.jobs = [j for j in e.jobs if j[2] == 'vehicle']   # the prefab check job of the same files is prefabs.py's
         e.last_job = 0
         e.run_job()
         check(group, 'the job: exported again from the file itself as a replay, its source kept; the catalogue once, after it',

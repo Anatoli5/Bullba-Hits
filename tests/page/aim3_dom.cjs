@@ -7591,10 +7591,11 @@ settle(20).then(function () {
        appSrc.indexOf("partNames=['chassis','hull','turret','gun','trackPair1']") !== -1);
     // Wheels (BACKLOG 39, 26.09): a wheel is part -k, 'Wheel k' in the details and wheel<k-1> in the Statistics log.
     ok('outer track: the hit details call a contact on part 4 the outer track, a wheel Wheel k, and an unknown part by its number',
-       appSrc.indexOf("var PART_NAMES=['Chassis','Hull','Turret','Gun','Outer track'];") !== -1 && appSrc.indexOf("detail('Point on the model',point?partLabel(point.part):") !== -1
-       && appSrc.indexOf("function partLabel(id){return id<0?'Wheel '+(-id):PART_NAMES[id]||'Part '+id;}") !== -1
-       && appSrc.indexOf("function logPart(id){return id<0?'wheel'+(-id-1):partNames[id]||id;}") !== -1
-       && appSrc.indexOf("' part='+logPart(v.part)+partial") !== -1);
+       appSrc.indexOf("var PART_NAMES=['Chassis','Hull','Turret','Gun','Outer track'],PREFAB_NAMES={crest:'Crest',containers:'Containers'};") !== -1
+       && appSrc.indexOf("detail('Point on the model',point?partLabel(point.part,(hit.target||{}).parts):") !== -1
+       && appSrc.indexOf("function partLabel(id,parts){var p=partOf(id,parts);if(p&&p.prefab)return PREFAB_NAMES[p.prefabKind]||'Armoured module';return id<0?'Wheel '+(-id):PART_NAMES[id]||'Part '+id;}") !== -1
+       && appSrc.indexOf("if(p&&p.prefab)return p.prefabKind||'prefab';return id<0?'wheel'+(-id-1):partNames[id]||id;}") !== -1
+       && appSrc.indexOf("' part='+logPart(v.part,parts)+partial") !== -1);
     ok('outer track: the viewer colours part 4 and the wheels as the chassis and puts them with the tracks (vehicleDamageFactor 0)',
        viewerSrc.indexOf('function partColor(part){return baseColors[part>0?part%4:0];}') !== -1 && viewerSrc.indexOf('function externalLayer(t){return t.part===0||') !== -1);
   });

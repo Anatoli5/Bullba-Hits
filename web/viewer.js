@@ -400,12 +400,14 @@
   };
   // The colours depend on the map switch and the track opacity alone - not on the shell or the distance - so a
   // buffer already filled for both is left as it is (configure() runs on every shell or distance change).
+  // A part's colour: an armoured prefab (27.09: the crest on the gun, the containers on the hull) takes its parent part's.
+  Viewer.prototype.partTint=function(id){var parent=this.parentOf&&this.parentOf[id];return partColor(parent!==undefined?parent:id);};
   Viewer.prototype.updateTrackAppearance=function(){
     if(!this.trackMesh)return;var key=(this.look?'look:'+this.look.kind+':'+this.look.part:this.heatmap?'map':'parts')+'|'+this.trackOpacity;if(this.trackKey===key)return;this.trackKey=key;
     var self=this,attribute=this.trackMesh.geometry.attributes.color,buffer=attribute.array,map=this.heatmap&&!this.look;
     this.trackTriangles.forEach(function(t,i){
       var opacity=map?self.trackOpacity:1;
-      var color=self.look?self.lookColor(t,i+LOOK_TRACKS):map?baseColors[0]:partColor(t.part);
+      var color=self.look?self.lookColor(t,i+LOOK_TRACKS):map?baseColors[0]:self.partTint(t.part);
       for(var j=0;j<3;j++){var offset=(i*3+j)*4;for(var k=0;k<3;k++)buffer[offset+k]=color[k];buffer[offset+3]=opacity;}
     });
     attribute.needsUpdate=true;
@@ -614,7 +616,10 @@
     var rotation=new T.Matrix4().makeTranslation(pivot.x,pivot.y,pivot.z).multiply(new T.Matrix4().makeRotationAxis(axis,this.turretAngle*Math.PI/180)).multiply(new T.Matrix4().makeTranslation(-pivot.x,-pivot.y,-pivot.z));
     var gun=parts.find(function(p){return p.id===3;}),gunRotation=null;
     if(gun&&gun.transform){var g=new T.Matrix4().fromArray(gun.transform).premultiply(rotation),gp=new T.Vector3().setFromMatrixPosition(g),ga=new T.Vector3(1,0,0).transformDirection(g);var info=source.hit.target.gunPitchLimits,yaw0=(source.hit.aim||[])[0]||0,yaw=yaw0+this.turretAngle*Math.PI/180;var correction=function(y){y=Math.atan2(Math.sin(y),Math.cos(y));return info?info.hullTurretPitch*(1-2*Math.abs(y)/Math.PI)+info.gunJointPitch:0;};var delta=this.gunAngle*Math.PI/180+correction(yaw0)-correction(yaw);gunRotation=new T.Matrix4().makeTranslation(gp.x,gp.y,gp.z).multiply(new T.Matrix4().makeRotationAxis(ga,delta)).multiply(new T.Matrix4().makeTranslation(-gp.x,-gp.y,-gp.z));}
-    return {2:rotation,3:gunRotation?gunRotation.clone().multiply(rotation):rotation};
+    var out={2:rotation,3:gunRotation?gunRotation.clone().multiply(rotation):rotation};
+    // A part carried by the turret or the gun (an armoured prefab, 27.09: the CAV mod. 71's crest rides the gun) turns with it.
+    parts.forEach(function(p){if(p&&p.id!==2&&p.id!==3&&(p.parentPart===2||p.parentPart===3))out[p.id]=out[p.parentPart];});
+    return out;
   };
   Viewer.prototype.applyTurret=function(){
     this.turretPending=false;this.poseStale=false;clearTimeout(this.turretTimer);this.turretTimer=null;
@@ -636,7 +641,7 @@
     var T=THREE,extra=this.poseExtra();if(!extra)return false;
     var mirror=new T.Matrix4().makeScale(1,1,-1),built=this.poseBuilt,delta={};
     // The engine mirrors z when it transforms a part's vertices, so a model-space pose matrix M is F·M·F on screen.
-    [2,3].forEach(function(id){
+    Object.keys(extra).forEach(function(id){
       var matrix=new T.Matrix4().copy(extra[id]);
       if(built&&built[id])matrix.multiply(new T.Matrix4().copy(built[id]).invert());
       delta[id]=new T.Matrix4().copy(mirror).multiply(matrix).multiply(mirror);
@@ -665,6 +670,7 @@
   Viewer.prototype.loadScene=function(data,context,keep){
     var held=this.keepSame(data,keep);this.clear();var carry=keep&&keep.pose?keep.pose:null;this.poseWish=carry?{yaw:carry.yaw,pitch:carry.pitch}:null;if(data.geometryIncomplete){this.bounds=null;this.render();return false;}var T=THREE,self=this;var hit=data.hit, parts=(hit.target||{}).parts||[], transforms={};
     parts.forEach(function(part){if(part.transform)transforms[part.id]=new T.Matrix4().fromArray(part.transform);});
+    this.parentOf={};var parentOf=this.parentOf;parts.forEach(function(part){if(part&&part.prefab&&part.parentPart!=null)parentOf[part.id]=part.parentPart;});
     var range=context&&context.range;this.recordedDistance=Number.isFinite(range)&&range>0?range:Number.isFinite(hit.rangeAtImpact)&&hit.rangeAtImpact>0?hit.rangeAtImpact:null;
     this.loadedData=data;this.posedData=null;this.poseBuilt=null;this.turretAngle=0;this.gunAngle=0;this.rebuild();
     this.root.updateMatrixWorld(true);
@@ -1357,7 +1363,7 @@
     var key=this.look?'look:'+this.look.kind+':'+this.look.part:this.heatmap?'neutral':'parts';if(this.paintedKey===key)return;
     var buffer=this.paintMesh.geometry.attributes.color.array;
     for(var n=0;n<this.samples.length;n++){
-      var color=this.look?this.lookColor(this.samples[n],n):this.heatmap?baseColors[0]:partColor(this.samples[n].part);
+      var color=this.look?this.lookColor(this.samples[n],n):this.heatmap?baseColors[0]:this.partTint(this.samples[n].part);
       for(var j=0;j<3;j++)for(var k=0;k<3;k++)buffer[n*9+j*3+k]=color[k];
     }
     this.paintedKey=key;this.paintMesh.geometry.attributes.color.needsUpdate=true;

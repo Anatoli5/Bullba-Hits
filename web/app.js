@@ -5883,13 +5883,13 @@
   // tabulates the lines. Once per hit and shell, never on camera moves.
   var verdictLines=0,verdictQueue=[],verdictDone={},verdictTimer=null,verdictBusy=false;
   // A part's name on a log line: partNames, a wheel of a wheeled vehicle as the crit list names it (wheel<k-1>).
-  function logPart(id){return id<0?'wheel'+(-id-1):partNames[id]||id;}
+  function logPart(id,parts){var p=(parts||[]).find(function(q){return q&&q.id===id;});if(p&&p.prefab)return p.prefabKind||'prefab';return id<0?'wheel'+(-id-1):partNames[id]||id;}
   // `scene`: the scene the verdicts were cast in (sceneFor's result). A part it had to leave out - a wheel without its
   // body (review of 5f2bee5) - is named in partial=, so a verdict computed without it is never read as a whole one.
   function verdictLine(battleId,hit,v,shell,mode,scene){var r=v.result||{},chance=r.chance;
     var ours=r.reason==='ricochet'?'ricochet':chance===null||chance===undefined?(r.reason||'none'):(chance>=50?'pen':'no-pen')+'_'+chance+'%';
-    var partial=scene&&Array.isArray(scene.partial)&&scene.partial.length?' partial='+scene.partial.map(logPart).join(','):'';
-    console.info('Bullba Hits verdict: battle='+battleId+' hit='+hit.id+' point='+v.index+' part='+logPart(v.part)+partial+' server='+String(effects[v.effect]||v.effect).replace(/ /g,'_')+' ours='+ours+' angle='+(r.angle!=null?Math.round(r.angle):'-')+' eff='+(r.effective!=null?Math.round(r.effective):'-')+' pen='+Math.round(shell.penetration)+' shell='+shell.kind+' dir='+v.source+' chordDev='+(v.chordDev==null?'-':(v.chordDev*180/Math.PI).toFixed(1))+' mode='+mode+shellModeColumns(hit,shell)+damageColumns(hit,r,shell)+ArmorCrits.columns(hit,v)+' v='+($('app-version').getAttribute('data-version')||'dev').replace(/\s+/g,'_')+' rec='+(recordsVersion||'-'));
+    var parts=(hit.target||{}).parts,partial=scene&&Array.isArray(scene.partial)&&scene.partial.length?' partial='+scene.partial.map(function(id){return logPart(id,parts);}).join(','):'';
+    console.info('Bullba Hits verdict: battle='+battleId+' hit='+hit.id+' point='+v.index+' part='+logPart(v.part,parts)+partial+' server='+String(effects[v.effect]||v.effect).replace(/ /g,'_')+' ours='+ours+' angle='+(r.angle!=null?Math.round(r.angle):'-')+' eff='+(r.effective!=null?Math.round(r.effective):'-')+' pen='+Math.round(shell.penetration)+' shell='+shell.kind+' dir='+v.source+' chordDev='+(v.chordDev==null?'-':(v.chordDev*180/Math.PI).toFixed(1))+' mode='+mode+shellModeColumns(hit,shell)+damageColumns(hit,r,shell)+ArmorCrits.columns(hit,v)+' v='+($('app-version').getAttribute('data-version')||'dev').replace(/\s+/g,'_')+' rec='+(recordsVersion||'-'));
     verdictLines++;verdictStatus();}
   // The shooter's vehicle mode on a log line that already carries the shell (22.09): which of the two
   // modes the shell used belongs to, whether the record held a second set at all and the siege state the
@@ -6257,7 +6257,11 @@
     if(r.reason==='parameters')return {label:'—',color:'',groups:[{kind:'armor',text:'set penetration and calibre'}]};
     if(r.reason==='armor')return {label:'—',color:'',groups:prefix.concat([{kind:'armor',text:'no armour data for this surface'}])};
     if(r.chance===null)return {label:'—',color:'',groups:prefix.concat([{kind:'armor',text:'no estimate for this penetration distribution'}])};
-    return {label:hp?damageShare(r):r.chance+'%',color:chanceRgb(r),groups:prefix.concat([{kind:'armor',text:'eff '+Math.round(r.effective)+' mm ← '+Math.round(r.nominal)+' mm – '+Math.round(r.angle)+'°'}],hp?damageGroups(r):[],shell,extra)};
+    // The plate on an armoured prefab (27.09): the chip says whose it is and where the part stands, on a click.
+    var main=layers[layers.length-1],parts=viewer&&viewer.loadedData&&viewer.loadedData.hit&&viewer.loadedData.hit.target?viewer.loadedData.hit.target.parts:null,
+      prefab=main&&partOf(main.part,parts),armor={kind:'armor',text:'eff '+Math.round(r.effective)+' mm ← '+Math.round(r.nominal)+' mm – '+Math.round(r.angle)+'°'};
+    if(prefab&&prefab.prefab)armor.title=prefabTitle(prefab,parts);
+    return {label:hp?damageShare(r):r.chance+'%',color:chanceRgb(r),groups:prefix.concat([armor],hp?damageGroups(r):[],shell,extra)};
   }
   function chips(container,line){container.replaceChildren();line.groups.forEach(function(g){var chip=node('span',g.text,'chip '+g.kind);if(g.title)chip.title=g.title;container.appendChild(chip);});}
   // Fill an info panel: the title, the chance, then the penetration chip on a row of its own above the armour chips.
@@ -6842,7 +6846,8 @@
     if(hit.synthetic){$('details').appendChild(node('p','The shooter\u2019s collision model, swapped in from the hit at '+clock(hit.receivedAt)+'. Nothing was fired at this vehicle in the record, so there is no hit line, no reticle and no shell of its own. The \u21c5 button next to the shooter tile goes back to the recorded hit.'));return;}
     detail('Direction',view==='incoming'?'Incoming':view==='outgoing'?'Outgoing':'Not this vehicle',clock(hit.receivedAt));detail('Result',result(hit));var critRow=critDetail(hit);if(critRow)$('details').appendChild(critRow);
     var points=hit.points||[],point=points.find(function(p){return p.status==='resolved';});
-    detail('Point on the model',point?partLabel(point.part):'Not restored',point?'Per the client collision handler':'Segment kept for diagnostics');
+    var onPart=point&&partOf(point.part,(hit.target||{}).parts);
+    detail('Point on the model',point?partLabel(point.part,(hit.target||{}).parts):'Not restored',onPart&&onPart.prefab?prefabPlace(onPart,hit.target.parts):point?'Per the client collision handler':'Segment kept for diagnostics');
     detail('Calibre',point&&point.caliber?point.caliber+' mm':'No data',points.length+' points in the event');
     if(hit.rangeAtImpact!=null)detail('To the attacker at impact',hit.rangeAtImpact.toFixed(1)+' m','Position when the hit was received; not a measured flight length.');
   }
@@ -6876,9 +6881,30 @@
     fall:'M10 2v10M6.5 8.5 10 12l3.5-3.5M3 16.5h14',strike:'M5 2v7M3 7l2 2 2-2M15 2v7M13 7l2 2 2-2M10 5v8M8 11l2 2 2-2M2.5 17h15',
     bolt:'M11.5 1.5 4.5 11h5l-1.2 7.5 7.2-10h-5.2Z',star:'M10 2.2l2.3 5 5.4.6-4 3.7 1.1 5.3L10 14.1l-4.8 2.7 1.1-5.3-4-3.7 5.4-.6Z',
     other:'M10 3.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 1 0 0-13ZM10 6.8v4.4M10 13.4v.3'};
-  var PART_NAMES=['Chassis','Hull','Turret','Gun','Outer track'];
+  var PART_NAMES=['Chassis','Hull','Turret','Gun','Outer track'],PREFAB_NAMES={crest:'Crest',containers:'Containers'};
   // A wheel of a wheeled vehicle is part -k (BACKLOG 39): 'Wheel k', the crit list's own name for it (crits.js wheel<k-1>).
-  function partLabel(id){return id<0?'Wheel '+(-id):PART_NAMES[id]||'Part '+id;}
+  // An armoured prefab (27.09) by what it is - found among `parts` (the scene's) when they are given: its index is the
+  // client's linker's, not a fixed one (the CAV mod. 71's crest and a double track can both be part 4 of their vehicles).
+  function partOf(id,parts){return (parts||[]).find(function(p){return p&&p.id===id;})||null;}
+  function partLabel(id,parts){var p=partOf(id,parts);if(p&&p.prefab)return PREFAB_NAMES[p.prefabKind]||'Armoured module';return id<0?'Wheel '+(-id):PART_NAMES[id]||'Part '+id;}
+  // Where an armoured prefab stands (ArmorInspectorData.prefabPose), in words: a position of the crest, the containers
+  // closed or open, and whether the record says so or it is the default the page takes.
+  function prefabPlace(part,parts){
+    var pose=window.ArmorInspectorData&&ArmorInspectorData.prefabPose?ArmorInspectorData.prefabPose(part,parts):null;if(!pose)return '';
+    var layer=pose.layer,m=/^(\d+) position layer$/.exec(layer||''),count=(pose.layers||[]).length;
+    var named=m?'position '+m[1]+' (0–'+(count-1)+')':layer==='closing'?'closed':layer==='opening'?'open':layer||'';
+    var angle=pose.angle!=null?Math.round(pose.angle*10)/10+'°':'';
+    if(pose.from==='default')return 'default: '+(named||'its first')+(angle?' ('+angle+')':'');
+    return 'at the hit: '+(named||'between its positions')+(angle?' ('+angle+')':'');
+  }
+  function prefabTitle(part,parts){
+    var what=part.prefabKind==='crest'?'The gun’s armoured crest: a part of its own, its armour counted as the vehicle’s.':
+      part.prefabKind==='containers'?'The armoured ammunition containers: a part of their own, their armour counted as the vehicle’s.':
+      'An armoured module: a part of its own, its armour counted as the vehicle’s.';
+    var pose=window.ArmorInspectorData&&ArmorInspectorData.prefabPose?ArmorInspectorData.prefabPose(part,parts):null;
+    return partLabel(part.id,parts)+'\n'+what+'\n• Position '+prefabPlace(part,parts)+
+      (pose&&pose.from==='default'?'\n• The game gives its position only in a battle':'');
+  }
   function damageEvents(){return current&&Array.isArray(current.damageEvents)?current.damageEvents:[];}
   function eventIn(battle,id){var list=battle&&Array.isArray(battle.damageEvents)?battle.damageEvents:[];for(var i=0;i<list.length;i++)if(list[i].id===id)return list[i];return null;}
   function eventOf(id){return eventIn(current,id);}
@@ -7016,7 +7042,7 @@
     detail('Direction',view==='incoming'?'Incoming':view==='outgoing'?'Outgoing':'Not this vehicle',clock(e.receivedAt));
     detail(r.name,'Damage '+e.damage+' HP'+(e.killed?', destroyed':''),vehicleName(e.targetId)+(selfDamage(e)?'':' · by '+vehicleName(e.attackerId)));
     if(e.kind==='ram'){
-      var part=viewer&&viewer.look&&viewer.look.part!=null?partLabel(viewer.look.part):null;
+      var part=viewer&&viewer.look&&viewer.look.part!=null?partLabel(viewer.look.part,viewer.loadedData&&viewer.loadedData.hit.target.parts):null;
       detail('Contact',e.contact?(part||'Recorded'):'Not recorded',e.contact?'Client physics'+(Number.isFinite(e.contact.closingSpeed)?', closing at '+Math.round(e.contact.closingSpeed*3.6)+' km/h':''):'Battles before the contact log');
       if(!selfDamage(e))detail('Rammer took',(e.selfDamage||0)+' HP'+(e.attackerKilled?', destroyed':''),vehicleName(e.attackerId));
     }else if(e.kind==='fire'){
