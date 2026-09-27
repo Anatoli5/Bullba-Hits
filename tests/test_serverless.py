@@ -98,7 +98,7 @@ class ServerlessTests(unittest.TestCase):
         sidecar = Path(str(path)+'.recovery.json')
         sidecar.write_text(json.dumps({'rawSha256':hashlib.sha256(original).hexdigest(),
             'header':self.header, 'warnings':['Recovered metadata; original header missing']}))
-        with patch.object(ex, 'extract', return_value=MODEL): self.exporter.setup()
+        with patch.object(ex, 'extract', return_value=MODEL): self.exporter.setup(); self.settle()
         battle = read_data(self.folder/'data/battles/12-test.js')[1]
         self.assertEqual([h['id'] for h in battle['hits']], ['1','2'])
         self.assertIn('Recovered metadata', battle['warnings'][0])

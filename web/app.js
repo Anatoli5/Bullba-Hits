@@ -87,6 +87,11 @@
   // once, the page reads its file every EXPORT_POLL ms until EXPORT_WAIT, and the row clicked and the scene spin meanwhile.
   var EXPORTING='Exporting the model\u2026',EXPORT_WAIT=30000,EXPORT_POLL=400;
   var NO_EXPORT_CHANNEL='The game did not take the export request. See game.log.';
+  // A row the page must ask the game for (27.09): no file yet, or a file the mod found out of date at its start ('outdated':
+  // a wheeled vehicle without its wheels, a prefab one without its prefabs, an older build) - that one is never shown while
+  // the page waits for the new one; the wait counts it as not there yet.
+  var OUTDATED_FILE='The file of this vehicle is out of date; the game exports it again.';
+  function needsExport(row){return !!row&&(!row.exported||!!row.outdated);}
   // The help of the pane, as the gold badge's popover shows it: three headings, a few lines each. It used to
   // be a paragraph under the count and a two-line foot under the list; both are gone (user, 19.09: the pane
   // is a list, not a leaflet).
@@ -333,7 +338,7 @@
   function vehicleRowWords(item){
     var v=item.v;
     return vehicleWords(v)+(item.side==='ally'||item.side==='enemy'?'\n\u2022 Team: '+(item.side==='ally'?'Ally':'Enemy'):'')
-      +'\n\u2022 Collision model: '+(v.exported?'exported'+(SOURCE_TAG[v.source]?' '+SOURCE_TAG[v.source]:''):'none yet');
+      +'\n\u2022 Collision model: '+(v.outdated?'out of date, a click exports it again':v.exported?'exported'+(SOURCE_TAG[v.source]?' '+SOURCE_TAG[v.source]:''):'none yet');
   }
   // One DOM node per row, up to about a thousand of them: the list is rebuilt only when the set of rows, the
   // roles or the export marks actually change, so the five-second poll of the catalogue costs nothing.
@@ -401,7 +406,7 @@
     if(!v.exported&&!host.game)return void pickVehicle(v.id,activeRole,{row:v}).catch(function(e){
       if(e&&e.superseded)return;message(e.message);warnings([e.message]);});
     // A request the game did not take ends the wait at once with its reason, not after EXPORT_WAIT.
-    var waiting=!v.exported,refused=null,options=waiting?{deadline:Date.now()+EXPORT_WAIT,waiting:EXPORTING,
+    var waiting=needsExport(v),refused=null,options=waiting?{deadline:Date.now()+EXPORT_WAIT,waiting:EXPORTING,
       failed:function(){return refused;}}:{};
     if(waiting)sendCommand('exportVehicle',{vehicleType:String(v.type||'')}).then(function(sent){if(!sent)refused=NO_EXPORT_CHANNEL;});
     pickVehicle(v.id,activeRole,options).catch(function(e){
@@ -433,9 +438,13 @@
   // of the reader) and is repeated every EXPORT_POLL ms - the page has the file within that of the mod writing it.
   function readVehicle(id,deadline,alive,failed){
     if(!VEHICLE_ID.test(String(id)))return Promise.reject(new Error('Invalid vehicle identifier'));
-    var row=catalogueRow(id),key=id+'@'+(row?row.exportedAt:'');
-    if(vehicleCache[key])return Promise.resolve(vehicleCache[key]);
+    var row=catalogueRow(id),key=id+'@'+(row?row.exportedAt:''),outdated=!!(deadline&&row&&row.outdated);
+    if(vehicleCache[key]&&!outdated)return Promise.resolve(vehicleCache[key]);
     return ArmorInspectorData.vehicle(id,!!deadline).then(function(record){
+      // The out-of-date file itself (its catalogue time) while the page waits for the new one: not there yet.
+      if(outdated&&record&&record.exportedAt===row.exportedAt)throw new Error(OUTDATED_FILE);
+      return record;
+    }).then(function(record){
       if(!record||record.id!==id||!Array.isArray(record.parts))throw new Error('This file is not a collision-model export of '+id+'.');
       vehicleCache[key]=record;vehicleOrder.push(key);
       while(vehicleOrder.length>8)delete vehicleCache[vehicleOrder.shift()];
@@ -648,10 +657,23 @@
     var id=String(fragment().vehicle||'');
     if(!id||!VEHICLE_ID.test(id)){if(!initial)lastFragment=null;return;}
     if(!initial&&id===lastFragment)return;
-    lastFragment=id;loadCatalogue();setMode('vehicles');   // the shooter picked stays (inherit sweep, 26.09)
+    lastFragment=id;var list=loadCatalogue();setMode('vehicles');   // the shooter picked stays (inherit sweep, 26.09)
     // In the game the mod exports it if it has to (page_waits puts it first); outside it nobody will: no wait.
-    pickVehicle(id,'model',host.game?{deadline:Date.now()+EXPORT_WAIT,waiting:EXPORTING}:{})
-      .catch(function(e){if(!(e&&e.superseded))message('The model of this vehicle was not exported. See game.log.');});
+    function open(){
+      pickVehicle(id,'model',host.game?{deadline:Date.now()+EXPORT_WAIT,waiting:EXPORTING}:{})
+        .catch(function(e){if(!(e&&e.superseded))message('The model of this vehicle was not exported. See game.log.');});
+    }
+    if(!host.game)return void open();
+    // In the game the list comes first (27.09): a file the mod found out of date is asked for again, as a click on its
+    // row asks, and the wait never takes the old file for the new one. A pick made meanwhile wins.
+    var generation=vehicleGeneration;
+    message(EXPORTING,true);
+    list.then(function(){
+      if(generation!==vehicleGeneration||lastFragment!==id)return;
+      var row=catalogueRow(id);
+      if(row&&row.outdated)sendCommand('exportVehicle',{vehicleType:String(row.type||'')});
+      open();
+    });
   }
   function restoreSidebar(){
     buildFilters();buildInfo();
@@ -6795,7 +6817,7 @@
     // Not exported yet (click-export-fast, 26.09): in the game the page asks for it as a click on its row does - the wait
     // below had nobody to wait for; a request the game did not take ends it at once.
     var refused=null;
-    if(deadline&&!row.exported)sendCommand('exportVehicle',{vehicleType:String(row.type||'')}).then(function(sent){if(!sent)refused=NO_EXPORT_CHANNEL;});
+    if(deadline&&needsExport(row))sendCommand('exportVehicle',{vehicleType:String(row.type||'')}).then(function(sent){if(!sent)refused=NO_EXPORT_CHANNEL;});
     return readVehicle(row.id,deadline,alive,function(){return refused;}).then(function(record){
       var synthetic=swapHit(hit);
       synthetic.target.parts=(record.parts||[]).slice();

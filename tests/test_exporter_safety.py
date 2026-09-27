@@ -60,6 +60,17 @@ class Quiet(unittest.TestCase):
     def warnings(self, text):
         return [r for r in self.logs if r.levelno == logging.WARNING and text in r.getMessage()]
 
+    @staticmethod
+    def started(exporter):
+        """setup(), then the saved battles it left to the background (startup-republish-slow, 27.09) as the idle ticks
+        run them - the job pace skipped, so no clock is needed."""
+        exporter.setup()
+        for _ in range(100):
+            if exporter.backlog is None: break
+            exporter.last_job = 0
+            exporter.run_job()
+        return exporter
+
 
 class PruneFromCompleteSet(Quiet):
     """EXP-02 / DATA-02: prune() never runs on an incomplete reference set."""
@@ -91,13 +102,12 @@ class PruneFromCompleteSet(Quiet):
             return real(path, *args, **kwargs)
 
         with patch.object(ex, 'read_battle', side_effect=locked):
-            self.exporter().setup()
+            self.started(self.exporter())
         self.assertTrue(self.model.exists(), 'the only copy of an old-client model was deleted')
         self.assertTrue(self.orphan.exists(), 'nothing is pruned from an incomplete set')
         self.assertEqual(len(self.warnings('Unused models kept')), 1)
         # The next start reads everything: the old model is referenced and stays, the orphan goes.
-        second = self.exporter()
-        second.setup()
+        second = self.started(self.exporter())
         self.assertTrue(self.model.exists())
         self.assertFalse(self.orphan.exists())
         part = ex.read_data_file(str(self.folder / 'data/battles/10-old.js'))['hits'][0]['target']['parts'][0]
@@ -107,26 +117,26 @@ class PruneFromCompleteSet(Quiet):
         vehicle = self.folder / 'data/vehicles/broken.js'
         vehicle.parent.mkdir(parents=True)
         vehicle.write_text('not an exported data file')
-        self.exporter().setup()
+        self.started(self.exporter())
         self.assertTrue(self.orphan.exists())
         self.assertTrue(self.model.exists())
 
     def test_headless_battle_blocks_prune_too(self):
         (self.folder / 'battles/11-headless.jsonl').write_bytes(lines({'schema': 1, 'type': 'roster', 'vehicles': []}))
-        self.exporter().setup()
+        self.started(self.exporter())
         self.assertTrue(self.orphan.exists())
 
     def test_battle_file_with_an_unexpected_name_blocks_prune(self):
         # F5: only a copy with a file-manager name is left; its models must survive.
         original = self.folder / 'battles/10-old.jsonl'
         original.rename(self.folder / 'battles/10-old - Copy.jsonl')
-        self.exporter().setup()
+        self.started(self.exporter())
         self.assertTrue(self.model.exists())
         self.assertTrue(self.orphan.exists())
         self.assertEqual(len(self.warnings('unexpected name')), 1)
 
     def test_complete_set_still_prunes(self):
-        self.exporter().setup()
+        self.started(self.exporter())
         self.assertTrue(self.model.exists())
         self.assertFalse(self.orphan.exists())
         self.assertEqual(self.warnings('Unused models kept'), [])

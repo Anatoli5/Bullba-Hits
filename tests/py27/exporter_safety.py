@@ -61,6 +61,16 @@ def write(path, text):
     with open(path, 'wb') as stream: stream.write(text)
 
 
+def started(exporter):
+    """setup(), then the saved battles it left to the background (startup-republish-slow, 27.09), the job pace skipped."""
+    exporter.setup()
+    for _ in range(100):
+        if exporter.backlog is None: break
+        exporter.last_job = 0
+        exporter.run_job()
+    return exporter
+
+
 temp = tempfile.mkdtemp()
 os.chdir(temp)
 try:
@@ -86,17 +96,17 @@ try:
 
     ex.read_battle = locked
     try:
-        ex.Exporter(game, folder, 'new client\n', archive).setup()
+        started(ex.Exporter(game, folder, 'new client\n', archive))
     finally:
         ex.read_battle = real
     check(os.path.exists(model) and os.path.exists(orphan), 'locked battle at setup: no model deleted')
     check(warned('Unused models kept') == 1, 'one warning for the kept models')
-    ex.Exporter(game, folder, 'new client\n', archive).setup()
+    started(ex.Exporter(game, folder, 'new client\n', archive))
     check(os.path.exists(model) and not os.path.exists(orphan), 'next complete start: orphan pruned, old model kept')
     # F5: only a copy with a file-manager name is left.
     write(orphan, 'ArmorInspectorData.receive(["model:y",{}]);\n')
     os.rename(os.path.join(folder, 'battles', '10-old.jsonl'), os.path.join(folder, 'battles', '10-old - Copy.jsonl'))
-    ex.Exporter(game, folder, 'new client\n', archive).setup()
+    started(ex.Exporter(game, folder, 'new client\n', archive))
     check(os.path.exists(model) and os.path.exists(orphan) and warned('unexpected name') == 1,
           'battle file with an unexpected name: prune off, one warning')
 

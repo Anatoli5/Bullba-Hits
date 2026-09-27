@@ -2,6 +2,11 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
+## Unreleased
+
+- **Fix (game start):** the export no longer rewrites every saved battle before doing anything else (in 0.8.7 that took minutes with the page open, and held back the wheels of wheeled vehicles, the characteristics and every export). Only battles that changed are published again, in the background after the vehicle updates; the first start after an update does them all once. game.log has one line with the start's timings.
+- **Vehicles (in the game):** a vehicle whose file is out of date (a wheeled one without its wheels, a CAV mod. 71 or AS-XX 40 t without its armoured parts) is exported again as soon as you open it, with the spinner, instead of showing the old model; its row's tooltip says so.
+
 ## 0.8.7 (2026-09-27)
 
 - **CAV mod. 71, AS-XX 40 t:** the gun's armoured crest (30–150 mm) and the armoured ammunition containers (20 mm) are part of the hit model: drawn on the exported vehicles (the crest in its first position, the containers closed), recorded with their pose when a shot lands on them - the details name the crest's position (1–4 of 4) - and counted as the vehicle's armour on the panels, the map and the Statistics log. Existing exports of the two are updated in the background at the next game start.

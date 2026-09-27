@@ -8870,6 +8870,8 @@ settle(20).then(function () {
 }).then(function () {
   return clickExport();
 }).then(function () {
+  return clickExportOutdated();
+}).then(function () {
 
 
   if (thrown.length) console.log('\nEXCEPTIONS: ' + thrown.map(function (e) { return e && e.stack; }).join('\n'));
@@ -9336,6 +9338,89 @@ function clickExport() {
       ok('click export: offline #vehicle= of a vehicle not exported - its words at once, no spinner, no poll',
          msg() === GONE && !loading().length && polls('germany-Uniform2') === 0 && reads.indexOf('germany-Uniform2') >= 0, msg() + ' | ' + reads.join());
     });
+  }).then(function () {
+    Object.keys(keep).forEach(function (k) { D[k] = keep[k]; });
+    Object.keys(keepHost).forEach(function (k) { H[k] = keepHost[k]; });
+  });
+}
+
+// ================= A VEHICLE WHOSE FILE IS OUT OF DATE (startup-republish-slow, 27.09) =================
+// The user: an EBR exported before the wheels opened without its wheels. The mod marks such a row 'outdated' in the
+// catalogue; opening it asks the game for it at once (the click-export path: exportVehicle, JOB_PAGE, the spinner) and the
+// page never shows the old file meanwhile - by a click on the row and by the game's #vehicle= alike.
+function clickExportOutdated() {
+  const $ = function (id) { return document.getElementById(id); };
+  const D = global.ArmorInspectorData, H = global.BullbaHost;
+  const keep = {vehicles: D.vehicles, vehicle: D.vehicle, ttx: D.ttx}, keepHost = {game: H.game, canSend: H.canSend, send: H.send, params: H.params};
+  const WAIT = 'Exporting the model…';
+  const fresh = {}, reads = [], sent = [];
+  const record = function (name, at) { return Object.assign({}, VEHICLE, {id: 'germany-' + name, type: 'germany:' + name, name: name, exportedAt: at}); };
+  const row = function (name) {
+    const now = !!fresh['germany-' + name];
+    return {id: 'germany-' + name, type: 'germany:' + name, name: name, level: 10, 'class': 'lightTank', nation: 'germany',
+            exported: true, outdated: !now, exportedAt: now ? 9 : 5, source: 'hangar'};
+  };
+  D.vehicles = function () { return Promise.resolve({updatedAt: 'co' + Object.keys(fresh).length, vehicles: [Object.assign({}, VEHICLE, {exported: true}), row('Xray'), row('Yankee')]}); };
+  D.vehicle = function (id, once) {
+    reads.push(id + (once ? ':poll' : ''));
+    if (id === VEHICLE.id) return Promise.resolve(VEHICLE);
+    return Promise.resolve(record(id.split('-')[1], fresh[id] ? 9 : 5));
+  };
+  D.ttx = function () { return Promise.reject(new Error('no characteristics')); };
+  H.game = true; H.canSend = function () { return true; }; H.send = function (name, payload) { sent.push(payload); return new Promise(function () {}); };
+  const rowOf = function (id) { return $('vehicles').children.filter(function (c) { return c.getAttribute('data-vehicle') === id; })[0]; };
+  const loading = function () { return $('vehicles').children.filter(function (c) { return c.getAttribute('data-loading') !== null; }).map(function (c) { return c.getAttribute('data-vehicle'); }); };
+  const msg = function () { return $('scene-message').textContent; };
+  const polls = function (id) { return reads.filter(function (r) { return r === id + ':poll'; }).length; };
+  const scopeAll = function () { document.querySelectorAll('#vehicle-scope [data-scope]').forEach(function (b) { if (b.getAttribute('data-scope') === 'all') b.onclick(); }); };
+  const exports = function () { return sent.filter(function (p) { return p.action === 'exportVehicle'; }).map(function (p) { return p.vehicleType; }); };
+  H.params = function () { return {}; };
+  sidebarModes[1].onclick();
+  return settle(20).then(function () {
+    scopeAll();
+    return settle(10);
+  }).then(function () {
+    ok('outdated: the row says its file is out of date and a click exports it again',
+       !!rowOf('germany-Xray') && rowOf('germany-Xray').title.indexOf('out of date, a click exports it again') >= 0, rowOf('germany-Xray') && rowOf('germany-Xray').title);
+    rowOf('germany-Xray').onclick();
+    return settle(10);
+  }).then(function () {
+    ok('outdated: a click asks the game for it at once (exportVehicle, its type), as for a vehicle without a file',
+       exports().join() === 'germany:Xray', JSON.stringify(sent));
+    ok('outdated: the row spins and the scene says the model is being exported - the old file is not shown',
+       loading().join() === 'germany-Xray' && msg() === WAIT && $('battle-map').textContent !== 'Xray', loading().join() + ' | ' + msg() + ' | ' + $('battle-map').textContent);
+    tick(0.4); return settle(10);
+  }).then(function () {
+    tick(0.4); return settle(10);
+  }).then(function () {
+    ok('outdated: the old file read again is still not taken - the wait polls on', polls('germany-Xray') >= 3 && loading().join() === 'germany-Xray'
+       && $('battle-map').textContent !== 'Xray', reads.join());
+    fresh['germany-Xray'] = true;
+    tick(0.4); return settle(30);
+  }).then(function () {
+    ok('outdated: the new file arrives - the vehicle is on screen, the spinner stops',
+       $('battle-map').textContent === 'Xray' && !loading().length && msg() !== WAIT, $('battle-map').textContent + ' | ' + loading().join() + ' | ' + msg());
+    const was = sent.length;
+    rowOf(VEHICLE.id).onclick();
+    return settle(10).then(function () {
+      ok('outdated: a current file asks nothing (the flag alone decides)', sent.length === was, JSON.stringify(sent.slice(was)));
+    });
+  }).then(function () {
+    // The game opens the page on an out-of-date vehicle (#vehicle=): the page asks for it too and waits for the new file.
+    H.params = function () { return {vehicle: 'germany-Yankee'}; };
+    (winListeners.hashchange || []).forEach(function (fn) { fn(); });
+    return settle(20);
+  }).then(function () {
+    ok('outdated: #vehicle= in the game - the export is asked for, the scene and the row spin, the old file is not shown',
+       exports().indexOf('germany:Yankee') >= 0 && msg() === WAIT && loading().join() === 'germany-Yankee' && $('battle-map').textContent !== 'Yankee',
+       exports().join() + ' | ' + msg() + ' | ' + loading().join() + ' | ' + $('battle-map').textContent);
+    fresh['germany-Yankee'] = true;
+    tick(0.4); return settle(30);
+  }).then(function () {
+    ok('outdated: #vehicle= - the new file on screen, no spinner', $('battle-map').textContent === 'Yankee' && !loading().length,
+       $('battle-map').textContent + ' | ' + loading().join());
+    rowOf(VEHICLE.id).onclick();
+    return settle(10);
   }).then(function () {
     Object.keys(keep).forEach(function (k) { D[k] = keep[k]; });
     Object.keys(keepHost).forEach(function (k) { H[k] = keepHost[k]; });
