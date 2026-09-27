@@ -4,6 +4,7 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 
 ## Unreleased
 
+- **Vehicles (in the game):** clicking a vehicle without a model now shows a spinner on its row and on the scene until the model is on screen, or says why it failed (no channel to the game, nothing within 30 s) instead of seeming to do nothing. The export runs at once, ahead of background work and even while you drag the scene; the page picks the model up within 0.4 s of it being written (was up to ~3 s), and a vehicle's armour data is read several times faster. A second click on the same vehicle is no longer ignored, and ⇅ to a shooter without a model asks the game for it too.
 - **Characteristics / Export all models:** the time the question gives is now the real wall-clock time at this PC's measured pace (it said ~9 s for a characteristics sweep that took 74 s), in minutes and seconds ("about 1 min 15 s").
 - **Characteristics / Export all models:** while the page is open a sweep now gets about half of the time (it got about a quarter); after a game update the characteristics of your exported vehicles are ready in seconds instead of ~50 s.
 - **Config / Consumables:** three slots as in the game - a click opens the list of the game's consumables; no item twice, one food, one fuel. Repair kits, first aid kits, extinguishers and the rest can be fitted too (they change no characteristic). Saved builds keep their food and fuel. Camouflage stays a tile of its own beside the slots.

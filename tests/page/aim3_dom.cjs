@@ -8570,6 +8570,8 @@ settle(20).then(function () {
 }).then(function () {
   return pathMatrix();
 }).then(function () {
+  return clickExport();
+}).then(function () {
 
 
   if (thrown.length) console.log('\nEXCEPTIONS: ' + thrown.map(function (e) { return e && e.stack; }).join('\n'));
@@ -8911,5 +8913,133 @@ function pathMatrix() {
        '(' + ttxAsked.join(', ') + ' · hidden ' + $('target-hp').hidden + ' · "' + $('target-hp-text').textContent + '")');
     setFun(false);
     Object.keys(keep).forEach(function (k) { D[k] = keep[k]; });
+  });
+}
+
+// ================= A CLICK ON A VEHICLE NOT EXPORTED YET (click-export-fast, 26.09) =================
+// The user: "he clicks and nothing happens, and he thinks it is broken". In the game: the row clicked and the scene spin
+// from the click until the model is on screen, the file is read every 400 ms (was 2 s), a failure says its reason; the
+// offline viewer never waits for an export nobody makes.
+function clickExport() {
+  const $ = function (id) { return document.getElementById(id); };
+  const D = global.ArmorInspectorData, H = global.BullbaHost;
+  const keep = {vehicles: D.vehicles, vehicle: D.vehicle, ttx: D.ttx}, keepHost = {game: H.game, canSend: H.canSend, send: H.send, params: H.params};
+  const WAIT = 'Exporting the model…', REFUSED = 'The game did not take the export request. See game.log.';
+  const LATE = 'The model did not arrive in 30 s. See game.log.', GONE = 'The model of this vehicle was not exported. See game.log.';
+  const row = function (id, extra) {
+    const name = id.split('-')[1];
+    return Object.assign({id: id, type: 'germany:' + name, name: name, level: 10, 'class': 'heavyTank', nation: 'germany', exported: false, exportedAt: null}, extra || {});
+  };
+  const arrived = {}, reads = [], sent = [];
+  let catalogueReads = 0;
+  D.vehicles = function () {
+    catalogueReads++;
+    return Promise.resolve({updatedAt: 'ce' + catalogueReads, vehicles: [VEHICLE, row('germany-Victor', arrived['germany-Victor'] ? {exported: true, exportedAt: 7} : {}), row('germany-Whiskey')]});
+  };
+  D.vehicle = function (id, once) {
+    reads.push(id + (once ? ':poll' : ''));
+    return arrived[id] ? Promise.resolve(arrived[id]) : id === VEHICLE.id ? Promise.resolve(VEHICLE) : Promise.reject(new Error('Not found data/vehicles/' + id + '.js'));
+  };
+  D.ttx = function () { return Promise.reject(new Error('no characteristics')); };
+  // In the game, the channel takes the command; its answer never comes (the page does not wait for it).
+  H.game = true; H.canSend = function () { return true; }; H.send = function (name, payload) { sent.push(payload); return new Promise(function () {}); };
+  const rowOf = function (id) { return $('vehicles').children.filter(function (c) { return c.getAttribute('data-vehicle') === id; })[0]; };
+  const loading = function () { return $('vehicles').children.filter(function (c) { return c.getAttribute('data-loading') !== null; }).map(function (c) { return c.getAttribute('data-vehicle'); }); };
+  const msg = function () { return $('scene-message').textContent; };
+  const polls = function (id) { return reads.filter(function (r) { return r === id + ':poll'; }).length; };
+  const scopeAll = function () { document.querySelectorAll('#vehicle-scope [data-scope]').forEach(function (b) { if (b.getAttribute('data-scope') === 'all') b.onclick(); }); };
+  sidebarModes[1].onclick();
+  return settle(20).then(function () {
+    $('model-tile').onclick();   // a click fills the model's role
+    return settle(10);
+  }).then(function () {
+    scopeAll();
+    ok('click export: the two rows without a model are listed, marked', !!rowOf('germany-Victor') && rowOf('germany-Victor').getAttribute('data-exported') === 'false' && !!rowOf('germany-Whiskey'));
+    rowOf('germany-Victor').onclick();
+    return settle(10);
+  }).then(function () {
+    ok('click export: the click asks the mod for the vehicle (exportVehicle, its type)',
+       sent.length === 1 && sent[0].action === 'exportVehicle' && sent[0].vehicleType === 'germany:Victor', JSON.stringify(sent));
+    ok('click export: the row clicked spins (data-loading) and the scene says the model is being exported',
+       loading().join() === 'germany-Victor' && msg() === WAIT, loading().join() + ' | ' + msg());
+    ok('click export: the file is polled - read once, without the reader\'s own read-again', polls('germany-Victor') === 1, reads.join());
+    tick(0.4); return settle(10);
+  }).then(function () {
+    tick(0.4); return settle(10);
+  }).then(function () {
+    ok('click export: every 400 ms (was 2 s)', polls('germany-Victor') === 3, reads.join());
+    scopeAll();   // the list painted again meanwhile
+    ok('click export: a list painted again keeps the spinner on the row', loading().join() === 'germany-Victor' && msg() === WAIT, loading().join());
+    arrived['germany-Victor'] = Object.assign({}, VEHICLE, {id: 'germany-Victor', type: 'germany:Victor', name: 'Victor'});
+    tick(0.4); return settle(30);
+  }).then(function () {
+    ok('click export: the file arrives - the vehicle is on screen, the row and the scene stop spinning',
+       $('battle-map').textContent === 'Victor' && !loading().length && msg() !== WAIT, $('battle-map').textContent + ' | ' + loading().join() + ' | ' + msg());
+    // (renderVehicles marks the row through querySelector, a stub here: the browser shows the mark.)
+    ok('click export: once the model is on screen the catalogue is read again (the mod wrote it right after the file)', catalogueReads === 2, catalogueReads);
+    // A request the game does not take: the reason at once, no spinner.
+    H.canSend = function () { return false; };
+    rowOf('germany-Whiskey').onclick();
+    return settle(10);
+  }).then(function () {
+    ok('click export: no channel to the mod - the reason at once, no spinner, no poll after it',
+       msg() === REFUSED && !loading().length && $('warnings').textContent.indexOf(REFUSED) >= 0 && polls('germany-Whiskey') === 1, msg() + ' | ' + reads.join());
+    H.canSend = function () { return true; };
+    rowOf('germany-Whiskey').onclick();
+    return settle(10);
+  }).then(function () {
+    ok('click export: another wait spins again', loading().join() === 'germany-Whiskey' && msg() === WAIT);
+    const realNow = Date.now;
+    Date.now = function () { return realNow() + 31000; };
+    tick(0.4);
+    return settle(10).then(function () { Date.now = realNow; });
+  }).then(function () {
+    ok('click export: nothing within 30 s - the reason, no eternal spinner', msg() === LATE && !loading().length, msg() + ' | ' + loading().join());
+    rowOf('germany-Whiskey').onclick();
+    return settle(10);
+  }).then(function () {
+    rowOf(VEHICLE.id).onclick();   // another pick while waiting
+    return settle(10);
+  }).then(function () {
+    const before = polls('germany-Whiskey');
+    tick(0.4);
+    return settle(10).then(function () {
+      ok('click export: another pick takes its place - the spinner goes with it, the wait stops polling',
+         !loading().length && msg() !== WAIT && polls('germany-Whiskey') === before, msg() + ' | ' + loading().join());
+    });
+  }).then(function () {
+    // The game opens the page on a vehicle (#vehicle=): the mod asked for it; the page waits and spins, sends nothing.
+    const was = sent.length;
+    H.params = function () { return {vehicle: 'germany-Whiskey'}; };
+    (winListeners.hashchange || []).forEach(function (fn) { fn(); });
+    return settle(10).then(function () {
+      ok('click export: #vehicle= in the game - the scene and the row spin, no second request from the page',
+         msg() === WAIT && loading().join() === 'germany-Whiskey' && sent.length === was, msg() + ' | ' + loading().join());
+      rowOf(VEHICLE.id).onclick();
+      return settle(10);
+    });
+  }).then(function () {
+    // The offline viewer: nobody exports, so nothing waits or spins - the row opens with its characteristics as before,
+    // and the fragment says at once what it said after 30 s.
+    H.game = false;
+    const was = sent.length, polled = polls('germany-Whiskey');
+    rowOf('germany-Whiskey').onclick();
+    return settle(10).then(function () {
+      tick(0.4); return settle(10);
+    }).then(function () {
+      ok('click export: offline a click sends nothing, polls nothing and never spins',
+         sent.length === was && polls('germany-Whiskey') === polled && !loading().length && msg() !== WAIT, msg() + ' | ' + loading().join());
+      H.params = function () { return {vehicle: 'germany-Uniform2'}; };
+      (winListeners.hashchange || []).forEach(function (fn) { fn(); });
+      return settle(10);
+    }).then(function () {
+      tick(2); return settle(10);
+    }).then(function () {
+      ok('click export: offline #vehicle= of a vehicle not exported - its words at once, no spinner, no poll',
+         msg() === GONE && !loading().length && polls('germany-Uniform2') === 0 && reads.indexOf('germany-Uniform2') >= 0, msg() + ' | ' + reads.join());
+    });
+  }).then(function () {
+    Object.keys(keep).forEach(function (k) { D[k] = keep[k]; });
+    Object.keys(keepHost).forEach(function (k) { H[k] = keepHost[k]; });
   });
 }

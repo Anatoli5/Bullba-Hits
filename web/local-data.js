@@ -2,6 +2,9 @@
 (function () {
   'use strict';
   var pending=Object.create(null), models=Object.create(null), modelOrder=[], serial=0;
+  // A momentary read failure is read again this many times, 400 ms apart; a poll that reads again anyway passes it as
+  // retryCount (vehicle(id,true): the page waiting for a clicked vehicle's export) and fails at once.
+  var RETRIES=2;
   function filename(key){
     if(key==='index')return 'data/index.js';
     if(/^battle:[-a-zA-Z0-9_]{1,100}$/.test(key))return 'data/battles/'+key.slice(7)+'.js';
@@ -25,7 +28,7 @@
       var timer=setTimeout(function(){finish(new Error('Could not read the local file.'));},15000);
       script.onload=function(){finish(entry.received?null:new Error('Data file is corrupted: '+path));};
       // A momentary read failure (file being replaced by the recorder, browser hiccup) gets two retries before it is reported.
-      script.onerror=function(){if(entry.retries<2){entry.retries++;clearTimeout(timer);script.remove();delete pending[key];setTimeout(function(){read(key,entry.retries).then(resolve,reject);},400);return;}finish(new Error('Not found '+path+'. Open Viewer.html from mods/configs/local.armor_inspector after running the game with the mod.'));};
+      script.onerror=function(){if(entry.retries<RETRIES){entry.retries++;clearTimeout(timer);script.remove();delete pending[key];setTimeout(function(){read(key,entry.retries).then(resolve,reject);},400);return;}finish(new Error('Not found '+path+'. Open Viewer.html from mods/configs/local.armor_inspector after running the game with the mod.'));};
       // A fresh URL avoids reusing a snapshot between polls.
       script.src=path+'?read='+Date.now()+'-'+(++serial);
     });
@@ -169,5 +172,5 @@
   // expandBattle is published so the offline tools that read a battle file straight from disk
   // (tools/check_shot_selection.cjs, tests/test_ballistics.cjs) use this one
   // reader instead of a second copy of the rules.
-  window.ArmorInspectorData={receive:receive,index:function(){return read('index');},battle:function(id){return read('battle:'+id);},vehicles:function(){return read('vehicles');},vehicle:function(id){return read('vehicle:'+id);},ttx:function(id){return read('ttx:'+id);},ttxSweep:function(){return read('ttxSweep');},modelsSweep:function(){return read('modelsSweep');},scene:scene,sceneFor:sceneFor,expandBattle:expandBattle};
+  window.ArmorInspectorData={receive:receive,index:function(){return read('index');},battle:function(id){return read('battle:'+id);},vehicles:function(){return read('vehicles');},vehicle:function(id,once){return read('vehicle:'+id,once?RETRIES:0);},ttx:function(id){return read('ttx:'+id);},ttxSweep:function(){return read('ttxSweep');},modelsSweep:function(){return read('modelsSweep');},scene:scene,sceneFor:sceneFor,expandBattle:expandBattle};
 }());

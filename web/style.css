@@ -674,7 +674,11 @@ input.lab-track::-moz-range-thumb{width:10px;height:18px;border-radius:3px;backg
 /* A collision model that is still being extracted (0.7.11): the scene message carries a small rotating
    ring, so a hit whose models have not arrived yet reads as work in progress and not as an empty scene.
    Only the message that asks for it spins - .scene-message without .busy is exactly what it was. */
-.scene-message.busy::before{content:"";flex:0 0 auto;width:18px;height:18px;margin-right:10px;border-radius:50%;border:2px solid #35475a;border-top-color:var(--gold);animation:bullba-spin 1s linear infinite}
+.scene-message.busy::before,.vehicle-row[data-loading=true]::after{content:"";flex:0 0 auto;width:18px;height:18px;margin-right:10px;border-radius:50%;border:2px solid #35475a;border-top-color:var(--gold);animation:bullba-spin 1s linear infinite}
+/* The same ring on the vehicle row whose export the page waits for (click-export-fast, 26.09): at its right end, the
+   row at full strength while the game exports it. */
+.vehicle-row[data-loading=true]{opacity:1}
+.vehicle-row[data-loading=true]::after{width:14px;height:14px;margin:0 0 0 auto}
 @keyframes bullba-spin{to{transform:rotate(360deg)}}
 
 /* 20.09 (user): Settings moved out of the crowded scene heading into the HEADER row, beside the

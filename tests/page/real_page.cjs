@@ -383,6 +383,23 @@ async function main() {
     ok('inherit: #vehicle= from the game puts its vehicle on screen and keeps the shooter picked (Quebec), with the camera', who(I2.model, 'Test vehicle') && who(I2.shooter, 'Quebec')
        && close(I2.yaw, .9) && close(I2.distance, 18) && I2.shells === 2, JSON.stringify(I2));
     await ev("history.replaceState(null, '', location.pathname + location.search)");
+    // click-export-fast (26.09): the offline viewer never waits for an export nobody makes - #vehicle= of a vehicle without a
+    // model says so at once, no spinner on the scene or on a row; a row that waits in the game wears the scene's own ring.
+    await ev("location.hash = '#vehicle=germany-Uniform'");
+    const CE = await ev(`(async () => {
+      const m = document.getElementById('scene-message');
+      for (let i = 0; i < 40 && !/not exported/.test(m.textContent); i++) await new Promise((r) => setTimeout(r, 100));
+      const row = document.querySelector('#vehicles [data-vehicle]');
+      let ring = null;
+      if (row) { row.setAttribute('data-loading', 'true'); const a = getComputedStyle(row, '::after');
+        ring = {anim: a.animationName, w: a.width, op: getComputedStyle(row).opacity}; row.removeAttribute('data-loading'); }
+      return {text: m.textContent, busy: m.classList.contains('busy'), loading: document.querySelectorAll('#vehicles [data-loading]').length, ring: ring};
+    })()`);
+    ok('click export: offline #vehicle= of a vehicle without a model says so at once - no spinner on the scene or a row',
+       /not exported/.test(CE.text) && !CE.busy && CE.loading === 0, JSON.stringify(CE));
+    ok('click export: a row waiting for its export wears the scene\'s ring (bullba-spin, 14 px) at full strength',
+       !!CE.ring && CE.ring.anim === 'bullba-spin' && CE.ring.w === '14px' && CE.ring.op === '1', JSON.stringify(CE.ring));
+    await ev("history.replaceState(null, '', location.pathname + location.search)");
     // 1: a model picked in the list after a hit: the hit's shooter (Papa, pm3) goes on shooting, read from his own export.
     await step("side('battles')"); await step("battle('pm3')"); await step('hit(0)');
     await step('modelTile()'); await step("list('pm_quebec')");

@@ -2609,6 +2609,9 @@ class Exporter(object):
         # Seconds after last_job before the next job that the page is not waiting for (run_job): PACE after a model or
         # a vehicle, a characteristics file's own share of the time after one.
         self.job_rest = PACE
+        # A job the page waits for (JOB_PAGE) is still queued after the one that just ran: the export loop takes it without
+        # its 50 ms wait for a message (export_hurry, one turn only). The clicked vehicle's own jobs run back to back.
+        self.page_follow = False
         # Durable JSONL cursors. The writer only raises targets after a complete
         # line has closed successfully; consumption is bounded on every tick.
         self.raw_offsets = {}
@@ -3320,8 +3323,9 @@ class Exporter(object):
         self.job_index.pop(job_key(job[2], job[3]), None)
         return job
 
-    def jobs_allowed(self):
-        """Never in a battle, never while the page is being used.
+    def jobs_allowed(self, page=False):
+        """Never in a battle, never while the page is being used - except a job the page itself waits for (`page`: JOB_PAGE,
+        click-export-fast 26.09): the user clicked a vehicle and waits for it, a drag in the scene does not hold it back.
 
         Both flags belong to the Recorder: the game thread writes them, this thread
         reads them. Without a recorder (the offline rebuild, a test) work may run.
@@ -3330,27 +3334,29 @@ class Exporter(object):
         if recorder is None: return True
         try:
             if getattr(recorder, 'in_battle', False): return False
-            return time.time() >= float(getattr(recorder, 'busy_until', 0) or 0)
+            return page or time.time() >= float(getattr(recorder, 'busy_until', 0) or 0)
         except Exception:
             return True
 
     def run_job(self):
         """One job per call, the lowest priority number first; with none queued, one slice of a sweep (run_sweeps)."""
         if not self.jobs: return self.run_sweeps()
-        if not self.jobs_allowed(): return False
         index = self.best_job()
+        page = self.jobs[index][0] == JOB_PAGE
+        if not self.jobs_allowed(page): return False
         # What the page is waiting for runs at once; everything else keeps PACE
         # seconds between two extractions, which halves the load on the hangar.
-        if self.jobs[index][0] > JOB_PAGE and time.time()-self.last_job < self.job_rest: return False
+        if not page and time.time()-self.last_job < self.job_rest: return False
         job = self.take_job(index)
         started = TTX_TIMER()
         try:
             if job[2] == 'model': self.run_model_job(job[3])
             elif job[2] == 'ttx': self.run_ttx_job(job[3])
-            else: self.run_vehicle_job(job[3])
+            else: self.run_vehicle_job(job[3], page)
         except Exception:
             LOG.exception('Deferred %s job failed; the rest of the queue continues', job[2])
         self.last_job = time.time()
+        self.page_follow = any(queued[0] == JOB_PAGE for queued in self.jobs)
         # A characteristics file is no extraction (26.09): the exported vehicles' files after a format change took 0.5 ms
         # each and waited PACE between them - 141 of them 47 s, the TTX sweep behind them. After one: the game's share of
         # the time its build took (SWEEP_SHARE, as between two slices of the sweep, at most SWEEP_REST_MAX); the export
@@ -3369,9 +3375,20 @@ class Exporter(object):
         self.invalidate_model(key)
         self.republish.update(self.waiting.pop(key, ()))
 
-    def run_vehicle_job(self, request):
-        """One vehicle record, exported exactly as before - only its turn has changed."""
-        self.export_vehicle(request)
+    def run_vehicle_job(self, request, page=False):
+        """One vehicle record, exported exactly as before - only its turn has changed. One the page waits for says in the
+        log how long it took and how long after the click (the request's time) it was done - the in-game measure of it."""
+        started = TTX_TIMER()
+        try:
+            written = self.export_vehicle(request)
+        except Exception:
+            if page: LOG.warning('Vehicle %s for the page failed; the page says so after its wait', request.get('vehicleType'))
+            raise
+        if page:
+            try: after = time.time() - float(request.get('requestedAt') or 0)
+            except Exception: after = -1.0
+            LOG.info('Vehicle %s for the page: %s in %.2f s, %.2f s after the request', request.get('vehicleType'),
+                     'exported' if written else 'already current', TTX_TIMER() - started, after)
 
     def request_vehicle_export(self, request):
         """The export thread's entry point for a vehicle asked for by the game.
@@ -3924,6 +3941,13 @@ class Exporter(object):
             return False
         return bool(not self.jobs and self.jobs_allowed())
 
+    def export_hurry(self):
+        """The export loop's wait for a message (Writer.run_export): none while a sweep's slices run (sweep_hurry), and none
+        once right after a job when another job the page waits for is queued (page_follow) - its jobs run back to back."""
+        sweep = self.sweep_hurry()
+        follow, self.page_follow = self.page_follow, False
+        return sweep or bool(follow and self.jobs_allowed(True))
+
     def sweep_hurry(self):
         """The export loop's wait: none while a sweep's slices run - between two of them it rests itself (sweep_rest).
         The game's frame callback is wanted while a sweep is started and the page open, even when no slice may run this
@@ -4047,7 +4071,8 @@ class Exporter(object):
                     if outcome == 'built': sweep['built'] += 1
                     elif outcome == 'failed': sweep['failed'].append(type_name)
                     else: sweep['current'] += 1
-                if TTX_TIMER() - began >= sweep['slice']: break
+                # A command of the page (a click's vehicle, Stop) ends the slice after this step, not after the slice's time.
+                if TTX_TIMER() - began >= sweep['slice'] or self.sweep_waiting(): break
             else:
                 self.sweep_measure(kind, sweep, began)
                 self.finish_sweep(kind)

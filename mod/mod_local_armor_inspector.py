@@ -451,9 +451,10 @@ class Writer(object):
             return
         while True:
             message = None
-            # While a sweep's slices run, no wait here: it waits one frame of the game between two slices itself.
+            # While a sweep's slices run, no wait here: it waits one frame of the game between two slices itself. None either
+            # right after a job when the page waits for another one (a clicked vehicle's): its jobs run back to back.
             hurry = False
-            try: hurry = bool(getattr(self.exporter, 'sweep_hurry', None) and self.exporter.sweep_hurry())
+            try: hurry = bool(getattr(self.exporter, 'export_hurry', None) and self.exporter.export_hurry())
             except Exception: hurry = False
             try: message = self.export_queue.get_nowait() if hurry else self.export_queue.get(timeout=0.05)
             except queue.Empty: pass
@@ -748,13 +749,15 @@ class Recorder(object):
         The hangar fires its change event often and a roster repeats itself, so the
         same type with the same compact descriptor twice in a row is dropped here;
         the exporter drops the rest by comparing the descriptor hash of the file it
-        already wrote.
+        already wrote. A click of the page ('picker') always goes through (click-export-fast, 26.09): a second click
+        after a failed or slow export was dropped here, and the page waited for nothing; the export thread's queue
+        holds one job per type anyway, and a current file costs one hash comparison.
         """
         try:
             if descr is None: return
             request = vehicle_request(descr, source)
             key = (request['vehicleType'], request['compactDescriptor'])
-            if key == self.last_vehicle: return
+            if key == self.last_vehicle and source != 'picker': return
             self.last_vehicle = key
             self.writer.put_vehicle(request)
         except Exception:
@@ -1250,25 +1253,46 @@ class Recorder(object):
 def open_viewer():
     """The mods list button: the Vehicles mode on the vehicle selected in the hangar (user, 25.09), whose model the
     hangar hook has already asked for (on_hangar_vehicle); the Hits mode is one click away on the page. No vehicle
-    in the hangar - the page as before, on the battles."""
+    in the hangar - the page as before, on the battles. The page opens waiting for that vehicle: if its export is still
+    queued, it goes first (page_waits)."""
     try:
         from local_armor_inspector.presentation import open_in_game
-        open_in_game(VIEWER_PATH, hangar_fragment())
+        type_name = hangar_type()
+        page_waits(type_name)
+        open_in_game(VIEWER_PATH, hangar_fragment(type_name))
     except Exception:
         LOG.exception('Could not open local HTML viewer')
 
 
-def hangar_fragment():
-    """'host=game&vehicle=<id>' of the vehicle selected in the hangar, else 'host=game'."""
+def hangar_type():
+    """The client type name of the vehicle selected in the hangar, or None."""
     try:
         from CurrentVehicle import g_currentVehicle
-        from local_armor_inspector.exporter import vehicle_id
         item = g_currentVehicle.item if g_currentVehicle.isPresent() else None
         if item is not None and item.descriptor is not None:
-            return 'host=game&vehicle=' + vehicle_id(item.descriptor.type.name)
+            return str(item.descriptor.type.name)
+    except Exception:
+        LOG.exception('Hangar vehicle unavailable; the viewer opens on the battles')
+    return None
+
+
+def hangar_fragment(type_name=None):
+    """'host=game&vehicle=<id>' of that vehicle type (by default the one selected in the hangar), else 'host=game'."""
+    if type_name is None: type_name = hangar_type()
+    if not type_name: return 'host=game'
+    try:
+        from local_armor_inspector.exporter import vehicle_id
+        return 'host=game&vehicle=' + vehicle_id(type_name)
     except Exception:
         LOG.exception('Hangar vehicle unavailable; the viewer opens on the battles')
     return 'host=game'
+
+
+def page_waits(type_name):
+    """The page is opened on this vehicle and waits for its file: whatever of it is still queued goes first, at the page's
+    priority (the page's own 'prioritise', click-export-fast 26.09). Game thread: one message to the export thread."""
+    if _recorder is None or not type_name: return
+    _recorder.prioritise([type_name])
 
 
 def picker_descriptor(type_name):
@@ -1361,6 +1385,7 @@ def show_vehicle(handler):
     descr = vehicle.descriptor
     if _recorder is not None:
         _recorder.request_vehicle(descr, 'hangar')
+        page_waits(descr.type.name)
     open_in_game(VIEWER_PATH, 'host=game&vehicle=' + vehicle_id(descr.type.name))
 
 

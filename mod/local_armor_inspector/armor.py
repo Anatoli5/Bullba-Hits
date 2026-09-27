@@ -19,6 +19,8 @@ _material_cache = threading.local()
 # Components remembered by the quick check below, per thread: a battle has up to 30 vehicles x 4 parts x 2
 # siege modes = 240 of them, so a full table is simply dropped and refilled.
 FAST_LIMIT = 256
+# ArmorCatalog.xml: the common vehicle.xml and the last vehicles' files stay decoded.
+XML_TREES = 3
 
 
 def _all_tuples(mapping):
@@ -208,8 +210,20 @@ class ArmorCatalog(object):
     def __init__(self, game):
         self.game = game
         self.cache = {}
+        # The last few decoded XML files (click-export-fast, 26.09): one vehicle's four or five parts each read the same
+        # vehicle file and the common vehicle.xml - ten opens of scripts.pkg (170 MB) and ten decodes a vehicle, 0.35-0.8 s
+        # of CPython 3 measured on the user's client, two to three times that in the game. The trees are only read.
+        self.trees = OrderedDict()
 
     def xml(self, name):
+        tree = self.trees.pop(name, None)
+        if tree is None:
+            tree = self.read_xml(name)
+        self.trees[name] = tree
+        while len(self.trees) > XML_TREES: self.trees.popitem(last=False)
+        return tree
+
+    def read_xml(self, name):
         for folder in glob.glob(os.path.join(self.game, 'res_mods', '*')):
             if os.path.isfile(os.path.join(folder, name)): raise ValueError('Armor definitions overridden in res_mods')
         for archive in glob.glob(os.path.join(self.game, 'mods', '*', '*.wotmod')):

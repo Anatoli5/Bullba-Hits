@@ -83,6 +83,10 @@
   var NO_VEHICLE_MODEL='No model yet: models come from the game. Open this viewer in the game and click the vehicle, or use Export all models there.';
   var NO_VEHICLE_TTX='No characteristics of this vehicle yet: the game writes them in the hangar, in the background.';
   var EXPORT_TIMEOUT='The model did not arrive in 30 s. See game.log.';
+  // A click on a vehicle the game has not exported yet (click-export-fast, 26.09; in the game only): the mod exports it at
+  // once, the page reads its file every EXPORT_POLL ms until EXPORT_WAIT, and the row clicked and the scene spin meanwhile.
+  var EXPORTING='Exporting the model\u2026',EXPORT_WAIT=30000,EXPORT_POLL=400;
+  var NO_EXPORT_CHANNEL='The game did not take the export request. See game.log.';
   // The help of the pane, as the gold badge's popover shows it: three headings, a few lines each. It used to
   // be a paragraph under the count and a two-line foot under the list; both are gone (user, 19.09: the pane
   // is a list, not a leaflet).
@@ -324,6 +328,7 @@
     b.setAttribute('aria-pressed',String(isModel));
     if(item.side)b.setAttribute('data-side',item.side);
     if(isShooter)b.setAttribute('data-role','shooter');
+    if(loadingVehicle&&loadingVehicle.id===v.id)b.setAttribute('data-loading','true');
     if(activeRole==='shooter'?isShooter:isModel)b.setAttribute('data-active','true');
     b.appendChild(vehicleTile(v,true));
     b.title=vehicleRowWords(item);
@@ -396,33 +401,56 @@
   function chooseVehicle(v){
     if(!v.exported&&!host.game)return void pickVehicle(v.id,activeRole,{row:v}).catch(function(e){
       if(e&&e.superseded)return;message(e.message);warnings([e.message]);});
-    var waiting=!v.exported,options=waiting?{deadline:Date.now()+30000,waiting:'Exporting the model\u2026'}:{};
-    if(waiting)requestExport(v);
+    // A request the game did not take ends the wait at once with its reason, not after EXPORT_WAIT.
+    var waiting=!v.exported,refused=null,options=waiting?{deadline:Date.now()+EXPORT_WAIT,waiting:EXPORTING,
+      failed:function(){return refused;}}:{};
+    if(waiting)sendCommand('exportVehicle',{vehicleType:String(v.type||'')}).then(function(sent){if(!sent)refused=NO_EXPORT_CHANNEL;});
     pickVehicle(v.id,activeRole,options).catch(function(e){
       if(e&&e.superseded)return;   // another pick or scene took its place (audit APP1-02): nothing to say over it
-      var text=waiting?EXPORT_TIMEOUT:e.message;message(text);warnings([text]);});
+      var text=e&&e.timedOut?EXPORT_TIMEOUT:e.message;message(text);warnings([text]);});
   }
-  function requestExport(v){sendCommand('exportVehicle',{vehicleType:String(v.type||'')});}
+  // The vehicle whose export the page waits for, and the pick that waits ({id, token}; null when none): its row carries
+  // data-loading (a spinner) - vehicleRow reads it, so a list painted again meanwhile keeps it.
+  var loadingVehicle=null;
+  function markLoading(id,token){
+    loadingVehicle=id?{id:id,token:token}:null;
+    Array.prototype.forEach.call($('vehicles').children,function(b){
+      var v=b.getAttribute('data-vehicle');if(v===null)return;
+      if(v===id)b.setAttribute('data-loading','true');else b.removeAttribute('data-loading');});
+  }
+  // The wait of pick `token` is over (the model on screen, a failure, or another scene took its place): the row stops, and
+  // so does the scene's spinner if it is still this wait's - a reason or the new scene writes over it anyway.
+  function endLoading(token){
+    if(!loadingVehicle||loadingVehicle.token!==token)return;
+    markLoading(null);
+    if($('scene-message').textContent===EXPORTING)message('');   // the words of a wait only
+  }
   // The export of a vehicle may still be running when the in-game window opens: retry until the deadline.
   // `alive` (optional, audits APP1-02/APP2-02): a wait another pick or scene has overtaken stops - no spinner over
   // that scene - and ends with an error marked `superseded`, which its callers leave unsaid.
   function superseded(){var e=new Error('Superseded by another scene');e.superseded=true;return e;}
-  function readVehicle(id,deadline,alive){
+  // `failed` (optional): the reason the wait ends early (a request the game did not take), or null; such an error is
+  // marked `refused`, the deadline's own `timedOut`. A read with a deadline is a poll: it fails at once (no read-again
+  // of the reader) and is repeated every EXPORT_POLL ms - the page has the file within that of the mod writing it.
+  function readVehicle(id,deadline,alive,failed){
     if(!VEHICLE_ID.test(String(id)))return Promise.reject(new Error('Invalid vehicle identifier'));
     var row=catalogueRow(id),key=id+'@'+(row?row.exportedAt:'');
     if(vehicleCache[key])return Promise.resolve(vehicleCache[key]);
-    return ArmorInspectorData.vehicle(id).then(function(record){
+    return ArmorInspectorData.vehicle(id,!!deadline).then(function(record){
       if(!record||record.id!==id||!Array.isArray(record.parts))throw new Error('This file is not a collision-model export of '+id+'.');
       vehicleCache[key]=record;vehicleOrder.push(key);
       while(vehicleOrder.length>8)delete vehicleCache[vehicleOrder.shift()];
       return record;
     },function(e){
       if(alive&&!alive())throw superseded();
-      if(!deadline||Date.now()>=deadline)throw e;
-      message('Exporting the model\u2026');
-      return new Promise(function(resolve){window.setTimeout(resolve,2000);}).then(function(){
+      var reason=failed&&failed();
+      if(reason){var r=new Error(reason);r.refused=true;throw r;}
+      if(!deadline)throw e;
+      if(Date.now()>=deadline){var t=new Error(e&&e.message||String(e));t.timedOut=true;throw t;}
+      message(EXPORTING,true);
+      return new Promise(function(resolve){window.setTimeout(resolve,EXPORT_POLL);}).then(function(){
         if(alive&&!alive())throw superseded();
-        return readVehicle(id,deadline,alive);});
+        return readVehicle(id,deadline,alive,failed);});
     });
   }
   // A catalogue row without a model, outside the game (24.09): its characteristics file stands in for the export - the
@@ -499,16 +527,23 @@
   // options.row: a catalogue row without a model, read from its characteristics file (the browser only).
   function pickVehicle(id,role,options){
     role=role==='shooter'?'shooter':'model';options=options||{};
-    var token=++vehicleGeneration;
-    message(options.waiting||'Preparing the model\u2026');
-    var read=options.row?ttxRecord(options.row):readVehicle(id,options.deadline,function(){return token===vehicleGeneration;});
+    var token=++vehicleGeneration,wait=!!options.deadline;
+    // A wait for the game's export (a deadline is given in the game only): the row and the scene spin until it ends.
+    message(options.waiting||'Preparing the model\u2026',wait);
+    markLoading(wait?id:null,token);
+    var read=options.row?ttxRecord(options.row):readVehicle(id,options.deadline,function(){return token===vehicleGeneration;},options.failed);
     return read.then(function(record){
       if(token!==vehicleGeneration)return null;
       // The last shooter used is looked up in the catalogue: at the start (the game's fragment) it may still be on its way.
       if(role==='model'&&!shooterVehicle&&!record.noModel&&lastShooterType&&!catalogue)
         return catalogueRead().then(function(){return token===vehicleGeneration?place(record):null;});
       return place(record);
-    });
+    }).then(function(shown){
+      // The model on screen: the catalogue the mod wrote right after its file marks the row exported. Read only now - read
+      // before, it would hand the list's roles the scene still on screen (adoptHitVehicles).
+      if(shown&&wait&&token===vehicleGeneration)loadCatalogue();
+      endLoading(token);return shown;
+    },function(e){endLoading(token);throw e;});
     function place(record){
       var keepCamera='view';
       if(role==='shooter'){
@@ -620,7 +655,8 @@
     if(!id||!VEHICLE_ID.test(id)){if(!initial)lastFragment=null;return;}
     if(!initial&&id===lastFragment)return;
     lastFragment=id;loadCatalogue();setMode('vehicles');   // the shooter picked stays (inherit sweep, 26.09)
-    pickVehicle(id,'model',{deadline:Date.now()+30000,waiting:'Exporting the model\u2026'})
+    // In the game the mod exports it if it has to (page_waits puts it first); outside it nobody will: no wait.
+    pickVehicle(id,'model',host.game?{deadline:Date.now()+EXPORT_WAIT,waiting:EXPORTING}:{})
       .catch(function(e){if(!(e&&e.superseded))message('The model of this vehicle was not exported. See game.log.');});
   }
   function restoreSidebar(){
@@ -671,12 +707,14 @@
   }
   // One page -> mod command, fire and forget. Outside the game there is no channel
   // and nothing is attempted; the external browser simply waits for the files.
+  // It resolves to false when the command could not be sent (no channel, or the channel refused it), never rejects; the
+  // game's answer is not waited for.
   function sendCommand(action,params){
-    if(!host.canSend())return;
+    if(!host.canSend())return Promise.resolve(false);
     var payload={action:action};
     if(params)Object.keys(params).forEach(function(k){payload[k]=params[k];});
-    host.send('bullba_hits',payload).catch(function(e){
-      if(window.console)console.warn('Bullba Hits '+action+' command failed: '+e.message);});
+    return host.send('bullba_hits',payload).then(function(){return true;},function(e){
+      if(window.console)console.warn('Bullba Hits '+action+' command failed: '+e.message);return false;});
   }
   // The mod holds its extractions back while the user is working in the page: one
   // message a second is enough for the two-second window on the mod's side.
@@ -6416,7 +6454,11 @@
     if(parts.pending&&current)return swapExtracting(hit,deadline,alive);
     var row=swapVehicleRow(hit);
     if(!row)return Promise.reject(new Error('The shooter’s collision model is not exported yet.'));
-    return readVehicle(row.id,deadline,alive).then(function(record){
+    // Not exported yet (click-export-fast, 26.09): in the game the page asks for it as a click on its row does - the wait
+    // below had nobody to wait for; a request the game did not take ends it at once.
+    var refused=null;
+    if(deadline&&!row.exported)sendCommand('exportVehicle',{vehicleType:String(row.type||'')}).then(function(sent){if(!sent)refused=NO_EXPORT_CHANNEL;});
+    return readVehicle(row.id,deadline,alive,function(){return refused;}).then(function(record){
       var synthetic=swapHit(hit);
       synthetic.target.parts=(record.parts||[]).slice();
       if(record.exportedAt!==undefined)synthetic.target.exportedAt=record.exportedAt;
@@ -7082,10 +7124,10 @@
     var token=++generation;message('Preparing the model\u2026');if(viewer)viewer.clear();
     // In the game the model can still be on its way: the same 30 s the vehicle browser waits. Outside it
     // there is nobody to extract anything, so what is published is all there will be.
-    swapScene(hit,host.game?Date.now()+30000:0,function(){return token===generation;}).then(function(synthetic){
+    swapScene(hit,host.game?Date.now()+EXPORT_WAIT:0,function(){return token===generation;}).then(function(synthetic){
       if(token!==generation)return null;
       return ArmorInspectorData.sceneFor(current,synthetic).then(function(data){if(token!==generation)return;display(data,false,view);});
-    }).catch(function(e){if(token===generation){sceneCleared();message(e.message);warnings([e.message]);}});
+    }).catch(function(e){if(token===generation){var text=e&&e.timedOut?EXPORT_TIMEOUT:e.message;sceneCleared();message(text);warnings([text]);}});
   };
   if(viewer)viewer.onAim=function(text){analysisKey=null;$('spread-result').textContent=text;};
   // Releasing the pinned centre: the manual estimate goes stale as before, the emulated circle simply
