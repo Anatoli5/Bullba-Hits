@@ -7593,7 +7593,8 @@ settle(20).then(function () {
     ok('outer track: the hit details call a contact on part 4 the outer track, a wheel Wheel k, and an unknown part by its number',
        appSrc.indexOf("var PART_NAMES=['Chassis','Hull','Turret','Gun','Outer track'];") !== -1 && appSrc.indexOf("detail('Point on the model',point?partLabel(point.part):") !== -1
        && appSrc.indexOf("function partLabel(id){return id<0?'Wheel '+(-id):PART_NAMES[id]||'Part '+id;}") !== -1
-       && appSrc.indexOf("' part='+(v.part<0?'wheel'+(-v.part-1):partNames[v.part]||v.part)") !== -1);
+       && appSrc.indexOf("function logPart(id){return id<0?'wheel'+(-id-1):partNames[id]||id;}") !== -1
+       && appSrc.indexOf("' part='+logPart(v.part)+partial") !== -1);
     ok('outer track: the viewer colours part 4 and the wheels as the chassis and puts them with the tracks (vehicleDamageFactor 0)',
        viewerSrc.indexOf('function partColor(part){return baseColors[part>0?part%4:0];}') !== -1 && viewerSrc.indexOf('function externalLayer(t){return t.part===0||') !== -1);
   });

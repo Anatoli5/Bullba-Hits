@@ -122,5 +122,13 @@ assert.equal(g.special,false);
   assert.equal(S({...base,attacker:{}},null),null);
   assert.equal(S({...base,attacker:{motion:at(0,20)}},null),null);
   assert.equal(S({...base,target:{parts:base.target.parts},attacker:{motion:at(0,9.9)}},null),null);
+  // Review of 5f2bee5: a first point on a wheel (its transform the place at rest, poseFrom 'rest') is no anchor - the
+  // eye stands on the hull point after it; a wheel point alone gives none.
+  const wheel={id:-3,transform:[1,0,0,0,0,1,0,0,0,0,1,0,5,0,0,1],poseFrom:'rest'};
+  const through={...base,attacker:{motion:at(-Math.PI/2,9.9)},target:{...base.target,parts:base.target.parts.concat([wheel])},
+    points:[{part:-3,status:'resolved',position:[0,0,0]},{part:1,status:'resolved',position:[0,1,0]}]};
+  st=S(through,null);
+  assert.ok(st&&near(st.eye,[0,1,100]),JSON.stringify(st));
+  assert.equal(S({...through,points:[through.points[0]]},null),null);
 }
-console.log(JSON.stringify({passed:true,cases:42}));
+console.log(JSON.stringify({passed:true,cases:44}));

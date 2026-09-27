@@ -162,11 +162,17 @@ float bounceLeg(vec3 origin,vec3 direction,float remaining,float nominal){
  Walk w;w.remaining=remaining;w.nominal=nominal;w.jetStart=0.0;w.jetRate=0.0;w.jet=false;w.screens=0;w.gate=1.0;
  int ignored[${COUNT}];int ignoredCount=0;
  float at=-1.0;int id=-1; // the key of the last contact; (-1, -1) lets the first one be anything the triangle test accepts
- for(int i=0;i<${COUNT};i++){
+ // A collide-once body met again (the far face of a wheel, of a track) is skipped without taking one of the COUNT
+ // contacts (review of 5f2bee5: a wheel spent two, and a leg through three wheels lost the hull). The loop stays bounded:
+ // COUNT contacts that count and 2 x COUNT steps in all (a convex body - a wheel, a plate - has one far face).
+ int counted=0;
+ for(int i=0;i<${2 * COUNT};i++){
+  if(counted>=${COUNT})break;
   vec3 faceNormal;float next;int nextId;
   if(!nextContact(origin,direction,at,id,next,nextId,faceNormal))return -2.0;
   at=next;id=nextId;
   bool skip=false;for(int j=0;j<${COUNT};j++){if(j>=ignoredCount)break;if(ignored[j]==id)skip=true;}if(skip)continue;
+  counted++;
   float value=0.0;int status=contact(id,abs(dot(direction,faceNormal)),max(at,0.0),w,value);
   if(status>=3){if(ignoredCount<${COUNT}){ignored[ignoredCount]=id;ignoredCount++;}continue;}
   if(status==2)return -4.0;

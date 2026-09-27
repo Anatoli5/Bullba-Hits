@@ -318,23 +318,34 @@ def wheel_parts_checked(descr, collisions):
     counts (generalWheelsAnimatorConfig.getNonTrackWheelsCount, Vehicle.calcMaxComponentIdx) and part -k under the name of
     the wheel of index k-1 (collisions.getPartName, the lookup the client's getMatinfo makes). The names are asked once per
     collision component and type; the cache holds no game object (a reused address meets another type's names and fails).
-    Otherwise [] - a contact on a wheel then stays 'unsupported-part', as before."""
+    Otherwise [] - a contact on a wheel then stays 'unsupported-part', as before.
+    Only an agreement is kept for good. A failure or a disagreement (the wheel colliders not attached yet at the first
+    hit, review of 5f2bee5) is asked again, at most every WHEEL_RETRY seconds: a count and a few names, cheap."""
     from local_armor_inspector.exporter import wheel_parts
     parts = wheel_parts(descr)
     if not parts: return []
     key = (id(collisions), str(descr.type.name))
-    names = _WHEEL_NAMES.get(key)
-    if names is None:
+    entry = _WHEEL_NAMES.get(key)
+    now = time.time()
+    if entry is None or (entry[1] is not None and now >= entry[1]):
         try:
             count = int(descr.chassis.generalWheelsAnimatorConfig.getNonTrackWheelsCount())
             names = tuple(str(collisions.getPartName(-k) or '') for k in range(1, count+1))
         except Exception:
             names = ()
+        agree = wheel_names_agree(names, parts)
         if len(_WHEEL_NAMES) >= 64: _WHEEL_NAMES.clear()
-        _WHEEL_NAMES[key] = names
-    if len(names) != len(parts) or any(-part['id'] > len(names) or names[-part['id']-1] != part['name'] for part in parts):
-        return []
-    return parts
+        entry = _WHEEL_NAMES[key] = (agree, None if agree else now + WHEEL_RETRY)
+    return parts if entry[0] else []
+
+
+WHEEL_RETRY = 5.0
+
+
+def wheel_names_agree(names, parts):
+    """The collision's wheel names are the descriptor's wheels, part -k under the name of the wheel of index k-1."""
+    return bool(names) and len(names) == len(parts) and all(
+        -part['id'] <= len(names) and names[-part['id']-1] == part['name'] for part in parts)
 
 
 def rest_transforms(descr):

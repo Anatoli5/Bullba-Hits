@@ -51,7 +51,7 @@ function wheelParts() {
   const screen = function (mm) { return {wheel: {armor: mm, vehicleDamageFactor: 0, useHitAngle: false, mayRicochet: false, collideOnceOnly: true,
     checkCaliberForRicochet: false, checkCaliberForHitAngleNorm: false, useArmorHomogenization: false, chanceToHitByProjectile: 1}}; };
   return [[-1, 'WD_L1', -1.9, -2.4, 5], [-2, 'WD_R1', 1.9, -2.4, 5], [-3, 'W_L1', -1.9, 0, 10], [-4, 'W_R1', 1.9, 0, 10]].map(function (w) {
-    return {id: w[0], name: w[1], material: 'wheel', wheel: {radius: 0.55, width: 0.35, sides: 16}, transform: translate(w[2], 0.55, w[3]),
+    return {id: w[0], name: w[1], material: 'wheel', wheel: {radius: 0.55, width: 0.35, sides: 16}, transform: translate(w[2], 0.55, w[3]), poseFrom: 'rest',
             armor: screen(w[4]), armorSource: 'synthetic'};
   });
 }

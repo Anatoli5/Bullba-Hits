@@ -50,7 +50,8 @@ window.__gpuBounce = function (sign, trackFirst, options) {
     track: {armor: 20, vehicleDamageFactor: 0, useHitAngle: false, mayRicochet: false, checkCaliberForRicochet: false, checkCaliberForHitAngleNorm: false, collideOnceOnly: true},
     side: Object.assign({}, main, {armor: options.side || 90}),
     back: Object.assign({}, main, {armor: 20}),
-    skirt: {armor: options.skirt || 30, vehicleDamageFactor: 0, useHitAngle: false, mayRicochet: false, checkCaliberForRicochet: false, checkCaliberForHitAngleNorm: false, collideOnceOnly: true}
+    skirt: {armor: options.skirt || 30, vehicleDamageFactor: 0, useHitAngle: false, mayRicochet: false, checkCaliberForRicochet: false, checkCaliberForHitAngleNorm: false, collideOnceOnly: true},
+    box: {armor: 5, vehicleDamageFactor: 0, useHitAngle: false, mayRicochet: false, checkCaliberForRicochet: false, checkCaliberForHitAngleNorm: false, collideOnceOnly: true}
   };
   const tris = [];
   function quad(part, name, a, b, c, d) { const m = function (p) { return [p[0] * sign, p[1], p[2]]; };
@@ -65,6 +66,11 @@ window.__gpuBounce = function (sign, trackFirst, options) {
   // options.screen: a 30 mm skirt across the first leg, in front of the floor (the mirrored leg never comes back to it):
   // the bounced leg must start with 0.75 x what was left behind it, as the CPU's engine.bounced does.
   if (options.screen) wall(3, 'skirt', -3.5);
+  // options.boxes (27.09, review of 5f2bee5): that many collide-once 5 mm bodies of their own (parts 10, 11, ...; a wheel
+  // each), both faces across the mirrored leg between the compared ricochets (x < 1) and the side plate - the far face of
+  // each must not take one of the leg's eight contacts, or five of them hide the side plate from the GPU (-2, "flies
+  // past") while the CPU walks on to it.
+  for (let k = 0; k < (options.boxes || 0); k++) { wall(10 + k, 'box', 1.02 + .1 * k); wall(10 + k, 'box', 1.06 + .1 * k); }
   const engine = B.fromTriangles(tris);
   const canvas = document.createElement('canvas'); document.body.appendChild(canvas);
   const renderer = new T.WebGLRenderer({canvas: canvas, antialias: false}); renderer.setPixelRatio(1); renderer.setSize(W, H, false);
@@ -167,6 +173,11 @@ async function main() {
     for (const trackFirst of [true, false]) {
       const tie = await page.evaluate('__gpuBounce(1,' + trackFirst + ',{tieGap:5e-5,far:true})');
       ok('a track face 50 um behind a main plate, ' + (trackFirst ? 'track' : 'hull') + ' ids first: the peel and the CPU meet the plate alone', tie.direct > 200 && tie.directLayers === 1 && !tie.directBad, '(direct ' + tie.direct + ', CPU layers ' + tie.directLayers + ', ' + tie.directBad + ' differ, e.g. ' + JSON.stringify(tie.dbg) + ')');
+    }
+    // Review of 5f2bee5: five collide-once bodies (ten faces) and the side plate on the leg - GPU equals CPU, both directions.
+    for (const sign of [1, -1]) {
+      const bx = await page.evaluate('__gpuBounce(' + sign + ',false,{boxes:5,pen:200,noTrack:true})');
+      ok('five collide-once bodies on the bounced leg, ' + (sign > 0 ? '+x' : '-x') + ': each costs one contact, the side plate behind is reached as on the CPU', bx.compared > 200 && bx.cpuZone > 200 && !bx.bad, '(compared ' + bx.compared + ', CPU zone ' + bx.cpuZone + ', ' + (bx.bad || 0) + ' differ, e.g. ' + JSON.stringify(bx.mismatches) + ')');
     }
     // A shell with enableTraceRicochet false: lost at the ricochet - no zone, the plain ricochet colour, no leg on the CPU.
     const nt = await page.evaluate('__gpuBounce(1,false,{noTrace:true})');

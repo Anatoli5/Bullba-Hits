@@ -5882,9 +5882,14 @@
   // estimate along the drawn line. The game writes the page's console into game.log; tools/verdicts_from_log.py
   // tabulates the lines. Once per hit and shell, never on camera moves.
   var verdictLines=0,verdictQueue=[],verdictDone={},verdictTimer=null,verdictBusy=false;
-  function verdictLine(battleId,hit,v,shell,mode){var r=v.result||{},chance=r.chance;
+  // A part's name on a log line: partNames, a wheel of a wheeled vehicle as the crit list names it (wheel<k-1>).
+  function logPart(id){return id<0?'wheel'+(-id-1):partNames[id]||id;}
+  // `scene`: the scene the verdicts were cast in (sceneFor's result). A part it had to leave out - a wheel without its
+  // body (review of 5f2bee5) - is named in partial=, so a verdict computed without it is never read as a whole one.
+  function verdictLine(battleId,hit,v,shell,mode,scene){var r=v.result||{},chance=r.chance;
     var ours=r.reason==='ricochet'?'ricochet':chance===null||chance===undefined?(r.reason||'none'):(chance>=50?'pen':'no-pen')+'_'+chance+'%';
-    console.info('Bullba Hits verdict: battle='+battleId+' hit='+hit.id+' point='+v.index+' part='+(v.part<0?'wheel'+(-v.part-1):partNames[v.part]||v.part)+' server='+String(effects[v.effect]||v.effect).replace(/ /g,'_')+' ours='+ours+' angle='+(r.angle!=null?Math.round(r.angle):'-')+' eff='+(r.effective!=null?Math.round(r.effective):'-')+' pen='+Math.round(shell.penetration)+' shell='+shell.kind+' dir='+v.source+' chordDev='+(v.chordDev==null?'-':(v.chordDev*180/Math.PI).toFixed(1))+' mode='+mode+shellModeColumns(hit,shell)+damageColumns(hit,r,shell)+ArmorCrits.columns(hit,v)+' v='+($('app-version').getAttribute('data-version')||'dev').replace(/\s+/g,'_')+' rec='+(recordsVersion||'-'));
+    var partial=scene&&Array.isArray(scene.partial)&&scene.partial.length?' partial='+scene.partial.map(logPart).join(','):'';
+    console.info('Bullba Hits verdict: battle='+battleId+' hit='+hit.id+' point='+v.index+' part='+logPart(v.part)+partial+' server='+String(effects[v.effect]||v.effect).replace(/ /g,'_')+' ours='+ours+' angle='+(r.angle!=null?Math.round(r.angle):'-')+' eff='+(r.effective!=null?Math.round(r.effective):'-')+' pen='+Math.round(shell.penetration)+' shell='+shell.kind+' dir='+v.source+' chordDev='+(v.chordDev==null?'-':(v.chordDev*180/Math.PI).toFixed(1))+' mode='+mode+shellModeColumns(hit,shell)+damageColumns(hit,r,shell)+ArmorCrits.columns(hit,v)+' v='+($('app-version').getAttribute('data-version')||'dev').replace(/\s+/g,'_')+' rec='+(recordsVersion||'-'));
     verdictLines++;verdictStatus();}
   // The shooter's vehicle mode on a log line that already carries the shell (22.09): which of the two
   // modes the shell used belongs to, whether the record held a second set at all and the siege state the
@@ -5924,7 +5929,7 @@
     var key=current.id+'/'+activeHit.id+'|'+JSON.stringify(shell);if(key===verdictKey)return;
     // Before load() the previous hit's points would be logged under the new id: wait for the points of this hit.
     var verdicts=viewer.pointVerdicts(shell)||[];if(!verdicts.length||viewer.loadedData.hit!==activeHit)return;verdictKey=key;
-    verdicts.forEach(function(v){verdictLine(current.id,activeHit,v,shell,'view');});
+    verdicts.forEach(function(v){verdictLine(current.id,activeHit,v,shell,'view',viewer.loadedData);});
   }
   // Every hit of a loaded battle, automatically (user, 14.09: the more data the better the analysis): the hit's own
   // shell, its models from the cache, a throwaway flat ballistics engine, one hit every 150 ms so the page stays responsive.
@@ -5963,7 +5968,7 @@
       // A flat engine (one leaf, no kd-tree): the tree would cost far more to build than the one to three rays
       // cast through it here save, and the verdicts are the same.
       if(!shell)return;var engine=ArmorBallistics.build(data,false,true),pts=ArmorViewer.points(hit,context);
-      ArmorViewer.verdicts(engine,pts,shell).forEach(function(v){verdictLine(battle.id,hit,v,shell,context.index>=0?'auto':'auto-shell-guess');});
+      ArmorViewer.verdicts(engine,pts,shell).forEach(function(v){verdictLine(battle.id,hit,v,shell,context.index>=0?'auto':'auto-shell-guess',data);});
     }).catch(function(e){if(window.console)console.warn('Bullba Hits verdict: hit '+hit.id+' skipped: '+e.message);})
       .then(function(){verdictBusy=false;verdictStatus();if(verdictQueue.length)verdictTimer=setTimeout(drainVerdicts,150);});
   }

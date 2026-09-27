@@ -158,6 +158,7 @@ function verdictModule(appSource, deps) {
     takeFunction(appSource, 'manualDamageFrom'),
     takeFunction(appSource, 'shellAt'),
     takeLiteral(appSource, /(var\s+verdictLines=[^\n]*)\n/, 'the verdict counters'),
+    takeFunction(appSource, 'logPart'),
     takeFunction(appSource, 'verdictLine'),
     // The shooter's vehicle mode on the line (22.09): verdictLine calls it, so it has to come along.
     takeFunction(appSource, 'shellModeColumns'),
@@ -359,7 +360,9 @@ function drain(api, timers) {
   });
 }
 
-Promise.resolve().then(function () { return main(process.argv.slice(2)); }).then(function (code) {
+// The cutters are shared with tests/test_verdict_line.cjs (the log line's columns), which requires this file.
+module.exports = {takeFunction: takeFunction, takeLiteral: takeLiteral};
+if (require.main === module) Promise.resolve().then(function () { return main(process.argv.slice(2)); }).then(function (code) {
   process.exitCode = code || 0;
 }, function (e) {
   process.stderr.write('verdicts_offline: ' + (e && e.message ? e.message : String(e)) + '\n');

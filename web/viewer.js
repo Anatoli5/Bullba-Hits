@@ -676,7 +676,7 @@
     var pts=Viewer.points(hit,context);pts.forEach(function(p){self.addReticle(p.pos);});
     // shotPath: the shell's flight carried onto the first point (Viewer.shellPath), null without a tracer; focus()
     // stands the camera at its origin, the horizon and the page's marks read it.
-    this.shotPoints=pts;this.shotPath=pts.path||null;this.drawTracers(pts);if(pts.length){this.point=pts[0].pos.clone();this.travel=pts[0].line.clone();}
+    this.shotPoints=pts;this.shotPath=pts.path||null;this.drawTracers(pts);if(pts.length){var at=pts[pts.anchor||0];this.point=at.pos.clone();this.travel=at.line.clone();}
     this.drawHorizon(hit.target&&hit.target.worldTransform);
     // The tracers and marks of this hit have just been added to the root: with the aim emulation running
     // they must not be on screen at all, so the recorded rule is applied to them here and not only when
@@ -882,13 +882,19 @@
   // `context` (ArmorShotContext.resolve) is optional: with the hit's tracer and its server stop the first point's line
   // is the shell's own flight (Viewer.shellPath) and pts.path carries it; without them the chain rule alone, as before.
   // The page's view and its verdict log both come here, so the line drawn and the line judged are one.
+  // pts.anchor: the index of the point the shot's line, arrow and camera stand on - the first on a part posed AT THE HIT.
+  // A wheel's transform is its place at rest (poseFrom 'rest'), an armoured prefab's may be its default one (poseFrom
+  // 'default'): neither is where the part was, so a line through a wheel into the hull is anchored on the hull point
+  // (review of 5f2bee5). With no such point, the first.
   Viewer.points=function(hit,context){
-    var T=THREE,transforms={};((hit&&hit.target||{}).parts||[]).forEach(function(part){if(part.transform)transforms[part.id]=new T.Matrix4().fromArray(part.transform);});
+    var T=THREE,transforms={},rest={};((hit&&hit.target||{}).parts||[]).forEach(function(part){if(part.transform){transforms[part.id]=new T.Matrix4().fromArray(part.transform);if(part.poseFrom)rest[part.id]=true;}});
     // pi: the point's index in hit.points (the log's point= counts resolved points only); hitType as recorded.
     var pts=[];((hit&&hit.points)||[]).forEach(function(p,pi){if(p.status!=='resolved'||!transforms[p.part]||!p.position||!p.direction)return;var pos=new T.Vector3().fromArray(p.position).applyMatrix4(transforms[p.part]);pos.z*=-1;var direction=new T.Vector3().fromArray(p.direction).transformDirection(transforms[p.part]).normalize();direction.z*=-1;pts.push({pos:pos,dir:direction,effect:p.effect,part:p.part,pi:pi,hitType:p.hitType,source:'segment',chordDev:null,line:direction.clone(),stretch:null});});
     Viewer.chain(pts);
+    var anchor=0;for(var i=0;i<pts.length;i++)if(!rest[pts[i].part]){anchor=i;break;}
+    pts.anchor=anchor;
     var path=pts.length?Viewer.shellPath(pts,context,hit&&hit.target&&hit.target.worldTransform):null;
-    if(path){pts[0].line=path.tangent.clone();pts[0].source='tracer';}
+    if(path){pts[anchor].line=path.tangent.clone();pts[anchor].source='tracer';}
     pts.path=path;
     return pts;
   };
@@ -910,7 +916,7 @@
      world pose - then the segment line stands, as before. */
   var TURN_TRUST=.5*Math.PI/180,PATH_STEPS=24;
   Viewer.shellPath=function(pts,context,worldTransform){
-    var T=THREE,tracer=context&&context.tracer,stop=context&&context.stop,first=pts&&pts[0];
+    var T=THREE,tracer=context&&context.tracer,stop=context&&context.stop,first=pts&&pts[pts.anchor||0];
     if(!first||!tracer||!stop||!Array.isArray(worldTransform)||!Array.isArray(tracer.origin)||!Array.isArray(tracer.velocity)||!Array.isArray(stop.position))return null;
     var g=Number(tracer.gravity)>0?Number(tracer.gravity):0,o=new T.Vector3().fromArray(tracer.origin),v=new T.Vector3().fromArray(tracer.velocity),S=new T.Vector3().fromArray(stop.position);
     if(!(v.lengthSq()>1e-6))return null;
@@ -965,15 +971,17 @@
      (screens, ricochet continuations) stay as they were drawn. Without a path: the stub, as before. */
   var DOT_PX=7;
   Viewer.prototype.drawTracers=function(pts){
-    var T=THREE,path=pts.path;
+    var T=THREE,path=pts.path,a=pts.anchor||0;
     if(path){var length=Math.max(path.length,1e-3),dash=Math.max(.15,Math.min(5,length/60));
       var arc=new T.Line(new T.BufferGeometry().setFromPoints(path.points),new T.LineDashedMaterial({color:TRACER,dashSize:dash,gapSize:dash*.6,transparent:true,opacity:.9,depthTest:false,depthWrite:false}));
       arc.computeLineDistances();arc.renderOrder=4;arc.frustumCulled=false;arc.userData.shotArc=true;this.root.add(arc);
       var start=startDot(path.origin,new T.Color(TRACER),DOT_PX,false);start.userData.shotArc=true;this.root.add(start);
-      this.root.add(arrowHead(pts[0].pos,pts[0].line,TRACER));}
+      this.root.add(arrowHead(pts[a].pos,pts[a].line,TRACER));}
+    // The arrow (or the full tracer) ends on the anchor; the points before it (a wheel at its rest place) keep their
+    // crosses, and the stretch into the anchor is the arrow itself.
     for(var i=0;i<pts.length;i++){var p=pts[i];
-      if(!i){if(!path)this.root.add(this.shotSegment(p.pos.clone().addScaledVector(p.line,-ARROW_LENGTH),p.pos,TRACER,false));}
-      else if(p.stretch)this.root.add(this.shotSegment(p.stretch.from,p.stretch.to,TRACER,p.stretch.dashed));}
+      if(i===a){if(!path)this.root.add(this.shotSegment(p.pos.clone().addScaledVector(p.line,-ARROW_LENGTH),p.pos,TRACER,false));}
+      else if(p.stretch&&i>a)this.root.add(this.shotSegment(p.stretch.from,p.stretch.to,TRACER,p.stretch.dashed));}
   };
   // An arrowhead alone at `tip` along `dir` (the full tracer's end): three's ArrowHelper with its shaft hidden, so the head
   // is the same cone as every other arrow of the scene (its geometry shared, never freed by clear()).

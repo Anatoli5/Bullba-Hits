@@ -166,12 +166,15 @@
     var result={hit:hit,models:{},warnings:(battle.warnings||[]).concat(hit.warnings||[])},parts=(hit.target||{}).parts||[];
     // A vehicle browsed without its model (the page's ttxRecord, 24.09): no geometry by design - its words, no warning.
     if(hit.target&&hit.target.noModel){result.geometryIncomplete=true;result.geometryError=String(hit.target.noModel);return Promise.resolve(result);}
-    // A wheel without its body (a record of another client version: the exporter reads only the running client's XML) is
-    // left out with a word, never withholding the scene: the vehicle is drawn as before the wheels were parts.
+    // A wheel without its body (a record of another client version: the exporter reads only the running client's XML; a
+    // hit published during a battle before its type's XML was read) is left out with a word, never withholding the
+    // scene: the vehicle is drawn as before the wheels were parts. `partial` lists the ids of such parts, so the
+    // Statistics log marks a verdict computed without them (review of 5f2bee5).
+    result.partial=[];
     parts=parts.filter(function(part){
       if(!(part&&part.id<0))return true;
       var body=part.transform?wheelModel(part):null;
-      if(body)result.models[String(part.id)]=body;else result.warnings.push((part.name||'Wheel')+': wheel body not saved');
+      if(body)result.models[String(part.id)]=body;else{result.warnings.push((part.name||'Wheel')+': wheel body not saved');result.partial.push(part.id);}
       return false;
     });
     return Promise.all(parts.map(function(part){

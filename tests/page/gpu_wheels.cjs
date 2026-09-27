@@ -77,7 +77,15 @@ window.__gpuWheels = function (vehicle, view, kind, pen) {
     // Interior pixels only: the same plates one pixel away on every side - never a silhouette or an edge of a face.
     if (sign(ray(px - .5, py + .5)) !== s || sign(ray(px + 1.5, py + .5)) !== s || sign(ray(px + .5, py - .5)) !== s || sign(ray(px + .5, py + 1.5)) !== s) continue;
     const wheels = r.layers.filter(function (l) { return l.part < 0; }), first = r.layers[0];
+    // A quarter view of a real vehicle also sees its gun, whose plates lie a fraction of a millimetre apart - an ordering
+    // matter of the GPU's depth, not of the wheels (wheels-2026-09-26 section 3): those pixels are counted, not compared.
+    if (view.quarter && r.layers.some(function (l) { return l.part === 3; })) { out.gunSkipped = (out.gunSkipped || 0) + 1; continue; }
     if (first.part < 0) out.wheelPixels++; else if (first.main) out.hullPixels++;
+    // Rays through several wheels (a quarter view, a row): each is ONE collide-once layer of the GPU's eight.
+    if (wheels.length >= 2) out.multi2 = (out.multi2 || 0) + 1;
+    out.maxWheels = Math.max(out.maxWheels || 0, wheels.length);
+    if (wheels.length >= 7) out.multi7 = (out.multi7 || 0) + 1;
+    out.maxLayers = Math.max(out.maxLayers || 0, r.layers.length);
     const seen = {};
     wheels.forEach(function (l) { if (seen[l.part]) out.wheelOnce = false; seen[l.part] = true; out.wheels[l.part] = l.nominal;
       if (l.material !== 'wheel' || l.main || Math.abs(l.effective - l.nominal) > 1e-9) out.wheelNominal = false; });
@@ -109,7 +117,12 @@ const PARSE = `(async () => {
   battle.staticTables['cfg:' + '1'.repeat(32)] = statics.concat([wheel(-1, 'WD_L1', -1.9, true), wheel(-2, 'WD_R1', 1.9, true), wheel(-3, 'W_X', -1.9, false)]);
   const b = D.expandBattle(battle), parts = b.hits[0].target.parts;
   const scene = await D.sceneFor({warnings: []}, b.hits[0]);
+  // The shot's anchor (review of 5f2bee5): a line through wheel -1 (at its rest place) into the hull stands on the hull point.
+  const hit = {target: {parts: [{id: 1, transform: I(0, .5, 0)}, {id: -1, transform: I(-1.9, .55, 0), poseFrom: 'rest'}]},
+    points: [{part: -1, status: 'resolved', position: [.1, 0, 0], direction: [1, 0, 0]}, {part: 1, status: 'resolved', position: [-.8, .3, 0], direction: [1, 0, 0]}]};
+  const pts = ArmorViewer.points(hit, null), alone = ArmorViewer.points({target: hit.target, points: [hit.points[0]]}, null);
   return {ids: parts.map(function (p) { return p.id; }), poses: parts.map(function (p) { return p.transform && p.transform.slice(12, 15); }),
+    anchor: [pts.length, pts.anchor, pts[pts.anchor].part, alone.anchor], partial: scene.partial,
     armor: parts[4].armor && parts[4].armor.wheel && parts[4].armor.wheel.armor, models: Object.keys(scene.models).sort(), incomplete: !!scene.geometryIncomplete,
     warnings: scene.warnings, kinds: [scene.models['-1'] && scene.models['-1'].procedural, scene.models['0'] && scene.models['0'].kind]};
 })()`;
@@ -130,6 +143,17 @@ function synthetic() {
   return {parts: parts, models: {1: {kind: 'client-shot-collision', groups: [box([-.9, .3, -2.6], [.9, 1.5, 2.6])]}}};
 }
 
+// Seven 5 mm wheels in a row along z (parts -1..-7) and a 40 mm plate behind them (part 1).
+function row() {
+  const I = function (x, y, z) { return [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, y, z, 1]; };
+  const main = {armor: 40, vehicleDamageFactor: 1, useHitAngle: true, mayRicochet: true, collideOnceOnly: false, checkCaliberForRicochet: true, checkCaliberForHitAngleNorm: true};
+  const wheel = {wheel: {armor: 5, vehicleDamageFactor: 0, useHitAngle: false, mayRicochet: false, collideOnceOnly: true, checkCaliberForRicochet: false, checkCaliberForHitAngleNorm: false}};
+  const parts = [{id: 1, name: 'hull', transform: I(0, 0, 0), armor: {armor_1: main}}];
+  for (let k = 1; k <= 7; k++) parts.push({id: -k, name: 'W' + k, material: 'wheel', wheel: {radius: .59, width: .35, sides: 16}, transform: I(-1, .6, 3.3 - 1.1 * k), armor: wheel});
+  const plate = {material: 'armor_1', vertices: [[-2, 0, -5.5], [0, 0, -5.5], [0, 1.4, -5.5], [-2, 1.4, -5.5]], indices: [0, 1, 2, 0, 2, 3]};
+  return {parts: parts, models: {1: {kind: 'client-shot-collision', groups: [plate]}}};
+}
+
 // A vehicle file of the bench and its models, as the page reads them (ArmorInspectorData.receive([key, value])).
 function bench(id) {
   const read = function (file) { const t = fs.readFileSync(file, 'utf8'); return JSON.parse(t.slice(t.indexOf('['), t.lastIndexOf(']') + 1))[1]; };
@@ -144,7 +168,7 @@ async function main() {
   if (!browser) { console.log('SKIP gpu wheels: no Chrome or Edge installed'); return 77; }
   const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'bullba-wheels-'));
   try {
-    const scripts = ['vendor/three.min.js', 'vendor/three-mesh-bvh.umd.js', 'ballistics.js', 'screen-armor.js', 'local-data.js'].map(function (p) { return url.pathToFileURL(path.join(WEB, p)).href; });
+    const scripts = ['vendor/three.min.js', 'vendor/three-mesh-bvh.umd.js', 'ballistics.js', 'screen-armor.js', 'viewer.js', 'local-data.js'].map(function (p) { return url.pathToFileURL(path.join(WEB, p)).href; });
     const html = '<!doctype html><meta charset="utf-8"><title>gpu wheels</title><body>' + scripts.map(function (s) { return '<script src="' + s + '"></script>'; }).join('') + '<script>' + PAGE + '</script></body>';
     fs.writeFileSync(path.join(folder, 'page.html'), html);
     // One box model file for the four static parts, where the page's reader looks for it (data/models/<sha256>.js).
@@ -161,6 +185,10 @@ async function main() {
     ok('parsing: sceneFor builds the wheel bodies without a model file, leaves a wheel without its body out with a word, and the scene stays whole',
        JSON.stringify(parsed.models) === '["-1","-2","0","1","2","3"]' && !parsed.incomplete && parsed.warnings.length === 1 && parsed.warnings[0] === 'W_X: wheel body not saved'
        && parsed.kinds[0] === 'wheel' && parsed.kinds[1] === 'client-shot-collision', JSON.stringify(parsed));
+    ok('parsing: the wheel left out is named in the partial list of the scene (the Statistics log marks the verdicts cast without it)',
+       JSON.stringify(parsed.partial) === '[-3]', JSON.stringify(parsed.partial));
+    ok('anchor: a line through a wheel at its rest place into the hull stands on the hull point; a wheel point alone is its own anchor',
+       JSON.stringify(parsed.anchor) === '[2,1,1,0]', JSON.stringify(parsed.anchor));
     const run = function (vehicle, view, kind, pen) { return page.evaluate('__gpuWheels(' + JSON.stringify(vehicle) + ',' + JSON.stringify(view) + ',"' + kind + '",' + pen + ')'); };
     const body = await page.evaluate(`(() => { const m = ArmorInspectorData.wheelModel({material: 'wheel', wheel: {radius: .59, width: .35, sides: 16}}), g = m.groups[0];
       let vol = 0; for (let i = 0; i < g.indices.length; i += 3) { const a = g.vertices[g.indices[i]], b = g.vertices[g.indices[i + 1]], c = g.vertices[g.indices[i + 2]];
@@ -178,6 +206,9 @@ async function main() {
        && Math.abs(body.face14[1] + .55557) < 1e-4 && Math.abs(body.face7[2] - .57866) < 1e-4, JSON.stringify(body));
     const cases = [];
     const syn = synthetic();
+    // Review of 5f2bee5: seven wheels in a row before a 40 mm plate, seen along the row - with a wheel at one layer the
+    // plate is the eighth and last layer of the peel; at two a wheel it would fall past the eighth (-1, unknown).
+    cases.push(['synthetic, a row of seven wheels before a plate', row(), {eye: [-1, .62, 14], at: [-1, .6, -5], fov: 5, row: true}, 'ARMOR_PIERCING', 200, {5: true}]);
     for (const kind of ['ARMOR_PIERCING', 'HOLLOW_CHARGE']) {
       cases.push(['synthetic, side, ' + kind, syn, {eye: [-9, 1.0, -1.4], at: [-1, .7, -1.4]}, kind, 120, {5: true, 10: true}]);
       cases.push(['synthetic, quarter, ' + kind, syn, {eye: [-7, 1.2, -6], at: [-1, .6, -1.2]}, kind, 120, {5: true, 10: true}]);
@@ -191,6 +222,13 @@ async function main() {
            JSON.stringify(wheels.map(function (p) { return [p.id, p.name, p.wheel, p.armor && p.armor.wheel && p.armor.wheel.armor]; })));
         const w3 = wheels[2], c = w3.transform.slice(12, 15);
         cases.push([id + ' (bench), side at ' + w3.name, b.vehicle, {eye: [c[0] - 8, c[1] + .9, c[2]], at: [c[0], c[1] + .25, c[2]], fov: 25, far: true}, 'ARMOR_PIERCING', 250, null]);
+        // Review of 5f2bee5: quarter views along the wheel row, front and rear - rays through two and three wheels and the
+        // chassis plates before the hull. A wheel is one collide-once layer (the peel keeps its first face only), so the
+        // eight layers still reach the hull there.
+        for (const q of [1, -1]) {
+          cases.push([id + ' (bench), quarter ' + (q > 0 ? 'front' : 'rear') + ' along the left wheels', b.vehicle,
+            {eye: [c[0] - 2.4, c[1] + .35, c[2] + 9 * q], at: [c[0] + .25, c[1] + .1, c[2] - 1.2 * q], fov: 24, far: true, quarter: true}, 'ARMOR_PIERCING', 250, null]);
+        }
         real++;
       }
     }
@@ -198,11 +236,16 @@ async function main() {
       const r = await run(vehicle, view, kind, pen);
       ok(name + ': the wheels are in the engine (' + r.wheelTriangles + ' of ' + r.triangles + ' triangles) and in front of the hull on many pixels',
          r.wheelTriangles >= 60 * 4 && r.wheelPixels > 150 && r.hullPixels > 50, '(wheel pixels ' + r.wheelPixels + ', hull pixels ' + r.hullPixels + ')');
+      if (view.quarter) ok(name + ': rays pass two wheels and the chassis plates before the hull', (r.multi2 || 0) > 10,
+         '(two wheels on ' + (r.multi2 || 0) + ' pixels, most wheels on a ray ' + r.maxWheels + ', most CPU layers ' + r.maxLayers + ', gun pixels left out ' + (r.gunSkipped || 0) + ')');
+      if (view.row) ok(name + ': seven wheels and the plate make eight layers on many rays - a wheel costs one', (r.multi7 || 0) > 50 && r.maxLayers === 8,
+         '(seven wheels on ' + (r.multi7 || 0) + ' pixels, most CPU layers ' + r.maxLayers + ')');
       ok(name + ': CPU - each wheel once (collide once), at its nominal thickness, a screen; the hull gets what the screens left',
          r.wheelOnce && r.wheelNominal && r.remainingOk && (!want || Object.keys(r.wheels).every(function (k) { return want[r.wheels[k]]; })), JSON.stringify(r.wheels));
       ok(name + ': the GPU map paints every interior pixel as the CPU walk', !r.bad, '(' + r.bad + ' differ, e.g. ' + JSON.stringify(r.mismatches) + ')');
     }
-    if (!real) console.log('note: tests/fixtures-local/wheels-2026-09-26 not here - the real exports are not compared');
+    // Without the bench the real vehicles are not compared: a SKIP line (AGENTS.md), never a silent pass.
+    if (!real) console.log('SKIP gpu wheels, real vehicles: tests/fixtures-local/wheels-2026-09-26 is not on this machine (EBR 105, EBR 90, Lynx 6x6 not compared)');
     ok('no uncaught exception in the page', page.errors.length === 0, page.errors.slice(0, 3).join(' | '));
   } catch (e) {
     ok('the run completes', false, String(e && e.stack || e).split('\n').slice(0, 4).join(' | '));

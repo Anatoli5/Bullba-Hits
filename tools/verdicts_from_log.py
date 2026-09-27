@@ -82,6 +82,10 @@ def classify(row):
     # says of the wheel (a crit, mostly), the verdict on the main armour belongs to the point after it.
     if re.match(r'wheel\d+\Z', row.get('part') or ''):
         return 'pass-through'
+    # A verdict cast in a scene that had to leave a part out (partial=: a wheel without its body, 27.09) is no verdict on
+    # the whole vehicle: it is counted apart, never as an agreement or a disagreement.
+    if row.get('partial'):
+        return 'partial-scene'
     # A module crit without HP damage (crit code 5/6 and 0 HP) against our "no penetration" is not a verdict on the
     # main armour either. Lines without hp= (pages before 22.09) keep their old class.
     if row.get('critCode') in ('5', '6') and row.get('hp') == '0' and server in CRIT_SERVER and ours.startswith('no-pen_'):
@@ -135,7 +139,8 @@ def main(argv):
     # server's fact never changes, our estimate does with every release, so old lines are compared per version.
     print('Page versions: %s; records versions: %s' % (dict(Counter(r.get('v', '?') for r in rows)), dict(Counter(r.get('rec', '?') for r in rows))))
     print('Shells: %s' % dict(Counter(r.get('shell', '?') for r in rows)))
-    for key in ('agree', 'coin-flip', 'DISAGREE', 'pass-through', 'module-crit', 'no-main-armour', 'no-estimate', 'unknown-server-effect'):
+    for key in ('agree', 'coin-flip', 'DISAGREE', 'pass-through', 'partial-scene', 'module-crit', 'no-main-armour', 'no-estimate',
+                'unknown-server-effect'):
         if counts.get(key):
             print('  %-22s %d' % (key, counts[key]))
     bad = [r for r in rows if classify(r) == 'DISAGREE']

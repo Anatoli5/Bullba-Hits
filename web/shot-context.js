@@ -453,11 +453,14 @@
     var out={position:[lin('x'),lin('y'),lin('z')],hullYaw:ang('hullYaw'),turretYaw:ang('turretYaw'),gunPitch:lin('gunPitch')};
     return [out.position[0],out.position[1],out.position[2],out.hullYaw,out.turretYaw,out.gunPitch].every(Number.isFinite)?out:null;
   }
+  // The first resolved point on a part posed AT THE HIT (review of 5f2bee5): a wheel's transform is its place at rest
+  // (poseFrom 'rest', exporter.fill_wheels), an armoured prefab's may be its default one (poseFrom 'default') - neither
+  // is where the part was, so the eye is anchored on the hull or turret point after it.
   function swapStart(hit,ctx){
-    var target=(hit&&hit.target)||{},W=target.worldTransform,parts=target.parts||[];
-    var p=((hit&&hit.points)||[]).find(function(q){return q.status==='resolved'&&Array.isArray(q.position);});
-    var part=p&&parts.find(function(v){return v.id===p.part;});
-    if(!Array.isArray(W)||!part||!Array.isArray(part.transform))return null;
+    var target=(hit&&hit.target)||{},W=target.worldTransform,parts=target.parts||[],part=null;
+    var p=((hit&&hit.points)||[]).find(function(q){if(q.status!=='resolved'||!Array.isArray(q.position))return false;
+      part=parts.find(function(v){return v.id===q.part;});return !!part&&Array.isArray(part.transform)&&!part.poseFrom;});
+    if(!Array.isArray(W)||!p)return null;
     var own=hit.direction==='outgoing',tracer=ctx&&ctx.tracer,at=null,from='';
     if(own&&tracer&&tracer.motion){at=motionAt(tracer.motion,Number(tracer.gameTime));from='own tracer';}
     else if(hit.attacker&&hit.attacker.motion){var fly=Number(hit.rangeAtImpact)>0&&Number(hit.shellVelocity)>0?hit.rangeAtImpact/hit.shellVelocity:0;

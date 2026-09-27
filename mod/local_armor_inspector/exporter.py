@@ -134,6 +134,9 @@ JOB_PAGE, JOB_PLAYER, JOB_OTHER, JOB_BULK = 0, 1, 2, 3
 # one it asked for, the hangar vehicle is the player's own, a roster or the
 # optional catalogue export is background work.
 VEHICLE_PRIORITY = {'picker':JOB_PAGE, 'hangar':JOB_PLAYER, 'battle':JOB_BULK, 'catalogue':JOB_BULK}
+# What a hit waits for when the vehicle XML of its type is not read yet and a battle is on (Exporter.type_extras): the
+# key under which the prepared hits and the battles wait, like a model's key (invalidate_model, waiting).
+EXTRAS_KEY = 'extras:'
 
 
 
@@ -150,7 +153,7 @@ def job_key(kind, payload):
     """
     if kind == 'model':
         return ('model', payload[0])
-    # 'vehicle' and 'ttx' (the characteristics file of a type) are one job per type each.
+    # 'vehicle', 'ttx' (the characteristics file of a type) and 'extras' (Exporter.type_extras) are one job per type each.
     return (kind, str((payload or {}).get('vehicleType') or ''))
 
 
@@ -1608,6 +1611,12 @@ def static_parts(descr):
 # wheelPos, the EBR 105's middle four 0.1 m further out (docs/KNOWLEDGE.md 9).
 WHEEL_EXTRA = re.compile(r'^wheel(\d+)Health\Z')
 WHEEL_SIDES = 16
+
+
+class ExtrasUnavailable(ValueError):
+    """The vehicle XML of a type did not read this session (Exporter.type_extras); the reason is its message."""
+
+
 _wheel_components = {}
 _wheel_rows = {}
 
@@ -1679,6 +1688,22 @@ def wheel_parts(descr, armor_source='live vehicle descriptor'):
     return parts
 
 
+def wheeled_types():
+    """The client's wheeled vehicle types (their 'wheeledVehicle' tag in items.vehicles.g_list, what VehicleType reads
+    isWheeledVehicle from), None outside the game. One pass over the list, no descriptor built."""
+    try:
+        import nations
+        from items import vehicles as client_vehicles
+        found = set()
+        for nation_id in range(len(nations.NAMES)):
+            listing = client_vehicles.g_list.getList(nation_id) or {}
+            for item in listing.values():
+                if 'wheeledVehicle' in tuple(getattr(item, 'tags', ()) or ()): found.add(str(item.name))
+        return found
+    except Exception:
+        return None
+
+
 def wheel_shapes(tree, chassis_name):
     """{name: {'index', 'wheel': {radius, width, sides}, 'transform'}} of the collision wheels of one chassis of a vehicle
     XML (the client's own file, ArmorCatalog.xml): nonTrack wheels with a procedural body, as chassis_readers reads them -
@@ -1718,6 +1743,8 @@ def fill_wheels(vehicle, shapes):
             continue
         part['wheel'] = dict(shape['wheel'])
         part['transform'] = list(shape['transform'])
+        # Its place at rest, not a pose of the hit: the page anchors the shot's line on a part posed at impact.
+        part['poseFrom'] = 'rest'
         filled += 1
     return filled
 
@@ -2780,6 +2807,13 @@ class Exporter(object):
         self.sweep_states = dict((kind, None) for kind in SWEEP_ORDER)
         # The CRCs of the characteristics' sources, read once a session for both sweeps (source_crcs).
         self.crcs = None
+        # The vehicle XML's extras per type (type_extras), a failure's reason included; the types whose descriptor failed
+        # in fix_wheels (logged once). Export thread only.
+        self.extras_cache = {}
+        self.extras_logged = set()
+        # Wheeled vehicles' files from before the wheels that load_vehicles found: exported again in the background, and
+        # the catalogue written once after the last of them (replay_vehicle_requests, run_vehicle_job).
+        self.migrating = set()
 
     def setup(self):
         archive = self.archive
@@ -3067,30 +3101,79 @@ class Exporter(object):
                     # armour for an old battle (comparisonArmor) had no reader left, and building it
                     # meant a synchronous model extraction inside publishing. It is gone.
 
-    def wheel_shapes(self, type_name, chassis_name):
-        """wheel_shapes of one chassis of the running client, read once a session per type and chassis (export thread)."""
-        cache = getattr(self, 'wheel_cache', None)
-        if cache is None: cache = self.wheel_cache = {}
-        key = (str(type_name), str(chassis_name))
-        if key not in cache:
-            if not re.match(r'^[a-z]+:[A-Za-z0-9_-]+\Z', key[0]): raise ValueError('Invalid vehicle type')
-            nation, name = key[0].split(':')
-            if len(cache) >= 256: cache.clear()
-            cache[key] = wheel_shapes(self.armor.xml('scripts/item_defs/vehicles/'+nation+'/'+name+'.xml'), key[1])
-        return cache[key]
+    # WHAT THE VEHICLE XML ADDS TO THE DESCRIPTOR (review of 5f2bee5, 27.09). The collision wheels' bodies and places
+    # (wheel_shapes) are in no descriptor, only in the vehicle's XML, and reading it is 74-91 ms of Python under the GIL
+    # (a look through every installed wotmod, a decode out of scripts.pkg): never during a battle. Read once a session per
+    # type - on the thread that exports vehicles anyway, in the hangar - and a failure is kept as well, with its reason, so
+    # it is neither read again nor logged again. A hit published during a battle before its type was read waits for it
+    # like a hit waits for its model: the extras job reads it after the battle and the battles that waited are published
+    # again (invalidate_model, waiting).
+    def xml_allowed(self):
+        """False during a battle (the Recorder's flag); outside the game (no recorder) always True."""
+        recorder = self.recorder
+        try:
+            return recorder is None or not getattr(recorder, 'in_battle', False)
+        except Exception:
+            return True
 
-    def fix_wheels(self, vehicle):
+    def type_extras(self, type_name, defer=None):
+        """{'wheels': {chassis name: wheel_shapes}} of one type of the running client, None while it may not be read (a
+        battle: `defer`, a set, gets the key the hit waits under and the extras job is queued). Raises ExtrasUnavailable
+        when the XML did not read (the reason is kept for the session)."""
+        cache = self.extras_cache
+        key = str(type_name)
+        entry = cache.get(key)
+        if entry is None:
+            if not self.xml_allowed():
+                if defer is not None: defer.add(EXTRAS_KEY + key)
+                self.queue_job(JOB_OTHER, 'extras', {'vehicleType':key})
+                return None
+            entry = self.read_type_extras(key)
+        if 'error' in entry: raise ExtrasUnavailable(entry['error'])
+        return entry
+
+    def read_type_extras(self, key):
+        """Read and keep one type's extras (type_extras); a failure is kept with its reason and logged once."""
+        try:
+            if not re.match(r'^[a-z]+:[A-Za-z0-9_-]+\Z', key): raise ValueError('Invalid vehicle type')
+            nation, name = key.split(':')
+            tree = self.armor.xml('scripts/item_defs/vehicles/'+nation+'/'+name+'.xml')
+            chassis = tree.find('chassis')
+            entry = {'wheels':dict((node.tag, wheel_shapes(tree, node.tag)) for node in (chassis if chassis is not None else ()))}
+        except Exception as exc:
+            LOG.warning('Vehicle XML unavailable for %s (its wheels are published without bodies): %s', key, exc)
+            entry = {'error':str(exc) or type(exc).__name__}
+        if len(self.extras_cache) >= 256: self.extras_cache.clear()
+        self.extras_cache[key] = entry
+        return entry
+
+    def run_extras_job(self, payload):
+        """After a battle: read the type's XML (unless the vehicle export already did) and publish again what waited for it."""
+        key = str((payload or {}).get('vehicleType') or '')
+        if key not in self.extras_cache: self.read_type_extras(key)
+        self.invalidate_model(EXTRAS_KEY + key)
+        self.republish.update(self.waiting.pop(EXTRAS_KEY + key, ()))
+
+    def fix_wheels(self, vehicle, defer=None):
         """Body and rest place for the wheel parts of one vehicle block that has any without them (the recorder's). Its own
-        descriptor names the type and chassis; a failure leaves the parts as recorded - the page then shows no wheel."""
+        descriptor names the type and chassis; a failure leaves the parts as recorded - the page then shows no wheel
+        (and says so on the Statistics log line). During a battle before the type is read: 0, and `defer` names the wait."""
         parts = (vehicle or {}).get('parts') if isinstance(vehicle, dict) else None
         if not parts or not any(isinstance(p, dict) and isinstance(p.get('id'), int) and p['id'] < 0 and 'wheel' not in p
                                 for p in parts):
             return 0
         try:
             descr = vehicle_descr(vehicle['compactDescriptor'])
-            return fill_wheels(vehicle, self.wheel_shapes(descr.type.name, descr.chassis.name))
+            extras = self.type_extras(descr.type.name, defer)
+            return fill_wheels(vehicle, extras['wheels'].get(descr.chassis.name) or {}) if extras is not None else 0
+        except ExtrasUnavailable:
+            return 0
         except Exception:
-            LOG.exception('Wheel bodies unavailable; the wheels are published without them')
+            # Not the XML (its failure is kept and logged once): the descriptor. Once a session per type, not per hit.
+            name = str((vehicle or {}).get('type') or '')
+            if name not in self.extras_logged:
+                self.extras_logged.add(name)
+                LOG.exception('Wheel bodies unavailable for %s; the wheels are published without them', name)
             return 0
 
     def reset_prepared(self):
@@ -3117,12 +3200,14 @@ class Exporter(object):
                 LOG.exception('Vehicle identity unavailable; the hit is published as recorded')
         synthesize_parts(hit.get('attacker'))
         # Only a battle of the running client: its rebuilt descriptor and extracted model are the recorded ones.
+        deferred = set()
         if canonical(battle.get('clientVersion') or '') == self.version:
             fix_extra_parts(hit)
             # The wheels the recorder wrote (a record before them has none: old data stays as it is) get their body and
-            # rest place from this client's XML - the same version's, as for the models.
+            # rest place from this client's XML - the same version's, as for the models. During a battle before the type
+            # is read the hit goes out without them and waits (`deferred`) like one waiting for a model.
             for side in ('target', 'attacker'):
-                self.fix_wheels(hit.get(side))
+                self.fix_wheels(hit.get(side), deferred)
         fix_shells(hit)
         try:
             stamp_aim_origin(hit, raw, battle)
@@ -3136,7 +3221,11 @@ class Exporter(object):
         pending = set()
         for side in ('target', 'attacker'):
             self.publish_parts(battle, hit, side, battle['id'], priority, pending)
+        for key in deferred:
+            self.waiting.setdefault(key, set()).add(battle['id'])
         if track:
+            for key in deferred:
+                self.prepared_models.setdefault(key, set()).add(index)
             for side in ('target', 'attacker'):
                 for part in (hit.get(side) or {}).get('parts', []):
                     try:
@@ -3524,6 +3613,7 @@ class Exporter(object):
         try:
             if job[2] == 'model': self.run_model_job(job[3])
             elif job[2] == 'ttx': self.run_ttx_job(job[3])
+            elif job[2] == 'extras': self.run_extras_job(job[3])
             else: self.run_vehicle_job(job[3], page)
         except Exception:
             LOG.exception('Deferred %s job failed; the rest of the queue continues', job[2])
@@ -3552,10 +3642,17 @@ class Exporter(object):
         log how long it took and how long after the click (the request's time) it was done - the in-game measure of it."""
         started = TTX_TIMER()
         try:
-            written = self.export_vehicle(request)
+            # A migration's replay (replay_vehicle_requests) is exported as one; every other request as it always was.
+            written = self.export_vehicle(request, replay=True) if request.get('replay') is True else self.export_vehicle(request)
         except Exception:
             if page: LOG.warning('Vehicle %s for the page failed; the page says so after its wait', request.get('vehicleType'))
             raise
+        finally:
+            # The wheeled files of an older build, exported again one by one: the catalogue once, after the last.
+            name = str(request.get('vehicleType') or '')
+            if name in self.migrating:
+                self.migrating.discard(name)
+                if not self.migrating: self.catalogue_dirty = True
         if page:
             try: after = time.time() - float(request.get('requestedAt') or 0)
             except Exception: after = -1.0
@@ -3590,7 +3687,7 @@ class Exporter(object):
         moved = 0
         for job in self.jobs:
             if job[0] == JOB_PAGE: continue
-            if job[2] in ('vehicle', 'ttx'):
+            if job[2] in ('vehicle', 'ttx', 'extras'):
                 match = str((job[3] or {}).get('vehicleType') or '') in wanted
             else:
                 match = bool(self.job_types.get(job[3][0], ()) and self.job_types[job[3][0]] & wanted)
@@ -3687,6 +3784,8 @@ class Exporter(object):
         complete = True
         # Files of wheeled vehicles written before the wheels, by type: replay_vehicle_requests exports them again.
         self.stale_vehicles = {}
+        # Which types are wheeled: the client's own list (its tags), read once here - no descriptor per file.
+        wheeled = wheeled_types()
         for path in sorted(glob.glob(os.path.join(self.folder, 'data', 'vehicles', '*.js'))):
             try:
                 record = read_data_file(path)
@@ -3717,17 +3816,18 @@ class Exporter(object):
                             filled = True
                     except Exception:
                         pass
-                # Exported before the wheels were parts (docs/BACKLOG.md 39): the same once-only check. A wheeled
-                # vehicle is exported again right after this - by the replay of its request, or of this file itself
-                # when no request names it (a sweep's, a hangar's) - every other file is marked and written back.
+                # Exported before the wheels were parts (docs/BACKLOG.md 39). A wheeled vehicle - by the client's list,
+                # no descriptor built - is exported again in the background after setup (replay_vehicle_requests), from
+                # its request or from this file itself when no request names it (a sweep's, a hangar's). Any other file
+                # has nothing to add and is left as it is: no rewrite (review of 5f2bee5: the first start rewrote every
+                # exported file for a 0). Without the client's list (outside the game) the descriptor decides.
                 if record.get('parts') and 'wheelParts' not in record and not stale:
+                    type_name = str(record.get('type') or '')
                     try:
-                        if wheel_parts(vehicle_descr(record['compactDescriptor'])):
+                        if (type_name in wheeled if wheeled is not None
+                                else bool(wheel_parts(vehicle_descr(record['compactDescriptor'])))):
                             stale = True
-                            self.stale_vehicles[str(record.get('type') or '')] = record
-                        else:
-                            record['wheelParts'] = 0
-                            filled = True
+                            self.stale_vehicles[type_name] = record
                     except Exception:
                         pass
                 if filled and identifier and IDENTIFIER.match(identifier):
@@ -3796,14 +3896,19 @@ class Exporter(object):
         except Exception:
             LOG.exception('Vehicle request log unreadable; exported vehicles are kept as they are')
             return
-        # A wheeled vehicle's file from before the wheels (load_vehicles) that no request names - the model sweep's, or one
-        # whose request line is gone - is exported again from the file itself, with its own source: once, as the next start
-        # finds it with its wheels.
+        # A wheeled vehicle's file from before the wheels (load_vehicles) is exported again as background work, not here:
+        # one vehicle job each at the bulk pace (its models are on disk already; the XML read is the cost), from its
+        # request or - when no request names it (the model sweep's, or one whose request line is gone) - from the file
+        # itself, with its own source. The catalogue is written once, after the last of them (run_vehicle_job).
         for type_name, record in sorted((getattr(self, 'stale_vehicles', None) or {}).items()):
-            if type_name and type_name not in requests and record.get('compactDescriptor'):
-                requests[type_name] = {'vehicleType':type_name, 'compactDescriptor':record['compactDescriptor'],
-                                       'source':record.get('source'), 'identity':dict((key, record.get(key)) for key in
-                                       ('name', 'level', 'class', 'role', 'nation'))}
+            request = requests.pop(type_name, None)
+            if request is None and type_name and record.get('compactDescriptor'):
+                request = {'vehicleType':type_name, 'compactDescriptor':record['compactDescriptor'],
+                           'source':record.get('source'), 'identity':dict((key, record.get(key)) for key in
+                           ('name', 'level', 'class', 'role', 'nation'))}
+            if request is None: continue
+            self.migrating.add(type_name)
+            self.queue_job(JOB_BULK, 'vehicle', dict(request, replay=True))
         for type_name in sorted(requests):
             try:
                 self.export_vehicle(requests[type_name], replay=True)
@@ -3915,17 +4020,22 @@ class Exporter(object):
             # Every static collision part is listed (static_parts); the count also tells load_vehicles
             # that this file needs no check for a missing extra track pair.
             record['staticParts'] = len(record['parts'])
-            # Then the wheels (BACKLOG 39): only those that got their body; the count tells load_vehicles this file has
-            # been written knowing them.
+            # Then the wheels (BACKLOG 39): only those that got their body. The count tells load_vehicles this file has
+            # been written knowing them - so it is left out when the XML did not read (type_extras): a failure of this
+            # session must not mark the file for good (review of 5f2bee5); the next start looks at it again.
             wheels = {'parts':wheel_parts(descr, 'client vehicle descriptor')}
-            if wheels['parts']:
+            listed = len(wheels['parts'])
+            if listed:
                 try:
-                    fill_wheels(wheels, self.wheel_shapes(descr.type.name, descr.chassis.name))
+                    extras = self.type_extras(descr.type.name)
+                    if extras is None: raise ExtrasUnavailable('not read during a battle')
+                    fill_wheels(wheels, extras['wheels'].get(descr.chassis.name) or {})
                 except Exception:
-                    LOG.exception('Wheel bodies unavailable for %s', type_name)
+                    pass
             wheels = [part for part in wheels['parts'] if 'wheel' in part]
             record['parts'].extend(wheels)
-            record['wheelParts'] = len(wheels)
+            if wheels or not listed: record['wheelParts'] = len(wheels)
+            else: record['warnings'].append('Wheel bodies unavailable')
             self.publish_vehicle_parts(record['parts'], record, self.version, extract=True)
         except Exception:
             record['parts'] = []
@@ -3933,8 +4043,9 @@ class Exporter(object):
             LOG.exception('Collision parts unavailable for %s', type_name)
         write_data(path, 'vehicle:'+identifier, record)
         self.remember_vehicle(record)
+        # A replay writes no catalogue of its own: setup writes it after all of them, the background ones once at the end.
         if sweep: self.catalogue_dirty = True
-        else: self.write_catalogue()
+        elif not replay: self.write_catalogue()
         return True
 
     # ------------------------------------------------------- characteristics (TTX)

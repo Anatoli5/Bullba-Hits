@@ -185,11 +185,56 @@ def exporter_checks(ex, records, temp):
               [p['id'] for p in old['target']['parts']] == [0, 1, 2, 3])
         calls = []
         e.armor.xml = lambda name: calls.append(name) or ET.fromstring(XML)
-        e.wheel_cache = {}
+        e.extras_cache = {}
         e.prepare_hit(raw(True), 0, battle)
         e.prepare_hit(raw(True), 1, battle)
-        check(group, 'the vehicle XML is read once a session per type and chassis', calls ==
+        check(group, 'the vehicle XML is read once a session per type', calls ==
               ['scripts/item_defs/vehicles/france/W_Test.xml'], calls)
+
+        # Review of 5f2bee5: no XML during a battle - the hit goes out without the wheels' bodies, waits under the type's
+        # key, the extras job reads the XML after the battle and the battle is published again with them.
+        group = 'battle'
+        calls[:] = []
+        e.extras_cache = {}
+        e.recorder = NS(in_battle=True, busy_until=0)
+        e.jobs, e.job_index, e.waiting, e.republish = [], {}, {}, set()
+        e.current = battle
+        e.reset_prepared()
+        hit = e.prepare_hit(raw(True), 0, battle, track=True)
+        check(group, 'in a battle: the XML is not read, the wheels go out without body, the hit is published',
+              calls == [] and not any('wheel' in p for p in hit['target']['parts'] if p['id'] < 0)
+              and hit['points'][0]['status'] == 'resolved', calls)
+        key = ex.EXTRAS_KEY + 'france:W_Test'
+        check(group, "the extras job is queued once, the battle and the hit wait under the type's key",
+              [j[2] for j in e.jobs] == ['extras'] and e.waiting.get(key) == set(['b1']) and 0 in e.prepared_models.get(key, ()),
+              ([j[2] for j in e.jobs], e.waiting, e.prepared_models.get(key)))
+        e.prepare_hit(raw(True), 1, battle, track=True)
+        check(group, 'a second hit of the type queues no second job', len(e.jobs) == 1, len(e.jobs))
+        check(group, 'no job runs during the battle', e.run_job() is False and len(e.jobs) == 1)
+        e.recorder.in_battle = False
+        e.prepared_hits = [dict(hit), dict(hit)]
+        e.last_job = 0
+        e.run_job()
+        check(group, 'after the battle: the job reads the XML once, drops the waiting hits and asks for the battle again',
+              calls == ['scripts/item_defs/vehicles/france/W_Test.xml'] and e.prepared_hits == [None, None]
+              and 'b1' in e.republish and key not in e.waiting, (calls, e.prepared_hits, e.republish))
+        again = e.prepare_hit(raw(True), 0, battle)
+        check(group, 'published again: the wheels have their body', all('wheel' in p for p in again['target']['parts'] if p['id'] < 0))
+        e.recorder, e.current = None, None
+
+        # A failed XML read is kept (with its reason) and never repeated: no XML scan per hit, one warning a session.
+        group = 'failure'
+        tries = []
+        def broken(name):
+            tries.append(name)
+            raise ValueError('Armor definitions overridden by a mod')
+        e.armor.xml = broken
+        e.extras_cache = {}
+        for n in range(3):
+            failed = e.prepare_hit(raw(True), n, battle)
+        check(group, 'an XML that does not read is tried once a session, not per hit', len(tries) == 1, tries)
+        check(group, 'the wheels then go out without body, the contact stays resolved',
+              not any('wheel' in p for p in failed['target']['parts'] if p['id'] < 0) and failed['points'][0]['status'] == 'resolved')
 
         group = 'vehicles'
         vehicles = os.path.join(folder, 'data', 'vehicles')
@@ -200,18 +245,71 @@ def exporter_checks(ex, records, temp):
                            'clientVersion': e.version, 'name': ident, 'level': 8, 'staticParts': 4,
                            'parts': [dict((k, v) for k, v in p.items() if k != 'armor') for p in statics]})
         tracked = rtb.descriptor('usa:T_Tracked')
-        ex.vehicle_descr = lambda compact: descr if compact == 'france:W_Test' else tracked
-        e.load_vehicles()
-        read = ex.read_data_file(os.path.join(vehicles, 'usa-T_Tracked.js'))
-        check(group, 'a tracked vehicle\'s old file: marked (wheelParts 0) and written back', read.get('wheelParts') == 0, read.get('wheelParts'))
-        check(group, 'a wheeled vehicle\'s old file: no hash, so it is exported again',
+        built = []
+        def descr_of(compact):
+            built.append(compact)
+            return descr if compact == 'france:W_Test' else tracked
+        ex.vehicle_descr = descr_of
+        tracked_path = os.path.join(vehicles, 'usa-T_Tracked.js')
+        stamp = os.path.getmtime(tracked_path)
+        os.utime(tracked_path, (stamp - 100, stamp - 100))
+        # The client's list says which types are wheeled (its tags): no descriptor per file.
+        # (fix_aim and fix_fitment, which fill these stub files' missing blocks from a descriptor, are left out here: the
+        # check is the wheels' alone.)
+        saved = ex.wheeled_types, ex.fix_aim, ex.fix_fitment
+        ex.wheeled_types, ex.fix_aim, ex.fix_fitment = lambda: set(['france:W_Test']), lambda r: False, lambda r: False
+        try:
+            e.load_vehicles()
+        finally:
+            ex.wheeled_types, ex.fix_aim, ex.fix_fitment = saved
+        read = ex.read_data_file(tracked_path)
+        check(group, "a tracked vehicle's old file: left as it is - no wheelParts, not written back (review of 5f2bee5)",
+              'wheelParts' not in read and abs(os.path.getmtime(tracked_path) - (stamp - 100)) < 1,
+              (read.get('wheelParts'), os.path.getmtime(tracked_path) - stamp))
+        check(group, "wheeled or not from the client's list: no descriptor built for the check", built == [], list(built))
+        check(group, "a wheeled vehicle's old file: no hash, so it is exported again",
               e.vehicles['france-W_Test']['descriptorHash'] is None and e.vehicles['usa-T_Tracked']['descriptorHash'] is not None)
         exported = []
         e.export_vehicle = lambda request, replay=False: exported.append((request, replay))
+        e.jobs, e.job_index = [], {}
+        e.catalogue_dirty = False
         e.replay_vehicle_requests()
-        check(group, 'replay without a request line: the wheeled file is exported again from itself, its source kept',
+        check(group, 'setup exports nothing inline: the wheeled file is a background job at the bulk pace',
+              exported == [] and [(j[0], j[2], j[3].get('vehicleType'), j[3].get('replay')) for j in e.jobs] ==
+              [(ex.JOB_BULK, 'vehicle', 'france:W_Test', True)], [(j[0], j[2], j[3]) for j in e.jobs])
+        e.last_job = 0
+        e.run_job()
+        check(group, 'the job: exported again from the file itself as a replay, its source kept; the catalogue once, after it',
               len(exported) == 1 and exported[0][0]['vehicleType'] == 'france:W_Test' and exported[0][0]['source'] == 'catalogue'
-              and exported[0][0]['compactDescriptor'] == 'france:W_Test' and exported[0][1] is True, exported)
+              and exported[0][0]['compactDescriptor'] == 'france:W_Test' and exported[0][1] is True and e.catalogue_dirty is True
+              and not e.migrating, (exported, e.catalogue_dirty, e.migrating))
+        del e.export_vehicle
+
+        # export_vehicle: the XML failed - no wheelParts (the next start looks again); read - the count of wheels with body.
+        group = 'export'
+        e.armor.xml = broken
+        e.extras_cache = {}
+        e.ensure_ttx = lambda *a, **k: None
+        e.publish_vehicle_parts = lambda *a, **k: None
+        e.vehicles = {}
+        parts_saved = ex.parts_from_descr
+        ex.parts_from_descr = lambda d, source='x': [dict(p) for p in statics]
+        try:
+            e.export_vehicle({'vehicleType': 'france:W_Test', 'compactDescriptor': 'france:W_Test', 'source': 'hangar'}, replay=True)
+            rec = ex.read_data_file(os.path.join(vehicles, 'france-W_Test.js'))
+            check(group, 'the XML did not read: the file has no wheelParts and says so', 'wheelParts' not in rec
+                  and 'Wheel bodies unavailable' in rec.get('warnings', []) and [p['id'] for p in rec['parts']] == [0, 1, 2, 3],
+                  (rec.get('wheelParts'), rec.get('warnings')))
+            e.armor.xml = lambda name: ET.fromstring(XML)
+            e.extras_cache = {}
+            e.vehicles = {}
+            e.export_vehicle({'vehicleType': 'france:W_Test', 'compactDescriptor': 'france:W_Test', 'source': 'hangar'}, replay=True)
+            rec = ex.read_data_file(os.path.join(vehicles, 'france-W_Test.js'))
+            check(group, 'the XML read: wheelParts 4, the wheels with body and their rest place marked as such',
+                  rec.get('wheelParts') == 4 and all(p.get('wheel') and p.get('poseFrom') == 'rest' for p in rec['parts'][4:]),
+                  (rec.get('wheelParts'), [sorted(p) for p in rec['parts'][4:5]]))
+        finally:
+            ex.parts_from_descr = parts_saved
     finally:
         ex.vehicle_descr = saved
 
@@ -241,6 +339,9 @@ def recorder_checks(temp):
     b.entities[b.enemy] = rtb.make_vehicle(b.enemy, enemy)
     names = dict((index, name) for name, index, _ in WHEELS)
     collisions = b.entities[b.enemy].appearance.collisions
+    # THE HYPOTHESIS, not a finding of this test: the stub names part -k after the wheel of XML index k-1, the mapping
+    # measured on two named contacts of the records (docs/KNOWLEDGE.md 9). The checks below show the recorder follows
+    # the collision's own names; that the client really numbers its wheels so is only what those contacts say.
     collisions.getPartName = lambda idx: names.get(-idx - 1, '') if idx < 0 else ''
     collisions.getBoundingBox = lambda idx: (V3(-0.175, -0.59, -0.59), V3(0.175, 0.59, 0.59))
     b.entities[b.enemy].appearance.compoundModel = NS(node=lambda name: rtb.Matrix())
@@ -255,17 +356,41 @@ def recorder_checks(temp):
         b.entities[b.enemy].appearance.collisions = NS(getPartTransform=collisions.getPartTransform, maxStaticPartIndex=3,
                                                        getPartName=lambda idx: 'X%d' % -idx, getBoundingBox=collisions.getBoundingBox)
         b.hit(b.enemy, b.me)
+        # Review of 5f2bee5: a collision whose wheels are not attached yet at the first hit (no names) is asked again later
+        # - not on the very next hit (WHEEL_RETRY), but after it.
+        asked = []
+        late = {'ready': False}
+        def late_name(idx):
+            asked.append(idx)
+            return (names.get(-idx - 1, '') if late['ready'] else '') if idx < 0 else ''
+        b.entities[b.enemy].appearance.collisions = NS(getPartTransform=collisions.getPartTransform, maxStaticPartIndex=3,
+                                                       getPartName=late_name, getBoundingBox=collisions.getBoundingBox)
+        b.hit(b.enemy, b.me)                  # 4: not attached - no wheels
+        late['ready'] = True
+        before = asked.count(-1)
+        b.hit(b.enemy, b.me)                  # 5: within WHEEL_RETRY - not asked again, still no wheels
+        # The list is asked from -1 on; the contact's own name (-3, extra_part_info) is another question.
+        again = asked.count(-1) - before
+        mod._WHEEL_NAMES[(id(b.entities[b.enemy].appearance.collisions), 'france:W_Test')] = (False, time.time() - 1)
+        b.hit(b.enemy, b.me)                  # 6: the retry is due - asked again, the wheels are there
         writer = recorder.writer
         deadline = time.time() + 5
         while not writer.queue.empty() and time.time() < deadline: time.sleep(0.01)
         time.sleep(0.1)
         rows = rtb.read_jsonl(os.path.join(writer.folder, recorder.file + '.jsonl'))[0]
         hits = [r for r in rows if r.get('type') == 'hit']
-        check(group, 'three hits written', len(hits) == 3, len(hits))
-        if len(hits) == 3:
-            first, incoming, other = hits
+        check(group, 'six hits written', len(hits) == 6, len(hits))
+        if len(hits) == 6:
+            first, incoming, other, early, soon, retried = hits
+            ids = lambda h: [p['id'] for p in h['target']['parts']]
+            check(group, 'wheels not attached at the first hit: none recorded, the contact unsupported',
+                  ids(early) == [0, 1, 2, 3] and early['points'][0].get('status') == 'unsupported-part', ids(early))
+            check(group, 'the next hit within WHEEL_RETRY: the collision is not asked again (cheap)', again == 0 and ids(soon) == [0, 1, 2, 3],
+                  (again, ids(soon)))
+            check(group, 'the retry once due: asked again, and the wheels are recorded from then on',
+                  ids(retried) == [0, 1, 2, 3, -1, -2, -3, -4] and retried['points'][0].get('status') == 'resolved', ids(retried))
             parts = first['target']['parts']
-            check(group, 'the wheeled target: parts 0-3 then -1..-4 by name, each with its armour reference',
+            check(group, 'the wheeled target (under the -k/index k-1 hypothesis of the stub): parts 0-3 then -1..-4 by name, each with its armour reference',
                   [(p['id'], p['name']) for p in parts][4:] == [(-1, 'WD_L1'), (-2, 'WD_R1'), (-3, 'W_L1'), (-4, 'W_R1')]
                   and all(p.get('armorRef') and p.get('material') == 'wheel' and 'transform' not in p for p in parts[4:]),
                   [(p['id'], p['name'], sorted(p)) for p in parts][4:6])
