@@ -890,12 +890,13 @@
   // The page's view and its verdict log both come here, so the line drawn and the line judged are one.
   // pts.anchor: the index of the point the shot's line, arrow and camera stand on - the first on a part posed AT THE HIT.
   // A wheel's transform is its place at rest (poseFrom 'rest'), an armoured prefab's may be its default one (poseFrom
-  // 'default'): neither is where the part was, so a line through a wheel into the hull is anchored on the hull point
-  // (review of 5f2bee5). With no such point, the first.
+  // 'default', or 'rejected': a recorded pose the rule could not take): neither is where the part was, so a line through
+  // a wheel into the hull is anchored on the hull point (review of 5f2bee5). With no such point, the first. Such a point
+  // (p.rest) lends no chord to a posed one and takes none from it (Viewer.chain; review of d1b372b).
   Viewer.points=function(hit,context){
     var T=THREE,transforms={},rest={};((hit&&hit.target||{}).parts||[]).forEach(function(part){if(part.transform){transforms[part.id]=new T.Matrix4().fromArray(part.transform);if(part.poseFrom)rest[part.id]=true;}});
     // pi: the point's index in hit.points (the log's point= counts resolved points only); hitType as recorded.
-    var pts=[];((hit&&hit.points)||[]).forEach(function(p,pi){if(p.status!=='resolved'||!transforms[p.part]||!p.position||!p.direction)return;var pos=new T.Vector3().fromArray(p.position).applyMatrix4(transforms[p.part]);pos.z*=-1;var direction=new T.Vector3().fromArray(p.direction).transformDirection(transforms[p.part]).normalize();direction.z*=-1;pts.push({pos:pos,dir:direction,effect:p.effect,part:p.part,pi:pi,hitType:p.hitType,source:'segment',chordDev:null,line:direction.clone(),stretch:null});});
+    var pts=[];((hit&&hit.points)||[]).forEach(function(p,pi){if(p.status!=='resolved'||!transforms[p.part]||!p.position||!p.direction)return;var pos=new T.Vector3().fromArray(p.position).applyMatrix4(transforms[p.part]);pos.z*=-1;var direction=new T.Vector3().fromArray(p.direction).transformDirection(transforms[p.part]).normalize();direction.z*=-1;pts.push({pos:pos,dir:direction,effect:p.effect,part:p.part,pi:pi,hitType:p.hitType,source:'segment',chordDev:null,line:direction.clone(),stretch:null,rest:!!rest[p.part]});});
     Viewer.chain(pts);
     var anchor=0;for(var i=0;i<pts.length;i++)if(!rest[pts[i].part]){anchor=i;break;}
     pts.anchor=anchor;
@@ -952,17 +953,21 @@
   };
   // The chain rule, as data: every point gets `line` (the direction drawn through it), `source` (chord / segment /
   // chord-unchecked), `chordDev` (radians) and `stretch` ({from,to,dashed} or null for a first point).
+  // A point on a part not posed at the hit (p.rest: a wheel at rest, a prefab at its default) and a posed one are in two
+  // different frames: the chord between them is no flight, so neither takes its line from it (review of d1b372b) - the
+  // stretch is drawn along the posed point's own recorded direction, dashed.
   Viewer.chain=function(pts){
-    var ricochet=function(q){return q.effect===1||q.effect===2;};
+    var ricochet=function(q){return q.effect===1||q.effect===2;},mixed=function(a,b){return !!a.rest!==!!b.rest;};
     for(var i=0;i<pts.length;i++){
       var p=pts[i],prev=i?pts[i-1]:null;p.line=p.dir.clone();p.stretch=null;
       if(!prev){
-        var next=pts[1],chord0=next&&!ricochet(p)?next.pos.clone().sub(p.pos):null;
+        var next=pts[1],chord0=next&&!ricochet(p)&&!mixed(p,next)?next.pos.clone().sub(p.pos):null;
         if(chord0&&chord0.length()>=.05){var c0=chord0.normalize(),a0=c0.angleTo(p.dir),a1=c0.angleTo(next.dir);p.chordDev=Math.max(a0,a1);if(a0<=CHORD_TOLERANCE&&a1<=CHORD_TOLERANCE){p.line=c0;p.source='chord';}}
         continue;
       }
       var chord=p.pos.clone().sub(prev.pos),span=chord.length();
       if(span<.05)continue; // the same contact twice (a second verdict at one point): nothing between them
+      if(mixed(p,prev)){p.stretch={from:p.pos.clone().addScaledVector(p.dir,-span),to:p.pos.clone(),dashed:true};continue;}
       var c=chord.normalize(),dev=c.angleTo(p.dir),devPrev=ricochet(prev)?0:c.angleTo(prev.dir);p.chordDev=Math.max(dev,devPrev);
       var agrees=dev<=CHORD_TOLERANCE&&devPrev<=CHORD_TOLERANCE;
       if(agrees||ricochet(prev)){p.line=c;p.source=agrees?'chord':'chord-unchecked';p.stretch={from:prev.pos.clone(),to:p.pos.clone(),dashed:!agrees};}

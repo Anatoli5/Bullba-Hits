@@ -83,8 +83,10 @@ def classify(row):
     if re.match(r'wheel\d+\Z', row.get('part') or ''):
         return 'pass-through'
     # A verdict cast in a scene that had to leave a part out (partial=: a wheel without its body, 27.09) is no verdict on
-    # the whole vehicle: it is counted apart, never as an agreement or a disagreement.
-    if row.get('partial'):
+    # the whole vehicle when its shell met that part (partialRay=1: a recorded contact on it up to this point): counted
+    # apart, never as an agreement or a disagreement. partialRay=0 - the part missing, but not on this shell's way - is
+    # judged as any line, so a hull DISAGREE still reaches triage (review of d1b372b). Lines before partialRay: apart.
+    if row.get('partial') and row.get('partialRay') != '0':
         return 'partial-scene'
     # A module crit without HP damage (crit code 5/6 and 0 HP) against our "no penetration" is not a verdict on the
     # main armour either. Lines without hp= (pages before 22.09) keep their old class.

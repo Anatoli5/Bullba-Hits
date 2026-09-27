@@ -6040,11 +6040,24 @@
   var verdictLines=0,verdictQueue=[],verdictDone={},verdictTimer=null,verdictBusy=false;
   // A part's name on a log line: partNames, a wheel of a wheeled vehicle as the crit list names it (wheel<k-1>).
   function logPart(id,parts){var p=(parts||[]).find(function(q){return q&&q.id===id;});if(p&&p.prefab)return p.prefabKind||'prefab';return id<0?'wheel'+(-id-1):partNames[id]||id;}
+  // An armoured prefab of the target on a log line (review of d1b372b): where it stood - prefabPose=<kind>/<hit|default|
+  // rejected>/<layer or ->, and prefabFit=<mm> (how far the recorded pose lies from the rule; '-' for a default) - so the
+  // first battle hits on it test the rule. No prefab, no columns.
+  function prefabColumns(parts){
+    var out='';(parts||[]).forEach(function(p){if(!p||!p.prefab||typeof ArmorInspectorData==='undefined'||!ArmorInspectorData.prefabPose)return;var pose=ArmorInspectorData.prefabPose(p,parts);if(!pose)return;
+      out+=' prefabPose='+(p.prefabKind||'prefab')+'/'+pose.from+'/'+String(pose.layer||'-').replace(/\s+/g,'_')+' prefabFit='+(pose.fit!=null&&isFinite(pose.fit)?pose.fit.toFixed(1):'-');});
+    return out;
+  }
   // `scene`: the scene the verdicts were cast in (sceneFor's result). A part it had to leave out - a wheel without its
-  // body (review of 5f2bee5) - is named in partial=, so a verdict computed without it is never read as a whole one.
+  // body (review of 5f2bee5) - is named in partial=, so a verdict computed without it is never read as a whole one; and
+  // partialRay= says whether THIS verdict's shell met such a part (a recorded contact on it up to this point: 1) or not
+  // (0 - the part is missing, but not on this shell's way; review of d1b372b: the verdict then counts as any).
   function verdictLine(battleId,hit,v,shell,mode,scene){var r=v.result||{},chance=r.chance;
     var ours=r.reason==='ricochet'?'ricochet':chance===null||chance===undefined?(r.reason||'none'):(chance>=50?'pen':'no-pen')+'_'+chance+'%';
-    var parts=(hit.target||{}).parts,partial=scene&&Array.isArray(scene.partial)&&scene.partial.length?' partial='+scene.partial.map(function(id){return logPart(id,parts);}).join(','):'';
+    var parts=(hit.target||{}).parts,missing=scene&&Array.isArray(scene.partial)?scene.partial:[],partial='';
+    if(missing.length){var met=v.part!=null&&missing.indexOf(v.part)!==-1||((hit.points||[]).some(function(p,pi){return (v.pi==null||pi<=v.pi)&&missing.indexOf(p.part)!==-1;}));
+      partial=' partial='+missing.map(function(id){return logPart(id,parts);}).join(',')+' partialRay='+(met?1:0);}
+    partial+=prefabColumns(parts);
     console.info('Bullba Hits verdict: battle='+battleId+' hit='+hit.id+' point='+v.index+' part='+logPart(v.part,parts)+partial+' server='+String(effects[v.effect]||v.effect).replace(/ /g,'_')+' ours='+ours+' angle='+(r.angle!=null?Math.round(r.angle):'-')+' eff='+(r.effective!=null?Math.round(r.effective):'-')+' pen='+Math.round(shell.penetration)+' shell='+shell.kind+' dir='+v.source+' chordDev='+(v.chordDev==null?'-':(v.chordDev*180/Math.PI).toFixed(1))+' mode='+mode+shellModeColumns(hit,shell)+damageColumns(hit,r,shell)+ArmorCrits.columns(hit,v)+' v='+($('app-version').getAttribute('data-version')||'dev').replace(/\s+/g,'_')+' rec='+(recordsVersion||'-'));
     verdictLines++;verdictStatus();}
   // The shooter's vehicle mode on a log line that already carries the shell (22.09): which of the two
@@ -7003,7 +7016,7 @@
     detail('Direction',view==='incoming'?'Incoming':view==='outgoing'?'Outgoing':'Not this vehicle',clock(hit.receivedAt));detail('Result',result(hit));var critRow=critDetail(hit);if(critRow)$('details').appendChild(critRow);
     var points=hit.points||[],point=points.find(function(p){return p.status==='resolved';});
     var onPart=point&&partOf(point.part,(hit.target||{}).parts);
-    detail('Point on the model',point?partLabel(point.part,(hit.target||{}).parts):'Not restored',onPart&&onPart.prefab?prefabPlace(onPart,hit.target.parts):point?'Per the client collision handler':'Segment kept for diagnostics');
+    detail('Point on the model',point?partLabel(point.part,(hit.target||{}).parts):'Not restored',onPart&&onPart.prefab?prefabPlaceText(onPart,hit.target.parts):point?'Per the client collision handler':'Segment kept for diagnostics');
     detail('Calibre',point&&point.caliber?point.caliber+' mm':'No data',points.length+' points in the event');
     if(hit.rangeAtImpact!=null)detail('To the attacker at impact',hit.rangeAtImpact.toFixed(1)+' m','Position when the hit was received; not a measured flight length.');
   }
@@ -7043,23 +7056,27 @@
   // client's linker's, not a fixed one (the CAV mod. 71's crest and a double track can both be part 4 of their vehicles).
   function partOf(id,parts){return (parts||[]).find(function(p){return p&&p.id===id;})||null;}
   function partLabel(id,parts){var p=partOf(id,parts);if(p&&p.prefab)return PREFAB_NAMES[p.prefabKind]||'Armoured module';return id<0?'Wheel '+(-id):PART_NAMES[id]||'Part '+id;}
-  // Where an armoured prefab stands (ArmorInspectorData.prefabPose), in words: a position of the crest, the containers
-  // closed or open, and whether the record says so or it is the default the page takes.
+  // Where an armoured prefab stands (ArmorInspectorData.prefabPose), in words: {key, where, note} - the key says whose the
+  // place is (At the hit / Default), `where` the crest's position of its four or the containers closed / open with the
+  // angle, `note` the fit of a recorded pose, or why the default stands (review of d1b372b). Null for no prefab.
   function prefabPlace(part,parts){
-    var pose=window.ArmorInspectorData&&ArmorInspectorData.prefabPose?ArmorInspectorData.prefabPose(part,parts):null;if(!pose)return '';
+    var pose=window.ArmorInspectorData&&ArmorInspectorData.prefabPose?ArmorInspectorData.prefabPose(part,parts):null;if(!pose)return null;
     var layer=pose.layer,m=/^(\d+) position layer$/.exec(layer||''),count=(pose.layers||[]).length;
-    var named=m?'position '+m[1]+' (0–'+(count-1)+')':layer==='closing'?'closed':layer==='opening'?'open':layer||'';
-    var angle=pose.angle!=null?Math.round(pose.angle*10)/10+'°':'';
-    if(pose.from==='default')return 'default: '+(named||'its first')+(angle?' ('+angle+')':'');
-    return 'at the hit: '+(named||'between its positions')+(angle?' ('+angle+')':'');
+    var named=m?'position '+(Number(m[1])+1)+' of '+count:layer==='closing'?'closed':layer==='opening'?'open':layer||'between positions';
+    var angle=pose.angle!=null&&isFinite(pose.angle)?' · '+Math.round(pose.angle*10)/10+'°':'';
+    var fit=pose.fit!=null&&isFinite(pose.fit)?(pose.fit<10?pose.fit.toFixed(1):Math.round(pose.fit))+' mm':'';
+    if(pose.from==='hit')return {key:'At the hit',where:named+angle,note:fit?'Fit: '+fit+' off the game’s rule':''};
+    return {key:'Default',where:named+angle,note:pose.from==='rejected'?'Recorded pose rejected: '+(fit||'far')+' off the game’s rule':'The game gives its position only in a battle'};
   }
+  // The same on one line (the details' "Point on the model"): the fit of a recorded pose or its rejection rides along.
+  function prefabPlaceText(part,parts){var p=prefabPlace(part,parts);if(!p)return '';var pose=ArmorInspectorData.prefabPose(part,parts);
+    return p.key+': '+p.where+(pose.from==='default'||!p.note?'':' · '+p.note.charAt(0).toLowerCase()+p.note.slice(1));}
   function prefabTitle(part,parts){
-    var what=part.prefabKind==='crest'?'The gun’s armoured crest: a part of its own, its armour counted as the vehicle’s.':
-      part.prefabKind==='containers'?'The armoured ammunition containers: a part of their own, their armour counted as the vehicle’s.':
-      'An armoured module: a part of its own, its armour counted as the vehicle’s.';
-    var pose=window.ArmorInspectorData&&ArmorInspectorData.prefabPose?ArmorInspectorData.prefabPose(part,parts):null;
-    return partLabel(part.id,parts)+'\n'+what+'\n• Position '+prefabPlace(part,parts)+
-      (pose&&pose.from==='default'?'\n• The game gives its position only in a battle':'');
+    var what=part.prefabKind==='crest'?'The gun’s armoured crest: its own part, its armour the vehicle’s.':
+      part.prefabKind==='containers'?'The armoured ammunition containers: their own part, their armour the vehicle’s.':
+      'An armoured module: its own part, its armour the vehicle’s.';
+    var p=prefabPlace(part,parts);
+    return partLabel(part.id,parts)+'\n'+what+(p?'\n\n• '+p.key+': '+p.where+(p.note?'\n• '+p.note:''):'');
   }
   function damageEvents(){return current&&Array.isArray(current.damageEvents)?current.damageEvents:[];}
   function eventIn(battle,id){var list=battle&&Array.isArray(battle.damageEvents)?battle.damageEvents:[];for(var i=0;i<list.length;i++)if(list[i].id===id)return list[i];return null;}

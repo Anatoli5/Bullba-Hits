@@ -126,6 +126,8 @@
       hits.forEach(function(hit){if(hit)pass[2](hit,tables);});
       delete value[pass[1]];delete value[pass[0]];
     });
+    // After the parts have their poses: a recorded prefab pose the rule rejects stands at its default (settlePrefabs).
+    hits.forEach(function(hit){if(hit)settlePrefabs(hit);});
     return value;
   }
   function receive(payload){
@@ -166,13 +168,20 @@
   // about x: the turn is read back here, the named layer within 0.25 degrees of it, and `fit` - how far (mm) the recorded
   // origin lies from where that rule puts it (a check of the rule on the first real hits). An export's part stands at the
   // default layer (poseFrom 'default': the game gives the position of no vehicle outside a battle). Null for other parts.
+  // A recorded pose more than PREFAB_FIT_MAX off the rule (review of d1b372b: a crit's 'crash' state, a stale index the
+  // recorder could not tell) is no pose of the part: settlePrefabs, when the battle is read, stands the part at its
+  // default layer instead (poseFrom 'rejected', poseFit the fit it had) - the scene, the ballistics, the anchor of the
+  // line and the words all take it from there, and the words say so. The threshold is a HYPOTHESIS until the first
+  // battle hits on the crest show the fit the rule really leaves (0 mm expected; the gun's recoil moves the crest too).
   function mul(a,b){var o=new Array(16),r,c,k;for(c=0;c<4;c++)for(r=0;r<4;r++){var v=0;for(k=0;k<4;k++)v+=a[k*4+r]*b[c*4+k];o[c*4+r]=v;}return o;}
   function rigidInverse(m){var o=[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],r,c;for(r=0;r<3;r++)for(c=0;c<3;c++)o[c*4+r]=m[r*4+c];
     for(r=0;r<3;r++)o[12+r]=-(m[r*4]*m[12]+m[r*4+1]*m[13]+m[r*4+2]*m[14]);return o;}
+  var PREFAB_FIT_MAX=50;
   function prefabPose(part,parts){
     if(!part||!part.prefab)return null;
     var layers=Array.isArray(part.prefabLayers)?part.prefabLayers:[],out={from:'default',layer:part.prefabDefault||null,angle:0,fit:null,layers:layers};
     if(part.poseFrom==='default')return out;
+    if(part.poseFrom==='rejected'){out.from='rejected';out.fit=Number(part.poseFit);return out;}
     out.from='hit';out.layer=null;out.angle=null;
     var parent=(parts||[]).find(function(p){return p&&p.id===part.parentPart;});
     if(!parent||!Array.isArray(parent.transform)||!Array.isArray(part.prefabBase)||!Array.isArray(part.transform))return out;
@@ -180,6 +189,15 @@
     var near=layers.find(function(l){return Math.abs(Number(l.angle)-angle)<=.25;});
     out.angle=angle;out.layer=near?near.name:null;out.fit=1000*Math.sqrt(R[12]*R[12]+R[13]*R[13]+R[14]*R[14]);
     return out;
+  }
+  function settlePrefabs(hit){
+    var parts=(hit.target||{}).parts;if(!Array.isArray(parts))return;
+    parts.forEach(function(part){
+      if(!part||!part.prefab||part.poseFrom)return;
+      var pose=prefabPose(part,parts);if(!pose||pose.fit==null||!(pose.fit>PREFAB_FIT_MAX))return;
+      var parent=parts.find(function(p){return p&&p.id===part.parentPart;});
+      part.transform=mul(parent.transform,part.prefabBase);part.poseFrom='rejected';part.poseFit=pose.fit;
+    });
   }
   // Models for the target of one hit. The hit need not be in the battle's list: the shooter/model swap
   // builds a synthetic hit whose target is the recorded attacker, and its parts load exactly the same way.
@@ -202,21 +220,24 @@
     // An armoured prefab (27.09) loads its model like any part, but one that is not there - its type's XML not read yet
     // during a battle, a model still on its way, a record of another client - is left out with a word, as a wheel without
     // its body: the vehicle is drawn as before the prefabs were parts, and `partial` names it for the Statistics log.
+    // A prefab whose model finally failed (its extraction, its file) is a part without its model, as any: the scene is
+    // incomplete (review of d1b372b). What it still waits for, or a statics block the exporter could not fill (its
+    // prefabError: the vehicle XML, another client's record), leaves it out with that word.
     function leftOut(part,why){result.warnings.push((part.name||'Prefab')+': '+why);result.partial.push(part.id);}
     return Promise.all(parts.map(function(part){
       var prefab=!!part.prefab;
       if(part.modelError||!part.modelKey||!part.transform||(prefab&&!part.armor)){
-        var why=part.modelError||(prefab&&part.modelPending?'model on its way':prefab&&!part.resource?'armoured part not read yet':'Model or part position not saved');
-        if(prefab)leftOut(part,why);else result.warnings.push(part.name+': '+why);return;}
+        if(prefab&&!part.modelError){leftOut(part,part.prefabError||(part.modelPending?'model on its way':!part.resource?'armoured part not read yet':'Model or part position not saved'));return;}
+        result.warnings.push(part.name+': '+(part.modelError||'Model or part position not saved'));return;}
       return model(part.modelKey).then(function(data){
         if(data.kind!=='client-shot-collision'||!Array.isArray(data.groups)||!data.groups.some(function(g){return Array.isArray(g.indices)&&g.indices.length>=3;}))throw new Error('Invalid or empty model');
         result.models[String(part.id)]=data;
-      }).catch(function(e){if(prefab)leftOut(part,e.message);else result.warnings.push(part.name+': '+e.message);});
+      }).catch(function(e){result.warnings.push(part.name+': '+e.message);});
     })).then(function(){
       // A gun/track without its hull is not a usable armour scene. Keep the
       // event, but withhold geometry and calculations until every part is ready.
       var extra=(hit.warnings||[]).indexOf('Additional vehicle parts are not yet rendered')!==-1;
-      var complete=[0,1,2,3].every(function(id){return parts.some(function(p){return p.id===id;})&&!!result.models[String(id)];})&&parts.every(function(p){return !!result.models[String(p.id)]||(!!p.prefab&&result.partial.indexOf(p.id)!==-1);});
+      var complete=[0,1,2,3].every(function(id){return parts.some(function(p){return p.id===id;})&&!!result.models[String(id)];})&&parts.every(function(p){return !!result.models[String(p.id)]||result.partial.indexOf(p.id)!==-1;});
       if(!complete||extra){
         result.models={};result.geometryIncomplete=true;
         result.geometryError=extra?'This vehicle has unsupported collision parts.':'Complete vehicle model unavailable.';
@@ -231,5 +252,5 @@
   // expandBattle is published so the offline tools that read a battle file straight from disk
   // (tools/check_shot_selection.cjs, tests/test_ballistics.cjs) use this one
   // reader instead of a second copy of the rules.
-  window.ArmorInspectorData={receive:receive,index:function(){return read('index');},battle:function(id){return read('battle:'+id);},vehicles:function(){return read('vehicles');},vehicle:function(id,once){return read('vehicle:'+id,once?RETRIES:0);},ttx:function(id){return read('ttx:'+id);},ttxSweep:function(){return read('ttxSweep');},modelsSweep:function(){return read('modelsSweep');},scene:scene,sceneFor:sceneFor,wheelModel:wheelModel,prefabPose:prefabPose,expandBattle:expandBattle};
+  window.ArmorInspectorData={receive:receive,index:function(){return read('index');},battle:function(id){return read('battle:'+id);},vehicles:function(){return read('vehicles');},vehicle:function(id,once){return read('vehicle:'+id,once?RETRIES:0);},ttx:function(id){return read('ttx:'+id);},ttxSweep:function(){return read('ttxSweep');},modelsSweep:function(){return read('modelsSweep');},scene:scene,sceneFor:sceneFor,wheelModel:wheelModel,prefabPose:prefabPose,settlePrefabs:settlePrefabs,PREFAB_FIT_MAX:PREFAB_FIT_MAX,expandBattle:expandBattle};
 }());

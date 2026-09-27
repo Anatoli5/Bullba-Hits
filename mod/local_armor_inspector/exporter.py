@@ -1765,6 +1765,8 @@ def fill_wheels(vehicle, shapes):
 # the client's own gun pitch (rest_columns) and the one that lifts the containers when they open (their "pods_move_up"
 # sound) - inferred. A node turned about another axis, or scaled, on that path is refused, never guessed.
 PREFAB_ROOT = 'content/CGFPrefabs/Vehicle/'
+# data/<this>: the collider folders of the armoured prefabs, per client version (Exporter.run_prefab_check).
+PREFAB_FOLDERS = 'prefab-folders.json'
 PREFAB_MARK = PREFAB_ROOT.encode('ascii')
 PREFAB_LIMIT = 1024*1024
 PREFAB_KINDS = (('script::CrestMovingSequenceParamsComponent', 'crest'),
@@ -1959,6 +1961,24 @@ def prefab_components(descr):
         except Exception:
             pass
     return names
+
+
+def migration_request(record):
+    """What a migration keeps of an exported file to export it again (review of d1b372b: not the whole record, which
+    holds every part's armour): the request the file answers - type, compact descriptor, source, identity."""
+    identity = record.get('identity') if isinstance(record.get('identity'), dict) else dict(
+        (key, record.get(key)) for key in ('name', 'level', 'class', 'role', 'nation'))
+    return {'vehicleType':str(record.get('vehicleType') or record.get('type') or ''),
+            'compactDescriptor':record.get('compactDescriptor'), 'source':record.get('source'), 'identity':identity}
+
+
+def collision_folders(record):
+    """The collision_client folders the models of an exported file's parts lie in (one, as a rule)."""
+    found = set()
+    for part in record.get('parts') or ():
+        resource = str(part.get('resource') or '') if isinstance(part, dict) else ''
+        if '/collision_client/' in resource: found.add(resource.rsplit('/collision_client/', 1)[0] + '/collision_client/')
+    return sorted(found)
 
 
 def prefab_statics(entry):
@@ -3327,7 +3347,9 @@ class Exporter(object):
             part.pop('modelPending', None)
             part.pop('modelError', None)
             # A wheel (id < 0) has no model file and no resource: its body is procedural (fill_wheels), its armour live.
-            if isinstance(part.get('id'), int) and part['id'] < 0 and 'resource' not in part:
+            # An armoured prefab part the prefab has not filled yet (fix_prefabs) has none either: the page says why
+            # (its prefabError, or "not read yet") instead of the KeyError a lookup would leave (review of d1b372b).
+            if 'resource' not in part and (part.get('prefab') or isinstance(part.get('id'), int) and part['id'] < 0):
                 continue
             try:
                 if extract:
@@ -3380,16 +3402,17 @@ class Exporter(object):
         except Exception:
             return True
 
-    def type_extras(self, type_name, defer=None):
+    def type_extras(self, type_name, defer=None, inline=True):
         """{'wheels': {chassis name: wheel_shapes}, 'prefabs': [armoured prefab entry], 'prefabErrors': [reason]} of one
-        type of the running client, None while it may not be read (a battle: `defer`, a set, gets the key the hit waits
-        under and the extras job is queued). Raises ExtrasUnavailable when the XML did not read (the reason is kept for the
+        type of the running client, None while it may not be read (a battle, or `inline` False - the publication of a
+        hit, which never reads the XML itself (review of d1b372b): `defer`, a set, gets the key the hit waits under and
+        the extras job is queued). Raises ExtrasUnavailable when the XML did not read (the reason is kept for the
         session). A prefab entry: {'parent', 'component', 'slot', 'prefab', 'place' (the slot's matrix), 'spec' (prefab_spec)}."""
         cache = self.extras_cache
         key = str(type_name)
         entry = cache.get(key)
         if entry is None:
-            if not self.xml_allowed():
+            if not inline or not self.xml_allowed():
                 if defer is not None: defer.add(EXTRAS_KEY + key)
                 self.queue_job(JOB_OTHER, 'extras', {'vehicleType':key})
                 return None
@@ -3437,9 +3460,14 @@ class Exporter(object):
         return cache[path]
 
     def run_extras_job(self, payload):
-        """After a battle: read the type's XML (unless the vehicle export already did) and publish again what waited for it."""
+        """After a battle: read the type's XML (unless the vehicle export already did) and publish again what waited for it.
+        Never during a battle, whatever priority the page gave the job (review of d1b372b): it waits for the battle's end."""
         key = str((payload or {}).get('vehicleType') or '')
-        if key not in self.extras_cache: self.read_type_extras(key)
+        if key not in self.extras_cache:
+            if not self.xml_allowed():
+                self.queue_job(JOB_OTHER, 'extras', {'vehicleType':key})
+                return
+            self.read_type_extras(key)
         self.invalidate_model(EXTRAS_KEY + key)
         self.republish.update(self.waiting.pop(EXTRAS_KEY + key, ()))
 
@@ -3448,29 +3476,55 @@ class Exporter(object):
         prefabs are the dynamic parts with a collider and armour (two in 2.4.0.1, both in content/CGFPrefabs/Vehicle/
         dynamic_parts); a file whose parts' models lie in the folder of such a prefab's collider is that vehicle's, and is
         exported again in the background (its own request, replay). Every other file is left as it is - nothing written;
-        the check is two small JSON reads a session. A failure leaves them all for the next start."""
+        the check is two small JSON reads, once per client version: the folders are kept (PREFAB_FOLDERS), and the next
+        start decides every file from them in load_vehicles, holding nothing and queueing no check (review of d1b372b).
+        Never in a battle (the JSON is read); a failure leaves them all for the next start."""
+        if not self.xml_allowed():
+            self.queue_job(JOB_BULK, 'prefabs', {'vehicleType':''})
+            return
         unchecked, self.prefab_unchecked = getattr(self, 'prefab_unchecked', None) or {}, {}
         if not unchecked: return
         self.ensure_packages()
-        folders = set()
+        folders, failed = set(), False
         for name in sorted(self.prefab_entries or ()):
             if not name.startswith(PREFAB_ROOT + 'dynamic_parts/'): continue
             try:
                 spec = self.prefab_spec(name)
             except Exception as exc:
                 LOG.warning('Prefab %s not read for the check: %s', name, exc)
+                failed = True
                 continue
             if spec: folders.add(spec['resource'].rsplit('/collision_client/', 1)[0] + '/collision_client/')
-        for type_name, record in sorted(unchecked.items()):
-            resources = [str(p.get('resource') or '') for p in record.get('parts') or () if isinstance(p, dict)]
-            if not type_name or not record.get('compactDescriptor') or not any(r.startswith(f) for r in resources for f in folders):
-                continue
-            summary = self.vehicles.get(str(record.get('id') or ''))
+        if not failed and self.prefab_entries is not None: self.write_prefab_folders(folders)
+        for type_name, (identifier, own, request) in sorted(unchecked.items()):
+            if not folders.intersection(own) or not request.get('compactDescriptor'): continue
+            summary = self.vehicles.get(str(identifier or ''))
             if summary is not None: summary['descriptorHash'] = None
             self.migrating.add(type_name)
-            self.queue_job(JOB_BULK, 'vehicle', {'vehicleType':type_name, 'compactDescriptor':record['compactDescriptor'],
-                                                 'source':record.get('source'), 'replay':True, 'identity':dict(
-                                                     (key, record.get(key)) for key in ('name', 'level', 'class', 'role', 'nation'))})
+            self.queue_job(JOB_BULK, 'vehicle', dict(request, replay=True))
+
+    def prefab_folders_path(self):
+        return os.path.join(self.folder, 'data', PREFAB_FOLDERS)
+
+    def read_prefab_folders(self):
+        """The collider folders of the armoured prefabs the check found for this client version, or None (not checked yet,
+        another version, unreadable)."""
+        try:
+            path = self.prefab_folders_path()
+            if not os.path.isfile(path) or os.path.getsize(path) > 65536: return None
+            with open(path, 'rb') as stream:
+                value = json.loads(stream.read().decode('utf-8'))
+            if value.get('clientVersion') != self.version or not isinstance(value.get('folders'), list): return None
+            return set(str(folder) for folder in value['folders'])
+        except Exception:
+            return None
+
+    def write_prefab_folders(self, folders):
+        try:
+            atomic_write(self.prefab_folders_path(), json.dumps({'clientVersion':self.version, 'folders':sorted(folders)},
+                                                                ensure_ascii=True, sort_keys=True).encode('ascii'))
+        except Exception:
+            LOG.exception('Armoured prefab folders not kept; the check runs again next start')
 
     def fix_wheels(self, vehicle, defer=None):
         """Body and rest place for the wheel parts of one vehicle block that has any without them (the recorder's). Its own
@@ -3482,7 +3536,7 @@ class Exporter(object):
             return 0
         try:
             descr = vehicle_descr(vehicle['compactDescriptor'])
-            extras = self.type_extras(descr.type.name, defer)
+            extras = self.type_extras(descr.type.name, defer, inline=False)
             return fill_wheels(vehicle, extras['wheels'].get(descr.chassis.name) or {}) if extras is not None else 0
         except ExtrasUnavailable:
             return 0
@@ -3502,15 +3556,18 @@ class Exporter(object):
         todo = [p for p in parts or () if isinstance(p, dict) and p.get('prefab') and 'resource' not in p]
         if not todo: return 0
         try:
-            extras = self.type_extras(str(vehicle.get('type') or ''), defer)
-        except ExtrasUnavailable:
+            extras = self.type_extras(str(vehicle.get('type') or ''), defer, inline=False)
+        except ExtrasUnavailable as exc:
+            for part in todo: part['prefabError'] = 'vehicle XML unavailable (%s)' % exc
             return 0
         if extras is None: return 0
         filled = 0
         for part in todo:
             entry = next((e for e in extras['prefabs'] if e['slot'] == part.get('name') and e['prefab'] == part.get('prefab')
                           and e['parent'] == part.get('parentPart')), None)
-            if entry is None: continue
+            if entry is None:
+                part['prefabError'] = 'not an armoured prefab of this client'
+                continue
             fill_prefab(part, entry)
             filled += 1
         return filled
@@ -3549,6 +3606,11 @@ class Exporter(object):
                 self.fix_wheels(hit.get(side), deferred)
             # The armoured prefab part the recorder wrote for the target (27.09): its model, armour and layers.
             self.fix_prefabs(hit.get('target'), deferred)
+        else:
+            # Another client's record: its prefab is read from no XML (as its wheels) - the page says so.
+            for part in (hit.get('target') or {}).get('parts') or ():
+                if isinstance(part, dict) and part.get('prefab') and 'resource' not in part:
+                    part['prefabError'] = 'recorded by another client version'
         fix_shells(hit)
         try:
             stamp_aim_origin(hit, raw, battle)
@@ -4128,8 +4190,11 @@ class Exporter(object):
         self.stale_vehicles = {}
         # Which types are wheeled: the client's own list (its tags), read once here - no descriptor per file.
         wheeled = wheeled_types()
-        # Files from before the armoured prefabs (27.09), by type: the prefab check job picks the few to export again.
+        # Files from before the armoured prefabs (27.09), by type: the prefab check job picks the few to export again - only
+        # what it needs of each (migration_request and the folders of its models), never the record (review of d1b372b).
+        # Once the check has run for this client version its folders decide at once (read_prefab_folders): no job.
         self.prefab_unchecked = {}
+        prefab_folders = self.read_prefab_folders()
         for path in sorted(glob.glob(os.path.join(self.folder, 'data', 'vehicles', '*.js'))):
             try:
                 record = read_data_file(path)
@@ -4171,11 +4236,16 @@ class Exporter(object):
                         if (type_name in wheeled if wheeled is not None
                                 else bool(wheel_parts(vehicle_descr(record['compactDescriptor'])))):
                             stale = True
-                            self.stale_vehicles[type_name] = record
+                            self.stale_vehicles[type_name] = migration_request(record)
                     except Exception:
                         pass
-                if record.get('parts') and 'prefabParts' not in record and not stale:
-                    self.prefab_unchecked[str(record.get('type') or '')] = record
+                if record.get('parts') and 'prefabParts' not in record and not stale and record.get('type'):
+                    folders = collision_folders(record)
+                    if prefab_folders is None:
+                        self.prefab_unchecked[str(record['type'])] = (identifier, folders, migration_request(record))
+                    elif prefab_folders.intersection(folders):
+                        stale = True
+                        self.stale_vehicles[str(record['type'])] = migration_request(record)
                 if filled and identifier and IDENTIFIER.match(identifier):
                     write_data(path, 'vehicle:'+identifier, record)
                 self.remember_vehicle(record)
@@ -4246,12 +4316,10 @@ class Exporter(object):
         # one vehicle job each at the bulk pace (its models are on disk already; the XML read is the cost), from its
         # request or - when no request names it (the model sweep's, or one whose request line is gone) - from the file
         # itself, with its own source. The catalogue is written once, after the last of them (run_vehicle_job).
-        for type_name, record in sorted((getattr(self, 'stale_vehicles', None) or {}).items()):
+        stale, self.stale_vehicles = getattr(self, 'stale_vehicles', None) or {}, {}
+        for type_name, own in sorted(stale.items()):
             request = requests.pop(type_name, None)
-            if request is None and type_name and record.get('compactDescriptor'):
-                request = {'vehicleType':type_name, 'compactDescriptor':record['compactDescriptor'],
-                           'source':record.get('source'), 'identity':dict((key, record.get(key)) for key in
-                           ('name', 'level', 'class', 'role', 'nation'))}
+            if request is None and type_name and own.get('compactDescriptor'): request = migration_request(own)
             if request is None: continue
             self.migrating.add(type_name)
             self.queue_job(JOB_BULK, 'vehicle', dict(request, replay=True))

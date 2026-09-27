@@ -353,9 +353,9 @@ async function main() {
       await step("battle('pm6')");
       expectScene('a hit on an armoured crest (pm6)', fun, {model: true, shooter: true, hp: '1 900 / 1 900', source: HP.ROSTER}, await step('hit(0)'));
       const onCrest = await ev(CREST);
-      ok('prefabs, ⌖ ' + (fun ? 'on' : 'off') + ': the crest is in the scene, the contact on it, its verdict ends on its own 150 mm; the details say Crest, position 1 at the hit',
+      ok('prefabs, ⌖ ' + (fun ? 'on' : 'off') + ': the crest is in the scene, the contact on it, its verdict ends on its own 150 mm; the details say Crest, position 2 of 4 at the hit',
          onCrest.crest === 12 && onCrest.points[0] === 4 && JSON.stringify(onCrest.end) === '[4,"armor_1",150]' && onCrest.follows
-         && onCrest.details.indexOf('Crest') >= 0 && onCrest.details.indexOf('at the hit: position 1 (0–3) (3.3°)') >= 0, JSON.stringify(onCrest).slice(0, 400));
+         && onCrest.details.indexOf('Crest') >= 0 && onCrest.details.indexOf('At the hit: position 2 of 4 · 3.3°') >= 0, JSON.stringify(onCrest).slice(0, 400));
       await step('modelTile()');
       expectScene('the crested vehicle browsed', fun, {model: true, shooter: true, hp: '1 900 / 1 900', source: HP.OWN}, await step("list('pm_xray')"));
       const browsed = await ev(CREST);

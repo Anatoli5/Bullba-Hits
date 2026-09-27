@@ -17,13 +17,18 @@ the 'crash' state. Checks, by group:
              a mod replaces is refused
   export     type_extras reads the XML and the prefab once; export_vehicle adds the crest as part 4 on the gun's rest
              pose, at the default layer, with prefabParts 1; a prefab that does not read: no prefabParts, a warning
-  publish    prepare_hit fills the recorder's prefab part (model, armour, layers, base) in a battle of the running client;
-             during a battle nothing is read and the hit waits for the extras job
-  migrate    a file from before the prefabs: the check job exports again only the vehicle whose models lie in the
-             folder of an armoured prefab's collider; nothing else is written
-  recorder   a contact on the dynamic index above the static parts: the part with its slot, prefab, parent and pose,
-             the point resolved; a later hit elsewhere records the part's pose again (remembered index); a vehicle
-             without a slot keeps its contact unsupported
+  publish    prepare_hit never reads the XML (hangar or battle): the hit waits for the extras job, which reads it after the
+             battle only, and the republished hit has the part filled (model, armour, layers, base); a lasting failure
+             and another client's record name their reason (no KeyError text of a model lookup)
+  migrate    a file from before the prefabs: only its request and model folders are held; the check job exports again
+             only the vehicle whose models lie in the folder of an armoured prefab's collider; nothing else is written;
+             the folders are kept, and the next start decides at once - nothing held, no check job
+  recorder   a contact on the dynamic index above the static parts: the part with its slot, prefab, parent and pose
+             (asked once each), the point resolved with its box only; a later hit elsewhere records the part's pose
+             again (remembered index). A stub answering garbage for the index (review of d1b372b): the chassis frame
+             (identity) - the remembered index rejected and forgotten; a parent with no slot, NaN, a place 20 m off -
+             the contact unsupported; no parent: the only slot for a fresh contact, never for a remembered one; a
+             vehicle without a slot keeps its contact unsupported
 
 Verdict through BULLBA_PY27_RESULT (see run27.py).
 """
@@ -31,6 +36,7 @@ import glob
 import imp
 import json
 import logging
+import math
 import os
 import shutil
 import sys
@@ -221,6 +227,27 @@ def exporter_checks(ex, temp):
             return {'type': 'hit', 'id': 'h', 'target': target, 'attacker': {'type': 'usa:T', 'parts': []}, 'warnings': [],
                     'points': [{'status': 'resolved', 'part': 5, 'position': [0, 0.1, -0.3]}]}
         battle = {'id': 'b1', 'clientVersion': 'client 1\n', 'hits': []}
+        # The hangar: the publication never reads the XML itself (review of d1b372b) - the hit goes out as recorded, the
+        # extras job is queued and the battle waits; the job reads it and the battle is published again.
+        e.jobs, e.job_index, e.waiting, e.republish = [], {}, {}, set()
+        reads = []
+        e.armor.xml = lambda name: reads.append(name) or ET.fromstring(clean)
+        first = e.prepare_hit(raw(), 0, battle)
+        part = [p for p in first['target']['parts'] if p['id'] == 5][0]
+        check(group, 'the hangar: the publication reads no XML, the part goes out as recorded (no KeyError text), the job queued',
+              not reads and 'resource' not in part and 'modelError' not in part and 'prefabError' not in part
+              and [j[2] for j in e.jobs] == ['extras'] and e.waiting.get(ex.EXTRAS_KEY + 'italy:T_Crest') == set(['b1']),
+              (reads, sorted(part), [j[2] for j in e.jobs]))
+        e.recorder = NS(in_battle=True, busy_until=0)
+        e.jobs[0][0] = ex.JOB_PAGE
+        e.run_extras_job(e.take_job(0)[3])
+        check(group, 'an extras job run in a battle (lifted by the page) reads nothing and waits again',
+              not reads and 'italy:T_Crest' not in e.extras_cache and [j[2] for j in e.jobs] == ['extras'], (list(reads), [j[2] for j in e.jobs]))
+        e.recorder = None
+        e.jobs, e.job_index = [], {}
+        e.run_extras_job({'vehicleType': 'italy:T_Crest'})
+        check(group, 'after the battle the job reads the XML once and the waiting battle is published again',
+              len(reads) == 1 and e.republish == set(['b1']) and not e.waiting, (list(reads), e.republish, e.waiting))
         hit = e.prepare_hit(raw(), 0, battle)
         part = [p for p in hit['target']['parts'] if p['id'] == 5][0]
         base = ex.multiply_columns(ex.translation_columns([0, 0, 0]), ex.translation_columns([0, 0.3, -0.5]))
@@ -238,6 +265,16 @@ def exporter_checks(ex, temp):
               'resource' not in part and [j[2] for j in e.jobs] == ['extras'] and e.waiting.get(ex.EXTRAS_KEY + 'italy:T_Crest') == set(['b1']),
               (sorted(part), [j[2] for j in e.jobs], e.waiting))
         e.recorder = None
+        # A lasting failure says why; another client's record too.
+        e.extras_cache = {'italy:T_Crest': {'error': 'broken'}}
+        failed = [p for p in e.prepare_hit(raw(), 0, battle)['target']['parts'] if p['id'] == 5][0]
+        old = [p for p in e.prepare_hit(raw(), 0, {'id': 'b0', 'clientVersion': 'client 0\n', 'hits': []})['target']['parts']
+               if p['id'] == 5][0]
+        check(group, 'a prefab part the XML cannot fill, or of another client: its reason, no model lookup, no KeyError text',
+              failed.get('prefabError') == 'vehicle XML unavailable (broken)' and 'modelError' not in failed
+              and old.get('prefabError') == 'recorded by another client version' and 'modelError' not in old,
+              (failed.get('prefabError'), failed.get('modelError'), old.get('prefabError'), old.get('modelError')))
+        e.extras_cache = {}
 
         group = 'migrate'
         for ident, type_name, resource in (('italy-T_Crest', 'italy:T_Crest', 'vehicles/italy/T_Crest/collision_client/Hull.model'),
@@ -258,6 +295,11 @@ def exporter_checks(ex, temp):
         check(group, 'both files from before the prefabs are noted, neither rewritten',
               sorted(e.prefab_unchecked) == ['italy:T_Crest', 'usa:T_Other'] and abs(os.path.getmtime(other) - stamp) < 1,
               sorted(e.prefab_unchecked))
+        kept_keys = sorted(e.prefab_unchecked['usa:T_Other'][2])
+        check(group, 'a noted file keeps only its request (type, descriptor, source, identity), its id and model folders',
+              kept_keys == ['compactDescriptor', 'identity', 'source', 'vehicleType']
+              and e.prefab_unchecked['usa:T_Other'][:2] == ('usa-T_Other', ['vehicles/american/T_Other/collision_client/']),
+              e.prefab_unchecked['usa:T_Other'])
         e.jobs, e.job_index = [], {}
         e.replay_vehicle_requests()
         check(group, 'setup queues one check job, nothing else', [(j[2], j[0]) for j in e.jobs] == [('prefabs', ex.JOB_BULK)],
@@ -269,6 +311,21 @@ def exporter_checks(ex, temp):
         check(group, "the check: only the vehicle whose models lie in the armoured prefab's collider folder is exported again",
               queued == [('vehicle', 'italy:T_Crest', True)] and e.vehicles['italy-T_Crest']['descriptorHash'] is None
               and e.vehicles['usa-T_Other']['descriptorHash'] is not None and abs(os.path.getmtime(other) - stamp) < 1, queued)
+        # The next start: the check's folders are kept for this client version - every file is decided at once, nothing
+        # noted, no check job; the crest's file (still without prefabParts) is exported again, the other left alone.
+        e.jobs, e.job_index, e.migrating = [], {}, set()
+        e.prefab_cache = {}
+        kept = ex.wheeled_types, ex.fix_aim, ex.fix_fitment
+        ex.wheeled_types, ex.fix_aim, ex.fix_fitment = lambda: set(), lambda r: False, lambda r: False
+        try:
+            e.load_vehicles()
+            e.replay_vehicle_requests()
+        finally:
+            ex.wheeled_types, ex.fix_aim, ex.fix_fitment = kept
+        queued = [(j[2], j[3].get('vehicleType'), j[3].get('replay')) for j in e.jobs]
+        check(group, 'the next start: nothing held, no check job, the crest\'s file queued straight from the kept folders',
+              not e.prefab_unchecked and queued == [('vehicle', 'italy:T_Crest', True)] and not e.stale_vehicles
+              and abs(os.path.getmtime(other) - stamp) < 1, (sorted(e.prefab_unchecked), queued))
     finally:
         ex.vehicle_descr, ex.parts_from_descr = saved
 
@@ -297,47 +354,86 @@ def recorder_checks(temp):
     b.arena.vehicles[b.enemy]['vehicleType'] = enemy
     b.entities[b.enemy] = rtb.make_vehicle(b.enemy, enemy)
     collisions = b.entities[b.enemy].appearance.collisions
-    asked = []
-    collisions.getParentPartIndex = lambda idx: asked.append(idx) or (3 if idx == 5 else None)
+    frame = rtb.Matrix(NS(angle=math.pi / 2, translation=(b.enemy * 10.0, 0.0, 0.0)))
+    # The stub's answers for the dynamic index 5 (review of d1b372b: what a crit's 'crash' state or a reused collision
+    # component could give): the crest 2.3 m over the chassis and 0.6 m back, the chassis frame itself (identity), a
+    # place 20 m off, a matrix of NaN; its parent the gun (3), none, or the hull (no slot there).
+    state = {'pose': 'crest', 'parent': 3}
+    poses = {'crest': (0.0, 2.3, -0.6), 'identity': (0.0, 0.0, 0.0), 'far': (0.0, 2.3, -20.0), 'nan': (float('nan'), 0.0, 0.0)}
+    asked, placed = [], []
+
+    def transform(idx):
+        if idx != 5: return rtb.Matrix(frame)
+        placed.append(idx)
+        return NS(angle=frame.angle, translation=frame.applyPoint(poses[state['pose']]))
+    collisions.getPartTransform = transform
+    collisions.getParentPartIndex = lambda idx: asked.append(idx) or (state['parent'] if idx == 5 else None)
     collisions.getBoundingBox = lambda idx: (V3(-0.4, -0.3, -1.3), V3(0.4, 0.2, 0))
     decoder = sys.modules['VehicleEffects'].DamageFromShotDecoder
     parse = decoder.parseHitPoint
     part_index = {'value': 5}
     decoder.parseHitPoint = staticmethod(lambda hit, c: (part_index['value'], 4, (0.2, 0.0, 0.0), (-0.2, 0.0, 0.0), 0, 2, 105.0))
+    calls = []
+    writer = recorder.writer
+
+    def shoot(target, attacker, idx, pose='crest', parent=3):
+        part_index['value'] = idx
+        state['pose'], state['parent'] = pose, parent
+        del asked[:], placed[:]
+        b.hit(target, attacker)
+        calls.append((len(asked), len(placed)))
     try:
         b.enter(events)
-        b.hit(b.enemy, b.me)                  # 1: on the crest, index 5
-        part_index['value'] = 1
-        b.hit(b.enemy, b.me)                  # 2: on the hull - the crest's pose recorded again
+        shoot(b.enemy, b.me, 5)                       # 1: on the crest, index 5
+        shoot(b.enemy, b.me, 1)                       # 2: on the hull - the crest's pose recorded again
+        shoot(b.enemy, b.me, 1, 'identity')           # 3: the remembered index gives the chassis frame: rejected, forgotten
+        shoot(b.enemy, b.me, 1)                       # 4: forgotten - not asked any more
+        shoot(b.enemy, b.me, 5, 'crest', 1)           # 5: a parent with no slot (the hull)
+        shoot(b.enemy, b.me, 5, 'nan')                # 6: a matrix of NaN
+        shoot(b.enemy, b.me, 5, 'far')                # 7: 20 m from the gun
+        shoot(b.enemy, b.me, 5, 'crest', None)        # 8: no parent given - the only slot, the pose checked
+        shoot(b.enemy, b.me, 1, 'crest', None)        # 9: remembered again, but the client names no parent: rejected
         # A vehicle with no slot: a contact above the static parts stays unsupported.
         plain = rtb.descriptor('usa:T_Plain')
         plain.gun.slotPrefabs, plain.hull.slotPrefabs, plain.turret.slotPrefabs, plain.chassis.slotPrefabs = [], [], [], []
         b.entities[b.ally] = rtb.make_vehicle(b.ally, plain)
         b.entities[b.ally].appearance.collisions.getParentPartIndex = lambda idx: 1
         part_index['value'] = 6
-        b.hit(b.ally, b.enemy)                # 3
-        writer = recorder.writer
+        b.hit(b.ally, b.enemy)                        # 10
         deadline = time.time() + 5
         while not writer.queue.empty() and time.time() < deadline: time.sleep(0.01)
         time.sleep(0.1)
         rows = rtb.read_jsonl(os.path.join(writer.folder, recorder.file + '.jsonl'))[0]
         hits = [r for r in rows if r.get('type') == 'hit']
-        check(group, 'three hits written', len(hits) == 3, len(hits))
-        if len(hits) == 3:
-            first, second, third = hits
-            part = [p for p in first['target']['parts'] if p['id'] == 5]
+        check(group, "ten hits written (a NaN pose costs no record)", len(hits) == 10, len(hits))
+        if len(hits) == 10:
+            crest = lambda h: [p for p in h['target']['parts'] if p['id'] == 5]
+            part = crest(hits[0])
             check(group, 'a contact on index 5: the crest part with its slot, prefab, parent and pose at the hit',
                   len(part) == 1 and part[0].get('name') == 'crest_module' and part[0].get('prefab') == PATH
-                  and part[0].get('parentPart') == 3 and len(part[0].get('transform') or []) == 16 and 'armor' not in part[0],
-                  part)
-            point = first['points'][0]
-            check(group, 'the contact is resolved and keeps what the collision says of it (parent, pose, box)',
-                  point.get('status') == 'resolved' and point.get('part') == 5 and point.get('parentPart') == 3
-                  and len(point.get('partTransform') or []) == 16 and point.get('partBounds'), point)
-            again = [p for p in second['target']['parts'] if p['id'] == 5]
+                  and part[0].get('parentPart') == 3 and near(part[0].get('transform')[12:15], [0.0, 2.3, -0.6], 1e-9)
+                  and 'armor' not in part[0], part)
+            point = hits[0]['points'][0]
+            check(group, 'the contact is resolved and keeps only its box: the part holds the parent and the pose (one copy)',
+                  point.get('status') == 'resolved' and point.get('part') == 5 and point.get('partBounds')
+                  and 'parentPart' not in point and 'partTransform' not in point, point)
+            check(group, 'the first contact asks the client for the parent and the pose once each', calls[0] == (1, 1), calls[0])
+            again = crest(hits[1])
             check(group, 'a later hit on the hull: the remembered index gives the crest its pose at that hit',
-                  len(again) == 1 and len(again[0].get('transform') or []) == 16 and second['points'][0].get('status') == 'resolved',
-                  [p['id'] for p in second['target']['parts']])
+                  len(again) == 1 and len(again[0].get('transform') or []) == 16 and hits[1]['points'][0].get('status') == 'resolved'
+                  and calls[1] == (1, 1), ([p['id'] for p in hits[1]['target']['parts']], calls[1]))
+            check(group, 'the remembered index answering the chassis frame (identity): no crest, the index forgotten',
+                  not crest(hits[2]) and not crest(hits[3]) and calls[3] == (0, 0), (calls[2], calls[3]))
+            for number, why in ((4, 'a parent with no slot'), (5, 'a matrix of NaN'), (6, 'a place 20 m from the gun')):
+                h = hits[number]
+                check(group, 'a contact on index 5 with ' + why + ': unsupported, no part, what the client gave kept on the point',
+                      not crest(h) and h['points'][0].get('status') == 'unsupported-part' and h['points'][0].get('partBounds')
+                      and calls[number] == (1, 1), (h['points'][0], calls[number]))
+            check(group, 'no parent given for a fresh contact: the only slot, its pose checked and taken',
+                  len(crest(hits[7])) == 1 and hits[7]['points'][0].get('status') == 'resolved', hits[7]['points'][0])
+            check(group, 'a remembered index whose parent the client no longer names: rejected',
+                  not crest(hits[8]) and calls[8] == (1, 1), calls[8])
+            third = hits[9]
             check(group, 'a vehicle without a slot: the contact above the static parts stays unsupported, no part added',
                   [p['id'] for p in third['target']['parts']] == [0, 1, 2, 3] and third['points'][0].get('status') == 'unsupported-part',
                   ([p['id'] for p in third['target']['parts']], third['points'][0].get('status')))

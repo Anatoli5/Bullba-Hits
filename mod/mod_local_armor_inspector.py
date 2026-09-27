@@ -271,7 +271,7 @@ def matrix_columns(matrix, root_inverse):
     return columns(matrix, root_inverse)
 
 
-def extra_part_info(idx, collisions, appearance, root, matrix):
+def extra_part_info(idx, collisions, appearance, root, matrix, probe=None):
     """What the client itself knows of a collision part beyond the static ones, for one contact on it.
 
     Read only with the calls the client makes for such an index (VehicleEffects.parseHitPoints and
@@ -279,9 +279,10 @@ def extra_part_info(idx, collisions, appearance, root, matrix):
     (docs/BACKLOG.md 39): a negative index is a wheel of a wheeled vehicle - the collision component's
     own part name and the compound model's node of that name, the frame the client lays the hit
     effect in; an index above maxStaticPartIndex is a CGF prefab (the CAV mod. 71 crest, the AS-XX
-    containers) linked by DynamicCollisionLinker - its parent part and getPartTransform. Both with the
-    part's bounding box. Each read on its own, so one that fails costs only its field. 'matrix' is
-    Math.Matrix; poses are column-major relative to the chassis, as the parts' transforms.
+    containers) linked by DynamicCollisionLinker - its parent part and getPartTransform, as prefab_probe
+    read them (`probe`; None: nothing more, the part itself carries them). Both with the part's bounding box.
+    Each read on its own, so one that fails costs only its field. 'matrix' is Math.Matrix; poses are
+    column-major relative to the chassis, as the parts' transforms.
     """
     info = {}
     try:
@@ -297,16 +298,9 @@ def extra_part_info(idx, collisions, appearance, root, matrix):
                 info['partTransform'] = matrix_columns(matrix(appearance.compoundModel.node(name)), root)
         except Exception:
             pass
-    elif idx > collisions.maxStaticPartIndex:
-        try:
-            parent = collisions.getParentPartIndex(idx)
-            if parent is not None: info['parentPart'] = int(parent)
-        except Exception:
-            pass
-        try:
-            info['partTransform'] = matrix_columns(matrix(collisions.getPartTransform(idx)), root)
-        except Exception:
-            pass
+    elif idx > collisions.maxStaticPartIndex and probe is not None:
+        if probe[0] is not None: info['parentPart'] = probe[0]
+        if probe[1] is not None: info['partTransform'] = probe[1]
     return info
 
 
@@ -354,40 +348,83 @@ def wheel_names_agree(names, parts):
 # only from a contact on it (DamageFromShotDecoder.getPartIndexByNetworkID). Such a contact is recorded on a part of that
 # index with its slot, parent and pose at the hit (collisions.getPartTransform - the call the client makes for it in
 # Vehicle.showDamageFromShot), and the index is remembered for the collision component: every later hit on that vehicle
-# records the part's pose too (one getPartTransform), whatever it strikes - the crest moves with the charges, the
-# containers when they open. Its model and armour come from the prefab on the export thread; nothing is read here.
+# records the part's pose too (one getParentPartIndex and one getPartTransform), whatever it strikes - the crest moves
+# with the charges, the containers when they open. Its model and armour come from the prefab on the export thread;
+# nothing is read here.
+# A pose is taken only when it can be the part's (review of d1b372b): the client names the slot's parent (for a
+# remembered index it must, and the same one), the matrix is finite and rigid, not the chassis frame itself (identity:
+# a prefab stands on the hull or the gun, never at the chassis origin) and its origin within PREFAB_REACH of the parent
+# part's. A crit that switches the prefab to its 'crash' state or a collision component at a reused address can leave
+# the index on something else; a remembered index that fails is forgotten, and no pose is ever made up. What the rule
+# of the page (ArmorInspectorData.prefabPose, `fit`) finds wrong with a pose that passes is the page's to reject.
 _PREFAB_INDEX = {}
+# Metres: the slot and the collider put the crest 0.6 m from its gun's origin and the containers 3.1 m from the hull's
+# (exporter.prefab_statics on the offline bench, 27.09); twice the larger, rounded up.
+PREFAB_REACH = 7.0
 
 
-def prefab_slot(descr, parent):
+def prefab_slot(descr, parent, strict=False):
     """(parent part index, slot, prefab path) of the target's prefab slot a dynamic collision part belongs to: the one slot
-    of its recorded parent's component, else the vehicle's only slot, else None (the contact then stays unsupported)."""
+    of its parent's component. The parent unknown (the client gave none): the vehicle's only slot, unless `strict` (a
+    remembered index); a parent the vehicle has no slot on: None - the contact then stays unsupported."""
     from local_armor_inspector.exporter import descriptor_slots
     found = descriptor_slots(descr)
-    own = [entry for entry in found if entry[0] == parent]
-    if len(own) == 1: return own[0]
-    return found[0] if len(found) == 1 else None
+    if parent is not None:
+        own = [entry for entry in found if entry[0] == parent]
+        return own[0] if len(own) == 1 else None
+    return found[0] if len(found) == 1 and not strict else None
 
 
-def prefab_part(idx, descr, collisions, root, matrix):
-    """The target's prefab part at collision index `idx`, posed now; None when it cannot be named or placed."""
+def prefab_probe(idx, collisions, root, matrix):
+    """(parent part index or None, pose columns or None) the client gives for a dynamic collision part - one
+    getParentPartIndex and one getPartTransform, each on its own (a failure costs only its half). A pose that is not 16
+    finite numbers is None: the record is JSON without NaN, and one NaN would cost the whole hit."""
     try:
         parent = collisions.getParentPartIndex(idx)
         parent = int(parent) if parent is not None else None
     except Exception:
         parent = None
-    slot = prefab_slot(descr, parent)
-    if slot is None: return None
     try:
         transform = matrix_columns(matrix(collisions.getPartTransform(idx)), root)
+        if any(value != value or value in (_INF, -_INF) for value in transform): transform = None
     except Exception:
-        return None
+        transform = None
+    return parent, transform
+
+
+_IDENTITY = (1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1)
+_INF = float('inf')
+
+
+def prefab_pose_valid(transform, parent_transform):
+    """Whether a recorded prefab pose can be the part's (see above): 16 numbers (finite: prefab_probe), a rigid turn, not the identity,
+    its origin within PREFAB_REACH of the parent part's (when that part's pose is known)."""
+    if not isinstance(transform, list) or len(transform) != 16: return False
+    columns = [transform[0:3], transform[4:7], transform[8:11]]
+    for a in range(3):
+        if abs(sum(x * x for x in columns[a]) - 1.0) > 1e-3: return False
+        for b in range(a + 1, 3):
+            if abs(sum(x * y for x, y in zip(columns[a], columns[b]))) > 1e-3: return False
+    if max(abs(x - y) for x, y in zip(transform, _IDENTITY)) < 1e-6: return False
+    if isinstance(parent_transform, list) and len(parent_transform) == 16:
+        if sum((transform[12 + k] - parent_transform[12 + k]) ** 2 for k in range(3)) > PREFAB_REACH ** 2: return False
+    return True
+
+
+def prefab_part(idx, descr, probe, poses, remembered=None):
+    """The target's prefab part at collision index `idx` from what the client gave for it (prefab_probe), posed at this
+    hit; None when it cannot be named or its pose is not one it can have. `poses`: {part id: transform} of the static parts
+    of this hit. `remembered`: the parent part the index was first found on - the client must name that one again."""
+    parent, transform = probe
+    if remembered is not None and parent != remembered: return None
+    slot = prefab_slot(descr, parent, strict=remembered is not None)
+    if slot is None or not prefab_pose_valid(transform, poses.get(slot[0])): return None
     return {'id':int(idx), 'name':slot[1], 'prefab':slot[2], 'parentPart':slot[0], 'transform':transform}
 
 
-def remember_prefab(collisions, descr, idx):
+def remember_prefab(collisions, descr, part):
     if len(_PREFAB_INDEX) >= 64: _PREFAB_INDEX.clear()
-    _PREFAB_INDEX[id(collisions)] = (str(descr.type.name), int(idx))
+    _PREFAB_INDEX[id(collisions)] = (str(descr.type.name), int(part['id']), int(part['parentPart']))
 
 
 def rest_transforms(descr):
@@ -1276,14 +1313,18 @@ class Recorder(object):
                     known.update(part['id'] for part in wheels)
             except Exception:
                 LOG.exception('Wheel parts unavailable; the hit is recorded without them')
-            # An armoured prefab a contact met before on this collision component: its pose at this hit.
+            # An armoured prefab a contact met before on this collision component: its pose at this hit. An index that
+            # no longer gives the part a pose it can have (prefab_part) is forgotten - never recorded, never guessed.
+            poses = dict((part['id'], part.get('transform')) for part in record['target']['parts'])
             try:
                 seen = _PREFAB_INDEX.get(id(collisions))
                 if seen is not None and seen[0] == str(descr.type.name) and seen[1] not in known:
-                    part = prefab_part(seen[1], descr, collisions, root, Math.Matrix)
+                    part = prefab_part(seen[1], descr, prefab_probe(seen[1], collisions, root, Math.Matrix), poses, seen[2])
                     if part:
                         record['target']['parts'].append(part)
                         known.add(part['id'])
+                    else:
+                        _PREFAB_INDEX.pop(id(collisions), None)
             except Exception:
                 LOG.exception('Prefab part unavailable; the hit is recorded without it')
             record['aim'] = list(vehicle.getAimParams())
@@ -1303,22 +1344,27 @@ class Recorder(object):
                     if resolved is None: continue
                     pos, direction, normal = resolved
                     point.update({'position':vector(pos), 'direction':vector(direction), 'normal':vector(normal)})
-                    # A contact on an armoured prefab (an index above the static parts): the part, posed at this hit.
+                    # A contact on an armoured prefab (an index above the static parts): the part, posed at this hit. The
+                    # client is asked for its parent and pose once (prefab_probe); the part keeps them, the point only
+                    # its box - one copy of the pose (review of d1b372b).
+                    probe = None
                     if idx not in known and idx > collisions.maxStaticPartIndex:
-                        part = prefab_part(idx, descr, collisions, root, Math.Matrix)
+                        probe = prefab_probe(idx, collisions, root, Math.Matrix)
+                        part = prefab_part(idx, descr, probe, poses)
                         if part:
                             record['target']['parts'].append(part)
                             known.add(idx)
-                            remember_prefab(collisions, descr, idx)
+                            remember_prefab(collisions, descr, part)
                     if idx not in known:
                         point['status'] = 'unsupported-part'
                         # A wheel or an armoured prefab: its name, parent and pose at impact, so the part can be
-                        # identified and placed later (docs/BACKLOG.md 39). Only for such a point - rare.
-                        point.update(extra_part_info(idx, collisions, vehicle.appearance, root, Math.Matrix))
+                        # identified and placed later (docs/BACKLOG.md 39). Only for such a point - rare. A prefab's
+                        # parent and pose are the ones just read (probe), not asked again.
+                        point.update(extra_part_info(idx, collisions, vehicle.appearance, root, Math.Matrix, probe))
                     else:
                         point['status'] = 'resolved'
-                        # A contact on a wheel or a prefab keeps what the collision says of it (its name or parent, box and
-                        # pose) - rare.
+                        # A contact on a wheel keeps what the collision says of it (its name, box and node pose); one on a
+                        # prefab its box - the part holds its parent and pose - rare.
                         if idx < 0 or idx > collisions.maxStaticPartIndex:
                             point.update(extra_part_info(idx, collisions, vehicle.appearance, root, Math.Matrix))
                 except Exception:

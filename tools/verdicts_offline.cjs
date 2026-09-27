@@ -159,6 +159,8 @@ function verdictModule(appSource, deps) {
     takeFunction(appSource, 'shellAt'),
     takeLiteral(appSource, /(var\s+verdictLines=[^\n]*)\n/, 'the verdict counters'),
     takeFunction(appSource, 'logPart'),
+    // The armoured prefab's place and fit on the line (review of d1b372b): verdictLine calls it.
+    takeFunction(appSource, 'prefabColumns'),
     takeFunction(appSource, 'verdictLine'),
     // The shooter's vehicle mode on the line (22.09): verdictLine calls it, so it has to come along.
     takeFunction(appSource, 'shellModeColumns'),

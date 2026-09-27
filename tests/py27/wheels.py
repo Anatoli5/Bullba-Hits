@@ -170,6 +170,18 @@ def exporter_checks(ex, records, temp):
             return {'type': 'hit', 'id': 'h', 'target': target, 'attacker': attacker, 'warnings': [],
                     'points': [{'status': 'resolved', 'part': -3, 'position': [-0.175, 0.2, 0.1]}]}
         battle = {'id': 'b1', 'clientVersion': 'client 1\n', 'hits': []}
+        # The publication never reads the XML itself, in the hangar too (review of d1b372b): the extras job does.
+        calls = []
+        e.armor.xml = lambda name: calls.append(name) or ET.fromstring(XML)
+        e.jobs, e.job_index, e.waiting, e.republish = [], {}, {}, set()
+        first = e.prepare_hit(raw(True), 0, battle)
+        e.prepare_hit(raw(True), 1, battle)
+        check(group, 'the hangar: the publication reads no XML, the wheels wait for the one extras job',
+              calls == [] and not any('wheel' in p for p in first['target']['parts'] if p['id'] < 0)
+              and [j[2] for j in e.jobs] == ['extras'], (list(calls), [j[2] for j in e.jobs]))
+        e.run_extras_job(e.take_job(0)[3])
+        check(group, 'the job reads the vehicle XML once a session per type and asks for the battle again',
+              calls == ['scripts/item_defs/vehicles/france/W_Test.xml'] and e.republish == set(['b1']), (list(calls), e.republish))
         hit = e.prepare_hit(raw(True), 0, battle)
         tw = [p for p in hit['target']['parts'] if p['id'] < 0]
         aw = [p for p in hit['attacker']['parts'] if p['id'] < 0]
@@ -183,10 +195,6 @@ def exporter_checks(ex, records, temp):
         old = e.prepare_hit(raw(False), 0, battle)
         check(group, 'a record without wheels is published as it was: four parts, no wheel',
               [p['id'] for p in old['target']['parts']] == [0, 1, 2, 3])
-        calls = []
-        e.armor.xml = lambda name: calls.append(name) or ET.fromstring(XML)
-        e.extras_cache = {}
-        e.prepare_hit(raw(True), 0, battle)
         e.prepare_hit(raw(True), 1, battle)
         check(group, 'the vehicle XML is read once a session per type', calls ==
               ['scripts/item_defs/vehicles/france/W_Test.xml'], calls)
@@ -230,9 +238,12 @@ def exporter_checks(ex, records, temp):
             raise ValueError('Armor definitions overridden by a mod')
         e.armor.xml = broken
         e.extras_cache = {}
+        e.jobs, e.job_index = [], {}
+        e.prepare_hit(raw(True), 0, battle)
+        e.run_extras_job(e.take_job(0)[3])
         for n in range(3):
             failed = e.prepare_hit(raw(True), n, battle)
-        check(group, 'an XML that does not read is tried once a session, not per hit', len(tries) == 1, tries)
+        check(group, 'an XML that does not read is tried once a session, not per hit', len(tries) == 1 and not e.jobs, tries)
         check(group, 'the wheels then go out without body, the contact stays resolved',
               not any('wheel' in p for p in failed['target']['parts'] if p['id'] < 0) and failed['points'][0]['status'] == 'resolved')
 
