@@ -78,6 +78,10 @@ def classify(row):
     # the gun part) is not a verdict on the main armour; the next point of the same hit carries that verdict.
     if server == 'Penetration_without_damage' and row.get('part') in ('chassis', 'gun', 'trackPair1'):
         return 'pass-through'
+    # A point on a wheel (part wheel<k-1>, BACKLOG 39) is the shell passing a screen that takes no HP: whatever the server
+    # says of the wheel (a crit, mostly), the verdict on the main armour belongs to the point after it.
+    if re.match(r'wheel\d+\Z', row.get('part') or ''):
+        return 'pass-through'
     # A module crit without HP damage (crit code 5/6 and 0 HP) against our "no penetration" is not a verdict on the
     # main armour either. Lines without hp= (pages before 22.09) keep their old class.
     if row.get('critCode') in ('5', '6') and row.get('hp') == '0' and server in CRIT_SERVER and ours.startswith('no-pen_'):

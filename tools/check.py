@@ -18,7 +18,8 @@ it before a build and refuses to build on red. Suites (they run side by side, ~1
   browser   tests/page/real_page.cjs: the REAL page in a local headless Chrome/Edge on synthetic data - the path
             matrix on the rendered DOM and a leak counter over 50 scene switches; tests/page/gpu_bounce.cjs: the real
             screen-armor.js composite on software WebGL against the CPU walk, pixel by pixel, on the bounced leg
-            (coincident plates, both directions), and the composite without the leg and with Soft lighting
+            (coincident plates, both directions), and the composite without the leg and with Soft lighting;
+            tests/page/gpu_wheels.cjs: the same for the wheels of a wheeled vehicle (synthetic, and the bench's EBRs)
   py27      tests/py27/*.py under the client's own python27.dll (the recorder through two battles, ...)
   installer (only with --installer) tests/installer_cleanup_check.py: a test build of the installer into a fake game
 
@@ -222,6 +223,12 @@ def check_browser(result):
     code, out, _ = run([exe, 'tests/page/gpu_bounce.cjs'], timeout=300)
     passed = result.passed
     harness_lines(result, 'gpu_bounce', code, out)
+    total = re.search(r'(\d+) checks, (\d+) failed', out)
+    if total: result.passed = passed + int(total.group(1)) - int(total.group(2))
+    # The wheels of a wheeled vehicle on the CPU walk and the GPU map (BACKLOG 39, 26.09): the same pattern.
+    code, out, _ = run([exe, 'tests/page/gpu_wheels.cjs'], timeout=300)
+    passed = result.passed
+    harness_lines(result, 'gpu_wheels', code, out)
     total = re.search(r'(\d+) checks, (\d+) failed', out)
     if total: result.passed = passed + int(total.group(1)) - int(total.group(2))
 

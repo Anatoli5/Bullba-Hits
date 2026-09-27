@@ -10,6 +10,7 @@
  * recorded outlines and the shot disc, whose server update is one tick stale (its origin 1.5 m from the shell's).
  * Its server stop lies 0.8 m along the hull from the recorded point: the flight is carried onto the point, the pose mark shows.
  * pm4: an event's vehicle whose record has the complete model and whose export does not (the gun's model missing).
+ * pm5 (26.09, BACKLOG 39): a wheeled vehicle, Whiskey, hit on its wheel -3; its export pm_whiskey carries the wheels too.
  *
  *   require('./fixture.cjs').write(folder)   // writes folder/data/**
  */
@@ -44,6 +45,16 @@ function box(min, max, material) {
   return {material: material, vertices: v, indices: f};
 }
 const translate = function (x, y, z) { return [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, y, z, 1]; };
+// A wheeled vehicle's wheels (BACKLOG 39): parts -1..-4 with the exporter's fields - no model file, the body from `wheel`
+// (web/local-data.js wheelModel), the rest place outside the tracks, the one material 'wheel': a screen of 5 or 10 mm.
+function wheelParts() {
+  const screen = function (mm) { return {wheel: {armor: mm, vehicleDamageFactor: 0, useHitAngle: false, mayRicochet: false, collideOnceOnly: true,
+    checkCaliberForRicochet: false, checkCaliberForHitAngleNorm: false, useArmorHomogenization: false, chanceToHitByProjectile: 1}}; };
+  return [[-1, 'WD_L1', -1.9, -2.4, 5], [-2, 'WD_R1', 1.9, -2.4, 5], [-3, 'W_L1', -1.9, 0, 10], [-4, 'W_R1', 1.9, 0, 10]].map(function (w) {
+    return {id: w[0], name: w[1], material: 'wheel', wheel: {radius: 0.55, width: 0.35, sides: 16}, transform: translate(w[2], 0.55, w[3]),
+            armor: screen(w[4]), armorSource: 'synthetic'};
+  });
+}
 // One set of four part models per vehicle size, shared by every vehicle of that size (as the exporter shares by hash).
 function partSet(scale) {
   const s = scale;
@@ -84,12 +95,13 @@ function write(folder) {
   }
   const VEHICLES = {30: {name: 'Papa', type: 'germany:Papa', scale: 1}, 31: {name: 'Romeo', type: 'germany:Romeo', scale: 1.15},
                     32: {name: 'Quebec', type: 'germany:Quebec', scale: 0.9}, 33: {name: 'Sierra', type: 'germany:Sierra', scale: 0.8},
-                    34: {name: 'Tango', type: 'germany:Tango', scale: 1.05}, 35: {name: 'Victor', type: 'germany:Victor_WT', scale: 1.1}};
+                    34: {name: 'Tango', type: 'germany:Tango', scale: 1.05}, 35: {name: 'Victor', type: 'germany:Victor_WT', scale: 1.1},
+                    36: {name: 'Whiskey', type: 'france:Whiskey', scale: 1, wheels: true}};
   const side = function (id, withAim) {
     const v = VEHICLES[id];
     const out = {name: v.name, type: v.type, nation: 'germany', level: 10, 'class': 'heavyTank', role: 'role_HT_break',
       gun: '105 mm single', gunName: '_105_single', gunDispersion: 0.00383, gunHeight: 2.15, gunHeightFrom: 'synthetic',
-      parts: parts(v.scale), worldTransform: translate(0, 0, 0)};
+      parts: parts(v.scale).concat(v.wheels ? wheelParts() : []), worldTransform: translate(0, 0, 0)};
     if (withAim) out.aim = AIM_BLOCK;
     return out;
   };
@@ -155,6 +167,12 @@ function write(folder) {
   const pm4hit = Object.assign(HIT('pm4-1', 30, 35, 'outgoing', T0 - 3500), {aim: [0.3, -0.05]});
   battles.push(Object.assign(BATTLE('pm4', 'Synthetic event', T0 - 3600, [pm4hit]),
     {roster: ROSTER.concat([{id: 35, name: 'Victor', type: 'germany:Victor_WT', team: 1, player: 'bot', maxHealth: 3000, defaultMaxHealth: 3000}])}));
+  // pm5 (BACKLOG 39): the player's shot on Whiskey's wheel -3 - the contact on its outer face, the shell going on inward.
+  const pm5hit = HIT('pm5-1', 30, 36, 'outgoing', T0 - 7100);
+  pm5hit.points = [{status: 'resolved', part: -3, effect: 5, hitType: 0, shellType: 2, shellKind: 'ARMOR_PIERCING', caliber: 105,
+    start: [-0.5, 0.2, 0.1], end: [0.5, 0.2, 0.1], position: [-0.175, 0.2, 0.1], direction: [1, 0, 0], normal: [-1, 0, 0], partName: 'W_L1'}];
+  battles.push(Object.assign(BATTLE('pm5', 'Synthetic plain', T0 - 7200, [pm5hit]),
+    {roster: ROSTER.concat([{id: 36, name: 'Whiskey', type: 'france:Whiskey', team: 1, player: 'bot2', maxHealth: 1400, defaultMaxHealth: 1400}])}));
   battles.forEach(function (b) { put('battles/' + b.id + '.js', 'battle:' + b.id, b); });
   put('index.js', 'index', {application: 'local.armor_inspector', version: 'synthetic', updatedAt: T0 + 9000,
     battles: battles.map(function (b) {
@@ -195,6 +213,10 @@ function write(folder) {
   const victor = EXPORT('pm_victor', 'germany:Victor_WT', 'Victor', 2600, 1.1);
   victor.parts.forEach(function (p) { if (p.name === 'gun') { delete p.modelKey; p.modelError = 'Collision model not found in client'; } });
   exports_.push(victor);
+  const whiskey = EXPORT('pm_whiskey', 'france:Whiskey', 'Whiskey', 1400, 1);
+  whiskey.parts = whiskey.parts.concat(wheelParts());
+  whiskey.wheelParts = 4;
+  exports_.push(whiskey);
   exports_.forEach(function (e) { put('vehicles/' + e.id + '.js', 'vehicle:' + e.id, e); });
   put('vehicles.js', 'vehicles', {application: 'local.armor_inspector', clientVersion: 'synthetic', updatedAt: T0,
     vehicles: exports_.map(function (e) {

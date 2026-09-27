@@ -140,6 +140,25 @@
     if(!models[key])models[key]=read('model:'+key).catch(function(e){delete models[key];throw e;});
     return models[key];
   }
+  // THE COLLISION BODY OF A WHEEL (BACKLOG 39, 26.09). A wheeled vehicle's wheel is a collision part of its own, id -k
+  // (the client's index maxStaticPartIndex - idx), and its body is procedural, not a model file: a prism of `sides` faces
+  // (16, measured on the recorded rim contacts) with its corners on `radius`, one of them on the part's +y axis, `width`
+  // along the axle (x), centred on the part's frame - the exporter writes those figures from the client's XML
+  // (exporter.wheel_shapes) and the one material the part's armour table has for it. Built here, where every scene gets
+  // its models, in the shape of a model file: outward winding, as the client's models have it. Cached by its figures.
+  var wheels=Object.create(null);
+  function wheelModel(part){
+    var w=part&&part.wheel,r=w&&Number(w.radius),h=w&&Number(w.width)/2,n=w&&Math.round(Number(w.sides)),material=part&&part.material;
+    if(!(r>0&&h>0&&n>=3&&n<=64)||typeof material!=='string'||!material)return null;
+    var key=[r,h,n,material].join('|');if(wheels[key])return wheels[key];
+    var vertices=[],indices=[],k,a,b;
+    // 0..n-1 the ring at -x, n..2n-1 the ring at +x; the angle runs from +y towards +z.
+    for(k=0;k<n;k++){a=2*Math.PI*k/n;vertices.push([-h,r*Math.cos(a),r*Math.sin(a)]);}
+    for(k=0;k<n;k++){a=2*Math.PI*k/n;vertices.push([h,r*Math.cos(a),r*Math.sin(a)]);}
+    for(k=0;k<n;k++){b=(k+1)%n;indices.push(k,n+b,n+k,k,b,n+b);}
+    for(k=1;k<n-1;k++)indices.push(n,n+k,n+k+1,0,k+1,k);
+    return (wheels[key]={kind:'client-shot-collision',procedural:'wheel',groups:[{material:material,vertices:vertices,indices:indices}]});
+  }
   // Models for the target of one hit. The hit need not be in the battle's list: the shooter/model swap
   // builds a synthetic hit whose target is the recorded attacker, and its parts load exactly the same way.
   function sceneFor(battle,hit){
@@ -147,6 +166,14 @@
     var result={hit:hit,models:{},warnings:(battle.warnings||[]).concat(hit.warnings||[])},parts=(hit.target||{}).parts||[];
     // A vehicle browsed without its model (the page's ttxRecord, 24.09): no geometry by design - its words, no warning.
     if(hit.target&&hit.target.noModel){result.geometryIncomplete=true;result.geometryError=String(hit.target.noModel);return Promise.resolve(result);}
+    // A wheel without its body (a record of another client version: the exporter reads only the running client's XML) is
+    // left out with a word, never withholding the scene: the vehicle is drawn as before the wheels were parts.
+    parts=parts.filter(function(part){
+      if(!(part&&part.id<0))return true;
+      var body=part.transform?wheelModel(part):null;
+      if(body)result.models[String(part.id)]=body;else result.warnings.push((part.name||'Wheel')+': wheel body not saved');
+      return false;
+    });
     return Promise.all(parts.map(function(part){
       if(part.modelError||!part.modelKey||!part.transform){result.warnings.push(part.name+': '+(part.modelError||'Model or part position not saved'));return;}
       return model(part.modelKey).then(function(data){
@@ -172,5 +199,5 @@
   // expandBattle is published so the offline tools that read a battle file straight from disk
   // (tools/check_shot_selection.cjs, tests/test_ballistics.cjs) use this one
   // reader instead of a second copy of the rules.
-  window.ArmorInspectorData={receive:receive,index:function(){return read('index');},battle:function(id){return read('battle:'+id);},vehicles:function(){return read('vehicles');},vehicle:function(id,once){return read('vehicle:'+id,once?RETRIES:0);},ttx:function(id){return read('ttx:'+id);},ttxSweep:function(){return read('ttxSweep');},modelsSweep:function(){return read('modelsSweep');},scene:scene,sceneFor:sceneFor,expandBattle:expandBattle};
+  window.ArmorInspectorData={receive:receive,index:function(){return read('index');},battle:function(id){return read('battle:'+id);},vehicles:function(){return read('vehicles');},vehicle:function(id,once){return read('vehicle:'+id,once?RETRIES:0);},ttx:function(id){return read('ttx:'+id);},ttxSweep:function(){return read('ttxSweep');},modelsSweep:function(){return read('modelsSweep');},scene:scene,sceneFor:sceneFor,wheelModel:wheelModel,expandBattle:expandBattle};
 }());

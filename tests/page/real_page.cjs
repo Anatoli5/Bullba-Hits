@@ -312,6 +312,31 @@ async function main() {
     }
     await loop(false);
     await loop(true);
+    // Wheels (BACKLOG 39, 26.09): a hit on a wheeled vehicle's wheel, and that vehicle browsed. The wheels are parts -1..-4 of
+    // the scene, each a procedural body (web/local-data.js wheelModel, 60 triangles), the contact on -3 lies on its wheel, and
+    // its verdict meets the wheel first as a screen at its nominal 10 mm and goes on; the details name it Wheel 3.
+    const WHEELS = `(() => { const v = window.__bullbaViewers[window.__bullbaViewers.length - 1], parts = {};
+      ((v.engine && v.engine.triangles) || []).forEach((t) => { if (t.part < 0) parts[t.part] = (parts[t.part] || 0) + 1; });
+      const r = v.engine && v.shotPoints ? v.pointVerdicts(ArmorBallistics.shell('ARMOR_PIERCING', 250, 105)) : [], first = r[0] && r[0].result;
+      // The parts' own colours with the map off (the wheels take the chassis'), then the map back.
+      let plain = true; try { const map = v.heatmap; v.configure(v.shell, false, v.palette, v.mapMode); v.configure(v.shell, map, v.palette, v.mapMode); } catch (e) { plain = String(e); }
+      return {parts: parts, points: (v.shotPoints || []).map((p) => p.part), reason: first && first.reason, plain: plain,
+        layers: ((first && first.layers) || []).map((l) => [l.part, l.material, l.nominal, +l.effective.toFixed(3), l.main]),
+        details: [].slice.call(document.querySelectorAll('#details > div')).map((d) => d.textContent).join(' | ')}; })()`;
+    for (const fun of [false, true]) {
+      await ev('__bt.act.fun(' + fun + ')'); await ev('__bt.settle()');
+      await step("battle('pm5')");
+      expectScene('a hit on a wheel (pm5)', fun, {model: true, shooter: true, hp: '1 400 / 1 400', source: HP.ROSTER}, await step('hit(0)'));
+      const onWheel = await ev(WHEELS), four = (w) => [-1, -2, -3, -4].every((id) => w.parts[id] === 60) && Object.keys(w.parts).length === 4;
+      ok('wheels, ⌖ ' + (fun ? 'on' : 'off') + ': the scene of the hit has the four wheels, the contact on -3, its verdict through the wheel as a screen',
+         four(onWheel) && onWheel.points.indexOf(-3) >= 0 && onWheel.reason === 'penetration' && JSON.stringify(onWheel.layers[0]) === '[-3,"wheel",10,10,false]'
+         && onWheel.layers.length >= 2 && onWheel.layers[onWheel.layers.length - 1][4] === true && onWheel.details.indexOf('Wheel 3') >= 0 && onWheel.plain === true, JSON.stringify(onWheel).slice(0, 400));
+      await step('modelTile()');
+      expectScene('the wheeled vehicle browsed', fun, {model: true, shooter: true, hp: '1 400 / 1 400', source: HP.OWN}, await step("list('pm_whiskey')"));
+      const browsed = await ev(WHEELS);
+      ok('wheels, ⌖ ' + (fun ? 'on' : 'off') + ': the browsed export draws its four wheels', four(browsed), JSON.stringify(browsed.parts));
+      await step("side('battles')"); await step("battle('pm')"); await step('hit(0)');
+    }
     // A target picked by hand inherits the view (user, 26.09): Papa shoots, Papa -> Quebec -> Papa as the model by clicks
     // in the Vehicles list. The camera, the pose and the shooter's shell carry over, and Papa comes back as he was.
     await ev('__bt.act.fun(false)'); await ev('__bt.settle()');

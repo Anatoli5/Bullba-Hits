@@ -9,6 +9,7 @@ from __future__ import absolute_import
 import copy
 import glob
 import hashlib
+import io
 import json
 import logging
 import math
@@ -1590,6 +1591,137 @@ def static_parts(descr):
     return parts
 
 
+# THE WHEELS OF A WHEELED VEHICLE (BACKLOG 39, 26.09; docs/KNOWLEDGE.md 9). Collision parts -1 ... -N after the static
+# ones: DamageFromShotDecoder.convertComponentIndex turns an index above maxStaticPartIndex into maxStaticPartIndex - idx,
+# Vehicle.calcMaxComponentIdx counts generalWheelsAnimatorConfig.getNonTrackWheelsCount() of them, and the client reads a
+# wheel's armour by the collision's own name alone (vehicle_utils.getMatinfo: chassis.wheelsArmor[getPartName(idx)], the
+# common table otherwise). Part -k is the wheel with XML index k-1: the recorder's partName of the two named contacts in
+# the records (-4 W_R1, -1 WD_L1 of the EBR 105) and the three earlier ones. The index is the client's own: the wheel's
+# material is read with it (_readArmor(..., index) names its extra 'wheel<index>Health').
+# The body is procedural (proceduralCollisionBody, the 220 collision wheels of the 35 wheeled chassis all have it): a
+# 16-sided prism, radius at its corners, `geometry/width` along the axle, a corner on the part's +y axis - the two rim
+# contacts' normals lie exactly on that grid (168.75 and -33.75 degrees, 1e-7) and 0.08 mm off its apothem. Its frame
+# carries no spin (a contact's direction through the spinning node would climb at 54 degrees). The wheel sits at its
+# `wheelPos` (Wheel.position, what the client reads for it), static in the chassis frame: the recorded node poses fit no
+# rest structure, so no pose at impact is taken from them. geometry/pivotXOffset is not a shift of the body: taken as one
+# it would put the AMD 178B's front wheels 0.24 m inside the hull; 107 of the 150 wheels' visual nodes sit exactly at
+# wheelPos, the EBR 105's middle four 0.1 m further out (docs/KNOWLEDGE.md 9).
+WHEEL_EXTRA = re.compile(r'^wheel(\d+)Health\Z')
+WHEEL_SIDES = 16
+_wheel_components = {}
+_wheel_rows = {}
+
+
+class WheelArmor(object):
+    """One wheel's material as armor.live_materials reads a component: its own material over the common table, as
+    vehicle_utils.getMatinfo falls back to it. Kept per material (wheel_armor) so the quick check of live_materials holds."""
+    __slots__ = ('material', 'materials')
+
+    def __init__(self, material):
+        self.material = material
+        self.materials = {material.kind: material}
+
+
+def wheel_armor(material):
+    """The armour table of one wheel from its live MaterialInfo (chassis.wheelsArmor[name])."""
+    from .armor import live_materials
+    entry = _wheel_components.get(id(material))
+    if entry is None or entry.material is not material:
+        if len(_wheel_components) >= 512: _wheel_components.clear()
+        entry = _wheel_components[id(material)] = WheelArmor(material)
+    return live_materials(entry)
+
+
+def wheel_parts(descr, armor_source='live vehicle descriptor'):
+    """[{id, name, material, armor, armorSource}] of every wheel that is a collision part, -1 first; [] for any other vehicle.
+
+    From the descriptor alone (chassis.wheelsArmor, read by the client only for the wheels with an armour section - the
+    nonTrack ones): the recorder writes them for both sides of a hit, the vehicle export for its file. The body and the
+    place (fill_wheels) come from the vehicle's XML on the export thread, which the game thread never reads.
+    """
+    try:
+        armour = descr.chassis.wheelsArmor
+    except Exception:
+        return []
+    if not armour:
+        return []
+    # The order and names are the chassis' own: kept per wheelsArmor dictionary (the same entries), so a hit pays only the
+    # quick check of each wheel's table (0.06 ms for the EBR 105's eight on the offline stand before, the rows each time).
+    cached = _wheel_rows.get(id(armour))
+    if cached is not None and cached[0] is armour and cached[1] == armour:
+        rows = cached[2]
+    else:
+        try:
+            from material_kinds import NAMES_BY_IDS
+        except Exception:
+            NAMES_BY_IDS = {}
+        rows = []
+        for name, material in armour.items():
+            extra = getattr(material, 'extra', None)
+            if not isinstance(extra, (str, TEXT_TYPE)): extra = getattr(extra, 'name', '')
+            match = WHEEL_EXTRA.match(str(extra or ''))
+            if match:
+                kind = NAMES_BY_IDS.get(getattr(material, 'kind', None))
+                rows.append((int(match.group(1)), str(name), material, str(kind) if kind else None))
+        rows.sort(key=lambda row: row[0])
+        if len(_wheel_rows) >= 256: _wheel_rows.clear()
+        _wheel_rows[id(armour)] = (armour, dict(armour), rows)
+    parts = []
+    for index, name, material, kind in rows:
+        part = {'id':-(index+1), 'name':name}
+        if kind: part['material'] = kind
+        try:
+            part['armor'] = wheel_armor(material)
+            part['armorSource'] = armor_source
+        except Exception:
+            pass
+        parts.append(part)
+    return parts
+
+
+def wheel_shapes(tree, chassis_name):
+    """{name: {'index', 'wheel': {radius, width, sides}, 'transform'}} of the collision wheels of one chassis of a vehicle
+    XML (the client's own file, ArmorCatalog.xml): nonTrack wheels with a procedural body, as chassis_readers reads them -
+    `radius` or else `geometry/radius`, `wheelPos` - and the width the native body takes. A wheel short of any of them is
+    left out, never guessed."""
+    shapes = {}
+    chassis = tree.find('chassis/' + chassis_name) if chassis_name else None
+    wheels = chassis.find('wheels') if chassis is not None else None
+    if wheels is None:
+        return shapes
+    flag = lambda node, key: (node.findtext(key) or '').strip().lower() == 'true'
+    for node in wheels.findall('wheel'):
+        try:
+            if not flag(node, 'nonTrack') or not flag(node, 'proceduralCollisionBody'): continue
+            name = (node.findtext('name') or '').strip()
+            index = int((node.findtext('index') or '').strip())
+            radius = float(node.findtext('radius') if node.find('radius') is not None else node.findtext('geometry/radius'))
+            width = float(node.findtext('geometry/width'))
+            position = [float(x) for x in node.findtext('wheelPos').split()]
+            if not name or len(position) != 3 or not (radius > 0 and width > 0): continue
+        except (TypeError, ValueError, AttributeError):
+            continue
+        shapes[name] = {'index':index, 'wheel':{'radius':radius, 'width':width, 'sides':WHEEL_SIDES},
+                        'transform':translation_columns(position)}
+    return shapes
+
+
+def fill_wheels(vehicle, shapes):
+    """Give each wheel part of a vehicle block (id < 0, no body yet) its body and its rest place from wheel_shapes, when the
+    XML's wheel of that name has the index the part stands for. Returns how many were filled; the rest stay as recorded."""
+    filled = 0
+    for part in (vehicle or {}).get('parts') or []:
+        if not isinstance(part, dict) or not isinstance(part.get('id'), int) or part['id'] >= 0 or 'wheel' in part:
+            continue
+        shape = shapes.get(part.get('name'))
+        if not shape or shape['index'] != -part['id']-1:
+            continue
+        part['wheel'] = dict(shape['wheel'])
+        part['transform'] = list(shape['transform'])
+        filled += 1
+    return filled
+
+
 def translation_columns(offset):
     """The column-major layout the recorder's matrix_columns writes, without rotation.
 
@@ -2896,6 +3028,9 @@ class Exporter(object):
             part.pop('modelKey', None)
             part.pop('modelPending', None)
             part.pop('modelError', None)
+            # A wheel (id < 0) has no model file and no resource: its body is procedural (fill_wheels), its armour live.
+            if isinstance(part.get('id'), int) and part['id'] < 0 and 'resource' not in part:
+                continue
             try:
                 if extract:
                     key, error = self.model_extract(part['resource'], client_version)
@@ -2932,6 +3067,32 @@ class Exporter(object):
                     # armour for an old battle (comparisonArmor) had no reader left, and building it
                     # meant a synchronous model extraction inside publishing. It is gone.
 
+    def wheel_shapes(self, type_name, chassis_name):
+        """wheel_shapes of one chassis of the running client, read once a session per type and chassis (export thread)."""
+        cache = getattr(self, 'wheel_cache', None)
+        if cache is None: cache = self.wheel_cache = {}
+        key = (str(type_name), str(chassis_name))
+        if key not in cache:
+            if not re.match(r'^[a-z]+:[A-Za-z0-9_-]+\Z', key[0]): raise ValueError('Invalid vehicle type')
+            nation, name = key[0].split(':')
+            if len(cache) >= 256: cache.clear()
+            cache[key] = wheel_shapes(self.armor.xml('scripts/item_defs/vehicles/'+nation+'/'+name+'.xml'), key[1])
+        return cache[key]
+
+    def fix_wheels(self, vehicle):
+        """Body and rest place for the wheel parts of one vehicle block that has any without them (the recorder's). Its own
+        descriptor names the type and chassis; a failure leaves the parts as recorded - the page then shows no wheel."""
+        parts = (vehicle or {}).get('parts') if isinstance(vehicle, dict) else None
+        if not parts or not any(isinstance(p, dict) and isinstance(p.get('id'), int) and p['id'] < 0 and 'wheel' not in p
+                                for p in parts):
+            return 0
+        try:
+            descr = vehicle_descr(vehicle['compactDescriptor'])
+            return fill_wheels(vehicle, self.wheel_shapes(descr.type.name, descr.chassis.name))
+        except Exception:
+            LOG.exception('Wheel bodies unavailable; the wheels are published without them')
+            return 0
+
     def reset_prepared(self):
         self.prepared_hits = [None] * len((self.current or {}).get('hits') or [])
         self.prepared_models = {}
@@ -2958,6 +3119,10 @@ class Exporter(object):
         # Only a battle of the running client: its rebuilt descriptor and extracted model are the recorded ones.
         if canonical(battle.get('clientVersion') or '') == self.version:
             fix_extra_parts(hit)
+            # The wheels the recorder wrote (a record before them has none: old data stays as it is) get their body and
+            # rest place from this client's XML - the same version's, as for the models.
+            for side in ('target', 'attacker'):
+                self.fix_wheels(hit.get(side))
         fix_shells(hit)
         try:
             stamp_aim_origin(hit, raw, battle)
@@ -3520,6 +3685,8 @@ class Exporter(object):
         read: its references are then unknown and setup must not prune.
         """
         complete = True
+        # Files of wheeled vehicles written before the wheels, by type: replay_vehicle_requests exports them again.
+        self.stale_vehicles = {}
         for path in sorted(glob.glob(os.path.join(self.folder, 'data', 'vehicles', '*.js'))):
             try:
                 record = read_data_file(path)
@@ -3547,6 +3714,19 @@ class Exporter(object):
                             stale = True
                         else:
                             record['staticParts'] = len(record['parts'])
+                            filled = True
+                    except Exception:
+                        pass
+                # Exported before the wheels were parts (docs/BACKLOG.md 39): the same once-only check. A wheeled
+                # vehicle is exported again right after this - by the replay of its request, or of this file itself
+                # when no request names it (a sweep's, a hangar's) - every other file is marked and written back.
+                if record.get('parts') and 'wheelParts' not in record and not stale:
+                    try:
+                        if wheel_parts(vehicle_descr(record['compactDescriptor'])):
+                            stale = True
+                            self.stale_vehicles[str(record.get('type') or '')] = record
+                        else:
+                            record['wheelParts'] = 0
                             filled = True
                     except Exception:
                         pass
@@ -3595,10 +3775,9 @@ class Exporter(object):
         derived. Deduplication skips the ones that are already current.
         """
         path = os.path.join(self.folder, 'vehicles', 'exports.jsonl')
-        if not os.path.isfile(path): return
         requests = {}
         try:
-            with open(path, 'rb') as stream:
+            with open(path, 'rb') if os.path.isfile(path) else io.BytesIO() as stream:
                 for number in range(100001):
                     line = stream.readline(1024*1024+1)
                     if not line: break
@@ -3617,6 +3796,14 @@ class Exporter(object):
         except Exception:
             LOG.exception('Vehicle request log unreadable; exported vehicles are kept as they are')
             return
+        # A wheeled vehicle's file from before the wheels (load_vehicles) that no request names - the model sweep's, or one
+        # whose request line is gone - is exported again from the file itself, with its own source: once, as the next start
+        # finds it with its wheels.
+        for type_name, record in sorted((getattr(self, 'stale_vehicles', None) or {}).items()):
+            if type_name and type_name not in requests and record.get('compactDescriptor'):
+                requests[type_name] = {'vehicleType':type_name, 'compactDescriptor':record['compactDescriptor'],
+                                       'source':record.get('source'), 'identity':dict((key, record.get(key)) for key in
+                                       ('name', 'level', 'class', 'role', 'nation'))}
         for type_name in sorted(requests):
             try:
                 self.export_vehicle(requests[type_name], replay=True)
@@ -3728,6 +3915,17 @@ class Exporter(object):
             # Every static collision part is listed (static_parts); the count also tells load_vehicles
             # that this file needs no check for a missing extra track pair.
             record['staticParts'] = len(record['parts'])
+            # Then the wheels (BACKLOG 39): only those that got their body; the count tells load_vehicles this file has
+            # been written knowing them.
+            wheels = {'parts':wheel_parts(descr, 'client vehicle descriptor')}
+            if wheels['parts']:
+                try:
+                    fill_wheels(wheels, self.wheel_shapes(descr.type.name, descr.chassis.name))
+                except Exception:
+                    LOG.exception('Wheel bodies unavailable for %s', type_name)
+            wheels = [part for part in wheels['parts'] if 'wheel' in part]
+            record['parts'].extend(wheels)
+            record['wheelParts'] = len(wheels)
             self.publish_vehicle_parts(record['parts'], record, self.version, extract=True)
         except Exception:
             record['parts'] = []

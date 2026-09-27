@@ -53,6 +53,9 @@
   var AIM_BALK={color:0xfb8580,opacity:1},AIM_BALK_STEP=150;
   function linear(color){return color.map(function(c){return c<=.04045?c/12.92:Math.pow((c+.055)/1.055,2.4);});}
   var baseColors=[[.38,.46,.54],[.65,.73,.8],[.75,.83,.87],[.55,.65,.72]].map(linear);
+  // A part's own colour: the chassis', hull's, turret's, gun's; the outer track pair (part 4) and the wheels (-1..-N, BACKLOG 39)
+  // are running gear and take the chassis'.
+  function partColor(part){return baseColors[part>0?part%4:0];}
   function externalLayer(t){return t.part===0||!!(t.armor&&Number.isFinite(t.armor.vehicleDamageFactor)&&t.armor.vehicleDamageFactor<=1e-5);}
   function Viewer(container) {
     var self = this, T = THREE;
@@ -402,7 +405,7 @@
     var self=this,attribute=this.trackMesh.geometry.attributes.color,buffer=attribute.array,map=this.heatmap&&!this.look;
     this.trackTriangles.forEach(function(t,i){
       var opacity=map?self.trackOpacity:1;
-      var color=self.look?self.lookColor(t,i+LOOK_TRACKS):map?baseColors[0]:baseColors[t.part%4];
+      var color=self.look?self.lookColor(t,i+LOOK_TRACKS):map?baseColors[0]:partColor(t.part);
       for(var j=0;j<3;j++){var offset=(i*3+j)*4;for(var k=0;k<3;k++)buffer[offset+k]=color[k];buffer[offset+3]=opacity;}
     });
     attribute.needsUpdate=true;
@@ -1346,7 +1349,7 @@
     var key=this.look?'look:'+this.look.kind+':'+this.look.part:this.heatmap?'neutral':'parts';if(this.paintedKey===key)return;
     var buffer=this.paintMesh.geometry.attributes.color.array;
     for(var n=0;n<this.samples.length;n++){
-      var color=this.look?this.lookColor(this.samples[n],n):this.heatmap?baseColors[0]:baseColors[this.samples[n].part%4];
+      var color=this.look?this.lookColor(this.samples[n],n):this.heatmap?baseColors[0]:partColor(this.samples[n].part);
       for(var j=0;j<3;j++)for(var k=0;k<3;k++)buffer[n*9+j*3+k]=color[k];
     }
     this.paintedKey=key;this.paintMesh.geometry.attributes.color.needsUpdate=true;

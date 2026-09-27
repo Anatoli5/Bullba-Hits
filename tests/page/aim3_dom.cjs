@@ -7566,10 +7566,13 @@ settle(20).then(function () {
        r.effective - without.effective === 20 && without.layers.length === 2, '(' + r.effective + ' vs ' + without.effective + ')');
     ok('outer track: the Statistics log names part 4 trackPair1 (tools/verdicts_offline.cjs reads this literal)',
        appSrc.indexOf("partNames=['chassis','hull','turret','gun','trackPair1']") !== -1);
-    ok('outer track: the hit details call a contact on part 4 the outer track, and an unknown part by its number',
-       appSrc.indexOf("['Chassis','Hull','Turret','Gun','Outer track'][point.part]||'Part '+point.part") !== -1);
-    ok('outer track: the viewer colours part 4 as the chassis (part % 4) and puts it with the tracks (vehicleDamageFactor 0)',
-       viewerSrc.indexOf('baseColors[t.part%4]') !== -1 && viewerSrc.indexOf('function externalLayer(t){return t.part===0||') !== -1);
+    // Wheels (BACKLOG 39, 26.09): a wheel is part -k, 'Wheel k' in the details and wheel<k-1> in the Statistics log.
+    ok('outer track: the hit details call a contact on part 4 the outer track, a wheel Wheel k, and an unknown part by its number',
+       appSrc.indexOf("var PART_NAMES=['Chassis','Hull','Turret','Gun','Outer track'];") !== -1 && appSrc.indexOf("detail('Point on the model',point?partLabel(point.part):") !== -1
+       && appSrc.indexOf("function partLabel(id){return id<0?'Wheel '+(-id):PART_NAMES[id]||'Part '+id;}") !== -1
+       && appSrc.indexOf("' part='+(v.part<0?'wheel'+(-v.part-1):partNames[v.part]||v.part)") !== -1);
+    ok('outer track: the viewer colours part 4 and the wheels as the chassis and puts them with the tracks (vehicleDamageFactor 0)',
+       viewerSrc.indexOf('function partColor(part){return baseColors[part>0?part%4:0];}') !== -1 && viewerSrc.indexOf('function externalLayer(t){return t.part===0||') !== -1);
   });
 }).then(function () {
   if (RELOAD) return;   // the S4 child page checks the stored settings only

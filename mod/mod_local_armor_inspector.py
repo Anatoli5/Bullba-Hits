@@ -310,6 +310,33 @@ def extra_part_info(idx, collisions, appearance, root, matrix):
     return info
 
 
+_WHEEL_NAMES = {}
+
+
+def wheel_parts_checked(descr, collisions):
+    """exporter.wheel_parts of a hit's target, only when its collision agrees with them: as many wheels as the client
+    counts (generalWheelsAnimatorConfig.getNonTrackWheelsCount, Vehicle.calcMaxComponentIdx) and part -k under the name of
+    the wheel of index k-1 (collisions.getPartName, the lookup the client's getMatinfo makes). The names are asked once per
+    collision component and type; the cache holds no game object (a reused address meets another type's names and fails).
+    Otherwise [] - a contact on a wheel then stays 'unsupported-part', as before."""
+    from local_armor_inspector.exporter import wheel_parts
+    parts = wheel_parts(descr)
+    if not parts: return []
+    key = (id(collisions), str(descr.type.name))
+    names = _WHEEL_NAMES.get(key)
+    if names is None:
+        try:
+            count = int(descr.chassis.generalWheelsAnimatorConfig.getNonTrackWheelsCount())
+            names = tuple(str(collisions.getPartName(-k) or '') for k in range(1, count+1))
+        except Exception:
+            names = ()
+        if len(_WHEEL_NAMES) >= 64: _WHEEL_NAMES.clear()
+        _WHEEL_NAMES[key] = names
+    if len(names) != len(parts) or any(-part['id'] > len(names) or names[-part['id']-1] != part['name'] for part in parts):
+        return []
+    return parts
+
+
 def rest_transforms(descr):
     """Collision-part transforms of a vehicle descriptor in its rest pose.
 
@@ -1055,6 +1082,13 @@ class Recorder(object):
                             part['error'] = 'Part model or transform unavailable'
                             record['warnings'].append('Shooter part unavailable: '+name)
                         parts.append(part)
+                    # His wheels, from his descriptor alone (no collision of his to ask): the rest place is added on the
+                    # export thread, as for the target's.
+                    try:
+                        from local_armor_inspector.exporter import wheel_parts
+                        parts.extend(wheel_parts(attacker))
+                    except Exception:
+                        pass
                     record['attacker']['parts'] = parts
                     record['attacker']['partsFrom'] = 'rest pose'
                 except Exception:
@@ -1180,6 +1214,15 @@ class Recorder(object):
             known = set(part['id'] for part in record['target']['parts'])
             if collisions.maxStaticPartIndex >= len(known):
                 record['warnings'].append(EXTRA_PARTS_WARNING)
+            # The wheels of a wheeled vehicle, parts -1 ... -N (exporter.wheel_parts; their body and rest place are added
+            # on the export thread). Only when the collision itself has them under these names (wheel_names).
+            try:
+                wheels = wheel_parts_checked(descr, collisions)
+                if wheels:
+                    record['target']['parts'].extend(wheels)
+                    known.update(part['id'] for part in wheels)
+            except Exception:
+                LOG.exception('Wheel parts unavailable; the hit is recorded without them')
             record['aim'] = list(vehicle.getAimParams())
             for hit in hitPoints:
                 point = {'status':'unresolved'}
@@ -1202,7 +1245,10 @@ class Recorder(object):
                         # A wheel or an armoured prefab: its name, parent and pose at impact, so the part can be
                         # identified and placed later (docs/BACKLOG.md 39). Only for such a point - rare.
                         point.update(extra_part_info(idx, collisions, vehicle.appearance, root, Math.Matrix))
-                    else: point['status'] = 'resolved'
+                    else:
+                        point['status'] = 'resolved'
+                        # A contact on a wheel keeps what the collision says of it (its name, box and node) - rare.
+                        if idx < 0: point.update(extra_part_info(idx, collisions, vehicle.appearance, root, Math.Matrix))
                 except Exception:
                     LOG.exception('Hit point could not be decoded')
         except Exception:

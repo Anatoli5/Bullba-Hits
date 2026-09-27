@@ -347,7 +347,13 @@ def snapshot_refs(hit):
                     poses.append(None)
                     continue
                 body = dict(part)
-                poses.append(body.pop('transform', None))
+                pose = body.pop('transform', None)
+                # A wheel (id < 0) sits at its rest place in the chassis frame (exporter.fill_wheels): its pose belongs
+                # to the configuration, so it stays in the static part and the hit's own poses get a null for it.
+                if pose is not None and isinstance(part.get('id'), int) and part['id'] < 0 and 'wheel' in part:
+                    body['transform'] = pose
+                    pose = None
+                poses.append(pose)
                 armor = body.pop('armor', None)
                 if isinstance(armor, dict):
                     # Materials keep the 0.7.17 key space: the full content hash, and no

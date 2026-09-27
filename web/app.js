@@ -5875,7 +5875,7 @@
   var verdictLines=0,verdictQueue=[],verdictDone={},verdictTimer=null,verdictBusy=false;
   function verdictLine(battleId,hit,v,shell,mode){var r=v.result||{},chance=r.chance;
     var ours=r.reason==='ricochet'?'ricochet':chance===null||chance===undefined?(r.reason||'none'):(chance>=50?'pen':'no-pen')+'_'+chance+'%';
-    console.info('Bullba Hits verdict: battle='+battleId+' hit='+hit.id+' point='+v.index+' part='+(partNames[v.part]||v.part)+' server='+String(effects[v.effect]||v.effect).replace(/ /g,'_')+' ours='+ours+' angle='+(r.angle!=null?Math.round(r.angle):'-')+' eff='+(r.effective!=null?Math.round(r.effective):'-')+' pen='+Math.round(shell.penetration)+' shell='+shell.kind+' dir='+v.source+' chordDev='+(v.chordDev==null?'-':(v.chordDev*180/Math.PI).toFixed(1))+' mode='+mode+shellModeColumns(hit,shell)+damageColumns(hit,r,shell)+ArmorCrits.columns(hit,v)+' v='+($('app-version').getAttribute('data-version')||'dev').replace(/\s+/g,'_')+' rec='+(recordsVersion||'-'));
+    console.info('Bullba Hits verdict: battle='+battleId+' hit='+hit.id+' point='+v.index+' part='+(v.part<0?'wheel'+(-v.part-1):partNames[v.part]||v.part)+' server='+String(effects[v.effect]||v.effect).replace(/ /g,'_')+' ours='+ours+' angle='+(r.angle!=null?Math.round(r.angle):'-')+' eff='+(r.effective!=null?Math.round(r.effective):'-')+' pen='+Math.round(shell.penetration)+' shell='+shell.kind+' dir='+v.source+' chordDev='+(v.chordDev==null?'-':(v.chordDev*180/Math.PI).toFixed(1))+' mode='+mode+shellModeColumns(hit,shell)+damageColumns(hit,r,shell)+ArmorCrits.columns(hit,v)+' v='+($('app-version').getAttribute('data-version')||'dev').replace(/\s+/g,'_')+' rec='+(recordsVersion||'-'));
     verdictLines++;verdictStatus();}
   // The shooter's vehicle mode on a log line that already carries the shell (22.09): which of the two
   // modes the shell used belongs to, whether the record held a second set at all and the siege state the
@@ -6828,7 +6828,7 @@
     if(hit.synthetic){$('details').appendChild(node('p','The shooter\u2019s collision model, swapped in from the hit at '+clock(hit.receivedAt)+'. Nothing was fired at this vehicle in the record, so there is no hit line, no reticle and no shell of its own. The \u21c5 button next to the shooter tile goes back to the recorded hit.'));return;}
     detail('Direction',view==='incoming'?'Incoming':view==='outgoing'?'Outgoing':'Not this vehicle',clock(hit.receivedAt));detail('Result',result(hit));var critRow=critDetail(hit);if(critRow)$('details').appendChild(critRow);
     var points=hit.points||[],point=points.find(function(p){return p.status==='resolved';});
-    detail('Point on the model',point?['Chassis','Hull','Turret','Gun','Outer track'][point.part]||'Part '+point.part:'Not restored',point?'Per the client collision handler':'Segment kept for diagnostics');
+    detail('Point on the model',point?partLabel(point.part):'Not restored',point?'Per the client collision handler':'Segment kept for diagnostics');
     detail('Calibre',point&&point.caliber?point.caliber+' mm':'No data',points.length+' points in the event');
     if(hit.rangeAtImpact!=null)detail('To the attacker at impact',hit.rangeAtImpact.toFixed(1)+' m','Position when the hit was received; not a measured flight length.');
   }
@@ -6863,6 +6863,8 @@
     bolt:'M11.5 1.5 4.5 11h5l-1.2 7.5 7.2-10h-5.2Z',star:'M10 2.2l2.3 5 5.4.6-4 3.7 1.1 5.3L10 14.1l-4.8 2.7 1.1-5.3-4-3.7 5.4-.6Z',
     other:'M10 3.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 1 0 0-13ZM10 6.8v4.4M10 13.4v.3'};
   var PART_NAMES=['Chassis','Hull','Turret','Gun','Outer track'];
+  // A wheel of a wheeled vehicle is part -k (BACKLOG 39): 'Wheel k', the crit list's own name for it (crits.js wheel<k-1>).
+  function partLabel(id){return id<0?'Wheel '+(-id):PART_NAMES[id]||'Part '+id;}
   function damageEvents(){return current&&Array.isArray(current.damageEvents)?current.damageEvents:[];}
   function eventIn(battle,id){var list=battle&&Array.isArray(battle.damageEvents)?battle.damageEvents:[];for(var i=0;i<list.length;i++)if(list[i].id===id)return list[i];return null;}
   function eventOf(id){return eventIn(current,id);}
@@ -7000,7 +7002,7 @@
     detail('Direction',view==='incoming'?'Incoming':view==='outgoing'?'Outgoing':'Not this vehicle',clock(e.receivedAt));
     detail(r.name,'Damage '+e.damage+' HP'+(e.killed?', destroyed':''),vehicleName(e.targetId)+(selfDamage(e)?'':' · by '+vehicleName(e.attackerId)));
     if(e.kind==='ram'){
-      var part=viewer&&viewer.look&&viewer.look.part!=null?PART_NAMES[viewer.look.part]||'Part '+viewer.look.part:null;
+      var part=viewer&&viewer.look&&viewer.look.part!=null?partLabel(viewer.look.part):null;
       detail('Contact',e.contact?(part||'Recorded'):'Not recorded',e.contact?'Client physics'+(Number.isFinite(e.contact.closingSpeed)?', closing at '+Math.round(e.contact.closingSpeed*3.6)+' km/h':''):'Battles before the contact log');
       if(!selfDamage(e))detail('Rammer took',(e.selfDamage||0)+' HP'+(e.attackerKilled?', destroyed':''),vehicleName(e.attackerId));
     }else if(e.kind==='fire'){
