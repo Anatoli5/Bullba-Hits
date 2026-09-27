@@ -998,6 +998,9 @@ function click(el) { el.onclick.call(el, {stopPropagation: function () {}}); }
 // S2: the user's click on the Config button (its <summary>): the page's own listener runs as the browser would
 // run it, before the popover opens. See the equipment section below.
 function openConfigMenu() { cfgSummary.fire('click', {}); }
+// default build (27.09): a shooter with no entry of his own starts on rammer, hardening and turbo; a check about something
+// else - a reload, a mode, a top speed - puts its shooter on the stock build first, through the store's chosen entry.
+function stockBuild() { openConfigMenu(); choosePreset('Stock — no equipment'); }
 // The three pointer events the real viewer sends, in the order and with the bookkeeping viewer.js does:
 // a press that the page claims sets aimHold (so the emulation is not paused for it), a move past the drag
 // threshold takes the press away again, and the release is handed back only to a press still held.
@@ -1660,24 +1663,38 @@ settle(20).then(function () {
   openConfigMenu();
   ok('S2: a second click with nothing changed paints nothing', slots.children === tilesPainted);
   // S4 (22.09): the preset control is one button that names the entry in force; its list is a sub-panel.
-  ok('the preset control names the entry in force, and starts on the stock build',
-     presetName() === 'Stock — no equipment' && presetOpen() === false && layer.hidden === true,
+  // default build (27.09, user): a shooter with no entry of his own starts on the most common build - rammer, hardening and
+  // turbocharger, the Standard grade banded to the vehicle - no longer on the stock one.
+  ok('the preset control names the entry in force, and a new shooter starts on the default build - rammer, hardening, turbo',
+     presetName() === 'Rammer, hardening, turbo' && presetOpen() === false && layer.hidden === true,
      '(' + presetName() + ')');
+  ok('default build: its three slots are filled - the rammer, the hardening and the turbocharger, the Standard grade',
+     slots.children.map(function (t) { return t.getAttribute('data-tier'); }).join(',') === 'standard,standard,standard'
+     && /\n• Equipment: Gun Rammer Class 1, Improved Hardening Class 1, Turbocharger Class 1(\n|$)/.test(cfgSummary.title),
+     '(' + slots.children.map(function (t) { return t.getAttribute('data-tier'); }).join(',') + ' / ' + cfgSummary.title.split('\n').slice(0, 4).join(' | ') + ')');
   // Stage 11: the two presets seeded into the old store are the user's own, and both survived the load.
   // S4: Custom - the user's own working build - is the first entry of the list, before the built-in builds.
+  // default build (27.09): its three grades follow the stock build, before the older built-in builds.
   openPresets();
-  ok('its list is Custom, the four built-in builds and the two stored ones, in that order',
-     rowNames() === ['Custom', 'Stock — no equipment', 'Rammer, stabiliser, vents',
+  ok('its list is Custom, the seven built-in builds (the default build\'s three grades after the stock one) and the two stored ones, in that order',
+     rowNames() === ['Custom', 'Stock — no equipment', 'Rammer, hardening, turbo', 'Improved — rammer, hardening, turbo',
+                     'Bounty — rammer, hardening, turbo', 'Rammer, stabiliser, vents',
                      'Improved Aiming, laying drive, stabiliser', 'Bounty — rammer, stabiliser, vents',
                      'Old partial', 'Old whole crew'].join(','),
      '(' + rowNames() + ')');
   ok('S4: the row of the entry in force is the marked one, and its name says so to a screen reader',
      presetRows().filter(function (r) { return r.getAttribute('data-selected') === 'true'; })
-       .map(rowName).join(',') === 'Stock — no equipment'
-     && presetRow('Stock — no equipment').children[0].getAttribute('aria-current') === 'true'
+       .map(rowName).join(',') === 'Rammer, hardening, turbo'
+     && presetRow('Rammer, hardening, turbo').children[0].getAttribute('aria-current') === 'true'
      && presetRow('Custom').children[0].getAttribute('aria-current') === null);
   click(document.getElementById('aim-cfg-scrim'));
   ok('S4: a click on the scrim closes the list', layer.hidden === true && presetOpen() === false);
+  // default build (27.09): the checks below are about the slots, the pickers and Custom, built up from an empty vehicle -
+  // the stock build is put in force through the store's chosen entry, as the user would pick it.
+  choosePreset('Stock — no equipment');
+  ok('default build: the stock build is still one click away, and it is what the entry in force now names',
+     presetName() === 'Stock — no equipment' && (storedAim().chosen || {})['germany:Test'] === 'Stock — no equipment',
+     '(' + JSON.stringify(storedAim().chosen) + ')');
   // Stage 11: 18 skills and perks plus one Brothers in Arms tile per member of the five-man crew.
   // TTX (23.09): four skills that do not shoot (Recon, Situational Awareness, Off-Road Driving, Engineer), one
   // Concealment tile per member beside his Brothers in Arms, and the paint beside the consumables.
@@ -2327,7 +2344,9 @@ settle(20).then(function () {
      && layer.hidden === false && scrim.hidden === false && parseFloat(layer.style.top) > 0,
      '(top ' + layer.style.top + ')');
   ok('S4: the panel has no heading of its own: a close control and the rows, nothing that names the owner',
-     panelWords() === '×Custom' + ['Stock — no equipment', 'Rammer, stabiliser, vents',
+     // default build (27.09): its three grades after the stock build
+     panelWords() === '×Custom' + ['Stock — no equipment', 'Rammer, hardening, turbo', 'Improved — rammer, hardening, turbo',
+                                   'Bounty — rammer, hardening, turbo', 'Rammer, stabiliser, vents',
                                    'Improved Aiming, laying drive, stabiliser', 'Bounty — rammer, stabiliser, vents',
                                    'My heavy', 'Old partial', 'Old whole crew', 'Three of five'].join(''),
      '(' + panelWords() + ')');
@@ -2459,13 +2478,15 @@ settle(20).then(function () {
   ok('S4: and the built-in build itself is untouched',
      slots.children.map(function (t) { return t.getAttribute('data-tier'); }).join(',') === builtIn
      && crewChip('Snap Shot').getAttribute('aria-pressed') === 'true', '(' + builtIn + ')');
-  // S4: the bin in a row deletes that preset; a vehicle that had it chosen goes back to the stock build.
+  // S4: the bin in a row deletes that preset; a vehicle that had it chosen goes back to the default build (27.09: it went
+  // back to the stock one).
   choosePreset('Three of five');
   openPresets();
   click(rowAct(presetRow('Three of five'), 'delete'));
-  ok('S4: the bin deletes the preset, the list stays open and the build goes back to the stock one',
+  ok('S4: the bin deletes the preset, the list stays open and the build goes back to the default one - rammer, hardening, turbo',
      !presetRow('Three of five') && !JSON.parse(savedSettings()).aim.presets['Three of five']
-     && layer.hidden === false && presetName() === 'Stock — no equipment',
+     && layer.hidden === false && presetName() === 'Rammer, hardening, turbo'
+     && slots.children.map(function (t) { return t.getAttribute('data-tier'); }).join(',') === 'standard,standard,standard',
      '(' + rowNames() + ' / ' + presetName() + ')');
   ok('S4: and no built-in row has a bin to press at all', !rowAct(presetRow('Stock — no equipment'), 'delete'));
   click(layer.children[0]);
@@ -6530,6 +6551,7 @@ settle(20).then(function () {
     document.getElementById('hits').children[0].onclick();
     return settle(20);
   }).then(function () {
+    stockBuild();   // default build (27.09): the panel's figures below are the stock ones, ⚙ compares this build against them
     const want = {avgDamagePerMinute: '2238', reload: '13.14', maxHealth: '2400', shotDispersionAngle: '0.38', aimingTime: '2.78',
                   turretRotationSpeed: '26.07', hull: '29.2', speedLimits: '59.6/15', enginePowerPerTon: '17.6',
                   stabMovement: '0.18', stabRotation: '0.18', stabTurret: '0.1',
@@ -6697,6 +6719,7 @@ settle(20).then(function () {
     document.getElementById('hits').children[1].onclick();
     return settle(20);
   }).then(function () {
+    stockBuild();   // default build (27.09): this shooter too, the reloads below are the stock gun's and Mag Mastery's alone
     // Two pairs, the recorded gun the clip one.
     ok('ttx: a vehicle with two guns - the tile shows ▾, and the pair on the panel is the one that fired (the clip gun, by its name)',
        panel.hidden === false && pairsBox.getAttribute('data-many') === 'true' && pairTile.children[1].textContent === '120'
@@ -8134,7 +8157,7 @@ settle(20).then(function () {
     return openM('m-cs63');
   }).then(function () {
     // --- CS-63: the turbine switches only standing ------------------------------------------------------------------
-    const view = viewerInstance; prepare(view); allKeysUp(); run(20);
+    const view = viewerInstance; prepare(view); allKeysUp(); stockBuild(); run(20);   // default build (27.09): no turbo, the stock top speeds
     const r0 = view.liveRadius100;
     ok('modes: CS-63 - the turbine button ≫, not lit', mech.textContent === '≫' && !lit() && /— Engine mode\n• Now: the normal engine mode\n/.test(mech.title));
     key('KeyW', true); run(1);
@@ -8206,7 +8229,7 @@ settle(20).then(function () {
     return openM('m-bz');
   }).then(function () {
     // --- BZ-176: the rocket booster -------------------------------------------------------------------------------------
-    const view = viewerInstance; prepare(view); allKeysUp(); run(20);
+    const view = viewerInstance; prepare(view); allKeysUp(); stockBuild(); run(20);   // default build (27.09): no turbo, the stock top speeds
     const r0 = view.liveRadius100;
     ok('rocket: BZ-176 - ⇮, ready, 4 uses, the tooltip names the numbers', mech.textContent === '⇮' && !lit() && !busy() && /\n• Uses left: 4 of 4\n/.test(mech.title)
        && /fire it for 10 s; it recharges 4 s/.test(mech.title) && /top speed 30 → 45 km\/h, reverse ×0\.1, hull traverse ×0\.15/.test(mech.title), '(' + mech.title.slice(0, 200) + ')');

@@ -1642,6 +1642,14 @@
   // every member of the crew (aimValues).
   var AIM_BUILT_IN = [
     {name: 'Stock — no equipment', values: {}},
+    // The most common build (user, 27.09): rammer, hardening, turbocharger - the default of a shooter who has no entry
+    // of his own (AIM_DEFAULT), in each of the three grades.
+    {name: 'Rammer, hardening, turbo',
+     values: {slots: ['tankRammer_tier1', 'extraHealthReserve_tier1', 'turbocharger_tier1']}},
+    {name: 'Improved — rammer, hardening, turbo',
+     values: {slots: ['deluxRammer', 'deluxeExtraHealthReserve', 'deluxeTurbocharger']}},
+    {name: 'Bounty — rammer, hardening, turbo',
+     values: {slots: ['trophyUpgradedTankRammer', 'trophyUpgradedExtraHealthReserve', 'trophyUpgradedTurbocharger']}},
     {name: 'Rammer, stabiliser, vents',
      values: {slots: ['tankRammer_tier1', 'aimingStabilizer_tier1', 'improvedVentilation_tier1'],
               skills: {brotherhood: true, gunner_smoothTurret: true, driver_smoothDriving: true}}},
@@ -1653,6 +1661,7 @@
      values: {slots: ['trophyUpgradedTankRammer', 'trophyUpgradedAimingStabilizer', 'trophyUpgradedImprovedVentilation'],
               consumables: ['food'],
               skills: {brotherhood: true, gunner_smoothTurret: true, driver_smoothDriving: true}}}];
+  var AIM_DEFAULT = AIM_BUILT_IN[1].name;   // a shooter with no entry of his own (27.09: was the stock build)
   shooterPreset = AIM_BUILT_IN[0].name;   // the stock build, until a shooter is on screen
   function aimBuiltIn(name) {
     for (var i = 0; i < AIM_BUILT_IN.length; i++) if (AIM_BUILT_IN[i].name === name) return AIM_BUILT_IN[i];
@@ -2018,7 +2027,7 @@
     return dir.skill ? aimSkillMult(dir.skill) > 1 : !!aimDirectiveLevel(dir);
   }
   // A new shooter on screen gets the entry he was last given, remembered across launches per vehicle type
-  // (aimStore.chosen), and the stock build when he has none - or when his preset has been deleted since.
+  // (aimStore.chosen), and the common build (AIM_DEFAULT) when he has none - or when his preset has been deleted since.
   // The entry is applied again every time, and Custom is this vehicle's own hand build: what was made by hand
   // on another shooter stays his, and comes back with him.
   function syncShooterMods(hit) {
@@ -2033,7 +2042,7 @@
     shooterPolicy = aimPolicyFor(hit);
     var name = type && aimStore.chosen[type] ? aimStore.chosen[type] : '';
     var values = name ? aimPreset(name) : null;
-    if (!values) { name = AIM_BUILT_IN[0].name; values = aimPreset(name); }
+    if (!values) { name = AIM_DEFAULT; values = aimPreset(name); }
     shooterConfig = values; shooterPreset = name;
     ttxSync(hit);   // the characteristics panel follows the shooter (read once per type, painted here)
     // A different gun - another shooter, another recorded gun of the same type, a pair picked for this type (24.09,
@@ -2924,7 +2933,7 @@
     Object.keys(aimStore.chosen).forEach(function (type) { if (aimStore.chosen[type] === name) delete aimStore.chosen[type]; });
     if (aimRenaming && aimRenaming.from === name) aimRenaming = null;
     persistSettings();
-    if (shooterPreset === name) { shooterPreset = AIM_BUILT_IN[0].name; shooterConfig = aimPreset(shooterPreset); aimConfigChanged(); }
+    if (shooterPreset === name) { shooterPreset = AIM_DEFAULT; shooterConfig = aimPreset(shooterPreset); aimConfigChanged(); }
     else aimPaintLayer();
   }
   // Escape takes the top layer of the popover away: the sub-panel first, the popover itself next. Listened for
