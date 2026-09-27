@@ -102,7 +102,7 @@
       'Export all models: every regular vehicle; after a game update only the changed ones.']],
     ['In a browser',['Every vehicle: its characteristics.','The model only where the game exported it: open this viewer in the game for more.']]];
   var sidebarMode='battles',battlesDirty=false;
-  var catalogue=null,catalogueStamp=null,catalogueError=null,cataloguePending=false;
+  var catalogue=null,catalogueStamp=null,catalogueError=null,catalogueLoading=null;
   var vehicleFilters={tier:[],nation:[],'class':[],role:[],flag:[],text:''},vehicleScope='battle';
   var modelVehicle=null,shooterVehicle=null,activeRole='model';
   // THE LAST SHOOTER USED (user, 26.09): the vehicle type of the shooter of the last scene on screen, in any panel - one
@@ -269,11 +269,6 @@
     var scope=activeScope();
     box.querySelectorAll('[data-scope]').forEach(function(b){b.setAttribute('aria-pressed',String(b.getAttribute('data-scope')===scope));});
   }
-  function catalogueByType(type){
-    var rows=(catalogue&&catalogue.vehicles)||[],i;
-    for(i=0;i<rows.length;i++)if(rows[i].type===type)return rows[i];
-    return null;
-  }
   // The file id the exporter gives a vehicle type (mod/local_armor_inspector/exporter.py vehicle_id): the
   // first colon becomes a dash, anything outside [-A-Za-z0-9_] an underscore. It is needed for a roster
   // vehicle the catalogue does not carry - in the game a click on it is an export request like any other
@@ -376,9 +371,13 @@
     for(i=0;i<rows.length;i++)if(rows[i].id===id)return rows[i];
     return null;
   }
+  // A read already under way is the one every caller waits for (its promise), never a second one - and never a promise
+  // that resolves before the list is there (27.09: catalogueRead polled a flag this function raised itself, so a page
+  // opened on a vehicle whose file arrived before the list re-read the list every 50 ms and stayed on "Preparing the
+  // model..." for good - the flaky real_page check 'inherit: the last shooter used').
   function loadCatalogue(){
-    if(cataloguePending)return Promise.resolve();cataloguePending=true;
-    return ArmorInspectorData.vehicles().then(function(data){
+    if(catalogueLoading)return catalogueLoading;
+    return (catalogueLoading=ArmorInspectorData.vehicles().then(function(data){
       if(!data||!Array.isArray(data.vehicles))throw new Error('Invalid vehicle list');
       catalogueError=null;
       var stamp=String(data.updatedAt||'')+':'+data.vehicles.length;
@@ -389,7 +388,7 @@
     }).catch(function(){
       catalogueError='No vehicle list yet. Run the game once with the mod: the catalogue is written at export setup.';
       if(!catalogue&&sidebarMode==='vehicles')renderVehicles(true);
-    }).then(function(){cataloguePending=false;});
+    }).then(function(){catalogueLoading=null;}));
   }
 
   // ---- picking a vehicle -------------------------------------------------
@@ -536,7 +535,7 @@
       if(token!==vehicleGeneration)return null;
       // The last shooter used is looked up in the catalogue: at the start (the game's fragment) it may still be on its way.
       if(role==='model'&&!shooterVehicle&&!record.noModel&&lastShooterType&&!catalogue)
-        return catalogueRead().then(function(){return token===vehicleGeneration?place(record):null;});
+        return loadCatalogue().then(function(){return token===vehicleGeneration?place(record):null;});
       return place(record);
     }).then(function(shown){
       // The model on screen: the catalogue the mod wrote right after its file marks the row exported. Read only now - read
@@ -560,11 +559,6 @@
       }
       return showVehicleScene(keepCamera);
     }
-  }
-  // The catalogue read to its end (a read already under way is waited for, not started twice).
-  function catalogueRead(){
-    var started=loadCatalogue();
-    return cataloguePending?new Promise(function(r){window.setTimeout(r,50);}).then(catalogueRead):started;
   }
   function catalogueByType(type){
     var rows=(catalogue&&catalogue.vehicles)||[],i;if(!type)return null;

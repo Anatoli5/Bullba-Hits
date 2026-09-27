@@ -501,12 +501,17 @@ async function main() {
     const I8 = await ev(`(() => { const v = ${LV}; return {ring: !!v.aimShotCircle, pinned: !!v.pinned, live: v.liveRadius100 > 0, reload: v.aimReloadPart}; })()`);
     ok('inherit: another model takes the shot away (its ring and pin), the shooter\'s ⌖ ring stands on', !I8.ring && !I8.pinned && I8.live, JSON.stringify(I8));
     // 1: the last shooter used is kept with the side panel's state; a page opened on a vehicle from the game (nothing on
-    // screen) gives it to him - not the model as its own shooter.
+    // screen) gives it to him - not the model as its own shooter. The vehicle list is held back 400 ms, so the vehicle's
+    // file arrives first - the order that, under load, left the page re-reading the list every 50 ms on "Preparing the
+    // model..." for good (27.09; this check was flaky: about 1 run in 5 with 5 pages in parallel).
     const kept = await ev("(() => { try { return JSON.parse(localStorage.getItem('bullba-sidebar')).shooter; } catch (e) { return null; } })()");
-    const page2 = await browser.open(url.pathToFileURL(path.join(folder, 'Viewer.html')).href + '#vehicle=pm_quebec', INIT);
+    const LIST_LATE = `;(() => { const append = Node.prototype.appendChild; let held = false;
+      Node.prototype.appendChild = function (n) { if (!held && n && n.tagName === 'SCRIPT' && String(n.src).indexOf('/data/vehicles.js') >= 0) { held = true; const self = this;
+        setTimeout(() => append.call(self, n), 400); return n; } return append.call(this, n); }; })();`;
+    const page2 = await browser.open(url.pathToFileURL(path.join(folder, 'Viewer.html')).href + '#vehicle=pm_quebec', INIT + LIST_LATE);
     const fresh = await page2.evaluate(`(async () => { const t = (id) => document.getElementById(id).title;
       for (let i = 0; i < 100 && t('model-tile').indexOf('Vehicle: Quebec') < 0; i++) await new Promise((r) => setTimeout(r, 100));
-      await new Promise((r) => setTimeout(r, 500)); return {model: t('model-tile'), shooter: t('shooter-tile')}; })()`);
+      await new Promise((r) => setTimeout(r, 500)); return {model: t('model-tile'), shooter: t('shooter-tile'), message: document.getElementById('scene-message').textContent}; })()`);
     ok('inherit: the last shooter used is stored (' + kept + ') and a page opened on a vehicle from the game shoots with him',
        kept === 'germany:Papa' && who(fresh.model, 'Quebec') && who(fresh.shooter, 'Papa') && page2.errors.length === 0, JSON.stringify([kept, fresh, page2.errors.slice(0, 2)]));
     await browser.send('Target.closeTarget', {targetId: page2.targetId});
