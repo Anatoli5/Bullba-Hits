@@ -2600,6 +2600,9 @@ class Exporter(object):
         # the game thread asks for a change of priority through the record queue.
         self.jobs = []
         self.job_index = {}
+        # The jobs the page's last 'prioritise' lifted to JOB_PAGE, with the priority each had (key -> priority): the next
+        # one puts them back - only what the page waits for now passes the drag gate (review 26.09).
+        self.lifted = {}
         self.job_seq = 0
         self.job_types = {}
         self.waiting = {}
@@ -3286,7 +3289,11 @@ class Exporter(object):
         key = job_key(kind, payload)
         job = self.job_index.get(key)
         if job is not None:
-            if priority < job[0]: job[0] = priority
+            if priority < job[0]:
+                job[0] = priority
+                # The newer request of a vehicle (the page's click over a queued roster or hangar one) is the one the log
+                # measures from (its requestedAt; review of click-export-fast 26.09).
+                if kind == 'vehicle': job[3] = payload
             return job
         self.job_seq += 1
         job = [priority, self.job_seq, kind, payload]
@@ -3409,6 +3416,12 @@ class Exporter(object):
         for name in list(types or [])[:8]:
             if name: wanted.add(str(name))
         if not wanted: return 0
+        # What an earlier hit lifted goes back to its own turn: a job lifted once stayed JOB_PAGE for good, and ten hits
+        # opened in a row left ten vehicles' extractions running through a drag (review of click-export-fast 26.09).
+        for key, priority in self.lifted.items():
+            job = self.job_index.get(key)
+            if job is not None and job[0] == JOB_PAGE: job[0] = priority
+        self.lifted = {}
         moved = 0
         for job in self.jobs:
             if job[0] == JOB_PAGE: continue
@@ -3417,6 +3430,7 @@ class Exporter(object):
             else:
                 match = bool(self.job_types.get(job[3][0], ()) and self.job_types[job[3][0]] & wanted)
             if match:
+                self.lifted[job_key(job[2], job[3])] = job[0]
                 job[0] = JOB_PAGE
                 moved += 1
         if moved: LOG.info('Page asked for %s deferred job(s) first', moved)

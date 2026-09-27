@@ -109,6 +109,22 @@ try:
           and all(j[0] == ex.JOB_BULK for j in e.jobs if j not in pages),
           'priorities: the click (picker), its characteristics and its models are JOB_PAGE, the roster stays JOB_BULK',
           [(j[0], j[2]) for j in e.jobs])
+    # Another hit opened: what the first one lifted goes back to its own turn (review 26.09), the click keeps JOB_PAGE.
+    e.queue_model('vehicles/german/Other/collision_client/Part_0.model', V, 'o0', {'type': 'germany:Other'}, None, ex.JOB_BULK)
+    check(e.prioritise(['germany:Other']) == 1, 'prioritise another hit: its model is lifted')
+    check(sorted(j[2] for j in e.jobs if j[0] == ex.JOB_PAGE) == ['model', 'ttx', 'vehicle']
+          and [j[3][0] for j in e.jobs if j[0] == ex.JOB_PAGE and j[2] == 'model'] == ['vehicles/german/Other/collision_client/Part_0.model'],
+          'the models of the first hit are back to JOB_BULK, the click and its characteristics stay JOB_PAGE',
+          [(j[0], j[2]) for j in e.jobs])
+    check(e.prioritise(['germany:Clicked']) == 2, 'the first hit again: its models lifted again, the other one back')
+    e.take_job([i for i, j in enumerate(e.jobs) if j[2] == 'model' and j[3][0] == 'vehicles/german/Other/collision_client/Part_0.model'][0])
+    e.lifted = {}
+    # A click over a queued roster request: the click's request (its time) is the one kept.
+    e.request_vehicle_export({'source': 'battle', 'vehicleType': 'germany:Roster', 'compactDescriptor': 'r', 'requestedAt': clock.now - 300})
+    e.request_vehicle_export({'source': 'picker', 'vehicleType': 'germany:Roster', 'compactDescriptor': 'r', 'requestedAt': clock.now})
+    roster = [j for j in e.jobs if j[2] == 'vehicle' and j[3].get('vehicleType') == 'germany:Roster']
+    check(len(roster) == 1 and roster[0][0] == ex.JOB_PAGE and roster[0][3]['source'] == 'picker', 'a click over a roster request: one job, that of the click', roster)
+    e.take_job(e.jobs.index(roster[0]))
     check(ex.VEHICLE_PRIORITY['picker'] == ex.JOB_PAGE and ex.VEHICLE_PRIORITY['battle'] == ex.JOB_BULK
           and ex.VEHICLE_PRIORITY['catalogue'] == ex.JOB_BULK and ex.VEHICLE_PRIORITY['hangar'] == ex.JOB_PLAYER,
           'the sources\' turns are unchanged')
