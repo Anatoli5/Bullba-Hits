@@ -12,7 +12,8 @@
  * Also: the composite without the bounced leg (library hidden) and with Soft lighting still compile and render (lit: the
  * zone flag only, the light scales the colour). 26.09: a 30 mm skirt across the first leg - the bounced leg starts with
  * 0.75 x what was left behind it (variant B, engine.bounced), both x directions; a shell with traceRicochet false paints
- * the plain ricochet colour and no zone.
+ * the plain ricochet colour and no zone. 27.09: a ricochet inside a collide-once body - equal once the grey of the screen
+ * in front is decoded as grey (the reported 47 % against 99 % was the test reading that grey as a chance).
  *
  * Test seam: an init script hides WEBGL_debug_renderer_info, so the Surface's software-WebGL guard (a performance
  * gate, not a correctness one) lets SwiftShader run the real program. Nothing in web/ is changed for the test.
@@ -71,6 +72,15 @@ window.__gpuBounce = function (sign, trackFirst, options) {
   // each must not take one of the leg's eight contacts, or five of them hide the side plate from the GPU (-2, "flies
   // past") while the CPU walks on to it.
   for (let k = 0; k < (options.boxes || 0); k++) { wall(10 + k, 'box', 1.02 + .1 * k); wall(10 + k, 'box', 1.06 + .1 * k); }
+  // options.inside (27.09): a closed collide-once 5 mm body (part 20, a wheel's kind) over the floor, from options.inside.bottom (0: its
+  // bottom face in the floor plane) to options.inside.top - the shell enters it through its top, ricochets off the floor INSIDE it and
+  // leaves through its top or side: both legs count the body once each, as on the CPU.
+  if (options.inside) {
+    const y0 = options.inside.bottom, y1 = options.inside.top, x0 = -2.6, x1 = 1.1, z0 = -1.6, z1 = 1.6;
+    quad(20, 'box', [x0, y1, z0], [x0, y1, z1], [x1, y1, z1], [x1, y1, z0]); quad(20, 'box', [x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1]);
+    quad(20, 'box', [x0, y0, z0], [x0, y0, z1], [x0, y1, z1], [x0, y1, z0]); quad(20, 'box', [x1, y0, z0], [x1, y1, z0], [x1, y1, z1], [x1, y0, z1]);
+    quad(20, 'box', [x0, y0, z0], [x0, y1, z0], [x1, y1, z0], [x1, y0, z0]); quad(20, 'box', [x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]);
+  }
   const engine = B.fromTriangles(tris);
   const canvas = document.createElement('canvas'); document.body.appendChild(canvas);
   const renderer = new T.WebGLRenderer({canvas: canvas, antialias: false}); renderer.setPixelRatio(1); renderer.setSize(W, H, false);
@@ -121,10 +131,14 @@ window.__gpuBounce = function (sign, trackFirst, options) {
     if (options.damage && cpuZone && Math.abs(r.expectedShare - r.chance / 100) > .05) out.damageMatters = (out.damageMatters || 0) + 1;
     out.compared++; if (zone) out.zone++; if (cpuZone) { out.cpuZone++; out.cpuMax = Math.max(out.cpuMax || 0, r.chance); }
     const gpu = zone ? chanceOf(data[i], data[i + 1]) : null;
-    // Behind a skirt the composite greys the colour (the front layer is a screen: mix with (.45,.50,.55) by the opacity),
-    // so there the CPU chance is turned into that colour instead of the colour into a chance.
+    // Behind a screen - a skirt, the face of a collide-once body the shell ricochets inside - the composite greys the
+    // colour (the front layer is a screen: mix with (.45,.50,.55) by 1 - (1 - opacity)^screens, the first leg's screens),
+    // so there the CPU chance is turned into that colour instead of the colour into a chance. options.plainDecode: the
+    // comparison before 27.09, which read the greyed colour as a chance (the "GPU 47 % where the CPU gives 99 %" of the
+    // collide-once body - a misreading, not a mismatch; kept as the negative control).
+    const firstLeg = r.bounce ? r.bounce.layers || [] : [], screens = firstLeg.filter(function (l) { return !l.main; }).length;
     let off = zone && !options.lit && Math.abs(gpu - cpu) > .02;
-    if (options.screen && zone) { const e = paletteOf(cpu).map(function (c, k) { return c + ([.45, .50, .55][k] - c) * .35; });
+    if (zone && !options.plainDecode && firstLeg.length && !firstLeg[0].main) { const share = 1 - Math.pow(1 - .35, screens), e = paletteOf(cpu).map(function (c, k) { return c + ([.45, .50, .55][k] - c) * share; });
       off = Math.abs(data[i] - e[0]) > .02 || Math.abs(data[i + 1] - e[1]) > .02 || Math.abs(data[i + 2] - e[2]) > .02; }
     if (zone !== cpuZone || off) { if (out.mismatches.length < 5) out.mismatches.push({px: px, py: py, cpu: cpu, gpu: gpu, layers: (r.layers || []).map(function (l) { return l.material; }).join('+')}); out.bad = (out.bad || 0) + 1; }
   }
@@ -179,6 +193,16 @@ async function main() {
       const bx = await page.evaluate('__gpuBounce(' + sign + ',false,{boxes:5,pen:200,noTrack:true})');
       ok('five collide-once bodies on the bounced leg, ' + (sign > 0 ? '+x' : '-x') + ': each costs one contact, the side plate behind is reached as on the CPU', bx.compared > 200 && bx.cpuZone > 200 && !bx.bad, '(compared ' + bx.compared + ', CPU zone ' + bx.cpuZone + ', ' + (bx.bad || 0) + ' differ, e.g. ' + JSON.stringify(bx.mismatches) + ')');
     }
+    // 27.09: a ricochet inside a collide-once body (its bottom in the floor's plane, or below it), both x directions: zone
+    // and chance as on the CPU once the screen's grey is read as grey. Negative control: the plain decode reads that grey as
+    // a chance and reports every zone pixel (GPU ~47 % where the CPU gives 100 %) - what was taken for a GPU mismatch.
+    for (const bottom of [0, -.1]) for (const sign of [1, -1]) {
+      const inside = await page.evaluate('__gpuBounce(' + sign + ',false,{inside:{bottom:' + bottom + ',top:.3},pen:200,noTrack:true})');
+      ok('ricochet inside a collide-once body (bottom ' + bottom + ' m), ' + (sign > 0 ? '+x' : '-x') + ': GPU zone and chance equal the CPU walk', inside.compared > 200 && inside.cpuZone > 200 && !inside.bad, '(compared ' + inside.compared + ', CPU zone ' + inside.cpuZone + ', ' + (inside.bad || 0) + ' differ, e.g. ' + JSON.stringify(inside.mismatches) + ')');
+    }
+    const plain = await page.evaluate('__gpuBounce(1,false,{inside:{bottom:0,top:.3},pen:200,noTrack:true,plainDecode:true})');
+    ok('negative control: the plain decode misreads the screen-greyed zone as ~47 % on every zone pixel', plain.bad === plain.cpuZone && plain.cpuZone > 200
+       && plain.mismatches.every(function (m) { return m.cpu === 1 && Math.abs(m.gpu - .4746) < .005; }), '(' + (plain.bad || 0) + ' of ' + plain.cpuZone + ', e.g. ' + JSON.stringify(plain.mismatches.slice(0, 2)) + ')');
     // A shell with enableTraceRicochet false: lost at the ricochet - no zone, the plain ricochet colour, no leg on the CPU.
     const nt = await page.evaluate('__gpuBounce(1,false,{noTrace:true})');
     ok('no-trace shell: no second leg on either side, the ricochet colour everywhere', nt.compared > 200 && nt.zone === 0 && nt.cpuZone === 0 && nt.ricochetColour === nt.compared, '(compared ' + nt.compared + ', zone ' + nt.zone + ', CPU zone ' + nt.cpuZone + ', ricochet colour ' + nt.ricochetColour + ')');

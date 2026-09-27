@@ -16,7 +16,9 @@
  *      one (review of d1b372b); Viewer.prototype.poseExtra turns the crest with the gun;
  *   1. a synthetic gun with a crest on it: rays that meet the crest end there (main armour, its own thickness, angle
  *      and ricochet by its flags); the GPU map paints every interior pixel as the CPU walk - the penetrations, and the
- *      ricochets off the crest (its 150 mm top grazed: the zone flag and the chance or the ricochet colour);
+ *      ricochets off the crest (its 150 mm top grazed: the zone flag and the chance or the ricochet colour); a mantlet
+ *      plate of the gun whose face lies in the plane of the crest's front face (the TIE order of coincident plates, both
+ *      id orders);
  *   2. the real exports of the offline bench (tests/fixtures-local/prefabs-2026-09-27: the client's own models and
  *      prefabs) when that folder is there - the crest of the CAV mod. 71 and the containers of the AS-XX 40 t, from the
  *      views where many rays meet them; without it a SKIP line.
@@ -240,6 +242,13 @@ async function main() {
     }
     // Ricochets off the crest's 150 mm top, grazed from the side (the leg flies off: the ricochet colour, no zone).
     cases.push(['synthetic crest top grazed (ricochets off 150 mm)', syn, {eye: [-9, 3.25, -.6], at: [0, 2.5, -.6], fov: 12, prefab: 5, ricochets: 100}, 'ARMOR_PIERCING', 160]);
+    // Review of d1b372b: the crest's front face in the plane of a mantlet plate of the gun - one depth, ordered by id on both
+    // sides, whichever part's ids come first (the depth test rounds such a pair either way).
+    for (const crestFirst of [false, true]) {
+      const tie = synthetic(true, crestFirst);
+      cases.push(['synthetic crest and mantlet faces in one plane, ' + (crestFirst ? 'crest' : 'gun') + ' ids first (TIE order)', tie,
+        {eye: [.05, 2.45, 9], at: [0, 2.45, 0], fov: 5, far: true, prefab: 5, tie: true}, 'ARMOR_PIERCING', 160]);
+    }
     let real = 0;
     if (fs.existsSync(BENCH)) {
       const cav = bench('italy-It43_CAV_mod_71'), pod = bench('france-F135_AS_XX_40_t');

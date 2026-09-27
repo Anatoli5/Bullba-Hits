@@ -30,7 +30,7 @@ uniform mat4 projectionMatrix; uniform mat4 modelViewMatrix;
 out vec3 vPosition; flat out vec3 vNormal; flat out float vMaterial;
 void main(){vPosition=position;vNormal=normal;vMaterial=materialId;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}`;
   var peelDeclarations=Array.from({length:COUNT},function(_,i){return 'uniform highp sampler2D uPeel'+i+';';}).join('\n');
-  var peelFetches=Array.from({length:COUNT},function(_,i){return 'if(index=='+i+')return texelFetch(uPeel'+i+',p,0).g;';}).join('\n');
+  var peelFetches=Array.from({length:COUNT},function(_,i){return 'if(index=='+i+')return texelFetch(uPeel'+i+',p,0).rg;';}).join('\n');
   var peel=`precision highp float; precision highp int;
 uniform highp sampler2D uPrevious; uniform bool uFirst; uniform int uPass;
 uniform highp sampler2D uMaterials;
@@ -41,17 +41,24 @@ out vec4 outputLayer;
 ${TIE_EPS}
 // The flat normal rides along with the layer: the bounced leg needs the whole vector, not just |cos|.
 vec2 octEncode(vec3 n){n/=abs(n.x)+abs(n.y)+abs(n.z);return n.z>=0.0?n.xy:(1.0-abs(n.yx))*vec2(n.x>=0.0?1.0:-1.0,n.y>=0.0?1.0:-1.0);}
-float earlier(int index,ivec2 p){${peelFetches}return 0.0;}
+vec2 earlier(int index,ivec2 p){${peelFetches}return vec2(0.0);}
 void main(){
  vec3 ray=normalize(vPosition-uOrigin);
  // Depth is relative to the target plane, avoiding subtraction of 1500 m values.
  float d=dot(vPosition-uAnchor,uForward)/max(.001,dot(ray,uForward));
  if(!uFirst){ivec2 p=ivec2(gl_FragCoord.xy);vec2 prev=texelFetch(uPrevious,p,0).rg;
-  if(prev.y<.5||d<prev.x-TIE_EPS||(abs(d-prev.x)<=TIE_EPS&&vMaterial<=floor(prev.y)))discard;
+  if(prev.y<.5||d<prev.x-TIE_EPS)discard;
+  int id=int(floor(vMaterial))-1;
+  // Within TIE_EPS of the last layer the surfaces are one depth (ArmorBallistics.TIE). The depth test can not order them
+  // by material id - two coincident faces of different triangles round to depths a hair apart, either way - so a
+  // surface of that depth is the next layer whatever its id, unless its material is already a layer of that depth (the
+  // same face again, a ray through a shared edge: it counts once, as on the CPU). The composite walks such a run by id,
+  // the CPU's order (review of d1b372b: a crest face in the plane of the mantlet's lost the tie whenever the mantlet's
+  // face rounded nearer). Only tie fragments pay for the look back.
+  if(abs(d-prev.x)<=TIE_EPS){for(int j=0;j<${COUNT};j++){if(j>=uPass)break;vec2 e=earlier(j,p);if(e.y>.5&&int(floor(e.y))-1==id&&abs(d-e.x)<=TIE_EPS)discard;}}
   // A collide-once material (tracks, screens) counts once per ray: its further surfaces take no layer,
   // exactly as the ballistic law ignores them. Otherwise a track seen along its length eats every layer.
-  int id=int(floor(vMaterial))-1;
-  if(texelFetch(uMaterials,ivec2(1,id),0).x>.5){for(int j=0;j<${COUNT};j++){if(j>=uPass)break;float y=earlier(j,p);if(y>.5&&int(floor(y))-1==id)discard;}}}
+  if(texelFetch(uMaterials,ivec2(1,id),0).x>.5){for(int j=0;j<${COUNT};j++){if(j>=uPass)break;float y=earlier(j,p).y;if(y>.5&&int(floor(y))-1==id)discard;}}}
  vec3 face=normalize(vNormal);
  outputLayer=vec4(d,vMaterial+abs(dot(ray,face))*.5,octEncode(face));
 }`;
@@ -125,8 +132,7 @@ void main(){vUV=position.xy*.5+.5;gl_Position=vec4(position.xy,0.0,1.0);}`;
 // material at the same depth (a ray through a shared edge) is not after its own key, so it counts once, as on the
 // CPU. The origin stays fixed, so the distances are the leg's own and nothing accumulates. The traversal is the
 // library's _bvhIntersectFirstHit with the key in place of the plain distance; a box that ends before the last
-// contact or begins past the best candidate is not opened.
-${TIE_EPS}
+// contact or begins past the best candidate is not opened. TIE_EPS: defined at the top of the composite.
 bool nextContact(vec3 origin,vec3 direction,float lastDist,int lastId,out float dist,out int id,out vec3 normal){
  dist=INFINITY;id=0x7fffffff;normal=vec3(0.0);bool found=false;
  vec3 invDir=1.0/direction;
@@ -193,6 +199,7 @@ float bounceLeg(vec3 origin,vec3 direction,float remaining,float nominal){
   if(after>=0.0){color=palette(after);zone=true;}
  }`:'';
     return `precision highp float; precision highp int; precision highp usampler2D; precision highp isampler2D;
+${TIE_EPS}
 ${declarations}
 uniform highp sampler2D uMaterials; uniform vec4 uPen; uniform vec4 uShell; uniform ivec4 uFlags;
 uniform bool uClassic; uniform float uOpacity;
@@ -242,41 +249,63 @@ int contact(int id,float cosine,float along,inout Walk w,out float result){
  w.jet=uShell.z>0.0;if(w.jet){w.jetStart=along+a.x*.001;if(w.jetRate==0.0)w.jetRate=w.remaining*uShell.z;}
  return flags.x>.5?3:0;
 }
+// The layers in the CPU's order (ArmorBallistics ordered()): by depth, and a run of layers within TIE_EPS of its first by
+// material id - the peel leaves such a run in whatever order the depth test rounded it (review of d1b372b). tieRun fills
+// run (the run starting at layer i, in the ids' order) and returns its length; one look-ahead fetch a run (the layer that
+// ends it). The front of a pixel is the first of its first run. Module-scope arrays, not array parameters (ANGLE).
+vec4 run[${COUNT}];
+int tieRun(int i,vec2 uv){
+ int count=0;vec4 head=layer(i,uv);if(head.y<.5)return 0;
+ for(int j=0;j<${COUNT};j++){if(i+j>=${COUNT})break;vec4 h=j==0?head:layer(i+j,uv);if(h.y<.5||h.x-head.x>TIE_EPS)break;
+  // Insertion by id: a run is two or three surfaces at most, most pixels have none.
+  int at=count;for(int b=${COUNT}-1;b>0;b--){if(b>count)continue;if(floor(run[b-1].y)>floor(h.y)){run[b]=run[b-1];at=b-1;}else break;}
+  run[at]=h;count++;}
+ return count;
+}
 // The direct result: -3 = nothing on this pixel, -2 = no main armour, -1 = unknown, 0..1 = chance.
 // On a ricochet it also reports the contact and what the shell had left there (leftPen), so the bounced leg starts there.
-float evaluate(vec2 uv,vec3 ray,out vec4 front,out bool screen,out int screens,out bool bounced,out vec3 spot,out vec3 face,out float leftPen){
- vec4 first=layer(0,uv);front=vec4(-2.0);screen=false;screens=0;bounced=false;spot=uOrigin;face=uForward;leftPen=uPen.x;
- if(first.y<.5)return -3.0;
- front=material(int(floor(first.y))-1,0);screen=front.y<=EPS;
+// frontCode: the front layer's material code (the peel's G), for the seams.
+float evaluate(vec2 uv,vec3 ray,out vec4 front,out bool screen,out int screens,out bool bounced,out vec3 spot,out vec3 face,out float leftPen,out float frontCode){
+ front=vec4(-2.0);screen=false;screens=0;bounced=false;spot=uOrigin;face=uForward;leftPen=uPen.x;frontCode=0.0;
+ int count=tieRun(0,uv);
+ if(count==0)return -3.0;
+ frontCode=floor(run[0].y);front=material(int(frontCode)-1,0);screen=front.y<=EPS;
  if(uFlags.w==0){return -1.0;}
  Walk w;w.remaining=uPen.x;w.nominal=uPen.x;w.jetStart=0.0;w.jetRate=0.0;w.jet=false;w.screens=0;w.gate=1.0;
  int ignored[${COUNT}];int ignoredCount=0;
- float result=-2.0;bool finished=false;
- for(int i=0;i<${COUNT};i++){
-  vec4 hit=layer(i,uv);if(hit.y<.5){finished=true;break;}
-  int id=int(floor(hit.y))-1;bool skip=false;for(int j=0;j<${COUNT};j++){if(j>=ignoredCount)break;if(ignored[j]==id)skip=true;}if(skip)continue;
-  float value=0.0;int status=contact(id,fract(hit.y)*2.0,hit.x,w,value);
-  if(status>=3){if(ignoredCount<${COUNT}){ignored[ignoredCount]=id;ignoredCount++;}continue;}
-  if(status==0)continue;
-  result=value;finished=true;
-  // The peel keeps the depth relative to the target plane: P = origin + ray * (d - offset).
-  if(status==2){spot=uOrigin+ray*(hit.x-dot(uOrigin-uAnchor,uForward)/max(.001,dot(ray,uForward)));face=octDecode(hit.zw);bounced=true;leftPen=w.remaining;}
-  break;
+ float result=-2.0;bool finished=false;int start=0;
+ for(int r=0;r<${COUNT};r++){
+  if(r>0){if(start>=${COUNT})break;count=tieRun(start,uv);}
+  if(count==0){finished=true;break;}
+  for(int k=0;k<${COUNT};k++){
+   if(k>=count)break;
+   vec4 hit=run[k];
+   int id=int(floor(hit.y))-1;bool skip=false;for(int j=0;j<${COUNT};j++){if(j>=ignoredCount)break;if(ignored[j]==id)skip=true;}if(skip)continue;
+   float value=0.0;int status=contact(id,fract(hit.y)*2.0,hit.x,w,value);
+   if(status>=3){if(ignoredCount<${COUNT}){ignored[ignoredCount]=id;ignoredCount++;}continue;}
+   if(status==0)continue;
+   result=value;finished=true;
+   // The peel keeps the depth relative to the target plane: P = origin + ray * (d - offset).
+   if(status==2){spot=uOrigin+ray*(hit.x-dot(uOrigin-uAnchor,uForward)/max(.001,dot(ray,uForward)));face=octDecode(hit.zw);bounced=true;leftPen=w.remaining;}
+   break;
+  }
+  if(finished)break;
+  start+=count;
  }
  screens=w.screens;
  if(!finished&&layer(${COUNT},uv).y>.5)result=-1.0; // Never silently truncate a ninth layer.
  return result;
 }${bounceLeg}
 void main(){
- vec4 front;bool screen;int screens;bool bounced;vec3 spot,face;float leftPen;bool zone=false;
+ vec4 front;bool screen;int screens;bool bounced;vec3 spot,face;float leftPen;float frontCode;bool zone=false;
  vec2 texel=1.0/vec2(textureSize(uLayer0,0));vec3 ray=pixelRay((floor(vUV/texel)+.5)*texel); // the peeled texel's own ray, so the contact point sits on the plate even when layers are smaller than the window
- float result=evaluate(vUV,ray,front,screen,screens,bounced,spot,face,leftPen);
+ float result=evaluate(vUV,ray,front,screen,screens,bounced,spot,face,leftPen,frontCode);
  // Every screen layer on the ray adds its own share of grey: two screens read darker than one.
  float share=1.0-pow(1.0-uOpacity,float(max(1,screens)));
  if(result<-2.5){outputColor=vec4(0.0);return;}
  // The front material's id (part and armour group) rides in alpha as 4*(id+1): the mark pass draws a seam where
  // neighbouring pixels carry different ids. Float target, no blending, so the integer survives intact.
- float idCode=4.0*floor(layer(0,vUV).y);
+ float idCode=4.0*frontCode;
  // Screens overlay as neutral grey: a probability-looking tint on top of the armour result misled readers.
  vec3 tint=vec3(.45,.50,.55);
  // Screen with nothing behind it: nothing to penetrate, so a neutral translucent grey instead of a probability-looking tint.
