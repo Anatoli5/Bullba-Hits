@@ -2,7 +2,7 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
-## Unreleased
+## 0.8.7 (2026-09-27)
 
 - **CAV mod. 71, AS-XX 40 t:** the gun's armoured crest (30–150 mm) and the armoured ammunition containers (20 mm) are part of the hit model: drawn on the exported vehicles (the crest in its first position, the containers closed), recorded with their pose when a shot lands on them - the details name the crest's position (1–4 of 4) - and counted as the vehicle's armour on the panels, the map and the Statistics log. Existing exports of the two are updated in the background at the next game start.
 - **CAV mod. 71, AS-XX 40 t:** a crest or container pose the game cannot have (after a crit, a stale index) is no longer recorded, and a recorded pose far off the game's rule is drawn at the default position, the tooltip saying so. The tooltip and the details read "At the hit: position 2 of 4 · 3.3°" with the fit; the Statistics log carries `prefabPose=` and `prefabFit=`. A part not read yet says "armoured part not read yet" (was `'resource'`); a crest whose model fails leaves the scene incomplete, as any part.
