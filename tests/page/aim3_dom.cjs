@@ -143,6 +143,8 @@ const winListeners = {};
 function scheduleLayoutNow() { (winListeners.resize || []).forEach(function (fn) { fn({}); }); tick(0.001); }
 const RELOAD_WANT = RELOAD ? JSON.parse(process.env.BULLBA_RELOAD_WANT || '{}') : null;
 if (RELOAD) storage['bullba-settings'] = RELOAD;
+// manual-motion (27.09): the side panel's store the first page left, with manual motion on at 50 % / 50 %.
+if (RELOAD && process.env.BULLBA_RELOAD_SIDEBAR) storage['bullba-sidebar'] = process.env.BULLBA_RELOAD_SIDEBAR;
 const window = {
   document: document,
   localStorage: {
@@ -968,6 +970,18 @@ function reloadChecks() {
   openPresets();
   ok('S4 (reload): and his presets are all there, Custom first',
      rowNames() === RELOAD_WANT.rows, '(' + rowNames() + ')');
+  if (!process.env.BULLBA_RELOAD_SIDEBAR) return;
+  // manual-motion (27.09): a new page - and a new shooter - inherits the switch and the shares from the side panel's store.
+  ok('S4 (reload): manual motion comes back on from the side panel’s store, the gold frame on the tile',
+     drive.getAttribute('data-manual') === 'true' && speed.textContent === '25 km/h', '(' + speed.textContent + ')');
+  drive.open = true; drive.fire('toggle');
+  ok('S4 (reload): with its two shares on the sliders',
+     document.getElementById('aim-manual-on').checked === true && document.getElementById('aim-manual-speed').value === '50'
+     && document.getElementById('aim-manual-hull').value === '50');
+  // Off again: the rest of this run's checks read the standing circle.
+  const off = document.getElementById('aim-manual-on'); off.checked = false; off.onchange.call(off);
+  drive.open = false; drive.fire('toggle');
+  run(30);
 }
 const FULL_AIM = 0.383 / 1.043;   // dispersion 0.00383 rad at 100 m, divided by the trained crew factor
 
@@ -2456,6 +2470,125 @@ settle(20).then(function () {
   ok('S4: and no built-in row has a bin to press at all', !rowAct(presetRow('Stock — no equipment'), 'delete'));
   click(layer.children[0]);
   ok('S4: the panel’s × closes it', layer.hidden === true && config.open === true);
+  // ---- manual-motion (27.09): the drive tile's popover sets the motion by hand ----------------------------------------------
+  // Two sliders, 0-100 % of the shooter's CURRENT top forward speed and hull traverse (ballistics.js motionLimits, with Config
+  // and the mode in force); the share is what is kept and inherited, the absolute figure follows the top. They feed the
+  // circle's movement and hull terms, the turret follows the cursor (its term holds the aim against the turning hull, as on
+  // the keys), the model stands. Any of W A S D ends it and the shares stay. A shot fired takes it; recorded hits do not.
+  config.open = false; config.fire('toggle');
+  view.gap = 0; view.dragging = false; view.aimHold = false;
+  choosePreset('Stock — no equipment');
+  run(30);
+  const manualBody = document.getElementById('aim-manual-body');
+  ok('manual: the drive tile is its popover’s own button - closed and not built until clicked, no gold frame',
+     drive.open === false && manualBody.children.length === 0 && drive.getAttribute('data-manual') === 'false' && loopFrames() === 0);
+  ok('manual: the tile’s words say the click and the gold frame; the shooter row’s "?" lists the tile first',
+     /^The shooter’s motion\n[^\n]+\n/.test((/id="aim-drive-summary" class="aim-drive-tile" title="([^"]*)"/.exec(pageSrc) || ['', ''])[1].replace(/&#10;/g, '\n'))
+     && /• Click: manual motion[^&]*&#10;• Gold frame: manual motion on; W A S D end it/.test(pageSrc)
+     && /data-help-for="aim-drive-summary swap-roles /.test(pageSrc));
+  drive.open = true; drive.fire('toggle');
+  const mOn = document.getElementById('aim-manual-on'), mSpeed = document.getElementById('aim-manual-speed'),
+    mHull = document.getElementById('aim-manual-hull'), mHullFig = document.getElementById('aim-manual-hull-value');
+  const mTop = manualBody.children[0], mDot = mTop && mTop.children[1];
+  ok('manual: opened, it holds the switch with its "?", then two sliders 0-100 % - speed and hull traverse, no turret slider',
+     manualBody.children.length === 3 && mTop.className === 'aim-manual-top' && mOn.type === 'checkbox' && mOn.checked === false
+     && !!mDot && mDot.className === 'help-dot' && mDot.getAttribute('data-help-for') === 'aim-manual-label aim-manual-speed-row aim-manual-hull-row'
+     && manualBody.children[1].id === 'aim-manual-speed-row' && manualBody.children[2].id === 'aim-manual-hull-row'
+     && [mSpeed, mHull].every(function (r) { return r.type === 'range' && r.min === '0' && r.max === '100' && r.step === '1' && r.value === '0' && !r.disabled; }));
+  ok('manual: the speed row has no figure of its own (the tile shows the km/h), the hull row a read-only °/s one',
+     manualBody.children[1].children.length === 2 && manualBody.children[2].children.length === 3
+     && manualBody.children[2].children[2] === mHullFig && mHullFig.tagName === 'OUTPUT' && mHullFig.textContent === '0 °/s');
+  ok('manual: the words - a heading, one line of what it does, then the points',
+     /^Manual motion\nThe circle as if[^\n]+\n• On: /.test(document.getElementById('aim-manual-label').title)
+     && /^Hull speed\n[^\n]+\n• 100 %: /.test(manualBody.children[1].title) && /^Hull traverse\n[^\n]+\n• 100 %: /.test(manualBody.children[2].title));
+  view.turned = [];
+  mSpeed.value = '100'; mSpeed.oninput.call(mSpeed);
+  const exp100 = FULL_AIM * Math.sqrt(1 + 9.5 * 9.5);   // 50 km/h x 0.19 per km/h, the stock crew's full aim
+  ok('manual: a slider moved turns it on - the switch ticked, the gold frame on the tile, the tile reading 100 % of 50 km/h',
+     mOn.checked === true && drive.getAttribute('data-manual') === 'true' && speed.textContent === '50 km/h', '(' + speed.textContent + ')');
+  tick(1 / 60);
+  ok('manual: the circle rises at once to the steady size of that speed, by the client’s formula',
+     Math.abs(view.liveRadius100 - exp100) < 1e-6, '(' + view.liveRadius100 + ' / ' + exp100 + ')');
+  run(6);
+  ok('manual: held, it stays there and the loop sleeps; the model neither drives nor turns (no key cap lit)',
+     Math.abs(view.liveRadius100 - exp100) < 1e-6 && loopFrames() === 0 && view.turned.length === 0 && capsDown() === '');
+  const stockMoving = view.liveRadius100;
+  choosePreset('Rammer, stabiliser, vents');
+  const stabAtOnce = view.liveRadius100;
+  run(6);
+  ok('manual: a stabiliser at the same speed - the steady circle smaller, at once, the slider where it was',
+     stabAtOnce < stockMoving * 0.9 && Math.abs(view.liveRadius100 - stabAtOnce) < 1e-9 && mSpeed.value === '100' && speed.textContent === '50 km/h',
+     '(' + stockMoving.toFixed(4) + ' -> ' + stabAtOnce.toFixed(4) + ')');
+  choosePreset('Stock — no equipment');
+  mSpeed.value = '50'; mSpeed.oninput.call(mSpeed);
+  mHull.value = '50'; mHull.oninput.call(mHull);
+  tick(1 / 60);
+  // 25 km/h x 0.19; 12 deg/s x 0.19 on the hull; the turret holding the aim against the hull, 12 deg/s x 0.09.
+  const exp5050 = FULL_AIM * Math.sqrt(1 + 4.75 * 4.75 + 2.28 * 2.28 + 1.08 * 1.08);
+  ok('manual: half speed and half the hull traverse - the tile 25 km/h and a clockwise arc of half the sweep, the hull figure 12 °/s',
+     speed.textContent === '25 km/h' && turn.hidden === false && turnFlags() === '01' && mHullFig.textContent === '12 °/s',
+     '(' + speed.textContent + ', ' + turnFlags() + ', ' + mHullFig.textContent + ')');
+  ok('manual: slower than before, the circle settles down to it by the aiming time, not at once',
+     view.liveRadius100 > exp5050 * 1.3, '(' + view.liveRadius100 + ' / ' + exp5050 + ')');
+  run(8);
+  ok('manual: the circle takes the speed, the hull and the turret holding the aim against it - the client’s formula',
+     Math.abs(view.liveRadius100 - exp5050) < 1e-6 && loopFrames() === 0, '(' + view.liveRadius100 + ' / ' + exp5050 + ')');
+  // The page's one wheel handler on the document (the Config menu's local wheelAt above shadows the harness's own here).
+  const wheelNotch = {target: mHull, deltaY: -100, deltaX: 0, deltaMode: 0, prevented: false,
+    preventDefault: function () { this.prevented = true; }, stopPropagation: function () {}};
+  document.fire('wheel', wheelNotch); runNamed('flushInput');
+  ok('manual: the wheel over a slider moves its share by one, through the same owner', mHull.value === '51' && wheelNotch.prevented
+     && mHullFig.textContent === '12.2 °/s', '(' + mHull.value + ', ' + mHullFig.textContent + ')');
+  mHull.value = '50'; mHull.oninput.call(mHull);
+  // The share holds when Config changes the top, and the absolute figure follows it: Clutch Braking, hull traverse x 1.05. On
+  // Custom and off again, so the user's own build of the checks above is what it was.
+  choosePreset('Custom');
+  const hullBefore = parseFloat(mHullFig.textContent);
+  click(crewChip('Clutch Braking'));
+  const hullAfter = parseFloat(mHullFig.textContent);
+  ok('manual: Clutch Braking raises the top traverse - the share stays 50 %, the figure follows it (x 1.05)',
+     mHull.value === '50' && Math.abs(hullAfter / hullBefore - 1.05) < 0.01, '(' + hullBefore + ' -> ' + hullAfter + ' °/s)');
+  click(crewChip('Clutch Braking'));
+  choosePreset('Stock — no equipment');
+  run(6);
+  // Any of W A S D ends it (user, 27.09): the switch goes off, the shares stay, the keys drive from that press on.
+  document.fire('keydown', {code: 'KeyW', key: 'w', target: document.body, preventDefault: function () {}});
+  ok('manual: W ends it - the switch off, the gold frame gone, the sliders where they were',
+     mOn.checked === false && drive.getAttribute('data-manual') === 'false' && mSpeed.value === '50' && mHull.value === '50');
+  run(0.5);
+  ok('manual: and W drives on from the manual speed, its cap lit', capsDown() === 'forward' && Number(speed.textContent.split(' ')[0]) > 25,
+     '(' + speed.textContent + ')');
+  document.fire('keyup', {code: 'KeyW', key: 'w', target: document.body, preventDefault: function () {}});
+  run(30);
+  ok('manual: let go, the vehicle stops and the circle is the full-aim one again', Math.abs(view.liveRadius100 - FULL_AIM) < 1e-6 && loopFrames() === 0);
+  mOn.checked = true; mOn.onchange.call(mOn);
+  tick(1 / 60);
+  ok('manual: ticked again, the same shares and the same steady circle', Math.abs(view.liveRadius100 - exp5050) < 1e-6 && speed.textContent === '25 km/h');
+  // A shot fired takes the manual circle; the recorded rings are the record's.
+  run(6);
+  const manualSteady = view.liveRadius100;
+  press(); tick(0.05); release();
+  ok('manual: a shot fired leaves the ring of the manual circle', Math.abs(view.shotRing - manualSteady) < 1e-9, '(' + view.shotRing + ' / ' + manualSteady + ')');
+  run(15);
+  switchOn(false);
+  ok('manual: with the emulation off it stays out of the scene - no live circle, the tile and its popover away, the recorded ring’s figure back',
+     view.liveRadius100 === null && drive.hidden === true && drive.open === false && shotCircle.textContent === '50 %' && loopFrames() === 0);
+  switchOn(true);
+  tick(1 / 60);
+  ok('manual: on again it is still on with its shares (a reset is no reason to drop them), the circle at its steady size at once',
+     drive.getAttribute('data-manual') === 'true' && Math.abs(view.liveRadius100 - exp5050) < 1e-6);
+  ok('manual: and the recorded shot’s ring keeps the record’s figure beside it', shotCircle.textContent === '50 %', '(' + shotCircle.textContent + ')');
+  runNamed('aimManualSave');
+  const manualStore = storage['bullba-sidebar'], manualKept = (JSON.parse(manualStore || '{}') || {}).manual || {};
+  ok('manual: kept per viewer with the side panel’s state - the switch and the two shares, once, a moment after the change',
+     manualKept.on === true && manualKept.speed === 50 && manualKept.hull === 50 && Object.keys(manualKept).length === 3, '(' + JSON.stringify(manualKept) + ')');
+  drive.open = true; drive.fire('toggle');
+  mOn.checked = false; mOn.onchange.call(mOn);
+  drive.open = false; drive.fire('toggle');
+  run(30);
+  runNamed('aimManualSave');
+  ok('manual: off again, at rest', drive.getAttribute('data-manual') === 'false' && Math.abs(view.liveRadius100 - FULL_AIM) < 1e-6 && loopFrames() === 0);
+  config.open = true; config.fire('toggle');
   // S4: THE RELOAD. Custom is put in force, then this same harness is started again in a child process with
   // the store as it stands: that second page has to come back on this very build without being told anything.
   choosePreset('Custom');
@@ -2468,7 +2601,8 @@ settle(20).then(function () {
   run(1);
   const child = require('child_process').spawnSync(process.execPath, [__filename], {encoding: 'utf8',
     env: Object.assign({}, process.env, {BULLBA_RELOAD: savedSettings(),
-                                         BULLBA_RELOAD_WANT: JSON.stringify(want)})});
+                                         BULLBA_RELOAD_WANT: JSON.stringify(want),
+                                         BULLBA_RELOAD_SIDEBAR: manualStore})});   // manual-motion: its switch and shares, on
   const childOut = String(child.stdout || '') + String(child.stderr || '');
   childOut.split('\n').filter(function (l) { return /S4 \(reload\)/.test(l); })
     .forEach(function (l) { console.log('     ' + l.trim()); });
@@ -5325,8 +5459,12 @@ settle(20).then(function () {
     ok('mag: and it fires at once', view.pinnedPoints === p0 + 5 && magStates() === 'fill,off,off,off', '(' + magStates() + ')');
     // From empty with nothing fired any more: 16 s for the loading round (its share kept), then 14, 12 and 10.
     const t1 = untilChange(30), t2 = untilChange(30), t3 = untilChange(30), t4 = untilChange(30);
+    // k off the tooltip's own 16 s × k (two decimals), not off the reload figure's 0.1 s; and the margin is the panel timer's
+    // 100 ms step at each end of an interval, read in 0.05 s ticks whose sum drifts - 0.16 s broke whenever the fake clock's
+    // phase moved (27.09: manual-motion's checks before this page shifted it, 13.55 s against 13.39).
+    const kt = tm ? +tm[1] / 16 : k;
     ok('mag: left alone the rounds come back one at a time: the second after 14 s × k, the third 12 s × k, the fourth 10 s × k',
-       t1 > 0 && near(t2, 14 * k, 0.16) && near(t3, 12 * k, 0.16) && near(t4, 10 * k, 0.16),
+       t1 > 0 && near(t2, 14 * kt, 0.21) && near(t3, 12 * kt, 0.21) && near(t4, 10 * kt, 0.21),
        '(' + [t1, t2, t3, t4].map(function (v) { return v.toFixed(2); }).join(', ') + ' s)');
     run(0.3);
     ok('mag: full again - four loaded, the panel timer stopped, the figure back at rest',
@@ -5757,6 +5895,8 @@ settle(20).then(function () {
   });
 }).then(function () {
   if (RELOAD) return;   // the S4 child page checks the stored settings only
+  // Mode switch time (27.09) is off by default; the checks below run the game's switch times, so they turn it on.
+  document.getElementById('mode-switch-time').checked = true;
   // ---- xi-mechanics (23.09, BACKLOG 37-38): the tier-XI mechanics under ✸, one mode button; the Borkenkäfer's mark ----
   // One button in the gun panel (#aim-gun-mech) runs the shooter's own mechanic, only under ✸ and only for the eleven
   // vehicles (plus the three it names and does not run); it starts from the recorded state of the shot. Its factors go
@@ -7839,6 +7979,25 @@ settle(20).then(function () {
        mech.hidden === false && mech.textContent === '⤓' && !lit() && !busy() && /— Siege mode\n• Now: travel\n/.test(mech.title)
        && /\nThe second mode’s numbers are from the vehicle’s characteristics file/.test(mech.title) && mech.getAttribute('aria-label') === SHITS[0].attacker.name + ': Siege mode',
        '(' + mech.textContent + ' / ' + mech.getAttribute('aria-label') + ' / ' + mech.title.slice(0, 120) + ')');
+    // MODE SWITCH TIME OFF (27.09, the default): the press puts the new mode in force at once - no dashes, the gun fires at
+    // once, the vehicle is not stopped - and the words say so. Then on again for the game's own times below.
+    const modeTime = document.getElementById('mode-switch-time');
+    modeTime.checked = false; modeTime.onchange.call(modeTime);
+    key('KeyW', true); run(6);
+    const vOff = kmh();
+    click(mech); run(0.02);
+    const pOff = view.pinnedPoints;
+    tap(); run(0.02);
+    ok('switch time off: pressed at ' + vOff + ' km/h - siege at once, lit and not dashed, and the gun fires at once',
+       vOff >= 49.9 && lit() && !busy() && view.pinnedPoints === pOff + 1 && /\n• Switch: at once - the game’s seconds above are off/.test(mech.title),
+       '(' + (view.pinnedPoints - pOff) + ' / ' + busy() + ')');
+    run(0.5);
+    ok('switch time off: W still drives - no forced stop, the speed only held to the siege mode\'s own top', kmh() > 0, '(' + kmh() + ')');
+    click(mech); run(0.02);
+    ok('switch time off: and back to travel at once', !lit() && !busy());
+    allKeysUp(); run(20);
+    modeTime.checked = true; modeTime.onchange.call(modeTime);
+    ok('switch time on: the mode button speaks of the switch again', /\n• While it switches: the gun does not fire/.test(mech.title));
     // Drive at 50 km/h, then press: 2.0 s of switching, the gun does not fire, W is ignored, the speed dies by the brake.
     key('KeyW', true); run(6);
     const v0 = kmh();
@@ -7947,6 +8106,16 @@ settle(20).then(function () {
     // --- the Strv 107-12: a touch from travel goes into siege, 2 s ----------------------------------------------------
     const view = viewerInstance; prepare(view); allKeysUp(); run(20);
     ok('modes: Strv 107-12 recorded in travel - ▣, not lit', mech.textContent === '▣' && !lit() && !glow());
+    // Mode switch time off (27.09): the press stays the game's - a hold of 1 s - and the pillbox is there at once.
+    const modeTime = document.getElementById('mode-switch-time');
+    modeTime.checked = false; modeTime.onchange.call(modeTime);
+    holdMech(1.1); run(0.02);
+    ok('switch time off: held 1 s from travel - into the pillbox at once, not dashed', glow() && !busy());
+    holdMech(0.5); run(0.02);
+    ok('switch time off: a press between a touch and a hold still does nothing', glow() && !busy());
+    holdMech(1.1); run(0.02);
+    ok('switch time off: held again - out to travel at once', !glow() && !lit() && !busy());
+    modeTime.checked = true; modeTime.onchange.call(modeTime); run(20);
     holdMech(0.1); run(1.85);
     ok('modes: a touch (0.1 s) from travel - into siege, dashed for 2 s', busy() && !lit());
     run(0.2);
@@ -8176,8 +8345,9 @@ settle(20).then(function () {
   pageSrc.replace(/<button type="button" class="help-dot[^"]*" (?:data-tb="\d+" )?data-help-for="([^"]*)"/g, function (m, ids) { dots[ids.split(' ')[0]] = ids.split(' '); return m; });
   ok('strip: the top help dot lists ⌖ first and everything of the strip one can press or read, not the tile (user 23.09: the group opened on the collision model); the shooter row no longer the mode button',
      JSON.stringify(dots['fun-mode-toggle']) === JSON.stringify(['fun-mode-toggle', 'real-reload-toggle', 'aim-gun-load', 'aim-gun-mag', 'aim-gun-heat', 'aim-gun-mech', 'target-hp-reset'])
-     && JSON.stringify(dots['swap-roles']) === JSON.stringify(['swap-roles', 'shooter-tile', 'aim-gun-shells', 'aim-config']),
-     '(' + JSON.stringify(dots['fun-mode-toggle']) + ' / ' + JSON.stringify(dots['swap-roles']) + ')');
+     // manual-motion (27.09): the drive tile opens a popover now, so the row's dot lists it first, as it stands first in the row
+     && JSON.stringify(dots['aim-drive-summary']) === JSON.stringify(['aim-drive-summary', 'swap-roles', 'shooter-tile', 'aim-gun-shells', 'aim-config']),
+     '(' + JSON.stringify(dots['fun-mode-toggle']) + ' / ' + JSON.stringify(dots['aim-drive-summary']) + ')');
   ok('strip: every id a help dot of the page lists is on the page',
      Object.keys(dots).length >= 5 && Object.keys(dots).every(function (k) { return dots[k].every(once); }), '(' + Object.keys(dots).length + ' dots)');
   ok('strip: the switch is a crosshair drawn in currentColor - lit in the accent with the switch - and its help row names it ⌖',

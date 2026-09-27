@@ -635,8 +635,23 @@ input.lab-track::-moz-range-thumb{width:10px;height:18px;border-radius:3px;backg
 /* The speed readout at the left end of the shooter row (user, 20.09): what the shooter is doing right
    now, the turn arc and the key glyph, side by side. The margin keeps it clear of the swap button, which
    belongs to the two vehicle tiles and not to this tile. Same translucent panel as the other overlays. */
-.aim-drive{display:flex;flex-direction:row;align-items:center;gap:9px;flex-shrink:0;margin-right:26px;padding:5px 10px;border-radius:5px;background:rgba(23,35,48,.55);color:#e5edf5;font-size:13px;line-height:1.1;white-space:nowrap}
+.aim-drive{flex-shrink:0;margin-right:26px}
 .aim-drive[hidden]{display:none}
+/* The tile is the <summary> of its popover (manual motion, 27.09): the look of the plain tile it was, a gold frame while
+   manual motion is on - the keys dim then, as any of them ends it. */
+.aim-drive>.aim-drive-tile{display:flex;flex-direction:row;align-items:center;gap:9px;padding:5px 10px;border:1px solid transparent;border-radius:5px;background:rgba(23,35,48,.55);color:#e5edf5;font-size:13px;line-height:1.1;white-space:nowrap}
+.aim-drive>.aim-drive-tile::after{content:none}
+.aim-drive[data-manual=true]>.aim-drive-tile{border-color:var(--gold);box-shadow:0 0 0 3px rgba(234,195,110,.18)}
+.aim-drive[data-manual=true] .aim-keys{opacity:.4}
+/* The popover opens to the LEFT of the tile, its foot on the tile's; placeManual (app.js) puts it above when the left runs out. */
+.aim-drive .toolbar-popover{left:auto;right:calc(100% + 8px);top:auto;bottom:0;width:260px;min-width:0;max-width:calc(100vw - 16px);gap:10px;padding:12px}
+.aim-drive .toolbar-popover[data-place=above]{left:0;right:auto;bottom:calc(100% + 6px)}
+.aim-manual-top{display:flex;align-items:center;gap:8px;width:100%}
+.aim-manual-top>label{display:flex;align-items:center;gap:6px;flex:1 1 auto;font-size:13px;color:#e5edf5;white-space:nowrap}
+.aim-manual-row{display:flex;align-items:center;gap:8px;width:100%}
+.aim-manual-row input[type=range]{flex:1 1 auto;min-width:80px;accent-color:var(--gold)}
+.aim-manual-row output{min-width:48px;text-align:right;font-size:12px;font-variant-numeric:tabular-nums;color:var(--muted);white-space:nowrap}
+.aim-manual[data-off=true] .aim-manual-row{opacity:.55}
 .aim-drive b{font-weight:600;font-variant-numeric:tabular-nums}
 /* Hull rotation: a small arc with an arrowhead, clockwise for D and counter-clockwise for A, as long as
    the turn rate is fast (up to 270° at the hull's top rotation speed). Drawn by the frame loop. */

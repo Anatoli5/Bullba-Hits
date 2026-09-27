@@ -620,6 +620,48 @@ async function main() {
     }
     await ev('__bt.act.fun(false)'); await ev('__bt.settle()');
 
+    // ---- manual motion (27.09): the drive tile's popover on the rendered page ---------------------------------------
+    // It opens to the LEFT of the tile, inside the window and clear of the tile; at a narrow width it goes above the tile.
+    // Its sliders drive the live circle as if the shooter moved steadily; a scene path (another battle's hit, its shooter
+    // another vehicle) keeps them for the new shooter (inherit); W ends it and drives from there.
+    await step("side('battles')"); await step("battle('pm')"); await step('hit(0)');
+    const MANUAL = `(() => { const d = document.getElementById('aim-drive'), s = document.getElementById('aim-drive-summary'), p = document.getElementById('aim-manual-body');
+      const v = ${LV}, b = s.getBoundingClientRect(), q = p.getBoundingClientRect(), h = document.getElementById('aim-manual-hull-value');
+      return {open: d.open, shown: s.getClientRects().length > 0, manual: d.getAttribute('data-manual'), tile: {l: b.left, r: b.right, t: b.top, b: b.bottom},
+        pop: {l: q.left, r: q.right, t: q.top, b: q.bottom, w: q.width}, vw: document.documentElement.clientWidth, vh: document.documentElement.clientHeight,
+        live: v.liveRadius100, speed: document.getElementById('aim-speed').textContent, hull: h ? h.textContent : '', place: p.getAttribute('data-place')}; })()`;
+    const clearOf = (m) => m.pop.w > 0 && m.pop.l >= 0 && m.pop.r <= m.vw && m.pop.t >= 0 && m.pop.b <= m.vh && (m.pop.r <= m.tile.l || m.pop.b <= m.tile.t);
+    await ev("document.getElementById('aim-drive-summary').click()"); await ev('__bt.settle()');
+    const M0 = await ev(MANUAL);
+    ok('manual: the drive tile opens its popover to the left of the tile, inside the window and clear of the tile',
+       M0.open && M0.shown && clearOf(M0) && M0.pop.r <= M0.tile.l && M0.place === null && M0.manual === 'false' && M0.live > 0, JSON.stringify(M0));
+    await ev(`(() => { const s = document.getElementById('aim-manual-speed'), h = document.getElementById('aim-manual-hull');
+      s.value = '100'; s.dispatchEvent(new Event('input')); h.value = '50'; h.dispatchEvent(new Event('input')); return true; })()`);
+    await ev('__bt.settle()');
+    const M1 = await ev(MANUAL);
+    ok('manual: the sliders turn it on - the gold frame, the tile at the top speed, the hull\'s °/s beside its slider, the live circle as if driving',
+       M1.manual === 'true' && /^[1-9]\d* km\/h$/.test(M1.speed) && /^[\d.]+ °\/s$/.test(M1.hull) && M1.hull !== '0 °/s' && M1.live > M0.live * 1.5, JSON.stringify([M0.live, M1]));
+    await step("battle('pm2')"); await step('hit(0)');
+    const M2 = await ev(MANUAL);
+    ok('manual: another battle\'s hit keeps it - its shooter drives by hand at his own top speed, the gold frame on', M2.manual === 'true' && /^[1-9]\d* km\/h$/.test(M2.speed) && M2.live > 0, JSON.stringify(M2));
+    await ev(`(() => { document.dispatchEvent(new KeyboardEvent('keydown', {code: 'KeyW', key: 'w', bubbles: true}));
+      document.dispatchEvent(new KeyboardEvent('keyup', {code: 'KeyW', key: 'w', bubbles: true})); return true; })()`);
+    const M3 = await ev(`(async () => { const read = ${MANUAL.replace(/^\(/, '(function () { return (').replace(/\)\(\)$/, ')(); })')};
+      for (let i = 0; i < 150; i++) { const m = read(); if (m.speed === '0 km/h' && m.live < ${M2.live} / 1.5) return m; await new Promise((r) => setTimeout(r, 100)); } return read(); })()`);
+    ok('manual: W ends it - no gold frame, the vehicle brakes to a stop and the circle settles from the manual one', M3.manual === 'false' && M3.speed === '0 km/h' && M3.live < M2.live / 1.5,
+       JSON.stringify([M2.live, M3]));
+    await step("battle('pm')"); await step('hit(0)');
+    // A narrow window: no room on the left any more - above the tile, still inside the window and clear of it.
+    await page.send('Emulation.setDeviceMetricsOverride', {width: 640, height: 900, deviceScaleFactor: 1, mobile: false});
+    await ev('__bt.settle()');
+    if (!(await ev("document.getElementById('aim-drive').open"))) { await ev("document.getElementById('aim-drive-summary').click()"); await ev('__bt.settle()'); }
+    const M4 = await ev(MANUAL);
+    ok('manual: at 640 px the popover moves above the tile, inside the window and clear of the tile', M4.open && M4.shown && clearOf(M4) && (M4.place === 'above' || M4.pop.r <= M4.tile.l), JSON.stringify(M4));
+    await ev("document.getElementById('aim-drive-summary').click()");
+    await page.send('Emulation.clearDeviceMetricsOverride'); await ev('__bt.settle()');
+    ok('manual: no uncaught exception in the page', page.errors.length === 0, page.errors.slice(0, 3).join(' | '));
+    page.errors.length = 0;
+
     // ---- the leak counter ----------------------------------------------------------------------------------
     const CYCLE = ["side('battles')", "battle('pm')", 'hit(0)', 'swap()', 'swap()', 'roster(32)', "battle('pm2')", 'hit(0)',
                    'modelTile()', "list('pm_quebec')", "side('battles')", "battle('pm')", 'hit(1)', 'event(0)', 'event(1)', "battle('pm3')", 'hit(0)', 'roster(33)'];

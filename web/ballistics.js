@@ -270,20 +270,28 @@
     if(value>target)return Math.max(target,value-most);
     return target;
   }
-  function moveStep(prev,keys,aim,mods,dt){
-    var k=keys||{},s=prev||{},m=aimMods(mods),a=aim||{};
-    var step=Math.max(0,Math.min(.25,Number(dt)||0));
-    // A turbocharger and the Mobility Improvement System raise the CAP the vehicle accelerates to
-    // (optional_devices.xml forwardMaxSpeedKMHTerm / backwardMaxSpeedKMHTerm), which makes the movement
-    // term BIGGER, not smaller - the honest answer. The page hands the terms in already converted to the
-    // m/s the record uses. A vehicle whose record carries no speed at all gains nothing: 0 means no data,
-    // and a term on top of it would be an invented speed.
-    // m.speed: a tier-XI mode that caps the vehicle's speed outright (the Strv 107-12's pillbox, ×0), 1 otherwise. The
-    // brake keeps the vehicle's own rate, so a vehicle rolling when the cap drops comes to a stop instead of coasting.
+  // THE SHOOTER'S TOP MOTION with this build and the mode in force - one owner for the WASD model below, the turret chase
+  // and the page's manual motion (26.09), which sets its sliders' ranges from it. m/s and rad/s, 0 = no data.
+  // A turbocharger and the Mobility Improvement System raise the CAP the vehicle accelerates to
+  // (optional_devices.xml forwardMaxSpeedKMHTerm / backwardMaxSpeedKMHTerm), which makes the movement
+  // term BIGGER, not smaller - the honest answer. The page hands the terms in already converted to the
+  // m/s the record uses. A vehicle whose record carries no speed at all gains nothing: 0 means no data,
+  // and a term on top of it would be an invented speed.
+  // m.speed: a tier-XI mode that caps the vehicle's speed outright (the Strv 107-12's pillbox, ×0), 1 otherwise. The
+  // brake keeps the vehicle's own rate (forwardCap, backCap), so a vehicle rolling when the cap drops comes to a stop
+  // instead of coasting. `turret`: the turret's top speed relative to the hull (turretChase below).
+  function motionLimits(aim,mods){
+    var m=aimMods(mods),a=aim||{};
     var forwardCap=a.speedForward>0?Math.max(0,a.speedForward+term(mods&&mods.speedForwardAdd)):0;
     var backCap=a.speedBackward>0?Math.max(0,a.speedBackward+term(mods&&mods.speedBackwardAdd)):0;
-    var forward=forwardCap*m.speed*m.forwardSpeed,back=backCap*m.speed*m.backwardSpeed;
-    var hullMax=(a.hullRotationSpeed>0?a.hullRotationSpeed:0)*m.hullSpeed;
+    return {forward:forwardCap*m.speed*m.forwardSpeed,back:backCap*m.speed*m.backwardSpeed,forwardCap:forwardCap,backCap:backCap,
+      hull:(a.hullRotationSpeed>0?a.hullRotationSpeed:0)*m.hullSpeed,turret:(a.turretRotationSpeed>0?a.turretRotationSpeed:0)*m.turretSpeed};
+  }
+  function moveStep(prev,keys,aim,mods,dt){
+    var k=keys||{},s=prev||{};
+    var step=Math.max(0,Math.min(.25,Number(dt)||0));
+    var lim=motionLimits(aim,mods),forwardCap=lim.forwardCap,backCap=lim.backCap;
+    var forward=lim.forward,back=lim.back,hullMax=lim.hull;
     var accel=seconds(mods&&mods.accelSeconds,MOVE.accel),accelBack=seconds(mods&&mods.accelBackSeconds,MOVE.accelBack);
     var brake=seconds(mods&&mods.brakeSeconds,MOVE.brake),turn=seconds(mods&&mods.turnSeconds,MOVE.turn);
     var speed=Number(s.speed)||0,hullTurn=Number(s.hullTurn)||0;
@@ -326,7 +334,7 @@
   // exporter could not complete) moves the pitch at once, as a block without a turret speed moves the gun at once:
   // no invented speed, and the circle is the same either way. `pitchStep` is the elevation of this frame.
   function turretChase(gap,hullTurn,aim,mods,dt,swung){
-    var m=aimMods(mods),limit=(aim&&aim.turretRotationSpeed>0?aim.turretRotationSpeed:0)*m.turretSpeed;
+    var m=aimMods(mods),limit=motionLimits(aim,mods).turret;
     var step=Math.max(1e-4,Math.min(.25,Number(dt)||0)),hull=Math.abs(Number(hullTurn)||0);
     var yaw=Math.max(0,Number(gap&&typeof gap==='object'?gap.yaw:gap)||0),pitch=Math.max(0,Number(gap&&typeof gap==='object'?gap.pitch:0)||0);
     var up=(aim&&aim.gunPitchSpeed>0?aim.gunPitchSpeed:0)*m.gunSpeed,pitchStep=up>0?Math.min(pitch,up*step):pitch;
@@ -641,6 +649,6 @@
     return stops[i].map(function(v,k){return v+(stops[i+1][k]-v)*f;});
   }
   root.ArmorBallistics={TIE:TIE,build:build,fromTriangles:fromTriangles,triangle:triangle,subdivide:subdivide,evaluate:evaluate,shell:shell,atDistance:atDistance,penetrationAt:penetrationAt,alphaAt:alphaAt,chance:chance,effective:effective,ricochet:ricochet,color:color,value:value,nonPenetration:nonPenetration,transform:transform,unit:unit,sub:sub,aimFactor:aimFactor,
-    aimStep:aimStep,aimShot:aimShot,shotTerm:shotTerm,reloadSeconds:reloadSeconds,autoreloadScaled:autoreloadScaled,moveStep:moveStep,turretChase:turretChase,
+    aimStep:aimStep,aimShot:aimShot,shotTerm:shotTerm,reloadSeconds:reloadSeconds,autoreloadScaled:autoreloadScaled,moveStep:moveStep,motionLimits:motionLimits,turretChase:turretChase,
     aimProfiles:AIM_PROFILES,aimProfile:aimProfile,aimProfileDefault:DEFAULT_PROFILE,moveDefaults:MOVE};
 }(typeof window==='undefined'?globalThis:window));

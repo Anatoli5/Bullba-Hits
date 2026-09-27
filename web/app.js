@@ -115,7 +115,7 @@
 
   // The game's CEF may refuse storage; the mode and the filters are a convenience, never a requirement.
   function storedSidebar(){try{return JSON.parse(window.localStorage.getItem(SIDEBAR_KEY));}catch(e){return null;}}
-  function storeSidebar(){try{window.localStorage.setItem(SIDEBAR_KEY,JSON.stringify({mode:sidebarMode,filters:vehicleFilters,scope:vehicleScope,shooter:lastShooterType}));}catch(e){}}
+  function storeSidebar(){try{window.localStorage.setItem(SIDEBAR_KEY,JSON.stringify({mode:sidebarMode,filters:vehicleFilters,scope:vehicleScope,shooter:lastShooterType,manual:aimManual}));}catch(e){}}
 
   // ---- filters -----------------------------------------------------------
   // No filter means every vehicle is listed - a filter only takes rows away (user, 19.09: an empty filter
@@ -669,6 +669,9 @@
     // 'filtersOpen' of an older state is ignored: the fold it belonged to is gone.
     if(saved&&(saved.scope==='battle'||saved.scope==='all'))vehicleScope=saved.scope;
     if(saved&&typeof saved.shooter==='string'&&SHOOTER_TYPE.test(saved.shooter))lastShooterType=saved.shooter;
+    // Manual motion (27.09): the switch and the three shares, whatever shooter comes next (inherit, not reset).
+    if(saved&&saved.manual&&typeof saved.manual==='object'){aimManual.on=saved.manual.on===true;
+      AIM_MANUAL_KEYS.forEach(function(k){aimManual[k]=aimShare(saved.manual[k]);});paintManual();}
     syncFilters();
     // The page opens on the battles and their hits (user, 14.09: a newcomer must not think the viewer is empty);
     // a fragment naming a vehicle opens the Vehicles mode - the game's mods list button names the hangar's vehicle
@@ -3390,6 +3393,16 @@
   // of wall clock through window.setTimeout, not a count of frames, so a slow scene does not lengthen the tap.
   var AIM_HOLD_MS = 250;
   var AIM_KEYS = {KeyW: 'forward', KeyS: 'back', KeyA: 'left', KeyD: 'right'};
+  // MANUAL MOTION (user, 27.09): the drive tile's popover sets the shooter's motion by hand, to compare what the equipment does
+  // to the circle on the move in a steady, repeatable state instead of driving with W A S D. Two shares, 0-100 %, of the
+  // shooter's CURRENT top figures - the forward speed and the hull traverse (ArmorBallistics.motionLimits, with Config and the
+  // mode in force) - so 100 % stays the top whatever Config or a second mode makes it. The shares are the one fact kept (per
+  // viewer, SIDEBAR_KEY 'manual') and every next shooter inherits them; the absolute figures are derived. They feed the circle's
+  // movement and hull terms only: the model on screen neither drives nor turns, and the turret follows the cursor as always
+  // (no turret slider: a set rate would fight the mouse). Any of W A S D ends it (the shares stay for the next time). No
+  // reverse and no sign: the direction changes none of the circle's terms.
+  var aimManual = {on: false, speed: 0, hull: 0};
+  var AIM_MANUAL_KEYS = ['speed', 'hull'];
   // The game's CEF and a non-Latin keyboard layout both have to work, so the physical key is preferred
   // and the typed character is the fallback for a browser without KeyboardEvent.code.
   function aimKeyName(e) {
@@ -3422,7 +3435,14 @@
   function stopAimLoop() { if (aimFrame) window.cancelAnimationFrame(aimFrame); aimFrame = 0; aimClock = 0; }
   // `hullMax` rides along for the turn indicator only: it is the hull's top rotation speed with this
   // build, which is what the arc's length is measured against. The ballistics read speed/hullTurn/turretTurn.
+  // Manual motion (27.09) stands in for the keys' motion; its turret term is the one the frame loop's chase gives a hull
+  // turning under a cursor at rest (the same ArmorBallistics.turretChase).
   function aimState() {
+    if (aimManual.on) {
+      var a = aimBlockData(), mods = aimHeated(aimModifiers()), mv = aimManualMove(a, mods);
+      return {speed: mv.speed, hullTurn: mv.hullTurn, hullMax: mv.hullMax,
+              turretTurn: mv.hullTurn ? ArmorBallistics.turretChase(0, mv.hullTurn, a, mods, 1 / 60, false).turretTurn : 0};
+    }
     return {speed: aimMove ? aimMove.speed : 0, hullTurn: aimMove ? aimMove.hullTurn : 0,
             hullMax: aimMove ? aimMove.hullMax : 0, turretTurn: 0};
   }
@@ -3454,15 +3474,20 @@
     var mods = aimHeated(aimModifiers());
     // The gun's sector of this frame (under ✸ a static gun is held on the hull's axis while driving or switching the
     // mode) and the keys the vehicle drives by (aimKeysNow: the second modes' rules and the autorotation past the sector).
-    var yawLimits = aimYawLimits(a);
-    aimMove = ArmorBallistics.moveStep(aimMove, aimKeysNow(yawLimits), a, mods, dt);
+    var yawLimits = aimYawLimits(a), manual = aimManual.on;
+    // Manual motion: the motion set by hand, with no ramp - it is a steady state, and the circle settles to it by the client's
+    // own law below (aimStep: an instant rise, a fall by the aiming time).
+    aimMove = manual ? aimManualMove(a, mods) : ArmorBallistics.moveStep(aimMove, aimKeysNow(yawLimits), a, mods, dt);
     xiMotion(aimMove.speed);   // the Leopard 120 V's stacks build only below their speed (nothing for other vehicles)
     // The hull turns first and TAKES THE GUN WITH IT (user, 20.09): the aim point swings around the
     // shooter by hullTurn·dt, opening a gap to the crosshair, and the turret below spends what the hull
     // left it on closing that gap again. So holding A with the cursor still drags the ring sideways and
     // the turret pulls it back.
     var swung = false;
-    if (aimMove.hullTurn) {
+    // A hull turned by hand does not carry the gun round (27.09): the model stands, and a hull turning for ever would make the
+    // scene unusable. The turret chase below still sees the hull's turn, unswung: holding the aim against it costs the turret
+    // its rate - the term the keys give a turning hull - and the rest of the turret's speed follows the cursor.
+    if (aimMove.hullTurn && !manual) {
       aimHeading += aimMove.hullTurn * dt;
       swung = !!(viewer.turnAim && viewer.turnAim(aimMove.hullTurn * dt));
     }
@@ -3516,7 +3541,7 @@
   var AIM_STATIC_YAW = [0, 0];
   function aimYawLimits(a) {
     var st = a && funOn() && a.staticTurretYaw !== undefined && a.staticTurretYaw !== null ? Number(a.staticTurretYaw) : NaN;
-    if (isFinite(st) && (aimHeld() || xiSwitching())) { AIM_STATIC_YAW[0] = st; AIM_STATIC_YAW[1] = st; return AIM_STATIC_YAW; }
+    if (isFinite(st) && (aimHeld() || aimManualMoving() || xiSwitching())) { AIM_STATIC_YAW[0] = st; AIM_STATIC_YAW[1] = st; return AIM_STATIC_YAW; }
     var l = a && a.turretYawLimits;
     if (!Array.isArray(l) || l.length !== 2) return null;
     var lo = Number(l[0]), hi = Number(l[1]);
@@ -3540,11 +3565,14 @@
     if (modes && modes.wheeled !== undefined) return !!modes.wheeled && !modes.onSpotRotation;
     return !!(a && a.siegeMode && a.siegeMode.kind === 'wheeled');
   }
+  // The two rules both ways of driving obey (the keys here, manual motion in aimManualMove): a mode switch that stops the
+  // vehicle, and a wheeled hull that does not turn standing.
+  function aimSwitchStops() { var m = funOn() && xiMech ? xiNow() : null; return !!(m && m.spec.kind === 'siege' && m.to !== null && m.spec.stop); }
+  function aimSpotLocked(speed) { return funOn() && !(Math.abs(Number(speed) || 0) >= 0.1 * KMH_TO_MS) && aimNoSpotTurn(); }
   function aimKeysNow(limits) {
-    var fun = funOn(), m = fun && xiMech ? xiNow() : null;
-    if (m && m.spec.kind === 'siege' && m.to !== null && m.spec.stop) { aimAutoTurn = false; return AIM_NO_KEYS; }
+    if (aimSwitchStops()) { aimAutoTurn = false; return AIM_NO_KEYS; }
     var turn = !!(aimKeys.left || aimKeys.right), keys = aimKeys;
-    if (fun && turn && !(aimMove && Math.abs(Number(aimMove.speed) || 0) >= 0.1 * KMH_TO_MS) && aimNoSpotTurn()) turn = false;
+    if (turn && aimSpotLocked(aimMove && aimMove.speed)) turn = false;
     if (!turn && limits && viewer && viewer.aimBeyond) {
       var over = Number(viewer.aimBeyond(limits)) || 0;
       if (Math.abs(over) > 1e-4) aimAutoTurn = true;
@@ -3671,6 +3699,7 @@
   function paintDrive(state) {
     var e = $('aim-speed');
     if (!e) return;
+    paintManual();
     var ms = state && Number.isFinite(state.speed) ? state.speed : 0;
     e.textContent = Math.round(ms / KMH_TO_MS) + ' km/h';
     ['forward', 'left', 'back', 'right'].forEach(function (name) {
@@ -3710,6 +3739,123 @@
     head.setAttribute('d', 'M' + fix(tip[0]) + ' ' + fix(tip[1]) + 'L' + fix(b1[0]) + ' ' + fix(b1[1]) +
       'L' + fix(b2[0]) + ' ' + fix(b2[1]) + 'Z');
     box.hidden = false;
+  }
+  // --- Manual motion: the drive tile's popover (user, 27.09) -------------------------------------------
+  // What aimManual (above) stands for: the motion for this block and these modifiers, the shares of the top figures of
+  // ArmorBallistics.motionLimits - the owner the WASD model and the turret chase read too - under the second modes' own rules.
+  // `resting`: nothing of it changes from one frame to the next, so the loop sleeps once the circle has settled.
+  function aimManualMove(a, mods) {
+    var lim = ArmorBallistics.motionLimits(a, mods), m = aimManual;
+    var speed = lim.forward * m.speed / 100, hull = lim.hull * m.hull / 100;
+    if (aimSwitchStops()) speed = hull = 0;
+    else if (hull && aimSpotLocked(speed)) hull = 0;
+    return {speed: speed, hullTurn: hull, forward: lim.forward, back: lim.back, hullMax: lim.hull, resting: true};
+  }
+  // The shooter moves by hand at this moment (a gun with a static yaw is held on the hull's axis then, as on the keys).
+  function aimManualMoving() { return !!(aimManual.on && aimMove && (aimMove.speed || aimMove.hullTurn)); }
+  function aimShare(v) { v = Math.round(Number(v)); return isFinite(v) ? Math.max(0, Math.min(100, v)) : 0; }
+  // The switch: its checkbox, and any of W A S D, which ends it (aimKeyDown).
+  function aimManualSwitch(on) {
+    on = !!on;
+    if (on === aimManual.on) return;
+    aimManual.on = on;
+    aimManualChanged();
+  }
+  // A slider: its share, and manual motion on - a slider moved is what the user wants to see.
+  function aimManualSet(key, value) {
+    var v = aimShare(value);
+    if (v === aimManual[key] && aimManual.on) return;
+    aimManual[key] = v; aimManual.on = true;
+    aimManualChanged();
+  }
+  // Every change goes here: the tile and the popover show it, the loop takes the new motion - the circle rises at once or
+  // settles by the aiming time, the client's own law (aimStep) - and it is kept a moment later, once (a drag or a wheel
+  // sends an input per step, and a store per step is a synchronous disk write).
+  var aimManualTimer = 0;
+  function aimManualChanged() {
+    aimEstAt = 0; aimEstFine = false;
+    paintDrive(aimState());
+    startAimLoop();
+    if (!aimManualTimer) aimManualTimer = window.setTimeout(aimManualSave, 300);
+  }
+  function aimManualSave() { aimManualTimer = 0; storeSidebar(); }
+  var AIM_MANUAL_TITLE = 'Manual motion\nThe circle as if the shooter drove steadily like this; the model stands still.' +
+    '\n• On: the sliders set the speed and the hull turn; shots fired take them too\n• A slider moved: turns it on' +
+    '\n• Tile: shows the speed and the turn; gold frame while on\n\n• Turret: follows the cursor as always' +
+    '\n• W A S D: end it; the sliders stay for the next time\n• Recorded hits: unchanged';
+  // The two rows: the TTX panel's own glyph and the share of the top figure (0-100 %). The hull traverse alone prints its
+  // figure (°/s, read-only) - the tile shows the speed in km/h already and the turn only as an arc.
+  var AIM_MANUAL_ROWS = {
+    speed: {glyph: 'speedLimits', lim: 'forward',
+      title: 'Hull speed\nThe speed the circle is taken at: a share of the top forward speed.' +
+        '\n• 100 %: the top speed with Config and the mode in force; the share holds when they change it\n• km/h: on the tile'},
+    hull: {glyph: 'chassisRotationSpeed', lim: 'hull', scale: 1 / DEG, unit: '°/s',
+      title: 'Hull traverse\nThe hull’s turn the circle is taken at: a share of its top traverse.' +
+        '\n• 100 %: the top traverse with Config and the mode in force\n• Figure: that rate, °/s\n\n• The model on screen does not turn' +
+        '\n• The turret holds the aim against it, as on the keys'}
+  };
+  // Built once, the first time the popover opens; paintManual keeps it current.
+  function buildManual(body) {
+    var top = node('div', undefined, 'aim-manual-top'), label = node('label'), box = node('input'), ids = ['aim-manual-label'], rows = [];
+    label.id = 'aim-manual-label'; label.title = AIM_MANUAL_TITLE;
+    box.type = 'checkbox'; box.id = 'aim-manual-on';
+    box.onchange = function () { aimManualSwitch(this.checked); };
+    label.appendChild(box); label.appendChild(document.createTextNode('Manual motion'));
+    top.appendChild(label);
+    AIM_MANUAL_KEYS.forEach(function (k) {
+      var spec = AIM_MANUAL_ROWS[k], row = node('label', undefined, 'aim-manual-row'), range = node('input');
+      row.id = 'aim-manual-' + k + '-row'; row.title = spec.title; ids.push(row.id);
+      range.type = 'range'; range.id = 'aim-manual-' + k; range.min = '0'; range.max = '100'; range.step = '1';
+      range.setAttribute('aria-label', spec.title.split('\n')[0] + ', % of the top');
+      // The one owner of the value is aimManual: the slider's input and the wheel's (the page's slider handler dispatches it).
+      range.oninput = function () { aimManualSet(k, this.value); };
+      row.appendChild(ttxGlyph(spec.glyph)); row.appendChild(range);
+      if (spec.unit) { var out = node('output'); out.id = 'aim-manual-' + k + '-value'; row.appendChild(out); }
+      rows.push(row);
+    });
+    top.appendChild(helpDotFor(ids));   // the popover's own "?": the switch and the two rows
+    body.appendChild(top);
+    rows.forEach(function (r) { body.appendChild(r); });
+  }
+  // The gold frame on the tile while manual motion is on, and - with the popover open - the switch, the sliders and the
+  // hull's figure, from the limits in force now. Run from paintDrive (every paint of the tile) and on the popover's toggle;
+  // each write is made only when its value changes.
+  function paintManual() {
+    var tile = $('aim-drive'), on = !!aimManual.on;
+    if (!tile) return;
+    if (tile.getAttribute('data-manual') !== String(on)) tile.setAttribute('data-manual', String(on));
+    var body = $('aim-manual-body');
+    if (!body || !tile.open) return;
+    if (!body.children.length) buildManual(body);
+    var box = $('aim-manual-on');
+    if (box.checked !== on) box.checked = on;
+    if (body.getAttribute('data-off') !== String(!on)) body.setAttribute('data-off', String(!on));
+    var lim = ArmorBallistics.motionLimits(aimBlockData(), aimHeated(aimModifiers()));
+    AIM_MANUAL_KEYS.forEach(function (k) {
+      var spec = AIM_MANUAL_ROWS[k], range = $('aim-manual-' + k), have = lim[spec.lim] > 0;
+      if (String(range.value) !== String(aimManual[k])) range.value = String(aimManual[k]);
+      if (range.disabled !== !have) range.disabled = !have;   // no figure in the record: nothing to take a share of
+      if (!spec.unit) return;
+      var out = $('aim-manual-' + k + '-value'), text = have ? String(Math.round(lim[spec.lim] * spec.scale * aimManual[k] / 10) / 10) + ' ' + spec.unit : '—';
+      if (out.textContent !== text) out.textContent = text;
+    });
+  }
+  // WHERE THE POPOVER OPENS (user, 27.09): to the LEFT of the tile, where the scene is free by default (the stylesheet); when
+  // the page is too narrow for that, above the tile, slid along to stay inside the window. Never over the tile itself. Run when
+  // it opens and when the window changes size - a measure, so never per frame.
+  var MANUAL_EDGE = 8;
+  function placeManual() {
+    var tile = $('aim-drive'), pop = $('aim-manual-body');
+    if (!tile || !pop || !tile.open) return;
+    if (pop.hasAttribute('data-place')) pop.removeAttribute('data-place');
+    pop.style.left = '';
+    var width = document.documentElement.clientWidth || window.innerWidth || 0, p = pop.getBoundingClientRect();
+    if (p.left >= MANUAL_EDGE) return;
+    pop.setAttribute('data-place', 'above');
+    p = pop.getBoundingClientRect();
+    var shift = p.right > width - MANUAL_EDGE ? width - MANUAL_EDGE - p.right : 0;
+    if (p.left + shift < MANUAL_EDGE) shift = MANUAL_EDGE - p.left;
+    if (shift) pop.style.left = Math.round(shift) + 'px';
   }
   // --- The gun panel beside the Shooter tile (user, 20.09) ---------------------------------------
   // The shooter's own shells as the client's own icons, and the gun's load state the way the in-game
@@ -5189,7 +5335,8 @@
     var s = m.spec, now = aimSeconds();
     switch (s.kind) {
       case 'stance':
-        if (m.to === null) { m.to = 1 - m.stance; m.until = now + s.switchTime; m.energyAt = now; }
+        // Without the switch time the stance changes at this instant: the switch ends now (xiAdvance takes it at once).
+        if (m.to === null) { m.to = 1 - m.stance; m.until = now + (xiSwitchTimed() ? s.switchTime : 0); m.energyAt = now; }
         break;
       case 'ability':
         if (m.state === 'ready') { m.state = 'active'; m.until = now + s.duration; }
@@ -5244,10 +5391,14 @@
     if (m.st === 2) xiSiegeGo(m, 0, p.toDrive, now);
     else xiSiegeGo(m, 2, m.st === 1 ? p.fromSiege : p.fromDrive, now);
   }
-  // An instant switch (the French wheeled vehicles, 0 s) is done at once; any other runs its time.
+  // THE SWITCH TIME IS AN OPTION (user, 27.09): Settings → Mode switch time, off by default - the new mode at once, no gun
+  // held, no forced stop. On, the game's own seconds as before. The press itself stays the game's either way (the pillbox's
+  // touch and hold, the turbine only standing); a recorded hit is the record's.
+  function xiSwitchTimed() { var e = $('mode-switch-time'); return !!(e && e.checked); }
+  // An instant switch (the French wheeled vehicles, 0 s, or the switch time off) is done at once; any other runs its time.
   function xiSiegeGo(m, to, seconds, now) {
     m.refused = 0;
-    if (!(seconds > 0)) { m.st = to; m.to = null; m.until = 0; return; }
+    if (!(seconds > 0) || !xiSwitchTimed()) { m.st = to; m.to = null; m.until = 0; return; }
     m.to = to; m.until = now + seconds;
   }
   // THE TOUCH AND THE HOLD on the button, the client's own times (PillboxSiegeComponent TAP_TIME 0.25 s, HOLD_TIME 1.0 s):
@@ -5399,7 +5550,7 @@
       case 'stance':
         return head + 'stance\n• Now: ' + (m.stance === 1 ? 'turbo' : 'fight') + (m.to !== null ? ', switching to ' + (m.to === 1 ? 'turbo' : 'fight') + ' - ' + xiSec(m.until - now) + ' s' : '') +
           (m.fightUntil > now ? '; the fight ability on - ' + xiSec(m.fightUntil - now) + ' s left' : '') + '\n• Fight energy: ' + Math.floor(m.energy) + ' / ' + s.energyMax +
-          '\n• Press: switch the stance - ' + s.switchTime + ' s, the new stance takes over at its end' +
+          (xiSwitchTimed() ? '\n• Press: switch the stance - ' + s.switchTime + ' s, the new stance takes over at its end' : '\n• Press: switch the stance, at once (Settings: Mode switch time off)') +
           '\n\n• Turbo: aiming time ×1.9; the movement, hull and turret terms of the circle ×1.9; the after-shot term ×1.66; +15 / +5 km/h' +
           '\n• Fight: energy +' + s.energyPerSec + ' a second, +' + s.energyPerHit + ' per damaging hit; at ' + s.energyMax + ' the fight ability for ' + s.fightTime + ' s - the circle ×0.8, aiming time ×0.75, reload ×0.8' +
           stock + '\nThis page’s readings:' +
@@ -5480,7 +5631,8 @@
       out += '\n• Press: ' + (m.st === 1 ? k.switchOff + (s.off > 0 ? ' - ' + aimNum(s.off) + ' s' : '') : k.switchOn + (s.on > 0 ? ' - ' + aimNum(s.on) + ' s' : '')) +
         (s.cancel ? '; a press while it switches cancels it' : '');
     }
-    out += s.on > 0 || s.off > 0 ? '\n• While it switches: the gun does not fire' + (s.stop ? ', the vehicle stops and W A S D do nothing' : ', the engine keeps running') +
+    out += !xiSwitchTimed() && (s.on > 0 || s.off > 0) ? '\n• Switch: at once - the game’s seconds above are off (Settings: Mode switch time)'
+      : s.on > 0 || s.off > 0 ? '\n• While it switches: the gun does not fire' + (s.stop ? ', the vehicle stops and W A S D do nothing' : ', the engine keeps running') +
       '; the old mode holds until the switch ends' : '\n• Switch: instant';
     if (second && first) {
       out += '\n\n• ' + xiCap(k.on) + ': the circle ' + xiM100(second.dispersion) + ' m at 100 m (' + xiM100(first.dispersion) + ' in ' + k.off + '), aiming ' +
@@ -5532,6 +5684,9 @@
     if (!t) return false;
     if (t.isContentEditable) return true;
     var tag = String(t.tagName || '').toUpperCase();
+    // A checkbox or a slider with the focus takes no letters (27.09: the manual-motion switch just clicked must not keep W
+    // from driving); every other input is a field.
+    if (tag === 'INPUT' && /^(checkbox|radio|range|button)$/i.test(String(t.type || ''))) return false;
     return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
   }
   // W A S D only. Every other key - the arrows that orbit, +/- that zoom - is left to the viewer's own
@@ -5541,6 +5696,7 @@
     var name = aimKeyName(e);
     if (!name || !aimLive || !aimBlockData()) return;
     e.preventDefault();
+    if (aimManual.on) aimManualSwitch(false);   // any of W A S D ends manual motion; the keys drive from this press (user, 27.09)
     if (aimKeys[name]) return;
     aimKeys[name] = true; startAimLoop();
   }
@@ -5607,6 +5763,7 @@
     showEl($('aim-config'), live || bare);
     if (!live && !bare) $('aim-config').open = false;   // aimConfigListen below takes the sub-panel and the Escape key with it
     showEl(tile, live);
+    if (!live && tile.open) tile.open = false;   // the manual-motion popover goes with its tile
     // The gun panel rides with the mode, exactly as the speed tile and Config do, and the heading shell list carries
     // the shells when the mode is off. Since 23.09 it holds the shells alone (an empty one is no panel at all); the
     // load state - the emulation's own - is the part of the strip beside ⌖ that needs a live emulation (#fun-gun).
@@ -7155,6 +7312,8 @@
   $('crosshair-style').onchange=function(){aimCursorClass();aimSyncCentre();};
   // The Config popover opening or closing, whoever did it: its summary, a click elsewhere, the mode going off.
   $('aim-config').addEventListener('toggle',function(){aimSyncCentre();aimConfigListen();});
+  $('aim-drive').addEventListener('toggle',function(){paintManual();placeManual();});
+  window.addEventListener('resize',function(){if($('aim-drive').open)placeManual();});
   // The wheel over the OPEN menu is the menu's: the viewer's own handler sits on #viewport, takes every wheel
   // and zooms the scene with it, so the popover and a sub-panel taller than the room could not be scrolled at
   // all. On the popover and not on the whole <details>, or the wheel over the collapsed "Config" button - a
@@ -7215,6 +7374,10 @@
     $('ring-hue').value=String(p[0]);$('ring-sat').value=String(p[1]);$('ring-light').value=String(p[2]);ringLab();persistSettings();};});
   // Ring axes (user, 24.09): the lab's one developer view - each recorded ring's axis from its apex to its centre.
   $('ring-axes').onchange=function(){if(viewer)viewer.setRingAxes(this.checked);};
+  // Mode switch time (27.09): turned off mid-switch, the switch ends now; the mode button's words are composed again.
+  $('mode-switch-time').onchange=function(){var m=xiMech&&funOn()?xiNow():null;
+    if(!this.checked&&m&&(m.spec.kind==='siege'||m.spec.kind==='stance')&&m.to!==null){m.until=aimSeconds();xiNow();xiPressed();}
+    xiTitleKey='';paintXi();};
   // View from (user, 24.09): where the record view of an own shot stands - the shot, your gun at the press, the server's gun
   // then. The viewer's camera owner (focus) places it; other hits ignore it.
   $('view-from').onchange=function(){if(viewer)viewer.setViewFrom(this.value);};
