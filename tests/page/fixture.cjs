@@ -163,6 +163,12 @@ function write(folder) {
                                  {damageEvents: pmEvents, damageCheck: {schema: 1, rows: []}}),
                    BATTLE('pm2', 'Synthetic hills', T0 + 3600, [HIT('pm2-1', 32, 30, 'incoming', T0 + 3660)]),
                    Object.assign(BATTLE('pm3', 'Synthetic coast', T0, [pm3hit]), {shotEvents: pm3shots})];
+  // pm7 (mode-button-both, 27.09): a Taschenratte's hit on the player - the ally's seat with the type of the vehicle whose
+  // second gun the one mode button takes up. No characteristics file for the type: the panel stands for the button alone.
+  const pm7hit = HIT('pm7-1', 32, 30, 'incoming', T0 - 14340);
+  pm7hit.attacker.type = 'germany:G187_Taschenratte'; pm7hit.attacker.name = 'Taschenratte';
+  pm7hit.availableShells = SHELLS.concat([Object.assign(SHELL('HIGH_EXPLOSIVE', 'Mortar HE', 60, 250), {gunInstallation: 1})]);
+  battles.push(BATTLE('pm7', 'Synthetic valley', T0 - 14400, [pm7hit]));
   // pm4 (keep-onscreen-model, 26.09): an event's vehicle, Victor, hit by the player - his record carries the complete model,
   // standing in the record's pose (turret 0.3 rad, gun 0.05 rad down), while his export (pm_victor, below) was made in the
   // hangar without the event's packages: its gun has no collision model. Another shooter must keep the model on screen.

@@ -131,7 +131,7 @@ const storage = {};
 // whole-crew flag skills.brotherhood, which must come back as every member having it; "Old partial" holds
 // the new per-member map with a member this five-man crew does not have (loader2), which must be kept for
 // a crew that has him, and a key that is nobody's name (bogus), which must go.
-storage['bullba-settings'] = JSON.stringify({v: 1, values: {}, aim: {v: 3, chosen: {}, presets: {
+storage['bullba-settings'] = JSON.stringify({v: 1, values: {'mode-switch-time': true}, aim: {v: 3, chosen: {}, presets: {
   'Old whole crew': {slots: ['', '', ''], directive: '', food: false, fuel: '', skills: {brotherhood: true, gunner_smoothTurret: true}},
   'Old partial': {slots: ['', '', ''], directive: '', food: true, fuel: 'excellentFuel', skills: {}, bia: {gunner: true, loader2: true, bogus: true}}}}});
 // S4 (22.09): the reload check. The run below starts this same harness again in a child process with the store
@@ -475,7 +475,7 @@ function ok(name, cond, extra) {
 }
 // Strip (23.09): a press the gun refused pulses the indicator in the way (data-balk, 1 or 2) - which ones do now.
 function balked() {
-  return ['aim-gun-load', 'aim-gun-mag', 'aim-gun-heat', 'aim-gun-mech'].filter(function (id) {
+  return ['aim-gun-load', 'aim-gun-mag', 'aim-gun-heat', 'ttx-mode'].filter(function (id) {
     const v = document.getElementById(id).getAttribute('data-balk'); return v === '1' || v === '2';
   }).join(',');
 }
@@ -5010,8 +5010,8 @@ settle(20).then(function () {
      /<button type="button" id="real-reload-toggle" class="swap-roles" aria-pressed="true" title="[^"]+" aria-label="Real reload" hidden>◔<\/button>/.test(modelRow)
      && modelRow.indexOf('id="fun-mode-toggle"') < modelRow.indexOf('id="real-reload-toggle"')
      && modelRow.indexOf('id="real-reload-toggle"') < modelRow.indexOf('id="target-hp"'));
-  ok('heat: its English tooltip says what ON and OFF do, and that the heat builds up either way',
-     /id="real-reload-toggle"[^>]*title="Real reload&#10;On: the gun reloads in real time[^"]*Off: every press fires\.&#10;[^"]*&#10;• Ares heat: builds up either way"/.test(modelRow));
+  ok('heat: its English tooltip says what ON and OFF do, that the heat builds up either way and that it is the mode switch time too (27.09)',
+     /id="real-reload-toggle"[^>]*title="Real reload&#10;On: the gun reloads in real time[^"]*Off: every press fires\.&#10;[^"]*&#10;• Ares heat: builds up either way&#10;• Mode switch: the game’s seconds, the gun waiting; off: at once"/.test(modelRow));
   ok('heat: the ⌖ tooltip names the heat and the sub-switch',
      /id="fun-mode-toggle"[^>]*title="Shooting emulation&#10;[^"]*&#10;• Gun: reload, magazine and heat as in the game; ◔ real reload&#10;/.test(modelRow));
   ok('heat: the sub-switch state is ONE hidden control of the Settings menu, checked (ON) by default',
@@ -5071,7 +5071,7 @@ settle(20).then(function () {
   ok('damaged gun: not emulated - no gunDevice, no aimGunDamage, no whileGunDamagedFactor on the page', !/gunDevice|aimGunDamage|whileGunDamagedFactor/.test(appSrc));
   // The record view (26.09): which barrel the recorded shot left from, handed to the viewer's aimMuzzle.
   {
-    const roStart = appSrc.indexOf('  function recordedMode(hit, at) {'), roEnd = appSrc.indexOf('  function aimOfHit(hit, want) {', roStart);
+    const roStart = appSrc.indexOf('  function recordedMode(hit, at) {'), roEnd = appSrc.indexOf('  function aimOfHit(hit, want, file) {', roStart);
     ok('record view: recordedMode and recordedOffset are one block before aimOfHit, which asks recordedMode', roStart > 0 && roEnd > roStart
        && /mode = recordedMode\(hit, at\)/.test(appSrc.slice(roEnd, roEnd + 600)));
     const RO = function (hit, ctx) { return new Function('env', 'var activeHit=env.hit,shotContext=env.ctx;' + appSrc.slice(roStart, roEnd) + 'return recordedOffset(env.hit);')({hit: hit, ctx: ctx}); };
@@ -5916,11 +5916,12 @@ settle(20).then(function () {
   });
 }).then(function () {
   if (RELOAD) return;   // the S4 child page checks the stored settings only
-  // Mode switch time (27.09) is off by default; the checks below run the game's switch times, so they turn it on.
-  document.getElementById('mode-switch-time').checked = true;
+  // The switch time follows ⌖ and ◔ (mode-button-both, 27.09): the checks below run under ⌖ with ◔ on - the game's times.
   // ---- xi-mechanics (23.09, BACKLOG 37-38): the tier-XI mechanics under ✸, one mode button; the Borkenkäfer's mark ----
-  // One button in the gun panel (#aim-gun-mech) runs the shooter's own mechanic, only under ✸ and only for the eleven
-  // vehicles (plus the three it names and does not run); it starts from the recorded state of the shot. Its factors go
+  // ONE button on the characteristics panel (#ttx-mode since 27.09: the panel's ◐ and the emulator's button merged) runs the
+  // shooter's own mechanic - in plain view too for every one that changes what the page shows, at once there; under ⌖ with
+  // the game's times. For the eleven vehicles (plus the three it names and does not run); it starts from the recorded
+  // state of the shot. Its factors go
   // on the very mods the circle and the reload take (aimHeated / xiApply). The mark of a leKpz Borkenkäfer on the target
   // (target.designatorMark) widens the damage window of the shell choice to ×1.15 at the top while it is on at the hit's
   // gameTime, and rolls the ✸ damage ×1.1. The client's numbers: A179 chargeableBurst, A183 concentrationMode, S36
@@ -5931,18 +5932,37 @@ settle(20).then(function () {
   const styleSrc = fs.readFileSync(path + 'style.css', 'utf8');
   const realShot = new Function('window', fs.readFileSync(path + 'shot-context.js', 'utf8') + ';return window.ArmorShotContext;')({ArmorBallistics: B});
   // ---- 1. the markup, the rules and the arithmetic ----------------------------------------------------------------------
-  // Strip (23.09): the button went up with the load state, into the strip beside ⌖ (the end of its live part).
-  const gunPanel = pageSrc.slice(pageSrc.indexOf('<div id="fun-strip"'), pageSrc.indexOf('<div id="target-mods-slot"'));
-  ok('xi: ONE mode button in the strip beside ⌖, after the heat bar - the page’s lit switch, hidden until needed, no text',
-     /<button type="button" id="aim-gun-mech" class="swap-roles aim-gun-mech" aria-pressed="false" hidden><\/button><\/span>/.test(gunPanel)
-     && gunPanel.indexOf('id="aim-gun-heat"') < gunPanel.indexOf('id="aim-gun-mech"'));
-  ok('xi: its rules - ⌖’s own size (every lit switch of the top row, no smaller one in the strip), dashed while something runs down, a gold ring, passive and dimmed states',
-     !/\.fun-strip \.swap-roles\{/.test(styleSrc) && /\.fun-strip\{flex-wrap:wrap;justify-content:center;row-gap:4px;max-width:100%;padding:2px 9px\}/.test(styleSrc) && /\.aim-gun-mech\[data-busy="1"\]\{border-style:dashed\}/.test(styleSrc)
-     && /\.aim-gun-mech\[data-glow="1"\]/.test(styleSrc) && /\.aim-gun-mech\[aria-disabled=true\]:not\(\[data-passive="1"\]\)\{opacity:\.5/.test(styleSrc));
+  // One button (user, 27.09): the mode button lives on the shooter's characteristics panel - the panel's ◐ and the emulator's
+  // button merged into one node, one painter (paintXi), one press (ttxModeToggle -> xiPress).
+  const toolsSrc = pageSrc.slice(pageSrc.indexOf('<div class="ttx-tools" id="ttx-tools">'), pageSrc.indexOf('<div class="ttx-head">'));
+  ok('xi: ONE mode button, at the left end of the characteristics panel’s tools - the page’s lit switch, hidden until needed; none in the strip or the gun panel',
+     /^<div class="ttx-tools" id="ttx-tools"><button type="button" id="ttx-mode" class="swap-roles" aria-pressed="false" title="Mode&#10;[^"]+" aria-label="Mode" hidden>◐<\/button>/.test(toolsSrc)
+     && pageSrc.split('id="ttx-mode"').length === 2 && pageSrc.indexOf('aim-gun-mech') < 0 && appSrc.indexOf('aim-gun-mech') < 0 && styleSrc.indexOf('aim-gun-mech') < 0
+     && /\$\('ttx-mode'\)\.onclick = ttxModeToggle;/.test(appSrc) && /function ttxModeToggle\(e\) \{\n    if \(xiNow\(\)\) \{ xiPress\(e\);/.test(appSrc)
+     && /\$\('ttx-mode'\)\.onpointerdown=xiDown;/.test(appSrc));
+  // Its accent (user, 27.09): a colour of its own on :root, the idle outline, a fuller fill lit, dimmed for 'skip' - and none
+  // of the page's other meanings (mint / red better-worse, gold manual motion and lit switches, the cyan / magenta circles).
+  const rootTok = function (name) { const m = new RegExp('^:root\\{[^}]*' + name + ':([^;}]+)').exec(styleSrc); return m ? m[1] : null; };
+  ok('xi: the mode button’s accent - lavender tokens on :root, an outline at rest, a fuller fill while lit, a ring of its hue, dashed while it runs down, dimmed and dotted for a mechanic not emulated',
+     rootTok('--mode') === '#b9a6ff' && rootTok('--mode-fill') === '#40357a' && rootTok('--mode-soft') === 'rgba(185,166,255,.12)' && rootTok('--mode-dim') === 'rgba(185,166,255,.38)'
+     && ['--mint', '--red', '--gold', '--aim-live', '--aim-shot', '--warn'].every(function (t) { const v = rootTok(t); return v && v !== rootTok('--mode') && v !== rootTok('--mode-fill'); })
+     && /\.ttx-panel #ttx-mode\{[^}]*border:1px solid var\(--mode\);[^}]*background:var\(--mode-soft\);color:var\(--mode\)/.test(styleSrc)
+     && /\.ttx-panel #ttx-mode\[aria-pressed=true\]\{border-color:var\(--mode\);color:#fff;background:var\(--mode-fill\)\}/.test(styleSrc)
+     && /#ttx-mode\[data-busy="1"\]\{border-style:dashed\}/.test(styleSrc) && /#ttx-mode\[data-glow="1"\]\{box-shadow:0 0 0 2px var\(--mode-ring\)\}/.test(styleSrc)
+     && /\.ttx-panel #ttx-mode\[aria-disabled=true\]:not\(\[data-passive="1"\]\)\{border-color:var\(--mode-dim\);border-style:dotted;color:var\(--mode-dim\);background:none/.test(styleSrc)
+     && !/var\(--gold\)[^}]*\}/.test((styleSrc.match(/#ttx-mode[^{]*\{[^}]*\}/g) || []).join('')));
+  ok('xi: the strip keeps ⌖’s own size for its switches; the refused press pulses the mode button on the panel too',
+     !/\.fun-strip \.swap-roles\{/.test(styleSrc) && /\.fun-strip\{flex-wrap:wrap;justify-content:center;row-gap:4px;max-width:100%;padding:2px 9px\}/.test(styleSrc)
+     && /\.fun-strip \[data-balk="1"\],#ttx-mode\[data-balk="1"\]\{animation:balk-1/.test(styleSrc));
+  // Settings -> Mode switch time (26.09) is gone (user, 27.09): the switch time follows ⌖ and ◔. The store of this harness
+  // was seeded with it on; the page drops it.
+  ok('mode switch time: the Settings checkbox is gone - no control, no handler, and its stored value is dropped from the store',
+     pageSrc.indexOf('mode-switch-time') < 0 && appSrc.indexOf("$('mode-switch-time')") < 0 && /delete box\.values\['mode-switch-time'\];/.test(appSrc)
+     && !Object.prototype.hasOwnProperty.call(storedValues(), 'mode-switch-time'), JSON.stringify(Object.keys(storedValues())).slice(0, 200));
   ok('xi: one table of the client’s numbers, thirteen vehicles, a glyph each; the XM69 gyro = the Black Rock Burst set + ×0.94 and ×1.1',
      /var XI_GYRO = \{movement: 0, rotation: 0, turret: 0, aimingTime: 0\.3\};/.test(appSrc)
      && /mods: \{movement: 0, rotation: 0, turret: 0, aimingTime: 0\.3, mult: 0\.94, hullSpeed: 1\.1\}/.test(appSrc)
-     && (appSrc.match(/^    '[a-z]+:[A-Za-z0-9_]+': \{mech: '/gm) || []).length === 13 && /\$\('aim-gun-mech'\)\.onclick=xiPress;/.test(appSrc));
+     && (appSrc.match(/^    '[a-z]+:[A-Za-z0-9_]+': \{mech: '/gm) || []).length === 13);
   ok('xi: ballistics.js takes the two new keys (after-shot term, speed cap) and lets a mechanic zero the three movement terms',
      near(B.aimFactor(AIM_BLOCK, {afterShot: true}, {afterShot: 1.66}).ideal, Math.sqrt(1 + 6.64 * 6.64))
      && B.aimFactor(AIM_BLOCK, {afterShot: true}).ideal === Math.sqrt(17)
@@ -5977,8 +5997,8 @@ settle(20).then(function () {
   // The stubbed resolve() hands the page the recorded gun state and the mark, the two things the real one reads here.
   const CTX = global.ArmorShotContext, keepResolve = CTX.resolve;
   CTX.resolve = function (hit) {
-    const st = hit && hit.attacker && hit.attacker.gunStateAtImpact || null;
-    return {choices: SHELLS, index: -1, kind: 'ARMOR_PIERCING', source: 'stub', aimReason: 'no-snapshot', tracer: null,
+    const st = hit && hit.attacker && hit.attacker.gunStateAtImpact || null, sw = hit && hit.id === 'x-switch';
+    return {choices: sw ? SWITCH_SHELLS : SHELLS, index: sw ? 0 : -1, kind: 'ARMOR_PIERCING', source: 'stub', aimReason: 'no-snapshot', tracer: null,
             gunState: st, gunStateFrom: st ? 'impact' : null, mark: realShot.markOf(hit)};
   };
   CTX.markOf = realShot.markOf;
@@ -6019,11 +6039,15 @@ settle(20).then(function () {
     XHIT('x-asxx', 72, 'france:F135_AS_XX_40_t', XA()),
     XHIT('x-amx67', 73, 'france:F136_AMX_67_Imbattable', XA()),
     XHIT('x-marked', 74, 'usa:Plain2', XA(), null, null, {designatorMark: {creatorID: 99, startTime: 495, endTime: 506}}),
-    XHIT('x-marked-old', 74, 'usa:Plain2', XA(), null, null, {designatorMark: {creatorID: 99, startTime: 480, endTime: 490}})];
+    XHIT('x-marked-old', 74, 'usa:Plain2', XA(), null, null, {designatorMark: {creatorID: 99, startTime: 480, endTime: 490}}),
+    // A shell switcher (27.09): the record's two sets, each tagged with its mode - the same AP, 360 and 325 alpha.
+    XHIT('x-switch', 75, 'germany:G193_Pz_Kpfw_55', XA({gunMechanics: ['shellParamsSwitcher'], siegeMode: {kind: 'gun', switchOnTime: 1, switchOffTime: 1, device: 'gun'}}))];
+  const SWITCH_SHELLS = [{kind: 'ARMOR_PIERCING', name: 'AP 55', caliber: 105, penetration100: 250, alpha: 360, damageRandomization: .25, gunInstallation: 0, vehicleMode: 0},
+                         {kind: 'ARMOR_PIERCING', name: 'AP 55', caliber: 105, penetration100: 250, alpha: 325, damageRandomization: .25, gunInstallation: 0, vehicleMode: 1}];
   const XROW = function (id, type) { return {id: id, name: type, type: type, team: 2, player: '', maxHealth: 2000, defaultMaxHealth: 2000}; };
   const XBATTLE = {id: 'x1', playerVehicleId: 7, map: 'Test', warnings: [], shotEvents: [],
     roster: [{id: 7, name: 'Alpha', type: 'germany:Alpha', team: 1, player: '', maxHealth: 5000, defaultMaxHealth: 5000}]
-      .concat([60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74].map(function (id) { return XROW(id, 'x:' + id); })),
+      .concat([60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75].map(function (id) { return XROW(id, 'x:' + id); })),
     hits: XHITS};
   const keepBattle = global.ArmorInspectorData.battle, keepScene = global.ArmorInspectorData.scene;
   global.ArmorInspectorData.battle = function (id) { return id === 'x1' ? Promise.resolve(XBATTLE) : keepBattle(id); };
@@ -6033,7 +6057,7 @@ settle(20).then(function () {
   if (!onBox.checked) { onBox.checked = true; onBox.onchange.call(onBox); }
   const funBox = document.getElementById('fun-mode'), realBox = document.getElementById('real-reload');
   const star = document.getElementById('fun-mode-toggle'), sub = document.getElementById('real-reload-toggle');
-  const mech = document.getElementById('aim-gun-mech'), bar = document.getElementById('target-hp');
+  const mech = document.getElementById('ttx-mode'), bar = document.getElementById('target-hp');
   const setFun = function (want) { if (funBox.checked !== want) click(star); };
   const cb = document.getElementById('battles');
   cb.value = 'x1'; cb.onchange.call(cb);
@@ -6072,12 +6096,21 @@ settle(20).then(function () {
   }).then(function () {
     // CS-67 Szakal, recorded in the turbo stance (state bit 1), fight energy 40.
     const view = viewerInstance; prepare(view); setFun(false); run(20);
-    ok('xi: ✸ OFF - no button on a tier-XI vehicle, and its ring is the recorded one', mech.hidden === true && near(view.liveRadius100 / r0, 1, 1e-9));
+    // Plain view (27.09): the one button is there on a tier-XI vehicle whose switch changes what the page shows, and the
+    // recorded state is in force - a record shows the real situation - until it is pressed.
+    ok('xi: plain view (⌖ off) - the one mode button is up on the Szakal, LIT: the record’s turbo stance; a press switches at once, the energy is ⌖’s',
+       mech.hidden === false && mech.textContent === '⇋' && lit() && /\n• Press: switch the stance, at once\n/.test(mech.title) && /\n• Energy and the fight ability: under ⌖ only/.test(mech.title)
+       && !/\n• Fight energy: /.test(mech.title), '(' + mech.title.slice(0, 160) + ')');
     tap(); const offBloom = view.liveRadius100 / r0;
-    ok('xi: Szakal, ✸ OFF - a round blooms by afterShot 4 (×4.12), exactly as before', near(offBloom, Math.sqrt(17), 1e-9), '(' + offBloom.toFixed(4) + ')');
-    run(20); setFun(true); run(1);
-    ok('xi: Szakal, ✸ ON - the button is up with its glyph, LIT: the record’s stance is turbo, and the tooltip says it started from the record',
-       mech.hidden === false && mech.textContent === '⇋' && lit() && /^CS-67 Szakal — stance\n• Now: turbo\n/.test(mech.title) && /\nStarted from the recorded state of this shot\.$/.test(mech.title)
+    ok('xi: Szakal in plain view - the recorded turbo: a round blooms by the after-shot term ×1.66 (×6.71)', near(offBloom, Math.sqrt(1 + 6.64 * 6.64), 1e-9), '(' + offBloom.toFixed(4) + ')');
+    run(20); click(mech); run(0.02);
+    const plainFight = !lit() && !busy();
+    tap(); const offFight = view.liveRadius100 / r0;
+    ok('xi: plain view - a press: the fight stance at once, not dashed; a round blooms by afterShot 4 (×4.12)', plainFight && near(offFight, Math.sqrt(17), 1e-9), '(' + offFight.toFixed(4) + ')');
+    run(20); click(mech); run(20);   // back to turbo, then ⌖: the stance the user left is kept (xiRetime)
+    setFun(true); run(1);
+    ok('xi: Szakal, ✸ ON - the same button with its glyph, LIT: turbo kept from plain view, and the tooltip says it started from the record',
+       mech.hidden === false && mech.textContent === '⇋' && lit() && /^CS-67 Szakal — stance\nTurbo or fight: [^\n]+\n• Now: turbo\n/.test(mech.title) && /\nStarted from the recorded state of this shot\.$/.test(mech.title)
        && mech.getAttribute('aria-label') === 'CS-67 Szakal: Stance', '(' + mech.title.slice(0, 80) + ')');
     tap(); const turbo = view.liveRadius100 / r0; run(1); const t1 = view.liveRadius100 / r0;
     ok('xi: turbo - the after-shot term ×1.66: the round blooms √(1 + 6.64²) = ×6.71 (×4.12 in the fight stance)', near(turbo, Math.sqrt(1 + 6.64 * 6.64), 1e-9), '(' + turbo.toFixed(4) + ')');
@@ -6245,6 +6278,20 @@ settle(20).then(function () {
     tap(); run(0.55);
     ok('xi: one press fires the mortar’s burst of two, 0.5 s apart - the magazine and the burst of the second gun', view.pinnedPoints === p + 2 && magStates() === 'fill,fill', '(' + (view.pinnedPoints - p) + ' / ' + magStates() + ')');
     click(mech); run(60);
+    // PLAIN VIEW (27.09, the user's case): the same button takes the mortar up at once - its shells, its circle, its
+    // penetration on the probe - and ⌖ then keeps the gun the user took up.
+    setFun(false); run(20);
+    const main = view.liveRadius100, pen = document.getElementById('penetration'), choice = document.getElementById('shell-choice');
+    ok('xi: Taschenratte in plain view - the ✦ button, the main gun in hand, its shell', mech.hidden === false && mech.textContent === '✦' && !lit() && choice.value === 'saved:0');
+    click(mech); run(0.5);
+    ok('xi: plain view - a press takes up the mortar at once: its shell (the second gun’s HE), its penetration (60) for the probe, its own circle (0.35 against 0.383 m)',
+       lit() && !busy() && choice.value === 'saved:2' && String(pen.value) === '60' && near(view.liveRadius100 / main, Math.tan(Math.atan(0.0035)) / 0.00383, 2e-3),
+       '(' + choice.value + ' / ' + pen.value + ' / ' + (view.liveRadius100 / main).toFixed(4) + ')');
+    setFun(true); run(0.5);
+    ok('xi: ⌖ on after it - the mortar still in hand (inherited, not reset), its shell on screen', lit() && choice.value === 'saved:2');
+    click(mech); run(0.5);
+    ok('xi: under ⌖ the press takes the main gun back - its shell and penetration', !lit() && choice.value === 'saved:0' && String(pen.value) === '250');
+    run(60);
     return openX('x-rock');
   }).then(function () {
     // The Black Rock: its burst only in the Burst mode, which the button switches.
@@ -6326,7 +6373,7 @@ settle(20).then(function () {
     });
   }).then(function () {
     setFun(false); run(1);
-    ok('xi: ✸ off - the button goes on a tier-XI vehicle too', mech.hidden === true);
+    ok('xi: ✸ off - a mechanic the page does not emulate (AMX 67) has no button in plain view', mech.hidden === true);
     return openX('x-marked');
   }).then(function () {
     // BACKLOG 38 through the page: a plain shooter's hit on a target the record shows marked, 6 s left at the hit.
@@ -6348,6 +6395,28 @@ settle(20).then(function () {
     setFun(true); run(0.1); tap(); run(0.05);
     ok('mark: and the roll is plain', lastRoll() === 400);
     setFun(false); run(1);
+    return openX('x-switch');
+  }).then(function () {
+    // THE SHELL SWITCHERS (27.09): the state is the shell on screen; the button picks the same shell of the other mode.
+    const view = viewerInstance; prepare(view); run(20);
+    const choice = document.getElementById('shell-choice'), alpha = document.getElementById('alpha');
+    ok('switcher: a Pz.Kpfw. 55 whose record holds both sets - plain view: its button, the first mode’s shell',
+       mech.hidden === false && mech.textContent === '⦣' && !lit() && choice.value === 'saved:0' && /— shell parameters switch\nWhich state of the shells fires/.test(mech.title), '(' + mech.textContent + ' / ' + choice.value + ')');
+    click(mech); run(0.05);
+    ok('switcher: plain view - a press puts the same shell of the second mode on screen at once (alpha 325)', lit() && !busy() && choice.value === 'saved:1' && String(alpha.value) === '325');
+    click(mech); run(0.05);
+    ok('switcher: and back at once', !lit() && choice.value === 'saved:0' && String(alpha.value) === '360');
+    setFun(true); if (!realBox.checked) click(sub); run(1);
+    click(mech); run(0.05);
+    const p = view.pinnedPoints; tap(); run(0.05);
+    ok('switcher: ⌖ with ◔ - the gun device’s 1 s: dashed, the first shell still on, a round does not go', busy() && !lit() && choice.value === 'saved:0' && view.pinnedPoints === p,
+       '(' + busy() + ' / ' + choice.value + ' / ' + (view.pinnedPoints - p) + ')');
+    run(1.05);
+    ok('switcher: at 1 s the second mode’s shell is on screen', !busy() && lit() && choice.value === 'saved:1');
+    click(sub); run(0.1);
+    click(mech); run(0.02);
+    ok('switcher: ◔ off (every press fires) - back at once', !busy() && !lit() && choice.value === 'saved:0');
+    click(sub); setFun(false); run(1);
     CTX.resolve = keepResolve; delete CTX.markOf;
     global.ArmorInspectorData.battle = keepBattle; global.ArmorInspectorData.scene = keepScene;
     delete window.BullbaHitsRng;
@@ -6712,10 +6781,14 @@ settle(20).then(function () {
     const fold = document.getElementById('ttx-fold');
     ok('ttx: on a scene lower than 420 px it folds into one button, its controls moved into the popover',
        fold.hidden === false && document.getElementById('ttx-fold-pop').children.indexOf(document.getElementById('ttx-inner')) >= 0);
+    const modeBtn = document.getElementById('ttx-mode');
+    ok('ttx: folded, the one mode button stays on the panel beside ▤, not in the popover (27.09)',
+       modeBtn.parentNode === panel && panel.children.indexOf(modeBtn) === panel.children.indexOf(fold) + 1);
     viewport.clientHeight = 800;
     scheduleLayoutNow();
-    ok('ttx: and unfolds when the scene grows again, the controls back in the panel',
-       fold.hidden === true && panel.children.indexOf(document.getElementById('ttx-inner')) >= 0);
+    ok('ttx: and unfolds when the scene grows again, the controls back in the panel - the mode button back at the left end of its tools',
+       fold.hidden === true && panel.children.indexOf(document.getElementById('ttx-inner')) >= 0
+       && modeBtn.parentNode === document.getElementById('ttx-tools') && document.getElementById('ttx-tools').children[0] === modeBtn);
     document.getElementById('hits').children[1].onclick();
     return settle(20);
   }).then(function () {
@@ -7217,7 +7290,7 @@ settle(20).then(function () {
   const byVehicle = {};
   ref.forEach(function (r, i) { (byVehicle[r.vehicle] = byVehicle[r.vehicle] || []).push(i); });
   const pairTileSw = document.getElementById('ttx-pair'), listSw = document.getElementById('ttx-pair-list'), buildToggleSw = document.getElementById('ttx-build-toggle');
-  const mech = document.getElementById('aim-gun-mech'), heat = document.getElementById('aim-gun-heat'), gunReloadSw = document.getElementById('aim-gun-reload');
+  const mech = document.getElementById('ttx-mode'), heat = document.getElementById('aim-gun-heat'), gunReloadSw = document.getElementById('aim-gun-reload');
   const snap = function () {
     tick(0.05);
     if (!buildBox.checked) click(buildToggleSw);
@@ -7407,14 +7480,14 @@ settle(20).then(function () {
       // The markup of the panel (24.09): the mode switch on its left; then the row of the panel's controls (⚙, ▴ and the
       // one help dot, which names the panel's clickable elements in their order), the head (HP, the gun chip) and the table.
       const m = /<div id="ttx-inner" class="ttx-inner">(.*?)<div id="ttx-compact" class="ttx-body">/.exec(pageSrc), inner = m ? m[1] : '';
-      const tm = /<div class="ttx-tools">(.*?)<\/div><div class="ttx-head">(.*)$/.exec(inner), tools = tm ? tm[1] : '', head = tm ? tm[2] : '';
+      const tm = /<div class="ttx-tools" id="ttx-tools">(.*?)<\/div><div class="ttx-head">(.*)$/.exec(inner), tools = tm ? tm[1] : '', head = tm ? tm[2] : '';
       const dot = /<button type="button" class="help-dot" data-help-for="([^"]+)" aria-label="Help">\?<\/button>/.exec(tools);
       const ids = dot ? dot[1].split(' ') : [], at = ids.map(function (id) { return inner.indexOf('id="' + id + '"'); });
       ok('ttx v2: the controls row has one help dot naming the panel\'s clickable elements in their order - the mode switch, ⚙, ▴, the gun chip',
          !!dot && ids.join(' ') === 'ttx-mode ttx-build-toggle ttx-more-button ttx-pair' && at.every(function (x, k) { return x >= 0 && (k === 0 || x > at[k - 1]); }),
          inner.slice(0, 80));
       ok('ttx 24.09: the panel\'s controls on a row of their own above the head - the mode switch at its left end, then ⚙, ▴ and "?"; the head is the HP and the gun chip',
-         inner.indexOf('<div class="ttx-main"><div class="ttx-tools"><button type="button" id="ttx-mode" class="swap-roles"') === 0
+         inner.indexOf('<div class="ttx-main"><div class="ttx-tools" id="ttx-tools"><button type="button" id="ttx-mode" class="swap-roles"') === 0
          && /^<button type="button" id="ttx-mode"[^>]*>◐<\/button><button type="button" id="ttx-build-toggle"/.test(tools) && tools.indexOf('id="ttx-more"') > 0 && tools.indexOf('id="ttx-pair"') < 0
          && /\.ttx-tools>#ttx-mode\{margin-right:auto\}/.test(fs.readFileSync(path + 'style.css', 'utf8'))
          && /^<span id="ttx-hp" class="ttx-hp"><\/span><details id="ttx-pairs"[^]*<\/details><\/div>$/.test(head), inner.slice(0, 120));
@@ -7463,7 +7536,7 @@ settle(20).then(function () {
   global.ArmorInspectorData.ttx = function (id) { return id === K.id ? Promise.resolve(K) : keepTtx ? keepTtx(id) : Promise.reject(new Error('none')); };
   const tb = document.getElementById('battles');
   tb.value = 't-swk'; tb.onchange.call(tb);
-  const mech = document.getElementById('aim-gun-mech'), reload = document.getElementById('aim-gun-reload');
+  const mech = document.getElementById('ttx-mode'), reload = document.getElementById('aim-gun-reload');
   const onBefore = onBox.checked;
   const state = function () { tick(0.05); return {reload: reload.textContent, ring: viewerInstance.liveRadius100 ? viewerInstance.liveRadius100.toFixed(6) : null, mech: mech.hidden ? '' : mech.getAttribute('aria-pressed') + '|' + mech.title}; };
   // Both modes of the gun on screen: travel, then the mode button and the switch time run out, siege.
@@ -7975,7 +8048,7 @@ settle(20).then(function () {
   const onBox2 = document.getElementById('aim-on');
   if (!onBox2.checked) { onBox2.checked = true; onBox2.onchange.call(onBox2); }
   const funBox = document.getElementById('fun-mode'), star = document.getElementById('fun-mode-toggle'), sub = document.getElementById('real-reload-toggle'), realBox = document.getElementById('real-reload');
-  const mech = document.getElementById('aim-gun-mech'), ttxMode = document.getElementById('ttx-mode');
+  const mech = document.getElementById('ttx-mode'), ttxMode = mech;   // ONE button since 27.09
   const setFun = function (want) { if (funBox.checked !== want) click(star); };
   const lit = function () { return mech.getAttribute('aria-pressed') === 'true'; };
   const busy = function () { return mech.getAttribute('data-busy') === '1'; };
@@ -8001,31 +8074,55 @@ settle(20).then(function () {
     // --- the Strv 103B recorded in travel, no modeAim in the record: under ✸ the second block is its file's ---------
     const view = viewerInstance; prepare(view); setFun(false); if (!realBox.checked) click(sub); allKeysUp(); run(20);
     const r0 = view.liveRadius100;
-    ok('modes: ✸ off - no button, the recorded (travel) ring', mech.hidden === true && r0 > 0);
+    // PLAIN VIEW (27.09): the one button of the Strv 103B on the panel, instant - the circle, the aiming and the panel follow.
+    ok('modes: plain view (⌖ off) - the Strv 103B’s one mode button on the panel, not lit (recorded in travel), the recorded (travel) ring and panel',
+       mech.hidden === false && mech.textContent === '⤓' && !lit() && r0 > 0 && ttxMode.getAttribute('aria-pressed') === 'false'
+       && /\n• Switch, at once in plain view; the game’s seconds above under ⌖ with ◔/.test(mech.title), '(' + mech.title.slice(0, 200) + ')');
+    key('KeyW', true); run(6);
+    const vPlain = kmh();
+    click(mech); run(0.02);
+    const pPlain = view.pinnedPoints;
+    tap(); run(0.02);
+    ok('modes: plain view - pressed at ' + vPlain + ' km/h: siege at once - lit, not dashed, the gun fires, W still drives',
+       vPlain >= 49.9 && lit() && !busy() && view.pinnedPoints === pPlain + 1 && (run(0.3), kmh() > 0), '(' + (view.pinnedPoints - pPlain) + ' / ' + kmh() + ')');
+    allKeysUp(); run(20);
+    ok('modes: plain view - the ring settles on the siege block of the characteristics file (0.25 against the travel 0.30 m)',
+       near(view.liveRadius100 / r0, 0.25 / 0.30, 2e-3), '(' + (view.liveRadius100 / r0).toFixed(5) + ')');
+    // Manual motion follows the mode (its tops are ArmorBallistics.motionLimits of the block in force, 702e9d6): 100 % is
+    // the siege mode's top in siege and the travel top the instant the button takes it back.
+    const driveM = document.getElementById('aim-drive'), mS = document.getElementById('aim-manual-speed'), mO = document.getElementById('aim-manual-on');
+    driveM.open = true; driveM.fire('toggle');
+    mS.value = '100'; mS.oninput.call(mS); run(0.1);
+    const topSiege = kmh();
+    click(mech); run(0.1);
+    const topTravel = kmh();
+    mO.checked = false; mO.onchange.call(mO); driveM.open = false; driveM.fire('toggle'); allKeysUp(); run(20);
+    ok('modes: plain view - manual motion follows the mode: 100 % is the siege block’s top (with the build’s turbocharger), then the travel block’s the moment it switches back - 40 km/h apart, as the blocks',
+       Math.abs((topTravel - topSiege) - (both(S103)[0].speedForward - both(S103)[1].speedForward) * 3.6) < 0.6 && topSiege < topTravel, '(' + topSiege + ' / ' + topTravel + ' vs ' + both(S103)[1].speedForward * 3.6 + ' / ' + both(S103)[0].speedForward * 3.6 + ')');
+    ok('modes: plain view - and back to travel at once, the travel ring', !lit() && !busy() && near(view.liveRadius100 / r0, 1, 1e-6));
     setFun(true); run(1);
-    ok('modes: ✸ on - the siege button of the Strv 103B: its glyph, not lit (recorded in travel), the second block from the characteristics file',
-       mech.hidden === false && mech.textContent === '⤓' && !lit() && !busy() && /— Siege mode\n• Now: travel\n/.test(mech.title)
+    ok('modes: ✸ on - the same button, not lit (travel kept), the second block from the characteristics file',
+       mech.hidden === false && mech.textContent === '⤓' && !lit() && !busy() && /— Siege mode\nThe second mode: [^\n]+\n• Now: travel\n/.test(mech.title)
        && /\nThe second mode’s numbers are from the vehicle’s characteristics file/.test(mech.title) && mech.getAttribute('aria-label') === SHITS[0].attacker.name + ': Siege mode',
        '(' + mech.textContent + ' / ' + mech.getAttribute('aria-label') + ' / ' + mech.title.slice(0, 120) + ')');
-    // MODE SWITCH TIME OFF (27.09, the default): the press puts the new mode in force at once - no dashes, the gun fires at
-    // once, the vehicle is not stopped - and the words say so. Then on again for the game's own times below.
-    const modeTime = document.getElementById('mode-switch-time');
-    modeTime.checked = false; modeTime.onchange.call(modeTime);
+    // ◔ OFF (27.09: "every press fires"): the press puts the new mode in force at once - no dashes, the gun fires at once, the
+    // vehicle is not stopped - and the words say so. Then ◔ on again for the game's own times below.
+    click(sub); run(0.1);
     key('KeyW', true); run(6);
     const vOff = kmh();
     click(mech); run(0.02);
     const pOff = view.pinnedPoints;
     tap(); run(0.02);
-    ok('switch time off: pressed at ' + vOff + ' km/h - siege at once, lit and not dashed, and the gun fires at once',
-       vOff >= 49.9 && lit() && !busy() && view.pinnedPoints === pOff + 1 && /\n• Switch: at once - the game’s seconds above are off/.test(mech.title),
+    ok('◔ off: pressed at ' + vOff + ' km/h - siege at once, lit and not dashed, and the gun fires at once',
+       vOff >= 49.9 && lit() && !busy() && view.pinnedPoints === pOff + 1 && /\n• Switch, at once \(◔ off\); the game’s seconds above under ⌖ with ◔/.test(mech.title),
        '(' + (view.pinnedPoints - pOff) + ' / ' + busy() + ')');
     run(0.5);
-    ok('switch time off: W still drives - no forced stop, the speed only held to the siege mode\'s own top', kmh() > 0, '(' + kmh() + ')');
+    ok('◔ off: W still drives - no forced stop, the speed only held to the siege mode\'s own top', kmh() > 0, '(' + kmh() + ')');
     click(mech); run(0.02);
-    ok('switch time off: and back to travel at once', !lit() && !busy());
+    ok('◔ off: and back to travel at once', !lit() && !busy());
     allKeysUp(); run(20);
-    modeTime.checked = true; modeTime.onchange.call(modeTime);
-    ok('switch time on: the mode button speaks of the switch again', /\n• While it switches: the gun does not fire/.test(mech.title));
+    click(sub); run(0.1);
+    ok('◔ on: the mode button speaks of the switch again', realBox.checked && /\n• While it switches: the gun does not fire/.test(mech.title));
     // Drive at 50 km/h, then press: 2.0 s of switching, the gun does not fire, W is ignored, the speed dies by the brake.
     key('KeyW', true); run(6);
     const v0 = kmh();
@@ -8034,7 +8131,7 @@ settle(20).then(function () {
     tap(); run(0.02);
     ok('modes: pressed at ' + v0 + ' km/h - dashed, 2 s of switching into siege, and a shot in the middle of it does not go (PlayerAvatar.shoot)',
        v0 >= 49.9 && busy() && !lit() && view.pinnedPoints === p0, '(' + v0 + ' / ' + (view.pinnedPoints - p0) + ')');
-    ok('strip: a tap refused by the mode switch pulses the mode button alone', balked() === 'aim-gun-mech' && /\n• While it switches: the gun does not fire/.test(mech.title),
+    ok('strip: a tap refused by the mode switch pulses the mode button alone', balked() === 'ttx-mode' && /\n• While it switches: the gun does not fire/.test(mech.title),
        '(' + balked() + ')');
     run(0.96);
     const v1 = kmh();
@@ -8109,8 +8206,8 @@ settle(20).then(function () {
        && /\n• Gun’s own sector: 3\/3°; past it the hull turns$/.test(f.gunYawLimits.title) && f.switchTime && f.switchTime.text === '2/1.3',
        JSON.stringify({p: f.pitchLimits && f.pitchLimits.text, y: f.gunYawLimits && f.gunYawLimits.text, s: f.switchTime && f.switchTime.text}));
     more.open = false;
-    ok('ttx modes: the second mode\'s switch beside ⚙ - under ✸ it is the emulator\'s mode (off: travel)', ttxMode.hidden === false && ttxMode.getAttribute('aria-pressed') === 'false'
-       && /Under ⌖ this is the emulator’s own mode/.test(ttxMode.title));
+    ok('ttx modes: the one mode button beside ⚙ - under ✸ the emulator\'s mode, and its words name the panel (off: travel)', ttxMode.hidden === false && ttxMode.getAttribute('aria-pressed') === 'false'
+       && /\n• This panel: the figures of the mode in force - mint where better than in travel, red where worse/.test(ttxMode.title));
     click(ttxMode); run(2.1);
     ok('ttx modes: pressed under ✸ - the emulator switches (its button lit) and the panel follows it', lit() && ttxMode.getAttribute('aria-pressed') === 'true');
     f = openFull();
@@ -8121,29 +8218,30 @@ settle(20).then(function () {
     more.open = false;
     click(mech); run(1.5); run(1);
     ok('ttx modes: the emulator back in travel - the panel follows', !lit() && ttxMode.getAttribute('aria-pressed') === 'false');
-    // Off ✸ the switch is the panel's own, kept per type.
+    // Off ⌖ (27.09): the same one button, the same state - at once, the panel and the circle together, nothing kept per type.
     setFun(false); run(0.5);
-    ok('ttx modes: off ⌖ - the switch is the panel\'s own', /Off ⌖ only the panel changes/.test(ttxMode.title) && mech.hidden === true);
-    click(ttxMode);
-    ok('ttx modes: pressed off ✸ - lit, the siege figures on the panel, the emulator untouched (the recorded ring)', ttxMode.getAttribute('aria-pressed') === 'true'
-       && /"modes":\{"sweden:S11_Strv_103B":1\}/.test(savedSettings() || ''), (savedSettings() || '').slice(-160));
-    click(ttxMode);
+    ok('ttx modes: off ⌖ - the same one button, travel', ttxMode.hidden === false && ttxMode.getAttribute('aria-pressed') === 'false' && /\n• This panel: /.test(ttxMode.title));
+    click(ttxMode); run(0.02);
+    f = openFull();
+    ok('ttx modes: pressed off ⌖ - siege at once, the siege figures on the panel, and no per-type copy of the mode stored',
+       ttxMode.getAttribute('aria-pressed') === 'true' && !busy() && f.shotDispersionAngle.text === '0.24' && !/"sweden:S11_Strv_103B":1/.test(savedSettings() || ''), (savedSettings() || '').slice(-160));
+    more.open = false;
+    click(ttxMode); run(0.02);
     setFun(true); run(0.5);
     return openM('m-107');
   }).then(function () {
     // --- the Strv 107-12: a touch from travel goes into siege, 2 s ----------------------------------------------------
     const view = viewerInstance; prepare(view); allKeysUp(); run(20);
     ok('modes: Strv 107-12 recorded in travel - ▣, not lit', mech.textContent === '▣' && !lit() && !glow());
-    // Mode switch time off (27.09): the press stays the game's - a hold of 1 s - and the pillbox is there at once.
-    const modeTime = document.getElementById('mode-switch-time');
-    modeTime.checked = false; modeTime.onchange.call(modeTime);
+    // ◔ off (27.09, every press fires): the press stays the game's gesture - a hold of 1 s - and the pillbox is there at once.
+    click(sub); run(0.1);
     holdMech(1.1); run(0.02);
-    ok('switch time off: held 1 s from travel - into the pillbox at once, not dashed', glow() && !busy());
+    ok('◔ off: held 1 s from travel - into the pillbox at once, not dashed', glow() && !busy());
     holdMech(0.5); run(0.02);
-    ok('switch time off: a press between a touch and a hold still does nothing', glow() && !busy());
+    ok('◔ off: a press between a touch and a hold still does nothing', glow() && !busy());
     holdMech(1.1); run(0.02);
-    ok('switch time off: held again - out to travel at once', !glow() && !lit() && !busy());
-    modeTime.checked = true; modeTime.onchange.call(modeTime); run(20);
+    ok('◔ off: held again - out to travel at once', !glow() && !lit() && !busy());
+    click(sub); run(20);
     holdMech(0.1); run(1.85);
     ok('modes: a touch (0.1 s) from travel - into siege, dashed for 2 s', busy() && !lit());
     run(0.2);
@@ -8161,7 +8259,7 @@ settle(20).then(function () {
     // --- CS-63: the turbine switches only standing ------------------------------------------------------------------
     const view = viewerInstance; prepare(view); allKeysUp(); stockBuild(); run(20);   // default build (27.09): no turbo, the stock top speeds
     const r0 = view.liveRadius100;
-    ok('modes: CS-63 - the turbine button ≫, not lit', mech.textContent === '≫' && !lit() && /— Engine mode\n• Now: the normal engine mode\n/.test(mech.title));
+    ok('modes: CS-63 - the turbine button ≫, not lit', mech.textContent === '≫' && !lit() && /— Engine mode\nThe second mode: [^\n]+\n• Now: the normal engine mode\n/.test(mech.title));
     key('KeyW', true); run(1);
     click(mech); run(0.05);
     ok('modes: pressed on the move - refused (not dashed), the tooltip says to stop first', !busy() && !lit() && /\n• Last press refused: the engine mode switches only standing - stop first\n/.test(mech.title));
@@ -8354,16 +8452,16 @@ settle(20).then(function () {
   const headSrc = rowSrc.slice(0, rowSrc.indexOf('<div id="fun-strip"')), stripSrc = rowSrc.slice(rowSrc.indexOf('<div id="fun-strip"'));
   const gunSrc = pageSrc.slice(pageSrc.indexOf('<div id="aim-gun"'), pageSrc.indexOf('<details class="toolbar-more aim-config"'));
   const once = function (id) { return pageSrc.split('id="' + id + '"').length === 2; };
-  const MOVED = ['real-reload-toggle', 'aim-gun-load', 'aim-gun-reload', 'aim-gun-mag', 'aim-gun-heat', 'aim-gun-heat-fill', 'aim-gun-heat-warn', 'aim-gun-mech', 'target-hp', 'target-hp-reset'];
+  const MOVED = ['real-reload-toggle', 'aim-gun-load', 'aim-gun-reload', 'aim-gun-mag', 'aim-gun-heat', 'aim-gun-heat-fill', 'aim-gun-heat-warn', 'target-hp', 'target-hp-reset'];
   ok('strip: the model row is the tile’s head (the tile, the ⌖ switch, the help dot) and the strip after it, hidden until something of it is there',
      /^<div class="model-row" id="model-row"><div class="model-head"><button type="button" id="model-tile"/.test(rowSrc)
      && headSrc.indexOf('id="fun-mode-toggle"') > 0 && /class="help-dot swap-roles"/.test(headSrc)
      && /^<div id="fun-strip" class="fun-strip" hidden><button type="button" id="real-reload-toggle"/.test(stripSrc));
-  ok('strip: in it ◔, then the live part (reload figure, magazine, heat bar, mode button), then the health bar and ↺',
+  ok('strip: in it ◔, then the live part (reload figure, magazine, heat bar), then the health bar and ↺ - the mode button went to the characteristics panel (27.09)',
      /<span id="fun-gun" class="fun-gun" hidden><span id="aim-gun-load" class="aim-gun-load" title="[^"]+"><b id="aim-gun-reload">—<\/b><\/span><span id="aim-gun-mag"/.test(stripSrc)
-     && ['real-reload-toggle', 'fun-gun', 'aim-gun-load', 'aim-gun-mag', 'aim-gun-heat', 'aim-gun-mech', 'target-hp', 'target-hp-reset'].every(function (id, i, a) {
+     && ['real-reload-toggle', 'fun-gun', 'aim-gun-load', 'aim-gun-mag', 'aim-gun-heat', 'target-hp', 'target-hp-reset'].every(function (id, i, a) {
        return stripSrc.indexOf('id="' + id + '"') > 0 && (!i || stripSrc.indexOf('id="' + a[i - 1] + '"') < stripSrc.indexOf('id="' + id + '"')); })
-     && /id="aim-gun-mech" class="swap-roles aim-gun-mech" aria-pressed="false" hidden><\/button><\/span><span id="target-hp"/.test(stripSrc));
+     && /<span id="aim-gun-heat-warn" class="aim-gun-heat-warn"><\/span><\/span><\/span><span id="target-hp"/.test(stripSrc) && stripSrc.indexOf('ttx-mode') < 0);
   ok('strip: the same nodes, moved - every id once in the page, none of them left in the gun panel, and the page builds no copy',
      MOVED.every(once) && MOVED.every(function (id) { return gunSrc.indexOf('id="' + id + '"') < 0; })
      && /^<div id="aim-gun" class="aim-gun" hidden><span id="aim-gun-shells" class="aim-gun-shells" role="group" aria-label="Shells of this gun"><\/span><\/div>$/.test(gunSrc)
@@ -8372,7 +8470,9 @@ settle(20).then(function () {
   const dots = {};
   pageSrc.replace(/<button type="button" class="help-dot[^"]*" (?:data-tb="\d+" )?data-help-for="([^"]*)"/g, function (m, ids) { dots[ids.split(' ')[0]] = ids.split(' '); return m; });
   ok('strip: the top help dot lists ⌖ first and everything of the strip one can press or read, not the tile (user 23.09: the group opened on the collision model); the shooter row no longer the mode button',
-     JSON.stringify(dots['fun-mode-toggle']) === JSON.stringify(['fun-mode-toggle', 'real-reload-toggle', 'aim-gun-load', 'aim-gun-mag', 'aim-gun-heat', 'aim-gun-mech', 'target-hp-reset'])
+     JSON.stringify(dots['fun-mode-toggle']) === JSON.stringify(['fun-mode-toggle', 'real-reload-toggle', 'aim-gun-load', 'aim-gun-mag', 'aim-gun-heat', 'target-hp-reset'])
+     // the one mode button (27.09) is the panel's: its "?" lists it first, as it stands first in the panel's tools
+     && JSON.stringify(dots['ttx-mode']) === JSON.stringify(['ttx-mode', 'ttx-build-toggle', 'ttx-more-button', 'ttx-pair'])
      // manual-motion (27.09): the drive tile opens a popover now, so the row's dot lists it first, as it stands first in the row
      && JSON.stringify(dots['aim-drive-summary']) === JSON.stringify(['aim-drive-summary', 'swap-roles', 'shooter-tile', 'aim-gun-shells', 'aim-config']),
      '(' + JSON.stringify(dots['fun-mode-toggle']) + ' / ' + JSON.stringify(dots['aim-drive-summary']) + ')');
@@ -8396,7 +8496,7 @@ settle(20).then(function () {
      && /\.aim-gun,\.fun-strip\{display:flex;/.test(styleSrc) && /\.aim-gun\[hidden\],\.fun-strip\[hidden\],\.fun-gun\[hidden\]\{display:none\}/.test(styleSrc)
      && /\.fun-strip\{flex-wrap:wrap;/.test(styleSrc) && /\.aim-gun-load b\{display:inline-block;min-width:5\.4ch;/.test(styleSrc));
   ok('strip: the pulse - two names of one animation, a red ring twice, and no frame of its own: a CSS animation, one timeout to take it off',
-     /\.fun-strip \[data-balk="1"\]\{animation:balk-1 \.3s ease-out 2\}/.test(styleSrc) && /\.fun-strip \[data-balk="2"\]\{animation:balk-2 \.3s ease-out 2\}/.test(styleSrc)
+     /\.fun-strip \[data-balk="1"\],#ttx-mode\[data-balk="1"\]\{animation:balk-1 \.3s ease-out 2\}/.test(styleSrc) && /\.fun-strip \[data-balk="2"\],#ttx-mode\[data-balk="2"\]\{animation:balk-2 \.3s ease-out 2\}/.test(styleSrc)
      && /@keyframes balk-1\{from\{box-shadow:0 0 0 2px var\(--red\)/.test(styleSrc) && /@keyframes balk-2\{from\{box-shadow:0 0 0 2px var\(--red\)/.test(styleSrc)
      && /balkTimer = window\.setTimeout\(balkClear, BALK_MS\);/.test(appSrc) && !/requestAnimationFrame/.test(appSrc.slice(appSrc.indexOf('  function gunBalk('), appSrc.indexOf('  function balkClear(') + 300)));
   ok('strip: the ring pulses by its one material and the frame draw() already asks for - four timeouts, no loop',

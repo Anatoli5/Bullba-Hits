@@ -103,7 +103,8 @@ const DRIVER = `(() => {
       if ($('battle-list').hidden) $('battle-pick').click();
       must(document.querySelector('#battle-list [data-id="' + id + '"]'), 'battle ' + id).click();
     },
-    fun: (on) => { if ($('fun-mode-toggle').getAttribute('aria-pressed') !== String(on)) $('fun-mode-toggle').click(); }
+    fun: (on) => { if ($('fun-mode-toggle').getAttribute('aria-pressed') !== String(on)) $('fun-mode-toggle').click(); },
+    mode: () => $('ttx-mode').click()
   };
   const words = (s) => String(s || '').replace(/[\\s\\u00a0\\u2009\\u202f]+/g, ' ').trim();
   const tip = (el) => el ? (el.getAttribute('data-tip') || el.getAttribute('title') || '') : '';
@@ -709,6 +710,32 @@ async function main() {
     await ev("document.getElementById('aim-drive-summary').click()");
     await page.send('Emulation.clearDeviceMetricsOverride'); await ev('__bt.settle()');
     ok('manual: no uncaught exception in the page', page.errors.length === 0, page.errors.slice(0, 3).join(' | '));
+    page.errors.length = 0;
+
+    // ---- THE ONE MODE BUTTON (mode-button-both, 27.09) on the scene path --------------------------------------------
+    // pm7: a Taschenratte's hit, no characteristics file for its type - the panel stands for the button (and its "?")
+    // alone. Plain view takes the second gun up at once (its shell and penetration), ⌖ keeps what the user took up.
+    const MODE = `(() => { const $ = (id) => document.getElementById(id), b = $('ttx-mode'), p = $('ttx-panel'), cs = getComputedStyle(b);
+      const laid = (el) => !!el && el.getClientRects().length > 0;
+      const dot = [].slice.call(p.querySelectorAll('[data-help-for]')).filter((d) => d.getAttribute('data-help-for').split(' ')[0] === 'ttx-mode')[0];
+      return {shown: laid(b), inPanel: p.contains(b), glyph: b.textContent, pressed: b.getAttribute('aria-pressed'), border: cs.borderTopColor,
+        only: p.getAttribute('data-mode-only'), figures: laid(p.querySelector('.ttx-head')), help: laid(dot), shell: $('shell-choice').value,
+        pen: $('penetration').value, strip: !!document.querySelector('#fun-strip #ttx-mode, #aim-gun #ttx-mode'), buttons: document.querySelectorAll('#ttx-mode').length}; })()`;
+    await step('fun(false)'); await step("side('battles')"); await step("battle('pm7')"); await step('hit(0)');
+    const B0 = await ev(MODE);
+    ok('mode button: a Taschenratte in plain view - ONE button, on the characteristics panel (standing alone: no file), its "?" beside it, in its own accent',
+       B0.shown && B0.inPanel && B0.buttons === 1 && !B0.strip && B0.glyph === '✦' && B0.pressed === 'false' && B0.only === '1' && !B0.figures && B0.help
+       && B0.border === 'rgb(185, 166, 255)' && B0.shell === 'saved:0', JSON.stringify(B0));
+    const B1 = await step('mode()') && await ev(MODE);
+    ok('mode button: plain view - a press takes the mortar up at once: lit, its shell and its penetration (60) on the page', B1.pressed === 'true' && B1.shell === 'saved:2' && B1.pen === '60', JSON.stringify(B1));
+    const B2 = await step('fun(true)') && await ev(MODE);
+    ok('mode button: ⌖ on - the same one button, the mortar still in hand (inherited)', B2.shown && B2.pressed === 'true' && B2.shell === 'saved:2', JSON.stringify(B2));
+    const B3 = await step('mode()') && await ev(MODE);
+    ok('mode button: under ⌖ a press takes the main gun back', B3.pressed === 'false' && B3.shell === 'saved:0' && B3.pen === '250', JSON.stringify(B3));
+    await step('fun(false)'); await step("battle('pm')"); await step('hit(0)');
+    const B4 = await ev(MODE);
+    ok('mode button: a plain shooter - no mode button', !B4.shown, JSON.stringify(B4));
+    ok('mode button: no uncaught exception in the page', page.errors.length === 0, page.errors.slice(0, 3).join(' | '));
     page.errors.length = 0;
 
     // ---- the leak counter ----------------------------------------------------------------------------------
