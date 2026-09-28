@@ -2,6 +2,13 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
+## Unreleased
+
+- **Aim emulation:** the aiming circle moves smoothly on heavy models. Its figure is computed a few milliseconds per frame instead of in one go (which froze a frame for ~20 ms every 0.12 s while moving and ~80 ms when it came to rest); it may lag a few frames and lands on the same value. A shot's own figure is computed the same way.
+- **Faster page start:** the armour map's shader compiles about 0.9 s faster on the game's graphics path (it had doubled in 0.8.7), with the same map.
+- The circle's tiles and the speed and reload figures are only rewritten when they change.
+- game.log: the page's frame-rate line also gives the longest frame of its 3-second sample.
+
 ## 0.8.8 (2026-09-27)
 
 - **Fix (game start):** the export no longer rewrites every saved battle before doing anything else (in 0.8.7 that took minutes with the page open, and held back the wheels of wheeled vehicles, the characteristics and every export). Only battles that changed are published again, in the background after the vehicle updates; the first start after an update does them all once. game.log has one line with the start's timings.

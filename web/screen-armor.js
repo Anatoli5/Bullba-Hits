@@ -250,47 +250,46 @@ int contact(int id,float cosine,float along,inout Walk w,out float result){
  return flags.x>.5?3:0;
 }
 // The layers in the CPU's order (ArmorBallistics ordered()): by depth, and a run of layers within TIE_EPS of its first by
-// material id - the peel leaves such a run in whatever order the depth test rounded it (review of d1b372b). tieRun fills
-// run (the run starting at layer i, in the ids' order) and returns its length; one look-ahead fetch a run (the layer that
-// ends it). The front of a pixel is the first of its first run. Module-scope arrays, not array parameters (ANGLE).
+// material id - the peel leaves such a run in whatever order the depth test rounded it (review of d1b372b). orderLayers
+// fills run with the pixel's layers up to the first empty one, each run of ties sorted by id (a stable insertion inside the
+// run: two or three surfaces at most, most pixels have none), and returns how many. The front of a pixel is run[0].
+// ONE pass and ONE walk (27.09, frame-smoothness): the walk below was a loop over runs around a loop over a run, which
+// the HLSL compiler of ANGLE/D3D11 (the game's CEF) unrolls into 8 x 8 copies of contact() - the page's start froze
+// ~0.9 s longer on it (1.05 -> 1.95 s on the D3D11 path, 2.0 -> 3.3 s in the game). Same order, same walk, 8 copies.
+// Module-scope arrays, not array parameters (ANGLE).
 vec4 run[${COUNT}];
-int tieRun(int i,vec2 uv){
- int count=0;vec4 head=layer(i,uv);if(head.y<.5)return 0;
- for(int j=0;j<${COUNT};j++){if(i+j>=${COUNT})break;vec4 h=j==0?head:layer(i+j,uv);if(h.y<.5||h.x-head.x>TIE_EPS)break;
-  // Insertion by id: a run is two or three surfaces at most, most pixels have none.
-  int at=count;for(int b=${COUNT}-1;b>0;b--){if(b>count)continue;if(floor(run[b-1].y)>floor(h.y)){run[b]=run[b-1];at=b-1;}else break;}
-  run[at]=h;count++;}
- return count;
+int orderLayers(vec2 uv){
+ int n=0,first=0;float head=0.0;
+ for(int i=0;i<${COUNT};i++){
+  vec4 h=layer(i,uv);if(h.y<.5)break;
+  if(i==0||h.x-head>TIE_EPS){head=h.x;first=i;}
+  int at=i;for(int b=${COUNT}-1;b>0;b--){if(b>i)continue;if(b<=first)break;if(floor(run[b-1].y)>floor(h.y)){run[b]=run[b-1];at=b-1;}else break;}
+  run[at]=h;n++;}
+ return n;
 }
 // The direct result: -3 = nothing on this pixel, -2 = no main armour, -1 = unknown, 0..1 = chance.
 // On a ricochet it also reports the contact and what the shell had left there (leftPen), so the bounced leg starts there.
 // frontCode: the front layer's material code (the peel's G), for the seams.
 float evaluate(vec2 uv,vec3 ray,out vec4 front,out bool screen,out int screens,out bool bounced,out vec3 spot,out vec3 face,out float leftPen,out float frontCode){
  front=vec4(-2.0);screen=false;screens=0;bounced=false;spot=uOrigin;face=uForward;leftPen=uPen.x;frontCode=0.0;
- int count=tieRun(0,uv);
+ int count=orderLayers(uv);
  if(count==0)return -3.0;
  frontCode=floor(run[0].y);front=material(int(frontCode)-1,0);screen=front.y<=EPS;
  if(uFlags.w==0){return -1.0;}
  Walk w;w.remaining=uPen.x;w.nominal=uPen.x;w.jetStart=0.0;w.jetRate=0.0;w.jet=false;w.screens=0;w.gate=1.0;
  int ignored[${COUNT}];int ignoredCount=0;
- float result=-2.0;bool finished=false;int start=0;
- for(int r=0;r<${COUNT};r++){
-  if(r>0){if(start>=${COUNT})break;count=tieRun(start,uv);}
-  if(count==0){finished=true;break;}
-  for(int k=0;k<${COUNT};k++){
-   if(k>=count)break;
-   vec4 hit=run[k];
-   int id=int(floor(hit.y))-1;bool skip=false;for(int j=0;j<${COUNT};j++){if(j>=ignoredCount)break;if(ignored[j]==id)skip=true;}if(skip)continue;
-   float value=0.0;int status=contact(id,fract(hit.y)*2.0,hit.x,w,value);
-   if(status>=3){if(ignoredCount<${COUNT}){ignored[ignoredCount]=id;ignoredCount++;}continue;}
-   if(status==0)continue;
-   result=value;finished=true;
-   // The peel keeps the depth relative to the target plane: P = origin + ray * (d - offset).
-   if(status==2){spot=uOrigin+ray*(hit.x-dot(uOrigin-uAnchor,uForward)/max(.001,dot(ray,uForward)));face=octDecode(hit.zw);bounced=true;leftPen=w.remaining;}
-   break;
-  }
-  if(finished)break;
-  start+=count;
+ float result=-2.0;bool finished=false;
+ for(int k=0;k<${COUNT};k++){
+  if(k>=count){finished=true;break;}   // an empty layer ended the pixel (with all COUNT taken the loop just ends)
+  vec4 hit=run[k];
+  int id=int(floor(hit.y))-1;bool skip=false;for(int j=0;j<${COUNT};j++){if(j>=ignoredCount)break;if(ignored[j]==id)skip=true;}if(skip)continue;
+  float value=0.0;int status=contact(id,fract(hit.y)*2.0,hit.x,w,value);
+  if(status>=3){if(ignoredCount<${COUNT}){ignored[ignoredCount]=id;ignoredCount++;}continue;}
+  if(status==0)continue;
+  result=value;finished=true;
+  // The peel keeps the depth relative to the target plane: P = origin + ray * (d - offset).
+  if(status==2){spot=uOrigin+ray*(hit.x-dot(uOrigin-uAnchor,uForward)/max(.001,dot(ray,uForward)));face=octDecode(hit.zw);bounced=true;leftPen=w.remaining;}
+  break;
  }
  screens=w.screens;
  if(!finished&&layer(${COUNT},uv).y>.5)result=-1.0; // Never silently truncate a ninth layer.

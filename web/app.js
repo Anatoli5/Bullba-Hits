@@ -1992,7 +1992,7 @@
     // Its figure goes with it: the 120 ms pace of the coarse estimate is for a ring that moves, not for a
     // new one, so it is taken at once, and the loop is woken to take the fine one when the ring rests -
     // a second click inside 120 ms used to leave the figure of the ring before it on the panel.
-    aimNow = null; aimEstAt = 0; aimEstFine = false;
+    aimNow = null; aimEstReset();
     updateAim(); startAimLoop(); scheduleLayout();
     ttxPaint();   // the characteristics panel shows the new build (an event, never a frame)
   }
@@ -3411,7 +3411,18 @@
   // The live figure of the aiming ring (user, 20.09: 'see the percentage in the circle all the time'). A
   // full integral is 1024 rays - tens of milliseconds - so while anything moves it is a coarse 256-ray one
   // at most every 120 ms, and the fine one runs once when the shooter, the turret and the cursor rest.
+  // SLICED (27.09, frame-smoothness): on a heavy model a ray costs ~80 us, so the coarse figure took ~20 ms of one frame
+  // every 120 ms and the fine one ~80 ms - the ring stuttered. A figure is now a job (viewer.liveAimSampler: the ring as it
+  // stood when the job began, the running sums) taken AIM_EST_SLICE ms per animation frame at most, the first slice at
+  // once - on a light model the whole figure, as before. It lags a few frames on a heavy one; the rays, their order and the
+  // sums are the one-piece integral's, so the figure it lands on is the same to the bit. aimEstAt is when the last job began.
   var aimEst = null, aimEstAt = 0, aimEstFine = false;
+  var AIM_EST_SLICE = 3;
+  // aimJob: {s: sampler, fine, shell} of the live figure being taken; aimShotJob: the same for the last shot's own figure.
+  // aimFrameT is the animation frame now running (its timestamp), aimSliceT the frame the last slice ran in: one slice a frame.
+  var aimJob = null, aimShotJob = null, aimJobFrame = 0, aimFrameT, aimSliceT;
+  // The shot's figure while its job runs: no text, so its tile stays away for those few frames (circleText).
+  var AIM_FIGURE_PENDING = {alpha: false, low: NaN};
   // The figure of the STANDING ring of the hit on screen - the recorded reticle, or the nominal estimate
   // when the hit has no reticle of its own (user, 20.09). Computed in shotStats(), where the saved circle
   // is sampled anyway for the reticle tile, and printed on the hit-line panel whenever that ring is the
@@ -3487,7 +3498,10 @@
     var list = a && Array.isArray(a.shotOffsets) && a.shotOffsets.length ? a.shotOffsets : null;
     return list ? list[aimBarrel % list.length] : null;
   }
-  function aimTick() {
+  // aimFrameT names the animation frame while its callbacks run, and only then: the figure takes one slice a frame, and an
+  // event between two frames (a press, a key) is a task of its own.
+  function aimTick(t) { aimFrameT = t; try { aimTickRun(); } finally { aimFrameT = undefined; } }
+  function aimTickRun() {
     aimFrame = 0;
     var a = aimBlockData();
     if (!aimLive || !a || !viewer || !viewer.liveRadius100) { aimClock = 0; return; }
@@ -3644,14 +3658,51 @@
   // What one shot inside the LIVE ring is worth: ONE figure (user, 20.09), the expected damage over the
   // circle as a share of the shell's alpha, misses counted as 0. `alpha` says whether the shell has one
   // at all - without it the share means nothing and the line prints a dash instead of a false zero.
+  // This starts the figure's job (the caller paints the lines after it): a coarse one at most every 120 ms while the ring moves -
+  // one already running is let finish, or on a heavy model no figure would ever land - and the fine one at rest, which a
+  // moving ring drops again.
   function estimateLive(fine) {
     var shell = viewer && viewer.shell, now = aimSeconds();
-    if (!shell || !viewer.liveRadius100) { aimEst = null; return; }
+    if (!shell || !viewer.liveRadius100) { aimEst = null; aimJob = null; return; }
+    if (aimJob && aimJob.shell !== shell) aimJob = null;
+    if (aimJob) {
+      if (aimJob.fine === !!fine) return;   // this very figure is being taken
+      if (!fine) aimEstFine = false;        // the ring moves again: the fine figure of the ring at rest is dropped
+      aimJob = null;
+    }
     if (!fine && aimEstAt && now - aimEstAt < 0.12) return;
-    var r = viewer.liveAimProbability(shell, fine ? 1024 : 256);
-    aimEst = circleFigure(r, shell);
-    aimEstAt = now; aimEstFine = !!fine;
+    var s = viewer.liveAimSampler ? viewer.liveAimSampler(shell, fine ? 1024 : 256) : null;
+    aimEstAt = now;
+    if (!s) { aimEst = null; aimEstFine = !!fine; return; }
+    aimJob = {s: s, fine: !!fine, shell: shell};
+    aimEstSlice();
   }
+  // Every change that makes the figure on the panel another ring's: it is taken again at once, finely once at rest.
+  function aimEstReset() { aimEstAt = 0; aimEstFine = false; aimJob = null; }
+  // One slice of the running jobs - the shot's figure first - at most one per animation frame, AIM_EST_SLICE ms at most;
+  // true when a figure landed in it. A live job whose viewer has built another engine since (a new model or pose) is
+  // dropped and the loop woken to take the figure again.
+  function aimEstSlice() {
+    if (!aimJob && !aimShotJob) return false;
+    if (aimFrameT !== undefined && aimFrameT === aimSliceT) { aimEstLater(); return false; }
+    aimSliceT = aimFrameT;
+    var until = aimSeconds() * 1000 + AIM_EST_SLICE, landed = false, r;
+    // The shot's figure is its ring's at the instant it left, against the engine it left into: it finishes there even if the
+    // scene has moved on (a shot kept under another shooter of the same model); a scene that drops the shot drops the job.
+    if (aimShotJob && (r = aimShotJob.s.step(until))) { aimShot = circleFigure(r, aimShotJob.shell); aimShotJob = null; landed = true; }
+    if (aimJob && !aimShotJob) {
+      if (aimJob.s.engine !== viewer.engine) { aimEstReset(); startAimLoop(); }
+      else if ((r = aimJob.s.step(until))) {
+        aimEst = circleFigure(r, aimJob.shell); aimEstFine = aimJob.fine; aimJob = null; landed = true;
+      }
+    }
+    if (aimJob || aimShotJob) aimEstLater();
+    return landed;
+  }
+  // The emulation off: no figure is taken any more, and no frame is left asked for.
+  function aimEstStop() { aimEstReset(); aimShotJob = null; if (aimJobFrame) window.cancelAnimationFrame(aimJobFrame); aimJobFrame = 0; }
+  function aimEstLater() { if (!aimJobFrame) aimJobFrame = window.requestAnimationFrame(aimEstTick); }
+  function aimEstTick(t) { aimJobFrame = 0; aimFrameT = t; try { if (aimEstSlice()) paintCircleLines(); } finally { aimFrameT = undefined; } }
   // The figure one sampled circle is worth (user, 22.09: with a MANUAL shell every Circle line read "—").
   // A shell chosen by hand - a type on the shell-type buttons, or a penetration and a calibre with no
   // saved candidate behind them - has no alpha at all, so a share of alpha is meaningless. It then carries
@@ -3709,12 +3760,14 @@
     var e = $(id), tile = $(id + '-tile');
     if (!e || !tile) return;
     var text = figure ? circleText(figure) : '';
-    e.textContent = text;
-    tile.hidden = !text;
+    // Every write below only when it changes: this runs on every frame of the emulation (27.09).
+    if (e.textContent !== text) e.textContent = text;
+    if (tile.hidden !== !text) tile.hidden = !text;
     // The sampling sentence of the recorded ring (it used to hang on the toolbar's reticle box, removed on
     // 22.09) is composed by aimTitle() once per hit, not here per frame.
     var extra = kind === 'saved' || kind === 'fired' || kind === 'estimate' ? aimExtra : '';
-    tile.title = text ? (CIRCLE_TITLES[kind] || CIRCLE_TITLES.live) + (figure.alpha ? SHARE : NO_ALPHA) + aimModel + extra : '';
+    var tip = text ? (CIRCLE_TITLES[kind] || CIRCLE_TITLES.live) + (figure.alpha ? SHARE : NO_ALPHA) + aimModel + extra : '';
+    if (tile.title !== tip) tile.title = tip;
     if (!text) return;
     var rgb = circleColor(figure);
     if (circleRgb[id] !== rgb) { circleRgb[id] = rgb; e.style.color = rgb; }
@@ -3736,10 +3789,11 @@
     if (!e) return;
     paintManual();
     var ms = state && Number.isFinite(state.speed) ? state.speed : 0;
-    e.textContent = Math.round(ms / KMH_TO_MS) + ' km/h';
+    var speed = Math.round(ms / KMH_TO_MS) + ' km/h';
+    if (e.textContent !== speed) e.textContent = speed;   // per frame: written only when it changes (27.09)
     ['forward', 'left', 'back', 'right'].forEach(function (name) {
       var cap = $('aim-key-' + name);
-      if (!cap) return;
+      if (!cap || cap.hasAttribute('data-down') === !!aimKeys[name]) return;
       if (aimKeys[name]) cap.setAttribute('data-down', '1'); else cap.removeAttribute('data-down');
     });
     paintTurn(state);
@@ -3759,7 +3813,7 @@
     var rate = state && Number.isFinite(state.hullTurn) ? state.hullTurn : 0;
     var max = state && state.hullMax > 0 ? state.hullMax : 0;
     var span = max > 0 ? Math.min(1, Math.abs(rate) / max) * TURN_MAX : 0;
-    if (!(span > 1)) { box.hidden = true; arc.setAttribute('d', ''); head.setAttribute('d', ''); return; }
+    if (!(span > 1)) { if (!box.hidden) { box.hidden = true; arc.setAttribute('d', ''); head.setAttribute('d', ''); } return; }
     var sign = rate > 0 ? 1 : -1, a0 = -90, a1 = a0 + sign * span;
     var p0 = turnPoint(a0, TURN_R), p1 = turnPoint(a1, TURN_R), r = a1 * Math.PI / 180;
     // The arrowhead sits at the far end, pointing the way the hull is coming round: `t` is the tangent
@@ -3769,11 +3823,12 @@
     var b1 = [p1[0] - tx * 1.2 + nx * 2.4, p1[1] - ty * 1.2 + ny * 2.4];
     var b2 = [p1[0] - tx * 1.2 - nx * 2.4, p1[1] - ty * 1.2 - ny * 2.4];
     var fix = function (v) { return v.toFixed(2); };
-    arc.setAttribute('d', 'M' + fix(p0[0]) + ' ' + fix(p0[1]) + 'A' + TURN_R + ' ' + TURN_R + ' 0 ' +
-      (span > 180 ? 1 : 0) + ' ' + (sign > 0 ? 1 : 0) + ' ' + fix(p1[0]) + ' ' + fix(p1[1]));
-    head.setAttribute('d', 'M' + fix(tip[0]) + ' ' + fix(tip[1]) + 'L' + fix(b1[0]) + ' ' + fix(b1[1]) +
-      'L' + fix(b2[0]) + ' ' + fix(b2[1]) + 'Z');
-    box.hidden = false;
+    var dArc = 'M' + fix(p0[0]) + ' ' + fix(p0[1]) + 'A' + TURN_R + ' ' + TURN_R + ' 0 ' +
+      (span > 180 ? 1 : 0) + ' ' + (sign > 0 ? 1 : 0) + ' ' + fix(p1[0]) + ' ' + fix(p1[1]);
+    var dHead = 'M' + fix(tip[0]) + ' ' + fix(tip[1]) + 'L' + fix(b1[0]) + ' ' + fix(b1[1]) + 'L' + fix(b2[0]) + ' ' + fix(b2[1]) + 'Z';
+    if (arc.getAttribute('d') !== dArc) arc.setAttribute('d', dArc);   // per frame: written only when it changes (27.09)
+    if (head.getAttribute('d') !== dHead) head.setAttribute('d', dHead);
+    if (box.hidden) box.hidden = false;
   }
   // --- Manual motion: the drive tile's popover (user, 27.09) -------------------------------------------
   // What aimManual (above) stands for: the motion for this block and these modifiers, the shares of the top figures of
@@ -3808,7 +3863,7 @@
   // sends an input per step, and a store per step is a synchronous disk write).
   var aimManualTimer = 0;
   function aimManualChanged() {
-    aimEstAt = 0; aimEstFine = false;
+    aimEstReset();
     paintDrive(aimState());
     startAimLoop();
     if (!aimManualTimer) aimManualTimer = window.setTimeout(aimManualSave, 300);
@@ -3948,8 +4003,9 @@
     // An autoloader under real reload counts down the round loading back too, as the reticle does, while the
     // gun may already fire the rounds it has.
     if (!running && aimRefill) { left = Math.max(0, aimRefill.until - aimSeconds()); running = left > 0; }
-    time.textContent = (running ? left : restReload(a, rl)).toFixed(1) + ' s';
-    time.setAttribute('data-running', running ? '1' : '0');
+    var shown = (running ? left : restReload(a, rl)).toFixed(1) + ' s', flag = running ? '1' : '0';
+    if (time.textContent !== shown) time.textContent = shown;   // per frame: written only when it changes (27.09)
+    if (time.getAttribute('data-running') !== flag) time.setAttribute('data-running', flag);
     return h;
   }
   // The gun's own reload at rest. An autoloader has no single one: the client stands the load of the first round
@@ -4080,7 +4136,12 @@
     if (viewer.setAimOffset) viewer.setAimOffset(aimOffsetNow(a));   // this round's barrel (P4)
     dualShot(a, now);   // ✸: a dual-accuracy gun is wider from this very round on (nothing otherwise)
     var mods = aimHeated(aimModifiers()), shell = viewer.shell;
-    var chance = shell ? viewer.liveAimProbability(shell, 1024) : null;
+    // The shot's own figure (27.09): a job over the ring as it stands at this instant, sliced like the live one
+    // (aimEstSlice) - the tile fills a few frames later on a heavy model, with the figure the one-piece integral gives. (The
+    // fine figure at rest is never the same ring: the press wakes the loop, and the ring's decay moves it by a hair.)
+    aimShotJob = null;
+    var sampler = shell && viewer.liveAimSampler ? viewer.liveAimSampler(shell, 1024) : null;
+    if (sampler) aimShotJob = {s: sampler, shell: shell};
     // The fun layer (user, 22.09): with the mode on the shot lands at a point DRAWN inside
     // the live circle instead of at its middle, and the shot line, the pinned panel and the reticle then
     // show that point - it is the same pin, cast down the same line by the same caster. The switch off and
@@ -4094,7 +4155,8 @@
     if (viewer.setAimShot) viewer.setAimShot();   // the ring left behind, drawn before the recoil widens the live one
     // The shot's own figure, on the pinned-shot panel and in the colour of its ring (user, 20.09): the
     // same single number the live ring prints - the expected damage over the circle, share of alpha.
-    aimShot = circleFigure(chance, shell);
+    aimShot = aimShotJob ? AIM_FIGURE_PENDING : null;
+    if (aimShotJob) aimEstSlice();
     // The reload first (it names the burst), then the circle: the round's place in a burst decides its term.
     var rl = ArmorBallistics.reloadSeconds(a, mods), real = realReload();
     var times = autoreloadTimes(a, rl);   // an autoloader under real reload, or null
@@ -4884,7 +4946,7 @@
     cancelHoldTimer();
     aimKeys = {}; aimMove = null; aimNow = null; aimReload = null;
     aimDown = false; aimBurst = false; aimClipDry = false;
-    aimShot = null; aimLastState = null; aimHeading = 0; aimBarrel = 0;
+    aimShot = null; aimShotJob = null; aimLastState = null; aimHeading = 0; aimBarrel = 0;
     // The hull faces the gun again: its yaw in the shooter's sector starts from the middle (BACKLOG 40).
     if (viewer) { viewer.aimHold = false; viewer.aimYaw = 0; if (viewer.clearAimShot) viewer.clearAimShot(); }
     aimLoadFull();
@@ -5597,7 +5659,7 @@
     else { aimReload = null; aimLoadFull(); }
     var a = aimBlockData();
     if (a) { aimNow = ArmorBallistics.aimStep(null, aimLastState || aimState(), a, aimHeated(aimModifiers()), 0); aimNowBlock = a; }
-    aimEstAt = 0; aimEstFine = false;
+    aimEstReset();
     xiWeaponShell(m.weapon);
   }
   function xiWeaponShell(weapon) {
@@ -5862,7 +5924,7 @@
     if (on === aimOn) { updateAim(); return; }
     aimOn = on;
     if (on) { document.addEventListener('keydown', aimKeyDown); document.addEventListener('keyup', aimKeyUp); window.addEventListener('blur', aimRelease); }
-    else { document.removeEventListener('keydown', aimKeyDown); document.removeEventListener('keyup', aimKeyUp); window.removeEventListener('blur', aimRelease); stopAimLoop(); }
+    else { document.removeEventListener('keydown', aimKeyDown); document.removeEventListener('keyup', aimKeyUp); window.removeEventListener('blur', aimRelease); stopAimLoop(); aimEstStop(); }
     resetAimRun();
     updateAim();
   }
@@ -5931,7 +5993,7 @@
   // The circle stands somewhere else now: its figure is taken again at once, and finely once at rest. Run
   // when the hold starts or ends.
   function aimRingMoved() {
-    aimEstAt = 0; aimEstFine = false;
+    aimEstReset();
     paintAim(aimLastState || aimState());
     startAimLoop();
   }
@@ -6902,7 +6964,7 @@
     if(shot&&shot!==lastShooterType&&SHOOTER_TYPE.test(shot)){lastShooterType=shot;storeSidebar();}   // the last shooter used
     currentHitKey=baseId!=null&&current?hitFingerprint(current.hits.find(function(h){return h.id===baseId;})):null;
     if(aimNow&&aimNowBlock!==aimBlockData())aimNow=null;
-    aimEstAt=0;aimEstFine=false;
+    aimEstReset();
     SCENE_PAINTERS.forEach(function(p){
       try{p[1]();}
       catch(e){if(window.console)console.error('Bullba Hits scene painter “'+p[0]+'”: '+(e&&e.stack||e));if(host.mark)host.mark('Scene: '+p[0],'error: '+(e&&e.message));}
@@ -6987,7 +7049,7 @@
     // previous hit must not sit on the panel of the new one, where it also hides that hit's own reticle figure (20.09).
     prepareShell(hit);var drawn=viewer&&viewer.load(data,shotContext,camera);funLaid=false;
     if(drawn&&viewer.setRecordedOffset)viewer.setRecordedOffset(recordedOffset(hit));   // the record view's camera stands at this shot's barrel (aimMuzzle)
-    if(!(viewer&&viewer.aimShotCircle))aimShot=null;
+    if(!(viewer&&viewer.aimShotCircle)){aimShot=null;aimShotJob=null;}
     $('shot-source').textContent=viewer&&viewer.pinned?'Pinned point':hit.synthetic?'No recorded shot':'Hit line';
     // A damage event's own look, set before the first frame is drawn, so no penetration map shows under it.
     if(drawn&&hit.damageEvent)viewer.setLook(eventLook(hit));

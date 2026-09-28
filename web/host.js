@@ -101,5 +101,7 @@
   var pointerLogged=0,lastMove=0;
   document.addEventListener('pointermove',function(e){if(pointerLogged>=4||!e.buttons)return;var vp=document.getElementById('viewport');if(!vp||!vp.contains(e.target))return;pointerLogged++;var now=window.performance?performance.now():Date.now();
     if(window.console)console.info('Bullba Hits host pointer: '+e.pointerType+' buttons '+e.buttons+' client '+Math.round(e.clientX)+','+Math.round(e.clientY)+' movement '+e.movementX+','+e.movementY+' dt '+(lastMove?Math.round(now-lastMove):0)+' ms');lastMove=now;},true);
-  if(window.requestAnimationFrame){var frames=0,started=null;window.requestAnimationFrame(function tick(t){if(started===null)started=t;frames++;if(t-started<3000)window.requestAnimationFrame(tick);else{host.fps=Math.round(frames*1000/(t-started));if(window.console)console.info('Bullba Hits host: '+host.fps+' frames/s over '+Math.round(t-started)+' ms ('+(game?'game':'browser')+')');}});}
+  // The sample starts with the page and so takes in the first scene's shader compile, a stall of one to three seconds on
+  // the D3D11 path (27.09: 0.8.7 read 1-2 frames/s for it); the longest frame says how much of the sample it was.
+  if(window.requestAnimationFrame){var frames=0,started=null,last=0,longest=0;window.requestAnimationFrame(function tick(t){if(started===null)started=t;else longest=Math.max(longest,t-last);last=t;frames++;if(t-started<3000)window.requestAnimationFrame(tick);else{host.fps=Math.round(frames*1000/(t-started));if(window.console)console.info('Bullba Hits host: '+host.fps+' frames/s over '+Math.round(t-started)+' ms ('+(game?'game':'browser')+'), longest frame '+Math.round(longest)+' ms');}});}
 }());

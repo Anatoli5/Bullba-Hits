@@ -293,6 +293,9 @@ StubViewer.prototype.hitMarkShot = function (verdict, caliber, roll) { return {c
 StubViewer.prototype.clearHitMarks = function () { const had = this.marks.length > 0; this.marks = []; this.marksCleared++; return had; };
 // Stage 11: counted, so the harness can see the figure being taken again when the ring moves to the centre.
 // S0: probeRadius is the ring the last figure was taken for, so a figure left over from another ring shows.
+// 27.09: the live figure is taken in slices (viewer.liveAimSampler); the stub's sampler is counted when it is made and
+// lands whole on its first slice, as the real one does on a light model.
+StubViewer.prototype.liveAimSampler = function (shell, count) { const r = this.liveAimProbability(shell, count); return {engine: this.engine, shell: shell, count: count, result: r, step: function () { return r; }}; };
 StubViewer.prototype.liveAimProbability = function (shell, count) { this.probes = (this.probes || 0) + 1; this.lastProbeCount = count; this.probeRadius = this.liveRadius100; if (count >= 1024) this.fineProbes++; return {low: 42, high: 42, unknown: 0, miss: 3, samples: 1024, damage: 100, damageHigh: 100}; };
 // Stage 7: the recorded rings are sampled too. Three different damages, so the panel line says which
 // ring it belongs to without being asked: 100 HP = 25 % for the live ring and the emulated shot,

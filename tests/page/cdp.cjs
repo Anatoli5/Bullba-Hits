@@ -33,9 +33,12 @@ async function launch(options) {
     '--disable-background-networking', '--disable-component-update', '--disable-sync', '--disable-extensions',
     '--disable-default-apps', '--disable-breakpad', '--no-proxy-server', '--host-resolver-rules=MAP * ~NOTFOUND',
     // Software WebGL: the viewer is three.js; without a GPU in headless mode Chrome needs SwiftShader allowed.
-    '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist',
+    // options.angle 'd3d11' asks for the machine's GPU through ANGLE's Direct3D 11 back end instead - the path the game's CEF
+    // takes on Windows (shader compiles through the HLSL compiler) - for local profiling only (tests/page/frame_cost.cjs --gpu,
+    // or BULLBA_ANGLE=d3d11 for any harness).
+  ].concat((options.angle || process.env.BULLBA_ANGLE) === 'd3d11' ? ['--use-angle=d3d11', '--enable-gpu', '--ignore-gpu-blocklist'] : ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'], [
     '--allow-file-access-from-files', '--window-size=' + (options.width || 1600) + ',' + (options.height || 1000),
-    '--user-data-dir=' + profile, 'about:blank'];
+    '--user-data-dir=' + profile, 'about:blank']);
   const child = spawn(exe, args, {stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'], windowsHide: true});
   let counter = 0, buffer = Buffer.alloc(0), stderr = '', exited = false;
   const pending = new Map(), listeners = [];

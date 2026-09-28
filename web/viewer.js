@@ -1475,18 +1475,36 @@
   // server distribution; the page says so next to every figure it feeds. Used by the button estimate, by
   // the saved client reticle and by the emulated circle alike, so all three read the same way.
   function sampleCircle(engine,shell,origin,center,right,up,radius,count,quantile){
-    var sum=0,unknown=0,miss=0,dmg=0,o=origin.toArray();
-    var q=typeof quantile==='function'?quantile:ArmorBallistics.aimProfile().quantile;
-    for(var i=0;i<count;i++){
-      var point=circlePoint(center,right,up,radius,(i+.5)/count,i*2.399963229728653,q);
-      var hit=engine.ray(o,point.sub(origin).toArray(),shell);
-      if(hit.chance===null)unknown++;else sum+=hit.chance;
-      if(hit.expected>0)dmg+=hit.expected;
-      if(hit.reason==='no-hull')miss++;
-    }
-    return {low:sum/count,high:(sum+unknown*100)/count,unknown:unknown,miss:miss/count*100,samples:count,
-      damage:dmg/count,damageHigh:(dmg+unknown*((shell||{}).alpha||0))/count};
+    return new CircleSampler(engine,shell,origin,center,right,up,radius,count,quantile).step(Infinity);
   }
+  // THE SAME INTEGRAL IN SLICES (27.09, frame-smoothness). A heavy model costs ~80 us a ray, so the live ring's 256 rays
+  // took ~20 ms of one frame every 120 ms while anything moved and its 1024 rays ~80 ms at rest: the ring stuttered. The
+  // sampler keeps the ring it was made for (copies: the live ring's vectors are replaced as it moves) and the running sums;
+  // step(until) casts rays in the one fixed order until the clock passes `until` (performance.now() ms; Infinity: to the
+  // end) - at least one ray per call - and returns the result once the last ray is in, else null. Same rays, same order,
+  // same sums: the result is the one-piece integral's to the bit. `engine` is the engine it casts against; a caller whose
+  // viewer has built another since drops it.
+  function CircleSampler(engine,shell,origin,center,right,up,radius,count,quantile){
+    this.engine=engine;this.shell=shell;this.origin=origin.clone();this.o=origin.toArray();this.center=center.clone();this.right=right.clone();this.up=up.clone();
+    this.radius=radius;this.count=count;this.q=typeof quantile==='function'?quantile:ArmorBallistics.aimProfile().quantile;
+    this.i=0;this.sum=0;this.unknown=0;this.miss=0;this.dmg=0;this.result=null;
+  }
+  CircleSampler.prototype.step=function(until){
+    var count=this.count,shell=this.shell,center=this.center,right=this.right,up=this.up,radius=this.radius;
+    while(this.i<count){
+      var i=this.i,point=circlePoint(center,right,up,radius,(i+.5)/count,i*2.399963229728653,this.q);
+      var hit=this.engine.ray(this.o,point.sub(this.origin).toArray(),shell);
+      if(hit.chance===null)this.unknown++;else this.sum+=hit.chance;
+      if(hit.expected>0)this.dmg+=hit.expected;
+      if(hit.reason==='no-hull')this.miss++;
+      this.i=i+1;
+      if(until!==Infinity&&this.i<count&&clock()>=until)return null;
+    }
+    if(!this.result){var sum=this.sum,unknown=this.unknown,dmg=this.dmg;
+      this.result={low:sum/count,high:(sum+unknown*100)/count,unknown:unknown,miss:this.miss/count*100,samples:count,
+        damage:dmg/count,damageHigh:(dmg+unknown*((shell||{}).alpha||0))/count};}
+    return this.result;
+  };
   // The frame a circle standing across a shot line is drawn in: the line itself is the normal, the other two
   // axes are any pair perpendicular to it.
   function circleFrame(origin,center){
@@ -1917,12 +1935,15 @@
     this.refreshPin(hit?hit.point:null);if(this.onPin)this.onPin(true);   // the same line was just cast above
     return true;
   };
-  Viewer.prototype.liveAimProbability=function(shell,count){
+  // The integral over the live ring as it stands now, to be taken in slices (CircleSampler, 27.09) - the page's live figure
+  // and a shot's own - or null with no ring, engine or shell. liveAimProbability is the same integral in one piece.
+  Viewer.prototype.liveAimSampler=function(shell,count){
     var aim=this.liveAim;
     if(!aim||!this.engine||!shell)return null;
     this.commitPose();
-    return sampleCircle(this.engine,shell,aim.origin,aim.center,aim.right,aim.up,aim.radius,count>0?count:256,this.aimQuantile());
+    return new CircleSampler(this.engine,shell,aim.origin,aim.center,aim.right,aim.up,aim.radius,count>0?count:256,this.aimQuantile());
   };
+  Viewer.prototype.liveAimProbability=function(shell,count){var s=this.liveAimSampler(shell,count);return s?s.step(Infinity):null;};
   // A RANDOM impact point inside the live ring (the fun layer, user 22.09): the same radial law the figure
   // over that ring is integrated with (circlePoint above with this viewer's own profile), drawn at a
   // uniform u instead of the stratified one and at a uniform angle. `random` is the page's own source, so

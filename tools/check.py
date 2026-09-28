@@ -21,6 +21,8 @@ it before a build and refuses to build on red. Suites (they run side by side, ~1
             (coincident plates, both directions), and the composite without the leg and with Soft lighting;
             tests/page/gpu_wheels.cjs: the same for the wheels of a wheeled vehicle (synthetic, and the bench's EBRs);
             tests/page/gpu_prefabs.cjs: the armoured prefabs (the CAV mod. 71's crest, the AS-XX 40 t's containers)
+            tests/page/frame_cost.cjs: the emulation's frame cost - the live ring's JS per frame while the cursor and the
+            shooter move and at rest, on a heavy model's ray cost, within a budget; its figure the exact integral at rest
   py27      tests/py27/*.py under the client's own python27.dll (the recorder through two battles, ...)
   installer (only with --installer) tests/installer_cleanup_check.py: a test build of the installer into a fake game
 
@@ -236,6 +238,12 @@ def check_browser(result):
     code, out, _ = run([exe, 'tests/page/gpu_prefabs.cjs'], timeout=300)
     passed = result.passed
     harness_lines(result, 'gpu_prefabs', code, out)
+    total = re.search(r'(\d+) checks, (\d+) failed', out)
+    if total: result.passed = passed + int(total.group(1)) - int(total.group(2))
+    # The emulation's frame cost (27.09): the ring's JS per frame on a heavy model's ray cost, and its figure exact at rest.
+    code, out, _ = run([exe, 'tests/page/frame_cost.cjs'], timeout=300)
+    passed = result.passed
+    harness_lines(result, 'frame_cost', code, out)
     total = re.search(r'(\d+) checks, (\d+) failed', out)
     if total: result.passed = passed + int(total.group(1)) - int(total.group(2))
 
