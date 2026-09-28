@@ -515,6 +515,45 @@ async function main() {
     ok('inherit: the last shooter used is stored (' + kept + ') and a page opened on a vehicle from the game shoots with him',
        kept === 'germany:Papa' && who(fresh.model, 'Quebec') && who(fresh.shooter, 'Papa') && page2.errors.length === 0, JSON.stringify([kept, fresh, page2.errors.slice(0, 2)]));
     await browser.send('Target.closeTarget', {targetId: page2.targetId});
+    // EXPORT ALL MODELS IN THE GAME (28.09: the user saw no button in 0.9.0 - not reproduced, this path had no check on
+    // the real page). The page as the game opens it from the hangar (#host=game&vehicle=..., the mod's channel stubbed:
+    // jsHostQuery records the commands), the progress file as the mod writes it before any Start (opted false, 917 of
+    // 1060, the user's own file of 28.09 01:36 in shape). The button stands laid out in the Vehicles panel with nothing
+    // over it; its click asks in the header; Start sends the command, the bar and the button count; the mod's next
+    // progress file moves both and the button shows the time left.
+    const sweepFile = (v) => fs.writeFileSync(path.join(folder, 'data', 'models-sweep.js'), 'ArmorInspectorData.receive(' + JSON.stringify(['modelsSweep', v]) + ');\n');
+    const plan = {stamp: {format: 1}, startedAt: 1, done: false, count: 0, total: 917, catalogue: 1060, confirmed: false, retrying: false,
+      built: 0, builtMs: 0, keys: {}, failed: {}, incremental: false, updatedAt: 1, estimate: 312, parts: {}, extension: [], bytes: 0, opted: false, failedOnly: false};
+    sweepFile(plan);
+    const HOSTQ = `;window.__sent = []; window.jsHostQuery = function (q) { try { window.__sent.push(JSON.parse(q.request)); } catch (e) {}
+      setTimeout(function () { q.onSuccess('ok'); }, 0); };`;
+    const page3 = await browser.open(url.pathToFileURL(path.join(folder, 'Viewer.html')).href + '#host=game&vehicle=pm_quebec', INIT + HOSTQ);
+    const SWEEP_UI = `(() => { const $ = (id) => document.getElementById(id), b = $('models-all'), r = b.getBoundingClientRect(),
+      laid = (e) => e.getClientRects().length > 0 && e.getBoundingClientRect().height > 0, top = laid(b) ? document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) : null;
+      return {button: laid(b), onTop: top === b, text: b.textContent, disabled: b.disabled, pane: !$('vehicles-pane').hidden, ask: laid($('models-sweep-ask')),
+        head: $('models-sweep-ask-head').textContent, words: $('models-sweep-ask-text').textContent, bar: laid($('models-sweep')), count: $('models-sweep-count').textContent,
+        stop: laid($('models-sweep-stop')), sent: window.__sent.filter((m) => m.params && /^sweep/.test(m.params.action)).map((m) => m.params.action + ':' + m.params.kind)}; })()`;
+    const until = (cond, ms) => page3.evaluate(`(async () => { const t = Date.now(); let s; while (Date.now() - t < ${ms}) { s = ${SWEEP_UI}; if (${cond}) break;
+      await new Promise((r) => setTimeout(r, 100)); } return s; })()`);
+    const E0 = await until('s.button', 10000);
+    ok('models in the game: Export all models stands in the Vehicles panel, nothing over it, before any Start (opted false)',
+       E0.pane && E0.button && E0.onTop && E0.text === 'Export all models' && !E0.disabled && !E0.bar && !E0.ask, JSON.stringify(E0));
+    await page3.evaluate(`document.getElementById('models-all').click()`);
+    const E1 = await until('s.ask', 3000);
+    ok('models in the game: its click asks in the header - all 917 of 1060, the size and the mod\'s time',
+       E1.ask && E1.head === 'Export all models' && E1.words.indexOf('917 of 1060 regular vehicles') === 0 && E1.words.indexOf('about 5 min 10 s') > 0, JSON.stringify(E1));
+    await page3.evaluate(`document.getElementById('models-sweep-go').click()`);
+    const E2 = await until('s.bar && s.sent.length', 3000);
+    ok('models in the game: Start sends the models\' sweepStart; the bar 0 / 917 with ■, the button counts and waits',
+       E2.sent.join() === 'sweepStart:models' && E2.bar && E2.stop && E2.count === '0 / 917' && !E2.ask && E2.disabled
+       && E2.text.indexOf('Exporting models… 0 / 917') === 0, JSON.stringify(E2));
+    sweepFile(Object.assign({}, plan, {count: 40, confirmed: true, opted: true, built: 40, bytes: 7000000, estimate: 290}));
+    const E3 = await until("s.count === '40 / 917'", 8000);
+    ok('models in the game: the mod\'s next progress file moves the bar and the button, with the time left',
+       E3.count === '40 / 917' && E3.bar && E3.text === 'Exporting models… 40 / 917 · about 4 min 50 s left' && page3.errors.length === 0,
+       JSON.stringify([E3, page3.errors.slice(0, 2)]));
+    await browser.send('Target.closeTarget', {targetId: page3.targetId});
+    fs.rmSync(path.join(folder, 'data', 'models-sweep.js'), {force: true});
     // keep-onscreen-model (26.09, the Panther II of the Waffenträger event): pm4's target Victor has the complete model in
     // the record, while his export lacks the gun's model. Hits -> the Shooter tile -> another shooter in "This battle": the
     // model ON SCREEN stays (no re-read of the export), in the record's pose with the user's turn, the pinned point kept;

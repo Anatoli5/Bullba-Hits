@@ -2,6 +2,12 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
+## Unreleased
+
+- **Aim emulation:** the live aiming circle has a centre mark where the gun points, in the Settings → Crosshair shape (cross or dot) - small and thin, so it hides no tracer and stays apart from the mouse pointer while the turret catches up.
+- **Aim emulation:** Settings → Pointer: Current (as before) or Chevron (the game's arcade sight) for the mouse pointer over the scene. The game's own window draws its arrow either way.
+- **Export all models:** while it runs, the button shows the time left beside the count.
+
 ## 0.9.0 (2026-09-28)
 
 - game.log: while the page is in use, one line every ~5 s of activity gives the real frame rate - frames/s, p95, p99 and the longest frame - for orbiting, the aim emulation and hovering apart; an idle page logs nothing.

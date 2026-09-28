@@ -254,6 +254,7 @@ StubViewer.prototype.setLiveAim = function (r) { this.liveRadius100 = r; this.dr
 // and the cursor point both jump to the centre (CENTRE stands for the point the real one raycasts), and
 // letting go gives back what was there. The real geometry is checked at the end on three.js.
 const CENTRE = {centre: true};
+StubViewer.prototype.setAimMarker = function (shape) { this.markerShape = shape; };
 StubViewer.prototype.setAimCentre = function (on, shape) {
   this.markerShape = shape; this.centreCalls = (this.centreCalls || 0) + 1;
   if (!!on === !!this.centred) return;
@@ -2911,8 +2912,10 @@ settle(20).then(function () {
   ok('real viewer: asking again only changes the crosshair’s shape', !!rv.aimCentred && mk.getAttribute('data-shape') === 'cross'
      && rv.liveAimPoint.distanceTo(onFace) < 1e-9);
   rv.setAimCentre(false, 'cross');
-  ok('real viewer: letting go gives the aim to where the pointer last pointed, and the crosshair goes',
-     rv.aimCursorPoint.distanceTo(hits[0].point) < 1e-9 && rv.liveAimPoint.distanceTo(hits[0].point) < 1e-9 && mk.hidden === true);
+  const goneProj = rv.spreadAim.clone().project(rv.camera);   // the ring stands on the pin again (below), and its mark with it
+  ok('real viewer: letting go gives the aim to where the pointer last pointed, and the ring’s centre mark goes with the ring (28.09)',
+     rv.aimCursorPoint.distanceTo(hits[0].point) < 1e-9 && rv.liveAimPoint.distanceTo(hits[0].point) < 1e-9 && mk.hidden === false
+     && Math.abs(parseFloat(mk.style.left) - (goneProj.x + 1) * 400) < 1e-6 && Math.abs(parseFloat(mk.style.top) - (1 - goneProj.y) * 300) < 1e-6);
   ok('real viewer: and the pin is in force again', rv.liveAim.center.distanceTo(rv.spreadAim) < 1e-9);
   rv.spreadAim = null;
   rv.aimCursorPoint = cursorAt.clone(); rv.liveAimPoint = cursorAt.clone(); rv.drawLiveAim();
@@ -2920,6 +2923,25 @@ settle(20).then(function () {
   ok('real viewer: a hold with no pointer move gives back exactly the points it took',
      rv.aimCursorPoint.distanceTo(cursorAt) < 1e-9 && rv.liveAimPoint.distanceTo(cursorAt) < 1e-9
      && rv.liveAim.center.distanceTo(cursorAt) < 1e-9);
+  // THE CENTRE MARK (28.09): the Settings crosshair on the live ring's own centre - the gun's point - with no hold at all,
+  // apart from the cursor while the turret catches up; gone with the ring; a pass that moves nothing writes nothing.
+  rv.aimCursorPoint = new THREE.Vector3(-2, 1.5, 1.5); rv.drawLiveAim();
+  const gunProj = cursorAt.clone().project(rv.camera);
+  ok('real viewer: the centre mark stands on the live ring’s centre (the gun’s point), not on the cursor, with no hold',
+     !rv.aimCentred && mk.hidden === false && rv.liveAim.center.distanceTo(cursorAt) < 1e-9
+     && Math.abs(parseFloat(mk.style.left) - (gunProj.x + 1) * 400) < 1e-6 && Math.abs(parseFloat(mk.style.top) - (1 - gunProj.y) * 300) < 1e-6);
+  let markWrites = 0;
+  ['left', 'top'].forEach(function (k) { let v = mk.style[k];
+    Object.defineProperty(mk.style, k, {configurable: true, get: function () { return v; }, set: function (x) { markWrites++; v = x; }}); });
+  rv.drawLiveAim(); rv.updateAimMarker(); rv.setAimMarker('dot');
+  ok('real viewer: a pass that moves nothing writes no position; the shape follows the Settings crosshair',
+     markWrites === 0 && mk.getAttribute('data-shape') === 'dot' && mk.hidden === false);
+  rv.setAimMarker('cross'); rv.setLiveAim(null);
+  ok('real viewer: no live ring, no centre mark', mk.hidden === true);
+  rv.setLiveAim(0.4);
+  ok('real viewer: the ring back, the mark back on its centre', mk.hidden === false && mk.getAttribute('data-shape') === 'cross' && markWrites === 0);
+  delete mk.style.left; delete mk.style.top;
+  rv.aimCursorPoint = cursorAt.clone();
   // A new model while held: clearLiveAim drops the points and setLiveAim finds the new centre. S0: the new
   // model really is another one - a 4 x 2 x 2 m box off to the right and further back - or the check would
   // pass with the aim simply left where it was.
@@ -2938,8 +2960,8 @@ settle(20).then(function () {
      && rv.liveAim.center.distanceTo(onFace2) < 1e-9 && onFace2.distanceTo(onFace) > 2 && mk.hidden === false,
      '(' + rv.liveAimPoint.toArray().map(function (v) { return v.toFixed(4); }).join(', ') + ')');
   rv.setAimCentre(false, 'cross');
-  ok('real viewer: and letting go of it keeps the aim there until the pointer moves',
-     !rv.aimCentred && rv.liveAimPoint.distanceTo(onFace2) < 1e-9 && mk.hidden === true);
+  ok('real viewer: and letting go of it keeps the aim there until the pointer moves - the centre mark on it',
+     !rv.aimCentred && rv.liveAimPoint.distanceTo(onFace2) < 1e-9 && mk.hidden === false);
 
   // S0: an orbit while held, through the viewer's REAL camera loop (startOrbit on the harness's frames). The
   // camera stands where it stood, as the loop's own yaw / pitch / distance round the target (0, 1, 0).
@@ -3639,7 +3661,7 @@ settle(20).then(function () {
       const at = g.sent.lastIndexOf('sweepStart');
       ok('models: Start - the mod is told which sweep, the ■ Stop stands, the button shows the progress and is off, the poll runs every 2 s',
          at >= 0 && g.params[at] && g.params[at].kind === 'models' && ask.hidden === true && g.$('models-sweep-stop').hidden === false
-         && button.disabled === true && button.textContent === 'Exporting models\u2026 0 / 1107' && g.api.anyRunning() === true
+         && button.disabled === true && button.textContent === 'Exporting models\u2026 0 / 1107 \u00b7 about 33 min left' && g.api.anyRunning() === true
          && g.$('models-sweep').hidden === false && g.$('models-sweep-count').textContent === '0 / 1107', button.textContent);
       const opens = g.sent.filter(function (a) { return a === 'open'; }).length;
       g.api.tick();
