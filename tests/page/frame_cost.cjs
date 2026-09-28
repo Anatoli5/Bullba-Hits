@@ -1,7 +1,18 @@
 /* THE FRAME COST OF THE EMULATION (27.09, frame-smoothness): the real page in a local headless browser (cdp.cjs, software
  * WebGL), the synthetic data of fixture.cjs, the live aiming ring driven by real input - the cursor circling over the model,
- * then W held and the cursor still moving, then everything at rest - and every animation-frame callback timed from an init
- * script (the page is not changed for the test).
+ * then W held and the cursor still moving, then everything at rest - and every task of the page's frame loop timed (28.09:
+ * web/frame.js reports each task's time to BullbaFrame.probe; the page is not changed for the test).
+ *
+ * HOW EVENLY THE PICTURE MOVES (28.09, frame-sync): the game forwards the pointer at its own frame rate, not the page's, and a
+ * steady hand then reached the page as uneven steps per frame. Pointer moves are sent here at a cadence of their own (not
+ * waiting for the page), a left drag orbits the camera and the cursor circles the model with the ring, and the picture each
+ * frame DREW is recorded (the viewer's render). Asked of the page:
+ *   - one animation-frame loop: every frame callback the page asks for during the phases is web/frame.js's;
+ *   - the camera turns by even steps: per 16.7 ms of frame time, the orbit's step varies by at most EVEN_CV (sd / mean), and
+ *     no frame repeats the last picture while the drag goes on (before 28.09: 0.37-0.39, the steps spread 3.6 times);
+ *   - the ring moves by even steps while the cursor circles: at most EVEN_CV_RING and at most two repeated frames (before:
+ *     0.36-0.59 and 13-19 frames in which the ring stood while the cursor moved);
+ *   - the host's line for that orbit carries the input and camera figures (host.js: 'input', 'camera step off').
  *
  * The fixture's models are boxes, where a ray costs microseconds. A real model costs 15-80 us a ray (KNOWLEDGE §14: 256 rays
  * 3.9 / 9.1 / 19.7 ms on the median / upper quartile / heavy models, 1024 rays 15.3 / 32.9 / 78.1 ms), so the harness makes
@@ -49,6 +60,10 @@ const THROTTLE = Number(arg('throttle', 1)), RAY_US = Number(arg('ray-us', 80)),
 // 1 ms on a desktop - the rest is a generous margin for a loaded test machine. Before 27.09 a coarse figure on the heavy model
 // took ~21 ms in one frame every 120 ms and the fine one ~82 ms.
 const BUDGET_MS = 10, SPIKE_MS = 40;
+// How evenly the drawn picture moves (frame-sync, 28.09): the coefficient of variation of the per-frame step, per 16.7 ms of
+// frame time, over the steady middle of a drag / a cursor circle. Measured 0.04-0.05 / 0.05-0.19 after, 0.37-0.39 / 0.36-0.59
+// before (scratch stand, cadences 7 and 16 ms).
+const EVEN_CV = 0.15, EVEN_CV_RING = 0.3;
 
 let checks = 0, failures = 0;
 function ok(name, cond, extra) {
@@ -77,9 +92,13 @@ const INIT = `(() => {
   const rec = {on: false, frames: new Map(), long: [], start: [], slow: [], tasks: []};
   Object.defineProperty(window, '__frames', {value: rec});
   const raf = window.requestAnimationFrame.bind(window);
-  const label = (fn) => { if (fn.name) return fn.name; const s = String(fn); return /countFrame/.test(s) ? 'render' : /hoverEvent/.test(s) ? 'hover' : /pendingPan|orbitId/.test(s) ? 'orbit' : 'other'; };
+  // The page's frame loop (web/frame.js) is one callback, 'tick'; its tasks are timed by the loop itself (BullbaFrame.probe,
+  // set after load). Its total is kept apart ('.loop': a name with a dot is not added into a frame's total again).
+  const label = (fn) => { if (fn.name === 'tick') return '.loop'; if (fn.name) return fn.name; const s = String(fn); return /countFrame/.test(s) ? 'render' : /hoverEvent/.test(s) ? 'hover' : /pendingPan|orbitId/.test(s) ? 'orbit' : 'other'; };
+  rec.names = new Set();
   window.requestAnimationFrame = function (fn) {
     const name = label(fn);
+    if (rec.on) rec.names.add(name);
     return raf(function (t) {
       const s = performance.now(); rec.cur = t;
       try { return fn(t); } finally { rec.cur = null;
@@ -110,6 +129,12 @@ const DRIVER = (rayUs) => `(() => {
     if (lean) e.lean = function () { window.__rays++; const t = performance.now() + spin / 1000; while (performance.now() < t) {} return lean.apply(this, arguments); };
   };
   setInterval(window.__slow, 20);
+  // Every task of the page's frame loop, timed by the loop (frame-sync, 28.09), into the frame it ran in.
+  if (window.BullbaFrame) window.BullbaFrame.probe = function (name, d, t) { const f = window.__frames; if (!f.on) return; const r = f.frames.get(t) || {}; r[name] = (r[name] || 0) + d; f.frames.set(t, r); };
+  // What each frame DREW: the camera's yaw and the live ring's centre at the viewer's render (the renderer's own call).
+  window.__shown = [];
+  window.__watch = function () { const view = v(), r = view.renderer; if (r.__watched) return; r.__watched = true; const render = r.render.bind(r);
+    r.render = function (scene, cam) { const out = render(scene, cam); const f = window.__frames; if (f.on && scene === view.scene) { const a = view.liveAim; window.__shown.push([f.cur, view.yaw, a ? a.center.x : NaN, a ? a.center.y : NaN, a ? a.center.z : NaN]); } return out; }; };
   window.__read = function () {
     const f = window.__frames, ts = Array.from(f.frames.keys()).sort((a, b) => a - b), rows = [];
     for (let i = 1; i < ts.length; i++) rows.push(Object.assign({gap: ts[i] - ts[i - 1]}, f.frames.get(ts[i])));
@@ -209,7 +234,7 @@ async function main() {
         const query = async (fn) => { if (!ext) return NaN; const q = g.createQuery(); g.beginQuery(ext.TIME_ELAPSED_EXT, q); fn(); g.endQuery(ext.TIME_ELAPSED_EXT); fence();
           for (let i = 0; i < 200 && !g.getQueryParameter(q, g.QUERY_RESULT_AVAILABLE); i++) await new Promise((z) => setTimeout(z, 2));
           const ns = g.getQueryParameter(q, g.QUERY_RESULT), bad = g.getParameter(ext.GPU_DISJOINT_EXT); g.deleteQuery(q); return bad ? NaN : ns / 1e6; };
-        if (v.frameId !== null) { cancelAnimationFrame(v.frameId); v.frameId = null; }
+        if (v.cancelDraw) v.cancelDraw(); else if (v.frameId !== null) { cancelAnimationFrame(v.frameId); v.frameId = null; }
         v.draw = function () {};   // held: no frame of the page's own while the passes are timed
         const quietTimer = () => { if (v.bounceTimer !== null) { clearTimeout(v.bounceTimer); v.bounceTimer = null; } };
         // At rest, exact: the viewer's 'exact' mode, the layers of the camera on screen, the composite done.
@@ -324,6 +349,51 @@ async function main() {
     await move(box.x, box.y); await new Promise((r) => setTimeout(r, 500));
     const onMain = await phases(' [main thread]');
     if (MEASURE) ['cursor', 'drive', 'rest'].forEach((k) => console.log('ring JS p95/max, worker vs main thread, ' + k + ': ' + fix(inWorker[k].ringP95) + '/' + fix(inWorker[k].ringMax) + ' vs ' + fix(onMain[k].ringP95) + '/' + fix(onMain[k].ringMax) + ' ms'));
+    // ---- frame-sync (28.09): how evenly the picture moves under pointer input at a cadence of its own -------------------
+    // Moves are sent every CADENCE ms without waiting for the page (the game forwards its cursor at its own frame rate), the
+    // hand's position taken at the wall time of the send. Per frame the drawn picture: its step per 16.7 ms of frame time.
+    await ev('window.__watch()');
+    const CADENCE = 7, send = (type, x, y, held) => page.send('Input.dispatchMouseEvent', {type: type, x: x, y: y, button: held || type !== 'mouseMoved' ? 'left' : 'none', buttons: held ? 1 : 0, clickCount: type === 'mouseMoved' ? 0 : 1}).catch(() => {});
+    async function sweep(ms, pos, held) { const t0 = Date.now(); let next = t0; while (Date.now() - t0 < ms) { const p = pos((Date.now() - t0) / 1000); send('mouseMoved', p[0], p[1], held); next += CADENCE; const w = next - Date.now(); if (w > 0) await new Promise((r) => setTimeout(r, w)); } }
+    async function drawn(fn) {
+      await ev('(window.__shown.length = 0, window.__record(true), true)'); await fn(); await ev('window.__record(false)');
+      const out = await ev(`(() => { const f = window.__frames, ts = Array.from(f.frames.keys()).sort((a, b) => a - b); return {frames: ts, shown: window.__shown.slice(), names: Array.from(f.names || [])}; })()`);
+      return out;
+    }
+    function evenness(rec, pick) {
+      // The state on screen at each frame = the last render at or before it; steps per 16.7 ms of frame time, the steady middle.
+      let j = 0, last = null; const at = [];
+      rec.frames.forEach((t) => { while (j < rec.shown.length && rec.shown[j][0] !== null && rec.shown[j][0] <= t) last = rec.shown[j++]; at.push([t, last]); });
+      const steps = []; for (let i = 1; i < at.length; i++) if (at[i][1] && at[i - 1][1]) steps.push(pick(at[i][1], at[i - 1][1]) / (at[i][0] - at[i - 1][0]) * 16.667);
+      const cut = Math.floor(steps.length * .15), mid = steps.slice(cut, steps.length - cut), m = mid.reduce((s, x) => s + x, 0) / Math.max(1, mid.length);
+      const sd = Math.sqrt(mid.reduce((s, x) => s + (x - m) * (x - m), 0) / Math.max(1, mid.length));
+      return {n: mid.length, mean: m, cv: m ? sd / Math.abs(m) : 1, repeats: mid.filter((x) => Math.abs(x) < 1e-12).length};
+    }
+    // A left drag from an empty spot at the right of the scene, 400 px/s to the left: the camera orbits.
+    const vp = await ev(`(() => { const b = document.getElementById('viewport').getBoundingClientRect(); return {l: b.left, t: b.top, w: b.width, h: b.height}; })()`);
+    const dx0 = vp.l + vp.w * 0.88, dy0 = vp.t + vp.h * 0.55;
+    await send('mouseMoved', dx0, dy0); await new Promise((r) => setTimeout(r, 400));
+    await send('mousePressed', dx0, dy0); await new Promise((r) => setTimeout(r, 60));
+    const orbitRec = await drawn(() => sweep(2500, (s) => [dx0 - 400 * s, dy0], true));
+    await send('mouseReleased', dx0 - 1000, dy0);
+    const orbitEven = evenness(orbitRec, (a, b) => (a[1] - b[1]) * 1000);
+    ok('one frame loop: every animation-frame callback the page asked for during the drag is web/frame.js\'s', orbitRec.names.length > 0 && orbitRec.names.every((n) => n === '.loop'), JSON.stringify(orbitRec.names));
+    ok('the camera turns by even steps under uneven pointer input: CV of the step per frame time at most ' + EVEN_CV + ', no repeated picture',
+       orbitEven.n > 60 && orbitEven.cv <= EVEN_CV && orbitEven.repeats === 0, JSON.stringify(orbitEven));
+    // The host flushes the orbit's line at its 5-second window or when the page goes idle - the ring settling after the drag
+    // keeps the emulation's clock running for a few seconds more.
+    let orbitLine = null;
+    for (let i = 0; i < 100 && !orbitLine; i++) { await new Promise((r) => setTimeout(r, 100)); orbitLine = (await hostLines()).slice(linesOrbit.length).filter((l) => l.labels.orbit).pop(); }
+    ok('frame telemetry: the orbit\'s line carries the pointer input and how evenly the camera moved', !!(orbitLine && orbitLine.labels.orbit.input && orbitLine.labels.orbit.camera && orbitLine.labels.orbit.camera.repeats === 0)
+       && page.console.some((l) => /Bullba Hits frames \(.*orbit .*; input .* per frame.*; camera step off/.test(l)), JSON.stringify(orbitLine));
+    // The cursor circles the model: the ring follows it (the turret's chase) - how evenly it moves on screen.
+    const box2 = await ev(`(() => { const b = document.getElementById('viewport').getBoundingClientRect(); return {x: b.left + b.width / 2, y: b.top + b.height / 2, r: Math.min(b.width, b.height) * 0.08}; })()`);
+    await send('mouseMoved', box2.x + box2.r, box2.y); await new Promise((r) => setTimeout(r, 1500));
+    const ringRec = await drawn(() => sweep(2500, (s) => { const a = s / 1.4 * Math.PI; return [box2.x + box2.r * Math.cos(a), box2.y + box2.r * Math.sin(a)]; }, false));
+    const ringEven = evenness(ringRec, (a, b) => Math.hypot(a[2] - b[2], a[3] - b[3], a[4] - b[4]) * 1000);
+    ok('the ring moves by even steps while the cursor circles: CV at most ' + EVEN_CV_RING + ', at most two repeated pictures',
+       ringEven.n > 60 && ringEven.cv <= EVEN_CV_RING && ringEven.repeats <= 2, JSON.stringify(ringEven));
+    if (MEASURE) console.log('evenness: orbit ' + JSON.stringify(orbitEven) + ', ring ' + JSON.stringify(ringEven));
     ok('no uncaught exception in the page', page.errors.length === 0, page.errors.slice(0, 3).join(' | '));
   } finally {
     await browser.close();

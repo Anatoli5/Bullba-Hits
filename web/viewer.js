@@ -12,6 +12,8 @@
   // A monotonic clock. Date.now() steps backwards when the system clock is corrected after a resume, which used
   // to leave the settle comparisons below permanently unsatisfied.
   function clock(){return window.performance&&window.performance.now?window.performance.now():Date.now();}
+  // Named work done outside the frames (a scene load in a click, a rebuild in a timer), for the host's slow-frame telemetry.
+  function noteWork(name,at){var F=window.BullbaFrame;if(F&&F.note&&F.time()===null)F.note(name,at);}
   // Whether the RECORDED markers belong on screen. There is no checkbox any more (0.7.15): the recorded
   // circles are always shown, and switching the emulation on no longer takes them away (user, 20.09).
   // They make way for the USER'S FIRST SHOT - the same rule as pinning a point on a hit - and come back
@@ -123,7 +125,7 @@
        press on the scene start the browser's own drag of that selection: pointercancel after a few pixels, and the
        vehicle turned a few degrees and stopped (user, 24.09). The press drops the selection and no drag may start here. */
     container.addEventListener('dragstart', function(e) { e.preventDefault(); });
-    container.addEventListener('pointerdown', function(e) { /* The scene tiles and the modifier groups beside them are controls of their own: capturing the pointer here would retarget the click to #viewport and the shooter tile would never fire. Leaving the drag unstarted also keeps the pointerup below from pinning a point under the control. */ if(e.target&&e.target.closest&&e.target.closest('.viewport-tile,.viewport-tiles,.mod-slot,.swap-roles,.aim-gun,.fun-strip,.aim-drive,#aim-config,.ttx-panel'))return; var selection=window.getSelection&&window.getSelection();if(selection&&!selection.isCollapsed)selection.removeAllRanges(); /* pan: right button, or Ctrl + left button (the in-game browser swallows the right button) */ if(e.button===2||(e.button===0&&e.ctrlKey)){drag={pan:true,x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY,moved:false};self.dragging=true;try{container.setPointerCapture(e.pointerId);}catch(ignore){}return;}if(e.button!==0)return;if(e.altKey){self.aimAt(e);return;}drag={x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY,moved:false,part:self.pickPart(e)};if(drag.part===2||drag.part===3){/* a turret and gun the client holds still (poseLocks) are not dragged; with both held the drag orbits */drag.locks=self.poseLocks();if(drag.locks.turret&&drag.locks.gun)drag.part=1;}self.dragging=true; try{container.setPointerCapture(e.pointerId);}catch(ignore){} container.focus();
+    container.addEventListener('pointerdown', function(e) { /* The scene tiles and the modifier groups beside them are controls of their own: capturing the pointer here would retarget the click to #viewport and the shooter tile would never fire. Leaving the drag unstarted also keeps the pointerup below from pinning a point under the control. */ if(e.target&&e.target.closest&&e.target.closest('.viewport-tile,.viewport-tiles,.mod-slot,.swap-roles,.aim-gun,.fun-strip,.aim-drive,#aim-config,.ttx-panel'))return; var selection=window.getSelection&&window.getSelection();if(selection&&!selection.isCollapsed)selection.removeAllRanges(); /* pan: right button, or Ctrl + left button (the in-game browser swallows the right button) */ if(e.button===2||(e.button===0&&e.ctrlKey)){drag={pan:true,x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY,moved:false,at:e.timeStamp};self.dragging=true;try{container.setPointerCapture(e.pointerId);}catch(ignore){}return;}if(e.button!==0)return;if(e.altKey){self.aimAt(e);return;}drag={x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY,moved:false,at:e.timeStamp,part:self.pickPart(e)};if(drag.part===2||drag.part===3){/* a turret and gun the client holds still (poseLocks) are not dragged; with both held the drag orbits */drag.locks=self.poseLocks();if(drag.locks.turret&&drag.locks.gun)drag.part=1;}self.dragging=true; try{container.setPointerCapture(e.pointerId);}catch(ignore){} container.focus();
       /* Hold to fire (user, 20.09): the press itself never shoots. The page starts a hold timer and decides -
          a short press is one shot on release, a long one a burst on the gun's cooldown - and a drag past the
          threshold below cancels the whole thing. aimHold marks the press as a shot so the emulation is not
@@ -133,29 +135,34 @@
        once the first round is away, moving the mouse AIMS the burst (the turret chases the cursor) and only
        the release stops it. onShotCancel says which it is: false = the burst goes on, so the press is never
        handed to the orbit or the turret drag and the pointer goes back to plain hovering. */
-    container.addEventListener('pointermove', function(e) { if (!drag){self.hover(e);return;}if(Math.abs(e.clientX-drag.sx)+Math.abs(e.clientY-drag.sy)>3)drag.moved=true;if(!drag.moved)return;if(self.aimHold){if(self.onShotCancel&&self.onShotCancel()===false){drag=null;self.dragging=false;self.hover(e);return;}self.aimHold=false;}if(drag.pan){/* the pan is accumulated and applied once in the camera's own frame loop, not per event */var p=self.pendingPan||(self.pendingPan={x:0,y:0});p.x+=e.clientX-drag.x;p.y+=e.clientY-drag.y;drag.x=e.clientX;drag.y=e.clientY;self.startOrbit();return;}if(drag.part===2||drag.part===3){/* turret and gun are one module: left/right turns the turret, up/down moves the gun - both applied first, then one markPose and one notification for the step */var dx=drag.locks&&drag.locks.turret?0:e.clientX-drag.x,dy=drag.locks&&drag.locks.gun?0:e.clientY-drag.y;if(self.loadedData&&(dx||dy)){var turned=dx?self.turretTo(self.turretAngle-dx*.5):null,gun=dy?self.gunTo(self.gunAngle+dy*.16):null;self.poseMoved(!!dx,!!dy);self.markPose();if(turned){if(self.onTurret)self.onTurret(turned);}else if(self.onGun)self.onGun(gun);}}else{self.orbitTo(self.targetYaw-(e.clientX-drag.x)*ORBIT_PER_PX,self.targetPitch+(e.clientY-drag.y)*ORBIT_PER_PX);}drag.x=e.clientX;drag.y=e.clientY; });
+    /* THE DRAG IS APPLIED BY THE FRAME, NOT BY THE EVENT (28.09, frame-sync). The event stores its samples in the drag's input
+       track (BullbaFrame.Track, with the coalesced ones and their own time stamps) and asks for the camera task; that task
+       turns the track's position at its frame into the orbit, the pan or the turret and gun (dragStep), so a steady hand moves
+       the picture by even steps whatever cadence the game forwards the pointer at. The threshold, the burst and the hand-over
+       to hovering stay decisions of the event. */
+    container.addEventListener('pointermove', function(e) { if (!drag){self.hover(e);return;}if(Math.abs(e.clientX-drag.sx)+Math.abs(e.clientY-drag.sy)>3)drag.moved=true;if(!drag.moved)return;if(self.aimHold){if(self.onShotCancel&&self.onShotCancel()===false){drag=null;self.dragging=false;self.hover(e);return;}self.aimHold=false;}if(!self.dragInput)self.dragInput=Viewer.dragInput(drag);self.dragInput.track.add(e);self.startOrbit(); });
     // The end of a drag: the pose the drag only previewed is rebuilt in full, and one frame is asked for so the
     // map comes back at full quality with the ricochet trace (paint() draws a drag at half resolution).
     // The end of a press: a press the emulation claimed is handed back to it (a tap fires one shot, a
     // hold has been firing all along and simply stops), anything else pins the point under the cursor
     // as it always did. A drag that moved the camera while the aim is held looks for the middle again now,
     // once, and not on each frame of it (settleAim).
-    container.addEventListener('pointerup', function(e) { var d=drag,hold=self.aimHold;drag=null;self.aimHold=false;self.dragging=false;self.commitPose();self.draw();if(d&&d.moved)self.settleAim();if(hold&&self.onShotUp){self.onShotUp(e);return;}if(d&&!d.moved&&!e.altKey&&!e.ctrlKey&&e.button===0)self.pinAt(e); });
+    container.addEventListener('pointerup', function(e) { var d=drag,hold=self.aimHold;drag=null;self.endDrag();self.aimHold=false;self.dragging=false;self.commitPose();self.draw();if(d&&d.moved)self.settleAim();if(hold&&self.onShotUp){self.onShotUp(e);return;}if(d&&!d.moved&&!e.altKey&&!e.ctrlKey&&e.button===0)self.pinAt(e); });
     /* A pointer that is taken away never sends its pointerup, so a burst has to be ENDED here, not
        cancelled: onShotCancel refuses a running burst (false) and the release path stops it instead. */
-    container.addEventListener('pointercancel', function() { var d=drag;drag=null;self.dragging=false;if(self.aimHold){self.aimHold=false;if(self.onShotCancel&&self.onShotCancel()===false&&self.onShotUp)self.onShotUp();}self.cancelHover();self.commitPose();self.draw();if(d&&d.moved)self.settleAim(); });
+    container.addEventListener('pointercancel', function() { var d=drag;drag=null;self.endDrag();self.dragging=false;if(self.aimHold){self.aimHold=false;if(self.onShotCancel&&self.onShotCancel()===false&&self.onShotUp)self.onShotUp();}self.cancelHover();self.commitPose();self.draw();if(d&&d.moved)self.settleAim(); });
     container.addEventListener('wheel', function(e) {e.preventDefault();self.wheel(e,!!(e.shiftKey||e.ctrlKey||e.altKey),1);}, {passive:false});
     container.addEventListener('keydown',function(e){var used=true,orbit=true;if(e.key==='ArrowLeft')self.orbitTo(self.targetYaw-.1,self.targetPitch);else if(e.key==='ArrowRight')self.orbitTo(self.targetYaw+.1,self.targetPitch);else if(e.key==='ArrowUp')self.orbitTo(self.targetYaw,self.targetPitch+.1);else if(e.key==='ArrowDown')self.orbitTo(self.targetYaw,self.targetPitch-.1);else{orbit=false;if(e.key==='+'||e.key==='='){if(e.shiftKey)self.setZoom(self.camera.zoom*1.1);else self.setDistance(Math.max(1,self.distance/1.1));}else if(e.key==='-'){if(e.shiftKey)self.setZoom(self.camera.zoom/1.1);else self.setDistance(Math.min(1500,self.distance*1.1));}else used=false;}if(used){e.preventDefault();if(!orbit&&self.aimCentred)self.settleAimSoon();}}); /* setDistance and setZoom render and report themselves */
     // A lost context stops the frame loop: three ignores render() while the context is gone, but a pending
     // frame of ours would still walk the whole paint path. Restoring clears the flag and redraws once.
     if(this.renderer.domElement.addEventListener){
-      this.renderer.domElement.addEventListener('webglcontextlost',function(e){e.preventDefault();self.contextLost=true;window.cancelAnimationFrame(self.frameId);self.frameId=null;self.cancelHover();self.cancelOrbit();window.dispatchEvent(new Event('armor-context-lost'));});
+      this.renderer.domElement.addEventListener('webglcontextlost',function(e){e.preventDefault();self.contextLost=true;self.cancelDraw();self.cancelHover();self.cancelOrbit();window.dispatchEvent(new Event('armor-context-lost'));});
       this.renderer.domElement.addEventListener('webglcontextrestored',function(){self.restoreContext();});
     }
     // Returning to the page asks for one frame and nothing else: no rebuild, no re-creation. A frame requested
     // while the host had stopped painting may never fire, and draw() would then decline every later frame
     // forever (a frozen picture over working panels), so the pending ids are dropped first.
-    document.addEventListener('visibilitychange',function(){if(document.hidden)return;window.cancelAnimationFrame(self.frameId);self.frameId=null;self.cancelHover();self.cancelOrbit();self.draw();self.resumeOrbit();});
+    document.addEventListener('visibilitychange',function(){if(document.hidden)return;self.cancelDraw();self.cancelHover();self.cancelOrbit();self.draw();self.resumeOrbit();});
     window.addEventListener('resize', function(){self.resize();});
     // The cached rect follows a scrolled page: scroll events do not bubble, so they are caught in the capture phase.
     window.addEventListener('scroll',function(){if(self.viewRect)self.viewRect=self.container.getBoundingClientRect();},true);
@@ -182,8 +189,31 @@
     this.resize();this.draw();this.resumeOrbit();
     window.dispatchEvent(new Event('armor-context-restored'));
   };
-  // Coalesce input and color updates into one draw at the next browser frame.
-  Viewer.prototype.draw=function(){if(this.contextLost||this.frameId!==null)return;var self=this;this.frameAt=clock();this.frameId=window.requestAnimationFrame(function(){try{self.countFrame();if(self.turretPending&&(!self.poseLive()||!self.previewPose()))self.applyTurret();if(self.fitPending){self.fitPending=false;self.resize();self.fit(self.zoomLock);}if(self.paintMesh)self.paint();self.renderer.render(self.scene,self.camera);self.updateReticles();}finally{self.frameId=null;}});};
+  // THE VIEWER'S TASKS IN THE PAGE'S ONE FRAME LOOP (28.09, frame-sync; web/frame.js): 'orbit' (the camera: the drag's input,
+  // the easing, the pan), 'hover' (the reading under the cursor, the aim point) and 'render', in that order within a frame, so
+  // what a frame draws was moved in that frame. Made when first asked for (a viewer built from its prototype in a harness has
+  // none yet). frameId / orbitId / hoverId stay the markers of a pending draw, a running camera and a pending reading.
+  Viewer.prototype.loopTask=function(name){
+    var t=this.loopTasks||(this.loopTasks={});if(t[name])return t[name];var self=this;
+    var fn=name==='render'?function(T){self.frameRender(T);}:name==='orbit'?function(T){self.frameCamera(T);}:function(T){self.frameHover(T);};
+    return t[name]=window.BullbaFrame.task(name==='orbit'?'camera':name,name,fn);
+  };
+  // Coalesce input and color updates into one draw in the frame (the render task, after the camera and the aim of that frame).
+  Viewer.prototype.draw=function(){if(this.contextLost||this.frameId!==null)return;this.frameAt=clock();this.frameId=1;this.loopTask('render').want();};
+  Viewer.prototype.cancelDraw=function(){if(this.loopTasks&&this.loopTasks.render)this.loopTasks.render.cancel();this.frameId=null;};
+  Viewer.prototype.frameRender=function(){
+    if(this.frameId===null||this.contextLost){this.frameId=null;return;}
+    try{this.countFrame();if(this.turretPending&&(!this.poseLive()||!this.previewPose()))this.applyTurret();if(this.fitPending){this.fitPending=false;this.resize();this.fit(this.zoomLock);}if(this.paintMesh)this.paint();this.renderer.render(this.scene,this.camera);this.updateReticles();this.shownView();}
+    finally{this.frameId=null;}
+  };
+  // What the frame put on screen, for the host's frame telemetry (host.js): the eye, the view direction, the zoom, the orbit
+  // distance and the live ring. Twelve numbers into the loop's own arrays, nothing allocated.
+  Viewer.prototype.shownView=function(){
+    var F=window.BullbaFrame;if(!F||!F.view)return;var v=F.view,p=this.camera.position,m=this.camera.matrixWorld.elements,a=this.liveAim,r=F.ring;
+    v[0]=p.x;v[1]=p.y;v[2]=p.z;v[3]=-m[8];v[4]=-m[9];v[5]=-m[10];v[6]=Math.log(this.camera.zoom||1);v[7]=this.distance;
+    if(a){r[0]=a.center.x;r[1]=a.center.y;r[2]=a.center.z;r[3]=a.radius;}else r[0]=r[1]=r[2]=r[3]=NaN;
+    F.viewSerial=F.serial;
+  };
   // The real cadence of the frames that ran, for the status line: the game's browser pumps its own BeginFrames
   // and the figure there is neither 60 nor the desktop browser's rate.
   Viewer.prototype.countFrame=function(){var ring=this.frameTimes;ring.push(clock());if(ring.length>FRAME_SAMPLES)ring.shift();};
@@ -196,7 +226,7 @@
   };
   // A frame that was asked for and never fired blocks every later draw(), because draw() declines while one is
   // pending. The page's own poll calls this; a frame long overdue is dropped and asked for again.
-  Viewer.prototype.kick=function(){if(this.contextLost||this.frameId===null)return;if(clock()-this.frameAt<FRAME_STALL)return;window.cancelAnimationFrame(this.frameId);this.frameId=null;this.draw();};
+  Viewer.prototype.kick=function(){if(this.contextLost||this.frameId===null)return;if(clock()-this.frameAt<FRAME_STALL)return;window.BullbaFrame.kick();this.cancelDraw();this.draw();};
   // The camera placed from the orbit (target, yaw, pitch, distance) and the pan, without drawing. render() starts
   // with it, and so does fit(): setPivot and the like change the orbit and fit at once, before any render, and a Fit
   // measured through the camera of the old centre put the model off screen (user 23.09, once Auto-frame, which re-zoomed
@@ -272,7 +302,7 @@
   // while it is (the shot range now changes as the camera orbits the vehicle or pans, not only with the distance), and the
   // last step of every glide reaches its target before it reports, so the end is never taken for a move.
   Viewer.prototype.cameraGliding=function(){return !!this.dragging||this.targetDistance!==null||this.targetScale!==null||this.targetZoom!==null||this.yaw!==this.targetYaw||this.pitch!==this.targetPitch||!!this.pendingPan;};
-  Viewer.prototype.cancelOrbit=function(){if(this.orbitId!==null)window.cancelAnimationFrame(this.orbitId);this.orbitId=null;};
+  Viewer.prototype.cancelOrbit=function(){if(this.loopTasks&&this.loopTasks.orbit)this.loopTasks.orbit.cancel();this.orbitId=null;};
   // After a hidden page or a lost context the easing loop is started again for whatever it had not reached: the
   // angles, and a wheel glide of the distance, frame scale or zoom - one cut short used to stay half way, and the
   // page (which waits for the end of a glide before it redoes its panels) with it.
@@ -299,24 +329,61 @@
     return worst+Math.abs(this.frameCenter.x*camera.zoom*(1/Math.max(.001,this.distance)-1/Math.max(.001,target)))*this.viewHeight/2;
   };
   Viewer.prototype.startOrbit=function(){
-    if(this.orbitId!==null||this.contextLost)return;var self=this,last=null;
-    var step=function(time){
-      self.orbitId=null;if(window.BullbaHost&&BullbaHost.activity)BullbaHost.activity('orbit');   // the camera eases: frame telemetry (host.js)
-      var stamp=typeof time==='number'?time:clock(),dt=last===null?16.7:Math.max(1,Math.min(100,stamp-last));last=stamp;
-      var k=1-Math.pow(1-.35,dt/16.7);
-      self.yaw+=(self.targetYaw-self.yaw)*k;self.pitch+=(self.targetPitch-self.pitch)*k;
-      var moving=false,l;
-      if(self.targetDistance!==null){l=Math.log(self.targetDistance/self.distance);if(Math.abs(l)<1e-4||self.dollyLeft(self.targetDistance)<.5){self.distance=self.targetDistance;self.targetDistance=null;}else{self.distance*=Math.exp(l*k);moving=true;}}
-      if(self.targetScale!==null){l=Math.log(self.targetScale/self.frameScale);if(Math.abs(l)<1e-4){self.frameScale=self.targetScale;self.targetScale=null;}else{self.frameScale*=Math.exp(l*k);moving=true;}}
-      if(self.targetZoom!==null){l=Math.log(self.targetZoom/self.camera.zoom);if(Math.abs(l)<1e-4){self.camera.zoom=self.targetZoom;self.targetZoom=null;}else{self.camera.zoom*=Math.exp(l*k);moving=true;}}
-      var done=Math.abs(self.targetYaw-self.yaw)<1e-4&&Math.abs(self.targetPitch-self.pitch)<1e-4&&!moving;
-      if(done){self.yaw=self.targetYaw;self.pitch=self.targetPitch;}
-      var pan=self.pendingPan;self.pendingPan=null;
-      if(pan)self.panBy(pan.x,pan.y);else self.render(); // panBy renders itself
-      if(!done||self.pendingPan)self.orbitId=window.requestAnimationFrame(step);
-      else self.settleAim(); // the camera is at rest: the held aim finds the middle again, unless a drag goes on
-    };
-    this.orbitId=window.requestAnimationFrame(step);
+    if(this.contextLost)return;
+    if(this.orbitId===null){this.orbitId=1;this.orbitLast=null;}
+    this.loopTask('orbit').want();
+  };
+  // One camera step per frame: first what the drag's input track gives at this frame (dragStep), then the easing, then
+  // the pan; the render it asks for runs later in the same frame. The easing follows the frame time: the step goes on for as
+  // long as the angles, a wheel glide, the pan or the drag's track still have somewhere to go.
+  Viewer.prototype.frameCamera=function(time){
+    if(window.BullbaHost&&BullbaHost.activity)BullbaHost.activity('orbit');   // the camera eases: frame telemetry (host.js)
+    var stamp=typeof time==='number'?time:clock(),dt=this.orbitLast===null||this.orbitLast===undefined?16.7:Math.max(1,Math.min(100,stamp-this.orbitLast));this.orbitLast=stamp;
+    var more=this.dragStep(stamp,false);
+    var k=1-Math.pow(1-.35,dt/16.7);
+    this.yaw+=(this.targetYaw-this.yaw)*k;this.pitch+=(this.targetPitch-this.pitch)*k;
+    var moving=false,l;
+    if(this.targetDistance!==null){l=Math.log(this.targetDistance/this.distance);if(Math.abs(l)<1e-4||this.dollyLeft(this.targetDistance)<.5){this.distance=this.targetDistance;this.targetDistance=null;}else{this.distance*=Math.exp(l*k);moving=true;}}
+    if(this.targetScale!==null){l=Math.log(this.targetScale/this.frameScale);if(Math.abs(l)<1e-4){this.frameScale=this.targetScale;this.targetScale=null;}else{this.frameScale*=Math.exp(l*k);moving=true;}}
+    if(this.targetZoom!==null){l=Math.log(this.targetZoom/this.camera.zoom);if(Math.abs(l)<1e-4){this.camera.zoom=this.targetZoom;this.targetZoom=null;}else{this.camera.zoom*=Math.exp(l*k);moving=true;}}
+    var done=Math.abs(this.targetYaw-this.yaw)<1e-4&&Math.abs(this.targetPitch-this.pitch)<1e-4&&!moving;
+    if(done){this.yaw=this.targetYaw;this.pitch=this.targetPitch;}
+    var pan=this.pendingPan;this.pendingPan=null;
+    if(pan)this.panBy(pan.x,pan.y);else this.render(); // panBy renders itself
+    if(!done||this.pendingPan||more){this.orbitId=1;this.loopTask('orbit').want();}
+    else{this.orbitId=null;this.settleAim();} // the camera is at rest: the held aim finds the middle again, unless a drag goes on
+  };
+  // The drag's input: its kind (pan, turret and gun, or orbit), its track from the press and the position applied so far.
+  // The lag the last drag's track learnt is carried over, so a drag is even from its first frame (BullbaFrame.Track).
+  Viewer.dragLag=0;
+  Viewer.dragInput=function(drag){
+    var track=new window.BullbaFrame.Track();track.lag=Viewer.dragLag||0;
+    track.start({timeStamp:drag.at},drag.x,drag.y);
+    return {track:track,x:drag.x,y:drag.y,pos:{x:drag.x,y:drag.y,more:false},pan:!!drag.pan,part:drag.part,locks:drag.locks||null};
+  };
+  // What the drag's track gives at the frame `time` (or all of it, `flush`) turned into the camera or the pose - the same
+  // arithmetic the pointer events did one by one until 28.09: the orbit 0.004 rad a pixel, the pan through the camera step's
+  // panBy, the turret 0.5 degrees and the gun 0.16 a pixel with one markPose and one notification for the step. True while
+  // the track still has motion to give after this frame.
+  Viewer.prototype.dragStep=function(time,flush){
+    var d=this.dragInput;if(!d)return false;
+    var p=flush?d.track.flush(d.pos):d.track.at(time,d.pos),dx=p.x-d.x,dy=p.y-d.y;d.x=p.x;d.y=p.y;
+    if(dx||dy){
+      if(d.pan){var q=this.pendingPan||(this.pendingPan={x:0,y:0});q.x+=dx;q.y+=dy;}
+      else if(d.part===2||d.part===3){
+        /* turret and gun are one module: left/right turns the turret, up/down moves the gun - both applied first, then one markPose and one notification for the step */
+        var tx=d.locks&&d.locks.turret?0:dx,ty=d.locks&&d.locks.gun?0:dy;
+        if(this.loadedData&&(tx||ty)){var turned=tx?this.turretTo(this.turretAngle-tx*.5):null,gun=ty?this.gunTo(this.gunAngle+ty*.16):null;this.poseMoved(!!tx,!!ty);this.markPose();if(turned){if(this.onTurret)this.onTurret(turned);}else if(this.onGun)this.onGun(gun);}
+      }
+      else{this.targetYaw-=dx*ORBIT_PER_PX;this.targetPitch=Math.max(-1.35,Math.min(1.35,this.targetPitch+dy*ORBIT_PER_PX));}
+    }
+    return !!p.more;
+  };
+  // The drag ends: what its track still holds is applied now (the pose is committed right after); the camera eases the rest.
+  Viewer.prototype.endDrag=function(){
+    var d=this.dragInput;if(!d)return;
+    this.dragStep(null,true);Viewer.dragLag=d.track.lag;this.dragInput=null;
+    if(d.pan||!(d.part===2||d.part===3))this.startOrbit();
   };
   // THE ZOOM HAS ONE OWNER (audit VIEW-02, 24.09). With Auto frame off it is camera.zoom itself. With it on, the stored
   // figure is frameScale - how much larger than the Fit of the moment the model is shown - and camera.zoom is only ever
@@ -330,10 +397,10 @@
   Viewer.prototype.setDistance=function(value){if(!Number.isFinite(value))return;this.targetDistance=null;this.distance=Math.max(DISTANCE_MIN,Math.min(DISTANCE_MAX,value));this.render();};
   Viewer.limits={distanceMin:DISTANCE_MIN,distanceMax:DISTANCE_MAX};
   // The worker's copies of this scene's engines go with it (ArmorBallistics.release; a job already there keeps its own).
-  Viewer.prototype.clear=function(){if(this.loadedData)this.lastView=this.cameraState(true);this.dropTargets();this.clearLiveAim();this.clearHitMarks();ArmorBallistics.release('scene');this.look=null;this.markDrawn=this.markBuilt=null;this.pinResult=null;this.fitPending=false;this.shotPoints=null;this.shotPath=null;this.horizon=null;this.recordedDistance=null;this.pinned=null;this.disposePin();this.pinCache=null;this.pinReticles=[];if(this.surface)this.surface.dispose();this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.gunAngle=0;this.savedAim=this.ringAim=this.discAim=this.shotDisc=null;this.viewPoints=null;this.recordedOffset=null;this.aimGroup=null;this.estimateAim=null;this.reticles=[];this.reticleLayer.replaceChildren();clearTimeout(this.turretTimer);this.turretTimer=null;this.turretPending=false;this.poseGeometries=null;this.poseBuilt=null;this.poseStale=false;this.spreadAim=null;this.hideSpread();window.clearTimeout(this.aimSettleTimer);this.aimSettleTimer=null;window.cancelAnimationFrame(this.frameId);this.frameId=null;this.cancelHover();this.cancelOrbit();this.pendingPan=null;this.inspectKey=null;this.paintMesh=null;this.outline=null;this.outlineDepth=null;this.engine=null;this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.loadedData=null;this.paintedKey=null;this.samples=[];var disposed=new Set([this.ringGeom]),kept=this.ringMat;this.root.traverse(function(o){var shared=!!(o.parent&&o.parent.type==='ArrowHelper'&&(o===o.parent.line||o===o.parent.cone));if(o.geometry&&!shared&&!disposed.has(o.geometry)){disposed.add(o.geometry);o.geometry.dispose();}if(o.material){(Array.isArray(o.material)?o.material:[o.material]).forEach(function(m){if(m!==kept)m.dispose();});}});while(this.root.children.length)this.root.remove(this.root.children[0]);this.point=null;this.travel=null;this.draw();};
+  Viewer.prototype.clear=function(){if(this.loadedData)this.lastView=this.cameraState(true);this.dropTargets();this.clearLiveAim();this.clearHitMarks();ArmorBallistics.release('scene');this.look=null;this.markDrawn=this.markBuilt=null;this.pinResult=null;this.fitPending=false;this.shotPoints=null;this.shotPath=null;this.horizon=null;this.recordedDistance=null;this.pinned=null;this.disposePin();this.pinCache=null;this.pinReticles=[];if(this.surface)this.surface.dispose();this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.gunAngle=0;this.savedAim=this.ringAim=this.discAim=this.shotDisc=null;this.viewPoints=null;this.recordedOffset=null;this.aimGroup=null;this.estimateAim=null;this.reticles=[];this.reticleLayer.replaceChildren();clearTimeout(this.turretTimer);this.turretTimer=null;this.turretPending=false;this.poseGeometries=null;this.poseBuilt=null;this.poseStale=false;this.spreadAim=null;this.hideSpread();window.clearTimeout(this.aimSettleTimer);this.aimSettleTimer=null;this.cancelDraw();this.cancelHover();this.cancelOrbit();this.pendingPan=null;this.inspectKey=null;this.paintMesh=null;this.outline=null;this.outlineDepth=null;this.engine=null;this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.loadedData=null;this.paintedKey=null;this.samples=[];var disposed=new Set([this.ringGeom]),kept=this.ringMat;this.root.traverse(function(o){var shared=!!(o.parent&&o.parent.type==='ArrowHelper'&&(o===o.parent.line||o===o.parent.cone));if(o.geometry&&!shared&&!disposed.has(o.geometry)){disposed.add(o.geometry);o.geometry.dispose();}if(o.material){(Array.isArray(o.material)?o.material:[o.material]).forEach(function(m){if(m!==kept)m.dispose();});}});while(this.root.children.length)this.root.remove(this.root.children[0]);this.point=null;this.travel=null;this.draw();};
   // clear() draws the empty scene and tells the page nothing: the camera has not moved, and the next load() reports once.
   Viewer.prototype.rebuild=function(){
-    if(!this.loadedData)return;var T=THREE,self=this;this.samples=[];this.paintedKey=null;
+    if(!this.loadedData)return;var T=THREE,self=this,at=clock();this.samples=[];this.paintedKey=null;
     // A failed composition is retried on the next rebuild (pose or model) instead of staying off for good.
     if(!this.surface&&this.surfaceAttempted){this.surfaceAttempted=false;}
     this.engine=ArmorBallistics.build(this.posedData||this.loadedData,false);this.engineGen++;
@@ -349,6 +416,7 @@
     this.capturePose();
     // The parts' own frames for the Hitmarks: the engine and the drawn model now stand in the same pose.
     this.markBuilt=this.markDrawn=this.markFrames(this.poseBuilt);this.poseHitMarks();
+    noteWork('rebuild',at);
     this.render();
   };
   // The drawn pose, vertex by vertex, as the last full rebuild left it: a copy of every position and the runs of
@@ -667,7 +735,7 @@
   // to report the camera with the OLD orbit centre, and the pose was reported twice unchanged (VIEW-07).
   // keep (optional): the view carried from the scene before (cameraState(true), a target picked by hand): its pose is put
   // on the new vehicle here, its camera by restoreCamera; a load without it starts from the record's pose.
-  Viewer.prototype.load=function(data,context,keep){this.hold++;try{return this.loadScene(data,context,keep);}finally{this.release();}};
+  Viewer.prototype.load=function(data,context,keep){var at=clock();this.hold++;try{return this.loadScene(data,context,keep);}finally{this.release();noteWork('scene load',at);}};
   Viewer.prototype.loadScene=function(data,context,keep){
     var held=this.keepSame(data,keep);this.clear();var carry=keep&&keep.pose?keep.pose:null;this.poseWish=carry?{yaw:carry.yaw,pitch:carry.pitch}:null;if(data.geometryIncomplete){this.bounds=null;this.render();return false;}var T=THREE,self=this;var hit=data.hit, parts=(hit.target||{}).parts||[], transforms={};
     parts.forEach(function(part){if(part.transform)transforms[part.id]=new T.Matrix4().fromArray(part.transform);});
@@ -1431,13 +1499,25 @@
   // The status line goes to the page when it changes, not on every frame (VIEW-16); the frame rate beside it is the page's
   // own poll's to refresh.
   Viewer.prototype.backend=function(text){if(text===this.backendShown)return;this.backendShown=text;if(this.onBackend)this.onBackend(text);};
-  // Hovering is coalesced to one reading per animation frame: a pointermove burst used to cost a Three.js
-  // raycast plus a ballistic ray each, and only the last event of the burst is still under the cursor.
+  // Hovering is one reading per frame, in the hover task after the camera's (28.09, frame-sync): a pointermove burst used to
+  // cost a Three.js raycast plus a ballistic ray each, and only the last event of the burst is still under the cursor. The
+  // events store their samples in the hover's input track and the task reads it at the frame's time (BullbaFrame.Track), so
+  // the aim point the emulated ring chases moves by even steps too; it reads again while the track has motion to give.
   Viewer.prototype.hover=function(event){
-    var self=this;this.hoverEvent=event;if(this.hoverId!==null)return;
-    this.hoverId=window.requestAnimationFrame(function(){self.hoverId=null;var last=self.hoverEvent;self.hoverEvent=null;if(last)self.inspect(last);});
+    var h=this.hoverInput;
+    if(!h)h=this.hoverInput={track:new window.BullbaFrame.Track(),pos:{x:0,y:0,more:false},ev:{clientX:NaN,clientY:NaN},live:false};
+    // One track for the viewer's life: a pause does not restart it, so the first step after one starts from where the last ended.
+    if(!h.track.t.length)h.track.start(event,event.clientX,event.clientY);else h.track.add(event);h.live=true;h.news=true;
+    this.hoverEvent=event;this.hoverId=1;this.loopTask('hover').want();
   };
-  Viewer.prototype.cancelHover=function(){if(this.hoverId!==null)window.cancelAnimationFrame(this.hoverId);this.hoverId=null;this.hoverEvent=null;};
+  // Read at a frame where an event came (as every burst was read before) or the track's position moved on.
+  Viewer.prototype.frameHover=function(time){
+    var h=this.hoverInput;this.hoverId=null;this.hoverEvent=null;if(!h||!h.live)return;
+    var p=h.track.at(typeof time==='number'?time:clock(),h.pos),ev=h.ev,news=h.news;h.news=false;
+    if(news||p.x!==ev.clientX||p.y!==ev.clientY){ev.clientX=p.x;ev.clientY=p.y;this.inspect(ev);}
+    if(p.more){this.hoverId=1;this.loopTask('hover').want();}else h.live=false;
+  };
+  Viewer.prototype.cancelHover=function(){if(this.loopTasks&&this.loopTasks.hover)this.loopTasks.hover.cancel();this.hoverId=null;this.hoverEvent=null;if(this.hoverInput){this.hoverInput.live=false;this.hoverInput.ev.clientX=NaN;}};
   // Everything the “Under the cursor” panel prints, as one short string: an unchanged reading is not redrawn.
   Viewer.readingKey=function(result,sample){
     var r=result||{},b=r.bounce,round=function(v){return v===undefined||v===null?'-':Math.round(v);};

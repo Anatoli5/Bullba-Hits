@@ -3398,7 +3398,7 @@
   // held, the vehicle still rolling, the circle still settling, the turret still catching up, a
   // reload running - and stops itself as soon as everything is at rest. It never touches the GPU
   // composition: only the circle's line and the figures on the two info panels are redrawn.
-  var aimOn = false, aimKeys = {}, aimFrame = 0, aimClock = 0, aimMove = null, aimNow = null;
+  var aimOn = false, aimKeys = {}, aimClock = 0, aimMove = null, aimNow = null;
   // The aim block the ring was last computed on (sceneShown compares it with the block of a new scene, audit PD-03).
   var aimNowBlock = null;
   var aimReload = null, aimClip = 0, aimClipSize = 1, aimShot = null, aimLastState = null;
@@ -3420,7 +3420,7 @@
   var AIM_EST_SLICE = 3;
   // aimJob: {s: sampler, fine, shell} of the live figure being taken; aimShotJob: the same for the last shot's own figure.
   // aimFrameT is the animation frame now running (its timestamp), aimSliceT the frame the last slice ran in: one slice a frame.
-  var aimJob = null, aimShotJob = null, aimJobFrame = 0, aimFrameT, aimSliceT;
+  var aimJob = null, aimShotJob = null, aimFrameT, aimSliceT;
   // The shot's figure while its job runs: no text, so its tile stays away for those few frames (circleText).
   var AIM_FIGURE_PENDING = {alpha: false, low: NaN};
   // The figure of the STANDING ring of the hit on screen - the recorded reticle, or the nominal estimate
@@ -3474,11 +3474,17 @@
   // The gun loaded in full with nothing loading: a new shooter, the emulation starting over, a rule switched, a
   // press under the simplified rule. `rounds` when the caller has the clip size already.
   function aimLoadFull(rounds) { aimClipSize = rounds || aimClipRounds(); aimClip = aimClipSize; aimRefill = null; }
+  // THE AIM LOOP AND THE FIGURE'S SLICES ARE TASKS OF THE PAGE'S ONE FRAME LOOP (28.09, frame-sync; web/frame.js): they run
+  // after the camera and the hover of their frame and before its render, so the ring a frame draws is the one computed in it.
+  // Made when first asked for: the module may ask before it has run down to here.
+  var aimLoopTask = null, aimSliceTask = null;
+  function aimLoop() { return aimLoopTask || (aimLoopTask = window.BullbaFrame.task('aim', 'aimTick', aimTick)); }
+  function aimSlices() { return aimSliceTask || (aimSliceTask = window.BullbaFrame.task('figure', 'aimEstTick', aimEstTick)); }
   function startAimLoop() {
-    if (aimFrame || !aimOn) return;
-    aimFrame = window.requestAnimationFrame(aimTick);
+    if (!aimOn) return;
+    aimLoop().want();
   }
-  function stopAimLoop() { if (aimFrame) window.cancelAnimationFrame(aimFrame); aimFrame = 0; aimClock = 0; }
+  function stopAimLoop() { aimLoop().cancel(); aimClock = 0; }
   // `hullMax` rides along for the turn indicator only: it is the hull's top rotation speed with this
   // build, which is what the arc's length is measured against. The ballistics read speed/hullTurn/turretTurn.
   // Manual motion (27.09) stands in for the keys' motion; its turret term is the one the frame loop's chase gives a hull
@@ -3502,7 +3508,6 @@
   // event between two frames (a press, a key) is a task of its own.
   function aimTick(t) { aimFrameT = t; if (host.activity) host.activity('emulation'); try { aimTickRun(); } finally { aimFrameT = undefined; } }
   function aimTickRun() {
-    aimFrame = 0;
     var a = aimBlockData();
     if (!aimLive || !a || !viewer || !viewer.liveRadius100) { aimClock = 0; return; }
     if (viewer.setAimOffset) viewer.setAimOffset(aimOffsetNow(a));
@@ -3514,7 +3519,10 @@
     // A pointer held for a burst keeps the viewer's `dragging` flag up although nothing is being dragged,
     // so the hold is excluded here or the shooter would freeze for the whole burst.
     if (viewer.dragging && !viewer.aimHold) { aimClock = 0; startAimLoop(); return; }
-    var now = aimSeconds(), dt = aimClock ? now - aimClock : 0; aimClock = now;
+    // The step is the FRAME's time (28.09, frame-sync): the animation frame's own time stamp, not the clock read somewhere inside
+    // it - that one moved with whatever ran before this task in the frame, and the turret's chase and the ring then went by
+    // uneven steps at an even 60 frames/s. Outside a frame (a harness calling the loop directly) the clock, as before.
+    var now = aimFrameT !== undefined ? aimFrameT / 1000 : aimSeconds(), dt = aimClock ? Math.max(0, now - aimClock) : 0; aimClock = now;
     // The first frame after the loop slept (settled and caught) has no time span: chasing the cursor over a
     // zero-length step would ask the turret for its full speed and bloom the ring as if it had fired (user,
     // 20.09: 'a shot without a shot, exactly when it had settled and I moved the mouse'). Count that frame
@@ -3701,9 +3709,9 @@
   }
   // The emulation off: no figure is taken any more, and no frame is left asked for; the worker drops the circles' jobs and
   // engines (ArmorBallistics.release).
-  function aimEstStop() { aimEstReset(); aimShotJob = null; if (aimJobFrame) window.cancelAnimationFrame(aimJobFrame); aimJobFrame = 0; ArmorBallistics.release('circles'); }
-  function aimEstLater() { if (!aimJobFrame) aimJobFrame = window.requestAnimationFrame(aimEstTick); }
-  function aimEstTick(t) { aimJobFrame = 0; aimFrameT = t; try { if (aimEstSlice()) paintCircleLines(); } finally { aimFrameT = undefined; } }
+  function aimEstStop() { aimEstReset(); aimShotJob = null; aimSlices().cancel(); ArmorBallistics.release('circles'); }
+  function aimEstLater() { aimSlices().want(); }
+  function aimEstTick(t) { aimFrameT = t; try { if (aimEstSlice()) paintCircleLines(); } finally { aimFrameT = undefined; } }
   // The figure one sampled circle is worth (user, 22.09: with a MANUAL shell every Circle line read "—").
   // A shell chosen by hand - a type on the shell-type buttons, or a penetration and a calibre with no
   // saved candidate behind them - has no alpha at all, so a share of alpha is meaningless. It then carries
@@ -6204,8 +6212,10 @@
   }
   function drainVerdicts(){
     verdictTimer=null;if(verdictBusy||!verdictQueue.length||!window.ArmorViewer||!window.ArmorBallistics)return;
-    // The diagnostics wait while the user is working: a hidden page or a drag gets the frame, not a BVH build.
-    if(document.hidden||(viewer&&viewer.dragging)){verdictTimer=setTimeout(drainVerdicts,150);return;}
+    // The diagnostics wait while the user is working: a hidden page or a drag gets the frame, not a BVH build. Since 28.09
+    // (frame-sync) also any work of the scene in the last second - an orbit, the aim loop, the cursor over it: a hit's models
+    // are parsed on the main thread, and game.log put three of the emulation's slow frames beside this pass.
+    if(document.hidden||(viewer&&viewer.dragging)||(host.busy&&host.busy(1000))){verdictTimer=setTimeout(drainVerdicts,150);return;}
     verdictBusy=true;
     var job=verdictQueue.shift(),battle=job.battle,hit=job.hit;
     ArmorInspectorData.sceneFor(battle,hit).then(function(data){
@@ -8785,15 +8795,15 @@
     // 'change' once the turn is over: notches that arrive faster than the page draws were each running the
     // control's whole handler (Distance: the shell pipeline) and queued up - the stall and the slip the user
     // felt (24.09). A key press keeps its immediate pair of events.
-    var coalesce=false,pendEl=null,pendFrame=null,doneEl=null,doneTimer=null;
+    var coalesce=false,pendEl=null,doneEl=null,doneTimer=null,pendTask=window.BullbaFrame.task('input','flushInput',flushInput);
     function pendInput(el){
       if(pendEl&&pendEl!==el)flushInput();
-      pendEl=el;if(pendFrame===null)pendFrame=window.requestAnimationFrame(flushInput);
+      pendEl=el;pendTask.want();
       if(doneEl&&doneEl!==el)flushChange();
       controlTurning=true;
       doneEl=el;if(doneTimer!==null)window.clearTimeout(doneTimer);doneTimer=window.setTimeout(flushChange,250);
     }
-    function flushInput(){if(pendFrame!==null){window.cancelAnimationFrame(pendFrame);pendFrame=null;}var el=pendEl;pendEl=null;if(el)el.dispatchEvent(new Event('input',{bubbles:true}));}
+    function flushInput(){pendTask.cancel();var el=pendEl;pendEl=null;if(el)el.dispatchEvent(new Event('input',{bubbles:true}));}
     function flushChange(){if(doneTimer!==null){window.clearTimeout(doneTimer);doneTimer=null;}flushInput();controlTurning=false;var el=doneEl;doneEl=null;if(el)el.dispatchEvent(new Event('change',{bubbles:true}));}
     // ONE NOTCH = ONE STEP of the control under the pointer (user, 24.09): the coarse move is the drag, the wheel is
     // for catching the fine value - Distance 1 m in its box, one position of the slider, Zoom 0.1 in its box, and so
@@ -8896,7 +8906,7 @@
   // line, taking them back when the window widens. insertBefore moves the nodes themselves, so every id and
   // every listener inside a group survives the move.
   var toolbar=document.querySelector('.scene-toolbar'),moreBox=document.querySelector('.scene-toolbar > .toolbar-more');
-  var popover=moreBox?moreBox.querySelector('.toolbar-popover'):null,tbWidth={},tbFrame=0;
+  var popover=moreBox?moreBox.querySelector('.toolbar-popover'):null,tbWidth={};
   var tbGroups=toolbar?[].slice.call(toolbar.querySelectorAll('[data-tb]')):[];
   var tbRank=function(g){return Number(g.getAttribute('data-tb'));};tbGroups.sort(function(a,b){return tbRank(a)-tbRank(b);});
   function tbRow(g){var rank=tbRank(g),before=null;
@@ -9022,12 +9032,16 @@
   // the start - is the whole pass, as it always was.
   var tbParts; // no initialiser: a pass asked for while the module was still starting keeps its mask
   function scheduleLayout(parts){
-    tbParts|=parts>0?parts:LAYOUT_ALL;if(tbFrame)return;
-    tbFrame=window.requestAnimationFrame(function(){var p=tbParts;tbFrame=0;tbParts=0;
+    tbParts|=parts>0?parts:LAYOUT_ALL;
+    // A task of the page's one frame loop (28.09, frame-sync): after the aim of the frame, before its render. Made on the
+    // first call, which may come before the module has run down to here.
+    (layoutTask||(layoutTask=window.BullbaFrame.task('layout','layout',layoutFrame))).want();
+  }
+  var layoutTask; // no initialiser, as tbParts
+  function layoutFrame(){var p=tbParts;tbParts=0;
       if(p&LAYOUT_HEADING)layoutHeading();if(p&LAYOUT_TOOLBAR)layoutToolbar();if(p&LAYOUT_MODS)layoutMods();if(p&LAYOUT_POSE)layoutPose();
       // The shooter row decides both corners, so what moves the pose tile lays the panel out again too.
-      if(p&(LAYOUT_POSE|LAYOUT_TTX))layoutTtx();});
-  }
+      if(p&(LAYOUT_POSE|LAYOUT_TTX))layoutTtx();}
   window.addEventListener('resize',function(){scheduleLayout();}); // not the handler itself: the Event would be read as a mask
   // Closing on a click outside is written out here: the settings menu has no such handler to reuse. Every
   // popover of the page is a .toolbar-more <details>, the toolbar's own and the modifier groups' alike, and

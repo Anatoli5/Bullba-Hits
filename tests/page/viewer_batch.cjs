@@ -45,7 +45,8 @@ function env(web) {
   vm.createContext(sb);
   vm.runInContext(fs.readFileSync(web + 'vendor/three.min.js', 'utf8'), sb, {filename: 'three.min.js'});
   vm.runInContext(fs.readFileSync(web + 'vendor/three-mesh-bvh.umd.js', 'utf8').replace(/typeof exports === 'object'/, 'false'), sb, {filename: 'three-mesh-bvh.umd.js'});
-  for (const name of ['ballistics.js', 'screen-armor.js', 'viewer.js']) vm.runInContext(fs.readFileSync(web + name, 'utf8'), sb, {filename: name});
+  // frame.js (28.09, frame-sync): the page's one frame loop the viewer's draw, camera and hover are tasks of; absent in an older web/.
+  for (const name of ['frame.js', 'ballistics.js', 'screen-armor.js', 'viewer.js']) if (name !== 'frame.js' || fs.existsSync(web + name)) vm.runInContext(fs.readFileSync(web + name, 'utf8'), sb, {filename: name});
   const T = sb.THREE;
   let viewer = null, target = null;
   const gl = {FRAMEBUFFER: 1, FRAMEBUFFER_COMPLETE: 2, getExtension: function (n) { return n === 'EXT_color_buffer_float' ? {} : null; },

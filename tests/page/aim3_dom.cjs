@@ -178,7 +178,12 @@ global.performance = window.performance;
 // Time control: advance the fake clock and run whatever is due.
 // S2: the frames the aim loop asked for - the page's layout debounce, which now runs in these checks (see the
 // load below), is not the loop and is left out of the count.
-function loopFrames() { return rafQueue.filter(function (f) { return !/layoutHeading/.test(String(f.fn)); }).length; }
+// 28.09 (frame-sync): the page runs ONE animation-frame loop (web/frame.js) and its parts are tasks of it, so what the aim loop
+// asked for is read off the loop's pending tasks - every one but the layout pass, as the raw frames were counted before.
+function loopFrames() {
+  if (window.BullbaFrame) return window.BullbaFrame.pendingNames().filter(function (n) { return n !== 'layout'; }).length;
+  return rafQueue.filter(function (f) { return !/layoutHeading/.test(String(f.fn)); }).length;
+}
 // 24.09: the page saves its settings one moment after the last change (persistNow on a 300 ms timer) and a wheel
 // notch redraws the control on the next frame (flushInput): a check that reads the store or the drawn value runs
 // just those two, so no other timer or frame of the page moves.
@@ -186,6 +191,7 @@ function runNamed(name) {
   const t = timerQueue.filter(function (x) { return x.fn && x.fn.name === name; });
   timerQueue = timerQueue.filter(function (x) { return !(x.fn && x.fn.name === name); });
   t.forEach(function (x) { x.fn(); });
+  if (window.BullbaFrame) { window.BullbaFrame.runTask(name); return; }   // a task of the page's frame loop (frame-sync)
   const f = rafQueue.filter(function (x) { return x.fn && x.fn.name === name; });
   rafQueue = rafQueue.filter(function (x) { return !(x.fn && x.fn.name === name); });
   f.forEach(function (x) { x.fn(clock * 1000); });
@@ -402,6 +408,9 @@ global.ArmorShotContext = {resolve: function () { return {choices: SHELLS, index
 global.ArmorShotTelemetry = {load: function () {}, shots: function () { return []; }};
 
 require(path + 'ballistics.js');
+// frame-sync (28.09): the page's one frame loop, loaded before host.js and app.js as the page loads it; an older web/ without it
+// (BULLBA_WEB) runs its own animation frames as before.
+try { require(path + 'frame.js'); global.BullbaFrame = window.BullbaFrame; } catch (e) { if (e.code !== 'MODULE_NOT_FOUND') throw e; }
 require(path + 'modifiers.js');
 // Stage 9: the aim configuration is built out of the client's own catalogue, which the page loads as a
 // plain script before app.js. Without it the menu would fall back to an empty one.
@@ -1026,8 +1035,8 @@ function cooldownFromFill(seconds) { return seconds / viewerInstance.reloadPart;
 settle(20).then(function () {
   // The layout debounce of the load, not ours. S2: it is RUN rather than dropped - a dropped frame left the
   // page's debounce waiting for ever, so no later layout pass ran here at all and nothing could be counted.
-  const loadFrames = rafQueue; rafQueue = [];
-  loadFrames.forEach(function (f) { if (/layoutHeading/.test(String(f.fn))) f.fn(clock * 1000); });
+  if (window.BullbaFrame) window.BullbaFrame.runTask('layout');
+  else { const loadFrames = rafQueue; rafQueue = []; loadFrames.forEach(function (f) { if (/layoutHeading/.test(String(f.fn))) f.fn(clock * 1000); }); }
   ok('the shooter scene loaded', document.getElementById('shooter-tile').hidden === false);
   if (RELOAD) return reloadChecks();
 
@@ -8020,7 +8029,9 @@ settle(20).then(function () {
     ok('viewer: poseLocks - the 103B\'s table locks the turret and the gun, a file\'s top-level staticTurretYaw only the turret, an ordinary vehicle nothing; the drag skips the locked axis and orbits when both are held',
        l1.turret && l1.gun && l2.turret && !l2.gun && !l3.turret && !l3.gun
        && vsrc.indexOf('drag.locks=self.poseLocks();if(drag.locks.turret&&drag.locks.gun)drag.part=1;') > 0
-       && vsrc.indexOf('var dx=drag.locks&&drag.locks.turret?0:e.clientX-drag.x,dy=drag.locks&&drag.locks.gun?0:e.clientY-drag.y;') > 0);
+       // frame-sync (28.09): the drag's motion is applied by the camera task (dragStep) from the drag's input, its locks carried.
+       && (vsrc.indexOf('var dx=drag.locks&&drag.locks.turret?0:e.clientX-drag.x,dy=drag.locks&&drag.locks.gun?0:e.clientY-drag.y;') > 0
+           || (vsrc.indexOf('var tx=d.locks&&d.locks.turret?0:dx,ty=d.locks&&d.locks.gun?0:dy;') > 0 && vsrc.indexOf('locks:drag.locks||null') > 0)));
   }
   // ---- B. through the page under ✸ -------------------------------------------------------------------------------------
   const CTX = global.ArmorShotContext, keepResolve = CTX.resolve;
@@ -8537,7 +8548,8 @@ settle(20).then(function () {
   const setFun = function (on) { if (funBox.checked !== on) click(star); };
   const tap = function () { press(); release(); };
   const layoutFrames = function (sec) {
-    let n = 0; const req = window.requestAnimationFrame;
+    let n = 0; const req = window.requestAnimationFrame, F = window.BullbaFrame;
+    if (F) { F.probe = function (name) { if (name === 'layout') n++; }; run(sec); F.probe = null; return n; }
     window.requestAnimationFrame = function (fn) { if (/layoutHeading/.test(String(fn))) n++; return req(fn); };
     run(sec); window.requestAnimationFrame = req; return n;
   };
