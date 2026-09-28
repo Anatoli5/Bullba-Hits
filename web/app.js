@@ -5971,11 +5971,14 @@
   }
   // A window that lost the focus never sends the keyup, and the vehicle would drive on for ever.
   function aimRelease() { if (!aimHeld()) return; aimKeys = {}; startAimLoop(); }
-  // The pointer over the scene while the mode is on: a game-like crosshair, the shape chosen in
-  // Settings. Both are data-URI SVGs in the stylesheet with the hotspot in the middle, and `crosshair`
-  // is the fallback for a browser that refuses the image.
+  // The pointer over the scene while the mode is on (Settings -> Pointer): Current - the Crosshair's shape, as
+  // before 28.09 - or Chevron, the game's arcade sight. All are data-URI SVGs in the stylesheet with the hotspot on
+  // the aimed point, and `crosshair` is the fallback for a browser that refuses the image. The game's own window
+  // shows its arrow for any of them (its browser view maps only hand, arrow, text, grab and move - KNOWLEDGE §12).
+  // The centre of the live ring has its own mark, drawn by the viewer (viewer.setAimMarker).
   function aimCursorClass() {
-    var box = $('viewport'), want = aimLive ? ($('crosshair-style').value === 'dot' ? 'aim-dot' : 'aim-cross') : '';
+    var box = $('viewport'), want = !aimLive ? '' : $('pointer-style').value === 'chevron' ? 'aim-chevron'
+      : $('crosshair-style').value === 'dot' ? 'aim-dot' : 'aim-cross';
     if (want === aimCursor) return;
     if (aimCursor) box.classList.remove(aimCursor);
     if (want) box.classList.add(want);
@@ -7638,7 +7641,8 @@
   $('aim-on').onchange=function(){setAimEmulation(this.checked);};
   // The crosshair shape is a Settings control, so the settings machinery stores it; this only re-applies
   // the class while the mode is on.
-  $('crosshair-style').onchange=function(){aimCursorClass();aimSyncCentre();};
+  $('crosshair-style').onchange=function(){aimCursorClass();if(viewer&&viewer.setAimMarker)viewer.setAimMarker(aimCrosshairShape());aimSyncCentre();};
+  $('pointer-style').onchange=aimCursorClass;
   // The Config popover opening or closing, whoever did it: its summary, a click elsewhere, the mode going off.
   $('aim-config').addEventListener('toggle',function(){aimSyncCentre();aimConfigListen();});
   $('aim-drive').addEventListener('toggle',function(){paintManual();placeManual();});
@@ -9182,7 +9186,9 @@
       var show=host.game&&!!s;if(b.hidden!==!show)b.hidden=!show;if(!show)return;
       var running=w.running&&!!s&&!s.done;
       b.disabled=running;
-      b.textContent=running?'Exporting models… '+count+' / '+total:s.done&&!Object.keys(s.failed||{}).length?'All models exported ✓':'Export all models';
+      // Running: the count and the mod's estimate of the time left (the pace the user watches, 28.09).
+      var left=running?sweepTime(s):'';
+      b.textContent=running?'Exporting models… '+count+' / '+total+(left?' · '+left+' left':''):s.done&&!Object.keys(s.failed||{}).length?'All models exported ✓':'Export all models';
       b.setAttribute('aria-pressed',String(running));}});
   // The user's own question: the characteristics' one, if it stands, gives way to it (it asks again on the next open).
   $('models-all').onclick=function(){if(modelsSweep.running)return;

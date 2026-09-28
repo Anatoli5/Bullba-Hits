@@ -108,9 +108,10 @@
     // parts' world matrices as drawn and as the engine was built (see the Hitmarks block).
     this.pinResult=null;this.hitMarks=false;this.markSets=null;this.markMaterials=null;this.markSlots=null;this.markCount=0;this.markNext=0;this.markDrawn=null;this.markBuilt=null;
     // aimCentred: the aim held on the model centre while the page's Config popover is open (setAimCentre),
-    // null otherwise; aimMarker the crosshair drawn there, in aimMarkerShape; aimSettleTimer the wait after a
-    // +/- key before the held point is looked for again (settleAimSoon).
-    this.aimCentred=null;this.aimMarker=null;this.aimMarkerShape='cross';this.aimSettleTimer=null;
+    // null otherwise; aimMarker the centre mark of the live ring (updateAimMarker), in aimMarkerShape, aimMarkerAt
+    // the position last written to it; aimSettleTimer the wait after a +/- key before the held point is looked for
+    // again (settleAimSoon).
+    this.aimCentred=null;this.aimMarker=null;this.aimMarkerShape='cross';this.aimMarkerAt='';this.aimSettleTimer=null;
     this.frameAt=0;this.frameTimes=[]; // when the pending frame was asked for, and the cadence of the frames that ran
     this.contextLost=false;this.dragging=false;this.hoverId=null;this.hoverEvent=null;this.inspectKey=null;
     // The camera is driven by its own frame loop: pointer and key events only move the target.
@@ -782,7 +783,7 @@
   Viewer.prototype.updateReticles=function(){
     var self=this,w=this.viewWidth,h=this.viewHeight,size=this.reticleSize()+'px';
     this.reticles.forEach(function(marker){var behind=marker.position.clone().applyMatrix4(self.camera.matrixWorldInverse).z>-.01,p=marker.position.clone().project(self.camera);marker.element.hidden=(!marker.pinned&&!self.recordedShown())||behind||Math.abs(p.x)>1||Math.abs(p.y)>1;if(!marker.element.hidden){var s=marker.element.style;s.left=(p.x+1)*w/2+'px';s.top=(1-p.y)*h/2+'px';if(s.width!==size){s.width=size;s.height=size;}}});
-    this.updateAimMarker();   // the crosshair of an aim held on the model follows the camera the same way
+    this.updateAimMarker();   // the live ring's centre mark follows the camera the same way
   };
   // Fit the actual projected mesh, including off-centre impacts. Only the lens
   // changes: the camera remains on the recorded shot line at the chosen distance.
@@ -1539,7 +1540,7 @@
   Viewer.prototype.aimAt=function(event){var ray=this.pointerRay(event).ray,normal=this.target.clone().sub(this.camera.position).normalize(),plane=new THREE.Plane().setFromNormalAndCoplanarPoint(normal,this.target),point=new THREE.Vector3();if(ray.intersectPlane(plane,point)){this.spreadAim=point;this.hideSpread();
     if(this.liveRadius100){var pinned=this.drawLiveAim();if(this.onAimMove)this.onAimMove(pinned);if(this.onAim)this.onAim('Circle pinned here. It keeps following the shooter’s state; “Centre on the hit” releases it.');}
     else if(this.onAim)this.onAim('Estimate centre moved. Press “Estimate”.');}};
-  Viewer.prototype.hideSpread=function(){var line=this.spreadCircle;if(line){this.scene.remove(line);if(line!==this.liveRingLine){line.geometry.dispose();if(line.material!==this.liveRingMaterial)line.material.dispose();}this.spreadCircle=null;this.draw();}};
+  Viewer.prototype.hideSpread=function(){var line=this.spreadCircle;if(line){this.scene.remove(line);if(line!==this.liveRingLine){line.geometry.dispose();if(line.material!==this.liveRingMaterial)line.material.dispose();}this.spreadCircle=null;if(line===this.liveRingLine)this.updateAimMarker();this.draw();}};
   // ONE point of a dispersion circle (ArmorBallistics.circlePoint: the one law of the integral and of a random shot) as a
   // three.js vector.
   function circlePoint(center,right,up,radius,u,angle,quantile){
@@ -1657,10 +1658,9 @@
   // in the middle of the target instead: the point on the model's surface along the view ray through the
   // centre of its bounds, found with the same raycast and the same fallback the cursor uses. The gun and
   // the cursor point both go there, so the turret has nothing to chase and the ring does not bloom for the
-  // jump, and a drawn crosshair marks the spot, because the real crosshair is the mouse pointer and cannot
-  // be moved. Pointer moves meanwhile only remember where the cursor is, and letting go puts the aim there
+  // jump, and the live ring's centre mark (updateAimMarker) stands on the spot. Pointer moves meanwhile only remember where the cursor is, and letting go puts the aim there
   // (or back where it was, if the pointer never moved). A pinned centre (Alt + click) is left alone and is
-  // in force again once the hold ends. `shape` is the Settings crosshair, 'cross' or 'dot'.
+  // in force again once the hold ends. `shape` is the Settings crosshair, 'cross' or 'dot' (the centre mark's shape).
   Viewer.prototype.setAimCentre=function(on,shape){
     this.aimMarkerShape=shape==='dot'?'dot':'cross';
     if(!!on===!!this.aimCentred){this.updateAimMarker();return;}
@@ -1671,8 +1671,8 @@
       // The gun given back where it stood keeps its yaw on the hull; one put down on the cursor has the hull facing it.
       if(back){this.aimCursorPoint=back.clone();this.liveAimPoint=(held.seen||held.gun||back).clone();this.aimYaw=!held.seen&&held.gun?held.yaw||0:0;}
     }
-    if(this.liveRadius100)this.drawLiveAim();
-    this.updateAimMarker();this.draw();
+    if(this.liveRadius100)this.drawLiveAim();else this.updateAimMarker();   // drawLiveAim moves the centre mark itself
+    this.draw();
   };
   Viewer.prototype.centreAim=function(){
     var point=this.aimCentrePoint();
@@ -1691,7 +1691,7 @@
     // The same point: nothing moves, and a gun the hull has swung off it is left to the turret's chase.
     if(!point||(was&&was.distanceToSquared(point)<1e-12))return false;
     this.aimCursorPoint=point;this.liveAimPoint=point.clone();this.aimYaw=0;
-    this.drawLiveAim();this.updateAimMarker();this.draw();
+    this.drawLiveAim();this.draw();   // drawLiveAim moves the centre mark too
     if(this.onAimCentre)this.onAimCentre();
     return true;
   };
@@ -1715,18 +1715,28 @@
   };
   // The centre a pin holds the circle on, or null. The hold on the model outranks a pin while it lasts.
   Viewer.prototype.aimPin=function(){return this.aimCentred?null:this.spreadAim;};
-  // The crosshair drawn where the held aim points: the Settings shape, the very picture of the mouse pointer
-  // (style.css .aim-marker), put on the projected point every frame so it stays on the model while the
-  // camera moves. Hidden whenever the aim is not held.
+  // THE CENTRE MARK OF THE LIVE RING (user, 28.09): the game draws a cross or a dot in the middle of its aiming circle,
+  // where the gun points, and the mouse pointer is where the gun is sent - two marks, apart while the turret catches up.
+  // One mark, one owner: the Settings crosshair shape (aimMarkerShape), on the live ring's own centre (liveAim.center:
+  // the gun's point, a pin's, or the held centre while the Config popover is open), projected every time the ring or
+  // the camera moves; hidden whenever the live ring is not on screen. Thin and small (style.css .aim-marker), so the
+  // tracer behind it stays visible. The DOM is written only when the position or the shape changes (a frame that
+  // moves nothing writes nothing).
+  Viewer.prototype.setAimMarker=function(shape){this.aimMarkerShape=shape==='dot'?'dot':'cross';this.updateAimMarker();};
   Viewer.prototype.updateAimMarker=function(){
-    var m=this.aimMarker,p=this.aimCentred?this.aimCursorPoint:null;
-    if(!p){if(m)m.hidden=true;return;}
-    if(!m){m=this.aimMarker=document.createElement('span');m.className='aim-marker';m.setAttribute('aria-hidden','true');}
+    var m=this.aimMarker,a=this.liveAim,p=a&&this.liveRingLine&&this.spreadCircle===this.liveRingLine?a.center:null;
+    if(!p){if(m&&!m.hidden)m.hidden=true;return;}
+    if(!m){m=this.aimMarker=document.createElement('span');m.className='aim-marker';m.setAttribute('aria-hidden','true');this.aimMarkerAt='';}
     if(m.parentNode!==this.reticleLayer)this.reticleLayer.appendChild(m);   // clear() empties the layer
-    var behind=p.clone().applyMatrix4(this.camera.matrixWorldInverse).z>-.01,q=p.clone().project(this.camera);
-    m.setAttribute('data-shape',this.aimMarkerShape||'cross');
-    m.hidden=behind||Math.abs(q.x)>1||Math.abs(q.y)>1;
-    if(!m.hidden){m.style.left=(q.x+1)*this.viewWidth/2+'px';m.style.top=(1-q.y)*this.viewHeight/2+'px';}
+    var v=this.aimMarkerV||(this.aimMarkerV=new THREE.Vector3()),shape=this.aimMarkerShape||'cross';
+    var behind=v.copy(p).applyMatrix4(this.camera.matrixWorldInverse).z>-.01;v.copy(p).project(this.camera);
+    if(m.getAttribute('data-shape')!==shape)m.setAttribute('data-shape',shape);
+    var hidden=behind||Math.abs(v.x)>1||Math.abs(v.y)>1;
+    if(m.hidden!==hidden)m.hidden=hidden;
+    if(hidden)return;
+    var left=(v.x+1)*this.viewWidth/2+'px',top=(1-v.y)*this.viewHeight/2+'px',at=left+' '+top;
+    if(at===this.aimMarkerAt)return;
+    this.aimMarkerAt=at;m.style.left=left;m.style.top=top;
   };
   // The ring the LAST SHOT left behind (user, 20.09): a copy of the live ring frozen where and as wide
   // as it was, solid and magenta, standing next to its own tracer until the next shot replaces it. The
@@ -1812,6 +1822,7 @@
     var part=this.aimReloadPart,top=Math.PI/2;
     if(part===null)this.drawCircle(center,frame.right,frame.up,radius,AIM_LIVE);
     else this.drawCircle(center,frame.right,frame.up,radius,AIM_LIVE,top,top-Math.PI*2*part);
+    this.updateAimMarker();   // the ring's centre mark goes with it
     return this.liveAim;
   };
   // Called from inspect() with the raycast it already did, so a pointer move costs no second cast. Without a
