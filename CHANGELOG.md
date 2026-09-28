@@ -2,7 +2,7 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
-## Unreleased
+## 0.9.0 (2026-09-28)
 
 - game.log: while the page is in use, one line every ~5 s of activity gives the real frame rate - frames/s, p95, p99 and the longest frame - for orbiting, the aim emulation and hovering apart; an idle page logs nothing.
 - **Aim emulation:** the circle's figure and a shot's figure are computed in a background thread of the page (a Web Worker), no longer between frames: the frame keeps ~0.3 ms of the circle's work instead of ~3 ms, and the fine figure lands sooner. The Statistics log's background pass after a battle opens runs there too. Same figures to the bit; where no worker can start, the page computes as before.
