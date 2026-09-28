@@ -263,8 +263,11 @@ function checks(ok, web) {
     v.setAutoFrame(false); e.settle(); e.reset();
     v.distanceTo(v.distance * Math.exp(.2));
     const frames = e.settle();
-    ok('viewer-batch: a distance glide peels on every frame it moves the camera, and composes once per peel', e.count.composite * 9 === e.count.peel && e.count.peel > 0,
-       '(frames ' + frames + ', peel ' + e.count.peel + ', composite ' + e.count.composite + ')');
+    // Plus ONE composition at rest (28.09, steady-60): while the camera moves the bounced leg runs on a budget of BVH visits,
+    // and the redraw SETTLE ms after the glide composes the exact map once more - from the same layers, no peel.
+    const exact = v.surface && v.surface.bounce ? 1 : 0;
+    ok('viewer-batch: a distance glide peels on every frame it moves the camera, composes once per peel and once more exactly at rest', e.count.composite === e.count.peel / 9 + exact && e.count.peel > 0,
+       '(frames ' + frames + ', peel ' + e.count.peel + ', composite ' + e.count.composite + ', leg ' + exact + ')');
     ok('viewer-batch: never more compositions than frames drawn', e.count.composite <= e.count.frame, '(' + e.count.composite + ' / ' + e.count.frame + ')');
     // At 50 m the easing tail that moves nothing by half a pixel is not composed any more (16 compositions a notch before).
     const e2 = env(web), v2 = loaded(e2, 1, 50);

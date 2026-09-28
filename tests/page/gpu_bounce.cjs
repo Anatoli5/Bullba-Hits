@@ -98,7 +98,19 @@ window.__gpuBounce = function (sign, trackFirst, options) {
   // options.damage: the expected-damage map - an alpha and a non-penetration damage, so the share differs from the chance.
   if (options.damage) { shell.alpha = 300; shell.nonPiercingArmorDamage = 90; }
   out.carryMatters = 0; out.ricochetColour = 0; out.direct = 0; out.directBad = 0;
-  surface.render(camera, anchor, shell, 'accessible', .35, 'high', W, H, 1, 'always', options.damage ? 'damage' : 'chance');
+  // options.moving (28.09, steady-60): first the frame of a camera that has just moved under Ricochet trace "Always" - the
+  // leg on its budget of BVH visits (options.budget lowers it: the negative control) - read and kept; then the same camera
+  // SETTLE ms later, which must be the exact map again.
+  let moving = null;
+  if (options.moving) {
+    if (options.budget) surface.movingBudget = options.budget;
+    surface.render(camera, anchor, shell, 'accessible', .35, 'high', W, H, 1, 'always', 'chance');
+    moving = {budget: surface.material.uniforms.uLegBudget.value, pending: surface.bouncePending, data: new Float32Array(W * H * 4), agree: 0, zone: 0};
+    renderer.readRenderTargetPixels(surface.result, 0, 0, W, H, moving.data);
+    surface.movedAt = -1e9;
+  }
+  surface.render(camera, anchor, shell, 'accessible', .35, 'high', W, H, 1, options.moving ? 'always' : 'exact', options.damage ? 'damage' : 'chance');
+  if (moving) { moving.after = surface.material.uniforms.uLegBudget.value; moving.pendingAfter = surface.bouncePending; }
   const data = new Float32Array(W * H * 4); renderer.readRenderTargetPixels(surface.result, 0, 0, W, H, data);
   // The accessible palette's inverse: g rises to .75 on the lower half, only the upper half goes past it.
   const chanceOf = function (r, g) { return g > .75 + 1e-6 ? .5 + (.95 - r) / 1.5 : (g - .18) / 1.14; };
@@ -129,6 +141,7 @@ window.__gpuBounce = function (sign, trackFirst, options) {
       if (Math.abs((restart.chance || 0) - r.chance) >= 5) out.carryMatters++; }
     const cpuZone = r.reason === 'penetration', cpu = cpuZone ? (options.damage ? r.expectedShare : r.chance / 100) : null;
     if (options.damage && cpuZone && Math.abs(r.expectedShare - r.chance / 100) > .05) out.damageMatters = (out.damageMatters || 0) + 1;
+    if (moving) { const ma = moving.data[i + 3], mz = ma - 4 * Math.floor(ma / 4) >= 2; if (mz) moving.zone++; if (mz === cpuZone) moving.agree++; }
     out.compared++; if (zone) out.zone++; if (cpuZone) { out.cpuZone++; out.cpuMax = Math.max(out.cpuMax || 0, r.chance); }
     const gpu = zone ? chanceOf(data[i], data[i + 1]) : null;
     // Behind a screen - a skirt, the face of a collide-once body the shell ricochets inside - the composite greys the
@@ -143,6 +156,7 @@ window.__gpuBounce = function (sign, trackFirst, options) {
     if (zone !== cpuZone || off) { if (out.mismatches.length < 5) out.mismatches.push({px: px, py: py, cpu: cpu, gpu: gpu, layers: (r.layers || []).map(function (l) { return l.material; }).join('+')}); out.bad = (out.bad || 0) + 1; }
   }
   surface.dispose(); renderer.dispose(); canvas.remove();
+  if (moving) { delete moving.data; out.moving = moving; }
   return out;
 };`;
 
@@ -206,6 +220,17 @@ async function main() {
     // A shell with enableTraceRicochet false: lost at the ricochet - no zone, the plain ricochet colour, no leg on the CPU.
     const nt = await page.evaluate('__gpuBounce(1,false,{noTrace:true})');
     ok('no-trace shell: no second leg on either side, the ricochet colour everywhere', nt.compared > 200 && nt.zone === 0 && nt.cpuZone === 0 && nt.ricochetColour === nt.compared, '(compared ' + nt.compared + ', zone ' + nt.zone + ', CPU zone ' + nt.cpuZone + ', ricochet colour ' + nt.ricochetColour + ')');
+    // 28.09 (steady-60): the leg on a budget of BVH visits while the camera moves, exact again once it stands - both x
+    // directions; this scene's legs are short, so the moving frame is the exact one. Negative control: a budget of one
+    // visit cuts every leg (no zone while moving), and the frame at rest has it back.
+    for (const sign of [1, -1]) {
+      const mv = await page.evaluate('__gpuBounce(' + sign + ',false,{moving:true})'), m = mv.moving || {};
+      ok('camera moving, ' + (sign > 0 ? '+x' : '-x') + ': the leg runs on its budget and a redraw at rest is asked for', m.budget === 512 && m.pending === true, JSON.stringify(m));
+      ok('camera moving, ' + (sign > 0 ? '+x' : '-x') + ': short legs are within the budget - zone as on the CPU on every compared pixel', mv.compared > 200 && m.agree === mv.compared, '(' + m.agree + ' of ' + mv.compared + ')');
+      ok('camera at rest, ' + (sign > 0 ? '+x' : '-x') + ': the exact leg again, zone and chance equal the CPU walk on every pixel', m.after > 1e9 && m.pendingAfter === false && mv.compared > 200 && mv.cpuZone > 200 && !mv.bad, '(' + (mv.bad || 0) + ' of ' + mv.compared + ' differ, e.g. ' + JSON.stringify(mv.mismatches) + ')');
+    }
+    const cut = await page.evaluate('__gpuBounce(1,false,{moving:true,budget:1})'), cm = cut.moving || {};
+    ok('negative control: a budget of one visit leaves no zone while moving, the exact one at rest', cm.budget === 1 && cm.zone === 0 && cut.cpuZone > 200 && !cut.bad, JSON.stringify(cm));
     const lit = await page.evaluate('__gpuBounce(-1,true,{lit:true})');
     ok('Soft lighting with the leg: the lit composite compiles and flags the same zone as the CPU (the light scales the colour)', lit.lit === true && lit.bounce === true && !lit.bad, '(lit ' + lit.lit + ', ' + (lit.bad || 0) + ' differ)');
     ok('no uncaught exception in the page', page.errors.length === 0, page.errors.slice(0, 3).join(' | '));

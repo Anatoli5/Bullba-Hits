@@ -61,7 +61,7 @@ window.__gpuWheels = function (vehicle, view, kind, pen) {
   view = Object.assign({}, view, {eye: eye});
   camera.position.copy(page(view.eye)); camera.lookAt(anchor); camera.updateMatrixWorld(); camera.updateProjectionMatrix();
   const shell = B.shell(kind, pen, 100);
-  surface.render(camera, anchor, shell, 'accessible', .35, 'high', W, H, 1, 'always', 'chance');
+  surface.render(camera, anchor, shell, 'accessible', .35, 'high', W, H, 1, 'exact', 'chance');
   const data = new Float32Array(W * H * 4); renderer.readRenderTargetPixels(surface.result, 0, 0, W, H, data);
   const paletteOf = function (p) { const lo = [.63, .18, .55], mid = [.95, .75, .31], hi = [.20, .84, .76];
     return p < .5 ? lo.map(function (c, k) { return c + (mid[k] - c) * p * 2; }) : mid.map(function (c, k) { return c + (hi[k] - c) * (p * 2 - 1); }); };

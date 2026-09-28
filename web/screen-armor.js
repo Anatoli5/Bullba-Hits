@@ -133,11 +133,18 @@ void main(){vUV=position.xy*.5+.5;gl_Position=vec4(position.xy,0.0,1.0);}`;
 // CPU. The origin stays fixed, so the distances are the leg's own and nothing accumulates. The traversal is the
 // library's _bvhIntersectFirstHit with the key in place of the plain distance; a box that ends before the last
 // contact or begins past the best candidate is not opened. TIE_EPS: defined at the top of the composite.
+// THE LEG'S WORK WHILE THE CAMERA MOVES (28.09, steady-60): legVisits counts down the BVH nodes a leg may open, uLegBudget
+// per leg (render() sets it). A few pixels whose mirrored ray grazes a large body run thousands of visits - and a GPU
+// draws the pass no faster than its slowest pixels: 7.6 ms of composite on a heavy model where 512 visits take 2.1 ms and
+// change no pixel there. At rest the budget is unlimited (exact, what the CPU checks compare); a leg that runs out while
+// moving is read as flying past - the plain ricochet colour - until the redraw at rest.
+int legVisits;
 bool nextContact(vec3 origin,vec3 direction,float lastDist,int lastId,out float dist,out int id,out vec3 normal){
  dist=INFINITY;id=0x7fffffff;normal=vec3(0.0);bool found=false;
  vec3 invDir=1.0/direction;
  int ptr=0;uint stack[BVH_STACK_DEPTH];stack[0]=0u;
  while(ptr>-1&&ptr<BVH_STACK_DEPTH){
+  if(--legVisits<0)break;
   uint node=stack[ptr];ptr--;
   vec3 lo=invDir*(texelFetch1D(uBVH.bvhBounds,node*2u).xyz-origin),hi=invDir*(texelFetch1D(uBVH.bvhBounds,node*2u+1u).xyz-origin);
   vec3 near=min(lo,hi),far=max(lo,hi);
@@ -166,7 +173,7 @@ bool nextContact(vec3 origin,vec3 direction,float lastDist,int lastId,out float 
 // -4 = a second ricochet (the shell is lost), -2 = flies past, -1 = unknown, 0..1 = chance on main armour.
 float bounceLeg(vec3 origin,vec3 direction,float remaining,float nominal){
  Walk w;w.remaining=remaining;w.nominal=nominal;w.jetStart=0.0;w.jetRate=0.0;w.jet=false;w.screens=0;w.gate=1.0;
- int ignored[${COUNT}];int ignoredCount=0;
+ int ignored[${COUNT}];int ignoredCount=0;legVisits=uLegBudget;
  float at=-1.0;int id=-1; // the key of the last contact; (-1, -1) lets the first one be anything the triangle test accepts
  // A collide-once body met again (the far face of a wheel, of a track) is skipped without taking one of the COUNT
  // contacts (review of 5f2bee5: a wheel spent two, and a leg through three wheels lost the hull). The loop stays bounded:
@@ -175,7 +182,7 @@ float bounceLeg(vec3 origin,vec3 direction,float remaining,float nominal){
  for(int i=0;i<${2 * COUNT};i++){
   if(counted>=${COUNT})break;
   vec3 faceNormal;float next;int nextId;
-  if(!nextContact(origin,direction,at,id,next,nextId,faceNormal))return -2.0;
+  if(!nextContact(origin,direction,at,id,next,nextId,faceNormal)||legVisits<0)return -2.0;
   at=next;id=nextId;
   bool skip=false;for(int j=0;j<${COUNT};j++){if(j>=ignoredCount)break;if(ignored[j]==id)skip=true;}if(skip)continue;
   counted++;
@@ -204,7 +211,7 @@ ${declarations}
 uniform highp sampler2D uMaterials; uniform vec4 uPen; uniform vec4 uShell; uniform ivec4 uFlags;
 uniform bool uClassic; uniform float uOpacity;
 uniform vec3 uOrigin; uniform vec3 uAnchor; uniform vec3 uForward;
-uniform mat4 uCameraWorld; uniform mat4 uInvProjection; uniform float uRicochetLoss; uniform int uBounce; uniform float uTint;
+uniform mat4 uCameraWorld; uniform mat4 uInvProjection; uniform float uRicochetLoss; uniform int uBounce; uniform float uTint; uniform int uLegBudget;
 // Expected damage instead of the chance: (on 0/1, alpha, non-penetration base HP, spall penetration mm).
 uniform vec4 uDamage; // ASCII only in here: this text is compiled as GLSL source
 ${lightUniforms}${traversal}
@@ -441,7 +448,7 @@ void main(){
     if(this.compositeQuad){this.compositeScene.remove(this.compositeQuad);this.compositeQuad.geometry.dispose();this.material.dispose();}
     var uniforms={uMaterials:{value:this.materialTexture},uPen:{value:new T.Vector4()},uShell:{value:new T.Vector4()},uFlags:{value:new Int32Array(4)},uClassic:{value:false},uOpacity:{value:.35},
       uOrigin:{value:new T.Vector3()},uAnchor:{value:new T.Vector3()},uForward:{value:new T.Vector3()},
-      uCameraWorld:{value:new T.Matrix4()},uInvProjection:{value:new T.Matrix4()},uRicochetLoss:{value:0},uBounce:{value:1},uTint:{value:.5},uDamage:{value:new T.Vector4()}};
+      uCameraWorld:{value:new T.Matrix4()},uInvProjection:{value:new T.Matrix4()},uRicochetLoss:{value:0},uBounce:{value:1},uTint:{value:.5},uLegBudget:{value:LEG_EXACT},uDamage:{value:new T.Vector4()}};
     for(var i=0;i<=COUNT;i++)uniforms['uLayer'+i]={value:this.targets[i].texture};
     if(this.bounce){var lib=root.MeshBVHLib;if(!this.bvhStruct){this.bvhStruct=new lib.MeshBVHUniformStruct();this.faceMaterial=new lib.FloatVertexAttributeTexture();}
       uniforms.uBVH={value:this.bvhStruct};uniforms.uFaceMaterial={value:this.faceMaterial};}
@@ -783,6 +790,9 @@ void main(){
   // A zoom is composed anew like any other camera change (user, 25.09: with one step per wheel notch the plain
   // redraw is smooth enough; the 2D-scaled picture of 24.09 was dropped).
   var SETTLE=150;
+  // The bounced leg's BVH visits: unlimited at rest, MOVING_BUDGET while the camera moves (Surface.movingBudget can
+  // lower it for a test). 512 on the heavy hit of stack-compare: composite 7.6 -> 2.1 ms, no pixel changed.
+  var LEG_EXACT=1073741824,MOVING_BUDGET=512;
   // Monotonic: Date.now() can step backwards when the system clock is corrected after a resume, and the settle
   // comparison below would then never be satisfied again - a full-screen composition every 160 ms while idle.
   function clock(){return root.performance&&root.performance.now?root.performance.now():Date.now();}
@@ -810,9 +820,9 @@ void main(){
     next[8]=flags[0];next[9]=flags[1];next[10]=flags[2];next[11]=flags[3];
     next[12]=u.uClassic.value?1:0;next[13]=u.uOpacity.value;next[14]=u.uRicochetLoss.value;next[15]=u.uBounce.value;next[16]=u.uTint.value;
     next[17]=damage.x;next[18]=damage.y;next[19]=damage.z;next[20]=damage.w;next[21]=buffer.x;next[22]=buffer.y;
-    var range=u.uLightRange?u.uLightRange.value:null;next[23]=range?range.x:0;next[24]=range?range.y:0;
+    var range=u.uLightRange?u.uLightRange.value:null;next[23]=range?range.x:0;next[24]=range?range.y:0;next[25]=u.uLegBudget.value;
     // NaN never equals itself, so a value that is not a number keeps the old every-frame composite.
-    for(i=0;i<25;i++)if(sig[i]!==next[i]){sig[i]=next[i];changed=true;}
+    for(i=0;i<26;i++)if(sig[i]!==next[i]){sig[i]=next[i];changed=true;}
     return changed;
   };
   Surface.prototype.render=function(camera,anchor,shell,palette,opacity,quality,width,height,pixelRatio,bounceMode,mode){
@@ -832,13 +842,18 @@ void main(){
     // Stale: the camera has moved or zoomed, or the layers were dropped (a new pose, a new size, a new model).
     var now=clock(),stale=this.key===null||this.cameraChange(camera);
     if(stale){this.movedAt=now;this.keepCamera(camera);}
-    var settled=bounceMode==='always'||!(Math.max(0,now-(this.movedAt||0))<SETTLE);
+    // bounceMode 'always': the leg is live while the camera moves, on a budget of BVH visits (MOVING_BUDGET), and exact
+    // again SETTLE ms after the last move - the caller redraws on bouncePending. 'exact' (the CPU/GPU checks): exact on
+    // every draw. 'idle': no leg until the camera stands still.
+    var moving=Math.max(0,now-(this.movedAt||0))<SETTLE,settled=bounceMode==='always'||bounceMode==='exact'||!moving;
+    var budgeted=moving&&bounceMode==='always';
     // The bounced leg is traced through the GPU BVH, which a previewed pose has left behind (pose(), bvhStale): off
     // until update() rebuilds it, however long the drag holds still (VIEW-01).
     // A shell with traceRicochet false (enableTraceRicochet, ballistics.js shell) is lost at its ricochet: no leg at all, the
     // plain ricochet colour and no zone - the same as the CPU walk's final ricochet.
     var trace=this.bounce&&s.traceRicochet!==false;
-    u.uBounce.value=trace&&settled&&!this.bvhStale?1:0;this.bouncePending=trace&&!settled;
+    u.uBounce.value=trace&&settled&&!this.bvhStale?1:0;this.bouncePending=trace&&moving&&(!settled||budgeted);
+    u.uLegBudget.value=budgeted?(this.movingBudget>0?this.movingBudget:MOVING_BUDGET):LEG_EXACT;
     if(stale){
       this.captureCamera.copy(camera);var distance=camera.position.distanceTo(anchor),span=Math.max(5,this.radius*3);this.captureCamera.near=Math.max(.01,distance-span);this.captureCamera.far=distance+span;this.captureCamera.updateProjectionMatrix();
       var p=this.peelMaterial.uniforms;p.uOrigin.value.copy(camera.position);p.uAnchor.value.copy(anchor);p.uForward.value.copy(anchor).sub(camera.position).normalize();
@@ -874,13 +889,14 @@ void main(){
     var target=new T.WebGLRenderTarget(size.x,size.y,{type:T.FloatType,format:T.RGBAFormat,minFilter:T.NearestFilter,magFilter:T.NearestFilter,depthBuffer:false,stencilBuffer:false});
     var scene=new T.Scene(),parent=this.quad.parent,visible=this.quad.visible,previous=renderer.getRenderTarget();
     this.quad.visible=true;scene.add(this.quad);
+    var u=this.material.uniforms,was=u.uLegBudget.value;u.uLegBudget.value=LEG_EXACT;   // the exact leg, as at rest
     try{
       this.composite(); // both passes, so the samples carry the outline and the pattern
       renderer.setRenderTarget(target);renderer.render(scene,quadView());
       var data=new Float32Array(size.x*size.y*4);renderer.readRenderTargetPixels(target,0,0,size.x,size.y,data);
       return pixels.map(function(p){var x=Math.min(size.x-1,Math.max(0,Math.round(p[0]))),y=Math.min(size.y-1,Math.max(0,size.y-1-Math.round(p[1]))),i=(y*size.x+x)*4;
         return [data[i],data[i+1],data[i+2],data[i+3]];});
-    }finally{renderer.setRenderTarget(previous);scene.remove(this.quad);if(parent)parent.add(this.quad);this.quad.visible=visible;target.dispose();}
+    }finally{u.uLegBudget.value=was;renderer.setRenderTarget(previous);scene.remove(this.quad);if(parent)parent.add(this.quad);this.quad.visible=visible;target.dispose();}
   };
   Surface.prototype.dispose=function(){if(this.quad){if(this.quad.parent)this.quad.parent.remove(this.quad);this.quad.geometry.dispose();}if(this.markMaterial)this.markMaterial.dispose();if(this.compositeQuad)this.compositeQuad.geometry.dispose();if(this.material)this.material.dispose();if(this.result)this.result.dispose();if(this.mesh)this.mesh.geometry.dispose();if(this.peelMaterial)this.peelMaterial.dispose();if(this.materialTexture)this.materialTexture.dispose();if(this.bvhStruct)this.bvhStruct.dispose();if(this.faceMaterial)this.faceMaterial.dispose();this.bvh=null;this.targets.forEach(function(t){t.dispose();});if(this.depth)this.depth.dispose();if(this.blank)this.blank.dispose();
     // Soft lighting goes with the instance. The light mesh shares the peel geometry, already disposed above.
