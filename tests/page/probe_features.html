@@ -1,0 +1,217 @@
+<!doctype html>
+<!-- Stack-environment probe (28.09.2026, task stack-env). NOT part of the product and not wired into tools/check.py.
+     Opens from file:// and measures what the browser can do: WebAssembly features, workers, OffscreenCanvas, WebGL2 and
+     its extensions, WebGPU, requestAnimationFrame pacing, performance.now resolution, module scripts, file:// reads.
+     Results: window.__probe (object, window.__probeDone = true when finished), the page text, and one console line per
+     section 'Bullba Hits probe <section>: <json>' - in the game these lines land in game.log.
+     Companion file: probe_features_worker.js (same folder). How to run it in the game: outputs/stack-env-2026-09-28.md. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Stack probe</title>
+<style>body{font:13px/1.4 Consolas,monospace;background:#111;color:#ddd;margin:12px}pre{white-space:pre-wrap}</style>
+</head>
+<body>
+<pre id="out">running...</pre>
+<canvas id="c" width="64" height="64" style="display:none"></canvas>
+<script>
+(function(){
+'use strict';
+var R=window.__probe={};window.__probeDone=false;
+function log(section){try{console.info('Bullba Hits probe '+section+': '+JSON.stringify(R[section]));}catch(e){}}
+function bytes(a){return new Uint8Array(a);}
+function valid(a){try{return WebAssembly.validate(bytes(a));}catch(e){return 'throws: '+e.message;}}
+function wait(ms){return new Promise(function(r){setTimeout(r,ms);});}
+function withTimeout(p,ms,label){return Promise.race([p,wait(ms).then(function(){return 'timeout '+ms+' ms'+(label?' ('+label+')':'');})]);}
+function err(e){return (e&&e.name?e.name+': ':'')+(e&&e.message?e.message:String(e));}
+
+function env(){
+  R.env={userAgent:navigator.userAgent,protocol:location.protocol,origin:String(self.origin),isSecureContext:self.isSecureContext,
+    crossOriginIsolated:self.crossOriginIsolated,hardwareConcurrency:navigator.hardwareConcurrency,deviceMemory:navigator.deviceMemory,
+    devicePixelRatio:window.devicePixelRatio,visibility:document.visibilityState,
+    SharedArrayBuffer:typeof SharedArrayBuffer,Atomics:typeof Atomics,AtomicsWaitAsync:typeof Atomics!=='undefined'&&typeof Atomics.waitAsync,
+    structuredClone:typeof structuredClone,requestIdleCallback:typeof requestIdleCallback,schedulerPostTask:typeof(self.scheduler&&scheduler.postTask),
+    isInputPending:typeof(navigator.scheduling&&navigator.scheduling.isInputPending),DecompressionStream:typeof DecompressionStream,
+    CompressionStream:typeof CompressionStream,deflateRaw:(function(){try{new DecompressionStream('deflate-raw');return 'ok';}catch(e){return err(e);}})(),gzip:(function(){try{new DecompressionStream('gzip');return 'ok';}catch(e){return err(e);}})(),createImageBitmap:typeof createImageBitmap,BigInt64Array:typeof BigInt64Array,
+    indexedDB:typeof indexedDB,localStorage:(function(){try{localStorage.setItem('__probe','1');localStorage.removeItem('__probe');return 'ok';}catch(e){return err(e);}})(),
+    OffscreenCanvas:typeof OffscreenCanvas,transferControlToOffscreen:typeof HTMLCanvasElement.prototype.transferControlToOffscreen,
+    navigatorGpu:typeof navigator.gpu,WebGL2RenderingContext:typeof WebGL2RenderingContext};
+  log('env');
+}
+
+function wasm(){
+  var H=[0,97,115,109,1,0,0,0];
+  var T={
+    mvp:H.concat([1,4,1,96,0,0,3,2,1,0,10,4,1,2,0,11]),
+    simd128:H.concat([1,5,1,96,0,1,123,3,2,1,0,10,10,1,8,0,65,0,253,15,253,98,11]),
+    relaxedSimd:H.concat([1,5,1,96,0,1,123,3,2,1,0,10,15,1,13,0,65,1,253,15,65,2,253,15,253,128,2,11]),
+    bulkMemory:H.concat([1,4,1,96,0,0,3,2,1,0,5,3,1,0,1,10,14,1,12,0,65,0,65,0,65,0,252,10,0,0,11]),
+    saturatingFloatToInt:H.concat([1,5,1,96,0,1,127,3,2,1,0,10,11,1,9,0,67,0,0,0,0,252,0,11]),
+    signExtension:H.concat([1,5,1,96,0,1,127,3,2,1,0,10,7,1,5,0,65,0,192,11]),
+    multiValue:H.concat([1,6,1,96,0,2,127,127,3,2,1,0,10,8,1,6,0,65,0,65,0,11]),
+    referenceTypes:H.concat([1,4,1,96,0,0,3,2,1,0,10,7,1,5,0,208,111,26,11]),
+    exceptionsLegacy:H.concat([1,4,1,96,0,0,3,2,1,0,10,8,1,6,0,6,64,25,11,11]),
+    exceptionsExnref:H.concat([1,4,1,96,0,0,3,2,1,0,10,8,1,6,0,31,64,0,11,11]),
+    tailCall:H.concat([1,4,1,96,0,0,3,2,1,0,10,6,1,4,0,18,0,11]),
+    threadsSharedMemory:H.concat([5,4,1,3,1,1]),
+    memory64:H.concat([5,3,1,4,1]),
+    gcStruct:H.concat([1,5,1,95,1,127,0])
+  };
+  var out={WebAssembly:typeof WebAssembly,instantiateStreaming:typeof(WebAssembly&&WebAssembly.instantiateStreaming),compileStreaming:typeof(WebAssembly&&WebAssembly.compileStreaming)};
+  Object.keys(T).forEach(function(k){out[k]=valid(T[k]);});
+  // BigInt <-> i64 at the JS boundary: (func (export "f") (param i64) (result i64) local.get 0)
+  try{var m=new WebAssembly.Module(bytes(H.concat([1,6,1,96,1,126,1,126,3,2,1,0,7,5,1,1,102,0,0,10,6,1,4,0,32,0,11])));
+    out.bigIntI64=String(new WebAssembly.Instance(m).exports.f(5n))==='5';}catch(e){out.bigIntI64=err(e);}
+  try{var sm=new WebAssembly.Memory({initial:1,maximum:1,shared:true});out.sharedMemoryObject=Object.prototype.toString.call(sm.buffer);}catch(e){out.sharedMemoryObject=err(e);}
+  // Memory ceiling: grow one memory step by step, keep the last size reached, then drop it.
+  try{var mem=new WebAssembly.Memory({initial:1,maximum:65536}),reached=64*1024;
+    [16384,32768,49152,65535].some(function(target){try{mem.grow(target-mem.buffer.byteLength/65536);reached=mem.buffer.byteLength;return false;}catch(e){out.memoryGrowStop=err(e);return true;}});
+    out.memoryMaxReachedMiB=Math.round(reached/1048576);mem=null;}catch(e){out.memoryGrow=err(e);}
+  R.wasm=out;log('wasm');
+}
+
+function webgl(){
+  var out={};var c=document.getElementById('c');var gl=null;
+  try{gl=c.getContext('webgl2',{antialias:false});}catch(e){out.error=err(e);}
+  out.webgl2=!!gl;
+  if(!gl){try{out.webgl1=!!document.createElement('canvas').getContext('webgl');}catch(e){out.webgl1=err(e);}R.webgl=out;log('webgl');return;}
+  var dbg=gl.getExtension('WEBGL_debug_renderer_info');
+  out.vendor=dbg?gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL):gl.getParameter(gl.VENDOR);
+  out.renderer=dbg?gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL):gl.getParameter(gl.RENDERER);
+  out.version=gl.getParameter(gl.VERSION);out.glsl=gl.getParameter(gl.SHADING_LANGUAGE_VERSION);
+  ['MAX_TEXTURE_SIZE','MAX_3D_TEXTURE_SIZE','MAX_ARRAY_TEXTURE_LAYERS','MAX_DRAW_BUFFERS','MAX_COLOR_ATTACHMENTS','MAX_SAMPLES','MAX_UNIFORM_BLOCK_SIZE',
+   'MAX_TEXTURE_IMAGE_UNITS','MAX_VERTEX_TEXTURE_IMAGE_UNITS','MAX_COMBINED_TEXTURE_IMAGE_UNITS','MAX_VERTEX_UNIFORM_VECTORS','MAX_FRAGMENT_UNIFORM_VECTORS',
+   'MAX_TRANSFORM_FEEDBACK_SEPARATE_ATTRIBS','MAX_RENDERBUFFER_SIZE'].forEach(function(k){out[k]=gl.getParameter(gl[k]);});
+  out.extensions=gl.getSupportedExtensions();
+  out.EXT_color_buffer_float=!!gl.getExtension('EXT_color_buffer_float');
+  out.OES_texture_float_linear=!!gl.getExtension('OES_texture_float_linear');
+  out.EXT_float_blend=!!gl.getExtension('EXT_float_blend');
+  // Render into an RGBA32F target and read the float back: the capability the armour screen relies on.
+  try{
+    var tex=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,tex);gl.texStorage2D(gl.TEXTURE_2D,1,gl.RGBA32F,4,4);
+    var fb=gl.createFramebuffer();gl.bindFramebuffer(gl.FRAMEBUFFER,fb);gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,tex,0);
+    out.rgba32fComplete=gl.checkFramebufferStatus(gl.FRAMEBUFFER)===gl.FRAMEBUFFER_COMPLETE;
+    if(out.rgba32fComplete){gl.viewport(0,0,4,4);gl.clearBufferfv(gl.COLOR,0,new Float32Array([1.5,-2.25,1e6,0.125]));
+      var px=new Float32Array(4);gl.readPixels(0,0,1,1,gl.RGBA,gl.FLOAT,px);out.rgba32fReadBack=Array.prototype.slice.call(px);}
+    gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.deleteFramebuffer(fb);gl.deleteTexture(tex);
+  }catch(e){out.rgba32f=err(e);}
+  var ctxAttr=gl.getContextAttributes();out.contextAttributes=ctxAttr;
+  R.webgl=out;log('webgl');
+}
+
+function offscreen(){
+  var out={};
+  try{var oc=new OffscreenCanvas(8,8);out.offscreenWebgl2=!!oc.getContext('webgl2');}catch(e){out.offscreenWebgl2=err(e);}
+  try{var oc2=new OffscreenCanvas(8,8);out.offscreen2d=!!oc2.getContext('2d');}catch(e){out.offscreen2d=err(e);}
+  R.offscreen=out;log('offscreen');
+}
+
+function workerTest(make,label){
+  return new Promise(function(resolve){
+    var w;try{w=make();}catch(e){resolve({construct:err(e)});return;}
+    var done=false;function fin(v){if(done)return;done=true;try{w.terminate();}catch(e){}resolve(v);}
+    w.onmessage=function(ev){fin({ok:true,reply:ev.data});};
+    w.onerror=function(ev){ev.preventDefault&&ev.preventDefault();fin({errorEvent:ev.message||'error event (no message)'});};
+    w.onmessageerror=function(){fin({messageerror:true});};
+    try{w.postMessage({ping:1});}catch(e){fin({postMessage:err(e)});}
+    setTimeout(function(){fin({timeout:true});},4000);
+  });
+}
+var WORKER_BODY="self.onmessage=function(e){var r={type:typeof WorkerGlobalScope,origin:String(self.origin),coi:self.crossOriginIsolated,"+
+  "wasm:typeof WebAssembly,offscreen:typeof OffscreenCanvas,sab:typeof SharedArrayBuffer};"+
+  "try{r.offscreenWebgl2=!!new OffscreenCanvas(4,4).getContext('webgl2');}catch(x){r.offscreenWebgl2=String(x);}"+
+  "if(e.data&&e.data.module){try{r.moduleInstantiated=!!new WebAssembly.Instance(e.data.module);}catch(x){r.moduleInstantiated=String(x);}}"+
+  "if(e.data&&e.data.buffer){r.bufferBytes=e.data.buffer.byteLength;}"+
+  "if(e.data&&e.data.importBlob){try{importScripts(e.data.importBlob);r.importScriptsBlob=self.__probeImported===1?'ok':'ran?';}catch(x){r.importScriptsBlob=String(x);}}"+
+  "if(e.data&&e.data.importFile){try{importScripts(e.data.importFile);r.importScriptsFile='ok';}catch(x){r.importScriptsFile=String(x);}}"+
+  "if(e.data&&e.data.shared){r.sharedBufferType=Object.prototype.toString.call(e.data.shared.buffer);}"+
+  "try{importScripts;r.importScripts=typeof importScripts;}catch(x){r.importScripts='absent';}"+
+  "postMessage(r);};";
+function workers(){
+  var out={};var jobs=[];
+  function add(k,f){jobs.push(workerTest(f,k).then(function(v){out[k]=v;}));}
+  add('classicFileUrl',function(){return new Worker('probe_features_worker.js');});
+  add('moduleFileUrl',function(){return new Worker('probe_features_worker.js',{type:'module'});});
+  add('classicBlob',function(){return new Worker(URL.createObjectURL(new Blob([WORKER_BODY],{type:'text/javascript'})));});
+  add('moduleBlob',function(){return new Worker(URL.createObjectURL(new Blob([WORKER_BODY],{type:'text/javascript'})),{type:'module'});});
+  add('classicDataUrl',function(){return new Worker('data:text/javascript,'+encodeURIComponent(WORKER_BODY));});
+  return Promise.all(jobs).then(function(){
+    // A compiled WebAssembly.Module and a transferred ArrayBuffer sent to a blob worker.
+    return workerTest(function(){
+      var w=new Worker(URL.createObjectURL(new Blob([WORKER_BODY],{type:'text/javascript'})));
+      var mod=new WebAssembly.Module(bytes([0,97,115,109,1,0,0,0]));var buf=new ArrayBuffer(1<<20);
+      var post=w.postMessage.bind(w);w.postMessage=function(){post({module:mod,buffer:buf},[buf]);};return w;
+    }).then(function(v){out.blobWithModuleAndTransfer=v;});
+  }).then(function(){
+    // importScripts inside a blob worker: of another blob URL (worker libraries shipped as strings) and of a file:// URL.
+    return workerTest(function(){
+      var w=new Worker(URL.createObjectURL(new Blob([WORKER_BODY],{type:'text/javascript'})));
+      var lib=URL.createObjectURL(new Blob(['self.__probeImported=1;'],{type:'text/javascript'}));
+      var file=new URL('probe_features_worker.js',location.href).href;var post=w.postMessage.bind(w);w.postMessage=function(){post({importBlob:lib,importFile:file});};return w;
+    }).then(function(v){out.importScriptsInBlobWorker=v;});
+  }).then(function(){
+    // Shared wasm memory posted to a worker: works only where the page may share memory across agents.
+    return workerTest(function(){
+      var w=new Worker(URL.createObjectURL(new Blob([WORKER_BODY],{type:'text/javascript'})));
+      var sm=new WebAssembly.Memory({initial:1,maximum:1,shared:true});var post=w.postMessage.bind(w);w.postMessage=function(){post({shared:sm});};return w;
+    }).then(function(v){out.sharedMemoryToWorker=v;});
+  }).then(function(){
+    try{var oc=document.createElement('canvas').transferControlToOffscreen();out.transferControlToOffscreen=Object.prototype.toString.call(oc);}catch(e){out.transferControlToOffscreen=err(e);}
+    R.workers=out;log('workers');
+  });
+}
+
+function files(){
+  var out={};
+  var p1=withTimeout(fetch('probe_features_worker.js').then(function(r){return 'status '+r.status;},function(e){return err(e);}),4000,'fetch');
+  var p2=new Promise(function(resolve){try{var x=new XMLHttpRequest();x.open('GET','probe_features_worker.js');x.onload=function(){resolve('status '+x.status+' bytes '+(x.responseText||'').length);};
+    x.onerror=function(){resolve('error event');};x.send();}catch(e){resolve(err(e));}});
+  var p3=withTimeout(import('./probe_features_worker.js').then(function(){return 'loaded';},function(e){return err(e);}),4000,'import');
+  var p4=new Promise(function(resolve){var s=document.createElement('script');s.src='probe_features_worker.js';s.onload=function(){resolve('loaded');s.remove();};s.onerror=function(){resolve('error event');};document.head.appendChild(s);});
+  var p5=new Promise(function(resolve){var s=document.createElement('script');s.type='module';s.src='probe_features_worker.js?m';s.onload=function(){resolve('loaded');s.remove();};s.onerror=function(){resolve('error event');};document.head.appendChild(s);});
+  // WebAssembly compiled from bytes the page already holds (base64 inside a classic script is how a file:// page ships .wasm).
+  var p6=WebAssembly.compile(bytes([0,97,115,109,1,0,0,0])).then(function(){return 'ok';},function(e){return err(e);});
+  var p7=(typeof Response==='function'&&WebAssembly.compileStreaming)?WebAssembly.compileStreaming(new Response(bytes([0,97,115,109,1,0,0,0]),{headers:{'Content-Type':'application/wasm'}})).then(function(){return 'ok';},function(e){return err(e);}):Promise.resolve('absent');
+  return Promise.all([p1,p2,p3,p4,p5,p6,p7]).then(function(v){out.wasmCompileStreamingFromResponse=v[6];out.fetchFileUrl=v[0];out.xhrFileUrl=v[1];out.dynamicImportModule=v[2];out.classicScriptTag=v[3];out.moduleScriptTag=v[4];out.wasmCompileFromBytes=v[5];R.files=out;log('files');});
+}
+
+function webgpu(){
+  var out={navigatorGpu:typeof navigator.gpu};
+  if(!navigator.gpu){R.webgpu=out;log('webgpu');return Promise.resolve();}
+  return withTimeout(navigator.gpu.requestAdapter().then(function(a){
+    if(!a)return 'null adapter';
+    out.features=Array.from(a.features||[]);out.maxBufferSize=a.limits&&a.limits.maxBufferSize;out.maxComputeWorkgroupStorageSize=a.limits&&a.limits.maxComputeWorkgroupStorageSize;
+    return (a.requestAdapterInfo?a.requestAdapterInfo():Promise.resolve(a.info||{})).then(function(i){out.info={vendor:i.vendor,architecture:i.architecture,description:i.description};return 'adapter';});
+  },function(e){return err(e);}),5000,'requestAdapter').then(function(v){out.requestAdapter=v;R.webgpu=out;log('webgpu');});
+}
+
+function timing(){
+  var out={};
+  // performance.now granularity: smallest non-zero step seen over ~20 ms of busy polling.
+  var t0=performance.now(),prev=t0,min=Infinity,steps=0;while(performance.now()-t0<20){var t=performance.now();if(t!==prev){min=Math.min(min,t-prev);prev=t;steps++;}}
+  out.performanceNowMinStepMs=min;out.performanceNowSteps=steps;
+  out.timeOrigin=performance.timeOrigin?'present':'absent';
+  // requestAnimationFrame: 180 frames, intervals between rAF timestamps and between performance.now at callback.
+  var ts=[],now=[];
+  return new Promise(function(resolve){
+    function tick(t){ts.push(t);now.push(performance.now());if(ts.length<181)requestAnimationFrame(tick);else resolve();}
+    requestAnimationFrame(tick);setTimeout(resolve,8000);
+  }).then(function(){
+    function stats(a){var d=[];for(var i=1;i<a.length;i++)d.push(a[i]-a[i-1]);d.sort(function(x,y){return x-y;});
+      if(!d.length)return null;return {n:d.length,min:+d[0].toFixed(3),median:+d[d.length>>1].toFixed(3),p90:+d[Math.floor(d.length*.9)].toFixed(3),max:+d[d.length-1].toFixed(3)};}
+    out.rafTimestampIntervals=stats(ts);out.rafCallbackIntervals=stats(now);
+    // Whether rAF timestamps sit on a 1000/60 grid (vsync / begin-frame pacing) or are free-running.
+    if(ts.length>2){var g=1000/60,off=0;for(var i=1;i<ts.length;i++){var q=(ts[i]-ts[0])/g;off=Math.max(off,Math.abs(q-Math.round(q)));}out.rafOn60HzGridMaxErrorFrames=+off.toFixed(4);}
+    R.timing=out;log('timing');
+  });
+}
+
+function show(){document.getElementById('out').textContent=JSON.stringify(R,null,1);}
+var steps=[env,wasm,webgl,offscreen,workers,files,webgpu,timing];
+steps.reduce(function(p,f){return p.then(function(){try{return f();}catch(e){R['error_'+f.name]=err(e);}});},Promise.resolve())
+  .then(function(){R.finishedAt=new Date().toISOString();window.__probeDone=true;show();console.info('Bullba Hits probe done');},
+        function(e){R.fatal=err(e);window.__probeDone=true;show();});
+})();
+</script>
+</body>
+</html>
