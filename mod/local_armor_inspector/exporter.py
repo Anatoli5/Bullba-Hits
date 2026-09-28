@@ -2665,9 +2665,11 @@ SWEEP_ORDER = ('ttx', 'models')
 SWEEP_FILES = {'ttx': (TTX_SWEEP_DATA, TTX_SWEEP_KEY), 'models': (MODELS_SWEEP_DATA, MODELS_SWEEP_KEY)}
 SWEEP_LABELS = {'ttx': 'TTX', 'models': 'Model'}
 # Ms of work a vehicle before this machine has measured its own (SWEEP_PACE_ITEMS): the characteristics as measured in the
-# game (0.8.6, 26.09: 17 s of slices for 1202 built types, 14.1 ms), the models on the offline stand (25.09: 986 s for
-# 1107 vehicles, 0.89 s; docs/KNOWLEDGE.md 14).
-SWEEP_MS = {'ttx': 14.0, 'models': 890.0}
+# game (0.8.6, 26.09: 17 s of slices for 1202 built types, 14.1 ms), the models on the offline stand (28.09, havok-lazy:
+# 179 s for 1058 vehicles, 169 ms; 626 ms with the whole-graph reader, 890 ms on 25.09; docs/KNOWLEDGE.md 14).
+SWEEP_MS = {'ttx': 14.0, 'models': 170.0}
+# A collision model whose extraction (model_extract: read, parse, hash, write) took this long says so in the log.
+MODEL_SLOW_MS = 100.0
 # The marker before the page's progress file (24.09, earlier the same day): removed when found.
 TTX_SWEEP_OLD = 'ttx-sweep.json'
 # The mode flags of a vehicle, by name in the file and the descriptor property (vehicles.pyc 2.4.0.1). The second
@@ -3070,6 +3072,8 @@ class Exporter(object):
         self.package_conflicts = set()
         self.overrides = None
         self.attempts = {}
+        # Ms of each model extracted since the last model sweep's report (model_extract; the report prints and clears it).
+        self.model_ms = []
         self.scan_errors = set()
         self.summaries = {}
         self.model_refs = {}
@@ -3658,11 +3662,16 @@ class Exporter(object):
             for root in glob.glob(os.path.join(self.game, 'res_mods', '*')):
                 if os.path.isfile(os.path.join(root, name)) or os.path.isfile(os.path.join(root, resource)):
                     raise ValueError('res_mods overrides this collision model')
+            started = TTX_TIMER()
             data = self.read_resource(name)
             model = extract(data)
             model.update({'resource':name, 'sha256':hashlib.sha256(data).hexdigest()})
             write_data(path, 'model:'+key, model)
             self.attempts[key] = None
+            # The whole unit under the GIL: read, parse, hash, write (28.09, havok-lazy: 10 ms median, 48 ms p99; 76 ms and 1.1 s before).
+            ms = (TTX_TIMER() - started) * 1000.0
+            self.model_ms.append(ms)
+            if ms >= MODEL_SLOW_MS: LOG.info('Model %s extracted in %.0f ms (%d KB)', name, ms, len(data) // 1024)
         except Exception as exc:
             self.attempts[key] = str(exc)
             LOG.warning('Model export unavailable: %s: %s', resource, exc)
@@ -5315,6 +5324,11 @@ class Exporter(object):
                  time.time() - (sweep['clock'] or time.time()), sweep['workMs'] / max(1, sweep['built']),
                  100.0 * sweep['workMs'] / max(1e-9, sweep['wallMs']), 100.0 * SWEEP_SHARE, sweep['slices'],
                  1000.0 * sweep['last'], 1000.0 * (sweep['frame'] or 0.0))
+        if kind == 'models' and self.model_ms:
+            times = sorted(self.model_ms)
+            LOG.info('Model sweep: %d collision models extracted, %.1f ms median, %.1f ms p90, %.1f ms max (read, parse, write)',
+                     len(times), times[len(times) // 2], times[min(len(times) - 1, int(0.9 * len(times)))], times[-1])
+            self.model_ms = []
 
     def new_sweep(self, types, retry=False, confirmed=False):
         """The run state of a sweep over `types` (the progress file's count is 'next')."""
@@ -5660,8 +5674,8 @@ class Exporter(object):
     def models_step(self, type_name, sweep):
         """The model sweep's step on one type, one unit of work at a time so that a frame of the game passes between two of
         them: the plan (its top configuration's descriptor and collision resources), each collision model (model_extract,
-        the one extraction; 0.11 s median, 1.6 s p99 offline), then the vehicle file itself (export_vehicle, which finds its models
-        written). A failure of any unit is this vehicle's (by its key), the sweep goes on."""
+        the one extraction; 10 ms median, 48 ms p99 offline since 28.09 - 76 ms and 1.1 s before), then the vehicle file
+        itself (export_vehicle, which finds its models written). A failure of any unit is this vehicle's (by its key), the sweep goes on."""
         state = self.sweep_states['models']
         work = sweep.get('work')
         if work is not None and work['type'] != type_name: work = sweep['work'] = None

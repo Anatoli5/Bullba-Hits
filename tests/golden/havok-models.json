@@ -1,0 +1,61 @@
+{
+ "models": [
+  {
+   "decoded": 20351, 
+   "model": "6ddc0802b73f1bb0ce1272a71da9ecab70b3d57e7446c70d6954a1ac789104e2", 
+   "package": "last_stand.pkg", 
+   "raw": "59044efec12bb01e1ed9af62f43b38d9be362451a2923151c92af694ac33bf07", 
+   "resource": "last_stand/vehicles/german/G00_Obelisk_02_LS_bot/collision_client/Turret_01.havok"
+  }, 
+  {
+   "decoded": 6840, 
+   "model": "dd7425d2feb9416250c58ca478b625142a7e472d7ae9374f9603873ae8d01c38", 
+   "package": "vehicles_level_01.pkg", 
+   "raw": "a63fffafd9d4fd0eaafbe7811ba35a10c0af5265ec0e6137066944f2fde7c51a", 
+   "resource": "vehicles/chinese/Ch24_Type64_SH/collision_client/Hull_03.havok"
+  }, 
+  {
+   "decoded": 13096, 
+   "model": "d2e7472360aceb76d833f1dc35fd001007bc12904617ebb3efdd9c569a1d5be0", 
+   "package": "vehicles_level_09-part2.pkg", 
+   "raw": "61f930355bc98bba328adab975285dd84a797691ff9ec3cca6cdf6ef928cb255", 
+   "resource": "vehicles/chinese/Ch49_BZ_68/collision_client/Chassis.havok"
+  }, 
+  {
+   "decoded": 1216, 
+   "model": "d075762ed371de60b1a8f56d52aa97f2d69111ba4a92fd3458abdd0e86932a8f", 
+   "package": "vehicles_level_08-part1.pkg", 
+   "raw": "96da630ab3aef1ad1efe18b871c19a1a87e38d3cc4cf3bfe979f953552745c7c", 
+   "resource": "vehicles/czech/Cz18_TNH_105_1000/collision_client/Hull.havok"
+  }, 
+  {
+   "decoded": 828, 
+   "model": "ce9b07129a4646f262e0f1528c905c7d0ed60d6130d8f8ffed6d968000fc19e7", 
+   "package": "vehicles_level_11.pkg", 
+   "raw": "08ff645da06de5bc872a65f8208a6de69922459adc9570a3fbe55b5a8103f89b", 
+   "resource": "vehicles/french/F135_AS_XX_40_t/collision_client/Hull_animated.havok"
+  }, 
+  {
+   "decoded": 520, 
+   "model": "ece4a6009617fd81686f850c294500c013ec0cb4bcc13579879c8cedecd4e393", 
+   "package": "vehicles_level_11.pkg", 
+   "raw": "fe354aa83bbf63eaf04a567ca0b5ba957a5fa458ad84c2600a1690f484a1b166", 
+   "resource": "vehicles/italy/It43_CAV_mod_71/collision_client/Gun_02_animated.havok"
+  }, 
+  {
+   "decoded": 72, 
+   "model": "7219662c81ab8b7085455bf72feeb58dde9826a041ba54a84c162f007a2e5d02", 
+   "package": "vehicles_level_06-part2.pkg", 
+   "raw": "94a716ea4e4ffe911e84179ff3dd17e168ba5487dc4cb3916b81233c7e499dee", 
+   "resource": "vehicles/poland/Pl32_SDP_Wz_44/collision_client/Turret_01.havok"
+  }, 
+  {
+   "decoded": 1376, 
+   "model": "e078e5642ff63453e1b55725221c0a5c0533bd04b718703978977d14738f5738", 
+   "package": "white_tiger.pkg", 
+   "raw": "754172370be4366e43b933141ac213257d556fee4e5a5b1d1702c31eb9040345", 
+   "resource": "white_tiger/vehicles/german/G89_Leopard1_WT24_Mini_Boss_3Dst/collision_client/Hull.havok"
+  }
+ ], 
+ "note": "hashes only (tests/py27/havok_lazy.py); no geometry"
+}
