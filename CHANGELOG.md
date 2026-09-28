@@ -2,14 +2,12 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
-## Unreleased
+## 0.8.9 (2026-09-28)
 
 - **Aim emulation:** the aiming circle moves smoothly on heavy models. Its figure is computed a few milliseconds per frame instead of in one go (which froze a frame for ~20 ms every 0.12 s while moving and ~80 ms when it came to rest); it may lag a few frames and lands on the same value. A shot's own figure is computed the same way.
 - **Faster page start:** the armour map's shader compiles about 0.9 s faster on the game's graphics path (it had doubled in 0.8.7), with the same map.
 - The circle's tiles and the speed and reload figures are only rewritten when they change.
 - game.log: the page's frame-rate line also gives the longest frame of its 3-second sample.
-
-## 0.8.8 (2026-09-27)
 
 - **Fix (game start):** the export no longer rewrites every saved battle before doing anything else (in 0.8.7 that took minutes with the page open, and held back the wheels of wheeled vehicles, the characteristics and every export). Only battles that changed are published again, in the background after the vehicle updates; the first start after an update does them all once. game.log has one line with the start's timings.
 - **Fix (game start):** that background work runs in short slices (~0.1 s) with the game getting as much time between them, and stops for a battle, a drag or a click - a clicked vehicle no longer waits for a whole battle. The open battle is no longer read again every few seconds while other battles are published. A new build publishes the saved battles again only when their format changed; a battle whose model file was deleted, or whose model or vehicle file failed to read, is published again at the next start.
