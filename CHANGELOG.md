@@ -2,12 +2,9 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
-## Unreleased
+## 0.9.2 (2026-09-28)
 
 - **Aim emulation:** ↺ starts over the shooter's gun too - cold, reloaded, a full magazine - not only the target's HP and Hitmarks, so an overheated gun is unlocked at once.
-
-## 0.9.1 (2026-09-28)
-
 - **Smoother rotation and aim circle:** the page now runs one frame loop. Mouse moves are applied once per frame at the frame's own time, spread evenly over the frames instead of in the uneven bursts the game sends them in. Rotating the camera, panning and dragging the turret or gun move by even steps (steadiness on a test bench: 0.37 → 0.04 spread per frame). The aim circle no longer stands still for a frame while the cursor moves.
 - game.log: the frame line also gives the mouse input per frame and its cadence, how evenly the camera and the circle moved, and for each frame over 25 ms whether the page or the game held it.
 - The Statistics log's background pass waits while you rotate, aim or move the cursor over the scene, instead of loading models in the middle of it.
