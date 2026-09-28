@@ -30,6 +30,7 @@
  *                   it also prints the slow frames of the page's start (the first scene's shader compile), the host's
  *                   3-second count and the GPU time of a composite and of a full peel
  *     --hit=N       the N-th hit row of the battle shown (default 0)
+ *     --battle=ID   with --data: the battle to open first (default: the one the page shows)
  *     --data=DIR    a real data folder (read in place through a junction, nothing written into it) instead of the fixture:
  *                   local profiling only, the checks then do not apply
  *   exit 0 pass, 1 fail, 77 skip (no browser installed)
@@ -169,8 +170,9 @@ async function main() {
     ok('the page starts: hits listed, the viewer made with WebGL', ready.hits > 0 && ready.webgl, JSON.stringify(ready));
     if (!ready.webgl) throw new Error('no WebGL viewer');
     // An outgoing hit of the player (pm3: the player shoots, so the emulated shooter is his vehicle) or, on real data, the first.
-    if (!DATA) await ev(`(() => { if (document.getElementById('battle-list').hidden) document.getElementById('battle-pick').click(); document.querySelector('#battle-list [data-id="pm3"]').click(); })()`);
-    await new Promise((r) => setTimeout(r, 800));
+    const battle = DATA ? arg('battle', '') : 'pm3';
+    if (battle) await ev(`(() => { if (document.getElementById('battle-list').hidden) document.getElementById('battle-pick').click(); document.querySelector('#battle-list [data-id="${battle}"]').click(); })()`);
+    await new Promise((r) => setTimeout(r, DATA ? 2500 : 800));
     await ev(`document.querySelectorAll('#hits [data-hit]')[${Number(arg('hit', 0))}].click()`);
     await new Promise((r) => setTimeout(r, 1500));
     const box = await ev(`(() => { const b = document.getElementById('viewport').getBoundingClientRect(); return {x: b.left + b.width / 2, y: b.top + b.height / 2, w: b.width, h: b.height}; })()`);
@@ -195,25 +197,43 @@ async function main() {
       // The GPU time of the heavy passes. gl.finish() is only a flush in Chrome (0 ms whatever the work - stack-compare §3.2,
       // 28.09), so each pass is fenced by a 1-pixel readPixels of the canvas, which waits for everything queued before it;
       // the paths are interleaved (a GPU's clock and a shared GPU's load drift between blocks), median of 15. Where
-      // EXT_disjoint_timer_query_webgl2 is offered, its GPU-side time is given beside. At rest the leg is exact; "moving" is
-      // the frame of a camera that has just moved (the leg on its budget, steady-60 step 4).
+      // EXT_disjoint_timer_query_webgl2 is offered, its GPU-side time is given beside.
+      // EVERY PATH IN ITS OWN MODE (28.09, steady-60-fix, D-092's correction): the exact ones ('exact', the leg unbounded)
+      // are exact by the viewer's own switch, not by a guess at movedAt - a composite() alone takes the leg's budget the
+      // last render() left in its uniform, and the peel's dropped layers used to start the camera's settle (the budgeted
+      // leg). "moving" is a camera that has just moved ('always', the leg on its budget). Nothing of the page draws in
+      // between: the viewer's draw() is held and its bounce redraw timer cleared, so no animation frame lands in a pass.
       const gpu = await ev(`(async () => { const v = window.__bullbaViewers[window.__bullbaViewers.length - 1], r = v.renderer, g = r.getContext(), s = v.surface, out = {}, px = new Uint8Array(4);
-        const ext = g.getExtension('EXT_disjoint_timer_query_webgl2');
+        const ext = g.getExtension('EXT_disjoint_timer_query_webgl2'), u = s.material.uniforms, mode = v.bounceMode;
         const fence = () => { r.setRenderTarget(null); g.readPixels(0, 0, 1, 1, g.RGBA, g.UNSIGNED_BYTE, px); };
         const query = async (fn) => { if (!ext) return NaN; const q = g.createQuery(); g.beginQuery(ext.TIME_ELAPSED_EXT, q); fn(); g.endQuery(ext.TIME_ELAPSED_EXT); fence();
           for (let i = 0; i < 200 && !g.getQueryParameter(q, g.QUERY_RESULT_AVAILABLE); i++) await new Promise((z) => setTimeout(z, 2));
           const ns = g.getQueryParameter(q, g.QUERY_RESULT), bad = g.getParameter(ext.GPU_DISJOINT_EXT); g.deleteQuery(q); return bad ? NaN : ns / 1e6; };
+        if (v.frameId !== null) { cancelAnimationFrame(v.frameId); v.frameId = null; }
+        v.draw = function () {};   // held: no frame of the page's own while the passes are timed
+        const quietTimer = () => { if (v.bounceTimer !== null) { clearTimeout(v.bounceTimer); v.bounceTimer = null; } };
+        // At rest, exact: the viewer's 'exact' mode, the layers of the camera on screen, the composite done.
+        const rest = () => { v.bounceMode = 'exact'; s.movedAt = -1e9; v.paint(); quietTimer(); };
+        rest(); const EXACT = u.uLegBudget.value;
         const paths = {
-          composite: () => { s.movedAt = -1e9; s.composite(); },
-          peel: () => { s.key = null; s.movedAt = -1e9; v.paint(); r.render(v.scene, v.camera); },
-          moving: () => { s.key = null; s.movedAt = performance.now(); v.paint(); r.render(v.scene, v.camera); },
-          frame: () => { v.paint(); r.render(v.scene, v.camera); }};
-        s.movedAt = -1e9; v.paint();
-        const wall = {}, gpuMs = {}; Object.keys(paths).forEach((k) => { wall[k] = []; gpuMs[k] = []; });
-        for (let i = 0; i < 15; i++) for (const k of Object.keys(paths)) { fence(); const t = performance.now(); paths[k](); fence(); wall[k].push(performance.now() - t); gpuMs[k].push(await query(paths[k])); }
+          composite: {prep: rest, run: () => { s.composite(); }},
+          peel: {prep: () => { rest(); s.key = null; }, run: () => { v.paint(); r.render(v.scene, v.camera); }},
+          moving: {prep: () => { rest(); v.bounceMode = 'always'; s.key = null; s.movedAt = performance.now(); }, run: () => { v.paint(); r.render(v.scene, v.camera); }},
+          frame: {prep: rest, run: () => { v.paint(); r.render(v.scene, v.camera); }}};
+        const wall = {}, gpuMs = {}, budget = {}; Object.keys(paths).forEach((k) => { wall[k] = []; gpuMs[k] = []; });
+        try {
+          for (let i = 0; i < 15; i++) for (const k of Object.keys(paths)) {
+            const p = paths[k];
+            p.prep(); fence(); const t = performance.now(); p.run(); fence(); wall[k].push(performance.now() - t); budget[k] = u.uLegBudget.value; quietTimer();
+            p.prep(); gpuMs[k].push(await query(p.run)); quietTimer();
+          }
+        } finally { delete v.draw; v.bounceMode = mode; s.movedAt = -1e9; quietTimer(); v.draw(); }
         const med = (a) => { a = a.filter((x) => x === x).sort((x, y) => x - y); return a.length ? +a[a.length >> 1].toFixed(2) : '-'; };
         Object.keys(paths).forEach((k) => { out[k] = med(wall[k]) + ' ms (GPU ' + med(gpuMs[k]) + ')'; });
-        s.movedAt = -1e9; v.paint(); out.size = s.width + 'x' + s.height; return out; })()`);
+        out.budget = budget; out.exact = EXACT; out.size = s.width + 'x' + s.height; return out; })()`);
+      // The stand itself: the exact paths ran on the unbounded leg, the moving one on the budget.
+      const exactLeg = gpu.exact > 1e9 && ['composite', 'peel', 'frame'].every((k) => gpu.budget[k] === gpu.exact) && gpu.budget.moving > 0 && gpu.budget.moving < 1e6;
+      console.log('GPU stand: the leg exact on composite / peel / still frame, on its budget (' + gpu.budget.moving + ') on the moving camera: ' + (exactLeg ? 'yes' : 'NO ' + JSON.stringify(gpu.budget)));
       console.log('GPU passes (median of 15, readPixels fence; timer query in brackets): composite ' + gpu.composite + ', peel + composite + scene ' + gpu.peel + ', the same on a moving camera ' + gpu.moving + ', a still frame ' + gpu.frame + ', layers ' + gpu.size);
     }
     ok('the live ring stands on the model under the cursor', ringUp.ring, JSON.stringify(ringUp));
@@ -259,9 +279,12 @@ async function main() {
     ok('the page’s ray worker runs (a blob worker importing web/ballistics.js)', worker.on && worker.running && worker.ready, JSON.stringify(worker));
     const inWorker = await phases(' [worker]');
     // The worker's figure is the main thread's to the bit: one ring integrated both ways, every field of the result.
-    const same = await ev(`(async () => { const v = window.__bullbaViewers[window.__bullbaViewers.length - 1], here = v.liveAimSampler(v.shell, 1024, true), there = v.liveAimSampler(v.shell, 1024);
+    // Answered BY THE WORKER (review 28.09: the old check's `!!there.remote || !!r` was true whatever answered): the job handed
+    // out must come back with its result and without a failure, and that result is the figure the sampler lands on.
+    const same = await ev(`(async () => { const v = window.__bullbaViewers[window.__bullbaViewers.length - 1], here = v.liveAimSampler(v.shell, 1024, true), there = v.liveAimSampler(v.shell, 1024), job = there.remote;
       let r = null; for (let i = 0; i < 400 && !(r = there.step(performance.now())); i++) await new Promise((z) => setTimeout(z, 5));
-      return {remote: !!there.remote || !!r, here: JSON.stringify(here.step(Infinity)), there: JSON.stringify(r)}; })()`);
+      return {posted: !!job, answered: !!(job && job.result && !job.failed), same: !!(job && r === job.result), here: JSON.stringify(here.step(Infinity)), there: JSON.stringify(r)}; })()`);
+    ok('the worker answers the 1024-ray figure itself', same.posted && same.answered && same.same, JSON.stringify(same).slice(0, 300));
     ok('the worker’s 1024-ray figure equals the main thread’s, every field', same.here === same.there && same.here !== 'null', JSON.stringify(same));
     // The host's steady-state line (host.js, 28.09): at least one line covering the emulation came out of the 5.5 s of
     // activity above, and the 6 s at rest added at most the one flush of what was left - an idle page logs nothing more.
