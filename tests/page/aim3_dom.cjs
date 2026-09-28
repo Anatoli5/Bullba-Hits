@@ -3771,8 +3771,10 @@ settle(20).then(function () {
     // Strip (23.09): the strip beside ⌖ comes and goes with paintFun, which then asks the layout pass for the top band.
     'var viewer=null,current=null,activeHit=null,xiMarkState=null,LAYOUT_MODS=4,funLayouts=0,ttxHp=0,ttxAsked=[],sceneBuild=false;function ttxHealth(){return ttxHp;}function xiMarkNow(){return null;}' +
     'function readTtx(type){ttxAsked.push(type);return Promise.resolve(null);}' + tipJoinSrc +
+    // ↺ starts the shooter's gun over too (28.09): the gun's owners live outside the block; stubs count the calls.
+    'var gunResets=[],gunLoads=0,aimReload=1,aimClipDry=true,xiMech=null;function gunHeatReset(k){gunResets.push(k);}function xiWake(){}function aimLoadFull(){gunLoads++;}function startAimLoop(){}' +
     'function scheduleLayout(p){if(p===LAYOUT_MODS)funLayouts++;}function stripLayout(){var s=$("fun-strip");if(s&&!s.hidden)scheduleLayout(LAYOUT_MODS);}\n' + funSrc +
-    '\nreturn {set:function(v,c,h){viewer=v;current=c;activeHit=h;},targetMaxHp:targetMaxHp,targetHp:targetHp,targetRow:targetRow,' +
+    '\nreturn {gun:function(){return {resets:gunResets.slice(),loads:gunLoads,reload:aimReload,dry:aimClipDry};},set:function(v,c,h){viewer=v;current=c;activeHit=h;},targetMaxHp:targetMaxHp,targetHp:targetHp,targetRow:targetRow,' +
     'targetKey:targetKey,funVerdict:funVerdict,funRoll:funRoll,funRandomization:funRandomization,funShot:funShot,' +
     'funReset:funReset,funModel:funModel,funSettings:funSettings,paintFun:paintFun,funMarks:function(){return funMarks;},' +
     'ttx:function(hp){ttxHp=hp;},asked:function(){return ttxAsked;},reloaded:function(){funLaid=false;},' +
@@ -3919,6 +3921,9 @@ settle(20).then(function () {
   fun.set(fviewer, FBATTLE, RECORDED);
   fun.funReset();
   ok('fun: a reset fills the bar to the record’s own maximum', fun.hp().max === 1850 && fun.hp().left === 1850);
+  ok('fun: ↺ starts the shooter’s gun over too - cold (the mode kept), reloaded, a full clip',
+     fun.gun().resets.length === 1 && fun.gun().resets[0] === true && fun.gun().loads === 1 && fun.gun().reload === null && fun.gun().dry === false,
+     JSON.stringify(fun.gun()));
   seed([.1, .5]);   // the outcome roll, then the damage roll
   fun.funShot(HE);
   ok('fun: a penetration takes its rolled damage off the target',

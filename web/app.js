@@ -4916,7 +4916,13 @@
     xiMarkState = null;   // an emulated Borkenkäfer mark goes with the health; the record's own comes back (BACKLOG 38)
     funMarks.length = 0; funLaid = true;
     if (viewer && viewer.clearHitMarks) viewer.clearHitMarks();
+    // The shooter's gun starts over with the target (user, 28.09: ↺ left an overheated Ares locked): cold, loaded, a
+    // full clip, as when the rule switches; the mode button's mode stays.
+    gunHeatReset(true);
+    xiWake();
+    aimReload = null; aimClipDry = false; aimLoadFull();
     paintFun();
+    startAimLoop();
   }
   // A scene is on screen (sceneShown, every path). A DIFFERENT vehicle starts at full health with no marks; the
   // SAME vehicle under another shooter keeps both - the target did not change (user, 22.09) - and its Hitmarks are
