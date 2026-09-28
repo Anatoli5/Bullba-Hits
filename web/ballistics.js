@@ -1,7 +1,11 @@
-/* Local collision rays and penetration estimate. No network or worker process. */
+/* Local collision rays and penetration estimate. No network; heavy integrals may run in a page-local Web Worker made
+   from this very file (remote*, serve below), with the main thread as the fallback. */
 (function(root){
   'use strict';
   var EPS=1e-5, RAD=Math.PI/180;
+  // This file's own URL, for the worker to import it (the page's classic <script>; empty in a worker and in Node).
+  var SELF_URL=typeof document!=='undefined'&&document.currentScript&&document.currentScript.src||'';
+  function now(){return typeof performance!=='undefined'&&performance.now?performance.now():Date.now();}
   // Two contacts closer than TIE metres along a ray are one depth: they go in the order of their material id (below).
   // THE one coincidence tolerance (review 26.09 R3): the GPU depth peel and its bounced leg (web/screen-armor.js, TIE_EPS
   // of both shaders) are generated from ArmorBallistics.TIE. 10 um, the peel's figure (the CPU and the leg had 0.1 mm):
@@ -584,7 +588,8 @@
       var r=evaluate(ordered(hits),s,start);r.origin=o;r.direction=d;return r;
     }
     // materialId(triangle): its id, undefined for one that takes none; materialCount: how many ids there are.
-    var engine={triangles:tris,acceleration:acceleration,materialId:materialId,materialCount:count};
+    // flat: the one-leaf engine (packEngine hands it on, so the worker builds the same acceleration).
+    var engine={triangles:tris,acceleration:acceleration,materialId:materialId,materialCount:count,flat:!!flat};
     // THE LEG AFTER A RICOCHET (user's decision 26.09, variant B of outputs/ricochet-second-leg-2026-09-26.md): the shell
     // flies on from the ricochet point with 75 % of what it had LEFT there - the first leg's screens stay spent -
     // remaining2 = (1 - ricochetLoss) * remaining1, and the chance is scaled by (1 - ricochetLoss) * P, P the shell's
@@ -628,6 +633,196 @@
     var e=edges[longest],a=points[e[0]],b=points[e[1]],c=points[e[2]],mid=a.map(function(x,i){return (x+b[i])/2;});
     subdivide(triangle(a,mid,c,t.part,t.name,t.armor),depth+1,out,edge,Math.floor(budget/2));subdivide(triangle(mid,b,c,t.part,t.name,t.armor),depth+1,out,edge,Math.ceil(budget/2));
   }
+  // ---- The integral over a dispersion circle (moved here from viewer.js 28.09, steady-60: ONE source for the page and
+  // for its worker) ------------------------------------------------------------------------------------------------------
+  // ONE point of a circle: the radial quantile of the chosen profile at `u`, at `angle`, written into `out` - the very
+  // arithmetic of three.js' center.clone().addScaledVector(right, r cos).addScaledVector(up, r sin) the viewer had, so the
+  // points (and every figure over them) are the same to the bit. The integral walks `u` over the stratified (i+.5)/count
+  // and the angle over the golden step; a random shot (viewer.liveAimSample) draws both - one law on the page.
+  function circlePoint(out,center,right,up,radius,u,angle,quantile){
+    var r=radius*quantile(u),a=r*Math.cos(angle),b=r*Math.sin(angle);
+    out[0]=center[0]+right[0]*a+up[0]*b;out[1]=center[1]+right[1]*a+up[1]*b;out[2]=center[2]+right[2]*a+up[2]*b;
+    return out;
+  }
+  function vec3(v){return [v[0],v[1],v[2]];}
+  // THE SAMPLING MODEL OF A CIRCLE: `count` rays fanned over it at the quantiles of the chosen radial profile (a sunflower
+  // spiral: the same count gives the same points), a miss counting as 0 % and 0 HP. Neither profile is a confirmed server
+  // distribution; the page says so next to every figure. IN SLICES (27.09, frame-smoothness): step(until) casts rays in the
+  // one fixed order until the clock passes `until` (performance.now() ms; Infinity: to the end) - at least one a call - and
+  // returns the result once the last ray is in, else null; same rays, order and sums as one piece, so the same result to
+  // the bit. The vectors are copied: the live ring's are replaced as it moves. `profile`: a profile id (the worker can take
+  // the job) or a quantile function (main thread only).
+  // IN THE WORKER (28.09, steady-60): post() hands the job to the page's worker, which runs this same step(Infinity) on the
+  // same engine rebuilt there; step(until) then only waits for its answer (null until it lands) - 0 ms of rays on the main
+  // thread. A worker that fails or never starts hands the job back to the slices here, from the first ray. step(Infinity)
+  // always computes here: a caller that wants the figure now does not wait for a message.
+  function CircleSampler(engine,shell,origin,center,right,up,radius,count,profile){
+    var fn=typeof profile==='function';
+    this.engine=engine;this.shell=shell;this.o=vec3(origin);this.center=vec3(center);this.right=vec3(right);this.up=vec3(up);
+    this.radius=radius;this.count=count;this.q=fn?profile:aimProfile(profile).quantile;this.profile=fn?null:aimProfile(profile).id;
+    this.i=0;this.sum=0;this.unknown=0;this.miss=0;this.dmg=0;this.result=null;this.remote=null;this.p=[0,0,0];
+  }
+  CircleSampler.prototype.step=function(until){
+    if(this.result)return this.result;
+    var job=this.remote;
+    if(job&&until!==Infinity){
+      if(job.result){this.result=job.result;this.remote=null;return this.result;}
+      if(!job.failed&&!remoteStalled())return null;
+      this.remote=null;   // the worker let it down: the slices below take it from the start
+    }
+    var count=this.count,shell=this.shell,center=this.center,right=this.right,up=this.up,radius=this.radius,o=this.o,p=this.p;
+    while(this.i<count){
+      var i=this.i;circlePoint(p,center,right,up,radius,(i+.5)/count,i*2.399963229728653,this.q);
+      var hit=this.engine.ray(o,[p[0]-o[0],p[1]-o[1],p[2]-o[2]],shell);
+      if(hit.chance===null)this.unknown++;else this.sum+=hit.chance;
+      if(hit.expected>0)this.dmg+=hit.expected;
+      if(hit.reason==='no-hull')this.miss++;
+      this.i=i+1;
+      if(until!==Infinity&&this.i<count&&now()>=until)return null;
+    }
+    if(!this.result){var sum=this.sum,unknown=this.unknown,dmg=this.dmg;
+      this.result={low:sum/count,high:(sum+unknown*100)/count,unknown:unknown,miss:this.miss/count*100,samples:count,
+        damage:dmg/count,damageHigh:(dmg+unknown*((shell||{}).alpha||0))/count};}
+    return this.result;
+  };
+  // Hand this job to the worker (no-op without one, with a quantile function, or once started here). Returns this.
+  CircleSampler.prototype.post=function(){
+    if(!this.profile||this.remote||this.i||this.result)return this;
+    this.remote=remoteSend('circle',{shell:this.shell,o:this.o,center:this.center,right:this.right,up:this.up,radius:this.radius,count:this.count,profile:this.profile},this.engine);
+    return this;
+  };
+  // THE VERDICTS AT A HIT'S RECORDED POINTS (the Statistics log; moved here from viewer.js Viewer.verdicts 28.09 so the
+  // worker runs the same code). `pts`: {pos, line} as [x,y,z] plus the recorded fields copied onto each verdict. A point's
+  // own ray comes from 60 m back along its line, so screens and the gun in front of it count as the server counted them.
+  // The point after a recorded ricochet is the bounced leg of the one law (engine.bounced): from the ricochet point with
+  // (1 - loss) times what our ray to it had left there - at our own ricochet there, at the main plate we met instead, or
+  // after its screens - and a further ricochet ends it (outputs/ricochet-second-leg-2026-09-26.md §3.1).
+  function verdicts(engine,pts,shell){
+    if(!engine||!shell||!pts)return [];
+    var out=[];
+    for(var i=0;i<pts.length;i++){var p=pts[i],prev=i?pts[i-1]:null,afterRicochet=prev&&(prev.effect===1||prev.effect===2);
+      var base=afterRicochet?prev.pos:p.pos,k=afterRicochet?.02:-60,l=p.line;
+      var origin=[base[0]+l[0]*k,base[1]+l[1]*k,base[2]+l[2]*k];
+      var r0=afterRicochet?out[i-1].result:null,before=r0?(r0.bounce?r0.bounce.remaining:r0.remaining):undefined;
+      var result=null;try{result=afterRicochet?engine.bounced(origin,vec3(l),shell,before):engine.ray(origin,vec3(l),shell);}catch(e){result=null;}
+      out.push({index:i,part:p.part,effect:p.effect,pi:p.pi,hitType:p.hitType,prevEffect:prev?prev.effect:null,source:p.source,chordDev:p.chordDev,result:result});}
+    return out;
+  }
+  // ---- The engine and the models as flat arrays: what the worker gets, once per engine / model ---------------------------
+  // The triangles in their order (so the worker's kd-tree and material ids come out the same), their corners as float64
+  // (exact), and the part, material name and armour table of each by index into small lists. The armour tables go by
+  // structured clone; one table shared by many triangles stays one object there too.
+  function listIndex(list,map,value){var k=map.get(value);if(k===undefined){k=list.length;list.push(value);map.set(value,k);}return k;}
+  function packEngine(engine){
+    var tris=engine.triangles,n=tris.length,v=new Float64Array(n*9),t=new Int32Array(n*3),parts=[],names=[],armors=[],pm=new Map(),nm=new Map(),am=new Map();
+    for(var i=0;i<n;i++){var tr=tris[i],o=i*9,c=[tr.a,tr.b,tr.c];
+      for(var j=0;j<3;j++){v[o+3*j]=c[j][0];v[o+3*j+1]=c[j][1];v[o+3*j+2]=c[j][2];}
+      t[i*3]=listIndex(parts,pm,tr.part);t[i*3+1]=listIndex(names,nm,tr.name);t[i*3+2]=tr.armor===undefined?-1:listIndex(armors,am,tr.armor);}
+    return {v:v,t:t,parts:parts,names:names,armors:armors,flat:!!engine.flat};
+  }
+  function unpackEngine(pk){
+    var v=pk.v,t=pk.t,n=t.length/3,tris=new Array(n);
+    for(var i=0;i<n;i++){var o=i*9;
+      tris[i]=triangle([v[o],v[o+1],v[o+2]],[v[o+3],v[o+4],v[o+5]],[v[o+6],v[o+7],v[o+8]],pk.parts[t[i*3]],pk.names[t[i*3+1]],t[i*3+2]<0?undefined:pk.armors[t[i*3+2]]);}
+    return fromTriangles(tris,pk.flat);
+  }
+  function packModel(model){
+    return {kind:model.kind,groups:(model.groups||[]).map(function(g){var vs=g.vertices||[],v=new Float64Array(vs.length*3);
+      for(var i=0;i<vs.length;i++){v[3*i]=vs[i][0];v[3*i+1]=vs[i][1];v[3*i+2]=vs[i][2];}
+      return {material:g.material,v:v,indices:Int32Array.from(g.indices||[])};})};
+  }
+  function unpackModel(pk){
+    return {kind:pk.kind,groups:pk.groups.map(function(g){var v=g.v,vs=new Array(v.length/3);for(var i=0;i<vs.length;i++)vs[i]=[v[3*i],v[3*i+1],v[3*i+2]];
+      return {material:g.material,vertices:vs,indices:g.indices};})};
+  }
+  // ---- The page's worker (28.09, steady-60) -------------------------------------------------------------------------------
+  // CEF 109 from file:// (outputs/stack-env-2026-09-28.md): new Worker('x.js') is refused (origin null), a classic blob
+  // worker runs, and inside it importScripts(file://…) works. So a two-line blob imports THIS file and serves. One worker,
+  // made on the first job; the main thread keeps every job's own fallback. Engines and models are sent once each (the
+  // engine when a job first names it, a model when a verdict job first needs it) and dropped past a few.
+  var WORKER_WAIT=3000,WORKER_ENGINES=4,WORKER_MODELS=32;
+  var remote={off:false,worker:null,ready:false,failed:false,born:0,seq:0,jobs:{},engines:[],models:[],modelIds:typeof WeakMap==='function'?new WeakMap():null};
+  function remoteStalled(){return !remote.ready&&(remote.failed||now()-remote.born>WORKER_WAIT);}
+  function remoteFail(){
+    remote.failed=true;var w=remote.worker;remote.worker=null;if(w)try{w.terminate();}catch(e){}
+    var jobs=remote.jobs;remote.jobs={};Object.keys(jobs).forEach(function(k){jobs[k].failed=true;if(jobs[k].done)jobs[k].done(jobs[k]);});
+    if(typeof console!=='undefined')console.info('Bullba Hits ballistics: the worker is off, the main thread computes');
+  }
+  function remoteWorker(){
+    if(remote.worker)return remote.worker;
+    if(remote.off||remote.failed||root.BULLBA_NO_WORKER===true||!SELF_URL||typeof Worker!=='function'||typeof Blob!=='function'||typeof URL==='undefined'||!URL.createObjectURL)return null;
+    try{
+      var src='importScripts('+JSON.stringify(SELF_URL)+');ArmorBallistics.serve(self);';
+      var w=new Worker(URL.createObjectURL(new Blob([src],{type:'text/javascript'})));
+      w.onmessage=function(e){var m=e.data||{};if(m.type==='ready'){remote.ready=true;return;}var job=remote.jobs[m.id];if(!job)return;delete remote.jobs[m.id];
+        if(m.error!==undefined){job.failed=true;job.error=m.error;}else job.result=m.result;if(job.done)job.done(job);};
+      w.onerror=function(e){if(e&&e.preventDefault)e.preventDefault();remoteFail();};
+      w.onmessageerror=function(){remoteFail();};
+      remote.worker=w;remote.born=now();return w;
+    }catch(e){remote.failed=true;return null;}
+  }
+  function remotePost(msg,transfer){var w=remoteWorker();if(!w)return false;try{w.postMessage(msg,transfer||[]);return true;}catch(e){return false;}}
+  // The engine's id in the worker, sending it first when the worker has not got it; 0 when it cannot go.
+  function remoteEngine(engine){
+    if(!engine)return 0;if(engine.remoteId&&remote.engines.indexOf(engine.remoteId)>=0)return engine.remoteId;
+    if(!remoteWorker())return 0;
+    var id=++remote.seq,pk=packEngine(engine);
+    if(!remotePost({type:'engine',id:id,engine:pk},[pk.v.buffer,pk.t.buffer]))return 0;
+    engine.remoteId=id;remote.engines.push(id);
+    while(remote.engines.length>WORKER_ENGINES)remotePost({type:'drop',id:remote.engines.shift()});
+    return id;
+  }
+  function remoteModel(model){
+    var id=remote.modelIds&&remote.modelIds.get(model);if(id&&remote.models.indexOf(id)>=0)return id;
+    id=++remote.seq;var pk=packModel(model),buffers=[];pk.groups.forEach(function(g){buffers.push(g.v.buffer,g.indices.buffer);});
+    if(!remotePost({type:'model',id:id,model:pk},buffers))return 0;
+    remote.modelIds.set(model,id);remote.models.push(id);
+    while(remote.models.length>WORKER_MODELS)remotePost({type:'dropModel',id:remote.models.shift()});
+    return id;
+  }
+  // One job: {result, failed, done}; null when it cannot go (the caller computes it itself).
+  function remoteSend(type,msg,engine){
+    if(!remoteWorker())return null;
+    if(engine){msg.engine=remoteEngine(engine);if(!msg.engine)return null;}
+    var job={id:++remote.seq,result:null,failed:false,done:null};msg.type=type;msg.id=job.id;
+    remote.jobs[job.id]=job;
+    if(!remotePost(msg)){delete remote.jobs[job.id];return null;}
+    return job;
+  }
+  // The verdicts of a scene the page does not show (the Statistics log's background pass): the flat engine is built in the
+  // worker from the models it holds. A promise of the list, or null without a worker (the caller computes it itself).
+  function remoteVerdicts(data,pts,shell){
+    if(!remoteWorker()||!remote.modelIds)return null;
+    var scene={parts:[],models:{}},parts=((data&&data.hit||{}).target||{}).parts||[];
+    for(var i=0;i<parts.length;i++){var part=parts[i],model=data.models[String(part.id)];if(!model||!part.transform)continue;
+      var mid=remoteModel(model);if(!mid)return null;scene.parts.push({id:part.id,transform:part.transform,armor:part.armor});scene.models[String(part.id)]=mid;}
+    var job=remoteSend('verdicts',{scene:scene,points:pts,shell:shell});
+    if(!job)return null;
+    return new Promise(function(resolve,reject){job.done=function(j){if(j.failed)reject(new Error(j.error||'worker'));else resolve(j.result);};});
+  }
+  // The worker's side: the same functions over what the page sent.
+  function serve(scope){
+    var engines={},models={};
+    scope.onmessage=function(e){var m=e.data||{},out;
+      if(m.type==='engine'){engines[m.id]=unpackEngine(m.engine);return;}
+      if(m.type==='drop'){delete engines[m.id];return;}
+      if(m.type==='model'){models[m.id]=unpackModel(m.model);return;}
+      if(m.type==='dropModel'){delete models[m.id];return;}
+      try{
+        if(m.type==='circle'){var en=engines[m.engine];if(!en)throw new Error('no engine '+m.engine);
+          out=new CircleSampler(en,m.shell,m.o,m.center,m.right,m.up,m.radius,m.count,m.profile).step(Infinity);}
+        else if(m.type==='verdicts'){var data={hit:{target:{parts:m.scene.parts}},models:{}};
+          Object.keys(m.scene.models).forEach(function(k){var md=models[m.scene.models[k]];if(!md)throw new Error('no model '+m.scene.models[k]);data.models[k]=md;});
+          out=verdicts(build(data,false,true),m.points,m.shell);}
+        else throw new Error('unknown job '+m.type);
+        scope.postMessage({id:m.id,result:out});
+      }catch(err){scope.postMessage({id:m.id,error:String(err&&err.message||err)});}
+    };
+    scope.postMessage({type:'ready'});
+  }
+  // useWorker(false): every job on the main thread from now on (the fallback; tests measure both). useWorker(): the state.
+  function useWorker(on){if(on===false){remote.off=true;if(remote.worker)remoteFail();remote.failed=false;}else if(on===true)remote.off=false;
+    return {on:!remote.off&&!remote.failed,running:!!remote.worker,ready:remote.ready};}
   var palettes={accessible:[[.63,.18,.55],[.95,.75,.31],[.20,.84,.76]],classic:[[.90,.20,.18],[.97,.79,.22],[.20,.79,.35]]};
   // The 0…1 quantity a result is coloured by: the penetration chance, or - in damage mode, and only when the
   // shell carries an alpha - the expected damage as a share of it. null means "no estimate": neutral grey.
@@ -650,5 +845,7 @@
   }
   root.ArmorBallistics={TIE:TIE,build:build,fromTriangles:fromTriangles,triangle:triangle,subdivide:subdivide,evaluate:evaluate,shell:shell,atDistance:atDistance,penetrationAt:penetrationAt,alphaAt:alphaAt,chance:chance,effective:effective,ricochet:ricochet,color:color,value:value,nonPenetration:nonPenetration,transform:transform,unit:unit,sub:sub,aimFactor:aimFactor,
     aimStep:aimStep,aimShot:aimShot,shotTerm:shotTerm,reloadSeconds:reloadSeconds,autoreloadScaled:autoreloadScaled,moveStep:moveStep,motionLimits:motionLimits,turretChase:turretChase,
-    aimProfiles:AIM_PROFILES,aimProfile:aimProfile,aimProfileDefault:DEFAULT_PROFILE,moveDefaults:MOVE};
+    aimProfiles:AIM_PROFILES,aimProfile:aimProfile,aimProfileDefault:DEFAULT_PROFILE,moveDefaults:MOVE,
+    circlePoint:circlePoint,CircleSampler:CircleSampler,verdicts:verdicts,packEngine:packEngine,unpackEngine:unpackEngine,packModel:packModel,unpackModel:unpackModel,
+    remoteVerdicts:remoteVerdicts,serve:serve,useWorker:useWorker};
 }(typeof window==='undefined'?globalThis:window));

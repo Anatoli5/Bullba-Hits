@@ -8,7 +8,12 @@
  * every ray of the viewer's engine spin for RAY_US microseconds (default 80: the heavy model). The integral of the ring is then
  * as dear as on a heavy model, and a frame that runs it in one piece shows.
  *
+ * The phases run twice (28.09, steady-60): with the page's ray worker taking the figures (web/ballistics.js, a blob worker)
+ * and on the main thread's slices after ArmorBallistics.useWorker(false) - the fallback where no worker starts.
+ *
  * Asked of the page:
+ *   - the worker runs, and its 1024-ray figure equals the main thread's, every field;
+ *   - the frame telemetry of host.js: a line after ~5 s of emulation, silence at rest, an orbit flushed as one line;
  *   - the JS of the ring's own frame callbacks (aimTick and the figure's slices, aimEstTick) stays under BUDGET_MS a frame
  *     (two exceptions, none near the old spikes) while moving and coming to rest - the integral is sliced over frames;
  *   - the figure reaches the ring: taken while moving, and at rest the fine figure equals the one a synchronous 1024-ray
@@ -210,14 +215,37 @@ async function main() {
       const one = await ev('window.__oneShot');
       console.log('one-piece integral on this model (' + one.model.trim().slice(0, 40) + ', ' + one.triangles + ' triangles): 256 rays ' + one.r256 + ' ms, 1024 rays ' + one.r1024 + ' ms');
     }
-    await ev('window.__record(true)'); await circle(3000); await ev('window.__record(false)');
-    const cursor = summary('cursor moving', await ev('window.__read()'));
-    const moving = await ev('window.__figure()');
-    await ev('window.__record(true)'); await key('keyDown', 'KeyW', 'w', 87); await circle(2500); await key('keyUp', 'KeyW', 'w', 87); await ev('window.__record(false)');
-    const drive = summary('W held, cursor moving', await ev('window.__read()'));
-    await ev('window.__record(true)'); await new Promise((r) => setTimeout(r, 6000)); await ev('window.__record(false)');
-    const rest = summary('coming to rest (the fine figure)', await ev('window.__read()'));
-    const shown = await ev('window.__figure()'), exact = await ev('window.__exact()');
+    // The three phases: the cursor circling, W held with the cursor moving, coming to rest (the fine figure). Run twice (28.09,
+    // steady-60): with the page's worker taking the figures (the default where a Worker starts) and on the main thread's
+    // slices (ArmorBallistics.useWorker(false): the fallback when none does). The ray spin applies to the main thread only.
+    async function phases(tag) {
+      await ev('window.__record(true)'); await circle(3000); await ev('window.__record(false)');
+      const cursor = summary('cursor moving' + tag, await ev('window.__read()'));
+      const moving = await ev('window.__figure()');
+      await ev('window.__record(true)'); await key('keyDown', 'KeyW', 'w', 87); await circle(2500); await key('keyUp', 'KeyW', 'w', 87); await ev('window.__record(false)');
+      const drive = summary('W held, cursor moving' + tag, await ev('window.__read()'));
+      await ev('window.__record(true)'); await new Promise((r) => setTimeout(r, 6000)); await ev('window.__record(false)');
+      const rest = summary('coming to rest (the fine figure)' + tag, await ev('window.__read()'));
+      const shown = await ev('window.__figure()'), exact = await ev('window.__exact()');
+      if (MEASURE) console.log('figure at rest' + tag + ': shown ' + JSON.stringify(shown.text) + ', synchronous 1024 rays ' + JSON.stringify(exact) + '; throttle ' + THROTTLE + 'x, ray spin ' + RAY_US + ' us, ' + browser.product);
+      if (!DATA && RAY_US >= 40 && THROTTLE <= 1) {   // the budget is for the plain run; throttled runs are for reading
+        // At most two frames over the budget (a garbage collection landing in one, a machine busy with the other suites) and
+        // none near the old spikes: the one-piece integral put ~20 ms into a frame every 120 ms and ~80 ms into one at rest.
+        [cursor, drive, rest].forEach((s) => ok('frame budget, ' + s.label + ': the ring’s JS (aimTick + figure slices) at most ' + BUDGET_MS + ' ms a frame (two exceptions, none over ' + SPIKE_MS + ' ms)',
+          s.frames > 20 && s.overBudget <= 2 && s.ringMax < SPIKE_MS, '(' + s.frames + ' frames, ' + s.overBudget + ' over, max ' + fix(s.ringMax) + ' ms, p95 ' + fix(s.ringP95) + ' ms)'));
+      }
+      ok('the figure is on the ring while it moves' + tag, moving.shown && /%$/.test(moving.text || ''), JSON.stringify(moving));
+      ok('at rest the figure is the exact 1024-ray integral over the ring on screen' + tag, shown.shown && shown.text === exact, JSON.stringify(shown) + ' vs ' + exact);
+      return {cursor: cursor, drive: drive, rest: rest};
+    }
+    const worker = await ev('ArmorBallistics.useWorker()');
+    ok('the page’s ray worker runs (a blob worker importing web/ballistics.js)', worker.on && worker.running && worker.ready, JSON.stringify(worker));
+    const inWorker = await phases(' [worker]');
+    // The worker's figure is the main thread's to the bit: one ring integrated both ways, every field of the result.
+    const same = await ev(`(async () => { const v = window.__bullbaViewers[window.__bullbaViewers.length - 1], here = v.liveAimSampler(v.shell, 1024, true), there = v.liveAimSampler(v.shell, 1024);
+      let r = null; for (let i = 0; i < 400 && !(r = there.step(performance.now())); i++) await new Promise((z) => setTimeout(z, 5));
+      return {remote: !!there.remote || !!r, here: JSON.stringify(here.step(Infinity)), there: JSON.stringify(r)}; })()`);
+    ok('the worker’s 1024-ray figure equals the main thread’s, every field', same.here === same.there && same.here !== 'null', JSON.stringify(same));
     // The host's steady-state line (host.js, 28.09): at least one line covering the emulation came out of the 5.5 s of
     // activity above, and the 6 s at rest added at most the one flush of what was left - an idle page logs nothing more.
     const hostLines = () => ev('(window.BullbaHost && window.BullbaHost.frameLines || []).slice()');
@@ -233,15 +261,6 @@ async function main() {
     const logged = page.console.filter((l) => /Bullba Hits frames \(/.test(l));
     ok('frame telemetry: every line reached the console (game.log in the game)', logged.length === linesOrbit.length, logged.length + ' vs ' + linesOrbit.length);
     if (MEASURE) logged.forEach((l) => console.log('host line: ' + l.replace(/^info: /, '')));
-    if (MEASURE) console.log('figure at rest: shown ' + JSON.stringify(shown.text) + ', synchronous 1024 rays ' + JSON.stringify(exact) + '; throttle ' + THROTTLE + 'x, ray spin ' + RAY_US + ' us, ' + browser.product);
-    if (!DATA && RAY_US >= 40 && THROTTLE <= 1) {   // the budget is for the plain run; throttled runs are for reading
-      // At most two frames over the budget (a garbage collection landing in one, a machine busy with the other suites) and
-      // none near the old spikes: the one-piece integral put ~20 ms into a frame every 120 ms and ~80 ms into one at rest.
-      [cursor, drive, rest].forEach((s) => ok('frame budget, ' + s.label + ': the ring’s JS (aimTick + figure slices) at most ' + BUDGET_MS + ' ms a frame (two exceptions, none over ' + SPIKE_MS + ' ms)',
-        s.frames > 20 && s.overBudget <= 2 && s.ringMax < SPIKE_MS, '(' + s.frames + ' frames, ' + s.overBudget + ' over, max ' + fix(s.ringMax) + ' ms, p95 ' + fix(s.ringP95) + ' ms)'));
-    }
-    ok('the figure is on the ring while it moves', moving.shown && /%$/.test(moving.text || ''), JSON.stringify(moving));
-    ok('at rest the figure is the exact 1024-ray integral over the ring on screen', shown.shown && shown.text === exact, JSON.stringify(shown) + ' vs ' + exact);
     // A shot's own figure is a job of its own, in slices: it must land on the shot's tile as the one-piece integral over the
     // ring the shot left gives it. The harness keeps an untouched copy of the shot's sampler and integrates it in one piece.
     const shotTile = () => ev(`(() => { const t = document.getElementById('shot-circle-tile'); return t && !t.hidden ? document.getElementById('shot-circle').textContent : null; })()`);
@@ -260,6 +279,11 @@ async function main() {
       ok('a shot ' + label + ': its figure lands on its tile, the one-piece integral over the ring it left', !!exact && shot === exact, '(' + shot + ' vs ' + exact + ')');
       await new Promise((r) => setTimeout(r, 1000));   // off the ⌖ mode a press fires whatever the reload
     }
+    // The fallback: the same phases on the main thread's slices, the budget and the exact figure as before the worker.
+    await ev('ArmorBallistics.useWorker(false)');
+    await move(box.x, box.y); await new Promise((r) => setTimeout(r, 500));
+    const onMain = await phases(' [main thread]');
+    if (MEASURE) ['cursor', 'drive', 'rest'].forEach((k) => console.log('ring JS p95/max, worker vs main thread, ' + k + ': ' + fix(inWorker[k].ringP95) + '/' + fix(inWorker[k].ringMax) + ' vs ' + fix(onMain[k].ringP95) + '/' + fix(onMain[k].ringMax) + ' ms'));
     ok('no uncaught exception in the page', page.errors.length === 0, page.errors.slice(0, 3).join(' | '));
   } finally {
     await browser.close();

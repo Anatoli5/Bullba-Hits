@@ -210,6 +210,8 @@ function main(argv) {
   require(path.join(WEB, 'crits.js'));
   require(path.join(WEB, 'local-data.js'));
   const ArmorBallistics = window.ArmorBallistics, ArmorShotContext = window.ArmorShotContext, ArmorCrits = window.ArmorCrits;
+  // viewer.js reaches the ballistics as a global (its verdicts are ArmorBallistics.verdicts since 28.09), as in the page.
+  global.ArmorBallistics = ArmorBallistics;
   const RealViewer = window.ArmorViewer, Data = window.ArmorInspectorData;
 
   // What the pass did with each hit, read off the calls the page's own code makes. Nothing is inferred
@@ -234,7 +236,9 @@ function main(argv) {
   };
   const probeViewer = {
     points: function (hit, context) { const p = RealViewer.points(hit, context); if (job) job.points = p.length; return p; },
-    verdicts: function (engine, pts, shell) { const v = RealViewer.verdicts(engine, pts, shell); if (job) job.verdicts = v.length; return v; }
+    verdicts: function (engine, pts, shell) { const v = RealViewer.verdicts(engine, pts, shell); if (job) job.verdicts = v.length; return v; },
+    // The page's background pass asks for a scene's verdicts as a promise (the worker's or, here in Node, the main thread's).
+    verdictsFor: function (data, pts, shell) { const here = job; return RealViewer.verdictsFor(data, pts, shell).then(function (v) { if (here) here.verdicts = v.length; return v; }); }
   };
 
   // The page paces itself at 150 ms a hit so the user keeps his frames; offline the queue is drained as fast

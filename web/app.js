@@ -6221,9 +6221,11 @@
       if(!c)c=context.choices[ArmorShotContext.pick(context,hit).index]||null;
       var shell=c?shellAt(c,c.kind,c.penetration100,c.caliber,range,hit):null;
       // A flat engine (one leaf, no kd-tree): the tree would cost far more to build than the one to three rays
-      // cast through it here save, and the verdicts are the same.
-      if(!shell)return;var engine=ArmorBallistics.build(data,false,true),pts=ArmorViewer.points(hit,context);
-      ArmorViewer.verdicts(engine,pts,shell).forEach(function(v){verdictLine(battle.id,hit,v,shell,context.index>=0?'auto':'auto-shell-guess',data);});
+      // cast through it here save, and the verdicts are the same. Built and cast in the page's worker when there is one
+      // (ArmorViewer.verdictsFor, 28.09: the build was the pass's cost on the frame), else here.
+      if(!shell)return;
+      return ArmorViewer.verdictsFor(data,ArmorViewer.points(hit,context),shell).then(function(list){
+        list.forEach(function(v){verdictLine(battle.id,hit,v,shell,context.index>=0?'auto':'auto-shell-guess',data);});});
     }).catch(function(e){if(window.console)console.warn('Bullba Hits verdict: hit '+hit.id+' skipped: '+e.message);})
       .then(function(){verdictBusy=false;verdictStatus();if(verdictQueue.length)verdictTimer=setTimeout(drainVerdicts,150);});
   }

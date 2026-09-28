@@ -4117,10 +4117,14 @@ settle(20).then(function () {
     delete window.BullbaHitsRng;
 
     // ---- 3. the geometry, on the REAL viewer.js over a box model ------------------------------------
+    // Since 28.09 (steady-60) the law is ArmorBallistics.circlePoint: the integral's sampler lives in ballistics.js (the
+    // page's worker runs it too) and the viewer's circlePoint - the drawn point's - hands its vectors to the same function.
+    const ballisticsSrc = fs.readFileSync(path + 'ballistics.js', 'utf8');
     ok('fun: one law for the integral and for the drawn point - both go through circlePoint()',
-       /function circlePoint\(/.test(viewerSrc)
-       && /point=circlePoint\(center,right,up,radius,\(i\+\.5\)\/count/.test(viewerSrc)
-       && /return circlePoint\(aim\.center,aim\.right,aim\.up,aim\.radius,r\(\),r\(\)\*Math\.PI\*2,this\.aimQuantile\(\)\)/.test(viewerSrc));
+       /function circlePoint\(out,center,right,up,radius,u,angle,quantile\)/.test(ballisticsSrc)
+       && /circlePoint\(p,center,right,up,radius,\(i\+\.5\)\/count/.test(ballisticsSrc)
+       && /function circlePoint\(center,right,up,radius,u,angle,quantile\)\{\s*var p=ArmorBallistics\.circlePoint\(/.test(viewerSrc)
+       &&/return circlePoint\(aim\.center,aim\.right,aim\.up,aim\.radius,r\(\),r\(\)\*Math\.PI\*2,this\.aimQuantile\(\)\)/.test(viewerSrc));
     ok('fun: a new model in the viewer clears the marks with everything else',
        /Viewer\.prototype\.clear=function\(\)\{if\(this\.loadedData\)this\.lastView=this\.cameraState\(true\);this\.dropTargets\(\);this\.clearLiveAim\(\);this\.clearHitMarks\(\);/.test(viewerSrc));
 

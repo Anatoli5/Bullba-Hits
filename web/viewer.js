@@ -1056,24 +1056,23 @@
     else{var body=new T.Mesh(new T.CylinderGeometry(.006,.006,length-head,8),new T.MeshBasicMaterial({color:color,transparent:true,opacity:.9,depthTest:false,depthWrite:false}));body.position.set(0,(length-head)/2,0);body.renderOrder=4;body.frustumCulled=false;arrow.add(body);}
     return group;
   };
-  // Our verdict at every recorded contact point along the drawn line, for the verdict log (server fact vs our
-  // estimate). A point's own ray comes from afar, so screens and the gun in front of the point count as the server
-  // counted them. The point after a recorded ricochet is the bounced leg of the one law, engine.bounced (ballistics.js):
-  // from the ricochet point with (1 - loss) times what our ray to the ricochet point had left there, and a further
-  // ricochet ends it. Before 26.09 that ray started with the shell's FULL penetration and flew on past a second
-  // ricochet - 21 lines "server no penetration, we penetrate" of the 26.09 log came from there
-  // (outputs/ricochet-second-leg-2026-09-26.md §3.1).
+  // Our verdict at every recorded contact point along the drawn line, for the verdict log (server fact vs our estimate):
+  // ArmorBallistics.verdicts, the one law (moved there 28.09 so the worker runs the same code), over the points as arrays.
+  function plainPoints(pts){
+    return (pts||[]).map(function(p){return {pos:p.pos.toArray(),line:p.line.toArray(),part:p.part,effect:p.effect,pi:p.pi,hitType:p.hitType,source:p.source,chordDev:p.chordDev};});
+  }
   Viewer.verdicts=function(engine,pts,shell){
     if(!engine||!shell||!pts)return [];
-    var out=[];
-    pts.forEach(function(p,i){var prev=i?pts[i-1]:null,afterRicochet=prev&&(prev.effect===1||prev.effect===2);
-      var origin=afterRicochet?prev.pos.clone().addScaledVector(p.line,.02):p.pos.clone().addScaledVector(p.line,-60);
-      // What the shell had left on reaching the ricochet point, by our ray to it: at our own ricochet there (the first
-      // leg's figure when our ray flew on), at the main plate we met instead, or after its screens.
-      var r0=afterRicochet?out[i-1].result:null,before=r0?(r0.bounce?r0.bounce.remaining:r0.remaining):undefined;
-      var result=null;try{result=afterRicochet?engine.bounced(origin.toArray(),p.line.toArray(),shell,before):engine.ray(origin.toArray(),p.line.toArray(),shell);}catch(e){result=null;}
-      out.push({index:i,part:p.part,effect:p.effect,pi:p.pi,hitType:p.hitType,prevEffect:prev?prev.effect:null,source:p.source,chordDev:p.chordDev,result:result});});
-    return out;
+    return ArmorBallistics.verdicts(engine,plainPoints(pts),shell);
+  };
+  // The verdicts of a scene the page does not show (the Statistics log's background pass, app.js drainVerdicts): a promise.
+  // In the worker when there is one - the flat engine is built there, off the frame - else here, the same law either way.
+  Viewer.verdictsFor=function(data,pts,shell){
+    var plain=plainPoints(pts);
+    function here(){return ArmorBallistics.verdicts(ArmorBallistics.build(data,false,true),plain,shell);}
+    if(!shell||!plain.length)return Promise.resolve([]);
+    var job=ArmorBallistics.remoteVerdicts(data,plain,shell);
+    return job?job.then(null,here):Promise.resolve().then(here);
   };
   Viewer.prototype.pointVerdicts=function(shell){return Viewer.verdicts(this.engine,this.shotPoints,shell);};
   Viewer.prototype.shotArrow=function(direction,tip,color){
@@ -1332,7 +1331,7 @@
     if(!this.savedAim||!this.savedAim.origin||!this.engine||!shell||!this.recordedPose())return null;
     // 'damage' is the mean expected damage over the circle, HP: a miss is 0 HP exactly as it is 0 %.
     var aim=this.savedAim;
-    return sampleCircle(this.engine,shell,aim.origin,aim.center,aim.right,aim.up,aim.radius,256,this.aimQuantile());
+    return sampleCircle(this.engine,shell,aim.origin,aim.center,aim.right,aim.up,aim.radius,256,this.aimProfileId());
   };
   // The same integral over the NOMINAL ring of a hit that has no recorded reticle (user, 20.09: the
   // circle figure belongs to every ring on screen). It is an estimate of the circle, so the figure is an
@@ -1340,7 +1339,7 @@
   Viewer.prototype.estimateAimProbability=function(shell){
     var aim=this.estimateAim;
     if(!aim||!aim.origin||!this.engine||!shell||!this.recordedPose())return null;
-    return sampleCircle(this.engine,shell,aim.origin,aim.center,aim.right,aim.up,aim.radius,256,this.aimQuantile());
+    return sampleCircle(this.engine,shell,aim.origin,aim.center,aim.right,aim.up,aim.radius,256,this.aimProfileId());
   };
   Viewer.prototype.paint=function(){
     if(!this.paintMesh)return;
@@ -1460,51 +1459,20 @@
     if(this.liveRadius100){var pinned=this.drawLiveAim();if(this.onAimMove)this.onAimMove(pinned);if(this.onAim)this.onAim('Circle pinned here. It keeps following the shooter’s state; “Centre on the hit” releases it.');}
     else if(this.onAim)this.onAim('Estimate centre moved. Press “Estimate”.');}};
   Viewer.prototype.hideSpread=function(){var line=this.spreadCircle;if(line){this.scene.remove(line);if(line!==this.liveRingLine){line.geometry.dispose();if(line.material!==this.liveRingMaterial)line.material.dispose();}this.spreadCircle=null;this.draw();}};
-  // ONE point of a dispersion circle: the radial quantile of the chosen profile at `u`, at the angle
-  // `angle`. The integral below walks `u` over the stratified (i+.5)/count and the angle over the golden
-  // step; a RANDOM shot (liveAimSample) draws both from the page's own source. Both therefore read the
-  // very same law - there is no second distribution anywhere on the page.
+  // ONE point of a dispersion circle (ArmorBallistics.circlePoint: the one law of the integral and of a random shot) as a
+  // three.js vector.
   function circlePoint(center,right,up,radius,u,angle,quantile){
-    var r=radius*quantile(u);
-    return center.clone().addScaledVector(right,r*Math.cos(angle)).addScaledVector(up,r*Math.sin(angle));
+    var p=ArmorBallistics.circlePoint([0,0,0],center.toArray(),right.toArray(),up.toArray(),radius,u,angle,quantile);
+    return new THREE.Vector3(p[0],p[1],p[2]);
   }
-  // The sampling model of a dispersion circle, in one place: 'count' rays fanned over the circle at the
-  // quantiles of the chosen radial distribution (a sunflower spiral, so the same count always gives the
-  // same points), a miss counting as 0 % and 0 HP. The distribution itself is a setting - the page's own
-  // Gaussian with sigma = radius/2, or the empirical post-9.6 table - and NEITHER is a confirmed WoT
-  // server distribution; the page says so next to every figure it feeds. Used by the button estimate, by
-  // the saved client reticle and by the emulated circle alike, so all three read the same way.
-  function sampleCircle(engine,shell,origin,center,right,up,radius,count,quantile){
-    return new CircleSampler(engine,shell,origin,center,right,up,radius,count,quantile).step(Infinity);
+  // The integral over a circle in one piece (the button estimate, the saved client reticle): ArmorBallistics.CircleSampler,
+  // the same model the live ring's figure is taken with (in slices or in the worker, liveAimSampler below).
+  function sampleCircle(engine,shell,origin,center,right,up,radius,count,profile){
+    return circleSampler(engine,shell,origin,center,right,up,radius,count,profile).step(Infinity);
   }
-  // THE SAME INTEGRAL IN SLICES (27.09, frame-smoothness). A heavy model costs ~80 us a ray, so the live ring's 256 rays
-  // took ~20 ms of one frame every 120 ms while anything moved and its 1024 rays ~80 ms at rest: the ring stuttered. The
-  // sampler keeps the ring it was made for (copies: the live ring's vectors are replaced as it moves) and the running sums;
-  // step(until) casts rays in the one fixed order until the clock passes `until` (performance.now() ms; Infinity: to the
-  // end) - at least one ray per call - and returns the result once the last ray is in, else null. Same rays, same order,
-  // same sums: the result is the one-piece integral's to the bit. `engine` is the engine it casts against; a caller whose
-  // viewer has built another since drops it.
-  function CircleSampler(engine,shell,origin,center,right,up,radius,count,quantile){
-    this.engine=engine;this.shell=shell;this.origin=origin.clone();this.o=origin.toArray();this.center=center.clone();this.right=right.clone();this.up=up.clone();
-    this.radius=radius;this.count=count;this.q=typeof quantile==='function'?quantile:ArmorBallistics.aimProfile().quantile;
-    this.i=0;this.sum=0;this.unknown=0;this.miss=0;this.dmg=0;this.result=null;
+  function circleSampler(engine,shell,origin,center,right,up,radius,count,profile){
+    return new ArmorBallistics.CircleSampler(engine,shell,origin.toArray(),center.toArray(),right.toArray(),up.toArray(),radius,count,profile);
   }
-  CircleSampler.prototype.step=function(until){
-    var count=this.count,shell=this.shell,center=this.center,right=this.right,up=this.up,radius=this.radius;
-    while(this.i<count){
-      var i=this.i,point=circlePoint(center,right,up,radius,(i+.5)/count,i*2.399963229728653,this.q);
-      var hit=this.engine.ray(this.o,point.sub(this.origin).toArray(),shell);
-      if(hit.chance===null)this.unknown++;else this.sum+=hit.chance;
-      if(hit.expected>0)this.dmg+=hit.expected;
-      if(hit.reason==='no-hull')this.miss++;
-      this.i=i+1;
-      if(until!==Infinity&&this.i<count&&clock()>=until)return null;
-    }
-    if(!this.result){var sum=this.sum,unknown=this.unknown,dmg=this.dmg;
-      this.result={low:sum/count,high:(sum+unknown*100)/count,unknown:unknown,miss:this.miss/count*100,samples:count,
-        damage:dmg/count,damageHigh:(dmg+unknown*((shell||{}).alpha||0))/count};}
-    return this.result;
-  };
   // The frame a circle standing across a shot line is drawn in: the line itself is the normal, the other two
   // axes are any pair perpendicular to it.
   function circleFrame(origin,center){
@@ -1583,7 +1551,7 @@
     if(!Number.isFinite(radius100)||radius100<0||radius100>10)throw new Error('The radius must be between 0 and 10 m at 100 m.');
     var aim=this.spreadAim||this.point||this.target,origin=this.camera.position.clone(),frame=circleFrame(origin,aim);
     var radius=origin.distanceTo(aim)*radius100/100;
-    var result=sampleCircle(this.engine,this.shell,origin,aim,frame.right,frame.up,radius,1024,this.aimQuantile());
+    var result=sampleCircle(this.engine,this.shell,origin,aim,frame.right,frame.up,radius,1024,this.aimProfileId());
     this.drawCircle(aim,frame.right,frame.up,radius);
     return result;
   };
@@ -1745,6 +1713,7 @@
   // back to the Gaussian, so a stored setting from a later build can never break the figures.
   Viewer.prototype.setAimProfile=function(name){this.aimProfileName=ArmorBallistics.aimProfile(name).id;};
   Viewer.prototype.aimQuantile=function(){return ArmorBallistics.aimProfile(this.aimProfileName).quantile;};
+  Viewer.prototype.aimProfileId=function(){return ArmorBallistics.aimProfile(this.aimProfileName).id;};
   // A pinned centre (Alt + click, or "Centre on the hit") outranks the cursor: the circle then stays where
   // the user put it and only its radius follows the state, which is what the Estimate button needs too.
   Viewer.prototype.drawLiveAim=function(){
@@ -1937,13 +1906,16 @@
   };
   // The integral over the live ring as it stands now, to be taken in slices (CircleSampler, 27.09) - the page's live figure
   // and a shot's own - or null with no ring, engine or shell. liveAimProbability is the same integral in one piece.
-  Viewer.prototype.liveAimSampler=function(shell,count){
+  // The page's jobs go to the worker when there is one (post: steady-60, 28.09); `here` keeps one on the main thread, as
+  // liveAimProbability does - it wants the figure now.
+  Viewer.prototype.liveAimSampler=function(shell,count,here){
     var aim=this.liveAim;
     if(!aim||!this.engine||!shell)return null;
     this.commitPose();
-    return new CircleSampler(this.engine,shell,aim.origin,aim.center,aim.right,aim.up,aim.radius,count>0?count:256,this.aimQuantile());
+    var s=circleSampler(this.engine,shell,aim.origin,aim.center,aim.right,aim.up,aim.radius,count>0?count:256,this.aimProfileId());
+    return here?s:s.post();
   };
-  Viewer.prototype.liveAimProbability=function(shell,count){var s=this.liveAimSampler(shell,count);return s?s.step(Infinity):null;};
+  Viewer.prototype.liveAimProbability=function(shell,count){var s=this.liveAimSampler(shell,count,true);return s?s.step(Infinity):null;};
   // A RANDOM impact point inside the live ring (the fun layer, user 22.09): the same radial law the figure
   // over that ring is integrated with (circlePoint above with this viewer's own profile), drawn at a
   // uniform u instead of the stratified one and at a uniform angle. `random` is the page's own source, so
