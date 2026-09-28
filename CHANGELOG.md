@@ -2,7 +2,7 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
 
-## Unreleased
+## 0.8.8 (2026-09-27)
 
 - **Fix (game start):** the export no longer rewrites every saved battle before doing anything else (in 0.8.7 that took minutes with the page open, and held back the wheels of wheeled vehicles, the characteristics and every export). Only battles that changed are published again, in the background after the vehicle updates; the first start after an update does them all once. game.log has one line with the start's timings.
 - **Fix (game start):** that background work runs in short slices (~0.1 s) with the game getting as much time between them, and stops for a battle, a drag or a click - a clicked vehicle no longer waits for a whole battle. The open battle is no longer read again every few seconds while other battles are published. A new build publishes the saved battles again only when their format changed; a battle whose model file was deleted, or whose model or vehicle file failed to read, is published again at the next start.
