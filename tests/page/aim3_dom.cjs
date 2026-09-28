@@ -8872,6 +8872,8 @@ settle(20).then(function () {
 }).then(function () {
   return clickExportOutdated();
 }).then(function () {
+  return indexRevisions();
+}).then(function () {
 
 
   if (thrown.length) console.log('\nEXCEPTIONS: ' + thrown.map(function (e) { return e && e.stack; }).join('\n'));
@@ -9346,8 +9348,10 @@ function clickExport() {
 
 // ================= A VEHICLE WHOSE FILE IS OUT OF DATE (startup-republish-slow, 27.09) =================
 // The user: an EBR exported before the wheels opened without its wheels. The mod marks such a row 'outdated' in the
-// catalogue; opening it asks the game for it at once (the click-export path: exportVehicle, JOB_PAGE, the spinner) and the
-// page never shows the old file meanwhile - by a click on the row and by the game's #vehicle= alike.
+// catalogue; opening it asks the game for it at once and the page never shows the old file meanwhile - by a click on the row
+// and by the game's #vehicle= alike. What it asks is 'prioritise' (review of 4b1c8c8 #1): the mod exports the file again
+// from its own request - exportVehicle made the game build the hangar's or the top configuration in its place. Outside the
+// game nobody exports: the row opens its file as it is (#2).
 function clickExportOutdated() {
   const $ = function (id) { return document.getElementById(id); };
   const D = global.ArmorInspectorData, H = global.BullbaHost;
@@ -9374,6 +9378,7 @@ function clickExportOutdated() {
   const polls = function (id) { return reads.filter(function (r) { return r === id + ':poll'; }).length; };
   const scopeAll = function () { document.querySelectorAll('#vehicle-scope [data-scope]').forEach(function (b) { if (b.getAttribute('data-scope') === 'all') b.onclick(); }); };
   const exports = function () { return sent.filter(function (p) { return p.action === 'exportVehicle'; }).map(function (p) { return p.vehicleType; }); };
+  const lifted = function () { return sent.filter(function (p) { return p.action === 'prioritise'; }).map(function (p) { return (p.vehicleTypes || []).join('+'); }); };
   H.params = function () { return {}; };
   sidebarModes[1].onclick();
   return settle(20).then(function () {
@@ -9385,8 +9390,8 @@ function clickExportOutdated() {
     rowOf('germany-Xray').onclick();
     return settle(10);
   }).then(function () {
-    ok('outdated: a click asks the game for it at once (exportVehicle, its type), as for a vehicle without a file',
-       exports().join() === 'germany:Xray', JSON.stringify(sent));
+    ok('outdated: a click asks the game for it at once - prioritise of its type, never exportVehicle (its own configuration stays)',
+       lifted().join() === 'germany:Xray' && exports().length === 0, JSON.stringify(sent));
     ok('outdated: the row spins and the scene says the model is being exported - the old file is not shown',
        loading().join() === 'germany-Xray' && msg() === WAIT && $('battle-map').textContent !== 'Xray', loading().join() + ' | ' + msg() + ' | ' + $('battle-map').textContent);
     tick(0.4); return settle(10);
@@ -9411,9 +9416,9 @@ function clickExportOutdated() {
     (winListeners.hashchange || []).forEach(function (fn) { fn(); });
     return settle(20);
   }).then(function () {
-    ok('outdated: #vehicle= in the game - the export is asked for, the scene and the row spin, the old file is not shown',
-       exports().indexOf('germany:Yankee') >= 0 && msg() === WAIT && loading().join() === 'germany-Yankee' && $('battle-map').textContent !== 'Yankee',
-       exports().join() + ' | ' + msg() + ' | ' + loading().join() + ' | ' + $('battle-map').textContent);
+    ok('outdated: #vehicle= in the game - prioritise is sent (no exportVehicle), the scene and the row spin, the old file is not shown',
+       lifted().indexOf('germany:Yankee') >= 0 && exports().length === 0 && msg() === WAIT && loading().join() === 'germany-Yankee' && $('battle-map').textContent !== 'Yankee',
+       lifted().join() + ' | ' + exports().join() + ' | ' + msg() + ' | ' + loading().join() + ' | ' + $('battle-map').textContent);
     fresh['germany-Yankee'] = true;
     tick(0.4); return settle(30);
   }).then(function () {
@@ -9422,7 +9427,89 @@ function clickExportOutdated() {
     rowOf(VEHICLE.id).onclick();
     return settle(10);
   }).then(function () {
+    // Outside the game (#2): an out-of-date row opens its file as it is - nobody would export it, the wait would only time out.
+    delete fresh['germany-Xray'];
+    H.game = false;
+    H.params = function () { return {}; };
+    const was = sent.length;
+    scopeAll();
+    return settle(10).then(function () {
+      rowOf('germany-Xray').onclick();
+      return settle(20);
+    }).then(function () {
+      ok('outdated: outside the game a click opens the existing file at once - no request, no spinner, no wait',
+         $('battle-map').textContent === 'Xray' && sent.length === was && !loading().length && msg() !== WAIT,
+         $('battle-map').textContent + ' | ' + JSON.stringify(sent.slice(was)) + ' | ' + loading().join() + ' | ' + msg());
+      rowOf(VEHICLE.id).onclick();
+      return settle(10);
+    });
+  }).then(function () {
     Object.keys(keep).forEach(function (k) { D[k] = keep[k]; });
     Object.keys(keepHost).forEach(function (k) { H[k] = keepHost[k]; });
+  });
+}
+
+// ================= THE OPEN BATTLE AND THE INDEX'S REVISIONS (review of 4b1c8c8 #3, optimisation plan C1) =================
+// After a start the mod publishes the saved battles in the background, one every few seconds, and writes the index after each:
+// its updatedAt changed on every poll and the page read the open battle again (1-3 MB) each time. Now every battle has its own
+// revision ('rev') in the index: the open battle is read again only when its own changed. An index of an earlier build (no
+// revisions) reads it again on every change, as before.
+function indexRevisions() {
+  if (RELOAD) return Promise.resolve();
+  const $ = function (id) { return document.getElementById(id); };
+  const D = global.ArmorInspectorData;
+  const keep = {index: D.index, battle: D.battle, scene: D.scene};
+  const HIT = function (id) {
+    return {id: id + '-1', direction: 'incoming', damage: 0, receivedAt: 1, points: [], warnings: [],
+            attacker: {name: 'A', parts: []}, target: {name: 'T', parts: []}};
+  };
+  const battles = {ra: {id: 'ra', map: 'Alpha', hits: [HIT('ra')], warnings: [], shotEvents: []},
+                   rb: {id: 'rb', map: 'Bravo', hits: [HIT('rb')], warnings: [], shotEvents: []}};
+  const rows = [{id: 'ra', startedAt: 2, map: 'Alpha', hits: 1, rev: 's.1'}, {id: 'rb', startedAt: 1, map: 'Bravo', hits: 1, rev: 's.2'}];
+  let updatedAt = 1;
+  const reads = [];
+  D.index = function () {
+    return Promise.resolve({application: 'local.armor_inspector', version: 'test', updatedAt: updatedAt,
+                            battles: rows.map(function (r) { return Object.assign({}, r); })});
+  };
+  D.battle = function (id) { reads.push(id); return battles[id] ? Promise.resolve(JSON.parse(JSON.stringify(battles[id]))) : Promise.reject(new Error('no battle')); };
+  D.scene = function (b, id) { return Promise.resolve({hit: b.hits.filter(function (h) { return h.id === id; })[0], models: {}, warnings: []}); };
+  const poll = function () { tick(5.1); return settle(30); };
+  sidebarModes[0].onclick();
+  return settle(20).then(poll).then(function () {
+    const pick = $('battles'); pick.value = 'ra'; pick.onchange.call(pick);
+    return settle(30);
+  }).then(function () {
+    ok('revisions: (the battle is open)', reads[reads.length - 1] === 'ra', reads.join());
+    const was = reads.length;
+    rows[1].rev = 's.3'; updatedAt = 2;   // another battle published by the background
+    return poll().then(function () {
+      ok('revisions: another battle published - the open one is not read again', reads.length === was, reads.slice(was).join());
+      rows[1].rev = 's.5'; updatedAt = 3;
+      return poll();
+    }).then(function () {
+      ok('revisions: (nor at the next one)', reads.length === was, reads.slice(was).join());
+    });
+  }).then(function () {
+    const was = reads.length;
+    rows[0].rev = 's.6'; updatedAt = 4;   // the open battle itself
+    return poll().then(function () {
+      ok('revisions: the open battle published - read again, once', reads.slice(was).join() === 'ra', reads.slice(was).join());
+      return poll();
+    }).then(function () {
+      ok('revisions: (and not again while nothing changes)', reads.slice(was).join() === 'ra', reads.slice(was).join());
+    });
+  }).then(function () {
+    const was = reads.length;
+    rows.forEach(function (r) { delete r.rev; }); updatedAt = 5;   // an index of an earlier build
+    return poll().then(function () {
+      updatedAt = 6;
+      return poll();
+    }).then(function () {
+      ok('revisions: an index without revisions - the open battle read again on every change, as before',
+         reads.slice(was).join() === 'ra,ra', reads.slice(was).join());
+    });
+  }).then(function () {
+    Object.keys(keep).forEach(function (k) { D[k] = keep[k]; });
   });
 }

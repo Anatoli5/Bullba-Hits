@@ -95,13 +95,14 @@ class PruneFromCompleteSet(Quiet):
         return ex.Exporter(str(self.game), str(self.folder), 'new client\n', str(self.archive))
 
     def test_locked_battle_keeps_every_model(self):
-        real = ex.read_battle
+        # Every raw read goes through BattleReader.step (read_battle and the background's slices alike).
+        real = ex.BattleReader.step
 
-        def locked(path, *args, **kwargs):
-            if path.endswith('10-old.jsonl'): raise IOError('file is locked by another process')
-            return real(path, *args, **kwargs)
+        def locked(reader, *args, **kwargs):
+            if reader.path.endswith('10-old.jsonl'): raise IOError('file is locked by another process')
+            return real(reader, *args, **kwargs)
 
-        with patch.object(ex, 'read_battle', side_effect=locked):
+        with patch.object(ex.BattleReader, 'step', locked):
             self.started(self.exporter())
         self.assertTrue(self.model.exists(), 'the only copy of an old-client model was deleted')
         self.assertTrue(self.orphan.exists(), 'nothing is pruned from an incomplete set')

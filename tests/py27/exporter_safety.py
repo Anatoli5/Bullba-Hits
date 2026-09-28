@@ -88,17 +88,18 @@ try:
     orphan = os.path.join(folder, 'data', 'models', 'orphan.js')
     write(model, 'ArmorInspectorData.receive(["model:x",{}]);\n')
     write(orphan, 'ArmorInspectorData.receive(["model:y",{}]);\n')
-    real = ex.read_battle
+    # Every raw read goes through BattleReader.step (read_battle and the background's slices alike).
+    real = ex.BattleReader.step
 
-    def locked(path, *args, **kwargs):
-        if path.endswith('10-old.jsonl'): raise IOError('file is locked by another process')
-        return real(path, *args, **kwargs)
+    def locked(reader, *args, **kwargs):
+        if reader.path.endswith('10-old.jsonl'): raise IOError('file is locked by another process')
+        return real(reader, *args, **kwargs)
 
-    ex.read_battle = locked
+    ex.BattleReader.step = locked
     try:
         started(ex.Exporter(game, folder, 'new client\n', archive))
     finally:
-        ex.read_battle = real
+        ex.BattleReader.step = real
     check(os.path.exists(model) and os.path.exists(orphan), 'locked battle at setup: no model deleted')
     check(warned('Unused models kept') == 1, 'one warning for the kept models')
     started(ex.Exporter(game, folder, 'new client\n', archive))

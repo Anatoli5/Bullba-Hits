@@ -92,6 +92,13 @@
   // the page waits for the new one; the wait counts it as not there yet.
   var OUTDATED_FILE='The file of this vehicle is out of date; the game exports it again.';
   function needsExport(row){return !!row&&(!row.exported||!!row.outdated);}
+  // What the page sends the game for such a row: an out-of-date file is exported again from its own request, so its
+  // configuration stays (review of 4b1c8c8 #1: exportVehicle made the game build the hangar's or the top one) - 'prioritise'
+  // puts that job first; a vehicle without a file is exported as the game has it ('exportVehicle').
+  function askExport(row){
+    var type=String(row.type||'');
+    return row.outdated?sendCommand('prioritise',{vehicleTypes:[type]}):sendCommand('exportVehicle',{vehicleType:type});
+  }
   // The help of the pane, as the gold badge's popover shows it: three headings, a few lines each. It used to
   // be a paragraph under the count and a two-line foot under the list; both are gone (user, 19.09: the pane
   // is a list, not a leaflet).
@@ -338,7 +345,7 @@
   function vehicleRowWords(item){
     var v=item.v;
     return vehicleWords(v)+(item.side==='ally'||item.side==='enemy'?'\n\u2022 Team: '+(item.side==='ally'?'Ally':'Enemy'):'')
-      +'\n\u2022 Collision model: '+(v.outdated?'out of date, a click exports it again':v.exported?'exported'+(SOURCE_TAG[v.source]?' '+SOURCE_TAG[v.source]:''):'none yet');
+      +'\n\u2022 Collision model: '+(v.outdated?(host.game?'out of date, a click exports it again':'out of date, the game exports it again'):v.exported?'exported'+(SOURCE_TAG[v.source]?' '+SOURCE_TAG[v.source]:''):'none yet');
   }
   // One DOM node per row, up to about a thousand of them: the list is rebuilt only when the set of rows, the
   // roles or the export marks actually change, so the five-second poll of the catalogue costs nothing.
@@ -406,9 +413,10 @@
     if(!v.exported&&!host.game)return void pickVehicle(v.id,activeRole,{row:v}).catch(function(e){
       if(e&&e.superseded)return;message(e.message);warnings([e.message]);});
     // A request the game did not take ends the wait at once with its reason, not after EXPORT_WAIT.
-    var waiting=needsExport(v),refused=null,options=waiting?{deadline:Date.now()+EXPORT_WAIT,waiting:EXPORTING,
+    // Outside the game nobody exports: an out-of-date file is shown as it is (review of 4b1c8c8 #2).
+    var waiting=host.game&&needsExport(v),refused=null,options=waiting?{deadline:Date.now()+EXPORT_WAIT,waiting:EXPORTING,
       failed:function(){return refused;}}:{};
-    if(waiting)sendCommand('exportVehicle',{vehicleType:String(v.type||'')}).then(function(sent){if(!sent)refused=NO_EXPORT_CHANNEL;});
+    if(waiting)askExport(v).then(function(sent){if(!sent)refused=NO_EXPORT_CHANNEL;});
     pickVehicle(v.id,activeRole,options).catch(function(e){
       if(e&&e.superseded)return;   // another pick or scene took its place (audit APP1-02): nothing to say over it
       var text=e&&e.timedOut?EXPORT_TIMEOUT:e.message;message(text);warnings([text]);});
@@ -671,7 +679,7 @@
     list.then(function(){
       if(generation!==vehicleGeneration||lastFragment!==id)return;
       var row=catalogueRow(id);
-      if(row&&row.outdated)sendCommand('exportVehicle',{vehicleType:String(row.type||'')});
+      if(row&&row.outdated)askExport(row);
       open();
     });
   }
@@ -6817,7 +6825,7 @@
     // Not exported yet (click-export-fast, 26.09): in the game the page asks for it as a click on its row does - the wait
     // below had nobody to wait for; a request the game did not take ends it at once.
     var refused=null;
-    if(deadline&&needsExport(row))sendCommand('exportVehicle',{vehicleType:String(row.type||'')}).then(function(sent){if(!sent)refused=NO_EXPORT_CHANNEL;});
+    if(deadline&&needsExport(row))askExport(row).then(function(sent){if(!sent)refused=NO_EXPORT_CHANNEL;});
     return readVehicle(row.id,deadline,alive,function(){return refused;}).then(function(record){
       var synthetic=swapHit(hit);
       synthetic.target.parts=(record.parts||[]).slice();
@@ -7302,9 +7310,10 @@
       target.name,attacker.name,attacker.gun,attacker.gunDispersion,attacker.gunHeight,attacker.gunHeightFrom,parts].join('\u0001');
   }
   function loadBattle(id,keep){
-    var request=++battleGeneration;if(!current||current.id!==id)++generation;
+    var request=++battleGeneration,rev=(battleSummary(id)||{}).rev||null;if(!current||current.id!==id)++generation;
     return ArmorInspectorData.battle(id).then(function(b){
       if(request!==battleGeneration)return;
+      loadedRev=rev;
       var sameBattle=!!current&&current.id===b.id,kept=keep&&selected?b.hits.find(function(h){return h.id===selected;}):null;
       // A view the user built is kept whatever the record did (audit APP1-01/APP2-01): ⇅, a roster shooter, a browsed
       // vehicle - a poll with a new stamp put the recorded hit back over them, with its camera, pin and pose. The
@@ -7344,10 +7353,17 @@
   // The battle list keeps itself fresh: the index file is re-read every few seconds (a local file, cheap) and the
   // battle is reloaded only when the exporter has written a newer index; the chosen battle and hit are kept.
   var indexStamp=null,polling=false,pollTimer=null;
+  // The index revision of the battle on screen when it was read (the mod's 'rev', optimisation plan C1): the index is
+  // written whenever any battle is published - the background publishes one every few seconds after a start - and the open
+  // battle (1-3 MB, its telemetry choice reset) is read again only when its own revision changed. An index without
+  // revisions (an earlier build's) reads it again on every change, as before.
+  var loadedRev=null;
+  function openBattleCurrent(id){var row=battleSummary(id);return !!(current&&current.id===id&&row&&row.rev&&row.rev===loadedRev);}
   function refresh(){
     if(polling)return Promise.resolve();polling=true;
     return ArmorInspectorData.index().then(function(index){var pv=$('app-version').getAttribute('data-version');recordsVersion=index.version||'';$('app-version').textContent=[pv!=='dev'?pv:'',index.version&&index.version!==pv?'records '+index.version:''].filter(Boolean).join(' \u00b7 ');if(index.application!=='local.armor_inspector'||!Array.isArray(index.battles))throw new Error('Invalid battle list');verdictStatus();
-      var stamp=String(index.updatedAt||'')+':'+index.battles.map(function(b){return b.id+'/'+b.hits;}).join(',');if(stamp===indexStamp)return;indexStamp=stamp;
+      var revs=index.battles.some(function(b){return b&&b.rev;});
+      var stamp=(revs?'':String(index.updatedAt||''))+':'+index.battles.map(function(b){return b.id+'/'+b.hits+'/'+(b.rev||'');}).join(',');if(stamp===indexStamp)return;indexStamp=stamp;
       var battles=index.battles,prior=$('battles').value;$('battles').replaceChildren();
       battleSummaries=battles.slice();
       if(!battles.length){current=null;selected=null;++battleGeneration;$('battles').appendChild(node('option','No battles yet'));
@@ -7356,6 +7372,12 @@
         ++generation;sceneCleared();renderHits();message('New hits appear here after a battle.');warnings([]);return;}
       battles.forEach(function(b){var option=node('option',new Date(b.startedAt*1000).toLocaleDateString('en-GB')+' \u00b7 '+b.map+' \u00b7 '+b.hits);option.value=b.id;$('battles').appendChild(option);});var id=battles.some(function(b){return b.id===prior;})?prior:battles[0].id;$('battles').value=id;
       renderBattleList();syncBattlePick();
+      // The open battle is as it was (its revision): nothing to read. A vehicle of it shown without its model yet is looked
+      // for again - that fallback used to come back only with a read of the battle another publish caused.
+      if(openBattleCurrent(id)){
+        if(sidebarMode==='battles'&&!selected&&!focusScene&&!current.hits.some(function(h){return !!viewDirection(h);}))return showFocusEmpty();
+        return;
+      }
       // The battle list stays fresh while the Vehicles mode is on screen, but the scene there belongs to a
       // vehicle: the reload waits for the switch back.
       if(sidebarMode!=='battles'){battlesDirty=true;return;}

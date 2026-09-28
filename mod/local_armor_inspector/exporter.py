@@ -140,16 +140,35 @@ EXTRAS_KEY = 'extras:'
 # Which saved battles setup publishes again (startup-republish-slow, 27.09). Until 0.8.7 setup read and published every
 # saved battle before anything else ran: 145 battles cost ~65 s of CPU offline and 8 min 22 s in the game on 27.09 (page
 # open over a hit), and the wheel migration, the TTX sources and every job waited behind it. data/published.json keeps,
-# per battle, what its derived file was built from: the stamp (this build, the client version), the raw bytes read, the
-# derived file's size, its model references, whether it still waited for a model or the vehicle XML, and its summary.
-# Setup compares two file sizes a battle and publishes again only those that differ - in the background, a 'battle' job
-# after the vehicle migrations, with the game's share of the time between two (as a characteristics file).
+# per battle, what its derived file was built from: the stamp (DERIVED_FORMAT, the client version), the raw bytes read and
+# the raw file's size, the derived file's size, its model references (and those whose model failed), whether it still
+# waited for a model or the vehicle XML - or had a part the next start may do better - and its summary. Setup compares two
+# file sizes a battle and one listing of data/models, and publishes again only those that differ - in the background, a
+# 'battle' job after the vehicle migrations, in slices (BATTLE_SLICE) with the game's share of the time between two.
 PUBLISHED_FILE = 'published.json'
-PUBLISHED_FORMAT = 1
+# 2 (startup-review-fixes, 27.09): 'rawSize', 'absent', the stamp by DERIVED_FORMAT.
+PUBLISHED_FORMAT = 2
 PUBLISHED_LIMIT = 16*1024*1024
 # The published state is written by the idle tick at most this often outside a battle (and at setup, at the end of the
 # background publication and when the game closes): a state lost to a crash only costs those battles one more publish.
 PUBLISHED_PAUSE = 30.0
+# WHAT A DERIVED BATTLE FILE IS (startup-review-fixes, 27.09): raised whenever publish() writes anything different for the
+# same raw battle - a field, a fix, an order. It stamps data/published.json instead of VERSION: a build that changes nothing
+# of it no longer publishes every saved battle again (145 in the background after every build). tests/py27/derived_golden.py
+# compares publish()'s output for a fixture battle with tests/golden/derived-battle-<N>.js and fails when it changes while
+# this stays; after a raise it stores the new one beside the previous, which the page must still read
+# (tests/test_derived_formats.cjs) until the background has published every battle again.
+DERIVED_FORMAT = 1
+# One slice of a saved battle's background publication (run_battle_job): lines of its raw file, then hits prepared, then the
+# file written (~60 ms for the largest, 53 MB raw / 405 hits - the one part that does not split). Between two lines or hits
+# the slice ends early for a battle, a drag, a command of the page or the mod closing; after it the game gets its share
+# (SWEEP_SHARE) of the time the slice took, with no cap.
+BATTLE_SLICE = 0.1
+# A model failure that the next start cannot undo (the other failures - a package scan, a mod overriding the model, anything
+# unexpected - leave the battle to be published again at the next start, 'waits').
+PERMANENT_MODEL_ERRORS = ('Client version changed', 'Collision model not found in client')
+# The background publication logs a battle of its own when it is this big or took this long (the rest are in the summary).
+BATTLE_LOG_MB, BATTLE_LOG_WALL = 10.0, 5.0
 
 
 
@@ -339,56 +358,84 @@ class HeaderUnavailable(ValueError):
     file alone for the session instead of retrying it on every tick."""
 
 
-def read_battle(path, return_offset=False, decoder=None):
-    header, hits, warnings, shot_events, crit_events, roster = None, [], [], [], [], None
-    decoder = decoder or RecordDecoder()
-    offset = 0
-    with open(path, 'rb') as stream:
-        for number in range(20001):
-            line = stream.readline(2*1024*1024+1)
-            if not line: break
-            if number == 20000 or len(line) > 2*1024*1024:
-                raise ValueError('Battle exceeds export limit')
-            if not line.endswith(b'\n'): break
-            offset = stream.tell()
-            try:
-                row = decoder.decode(json.loads(line.decode('utf-8')))
-                if row.get('schema') != 1: raise ValueError('Unknown schema')
-                if row.get('type') == 'battle' and header is None: header = row
-                elif row.get('type') == 'hit': hits.append(row)
-                elif row.get('type') == 'shot': shot_events.append(row)
-                elif row.get('type') == 'crit': crit_events.append(row)
-                elif row.get('type') == 'roster': roster = row
-                else: raise ValueError('Unexpected record')
-            except (ValueError, AttributeError): warnings.append('Unreadable record at line '+str(number+1))
-    if header is None:
-        # Explicit, hash-bound metadata can recover the header lost by 0.2.0.
-        # Never guess the client version from whatever client is installed now.
-        sidecar = path + '.recovery.json'
-        if not os.path.isfile(sidecar): raise HeaderUnavailable('Battle header unavailable')
-        with open(sidecar, 'rb') as stream:
-            recovery = json.loads(stream.read(65537).decode('utf-8'))
-        digest = hashlib.sha256()
-        with open(path, 'rb') as stream:
+class BattleReader(object):
+    """A raw battle file read in steps (startup-review-fixes, 27.09): read_battle is one step to the end; the background
+    publication (Exporter.run_battle_job) reads a line at a time between its gates. The file is opened for each step and
+    read from where the last one stopped. `offset`: the bytes of the complete lines read; `size`: the file's size at the
+    last step - more than `offset` when the last line is unfinished (data/published.json keeps both)."""
+
+    def __init__(self, path, decoder=None):
+        self.path = path
+        self.decoder = decoder or RecordDecoder()
+        self.header, self.hits, self.warnings, self.shot_events, self.crit_events, self.roster = None, [], [], [], [], None
+        self.offset, self.number, self.size, self.done = 0, 0, None, False
+
+    def step(self, stop=None):
+        """Read lines until the end of the file, or until `stop()` says so after a line. True when the file is read."""
+        with open(self.path, 'rb') as stream:
+            self.size = os.fstat(stream.fileno()).st_size
+            stream.seek(self.offset)
             while True:
-                chunk = stream.read(65536)
-                if not chunk: break
-                digest.update(chunk)
-        if recovery.get('rawSha256') != digest.hexdigest():
-            raise ValueError('Recovery metadata does not match the raw battle')
-        header = recovery['header']
-        if (header.get('schema') != 1 or header.get('type') != 'battle' or
-                header.get('id') != os.path.basename(path)[:-6] or not header.get('clientVersion')):
-            raise ValueError('Invalid recovery header')
-        warnings.extend(recovery.get('warnings', []))
-    result = dict(header)
-    result.update({'id':os.path.basename(path)[:-6], 'hits':hits, 'shotEvents':shot_events, 'critEvents':crit_events,
-                   'warnings':warnings})
-    if roster is not None:
-        result.update({'roster':roster.get('vehicles') or [], 'playerTeam':roster.get('playerTeam')})
-        # The header may hold 0 when the battle record was opened before the client knew its vehicle.
-        if roster.get('playerVehicleId'): result['playerVehicleId'] = roster['playerVehicleId']
-    return (result, offset) if return_offset else result
+                line = stream.readline(2*1024*1024+1)
+                if not line: break
+                if self.number == 20000 or len(line) > 2*1024*1024:
+                    raise ValueError('Battle exceeds export limit')
+                if not line.endswith(b'\n'): break
+                self.offset = stream.tell()
+                try:
+                    row = self.decoder.decode(json.loads(line.decode('utf-8')))
+                    if row.get('schema') != 1: raise ValueError('Unknown schema')
+                    if row.get('type') == 'battle' and self.header is None: self.header = row
+                    elif row.get('type') == 'hit': self.hits.append(row)
+                    elif row.get('type') == 'shot': self.shot_events.append(row)
+                    elif row.get('type') == 'crit': self.crit_events.append(row)
+                    elif row.get('type') == 'roster': self.roster = row
+                    else: raise ValueError('Unexpected record')
+                except (ValueError, AttributeError): self.warnings.append('Unreadable record at line '+str(self.number+1))
+                self.number += 1
+                if stop is not None and stop(): return False
+        self.done = True
+        return True
+
+    def result(self):
+        """The battle read (the header restored from its recovery file when the file lost it)."""
+        path, header, warnings = self.path, self.header, self.warnings
+        if header is None:
+            # Explicit, hash-bound metadata can recover the header lost by 0.2.0.
+            # Never guess the client version from whatever client is installed now.
+            sidecar = path + '.recovery.json'
+            if not os.path.isfile(sidecar): raise HeaderUnavailable('Battle header unavailable')
+            with open(sidecar, 'rb') as stream:
+                recovery = json.loads(stream.read(65537).decode('utf-8'))
+            digest = hashlib.sha256()
+            with open(path, 'rb') as stream:
+                while True:
+                    chunk = stream.read(65536)
+                    if not chunk: break
+                    digest.update(chunk)
+            if recovery.get('rawSha256') != digest.hexdigest():
+                raise ValueError('Recovery metadata does not match the raw battle')
+            header = recovery['header']
+            if (header.get('schema') != 1 or header.get('type') != 'battle' or
+                    header.get('id') != os.path.basename(path)[:-6] or not header.get('clientVersion')):
+                raise ValueError('Invalid recovery header')
+            warnings.extend(recovery.get('warnings', []))
+        result = dict(header)
+        result.update({'id':os.path.basename(path)[:-6], 'hits':self.hits, 'shotEvents':self.shot_events,
+                       'critEvents':self.crit_events, 'warnings':warnings})
+        roster = self.roster
+        if roster is not None:
+            result.update({'roster':roster.get('vehicles') or [], 'playerTeam':roster.get('playerTeam')})
+            # The header may hold 0 when the battle record was opened before the client knew its vehicle.
+            if roster.get('playerVehicleId'): result['playerVehicleId'] = roster['playerVehicleId']
+        return result
+
+
+def read_battle(path, return_offset=False, decoder=None):
+    reader = BattleReader(path, decoder)
+    reader.step()
+    result = reader.result()
+    return (result, reader.offset) if return_offset else result
 
 
 VEHICLE_CLASS_TAGS = ('lightTank', 'mediumTank', 'heavyTank', 'AT-SPG', 'SPG')
@@ -3093,6 +3140,8 @@ class Exporter(object):
         # Wheeled vehicles' files from before the wheels that load_vehicles found: exported again in the background, and
         # the catalogue written once after the last of them (replay_vehicle_requests, run_vehicle_job).
         self.migrating = set()
+        # The out-of-date files the page asked for with no job queued, exported again from their own request (outdated_request).
+        self.outdated_tried = set()
         # data/published.json (PUBLISHED_FILE): {battle id: what its derived file was built from}, kept by publish() and
         # written by write_published when dirty. `backlog`: the saved battles setup left to the background ('battle' jobs)
         # - {'left', 'count', 'started', 'work', 'failed', 'prune'} - None when there are none left.
@@ -3100,8 +3149,17 @@ class Exporter(object):
         self.published_dirty = False
         self.published_written = 0.0
         self.backlog = None
-        # This build and this client: a derived battle file of another build or client is published again.
-        self.stamp = VERSION + ':' + hashlib.sha1(self.version.encode('utf-8')).hexdigest()[:16]
+        # The saved battle the background is publishing in slices (run_battle_job), None between two: its reader, the hits
+        # prepared so far, its times. Dropped when a battle starts (a big one holds its whole record in memory).
+        self.battle_work = None
+        # What a derived battle file is and this client: a file of another format or client is published again (not of
+        # another build - DERIVED_FORMAT says when a build writes them differently).
+        self.stamp = 'd%d:%s' % (DERIVED_FORMAT, hashlib.sha1(self.version.encode('utf-8')).hexdigest()[:16])
+        # Each publish gives its battle a revision in the index ('rev', optimisation plan C1): the page reads again only the
+        # battle it has open when that one's revision changed, not whenever the index was written (the background publishes
+        # a battle every few seconds). This session and a count: a page that outlives a restart never sees one revision twice.
+        self.session = '%x' % int(time.time() * 1000)
+        self.publish_serial = 0
 
     def setup(self):
         # The startup timing line (startup-republish-slow, 27.09): where setup's time goes, one line in game.log.
@@ -3172,7 +3230,7 @@ class Exporter(object):
         self.write_catalogue(force=True, rows=rows)
         if queued:
             self.backlog = {'left':set(queued), 'count':len(queued), 'started':time.time(), 'work':0.0, 'failed':0,
-                            'prune':complete and not refs_known}
+                            'prune':complete and not refs_known, 'mb':0.0, 'slices':0, 'slowest':None}
         if self.published_dirty: self.write_published()
         step = lap('catalogue')
         LOG.info('Startup in %.2f s: assets %.2f s, %d vehicles %.2f s, battles %d current and %d to publish in the '
@@ -3225,15 +3283,27 @@ class Exporter(object):
             LOG.exception('Published battle state not written; those battles are published again next start')
         self.published_written = time.time()
 
-    def published_current(self, name, entry):
-        """The derived file of this battle is what `entry` says, built by this build for this client from all the raw
-        bytes there are, and waits for nothing: two sizes, nothing read."""
+    def published_current(self, name, entry, models=None):
+        """The derived file of this battle is what `entry` says, built in this format for this client from the raw file as
+        it is now (its size: an unfinished last line is read to the same end every time), and waits for nothing: two sizes,
+        nothing read. `models` (setup: the model keys on disk, one listing): every model it names that was there is still
+        there - a model file deleted since would leave its parts empty until the next build."""
         if not entry or entry.get('stamp') != self.stamp or entry.get('waits'): return False
         try:
-            return (entry.get('raw') == os.path.getsize(os.path.join(self.folder, 'battles', name+'.jsonl')) and
-                    entry.get('size') == os.path.getsize(os.path.join(self.folder, 'data', 'battles', name+'.js')))
+            if not (entry.get('rawSize') == os.path.getsize(os.path.join(self.folder, 'battles', name+'.jsonl')) and
+                    entry.get('size') == os.path.getsize(os.path.join(self.folder, 'data', 'battles', name+'.js'))):
+                return False
         except OSError:
             return False
+        if models is not None and not (entry['refs'] - set(entry.get('absent') or ())) <= models: return False
+        return True
+
+    def model_files(self):
+        """The model keys in data/models, one listing (setup's check of the saved battles); none without the folder."""
+        try:
+            return set(name[:-3] for name in os.listdir(os.path.join(self.folder, 'data', 'models')) if name.endswith('.js'))
+        except OSError:
+            return set()
 
     def saved_battles(self):
         """Setup's look at the saved battles. A current one (published_current) is taken as it is: its summary, model
@@ -3242,6 +3312,8 @@ class Exporter(object):
         its file's when the entry is that file's. Returns (every name a battle id, current count, [queued ids], every
         reference known)."""
         stored = self.read_published()
+        # One listing of data/models for all of them (a battle whose model file was deleted is published again).
+        models = self.model_files() if stored else None
         previous = None
         named, refs_known, current, queued = True, True, 0, []
         for path in sorted(glob.glob(os.path.join(self.folder, 'battles', '*.jsonl'))):
@@ -3253,7 +3325,7 @@ class Exporter(object):
                 LOG.warning('Battle file with an unexpected name is not published: %s', os.path.basename(path))
                 continue
             entry = stored.get(name)
-            if self.published_current(name, entry):
+            if self.published_current(name, entry, models):
                 self.published[name] = entry
                 self.summaries[name] = dict(entry['summary'] or {'id':name})
                 self.model_refs[name] = set(entry['refs'])
@@ -3289,42 +3361,127 @@ class Exporter(object):
             return {}
 
     def republish_saved(self, battle_id):
-        """Publish one saved battle again: the active one from memory, any other read from its raw file (its offset kept
-        for the tail and for data/published.json). The one path of drain_republish and of the startup backlog."""
+        """Publish one saved battle again, at once: the active one from memory, any other read from its raw file (its
+        offset kept for the tail and for data/published.json). drain_republish's path. The background's slices of this
+        battle, if any, are dropped: their hits were prepared before what made this publish necessary."""
+        self.drop_battle_work(battle_id)
         if self.current is not None and self.current.get('id') == battle_id:
             self.publish(self.current)
             return
-        battle, offset = read_battle(os.path.join(self.folder, 'battles', battle_id+'.jsonl'), return_offset=True)
-        self.raw_offsets[battle_id] = offset
-        self.publish(battle, offset)
+        reader = BattleReader(os.path.join(self.folder, 'battles', battle_id+'.jsonl'))
+        reader.step()
+        battle = reader.result()
+        self.raw_offsets[battle_id] = reader.offset
+        self.publish(battle, reader.offset, raw_size=reader.size)
+
+    def drop_battle_work(self, battle_id=None):
+        """Forget the background's slices of this battle (of any, without an id): its job, still queued, starts it anew."""
+        work = self.battle_work
+        if work is not None and (battle_id is None or work['name'] == battle_id): self.battle_work = None
+
+    def battle_stop(self):
+        """A slice of the background publication ends after this line or hit: a battle, a drag of the page, a command of
+        the page waiting to be read (its click's job goes first), the mod closing."""
+        return self.ttx_stopped or not self.jobs_allowed() or self.sweep_waiting()
 
     def run_battle_job(self, payload):
-        """One saved battle setup left to the background. Passed over when it is current by now (the tail made it the
-        active battle and published it) or skipped; a failure is logged and keeps the prune off."""
+        """One slice of a saved battle setup left to the background: lines of its raw file (BattleReader), then its hits
+        prepared, then its file and the index written - for BATTLE_SLICE seconds, the gates checked after every line and
+        hit (battle_stop); every slice does one line, hit or write at least. True when the battle needs another slice:
+        run_job puts the job back in its place, and whatever the page waits for goes first meanwhile. Passed over when it
+        is current by now (the tail made it the active battle and published it) or skipped; a failure is logged and keeps
+        the prune off. 0.8.7 did a battle in one go: 0.5-11 s in the game (11.4 s for 53 MB raw), a click waiting behind."""
         name = str((payload or {}).get('battleId') or '')
-        started = TTX_TIMER()
-        failed = False
+        began = TTX_TIMER()
+        # The tail made it the active battle since the last slice: what was read is not what is in memory now.
+        if self.current is not None and self.current.get('id') == name: self.drop_battle_work(name)
+        work = self.battle_work
+        if work is not None and work['name'] != name:
+            self.drop_battle_work()
+            work = None
+        failed = done = False
         try:
-            # A battle passed over this session keeps its references unknown: no prune after the backlog either.
-            if name in self.skipped: failed = True
-            elif not self.published_current(name, self.published.get(name)):
-                self.republish_saved(name)
-                self.write_index()
+            if work is None:
+                # A battle passed over this session keeps its references unknown: no prune after the backlog either.
+                if name in self.skipped: failed = done = True
+                # Published this session already (the tail made it the active battle): its entry is this session's.
+                elif (str(((self.published.get(name) or {}).get('summary') or {}).get('rev') or '').startswith(self.session + '.')
+                      and self.published_current(name, self.published.get(name))): done = True
+                elif self.current is not None and self.current.get('id') == name:
+                    self.republish_saved(name)
+                    self.write_index()
+                    done = True
+                else:
+                    work = self.battle_work = {'name':name, 'battle':None, 'prepared':[], 'started':began,
+                                               'work':0.0, 'slices':0,
+                                               'reader':BattleReader(os.path.join(self.folder, 'battles', name+'.jsonl'))}
+            if work is not None:
+                deadline = began + BATTLE_SLICE
+                stop = lambda: TTX_TIMER() >= deadline or self.battle_stop()
+                reader, prepared = work['reader'], work['prepared']
+                stopped = worked = False
+                if not reader.done:
+                    stopped = not reader.step(stop)
+                    worked = True
+                    if not stopped: work['battle'] = reader.result()
+                battle = work['battle']
+                if battle is not None and not stopped:
+                    hits = battle.get('hits') or []
+                    while len(prepared) < len(hits):
+                        index = len(prepared)
+                        prepared.append(self.prepare_hit(hits[index], index, battle))
+                        worked = True
+                        if stop():
+                            stopped = True
+                            break
+                    # The file: in this slice when it has time left, else first thing in the next.
+                    if len(prepared) == len(hits) and not (worked and stop()):
+                        self.raw_offsets[name] = reader.offset
+                        self.publish(battle, reader.offset, prepared=prepared, raw_size=reader.size)
+                        self.write_index()
+                        done = True
         except Exception:
-            failed = True
+            failed = done = True
             LOG.exception('Could not rebuild saved battle: %s', name)
+        spent = max(0.0, TTX_TIMER() - began)
+        if work is not None:
+            work['work'] += spent
+            work['slices'] += 1
+        if not done:
+            # A battle began: the record read so far is let go (a big one is hundreds of MB of objects); the job, still
+            # queued, starts the battle again after it.
+            if not self.xml_allowed(): self.drop_battle_work(name)
+            if self.backlog is not None: self.backlog['work'] += spent
+            return True
+        if work is not None:
+            self.drop_battle_work(name)
+            megabytes = (work['reader'].size or 0) / 1e6
+            wall = TTX_TIMER() - work['started']
+            # The pace in the game (review of 4b1c8c8 #10): the big or slow ones one line each, the rest in the summary.
+            if megabytes >= BATTLE_LOG_MB or wall >= BATTLE_LOG_WALL:
+                LOG.info('Saved battle %s published in the background: %.1f MB raw, %d hits, %.1f s (%.2f s of work in %d '
+                         'slices)', name, megabytes, len(work['prepared']), wall, work['work'], work['slices'])
         backlog = self.backlog
-        if backlog is None or name not in backlog['left']: return
+        if backlog is None or name not in backlog['left']: return False
         backlog['left'].discard(name)
-        backlog['work'] += TTX_TIMER() - started
+        backlog['work'] += spent
+        if work is not None:
+            backlog['mb'] += megabytes
+            backlog['slices'] += work['slices']
+            if backlog['slowest'] is None or wall > backlog['slowest'][1]:
+                backlog['slowest'] = (name, wall, work['work'], megabytes)
         if failed: backlog['failed'] += 1
         if not backlog['left']: self.finish_backlog()
+        return False
 
     def finish_backlog(self):
         """The last saved battle of setup's backlog is published: one log line, the prune its references waited for."""
         backlog, self.backlog = self.backlog, None
-        LOG.info('Saved battles published in the background: %d in %.1f s (%.1f s of work)', backlog['count'],
-                 time.time() - backlog['started'], backlog['work'])
+        slowest = backlog['slowest']
+        LOG.info('Saved battles published in the background: %d in %.1f s (%.1f s of work, %.0f MB raw, %d slices)%s',
+                 backlog['count'], time.time() - backlog['started'], backlog['work'], backlog['mb'], backlog['slices'],
+                 '; the longest %s: %.1f MB, %.1f s (%.2f s of work)' % (slowest[0], slowest[3], slowest[1], slowest[2])
+                 if slowest else '')
         if backlog['failed']:
             LOG.warning('Unused models kept this session: %d saved battle(s) could not be read', backlog['failed'])
         elif backlog['prune']:
@@ -3837,9 +3994,10 @@ class Exporter(object):
         stamp_snapshot(hit)
         return hit
 
-    def publish(self, battle, offset=None):
-        """Write one battle's derived file. `offset`: the raw bytes it was read from (a saved battle); the active
-        battle's are its tail's. Known, they go to data/published.json with what else the file was built from."""
+    def publish(self, battle, offset=None, prepared=None, raw_size=None):
+        """Write one battle's derived file. `offset`: the raw bytes it was read from (a saved battle), `raw_size` its raw
+        file's size then; the active battle's are its tail's. Known, they go to data/published.json with what else the
+        file was built from. `prepared`: the hits of a saved battle already prepared (the background's slices)."""
         if not IDENTIFIER.match(battle['id']): raise ValueError('Invalid battle id')
         active = battle is self.current
         identity = (battle['id'], canonical(battle.get('clientVersion') or ''), self.version)
@@ -3848,22 +4006,19 @@ class Exporter(object):
             self.reset_prepared()
             self.prepared_identity = identity
         result = dict(battle)
-        result['hits'] = []
-        pending = set()
-        for index, raw in enumerate(battle.get('hits') or []):
-            if active:
-                hit = self.prepared_hits[index]
-                if hit is None:
-                    hit = self.prepare_hit(raw, index, battle, track=True)
-                    self.prepared_hits[index] = hit
-            else:
-                hit = self.prepare_hit(raw, index, battle)
-            result['hits'].append(hit)
-            for side in ('target', 'attacker'):
-                for part in (hit.get(side) or {}).get('parts', []):
-                    if part.get('modelPending'):
-                        try: pending.add(model_key(part['resource'], battle['clientVersion']))
-                        except Exception: pass
+        if prepared is not None and not active and len(prepared) == len(battle.get('hits') or []):
+            result['hits'] = list(prepared)
+        else:
+            result['hits'] = []
+            for index, raw in enumerate(battle.get('hits') or []):
+                if active:
+                    hit = self.prepared_hits[index]
+                    if hit is None:
+                        hit = self.prepare_hit(raw, index, battle, track=True)
+                        self.prepared_hits[index] = hit
+                else:
+                    hit = self.prepare_hit(raw, index, battle)
+                result['hits'].append(hit)
         # The client's crit records tied to the hits (22.09). Every publish ties them afresh, so a record that
         # arrives after its hit, or a better rule, moves a tie instead of adding one; the raw records stay in the
         # JSONL and the page reads only the ties.
@@ -3885,29 +4040,59 @@ class Exporter(object):
         except Exception: LOG.exception('Damage events failed; hits are published without them')
         result.pop('critEvents', None)
         size = write_data(os.path.join(self.folder, 'data', 'battles', battle['id']+'.js'), 'battle:'+battle['id'], result)
-        # The shooter's models count as referenced too, or prune() would delete them as unused.
-        # A model this battle is still waiting for counts the same way, or prune() would
-        # delete it between the job that writes it and the republish that names it.
-        references = set(part['modelKey'] for hit in result['hits']
-                         for side in ('target', 'attacker')
-                         for part in (hit.get(side) or {}).get('parts', []) if part.get('modelKey'))
+        # One walk over the parts: the models it references (the shooter's count too, or prune() would delete them as
+        # unused; a model it still waits for counts the same way, or prune() would delete it between the job that writes it
+        # and the republish that names it), those whose model failed (no file to look for at the next start), and whether
+        # the next start may do better (startup-review-fixes #5): a model failure that is not for good, a wheel without its
+        # body or a prefab without its model because the vehicle XML did not read - only in a battle of the running client.
+        running = canonical(battle.get('clientVersion') or '') == self.version
+        references, pending, absent, redo = set(), set(), set(), False
+        for hit in result['hits']:
+            for side in ('target', 'attacker'):
+                vehicle = hit.get(side) or {}
+                for part in vehicle.get('parts', []):
+                    key = part.get('modelKey')
+                    if key:
+                        references.add(key)
+                        error = part.get('modelError')
+                        if error:
+                            absent.add(key)
+                            if running and not str(error).startswith(PERMANENT_MODEL_ERRORS): redo = True
+                    elif part.get('modelPending'):
+                        try: pending.add(model_key(part['resource'], battle['clientVersion']))
+                        except Exception: pass
+                    if running and not redo:
+                        if str(part.get('prefabError') or '').startswith('vehicle XML unavailable'): redo = True
+                        elif (isinstance(part.get('id'), int) and part['id'] < 0 and 'wheel' not in part
+                              and 'error' in (self.extras_cache.get(str(vehicle.get('type') or '')) or {})): redo = True
         references.update(pending)
         self.model_refs[battle['id']] = references
-        self.summaries[battle['id']] = dict((k, battle.get(k)) for k in ('id', 'startedAt', 'map'))
-        self.summaries[battle['id']]['hits'] = len(battle['hits'])
+        summary = self.summaries[battle['id']] = dict((k, battle.get(k)) for k in ('id', 'startedAt', 'map'))
+        summary['hits'] = len(battle['hits'])
         try:
-            self.summaries[battle['id']]['vehicle'] = player_vehicle(result)
+            summary['vehicle'] = player_vehicle(result)
         except Exception:
-            self.summaries[battle['id']]['vehicle'] = None
+            summary['vehicle'] = None
+        # Its revision in the index (C1): the page reads the battle it has open again only when this changes.
+        self.publish_serial += 1
+        summary['rev'] = '%s.%d' % (self.session, self.publish_serial)
         # What this file was built from (PUBLISHED_FILE): the next start takes it as it is when nothing of it changed.
         # A battle still waiting for a model or for its vehicle XML is published again then, which queues that wait anew.
         if offset is None and active: offset = self.raw_offsets.get(battle['id'])
         if offset is None:
             self.published.pop(battle['id'], None)
         else:
-            waits = bool(pending) or any(battle['id'] in ids for ids in self.waiting.values())
-            self.published[battle['id']] = {'stamp':self.stamp, 'raw':int(offset), 'size':size, 'refs':references,
-                                            'waits':waits, 'summary':dict(self.summaries[battle['id']])}
+            if raw_size is None:
+                # The active battle: its raw file as far as the tail has read it. Bytes behind that (records not read yet, an
+                # unfinished line) are not in this file: no size, and the next start publishes it again.
+                try: raw_size = os.path.getsize(os.path.join(self.folder, 'battles', battle['id']+'.jsonl'))
+                except OSError: raw_size = None
+                if raw_size != offset: raw_size = None
+            waits = redo or bool(pending) or any(battle['id'] in ids for ids in self.waiting.values())
+            entry = {'stamp':self.stamp, 'raw':int(offset), 'rawSize':raw_size, 'size':size, 'refs':references,
+                     'waits':waits, 'summary':dict(summary)}
+            if absent: entry['absent'] = sorted(absent)
+            self.published[battle['id']] = entry
         self.published_dirty = True
 
     def set_current(self, name, battle):
@@ -4124,6 +4309,8 @@ class Exporter(object):
         extraction still waits until ingestion/publication catches up and the
         existing in-battle/busy checks allow it.
         """
+        # A battle began while the background was halfway through a saved one: what it read is let go (run_battle_job).
+        if self.battle_work is not None and not self.xml_allowed(): self.drop_battle_work()
         self.consume_records()
         published = self.flush()
         if getattr(self, 'pending_publish', False) and not published: return
@@ -4161,8 +4348,14 @@ class Exporter(object):
             if priority < job[0]:
                 job[0] = priority
                 # The newer request of a vehicle (the page's click over a queued roster or hangar one) is the one the log
-                # measures from (its requestedAt; review of click-export-fast 26.09).
-                if kind == 'vehicle': job[3] = payload
+                # measures from (its requestedAt; review of click-export-fast 26.09). Never over a file's own request
+                # queued to export it again (a migration, replay): that one keeps its configuration - a click would put the
+                # hangar's or the top one in its place, and the request log would keep that for good (review of 4b1c8c8 #1).
+                # The click's time goes with it for the log (askedAt).
+                if kind == 'vehicle':
+                    if (job[3] or {}).get('replay') is True:
+                        job[3] = dict(job[3], askedAt=float((payload or {}).get('requestedAt') or time.time()))
+                    else: job[3] = payload
             return job
         self.job_seq += 1
         job = [priority, self.job_seq, kind, payload]
@@ -4225,15 +4418,21 @@ class Exporter(object):
         if not page and time.time()-self.last_job < self.job_rest: return False
         job = self.take_job(index)
         started = TTX_TIMER()
+        more = False
         try:
             if job[2] == 'model': self.run_model_job(job[3])
             elif job[2] == 'ttx': self.run_ttx_job(job[3])
             elif job[2] == 'extras': self.run_extras_job(job[3])
             elif job[2] == 'prefabs': self.run_prefab_check()
-            elif job[2] == 'battle': self.run_battle_job(job[3])
+            elif job[2] == 'battle': more = self.run_battle_job(job[3])
             else: self.run_vehicle_job(job[3], page)
         except Exception:
             LOG.exception('Deferred %s job failed; the rest of the queue continues', job[2])
+        # A saved battle with slices to go goes back in its own place (its priority and order): the next of them after the
+        # rest, unless something the page waits for comes first.
+        if more and job_key(job[2], job[3]) not in self.job_index:
+            self.jobs.append(job)
+            self.job_index[job_key(job[2], job[3])] = job
         self.last_job = time.time()
         self.page_follow = any(queued[0] == JOB_PAGE for queued in self.jobs)
         # A characteristics file is no extraction (26.09): the exported vehicles' files after a format change took 0.5 ms
@@ -4241,8 +4440,10 @@ class Exporter(object):
         # the time its build took (SWEEP_SHARE, as between two slices of the sweep, at most SWEEP_REST_MAX); the export
         # loop's own wait for a message (50 ms) comes between two jobs anyway.
         spent = max(0.0, TTX_TIMER() - started)
-        # A saved battle of setup's backlog (27.09) is no extraction either: the same share after it.
-        self.job_rest = min(SWEEP_REST_MAX, spent * (1.0 - SWEEP_SHARE) / SWEEP_SHARE) if job[2] in ('ttx', 'battle') else PACE
+        rest = spent * (1.0 - SWEEP_SHARE) / SWEEP_SHARE
+        # A slice of a saved battle of setup's backlog (27.09) is no extraction either: the game's share after it, all of it
+        # (review of 4b1c8c8 #4: a 1 s cap left the work 85-95 % of the time when a battle took seconds in one go).
+        self.job_rest = rest if job[2] == 'battle' else min(SWEEP_REST_MAX, rest) if job[2] == 'ttx' else PACE
         return True
 
     def run_model_job(self, payload):
@@ -4271,8 +4472,10 @@ class Exporter(object):
             if name in self.migrating:
                 self.migrating.discard(name)
                 if not self.migrating: self.catalogue_dirty = True
+            # One the page waits for: its row stops saying 'outdated' at the next idle tick, whatever else still migrates.
+            if page and request.get('replay') is True: self.catalogue_dirty = True
         if page:
-            try: after = time.time() - float(request.get('requestedAt') or 0)
+            try: after = time.time() - float(request.get('askedAt') or request.get('requestedAt') or 0)
             except Exception: after = -1.0
             LOG.info('Vehicle %s for the page: %s in %.2f s, %.2f s after the request', request.get('vehicleType'),
                      'exported' if written else 'already current', TTX_TIMER() - started, after)
@@ -4284,7 +4487,29 @@ class Exporter(object):
         page is looking at goes first and the pace between two extractions holds.
         """
         source = str((request or {}).get('source') or '')
+        # A click on a row whose file is out of date (a page of an earlier build still sends one): the file's own request,
+        # never the hangar's or the top configuration picker_descriptor built (review of 4b1c8c8 #1).
+        if source == 'picker':
+            type_name = str(request.get('vehicleType') or '')
+            own = self.outdated_request(type_name) if ('vehicle', type_name) not in self.job_index else None
+            if own is not None: request = dict(own, replay=True, askedAt=float(request.get('requestedAt') or time.time()))
         self.queue_job(VEHICLE_PRIORITY.get(source, JOB_OTHER), 'vehicle', request)
+
+    def outdated_request(self, type_name):
+        """The own request (migration_request) of a vehicle file this session found out of date - the catalogue's 'outdated':
+        a file of this client whose summary has no hash (a wheeled type without its wheels, a prefab type without its
+        prefabs, a missing extra track pair) - read from the file; None for any other type, and once a session per type
+        (a re-export that fails is not tried again on every hit the page opens)."""
+        summary = self.vehicles.get(vehicle_id(type_name))
+        if not summary or summary.get('descriptorHash') is not None or not self.vehicle_current(summary): return None
+        if type_name in self.outdated_tried: return None
+        self.outdated_tried.add(type_name)
+        try:
+            request = migration_request(read_data_file(os.path.join(self.folder, 'data', 'vehicles', vehicle_id(type_name)+'.js')))
+        except Exception:
+            LOG.exception('Out-of-date vehicle file of %s unreadable; it is not exported again', type_name)
+            return None
+        return request if request.get('compactDescriptor') and request.get('vehicleType') == type_name else None
 
     def prioritise(self, types):
         """The page opened a hit: whatever it needs is moved to the front.
@@ -4314,7 +4539,19 @@ class Exporter(object):
             if match:
                 self.lifted[job_key(job[2], job[3])] = job[0]
                 job[0] = JOB_PAGE
+                if job[2] == 'vehicle' and (job[3] or {}).get('replay') is True: job[3] = dict(job[3], askedAt=time.time())
                 moved += 1
+        # A file out of date whose own job is not queued (it ran and failed, or its migration had no request to replay): the
+        # page opened it - 'prioritise' is what the page sends for such a row (review of 4b1c8c8 #1) - so it is exported again
+        # from its own request at the page's turn, never in another configuration.
+        for type_name in sorted(wanted):
+            if ('vehicle', type_name) in self.job_index: continue
+            request = self.outdated_request(type_name)
+            if request is None: continue
+            self.queue_job(JOB_PAGE, 'vehicle', dict(request, replay=True, askedAt=time.time()))
+            self.lifted[('vehicle', type_name)] = JOB_BULK
+            self.migrating.add(type_name)
+            moved += 1
         if moved: LOG.info('Page asked for %s deferred job(s) first', moved)
         return moved
 

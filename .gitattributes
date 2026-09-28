@@ -12,3 +12,4 @@ installer/script/*.txt text eol=crlf
 *.png binary
 *.ico binary
 installer/upgrades/*.json -text
+tests/golden/*.js -text
