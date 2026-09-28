@@ -103,8 +103,10 @@ const DRIVER = (rayUs) => `(() => {
   window.__slow = function () {
     const e = v() && v().engine;
     if (!e || e.__slow || !(spin > 0)) return;
-    const ray = e.ray; e.__slow = true;
+    const ray = e.ray, lean = e.lean; e.__slow = true;
     e.ray = function () { window.__rays++; const t = performance.now() + spin / 1000; while (performance.now() < t) {} return ray.apply(this, arguments); };
+    // The circle's integral casts the lean ray (28.09): the same spin on it.
+    if (lean) e.lean = function () { window.__rays++; const t = performance.now() + spin / 1000; while (performance.now() < t) {} return lean.apply(this, arguments); };
   };
   setInterval(window.__slow, 20);
   window.__read = function () {

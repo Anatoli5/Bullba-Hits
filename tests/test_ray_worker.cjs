@@ -64,6 +64,26 @@ for (const flat of [false, true]) {
 }
 console.log('ok   packed engines cast the same ' + rays + ' rays, every field (kd-tree and flat)');
 
+// The lean ray (engine.lean, the circle's): the chance, the expected damage and the reason of ray(), on every ray - the
+// ricochet continuation included - and no array or object of its own per ray (the same result object every time).
+{
+  const engine = B.build(data, false);
+  let n = 0, bounced = 0, first = null;
+  for (let i = 0; i < 4000; i++) {
+    const th = i * 2.399963, ph = Math.acos(1 - 2 * (i + .5) / 4000), d = [-Math.sin(ph) * Math.cos(th), -Math.cos(ph), -Math.sin(ph) * Math.sin(th)];
+    const o = [-d[0] * 12 + (rnd() - .5) * 3, -d[1] * 12 + (rnd() - .5) * 2, -d[2] * 12 + (rnd() - .5) * 4], s = shells[i % shells.length];
+    const full = engine.ray(o, d, s), lean = engine.lean(o, d, s);
+    if (!first) first = lean; else assert.equal(lean, first, 'one lean result object');
+    assert.equal(json([lean.chance, lean.expected, lean.reason]), json([full.chance, full.expected, full.reason]), 'lean ray ' + i);
+    if (full.bounce) bounced++;
+    n++;
+  }
+  assert.ok(bounced > 50, 'ricochet legs among the rays (' + bounced + ')');
+  const none = engine.lean([0, 0, -20], [0, 0, 1], null);
+  assert.equal(json([none.chance, none.reason, none.expected]), json([null, 'parameters', undefined]));
+  console.log('ok   the lean ray gives ray()’s chance, expected damage and reason on ' + n + ' rays (' + bounced + ' after a ricochet)');
+}
+
 // The worker's side: the engine once, then circle jobs; the answers equal one-piece and sliced integrals here.
 const w = scope(), engine = B.build(data, false), pk = B.packEngine(engine);
 assert.deepEqual(w.answers.shift(), {type: 'ready'});

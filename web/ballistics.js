@@ -25,14 +25,16 @@
     return {a:a,b:b,c:c,e1:e1,e2:e2,normal:unit(cross(e1,e2)),center:a.map(function(x,i){return (x+b[i]+c[i])/3;}),part:part,name:name,armor:armor,
       min:a.map(function(x,i){return Math.min(x,b[i],c[i]);}),max:a.map(function(x,i){return Math.max(x,b[i],c[i]);})};
   }
-  function tree(tris){
-    if(!tris.length)return null;
+  // The kd-tree over triangle INDICES (28.09: a leaf's idx is what collisions keeps; the split, the sort by centre and
+  // the halves are the ones the tree over the triangle objects had - the same stable sort on the same keys).
+  function tree(all,idx){
+    if(!idx.length)return null;
     var lo=[Infinity,Infinity,Infinity],hi=[-Infinity,-Infinity,-Infinity];
-    tris.forEach(function(t){for(var i=0;i<3;i++){lo[i]=Math.min(lo[i],t.min[i]);hi[i]=Math.max(hi[i],t.max[i]);}});
-    var node={min:lo,max:hi};if(tris.length<=10){node.tris=tris;return node;}
+    idx.forEach(function(k){var t=all[k];for(var i=0;i<3;i++){lo[i]=Math.min(lo[i],t.min[i]);hi[i]=Math.max(hi[i],t.max[i]);}});
+    var node={min:lo,max:hi};if(idx.length<=10){node.idx=Int32Array.from(idx);return node;}
     var axis=0;for(var i=1;i<3;i++)if(hi[i]-lo[i]>hi[axis]-lo[axis])axis=i;
-    tris.sort(function(a,b){return a.center[axis]-b.center[axis];});var half=tris.length>>1;
-    node.left=tree(tris.slice(0,half));node.right=tree(tris.slice(half));return node;
+    idx.sort(function(a,b){return all[a].center[axis]-all[b].center[axis];});var half=idx.length>>1;
+    node.left=tree(all,idx.slice(0,half));node.right=tree(all,idx.slice(half));return node;
   }
   // The distance at which the ray enters the box (0 when it starts inside), or -1 for a miss. Callers test
   // `< 0`, never falsiness: 0 is an ordinary hit - the second leg after a ricochet starts 1 mm off the surface.
@@ -45,14 +47,27 @@
     }
     return far>=0?near:-1;
   }
+  // The distance to triangle t along the ray, or -1: the caller keeps a contact only beyond EPS. No object per triangle.
   function intersect(t,o,d){
-    // Same intersection arithmetic without temporary vectors for every triangle.
     var e1=t.e1,e2=t.e2,hx=d[1]*e2[2]-d[2]*e2[1],hy=d[2]*e2[0]-d[0]*e2[2],hz=d[0]*e2[1]-d[1]*e2[0];
-    var det=e1[0]*hx+e1[1]*hy+e1[2]*hz;if(Math.abs(det)<1e-10)return null;
-    var sx=o[0]-t.a[0],sy=o[1]-t.a[1],sz=o[2]-t.a[2],u=(sx*hx+sy*hy+sz*hz)/det;if(u<-1e-8||u>1+1e-8)return null;
-    var qx=sy*e1[2]-sz*e1[1],qy=sz*e1[0]-sx*e1[2],qz=sx*e1[1]-sy*e1[0],v=(d[0]*qx+d[1]*qy+d[2]*qz)/det;if(v<-1e-8||u+v>1+1e-8)return null;
-    var distance=(e2[0]*qx+e2[1]*qy+e2[2]*qz)/det;return distance>EPS?{distance:distance,triangle:t,cos:Math.abs(dot(d,t.normal))}:null;
+    var det=e1[0]*hx+e1[1]*hy+e1[2]*hz;if(Math.abs(det)<1e-10)return -1;
+    var sx=o[0]-t.a[0],sy=o[1]-t.a[1],sz=o[2]-t.a[2],u=(sx*hx+sy*hy+sz*hz)/det;if(u<-1e-8||u>1+1e-8)return -1;
+    var qx=sy*e1[2]-sz*e1[1],qy=sz*e1[0]-sx*e1[2],qz=sx*e1[1]-sy*e1[0],v=(d[0]*qx+d[1]*qy+d[2]*qz)/det;if(v<-1e-8||u+v>1+1e-8)return -1;
+    return (e2[0]*qx+e2[1]*qy+e2[2]*qz)/det;
   }
+  // THE CONTACTS OF ONE RAY WITHOUT GARBAGE (28.09, steady-60: ~1.5 KiB of objects a ray made 4-9 collections in 4 s of
+  // emulation). An engine keeps one buffer: the distance, the cosine and the triangle's index of every contact, and an
+  // order over them; a cast refills it. `hits` (optional): the contact objects of a caller that brought its own (evaluate).
+  function Contacts(cap){this.n=0;this.cap=0;this.hits=null;this.grow(cap||32);}
+  Contacts.prototype.grow=function(cap){
+    var d=new Float64Array(cap),c=new Float64Array(cap),t=new Int32Array(cap);
+    if(this.n){d.set(this.dist.subarray(0,this.n));c.set(this.cos.subarray(0,this.n));t.set(this.tri.subarray(0,this.n));}
+    this.dist=d;this.cos=c;this.tri=t;this.order=new Int32Array(cap);this.cap=cap;
+  };
+  // The walk's per-key marks (seen at a distance, collide-once spent), stamped with a generation per walk: no clearing.
+  Contacts.prototype.keys=function(count){if(this.seenGen&&this.seenGen.length>=count)return;count=Math.max(1,count);this.seenGen=new Int32Array(count);this.seenDist=new Float64Array(count);this.ignGen=new Int32Array(count);this.gen=0;};
+  Contacts.prototype.stamp=function(){if(++this.gen>1e9){this.seenGen.fill(0);this.ignGen.fill(0);this.gen=1;}return this.gen;};
+  Contacts.prototype.push=function(distance,cos,ti){if(this.n===this.cap)this.grow(this.cap*2);var k=this.n++;this.dist[k]=distance;this.cos[k]=cos;this.tri[k]=ti;};
   // Every contact of the ray, cut off past the nearest MAIN armour met so far (st.best): walk() below stops at
   // the first main plate, so nothing behind it can change the result, and a box the ray enters beyond it is
   // skipped. The condition that moves st.best is exactly walk()'s exit - armour with a value and a damage
@@ -62,11 +77,12 @@
   // Keep this condition and walk()'s exits in step.
   // The cut-off keeps a box entered within TIE of best: a surface coincident with that plate is still met, whatever order
   // the tree is walked in, and the sort below puts the pair in the order of their material ids.
-  function collisions(node,o,d,out,st){
+  // A leaf lists its triangles' indices in `idx` (fromTriangles), which the contacts keep.
+  function collisions(node,o,d,C,st,tris){
     if(!node)return;var near=intersectsBox(node,o,d);if(near<0||near>st.best+TIE)return;
-    if(node.tris){for(var i=0;i<node.tris.length;i++){var t=node.tris[i],hit=intersect(t,o,d);if(hit){out.push(hit);var a=t.armor;
-      if(a&&a.armor!=null&&a.vehicleDamageFactor>EPS&&hit.distance<st.best)st.best=hit.distance;}}}
-    else{collisions(node.left,o,d,out,st);collisions(node.right,o,d,out,st);}
+    if(node.idx){var idx=node.idx;for(var i=0;i<idx.length;i++){var ti=idx[i],t=tris[ti],distance=intersect(t,o,d);if(distance>EPS){C.push(distance,Math.abs(dot(d,t.normal)),ti);var a=t.armor;
+      if(a&&a.armor!=null&&a.vehicleDamageFactor>EPS&&distance<st.best)st.best=distance;}}}
+    else{collisions(node.left,o,d,C,st,tris);collisions(node.right,o,d,C,st,tris);}
   }
   function erf(x){var sign=x<0?-1:1;x=Math.abs(x);var t=1/(1+.3275911*x);return sign*(1-(((((1.061405429*t-1.453152027)*t)+1.421413741)*t-.284496736)*t+.254829592)*t*Math.exp(-x*x));}
   // Same Gaussian scale as the 2.4 #936 client's _computePenetrationChance.
@@ -462,33 +478,61 @@
   // A reconstruction of the server's rule from the client's own armorSpalls data (outputs/he-damage-findings.md),
   // NOT a confirmed formula, and the ±25% damage roll is not in it. Legacy HE (SPG) has no client-side splash
   // model at all, so it stays at 0 and says so; AP/APCR/HEAT take nonPiercingArmorDamage, 0 on every shell today.
-  function nonPenetration(s,nominal){
-    if(s.kind!=='HIGH_EXPLOSIVE')return {damage:s.nonPiercingArmorDamage>0?s.nonPiercingArmorDamage:0,law:'none'};
-    if(s.mechanics!=='MODERN'||!(s.spallDamage>0))return {damage:0,law:'legacy-unknown'};
+  // Split in two (28.09) so the lean ray below takes the damage without an object: the law's name and its figure.
+  function npLaw(s){
+    if(s.kind!=='HIGH_EXPLOSIVE')return 'none';
+    if(s.mechanics!=='MODERN'||!(s.spallDamage>0))return 'legacy-unknown';
     // armorSpalls/damageAbsorption (one shell in the client, the Taschenratte ability gun): the recorded series of
     // the Reddit study fit neither law (45 HP measured on 200 mm, 11 by the ratio law), so it stays unmodelled.
-    if(s.spallAbsorption!==null&&s.spallAbsorption!==undefined)return {damage:0,law:'special-unknown'};
-    return {damage:s.spallDamage*Math.min(1,.1*s.spallDamage/Math.max(EPS,nominal*(s.liner>0?s.liner:1))),law:'ratio'};
+    if(s.spallAbsorption!==null&&s.spallAbsorption!==undefined)return 'special-unknown';
+    return 'ratio';
   }
+  function npDamage(s,nominal){
+    var law=npLaw(s);
+    if(law==='none')return s.nonPiercingArmorDamage>0?s.nonPiercingArmorDamage:0;
+    if(law!=='ratio')return 0;
+    return s.spallDamage*Math.min(1,.1*s.spallDamage/Math.max(EPS,nominal*(s.liner>0?s.liner:1)));
+  }
+  function nonPenetration(s,nominal){return {damage:npDamage(s,nominal),law:npLaw(s)};}
   // E = p·α + (1−p)·D_np on main armour; 0 where the shell never reaches it (ricochet, screen, fly-past).
+  // One penetration roll serves the whole shot: the shell passes a screen when the roll beats the screen's own
+  // plate, pierces the hull when the roll less 3x the screens beats the main plate. Non-penetration damage needs
+  // the first without the second, so its weight is P(pass every screen) - p, not 1 - p. A shell stopped by a
+  // screen explodes there and deals nothing (client reticle __shotResultModernHE, WG 1.13: "will not cause any
+  // damage at all"), which is why a gun mantlet screen so often eats a whole HE shell.
+  function expectedOf(chanceValue,screenPass,s,np){
+    var p=chanceValue===null||chanceValue===undefined?null:clamp(chanceValue/100,0,1),pass=screenPass===undefined||screenPass===null?1:screenPass;
+    return p===null?null:p*s.alpha+Math.max(0,pass-p)*np;
+  }
   function withDamage(r,s){
     if(r.reason==='penetration'){
-      var np=nonPenetration(s,r.nominal),p=r.chance===null||r.chance===undefined?null:clamp(r.chance/100,0,1);
-      r.alpha=s.alpha;r.nonPen=np.damage;r.damageLaw=np.law;
-      // One penetration roll serves the whole shot: the shell passes a screen when the roll beats the screen's own
-      // plate, pierces the hull when the roll less 3x the screens beats the main plate. Non-penetration damage needs
-      // the first without the second, so its weight is P(pass every screen) - p, not 1 - p. A shell stopped by a
-      // screen explodes there and deals nothing (client reticle __shotResultModernHE, WG 1.13: "will not cause any
-      // damage at all"), which is why a gun mantlet screen so often eats a whole HE shell.
-      var pass=r.screenPass===undefined||r.screenPass===null?1:r.screenPass;
-      r.expected=p===null?null:p*s.alpha+Math.max(0,pass-p)*np.damage;
+      var np=npDamage(s,r.nominal);
+      r.alpha=s.alpha;r.nonPen=np;r.damageLaw=npLaw(s);
+      r.expected=expectedOf(r.chance,r.screenPass,s,np);
       r.expectedShare=r.expected===null?null:clamp(r.expected/s.alpha,0,1);
     }else if(r.reason==='ricochet'||r.reason==='screen'||r.reason==='no-hull'){r.expected=0;r.expectedShare=0;}
     return r;
   }
+  // The same for the lean result: `expected` alone, undefined where withDamage leaves it out.
+  function leanDamage(out,s){
+    out.expected=undefined;
+    if(!(s&&s.alpha>0))return out;
+    if(out.reason==='penetration')out.expected=expectedOf(out.chance,out.screenPass,s,npDamage(s,out.nominal));
+    else if(out.reason==='ricochet'||out.reason==='screen'||out.reason==='no-hull')out.expected=0;
+    return out;
+  }
   // `start`: the penetration the shell has left on entering this walk, when it is not the nominal - the leg after a
   // ricochet (engine.bounced). s.penetration stays the walk's NOMINAL: the scale of the chance and of `effective`.
-  function evaluate(hits,s,start){var r=walk(hits,s,start);return s&&s.alpha>0?withDamage(r,s):r;}
+  // `hits`: {distance, triangle, cos} in the order to walk them (the engine sorts its own; this entry does not).
+  function evaluate(hits,s,start){
+    var n=hits.length,C=new Contacts(Math.max(1,n)),tris=new Array(n),keys=new Int32Array(n),keyOf=new Map();
+    for(var k=0;k<n;k++){var h=hits[k],t=h.triangle,key=t.part+':'+t.name,id=keyOf.get(key);if(id===undefined){id=keyOf.size;keyOf.set(key,id);}
+      C.push(h.distance,h.cos,k);tris[k]=t;keys[k]=id;}
+    for(k=0;k<n;k++)C.order[k]=k;
+    C.hits=hits;C.keys(keyOf.size);
+    var r=walk(C,s,start,undefined,false,keys,tris,null);
+    return s&&s.alpha>0?withDamage(r,s):r;
+  }
   function known(x){return typeof x==='number'&&isFinite(x);}
   // What the leg after a ricochet starts with (variant B): (1 - loss) x what the first leg had left there, never below
   // zero - screens thicker than the shell leave it nothing to carry (review 26.09 D1: a negative remainder used to read
@@ -496,47 +540,58 @@
   function carried(s,remaining){return (known(remaining)?Math.max(0,Math.min(remaining,s.penetration)):s.penetration)*(1-(s.ricochetLoss||0));}
   // Every result carries `remaining`: what the shell had left on reaching the contact it ended on (a ricochet, the main
   // plate - before that plate) or after its last screen (no-hull). The leg after a ricochet starts from it.
-  function walk(hits,s,start){
-    if(!s||!(s.penetration>0)||!(s.caliber>0))return {chance:null,reason:'parameters',layers:[]};
+  // THE WALK over the contacts C in C.order (28.09: over the engine's buffers, see Contacts): `nominal` is the leg's
+  // nominal penetration (the shell's, or (1 - loss) x it after a ricochet - engine.bounced; undefined: the shell's) and
+  // `ricocheted` says this leg follows a ricochet. keys[ti]: the triangle's part:material as a number - a duplicate contact
+  // and a collide-once body are recognised by it, as by the string before. `out`: the engine's lean result, written in place
+  // with chance and reason (and what the caller needs next) and no layers; null: a fresh full result, as it always was.
+  function walk(C,s,start,nominal,ricocheted,keys,tris,out){
+    if(nominal===undefined)nominal=s&&s.penetration;
+    if(!s||!(nominal>0)||!(s.caliber>0)){if(out){out.chance=null;out.reason='parameters';return out;}return {chance:null,reason:'parameters',layers:[]};}
     // `start` unknown is the absence of a number, never its sign: a leg after a ricochet may start with nothing left.
-    var remaining=known(start)?start:s.penetration,ignored={},layers=[],jet=false,jetStart=0,jetRate=0,seen={},screenPass=1;
-    for(var i=0;i<hits.length;i++){
-      var hit=hits[i],t=hit.triangle,a=t.armor,key=t.part+':'+t.name;
-      if(seen[key]!==undefined&&Math.abs(hit.distance-seen[key])<EPS)continue;
-      seen[key]=hit.distance;
-      if(ignored[key])continue;
-      if(!a)return {chance:null,reason:'armor',layers:layers};
+    var remaining=known(start)?start:nominal,layers=out?null:[],jet=false,jetStart=0,jetRate=0,screenPass=1,gen=C.stamp();
+    var final=!!ricocheted||!!s.ricocheted||s.traceRicochet===false,seenGen=C.seenGen,seenDist=C.seenDist,ignGen=C.ignGen;
+    for(var p=0;p<C.n;p++){
+      var k=C.order[p],distance=C.dist[k],ti=C.tri[k],t=tris[ti],a=t.armor,key=keys[ti];
+      if(seenGen[key]===gen&&Math.abs(distance-seenDist[key])<EPS)continue;
+      seenGen[key]=gen;seenDist[key]=distance;
+      if(ignGen[key]===gen)continue;
+      if(!a){if(out){out.chance=null;out.reason='armor';return out;}return {chance:null,reason:'armor',layers:layers};}
       if(a.armor===null||a.armor===undefined)continue;
-      var cos=a.useHitAngle?hit.cos:1;
+      var cos=a.useHitAngle?C.cos[k]:1;
       // final: the shell is lost here - a second ricochet, or a shell that never flies on (traceRicochet false).
-      if(!jet&&ricochet(a,cos,s))return {chance:0,reason:'ricochet',layers:layers,nominal:a.armor,angle:Math.acos(clamp(cos,0,1))/RAD,distance:hit.distance,hit:hit,
-        final:!!s.ricocheted||s.traceRicochet===false,remaining:remaining};
+      if(!jet&&ricochet(a,cos,s)){
+        if(out){out.chance=0;out.reason='ricochet';out.nominal=a.armor;out.final=final;out.remaining=remaining;out.hitK=k;return out;}
+        return {chance:0,reason:'ricochet',layers:layers,nominal:a.armor,angle:Math.acos(clamp(cos,0,1))/RAD,distance:distance,
+          hit:C.hits?C.hits[k]:{distance:distance,triangle:t,cos:C.cos[k]},final:final,remaining:remaining};
+      }
       // HEAT after the first screen: the jet loses a fixed share of the penetration it had behind that screen per
       // metre flown (client: 0.5/m), linearly along the whole way to the armour. A later screen only subtracts its own
       // plate; it never restarts the decay (user, 19.09: a second screen in the same gap used to raise the chance).
-      if(jet)remaining=Math.max(0,remaining-jetRate*Math.max(0,hit.distance-jetStart));
-      var plate=effective(a,cos,s);
+      if(jet)remaining=Math.max(0,remaining-jetRate*Math.max(0,distance-jetStart));
+      var plate=effective(a,cos,s),main=a.vehicleDamageFactor>EPS,angle;
       // `distance` along this leg and the struck facet's `normal` (a reference, never copied) say WHERE the plate was
       // met: the Hitmarks lay one mark at every plate of the verdict's own path from them, with no second ray.
-      layers.push({part:t.part,material:t.name,nominal:a.armor,effective:plate,angle:Math.acos(clamp(cos,0,1))/RAD,main:a.vehicleDamageFactor>EPS,
-        distance:hit.distance,normal:t.normal});
-      if(a.vehicleDamageFactor>EPS){
-        return {chance:chance(remaining,plate,s.penetration,s.randomization,s.randomizationType),reason:'penetration',
-          effective:s.penetration-remaining+plate,nominal:a.armor,angle:layers[layers.length-1].angle,layers:layers,distance:hit.distance,screenPass:screenPass,remaining:remaining};
+      if(layers){angle=Math.acos(clamp(cos,0,1))/RAD;layers.push({part:t.part,material:t.name,nominal:a.armor,effective:plate,angle:angle,main:main,distance:distance,normal:t.normal});}
+      if(main){
+        var odds=chance(remaining,plate,nominal,s.randomization,s.randomizationType);
+        if(out){out.chance=odds;out.reason='penetration';out.nominal=a.armor;out.screenPass=screenPass;out.remaining=remaining;return out;}
+        return {chance:odds,reason:'penetration',effective:nominal-remaining+plate,nominal:a.armor,angle:angle,layers:layers,distance:distance,screenPass:screenPass,remaining:remaining};
       }
       if(s.kind==='HIGH_EXPLOSIVE'){
-        if(!s.shieldPenetration)return {chance:0,reason:'screen',layers:layers,distance:hit.distance};
+        if(!s.shieldPenetration){if(out){out.chance=0;out.reason='screen';return out;}return {chance:0,reason:'screen',layers:layers,distance:distance};}
         // Chance that the shell gets through this screen at all (its own plate against the penetration left); the
         // thresholds of successive screens nest, so the smallest chance is the chance to pass them all.
-        var through=chance(remaining,plate,s.penetration,s.randomization,s.randomizationType);
+        var through=chance(remaining,plate,nominal,s.randomization,s.randomizationType);
         if(through!==null)screenPass=Math.min(screenPass,through/100);
-        layers[layers.length-1].through=through; // which screen a shell stopped short of the hull died on (Hitmarks)
+        if(layers)layers[layers.length-1].through=through; // which screen a shell stopped short of the hull died on (Hitmarks)
         remaining-=plate*3; // Modern HE shield penalty
       }else remaining-=plate;
-      if(a.collideOnceOnly)ignored[key]=true;
+      if(a.collideOnceOnly)ignGen[key]=gen;
       jet=s.jetLossPerMeter>0;
-      if(jet){jetStart=hit.distance+a.armor*.001;if(!jetRate)jetRate=remaining*s.jetLossPerMeter;}
+      if(jet){jetStart=distance+a.armor*.001;if(!jetRate)jetRate=remaining*s.jetLossPerMeter;}
     }
+    if(out){out.chance=0;out.reason='no-hull';out.screenPass=screenPass;out.remaining=remaining;return out;}
     return {chance:0,reason:'no-hull',layers:layers,screenPass:screenPass,remaining:remaining};
   }
   // `flat`: one leaf holding every triangle instead of the kd-tree, for a caller that casts only a handful of
@@ -556,36 +611,51 @@
   }
   function leaf(tris){
     if(!tris.length)return null;
-    var lo=[Infinity,Infinity,Infinity],hi=[-Infinity,-Infinity,-Infinity];
-    tris.forEach(function(t){for(var i=0;i<3;i++){lo[i]=Math.min(lo[i],t.min[i]);hi[i]=Math.max(hi[i],t.max[i]);}});
-    return {min:lo,max:hi,tris:tris.slice()};
+    var lo=[Infinity,Infinity,Infinity],hi=[-Infinity,-Infinity,-Infinity],idx=new Int32Array(tris.length);
+    tris.forEach(function(t,k){idx[k]=k;for(var i=0;i<3;i++){lo[i]=Math.min(lo[i],t.min[i]);hi[i]=Math.max(hi[i],t.max[i]);}});
+    return {min:lo,max:hi,idx:idx};
   }
+  // By distance; contacts within TIE of the first of a run are one depth and go by material id (stable within one id).
+  // Before 26.09 a tie went by the order the tree was walked in: coincident plates of two materials (a track face in
+  // the plane of a side plate) could come either way round, and CPU and GPU could disagree. Insertion sorts over C.order
+  // (28.09, no arrays per ray): stable, so the order is the one the stable Array sort gave - a ray meets a handful of faces.
+  function sortContacts(C,mats){
+    var n=C.n,o=C.order,d=C.dist,tri=C.tri,i,j,x,m;
+    for(i=0;i<n;i++)o[i]=i;
+    for(i=1;i<n;i++){x=o[i];j=i-1;while(j>=0&&d[o[j]]>d[x]){o[j+1]=o[j];j--;}o[j+1]=x;}
+    for(i=0;i<n;){
+      j=i+1;while(j<n&&d[o[j]]-d[o[i]]<=TIE)j++;
+      for(var a=i+1;a<j;a++){x=o[a];m=mats[tri[x]];var b=a-1;while(b>=i&&mats[tri[o[b]]]>m){o[b+1]=o[b];b--;}o[b+1]=x;}
+      i=j;
+    }
+  }
+  function unitInto(out,v){var n=Math.sqrt(dot(v,v));if(n>EPS){out[0]=v[0]/n;out[1]=v[1]/n;out[2]=v[2]/n;}else{out[0]=0;out[1]=0;out[2]=0;}return out;}
   function fromTriangles(tris,flat){
-    var acceleration=flat?leaf(tris):tree(tris.slice());
+    var acceleration=flat?leaf(tris):tree(tris,tris.map(function(t,i){return i;}));
     // THE material id of every part:material (review 26.09 R4: one owner), in the order they first appear; triangles
     // with armour null take none. It orders contacts that tie in distance here, and the GPU surface takes the same ids
     // from engine.materialId (Surface.update) for its peel and bounced leg - so both sides break a tie alike.
     var order=Object.create(null),count=0;
     tris.forEach(function(t){var key=t.part+':'+t.name;if(order[key]===undefined&&!(t.armor&&t.armor.armor===null))order[key]=count++;});
     function materialId(t){return order[t.part+':'+t.name];}
-    function id(h){var v=materialId(h.triangle);return v===undefined?count:v;}
-    // By distance; contacts within TIE of the first of a run are one depth and go by material id (stable within one id).
-    // Before 26.09 a tie went by the order the tree was walked in: coincident plates of two materials (a track face in
-    // the plane of a side plate) could come either way round, and CPU and GPU could disagree.
-    function ordered(hits){
-      hits.sort(function(a,b){return a.distance-b.distance;});
-      for(var i=0;i<hits.length;){
-        var j=i+1;while(j<hits.length&&hits[j].distance-hits[i].distance<=TIE)j++;
-        if(j-i>1){var run=hits.slice(i,j).map(function(h,k){return [id(h),k,h];});
-          run.sort(function(a,b){return a[0]-b[0]||a[1]-b[1];});for(var k=0;k<run.length;k++)hits[i+k]=run[k][2];}
-        i=j;
-      }
-      return hits;
-    }
-    // One leg: every contact of the ray, cut off past its first main plate (collisions), walked from `start`.
-    function cast(o,d,s,start){
-      d=unit(d);var hits=[];collisions(acceleration,o,d,hits,{best:Infinity});
-      var r=evaluate(ordered(hits),s,start);r.origin=o;r.direction=d;return r;
+    // By triangle index (28.09): its part:material as a number (keys: the walk's duplicate and collide-once rules) and its
+    // material id for ties (mats; `count` for one without). Fixed at build, as the string lookups they replace were.
+    var n=tris.length,keys=new Int32Array(n),mats=new Int32Array(n),keyOf=new Map();
+    for(var i=0;i<n;i++){var t=tris[i],key=t.part+':'+t.name,k=keyOf.get(key);if(k===undefined){k=keyOf.size;keyOf.set(key,k);}
+      keys[i]=k;var m=order[key];mats[i]=m===undefined?count:m;}
+    // The engine's scratch: the contact buffer, the cut-off, the lean result and its vectors. One thread uses an engine.
+    var C=new Contacts(),st={best:Infinity},dir=[0,0,0],bdir=[0,0,0],bo=[0,0,0];
+    var lean={chance:null,reason:'',expected:undefined,nominal:0,screenPass:1,remaining:0,final:false,hitK:-1};
+    C.keys(keyOf.size);
+    // One leg: every contact of the ray, cut off past its first main plate (collisions), walked from `start` against the
+    // leg's `nominal`. `out`: the lean result (the direction normalised into scratch), else a full result as before.
+    function cast(o,d,s,start,nominal,ricocheted,out){
+      var u=out?unitInto(dir,d):unit(d);
+      C.n=0;C.hits=null;st.best=Infinity;collisions(acceleration,o,u,C,st,tris);sortContacts(C,mats);
+      var r=walk(C,s,start,nominal,ricocheted,keys,tris,out);
+      if(out)return leanDamage(out,s);
+      if(s&&s.alpha>0)withDamage(r,s);
+      r.origin=o;r.direction=u;return r;
     }
     // materialId(triangle): its id, undefined for one that takes none; materialCount: how many ids there are.
     // flat: the one-leaf engine (packEngine hands it on, so the worker builds the same acceleration).
@@ -597,16 +667,17 @@
     // B_carried75: rem = 0.75*(P-S1)-S2, nom = 0.75*P). HEAT loses nothing (ricochetLoss 0). `remaining` unknown: the
     // nominal. The collide-once list starts afresh on this leg (a track met on both legs counts twice) - how the server
     // does it is not known (one recorded case, not informative). Used by the continuation below and by the Statistics
-    // log's point after a recorded ricochet (viewer.js Viewer.verdicts): one law for both.
-    engine.bounced=function(o,d,s,remaining){
-      if(!s||!(s.penetration>0)||!(s.caliber>0))return evaluate([],s);
-      var keep=1-(s.ricochetLoss||0),next=Object.assign({},s,{penetration:s.penetration*keep,ricocheted:true});
-      return cast(o,d,next,carried(s,remaining));
-    };
+    // log's point after a recorded ricochet (verdicts above): one law for both. The leg's nominal and its "after a
+    // ricochet" go to the walk as they are (28.09): no copy of the shell.
+    function bouncedLeg(o,d,s,remaining,out){
+      if(!s||!(s.penetration>0)||!(s.caliber>0)){if(out){out.chance=null;out.reason='parameters';out.expected=undefined;return out;}return evaluate([],s);}
+      return cast(o,d,s,carried(s,remaining),s.penetration*(1-(s.ricochetLoss||0)),true,out);
+    }
+    engine.bounced=function(o,d,s,remaining){return bouncedLeg(o,d,s,remaining,null);};
     engine.ray=function(o,d,s){
       if(!s||!(s.penetration>0)||!(s.caliber>0))return evaluate([],s);
       // A fresh cut-off for every ray, the second leg after a ricochet included (collisions above).
-      var r=cast(o,d,s);d=r.direction;
+      var r=cast(o,d,s,undefined,s.penetration,false,null);d=r.direction;
       // Client rule since 9.3: after a ricochet the shell flies on along the mirrored direction (engine.bounced) and may
       // hit the same vehicle again; a second ricochet destroys it, and a shell with traceRicochet false is lost at the
       // first. The first-contact picture (heat map, GPU cross-check) passes ricochetContinue:false and stops here.
@@ -620,6 +691,22 @@
         second.bounce={point:point,normal:n,direction:out,nominal:r.nominal,angle:r.angle,penetration:s.penetration*keep,remaining:r.remaining,
           carried:carried(s,r.remaining),shell:s.penetration,loss:s.ricochetLoss,layers:r.layers,part:h.triangle.part};
         return second;
+      }
+      return r;
+    };
+    // THE LEAN RAY (28.09, steady-60): the same cast, walk and continuation as engine.ray, for a caller that reads only
+    // chance, expected and reason (the circle's integral) - no object, array or string per ray. The result is the engine's
+    // own object, overwritten by the next lean ray. tests/test_ray_worker.cjs and the golden comparisons hold it to ray().
+    engine.lean=function(o,d,s){
+      if(!s||!(s.penetration>0)||!(s.caliber>0)){lean.chance=null;lean.reason='parameters';lean.expected=undefined;return lean;}
+      var r=cast(o,d,s,undefined,s.penetration,false,lean);
+      if(r.reason==='ricochet'&&r.hitK>=0&&!r.final&&s.ricochetContinue!==false&&s.ricochetLoss!==undefined){
+        var dist=C.dist[r.hitK],n=tris[C.tri[r.hitK]].normal,k=2*dot(dir,n);
+        bdir[0]=dir[0]-k*n[0];bdir[1]=dir[1]-k*n[1];bdir[2]=dir[2]-k*n[2];unitInto(bdir,bdir);
+        // the ricochet point, then 1 mm off it along the new way - the arithmetic of engine.ray
+        bo[0]=o[0]+dir[0]*dist;bo[1]=o[1]+dir[1]*dist;bo[2]=o[2]+dir[2]*dist;
+        bo[0]=bo[0]+bdir[0]*1e-3;bo[1]=bo[1]+bdir[1]*1e-3;bo[2]=bo[2]+bdir[2]*1e-3;
+        return bouncedLeg(bo,bdir,s,r.remaining,lean);
       }
       return r;
     };
@@ -660,7 +747,7 @@
     var fn=typeof profile==='function';
     this.engine=engine;this.shell=shell;this.o=vec3(origin);this.center=vec3(center);this.right=vec3(right);this.up=vec3(up);
     this.radius=radius;this.count=count;this.q=fn?profile:aimProfile(profile).quantile;this.profile=fn?null:aimProfile(profile).id;
-    this.i=0;this.sum=0;this.unknown=0;this.miss=0;this.dmg=0;this.result=null;this.remote=null;this.p=[0,0,0];
+    this.i=0;this.sum=0;this.unknown=0;this.miss=0;this.dmg=0;this.result=null;this.remote=null;this.p=[0,0,0];this.dv=[0,0,0];
   }
   CircleSampler.prototype.step=function(until){
     if(this.result)return this.result;
@@ -670,10 +757,12 @@
       if(!job.failed&&!remoteStalled())return null;
       this.remote=null;   // the worker let it down: the slices below take it from the start
     }
-    var count=this.count,shell=this.shell,center=this.center,right=this.right,up=this.up,radius=this.radius,o=this.o,p=this.p;
+    // The lean ray (engine.lean: chance, expected and reason, no garbage) where the engine has one; the same figures as ray().
+    var count=this.count,shell=this.shell,center=this.center,right=this.right,up=this.up,radius=this.radius,o=this.o,p=this.p,dv=this.dv,en=this.engine,lean=!!en.lean;
     while(this.i<count){
       var i=this.i;circlePoint(p,center,right,up,radius,(i+.5)/count,i*2.399963229728653,this.q);
-      var hit=this.engine.ray(o,[p[0]-o[0],p[1]-o[1],p[2]-o[2]],shell);
+      dv[0]=p[0]-o[0];dv[1]=p[1]-o[1];dv[2]=p[2]-o[2];
+      var hit=lean?en.lean(o,dv,shell):en.ray(o,[dv[0],dv[1],dv[2]],shell);
       if(hit.chance===null)this.unknown++;else this.sum+=hit.chance;
       if(hit.expected>0)this.dmg+=hit.expected;
       if(hit.reason==='no-hull')this.miss++;
