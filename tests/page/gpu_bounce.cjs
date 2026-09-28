@@ -101,16 +101,29 @@ window.__gpuBounce = function (sign, trackFirst, options) {
   // options.moving (28.09, steady-60): first the frame of a camera that has just moved under Ricochet trace "Always" - the
   // leg on its budget of BVH visits (options.budget lowers it: the negative control) - read and kept; then the same camera
   // SETTLE ms later, which must be the exact map again.
+  // 28.09 (steady-60-fix): only a camera that MOVED is "moving" - the layers are first peeled for the camera a hair away,
+  // then for this one. Layers dropped under a still camera (a pose, a model, a size) are drawn exact at once (moving.dropped).
   let moving = null;
   if (options.moving) {
     if (options.budget) surface.movingBudget = options.budget;
+    const x0 = camera.position.x;
+    camera.position.x = x0 + .05; camera.updateMatrixWorld();
+    surface.render(camera, anchor, shell, 'accessible', .35, 'high', W, H, 1, 'always', 'chance');
+    camera.position.x = x0; camera.updateMatrixWorld();
     surface.render(camera, anchor, shell, 'accessible', .35, 'high', W, H, 1, 'always', 'chance');
     moving = {budget: surface.material.uniforms.uLegBudget.value, pending: surface.bouncePending, data: new Float32Array(W * H * 4), agree: 0, zone: 0};
     renderer.readRenderTargetPixels(surface.result, 0, 0, W, H, moving.data);
     surface.movedAt = -1e9;
   }
   surface.render(camera, anchor, shell, 'accessible', .35, 'high', W, H, 1, options.moving ? 'always' : 'exact', options.damage ? 'damage' : 'chance');
-  if (moving) { moving.after = surface.material.uniforms.uLegBudget.value; moving.pendingAfter = surface.bouncePending; }
+  if (moving) {
+    moving.after = surface.material.uniforms.uLegBudget.value; moving.pendingAfter = surface.bouncePending;
+    const settled = surface.movedAt;
+    surface.key = null;   // the layers dropped, the camera still
+    surface.render(camera, anchor, shell, 'accessible', .35, 'high', W, H, 1, 'always', 'chance');
+    moving.dropped = {budget: surface.material.uniforms.uLegBudget.value, pending: surface.bouncePending, movedAt: surface.movedAt === settled};
+    surface.render(camera, anchor, shell, 'accessible', .35, 'high', W, H, 1, 'always', options.damage ? 'damage' : 'chance');
+  }
   const data = new Float32Array(W * H * 4); renderer.readRenderTargetPixels(surface.result, 0, 0, W, H, data);
   // The accessible palette's inverse: g rises to .75 on the lower half, only the upper half goes past it.
   const chanceOf = function (r, g) { return g > .75 + 1e-6 ? .5 + (.95 - r) / 1.5 : (g - .18) / 1.14; };
@@ -228,6 +241,7 @@ async function main() {
       ok('camera moving, ' + (sign > 0 ? '+x' : '-x') + ': the leg runs on its budget and a redraw at rest is asked for', m.budget === 512 && m.pending === true, JSON.stringify(m));
       ok('camera moving, ' + (sign > 0 ? '+x' : '-x') + ': short legs are within the budget - zone as on the CPU on every compared pixel', mv.compared > 200 && m.agree === mv.compared, '(' + m.agree + ' of ' + mv.compared + ')');
       ok('camera at rest, ' + (sign > 0 ? '+x' : '-x') + ': the exact leg again, zone and chance equal the CPU walk on every pixel', m.after > 1e9 && m.pendingAfter === false && mv.compared > 200 && mv.cpuZone > 200 && !mv.bad, '(' + (mv.bad || 0) + ' of ' + mv.compared + ' differ, e.g. ' + JSON.stringify(mv.mismatches) + ')');
+      ok('layers dropped under a still camera, ' + (sign > 0 ? '+x' : '-x') + ': drawn exact at once, no settle, no redraw asked for', !!m.dropped && m.dropped.budget > 1e9 && m.dropped.pending === false && m.dropped.movedAt === true, JSON.stringify(m.dropped));
     }
     const cut = await page.evaluate('__gpuBounce(1,false,{moving:true,budget:1})'), cm = cut.moving || {};
     ok('negative control: a budget of one visit leaves no zone while moving, the exact one at rest', cm.budget === 1 && cm.zone === 0 && cut.cpuZone > 200 && !cut.bad, JSON.stringify(cm));

@@ -807,6 +807,7 @@ void main(){
   Surface.prototype.keepCamera=function(camera){
     var cache=this.cameraCache,world=camera.matrixWorld.elements,projection=camera.projectionMatrix.elements;
     for(var i=0;i<16;i++){cache[i]=world[i];cache[i+16]=projection[i];}
+    this.cameraKept=true;
   };
   // The composite's own inputs as render() has just written them, compared element by element with the last
   // frame's and stored in place (the same no-garbage discipline as cameraCache), the Soft lighting depth (uLightRange)
@@ -840,8 +841,13 @@ void main(){
     var pr=Math.max(1,pixelRatio||1),m=this.markMaterial.uniforms;m.uHatch.value.set(Math.max(2,this.hatch||5)*pr,pr); // dot pitch in CSS px, one CSS px per dot
     m.uDots.value=!!this.dots;m.uEdges.value=this.edges!==false;m.uOutline.value=!!this.outline;var tint=this.tint===undefined?.5:this.tint;m.uTint.value=tint;u.uTint.value=tint;m.uClassic.value=u.uClassic.value;
     // Stale: the camera has moved or zoomed, or the layers were dropped (a new pose, a new size, a new model).
-    var now=clock(),stale=this.key===null||this.cameraChange(camera);
-    if(stale){this.movedAt=now;this.keepCamera(camera);}
+    // Only a camera that MOVED starts the settle below (28.09, steady-60-fix): layers dropped under a still camera - a
+    // committed pose, a new model, Soft lighting, the quality's size - are drawn exact at once, one pass, instead of a
+    // budgeted pass and an exact one 160 ms later (a full-screen pass more on every pose commit of a turret chase in ⌖). A
+    // fresh instance's first camera (cameraKept unset) is no move either.
+    var now=clock(),moved=!!this.cameraKept&&this.cameraChange(camera),stale=moved||this.key===null;
+    if(moved)this.movedAt=now;
+    if(stale)this.keepCamera(camera);
     // bounceMode 'always': the leg is live while the camera moves, on a budget of BVH visits (MOVING_BUDGET), and exact
     // again SETTLE ms after the last move - the caller redraws on bouncePending. 'exact' (the CPU/GPU checks): exact on
     // every draw. 'idle': no leg until the camera stands still.
