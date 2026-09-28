@@ -3500,7 +3500,7 @@
   }
   // aimFrameT names the animation frame while its callbacks run, and only then: the figure takes one slice a frame, and an
   // event between two frames (a press, a key) is a task of its own.
-  function aimTick(t) { aimFrameT = t; try { aimTickRun(); } finally { aimFrameT = undefined; } }
+  function aimTick(t) { aimFrameT = t; if (host.activity) host.activity('emulation'); try { aimTickRun(); } finally { aimFrameT = undefined; } }
   function aimTickRun() {
     aimFrame = 0;
     var a = aimBlockData();

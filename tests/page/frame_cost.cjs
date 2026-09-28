@@ -218,6 +218,21 @@ async function main() {
     await ev('window.__record(true)'); await new Promise((r) => setTimeout(r, 6000)); await ev('window.__record(false)');
     const rest = summary('coming to rest (the fine figure)', await ev('window.__read()'));
     const shown = await ev('window.__figure()'), exact = await ev('window.__exact()');
+    // The host's steady-state line (host.js, 28.09): at least one line covering the emulation came out of the 5.5 s of
+    // activity above, and the 6 s at rest added at most the one flush of what was left - an idle page logs nothing more.
+    const hostLines = () => ev('(window.BullbaHost && window.BullbaHost.frameLines || []).slice()');
+    const linesMoving = await hostLines();
+    ok('frame telemetry: a line with the emulation’s frame rate after ~5 s of emulation', linesMoving.some((l) => l.labels.emulation && l.labels.emulation.frames > 10), JSON.stringify(linesMoving).slice(0, 300));
+    await new Promise((r) => setTimeout(r, 2500));
+    ok('frame telemetry: nothing more is logged while the page is idle', (await hostLines()).length === linesMoving.length, JSON.stringify(await hostLines()).slice(0, 300));
+    // A camera drag's label: the orbit noted every frame for 1.3 s, then idle - flushed as one line under 'orbit'.
+    await ev(`new Promise((done) => { const t0 = performance.now(); (function f() { BullbaHost.activity('orbit'); if (performance.now() - t0 < 1300) requestAnimationFrame(f); else done(); })(); })`);
+    await new Promise((r) => setTimeout(r, 1600));
+    const linesOrbit = await hostLines(), lastLine = linesOrbit[linesOrbit.length - 1];
+    ok('frame telemetry: an orbit flushed as one line when the page goes idle', linesOrbit.length === linesMoving.length + 1 && !!(lastLine && lastLine.labels.orbit), JSON.stringify(lastLine));
+    const logged = page.console.filter((l) => /Bullba Hits frames \(/.test(l));
+    ok('frame telemetry: every line reached the console (game.log in the game)', logged.length === linesOrbit.length, logged.length + ' vs ' + linesOrbit.length);
+    if (MEASURE) logged.forEach((l) => console.log('host line: ' + l.replace(/^info: /, '')));
     if (MEASURE) console.log('figure at rest: shown ' + JSON.stringify(shown.text) + ', synchronous 1024 rays ' + JSON.stringify(exact) + '; throttle ' + THROTTLE + 'x, ray spin ' + RAY_US + ' us, ' + browser.product);
     if (!DATA && RAY_US >= 40 && THROTTLE <= 1) {   // the budget is for the plain run; throttled runs are for reading
       // At most two frames over the budget (a garbage collection landing in one, a machine busy with the other suites) and

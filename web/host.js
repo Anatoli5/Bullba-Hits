@@ -104,4 +104,42 @@
   // The sample starts with the page and so takes in the first scene's shader compile, a stall of one to three seconds on
   // the D3D11 path (27.09: 0.8.7 read 1-2 frames/s for it); the longest frame says how much of the sample it was.
   if(window.requestAnimationFrame){var frames=0,started=null,last=0,longest=0;window.requestAnimationFrame(function tick(t){if(started===null)started=t;else longest=Math.max(longest,t-last);last=t;frames++;if(t-started<3000)window.requestAnimationFrame(tick);else{host.fps=Math.round(frames*1000/(t-started));if(window.console)console.info('Bullba Hits host: '+host.fps+' frames/s over '+Math.round(t-started)+' ms ('+(game?'game':'browser')+'), longest frame '+Math.round(longest)+' ms');}});}
+  // THE STEADY FRAME RATE WHILE THE PAGE IS IN USE (28.09, steady-60). The line above covers the start only. Here a frame
+  // clock runs only while something happens - host.activity(label) from the page (the aim loop: 'emulation'), a drag or
+  // the wheel over the scene ('orbit'), the cursor over it ('hover') - and stops a second after the last of it, so an idle
+  // page costs nothing. Every interval between two animation frames that saw activity is counted under the highest label
+  // noted during it (orbit, then emulation, then hover); a stall inside the activity counts in full. Every FRAME_WINDOW ms
+  // of counted frames one line goes to the console (game.log in the game): per label its seconds, frames/s, p95, p99 and
+  // longest interval and how many exceeded 25 ms (1.5 frames at the game's 60 Hz). Going idle flushes what is left as one
+  // line if it holds at least FRAME_FLUSH ms; less is carried into the next activity. A hidden page restarts the clock.
+  var FRAME_WINDOW=5000,FRAME_IDLE=1000,FRAME_FLUSH=1000,FRAME_RECENT=250,FRAME_LABELS=['orbit','emulation','hover'];
+  var clockNow=window.performance&&performance.now?function(){return performance.now();}:function(){return Date.now();};
+  var fr={loop:0,last:null,lastNow:0,seen:-1e9,noted:{},gaps:{},ms:0};
+  function frameReset(){fr.ms=0;FRAME_LABELS.forEach(function(k){fr.gaps[k]=[];});}
+  frameReset();
+  host.frameLines=[];   // the lines logged so far, as data: for a harness (tests/page/frame_cost.cjs)
+  function q(a,p){return a[Math.min(a.length-1,Math.floor(p/100*a.length))];}
+  function frameFlush(){
+    var parts=[],data={ms:Math.round(fr.ms),labels:{}};
+    FRAME_LABELS.forEach(function(k){var a=fr.gaps[k];if(!a.length)return;a.sort(function(x,y){return x-y;});var sum=0,slow=0;for(var i=0;i<a.length;i++){sum+=a[i];if(a[i]>25)slow++;}
+      var d={seconds:Math.round(sum/100)/10,fps:Math.round(a.length*1000/sum),p95:Math.round(q(a,95)*10)/10,p99:Math.round(q(a,99)*10)/10,longest:Math.round(a[a.length-1]*10)/10,slow:slow,frames:a.length};data.labels[k]=d;
+      parts.push(k+' '+d.seconds+' s: '+d.fps+' frames/s, p95 '+d.p95+' ms, p99 '+d.p99+' ms, longest '+d.longest+' ms, '+d.slow+' over 25 ms');});
+    frameReset();if(!parts.length)return;
+    host.frameLines.push(data);if(host.frameLines.length>50)host.frameLines.shift();
+    if(window.console)console.info('Bullba Hits frames ('+(game?'game':'browser')+'): '+parts.join('; '));
+  }
+  function frameTick(t){
+    fr.loop=0;var now=clockNow();
+    if(fr.last!==null){var dt=t-fr.last,label=null;
+      for(var i=0;i<FRAME_LABELS.length&&!label;i++){var k=FRAME_LABELS[i];if(fr.noted[k]>=fr.lastNow-FRAME_RECENT)label=k;}
+      if(label&&dt>0){fr.gaps[label].push(dt);fr.ms+=dt;if(fr.ms>=FRAME_WINDOW)frameFlush();}}
+    if(now-fr.seen>FRAME_IDLE){fr.last=null;if(fr.ms>=FRAME_FLUSH)frameFlush();return;}
+    fr.last=t;fr.lastNow=now;fr.loop=window.requestAnimationFrame(frameTick);
+  }
+  // One call per frame or event at most is cheap: a time stamp, and a frame asked for only when the clock is not running.
+  host.activity=function(label){var now=clockNow();fr.noted[label]=now;fr.seen=now;if(!fr.loop&&window.requestAnimationFrame&&!document.hidden)fr.loop=window.requestAnimationFrame(frameTick);};
+  document.addEventListener('visibilitychange',function(){fr.last=null;});
+  function overScene(e){var vp=document.getElementById('viewport');return !!(vp&&e.target&&vp.contains(e.target));}
+  document.addEventListener('pointermove',function(e){if(overScene(e))host.activity(e.buttons?'orbit':'hover');},{capture:true,passive:true});
+  document.addEventListener('wheel',function(e){if(overScene(e))host.activity('orbit');},{capture:true,passive:true});
 }());

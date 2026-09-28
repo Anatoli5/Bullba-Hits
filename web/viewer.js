@@ -301,7 +301,7 @@
   Viewer.prototype.startOrbit=function(){
     if(this.orbitId!==null||this.contextLost)return;var self=this,last=null;
     var step=function(time){
-      self.orbitId=null;
+      self.orbitId=null;if(window.BullbaHost&&BullbaHost.activity)BullbaHost.activity('orbit');   // the camera eases: frame telemetry (host.js)
       var stamp=typeof time==='number'?time:clock(),dt=last===null?16.7:Math.max(1,Math.min(100,stamp-last));last=stamp;
       var k=1-Math.pow(1-.35,dt/16.7);
       self.yaw+=(self.targetYaw-self.yaw)*k;self.pitch+=(self.targetPitch-self.pitch)*k;
