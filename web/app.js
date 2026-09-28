@@ -3671,7 +3671,7 @@
       aimJob = null;
     }
     if (!fine && aimEstAt && now - aimEstAt < 0.12) return;
-    var s = viewer.liveAimSampler ? viewer.liveAimSampler(shell, fine ? 1024 : 256) : null;
+    var s = viewer.liveAimSampler ? viewer.liveAimSampler(shell, fine ? 1024 : 256, false, 'live') : null;
     aimEstAt = now;
     if (!s) { aimEst = null; aimEstFine = !!fine; return; }
     aimJob = {s: s, fine: !!fine, shell: shell};
@@ -3699,8 +3699,9 @@
     if (aimJob || aimShotJob) aimEstLater();
     return landed;
   }
-  // The emulation off: no figure is taken any more, and no frame is left asked for.
-  function aimEstStop() { aimEstReset(); aimShotJob = null; if (aimJobFrame) window.cancelAnimationFrame(aimJobFrame); aimJobFrame = 0; }
+  // The emulation off: no figure is taken any more, and no frame is left asked for; the worker drops the circles' jobs and
+  // engines (ArmorBallistics.release).
+  function aimEstStop() { aimEstReset(); aimShotJob = null; if (aimJobFrame) window.cancelAnimationFrame(aimJobFrame); aimJobFrame = 0; ArmorBallistics.release('circles'); }
   function aimEstLater() { if (!aimJobFrame) aimJobFrame = window.requestAnimationFrame(aimEstTick); }
   function aimEstTick(t) { aimJobFrame = 0; aimFrameT = t; try { if (aimEstSlice()) paintCircleLines(); } finally { aimFrameT = undefined; } }
   // The figure one sampled circle is worth (user, 22.09: with a MANUAL shell every Circle line read "—").
@@ -4140,7 +4141,7 @@
     // (aimEstSlice) - the tile fills a few frames later on a heavy model, with the figure the one-piece integral gives. (The
     // fine figure at rest is never the same ring: the press wakes the loop, and the ring's decay moves it by a hair.)
     aimShotJob = null;
-    var sampler = shell && viewer.liveAimSampler ? viewer.liveAimSampler(shell, 1024) : null;
+    var sampler = shell && viewer.liveAimSampler ? viewer.liveAimSampler(shell, 1024, false, 'shot') : null;
     if (sampler) aimShotJob = {s: sampler, shell: shell};
     // The fun layer (user, 22.09): with the mode on the shot lands at a point DRAWN inside
     // the live circle instead of at its middle, and the shot line, the pinned panel and the reticle then
@@ -6227,7 +6228,8 @@
       return ArmorViewer.verdictsFor(data,ArmorViewer.points(hit,context),shell).then(function(list){
         list.forEach(function(v){verdictLine(battle.id,hit,v,shell,context.index>=0?'auto':'auto-shell-guess',data);});});
     }).catch(function(e){if(window.console)console.warn('Bullba Hits verdict: hit '+hit.id+' skipped: '+e.message);})
-      .then(function(){verdictBusy=false;verdictStatus();if(verdictQueue.length)verdictTimer=setTimeout(drainVerdicts,150);});
+      // The pass has nothing left: the worker drops the models it was sent for it (sent again with the next battle's).
+      .then(function(){verdictBusy=false;verdictStatus();if(verdictQueue.length)verdictTimer=setTimeout(drainVerdicts,150);else ArmorBallistics.release('models');});
   }
   // Header line: the verdict log is on, with the count so far; the (i) explains what it is for.
   function verdictStatus(){var e=$('connection');if(!e)return;e.textContent='Statistics log \u00b7 '+verdictLines+' points'+(verdictQueue.length?' \u00b7 checking '+verdictQueue.length+' more':'');}

@@ -1,7 +1,10 @@
 /* The page's ray worker (28.09, steady-60): the engine and the models as flat arrays and back, and the worker's side
  * (ArmorBallistics.serve) over a scope whose messages go through structuredClone as a real postMessage would. Everything
  * the worker answers must equal the main thread's own result, every field: rays of a full and of a flat engine, a circle
- * integral in one piece and in slices, the Statistics log's verdicts. The real blob worker in Chrome: tests/page/frame_cost.cjs. */
+ * integral in one piece and in slices, the Statistics log's verdicts. The real blob worker in Chrome: tests/page/frame_cost.cjs.
+ * 28.09 (steady-60-fix): the engine carries its kd-tree - the worker puts back the very nodes the page built instead of
+ * building them again; a model stays flat arrays in the worker; jobs queue and a cancelled one is never answered.
+ * The page's side of the worker's life (terms, failures, lanes, memory): tests/test_worker_life.cjs. */
 'use strict';
 const assert = require('node:assert/strict'), fs = require('node:fs'), vm = require('node:vm');
 vm.runInThisContext(fs.readFileSync('web/ballistics.js', 'utf8'));
@@ -39,19 +42,27 @@ const parts = [
 ];
 const data = {hit: {target: {parts: parts}}, models: models};
 
-// A worker scope in-process: every message through structuredClone (with the transfer list), the answers collected.
+// A worker scope in-process: every message through structuredClone (with the transfer list), the answers collected; the
+// worker's queue runs on setImmediate (scope.later), so `answer(id)` waits for the job's own reply.
 function scope() {
-  const answers = [], s = {postMessage: (m) => answers.push(structuredClone(m)), answers: answers};
+  const answers = [], s = {postMessage: (m) => answers.push(structuredClone(m)), answers: answers, later: (f) => setImmediate(f)};
   B.serve(s);
   s.send = (m, transfer) => s.onmessage({data: structuredClone(m, {transfer: transfer || []})});
+  s.answer = async (id) => { for (let i = 0; i < 100000; i++) { const k = answers.findIndex((a) => a.id === id); if (k >= 0) return answers.splice(k, 1)[0]; await new Promise((r) => setImmediate(r)); } throw new Error('no answer to ' + id); };
+  s.idle = async () => { for (let i = 0; i < 50; i++) await new Promise((r) => setImmediate(r)); };
   return s;
 }
+// The kd-tree as a plain structure (boxes, children, leaf indices), to compare the page's with the worker's node for node.
+const shape = (n) => (n ? {min: n.min.slice(), max: n.max.slice(), idx: n.idx ? Array.from(n.idx) : null, left: n.idx ? null : shape(n.left), right: n.idx ? null : shape(n.right)} : null);
 const shells = [B.shell('ARMOR_PIERCING', 140, 100), B.shell('ARMOR_PIERCING_CR', 90, 85), B.shell('HOLLOW_CHARGE', 200, 105), Object.assign(B.shell('HIGH_EXPLOSIVE', 50, 152), {alpha: 750, spallDamage: 375, mechanics: 'MODERN'})];
 shells[0].alpha = 390;
 
 let rays = 0;
 for (const flat of [false, true]) {
   const engine = B.build(data, false, flat), pk = B.packEngine(engine), back = B.unpackEngine(structuredClone(pk));
+  // The tree travels with the triangles and comes back node for node - the worker does not build one of its own.
+  assert.ok(pk.box instanceof Float64Array && pk.pool instanceof Int32Array, 'the packed engine carries its tree');
+  assert.equal(json(shape(back.acceleration)), json(shape(engine.acceleration)), 'the same tree' + (flat ? ' (flat)' : ''));
   assert.equal(back.triangles.length, engine.triangles.length);
   assert.equal(back.materialCount, engine.materialCount);
   assert.equal(back.flat, flat);
@@ -62,7 +73,14 @@ for (const flat of [false, true]) {
     rays++;
   }
 }
-console.log('ok   packed engines cast the same ' + rays + ' rays, every field (kd-tree and flat)');
+// The tree is not built again: the kd-tree build sorts at every node, the unpacking sorts nothing.
+{
+  const engine = B.build(data, false), pk = B.packEngine(engine), sort = Array.prototype.sort;
+  let sorts = 0; Array.prototype.sort = function () { sorts++; return sort.apply(this, arguments); };
+  try { B.unpackEngine(structuredClone(pk)); } finally { Array.prototype.sort = sort; }
+  assert.equal(sorts, 0, 'unpacking an engine builds no tree');
+}
+console.log('ok   packed engines carry their kd-tree and cast the same ' + rays + ' rays, every field (kd-tree and flat)');
 
 // The lean ray (engine.lean, the circle's): the chance, the expected damage and the reason of ray(), on every ray - the
 // ricochet continuation included - and no array or object of its own per ray (the same result object every time).
@@ -84,6 +102,7 @@ console.log('ok   packed engines cast the same ' + rays + ' rays, every field (k
   console.log('ok   the lean ray gives ray()’s chance, expected damage and reason on ' + n + ' rays (' + bounced + ' after a ricochet)');
 }
 
+(async () => {
 // The worker's side: the engine once, then circle jobs; the answers equal one-piece and sliced integrals here.
 const w = scope(), engine = B.build(data, false), pk = B.packEngine(engine);
 assert.deepEqual(w.answers.shift(), {type: 'ready'});
@@ -97,7 +116,7 @@ for (const [count, radius, profile] of [[256, .4, 'empirical-post96'], [1024, .9
     let r = null; while (!(r = sliced.step(-1))) {}   // one ray a call: the slices' path to the end
     assert.equal(json(r), json(here), 'sliced circle');
     w.send({type: 'circle', id: 100 + circles, engine: 1, shell: s, o: o, center: c, right: right, up: up, radius: radius, count: count, profile: profile});
-    const a = w.answers.shift();
+    const a = await w.answer(100 + circles);
     assert.equal(a.id, 100 + circles);
     assert.equal(json(a.result), json(here), 'worker circle ' + count + ' ' + profile + ' ' + s.kind);
     circles++;
@@ -105,9 +124,26 @@ for (const [count, radius, profile] of [[256, .4, 'empirical-post96'], [1024, .9
 }
 console.log('ok   ' + circles + ' circle integrals from the worker equal the main thread’s, in one piece and in slices');
 // A job on an engine the worker dropped (or never had) is answered with an error, so the page falls back.
-w.send({type: 'drop', id: 1});
-w.send({type: 'circle', id: 999, engine: 1, shell: shells[0], o: [0, 0, -30], center: [0, 0, 0], right: [1, 0, 0], up: [0, 1, 0], radius: 1, count: 8, profile: 'empirical-post96'});
-assert.ok(/no engine/.test(w.answers.shift().error));
+// Cancels (the page's lanes): a job cancelled while queued, or before its first slice, is never answered; the job after it
+// is. A job holds its engine from the moment it arrives: a drop after it does not take it away.
+const job = (id, count, en) => ({type: 'circle', id: id, engine: en || 1, shell: shells[0], o: [0.3, 0.2, -30], center: [0.1, 0.05, 0], right: [1, 0, 0], up: [0, 1, 0], radius: .9, count: count, profile: 'empirical-post96'});
+w.send(job(300, 4000)); w.send(job(301, 4000)); w.send(job(302, 64)); w.send({type: 'cancel', ids: [300, 301]});
+w.send({type: 'drop', engines: [1]});
+const kept = await w.answer(302); await w.idle();
+assert.ok(kept.result && kept.result.samples === 64, 'the job after the cancelled ones is answered');
+assert.ok(!w.answers.some((a) => a.id === 300 || a.id === 301), 'cancelled jobs are never answered');
+// A job cancelled between its slices: its first slices run, the cancel lands before the next, no answer.
+const pk2 = B.packEngine(engine);
+w.send({type: 'engine', id: 2, engine: pk2});
+w.send(job(303, 400000, 2)); w.send(job(304, 32, 2));
+await new Promise((r) => setTimeout(r, 30));
+w.send({type: 'cancel', ids: [303]});
+assert.equal((await w.answer(304)).result.samples, 32); await w.idle();
+assert.ok(!w.answers.some((a) => a.id === 303), 'a running job cancelled between its slices is dropped');
+console.log('ok   a cancelled job (queued, or between its slices) is never answered; the next one is; a drop spares queued jobs');
+w.send({type: 'drop', engines: [2]});
+w.send(job(999, 8, 2));
+assert.ok(/no engine/.test((await w.answer(999)).error));
 console.log('ok   a job on a dropped engine is answered with an error');
 
 // Verdicts: the models once, the scene by model ids; the answer equals verdicts on the flat engine built here. Points with
@@ -119,12 +155,19 @@ const pts = [
   {pos: [-2, 0.5, 2], line: [0.2, -0.1, 1], part: 1, effect: 4, pi: 3, hitType: 0, source: 'segment', chordDev: 0}
 ];
 const m1 = B.packModel(models[1]), m2 = B.packModel(models[2]);
+// A packed model is what the worker keeps and builds from: the same engine as the page's models give.
+{
+  const flatData = {hit: data.hit, models: {1: structuredClone(m1), 2: structuredClone(m2)}}, a = B.build(flatData, false), b = B.build(data, false);
+  assert.ok(flatData.models[1].groups[0].v instanceof Float64Array);
+  assert.equal(json(a.triangles), json(b.triangles), 'a packed model builds the same triangles');
+  assert.equal(json(shape(a.acceleration)), json(shape(b.acceleration)), 'and the same tree');
+}
 w.send({type: 'model', id: 7, model: m1}); w.send({type: 'model', id: 8, model: m2});
 let verdictSets = 0;
 for (const s of shells) {
   const here = B.verdicts(B.build(data, false, true), pts, s);
   w.send({type: 'verdicts', id: 200 + verdictSets, scene: {parts: parts.map((p) => ({id: p.id, transform: p.transform, armor: p.armor})), models: {1: 7, 2: 8}}, points: pts, shell: s});
-  const a = w.answers.shift();
+  const a = await w.answer(200 + verdictSets);
   assert.equal(json(a.result), json(here), 'worker verdicts ' + s.kind);
   assert.ok(here.some((v) => v.result && v.result.bounce) || here.some((v) => v.prevEffect === 1), 'a ricochet leg in the chain');
   verdictSets++;
@@ -137,3 +180,4 @@ assert.ok(lone.step(-1) === null || lone.result);
 assert.equal(B.remoteVerdicts(data, pts, shells[0]), null);
 console.log('ok   no worker: jobs stay on the main thread');
 console.log('PASS: ray worker');
+})().catch((e) => { console.log('FAIL: ' + (e && e.stack || e)); process.exit(1); });
