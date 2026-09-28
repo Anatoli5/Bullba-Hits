@@ -192,14 +192,29 @@ async function main() {
       // The first scene's shader compile is the first 'render' callback's stall (the D3D11 compiler; SwiftShader compiles fast).
       console.log('slow frame callbacks (> 50 ms) [name, at ms, ms]: ' + JSON.stringify(st.slow.slice(0, 12)) + '; long tasks [at ms, ms]: ' + JSON.stringify(st.tasks.slice(0, 12)));
       console.log('start: host-style count ' + st.start[0] + ' frames over ' + st.start[1] + ' ms = ' + Math.round(st.start[0] * 1000 / st.start[1]) + ' frames/s');
-      // The GPU time of the heavy passes, finished (gl.finish): the composite alone, and a full peel + composite (the camera moved).
-      const gpu = await ev(`(() => { const v = window.__bullbaViewers[window.__bullbaViewers.length - 1], g = v.renderer.getContext(), s = v.surface, out = {};
-        const time = (fn) => { const a = []; for (let i = 0; i < 12; i++) { g.finish(); const t = performance.now(); fn(); g.finish(); a.push(performance.now() - t); } a.sort((x, y) => x - y); return +a[6].toFixed(2); };
-        out.composite = time(() => s.composite());
-        out.peel = time(() => { s.key = null; v.paint(); v.renderer.render(v.scene, v.camera); });
-        out.frame = time(() => { v.paint(); v.renderer.render(v.scene, v.camera); });
-        out.size = s.width + 'x' + s.height; return out; })()`);
-      console.log('GPU passes (median of 12, finished): composite ' + gpu.composite + ' ms, peel + composite ' + gpu.peel + ' ms, a still frame ' + gpu.frame + ' ms, layers ' + gpu.size);
+      // The GPU time of the heavy passes. gl.finish() is only a flush in Chrome (0 ms whatever the work - stack-compare §3.2,
+      // 28.09), so each pass is fenced by a 1-pixel readPixels of the canvas, which waits for everything queued before it;
+      // the paths are interleaved (a GPU's clock and a shared GPU's load drift between blocks), median of 15. Where
+      // EXT_disjoint_timer_query_webgl2 is offered, its GPU-side time is given beside. At rest the leg is exact; "moving" is
+      // the frame of a camera that has just moved (the leg on its budget, steady-60 step 4).
+      const gpu = await ev(`(async () => { const v = window.__bullbaViewers[window.__bullbaViewers.length - 1], r = v.renderer, g = r.getContext(), s = v.surface, out = {}, px = new Uint8Array(4);
+        const ext = g.getExtension('EXT_disjoint_timer_query_webgl2');
+        const fence = () => { r.setRenderTarget(null); g.readPixels(0, 0, 1, 1, g.RGBA, g.UNSIGNED_BYTE, px); };
+        const query = async (fn) => { if (!ext) return NaN; const q = g.createQuery(); g.beginQuery(ext.TIME_ELAPSED_EXT, q); fn(); g.endQuery(ext.TIME_ELAPSED_EXT); fence();
+          for (let i = 0; i < 200 && !g.getQueryParameter(q, g.QUERY_RESULT_AVAILABLE); i++) await new Promise((z) => setTimeout(z, 2));
+          const ns = g.getQueryParameter(q, g.QUERY_RESULT), bad = g.getParameter(ext.GPU_DISJOINT_EXT); g.deleteQuery(q); return bad ? NaN : ns / 1e6; };
+        const paths = {
+          composite: () => { s.movedAt = -1e9; s.composite(); },
+          peel: () => { s.key = null; s.movedAt = -1e9; v.paint(); r.render(v.scene, v.camera); },
+          moving: () => { s.key = null; s.movedAt = performance.now(); v.paint(); r.render(v.scene, v.camera); },
+          frame: () => { v.paint(); r.render(v.scene, v.camera); }};
+        s.movedAt = -1e9; v.paint();
+        const wall = {}, gpuMs = {}; Object.keys(paths).forEach((k) => { wall[k] = []; gpuMs[k] = []; });
+        for (let i = 0; i < 15; i++) for (const k of Object.keys(paths)) { fence(); const t = performance.now(); paths[k](); fence(); wall[k].push(performance.now() - t); gpuMs[k].push(await query(paths[k])); }
+        const med = (a) => { a = a.filter((x) => x === x).sort((x, y) => x - y); return a.length ? +a[a.length >> 1].toFixed(2) : '-'; };
+        Object.keys(paths).forEach((k) => { out[k] = med(wall[k]) + ' ms (GPU ' + med(gpuMs[k]) + ')'; });
+        s.movedAt = -1e9; v.paint(); out.size = s.width + 'x' + s.height; return out; })()`);
+      console.log('GPU passes (median of 15, readPixels fence; timer query in brackets): composite ' + gpu.composite + ', peel + composite + scene ' + gpu.peel + ', the same on a moving camera ' + gpu.moving + ', a still frame ' + gpu.frame + ', layers ' + gpu.size);
     }
     ok('the live ring stands on the model under the cursor', ringUp.ring, JSON.stringify(ringUp));
 
