@@ -5,8 +5,10 @@ folder and install it silently into a fake game folder there. Nothing under the 
 Needs a previous tools/build_installer.py run (installer/generated/ and its payload) and the Inno compiler in
 work/installer-dependencies. Runs an unsigned setup engine: Smart App Control may refuse it (docs/KNOWLEDGE.md §13).
 
-Checks: the backup folder and the retired web/heatmap-gpu.js go; a previous recorder in mods/2.4.0.1 and
-mods/2.4.0.0 goes (no copy); records, models, settings, other mods and a user file in our folder stay."""
+Checks: the backup folder and the retired web/heatmap-gpu.js go; a previous recorder in the client's own mods folder
+and in those of the two earlier clients goes (no copy); records, models, settings, other mods and a user file in our
+folder stay. The fake client has the build's version with ANOTHER build number: the installer compares the version
+and the realm only (tools/client_version.py); a client of another version is refused and nothing is written."""
 import hashlib, json, os, shutil, subprocess, sys, tempfile
 from pathlib import Path
 
@@ -14,6 +16,9 @@ ROOT = Path(__file__).resolve().parent.parent
 SCRATCH = Path(tempfile.mkdtemp(prefix='bullba-installer-'))
 sys.path.insert(0, str(ROOT / 'tools'))
 import build_installer as bi
+import client_version
+MODS = 'mods/' + client_version.VERSION
+OLD1, OLD2 = ('mods/' + v for v in client_version.PREVIOUS)
 
 src = SCRATCH / 'src'; (src / 'generated').mkdir(parents=True)
 shutil.copy(ROOT / 'installer/ArmorInspector.iss', src)
@@ -36,10 +41,14 @@ game = root / 'game'
 cfg = game / 'mods/configs/local.armor_inspector'
 def put(rel, data=b'x'):
     p = game / rel; p.parent.mkdir(parents=True, exist_ok=True); p.write_bytes(data); return p
-put('version.xml', b'<version.xml><version>v.2.4.0.1 #950</version><meta><realm>NA</realm></meta></version.xml>')
+def version_xml(version, realm='NA'):
+    put('version.xml', ('<version.xml><version>%s</version><meta><realm>%s</realm></meta></version.xml>' % (version, realm)).encode('ascii'))
+# the build's version, a build number it was never checked on: a micro-update of the same client
+version_xml('v.%s #%d' % (client_version.VERSION, int(client_version.BUILD) + 7))
 (game / 'res/packages').mkdir(parents=True)
 keep = {
-    'mods/2.4.0.1/someone.else_1.0.wotmod': b'other mod',
+    MODS + '/someone.else_1.0.wotmod': b'other mod',
+    OLD1 + '/someone.else_0.9.wotmod': b'other mod of the earlier client',
     'mods/configs/local.armor_inspector/battles/1-abc.jsonl': b'{"schema":1,"type":"battle"}\n',
     'mods/configs/local.armor_inspector/data/models/k.js': b'model',
     'mods/configs/local.armor_inspector/data/battles/1-abc.js': b'snapshot',
@@ -47,13 +56,13 @@ keep = {
     'mods/configs/local.armor_inspector/web/user-note.txt': b'mine',
 }
 for rel, data in keep.items(): put(rel, data)
-gone = ['mods/2.4.0.1/local.armor_inspector_0.7.41.wotmod', 'mods/2.4.0.0/local.armor_inspector_0.6.4.wotmod',
+gone = [MODS + '/local.armor_inspector_0.9.1.wotmod', OLD1 + '/local.armor_inspector_0.7.41.wotmod', OLD2 + '/local.armor_inspector_0.6.4.wotmod',
         'mods/configs/local.armor_inspector/web/heatmap-gpu.js',
         'mods/configs/local.armor_inspector/installer/backups/0.7.40/local.armor_inspector_0.7.40.wotmod',
         'mods/configs/local.armor_inspector/installer/backups/viewer-20260923-101010/web/app.js',
         'mods/configs/local.armor_inspector/installer/backups/desktop/ArmorInspector-1.lnk',
         # A recorder an earlier install could not delete and renamed (RemoveLegacyMod).
-        'mods/2.4.0.1/local.armor_inspector_0.7.39.wotmod.removed']
+        OLD1 + '/local.armor_inspector_0.7.39.wotmod.removed', MODS + '/local.armor_inspector_0.9.0.wotmod.removed']
 for rel in gone: put(rel)
 # Review F1 (24.09): the previous recorders and the renamed one are read-only (a mod pack, a copy from a medium);
 # DeleteFile refuses such a file unless the attribute goes first.
@@ -67,10 +76,21 @@ version = re.search(r'ProductVersion "([^"]+)"', (src / 'generated/build.iss').r
 exe = out / ('BullbaHits-' + version + '-Setup-Test.exe')
 print('exe sha256', hashlib.sha256(exe.read_bytes()).hexdigest())
 log = SCRATCH / 'install.log'
+new_mod = game / MODS / ('local.armor_inspector_' + version + '.wotmod')
+ok = True
+# A client of another version (the earlier one): refused, nothing of ours is written.
+version_xml('v.%s #950' % client_version.PREVIOUS[0])
+r = subprocess.run([str(exe), '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/DIR=' + str(game), '/TASKS=',
+                    '/TESTPROCESSNAME=NoSuchGame.exe', '/LOG=' + str(SCRATCH / 'refused.log')], capture_output=True, text=True, timeout=300)
+refused = r.returncode != 0 and not new_mod.exists() and (cfg / 'Viewer.html').read_bytes() == b'old viewer'
+ok &= refused
+print(('ok ' if refused else 'FAIL ') + 'a client of another version is refused, nothing written (exit %d)' % r.returncode)
+# The build's version with a build number it was never checked on: a micro-update of the same client, accepted.
+version_xml('v.%s #%d' % (client_version.VERSION, int(client_version.BUILD) + 7))
 r = subprocess.run([str(exe), '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/DIR=' + str(game), '/TASKS=',
                     '/TESTPROCESSNAME=NoSuchGame.exe', '/LOG=' + str(log)], capture_output=True, text=True, timeout=300)
 print('install exit', r.returncode)
-ok = r.returncode == 0
+ok &= r.returncode == 0
 # An exception in a [Code] step still ends with exit 0; the setup log says so.
 text = log.read_text(encoding='utf-8', errors='replace') if log.exists() else ''
 clean = 'Runtime error' not in text and 'Exception message' not in text
@@ -89,7 +109,6 @@ for rel, digest in before.items():
     same = (game / rel).exists() and hashlib.sha256((game / rel).read_bytes()).hexdigest() == digest
     ok &= same
     print(('ok kept ' if same else 'FAIL changed ') + rel)
-new_mod = game / 'mods/2.4.0.1' / ('local.armor_inspector_' + version + '.wotmod')
 fresh = new_mod.exists() and (cfg / 'Viewer.html').read_bytes() != b'old viewer'
 ok &= fresh
 print(('ok ' if fresh else 'FAIL ') + 'new recorder and viewer installed')

@@ -20,6 +20,8 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parent.parent
 sys.path.insert(0,str(ROOT/'mod'))
 from local_armor_inspector.exporter import VERSION
+sys.path.insert(0,str(ROOT/'tools'))
+import client_version
 
 # One generated [Files] line: Source, DestDir under {app}, DestName, Flags.
 ENTRY=re.compile(r'^Source: "(.+?)"; DestDir: "\{app\}\\(.+?)"; DestName: "(.+?)"; Flags: (.*)$')
@@ -52,13 +54,12 @@ def read_entries(files_iss,manifest):
 
 
 def client_facts():
-    """Client version, realm and default folder come from the .iss, so there is one source of truth."""
+    """Client version and realm come from tools/client_version.py (as the setup's do), the default folder from the
+    .iss. The version is 'v.2.4.0.2' - without the build number, which install.ps1 does not compare."""
     text=(ROOT/'installer/ArmorInspector.iss').read_text(encoding='utf-8-sig')
-    client=re.search(r"VersionText <> '([^']+)'",text)
-    realm=re.search(r"realm'\)\.text\) <> '([^']+)'",text)
     folder=re.search(r'(?m)^DefaultDirName=(.+)$',text)
-    if not client or not realm or not folder: raise ValueError('Could not read version, realm or default folder from the .iss')
-    return client.group(1),realm.group(1),folder.group(1).strip()
+    if not folder: raise ValueError('Could not read the default folder from the .iss')
+    return 'v.'+client_version.VERSION,client_version.REALM,folder.group(1).strip()
 
 
 def build():
@@ -80,6 +81,7 @@ def build():
         target.parent.mkdir(parents=True,exist_ok=True)
         shutil.copyfile(source,target)
     document={'application':'local.armor_inspector','version':VERSION,'client':client,'realm':realm,
+              'modsFolder':'mods\\'+client_version.VERSION,
               'mod':mod.name,'modSha256':digest(mod),'defaultGameFolder':default_folder,
               'note':'files[] is installer/generated/payload-manifest.json as a list; path is both the '
                      'destination under the game folder and the path inside payload\\.',
@@ -88,7 +90,9 @@ def build():
     (out/'manifest.json').write_text(json.dumps(document,indent=2),encoding='utf-8')
     for name in TEMPLATES:
         data=(ROOT/'installer/script'/name).read_bytes()
-        (out/name).write_bytes(data.replace(b'{VERSION}',VERSION.encode('ascii')).replace(b'{CLIENT}',client.encode('ascii')))
+        (out/name).write_bytes(data.replace(b'{VERSION}',VERSION.encode('ascii')).replace(b'{CLIENT}',client_version.LABEL[len('World of Tanks PC '):].encode('ascii'))
+                               .replace(b'{MODS}',client_version.VERSION.encode('ascii'))
+                               .replace(b'{PREVIOUS}',("', '".join(client_version.PREVIOUS)).encode('ascii')))
     # Every staged file takes the .wotmod's own time, so one build of the mod gives one archive
     # however often it is packed (same reason as in tools/build_installer.py).
     stamp=mod.stat().st_mtime

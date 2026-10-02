@@ -7,6 +7,9 @@ it before a build and refuses to build on red. Suites (they run side by side, ~1
             and every script/stylesheet index.html loads is in ASSETS (web/modifiers.js once shipped without it);
             the icons on disk = ICON_FILES + CRIT_ICON_FILES; CRIT_ICON_FILES = what tools/extract_crit_icons.py
             writes; the icon names of web/equipment.js are in ICON_FILES
+  client    the installed client is the one tools/client_version.py names (another version or realm: another mods
+            folder; the same version with another build number: a micro-update) and every client name the recorder
+            hooks is in its bytecode (tools/inspect_hook_names.py, rule W7). No client or no game Python: SKIP
   version   VERSION equal in exporter.py and mod_local_armor_inspector.py; CHANGELOG.md has its section and no
             heading twice
   pytest    tests/test_*.py under CPython 3 (the exporter, the records, the page channel, the recorder on stubs)
@@ -264,12 +267,31 @@ def check_py27(result):
         elif code == 0 and not counts: result.passed += max(1, sum(1 for l in out.splitlines() if l.startswith('ok')))
 
 
+def check_client(result):
+    sys.path.insert(0, os.path.join(ROOT, 'tools'))
+    import client_version
+    found = client_version.installed()
+    if found is None:
+        return result.skip('client: no client at %s' % client_version.GAME)
+    problem = client_version.problem(found=found)
+    if problem: result.fail('client: ' + problem)
+    else: result.passed += 1
+    result.note = '%s %s' % (found[1], found[0])
+    if not os.path.isdir(os.path.join(ROOT, 'work', 'game-python27')):
+        return result.skip('client: no work/game-python27 to read the bytecode with (hooked names not looked up)')
+    code, out, _ = run([sys.executable, 'tools/inspect_hook_names.py'], timeout=300)
+    names = len(re.findall(r"^\('ok     '", out, re.M))
+    if code != 0 or 'MISSING' in out or not names:
+        result.fail('client: hooked names: %s' % tail(out))
+    else: result.passed += names
+
+
 def check_installer(result):
     code, out, _ = run([sys.executable, 'tests/installer_cleanup_check.py'], timeout=600)
     harness_lines(result, 'installer_cleanup_check', code, out)
 
 
-SUITES = [('lists', check_lists), ('version', check_version), ('pytest', check_pytest), ('node', check_node),
+SUITES = [('lists', check_lists), ('client', check_client), ('version', check_version), ('pytest', check_pytest), ('node', check_node),
           ('page', check_page), ('browser', check_browser), ('py27', check_py27), ('installer', check_installer)]
 
 

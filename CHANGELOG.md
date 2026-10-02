@@ -1,6 +1,11 @@
 # Changelog
 
-All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.1 #950 from 0.7.6 on, 2.4.0.0 #945 before.
+All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.2 from 0.9.3 on, 2.4.0.1 #950 from 0.7.6, 2.4.0.0 #945 before.
+
+## 0.9.3 (2026-10-01)
+
+- **Client 2.4.0.2:** the mod is built for World of Tanks PC NA 2.4.0.2 and installs into `mods.4.0.2`. The recorder and the viewer are unchanged; your recorded battles are kept.
+- **Installer:** it checks the client's version and region, not its build number, so a small game update that keeps the version needs no new installer. A recorder left in the folder of an earlier client is removed.
 
 ## 0.9.2 (2026-09-28)
 

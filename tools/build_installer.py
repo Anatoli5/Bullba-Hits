@@ -15,6 +15,7 @@ sys.path.insert(0,str(ROOT/'mod'))
 from local_armor_inspector.exporter import ASSETS, VERSION, write_data
 sys.path.insert(0,str(ROOT/'tools'))
 import third_party
+import client_version
 
 
 def digest(path): return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -72,10 +73,11 @@ def build(test=False,sign_command=None,require_signature=False,only=None):
     mod=ROOT/'dist'/('local.armor_inspector_'+VERSION+'.wotmod')
     report=json.loads((ROOT/'dist/build.json').read_text())
     if digest(mod)!=report['sha256']: raise ValueError('Mod differs from validated build')
-    files=[(mod,'mods/2.4.0.1/'+mod.name,False,False)]
+    mods='mods/'+client_version.VERSION+'/'
+    files=[(mod,mods+mod.name,False,False)]
     # The hangar panel (ModsList + OpenWG Gameface): copied only when absent, kept on uninstall, never hash-checked
     # afterwards - a modpack may bring its own build of the same package.
-    files.extend((path,'mods/2.4.0.1/'+path.name,True,True) for path in third_party.collect())
+    files.extend((path,mods+path.name,True,True) for path in third_party.collect())
     with zipfile.ZipFile(mod) as z:
         for relative in ASSETS:
             data=z.read('res/armor_inspector_viewer/'+relative)
@@ -123,7 +125,10 @@ def build(test=False,sign_command=None,require_signature=False,only=None):
     prefix='mods/configs/local.armor_inspector/'
     shipped=set(relative[len(prefix):] for _,relative,_,_ in files if relative.startswith(prefix))
     (generated/'retired.iss').write_text('\n'.join(retired_lines(shipped))+'\n',encoding='utf-8-sig')
-    (generated/'build.iss').write_text('#define ProductVersion "'+VERSION+'"\n#define ModName "'+mod.name+'"\n#define ModHash "'+digest(mod)+'"\n',encoding='utf-8-sig')
+    (generated/'build.iss').write_text('#define ProductVersion "'+VERSION+'"\n#define ModName "'+mod.name+'"\n#define ModHash "'+digest(mod)+'"\n'
+        '#define ClientVersion "'+client_version.VERSION+'"\n#define ClientBuild "'+client_version.BUILD+'"\n'
+        '#define ClientRealm "'+client_version.REALM+'"\n#define PreviousClient1 "'+client_version.PREVIOUS[0]+'"\n'
+        '#define PreviousClient2 "'+client_version.PREVIOUS[1]+'"\n',encoding='utf-8-sig')
     (generated/'payload-manifest.json').write_text(json.dumps(manifest,indent=2),encoding='utf-8')
     # Two forms of the same installer from one script and one payload. The single EXE in dist/: Inno's loader
     # unpacks the setup engine into %TEMP% and runs it there - the copy Smart App Control refused on 22.09
@@ -151,7 +156,8 @@ def build(test=False,sign_command=None,require_signature=False,only=None):
                 'files':[{'name':p.name,'bytes':p.stat().st_size,'sha256':digest(p)} for p in parts],
                 'innoSetup':'7.1.0','compilerSha256':digest(compiler),'modSha256':digest(mod),'testBuild':test,
                 'digitallySigned':signature['status']=='Valid','authenticode':signature,
-                'signedInnerSetupRequested':bool(sign_command),'smartAppControlTested':False}
+                'signedInnerSetupRequested':bool(sign_command),'smartAppControlTested':False,
+                'client':client_version.LABEL,'modsFolder':'mods/'+client_version.VERSION}
         name=('installer-test-build' if test else 'installer-build')+('-noloader' if variant=='noloader' else '')+'.json'
         (ROOT/'outputs'/name).write_text(json.dumps(result,indent=2),encoding='utf-8')
         print(json.dumps(result,indent=2))

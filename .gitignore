@@ -33,6 +33,7 @@ __pycache__/
 !/tools/build.py
 !/tools/package.py
 !/tools/build_installer.py
+!/tools/client_version.py
 !/tools/build_script_installer.py
 !/tools/fetch_installer_compiler.py
 !/tools/make_installer_icon.ps1

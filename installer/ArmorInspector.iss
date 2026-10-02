@@ -1,4 +1,9 @@
 ﻿; Native installer. All game writes are explicit [Files] entries managed by Inno.
+; generated\build.iss (tools/build_installer.py) defines ProductVersion, ModName, ModHash and the client:
+; ClientVersion (the folder mods\<ClientVersion> and, with ClientRealm, what version.xml must say), ClientBuild (the
+; build the mod was checked on - never compared: a micro-update keeps the folder) and PreviousClient1 /
+; PreviousClient2 (folders of earlier clients a recorder of ours may still lie in). Their owner is
+; tools/client_version.py.
 #include "generated\build.iss"
 
 [Setup]
@@ -69,7 +74,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Messages]
 WelcomeLabel1=Bullba Hits Setup
-WelcomeLabel2=The mod records hits; the saved history opens in an ordinary browser.%n%nSupports World of Tanks PC NA 2.4.0.1 #950.%nClose the game before installing.
+WelcomeLabel2=The mod records hits; the saved history opens in an ordinary browser.%n%nSupports World of Tanks PC {#ClientRealm} {#ClientVersion}.%nClose the game before installing.
 SelectDirLabel3=Select the World of Tanks folder that contains version.xml and the res directory.
 SelectDirBrowseLabel=Game folder:
 FinishedLabelNoIcons=Installation complete. The mod starts recording hits once the game runs.%n%nThe viewer is Viewer.html in mods\configs\local.armor_inspector. New battles appear in the viewer on their own; it can stay open.
@@ -85,8 +90,9 @@ Name: desktopicon; Description: "Create a desktop shortcut for the viewer"; Grou
 ; tools/build_installer.py, generated into retired.iss). Records, models, settings and other mods are never named here.
 Type: filesandordirs; Name: "{app}\mods\configs\local.armor_inspector\installer\backups"
 ; A previous recorder that could not be deleted is renamed .wotmod.removed (RemoveLegacyMod); it goes here next time.
-Type: files; Name: "{app}\mods\2.4.0.1\local.armor_inspector_*.wotmod.removed"
-Type: files; Name: "{app}\mods\2.4.0.0\local.armor_inspector_*.wotmod.removed"
+Type: files; Name: "{app}\mods\{#ClientVersion}\local.armor_inspector_*.wotmod.removed"
+Type: files; Name: "{app}\mods\{#PreviousClient1}\local.armor_inspector_*.wotmod.removed"
+Type: files; Name: "{app}\mods\{#PreviousClient2}\local.armor_inspector_*.wotmod.removed"
 #include "generated\retired.iss"
 
 [Files]
@@ -263,6 +269,25 @@ end;
 
 #include "generated\checks.iss"
 
+// <version> of version.xml is 'v.2.4.0.2 #964': the part before # is the version (the folder mods\<version>), the
+// number after it the build of that version.
+function VersionOf(const Text: String): String;
+var P: Integer;
+begin
+  P := Pos('#', Text);
+  if P > 0 then Result := Trim(Copy(Text, 1, P - 1)) else Result := Trim(Text);
+end;
+
+// Empty when the client is the one this mod is for: the same version and realm. The build number is not compared
+// (a micro-update of the same version keeps the mods folder; tools/client_version.py).
+function ClientProblem(const VersionText, Realm: String): String;
+begin
+  Result := '';
+  if (VersionOf(VersionText) <> 'v.{#ClientVersion}') or (Trim(Realm) <> '{#ClientRealm}') then
+    Result := 'This build is for WoT PC {#ClientRealm} {#ClientVersion}.' + #13#10 +
+      'The selected folder has ' + Trim(Realm) + ' ' + Trim(VersionText) + '.';
+end;
+
 function CheckGame(const Folder: String; CheckShortcut: Boolean): String;
 var
   Doc, Shell, Shortcut: Variant;
@@ -291,17 +316,13 @@ begin
       Exit;
     end;
     VersionText := Trim(Doc.selectSingleNode('/version.xml/version').text);
-    if (VersionText <> 'v.2.4.0.1 #950') or
-       (Trim(Doc.selectSingleNode('/version.xml/meta/realm').text) <> 'NA') then begin
-      Result := 'This alpha build is for WoT PC NA 2.4.0.1 #950.' + #13#10 +
-        'A different version or region was found in the selected folder.';
-      Exit;
-    end;
+    Result := ClientProblem(VersionText, Doc.selectSingleNode('/version.xml/meta/realm').text);
+    if Result <> '' then Exit;
     if GameRunning then begin
       Result := 'Close World of Tanks before installing. The installer does not close the game itself.';
       Exit;
     end;
-    ModPath := AddBackslash(Folder) + 'mods\2.4.0.1\';
+    ModPath := AddBackslash(Folder) + 'mods\{#ClientVersion}\';
     if FindFirst(ModPath + 'local.armor_inspector*.wotmod', Find) then begin
       try
         repeat
@@ -363,7 +384,7 @@ var OldPath, NewPath: String;
 begin
   OldPath := ExpandConstant('{app}\mods\') + ModsFolder + '\local.armor_inspector_' + Version + '.wotmod';
   if not FileExists(OldPath) then Exit;
-  NewPath := ExpandConstant('{app}\mods\2.4.0.1\{#ModName}');
+  NewPath := ExpandConstant('{app}\mods\{#ClientVersion}\{#ModName}');
   if not IsKnownLegacyMod(OldPath) or not FileExists(NewPath) or
       (CheckOwnedFile(NewPath, '{#ModHash}') <> '') then
     RaiseException('Could not verify the update files. The previous version is kept.');
@@ -396,12 +417,13 @@ begin
   end;
 end;
 
-// The current client folder first, then the previous client's folder (2.4.0.0): a build left there by the
-// 2.4.0.0 installer is ours too, so the game folder keeps one recorder.
+// The current client folder first, then the folders of the earlier clients: a build left there by an earlier
+// installer is ours too, so the game folder keeps one recorder.
 procedure RemoveAllLegacyMods;
 begin
-  RemoveLegacyModsIn('2.4.0.1');
-  RemoveLegacyModsIn('2.4.0.0');
+  RemoveLegacyModsIn('{#ClientVersion}');
+  RemoveLegacyModsIn('{#PreviousClient1}');
+  RemoveLegacyModsIn('{#PreviousClient2}');
 end;
 
 // The viewer files in our folder are simply replaced by [Files]; no copy of the previous set is kept (24.09).
@@ -421,7 +443,7 @@ begin
       SuppressibleMsgBox('Close World of Tanks before removing the mod.', mbError, MB_OK, IDOK);
       Exit;
     end;
-    Error := CheckOwnedFile(ExpandConstant('{app}\mods\2.4.0.1\{#ModName}'), '{#ModHash}');
+    Error := CheckOwnedFile(ExpandConstant('{app}\mods\{#ClientVersion}\{#ModName}'), '{#ModHash}');
     if Error <> '' then begin
       SuppressibleMsgBox(Error, mbError, MB_OK, IDOK);
       Exit;

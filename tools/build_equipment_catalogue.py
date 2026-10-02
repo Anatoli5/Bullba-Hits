@@ -36,7 +36,9 @@ import xml.etree.ElementTree as ET
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CATALOGUE = os.path.join(ROOT, 'outputs', 'equipment-perks-2026-09-20.json')
 TARGET = os.path.join(ROOT, 'web', 'equipment.js')
-CLIENT = 'World of Tanks PC NA 2.4.0.1 #950'
+sys.path.insert(0, os.path.join(ROOT, 'tools'))
+import client_version  # noqa: E402
+CLIENT = client_version.LABEL       # the client the catalogue was last made from
 GAME = 'C:/Games/World_of_Tanks_NA'
 DEVICE_FILES = ['tiers_devices.xml', 'deluxe_devices.xml', 'trophy_devices.xml', 'modernized_devices.xml']
 DEVICE_DIR = 'scripts/item_defs/vehicles/common/optional_devices/'

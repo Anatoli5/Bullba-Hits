@@ -21,6 +21,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'mod'))
 from local_armor_inspector.exporter import VERSION  # noqa: E402
+sys.path.insert(0, str(ROOT / 'tools'))
+import client_version  # noqa: E402
 
 OWNER = 'Anatoli5'
 NAME = 'Bullba-Hits'
@@ -107,9 +109,9 @@ if digest(wotmod) != report['sha256']:
     raise RuntimeError('dist/*.wotmod does not match dist/build.json; rebuild first')
 
 repo = '/repos/' + OWNER + '/' + NAME
-notes = ['Bullba Hits ' + VERSION + u' \u2014 WoT PC NA 2.4.0.1 #950.', '', changelog, '', '### Files', '',
+notes = ['Bullba Hits ' + VERSION + u' \u2014 WoT PC ' + client_version.REALM + ' ' + client_version.VERSION + '.', '', changelog, '', '### Files', '',
          '**' + assets[0].name + u'** \u2014 the installer. Works alongside other mod packs: used with Aslain\'s, others are expected to work. Keeps your recorded battles.', '',
-         '**' + assets[1].name + u'** \u2014 the `.wotmod` files for a manual install (copy them into `mods\\2.4.0.1\\`), the sources, README and licences.', '',
+         '**' + assets[1].name + u'** \u2014 the `.wotmod` files for a manual install (copy them into `mods\\' + client_version.VERSION + '\\`), the sources, README and licences.', '',
          'SHA-256:']
 notes += ['- `' + a.name + '`: `' + digest(a) + '`' for a in assets]
 notes += ['- `' + wotmod.name + '` (inside the archive): `' + report['sha256'] + '`']

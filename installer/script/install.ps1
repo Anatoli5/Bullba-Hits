@@ -64,7 +64,10 @@ try {
     if (-not $versionNode -or -not $realmNode) { throw 'Could not read version.xml of the selected game.' }
     $clientVersion = $versionNode.Node.InnerText.Trim()
     $clientRealm = $realmNode.Node.InnerText.Trim()
-    if (($clientVersion -cne $manifest.client) -or ($clientRealm -cne $manifest.realm)) {
+    # 'v.2.4.0.2 #964': the version is the part before '#'; the build number after it is not compared (a
+    # micro-update of the same version keeps the mods folder).
+    $clientNumber = ($clientVersion -split '#')[0].Trim()
+    if (($clientNumber -cne $manifest.client) -or ($clientRealm -cne $manifest.realm)) {
         throw ('This build is for WoT PC ' + $manifest.realm + ' ' + $manifest.client +
             '; the selected folder has ' + $clientRealm + ' ' + $clientVersion + '.')
     }
@@ -76,7 +79,7 @@ try {
 
     # 4. Every build of our recorder is local.armor_inspector_<x.y.z>.wotmod. Anything else under that
     #    name is not ours to move aside.
-    $modsFolder = Join-Path $game 'mods\2.4.0.1'
+    $modsFolder = Join-Path $game 'mods\{MODS}'
     $ourName = '^local\.armor_inspector_(\d+\.\d+\.\d+)\.wotmod$'
     if (Test-Path -LiteralPath $modsFolder -PathType Container) {
         foreach ($file in Get-ChildItem -LiteralPath $modsFolder -File) {
@@ -90,7 +93,7 @@ try {
     # 5. Our own .wotmod under this version number is never rebuilt, so a different file with that
     #    name is somebody else's and is not replaced (CheckOwnedFile).
     $modEntry = $null
-    foreach ($entry in $files) { if ($entry.path -eq ('mods\2.4.0.1\' + $manifest.mod)) { $modEntry = $entry } }
+    foreach ($entry in $files) { if ($entry.path -eq ('mods\{MODS}\' + $manifest.mod)) { $modEntry = $entry } }
     if (-not $modEntry) { throw 'manifest.json does not carry our own .wotmod.' }
     $modDest = Join-Path $game $modEntry.path
     if (Test-Path -LiteralPath $modDest -PathType Leaf) {
@@ -177,9 +180,9 @@ try {
         }
     }
 
-    # 10. Any earlier build of ours, in this client's folder and in the previous one, is moved to the
+    # 10. Any earlier build of ours, in this client's folder and in those of the earlier clients, is moved to the
     #     backups - never deleted. A different file under the same version number keeps its own folder.
-    foreach ($folder in @('2.4.0.1', '2.4.0.0')) {
+    foreach ($folder in @('{MODS}', '{PREVIOUS}')) {
         $dir = Join-Path $game ('mods\' + $folder)
         if (-not (Test-Path -LiteralPath $dir -PathType Container)) { continue }
         foreach ($file in Get-ChildItem -LiteralPath $dir -File) {
@@ -208,7 +211,7 @@ try {
         if ((Get-Sha256 $path) -ne $guard[$path]) { throw ('A file that had to be kept changed: ' + $path) }
     }
     $active = @(Get-ChildItem -LiteralPath $modsFolder -File | Where-Object { $_.Name -like 'local.armor_inspector_*.wotmod' })
-    if ($active.Count -ne 1) { throw ('mods\2.4.0.1 must hold exactly one recorder; it holds ' + $active.Count + '.') }
+    if ($active.Count -ne 1) { throw ('mods\{MODS} must hold exactly one recorder; it holds ' + $active.Count + '.') }
     Note ('active recorder: ' + $active[0].FullName)
     Note ('written ' + $written + ', kept ' + $kept + ', moved to backups ' + $moved)
 
