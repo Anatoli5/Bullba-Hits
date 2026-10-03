@@ -15,7 +15,7 @@ a track wheel with no armour, the chassis XML in the client's layout. Checks, by
   snapshot   the published snapshot keeps a wheel's rest place in the static part (the hit's poses carry null there)
              and unpacks it back; the page's poses of the other parts are untouched
   publish    publish_vehicle_parts leaves a wheel alone (no model, no XML armour); prepare_hit gives the recorded
-             wheels their body in a battle of the running client, not in another client's; a record without wheels
+             wheels their body in a battle of the running client, not in another client's whose XML is unknown; a record without wheels
              is published as it was
   vehicles   load_vehicles: a wheeled vehicle's file from before the wheels is exported again once by the replay (its
              own source kept) even with no request line; a tracked one is marked and written back
@@ -190,7 +190,9 @@ def exporter_checks(ex, records, temp):
               and tw[2]['transform'][12:15] == list(POSITIONS['W_L1']), [p.get('transform') for p in tw][:1])
         check(group, 'the contact on -3 stays resolved', hit['points'][0]['status'] == 'resolved')
         other = e.prepare_hit(raw(True), 0, {'id': 'b2', 'clientVersion': 'client 0\n', 'hits': []})
-        check(group, 'another client\'s battle: the wheels stay as recorded (no XML of that version)',
+        # BACKLOG 55: the gate is the CRC of the XML in the battle's client, not its version text - here nothing is known of
+        # 'client 0' (no snapshot of it): no body is guessed (the same XML of a known client: tests/py27/battles_on_demand.py).
+        check(group, 'another client\'s battle, its XML unknown: the wheels stay as recorded (no body guessed)',
               not any('wheel' in p for p in other['target']['parts']))
         old = e.prepare_hit(raw(False), 0, battle)
         check(group, 'a record without wheels is published as it was: four parts, no wheel',

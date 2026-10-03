@@ -1,0 +1,5018 @@
+{
+ "clients": {
+  "v.2.4.0.2 #964": {
+   "order": 1,
+   "types": {
+    "china:Ch00_ClingeBot_SH": [
+     "7e67aaaf7beff608",
+     "23b054911f2c4646"
+    ],
+    "china:Ch01_Type59": [
+     "e4070d0d7b8d66d6",
+     "5708af1f74ee9ced"
+    ],
+    "china:Ch01_Type59_Gold": [
+     "c0eff7f50577e5e0",
+     "1ae5907c270e712b"
+    ],
+    "china:Ch02_Type62": [
+     "0ed4faa8a1992073",
+     "3fb2aba88a7c4633"
+    ],
+    "china:Ch03_WZ-111": [
+     "ab7cae3a71dcdef0",
+     "7749b915e7b65ec0"
+    ],
+    "china:Ch03_WZ_111_A": [
+     "4dcb2430dd5e9a3a",
+     "1197c0be041a0d1e"
+    ],
+    "china:Ch04_T34_1": [
+     "c54d6a0fad8b5843",
+     "b3ac44513e06f06e"
+    ],
+    "china:Ch05_T34_2": [
+     "95e82922a9a3fd33",
+     "e34899b5a2a52fa8"
+    ],
+    "china:Ch06_Renault_NC31": [
+     "9b9a98823d929c75",
+     "2cab659ddf785200"
+    ],
+    "china:Ch07_Vickers_MkE_Type_BT26": [
+     "033e0781b2f8a92e",
+     "5d8bef8f6bf4a2a3"
+    ],
+    "china:Ch08_Type97_Chi_Ha": [
+     "03619f5dd989789b",
+     "48e89c7723f8eb0c"
+    ],
+    "china:Ch09_M5": [
+     "48748e86dfa5ad03",
+     "f4f50ee0d0d510f7"
+    ],
+    "china:Ch10_IS2": [
+     "c7a0b8dd8dc0084f",
+     "525e17cb4326dd22"
+    ],
+    "china:Ch11_110": [
+     "526a0d5be0978b8f",
+     "a8f3fb8b88aea65d"
+    ],
+    "china:Ch11_110_IGR": [
+     "b11d32f1f6cae9d0",
+     "e6a88ea087431750"
+    ],
+    "china:Ch12_111_1_2_3": [
+     "b719b23abc4c7696",
+     "7ae479cdafc86833"
+    ],
+    "china:Ch12_111_1_2_3_FL": [
+     "0a45841613bffd7c",
+     "ef6c1e577774f0ae"
+    ],
+    "china:Ch14_T34_3": [
+     "ca7fac6a15dff380",
+     "e16e93fff700f046"
+    ],
+    "china:Ch15_59_16": [
+     "973f62f73eb926b9",
+     "88019d93bab142ea"
+    ],
+    "china:Ch16_WZ_131": [
+     "bb9cdcf897d96fa1",
+     "332e6042aad45670"
+    ],
+    "china:Ch17_WZ131_1_WZ132": [
+     "1e9fb681a730c0e5",
+     "001f5eb90ce35929"
+    ],
+    "china:Ch17_WZ131_1_WZ132_FL": [
+     "6d4a78526e3bb725",
+     "8f786d60930db0c3"
+    ],
+    "china:Ch17_WZ131_1_WZ132_IGR": [
+     "9b39cfad9ed419b1",
+     "6098d8465478a7c8"
+    ],
+    "china:Ch18_WZ-120": [
+     "be89e9f014844f1b",
+     "fa566fe05b5b3b68"
+    ],
+    "china:Ch19_121": [
+     "b0a5e0f5f323afee",
+     "ad378fc0d57214c1"
+    ],
+    "china:Ch19_121_IGR": [
+     "86e495e9e94d26a4",
+     "dd6c56c43f8de2c3"
+    ],
+    "china:Ch20_Type58": [
+     "764a3841e4f179cc",
+     "14b98c3e090b805f"
+    ],
+    "china:Ch21_T34": [
+     "4f13373c4dad4867",
+     "fe77d9d971157e67"
+    ],
+    "china:Ch22_113": [
+     "79234794c590d73e",
+     "6b146d414e9d0fba"
+    ],
+    "china:Ch22_113P": [
+     "721c7cf5e9336e63",
+     "476ee3a332e489b7"
+    ],
+    "china:Ch22_113_Beijing_Opera": [
+     "e6b69544edefa1ec",
+     "5f2e43b5437fd161"
+    ],
+    "china:Ch23_112": [
+     "146afe8af8923e17",
+     "9ee7c8c0bf9ea034"
+    ],
+    "china:Ch23_112_FL": [
+     "6975048ed31700c4",
+     "724a21987d98db8e"
+    ],
+    "china:Ch24_Type64": [
+     "d7ae18828c23a7bb",
+     "e7f595849346cf94"
+    ],
+    "china:Ch24_Type64_SH": [
+     "e26f887529dc7c8e",
+     "8d1ce71d04ded779"
+    ],
+    "china:Ch25_121_mod_1971B": [
+     "53a0889c238920a7",
+     "7cf01abc1a335468"
+    ],
+    "china:Ch25_121_mod_1971B_MK": [
+     "22eaf4953b81897d",
+     "2d0288be61918c02"
+    ],
+    "china:Ch26_59_Patton": [
+     "9e18d50eec495b84",
+     "383197beae2dc80a"
+    ],
+    "china:Ch28_WZ_132A": [
+     "d2f7cda67462efe1",
+     "aba24d08bd257c78"
+    ],
+    "china:Ch29_Type_62C_prot": [
+     "a855d401e9071bce",
+     "b431637e9113bae6"
+    ],
+    "china:Ch30_T-26G_FT": [
+     "dfdf2e8d0701534f",
+     "c3b718d7f899fa0a"
+    ],
+    "china:Ch31_M3G_FT": [
+     "4c5405b452ea5e86",
+     "7af8d0b4902b10f7"
+    ],
+    "china:Ch32_SU-76G_FT": [
+     "b53189d02a6f407d",
+     "e83951818b3c54a1"
+    ],
+    "china:Ch33_60G_FT": [
+     "bc76325034e321f3",
+     "1baa3c35e088bc33"
+    ],
+    "china:Ch34_WZ131G_FT": [
+     "26ecf9aca92d5ccd",
+     "1717dbea93b81474"
+    ],
+    "china:Ch35_T-34-2G_FT": [
+     "ba29d570014b0766",
+     "3dc1705e3b752a43"
+    ],
+    "china:Ch36_WZ111_1G_FT": [
+     "f674bb08a815b030",
+     "0d4475fea580ea92"
+    ],
+    "china:Ch37_WZ111G_FT": [
+     "e1bb721321683267",
+     "11f9e9ddbcc6912e"
+    ],
+    "china:Ch38_WZ113G_FT": [
+     "8c75581422789b7e",
+     "e96bdf82760c7818"
+    ],
+    "china:Ch38_WZ113G_FT_7x7": [
+     "c3e56e6b07f33482",
+     "d70634ef8c1e2a0a"
+    ],
+    "china:Ch39_WZ120_1G_FT": [
+     "41b740ac3e44e675",
+     "442bc979f5039ad3"
+    ],
+    "china:Ch39_WZ120_1G_FT_FL": [
+     "b0dcd08968e641eb",
+     "06be1d45cbd7c69c"
+    ],
+    "china:Ch40_WZ120G_FT": [
+     "dfb246a0dcc77817",
+     "cdaf76ae57e09c47"
+    ],
+    "china:Ch41_WZ_111_5A": [
+     "b2b74b30d9de16c6",
+     "f7d089a8c8bf2799"
+    ],
+    "china:Ch41_WZ_111_5A_7x7": [
+     "19c56133fc457f56",
+     "e8e0259bf4778cb6"
+    ],
+    "china:Ch41_WZ_111_QL": [
+     "42a273c5b4d0c4b3",
+     "3194f929d221786a"
+    ],
+    "china:Ch41_WZ_111_TEST": [
+     "d0cbf3c66587dd4d",
+     "0d4ad6e5fe3c0d55"
+    ],
+    "china:Ch42_WalkerBulldog_M41D": [
+     "b483dace3d5379ce",
+     "9bfa50a47b1d4f8c"
+    ],
+    "china:Ch43_WZ_122_2": [
+     "dfb549a95c006da9",
+     "d35b63093ec335b3"
+    ],
+    "china:Ch44_114_SP2": [
+     "0ce3ce89d66472d1",
+     "0b55e274832b689c"
+    ],
+    "china:Ch45_WZ_114": [
+     "abdb7f326cd82547",
+     "d4d767818548f8c3"
+    ],
+    "china:Ch45_WZ_114_CFE_D": [
+     "864c931991e05150",
+     "ebb692676429b797"
+    ],
+    "china:Ch46_113_140": [
+     "0492fd3b051445cc",
+     "8b276676375cf0fa"
+    ],
+    "china:Ch47_BZ_176": [
+     "faa51d7fed0ce5dd",
+     "a67b7bb705df3131"
+    ],
+    "china:Ch47_BZ_176_CFE_B": [
+     "3ca810bd9971ba54",
+     "1485d7b64fec20fd"
+    ],
+    "china:Ch48_BZ_75": [
+     "bc5a2ec6cc6c14a6",
+     "651a228224606b9a"
+    ],
+    "china:Ch48_BZ_75_7x7": [
+     "e3c5d912a265fd81",
+     "c7f1556a5bde87e7"
+    ],
+    "china:Ch48_BZ_75_CFE_F": [
+     "d8548722038dc813",
+     "d3f8b762a634ddfe"
+    ],
+    "china:Ch49_BZ_68": [
+     "fa3ab1013b3c865e",
+     "75be069488f47238"
+    ],
+    "china:Ch50_BZ_166": [
+     "d1d79cfb7aad4c72",
+     "2e2e0c373fb4baa3"
+    ],
+    "china:Ch51_BZ_58": [
+     "7b963dc4e90164c7",
+     "c6f6634ca72bf2f6"
+    ],
+    "china:Ch52_WZ_122_6_F3": [
+     "938009c982d217d9",
+     "81a4ea6adf7d86d4"
+    ],
+    "china:Ch53_T_26_China": [
+     "dcdcae3b3f6672a8",
+     "f42765f1a7101f13"
+    ],
+    "china:Ch54_BZ_72_1": [
+     "16672d0581f81b58",
+     "058d1f043ba4be03"
+    ],
+    "china:Ch56_BZ_74_1": [
+     "8dc7da6a5d20ee34",
+     "039b518915f65f38"
+    ],
+    "china:Ch57_BZT_70": [
+     "34d6d5a02aeea556",
+     "ca7a1682bc55d33b"
+    ],
+    "china:Ch58_111_Vz51": [
+     "662c40d036a0820b",
+     "0964a222b1dcf132"
+    ],
+    "china:Ch59_BZ58_2": [
+     "a70641e76cffe984",
+     "39cb2b2db6836219"
+    ],
+    "china:Ch60_Vickers_TypeB": [
+     "1f2b8728126cae21",
+     "f01122de5683a046"
+    ],
+    "china:Ch61_DZT_159": [
+     "fe64f08a6559cbb6",
+     "ba6d3a5ecef07e56"
+    ],
+    "china:Ch61_DZT_159_CFE_A": [
+     "4b9ceba4994a38dd",
+     "47e875a7d0365806"
+    ],
+    "china:Ch62_BZ_75_M": [
+     "c0e02a2f803be37b",
+     "46a1ffd792b98cce"
+    ],
+    "china:Ch63_Yong_Bing": [
+     "1c406913b0700f30",
+     "f05ccabbddb5d135"
+    ],
+    "china:Ch65_Type59_IC4_3DSt": [
+     "a9ae389dd59342dc",
+     "49d2159145c39c57"
+    ],
+    "china:Ch66_121_2_Ziqiang": [
+     "d52faefe4bbf2192",
+     "3836543404d9c09b"
+    ],
+    "china:Ch67_BZ_79": [
+     "c754580ce050ed40",
+     "44efb58d32c0de9b"
+    ],
+    "china:Ch68_PGZ_70": [
+     "3d3847890edf1b43",
+     "0dd1a11c9fca7a20"
+    ],
+    "china:Ch70_PTZ_78": [
+     "0e56a0e0376fbc26",
+     "220f50df09ee69f0"
+    ],
+    "china:Ch71_WZ_219": [
+     "e9409cb6571a7e5a",
+     "bfc8262a8c603505"
+    ],
+    "china:Ch72_Yongshi": [
+     "24e01610194a2c0b",
+     "7ef28d1e985c8e4c"
+    ],
+    "china:Ch74_Waffentrager_15": [
+     "e1f08c7275344aa4",
+     "ada4a76ee49eb094"
+    ],
+    "czech:Cz01_Skoda_T40": [
+     "b832bddd17586012",
+     "b38c6d44fa65eb3f"
+    ],
+    "czech:Cz02_TVP_T50": [
+     "21f5755f7afd8541",
+     "0670a5262e81d38f"
+    ],
+    "czech:Cz03_LT_vz35": [
+     "edbd19e1fd6d76ef",
+     "a743007afbcf7d2d"
+    ],
+    "czech:Cz04_T50_51": [
+     "96a8a662e83ad9de",
+     "11570f452a1af6cf"
+    ],
+    "czech:Cz05_T34_100": [
+     "53077707cacce91a",
+     "27c3d53af4785fbd"
+    ],
+    "czech:Cz06_Kolohousenka": [
+     "ea7fcc3447b5d829",
+     "713e949c8bfd1914"
+    ],
+    "czech:Cz07_TVP_46": [
+     "982efbeaa272d942",
+     "30de24ac2a351a57"
+    ],
+    "czech:Cz08_T_25": [
+     "64f20f1ac09a4cea",
+     "27c0db90092a7fbd"
+    ],
+    "czech:Cz09_T_24": [
+     "ec1e542bbec3787c",
+     "74a1617792c7b2ce"
+    ],
+    "czech:Cz10_LT_vz38": [
+     "f53d36ff1c67da69",
+     "e17c1ecfbeca8340"
+    ],
+    "czech:Cz11_V_8_H": [
+     "376ef0478380cb63",
+     "05a80ee80619b3d3"
+    ],
+    "czech:Cz13_T_27": [
+     "fa94008d08c79060",
+     "4d8aabe22119b7e7"
+    ],
+    "czech:Cz14_Skoda_T-56": [
+     "875be177c8afbeb6",
+     "2cf29260ed939207"
+    ],
+    "czech:Cz14_Skoda_T-56_WT24_3Dst": [
+     "07643e20f2fbd3b2",
+     "55df40910e6afeae"
+    ],
+    "czech:Cz15_Skoda_T-45_Prem": [
+     "6f0559a5cd5ae526",
+     "bd509252a372b1ed"
+    ],
+    "czech:Cz16_TNH_T_vz51": [
+     "1d1d8f7d2a67a72e",
+     "939183734019dada"
+    ],
+    "czech:Cz17_Vz_55": [
+     "456485c8f12157b1",
+     "f88cbc578b462f45"
+    ],
+    "czech:Cz17_Vz_55_CN": [
+     "651ac578288c4122",
+     "e5177f435974c4fe"
+    ],
+    "czech:Cz18_TNH_105_1000": [
+     "3804ddd53114d36d",
+     "97e0b5e4aee2e151"
+    ],
+    "czech:Cz19_Vz_44_1": [
+     "c171951df27895d9",
+     "029c74ae1cce9c36"
+    ],
+    "czech:Cz20_ShPTK_TVP_100_mm": [
+     "d5b5485b937ff01a",
+     "4b0e87326be4186f"
+    ],
+    "czech:Cz20_ShPTK_TVP_100_mm_CO": [
+     "8c7a3c8d03f67692",
+     "2a751c1a45d02423"
+    ],
+    "czech:Cz21_Vz_60S": [
+     "67301b43066f4d70",
+     "4649dcf196766bc8"
+    ],
+    "czech:Cz21_Vz_60S_Dravec": [
+     "7be001797b2eb176",
+     "84d3eb0fa7bbbd32"
+    ],
+    "czech:Cz22_Skoda_T_15A": [
+     "74e1b5f4d851afc9",
+     "09596021438e0c33"
+    ],
+    "czech:Cz23_Skoda_T_17": [
+     "29104bf812a6f925",
+     "8181b374f7513117"
+    ],
+    "czech:Cz24_Vz_64_Blesk": [
+     "b579d76d9f9b889b",
+     "5610720524c8941a"
+    ],
+    "czech:Cz28_LPT_67_Selma": [
+     "d0907ebbdceb2ca3",
+     "1db1a26ea5cc8ffa"
+    ],
+    "czech:Cz29_Pzw_39": [
+     "5ab9a989e96aa735",
+     "1a4b6ad80f9b5a1b"
+    ],
+    "czech:Cz30_TBT": [
+     "b520bb0565ae58ff",
+     "fe2233d80598ecf5"
+    ],
+    "czech:Cz32_Vz_58_Koncept": [
+     "687df74122595405",
+     "5a206713b88a5f7a"
+    ],
+    "czech:Cz33_Vz_68_Squall": [
+     "3f0b0119e2de225c",
+     "9acb1427a5c7ed8d"
+    ],
+    "czech:Cz34_Vz_71_Tesak": [
+     "1bcb52a066ee024f",
+     "587b3d64062214ac"
+    ],
+    "czech:Cz35_T56_G": [
+     "4bba3b5b4ecbbc5f",
+     "87eb00ca4cca4aa5"
+    ],
+    "czech:Cz36_Jezevec": [
+     "77688faa8ff49285",
+     "c95da7fa59cae680"
+    ],
+    "czech:Cz37_SDT_58_Vlkodav": [
+     "fb82a0d3444fd52d",
+     "f4ea954bf756aaa7"
+    ],
+    "czech:Cz38_SZDV_vz50": [
+     "cc4e97c7209789e5",
+     "0d001edf717f2c03"
+    ],
+    "czech:Cz39_STMP_Vz_62_Jasan": [
+     "663b2eb8a8236100",
+     "a891a483b6de5ae1"
+    ],
+    "czech:Cz40_DBV_152": [
+     "741750aeb3bce3c5",
+     "9e00a89dfd9e1047"
+    ],
+    "czech:Cz43_Ogar": [
+     "4ec0d9a83dc2aaaa",
+     "1bee8c25db698584"
+    ],
+    "czech:Cz46_Vz_63P": [
+     "4f6b51c338f9665b",
+     "701d5d8f4918b715"
+    ],
+    "france:F01_RenaultFT": [
+     "506a9d8e26118650",
+     "e747a7761b818aee"
+    ],
+    "france:F02_D1": [
+     "df6c46c19e42baae",
+     "92119d36b02074dc"
+    ],
+    "france:F03_D2": [
+     "97ae706d2502b5ba",
+     "834b256825c28e8b"
+    ],
+    "france:F04_B1": [
+     "cc21c6c3555f2749",
+     "755ce79a1a13cb39"
+    ],
+    "france:F05_BDR_G1B": [
+     "31603d0bfacd2ce8",
+     "d231b8b7918596e2"
+    ],
+    "france:F06_ARL_44": [
+     "9966bacdca20c985",
+     "51464884824808d7"
+    ],
+    "france:F07_AMX_M4_1945": [
+     "cd56a221ff74c263",
+     "f9d70323d8bc9f5c"
+    ],
+    "france:F08_AMX_50_100": [
+     "d99d42ca5676e707",
+     "64893fe37a9665be"
+    ],
+    "france:F08_AMX_50_100_IGR": [
+     "10ffe7dd61e3c223",
+     "3d00b2a24d33e276"
+    ],
+    "france:F09_AMX_50_120": [
+     "d3249917f6da7292",
+     "d4186133bf065494"
+    ],
+    "france:F100_Panhard_EBR_90": [
+     "5f00d24f7f67021e",
+     "154663a9c335fc5b"
+    ],
+    "france:F106_Panhard_EBR_75_Mle1954": [
+     "a26c4408f7100895",
+     "bc1b763db76b1ac0"
+    ],
+    "france:F107_Hotchkiss_EBR": [
+     "4043d68ac73ece25",
+     "fa969f693039f995"
+    ],
+    "france:F108_Panhard_EBR_105": [
+     "eadd8730b84ea0f3",
+     "aee455f1f1ec1efc"
+    ],
+    "france:F109_AMD_Panhard_178B": [
+     "f2a234af8179ec2a",
+     "f4bda9bbeb5a8512"
+    ],
+    "france:F10_AMX_50B": [
+     "27614e7dedcfcbed",
+     "bcbc6281d2ffe689"
+    ],
+    "france:F10_AMX_50B_fallout": [
+     "a56b61a018ae80f6",
+     "c9abfbc6415779e7"
+    ],
+    "france:F110_Lynx_6x6": [
+     "4a94a50f22944a25",
+     "9f2b21b70203c3e4"
+    ],
+    "france:F111_AM39_Gendron_Somua": [
+     "e914559fb01950cd",
+     "cbc18686d2cadb55"
+    ],
+    "france:F112_M10_RBFM": [
+     "b6ba823945464c93",
+     "1754fff4a4f7d571"
+    ],
+    "france:F113_Bretagne_Panther": [
+     "a8eb8b9217ac4735",
+     "673af743b59c5093"
+    ],
+    "france:F114_Projet_4_1": [
+     "d63ddd479adf376f",
+     "46289af0217fb74f"
+    ],
+    "france:F115_Lorraine_50t": [
+     "0297a5f2601309e1",
+     "9defafe046d5542a"
+    ],
+    "france:F116_Bat_Chatillon_Bourrasque": [
+     "7be8214401842eed",
+     "bbeb0d79ece9ab12"
+    ],
+    "france:F116_Bat_Chatillon_Bourrasque_DV": [
+     "00f8af66fbcfc47c",
+     "5409852f1b4832e4"
+    ],
+    "france:F117_Alt_Proto_AMX_30": [
+     "a749beccc1da0b73",
+     "bf770666e3df71d0"
+    ],
+    "france:F118_Char_Mle_75": [
+     "90c2d92836b3f406",
+     "a251e283c5aa6fd7"
+    ],
+    "france:F119_Char_Murat": [
+     "51ab9e5e3941c03c",
+     "5e7295bf372a25e2"
+    ],
+    "france:F11_Renault_G1R": [
+     "05ad669be00d36eb",
+     "e7cf61c3933be437"
+    ],
+    "france:F120_Projet_Louis": [
+     "14afa277b9d8d2bb",
+     "4051758db1cd1e1a"
+    ],
+    "france:F122_VCS_6x6_TS90": [
+     "e62dd38d8ba7267e",
+     "d0994e1a55e752db"
+    ],
+    "france:F123_ERAC_105_Proto": [
+     "0484991599709669",
+     "232c84717510ffd4"
+    ],
+    "france:F124_AMX_13FL11": [
+     "714cd8339d599964",
+     "df3b67f365e49e0a"
+    ],
+    "france:F127_AMX_ELC_901": [
+     "fd04288e1a1f2d23",
+     "6ffe67b42991af47"
+    ],
+    "france:F128_SFAC_105": [
+     "65bfa6a3063b37f5",
+     "b09e86ce3b9f1344"
+    ],
+    "france:F129_ARL_44_BPXIV": [
+     "66c29f3916f38cf4",
+     "f3e88858e05f753f"
+    ],
+    "france:F12_Hotchkiss_H35": [
+     "f92271b09062e454",
+     "f470089dccc5a5a3"
+    ],
+    "france:F130_Sentinelle": [
+     "11da78b8f3a9d36e",
+     "babd8ce9d60ee2ca"
+    ],
+    "france:F131_Brennos": [
+     "832bea8983af54f5",
+     "57085fdefdeeacfe"
+    ],
+    "france:F132_Vercingetorix": [
+     "b16b63f0cd88f60b",
+     "a018d3b81c6c0a48"
+    ],
+    "france:F134_Lorraine_120_Alby": [
+     "9f783f21f6f2fe99",
+     "62d154718146fbb6"
+    ],
+    "france:F135_AS_XX_40_t": [
+     "33460089cd3c4b91",
+     "0585220c9532e7e7"
+    ],
+    "france:F136_AMX_67_Imbattable": [
+     "2880ecdbc3195ca9",
+     "f5023f4e11693bfb"
+    ],
+    "france:F137_LEOX": [
+     "59d85a46f0d76aa7",
+     "d9710acacd3b8b15"
+    ],
+    "france:F138_Renault_R35_FCM_36": [
+     "99549221eb8fee13",
+     "8ee0eac87941fbcb"
+    ],
+    "france:F139_Terrifiant": [
+     "2cc10fa6f639f207",
+     "3e1fde9c555e0fbc"
+    ],
+    "france:F13_AMX38": [
+     "bac4c7da73452c24",
+     "3d36eb710ba9df11"
+    ],
+    "france:F140_Fantome": [
+     "f376a54cccceb814",
+     "ff4965ba33496fec"
+    ],
+    "france:F141_Durendal": [
+     "bf93055ae1414302",
+     "2a981536ec9dbec9"
+    ],
+    "france:F142_M47_Chevalier": [
+     "04c6a5d18c53db5d",
+     "53cd2bfbf40a88c5"
+    ],
+    "france:F143_Fauteur": [
+     "0d0bd71b188f095d",
+     "5978227a3721256f"
+    ],
+    "france:F147_AMX29_Belier": [
+     "b59d1acbb9f18d1f",
+     "4203e0a8f6694904"
+    ],
+    "france:F14_AMX40": [
+     "696b5c61adfb3fd2",
+     "d7ee18a93fda0e0d"
+    ],
+    "france:F15_AMX_12t": [
+     "4bdbb0e8bcca8c37",
+     "daa595b0dc6641f0"
+    ],
+    "france:F16_AMX_13_75": [
+     "2eebb1d0cacc732a",
+     "f6f4ab4b3ef1b861"
+    ],
+    "france:F17_AMX_13_90": [
+     "de3dc2f4d7494c80",
+     "d28b24fb1670b51c"
+    ],
+    "france:F17_AMX_13_90_IGR": [
+     "c72f4aecd94aa342",
+     "b22f50aa7b9c8348"
+    ],
+    "france:F18_Bat_Chatillon25t": [
+     "8c3cfd497c90c461",
+     "dd748a257b1f4148"
+    ],
+    "france:F18_Bat_Chatillon25t_7x7": [
+     "863bd9e0c2c57996",
+     "f8b9df0839f845ff"
+    ],
+    "france:F18_Bat_Chatillon25t_IGR": [
+     "69e4ed50e6ef8910",
+     "a7588decb51ce90d"
+    ],
+    "france:F19_Lorraine40t": [
+     "609b0bc5bebd5a47",
+     "5d9ea8598961f4c9"
+    ],
+    "france:F20_RenaultBS": [
+     "4de1cc4c6063a0d3",
+     "09adba180d7ace0c"
+    ],
+    "france:F21_Lorraine39_L_AM": [
+     "5f897bf0c3d2bba0",
+     "6474fb5035474715"
+    ],
+    "france:F22_AMX_105AM": [
+     "18edb1bf1d96be12",
+     "252c6381b8af4cfe"
+    ],
+    "france:F23_AMX_13F3AM": [
+     "2f11ffa3935f81fd",
+     "825c447263932c0e"
+    ],
+    "france:F23_AMX_13F3AM_MapsTraining_Dummy_SPG_2": [
+     "9e701599414c8124",
+     "aecd65185cccdd50"
+    ],
+    "france:F24_Lorraine155_50": [
+     "d0c88414e1eea168",
+     "6067641282dff870"
+    ],
+    "france:F25_Lorraine155_51": [
+     "32848628c87994be",
+     "1ccd6d795bba417c"
+    ],
+    "france:F27_FCM_36Pak40": [
+     "b3614f20ddd1ef23",
+     "60b3328890ef852b"
+    ],
+    "france:F28_105_leFH18B2": [
+     "43cb6f87dd0fa0ff",
+     "013776ff4266dcd1"
+    ],
+    "france:F28_105_leFH18B2_IGR": [
+     "f1e67a2e989f51db",
+     "49210f2e08f296ff"
+    ],
+    "france:F30_RenaultFT_AC": [
+     "ef24cc680f74e4b2",
+     "4c9934e39962e780"
+    ],
+    "france:F32_Somua_Sau_40": [
+     "c383c6a8f143236b",
+     "4b6866fd7abc617e"
+    ],
+    "france:F33_S_35CA": [
+     "e4cc5705438c3c8f",
+     "88a364264a0afa24"
+    ],
+    "france:F33_S_35CA_IGR": [
+     "7af53c30a8f1400e",
+     "de28d9e4a1f24b19"
+    ],
+    "france:F34_ARL_V39": [
+     "c0c0e5fdc01e5163",
+     "dff52a289852577b"
+    ],
+    "france:F35_AMX_AC_Mle1946": [
+     "e09ef8092f3b1731",
+     "3716c923694b6729"
+    ],
+    "france:F36_AMX_AC_Mle1948": [
+     "74812514978abe5f",
+     "36c6d378fc7cb332"
+    ],
+    "france:F36_AMX_AC_Mle1948_FL": [
+     "9cda2f1cfcff4f2b",
+     "cd4e2f0fd4cb9bb0"
+    ],
+    "france:F36_AMX_AC_Mle1948_IGR": [
+     "d3796a749a032df9",
+     "6f13879bffc3774f"
+    ],
+    "france:F37_AMX50_Foch": [
+     "3b2847c46fc22f0e",
+     "50ddf69bcb73bef6"
+    ],
+    "france:F38_Bat_Chatillon155_58": [
+     "e47571039d94dd27",
+     "c2b319000a84540f"
+    ],
+    "france:F39_AMR_P103": [
+     "6a4eaa88befccfde",
+     "f1d18ae080ebcb17"
+    ],
+    "france:F42_AMR_35": [
+     "4fafe9d64b6f4d2a",
+     "aab4c3565ae88ff7"
+    ],
+    "france:F43_AMC_35_SH": [
+     "e028b6282faac259",
+     "612a4e57751b381e"
+    ],
+    "france:F44_Somua_S35": [
+     "6dc52c838de51ef7",
+     "65962d101ce9ee8d"
+    ],
+    "france:F49_RenaultR35": [
+     "07bc1e027b1b725f",
+     "a9df32e33301d9b2"
+    ],
+    "france:F50_FCM36_20t": [
+     "5e50fef119f76c3a",
+     "ec8250cd23694df0"
+    ],
+    "france:F52_RenaultUE57": [
+     "1be5bf37c59615eb",
+     "6e84cafffe4ea3a6"
+    ],
+    "france:F62_ELC_AMX": [
+     "81c41a1ad1215167",
+     "e653aeea41c81978"
+    ],
+    "france:F62_ELC_AMX_IGR": [
+     "17321ee5a023d77e",
+     "119b6795a1fb7a5f"
+    ],
+    "france:F64_AMX_50Fosh_155": [
+     "cfeaae343fda5e5b",
+     "ec747d3e8cd6cd44"
+    ],
+    "france:F64_AMX_50Fosh_B": [
+     "6ea1ab53fd38b4ea",
+     "71950f810769b366"
+    ],
+    "france:F64_AMX_50Fosh_B_7x7": [
+     "231d575328a6d3ae",
+     "cc46a9b313884549"
+    ],
+    "france:F65_FCM_50t": [
+     "db6ccc19bfae33af",
+     "3ebddef333510d2a"
+    ],
+    "france:F66_AMX_Ob_Am105": [
+     "c5a1590b91b67f82",
+     "f5289495d4116f1e"
+    ],
+    "france:F67_Bat_Chatillon155_55": [
+     "b9ec4407efbd7899",
+     "59c863d09d87b1a4"
+    ],
+    "france:F68_AMX_Chasseur_de_char_46": [
+     "472809cae092f1ad",
+     "0c5d2146917734bb"
+    ],
+    "france:F69_AMX13_57_100": [
+     "dba6be6d04c742af",
+     "94f57ae28635c32a"
+    ],
+    "france:F69_AMX13_57_100_GrandFinal": [
+     "fc14419fb92ba5d0",
+     "2dbf545579a0182c"
+    ],
+    "france:F70_SARL42": [
+     "37a31c0e3a8fbf6a",
+     "3d55a290679d7f7d"
+    ],
+    "france:F71_AMX_30_prototype": [
+     "d503cbf33be3e650",
+     "5bc81e28ecc8b7d2"
+    ],
+    "france:F72_AMX_30": [
+     "bc29d341353bdba3",
+     "8a3a954c605be0d3"
+    ],
+    "france:F73_M4A1_Revalorise": [
+     "384e8fafea47948c",
+     "0cd58538a4fb135f"
+    ],
+    "france:F73_M4A1_Revalorise_FL": [
+     "90dc87cc84371724",
+     "97283236d9f42a30"
+    ],
+    "france:F74_AMX_M4_1949": [
+     "0b63ace48a8cf5e0",
+     "d80e7cd10c89e182"
+    ],
+    "france:F74_AMX_M4_1949_FL": [
+     "f6fd49de079d8c10",
+     "e2baff3bcf2400fb"
+    ],
+    "france:F74_AMX_M4_1949_Liberte": [
+     "4db0db27f9494259",
+     "9898995aa1daae88"
+    ],
+    "france:F75_Char_de_25t": [
+     "d59c2d344b6863bd",
+     "76033443dce84ae6"
+    ],
+    "france:F77_FCM_2C": [
+     "69ae4cdbe75f66a2",
+     "70eef0d3834ff59b"
+    ],
+    "france:F81_Char_de_65t": [
+     "7c35a1198ff304fb",
+     "5269e40dc6b5f9b9"
+    ],
+    "france:F82_AMX_M4_Mle1949_Ter": [
+     "4b6757a8098f9ff7",
+     "ff9c8a2859d8e701"
+    ],
+    "france:F82_AMX_M4_Mle1949_Ter_7x7": [
+     "473afcddb5addfcd",
+     "cf68dc9914cb5ef0"
+    ],
+    "france:F83_AMX_M4_Mle1949_Bis": [
+     "8ad79982f4465e27",
+     "c6285628c0e7edc3"
+    ],
+    "france:F83_AMX_M4_Mle1949_Bis_FL": [
+     "8c285851a093ed20",
+     "b5e0ad5f79f1257b"
+    ],
+    "france:F84_Somua_SM": [
+     "fc62525d1b83bd09",
+     "66f86c1318deda6b"
+    ],
+    "france:F85_M4A1_FL10": [
+     "701968cdc5bdf6f6",
+     "483fddabc61422da"
+    ],
+    "france:F87_Batignolles-Chatillon_12t": [
+     "30504edb34611336",
+     "6722b148a561998b"
+    ],
+    "france:F88_AMX_13_105": [
+     "3356bbb6c24620ab",
+     "9d914ad01bab4cdf"
+    ],
+    "france:F88_AMX_13_105_7x7": [
+     "798411f78dceb463",
+     "91a03e16b5bfc797"
+    ],
+    "france:F89_Canon_dassaut_de_105": [
+     "47758fc32f4befce",
+     "4b76da568516e782"
+    ],
+    "france:F97_ELC_EVEN_90": [
+     "5c11e12204f1a08e",
+     "dfa3b8133254b155"
+    ],
+    "france:F97_ELC_EVEN_90_FL": [
+     "03633be288a68580",
+     "64a84cb9a31099e6"
+    ],
+    "germany:Env_Artillery": [
+     "fa582859b0491e67",
+     "99b083a8ec115d06"
+    ],
+    "germany:G00_Bomber_SH": [
+     "63de883ce895a4dc",
+     "e9fc649414500c46"
+    ],
+    "germany:G00_Pillbox_Gun_10cm_SM24": [
+     "908b0429724e416b",
+     "532b5b3cdad8fd02"
+    ],
+    "germany:G00_Pillbox_Gun_15cm_SM24": [
+     "e872933a5b0972da",
+     "1b92e1e9d4c160eb"
+    ],
+    "germany:G00_Pillbox_Gun_38cm_SM24": [
+     "123429c07c6379cc",
+     "b53e51d86a420867"
+    ],
+    "germany:G00_Pillbox_Gun_7_5cm_SM24": [
+     "80ee17e72360f55e",
+     "84d3ad6387ca86a7"
+    ],
+    "germany:G00_Pillbox_Tank_Turret_SM24": [
+     "b4d2730ab5eb005c",
+     "d54767cc93429587"
+    ],
+    "germany:G02_Hummel": [
+     "25a7ec421e9a2fff",
+     "9c99afa404f3e201"
+    ],
+    "germany:G03_PzV_Panther": [
+     "ba49bf72f7f12cc4",
+     "5f9c0b9111f415a9"
+    ],
+    "germany:G03_PzV_Panther_IGR": [
+     "87a769a5afbc891b",
+     "df7d3fb577431890"
+    ],
+    "germany:G04_PzVI_Tiger_I": [
+     "48f552dd1d77f708",
+     "1be6c2b46b756dbc"
+    ],
+    "germany:G04_PzVI_Tiger_IA": [
+     "6a959d35cc1cef78",
+     "dfe7c0ffd555b318"
+    ],
+    "germany:G04_PzVI_Tiger_I_IGR": [
+     "fd9b5c321348f661",
+     "3bd92b3f3a0b0811"
+    ],
+    "germany:G04_PzVI_Tiger_I_MapsTraining_Player_HT_2": [
+     "bcd47a09230a59c1",
+     "0a43bb0b6e9d8fb8"
+    ],
+    "germany:G04_PzVI_Tiger_I_SHXXI_B": [
+     "976475615c480cfa",
+     "d5986693e40150ad"
+    ],
+    "germany:G05_StuG_40_AusfG": [
+     "7fc5024cce954251",
+     "22d6a2114312f30b"
+    ],
+    "germany:G05_StuG_40_AusfG_IGR": [
+     "2a26d8c614048f2d",
+     "c438673660d127ce"
+    ],
+    "germany:G06_PzII": [
+     "4df3679e070f3fe5",
+     "295b4f71a7c81aba"
+    ],
+    "germany:G07_Pz35t": [
+     "554b838b50dad80b",
+     "0465219f0575fbf4"
+    ],
+    "germany:G08_Pz38t": [
+     "7e339c3d26443b32",
+     "7ab12cd57758a176"
+    ],
+    "germany:G09_Hetzer": [
+     "8708c438b608eb72",
+     "e8a6df6c82b0baff"
+    ],
+    "germany:G09_Hetzer_MapsTraining_Dummy_ATSPG_1": [
+     "f9a272d56feeddb2",
+     "7fb78dc438ca5810"
+    ],
+    "germany:G1002_Hummel_NewOnBoarding": [
+     "20a745db99df3648",
+     "df011b51ce1245e0"
+    ],
+    "germany:G1003_PzV_Panther_StoryModeStealth": [
+     "087685512ff486cf",
+     "e9c5c7e3ca88d2f0"
+    ],
+    "germany:G1004_PzVI_Tiger_I_StoryMode": [
+     "688d91e9caab764b",
+     "e68cfca8008cb7db"
+    ],
+    "germany:G1004_PzVI_Tiger_I_StoryModeStealth": [
+     "290d45566e8a6de0",
+     "02f843d1bf931968"
+    ],
+    "germany:G100_Gtraktor_Krupp": [
+     "60a1a37acc82f42b",
+     "d6a99275489e44b2"
+    ],
+    "germany:G1010_PzIII_AusfJ_NewOnBoarding": [
+     "dcdd33bddc25eee3",
+     "8c0e56a55219f3dc"
+    ],
+    "germany:G1010_PzIII_AusfJ_StoryModeStealth": [
+     "704717aa5972d64a",
+     "278f81e466c29727"
+    ],
+    "germany:G1016_PzVIB_Tiger_II_NewOnBoarding": [
+     "9985b864a3c3009d",
+     "98358ca88989897b"
+    ],
+    "germany:G1016_PzVIB_Tiger_II_StoryMode": [
+     "42540af3bf325970",
+     "8ba5994914b4637f"
+    ],
+    "germany:G1018_JagdPanther_NewOnBoarding": [
+     "7990dbbbd40b9158",
+     "f378289336743434"
+    ],
+    "germany:G1018_JagdPanther_StoryModeStealth": [
+     "379b423ee06d22ad",
+     "ee5acb763a8386c2"
+    ],
+    "germany:G101_StuG_III": [
+     "b98602eaf6d6800d",
+     "be99635548ace8a7"
+    ],
+    "germany:G1023_Grille_StoryModeStealth": [
+     "9ac899c6e977e964",
+     "e9aad622846591dd"
+    ],
+    "germany:G1025_PzII_Luchs_StoryMode": [
+     "99681a5a1fb56305",
+     "7be826b092192c44"
+    ],
+    "germany:G1025_PzII_Luchs_StoryModeStealth": [
+     "60d5e18bcfbdf343",
+     "98007c63bfa05d26"
+    ],
+    "germany:G1027_VK3001P_NewOnBoarding": [
+     "8f80a6cc3470d9f7",
+     "0fd1fe0b72c883db"
+    ],
+    "germany:G102_Pz_III": [
+     "8ace34f12ce540a1",
+     "803104e4445ab8fc"
+    ],
+    "germany:G1037_Ferdinand_StoryMode": [
+     "54c3dbe8762d3ddf",
+     "87230047093f1fb2"
+    ],
+    "germany:G1037_Ferdinand_StoryModeStealth": [
+     "973066df7fc38db2",
+     "4f31c8c258ff5fa4"
+    ],
+    "germany:G103_RU_251": [
+     "d567f20f9eeb3ea4",
+     "06461d2bedc51f65"
+    ],
+    "germany:G1042_Maus_StoryMode": [
+     "b2c955a6aa97a0b9",
+     "392c6042c9258f51"
+    ],
+    "germany:G1044_JagdTiger_StoryMode": [
+     "26e0f6fcda075c81",
+     "8cb1674f2ac55546"
+    ],
+    "germany:G104_Stug_IV": [
+     "f8b8d4c36c4e3279",
+     "89ecc937a88416ce"
+    ],
+    "germany:G1057_PzVI_Tiger_P_NewOnBoarding": [
+     "234a0eb04ea7299a",
+     "f447c2e012b2c76f"
+    ],
+    "germany:G105_T-55_NVA_DDR": [
+     "f66b19469b61dba3",
+     "fb676c5a7e5eae9e"
+    ],
+    "germany:G106_PzKpfwPanther_AusfF": [
+     "66926b52a5115881",
+     "d3fc7bb4ffa879f2"
+    ],
+    "germany:G107_PzKpfwIII_AusfK": [
+     "0c4934722107ace1",
+     "8cb496b5ed1537d0"
+    ],
+    "germany:G1081_Pz_IV_AusfH_NewOnBoarding": [
+     "c62e4af53e2a148f",
+     "faea28f00dfad77f"
+    ],
+    "germany:G1081_Pz_IV_AusfH_StoryModeStealth": [
+     "ae9389c45382eb94",
+     "20c25358b7e7ca31"
+    ],
+    "germany:G108_PzKpfwII_AusfD": [
+     "9c487ec172e3e1bd",
+     "b1754c80cd983c60"
+    ],
+    "germany:G109_Steyr_WT": [
+     "bd4b0ce831d5a9d1",
+     "2199a824b59ae579"
+    ],
+    "germany:G10_PzIII_AusfJ": [
+     "b2e3a33d5b7314be",
+     "30c54dcb39817006"
+    ],
+    "germany:G110_Typ_205": [
+     "e990f909b89c5f1c",
+     "55ab311ba7552cd8"
+    ],
+    "germany:G112_KanonenJagdPanzer": [
+     "eb0a2919c3dea8cf",
+     "46d26b7ab0e5400f"
+    ],
+    "germany:G112_KanonenJagdPanzer_105": [
+     "4933da2576d6f697",
+     "484eb87ae1c049fd"
+    ],
+    "germany:G113_SP_I_C": [
+     "c825f1bb53fcd5b6",
+     "3df84760a59f606d"
+    ],
+    "germany:G114_Rheinmetall_Skorpian": [
+     "f25ef791a21b15f1",
+     "9fb4f038750552b7"
+    ],
+    "germany:G114_Skorpian": [
+     "73f6e7a497c31735",
+     "81d3d18aef76856e"
+    ],
+    "germany:G115_Typ_205B": [
+     "9eb22652fdaf25ba",
+     "72b64e2ffe2be1cc"
+    ],
+    "germany:G115_Typ_205_4_Jun": [
+     "da65423b2c87cee0",
+     "a252e94d8271882b"
+    ],
+    "germany:G116_Turan_III_prot": [
+     "ce78002261dede22",
+     "085bc14e222dbcda"
+    ],
+    "germany:G117_Toldi_III": [
+     "e5ea9f129640b34f",
+     "7273f12f0bfd18ce"
+    ],
+    "germany:G118_VK4503": [
+     "e280e9185f8eb4c4",
+     "00954dc6d475bf77"
+    ],
+    "germany:G119_Panzer58": [
+     "ccd79684be4ea598",
+     "4574277e2b6b49cf"
+    ],
+    "germany:G119_Panzer58_BF": [
+     "38ee87d45eb57297",
+     "f443e12227087708"
+    ],
+    "germany:G119_Panzer58_FL": [
+     "fb17894638b0d8cc",
+     "8bed0939b1bc4bb5"
+    ],
+    "germany:G119_Pz58_Mutz": [
+     "93ebd07c00ca706f",
+     "b27a117ad0f6db28"
+    ],
+    "germany:G11_Bison_I": [
+     "273709d9e2c21638",
+     "7be944a45639e772"
+    ],
+    "germany:G120_M41_90": [
+     "c910ef8cc5242461",
+     "e6a5bf1b2dfc806b"
+    ],
+    "germany:G120_M41_90_GrandFinal": [
+     "56b64e6988c10891",
+     "be7e80e929c6f152"
+    ],
+    "germany:G121_Grille_15_L63": [
+     "e7ce9cafc1d0bd61",
+     "00aa4822deedfee2"
+    ],
+    "germany:G122_VK6501H": [
+     "94ba43d064a9796d",
+     "9d9420cd77e7df5b"
+    ],
+    "germany:G124_Pz_Kpfw_38_K": [
+     "0c9e5a3c5bc477c4",
+     "a15eafc2ba111818"
+    ],
+    "germany:G125_Spz_57_Rh": [
+     "1a5b660e3ac28ceb",
+     "c411d1fdf13b6381"
+    ],
+    "germany:G126_HWK_12": [
+     "1ca96650b5ced37e",
+     "f6bb7bfdb22d876d"
+    ],
+    "germany:G12_Ltraktor": [
+     "1e8c915c661c3c55",
+     "dc2c7ae31ef0e9b3"
+    ],
+    "germany:G134_PzKpfw_VII": [
+     "89dd206b995bded2",
+     "70cbef69dacee065"
+    ],
+    "germany:G136_Tiger_131": [
+     "17334bb0d031f5e2",
+     "d3aea77c14d43692"
+    ],
+    "germany:G137_PzVI_Tiger_217": [
+     "cfcafdcc65fdadf1",
+     "f9ceefd0eafc8612"
+    ],
+    "germany:G138_VK168_02": [
+     "0fee958350ee1b5d",
+     "4ea168d407759dfc"
+    ],
+    "germany:G138_VK168_02_Mauerbrecher": [
+     "996a2852454066bd",
+     "7b7f92c04ac52171"
+    ],
+    "germany:G139_MKA": [
+     "337a758f28810dde",
+     "937b371dc29bb5cb"
+    ],
+    "germany:G13_VK3001H": [
+     "15ca5ac089ecf721",
+     "917db24839dbdf95"
+    ],
+    "germany:G140_HWK_30": [
+     "61bc56bc0567f349",
+     "48426f7bad352910"
+    ],
+    "germany:G141_VK7501K": [
+     "bd9203f9dda628fb",
+     "664b037c365af037"
+    ],
+    "germany:G142_M48RPz": [
+     "6da3d4380010f712",
+     "1d2097e2f3046ba8"
+    ],
+    "germany:G143_E75_TS": [
+     "35ccfcf281235421",
+     "9f0358c18ed5f71b"
+    ],
+    "germany:G144_Kpz_50t": [
+     "dbed67ca65f198d7",
+     "bbd92d02f7cec89e"
+    ],
+    "germany:G147_Kunze_Panzer": [
+     "5814f1b4e5924a11",
+     "0338430bf0b06f2f"
+    ],
+    "germany:G151_Pz_Sfl_IC": [
+     "af59d41ec16f61b8",
+     "5c8f58b262640f0e"
+    ],
+    "germany:G154_Kpz_07_RH": [
+     "729b59681709b463",
+     "554225216bd502ee"
+    ],
+    "germany:G154_Kpz_07_RH_LN": [
+     "9b3fbfee09f60b98",
+     "753adff334b2ad7e"
+    ],
+    "germany:G158_VK2801_105_SPXXI": [
+     "ce95d7c1c8ed3a4e",
+     "befb345674e12457"
+    ],
+    "germany:G159_KPZ_3_Project_07_HK": [
+     "e53094820af31151",
+     "7003341d7b494f1b"
+    ],
+    "germany:G15_VK3601H": [
+     "7411ae36da6eed17",
+     "deb2f6ef382295b8"
+    ],
+    "germany:G160_Pz_Kpfw_35_R_mit_T_26_Turm": [
+     "ee28abf66b645fb9",
+     "4865c5f6acd79f8d"
+    ],
+    "germany:G161_Pz_Kpfw_M15_38_t": [
+     "e179a4a10a517036",
+     "77e282b30e259ae3"
+    ],
+    "germany:G162_Project_Kpz_07P_E": [
+     "fb760d14cae70ad9",
+     "9879444ee7f89308"
+    ],
+    "germany:G163_Pz_Kpfw_KW_Ir_mit_75mm_kwk40": [
+     "1ac70c770c273e93",
+     "433a6cb1376b31c9"
+    ],
+    "germany:G164_Kpz_Pr_68_P": [
+     "7dd4d4823d38a14d",
+     "1b498a463d60d4a2"
+    ],
+    "germany:G165_Erich_Konzept_I": [
+     "567839fad76259b1",
+     "15c266b9c978314a"
+    ],
+    "germany:G166_LKpz_70_K": [
+     "17a0bdcd426a5715",
+     "ee8e3320633e63c7"
+    ],
+    "germany:G167_Tiger_Maus_120t": [
+     "1ad439c8b96afc5b",
+     "9aad06ffb2a6887c"
+    ],
+    "germany:G168_KJpz_T_III": [
+     "02e94f765c8a0da1",
+     "b581dd3e88cf66f9"
+    ],
+    "germany:G169_T_54D": [
+     "492263dfc571edd9",
+     "a69371199fad2246"
+    ],
+    "germany:G16_PzVIB_Tiger_II": [
+     "b555a9d3e3847f9d",
+     "21d57b01da2ad898"
+    ],
+    "germany:G16_PzVIB_Tiger_II_F": [
+     "f77321b21763a295",
+     "acff35101a91cd77"
+    ],
+    "germany:G16_PzVIB_Tiger_II_FL": [
+     "9a382c92ca2c4737",
+     "c131c65c1dbe914a"
+    ],
+    "germany:G16_PzVIB_Tiger_II_IGR": [
+     "6d3ab8aea31c7935",
+     "7db17218469a1267"
+    ],
+    "germany:G170_PzKpfwIV_Ausf_F2": [
+     "3d1cce97e388e678",
+     "d7718a97f9c97a23"
+    ],
+    "germany:G171_E77": [
+     "a7c4039b36ad8ac7",
+     "a411d3708080709e"
+    ],
+    "germany:G172_PzVIB_Tiger_II_DIT": [
+     "ea31270334aa4deb",
+     "e08c0696f2a631f0"
+    ],
+    "germany:G173_BT42_DIT": [
+     "5a97eecb384e81b5",
+     "0a9b0937d99c45ed"
+    ],
+    "germany:G174_Kpz3_GST_Turm": [
+     "ee899aded37e6df9",
+     "b46e35c357a46cad"
+    ],
+    "germany:G175_Rheinmetall_Begleitwagen": [
+     "532c9e748db8d3c1",
+     "506a2f1bded2599f"
+    ],
+    "germany:G176_Jagdpanzer_E90": [
+     "99c41c7bb74cba2b",
+     "cbfc77ccb0d2cc7a"
+    ],
+    "germany:G177_E65_Zwilling": [
+     "893d08239195b74d",
+     "a3b1d4aa1817a8d3"
+    ],
+    "germany:G178_KanJpz_2": [
+     "3c73d0715835b3f5",
+     "5a029feb4382ba01"
+    ],
+    "germany:G179_Straussler_V4": [
+     "008caa20ea456a42",
+     "91911d2cb418229a"
+    ],
+    "germany:G17_JagdPzIV": [
+     "b7a292b393c57b6c",
+     "774212eaeefacdef"
+    ],
+    "germany:G183_Fossa_VM_68": [
+     "22f3e91622f9c81f",
+     "2c0e58c6d579f6c3"
+    ],
+    "germany:G183_Radkampfwagen": [
+     "c4f55af29fd4a764",
+     "5890d333c09bf39a"
+    ],
+    "germany:G184_Windhund": [
+     "f22f438d822fdf15",
+     "3c8eab2e7fb52380"
+    ],
+    "germany:G185_Leopard_120_Verbessert": [
+     "d606a30de785c81e",
+     "cbff6c455473dce4"
+    ],
+    "germany:G186_Schwertwal": [
+     "9eb4fb9411abfdd3",
+     "d71bd5c105edea8b"
+    ],
+    "germany:G187_Taschenratte": [
+     "7abd781103f31343",
+     "ee5863ef76612093"
+    ],
+    "germany:G188_LeKpz_Borkenkafer": [
+     "32b6ab5dd5a199d4",
+     "a06c2cd6d2b9050d"
+    ],
+    "germany:G189_Hirschkafer": [
+     "31d39c296d638543",
+     "e3ecb342cdb8f917"
+    ],
+    "germany:G18_JagdPanther": [
+     "2136900da622aa5e",
+     "0c6fc9e5bf684ce1"
+    ],
+    "germany:G191_StuG_IIIF_CFE_A": [
+     "8324abb3102aa0b8",
+     "2848a330d8c47a47"
+    ],
+    "germany:G193_Pz_Kpfw_55": [
+     "9e2d052fd730fb83",
+     "7150eb6430dd0297"
+    ],
+    "germany:G195_HWK_40": [
+     "c958422ac8cc33b6",
+     "871da16277f4fc8e"
+    ],
+    "germany:G196_Versuchspanzer_57": [
+     "72c9cfcfbaccc8a0",
+     "2a0d639d4c918ad1"
+    ],
+    "germany:G197_Pz_Kpfw_Neu": [
+     "c21963e7291cfd6d",
+     "5766ce1d2bfb67a4"
+    ],
+    "germany:G198_Kampfpanzer_67": [
+     "d77c03c4e5e109b8",
+     "accfa22a281cbac7"
+    ],
+    "germany:G19_Wespe": [
+     "850646ece6af7813",
+     "a1eb8f31bfe06501"
+    ],
+    "germany:G200_Chi_Go": [
+     "18809dbb352c9828",
+     "f33874fe15146654"
+    ],
+    "germany:G204_PzVI_Tiger_P_CFE_A": [
+     "9cc30688801f8613",
+     "c99a80bf4ea32113"
+    ],
+    "germany:G20_Marder_II": [
+     "3bb4622ef7302cb6",
+     "a48e9b62b4adfa1a"
+    ],
+    "germany:G21_PanzerJager_I": [
+     "ffda64b44b5f05cd",
+     "321ff19e966553d9"
+    ],
+    "germany:G22_Sturmpanzer_II": [
+     "1e0c967bf3150c2d",
+     "77f0e4c7b59b904e"
+    ],
+    "germany:G23_Grille": [
+     "543ecb9822cc1f9a",
+     "dfa14d6a766a5e02"
+    ],
+    "germany:G24_VK3002DB": [
+     "ccf0eb92c5fde804",
+     "134447ab48b05149"
+    ],
+    "germany:G24_VK3002DB_SH": [
+     "d5b21f7acfe136ab",
+     "239ba57724d24aca"
+    ],
+    "germany:G25_PzII_Luchs": [
+     "6b3bb7cbb358164a",
+     "7c981d2e9823a6df"
+    ],
+    "germany:G25_PzII_Luchs_SHXXI_B": [
+     "0f049cf1b9c30846",
+     "1e1f65c605f8e516"
+    ],
+    "germany:G25_PzII_Luchs_SHXXI_L": [
+     "8f270cd71f08af60",
+     "a744fd986fff6887"
+    ],
+    "germany:G26_VK1602": [
+     "909ef6ad2e955863",
+     "3ef8a4e820cf116f"
+    ],
+    "germany:G27_VK3001P": [
+     "eac904be4b49e365",
+     "38167e738bd2160b"
+    ],
+    "germany:G28_PzIII_IV": [
+     "b5c6079a05202d51",
+     "f463af75d85dab6d"
+    ],
+    "germany:G32_PzV_PzIV": [
+     "ff4618557f02eb5e",
+     "e7ccd1238f493bf2"
+    ],
+    "germany:G32_PzV_PzIV_CN": [
+     "5f3f167f740d638e",
+     "4de61b4a387e33b1"
+    ],
+    "germany:G32_PzV_PzIV_ausf_Alfa": [
+     "27e4cba2b5b67ffb",
+     "2365b1dabfdcf00b"
+    ],
+    "germany:G32_PzV_PzIV_ausf_Alfa_CN": [
+     "b3415fa60958a2d0",
+     "75253e507bd9a699"
+    ],
+    "germany:G33_H39_captured": [
+     "962430e42fb9daff",
+     "ef29890164ff93e2"
+    ],
+    "germany:G34_S35_captured": [
+     "c371860d9a1cd569",
+     "e4e3a1d25784a07f"
+    ],
+    "germany:G35_B-1bis_captured": [
+     "81b04a624aa1a227",
+     "61b2ad7aab381fca"
+    ],
+    "germany:G36_PzII_J": [
+     "08256780dcbd9fb7",
+     "055ab134eae7b52c"
+    ],
+    "germany:G37_Ferdinand": [
+     "e79b2436b500f4ea",
+     "ef993613d1b8b3bc"
+    ],
+    "germany:G37_Ferdinand_FL": [
+     "6c9c391344b7ae4a",
+     "885553d61a419be7"
+    ],
+    "germany:G37_Ferdinand_IGR": [
+     "99e6ab5833bfe1ee",
+     "9151a51772af23f0"
+    ],
+    "germany:G39_Marder_III": [
+     "980189b3c8b764f0",
+     "4cf390e01006b6a7"
+    ],
+    "germany:G40_Nashorn": [
+     "90581dea74b51688",
+     "c100cfccfc8db022"
+    ],
+    "germany:G40_Nashorn_MapsTraining_Dummy_ATSPG_2": [
+     "9f090478eb4b304b",
+     "a6e48e51f52ad565"
+    ],
+    "germany:G41_DickerMax": [
+     "de024256daf22b1b",
+     "8899d2e420b9f40b"
+    ],
+    "germany:G42_Maus": [
+     "1b17a70c56c2087d",
+     "47ba918d8cd5e978"
+    ],
+    "germany:G42_Maus_7x7": [
+     "45ddd13abdc2f39f",
+     "a254ff8c04ecc1f7"
+    ],
+    "germany:G42_Maus_IGR": [
+     "ddb906f7771f9675",
+     "1214e3c1930ba071"
+    ],
+    "germany:G43_Sturer_Emil": [
+     "0fb84550b57981d0",
+     "fe179614412801a4"
+    ],
+    "germany:G44_JagdTiger": [
+     "da07cec65a3dd79d",
+     "e9381f46bae73bea"
+    ],
+    "germany:G44_JagdTigerH": [
+     "6ebcec4114d1f28a",
+     "3f4c9a4ca471ca3b"
+    ],
+    "germany:G44_JagdTiger_FL": [
+     "3b59dcc1dfbda321",
+     "fac917b7a06db65a"
+    ],
+    "germany:G45_G_Tiger": [
+     "e7ce4f2cab8901ce",
+     "271f85ce6e24ebd4"
+    ],
+    "germany:G46_T-25": [
+     "f3b9a0c68f2973e9",
+     "3d4dfb2465451e98"
+    ],
+    "germany:G48_E-25": [
+     "956819549ac24547",
+     "1dd434978ac9d81e"
+    ],
+    "germany:G48_E-25_IGR": [
+     "14365660eac1fa42",
+     "c468e995b755ceb8"
+    ],
+    "germany:G49_G_Panther": [
+     "38083649e8e79c9e",
+     "90b0a8816ed868bb"
+    ],
+    "germany:G50_T-15": [
+     "60bcd7743230cebf",
+     "4b548b4d457c43f3"
+    ],
+    "germany:G51_Lowe": [
+     "a7f7a874f64e9b65",
+     "00f4943726f33be9"
+    ],
+    "germany:G51_Lowe_FL": [
+     "09bb82ee6a14fa94",
+     "e55236e2cc57ee70"
+    ],
+    "germany:G52_Pz38_NA": [
+     "1dd105011161c2e4",
+     "64d02692e9e62f0b"
+    ],
+    "germany:G53_PzI": [
+     "2dfb9246380c5c7a",
+     "c3c86c400e556879"
+    ],
+    "germany:G54_E-50": [
+     "e836e2a2c3d0d926",
+     "d891fa90f429a339"
+    ],
+    "germany:G54_E-50_FL": [
+     "54c77b783e19363c",
+     "aba6424b50155a11"
+    ],
+    "germany:G55_E-75": [
+     "9b28682a65df49cf",
+     "c850d03c7e4a8195"
+    ],
+    "germany:G56_E-100": [
+     "075613890294f8bf",
+     "b2cd94bc5f1051a8"
+    ],
+    "germany:G56_E-100_7x7": [
+     "ae4e7527093be0ef",
+     "a291b7ec4b9f3aa3"
+    ],
+    "germany:G57_PzVI_Tiger_P": [
+     "1c6fcadb0ef3b809",
+     "06842c22b41a15a0"
+    ],
+    "germany:G58_VK4502P": [
+     "04778ec3b6968897",
+     "aaf912c7b6fce483"
+    ],
+    "germany:G58_VK4502P7": [
+     "83ac63f8bda96c63",
+     "dd00f73f6375dd2d"
+    ],
+    "germany:G61_G_E": [
+     "9888f1d1622682c5",
+     "cf604d14e8b3da62"
+    ],
+    "germany:G63_PzI_ausf_C": [
+     "8e702c6e47b5879a",
+     "6c7b934bdf757ef4"
+    ],
+    "germany:G64_Panther_II": [
+     "64917adbfbac7452",
+     "7f602a61940629d7"
+    ],
+    "germany:G64_Panther_II_IGR": [
+     "2ef31f3b40e367d9",
+     "fb4912408c089f41"
+    ],
+    "germany:G65_JagdTiger_SdKfz_185": [
+     "d886b052d153ce05",
+     "e4b4cf40e7df16f8"
+    ],
+    "germany:G65_JagdTiger_SdKfz_185_IGR": [
+     "724e69479f43ee1d",
+     "d7b41c7c1946b938"
+    ],
+    "germany:G66_VK2801": [
+     "69952f8963d7160d",
+     "914bcaeeb682a335"
+    ],
+    "germany:G67_VK4502A": [
+     "4bedb5a384b1ac7c",
+     "7544e44b26dbe134"
+    ],
+    "germany:G70_PzIV_Hydro": [
+     "ab96ed75074cf3c3",
+     "a5da192128e5e6fb"
+    ],
+    "germany:G71_JagdPantherII": [
+     "df77018fbd546aa0",
+     "b2aac01de90c12ea"
+    ],
+    "germany:G72_JagdPz_E100": [
+     "cea8737101a04b78",
+     "09f6739818d80cf8"
+    ],
+    "germany:G72_JagdPz_E100_7x7": [
+     "d686712d3e0444d8",
+     "0efd7eb501af1da6"
+    ],
+    "germany:G73_E50_Ausf_M": [
+     "43704f9d24e43f20",
+     "f61cdd708e68a348"
+    ],
+    "germany:G73_E50_Ausf_M_7x7": [
+     "fe9795741dd3f4c2",
+     "9e473657ecc28423"
+    ],
+    "germany:G76_Pz_Sfl_IVc": [
+     "bc5f65191f4ae098",
+     "f5cfc4b4494110d6"
+    ],
+    "germany:G77_PzIV_Schmalturm": [
+     "fd40d806de60b459",
+     "253533eb7dc8375c"
+    ],
+    "germany:G77_PzIV_Schmalturm_SHXXI_B": [
+     "32800849bf0b5abb",
+     "c9067dc737565589"
+    ],
+    "germany:G78_Panther_M10": [
+     "936d52598536e9e0",
+     "26c21fac6c70f9fb"
+    ],
+    "germany:G79_Pz_IV_AusfGH": [
+     "4ea43433d64e414e",
+     "f5f34aabc53246a0"
+    ],
+    "germany:G80_Pz_IV_AusfD": [
+     "bb78a98b0bd85519",
+     "ea62c8343347f483"
+    ],
+    "germany:G81_Pz_IV_AusfH": [
+     "1ed1b9f0a4b96bed",
+     "1dbd004dd026dafc"
+    ],
+    "germany:G81_Pz_IV_AusfH_GuP": [
+     "d5acc2d27f0f6b5a",
+     "32f49178bb248c3c"
+    ],
+    "germany:G82_Pz_II_AusfG": [
+     "83bb6d2071d09ce1",
+     "6371f6c168b25590"
+    ],
+    "germany:G83_Pz_IV_AusfA": [
+     "91472f73c132378e",
+     "412a68e2332d54fb"
+    ],
+    "germany:G85_Auf_Panther": [
+     "719b78210c653411",
+     "b530e5a89bc30838"
+    ],
+    "germany:G85_Aufklarungspanzer_V": [
+     "eb5d992b10a3f8e4",
+     "b98b3611ae4df4ad"
+    ],
+    "germany:G86_VK2001DB": [
+     "3318fc1a9e71c3ab",
+     "f2c7882f149591b0"
+    ],
+    "germany:G87_VK3002DB_V1": [
+     "12797d53308d2848",
+     "fa76546b4dc5db55"
+    ],
+    "germany:G88_Indien_Panzer": [
+     "853ed91feb206263",
+     "ce3d87163b17c7d8"
+    ],
+    "germany:G89_Leopard1": [
+     "408575ed530fef6c",
+     "4799ae7c84b262a2"
+    ],
+    "germany:G89_Leopard1_bob": [
+     "86e158816a390fa5",
+     "f42fce5daa4bac88"
+    ],
+    "germany:G90_DW_II": [
+     "5994f2f48c6782b8",
+     "b6471ea3f5c309eb"
+    ],
+    "germany:G90_DW_II_MapsTraining_Dummy_HT_1": [
+     "765599cb1b8ca061",
+     "3615e35dd1ece1f0"
+    ],
+    "germany:G91_Pro_Ag_A": [
+     "e2944571d483f845",
+     "4b088158ffb7b698"
+    ],
+    "germany:G92_VK7201": [
+     "676da6af71f7e961",
+     "d20edd7e880812a0"
+    ],
+    "germany:G93_GW_Mk_VIe": [
+     "ea71d14bccc46c46",
+     "6b633b53ede55b76"
+    ],
+    "germany:G94_GW_Tiger_P": [
+     "0eb183999a902b62",
+     "fc31294033d0ef15"
+    ],
+    "germany:G95_Pz_Sfl_IVb": [
+     "8cff5dbf62f31132",
+     "e26c31b73e137772"
+    ],
+    "germany:G96_VK3002M": [
+     "a794990d50c11511",
+     "b0bc663f3a447a04"
+    ],
+    "germany:G97_Waffentrager_IV": [
+     "ce7b3ac7160077d1",
+     "8c4c7a0749b0293b"
+    ],
+    "germany:G98_WT_auf_E_100_Phonix": [
+     "285e5ee5d73b8e6f",
+     "6166aecb67631d3c"
+    ],
+    "germany:G98_Waffentrager_E100": [
+     "d47bdcdd2b67ba7f",
+     "b54b6f661255b9f4"
+    ],
+    "germany:G98_Waffentrager_E100_CFE_T": [
+     "05106d015b244a78",
+     "88cd899269f20798"
+    ],
+    "germany:G98_Waffentrager_E100_P": [
+     "109bc9bcd6d22fbf",
+     "de6d2486eec8c0f6"
+    ],
+    "germany:G98_Waffentrager_E100_WO": [
+     "cf89401983795161",
+     "0816b9bd487209ac"
+    ],
+    "germany:G99_RhB_Waffentrager": [
+     "eaad86d48d7909cb",
+     "aa482b302842e372"
+    ],
+    "italy:It03_M15_42": [
+     "8ea665063bef59db",
+     "6cde836ff2e07798"
+    ],
+    "italy:It04_Fiat_3000": [
+     "3ed4ead64d43c882",
+     "613e086f12e35ef4"
+    ],
+    "italy:It05_Carro_L6_40": [
+     "ee24b8d5b2a6c823",
+     "1c56e7e5f41ee2df"
+    ],
+    "italy:It06_M14_41": [
+     "d539d87b8cbc6802",
+     "728530b0fb03170f"
+    ],
+    "italy:It07_P26_40": [
+     "de169daabc01581d",
+     "abeda1e6b70adce3"
+    ],
+    "italy:It08_Progetto_M40_mod_65": [
+     "55f5a3bb63391252",
+     "467caee7017f8d61"
+    ],
+    "italy:It08_Progetto_M40_mod_65_bob": [
+     "e4484bda83c73f64",
+     "4b38e23f434b4bec"
+    ],
+    "italy:It09_P43_ter": [
+     "42a93097e33a980e",
+     "415946c0f8c7f7d5"
+    ],
+    "italy:It10_P43_bis": [
+     "c362185cf717680c",
+     "e4bd2cc7df79fbe7"
+    ],
+    "italy:It11_P43": [
+     "6bfe7ca4f1389fde",
+     "da58117d833690d9"
+    ],
+    "italy:It12_Prototipo_Standard_B": [
+     "6f550d77777ff191",
+     "169432baa69d91a4"
+    ],
+    "italy:It13_Progetto_M35_mod_46": [
+     "084cf3c23b74e76b",
+     "b464101927ece307"
+    ],
+    "italy:It13_Progetto_M35_mod_46_LE": [
+     "c12f243dec283cf6",
+     "5b37bfa3d1a9b7ab"
+    ],
+    "italy:It14_P44_Pantera": [
+     "7f9d035e62e37b40",
+     "974e30d0e0a59c4a"
+    ],
+    "italy:It15_Rinoceronte": [
+     "58c08e22da4ec7e6",
+     "1f1e7b0a912da4f9"
+    ],
+    "italy:It16_Carro_d_assalto_P88": [
+     "5e045c56f0ad0f0b",
+     "1e050efb98e8e54d"
+    ],
+    "italy:It17_Progetto_CC55_mod_54": [
+     "10d4a44f4ec9c7ff",
+     "41aaa816ca48d221"
+    ],
+    "italy:It18_Progetto_C45_mod_71": [
+     "c4e7c5d275c2ffc7",
+     "1612ae1b705cfac8"
+    ],
+    "italy:It19_Progetto_C50_mod_66": [
+     "dc71030fb67bd50b",
+     "6df38a5a05b77a96"
+    ],
+    "italy:It20_Carro_Combattimento_45t": [
+     "860f087207fbdacb",
+     "04932bd8f8ad01b6"
+    ],
+    "italy:It21_Lion": [
+     "08d1c80f2a54a465",
+     "8d82682c70db7d9d"
+    ],
+    "italy:It23_CC_3": [
+     "b8a4b2910ea399c5",
+     "31f3548ed50452db"
+    ],
+    "italy:It23_CC_3_7x7": [
+     "64e8373b46296bfd",
+     "e28267e5e3967104"
+    ],
+    "italy:It24_Controcarro_1_Mk2": [
+     "f01984ba54ffbfdf",
+     "d15482486e666b27"
+    ],
+    "italy:It26_CC_56": [
+     "cfd01eba488c166d",
+     "415cfbf13fd23623"
+    ],
+    "italy:It27_M43_da_105_25_Bassoto": [
+     "a88b3210216ded53",
+     "2b6c839b3b4af63c"
+    ],
+    "italy:It28_Semovente_M41_Da_75_18": [
+     "bf70f52041116dcd",
+     "0dbd168c98a89a69"
+    ],
+    "italy:It29_Carro_Celere_Sahariano": [
+     "69f706f7dfc556f4",
+     "fef7a47facf98a66"
+    ],
+    "italy:It30_CC_mod_64_Prem": [
+     "7629064bcd329566",
+     "a34e7b7ce7698493"
+    ],
+    "italy:It31_CC_67_B": [
+     "27f28953cfcff1d9",
+     "a378c1000d36a473"
+    ],
+    "italy:It33_Prototipo_6": [
+     "a3a8af10674fe0b6",
+     "d145cc7c6f1aac93"
+    ],
+    "italy:It34_Toro": [
+     "b535e4e3e3b5505b",
+     "7744b3b0a5ea69b5"
+    ],
+    "italy:It35_Felice": [
+     "3b308398637c9b0d",
+     "7b92c7236bb83b12"
+    ],
+    "italy:It36_Progetto_C45_mod_71_M": [
+     "9b1ce675271a2be5",
+     "a17fb7908c6739cc"
+    ],
+    "italy:It37_Serpente": [
+     "14673b80eb68d2c2",
+     "ad71ca0a00ccd511"
+    ],
+    "italy:It38_Donnola": [
+     "7b87696308bb76b9",
+     "31e918dc70eab7e2"
+    ],
+    "italy:It39_Coccodrillo": [
+     "15b52e0d2247b0d7",
+     "198c52cc89f9cd07"
+    ],
+    "italy:It40_Predatore": [
+     "e440e28686df8999",
+     "35a31108edf2d6a6"
+    ],
+    "italy:It41_Cerbero": [
+     "1a678ffc606ea036",
+     "cf6f14b696b7539f"
+    ],
+    "italy:It43_CAV_mod_71": [
+     "eb84cc9e710d83b0",
+     "a547885837208690"
+    ],
+    "japan:J01_NC27": [
+     "9850dbee3856d6e3",
+     "78d0751a354b5f98"
+    ],
+    "japan:J02_Te_Ke": [
+     "5fb3ae7bd2b83424",
+     "46f56524323a4c3d"
+    ],
+    "japan:J03_Ha_Go": [
+     "bc3d4500ff86a048",
+     "591070557ef38856"
+    ],
+    "japan:J04_Ke_Ni": [
+     "2827df2810b61777",
+     "f36cd27628e0fb50"
+    ],
+    "japan:J05_Ke_Ni_B": [
+     "e9d84d7b47dd25b7",
+     "50770899066fed86"
+    ],
+    "japan:J06_Ke_Ho": [
+     "223bb86e387a110d",
+     "ea8f888c09128a0a"
+    ],
+    "japan:J07_Chi_Ha": [
+     "993f202abe86063f",
+     "8822c39b290868b3"
+    ],
+    "japan:J08_Chi_Nu": [
+     "1d071bd5621da52a",
+     "0ee0e2509e176ef6"
+    ],
+    "japan:J09_Chi_He": [
+     "6fb1d7f273ed5d62",
+     "ef4e48551ea76912"
+    ],
+    "japan:J10_Chi_To": [
+     "cb2750feb20b0871",
+     "ea4bd53f2a5dda6f"
+    ],
+    "japan:J11_Chi_Ri": [
+     "139299fd69d829f8",
+     "63de0dfb9f17f345"
+    ],
+    "japan:J11_Chi_Ri_IGR": [
+     "0724aec9a251826d",
+     "8301e4ecc54e1284"
+    ],
+    "japan:J12_Chi_Nu_Kai": [
+     "6cc4c94a9b56d70d",
+     "c758465e2b8bde8d"
+    ],
+    "japan:J13_STA_1": [
+     "e8b17812b81b8293",
+     "ffe660f041d12a1d"
+    ],
+    "japan:J13_STA_1_IGR": [
+     "1a17969aa6d04976",
+     "9953d4ff3e52701b"
+    ],
+    "japan:J14_Type_61": [
+     "5e45936326634000",
+     "26fb6bbf12ade5ca"
+    ],
+    "japan:J15_Chi_Ni": [
+     "5fae86cbb5d5d2ab",
+     "fac2cc094fcaf295"
+    ],
+    "japan:J16_ST_B1": [
+     "4dc1a0482a8a00fc",
+     "78e8c1dde0f8555d"
+    ],
+    "japan:J16_ST_B1_7x7": [
+     "8827fb39669bfc7b",
+     "901cecdce73e1590"
+    ],
+    "japan:J16_ST_B1_IGR": [
+     "6c6ff73105a3db84",
+     "5c0dd1ea049caa06"
+    ],
+    "japan:J18_STA_2_3": [
+     "19362f0c96dd708b",
+     "6cf6f867f610621e"
+    ],
+    "japan:J19_Tiger_I_Jpn": [
+     "5a44cd697860e6ac",
+     "3f7c3c40f70d0a01"
+    ],
+    "japan:J20_Type_2605": [
+     "e38ca09ad0b9af27",
+     "fadffe8aa8a69047"
+    ],
+    "japan:J21_Type_91": [
+     "e130884cb8dbe4b0",
+     "a7a75703cf49cf5e"
+    ],
+    "japan:J22_Type_95": [
+     "eee46c59b7ae7bfa",
+     "1d4437ba96da92f4"
+    ],
+    "japan:J23_Mi_To": [
+     "a1e71d1199d0d749",
+     "c07ff857aaf84efb"
+    ],
+    "japan:J24_Mi_To_130_tons": [
+     "c541cbdcda835b47",
+     "ab26b55307d2b0f6"
+    ],
+    "japan:J25_Type_4": [
+     "7a72e8af48a34cac",
+     "bf210d58c10bb493"
+    ],
+    "japan:J26_Type_89": [
+     "f76c6bffb70501e3",
+     "101386a088c4d9b3"
+    ],
+    "japan:J27_O_I_120": [
+     "856643eba076f0eb",
+     "c1e24ed9a7c920ea"
+    ],
+    "japan:J27_O_I_120_BP": [
+     "78a334f6e6d4aba8",
+     "af2aba7552e66755"
+    ],
+    "japan:J28_O_I_100": [
+     "26c5ff74884ba77e",
+     "7c8bc81a4e516cc6"
+    ],
+    "japan:J29_Nameless": [
+     "ec5514b66689227a",
+     "0b945c62403848a1"
+    ],
+    "japan:J30_Edelweiss": [
+     "a7cb71996e6d6d7c",
+     "f3a3719b53b235cb"
+    ],
+    "japan:J31_Type_5_KaRi": [
+     "7f8b09baa71d5aa4",
+     "7c074c8fb356dba1"
+    ],
+    "japan:J32_Chi_To_SPG": [
+     "0a8305a374bdf749",
+     "d428719d736ffb53"
+    ],
+    "japan:J33_Ho_Ri_2": [
+     "14ff0442a579883b",
+     "5e7b697d168e6bb1"
+    ],
+    "japan:J34_Ho_Ri_1": [
+     "b8d5b7bf7cd5e373",
+     "469163dc89383b47"
+    ],
+    "japan:J35_Ho_Ri_3": [
+     "3a8d6ca91a945eae",
+     "165c9ca3ef3798ed"
+    ],
+    "japan:J35_Ho_Ri_3_7x7": [
+     "2ed77485d6c81fe0",
+     "9e973b75b129fbaa"
+    ],
+    "japan:J36_Type_63_HT": [
+     "22c04c78a5cbf7f7",
+     "2ec3579dc8b03262"
+    ],
+    "japan:J37_Type_3_Ho_Ni_III": [
+     "58eadb5f1c567ffd",
+     "771e6bb7d1db1a6a"
+    ],
+    "japan:J38_Type_95_Ji_Ro": [
+     "727b548c12071288",
+     "1f15f3524cd8f84b"
+    ],
+    "japan:J39_Type_57": [
+     "0d9df4b8c600bb29",
+     "8b478f0f222ae3d1"
+    ],
+    "japan:J40_Type_71": [
+     "98216c99126f3226",
+     "c68b9235cdaefe2b"
+    ],
+    "japan:J40_Type_71_7x7": [
+     "dd36bfa7c8748720",
+     "3c34d2a27f2f783e"
+    ],
+    "japan:J41_Type_68": [
+     "98494f5538fdf6b5",
+     "409b356fb61cad6b"
+    ],
+    "japan:J42_Chi_Se": [
+     "50fc5e69dd3d33bd",
+     "c270ea04286d3280"
+    ],
+    "japan:J42_Chi_Se_CFE_A": [
+     "5d5f320b63bbc195",
+     "2709c21e5dd29698"
+    ],
+    "japan:J43_Type_4_Ju-To": [
+     "f603b315d2841a13",
+     "f9addd325c404f81"
+    ],
+    "japan:J44_Type_3_Ju_Nu": [
+     "cf3359e1a9102a2a",
+     "7d78cc1bc8d298d2"
+    ],
+    "japan:J45_Mitsu_108": [
+     "cf7bbe56aca89905",
+     "150f2fe60e4eed52"
+    ],
+    "japan:J48_Saryuda": [
+     "fac721156b455faf",
+     "02c2134d2835812d"
+    ],
+    "japan:J49_Kame": [
+     "35d4673c937e26c7",
+     "125bf4babf9e7faf"
+    ],
+    "japan:J50_Type_1_Ho_Ni_II": [
+     "1f6f8dbdfef678bd",
+     "56b6ce684b79e1ac"
+    ],
+    "japan:J51_Ashigaru": [
+     "58aed93f9904f17d",
+     "08aa7516109f3710"
+    ],
+    "japan:J52_STK_2": [
+     "3164538c810c0997",
+     "91a3612a9efa362f"
+    ],
+    "japan:J53_Ho_Ri_Shugo": [
+     "4d0f077f1f1139e0",
+     "c04960865be318de"
+    ],
+    "poland:Pl01_TKS_20mm": [
+     "345d54017ab01073",
+     "49b7b6dc64e34a95"
+    ],
+    "poland:Pl03_PzV_Poland": [
+     "11f58d509a3684be",
+     "5ae700f36e788077"
+    ],
+    "poland:Pl05_50TP_Tyszkiewicza": [
+     "35b9539d82fd180e",
+     "6d733c0ff7f7853a"
+    ],
+    "poland:Pl06_10TP": [
+     "541f54407f54df22",
+     "5b81a8fbbb3fb294"
+    ],
+    "poland:Pl07_14TP": [
+     "888cdcc87b3df411",
+     "0ce4c8bd580ebad0"
+    ],
+    "poland:Pl08_50TP_Prototyp_Resilient": [
+     "10e51cfbad7e0ecd",
+     "befc08004909ce26"
+    ],
+    "poland:Pl08_50TP_prototyp": [
+     "ab68ac81f30ea53e",
+     "404e00a1b5389c46"
+    ],
+    "poland:Pl09_7TP": [
+     "6a87453399a2d722",
+     "ba2503b3b713b848"
+    ],
+    "poland:Pl10_40TP_Habicha": [
+     "f19e09022fd522d9",
+     "52d3972c5e269450"
+    ],
+    "poland:Pl11_45TP_Habicha": [
+     "5124bd4479d0b6b8",
+     "77395a0c992c4601"
+    ],
+    "poland:Pl12_25TP_KSUST_II": [
+     "dd9378c61eeb1d9a",
+     "2639dc873e656ede"
+    ],
+    "poland:Pl13_53TP_Markowskiego": [
+     "9acd908969ca551e",
+     "be7da9a92db5f4af"
+    ],
+    "poland:Pl14_4TP": [
+     "e19d830ed20ea2fd",
+     "737cffd43d22c585"
+    ],
+    "poland:Pl15_60TP_Lewandowskiego": [
+     "03aff5dae91a61c4",
+     "0cac4e36f987c1e2"
+    ],
+    "poland:Pl15_60TP_Lewandowskiego_CFE_A": [
+     "3c11d634f4fc7e6d",
+     "17a3c32c67992281"
+    ],
+    "poland:Pl16_T34_85_Rudy": [
+     "02da6ad382db9b8e",
+     "230e34c41e35b333"
+    ],
+    "poland:Pl17_DS_PZlnz": [
+     "e9db48f54d48ac38",
+     "d7bc187cf9a5b0fb"
+    ],
+    "poland:Pl17_DS_PZlnz_SH": [
+     "d361f40709d00a61",
+     "a03485fbb785c4c4"
+    ],
+    "poland:Pl18_BUGI": [
+     "734190f9e5bc8f81",
+     "9277568d5ff37b08"
+    ],
+    "poland:Pl19_CS_52_LIS": [
+     "1ec6a877c67d25df",
+     "48dae0a3638b8a0c"
+    ],
+    "poland:Pl20_CS_44": [
+     "da4036ea44d32786",
+     "c586fc19b730c0ed"
+    ],
+    "poland:Pl21_CS_63": [
+     "e84b624cc506bcd1",
+     "735baa013d8db763"
+    ],
+    "poland:Pl21_CS_63_7x7": [
+     "57fbef643adefe8c",
+     "962e74f00b0a8cea"
+    ],
+    "poland:Pl21_CS_63_OSP3": [
+     "eef941222c7670ca",
+     "e4fb9c2ad230bf54"
+    ],
+    "poland:Pl22_CS_59": [
+     "8c262ae382a4c715",
+     "64f0342be81a90a5"
+    ],
+    "poland:Pl23_CS_53": [
+     "72d6511ec19f0f93",
+     "4487e00487dabe81"
+    ],
+    "poland:Pl24_56TP": [
+     "d4c50b2a215975df",
+     "1458246fa27963d2"
+    ],
+    "poland:Pl25_CS_52_C": [
+     "3d9466bb1b032882",
+     "2b6f390446fa76ae"
+    ],
+    "poland:Pl26_Czolg_P_Wz_46": [
+     "719a6e181c13e35c",
+     "4d86f5aff1b4d2ae"
+    ],
+    "poland:Pl27_SDP_Wz_66T": [
+     "e38b8460820e5860",
+     "81d02c1f51a682b1"
+    ],
+    "poland:Pl28_SDP_Wz_60": [
+     "2d6cefc6878a9629",
+     "7d7a7f93efab055d"
+    ],
+    "poland:Pl29_NC_Wz_70T": [
+     "795cf7a591906a09",
+     "4619903db4252919"
+    ],
+    "poland:Pl29_NC_Wz_70T_7x7": [
+     "ed03581a85ab42b8",
+     "22e251fec1faac11"
+    ],
+    "poland:Pl30_SDP_Wz58T": [
+     "a334b6d3fc19a781",
+     "2450dda8d6dd3ec6"
+    ],
+    "poland:Pl31_SDP_Wz_57D": [
+     "c899da6506598974",
+     "857d6aa20ff61e7b"
+    ],
+    "poland:Pl32_SDP_Wz_44": [
+     "a695443d5b9166f9",
+     "9c144ed6735303e1"
+    ],
+    "poland:Pl33_SDP_Wz_40": [
+     "08c36a0b315206f7",
+     "a8f8e36bae450fca"
+    ],
+    "poland:Pl34_Cs53_56_Woitek": [
+     "6025eb8c2203d742",
+     "bb2f67ade36351d6"
+    ],
+    "poland:Pl36_Wz_64GC_Bzyg": [
+     "99f08748a91725cd",
+     "9f8d2af85a217987"
+    ],
+    "poland:Pl37_CS_67_Szakal": [
+     "120815c07052f415",
+     "2491a393d5d77158"
+    ],
+    "poland:Pl38_63TP_Rycerski": [
+     "6eb4a13af4ff3b22",
+     "b90ecba8fa3fb50b"
+    ],
+    "poland:Pl39_Husarz": [
+     "f3d8864fd0c4571c",
+     "73b685a510c25acf"
+    ],
+    "poland:Pl40_Krazownik": [
+     "7217298bd0239ae3",
+     "b22b8d076266c283"
+    ],
+    "poland:Pl44_Kolczatka": [
+     "5f6a80f33feefec6",
+     "35ff46d27bf550bd"
+    ],
+    "sweden:S01_Strv_74_A2": [
+     "a2d1be2688d7123a",
+     "5aba6b500b4a78b2"
+    ],
+    "sweden:S02_Strv_M42": [
+     "06b93e826bcc3945",
+     "c86c45dbeef643a3"
+    ],
+    "sweden:S03_Strv_M38": [
+     "2301581bdb5f41bb",
+     "f0da6cab79729265"
+    ],
+    "sweden:S04_Lago_I": [
+     "85027b6aec32e885",
+     "a93a06e24cf1773d"
+    ],
+    "sweden:S05_Strv_M21_29": [
+     "863a8dfc8c687c6c",
+     "e6398e9450fda104"
+    ],
+    "sweden:S06_Ikv_90_Typ_B_Bofors": [
+     "d1d0b49551d29a76",
+     "b3f61efcd5ec9efc"
+    ],
+    "sweden:S07_Strv_74": [
+     "49e7ea4efa317b86",
+     "dcf4dfce8a9217a3"
+    ],
+    "sweden:S08_Ikv_65_Alt_2": [
+     "d98fa03f14241b7e",
+     "068d0d8aa857fe1c"
+    ],
+    "sweden:S09_L_120_TD": [
+     "2104e87c31cc800e",
+     "e62214a20febfa25"
+    ],
+    "sweden:S10_Strv_103_0_Series": [
+     "b323c5b20fa5ee45",
+     "2de883f14ebbcf64"
+    ],
+    "sweden:S10_Strv_103_0_Series_FL": [
+     "6866a1f3fed1d5e1",
+     "b7d4e7f4f9e26807"
+    ],
+    "sweden:S11_Strv_103B": [
+     "3aee2ae424bee0f4",
+     "32fa3abe910ab94a"
+    ],
+    "sweden:S12_Strv_M40": [
+     "ec81b5274898bc28",
+     "7b11f89210408677"
+    ],
+    "sweden:S13_Leo": [
+     "2257879b81b95b4f",
+     "840134de708bad1f"
+    ],
+    "sweden:S14_Ikv_103": [
+     "1663ca74c934e7d7",
+     "29e4e459f97d0b64"
+    ],
+    "sweden:S14_Ikv_103_SH": [
+     "045d414095e6dfe4",
+     "855fabd302071036"
+    ],
+    "sweden:S15_L_60": [
+     "fb573ab4f07dc8f2",
+     "f9dd9029ae364c23"
+    ],
+    "sweden:S16_Kranvagn": [
+     "53115626e0b656d3",
+     "7f5862e4d905e3b2"
+    ],
+    "sweden:S16_Kranvagn_bob": [
+     "f5746dae0741e756",
+     "5aad8091d9b98aa3"
+    ],
+    "sweden:S17_EMIL_1952_E2": [
+     "d5bf487b8546e6ea",
+     "12a92f17ea07aa00"
+    ],
+    "sweden:S18_EMIL_1951_E1": [
+     "217a9477fe8b717f",
+     "6215cef7e3cc087b"
+    ],
+    "sweden:S19_Sav_M43": [
+     "071ed2e6f285539e",
+     "6e51ccc7b0d8165e"
+    ],
+    "sweden:S20_Ikv_72": [
+     "bdcc362fe0d2b91b",
+     "52411248cff5b38e"
+    ],
+    "sweden:S21_UDES_03": [
+     "53ecc22f84cc8d20",
+     "04e9a56270d32b74"
+    ],
+    "sweden:S22_Strv_S1": [
+     "d9f28b870aadaddb",
+     "001f4d1c8ee5071d"
+    ],
+    "sweden:S22_Strv_S1_FL": [
+     "a8113e05bdd0351b",
+     "037769d209784530"
+    ],
+    "sweden:S23_Strv_81": [
+     "661402b369a15871",
+     "66d882805c64af98"
+    ],
+    "sweden:S23_Strv_81_sabaton": [
+     "1832a01541ef2e42",
+     "2e6d408f56488a83"
+    ],
+    "sweden:S25_EMIL_51": [
+     "0fd1c4051542bae8",
+     "060f55e6cc4e113a"
+    ],
+    "sweden:S26_Lansen_C": [
+     "0148eb61e37ea42c",
+     "12f9fbec7bfbc799"
+    ],
+    "sweden:S27_UDES_16": [
+     "431c0c531243864a",
+     "99c9fa5517b2aa7d"
+    ],
+    "sweden:S28_UDES_15_16": [
+     "84b64ff5eb756fee",
+     "c46b837cce8ff48f"
+    ],
+    "sweden:S28_UDES_15_16_7x7": [
+     "4af7aff04ef17cf7",
+     "698b030a78d98a76"
+    ],
+    "sweden:S29_UDES_14_5": [
+     "97c7d8c9aedf8c06",
+     "44214a1522690817"
+    ],
+    "sweden:S30_UDES_03_Alt_3": [
+     "8b829799fba0d54f",
+     "e72333616f7f658e"
+    ],
+    "sweden:S31_Strv_K": [
+     "5b0e1751a7ee009a",
+     "2165ed1c0e372620"
+    ],
+    "sweden:S32_Bofors_Tornvagn": [
+     "bbabd3d9c00bb097",
+     "cd4ba355938e50e1"
+    ],
+    "sweden:S33_Latt_Stridsfordon_120": [
+     "58531d3836554666",
+     "69cb3d3f00e19fc0"
+    ],
+    "sweden:S34_Lago_M38": [
+     "a8adbb58110d76db",
+     "0d5f95b4c9061cb3"
+    ],
+    "sweden:S35_Stridsyxa": [
+     "9f8b8d084d9334f4",
+     "11c616830e88bab8"
+    ],
+    "sweden:S36_Strv_107_12": [
+     "bed21841ac0d4a88",
+     "49332e435f67bc70"
+    ],
+    "sweden:S37_Ambassador": [
+     "3e8cb056a09f83f6",
+     "8560bea72b3c6677"
+    ],
+    "sweden:S39_Strv_m31": [
+     "1659147a37a83f97",
+     "989fa2495440baf9"
+    ],
+    "sweden:S41_BV_111": [
+     "d335e5dd1a3f032f",
+     "72eecf112541f317"
+    ],
+    "uk:GB01_Medium_Mark_I": [
+     "7b9c84384883d732",
+     "e3c8c0d3f7f565ea"
+    ],
+    "uk:GB03_Cruiser_Mk_I": [
+     "5a55bd965ff90339",
+     "a30f04d3869a63a2"
+    ],
+    "uk:GB04_Valentine": [
+     "eb5764a662a517e6",
+     "7a4e425a51c91096"
+    ],
+    "uk:GB05_Vickers_Medium_Mk_II": [
+     "e4481b1946398c56",
+     "5565222a8086b00b"
+    ],
+    "uk:GB06_Vickers_Medium_Mk_III": [
+     "b43f196095712b9e",
+     "5e06a8fe4569823f"
+    ],
+    "uk:GB07_Matilda": [
+     "0e7fd8b8123af2aa",
+     "9184c01a27701b05"
+    ],
+    "uk:GB08_Churchill_I": [
+     "fb4d1669e17977ef",
+     "b2a77def54d73ba8"
+    ],
+    "uk:GB08_Churchill_I_IGR": [
+     "6f326408a28b5853",
+     "a6570cc54155b7b9"
+    ],
+    "uk:GB09_Churchill_VII": [
+     "42823faaed914a03",
+     "47c5702eadb0d1b4"
+    ],
+    "uk:GB100_Manticore": [
+     "b554a03201379ab6",
+     "fce43f741b81b66b"
+    ],
+    "uk:GB1019_Sherman_Firefly_NewOnBoarding": [
+     "213571552afec02a",
+     "c689dc66f2bce7db"
+    ],
+    "uk:GB101_FV1066_Senlac": [
+     "c3fe4b958f1ed56a",
+     "33324b11cd170cfd"
+    ],
+    "uk:GB1020_Crusader_NewOnBoarding": [
+     "239ea4b508bcae8d",
+     "8e27934bb515b823"
+    ],
+    "uk:GB102_LHMTV": [
+     "564a8213f57ecc01",
+     "bef1d204ddd4ed1b"
+    ],
+    "uk:GB103_GSOR3301_AVR_FS": [
+     "9f70a05683fe2f90",
+     "5261f0b7465eb90d"
+    ],
+    "uk:GB104_GSR_3301_Setter": [
+     "67f9aaff2fcab983",
+     "27e478e062254adb"
+    ],
+    "uk:GB105_Black_Prince_2019": [
+     "1e60c166ef790b0f",
+     "ae0c3923c75fbf3e"
+    ],
+    "uk:GB106_Cobra": [
+     "72388dcec4e66aa3",
+     "8de170de33bff774"
+    ],
+    "uk:GB107_Cavalier": [
+     "2ecbda18a3648346",
+     "11b3340a9fc1ba34"
+    ],
+    "uk:GB107_Cavalier_SH": [
+     "84baf42d60f0a32a",
+     "1ff10529b282c6b1"
+    ],
+    "uk:GB108_A46": [
+     "e86711ed5a387798",
+     "bd973272b8d3579f"
+    ],
+    "uk:GB109_GSOR_1008": [
+     "3147f1d4e2506506",
+     "86f691bfbcee0426"
+    ],
+    "uk:GB109_GSOR_1008_CFE_J": [
+     "0a37f5b53b555c02",
+     "09b228d010fdfa1f"
+    ],
+    "uk:GB10_Black_Prince": [
+     "d43c146cb067874d",
+     "9c34853c0a903167"
+    ],
+    "uk:GB110_FV4201_Chieftain_Prototype": [
+     "d356ca5869c4ad61",
+     "450b858dee9b0cf4"
+    ],
+    "uk:GB111_Charlemagne": [
+     "93dc988a57db4886",
+     "6d760c33052f0df0"
+    ],
+    "uk:GB112_Caliban": [
+     "aba8524ce460484f",
+     "1e49398a92b57578"
+    ],
+    "uk:GB113_Matilda_LVT": [
+     "f760ebdca8912976",
+     "836334ed183d416e"
+    ],
+    "uk:GB114_Vickers_MBT_Mk3": [
+     "0f2fc4532676842b",
+     "f9e1ca9542bcd8e1"
+    ],
+    "uk:GB115_Gonsalo": [
+     "267a1dda67d7b292",
+     "59246745f489cb01"
+    ],
+    "uk:GB116_Harry_Hopkins_I": [
+     "39e989d2420e977f",
+     "eaba41d03152fb65"
+    ],
+    "uk:GB11_Caernarvon": [
+     "0f15898d644f131d",
+     "b1f64ae35aba2e4f"
+    ],
+    "uk:GB11_Caernarvon_IGR": [
+     "bbe29d378f632a14",
+     "fa5e3cb4cc1cb65a"
+    ],
+    "uk:GB120_Concept_No_5": [
+     "e945480ad7b869ba",
+     "f9ccfafe0ce00252"
+    ],
+    "uk:GB120_Concept_No_5_7x7": [
+     "39beafaccd24d5a4",
+     "79afc60a5e93c9da"
+    ],
+    "uk:GB121_GSOR_1010_FB": [
+     "e42d2e5c42034f24",
+     "4d34bc21448f7a20"
+    ],
+    "uk:GB122_Staghound_Mk_III": [
+     "afbeff3318f99b36",
+     "6a4536e69b59b4b6"
+    ],
+    "uk:GB123_GSOR_1006_v7": [
+     "5beaa98b708c5b3d",
+     "75fab3e4be4dea39"
+    ],
+    "uk:GB124_AEC_Armoured_Car": [
+     "ebadc5ac75b56ec4",
+     "b231b7b98fe9c554"
+    ],
+    "uk:GB125_Saladin": [
+     "f9e3a4fdd3694fbe",
+     "f3311c6e70b57658"
+    ],
+    "uk:GB126_FSV_Scheme_A": [
+     "f74c0c92d51ca4d0",
+     "3cd91c42843367a5"
+    ],
+    "uk:GB127_A7E3": [
+     "bb8f5afb2ce156cf",
+     "69065a76fca8866f"
+    ],
+    "uk:GB128_Nemesis": [
+     "190e31a71a0b8f1e",
+     "76250f926966cc75"
+    ],
+    "uk:GB12_Conqueror": [
+     "c2940e1b99dd29a3",
+     "0ce95c36226051d6"
+    ],
+    "uk:GB12_Conqueror_FL": [
+     "036d753208036e0a",
+     "8329088fb2b29224"
+    ],
+    "uk:GB130_FV225_Collector": [
+     "a424f327959376ff",
+     "ab752e0a34ce5a76"
+    ],
+    "uk:GB131_Crusher": [
+     "93aee4084979b761",
+     "5db244cb9ba26e59"
+    ],
+    "uk:GB132_Taurus_CAT": [
+     "b80c2449fa5436ce",
+     "8f46e21c46ba35c3"
+    ],
+    "uk:GB133_Charioteer_MkVII": [
+     "aa7a7a0d55def1d1",
+     "da64feb5a7793928"
+    ],
+    "uk:GB134_Gryphon": [
+     "481b1c61c9ba1db5",
+     "97a7225b1fed760e"
+    ],
+    "uk:GB136_Churchill_BPXIV": [
+     "9e06e687739ddfd8",
+     "72f7bcef1c825624"
+    ],
+    "uk:GB137_Cromwell_Applique": [
+     "e6cf28cdcd57c6a7",
+     "7a48cbda172caeca"
+    ],
+    "uk:GB139_FV226_Contradictious": [
+     "ff27a5a6293decdc",
+     "3e8f47782afd0002"
+    ],
+    "uk:GB13_FV215b": [
+     "bd0e2a8da7d95e89",
+     "b53b6e1055f7c456"
+    ],
+    "uk:GB13_FV215b_IGR": [
+     "0bfeeb23d5ab91e6",
+     "bb3f94ab9a6089ab"
+    ],
+    "uk:GB140_FV224_Chopper": [
+     "3a6bc1e57b504ee3",
+     "3fb2d66f19f08344"
+    ],
+    "uk:GB141_GSOR_the_TANK": [
+     "aeb0f8be75157180",
+     "aaa0980ed02a8b68"
+    ],
+    "uk:GB142_FV230_Canopener": [
+     "bdc1197873c6ce16",
+     "df370ed5e7e26219"
+    ],
+    "uk:GB142_FV230_Canopener_CFE_G": [
+     "cf04aab9afbc069e",
+     "d8ecb65e357b2068"
+    ],
+    "uk:GB143_FV229_Contender": [
+     "be794bc8d48062c5",
+     "2d280b29da009103"
+    ],
+    "uk:GB145_Crusher_ASE_4": [
+     "353258f51ffdf76a",
+     "4c3ebebafc3de65e"
+    ],
+    "uk:GB146_Gabler_s_Destroyer": [
+     "689a303049ea4911",
+     "57ffcc28ef44ba6d"
+    ],
+    "uk:GB147_FV4025_Contriver": [
+     "af48acf485cc597a",
+     "50c960a33e574be2"
+    ],
+    "uk:GB148_FV227_Conceiver": [
+     "2a9868093389b3cc",
+     "03b03c80d88a29b7"
+    ],
+    "uk:GB149_Centurion_MkI_A": [
+     "f24e7dd5be359383",
+     "c587b753d423c863"
+    ],
+    "uk:GB14_M2": [
+     "749cfa99d341cf86",
+     "2b1782379a2cc824"
+    ],
+    "uk:GB150_Churchill_VII_A": [
+     "374a7a4d95a5be67",
+     "8425ff45793e1eff"
+    ],
+    "uk:GB151_Headshaker": [
+     "41596dae80ff965a",
+     "4526b6cf8e70bbb9"
+    ],
+    "uk:GB152_AT_FV230_Breaker": [
+     "31caa3a9307e36fe",
+     "8fc20b759b2bc656"
+    ],
+    "uk:GB155_Pike": [
+     "1d5d68a6ad66781b",
+     "064df06b898cd276"
+    ],
+    "uk:GB156_Black_Prince_II": [
+     "c231d23cfbf0cee2",
+     "e93af1c689b2657a"
+    ],
+    "uk:GB157_FV214t": [
+     "5f9cfc2e80268e39",
+     "8c2abd23755d5431"
+    ],
+    "uk:GB158_Executor": [
+     "4bd5ab1c0970d3e2",
+     "fd05327f7194084a"
+    ],
+    "uk:GB15_Stuart_I": [
+     "c2033f1d31a4324d",
+     "0be8104c8b0c3819"
+    ],
+    "uk:GB17_Grant_I": [
+     "eb06779c8472ac23",
+     "548f823bb37ef762"
+    ],
+    "uk:GB19_Sherman_Firefly": [
+     "2b24bed179b9024b",
+     "0a38f431a16bb3e9"
+    ],
+    "uk:GB19_Sherman_Firefly_MapsTraining_Dummy_MT_2": [
+     "46423a89d4084ee8",
+     "c4c44ceca4d67cf4"
+    ],
+    "uk:GB20_Crusader": [
+     "83d16b6054a6c6bc",
+     "ae2201b5776e5bb4"
+    ],
+    "uk:GB21_Cromwell": [
+     "2ae57ef4aa93a45d",
+     "a7467e02fafdb633"
+    ],
+    "uk:GB21_Cromwell_IGR": [
+     "c2598d90b1a91169",
+     "b5ca805369231b48"
+    ],
+    "uk:GB22_Comet": [
+     "98bec8438cb3557f",
+     "8aaa38d7e2350a8c"
+    ],
+    "uk:GB23_Centurion": [
+     "dcf652cc24a14e13",
+     "c829198638a629a4"
+    ],
+    "uk:GB23_Centurion_IGR": [
+     "f0deed1b57e78c83",
+     "f6640c68f94e214f"
+    ],
+    "uk:GB24_Centurion_Mk3": [
+     "5b3b87b94cfe1044",
+     "b4e99ab23b89e4e1"
+    ],
+    "uk:GB25_Loyd_Gun_Carriage": [
+     "436d0274822d4454",
+     "db0f9471749d4bcd"
+    ],
+    "uk:GB26_Birch_Gun": [
+     "7adc66d05e003642",
+     "04c5849cabaaa546"
+    ],
+    "uk:GB27_Sexton": [
+     "f28e5d1cf82a6445",
+     "674a5b7142e15deb"
+    ],
+    "uk:GB28_Bishop": [
+     "2c84ee3b95618dde",
+     "1512afa8e28f9da8"
+    ],
+    "uk:GB29_Crusader_5inch": [
+     "f63d93ab2432ad87",
+     "ad40b5d96ac2dc32"
+    ],
+    "uk:GB30_FV3805": [
+     "8f48783a4280b444",
+     "185adbed66ccba30"
+    ],
+    "uk:GB31_Conqueror_Gun": [
+     "c32d916339e7a189",
+     "51c028b450d58889"
+    ],
+    "uk:GB32_Tortoise": [
+     "2094149860928644",
+     "01146bee3514c2ce"
+    ],
+    "uk:GB33_Sentinel_AC_I": [
+     "74cdbe0ce41493df",
+     "b4e8a03658fbf56f"
+    ],
+    "uk:GB35_Sentinel_AC_IV": [
+     "ad8702617404d5e4",
+     "9bd0a167f63dce35"
+    ],
+    "uk:GB37_Valliant": [
+     "f886e41618507f36",
+     "73f8e1f0bb6d0d5c"
+    ],
+    "uk:GB39_Universal_CarrierQF2": [
+     "752ad1c2989d8478",
+     "e2f64dd57bddbc77"
+    ],
+    "uk:GB40_Gun_Carrier_Churchill": [
+     "f5d57ab01e43bbc9",
+     "6801fc3ad42cc386"
+    ],
+    "uk:GB41_Challenger": [
+     "d516f20e114ed39d",
+     "15294b0f47d089aa"
+    ],
+    "uk:GB42_Valentine_AT": [
+     "2002f0d36ceab4dd",
+     "4732b754dcdb127d"
+    ],
+    "uk:GB44_Archer": [
+     "8c9a8ad417b5466d",
+     "367269d48d40703e"
+    ],
+    "uk:GB45_Achilles_IIC": [
+     "3f953d0e5e2173f8",
+     "5240dfa544a29dd0"
+    ],
+    "uk:GB48_FV215b_183": [
+     "b69caab7d68f0176",
+     "1595ba28d3dfe2db"
+    ],
+    "uk:GB50_Sherman_III": [
+     "c5ccc61cded43e4b",
+     "d8364102fefdc432"
+    ],
+    "uk:GB51_Excelsior": [
+     "827274b9c271ff78",
+     "f70dedf79d681c3e"
+    ],
+    "uk:GB52_A45": [
+     "7f3ab1ab8072ccb7",
+     "62ddda7b8cc19a04"
+    ],
+    "uk:GB57_Alecto": [
+     "584a6e176b3ee118",
+     "95f56acf7dc1694e"
+    ],
+    "uk:GB58_Cruiser_Mk_III": [
+     "f1523a6490e804a7",
+     "86fc26c3e30f5991"
+    ],
+    "uk:GB59_Cruiser_Mk_IV": [
+     "2c002e2792ef213a",
+     "6ec90ebb52e103f2"
+    ],
+    "uk:GB60_Covenanter": [
+     "69600d43feaa2df6",
+     "ec09c534a6759ce6"
+    ],
+    "uk:GB63_TOG_II": [
+     "0861f804c359cf4f",
+     "e15405f5e0decd52"
+    ],
+    "uk:GB68_Matilda_Black_Prince": [
+     "e2af168a326ee4a4",
+     "9f275c5ffc964d86"
+    ],
+    "uk:GB69_Cruiser_Mk_II": [
+     "23339a363c92d473",
+     "139b33a90524ccc2"
+    ],
+    "uk:GB70_FV4202_105": [
+     "8004e977bf0db04b",
+     "8021181b946036ce"
+    ],
+    "uk:GB70_N_FV4202_105": [
+     "9074c5aedcdd0955",
+     "951fa627accd9f13"
+    ],
+    "uk:GB70_N_FV4202_105_FL": [
+     "3d952ab830f2a126",
+     "7d80dce53827ae0a"
+    ],
+    "uk:GB71_AT_15A": [
+     "ea7147ffffd3dfa0",
+     "2dd624a5b185ae9d"
+    ],
+    "uk:GB72_AT15": [
+     "386ab463c754365f",
+     "fd088f522c9977f7"
+    ],
+    "uk:GB72_AT15_IGR": [
+     "41b5ef830a5bbcfc",
+     "82beeaa93c814d6a"
+    ],
+    "uk:GB73_AT2": [
+     "13bc0ce08aad3114",
+     "0ae02bd948e43df0"
+    ],
+    "uk:GB74_AT8": [
+     "fe7191052c1c94ad",
+     "e3c24b2f5254db4e"
+    ],
+    "uk:GB75_AT7": [
+     "ef3b802924dcffdd",
+     "0cc34480501b4664"
+    ],
+    "uk:GB76_Mk_VIC": [
+     "29efd52752610d1c",
+     "ac32df0e039e5595"
+    ],
+    "uk:GB77_FV304": [
+     "763ae6b5840e0ea3",
+     "44b6e444eed893e4"
+    ],
+    "uk:GB77_FV304_IGR": [
+     "6447e04b52b0f565",
+     "4ae0fec41ef671e1"
+    ],
+    "uk:GB78_Sexton_I": [
+     "694f62b5610d008a",
+     "3ab130ffc87e9b34"
+    ],
+    "uk:GB79_FV206": [
+     "9a714eea241ff3e1",
+     "9bc9766dd7909d4d"
+    ],
+    "uk:GB80_Charioteer": [
+     "7a35f21861c00632",
+     "3e3b5eee85427fe3"
+    ],
+    "uk:GB81_FV4004": [
+     "19a8410b510cf42e",
+     "70ad8ec9a10eabaa"
+    ],
+    "uk:GB83_FV4005": [
+     "e9996e8e572ec6d9",
+     "2c4cda976a5aa630"
+    ],
+    "uk:GB84_Chieftain_Mk6": [
+     "83d903270fb1a894",
+     "4c6474b3e154bdef"
+    ],
+    "uk:GB85_Cromwell_Berlin": [
+     "40c91f0183f5e0ed",
+     "f95097e7abc484bf"
+    ],
+    "uk:GB86_Centurion_Action_X": [
+     "6c2078907cc15316",
+     "bc2db37231bacbc4"
+    ],
+    "uk:GB86_Centurion_Action_X_7x7": [
+     "be8bcef4093771e9",
+     "b379edf363c988a8"
+    ],
+    "uk:GB86_Centurion_Action_X_CFE_A": [
+     "cb50f268efd74743",
+     "6f7f37d5cbc2673f"
+    ],
+    "uk:GB87_Chieftain_T95_turret": [
+     "226a185cc9c14d85",
+     "0be5872b40a957f2"
+    ],
+    "uk:GB88_T95_Chieftain_turret": [
+     "72954f1225b78840",
+     "3ac801d06635a0de"
+    ],
+    "uk:GB91_Super_Conqueror": [
+     "a368715e6d1e64ed",
+     "460edc1e6064cf50"
+    ],
+    "uk:GB91_Super_Conqueror_7x7": [
+     "fdfffd6769eddbc1",
+     "af39d282ed447ceb"
+    ],
+    "uk:GB92_FV217": [
+     "5e0f1f75f1c54c29",
+     "a27f8128b3fb91e0"
+    ],
+    "uk:GB92_FV217_7x7": [
+     "981964a78c238198",
+     "07ffbe7cf9f97e63"
+    ],
+    "uk:GB93_Caernarvon_AX": [
+     "09775895f4ddbbb3",
+     "fabadb2d4e6aa3fa"
+    ],
+    "uk:GB94_Centurion_Mk5-1_RAAC": [
+     "e1f7403a2aaecb8f",
+     "097651126a20fa91"
+    ],
+    "uk:GB95_Ekins_Firefly_M4A4": [
+     "c870c09523e9a845",
+     "163614c0a59cf4b5"
+    ],
+    "uk:GB96_Excalibur": [
+     "6cad8cfb8f58f2b2",
+     "4729a36d7319da53"
+    ],
+    "uk:GB97_Chimera": [
+     "bdca23cd061bd422",
+     "a2054c1cb19217d0"
+    ],
+    "uk:GB98_T95_FV4201_Chieftain": [
+     "e8fa3a04e4ec93aa",
+     "c6a3f009652ac4ce"
+    ],
+    "uk:GB99_Turtle_Mk1": [
+     "8e73fe8ddd681266",
+     "7e43587a4d792d1d"
+    ],
+    "usa:A01_T1_Cunningham": [
+     "2f75d623b6cae165",
+     "6187efd920d8c7a1"
+    ],
+    "usa:A02_M2_lt": [
+     "1dd379bdfcaa34b4",
+     "57970b6fb8345cd8"
+    ],
+    "usa:A03_M3_Stuart": [
+     "1dc3c5cd54dcf40a",
+     "1ca04bd85688c0ff"
+    ],
+    "usa:A04_M3_Grant": [
+     "1c2c1edebf9b9f16",
+     "2f0a6af3ea8f9e8b"
+    ],
+    "usa:A05_M4_Sherman": [
+     "dcee3c298d2b1d2c",
+     "97e0230298ceba37"
+    ],
+    "usa:A05_M4_Sherman_IGR": [
+     "064c268d63401fca",
+     "6a1bfa10d896be70"
+    ],
+    "usa:A06_M4A3E8_Sherman": [
+     "500adba423c495df",
+     "bdd33263fae910cc"
+    ],
+    "usa:A07_T20": [
+     "043aec18a3288a82",
+     "a0b98b310e329f2d"
+    ],
+    "usa:A08_T23": [
+     "317efe93b3e419ef",
+     "0634e659be41ff2b"
+    ],
+    "usa:A09_T1_hvy": [
+     "888dfc4e2c5a4504",
+     "a432b95e173dd897"
+    ],
+    "usa:A1005_M4_Sherman_StoryMode": [
+     "15b15c4d8f162fdf",
+     "d257d65731b24468"
+    ],
+    "usa:A1006_M4A3E8_Sherman_NewOnBoarding": [
+     "41ec889d9bfc788a",
+     "3307db6827534111"
+    ],
+    "usa:A1006_M4A3E8_Sherman_StoryMode": [
+     "9760edc6d73f418e",
+     "e9f3442513248039"
+    ],
+    "usa:A1006_M4A3E8_Sherman_StoryModeHard": [
+     "21ec45b205e3ecd7",
+     "82f7ed7a5d9d5c53"
+    ],
+    "usa:A1006_M4A3E8_Sherman_StoryMode_3_4": [
+     "6f4bf48f9d9458c8",
+     "8c1fa6e3d1d27594"
+    ],
+    "usa:A100_T49": [
+     "ea88dd082b46bbf9",
+     "ed85af831075ae13"
+    ],
+    "usa:A101_M56": [
+     "351ad49354ca5f00",
+     "45dbfd57d7aaf7b6"
+    ],
+    "usa:A102_T28_concept": [
+     "82b84ccbbe55492b",
+     "cdea145185adb45e"
+    ],
+    "usa:A1034_M24_Chaffee_StoryMode": [
+     "be00a74daef9e21b",
+     "ea52a7358f68026f"
+    ],
+    "usa:A1034_M24_Chaffee_StoryModeStealth": [
+     "c2ba0dd4a020d3f5",
+     "7202509191338f9d"
+    ],
+    "usa:A103_T71E1": [
+     "113720949a96ef5e",
+     "5621605006ec40a3"
+    ],
+    "usa:A103_T71E1_IGR": [
+     "2f86d5462f1e6d9c",
+     "dc709af8efcc8c5a"
+    ],
+    "usa:A1041_M18_Hellcat_NewOnBoarding": [
+     "5be48dce38d7faa7",
+     "10a07bd9b55cdc30"
+    ],
+    "usa:A104_M4A3E8A": [
+     "ca1bfb4305c38ebb",
+     "f385f30a4ba5375a"
+    ],
+    "usa:A106_M48A2_120": [
+     "ebb358518ae0dfee",
+     "bc205c8fc5d82598"
+    ],
+    "usa:A107_T1_HMC": [
+     "09bcd72a67ecf28a",
+     "cad653ec85604169"
+    ],
+    "usa:A108_T18_HMC": [
+     "72ca22d322e1aed7",
+     "2064cd2a5219c34f"
+    ],
+    "usa:A109_T56_GMC": [
+     "046d46582d2b194c",
+     "0719799ecc3059a3"
+    ],
+    "usa:A10_M6": [
+     "11327937a11bf846",
+     "735fd9a0c705035e"
+    ],
+    "usa:A1118_M4_Thunderbolt_NewOnBoarding": [
+     "2791cda6eaf049e4",
+     "aca822b79485a1c9"
+    ],
+    "usa:A111_T25_Pilot": [
+     "73c126c44955c748",
+     "ed7abcf5b9f57737"
+    ],
+    "usa:A112_T71E2": [
+     "b492f4aee0f14397",
+     "7fd077839de0e99c"
+    ],
+    "usa:A112_T71E2R": [
+     "ea4981c4057257e1",
+     "d899470fe25b4987"
+    ],
+    "usa:A115_Chrysler_K": [
+     "10f1e98de4f93c8d",
+     "bdd40e6dc0157ff0"
+    ],
+    "usa:A115_Chrysler_K_GF": [
+     "5bf64ca4abf6f56d",
+     "ef2c0ba9a5b89e54"
+    ],
+    "usa:A116_XM551": [
+     "9cd8e3d3240175a6",
+     "e7a2ded8d047edd4"
+    ],
+    "usa:A117_T26E5": [
+     "4cbc27eccbebb81b",
+     "6ffe94fb7699a691"
+    ],
+    "usa:A117_T26E5_FL": [
+     "c696df3e51babb98",
+     "c43192670074f056"
+    ],
+    "usa:A117_T26E5_Patriot": [
+     "62a0ff5565bbafc1",
+     "99e75b887e385c9f"
+    ],
+    "usa:A118_M4_Thunderbolt": [
+     "aed64dc759275b59",
+     "4103a41be7e777b2"
+    ],
+    "usa:A11_T29": [
+     "426a72604ad415a9",
+     "a1d9ffad72978c42"
+    ],
+    "usa:A11_T29_IGR": [
+     "678d2c6230d0efec",
+     "6987e33e379d20c4"
+    ],
+    "usa:A120_M48A5": [
+     "b6cced1714abdf9d",
+     "47fa82f1b4ab286a"
+    ],
+    "usa:A120_M48A5_7x7": [
+     "8aa1306c6150aa4e",
+     "8bdb73b1823e9cb6"
+    ],
+    "usa:A120_M48A5_IGR": [
+     "9ab9c4c34740d941",
+     "ad62198f0e028088"
+    ],
+    "usa:A121_M26_Cologne": [
+     "840bd141db5a52e0",
+     "08740c05cfb54b81"
+    ],
+    "usa:A122_TS-5": [
+     "dd4ce70df326f4b7",
+     "c108ecbd44c61484"
+    ],
+    "usa:A123_T78": [
+     "95c2a01941eba49e",
+     "7ea03b2580e8df87"
+    ],
+    "usa:A124_T54E2": [
+     "cd62482186317c1c",
+     "b7ce9be56c084e7f"
+    ],
+    "usa:A125_AEP_1": [
+     "56345a581096292b",
+     "ec28fe8a11e1fa8d"
+    ],
+    "usa:A126_PzVI_Tiger_II_capt": [
+     "53d9b4aa7095f895",
+     "ce9daceb878bc9f5"
+    ],
+    "usa:A127_TL_1_LPC": [
+     "008b0c8c6f76572b",
+     "a583d9e46cafe52e"
+    ],
+    "usa:A128_concept_1b": [
+     "9addb4a0a841d9c5",
+     "e95d857b9be6dc07"
+    ],
+    "usa:A129_T6_medium": [
+     "8c27a8db216cb898",
+     "d22e6b3f971882f3"
+    ],
+    "usa:A129_T6_medium_MapsTraining_Dummy_MT_1": [
+     "0a6ff09b90990e16",
+     "d7a553a44903b15d"
+    ],
+    "usa:A12_T32": [
+     "b3a91b8077e36d47",
+     "d5450ac7070aae15"
+    ],
+    "usa:A12_T32_FL": [
+     "cee39180aaf3615c",
+     "0d5ed11ede14953d"
+    ],
+    "usa:A12_T32_M": [
+     "10d510123e89540a",
+     "916fc5804c60d90e"
+    ],
+    "usa:A130_Super_Hellcat": [
+     "f3ed3e6fc292e7ac",
+     "877ce78702c4ba63"
+    ],
+    "usa:A132_T77": [
+     "9b5bb82670fcaf7e",
+     "6f74d6ebed299fc9"
+    ],
+    "usa:A134_M24E2_SuperChaffee": [
+     "0efa379749157184",
+     "520f5ef700e78392"
+    ],
+    "usa:A136_T42": [
+     "17ba89ff845f8616",
+     "f08eb4299cd2d5ba"
+    ],
+    "usa:A139_M_III_Y": [
+     "cdb8494a1ad567b4",
+     "d98f71e7856cd4f9"
+    ],
+    "usa:A13_T34_hvy": [
+     "138890629dc77b2f",
+     "11e8e9c923ce1823"
+    ],
+    "usa:A13_T34_hvy_BF": [
+     "45d4acc3943ab49d",
+     "605f43e47918ab1a"
+    ],
+    "usa:A13_T34_hvy_FL": [
+     "65a981725704b111",
+     "380f2c10a85d706c"
+    ],
+    "usa:A13_T34_hvy_IGR": [
+     "20c3e26210c9d9b0",
+     "de5141fa0fa7c1c3"
+    ],
+    "usa:A140_ASTRON_REX_105mm": [
+     "6c2728fe8effc10a",
+     "7df54d8e55ad261e"
+    ],
+    "usa:A140_ASTRON_REX_105mm_SPD": [
+     "124e615a47706e9e",
+     "6f916d9a6f256789"
+    ],
+    "usa:A141_M_IV_Y": [
+     "837070406113cee3",
+     "81fa63717b6cd015"
+    ],
+    "usa:A142_Pawlack_Tank": [
+     "6a63fd08202cdce8",
+     "969abf3945623a58"
+    ],
+    "usa:A143_M_V_Y": [
+     "c04066f3e158eb82",
+     "f637d7f2cf5e0584"
+    ],
+    "usa:A144_M_VI_Y": [
+     "deb19154884201f2",
+     "1a82f0d159d68522"
+    ],
+    "usa:A144_M_VI_Y_CFE_R": [
+     "f728b64b8428f693",
+     "a479a353757ea384"
+    ],
+    "usa:A144_M_VI_Y_CFE_RC": [
+     "291171914ef8d20a",
+     "d7fce7a1e0fae228"
+    ],
+    "usa:A145_TS_54": [
+     "44f029463cdbcce9",
+     "5516a71a9dd736bd"
+    ],
+    "usa:A146_TL_7_120": [
+     "7026b451cbd8c0f7",
+     "7c851ca0f3a269c3"
+    ],
+    "usa:A147_M_II_Y": [
+     "498477120301c87e",
+     "f94f61808b7d1101"
+    ],
+    "usa:A148_Convertible_Medium_Tank_T3": [
+     "c1cfd7f125d11592",
+     "ba610391c9e7040a"
+    ],
+    "usa:A149_AMBT": [
+     "564303e1e999b904",
+     "78617798d0e9925b"
+    ],
+    "usa:A14_T30": [
+     "e3b2d4d2da6e8d4f",
+     "ee171255970b749f"
+    ],
+    "usa:A14_T30_FL": [
+     "42105308d50da935",
+     "0123e05df664e6e3"
+    ],
+    "usa:A150_MBT_B": [
+     "fab0d1811e5b5e69",
+     "fde2726236f10f00"
+    ],
+    "usa:A151_TS_60": [
+     "97de5415c0d52fe8",
+     "e95a330cc6bffbbb"
+    ],
+    "usa:A152_M_Project": [
+     "d3ffc3e6ed40ff8b",
+     "d95607b7b9f1cce3"
+    ],
+    "usa:A152_M_Project_2": [
+     "f84f9c4a4d96f4eb",
+     "1a32488c7241cf2e"
+    ],
+    "usa:A153_XM66F": [
+     "dab613b677d9f348",
+     "e6bbfd37df2d8ee0"
+    ],
+    "usa:A154_Convertible_Medium_Tank_T3E2": [
+     "47c3bb378f40ab92",
+     "29b24eb55adc60b3"
+    ],
+    "usa:A155_AAT60": [
+     "fd4b166201bb3679",
+     "c9ce0e6f1326c3f0"
+    ],
+    "usa:A156_T54_2022": [
+     "f3f4989c7e551f75",
+     "e2d85d024c323c15"
+    ],
+    "usa:A158_T832": [
+     "65a6e42617970392",
+     "e95a2e577e0599e5"
+    ],
+    "usa:A159_Chrysler_MTC_2": [
+     "75635a02ba3eb133",
+     "705f47b265a3b63f"
+    ],
+    "usa:A15_T57": [
+     "dd6fbccf29431fe8",
+     "b26bd77e3d8d2561"
+    ],
+    "usa:A160_M24_594": [
+     "ba0656cbac68eedf",
+     "6528f610f28dc8c4"
+    ],
+    "usa:A161_ARMT": [
+     "3ca4c1a9c1e4315c",
+     "95bd573fd319d3dd"
+    ],
+    "usa:A166_H_3": [
+     "bde2d4b546cc4697",
+     "23d58db5647c4568"
+    ],
+    "usa:A167_TS_6": [
+     "0e4d3b94e4fee1ca",
+     "385dd4ca765d3c2b"
+    ],
+    "usa:A168_XM_57": [
+     "dcfd81fb392521e4",
+     "352d34362efac3fa"
+    ],
+    "usa:A168_XM_57_CFE_I": [
+     "a5f99aa59045890f",
+     "89986b2feafe7310"
+    ],
+    "usa:A169_PattonIII_120": [
+     "de3ee380813c9eff",
+     "36e0f7f6d9067d66"
+    ],
+    "usa:A16_M7_Priest": [
+     "fb2d02c271d6b62f",
+     "99ba9a7fe7991cc4"
+    ],
+    "usa:A170_M_VII_Y": [
+     "d5048f95b5458e71",
+     "76171272698b721b"
+    ],
+    "usa:A171_IMT": [
+     "93da369ca8950dcc",
+     "0a94f541a298cc6d"
+    ],
+    "usa:A172_M4A3E8_Sherman_BPXIV": [
+     "efc2b6770b3acf0d",
+     "e7506d3a7bc60739"
+    ],
+    "usa:A173_Sherman_Crab": [
+     "8a64c7bfc79c50a1",
+     "5c35693c2483d097"
+    ],
+    "usa:A174_T57_58_Rush_Ep1": [
+     "edb59aea631eee8b",
+     "b4cf9409b1fb112f"
+    ],
+    "usa:A175_LTC_II": [
+     "cf0817f0adf5cf1a",
+     "059697f74dd40d11"
+    ],
+    "usa:A176_M103_110": [
+     "4116513108cf5477",
+     "bf5d8e194394e3f8"
+    ],
+    "usa:A176_M103_110_CFE_R": [
+     "37c6bc21665c4f21",
+     "2818331cb33b1a0e"
+    ],
+    "usa:A178_SPHT": [
+     "abc077453139c45d",
+     "23438c67c49187c5"
+    ],
+    "usa:A179_Black_Rock": [
+     "54a8a605387d39d6",
+     "1d378bfa4a2e4f69"
+    ],
+    "usa:A17_M37": [
+     "7f3b307d4074ba03",
+     "b0e1a59e20ef3573"
+    ],
+    "usa:A182_T803": [
+     "c591de1e540d87bf",
+     "059576978da5b89d"
+    ],
+    "usa:A183_XM69_Hacker": [
+     "98603b0033c7aa23",
+     "55ca0f6c803b58e8"
+    ],
+    "usa:A186_XM94_Shadow": [
+     "e57f50604bf3ab55",
+     "fc2b61f0b57f3043"
+    ],
+    "usa:A187_Ares_75": [
+     "dc229c6c1dfce185",
+     "429b8195e98e6b42"
+    ],
+    "usa:A188_Ares_MTB": [
+     "e26ac6ff5123090b",
+     "ed162d4668b5e0ec"
+    ],
+    "usa:A189_Ares_90": [
+     "0d1278c08330e6ea",
+     "295231a4946138b7"
+    ],
+    "usa:A18_M41": [
+     "42ccd842ab97a257",
+     "dc419daa69043565"
+    ],
+    "usa:A190_Ares_85": [
+     "b93c5a3a5c5200a6",
+     "41b0038b00a462f3"
+    ],
+    "usa:A191_Ares_90_C": [
+     "d087b975c38fae52",
+     "02d74ba3dc3706d2"
+    ],
+    "usa:A192_M4A4_Firefly_CFE_A": [
+     "5ef0c9286e4568e9",
+     "c5939a60b9ec1a0a"
+    ],
+    "usa:A194_AHT_7": [
+     "c870f65e022f0e94",
+     "c075c16d7b3d771c"
+    ],
+    "usa:A195_Gorilla": [
+     "3274d2b12eb4bd8a",
+     "1b76488cf85c821f"
+    ],
+    "usa:A197_Jezevec": [
+     "e09a880755859501",
+     "77abee68450537c3"
+    ],
+    "usa:A19_T2_lt": [
+     "68ef46a5aaaa908f",
+     "210493d6f4f5813e"
+    ],
+    "usa:A21_T14": [
+     "53ec83a585ef2d36",
+     "f7f0c7a62fcb399e"
+    ],
+    "usa:A21_T14_MapsTraining_Player_HT_1": [
+     "03ff899ea8e2a634",
+     "9b1a8ae2a3be101b"
+    ],
+    "usa:A22_M5_Stuart": [
+     "b885df7cef5eed72",
+     "cf36116de1db607c"
+    ],
+    "usa:A23_M7_med": [
+     "9aa333e59a0b4ea9",
+     "51a9b3e9c3adc153"
+    ],
+    "usa:A24_T2_med": [
+     "6c8b3a918c1f60d0",
+     "263d6485d8699628"
+    ],
+    "usa:A25_M2_med": [
+     "233c4efccd53ebcc",
+     "771ffc7f47f7ee52"
+    ],
+    "usa:A26_T18": [
+     "89cb9e04d2c6c24d",
+     "73cf05535dcf512d"
+    ],
+    "usa:A27_T82": [
+     "ed7b10aa26d0c147",
+     "f1abd84f593cc1b5"
+    ],
+    "usa:A29_T40": [
+     "52e518342062cbe5",
+     "d48e7ef81bbc4168"
+    ],
+    "usa:A30_M10_Wolverine": [
+     "307fd62092bfd44f",
+     "168f3311a80227c9"
+    ],
+    "usa:A31_M36_Slagger": [
+     "9a4c0353592883a4",
+     "19a51cd640cc0e9c"
+    ],
+    "usa:A32_M12": [
+     "4597df3b3f9dc08f",
+     "84a8e4b5852fce17"
+    ],
+    "usa:A33_MTLS-1G14": [
+     "8e60a2e9b53e0d81",
+     "593d6af834fed705"
+    ],
+    "usa:A34_M24_Chaffee": [
+     "108fcf88b20e0fbc",
+     "ccb0a73b6117de39"
+    ],
+    "usa:A34_M24_Chaffee_CFE_V": [
+     "233e770b5fd17bf2",
+     "a25aec761c7882a5"
+    ],
+    "usa:A35_Pershing": [
+     "f9f6ac2381e64ea0",
+     "ccd63e12bf01d039"
+    ],
+    "usa:A35_Pershing_IGR": [
+     "a5943dacfdbc7468",
+     "793e6fe340a4cbe5"
+    ],
+    "usa:A36_Sherman_Jumbo": [
+     "ccb5564b911d1d4d",
+     "bf195f010d01972e"
+    ],
+    "usa:A36_Sherman_Jumbo_IGR": [
+     "5093379db48e119f",
+     "ce331ab3c4cec1cd"
+    ],
+    "usa:A37_M40M43": [
+     "0b64f3584f0a5443",
+     "7caebb870d833bcb"
+    ],
+    "usa:A38_T92": [
+     "b75c3bdc74087dbc",
+     "2564fd07d11d1db7"
+    ],
+    "usa:A39_T28": [
+     "f5f7d3f500f7192b",
+     "7b2fd08fd4d644f8"
+    ],
+    "usa:A40_T95": [
+     "f84e97e7c942dc6a",
+     "7fc2b579bfe0d2cb"
+    ],
+    "usa:A41_M18_Hellcat": [
+     "7dc3fd3e4800d676",
+     "7c1622a11d935101"
+    ],
+    "usa:A43_M22_Locust": [
+     "ae34021be7dc0385",
+     "e88aed0d39b32c1f"
+    ],
+    "usa:A44_M4A2E4": [
+     "1999688f89e41b55",
+     "23eccce9f63cf36d"
+    ],
+    "usa:A45_M6A2E1": [
+     "59f813ade34b5220",
+     "b7e94f69829f11cd"
+    ],
+    "usa:A46_T3": [
+     "b98b605bde8c4868",
+     "2236e3d0826f2357"
+    ],
+    "usa:A57_M8A1": [
+     "9500ae8936bbdd99",
+     "036550c0f32fda8c"
+    ],
+    "usa:A58_T67": [
+     "60c35d075de46d2f",
+     "ca1f3cbcca2083e7"
+    ],
+    "usa:A58_T67_IGR": [
+     "b9892157b2b530f1",
+     "8698b2665aa97a0b"
+    ],
+    "usa:A62_Ram-II": [
+     "cc3d53085418967c",
+     "d1a3c7c027e5fdcd"
+    ],
+    "usa:A63_M46_Patton": [
+     "7c2bc00f200a9160",
+     "9b464a776f76071b"
+    ],
+    "usa:A63_M46_Patton_FL": [
+     "116597cc82b682d6",
+     "6abee0b7507a8fec"
+    ],
+    "usa:A63_M46_Patton_KR": [
+     "2bea18427e73da9c",
+     "6be9c95edd68b42d"
+    ],
+    "usa:A64_T25_AT": [
+     "9aac6d078894ec77",
+     "d57175797521da35"
+    ],
+    "usa:A66_M103": [
+     "b830bdd6ef0297f3",
+     "2744f6072e994ec7"
+    ],
+    "usa:A67_T57_58": [
+     "8ce7be9e4c485e19",
+     "ce2240c00e79697d"
+    ],
+    "usa:A67_T57_58_7x7": [
+     "0dd9feeb86ba1fad",
+     "87dcadb44f4dfd7f"
+    ],
+    "usa:A68_T28_Prototype": [
+     "8586869cbcc4c44f",
+     "e167e72b779a5ef4"
+    ],
+    "usa:A69_T110E5": [
+     "a7d836076bfeba6d",
+     "4e1eac7710892f20"
+    ],
+    "usa:A69_T110E5_7x7": [
+     "4e44c862ad0badd1",
+     "e5d1c80c9093f123"
+    ],
+    "usa:A69_T110E5_cl": [
+     "8397b55e8bfd0619",
+     "9b6136980211551f"
+    ],
+    "usa:A71_T21": [
+     "80c0eb510f78c2f9",
+     "c8c531a87a09557e"
+    ],
+    "usa:A71_T21_MapsTraining_Dummy_LT_2": [
+     "8dc36b49a1a58e8e",
+     "1a10b330c762594d"
+    ],
+    "usa:A72_T25_2": [
+     "5b79d32bb0c83590",
+     "2156bae3bf1ba33a"
+    ],
+    "usa:A72_T25_2_SH": [
+     "eaed20ea040b6f67",
+     "4f9db187c2a45e9c"
+    ],
+    "usa:A74_T1_E6": [
+     "bc91af99797608db",
+     "77e44b3d8716030c"
+    ],
+    "usa:A76_M3_A3": [
+     "439929d3c8e42145",
+     "91d9b97271ae797d"
+    ],
+    "usa:A78_M4_Improved": [
+     "547e5253577d081f",
+     "476b4c2d5c0a9ead"
+    ],
+    "usa:A80_T26_E4_SuperPershing": [
+     "69f7a285d3626727",
+     "d5c864c4810c5f85"
+    ],
+    "usa:A80_T26_E4_SuperPershing_FL": [
+     "5facfce7d67d976a",
+     "841675018976e905"
+    ],
+    "usa:A81_T95_E2": [
+     "bd028b7df6698c65",
+     "f5df702a831b2182"
+    ],
+    "usa:A83_T110E4": [
+     "a82aca8d07a031bd",
+     "eacaa4d14f56a42f"
+    ],
+    "usa:A83_T110E4_7x7": [
+     "88225b135060a317",
+     "7bd26e2dd9f21a23"
+    ],
+    "usa:A85_T110E3": [
+     "03b00fd42a536ee5",
+     "e7cf5626be926bf7"
+    ],
+    "usa:A85_T110E3_7x7": [
+     "cc47a3dae5231eca",
+     "da1914d4fe3b5699"
+    ],
+    "usa:A86_T23E3": [
+     "c6a229fe78ccf681",
+     "f71cfe3c744300f6"
+    ],
+    "usa:A87_M44": [
+     "d56e7ca2279d13fe",
+     "1bdf8167e72428b2"
+    ],
+    "usa:A88_M53_55": [
+     "de248afe4bf999b6",
+     "8d201d08a3ff5320"
+    ],
+    "usa:A89_T54E1": [
+     "b315a902fbd5196c",
+     "54052e59888eab2a"
+    ],
+    "usa:A90_T69": [
+     "6f3508a53f7d09e1",
+     "79c3c542de7daef9"
+    ],
+    "usa:A90_T69_IGR": [
+     "1601e58dfa75c005",
+     "d4aa4a72eaf1e969"
+    ],
+    "usa:A92_M60": [
+     "131867183ff1ad17",
+     "decabc33cb2825fc"
+    ],
+    "usa:A93_T7_Combat_Car": [
+     "52f44fb6b28ab4fc",
+     "55919b5b8cf1fa10"
+    ],
+    "usa:A94_T37": [
+     "f2ed587c59ddd2d0",
+     "19ce96861af53b4e"
+    ],
+    "usa:A95_T95_E6": [
+     "5ff5fcde12f09277",
+     "63a94e2a4f021735"
+    ],
+    "usa:A97_M41_Bulldog": [
+     "96f8f1de6da4f23b",
+     "72f0ff77f62ef11e"
+    ],
+    "usa:A97_M41_Bulldog_FL": [
+     "4dced2882ebab2fd",
+     "e464fd5ad033d157"
+    ],
+    "usa:A99_T92_LT": [
+     "c8154373edaa6950",
+     "e247eda546f5b1d3"
+    ],
+    "ussr:Observer": [
+     "80151ba4ce82b038",
+     "00623e9069fe5527"
+    ],
+    "ussr:R01_IS": [
+     "f9a4ab31e10e41d0",
+     "4f5b1c76a892743d"
+    ],
+    "ussr:R02_SU-85": [
+     "e2e1ad934b2e5492",
+     "4d7e18360ac8d40c"
+    ],
+    "ussr:R03_BT-7": [
+     "102829dfad3ade9c",
+     "a943ac0344db6efc"
+    ],
+    "ussr:R04_T-34": [
+     "2d836d3659aa094d",
+     "b6baced587a884a4"
+    ],
+    "ussr:R04_T-34_MapsTraining_Player_MT_1": [
+     "f335c59749da74d1",
+     "6c333bd3aae525c4"
+    ],
+    "ussr:R05_KV": [
+     "4004472ba37fdeb1",
+     "cffde28d0685376c"
+    ],
+    "ussr:R06_T-28": [
+     "6d9de4e216380b3c",
+     "0da5428c78e3ebfd"
+    ],
+    "ussr:R07_T-34-85": [
+     "7b234da87bdf3954",
+     "11f62a7bc552ab75"
+    ],
+    "ussr:R08_BT-2": [
+     "5c5574685d939cd9",
+     "e52d4014f8f1560e"
+    ],
+    "ussr:R09_T-26": [
+     "61b88a4cbd476bf9",
+     "0c87a94c415bd6a7"
+    ],
+    "ussr:R1004_T-34_StoryMode": [
+     "758a1e26bd0c3bdf",
+     "56752aedf398dc73"
+    ],
+    "ussr:R100_SU122A": [
+     "7b9ed373b2fbb826",
+     "e7359469ddbaeca1"
+    ],
+    "ussr:R101_MT25": [
+     "286aa05603703c9a",
+     "9c6401c038b2de2e"
+    ],
+    "ussr:R104_Object_430_II": [
+     "d47987ce87396440",
+     "918b44177bbf71bf"
+    ],
+    "ussr:R105_BT_7A": [
+     "e0e38d045ad343c3",
+     "41d058b8fa6fed40"
+    ],
+    "ussr:R106_KV85": [
+     "b6ae36a1fab38a87",
+     "228a355c41a4fc96"
+    ],
+    "ussr:R106_KV85_IGR": [
+     "2a74dffeb7433d2b",
+     "eabe31307b602d83"
+    ],
+    "ussr:R107_LTB": [
+     "a141b51b53807ac1",
+     "ea42c3799b23e221"
+    ],
+    "ussr:R108_T34_85M": [
+     "4b7ebef8615031a9",
+     "5b6b52d3b57a294b"
+    ],
+    "ussr:R109_T54S": [
+     "4591a51e01d2d490",
+     "818e2c28a3f6f5c6"
+    ],
+    "ussr:R10_AT-1": [
+     "7656eddd4d8c4c8e",
+     "36de6d5b3a7aa275"
+    ],
+    "ussr:R110_Object_260": [
+     "66a7f5cf344e6cdd",
+     "5cb088a7f7270bff"
+    ],
+    "ussr:R111_ISU130": [
+     "2469e38e987e0f94",
+     "4e9d89db5f42029f"
+    ],
+    "ussr:R112_T54_45": [
+     "a51e9925f6dd8260",
+     "6d626817fe868f37"
+    ],
+    "ussr:R112_T54_45_FL": [
+     "3968a414cc0dd8c9",
+     "5013323734a57588"
+    ],
+    "ussr:R113_Object_730": [
+     "064c8053755ad271",
+     "e0147bcb48f14313"
+    ],
+    "ussr:R114_Object_244": [
+     "e91ded25e1bf275b",
+     "95519e62245845ea"
+    ],
+    "ussr:R115_IS-3_auto": [
+     "2f48f754cd03fe01",
+     "75d9dfd872425025"
+    ],
+    "ussr:R115_IS-3_auto_S": [
+     "487ed0ad9480239e",
+     "2633aa60e2310166"
+    ],
+    "ussr:R115_IS-3_auto_test": [
+     "10a5cee55397807e",
+     "d49ba3aca097ef54"
+    ],
+    "ussr:R116_ISU122C_Berlin": [
+     "c46a68add84e2c82",
+     "0a81f1ecd090696e"
+    ],
+    "ussr:R117_T34_85_Rudy": [
+     "dfd1d612e90e8ee8",
+     "8c1b120b05840f77"
+    ],
+    "ussr:R118_T28_F30": [
+     "dfcdebc28ad8aa8b",
+     "cc91cb4da7b94c3c"
+    ],
+    "ussr:R119_Object_777": [
+     "e0a8ee4e21d9991a",
+     "6c355290524551ae"
+    ],
+    "ussr:R119_Object_777C": [
+     "72242ccc61dd7e9d",
+     "3350cc28ab01b43e"
+    ],
+    "ussr:R11_MS-1": [
+     "27137a1e4a412c74",
+     "7bbfe0dfa1b3a585"
+    ],
+    "ussr:R120_T22SR_A22": [
+     "201095f48a737a2c",
+     "1b10331e8f815796"
+    ],
+    "ussr:R121_KV4_KTT": [
+     "db72ad7593a16487",
+     "54b9e6b801b604bf"
+    ],
+    "ussr:R122_T44_100": [
+     "2fc3e14a7f05e55a",
+     "62818a08597cc92f"
+    ],
+    "ussr:R122_T44_100B": [
+     "f293d24cd66dcb62",
+     "31450b70e894b9dc"
+    ],
+    "ussr:R123_Kirovets_1": [
+     "584384a317e4c314",
+     "cbf130fc0e770e02"
+    ],
+    "ussr:R125_T_45": [
+     "9b02a0ccd1ccb147",
+     "331c552345c71f50"
+    ],
+    "ussr:R126_Object_730_5": [
+     "97a47bb9bcd51ab4",
+     "d8b4e5aea7abfe0e"
+    ],
+    "ussr:R127_T44_100_I": [
+     "19f4bff7647f1b2d",
+     "63ce5ac8d0404478"
+    ],
+    "ussr:R127_T44_100_K": [
+     "b90af4b4fc90e230",
+     "d7b0b2066639dbdc"
+    ],
+    "ussr:R127_T44_100_M": [
+     "bdfbd3de3a990c1c",
+     "36cbfb8225628875"
+    ],
+    "ussr:R127_T44_100_P": [
+     "01d54aa364a3df76",
+     "083465b73537f9f0"
+    ],
+    "ussr:R127_T44_100_U": [
+     "fe972fb0cdeb65fe",
+     "1503ea6f16853c88"
+    ],
+    "ussr:R128_KV4_Kreslavskiy": [
+     "8dd7faaa4815751b",
+     "eb5c4ddee4c31bfd"
+    ],
+    "ussr:R129_Object_257": [
+     "e8431f614f4d78f9",
+     "cdfb40bae1df8f26"
+    ],
+    "ussr:R12_A-20": [
+     "0206dc58747c0981",
+     "c3a3a4ac6428f345"
+    ],
+    "ussr:R131_Tank_Gavalov": [
+     "984b034edfd84bfd",
+     "0373ac4d8e693265"
+    ],
+    "ussr:R132_VNII_100LT": [
+     "3517218daee57e4b",
+     "d03aeb50f32ecea2"
+    ],
+    "ussr:R133_KV_122": [
+     "82d97bcedec3c003",
+     "ed0a458c5396c17c"
+    ],
+    "ussr:R134_Object_252K": [
+     "065dc6c65f65e8d4",
+     "c29cc28c39db1c7f"
+    ],
+    "ussr:R134_Object_252U": [
+     "6b7f92a162aecaf1",
+     "10817de4dba8bbe9"
+    ],
+    "ussr:R135_T_103": [
+     "55e4cade70de5e02",
+     "3f5d807f47e7541c"
+    ],
+    "ussr:R139_IS_M": [
+     "f2c72f381f8de5a9",
+     "fcc6ff61ee279c17"
+    ],
+    "ussr:R13_KV-1s": [
+     "e2ce0ac4160e539a",
+     "e90801fc644aa756"
+    ],
+    "ussr:R140_M4_Loza": [
+     "0ed4b4818c82ef20",
+     "477c1dd935d9755d"
+    ],
+    "ussr:R143_T_29": [
+     "1f652658d96c56fe",
+     "934a2103e1915484"
+    ],
+    "ussr:R144_K_91": [
+     "9cdc6d9e7a7ba91c",
+     "3dd2ba319d6457ac"
+    ],
+    "ussr:R144_K_91_7x7": [
+     "d57dfe2db78d3726",
+     "b5c0fc9ddda8fb4b"
+    ],
+    "ussr:R145_Object_705_A": [
+     "f6257fcf97d81a7c",
+     "0818dd698711a2ad"
+    ],
+    "ussr:R145_Object_705_A_7x7": [
+     "fc27bb1092b83410",
+     "cbe15c19de19dd9d"
+    ],
+    "ussr:R146_STG": [
+     "a5222f0b7f512a53",
+     "de5337aa545d8ec4"
+    ],
+    "ussr:R146_STG_Tday": [
+     "d35d894fc3fd7921",
+     "24d13c754a2b1fac"
+    ],
+    "ussr:R147_Object_701": [
+     "f73d6fb98bed0bf3",
+     "20df0d3edd9df310"
+    ],
+    "ussr:R148_Object_430_U": [
+     "fce65650105bcd93",
+     "a4441c1d04c8e0eb"
+    ],
+    "ussr:R148_Object_430_U_7x7": [
+     "be9552c25fde7f9c",
+     "d309b3a70206bdf4"
+    ],
+    "ussr:R149_Object_268_4": [
+     "17be3cf857b0e8c8",
+     "1ceab97f46592c67"
+    ],
+    "ussr:R149_Object_268_4_7x7": [
+     "eb1d48ada0b0d4d8",
+     "0ba8248c93cdb452"
+    ],
+    "ussr:R14_SU-5": [
+     "12ea6ddf8b9a351e",
+     "17edfac36a3a127d"
+    ],
+    "ussr:R14_SU-5_MapsTraining_Dummy_SPG_1": [
+     "a8fbfc11edd739d6",
+     "407c54631de82220"
+    ],
+    "ussr:R151_Object_257_2": [
+     "1c46c0efc42427f3",
+     "20d1e5dd8df65d85"
+    ],
+    "ussr:R152_KV2_W": [
+     "db6092e91e74443f",
+     "bf7bd7321a6cddad"
+    ],
+    "ussr:R153_Object_705": [
+     "65315c04d7b43fbd",
+     "3380d871cb168002"
+    ],
+    "ussr:R154_T_34E_1943": [
+     "763d75d20144460f",
+     "1d002537aabc6b61"
+    ],
+    "ussr:R155_Object_277": [
+     "e6558ac559f65ff9",
+     "e79fc5f3f9cf935b"
+    ],
+    "ussr:R155_Object_277_7x7": [
+     "cb58800ea784ff74",
+     "52e32eb7b4a93666"
+    ],
+    "ussr:R156_IS_2M": [
+     "b1c294f35781ef39",
+     "568ac39b5e84d0ef"
+    ],
+    "ussr:R157_Object_279R": [
+     "f2650d2dc84619aa",
+     "844aaae1fb44766f"
+    ],
+    "ussr:R158_LT_432": [
+     "8cac33712508dc5a",
+     "790a2fb98aabce28"
+    ],
+    "ussr:R159_SU_130PM": [
+     "42dd4eaca0440e64",
+     "17778399f23447fa"
+    ],
+    "ussr:R159_SU_130PM_DR": [
+     "ebc17d77703da56e",
+     "5373e1aee8ac6ed8"
+    ],
+    "ussr:R15_S-51": [
+     "59e005d3b8f4bec7",
+     "e95a494438ee2634"
+    ],
+    "ussr:R160_T_50_2": [
+     "ea5436f5417a4885",
+     "c113ecbc10b551e0"
+    ],
+    "ussr:R161_T_116": [
+     "b26ccb6c80aa5f56",
+     "92bb2e6b63052522"
+    ],
+    "ussr:R165_Object_703_II": [
+     "928ec7d19ec34990",
+     "16e4489eb4309c37"
+    ],
+    "ussr:R165_Object_703_II_2": [
+     "308b9fda3571c0b3",
+     "048d5b04235df176"
+    ],
+    "ussr:R169_ST_II": [
+     "be1cac1437f63593",
+     "365e1ccccb3e90dd"
+    ],
+    "ussr:R16_SU-18": [
+     "ddcd10fd1f021448",
+     "639b858f2a0319fa"
+    ],
+    "ussr:R170_IS_2_II": [
+     "23b5854c69d148bd",
+     "f6136a64324f215f"
+    ],
+    "ussr:R171_IS_3_II": [
+     "ac0f76a4231432f2",
+     "4b5343d5f61175d6"
+    ],
+    "ussr:R172_Object_752": [
+     "307fcef51d61940a",
+     "cf09001b39bcd140"
+    ],
+    "ussr:R172_Object_752_CFE_T": [
+     "0fe7a1d2435bba15",
+     "5705d982e18ffce8"
+    ],
+    "ussr:R173_K_91_2": [
+     "5b4ffef1a4ccf349",
+     "232c91e7cf57dfd9"
+    ],
+    "ussr:R174_BT-5": [
+     "34c35efd44f52807",
+     "36e85c151e40c2e5"
+    ],
+    "ussr:R175_IS_2_screen": [
+     "3f1532549c4392f4",
+     "f059988fa45a1891"
+    ],
+    "ussr:R177_ISU_152K_BL10": [
+     "e4b49357e6fbb2ea",
+     "0c9d3a03260b5877"
+    ],
+    "ussr:R178_Object_780": [
+     "10093e8b0ae613a4",
+     "c81962382bf4c1ef"
+    ],
+    "ussr:R17_SU-100": [
+     "c2caab669a790e65",
+     "a9ae348da6ede043"
+    ],
+    "ussr:R180_Object_274_A": [
+     "7ef652c628f413e8",
+     "34c81813ebd12643"
+    ],
+    "ussr:R182_ST_66": [
+     "b2507b41ec643383",
+     "c86ed7d501150125"
+    ],
+    "ussr:R183_K_91_PT": [
+     "80dad363283ebecc",
+     "698a3a1d307e84ff"
+    ],
+    "ussr:R185_T_34_L_11_1941": [
+     "553f75a8554861fc",
+     "b9ea66ce7b41e1a7"
+    ],
+    "ussr:R186_KV_1_Screened": [
+     "4818c9e762140fa5",
+     "d8e9f20453eda4c6"
+    ],
+    "ussr:R187_Object_590": [
+     "9fb03d9277e98575",
+     "882a76ec808f4681"
+    ],
+    "ussr:R188_Object_259A": [
+     "1129ad7f0179a9df",
+     "47af6aab878f6afa"
+    ],
+    "ussr:R188_Object_259A_CN": [
+     "db7fefc8b133de45",
+     "7ce231382cc27fdd"
+    ],
+    "ussr:R18_SU-152": [
+     "ac649ceefb926a3a",
+     "9909f8d5212f4b4b"
+    ],
+    "ussr:R18_SU-152_IGR": [
+     "aa36263cc92e03ef",
+     "9ec310fb649924fb"
+    ],
+    "ussr:R191_Object_283": [
+     "37855852ff0c9101",
+     "f97bb5d384a4f6a9"
+    ],
+    "ussr:R192_K_2": [
+     "6ebf2e525d486910",
+     "8d561604a211c991"
+    ],
+    "ussr:R193_M4A2_T_34": [
+     "af7385c4635a7d9e",
+     "c369bc28482e2bd4"
+    ],
+    "ussr:R194_ST_62_var_2": [
+     "d9c57b00dabefc1b",
+     "2b92a2115cb9fd51"
+    ],
+    "ussr:R195_T34M_54": [
+     "91a29c4a54ed3683",
+     "2224dabc93819d90"
+    ],
+    "ussr:R196_Object_452K": [
+     "72c7248db131a201",
+     "f77b3b0ad2b8c777"
+    ],
+    "ussr:R197_KV_1S_MZ": [
+     "9fe4efe0912e22f6",
+     "8f42a21a86c5ea24"
+    ],
+    "ussr:R198_LTS_85": [
+     "0ca4f9cc93bf09fa",
+     "eb495a18635388c6"
+    ],
+    "ussr:R199_SU_122V": [
+     "7f63b0a07a010644",
+     "49e2082d74da396f"
+    ],
+    "ussr:R19_IS-3": [
+     "56912a075769a227",
+     "5565440232d6f4eb"
+    ],
+    "ussr:R19_IS-3_IGR": [
+     "28d5eb925269e59c",
+     "0617f95232282724"
+    ],
+    "ussr:R200_KV_4_Turchaninov": [
+     "c5e816457f8617b6",
+     "49f5355d9ec70e2b"
+    ],
+    "ussr:R201_IT_3": [
+     "ded5aa38462f9718",
+     "eab06d226ec2d971"
+    ],
+    "ussr:R202_SU_2_122": [
+     "ccd1eb4dad65910e",
+     "ccc5ad1299933b70"
+    ],
+    "ussr:R203_Object_168N": [
+     "cbb2076b5262f603",
+     "403c1c669c581333"
+    ],
+    "ussr:R204_ISU_122_2": [
+     "61787a25e03fd314",
+     "854332db135600ae"
+    ],
+    "ussr:R205_Tank_Rozanova": [
+     "f465f5995112c708",
+     "b5f97751c90f204a"
+    ],
+    "ussr:R205_Tank_Rozanova_Obsidian": [
+     "ed3d5025b5dfcb9f",
+     "7fa7faf7bc66f38f"
+    ],
+    "ussr:R20_T-44": [
+     "6a17bd7e2560b0b1",
+     "9374da936c2af93d"
+    ],
+    "ussr:R20_T-44_FL": [
+     "6ec47999827d56d5",
+     "5692f6cec9456d68"
+    ],
+    "ussr:R20_T-44_IGR": [
+     "a61bdf28cdda2baa",
+     "64d929900346e001"
+    ],
+    "ussr:R217_Object_Kust": [
+     "929bbd7c072b6671",
+     "7106e0ec8d90ce67"
+    ],
+    "ussr:R218_T_115": [
+     "e379a370f02a0981",
+     "b6e689a7f1a7abb6"
+    ],
+    "ussr:R219_Object_265T": [
+     "168e76b9c1fab6d6",
+     "a5b0979bc583cba4"
+    ],
+    "ussr:R225_SU_100i": [
+     "036da2df82d0d590",
+     "a0bad57b05ea6a8a"
+    ],
+    "ussr:R228_KR_1": [
+     "e4b2d31f461d2145",
+     "3ff382b29d54ac29"
+    ],
+    "ussr:R22_T-46": [
+     "f948b6008b3bc4d3",
+     "6f7e2f30a7e70cfd"
+    ],
+    "ussr:R230_Object_432U": [
+     "0986fe962b1bcb99",
+     "a117930d1b7420a1"
+    ],
+    "ussr:R231_Buryan": [
+     "aa969d53dfc93938",
+     "1ecc79be6a4aab4e"
+    ],
+    "ussr:R233_NK_1": [
+     "99d4fe4fc1a7adee",
+     "9ce341f04f2c7021"
+    ],
+    "ussr:R234_T_13": [
+     "9ac5afa9ff805a06",
+     "49a5715fe9e7a89b"
+    ],
+    "ussr:R235_KB_52": [
+     "c6b7fbf2cfd9c358",
+     "028b14a59ebb70c3"
+    ],
+    "ussr:R236_Object_265_II": [
+     "3d84964a8e7ab713",
+     "7b827ba7a6872e7a"
+    ],
+    "ussr:R239_Object_Veles": [
+     "74e71cf1e71d34cb",
+     "008af1e113fd10b3"
+    ],
+    "ussr:R23_T-43": [
+     "b402d3428afb492d",
+     "169bc4d9c587b072"
+    ],
+    "ussr:R23_T-43_MapsTraining_Player_MT_2": [
+     "fa12d01e5ca49ac6",
+     "c35e0b529417cce1"
+    ],
+    "ussr:R24_SU-76": [
+     "2a2d0c8ccba3bf4d",
+     "a11eb883e2dc87a0"
+    ],
+    "ussr:R25_GAZ-74b": [
+     "c612bd7b8567677e",
+     "c644f11688b7da2a"
+    ],
+    "ussr:R26_SU-8": [
+     "47718cde2cba3fae",
+     "ffce2525735a4c23"
+    ],
+    "ussr:R27_SU-14": [
+     "106ad9e020f6815f",
+     "310cf27bb0b7182d"
+    ],
+    "ussr:R31_Valentine_LL": [
+     "71630d9292f6c6fe",
+     "5b590de4a8562b1a"
+    ],
+    "ussr:R31_Valentine_LL_IGR": [
+     "3b5a35566533db73",
+     "42970ef7549894a7"
+    ],
+    "ussr:R32_Matilda_II_LL": [
+     "daadbbc9ecec2557",
+     "4d3eb4a9df82318d"
+    ],
+    "ussr:R33_Churchill_LL": [
+     "996e7c9f3c7629d6",
+     "2f831df5894c727c"
+    ],
+    "ussr:R34_BT-SV": [
+     "6443ab2cba074456",
+     "059ea3867156888b"
+    ],
+    "ussr:R38_KV-220": [
+     "469394fce0e4e740",
+     "691c250ab8d9548f"
+    ],
+    "ussr:R38_KV-220_beta": [
+     "cf3ecf52b2e2e51e",
+     "6e41906e273640cb"
+    ],
+    "ussr:R39_KV-3": [
+     "b13070093ab396d3",
+     "79eb00bfa7884f8d"
+    ],
+    "ussr:R40_T-54": [
+     "d1577d4fa7a48130",
+     "366dfd477df759ef"
+    ],
+    "ussr:R40_T-54_FL": [
+     "ca744b27b1452d49",
+     "91db6d12f60c2e61"
+    ],
+    "ussr:R41_T-50": [
+     "401c43985773e304",
+     "2b1a72aae22f97e1"
+    ],
+    "ussr:R42_T-60": [
+     "11fe35b645f91992",
+     "395f25c2fce80afe"
+    ],
+    "ussr:R43_T-70": [
+     "6e7624fc3c255bf8",
+     "6c78474e553634bd"
+    ],
+    "ussr:R44_T80": [
+     "fe98f875a330fc5d",
+     "dc2d4ad2472f0156"
+    ],
+    "ussr:R44_T80_MapsTraining_Dummy_LT_1": [
+     "3f80c02bca7b440d",
+     "489d22fd365f376a"
+    ],
+    "ussr:R45_IS-7": [
+     "1bc39ed6d66390f1",
+     "fb6873802f23830d"
+    ],
+    "ussr:R45_IS-7_7x7": [
+     "c5c67facde336e7f",
+     "83e190a0d359454b"
+    ],
+    "ussr:R45_IS-7_IGR": [
+     "647994c7eb1b1f4a",
+     "4760fe593fd01520"
+    ],
+    "ussr:R45_IS-7_fallout": [
+     "6ff3e72df247cb37",
+     "523e8722de611d73"
+    ],
+    "ussr:R46_KV-13": [
+     "c7d5976da0e8ee68",
+     "5ea2f88f87c38c7b"
+    ],
+    "ussr:R46_KV-13_SH": [
+     "1440efb22c77d908",
+     "6d18de4e87c68d8a"
+    ],
+    "ussr:R47_ISU-152": [
+     "e532ddd9618431a3",
+     "9fcf45ddbf7cbe45"
+    ],
+    "ussr:R47_ISU-152_IGR": [
+     "5be5f54882b5426f",
+     "391206f95bf2112d"
+    ],
+    "ussr:R49_SU100Y": [
+     "b16bab2e7d916874",
+     "263120cf02ac2e52"
+    ],
+    "ussr:R50_SU76I": [
+     "27a92cd07e26f8d7",
+     "0706dfaaa043fd6b"
+    ],
+    "ussr:R51_Object_212": [
+     "d5ba791aa08497ea",
+     "95c159f750c3f9f4"
+    ],
+    "ussr:R52_Object_261": [
+     "f37867ff4d5f366e",
+     "a88b1c5a88c58e9c"
+    ],
+    "ussr:R53_Object_704": [
+     "039fbc270762117e",
+     "07a74fef1a13ecf2"
+    ],
+    "ussr:R54_KV-5": [
+     "68f554f20815327b",
+     "f10d3ddd9497a9ac"
+    ],
+    "ussr:R54_KV-5_IGR": [
+     "9553028c01b39820",
+     "10e882751a12fdda"
+    ],
+    "ussr:R56_T-127": [
+     "2d58910b86172bb8",
+     "d270bd7ea98ec2c5"
+    ],
+    "ussr:R57_A43": [
+     "47bf1a10e035d694",
+     "c2fd0bcad00c5fb4"
+    ],
+    "ussr:R58_SU-101": [
+     "961d14b9f2861076",
+     "20626b46813466a2"
+    ],
+    "ussr:R59_A44": [
+     "569082388242c4bb",
+     "30929a34cb9a5b29"
+    ],
+    "ussr:R60_Object416": [
+     "52b6d66f6a7b0d7c",
+     "a1bf83bff92889a2"
+    ],
+    "ussr:R61_Object252": [
+     "721676a87aaaba84",
+     "f0b4489f65eff69b"
+    ],
+    "ussr:R61_Object252_BF": [
+     "c3ba0e6165945087",
+     "b8abaf4abeeafde3"
+    ],
+    "ussr:R61_Object252_FL": [
+     "4e453445f4de478b",
+     "02aecbf8393f7aba"
+    ],
+    "ussr:R63_ST_I": [
+     "0539fbe1d83e6a23",
+     "d07537ebcd071b87"
+    ],
+    "ussr:R66_SU-26": [
+     "60c541687517abdd",
+     "71303425f551f8d6"
+    ],
+    "ussr:R67_M3_LL": [
+     "53ae5fb59ff65720",
+     "0cb07e6b776071a2"
+    ],
+    "ussr:R68_A-32": [
+     "90c23623a1ecf3a3",
+     "36c2008a830b3ec7"
+    ],
+    "ussr:R70_T_50_2": [
+     "9be30f06f99cbb64",
+     "5a802550246c0e67"
+    ],
+    "ussr:R71_IS_2B": [
+     "2138956ef6427c3f",
+     "c0140d9f35145603"
+    ],
+    "ussr:R72_T150": [
+     "3dba41ec83e84e50",
+     "0578cbe31085def2"
+    ],
+    "ussr:R72_T150_MapsTraining_Dummy_HT_2": [
+     "a856984c05a79a2f",
+     "c40ef02521bd39a5"
+    ],
+    "ussr:R73_KV4": [
+     "a64838fc4589267f",
+     "9892bec9e2ee1a82"
+    ],
+    "ussr:R74_SU100M1": [
+     "fd7d33971b4b76b3",
+     "dd2bcbc1e39e7280"
+    ],
+    "ussr:R75_SU122_54": [
+     "7792bc21513ab80c",
+     "36ac0de9fe187e51"
+    ],
+    "ussr:R77_KV2": [
+     "f1cc3c6d5dda7811",
+     "2aca768822f2af17"
+    ],
+    "ussr:R77_KV2_IGR": [
+     "b3f8c009f140597b",
+     "9138363f894eb3a4"
+    ],
+    "ussr:R78_SU_85I": [
+     "bd006282b771db54",
+     "6545d5ccced641d7"
+    ],
+    "ussr:R80_KV1": [
+     "9c395af2d57d5597",
+     "17bf7c3f0bd91a7b"
+    ],
+    "ussr:R81_IS8": [
+     "534a0d3e5aa46d07",
+     "c7242bfa1a6187b0"
+    ],
+    "ussr:R84_Tetrarch_LL": [
+     "4360b1a392af71c5",
+     "a1d25025aed54d3e"
+    ],
+    "ussr:R86_LTP": [
+     "99f6b6e6dc63a888",
+     "4ad6e72ee7a1241d"
+    ],
+    "ussr:R87_T62A": [
+     "ca3b2da62461a931",
+     "7aaeb7324549f3eb"
+    ],
+    "ussr:R87_T62A_fallout": [
+     "39415bfc371506d9",
+     "af0ffecc215038c3"
+    ],
+    "ussr:R88_Object268": [
+     "87ab7d918bf9d101",
+     "cae4e1b127142301"
+    ],
+    "ussr:R88_Object268_7x7": [
+     "792682f4a8587700",
+     "67a256b45b88d8d3"
+    ],
+    "ussr:R89_SU122_44": [
+     "2fba6a0789faa8c7",
+     "948f57fafc58dedb"
+    ],
+    "ussr:R90_IS_4M": [
+     "eba208bab7e2a968",
+     "a013c6eb0b37e965"
+    ],
+    "ussr:R90_IS_4M_7x7": [
+     "be054c3b9e49e7ed",
+     "143654ee13f61a28"
+    ],
+    "ussr:R91_SU14_1": [
+     "50c45c30561fd227",
+     "caadda3c0edbf3af"
+    ],
+    "ussr:R93_Object263": [
+     "7c2b880fa778d702",
+     "e3cad3457b88781b"
+    ],
+    "ussr:R93_Object263B": [
+     "ac08048c5c015eed",
+     "74bd40b13f2f662a"
+    ],
+    "ussr:R95_Object_907": [
+     "14da6e61a01510ae",
+     "4dd8bc7397bd9250"
+    ],
+    "ussr:R95_Object_907A": [
+     "06616b2787efc6ca",
+     "2e40c33489ced4b5"
+    ],
+    "ussr:R96_Object_430": [
+     "6a5b6c1dcc85d46c",
+     "33ee9cbb868589ac"
+    ],
+    "ussr:R96_Object_430B": [
+     "d84b7526685a4aea",
+     "d02d8c0b02460497"
+    ],
+    "ussr:R97_Object_140": [
+     "c766c0599102b0cc",
+     "4193e54916682789"
+    ],
+    "ussr:R97_Object_140_7x7": [
+     "86ed8d1ca0a64366",
+     "f13826da88015753"
+    ],
+    "ussr:R97_Object_140_cl": [
+     "98f9ab320505a5bd",
+     "aecc54ca378a4cf0"
+    ],
+    "ussr:R98_T44_85": [
+     "6b49526ab907bccb",
+     "a50a3e2f75115b09"
+    ],
+    "ussr:R98_T44_85M": [
+     "36ba34dee19e008a",
+     "c1e54204b6c21e07"
+    ],
+    "ussr:R99_T44_122": [
+     "711ddcad6d27b130",
+     "d9cdc9e48f2f21d4"
+    ],
+    "ussr:R99_T44_122_CN": [
+     "a524c07bb549c9ad",
+     "757bc36da711ffff"
+    ]
+   }
+  }
+ },
+ "note": "hashes only"
+}

@@ -13,7 +13,7 @@ try:
 except ImportError:
     import queue
 
-VERSION = '0.9.3'
+VERSION = '0.9.4'
 VIEWER_PATH = os.path.join('mods', 'configs', 'local.armor_inspector', 'Viewer.html')
 LOG = logging.getLogger('local.armor_inspector')
 PARTS = ('chassis', 'hull', 'turret', 'gun')
@@ -581,6 +581,7 @@ class Writer(object):
                     if name == 'vehicle': self.exporter.request_vehicle_export(payload)
                     elif name == 'prioritise': self.exporter.prioritise(payload)
                     elif name == 'ttx': self.exporter.request_ttx(payload)
+                    elif name == 'battle': self.exporter.request_battle(payload)
                     elif name == 'sweepStart': self.exporter.confirm_sweep(payload or 'ttx')
                     elif name == 'sweepStop': self.exporter.stop_sweep(payload or 'ttx')
                 except Exception: LOG.exception('HTML export command failed')
@@ -936,6 +937,11 @@ class Recorder(object):
         """
         names = [str(name) for name in list(types or [])[:8] if name]
         if names: self.writer.put_export('prioritise', names)
+
+    def request_battle(self, battle_id):
+        """The page opened a saved battle whose file is stale (BACKLOG 55). Game thread: the id goes through the export
+        queue; reading the raw file and writing the battle belong to that thread."""
+        if battle_id: self.writer.put_export('battle', str(battle_id))
 
     def request_ttx(self, type_name):
         """The page asks for the characteristics file of one type (data/ttx/<id>.js). Game thread: the
@@ -1521,6 +1527,12 @@ def page_prioritise(types):
     _recorder.prioritise(types)
 
 
+def page_battle(battle_id):
+    """The page opened a stale saved battle and shows its old file meanwhile. Game thread: the request only."""
+    if _recorder is None: return
+    _recorder.request_battle(battle_id)
+
+
 def page_ttx(type_name):
     """The page has no current characteristics file of this type. Game thread: the request only."""
     if _recorder is None: return
@@ -1644,6 +1656,7 @@ def init():
             presentation.set_ttx_request(page_ttx)
             presentation.set_open_request(page_open)
             presentation.set_sweep_request(page_sweep)
+            presentation.set_battle_request(page_battle)
         except Exception: LOG.exception('Page export command unavailable; hit recording continues')
         try:
             from gui.modsListApi import g_modsListApi
@@ -1670,6 +1683,7 @@ def fini():
         presentation.set_ttx_request(None)
         presentation.set_open_request(None)
         presentation.set_sweep_request(None)
+        presentation.set_battle_request(None)
     except Exception: LOG.exception('Page export command cleanup failed')
     remove_context_menu(_context_menu)
     _context_menu = None

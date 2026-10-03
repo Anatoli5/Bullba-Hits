@@ -3578,7 +3578,7 @@ settle(20).then(function () {
   (function sweepChecks() {
     const from = sweepFrom, to = sweepTo;
     ok('sweep: its block of app.js can be cut out, and the poll runs it', from > 0 && to > from
-       && /refresh\(\);if\(sidebarMode==='vehicles'\)loadCatalogue\(\);\n    sweepTick\(\);/.test(appSrc) && /modelsPending\|\|sweepRunning\(\)\?2000:5000/.test(appSrc));
+       && /refresh\(\);if\(sidebarMode==='vehicles'\)loadCatalogue\(\);\n    sweepTick\(\);/.test(appSrc) && /modelsPending\|\|sweepRunning\(\)\|\|battlePreparing\?2000:5000/.test(appSrc));
     const page = function (game, file, hidden) { return sweepPage(game, file, hidden, null); };
     const settleMicro = function () { return new Promise(function (r) { setImmediate(r); }); };
     // 'estimate': the mod's wall-clock seconds for what is left (26.09, write_sweep: 1343 at 14 ms a vehicle, half the time).
@@ -8920,6 +8920,8 @@ settle(20).then(function () {
 }).then(function () {
   return indexRevisions();
 }).then(function () {
+  return staleBattleOpen().then(sweepWaitingWords);
+}).then(function () {
 
 
   if (thrown.length) console.log('\nEXCEPTIONS: ' + thrown.map(function (e) { return e && e.stack; }).join('\n'));
@@ -9557,5 +9559,112 @@ function indexRevisions() {
     });
   }).then(function () {
     Object.keys(keep).forEach(function (k) { D[k] = keep[k]; });
+  });
+}
+
+// ================= A STALE BATTLE OPENED, THE SWEEP'S WAIT IN WORDS (BACKLOG 55, 02.10) =================
+// The user's decisions of 02.10: a saved battle is no longer published again at the start; the index marks one whose file is
+// out of date ('stale'), and opening it shows the file there is AT ONCE and asks the game to prepare it ('prepareBattle' with
+// its id) - once; the page looks for the new revision every 2 s meanwhile and reads the battle again when it comes. Outside the
+// game nothing is asked. And a started sweep that waits says what for (the progress file's 'waiting').
+function staleBattleOpen() {
+  if (RELOAD) return Promise.resolve();
+  const $ = function (id) { return document.getElementById(id); };
+  const D = global.ArmorInspectorData, H = global.BullbaHost;
+  const keep = {index: D.index, battle: D.battle, scene: D.scene}, keepHost = {game: H.game, canSend: H.canSend, send: H.send};
+  const HIT = function (id) {
+    return {id: id + '-1', direction: 'incoming', damage: 0, receivedAt: 1, points: [], warnings: [],
+            attacker: {name: 'A', parts: []}, target: {name: 'T', parts: []}};
+  };
+  const battles = {sa: {id: 'sa', map: 'Sierra', hits: [HIT('sa')], warnings: [], shotEvents: []},
+                   sb: {id: 'sb', map: 'Tango', hits: [HIT('sb')], warnings: [], shotEvents: []},
+                   sc: {id: 'sc', map: 'Uniform', hits: [HIT('sc')], warnings: [], shotEvents: []}};
+  // The newest (the one the page opens by itself) is current; the stale ones are opened by hand.
+  const rows = [{id: 'sc', startedAt: 4, map: 'Uniform', hits: 1, rev: 'p.3'},
+                {id: 'sa', startedAt: 3, map: 'Sierra', hits: 1, rev: 'p.1', stale: true},
+                {id: 'sb', startedAt: 2, map: 'Tango', hits: 1, rev: 'p.2', stale: true}];
+  const reads = [], sent = [];
+  let indexReads = 0, askedBefore = 0;
+  D.index = function () {
+    indexReads++;
+    return Promise.resolve({application: 'local.armor_inspector', version: 'test', updatedAt: 1,
+                            battles: rows.map(function (r) { return Object.assign({}, r); })});
+  };
+  D.battle = function (id) { reads.push(id); return battles[id] ? Promise.resolve(JSON.parse(JSON.stringify(battles[id]))) : Promise.reject(new Error('no battle')); };
+  D.scene = function (b, id) { return Promise.resolve({hit: b.hits.filter(function (h) { return h.id === id; })[0], models: {}, warnings: []}); };
+  H.game = true; H.canSend = function () { return true; }; H.send = function (name, payload) { sent.push(payload); return new Promise(function () {}); };
+  const asked = function () { return sent.filter(function (p) { return p.action === 'prepareBattle'; }).map(function (p) { return p.battleId; }); };
+  const open = function (id) { const pick = $('battles'); pick.value = id; pick.onchange.call(pick); return settle(30); };
+  const poll = function (seconds) { tick(seconds || 5.1); return settle(30); };
+  sidebarModes[0].onclick();
+  return settle(20).then(function () { return poll(); }).then(function () {
+    reads.length = 0;
+    return open('sc');
+  }).then(function () {
+    ok('stale: a current battle opens as before - nothing asked of the game', reads.join() === 'sc' && !asked().length,
+       reads.join() + ' | ' + JSON.stringify(asked()));
+    reads.length = 0;
+    return open('sa');
+  }).then(function () {
+    ok('stale: the battle\'s file is shown at once - no wait for the game', reads.join() === 'sa' && /Sierra/.test($('battle-map').textContent),
+       reads.join() + ' | ' + $('battle-map').textContent);
+    ok('stale: in the game the page asks to prepare it - prepareBattle with its id', asked().join() === 'sa', JSON.stringify(sent));
+    const before = indexReads;
+    return poll(2.1).then(function () {
+      ok('stale: while it is prepared the page looks for its new revision every 2 s', indexReads > before, indexReads - before);
+      return poll();
+    });
+  }).then(function () {
+    ok('stale: asked once - the polls meanwhile ask nothing more', asked().length <= 1, JSON.stringify(asked()));
+    askedBefore = asked().length;
+    reads.length = 0;
+    delete rows[1].stale; rows[1].rev = 'p.4';   // the mod has prepared it
+    return poll();
+  }).then(function () {
+    ok('stale: prepared - the new file read, once', reads.join() === 'sa', reads.join());
+    return poll();
+  }).then(function () {
+    ok('stale: (and nothing asked again, nothing read again)', reads.join() === 'sa' && asked().length === askedBefore,
+       reads.join() + ' | ' + JSON.stringify(asked()));
+    H.canSend = function () { return false; }; H.game = false;
+    reads.length = 0;
+    return open('sb');
+  }).then(function () {
+    ok('stale: outside the game - its file opens at once, nothing is asked', reads.join() === 'sb' && asked().length === askedBefore,
+       reads.join() + ' | ' + JSON.stringify(asked()));
+  }).then(function () {
+    Object.keys(keep).forEach(function (k) { D[k] = keep[k]; });
+    Object.keys(keepHost).forEach(function (k) { H[k] = keepHost[k]; });
+  });
+}
+function sweepWaitingWords() {
+  if (RELOAD) return Promise.resolve();
+  // The sweeps' block of app.js cut out and run on stubs, as the sweep checks do.
+  const from = appSrc.indexOf('  // THE SWEEPS OF EVERY VEHICLE'), to = appSrc.indexOf('  sweepTick();\n', from);
+  const tipJoinSrc = (/\n  function tipJoin\(lines\) \{[\s\S]*?\n  \}\n/.exec(appSrc) || [''])[0];
+  function page(models) {
+    const els = {};
+    const $ = function (id) { return els[id] || (els[id] = {id: id, hidden: true, disabled: false, textContent: '', title: '', style: {}, onclick: null,
+      attrs: {}, setAttribute: function (k, v) { this.attrs[k] = v; }}); };
+    const data = {ttxSweep: function () { return Promise.resolve({done: true, count: 0, total: 0, catalogue: 1343}); },
+      modelsSweep: function () { return Promise.resolve(models); }};
+    const run = new Function('$', 'host', 'sendCommand', 'ArmorInspectorData', 'document', tipJoinSrc + appSrc.slice(from, to)
+      + 'return {tick: sweepTick, models: modelsSweep};');
+    const api = run($, {game: true}, function () {}, data, {hidden: false});
+    api.tick();
+    return {$: $, api: api};
+  }
+  const base = {done: false, count: 0, total: 888, catalogue: 1060, confirmed: true, opted: true, built: 0, builtMs: 0, bytes: 0, failed: {}, estimate: 300};
+  const jobs = page(Object.assign({}, base, {waiting: {for: 'jobs', jobs: {battle: 3, ttx: 9}}}));
+  const battle = page(Object.assign({}, base, {waiting: {for: 'battle'}}));
+  const going = page(base);
+  const settleOnce = function () { return new Promise(function (r) { setImmediate(r); }); };
+  return settleOnce().then(settleOnce).then(function () {
+    [jobs, battle, going].forEach(function (g) { g.api.models.running = true; g.api.models.saidAt = 0; g.api.models.paint(g.api.models.state); });
+    const text = function (g) { return g.$('models-all').textContent; };
+    ok('sweep wait: behind other work - the button says it waits, and for how many tasks',
+       /^Waiting/.test(text(jobs)) && /12/.test(text(jobs)) && /0 \/ 888/.test(text(jobs)), text(jobs));
+    ok('sweep wait: in a battle - it says so', /^Waiting/.test(text(battle)) && /battle/i.test(text(battle)), text(battle));
+    ok('sweep wait: running - the progress as before', /^Exporting models… 0 \/ 888/.test(text(going)), text(going));
   });
 }

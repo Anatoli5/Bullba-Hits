@@ -192,7 +192,19 @@ class VehicleExportTests(unittest.TestCase):
         self.export()
         self.export(request=dict(self.request, compactDescriptor='bGF0ZXN0', source='battle'))
         (self.folder/'data/vehicles'/(IDENTIFIER+'.js')).unlink()
-        self.setup_exporter(self.build())
+        exporter = self.setup_exporter(self.build())
+        # Not inside setup (BACKLOG 55: 02.10, 196 vehicles and their models before the page heard a command): one job.
+        self.assertFalse((self.folder/'data/vehicles'/(IDENTIFIER+'.js')).exists())
+        self.assertEqual([(job[0], job[2], job[3]['compactDescriptor'], job[3].get('replay')) for job in exporter.jobs if job[2] == 'vehicle'],
+                         [(ex.JOB_BULK, 'vehicle', 'bGF0ZXN0', True)])
+        patches = self.client()
+        for item in patches: item.start()
+        try:
+            while exporter.jobs:
+                exporter.last_job = 0
+                exporter.run_job()
+        finally:
+            for item in patches: item.stop()
         record = read_data(self.folder/'data/vehicles'/(IDENTIFIER+'.js'))[1]
         self.assertEqual(record['compactDescriptor'], 'bGF0ZXN0')
         self.assertEqual(record['source'], 'battle')
@@ -267,11 +279,13 @@ class VehicleExportTests(unittest.TestCase):
         with path.open('a', encoding='ascii') as stream:
             stream.write(json.dumps({'schema':1, 'type':'vehicle', 'vehicleType':'ussr:R45_IS-7', 'source':'catalogue',
                                      'compactDescriptor':'dG9w', 'requestedAt':1.0}) + '\n')
+        (self.folder/'data/vehicles'/(IDENTIFIER+'.js')).unlink()
         exporter = self.build()
         exported = []
-        with patch.object(ex.Exporter, 'export_vehicle', side_effect=lambda request, replay=False: exported.append(request['vehicleType'])):
+        with patch.object(ex.Exporter, 'export_vehicle', side_effect=lambda *a, **k: exported.append(a)):
             exporter.replay_vehicle_requests()
-        self.assertEqual(exported, [TYPE])
+        # Nothing is exported inside setup any more (BACKLOG 55); a request without its file is one background job.
+        self.assertEqual((exported, [job[3]['vehicleType'] for job in exporter.jobs if job[2] == 'vehicle']), ([], [TYPE]))
 
     def test_a_sweep_export_writes_no_request_line_and_defers_the_catalogue(self):
         exporter = self.build()

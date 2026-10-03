@@ -255,8 +255,14 @@ class EnsureTtxTests(unittest.TestCase):
         with patch.object(ex, 'ttx_block', side_effect=AssertionError('rebuilt')):
             self.assertFalse(fresh.ensure_ttx('germany:G1_Test', inline=True))
         self.assertEqual(fresh.ttx_known, {'germany:G1_Test': ex.TTX_CURRENT})
+        # Another client without keys (no snapshot): the file is built again and compared - the same content is not
+        # written again (BACKLOG 55: 02.10, 1343 files written with what they held); its type is current from then on.
+        before = self.path.read_bytes()
         newer = ex.Exporter(self.temp.name, self.temp.name, 'another client\n')
-        self.assertTrue(self.build(lambda: newer.ensure_ttx('germany:G1_Test', inline=True)))
+        built, real_block = [], ex.ttx_block
+        with patch.object(ex, 'ttx_block', side_effect=lambda *a, **k: built.append(1) or real_block(*a, **k)):
+            self.assertFalse(self.build(lambda: newer.ensure_ttx('germany:G1_Test', inline=True)))
+        self.assertEqual((built, self.path.read_bytes(), newer.ttx_known), ([1], before, {'germany:G1_Test': ex.TTX_CURRENT}))
 
     def test_a_sector_file_without_the_turret_flag_is_built_again_once(self):
         self.assertTrue(self.build(lambda: self.exporter.ensure_ttx('germany:G1_Test', inline=True)))

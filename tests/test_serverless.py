@@ -47,7 +47,9 @@ class ServerlessTests(unittest.TestCase):
 
     def settle(self):
         """Run the deferred work the way the worker's idle ticks would: model jobs (extraction is queued
-        since the on-demand export of 0.7.x) and the republish of the battles that waited for them."""
+        since the on-demand export of 0.7.x) and the republish of the battles that waited for them. A saved battle setup
+        found stale is prepared as the page asks for it when it is opened (BACKLOG 55: none is published at the start)."""
+        for name in sorted(getattr(self.exporter, 'stale', ())): self.exporter.request_battle(name)
         for _ in range(100):
             self.exporter.last_job = 0
             if not (self.exporter.run_job() or self.exporter.drain_republish()): break

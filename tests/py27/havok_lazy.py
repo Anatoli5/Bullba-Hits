@@ -10,7 +10,8 @@ sha256 of the raw .havok and of the model file, and how many values the lazy rea
 hashes were made with the whole-graph reader of 2b8cb4b and are the same with the lazy one on every collision model of
 the client (tools/havok_parity.py). Checks:
 
-  output   each model file byte for byte (sha256) as golden
+  output   each model file byte for byte (sha256) as golden - while exporter.MODEL_FILE_FORMAT is the golden's (BACKLOG 55:
+           a change of the output without raising it fails here; a raise without a change too)
   lazy     the reader decodes at most twice the golden number of values - the whole-graph reader decoded many times
            more, so a change that reads the whole file again fails here
   struct   a struct: the same object on a second access, `in`, get(), and neither iterable nor serialisable (a half-read
@@ -38,7 +39,9 @@ from local_armor_inspector import exporter, geometry, havok
 
 
 def model_file(data, name):
-    """sha256 of the model file as model_extract writes it (geometry.extract, then write_data), and the values decoded."""
+    """sha256 of the model file as model_extract writes it (exporter.model_document, then write_data), and the values decoded.
+    model_document is the one writer of a model file: a raised MODEL_FILE_FORMAT changes its bytes (its 'format'), so the
+    users' files of the earlier format are exported again (review 02.10 #4)."""
     calls = [0]
     original = havok.TagFile.object
     def counted(self, t, offset):
@@ -48,11 +51,10 @@ def model_file(data, name):
     saved, exporter.atomic_write = exporter.atomic_write, lambda path, blob: written.append(blob)
     havok.TagFile.object = counted
     try:
-        model = geometry.extract(data)
+        model = exporter.model_document(data, name)
     finally:
         havok.TagFile.object = original
     try:
-        model.update({'resource': name, 'sha256': hashlib.sha256(data).hexdigest()})
         exporter.write_data('unused', 'model:golden', model)
     finally:
         exporter.atomic_write = saved
@@ -77,14 +79,18 @@ def write(names):
     if wanted: raise ValueError('not in the client: ' + ', '.join(sorted(wanted)))
     rows.sort(key=lambda r: r['resource'])
     with open(GOLDEN, 'w') as stream:
-        json.dump({'note': 'hashes only (tests/py27/havok_lazy.py); no geometry', 'models': rows}, stream, indent=1,
-                  sort_keys=True)
+        json.dump({'note': 'hashes only (tests/py27/havok_lazy.py); no geometry', 'models': rows,
+                   'format': exporter.MODEL_FILE_FORMAT}, stream, indent=1, sort_keys=True)
         stream.write('\n')
     return ['wrote %d models into %s' % (len(rows), GOLDEN)], 0
 
 
 def check():
-    golden = json.load(open(GOLDEN))['models']
+    stored = json.load(open(GOLDEN))
+    golden = stored['models']
+    # The model file's format (BACKLOG 55): it names every model file (exporter.model_content_key), so an output that changes
+    # while it stays leaves the users' files as they were for good; a golden without the field is of format 1.
+    golden_format = stored.get('format', 1)
     checks, skipped = [], []
     def ok(value, name, detail=''): checks.append((name, bool(value), detail))
     handles, first = {}, None
@@ -100,7 +106,12 @@ def check():
             if hashlib.sha256(data).hexdigest() != row['raw']:
                 skipped.append(row['resource']); continue
             digest, calls = model_file(data, row['resource'])
-            ok(digest == row['model'], 'output %s' % row['resource'], digest)
+            if golden_format == exporter.MODEL_FILE_FORMAT:
+                ok(digest == row['model'], 'output %s' % row['resource'], '%s - the model file changed while MODEL_FILE_FORMAT '
+                   'stayed %d: if meant, raise it in exporter.py and run with --write' % (digest, golden_format))
+            else:
+                ok(digest != row['model'], 'output %s' % row['resource'], 'MODEL_FILE_FORMAT raised to %d but this model is '
+                   'written as in format %d - raise it only for a changed output' % (exporter.MODEL_FILE_FORMAT, golden_format))
             ok(calls <= 2 * row['decoded'], 'lazy %s' % row['resource'], '%d values decoded, golden %d' % (calls, row['decoded']))
             if first is None: first = data
     finally:
@@ -130,6 +141,11 @@ def main():
     if not checks:
         return finish(['SKIP: none of the %d golden models is in this client (another version?)' % len(skipped)], 77)
     failed = [c for c in checks if not c[1]]
+    golden_format = json.load(open(GOLDEN)).get('format', 1)
+    if golden_format != exporter.MODEL_FILE_FORMAT and not failed:
+        failed = [('format', False, 'MODEL_FILE_FORMAT is %d, the golden of %d: store the new one with --write'
+                   % (exporter.MODEL_FILE_FORMAT, golden_format))]
+        checks.append(failed[0])
     lines = ['havok_lazy: %d checks, %d failed, %d models of another client skipped (%.1f s)'
              % (len(checks), len(failed), len(skipped), time.time() - started)]
     lines += ['FAIL %s -- %s' % (name, detail) for name, _, detail in failed]

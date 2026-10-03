@@ -4,6 +4,7 @@ from __future__ import absolute_import
 import logging
 import math
 import os
+import re
 from urllib import pathname2url
 
 LOG = logging.getLogger('local.armor_inspector')
@@ -16,7 +17,9 @@ _prioritise_request = None
 _ttx_request = None
 _open_request = None
 _sweep_request = None
+_battle_request = None
 _warned = set()
+BATTLE_ID = re.compile(r'^[-a-zA-Z0-9_]{1,100}\Z')
 
 
 def gun_limits(descr, key=None):
@@ -93,6 +96,12 @@ def set_prioritise_request(handler):
     _prioritise_request = handler
 
 
+def set_battle_request(handler):
+    """The page opened a saved battle whose file is stale ('prepareBattle', BACKLOG 55): the mod prepares that battle."""
+    global _battle_request
+    _battle_request = handler
+
+
 def set_ttx_request(handler):
     """The page asks for the characteristics file of one vehicle type (data/ttx/<id>.js)."""
     global _ttx_request
@@ -127,13 +136,14 @@ def _warn_once(key, message, *args):
 def _handle_web_command(command, ctx):
     """One w2c command from the page, on the game thread. Only the request is done here.
 
-    Seven fire-and-forget actions: 'exportVehicle' asks for one vehicle type,
+    Eight fire-and-forget actions: 'exportVehicle' asks for one vehicle type,
     'exportTtx' for the characteristics file of one type (no collision models),
     'busy' says the user is dragging or zooming the page right now,
     'prioritise' names the vehicle types whose collision models the page is
     waiting for, 'open' says the page is open (a sweep may run) and
     'sweepStart'/'sweepStop' are the user's Start and Stop of a sweep, its
-    'kind' - 'ttx' when absent, or 'models'.
+    'kind' - 'ttx' when absent, or 'models' - and 'prepareBattle' names the saved
+    battle the page opened whose file is stale ('battleId').
     None of them may cost the game thread more than a flag.
     """
     try:
@@ -160,6 +170,16 @@ def _handle_web_command(command, ctx):
                 _warn_once('open', 'Bullba Hits page command: the recorder is not running')
                 return
             _open_request()
+            return
+        if action == 'prepareBattle':
+            battle_id = getattr(command, 'battleId', None)
+            if not battle_id or not BATTLE_ID.match(str(battle_id)):
+                _warn_once('battle-id', 'Bullba Hits page command: no battle id in %r', battle_id)
+                return
+            if _battle_request is None:
+                _warn_once('battle', 'Bullba Hits page command: the recorder is not running')
+                return
+            _battle_request(str(battle_id))
             return
         if action == 'prioritise':
             types = getattr(command, 'vehicleTypes', None)
@@ -240,6 +260,8 @@ def web_handlers():
             vehicleTypes = Field(type=list)
             # 'sweepStart'/'sweepStop': which sweep ('ttx' when absent, 'models').
             kind = Field(type=basestring)
+            # 'prepareBattle': the saved battle the page opened (BACKLOG 55).
+            battleId = Field(type=basestring)
         return [createCommandHandler(WEB_COMMAND, BullbaHitsSchema, _handle_web_command, None)]
     except Exception:
         LOG.exception('Bullba Hits page command could not be registered')

@@ -163,6 +163,8 @@ try:
         return Descriptor(type_name)
 
     ex.extract, ex.ttx_block, ex.parts_from_descr, ex.top_descriptor = fake_extract, fake_ttx, fake_parts, fake_top
+    # A vehicle file checked again after a client change (BACKLOG 55) is built from its own compact descriptor.
+    client_vehicles.VehicleDescr = lambda compactDescr=None, typeID=None: Descriptor(compactDescr.split(' ', 1)[1])
     ex.gun_limits = lambda descr: {'samples': []}
     ex.shot_candidates = lambda descr, installation=None: []
     ex.aim_block = lambda descr: None
@@ -196,6 +198,7 @@ try:
         for _ in range(limit):
             if exporter.sweeps['models'] is None: break
             exporter.run_job()
+        exporter.write_keys(force=True)   # what the idle tick and the game's close do (BACKLOG 55: the vehicle files' keys)
 
     def vehicle_file(type_name):
         return os.path.join(folder, 'data', 'vehicles', ex.vehicle_id(type_name) + '.js')
@@ -204,6 +207,7 @@ try:
     owner = ex.Exporter(game, folder, 'client 1\n', os.path.join(temp, 'unused.wotmod'))
     owner.export_vehicle({'schema': 1, 'type': 'vehicle', 'vehicleType': OWNED, 'source': 'hangar',
                           'compactDescriptor': 'aGFuZ2Fy', 'requestedAt': 1.0}, descr=Descriptor(OWNED))
+    owner.write_keys(force=True)
     owned_before = open(vehicle_file(OWNED), 'rb').read()
     requests_log = os.path.join(folder, 'vehicles', 'exports.jsonl')
     log_before = open(requests_log, 'rb').read()
@@ -290,6 +294,7 @@ try:
     check(len(extracted) == at and progress()['confirmed'] is False, 'the page closed: stopped the same way')
 
     # --- the next session goes on where this one stopped; the player's file stays his; one vehicle fails ----------------
+    first.write_keys(force=True)   # the idle tick's (BACKLOG 55: the vehicle files' keys)
     extracted[:] = []
     built[:] = []
     second = session()
@@ -328,41 +333,64 @@ try:
     for _ in range(5): again.run_job()
     check(not extracted, 'nothing runs without the user')
 
-    # --- a game update: the keys decide -----------------------------------------------------------------------------------
+    # --- a game update: the keys decide (BACKLOG 55, 02.10) ----------------------------------------------------------------
+    # The model sweep exports only what has no file (and its failures, on the user's Start); a file whose key changed - any
+    # source's - is built again and compared in the background (start_verify), written only where it differs.
+    def checking(exporter):
+        exporter.start_verify()
+        sweep = exporter.sweeps.get('verify')
+        return sorted(i for i in (sweep['types'] if sweep else []) if not i.startswith('sample-'))
+
     quiet = session('client 2\n')
-    check(planned(quiet) == ['germany:G4_Broken'] and progress()['incremental'] is True, 'new client, nothing changed: nothing to export but the failure')
+    check(planned(quiet) == ['germany:G4_Broken'] and checking(quiet) == [],
+          'new client, nothing changed: nothing to export but the failure, nothing to check (%s, %s)' % (planned(quiet), checking(quiet)))
     rows = quiet.flag_rows([dict(r) for r in ROWS if 'id' in r])
     flagged = sorted(r['type'] for r in rows if r['exported'])
-    check('germany:G1_A' in flagged and 'usa:A1_E' in flagged and OWNED not in flagged and 'germany:G2_B' not in flagged,
-          'and the files of the old client whose keys held count as this client\'s; the player\'s and the clicked one wait for their own path')
+    check(flagged == sorted(REGULAR + [OWNED]),
+          'every vehicle with a file stays exported, whoever wrote it (02.10: 817 shown as not exported) (%s)' % flagged)
     HAVOK['vehicles/german/G1_A/collision_client/Hull.havok'] = 'hull 2'
     write_packages(SOURCES, HAVOK)
-    check(planned(session('client 3\n')) == ['germany:G1_A', 'germany:G4_Broken'], 'one collision model changed: only its vehicle')
+    three = session('client 3\n')
+    check(planned(three) == ['germany:G4_Broken'] and checking(three) == ['vehicle:germany-G1_A'],
+          'one collision model changed: only its vehicle is checked (%s)' % checking(three))
     changed = dict(SOURCES, **{'scripts/item_defs/vehicles/usa/A1_E.xml': 'A1_E 2'})
     write_packages(changed, HAVOK)
-    check(planned(session('client 4\n')) == ['germany:G1_A', 'germany:G4_Broken', 'usa:A1_E'], 'one vehicle\'s XML changed: it too')
+    check(checking(session('client 4\n')) == ['vehicle:germany-G1_A', 'vehicle:usa-A1_E'], "one vehicle's XML changed: it too")
     changed['scripts/item_defs/vehicles/ussr/components/guns.xml'] = 'ussr guns 2'
     write_packages(changed, HAVOK)
-    five = planned(session('client 5\n'))
-    check(five == ['germany:G1_A', 'germany:G4_Broken', 'usa:A1_E', 'ussr:R1_C'], 'a nation\'s components changed: that nation (%s)' % five)
+    five = checking(session('client 5\n'))
+    check(five == ['vehicle:germany-G1_A', 'vehicle:usa-A1_E', 'vehicle:ussr-R1_C'], "a nation's components changed: that nation (%s)" % five)
     full = session('client 5\n')
-    full.confirm_sweep('models')
-    drain(full)
-    check(planned(session('client 6\n')) == ['germany:G4_Broken'], 'all exported again: the next client with the same packages has only the failure left')
-    real_format = ex.MODELS_FORMAT
-    ex.MODELS_FORMAT = real_format + 1
-    check(planned(session('client 6\n')) == sorted(set(REGULAR) - set(['germany:G2_B'])), 'our format raised: every vehicle of the sweep')
-    ex.MODELS_FORMAT = real_format
-    # --- the keys unreadable: every vehicle of the new client --------------------------------------------------------------
+    full.start_verify()
+    drain_all = [0]
+    for _ in range(500):
+        if full.sweeps.get('verify') is None: break
+        full.last_job = 0
+        full.run_job()
+    full.write_keys(force=True)
+    rewritten = sorted(t for t in REGULAR + [OWNED] if os.path.isfile(vehicle_file(t)))
+    left = checking(session('client 6\n'))
+    check(full.sweeps.get('verify') is None and left == [],
+          'all checked: the next client with the same packages has nothing to check (%s)' % left)
+    check(open(vehicle_file(OWNED), 'rb').read() == owned_before, "the check left the player's own vehicle file as it was (the same)")
+    real_format = ex.VEHICLE_FORMAT
+    ex.VEHICLE_FORMAT = real_format + 1
+    raised = checking(session('client 6\n'))
+    check(raised == sorted('vehicle:' + ex.vehicle_id(t) for t in REGULAR + [OWNED]), 'the vehicle file format raised: every vehicle file is checked (%s)' % raised)
+    ex.VEHICLE_FORMAT = real_format
+    # --- a package unreadable: left out of the snapshot (review 02.10 #1), what it held unknown - every file checked ---------
     with open(os.path.join(packages, 'scripts.pkg'), 'wb') as stream: stream.write('not a zip at all')
     broken = session('client 7\n')
-    check(planned(broken) == sorted(set(REGULAR) - set(['germany:G2_B'])) + ['ussr:R9_Event'] and logged('Model sweep: the client packages could not be read') >= 1,
-          'the packages unreadable: every vehicle of the sweep (the event package\'s told by its tags only), one line (%s)' % planned(broken))
+    check(planned(broken) == ['germany:G4_Broken'] and checking(broken) == []
+          and logged('scripts.pkg left out of the snapshot') >= 1,
+          "scripts.pkg unreadable: the rest of the snapshot is taken (the event package's vehicle still told by it); its files "
+          "unknown - no vehicle file is judged by them this session (second review G), one line (%s, %d)"
+          % (planned(broken), len(checking(broken))))
     write_packages(changed, HAVOK)
     # --- a progress file of another shape counts as none; the setup: a sweep that throws, the old setting ---------------
     ex.write_data(os.path.join(folder, 'data', 'models-sweep.js'), ex.MODELS_SWEEP_KEY, {'stamp': {}, 'parts': [], 'keys': {}})
     odd = session('client 8\n')
-    check(odd.sweeps['models'] is not None and progress()['opted'] is False, 'a progress file of another shape counts as none (never started)')
+    check(progress()['opted'] is False, 'a progress file of another shape counts as none (never started)')
     archive = os.path.join(temp, 'test.wotmod')
     z = zipfile.ZipFile(archive, 'w')
     for asset in ex.ASSETS: z.writestr('res/armor_inspector_viewer/' + asset, '')

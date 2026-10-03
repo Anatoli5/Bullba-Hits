@@ -2,6 +2,16 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.2 from 0.9.3 on, 2.4.0.1 #950 from 0.7.6, 2.4.0.0 #945 before.
 
+## 0.9.4 (2026-10-03)
+
+- **Game updates:** the mod rebuilds only what the update really changed. A collision model is exported again only when its own file in the game changed; models exported by earlier versions of the mod are kept and reused. A characteristics or vehicle file is rebuilt only when its own game files changed, or when the game code that builds it changed; a change in game code the mod does not run (such as the crew tables of 2.4.0.2) rebuilds nothing. The rebuild runs in the background, and a file is written only when the result differs. After 2.4.0.2 the mod had rebuilt every model, vehicle and characteristics file with the same content.
+- **Startup:** no vehicle is exported while the game starts any more (after 2.4.0.2 this took 31 s, and the page could not be used meanwhile), and an ordinary start queues no work.
+- **Vehicles list:** a vehicle exported before a game update stays shown as exported.
+- **Saved battles:** no battle is rebuilt when the game starts or in the background any more (after 2.4.0.2 the mod rebuilt all 222 in 5 minutes, mostly into the very same files). A battle whose file is out of date opens at once as it is; the game prepares that one battle meanwhile, and the page shows the new file when it is ready. A file that comes out the same is not rewritten.
+- **Saved battles:** a battle of the previous game version keeps its outer track pair, its wheels and its armoured parts when it is prepared again, as long as the game files they come from did not change. The battles that lost them after 2.4.0.2 get them back when you open them.
+- **Export all models:** it no longer waits behind background work, and it no longer waits for the characteristics to finish. When it has to wait, the button says what for - the battle or the game's other tasks.
+- game.log: one line says which game files changed since the last start, and one says what the background check rebuilt and how many files differed. A difference the mod did not expect is logged as "Missed change".
+
 ## 0.9.3 (2026-10-01)
 
 - **Client 2.4.0.2:** the mod is built for World of Tanks PC NA 2.4.0.2 and installs into `mods.4.0.2`. The recorder and the viewer are unchanged; your recorded battles are kept.

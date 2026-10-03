@@ -265,7 +265,8 @@ def exporter_checks(ex, temp):
               'resource' not in part and [j[2] for j in e.jobs] == ['extras'] and e.waiting.get(ex.EXTRAS_KEY + 'italy:T_Crest') == set(['b1']),
               (sorted(part), [j[2] for j in e.jobs], e.waiting))
         e.recorder = None
-        # A lasting failure says why; another client's record too.
+        # A lasting failure says why; another client's record too, when its prefab files are not known to be this client's
+        # (BACKLOG 55: the gate is their CRCs - tests/py27/battles_on_demand.py has the known and equal case).
         e.extras_cache = {'italy:T_Crest': {'error': 'broken'}}
         failed = [p for p in e.prepare_hit(raw(), 0, battle)['target']['parts'] if p['id'] == 5][0]
         old = [p for p in e.prepare_hit(raw(), 0, {'id': 'b0', 'clientVersion': 'client 0\n', 'hits': []})['target']['parts']

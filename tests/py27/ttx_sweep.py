@@ -223,14 +223,15 @@ try:
     # --- queued jobs, battle, drag, shutdown ---------------------------------------------------------------------------
     delay[0] = 0.0
     before = len(calls)
-    first.queue_job(ex.JOB_BULK, 'ttx', {'vehicleType': 'usa:A9_Queued'})
-    check(not first.sweep_hurry() and first.recorder.frames_wanted, 'a queued job: the export loop waits as usual; the frame callback goes on (a chain that stops returns only with the page\'s next open)')
+    # A job above the background's (BACKLOG 55: a JOB_BULK one waits for the sweep the user started) - the page's own here.
+    first.queue_job(ex.JOB_PAGE, 'ttx', {'vehicleType': 'usa:A9_Queued'})
+    check(not first.sweep_hurry() and first.recorder.frames_wanted, 'a queued job the page waits for: the export loop waits as usual; the frame callback goes on (a chain that stops returns only with the page\'s next open)')
     first.last_job = 0   # the models' PACE after the sweep's last build
     first.run_job()
     check(calls[-1] == 'usa:A9_Queued' and len(calls) == before + 1, 'a queued job (a clicked vehicle) runs before the sweep')
     # 26.09: the exported vehicles' characteristics after a format change waited PACE (0.3 s) each for 0.5 ms of work.
-    first.queue_job(ex.JOB_BULK, 'ttx', {'vehicleType': 'usa:A10_Paced'})
-    first.queue_job(ex.JOB_BULK, 'ttx', {'vehicleType': 'usa:A11_Paced'})
+    first.queue_job(ex.JOB_OTHER, 'ttx', {'vehicleType': 'usa:A10_Paced'})
+    first.queue_job(ex.JOB_OTHER, 'ttx', {'vehicleType': 'usa:A11_Paced'})
     delay[0] = 0.035
     first.run_job()
     rested = first.job_rest
@@ -238,7 +239,7 @@ try:
     first.run_job()
     check(calls[-2:] == ['usa:A10_Paced', 'usa:A11_Paced'] and abs(rested - 0.035) < 1e-9,
           'characteristics jobs: no PACE between them - after one, the game\'s share of its build time (35 ms at 0.5)')
-    first.queue_job(ex.JOB_BULK, 'vehicle', {'vehicleType': 'usa:A12_Model'})
+    first.queue_job(ex.JOB_OTHER, 'vehicle', {'vehicleType': 'usa:A12_Model'})
     real_export = first.export_vehicle
     first.export_vehicle = lambda request, **named: None
     first.last_job = 0
@@ -318,51 +319,79 @@ try:
     broken.clear()
     drain(retry)
     check(calls == ['germany:G3_Broken'] and progress()['failed'] == {} and len(progress()['keys']) == 6, 'it builds, and the progress file is clean')
+    # The client's packages are read only when one of them changed (BACKLOG 55: client_snapshot, by size and time).
+    from local_armor_inspector import client_snapshot
     reads = []
-    real_sources = ex.Exporter.ttx_sources
-    ex.Exporter.ttx_sources = lambda self, cached: reads.append(1) or real_sources(self, cached)
+    real_members = client_snapshot.package_members
+    client_snapshot.package_members = lambda path, prefix='': reads.append(path) or real_members(path, prefix)
     calls[:] = []
     again = session()
-    check(again.ttx_sweep is None and not calls and not reads, 'the same client, all done: no sweep, no package read at all')
+    check(again.ttx_sweep is None and not calls and not reads and not again.ttx_stale,
+          'the same client, all done: no sweep, nothing to check, no package read at all')
 
-    # --- a game update: only what changed ---------------------------------------------------------------------------------
+    # --- a game update: only what changed is built again, and written only where it differs (BACKLOG 55) ----------------
+    def files():
+        return dict((name, open(os.path.join(folder, 'data', 'ttx', name), 'rb').read())
+                    for name in os.listdir(os.path.join(folder, 'data', 'ttx')))
+
+    def check_all(exporter):
+        """The background check (start_verify) run to its end: what it built."""
+        before = len(calls)
+        exporter.start_verify()
+        for _ in range(200):
+            if exporter.sweeps.get('verify') is None: break
+            exporter.run_job()
+        exporter.write_sweep('ttx', done=True)
+        return sorted(set(calls[before:]))
+
     quiet = session('client 2\n')
-    check(quiet.ttx_sweep is None and reads, 'new client, no source changed: no sweep')
+    check(quiet.ttx_sweep is None and not quiet.ttx_stale and not reads, 'new client, no source changed: nothing to build or check, no package read')
     check(quiet.ttx_current('germany:G1_A') and ex.read_data_file(quiet.ttx_path('germany:G1_A'))['clientVersion'] == 'client 1\n',
           'and a file of the old client with unchanged sources counts as current')
     changed = dict(SOURCES, **{'scripts/item_defs/vehicles/germany/G2_B.xml': 'G2_B 2'})
     write_packages(changed)
     one = session('client 3\n')
-    check(planned(one) == ['germany:G2_B'] and progress()['total'] == 1 and progress()['catalogue'] == 6, 'one vehicle\'s XML changed: only it')
+    check(planned(one) == [] and sorted(one.ttx_stale) == ['germany:G2_B'] and progress()['catalogue'] == 6,
+          "one vehicle's XML changed: only it is checked, in the background - no question (%s)" % one.ttx_stale)
     changed['scripts/item_defs/vehicles/germany/G1_A_7x7.xml'] = 'G1_A_7x7 2'
     write_packages(changed)
-    check(planned(session('client 4\n')) == ['germany:G1_A', 'germany:G2_B'], 'a variant\'s XML changed: its vehicle too')
+    check(sorted(session('client 4\n').ttx_stale) == ['germany:G1_A', 'germany:G2_B'], "a variant's XML changed: its vehicle too")
     changed['scripts/item_defs/vehicles/ussr/components/guns.xml'] = 'ussr guns 2'
     write_packages(changed)
-    check(planned(session('client 5\n')) == ['germany:G1_A', 'germany:G2_B', 'ussr:R1_C', 'ussr:R2_D'], 'a nation\'s components changed: that nation')
+    check(sorted(session('client 5\n').ttx_stale) == ['germany:G1_A', 'germany:G2_B', 'ussr:R1_C', 'ussr:R2_D'],
+          "a nation's components changed: that nation")
     changed['scripts/item_defs/vehicles/common/customization.xml'] = 'paint 2'
     write_packages(changed)
-    check(planned(session('client 6\n')) == ['germany:G1_A', 'germany:G2_B', 'ussr:R1_C', 'ussr:R2_D'], 'a paint file changed: nothing more (no characteristic is read from it)')
+    check(sorted(session('client 6\n').ttx_stale) == sorted(TYPES),
+          "the vehicles' common customization.xml changed: every type is checked - the builds read it (BACKLOG 55: measured on "
+          "the offline stand, client_code.SHARED_DATA; the old list said no characteristic is read from it - unproven)")
+    # 02.10: the client's code changed (tankmen_components.pyc) and every file was written again with the same content.
     changed['scripts/common/items/vehicles.pyc'] = 'code 2'
     write_packages(changed)
-    check(planned(session('client 7\n')) == sorted(TYPES), 'the client\'s items code changed: every type')
+    code = session('client 7\n')
+    check(planned(code) == [] and sorted(code.ttx_stale) == sorted(TYPES),
+          "the client's code changed: every type is checked in the background, not asked about (was: every type built again)")
     SOURCES = changed
-    drain_all = session('client 7\n')
-    drain_all.confirm_sweep('ttx')
-    drain(drain_all)
-    check(session('client 8\n').ttx_sweep is None, 'all built: the next client with the same sources has nothing to build')
+    before = files()
+    built = check_all(code)
+    check(built == sorted(TYPES) and files() == before, 'each built once and compared: the same content - not one file written')
+    check(session('client 8\n').ttx_sweep is None and not current.ttx_stale, 'all checked: the next client with the same sources has nothing to do')
     real_format = ex.TTX_FORMAT
     ex.TTX_FORMAT = real_format + 1
-    check(planned(session('client 8\n')) == sorted(TYPES), 'our format raised: every type')
+    check(sorted(session('client 8\n').ttx_stale) == sorted(TYPES), 'our format raised: every type is checked')
     ex.TTX_FORMAT = real_format
-    session('client 8\n')   # back to the keys of the format in force (its sweep is not run)
-    # --- the sources unreadable: every type of the new client, one line ------------------------------------------------
+    session('client 8\n')   # back to the keys of the format in force
+    # --- the sources unreadable: every file of the new client is checked, one line ------------------------------------
     write_packages(SOURCES, broken=True)
     fallback = session('client 9\n')
-    check(planned(fallback) == sorted(TYPES) and progress()['incremental'] is False and logged('TTX sources unreadable') == 1,
-          'a package unreadable: every type of this client version, one log line')
+    check(fallback.ttx_stale == [] and logged('scripts.pkg left out of the snapshot') == 1
+          and logged('some client files unreadable now'),
+          'a package unreadable: left out of the snapshot, its files unknown - no file is judged by them this session, they '
+          'are looked at again next start (second review G; review 02.10 #1: no longer the whole snapshot)')
     write_packages(SOURCES)
-    ex.Exporter.ttx_sources = real_sources
+    client_snapshot.package_members = real_members
+    # The files gone: the sweep builds them all (what follows needs a sweep of six).
+    for name in os.listdir(os.path.join(folder, 'data', 'ttx')): os.remove(os.path.join(folder, 'data', 'ttx', name))
 
     # --- review #2: a file that cannot be written is one failed vehicle; the sweep goes on ---------------------------------
     real_write = ex.write_data
@@ -380,7 +409,9 @@ try:
     # --- the kept pace: a share measured under another SWEEP_SHARE is not this build's -------------------------------------
     real_write(os.path.join(folder, 'data', 'ttx-sweep.js'), ex.TTX_SWEEP_KEY, {'stamp': {}, 'pace': {'ms': 2000, 'share': 0.3, 'target': 0.25}})
     retuned = session('client 12\n')
-    check(progress()['pace'] == {'ms': 2000.0, 'target': ex.SWEEP_SHARE} and progress()['estimate'] == int(math.ceil(6 * 2000 / ex.SWEEP_SHARE / 1000.0)),
+    left = progress()['total'] - progress()['count']
+    check(progress()['pace'] == {'ms': 2000.0, 'target': ex.SWEEP_SHARE} and left > 0
+          and progress()['estimate'] == int(math.ceil(left * 2000 / ex.SWEEP_SHARE / 1000.0)),
           'a share measured under another SWEEP_SHARE is dropped, the ms a vehicle kept (%s)' % progress()['pace'])
     real_write(os.path.join(folder, 'data', 'ttx-sweep.js'), ex.TTX_SWEEP_KEY, {'stamp': {}, 'pace': {'ms': 'fast', 'share': 7}})
     session('client 13\n')
@@ -388,7 +419,10 @@ try:
     # --- review #1: a progress file of another shape, and a sweep that throws, never cost the export -------------------
     real_write(os.path.join(folder, 'data', 'ttx-sweep.js'), ex.TTX_SWEEP_KEY, {'stamp': {}, 'failed': 5, 'keys': []})
     odd = session('client 11\n')
-    check(odd.ttx_sweep is not None and planned(odd) == sorted(TYPES), 'a progress file of another shape counts as none (review #1)')
+    check(odd.ttx_stale == [] and planned(odd) == ['germany:G1_A'],
+          'a progress file of another shape counts as none: no key is taken from it - a file is current only because its own '
+          'client had these very inputs (proven by the snapshots, BACKLOG 55); the one never written is built (review #1) %r'
+          % ((odd.ttx_stale, planned(odd)),))
     archive = os.path.join(temp, 'test.wotmod')
     z = zipfile.ZipFile(archive, 'w')
     for asset in ex.ASSETS: z.writestr('res/armor_inspector_viewer/' + asset, '')

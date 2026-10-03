@@ -7,7 +7,7 @@ Temp folders only.
 0.8.7's setup read and published every saved battle before anything else ran (145 battles: ~65 s of CPU offline, 8 min
 22 s in the game), and the wheel migration, the TTX sources and every job waited behind it. Checks, by group:
 
-  first      no data/published.json: setup reads no raw battle, lists every battle from the previous index, queues one
+  first      no data/published.json: setup reads no raw battle, lists every battle from the previous index, each stale;
              'battle' job each after the jobs of the vehicle replay (a migration goes first), keeps the prune for the end
   slices     a battle is published in slices: lines, then hits, then the file; the job goes back in its place; the game's
              share of the time after each slice, with no cap; a page job goes first between two slices and the battle
@@ -159,12 +159,17 @@ try:
     first.setup()
     check(reads == [], 'first: setup reads no raw battle', reads)
     kinds = [job[2] for job in sorted(first.jobs)]
-    check(kinds == ['vehicle', 'battle', 'battle', 'battle'], 'first: one battle job each, after the migration', kinds)
-    check(sorted(index_rows()) == names, 'first: the index lists every battle from the previous one', sorted(index_rows()))
+    # BACKLOG 55 (02.10): no battle is published at the start or in the background - each when the page opens it.
+    check(kinds == ['vehicle'], 'first: no battle job - only the migration', kinds)
+    check(sorted(index_rows()) == names and all(index_rows()[n].get('stale') is True for n in names),
+          'first: the index lists every battle from the previous one, each stale', index_rows())
     check(os.path.exists(orphan), 'first: no prune before the references are known')
-    check(len(logged('Startup in ')) == 1 and 'battles 0 current and 3 to publish in the background' in logged('Startup in ')[0],
+    check(len(logged('Startup in ')) == 1 and 'battles 0 current and 3 stale (prepared when opened)' in logged('Startup in ')[0],
           'first: one startup line with the battles', logged('Startup in '))
-    check(first.backlog is not None and first.backlog['count'] == 3, 'first: a backlog of three')
+    check(first.backlog is None and first.prune_waits is True, 'first: no background backlog; the prune waits for the references')
+    for name in names: first.request_battle(name)
+    check([(j[0], j[3]['battleId']) for j in sorted(first.jobs) if j[2] == 'battle'] == [(ex.JOB_PAGE, n) for n in names],
+          'first: the page opening each battle queues it at the page\'s turn', [(j[0], j[2], j[3]) for j in sorted(first.jobs)])
 
     # --- slices: a fake clock; a hit costs 0.2 s (BATTLE_SLICE 0.1) ------------------------------------------------------
     clock = [100.0]
@@ -178,10 +183,8 @@ try:
         return real_prepare(raw, index, battle, track)
     first.prepare_hit = slow_prepare
     first.last_job = 0
-    first.run_job()   # the migration
-    check(order == ['vehicle'], 'slices: the migration first', order)
-    first.last_job = 0
-    first.run_job()   # the first slice of the first battle: its lines, its first hit
+    first.run_job()   # the first slice of the first battle the page asked for: its lines, its first hit
+    check(order == ['battle'], 'slices: the page\'s battles before the background\'s migration', order)
     work = first.battle_work
     check(work is not None and work['name'] == '10-a' and work['reader'].done and len(work['prepared']) == 1,
           'slices: the first slice reads the lines and prepares one hit, then stops (0.2 s > BATTLE_SLICE)',
@@ -189,21 +192,13 @@ try:
     check([j[2] for j in sorted(first.jobs)][0] == 'battle' and sorted(first.jobs)[0][3]['battleId'] == '10-a'
           and not os.path.exists(os.path.join(folder, 'data', 'battles', '10-a.js')),
           'slices: the job is back in its own place, nothing written yet', [(j[2], j[3]) for j in sorted(first.jobs)])
-    check(abs(first.job_rest - 0.2) < 1e-9, 'slices: after a slice the game gets its share of the time (0.2 s)', first.job_rest)
-    check(first.run_job() is False, 'slices: the next slice waits for that share')
-    # A click of the page between two slices: its job runs at once, the battle goes on where it stopped (not read again).
-    first.queue_job(ex.JOB_PAGE, 'vehicle', {'vehicleType': 'germany:Clicked', 'source': 'picker'})
-    check(first.run_job() and order[-1] == 'vehicle', 'slices: a job the page waits for goes first between two slices', order)
-    first.last_job = 0
     cost['hit'] = 5.0
-    first.run_job()   # the second hit - 5 s: the rest has no 1 s cap
-    check(abs(first.job_rest - 5.0) < 1e-9 and first.battle_work is not None and len(first.battle_work['prepared']) == 2,
-          'slices: a long slice gets as long a rest - no 1 s cap', first.job_rest)
-    first.last_job = 0
+    check(first.run_job() is True and len(first.battle_work['prepared']) == 2,
+          'slices: the page waits for it - the next slice at once, no rest between them', first.battle_work and len(first.battle_work['prepared']))
     first.run_job()   # the file
     check(os.path.exists(os.path.join(folder, 'data', 'battles', '10-a.js')) and first.battle_work is None
           and reads.count('10-a.jsonl') == 1, 'slices: the file in the third slice, the raw file read once', reads)
-    check(order.count('battle') == 3, 'slices: three slices of the first battle', order)
+    check(order == ['battle'] * 3, 'slices: three slices of the first battle', order)
     cost['hit'] = 0.0
     # The gates, with a recorder: a command of the page waiting ends a slice after its first line.
     commands = queue.Queue()
@@ -224,18 +219,17 @@ try:
     first.idle()
     check(first.battle_work is None, 'slices: a battle drops the battle read halfway')
     recorder.in_battle = False
-    # A drag ends a slice too.
+    # A drag does not hold the battle the page asked for (BACKLOG 55: the user drags the scene of its old file meanwhile).
     recorder.busy_until = 1e12
     first.last_job = 0
-    check(first.run_job() is False, 'slices: a drag holds the next slice')
+    cost['hit'] = 0.2
+    check(first.run_job() is True and first.battle_work is not None and first.battle_work['name'] == '11-b'
+          and reads.count('11-b.jsonl') == 2, 'slices: a drag does not hold the page\'s battle; the one dropped for the battle is read again',
+          reads)
+    cost['hit'] = 0.0
     recorder.busy_until = 0.0
     first.recorder = None
     first.last_job = 0
-    cost['hit'] = 0.2
-    first.run_job()
-    cost['hit'] = 0.0
-    check(first.battle_work is not None and first.battle_work['name'] == '11-b' and reads.count('11-b.jsonl') == 2,
-          'slices: the battle dropped for the battle is read again after it', reads)
     # A model arrived for it meanwhile (drain_republish publishes it at once): the slices are dropped, its job passes over.
     first.republish_saved('11-b')
     check(first.battle_work is None, 'slices: a publish of that battle at once drops its slices')
@@ -243,32 +237,38 @@ try:
     ex.TTX_TIMER = real_timer
     check(reads.count('11-b.jsonl') == 3, 'slices: ... and its job passes over it - not read a fourth time', reads)
 
-    # --- backlog -----------------------------------------------------------------------------------------------------
-    check(all(os.path.exists(os.path.join(folder, 'data', 'battles', n + '.js')) for n in names), 'backlog: every battle published')
-    check(first.backlog is None and len(logged('Saved battles published in the background: 3 in')) == 1
-          and ' MB raw, ' in logged('Saved battles published in the background')[0]
-          and ' slices)' in logged('Saved battles published in the background')[0],
-          'backlog: one line when the last is done, with the MB and the slices', logged('Saved battles'))
-    check(len(logged('Saved battle 10-a published in the background:')) == 1 and len(logged('Saved battle 12-c')) == 0,
-          'backlog: a battle that took long has a line of its own, a quick one not', logged('Saved battle '))
-    check(os.path.exists(model) and not os.path.exists(orphan), 'backlog: the prune after the last (orphan gone, model kept)')
+    # --- opened: the battles the page asked for ----------------------------------------------------------------------
+    check(all(os.path.exists(os.path.join(folder, 'data', 'battles', n + '.js')) for n in names)
+          and not any(index_rows()[n].get('stale') for n in names), 'opened: every battle published, none stale any more')
+    check(len(logged('Saved battle 10-a prepared for the page: ')) == 1 and ' MB raw, ' in logged('prepared for the page')[0]
+          and ' slices)' in logged('prepared for the page')[0] and not logged('Saved battles published in the background'),
+          'opened: one line a battle the page waited for, with the MB and the slices; no background summary', logged('Saved battle'))
+    check(os.path.exists(model) and not os.path.exists(orphan), 'opened: the prune once the last references are known (orphan gone, model kept)')
+    first.write_published()
     published = published_file()
     check(sorted(published['battles']) == names and published['keys'] == [ex.model_key(RESOURCE, VERSION)],
           'backlog: data/published.json with every battle and the model key once', published.get('keys'))
     entry = published['battles']['11-b']
-    check(entry['stamp'].startswith('d%d:' % ex.DERIVED_FORMAT) and entry['rawSize'] == entry['raw']
-          == os.path.getsize(os.path.join(folder, 'battles', '11-b.jsonl')),
-          'backlog: the stamp is the derived format\'s, the raw bytes and the raw size kept', entry)
+    check(entry['stamp'] == 'd%d' % ex.DERIVED_FORMAT and entry['rawSize'] == entry['raw']
+          == os.path.getsize(os.path.join(folder, 'battles', '11-b.jsonl'))
+          and entry['client'] == entry['built'] == ex.version_hash(VERSION),
+          'opened: the stamp is the derived format\'s alone (no client), the raw bytes and size, the clients named', entry)
 
-    # --- rev: every publish a new revision in the index ----------------------------------------------------------------
+    # --- rev: every publish that changes the file a new revision in the index --------------------------------------------
     rows = index_rows()
     revs = [rows[n].get('rev') for n in names]
     check(all(revs) and len(set(revs)) == 3, 'rev: each battle has its own revision in the index', revs)
+    stamp = os.path.getmtime(os.path.join(folder, 'data', 'battles', '10-a.js'))
+    os.utime(os.path.join(folder, 'data', 'battles', '10-a.js'), (stamp - 100, stamp - 100))
+    first.republish_saved('10-a')
+    write(os.path.join(folder, 'battles', '12-c.jsonl'), lines(hit(3)), 'ab')
     first.republish_saved('12-c')
     first.write_index()
     again = index_rows()
     check(again['12-c']['rev'] != rows['12-c']['rev'] and again['10-a']['rev'] == rows['10-a']['rev'],
-          'rev: a publish changes that battle\'s revision only', (rows['12-c']['rev'], again['12-c']['rev']))
+          'rev: a publish that changes the file changes that battle\'s revision only', (rows['12-c']['rev'], again['12-c']['rev']))
+    check(abs(os.path.getmtime(os.path.join(folder, 'data', 'battles', '10-a.js')) - (stamp - 100)) < 1,
+          'rev: a publish of the same bytes writes nothing (BACKLOG 55: 138 of 145 were the same on 02.10)')
     first.write_published()
 
     # --- current: the next start takes them as they are -------------------------------------------------------------
@@ -283,18 +283,26 @@ try:
     check(not os.path.exists(orphan) and os.path.exists(model), 'current: references known - the prune at setup')
     size = os.path.getsize(os.path.join(folder, 'battles', '11-b.jsonl'))
     check(second.raw_offsets.get('11-b') == size, 'current: the raw offset of each battle', second.raw_offsets.get('11-b'))
-    check('battles 3 current and 0 to publish' in logged('Startup in ')[-1], 'current: the startup line says so', logged('Startup in ')[-1])
+    check('battles 3 current and 0 stale' in logged('Startup in ')[-1], 'current: the startup line says so', logged('Startup in ')[-1])
+
+    def open_stale(e):
+        """The page opens every stale battle (request_battle), the export thread runs what that queued; the published state
+        written as the idle tick or the game's close writes it."""
+        for name in sorted(e.stale): e.request_battle(name)
+        drain(e)
+        e.write_published()
 
     # --- changed: only what changed ------------------------------------------------------------------------------------
     write(os.path.join(folder, 'battles', '10-a.jsonl'), lines(hit(3)), 'ab')              # the raw file grew
     write(os.path.join(folder, 'data', 'battles', '11-b.js'), 'ArmorInspectorData.receive(["battle:11-b",{}]);\n')  # derived changed
     third = exporter()
     third.setup()
-    queued = sorted(j[3]['battleId'] for j in third.jobs if j[2] == 'battle')
-    check(queued == ['10-a', '11-b'], 'changed: the grown raw file and the changed derived file only', queued)
-    check(third.backlog['prune'] is True, 'changed: the references of the changed derived file are unknown - the prune waits for the backlog')
+    queued = sorted(third.stale)
+    check(queued == ['10-a', '11-b'] and not [j for j in third.jobs if j[2] == 'battle'],
+          'changed: the grown raw file and the changed derived file only are stale (none queued)', queued)
+    check(third.prune_waits is True, 'changed: the references of the changed derived file are unknown - the prune waits for them')
     del reads[:]
-    drain(third)
+    open_stale(third)
     check(sorted(reads) == ['10-a.jsonl', '11-b.jsonl'], 'changed: those two read', reads)
     hits = ex.read_data_file(os.path.join(folder, 'data', 'battles', '10-a.js'))['hits']
     check(len(hits) == 3, 'changed: the grown battle published with its new hit', len(hits))
@@ -304,8 +312,8 @@ try:
     os.remove(model)
     fourth = exporter()
     fourth.setup()
-    queued = sorted(j[3]['battleId'] for j in fourth.jobs if j[2] == 'battle')
-    check(queued == names, 'changed: a battle whose model file was deleted is published again', queued)
+    queued = sorted(fourth.stale)
+    check(queued == names, 'changed: a battle whose model file was deleted is stale', queued)
     check(not any(j[2] == 'model' for j in fourth.jobs), 'changed: (no model queued before its battle is published)')
     while fourth.run_battle_job({'battleId': '10-a'}): pass
     models = [j for j in fourth.jobs if j[2] == 'model']
@@ -344,13 +352,11 @@ try:
     write(os.path.join(folder, 'battles', '11-b.jsonl'), '{"schema": 1, "type": "hit", "id": "9"', 'ab')
     fifth = exporter()
     fifth.setup()
-    check(sorted(j[3]['battleId'] for j in fifth.jobs if j[2] == 'battle') == ['11-b'], 'truncated: the grown file is published once',
-          sorted(j[3]['battleId'] for j in fifth.jobs if j[2] == 'battle'))
-    drain(fifth)
+    check(sorted(fifth.stale) == ['11-b'], 'truncated: the grown file is stale', sorted(fifth.stale))
+    open_stale(fifth)
     sixth = exporter()
     sixth.setup()
-    check(not [j for j in sixth.jobs if j[2] == 'battle'], 'truncated: the next start takes it as it is (its raw size kept)',
-          [j[3] for j in sixth.jobs if j[2] == 'battle'])
+    check(not sixth.stale, 'truncated: once prepared, the next start takes it as it is (its raw size kept)', sorted(sixth.stale))
 
     # Another build: nothing again (DERIVED_FORMAT says when the files differ); another derived format: every battle again.
     real_version, real_format = ex.VERSION, ex.DERIVED_FORMAT
@@ -358,22 +364,24 @@ try:
     try:
         seventh = exporter()
         seventh.setup()
-        check(not [j for j in seventh.jobs if j[2] == 'battle'], 'changed: another build with the same derived format publishes nothing')
+        check(not seventh.stale, 'changed: another build with the same derived format: nothing stale')
     finally:
         ex.VERSION = real_version
     ex.DERIVED_FORMAT = real_format + 1
     try:
         eighth = exporter()
         eighth.setup()
-        queued = sorted(j[3]['battleId'] for j in eighth.jobs if j[2] == 'battle')
-        check(queued == sorted(names + ['13-d']), 'changed: another derived format publishes every battle again', queued)
-        # --- tail: a queued battle made current and published meanwhile is passed over -----------------------------
+        queued = sorted(eighth.stale)
+        check(queued == sorted(names + ['13-d']) and not [j for j in eighth.jobs if j[2] == 'battle'],
+              'changed: another derived format - every battle stale, none queued', queued)
+        # --- tail: a stale battle made current and published by the tail is current ---------------------------------
         eighth.load_tail('12-c')
         eighth.flush(force=True)
+        check('12-c' not in eighth.stale and not index_rows()['12-c'].get('stale'), 'tail: the battle the tail published is not stale')
         del reads[:]
         del order[:]
-        drain(eighth)
-        check('12-c.jsonl' not in reads and order.count('battle') == 4, 'tail: its job passes over the battle the tail published',
+        open_stale(eighth)
+        check('12-c.jsonl' not in reads and order.count('battle') == 3, 'tail: opening the others prepares them alone',
               '%s %s' % (reads, order))
     finally:
         ex.DERIVED_FORMAT = real_format

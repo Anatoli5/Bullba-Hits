@@ -11,6 +11,7 @@ import glob
 import hashlib
 import io
 import json
+import marshal
 import logging
 import math
 import numbers
@@ -30,9 +31,17 @@ from .records import RecordDecoder, pack_battle, stamp_snapshot, unpack_battle
 from .telemetry import mechanics_params
 from .crit_tie import attach_crits, moves_tie
 from .damage_log import damage_log
+from .client_snapshot import ClientSnapshot, version_label
+from .client_code import CODE_MODULES, SHARED_DATA, TEXT_DOMAINS
+from . import client_code as _client_code
+from .client_objects import Objects
+# The types whose output on the offline stand changed between the previous client and this one (tools/client_code_set.py:
+# the stand built every type for both; hashes only): rebuilt once whatever their keys say (BACKLOG 55, second review C2).
+STAND_CHANGED = tuple(getattr(_client_code, 'STAND_CHANGED', ()))
+STAND_CLIENT = getattr(_client_code, 'STAND_CLIENT', None)
 
 LOG = logging.getLogger('local.armor_inspector')
-VERSION = '0.9.3'
+VERSION = '0.9.4'
 RESOURCE = re.compile(r'^(?:[A-Za-z0-9_-]+/)?vehicles/[A-Za-z0-9_/-]+\.(?:model|havok)\Z')
 IDENTIFIER = re.compile(r'^[-a-zA-Z0-9_]{1,100}\Z')
 # The interface icons of the aim configuration (equipment, perks, shells) ship with the page in web/icons
@@ -147,6 +156,13 @@ EXTRAS_KEY = 'extras:'
 # 'battle' job after the vehicle migrations, in slices (BATTLE_SLICE) with the game's share of the time between two.
 PUBLISHED_FILE = 'published.json'
 # 2 (startup-review-fixes, 27.09): 'rawSize', 'absent', the stamp by DERIVED_FORMAT.
+# BACKLOG 55 (02.10): the stamp is 'd<DERIVED_FORMAT>' alone - the client a battle was recorded with never changes, and a
+# client update queued all 222 saved battles (296 s) to write 138 of 145 byte for byte again and to lose the fill-ins of the
+# rest. An entry also names the client that recorded the battle and the one that built the file ('client', 'built': sha1[:16]
+# of the version text) and the inputs its fill-ins read ('inputs': path -> 'crc:size'). An entry of 0.9.3 ('d1:<built
+# under>') is current when the battle's own client built it (its raw header says), else it is repaired when it is opened.
+# No battle is published at the start any more: one that is not current is 'stale' in the index; the page shows its file at
+# once and asks for it ('prepareBattle' -> request_battle), and the mod prepares that one battle at the page's turn.
 PUBLISHED_FORMAT = 2
 PUBLISHED_LIMIT = 16*1024*1024
 # The published state is written by the idle tick at most this often outside a battle (and at setup, at the end of the
@@ -169,6 +185,46 @@ BATTLE_SLICE = 0.1
 PERMANENT_MODEL_ERRORS = ('Client version changed', 'Collision model not found in client')
 # The background publication logs a battle of its own when it is this big or took this long (the rest are in the summary).
 BATTLE_LOG_MB, BATTLE_LOG_WALL = 10.0, 5.0
+LEGACY_STAMP = re.compile(r'^d(\d+):([0-9a-f]{16})\Z')
+# What an armoured prefab's armour names come from besides the prefab and the vehicle XML (prefab_spec, material_kinds).
+MATERIAL_KINDS = 'system/data/material_kinds.xml'
+MATERIAL_KINDS_CODE = 'scripts/common/material_kinds.pyc'
+# THE CODE A FILL-IN READS THROUGH (review #7, 02.10). The outer track pair and the wheels start from the compact descriptor,
+# decoded by the client's items code with the nation's tables (list.xml, components/chassis.xml); the pair's armour names
+# come from material_kinds. That code is the code set of the characteristics and vehicle files (Exporter.code_modules, BACKLOG
+# 55: the modules the builds execute and those whose objects they name) - one rule for both: 2.4.0.2 changed only the crew's
+# tankmen_components.pyc, which no build executes, so the repair of 02.10's battles stays open.
+
+
+def nation_tables(type_name):
+    """The nation's tables a compact descriptor of this type is decoded with: list.xml (type ids) and components/chassis.xml
+    (chassis ids)."""
+    nation = str(type_name or '').split(':', 1)[0]
+    if not re.match(r'^[a-z]+\Z', nation): return []
+    return ['scripts/item_defs/vehicles/%s/list.xml' % nation, 'scripts/item_defs/vehicles/%s/components/chassis.xml' % nation]
+
+
+def version_hash(text):
+    """The short hash a published entry names a client by ('client', 'built', the 0.9.3 stamp)."""
+    return hashlib.sha1(canonical(text or '').encode('utf-8')).hexdigest()[:16]
+
+
+def vehicle_xml(type_name):
+    """The client path of a vehicle type's XML ('france:F108_X' -> scripts/item_defs/vehicles/france/F108_X.xml), or None."""
+    if not re.match(r'^[a-z]+:[A-Za-z0-9_-]+\Z', str(type_name or '')): return None
+    nation, name = str(type_name).split(':')
+    return 'scripts/item_defs/vehicles/' + nation + '/' + name + '.xml'
+
+
+def read_header(path):
+    """The first line of a raw battle file when it is the battle's header (id, start, map, client), else None: one readline,
+    no record decoded."""
+    try:
+        with open(path, 'rb') as stream: line = stream.readline(1024 * 1024 + 1)
+        row = json.loads(line.decode('utf-8'))
+        return row if isinstance(row, dict) and row.get('type') == 'battle' else None
+    except Exception:
+        return None
 
 
 
@@ -185,7 +241,7 @@ def job_key(kind, payload):
     """
     if kind == 'model':
         return ('model', payload[0])
-    # 'battle' (a saved battle setup left to the background) is one job per battle.
+    # 'battle' (a saved battle the page asked for, request_battle) is one job per battle.
     if kind == 'battle':
         return ('battle', str((payload or {}).get('battleId') or ''))
     # 'vehicle', 'ttx' (the characteristics file of a type) and 'extras' (Exporter.type_extras) are one job per type each.
@@ -193,9 +249,57 @@ def job_key(kind, payload):
 
 
 def model_key(resource, version):
+    """The name of a model file before 0.9.4 (and of every model of a battle of another client): the version text and the
+    resource. Such files stay as they are; Exporter.model_ref names the models of the running client by their content."""
     if not RESOURCE.match(resource) or '..' in resource:
         raise ValueError('Invalid collision resource')
     return hashlib.sha256((canonical(version)+'\n'+resource).encode('utf-8')).hexdigest()
+
+
+# WHAT A MODEL FILE IS (BACKLOG 55, 02.10): raised whenever geometry.extract, havok.py or model_document writes anything
+# different for the same .havok. It is in every model's name (model_content_key) and, from 2 on, in the file itself ('format';
+# a file without it is of format 1): a model file of another format is never taken over (Exporter.adopt_model) nor counted the
+# same part of a vehicle file (model_identity), so a raise exports each model again as it is next needed and writes the vehicle
+# files that refer to it again. tests/py27/havok_lazy.py compares the files of eight client models with
+# tests/golden/havok-models.json and fails when they change while this stays (or when it is raised without a change).
+MODEL_FILE_FORMAT = 1
+
+
+def model_content_key(havok, crc, size):
+    """The name of a model file by what it is made of (BACKLOG 55): its .havok's path, CRC-32 and size in the client's
+    packages, and MODEL_FILE_FORMAT - no client version. The same file in the next client is the same model."""
+    return hashlib.sha256(('model-file %d\n%s\n%s\n%d' % (MODEL_FILE_FORMAT, havok, crc, int(size))).encode('utf-8')).hexdigest()
+
+
+def model_document(data, havok):
+    """What a model file holds (the one writer: Exporter.model_extract, and tests/py27/havok_lazy.py's golden): the shot
+    collision of the .havok's bytes, the .havok's path and sha256, and MODEL_FILE_FORMAT from 2 on (format 1 files have none,
+    so they stay byte for byte what 0.9.3 wrote)."""
+    model = extract(data)
+    model.update({'resource': havok, 'sha256': hashlib.sha256(data).hexdigest()})
+    if MODEL_FILE_FORMAT != 1: model['format'] = MODEL_FILE_FORMAT
+    return model
+
+
+def code_identity(code):
+    """What a client module's code does, without where it stands (BACKLOG 55): sha1 of every code object's bytecode, constants
+    (a nested code object by its own identity), names, variable, free and cell names, argument count, flags and name - not the
+    file name, the first line or the line table. A module moved down a few lines keeps it; a changed function changes it
+    (measured on the client's 8642 .pyc: 1.7 s for all on its python27; outputs/rebuild-code-identity-2026-10-02.md)."""
+    digest = hashlib.sha1()
+    digest.update(code.co_code)
+    for value in code.co_consts:
+        if isinstance(value, type(code)): digest.update(b'C' + code_identity(value).encode('ascii'))
+        else: digest.update(('K%r%r' % (type(value), value)).encode('utf-8', 'replace'))
+    for names in (code.co_names, code.co_varnames, code.co_freevars, code.co_cellvars):
+        digest.update(('|' + ','.join(names)).encode('utf-8', 'replace'))
+    digest.update(('|%d|%d|%d|%s' % (code.co_argcount, code.co_flags, code.co_nlocals, code.co_name)).encode('utf-8', 'replace'))
+    return digest.hexdigest()
+
+
+def crc_text(entry):
+    """'%08x:size' of a snapshot entry, '-' for none, '?' for an unknown CRC."""
+    return '-' if entry is None else '?' if entry[0] < 0 else '%08x:%d' % entry
 
 
 def atomic_write(path, data):
@@ -228,7 +332,6 @@ ZIP_LOCAL_HEADER = struct.Struct('<4sHHHHHIIIHH')
 
 
 ZIP_END = struct.Struct('<4s4H2LH')
-TTX_SOURCE_MARKS = (b'scripts/item_defs/vehicles/', b'scripts/common/items/')
 
 
 def zip_directory(path):
@@ -321,16 +424,34 @@ def same_as_member(path, info):
     return len(data) == info.file_size and (zlib.crc32(data) & 0xffffffff) == info.CRC
 
 
-def write_data(path, key, value):
+def data_bytes(key, value):
     # JSON is serialized, never interpolated into executable text unescaped.
     if str(key).startswith('battle:'):
         value = pack_battle(value)
     payload = json.dumps([key, value], ensure_ascii=True, allow_nan=False, separators=(',', ':'))
     payload = payload.replace('<', '\\u003c').replace('>', '\\u003e').replace('&', '\\u0026')
-    data = ('ArmorInspectorData.receive('+payload+');\n').encode('ascii')
+    return ('ArmorInspectorData.receive('+payload+');\n').encode('ascii')
+
+
+def write_data(path, key, value):
+    data = data_bytes(key, value)
     atomic_write(path, data)
     # The size written: data/published.json compares it with the file on disk at the next start.
     return len(data)
+
+
+def write_data_changed(path, key, value):
+    """(size, written): write_data, unless the file on disk holds these very bytes (BACKLOG 55, 02.10: 138 of 145 battles
+    published again after the client update were byte for byte the old files) - then nothing is written."""
+    data = data_bytes(key, value)
+    try:
+        if os.path.getsize(path) == len(data):
+            with open(path, 'rb') as stream:
+                if stream.read(len(data) + 1) == data: return len(data), False
+    except (OSError, IOError):
+        pass
+    atomic_write(path, data)
+    return len(data), True
 
 
 def read_data_file(path):
@@ -2317,9 +2438,11 @@ def vehicle_id(type_name):
     return NON_IDENTIFIER.sub('_', str(type_name).replace(':', '-', 1))
 
 
-def descriptor_hash(version, type_name, compact_descriptor):
-    """Identity of one exported configuration: client version, type and descriptor."""
-    identity = '\n'.join((canonical(version or ''), str(type_name or ''), str(compact_descriptor or '')))
+def descriptor_hash(type_name, compact_descriptor):
+    """Identity of one exported configuration: type and descriptor. Not the client version (BACKLOG 55: after 02.10's update
+    every vehicle a request named was exported again inside setup, 31 s); whether the file is still this client's is its key's
+    business (Exporter.vehicle_current)."""
+    identity = '\n'.join((str(type_name or ''), str(compact_descriptor or '')))
     return hashlib.sha256(identity.encode('utf-8')).hexdigest()
 
 
@@ -2645,6 +2768,36 @@ TTX_SWEEP_KEY = 'ttxSweep'
 # of the sweep must be written again. Measured on the offline stand (docs/KNOWLEDGE.md 14): 1107 regular vehicles, a vehicle
 # 0.74 s median of work (0.89 s mean), a collision model 0.11 s median and 1.6 s p99; 986 s of work, ~190 MB in all.
 MODELS_FORMAT = 1
+# THE KEYS OF THE CLIENT'S OUTPUTS (BACKLOG 55, 02.10). The 2.4.0.2 update changed tankmen_components.pyc (crew tables) and one
+# vehicle's XML; the mod built again all 1343 characteristics files, 888 vehicles' models and 196 vehicle files - the same
+# bytes. The user: when a formula changes, check the formula, not every value run through it. Each output is keyed by:
+#   - its data: the vehicle's own XML (and variants), its nation's files, and what every type is built with alike - the files
+#     items reads at its start and the builds open beyond those (client_code.SHARED_DATA) and the texts they translate from
+#     (client_code.TEXT_DOMAINS); a vehicle file adds its compact descriptor, its collision models and prefabs;
+#   - the client's CODE its build executes: the identity (code_identity: the bytecode, constants and names, not the line
+#     numbers or the file) of every module of the code set - client_code.CODE_MODULES (made on the offline stand for each
+#     client by tools/client_code_set.py: what the builds execute and what that code names), and what the game itself records
+#     executing during builds (code_record). One 'generation' for all, changed only when a module of the set really changed.
+# A key that changed is built again and compared with the file on disk, written only when the result differs: a vehicle whose
+# data changed - that vehicle; a module of the set - every file (a real change of the formula). Outside the keys: the
+# game's executable (native XML reading, vector maths) and code outside the set (a table computed at import from a module
+# the set does not name); their change runs the sample check (VERIFY_SAMPLE_*): a few files built and compared, one that
+# differs - 'Missed change' and every file. A key: '<data>.<generation>' (characteristics) or '<data>.<generation>.<own>'.
+CODE_STATE_FILE = 'code-state.json'
+# The client change check that must outlive its session (second review A): the reasons of a pending sample check, whether every
+# file is to be checked (a 'Missed change'), and the client whose stand changes were rebuilt.
+VERIFY_STATE_FILE = 'verify.json'
+# WHAT A VEHICLE FILE IS: raised whenever export_vehicle writes anything different for the same vehicle (in every vehicle
+# file's key: each is built again in the background and written where it differs).
+VEHICLE_FORMAT = 1
+# The keys of the vehicle files (data/<this>): {id: key} - the one owner of "this file is the running client's".
+VEHICLE_KEYS_FILE = 'vehicle-keys.json'
+# The model files named before 0.9.4 (by the version text) that hold exactly a model of the running client: {content key:
+# file}, and what each scanned file is (its .havok and that file's sha256). data/<this>.
+MODELS_INDEX_FILE = 'models-index.json'
+# THE GUARD AGAINST A MISSED CHANGE: after the client's files changed, this many characteristics files and vehicle files whose
+# keys did NOT change are built and compared all the same; one that differs is a change the keys missed ('Missed change').
+VERIFY_SAMPLE_TTX, VERIFY_SAMPLE_VEHICLES = 8, 4
 MODELS_SWEEP_DATA = ('data', 'models-sweep.js')
 MODELS_SWEEP_KEY = 'modelsSweep'
 # Base-list copies made for the onboarding and Story Mode (no battle-mode tag on them) and the client's test vehicles:
@@ -2661,13 +2814,18 @@ def regular_vehicle(row, extension=()):
                 or MODELS_SKIP_NAME.search(type_name.split(':', 1)[-1]))
 # The catalogue while the model sweep writes vehicle after vehicle: at most every 5 s (the page polls every 2-5 s).
 SWEEP_CATALOGUE_PAUSE = 5.0
-SWEEP_ORDER = ('ttx', 'models')
+# 'verify' (BACKLOG 55): the files whose key really changed (their own data, or a module of the code set), built again and
+# compared - in the background, after every job and every sweep the user started, without the page and without asking; and
+# the sample check when the exe or code outside the set changed. It has no progress file.
+SWEEP_ORDER = ('ttx', 'models', 'verify')
+# The sweeps the user starts (the page's Start): ahead of the background's jobs, taking turns (BACKLOG 55, run_sweeps).
+USER_SWEEPS = ('ttx', 'models')
 SWEEP_FILES = {'ttx': (TTX_SWEEP_DATA, TTX_SWEEP_KEY), 'models': (MODELS_SWEEP_DATA, MODELS_SWEEP_KEY)}
-SWEEP_LABELS = {'ttx': 'TTX', 'models': 'Model'}
+SWEEP_LABELS = {'ttx': 'TTX', 'models': 'Model', 'verify': 'Client change check'}
 # Ms of work a vehicle before this machine has measured its own (SWEEP_PACE_ITEMS): the characteristics as measured in the
 # game (0.8.6, 26.09: 17 s of slices for 1202 built types, 14.1 ms), the models on the offline stand (28.09, havok-lazy:
 # 179 s for 1058 vehicles, 169 ms; 626 ms with the whole-graph reader, 890 ms on 25.09; docs/KNOWLEDGE.md 14).
-SWEEP_MS = {'ttx': 14.0, 'models': 170.0}
+SWEEP_MS = {'ttx': 14.0, 'models': 170.0, 'verify': 14.0}
 # A collision model whose extraction (model_extract: read, parse, hash, write) took this long says so in the log.
 MODEL_SLOW_MS = 100.0
 # The marker before the page's progress file (24.09, earlier the same day): removed when found.
@@ -3070,6 +3228,7 @@ class Exporter(object):
         self.package_scan_failed = None
         self.prefab_entries = None
         self.package_conflicts = set()
+        self.index_skipped, self.index_failed = set(), []
         self.overrides = None
         self.attempts = {}
         # Ms of each model extracted since the last model sweep's report (model_extract; the report prints and clears it).
@@ -3136,6 +3295,24 @@ class Exporter(object):
         self.sweep_states = dict((kind, None) for kind in SWEEP_ORDER)
         # The CRCs of the characteristics' sources, read once a session for both sweeps (source_crcs).
         self.crcs = None
+        # The client's files (BACKLOG 55): the snapshot (client_snapshot.ClientSnapshot, refreshed once a session by
+        # client(); None until then, False when it could not be taken - the keys fall back to the client version), and
+        # {client version text: {path: (crc, size)}} given from outside (a test) before the snapshot's own (client_files).
+        self.client_state = None
+        self.client_snapshots = {}
+        self.code_generation_value = None
+        self.code_state_value = None
+        self.code_samples = []      # why the sample check runs this session (code_generation)
+        self.code_seen = set()      # client modules the builds executed this session (recorded, code_record)
+        # The model files named by the version text that hold a model of this client (models_index), the vehicle files' keys
+        # (vehicle_keys), the characteristics files whose key changed (start_ttx_sweep -> start_verify).
+        self.models_index_value = None
+        self.models_index_dirty = False
+        self.vehicle_keys_value = None
+        self.vehicle_keys_dirty = False
+        self.vehicle_keys_written = 0.0
+        self.vehicle_bases = {}
+        self.ttx_stale = []
         # The vehicle XML's extras per type (type_extras), a failure's reason included; the types whose descriptor failed
         # in fix_wheels (logged once). Export thread only.
         self.extras_cache = {}
@@ -3156,9 +3333,26 @@ class Exporter(object):
         # The saved battle the background is publishing in slices (run_battle_job), None between two: its reader, the hits
         # prepared so far, its times. Dropped when a battle starts (a big one holds its whole record in memory).
         self.battle_work = None
-        # What a derived battle file is and this client: a file of another format or client is published again (not of
-        # another build - DERIVED_FORMAT says when a build writes them differently).
-        self.stamp = 'd%d:%s' % (DERIVED_FORMAT, hashlib.sha1(self.version.encode('utf-8')).hexdigest()[:16])
+        # What a derived battle file is: a file of another format is prepared again when it is opened (not of another build -
+        # DERIVED_FORMAT says when a build writes them differently - nor of another client: BACKLOG 55, PUBLISHED_FORMAT).
+        self.stamp = 'd%d' % DERIVED_FORMAT
+        # The saved battles whose file is not current ('stale' in the index): each prepared when the page opens it
+        # (request_battle). Those whose model references are unknown (no entry for their file): the prune waits for them.
+        self.stale = set()
+        self.refs_unknown = set()
+        self.prune_waits = self.prune_now = False
+        # A 'battle' job the page waits for runs now (run_job): its slices go on through a drag (battle_stop) and read the
+        # vehicle XML at once instead of queueing the extras job behind the drag (fix_wheels, fix_prefabs).
+        self.preparing_page = False
+        # The inputs the fill-ins of a battle read this publish ({battle id: {path: 'crc:size'}}, fill_allowed): its entry
+        # keeps them, so a later client is compared with what was really read.
+        self.fill_reads = {}
+        # The hits of a battle's file on disk while it is prepared again (kept_hit), and the fill-ins taken from them
+        # (keep_fills: {battle id: kinds}) - for the one log line of its publish.
+        self.kept_files = {}
+        self.kept_now = {}
+        # The started sweep that ran last (run_sweeps): the other started one goes next - both get slices.
+        self.sweep_last = None
         # Each publish gives its battle a revision in the index ('rev', optimisation plan C1): the page reads again only the
         # battle it has open when that one's revision changed, not whenever the index was written (the background publishes
         # a battle every few seconds). This session and a count: a page that outlives a restart never sees one revision twice.
@@ -3198,26 +3392,33 @@ class Exporter(object):
                     pass
                 atomic_write(target, z.read(member))
         step = lap('assets')
+        # The client's files (BACKLOG 55): read again only when a package, an override or a text changed since the last start.
+        self.client()
+        # And the code its builds execute: changed - every characteristics and vehicle file is rebuilt (code_generation).
+        try:
+            self.code_generation()
+        except Exception:
+            LOG.exception('Client code identity unavailable this session; the files are checked by their data')
+        step = lap('client')
         self.load_settings()
         complete = self.load_vehicles()
         step = lap('vehicles')
-        # The saved battles: two sizes each; only those whose derived file is not what data/published.json says it was
-        # built from are published again, in the background (saved_battles, run_battle_job). Raw JSONL is untouched.
-        named, current, queued, refs_known = self.saved_battles()
+        # The saved battles: two sizes each; those whose derived file is not what data/published.json says it was built from
+        # are 'stale' - none is published here or in the background (BACKLOG 55): the page asks for the one it opens.
+        named, current, stale, refs_known = self.saved_battles()
         complete = complete and named
         step = lap('battles')
         self.replay_vehicle_requests()
-        # After the replay: the migrations of the wheeled and prefab vehicles' files go first, the battles after them.
-        for name in queued: self.queue_job(JOB_BULK, 'battle', {'battleId':name})
         step = lap('replay')
         rows = self.catalogue_rows()
         # prune() deletes every model no reference names, and a model of an earlier client can never be extracted
         # again. So it runs only from a complete reference set: one battle or vehicle file that did not read or
         # publish - locked by an antivirus or a backup, or broken - keeps every model on disk this session
         # (EXP-02/DATA-02, 24.09). The unused ones go on the next start that reads everything. A battle whose references
-        # are not known yet (no published state for its file) is published in the background first; the prune waits for
-        # the last of them (finish_backlog).
+        # are not known (no published state for its file) is prepared when it is opened; the prune waits for the last of
+        # them (publish -> write_index).
         if not complete: LOG.warning('Unused models kept this session: a saved battle or vehicle could not be read')
+        self.prune_waits = bool(complete and not refs_known)
         self.write_index(prune=complete and refs_known)
         step = lap('index')
         # The sweeps are optional: whatever goes wrong with one leaves the export alone (review #1).
@@ -3227,19 +3428,23 @@ class Exporter(object):
             except Exception:
                 self.sweeps[kind] = None
                 LOG.exception('%s sweep unavailable this session; the export goes on', SWEEP_LABELS[kind])
+        # What the client's change asks to build again and compare (the files whose key changed), in the background.
+        try:
+            self.start_verify()
+        except Exception:
+            self.sweeps['verify'] = None
+            LOG.exception('Client change check unavailable this session; the export goes on')
         step = lap('sweeps')
         # The catalogue once the model sweep's keys are known: a file of an earlier client whose sources did not change
         # is this client's too ('exported').
         self.flag_rows(rows)
         self.write_catalogue(force=True, rows=rows)
-        if queued:
-            self.backlog = {'left':set(queued), 'count':len(queued), 'started':time.time(), 'work':0.0, 'failed':0,
-                            'prune':complete and not refs_known, 'mb':0.0, 'slices':0, 'slowest':None}
         if self.published_dirty: self.write_published()
+        self.write_keys(force=True)
         step = lap('catalogue')
-        LOG.info('Startup in %.2f s: assets %.2f s, %d vehicles %.2f s, battles %d current and %d to publish in the '
-                 'background %.2f s, replay %.2f s (%d jobs queued), index %.2f s, sweeps %.2f s, catalogue %.2f s',
-                 step - began, spent['assets'], len(self.vehicles), spent['vehicles'], current, len(queued),
+        LOG.info('Startup in %.2f s: assets %.2f s, client files %.2f s, %d vehicles %.2f s, battles %d current and %d stale '
+                 '(prepared when opened) %.2f s, replay %.2f s (%d jobs queued), index %.2f s, sweeps %.2f s, catalogue %.2f s',
+                 step - began, spent['assets'], spent['client'], len(self.vehicles), spent['vehicles'], current, len(stale),
                  spent['battles'], spent['replay'], len(self.jobs), spent['index'], spent['sweeps'], spent['catalogue'])
 
     # SAVED BATTLES AT STARTUP (startup-republish-slow, 27.09): see PUBLISHED_FILE.
@@ -3292,7 +3497,7 @@ class Exporter(object):
         it is now (its size: an unfinished last line is read to the same end every time), and waits for nothing: two sizes,
         nothing read. `models` (setup: the model keys on disk, one listing): every model it names that was there is still
         there - a model file deleted since would leave its parts empty until the next build."""
-        if not entry or entry.get('stamp') != self.stamp or entry.get('waits'): return False
+        if not entry or entry.get('stamp') != self.stamp or entry.get('waits') or entry.get('repair'): return False
         try:
             if not (entry.get('rawSize') == os.path.getsize(os.path.join(self.folder, 'battles', name+'.jsonl')) and
                     entry.get('size') == os.path.getsize(os.path.join(self.folder, 'data', 'battles', name+'.js'))):
@@ -3309,14 +3514,35 @@ class Exporter(object):
         except OSError:
             return set()
 
+    def legacy_entry(self, name, entry):
+        """An entry of 0.9.3 ('d<format>:<sha1 of the client that built the file>'): current - stamped by the format alone -
+        when the battle's own client built it (its raw header's clientVersion; one readline), else marked for the repair:
+        built under another client, its fill-ins were left out (BACKLOG 55, 02.10). Any other entry as it is."""
+        match = LEGACY_STAMP.match(str((entry or {}).get('stamp') or ''))
+        if not match: return entry
+        header = read_header(os.path.join(self.folder, 'battles', name + '.jsonl')) or {}
+        own = version_hash(header.get('clientVersion')) if header.get('clientVersion') else None
+        entry = dict(entry, stamp='d%s' % match.group(1), built=match.group(2))
+        if own is not None: entry['client'] = own
+        if own != match.group(2): entry['repair'] = True
+        self.published_dirty = True
+        return entry
+
+    def header_summary(self, name):
+        """The list's row of a battle no state or index names (a crash before its first publish, a copied raw file): its
+        header line alone - id, start, map; the hits are not counted before it is prepared."""
+        header = read_header(os.path.join(self.folder, 'battles', name + '.jsonl'))
+        if header is None: return None
+        return {'id': name, 'startedAt': header.get('startedAt'), 'map': header.get('map'), 'hits': '?'}
+
     def saved_battles(self):
         """Setup's look at the saved battles. A current one (published_current) is taken as it is: its summary, model
-        references and raw offset from data/published.json. Any other is left to the background ('battle' job); until
-        then the index lists it with its last summary (its entry's, else the previous index's), and its references are
-        its file's when the entry is that file's. Returns (every name a battle id, current count, [queued ids], every
-        reference known)."""
+        references and raw offset from data/published.json. Any other is 'stale' - prepared when the page opens it
+        (request_battle), never here nor in the background (BACKLOG 55); the index lists it with its last summary (its
+        entry's, else the previous index's, else its header line's), and its references are its file's when the entry is
+        that file's. Returns (every name a battle id, current count, [stale ids], every reference known)."""
         stored = self.read_published()
-        # One listing of data/models for all of them (a battle whose model file was deleted is published again).
+        # One listing of data/models for all of them (a battle whose model file was deleted is prepared again).
         models = self.model_files() if stored else None
         previous = None
         named, refs_known, current, queued = True, True, 0, []
@@ -3328,7 +3554,7 @@ class Exporter(object):
                 named = False
                 LOG.warning('Battle file with an unexpected name is not published: %s', os.path.basename(path))
                 continue
-            entry = stored.get(name)
+            entry = self.legacy_entry(name, stored.get(name))
             if self.published_current(name, entry, models):
                 self.published[name] = entry
                 self.summaries[name] = dict(entry['summary'] or {'id':name})
@@ -3337,22 +3563,27 @@ class Exporter(object):
                 current += 1
                 continue
             queued.append(name)
+            self.stale.add(name)
             try:
                 same = entry is not None and entry.get('size') == os.path.getsize(
                     os.path.join(self.folder, 'data', 'battles', name+'.js'))
             except OSError:
                 same = False
-            if same:
+            # A battle to repair (built under another client, its fill-ins left out): its file names fewer models than the
+            # battle needs - the prune must not take the outer track pair's or the prefab's model before it is prepared.
+            if same and not entry.get('repair'):
                 self.published[name] = entry
                 self.model_refs[name] = set(entry['refs'])
             else:
+                if same: self.published[name] = entry
                 refs_known = False
+                self.refs_unknown.add(name)
             summary = entry.get('summary') if entry else None
             if summary is None:
                 if previous is None: previous = self.index_summaries()
-                summary = previous.get(name)
+                summary = previous.get(name) or self.header_summary(name)
             if summary: self.summaries[name] = dict(summary)
-        self.published_dirty = set(stored) != set(self.published)
+        self.published_dirty = self.published_dirty or set(stored) != set(self.published)
         return named, current, queued, refs_known
 
     def index_summaries(self):
@@ -3384,12 +3615,26 @@ class Exporter(object):
         if work is not None and (battle_id is None or work['name'] == battle_id): self.battle_work = None
 
     def battle_stop(self):
-        """A slice of the background publication ends after this line or hit: a battle, a drag of the page, a command of
+        """A slice of a battle's preparation ends after this line or hit: a battle, a drag of the page (not for the battle the
+        page asked for: preparing_page - the user dragging the scene of its old file must not hold it back), a command of
         the page waiting to be read (its click's job goes first), the mod closing."""
-        return self.ttx_stopped or not self.jobs_allowed() or self.sweep_waiting()
+        return self.ttx_stopped or not self.jobs_allowed(self.preparing_page) or self.sweep_waiting()
+
+    def request_battle(self, battle_id):
+        """The page's 'prepareBattle' (BACKLOG 55): it opened a saved battle the index says is stale and shows its old file
+        meanwhile. That battle alone is prepared at the page's turn (JOB_PAGE: before the background, through a drag, never
+        in a battle); its new revision in the index tells the page to read it again. True when a job was queued."""
+        name = str(battle_id or '')
+        if not IDENTIFIER.match(name) or name in self.skipped: return False
+        if not os.path.isfile(os.path.join(self.folder, 'battles', name + '.jsonl')): return False
+        if name not in self.stale and self.published_current(name, self.published.get(name)): return False
+        if self.current is not None and self.current.get('id') == name: return False
+        self.queue_job(JOB_PAGE, 'battle', {'battleId': name})
+        LOG.info('Saved battle %s asked for by the page: prepared now', name)
+        return True
 
     def run_battle_job(self, payload):
-        """One slice of a saved battle setup left to the background: lines of its raw file (BattleReader), then its hits
+        """One slice of a saved battle the page asked for (request_battle): lines of its raw file (BattleReader), then its hits
         prepared, then its file and the index written - for BATTLE_SLICE seconds, the gates checked after every line and
         hit (battle_stop); every slice does one line, hit or write at least. True when the battle needs another slice:
         run_job puts the job back in its place, and whatever the page waits for goes first meanwhile. Passed over when it
@@ -3416,6 +3661,7 @@ class Exporter(object):
                     self.write_index()
                     done = True
                 else:
+                    for state in (self.fill_reads, self.kept_files, self.kept_now): state.pop(name, None)
                     work = self.battle_work = {'name':name, 'battle':None, 'prepared':[], 'started':began,
                                                'work':0.0, 'slices':0,
                                                'reader':BattleReader(os.path.join(self.folder, 'battles', name+'.jsonl'))}
@@ -3447,6 +3693,10 @@ class Exporter(object):
         except Exception:
             failed = done = True
             LOG.exception('Could not rebuild saved battle: %s', name)
+            # Its references stay unknown: the prune that waited for them does not run this session (EXP-02/DATA-02).
+            if name in self.refs_unknown and self.prune_waits:
+                self.prune_waits = False
+                LOG.warning('Unused models kept this session: saved battle %s could not be read', name)
         spent = max(0.0, TTX_TIMER() - began)
         if work is not None:
             work['work'] += spent
@@ -3462,7 +3712,11 @@ class Exporter(object):
             megabytes = (work['reader'].size or 0) / 1e6
             wall = TTX_TIMER() - work['started']
             # The pace in the game (review of 4b1c8c8 #10): the big or slow ones one line each, the rest in the summary.
-            if megabytes >= BATTLE_LOG_MB or wall >= BATTLE_LOG_WALL:
+            # A battle the page asked for: one line each (the wait the user had; BACKLOG 55 asks for it measured in the game).
+            if self.preparing_page:
+                LOG.info('Saved battle %s prepared for the page: %.1f MB raw, %d hits, %.2f s (%.2f s of work in %d slices)',
+                         name, megabytes, len(work['prepared']), wall, work['work'], work['slices'])
+            elif megabytes >= BATTLE_LOG_MB or wall >= BATTLE_LOG_WALL:
                 LOG.info('Saved battle %s published in the background: %.1f MB raw, %d hits, %.1f s (%.2f s of work in %d '
                          'slices)', name, megabytes, len(work['prepared']), wall, work['work'], work['slices'])
         backlog = self.backlog
@@ -3492,6 +3746,544 @@ class Exporter(object):
             self.write_index(prune=True)
         self.write_published()
 
+    # ---- THE CLIENT'S FILES (BACKLOG 55): one snapshot of path -> (CRC, size), the source of every key below.
+    def client(self):
+        """The client's snapshot (client_snapshot.ClientSnapshot), refreshed once a session - setup does it first, so its one
+        log line says what an update changed. None when it cannot be had: the keys then fall back to the client version."""
+        if self.client_state is None:
+            try:
+                snapshot = ClientSnapshot(self.game, self.folder, self.version)
+                snapshot.refresh()
+                snapshot.files()
+                self.client_state = snapshot
+            except Exception as error:
+                self.client_state = False
+                LOG.warning('Client files unreadable (%r): this session the keys fall back to the client version', error)
+        return self.client_state or None
+
+    def client_files(self, version=None):
+        """{path: (crc, size)} of the running client, or of the client of `version` (a battle's clientVersion text): given
+        from outside (client_snapshots[version]), the snapshot this mod took of it, or one derived from a later snapshot and
+        what the update changed (client_changes.py; a changed path's crc is negative - unknown). None when unknown."""
+        if version is not None:
+            for text in (version, canonical(version)):
+                if text in self.client_snapshots: return self.client_snapshots[text]
+            if canonical(version) == self.version: version = None
+        snapshot = self.client()
+        if snapshot is None: return None
+        try:
+            return snapshot.files(None if version is None else canonical(version))
+        except Exception:
+            return None
+
+    def client_crc(self, path, version=None):
+        """THE HELPER FOR THE BATTLES (BACKLOG 55): ('%08x' CRC, size) of one client file - of the running client, or of the
+        client of `version` (a battle's clientVersion text) - or None when that client has no such file in the snapshot's
+        scope (scripts/, collision .havok, vehicle prefabs, material_kinds.xml, lc_messages/*.mo) or nothing is known of
+        that client. '?' for a CRC that is unknown (a derived snapshot's changed path): it equals no real CRC."""
+        files = self.client_files(version)
+        entry = None if files is None else files.get(path)
+        if entry is None: return None
+        return ('?' if entry[0] < 0 else '%08x' % entry[0], entry[1])
+
+    def client_signature(self, paths, version=None):
+        """One '%08x' over the CRCs and sizes of the given client files (a missing one counts as missing, an unknown one as
+        '?'), of the running client or of `version`'s; None when that client is unknown. Two equal signatures of two clients:
+        the same inputs."""
+        files = self.client_files(version)
+        if files is None: return None
+        lines = []
+        for path in sorted(set(paths)):
+            entry = files.get(path)
+            lines.append('%s=%s' % (path, '-' if entry is None else '?' if entry[0] < 0 else '%08x:%d' % entry))
+        return '%08x' % (zlib.crc32('\n'.join(lines).encode('utf-8')) & 0xffffffff)
+
+    # ---- THE CLIENT'S CODE (BACKLOG 55): the code set and its identity.
+    def code_state(self):
+        """data/code-state.json: {'modules': {path: [crc, identity]} of the code set, 'objects': {module:name: identity} of
+        what the set takes from modules outside it and 'objectsBasis' ({path: crc} they were read from), 'watch': {path: [crc,
+        identity]} of modules only the game's recording saw a build execute, 'generation', 'client' (the version text the
+        generation was set under), 'exe' ([size, mtime] of the game's exe)}."""
+        if self.code_state_value is None:
+            value = None
+            try:
+                path = os.path.join(self.folder, 'data', CODE_STATE_FILE)
+                if os.path.isfile(path):
+                    with open(path, 'rb') as stream: value = json.loads(stream.read().decode('utf-8'))
+                if not (isinstance(value, dict) and value.get('format') == 1 and isinstance(value.get('modules'), dict)): value = None
+            except Exception:
+                value = None
+            value = value or {'format': 1, 'modules': {}, 'generation': None, 'client': None, 'exe': None}
+            value.setdefault('watch', {})
+            # The game's recording added modules to the set until the second review (02.10): they are watched now.
+            for path in value.pop('recorded', None) or ():
+                if path in value['modules'] and path not in CODE_MODULES: value['watch'][path] = value['modules'].pop(path)
+            self.code_state_value = value
+        return self.code_state_value
+
+    def write_code_state(self):
+        try:
+            atomic_write(os.path.join(self.folder, 'data', CODE_STATE_FILE),
+                         json.dumps(self.code_state(), sort_keys=True, separators=(',', ':')).encode('ascii'))
+        except Exception:
+            LOG.exception('Client code state not written; the code set is looked at again next start')
+
+    def code_modules(self):
+        """The code set: client_code.CODE_MODULES - what the offline stand saw the builds execute and what that code names.
+        What only the game's recording saw is watched (code_record), not part of it."""
+        return sorted(CODE_MODULES)
+
+    def module_identity(self, path, entry):
+        """code_identity of a client module (its .pyc from the snapshot's source); 'bytes:<crc>' when its bytes do not
+        decode; None when they could not be read now (unknown: never taken for a change)."""
+        try:
+            data = self.client().read(path)
+        except Exception:
+            return None
+        if data is None: return None
+        try:
+            return code_identity(marshal.loads(data[8:]))
+        except Exception:
+            return 'bytes:%08x:%d' % entry
+
+    def exe_stat(self):
+        for path in (os.path.join(self.game, 'win64', 'WorldOfTanks.exe'), os.path.join(self.game, 'WorldOfTanks.exe')):
+            try:
+                stat = os.stat(path)
+                return [int(stat.st_size), repr(stat.st_mtime)]
+            except OSError:
+                continue
+        return None
+
+    # ---- the durable client change check (second review A)
+    def verify_state(self):
+        """data/verify.json: {'pending': [reasons of a sample check not run to its end], 'everything': a 'Missed change'
+        asked for every file, 'stand': the client whose stand changes were rebuilt}."""
+        if getattr(self, 'verify_state_value', None) is None:
+            value = None
+            try:
+                path = os.path.join(self.folder, 'data', VERIFY_STATE_FILE)
+                if os.path.isfile(path):
+                    with open(path, 'rb') as stream: value = json.loads(stream.read().decode('utf-8'))
+                if not (isinstance(value, dict) and value.get('format') == 1): value = None
+            except Exception:
+                value = None
+            self.verify_state_value = value or {'format': 1, 'pending': [], 'everything': False, 'stand': None}
+        return self.verify_state_value
+
+    def write_verify_state(self):
+        try:
+            atomic_write(os.path.join(self.folder, 'data', VERIFY_STATE_FILE),
+                         json.dumps(self.verify_state(), sort_keys=True).encode('ascii'))
+        except Exception:
+            LOG.exception('Client change check state not written; the check is asked for again next start')
+
+    def code_generation(self):
+        """The generation of the client's code, once a session: changed when a module of the code set or a name the set
+        takes from outside it changed its identity (a line shift is none; a module that does not read now is unknown, not
+        changed) - every characteristics and vehicle file is then rebuilt. The sample check is asked for (code_samples, kept
+        in data/verify.json until it ran to its end) when the game's exe changed, a module of the set changed its bytes but
+        not its code, a watched module changed, or a module outside the set changed. None without a snapshot."""
+        if self.code_generation_value is not None: return self.code_generation_value
+        try:
+            return self.take_code_generation()
+        finally:
+            # The packages read() opened for the identities: never left open (the launcher updates them).
+            if self.client_state: self.client_state.close()
+
+    def take_code_generation(self):
+        files = self.client_files()
+        if files is None: return None
+        state = self.code_state()
+        stored, first = state['modules'], state.get('generation') is None
+        changed, shifted, unknown, now = [], [], [], {}
+        for path in self.code_modules():
+            entry = files.get(path)
+            crc = crc_text(entry)
+            old = stored.get(path)
+            identity = old[1] if old and old[0] == crc else None
+            if identity is None and crc != '?':
+                identity = '-' if entry is None else self.module_identity(path, entry)
+            if identity is None:
+                # Not readable now (a package locked, left out of the snapshot): unknown - kept as it was, tried again.
+                unknown.append(path)
+                if old: now[path] = old
+                continue
+            if old is not None:
+                if old[1] != identity: changed.append(path)
+                elif old[0] != crc: shifted.append(path)
+            elif not first and not self.code_same_since(path, crc):
+                changed.append(path)
+            now[path] = [crc, identity]
+        objects, objects_changed = self.code_objects(state, files, unknown)
+        if first or changed or objects_changed:
+            text = '\n'.join(['%s=%s' % (p, now[p][1]) for p in sorted(now)] + ['%s=%s' % (k, objects[k]) for k in sorted(objects)])
+            state['generation'] = hashlib.sha1(text.encode('utf-8')).hexdigest()[:12]
+            state['client'] = self.version
+            if changed or objects_changed:
+                LOG.info('Client code changed in %d module(s) the builds execute and %d name(s) they take from other modules '
+                         '(%s): every characteristics and vehicle file is built again and compared', len(changed),
+                         len(objects_changed), ', '.join((changed + objects_changed)[:5]))
+        if unknown:
+            LOG.warning('Client code: %d module(s) of the set unreadable now (%s): taken as they were, looked at again next start',
+                        len(unknown), ', '.join(unknown[:3]))
+        state['modules'], state['objects'] = now, objects
+        # The watched modules (only the game's recording saw them): a change asks for the sample check, nothing more.
+        watched = []
+        for path, old in sorted(state['watch'].items()):
+            entry = files.get(path)
+            crc = crc_text(entry)
+            if crc == '?' or old[0] == crc: continue
+            identity = '-' if entry is None else self.module_identity(path, entry)
+            if identity is None: continue
+            if identity != old[1]: watched.append(path)
+            state['watch'][path] = [crc, identity]
+        exe = self.exe_stat()
+        snapshot = self.client()
+        diff = (snapshot.diff or {}) if snapshot is not None else {}
+        outside = [p for p in diff.get('changed', []) + diff.get('added', []) + diff.get('removed', [])
+                   if p.endswith('.pyc') and p not in now and p not in state['watch']]
+        reasons = []
+        if not first and state.get('exe') and exe != state.get('exe'): reasons.append('the game\'s executable')
+        if shifted: reasons.append('%d module(s) of the set rebuilt with the same code' % len(shifted))
+        if watched: reasons.append('%d watched module(s) (%s)' % (len(watched), ', '.join(watched[:3])))
+        if outside: reasons.append('%d client module(s) outside the set (%s)' % (len(outside), ', '.join(outside[:3])))
+        state['exe'] = exe
+        self.write_code_state()
+        pending = self.verify_state()
+        if reasons:
+            pending['pending'] = sorted(set(pending.get('pending') or ()) | set(reasons))
+            self.write_verify_state()
+        self.code_samples = list(pending.get('pending') or ())
+        self.code_generation_value = state['generation']
+        return self.code_generation_value
+
+    def code_objects(self, state, files, unknown):
+        """({'<module>:<name>': identity}, [changed]) of what the set takes from modules outside it (client_objects). Read
+        only when a module it was read from changed; unknown when a module of the set or of them does not read now."""
+        basis = state.get('objectsBasis') or {}
+        old = state.get('objects')
+        if old is not None and basis and all(crc_text(files.get(p)) == c for p, c in basis.items()) and not unknown:
+            return old, []
+        if unknown: return old or {}, []
+        snapshot = self.client()
+        failed = []
+
+        def read(path):
+            try:
+                data = snapshot.read(path)
+            except Exception:
+                data = None
+            if data is None:
+                # A module the client has that did not read now is unknown; one it does not have is simply absent.
+                if path in files: failed.append(path)
+                raise IOError(path)
+            return data
+        objects = Objects(read, lambda p: p in files, lambda p: crc_text(files.get(p)), code_identity)
+        try:
+            found = objects.external(self.code_modules())
+        except Exception:
+            LOG.exception('Client code: the names the set takes from other modules not read; taken as they were')
+            return old or {}, []
+        if failed or any(crc_text(files.get(p)) == '?' for p in objects.read_paths):
+            return old or {}, []
+        state['objectsBasis'] = dict((p, crc_text(files.get(p))) for p in objects.read_paths)
+        if old is None: return found, []
+        return found, sorted(k for k in set(old) | set(found) if old.get(k) != found.get(k))
+
+    def code_same_since(self, path, crc):
+        """A module new to the set had this very file when the generation was set (its client's snapshot): nothing to rebuild."""
+        then = self.client_files(self.code_state().get('client'))
+        if then is None: return False
+        return crc == crc_text(then.get(path)) and crc != '?'
+
+    def code_record(self, paths):
+        try:
+            self.record_code(paths)
+        finally:
+            if self.client_state: self.client_state.close()
+
+    def record_code(self, paths):
+        """Modules the game saw a build execute that the stand's set lacks (second review D): WATCHED - their change asks for
+        the sample check, raises no generation, closes no fill-in gate and no proof. Logged, so the stand can be corrected."""
+        files = self.client_files()
+        if files is None: return
+        state = self.code_state()
+        added = []
+        for path in sorted(set(paths) - set(self.code_modules()) - set(state['watch'])):
+            entry = files.get(path)
+            if entry is None or entry[0] < 0: continue
+            identity = self.module_identity(path, entry)
+            if identity is None: continue
+            state['watch'][path] = [crc_text(entry), identity]
+            added.append(path)
+        if not added: return
+        LOG.info('Client code: %d module(s) the builds executed are not in the stand\'s set - watched (a change runs the sample '
+                 'check); correct the stand at the next build: %s', len(added), ', '.join(added[:8]))
+        self.write_code_state()
+
+    def flush_code_seen(self):
+        if self.code_seen:
+            seen, self.code_seen = self.code_seen, set()
+            try: self.code_record(seen)
+            except Exception: LOG.exception('Client code set not recorded')
+
+    def recorded_build(self, action, *args, **kwargs):
+        """One build of a background pass, with the modules it executes recorded (the C profiler of this thread only, no call
+        tree: second review G)."""
+        profiler = None
+        try:
+            import _lsprof
+            profiler = _lsprof.Profiler(builtins=False, subcalls=False)
+            profiler.enable()
+        except Exception:
+            profiler = None
+        try:
+            return action(*args, **kwargs)
+        finally:
+            if profiler is not None:
+                try:
+                    profiler.disable()
+                    for entry in profiler.getstats():
+                        code = entry.code
+                        name = getattr(code, 'co_filename', None)
+                        if name and name.startswith('scripts/') and name.endswith('.py'): self.code_seen.add(name + 'c')
+                except Exception:
+                    pass
+
+    def code_inputs_same(self, version):
+        """The client of `version` (a file's clientVersion) had the very files of the code set this one has (CRCs, none
+        unknown): files it built were built with this code."""
+        cache = getattr(self, 'code_same_cache', None)
+        if cache is None: cache = self.code_same_cache = {}
+        if version in cache: return cache[version]
+        now, then = self.client_files(), self.client_files(version)
+        same = bool(now is not None and then is not None and all(
+            now.get(p) == then.get(p) and (now.get(p) is None or now.get(p)[0] >= 0) for p in self.code_modules()))
+        cache[version] = same
+        return same
+
+    # ---- model files by content (BACKLOG 55)
+    def model_path(self, key):
+        return os.path.join(self.folder, 'data', 'models', key + '.js')
+
+    def model_content(self, resource, version=None):
+        """model_content_key of a resource of the running client (or of the client of `version`), None when its .havok is
+        not in that client's snapshot or its CRC there is unknown."""
+        havok = str(resource).rsplit('.', 1)[0] + '.havok'
+        files = self.client_files(version)
+        entry = files.get(havok) if files else None
+        if entry is None or entry[0] < 0: return None
+        return model_content_key(havok, '%08x' % entry[0], entry[1])
+
+    def model_ref(self, resource, version):
+        """The model file of a part: for a battle of another client (and without a snapshot) the name by the version text,
+        as before; for the running client the file of the same content - one named by it, or one named by an earlier client's
+        version text that holds the same .havok (models_index: verified by its sha256 when the model was first wanted)."""
+        legacy = model_key(resource, version)
+        aliases = self.models_index()['aliases']
+        if canonical(version) != self.version:
+            # A battle of another client: its file as that client named it; else the file of the same content, when that
+            # client's .havok is known (client_files: this mod's snapshot of it, or one derived) - its model by content. When
+            # it is the very .havok of this client (review 02.10 #2: the repair of a 2.4.0.1 battle whose added part has no
+            # model yet), the content key even without a file: model_extract exports it from this client.
+            if os.path.isfile(self.model_path(legacy)): return legacy
+            content = self.model_content(resource, version)
+            if content is not None:
+                if os.path.isfile(self.model_path(content)): return content
+                alias = aliases.get(content)
+                if alias and os.path.isfile(self.model_path(alias)): return alias
+                if content == self.model_content(resource): return content
+            return legacy
+        content = self.model_content(resource)
+        if content is None:
+            # No snapshot (review 02.10 #1c): the name by the version text, or the earlier file found to hold the same .havok.
+            alias = aliases.get(legacy)
+            return alias if alias and not os.path.isfile(self.model_path(legacy)) and os.path.isfile(self.model_path(alias)) else legacy
+        if os.path.isfile(self.model_path(content)): return content
+        alias = aliases.get(content)
+        if alias and os.path.isfile(self.model_path(alias)): return alias
+        return content
+
+    def models_index(self):
+        """{'aliases': {content key: file}, 'files': {file: [havok, sha256 of its bytes]}} (MODELS_INDEX_FILE), read once."""
+        if self.models_index_value is None:
+            value = None
+            try:
+                path = os.path.join(self.folder, 'data', MODELS_INDEX_FILE)
+                if os.path.isfile(path):
+                    with open(path, 'rb') as stream: value = json.loads(stream.read().decode('utf-8'))
+                if not (isinstance(value, dict) and value.get('format') == MODEL_FILE_FORMAT
+                        and isinstance(value.get('aliases'), dict) and isinstance(value.get('files'), dict)): value = None
+            except Exception:
+                value = None
+            self.models_index_value = value or {'format': MODEL_FILE_FORMAT, 'aliases': {}, 'files': {}}
+            self.models_index_value['scanned'] = False
+        return self.models_index_value
+
+    def model_identity(self, name):
+        """(havok, sha256 of its bytes, MODEL_FILE_FORMAT it was written in) of a model file - read from the file once and
+        kept in models_index - or (name,) when it does not read. Two files of one identity are the same model."""
+        files = self.models_index()['files']
+        if name not in files or len(files[name]) < 3:
+            files[name] = self.read_model_identity(name)
+            self.models_index_dirty = True
+        found = files.get(name)
+        return tuple(found) if found and found[0] else (name,)
+
+    def read_model_identity(self, name):
+        try:
+            path = self.model_path(name)
+            size = os.path.getsize(path)
+            with open(path, 'rb') as stream:
+                head = stream.read(1024).decode('ascii', 'replace')
+                stream.seek(max(0, size - 256))
+                tail = stream.read().decode('ascii', 'replace')
+            resource = re.search(r'"resource":"([^"]+)"', head) or re.search(r'"resource":"([^"]+)"', tail)
+            digest = re.search(r'"sha256":"([0-9a-f]{64})"', tail) or re.search(r'"sha256":"([0-9a-f]{64})"', head)
+            # The format is written after the geometry (model_document; the order Python 2 gives its keys): in the tail when
+            # there at all - none is format 1 (every file 0.9.3 wrote).
+            form = re.search(r'"format":(\d+)', tail) or re.search(r'"format":(\d+)', head)
+            if resource and digest: return [resource.group(1), digest.group(1), int(form.group(1)) if form else 1]
+            value = read_data_file(path)
+            return [str(value['resource']), str(value['sha256']), int(value.get('format', 1))]
+        except Exception:
+            return ['', '', 0]
+
+    def adopt_model(self, havok, content, data):
+        """A model file of an earlier name that holds exactly these bytes of `havok` (by the sha256 it keeps): it becomes the
+        file of `content` (no export). The folder is scanned once a session, each file read once ever (models_index)."""
+        index = self.models_index()
+        if not index['scanned']:
+            index['scanned'] = True
+            names = set(self.model_files())
+            for name in [n for n in index['files'] if n not in names]:
+                del index['files'][name]
+                self.models_index_dirty = True
+            for name in sorted(names):
+                if name not in index['files']: self.model_identity(name)
+            for key in [k for k, name in index['aliases'].items() if name not in names]:
+                del index['aliases'][key]
+                self.models_index_dirty = True
+        digest = hashlib.sha256(data).hexdigest()
+        # The files by the .havok they hold, once a session (a model a time would walk them all).
+        by_havok = getattr(self, 'models_by_havok', None)
+        if by_havok is None or by_havok[0] != len(index['files']):
+            found = {}
+            for name, entry in index['files'].items():
+                if entry and entry[0]: found.setdefault(entry[0], []).append(name)
+            by_havok = self.models_by_havok = (len(index['files']), found)
+        for name in sorted(by_havok[1].get(havok, ())):
+            entry = index['files'][name]
+            # The same bytes AND the same format (review 02.10 #4: a raised MODEL_FILE_FORMAT took the old files over).
+            if (entry and entry[0] == havok and entry[1] == digest and (entry[2] if len(entry) > 2 else 1) == MODEL_FILE_FORMAT
+                    and os.path.isfile(self.model_path(name))):
+                index['aliases'][content] = name
+                self.models_index_dirty = True
+                return name
+        return None
+
+    # ---- the vehicle files' keys (BACKLOG 55)
+    def vehicle_keys(self):
+        """{vehicle id: key} of the vehicle files (VEHICLE_KEYS_FILE), read once."""
+        if self.vehicle_keys_value is None:
+            value = None
+            try:
+                path = os.path.join(self.folder, 'data', VEHICLE_KEYS_FILE)
+                if os.path.isfile(path):
+                    with open(path, 'rb') as stream: value = json.loads(stream.read().decode('utf-8'))
+                if not (isinstance(value, dict) and value.get('format') == 1 and isinstance(value.get('keys'), dict)): value = None
+            except Exception:
+                value = None
+            self.vehicle_keys_value = dict((value or {}).get('keys') or {})
+        return self.vehicle_keys_value
+
+    def write_keys(self, force=False):
+        """The vehicle files' keys and the models' index, when changed - at most every SWEEP_CATALOGUE_PAUSE s unless forced."""
+        if not force and time.time() - self.vehicle_keys_written < SWEEP_CATALOGUE_PAUSE: return
+        self.vehicle_keys_written = time.time()
+        try:
+            if self.vehicle_keys_dirty:
+                atomic_write(os.path.join(self.folder, 'data', VEHICLE_KEYS_FILE), json.dumps(
+                    {'format': 1, 'keys': self.vehicle_keys()}, sort_keys=True, separators=(',', ':')).encode('ascii'))
+                self.vehicle_keys_dirty = False
+            if self.models_index_dirty:
+                index = dict(self.models_index())
+                index.pop('scanned', None)
+                atomic_write(os.path.join(self.folder, 'data', MODELS_INDEX_FILE),
+                             json.dumps(index, sort_keys=True, separators=(',', ':')).encode('ascii'))
+                self.models_index_dirty = False
+        except Exception:
+            LOG.exception('Vehicle keys or the models index not written; those files are checked again next start')
+
+    def vehicle_key(self, record):
+        """'<data>.<epoch>.<own>' of a vehicle file (or its summary): its type's data (ttx_source_keys with VEHICLE_FORMAT),
+        the client's code (code_generation), and its own inputs - the compact descriptor, each part's .havok and prefab. Raises
+        without a snapshot."""
+        type_name = str(record.get('type') or '')
+        if type_name not in self.vehicle_bases:
+            types = set([type_name]) | set(str(s.get('type') or '') for s in self.vehicles.values())
+            self.vehicle_bases.update(self.ttx_source_keys(sorted(t for t in types if ':' in t and t not in self.vehicle_bases),
+                                                           self.source_crcs(), 'vehicle-%d' % VEHICLE_FORMAT))
+        files = self.client_files()
+        lines = ['compact=%s' % (record.get('compactDescriptor') or '')]
+        for part in record.get('parts') or ():
+            if not isinstance(part, dict): continue
+            for path in (str(part['resource']).rsplit('.', 1)[0] + '.havok' if part.get('resource') else None, part.get('prefab')):
+                if not path: continue
+                entry = files.get(path)
+                lines.append('%s=%s' % (path, '-' if entry is None else '%08x:%d' % entry))
+        own = '%08x' % (zlib.crc32('\n'.join(sorted(lines)).encode('utf-8')) & 0xffffffff)
+        return '%s.%s.%s' % (self.vehicle_bases.get(type_name, '-'), self.code_generation() or '-', own)
+
+    def vehicle_own(self, record, files):
+        own = ['compact=%s' % (record.get('compactDescriptor') or '')]
+        for part in record.get('parts') or ():
+            if not isinstance(part, dict): continue
+            for path in (str(part['resource']).rsplit('.', 1)[0] + '.havok' if part.get('resource') else None, part.get('prefab')):
+                if path:
+                    entry = files.get(path)
+                    own.append('%s=%s' % (path, '-' if entry is None else '?' if entry[0] < 0 else '%08x:%d' % entry))
+        return sorted(own)
+
+    def proven(self, type_name, version, record=None):
+        """A file made by the client of `version` (a 0.9.3 file has no key) holds what this client would build: its type's
+        data files, the code set and - a vehicle file - its own models and prefabs are the same files in both clients (that
+        client's snapshot: this mod's, or one derived from the update's changes). No build needed: its key is kept."""
+        version = canonical(version or '')
+        if not version: return False
+        # Built by this build's format, whichever client (second review F): a vehicle file names it (none: format 1).
+        if record is not None and record.get('format', 1) != VEHICLE_FORMAT: return False
+        if version != self.version:
+            then = self.client_files(version)
+            if then is None or not self.code_inputs_same(version): return False
+            tables = getattr(self, 'proof_crcs', None)
+            if tables is None: tables = self.proof_crcs = {}
+            if version not in tables: tables[version] = self.source_crcs_of(then)
+            data = self.ttx_source_keys([type_name], tables[version], 'proof')
+            if data != self.ttx_source_keys([type_name], self.source_crcs(), 'proof'): return False
+            if record is not None and self.vehicle_own(record, then) != self.vehicle_own(record, self.client_files()): return False
+        return True
+
+    def vehicle_current(self, summary):
+        """An exported vehicle file is what this client and this build would write now: its key (vehicle_key) is the one it
+        was last built or checked with (vehicle_keys). Without a snapshot: written by this client version, as before."""
+        if not summary: return False
+        stored = self.vehicle_keys().get(str(summary.get('id') or ''))
+        if self.client() is not None:
+            try:
+                return stored == self.vehicle_key(summary)
+            except Exception:
+                pass
+        # No snapshot (review 02.10 #1b): current only when written or checked by this very client - its version text, or the
+        # fallback key a check under it left; another client's file is unknown, never current.
+        return stored == self.fallback_key() or canonical(summary.get('clientVersion') or '') == self.version
+
+    def fallback_key(self):
+        """The key of a file checked while there is no snapshot: this client's version text (a different one - another
+        client - is unknown). Never equal to a key from a snapshot, so the next snapshot checks the file again."""
+        return 'version:' + hashlib.sha1(self.version.encode('utf-8')).hexdigest()[:16]
+
     def mounted_packages(self):
         """The client's packages in the order paths.xml mounts them (the collision index and the TTX sources' keys)."""
         package_root = os.path.normcase(os.path.abspath(os.path.join(self.game, 'res', 'packages')))
@@ -3516,17 +4308,23 @@ class Exporter(object):
         # The vehicles' CGF prefabs too (27.09): an armoured one's JSON is read for its collider and armour (type_extras).
         # The first package that has one wins, as for the models; they are few (two armoured of 287).
         prefabs = {}
+        skipped = []
         for path in paths:
             # The raw directory (collision_members, 25.09): the same names, places and CRCs as zipfile's, in ~1/20 of
-            # the time; any doubt about a package reads it through zipfile as before.
-            members = collision_members(path)
-            prefab_members = collision_members(path, PREFAB_MARK, '.prefab') if members is not None else None
-            if members is None or prefab_members is None:
-                with zipfile.ZipFile(path) as archive:
-                    members = [(info.filename, (info.header_offset, info.compress_type, info.compress_size,
-                                                info.file_size, info.CRC)) for info in archive.infolist()]
-            else:
-                members = members + prefab_members
+            # the time; any doubt about a package reads it through zipfile as before. One that does not read at all is left
+            # out with a line (second review B): its models are 'unavailable' this session, never 'not in the client'.
+            try:
+                members = collision_members(path)
+                prefab_members = collision_members(path, PREFAB_MARK, '.prefab') if members is not None else None
+                if members is None or prefab_members is None:
+                    with zipfile.ZipFile(path) as archive:
+                        members = [(info.filename, (info.header_offset, info.compress_type, info.compress_size,
+                                                    info.file_size, info.CRC)) for info in archive.infolist()]
+                else:
+                    members = members + prefab_members
+            except Exception as error:
+                skipped.append((path, error))
+                continue
             for name, entry in members:
                 if name.startswith(PREFAB_ROOT) and name.endswith('.prefab') and '..' not in name:
                     if name not in prefabs: prefabs[name] = (path, entry)
@@ -3546,11 +4344,20 @@ class Exporter(object):
                         # with one seek instead of parsing this whole directory again.
                         entries[name] = entry
         for path in glob.glob(os.path.join(self.game, 'mods', '*', '*.wotmod')):
-            with zipfile.ZipFile(path) as archive:
-                for name in archive.namelist():
-                    resource = name[4:] if name.startswith('res/') else ''
-                    if (RESOURCE.match(resource) or resource.startswith(PREFAB_ROOT)) and '..' not in resource:
-                        overrides.add(resource)
+            try:
+                with zipfile.ZipFile(path) as archive:
+                    for name in archive.namelist():
+                        resource = name[4:] if name.startswith('res/') else ''
+                        if (RESOURCE.match(resource) or resource.startswith(PREFAB_ROOT)) and '..' not in resource:
+                            overrides.add(resource)
+            except Exception as error:
+                # A broken mod package overrides nothing the game can read either (second review B).
+                skipped.append((path, error))
+        for path, error in skipped:
+            if path not in self.index_skipped:
+                self.index_skipped.add(path)
+                LOG.warning('Collision index: %s left out (%r)', os.path.basename(path), error)
+        self.index_failed = [path for path, error in skipped if path.lower().endswith('.pkg')]
         # Publish the index only after a complete successful scan.
         self.packages, self.package_conflicts, self.overrides = packages, conflicts, overrides
         self.package_entries = entries
@@ -3620,7 +4427,7 @@ class Exporter(object):
         (key, None) when the file is already written, (key, reason) when the
         extraction was tried and failed, (key, PENDING) when nothing was tried yet.
         """
-        key = model_key(resource, version)
+        key = self.model_ref(resource, version)
         if key in self.attempts and not self.scan_retry(key): return key, self.attempts[key]
         if os.path.isfile(os.path.join(self.folder, 'data', 'models', key+'.js')):
             self.attempts[key] = None
@@ -3640,14 +4447,17 @@ class Exporter(object):
         return True
 
     def model_extract(self, resource, version):
-        key = model_key(resource, version)
+        key = self.model_ref(resource, version)
         path = os.path.join(self.folder, 'data', 'models', key+'.js')
         if key in self.attempts and not self.scan_retry(key): return key, self.attempts[key]
         if os.path.isfile(path):
             self.attempts[key] = None
             return key, None
         try:
-            if canonical(version) != self.version:
+            # Another client's battle: its model is extracted from this client only when it is the very same .havok there
+            # (its content key in that client's snapshot is this client's) - the repair of 02.10's battles (BACKLOG 55).
+            if canonical(version) != self.version and not (key == self.model_content(resource) is not None
+                                                           and self.model_content(resource, version) == key):
                 raise ValueError('Client version changed; model was not saved before the update')
             name = resource.rsplit('.', 1)[0]+'.havok'
             try:
@@ -3656,7 +4466,12 @@ class Exporter(object):
                 self.scan_errors.add(key)
                 raise
             if name in self.package_conflicts: raise ValueError('Conflicting mounted collision resources')
-            if name not in self.packages: raise ValueError('Collision model not found in client')
+            if name not in self.packages:
+                if getattr(self, 'index_failed', None):
+                    # A package of the client did not read: unknown, not missing - looked at again after the pause.
+                    self.scan_errors.add(key)
+                    raise ValueError('Collision model unavailable: a client package did not read')
+                raise ValueError('Collision model not found in client')
             if name in self.overrides or resource in self.overrides:
                 raise ValueError('A mod overrides this collision model')
             for root in glob.glob(os.path.join(self.game, 'res_mods', '*')):
@@ -3664,9 +4479,14 @@ class Exporter(object):
                     raise ValueError('res_mods overrides this collision model')
             started = TTX_TIMER()
             data = self.read_resource(name)
-            model = extract(data)
-            model.update({'resource':name, 'sha256':hashlib.sha256(data).hexdigest()})
-            write_data(path, 'model:'+key, model)
+            # A file of an earlier name with these very bytes and this MODEL_FILE_FORMAT (0.9.3 and before named them by the
+            # version text): it is the model - also without a snapshot (review 02.10 #1c: else the file of the new name was
+            # written, the vehicle file kept the old name, and the prune deleted the new one).
+            alias = self.adopt_model(name, key, data)
+            if alias is not None:
+                self.attempts[alias] = None
+                return alias, None
+            write_data(path, 'model:'+key, model_document(data, name))
             self.attempts[key] = None
             # The whole unit under the GIL: read, parse, hash, write (28.09, havok-lazy: 10 ms median, 48 ms p99; 76 ms and 1.1 s before).
             ms = (TTX_TIMER() - started) * 1000.0
@@ -3676,6 +4496,21 @@ class Exporter(object):
             self.attempts[key] = str(exc)
             LOG.warning('Model export unavailable: %s: %s', resource, exc)
         return key, self.attempts[key]
+
+    def armor_inputs(self, type_name, version):
+        """'armor:<the CRCs of the vehicle's XML and common/vehicle.xml>' in the client of `version` (client_files), None when
+        that client is unknown; a file whose CRC is unknown there leaves a '?' in it (never a real key)."""
+        try:
+            nation, name = str(type_name).split(':', 1)
+            files = self.client_files(None if canonical(version) == self.version else version)
+            if files is None: return None
+            parts = []
+            for path in ('scripts/item_defs/vehicles/%s/%s.xml' % (nation, name), 'scripts/item_defs/vehicles/common/vehicle.xml'):
+                entry = files.get(path)
+                parts.append('-' if entry is None else '?' if entry[0] < 0 else '%08x:%d' % entry)
+            return 'armor:' + ','.join(parts)
+        except Exception:
+            return None
 
     def publish_parts(self, result, hit, side, battle_id=None, priority=JOB_OTHER, pending=None):
         """Collision models and armour tables for one side of a recorded hit."""
@@ -3724,17 +4559,29 @@ class Exporter(object):
             except Exception as exc: part['modelError'] = str(exc)
             if 'armor' not in part:
                 try:
-                    identity = '\n'.join((canonical(client_version), vehicle['type'],
+                    # Keyed by what the table is read from (review 02.10 #3): the vehicle's XML and the common vehicle.xml
+                    # (ArmorCatalog.materials) of the client of these parts - not its version text; that text without a snapshot.
+                    inputs = self.armor_inputs(vehicle['type'], client_version)
+                    identity = '\n'.join((inputs or canonical(client_version), vehicle['type'],
                         vehicle.get('compactDescriptor', ''), part['resource']))
                     key = hashlib.sha256(identity.encode('utf-8')).hexdigest()
                     cache = os.path.join(self.folder, 'data', 'armor', key+'.json')
+                    # The cache 0.9.3 named by the version text (second review E): written by that very client, so its
+                    # tables are that client's - the battle's own - whatever the key above says.
+                    if not os.path.isfile(cache) and inputs:
+                        legacy = '\n'.join((canonical(client_version), vehicle['type'],
+                                            vehicle.get('compactDescriptor', ''), part['resource']))
+                        legacy = os.path.join(self.folder, 'data', 'armor', hashlib.sha256(legacy.encode('utf-8')).hexdigest() + '.json')
+                        if os.path.isfile(legacy): cache = legacy
                     if os.path.isfile(cache):
                         with open(cache, 'rb') as stream:
                             size = os.fstat(stream.fileno()).st_size
                             if size > 1024*1024: raise ValueError('Armor metadata cache too large')
                             part['armor'] = json.loads(stream.read(size).decode('ascii'))
                     else:
-                        if canonical(client_version) != self.version:
+                        # Read from this client: only for its own parts, or another client's whose two files are these.
+                        if canonical(client_version) != self.version and (
+                                inputs is None or '?' in inputs or inputs != self.armor_inputs(vehicle['type'], self.version)):
                             raise ValueError('Armor metadata was not saved for the old client version')
                         part['armor'] = self.armor.materials(vehicle['type'], part['resource'])
                         atomic_write(cache, json.dumps(part['armor'], ensure_ascii=True, allow_nan=False).encode('ascii'))
@@ -3863,6 +4710,13 @@ class Exporter(object):
             # The catalogue marks it 'outdated' at the next idle tick: the page then asks for it when it is opened.
             self.catalogue_dirty = True
 
+    def prefab_inputs(self):
+        """What the check's folders are made of (BACKLOG 55): the armoured-prefab candidates' CRCs in the client's snapshot
+        (the dynamic parts' prefabs) - not the client version; the version text without a snapshot."""
+        files = self.client_files()
+        if not files: return 'version:' + hashlib.sha1(self.version.encode('utf-8')).hexdigest()[:16]
+        return 'prefabs:' + self.client_signature([p for p in files if p.startswith(PREFAB_ROOT + 'dynamic_parts/')])
+
     def prefab_folders_path(self):
         return os.path.join(self.folder, 'data', PREFAB_FOLDERS)
 
@@ -3874,14 +4728,14 @@ class Exporter(object):
             if not os.path.isfile(path) or os.path.getsize(path) > 65536: return None
             with open(path, 'rb') as stream:
                 value = json.loads(stream.read().decode('utf-8'))
-            if value.get('clientVersion') != self.version or not isinstance(value.get('folders'), list): return None
+            if value.get('inputs') != self.prefab_inputs() or not isinstance(value.get('folders'), list): return None
             return set(str(folder) for folder in value['folders'])
         except Exception:
             return None
 
     def write_prefab_folders(self, folders):
         try:
-            atomic_write(self.prefab_folders_path(), json.dumps({'clientVersion':self.version, 'folders':sorted(folders)},
+            atomic_write(self.prefab_folders_path(), json.dumps({'inputs':self.prefab_inputs(), 'folders':sorted(folders)},
                                                                 ensure_ascii=True, sort_keys=True).encode('ascii'))
         except Exception:
             LOG.exception('Armoured prefab folders not kept; the check runs again next start')
@@ -3896,7 +4750,12 @@ class Exporter(object):
             return 0
         try:
             descr = vehicle_descr(vehicle['compactDescriptor'])
-            extras = self.type_extras(descr.type.name, defer, inline=False)
+            # A descriptor this client decodes to another type than the record names (ids that moved): its XML is not the
+            # vehicle's (review #7) - as fix_extra_parts and fix_yaw_limits, nothing is taken from it.
+            if vehicle.get('type') and str(descr.type.name) != str(vehicle.get('type')): return 0
+            # The publication never reads the XML itself, except for the battle the page waits for (preparing_page): its
+            # extras job would stand behind a drag of that very page (type_extras still refuses in a battle).
+            extras = self.type_extras(descr.type.name, defer, inline=self.preparing_page)
             return fill_wheels(vehicle, extras['wheels'].get(descr.chassis.name) or {}) if extras is not None else 0
         except ExtrasUnavailable:
             return 0
@@ -3916,7 +4775,7 @@ class Exporter(object):
         todo = [p for p in parts or () if isinstance(p, dict) and p.get('prefab') and 'resource' not in p]
         if not todo: return 0
         try:
-            extras = self.type_extras(str(vehicle.get('type') or ''), defer, inline=False)
+            extras = self.type_extras(str(vehicle.get('type') or ''), defer, inline=self.preparing_page)
         except ExtrasUnavailable as exc:
             for part in todo: part['prefabError'] = 'vehicle XML unavailable (%s)' % exc
             return 0
@@ -3947,6 +4806,106 @@ class Exporter(object):
             self.prepared_models[other].difference_update(indexes)
             if not self.prepared_models[other]: self.prepared_models.pop(other, None)
 
+    def input_text(self, path, version=None):
+        """'crc:size' of one client file (client_crc), '-' when that client has no such file, '?' for an unknown CRC."""
+        found = self.client_crc(path, version) if path else None
+        return '-' if found is None else '?' if found[0] == '?' else '%s:%d' % found
+
+    def fill_code(self, version=None):
+        """One signature over the code set (code_modules: the client's code the builds execute and name) in the client of
+        `version` (the running one without it); None when that client is unknown. The same rule as the files' keys: the
+        crew's code is outside it, the chassis code inside."""
+        return self.client_signature(self.code_modules(), version)
+
+    def fill_allowed(self, battle, paths, code=False):
+        """A fill-in of this battle may read these client files now (BACKLOG 55): the battle is the running client's, or its
+        own client's files are these very files - by what its entry says its fill-ins read before (inputs), else by the
+        snapshot of its client (client_files: this mod's, or one derived from the update's changes). `code`: the fill-in
+        decodes the compact descriptor, so the client's code it goes through counts too (fill_code, one signature '@code').
+        Nothing known of its client, an unknown CRC ('?') or a file that differs: no fill-in from this client - keep_fills
+        takes it from the battle's own file, else the part stays as recorded, never guessed. What was read is kept for the
+        battle's entry (fill_reads), whether it is the running client's battle or not (review #5: a battle outlives the
+        snapshots of its client)."""
+        paths = [p for p in paths if p]
+        if not paths: return False
+        version = canonical(battle.get('clientVersion') or '')
+        running = version == self.version
+        now = dict((p, self.input_text(p)) for p in paths)
+        if code: now['@code'] = self.fill_code() or '?'
+        if running:
+            allowed = True
+        elif self.client_files() is None or any(v == '?' for v in now.values()):
+            allowed = False
+        else:
+            known = (self.published.get(str(battle.get('id') or '')) or {}).get('inputs') or {}
+            if all(p in known for p in now):
+                allowed = all(known[p] == now[p] for p in now)
+            else:
+                then = self.client_signature(paths, version)
+                allowed = then is not None and then == self.client_signature(paths)
+                if allowed and code: allowed = self.fill_code(version) == now['@code']
+        if allowed and self.client_files() is not None: self.fill_reads.setdefault(str(battle.get('id') or ''), {}).update(now)
+        return allowed
+
+    # NEVER A WORSE FILE (review #5, 02.10): a battle whose fill-ins its own client made is prepared again (a raised format, a
+    # model deleted, a wait) under a client whose files they were read from changed. The gate closes - and that client is
+    # gone, so what the file holds can never be had again: the fill-ins are taken from the battle's file as it is, one log line.
+    def kept_hit(self, battle, hit_id):
+        """The hit of this id in the battle's derived file on disk (read once per preparation), or None."""
+        name = str(battle.get('id') or '')
+        files = self.kept_files
+        if name not in files:
+            try:
+                value = read_data_file(os.path.join(self.folder, 'data', 'battles', name + '.js'))
+                files[name] = dict((str(h.get('id')), h) for h in value.get('hits') or () if isinstance(h, dict))
+            except Exception:
+                files[name] = {}
+        return files[name].get(str(hit_id))
+
+    def keep_fills(self, battle, hit, kind):
+        """Copy one fill-in ('pair', 'wheels', 'prefab') of `hit` from the same hit of the battle's file; True when it did."""
+        old = self.kept_hit(battle, hit.get('id'))
+        if not old: return False
+        kept = False
+        if kind == 'pair':
+            target, before = hit.get('target') or {}, old.get('target') or {}
+            if EXTRA_PARTS_WARNING in (old.get('warnings') or ()): return False
+            known = set(p.get('id') for p in target.get('parts') or () if isinstance(p, dict))
+            added = [dict((k, v) for k, v in p.items() if k not in ('modelKey', 'modelPending', 'modelError'))
+                     for p in before.get('parts') or () if isinstance(p, dict) and isinstance(p.get('id'), int)
+                     and p['id'] >= len(PARTS) and p['id'] not in known and not p.get('prefab') and p.get('resource')]
+            if not added: return False
+            target.setdefault('parts', []).extend(added)
+            ids = set(p['id'] for p in added)
+            for point in hit.get('points') or []:
+                if isinstance(point, dict) and point.get('status') == 'unsupported-part' and point.get('part') in ids:
+                    point['status'] = 'resolved'
+            hit['warnings'] = [line for line in hit.get('warnings') or () if line != EXTRA_PARTS_WARNING]
+            kept = True
+        elif kind == 'wheels':
+            for side in ('target', 'attacker'):
+                shapes = dict((p.get('id'), p) for p in (old.get(side) or {}).get('parts') or ()
+                              if isinstance(p, dict) and isinstance(p.get('id'), int) and p['id'] < 0 and p.get('wheel'))
+                for part in (hit.get(side) or {}).get('parts') or ():
+                    source = shapes.get(part.get('id')) if isinstance(part, dict) and 'wheel' not in part else None
+                    if source is None or source.get('name') != part.get('name'): continue
+                    for key in ('wheel', 'transform', 'poseFrom'):
+                        if key in source: part[key] = copy.deepcopy(source[key])
+                    kept = True
+        else:
+            before = dict((p.get('id'), p) for p in (old.get('target') or {}).get('parts') or ()
+                          if isinstance(p, dict) and p.get('prefab') and p.get('resource') and not p.get('prefabError'))
+            for part in (hit.get('target') or {}).get('parts') or ():
+                if not (isinstance(part, dict) and part.get('prefab') and 'resource' not in part): continue
+                source = before.get(part.get('id'))
+                if source is None or source.get('prefab') != part.get('prefab'): continue
+                part.pop('prefabError', None)
+                for key, value in source.items():
+                    if key not in ('transform', 'modelKey', 'modelPending', 'modelError'): part[key] = copy.deepcopy(value)
+                kept = True
+        if kept: self.kept_now.setdefault(str(battle.get('id') or ''), set()).add(kind)
+        return kept
+
     def prepare_hit(self, raw, index, battle, track=False):
         hit = copy.deepcopy(raw)
         for side in ('attacker', 'target'):
@@ -3955,22 +4914,48 @@ class Exporter(object):
             except Exception:
                 LOG.exception('Vehicle identity unavailable; the hit is published as recorded')
         synthesize_parts(hit.get('attacker'))
-        # Only a battle of the running client: its rebuilt descriptor and extracted model are the recorded ones.
+        # THE FILL-INS (BACKLOG 55, 02.10): what the running client's files add to the record - the outer track pair, the
+        # wheels' bodies, the armoured prefab - is right for the battle when the files it reads are the battle's client's:
+        # a battle of the running client, or one whose files of its own client have the same CRCs (fill_allowed). It used
+        # to be the client's version text: the update of 02.10 changed none of those files and 22 battles lost them.
         deferred = set()
-        if canonical(battle.get('clientVersion') or '') == self.version:
-            fix_extra_parts(hit)
-            # The wheels the recorder wrote (a record before them has none: old data stays as it is) get their body and
-            # rest place from this client's XML - the same version's, as for the models. During a battle before the type
-            # is read the hit goes out without them and waits (`deferred`) like one waiting for a model.
-            for side in ('target', 'attacker'):
-                self.fix_wheels(hit.get(side), deferred)
-            # The armoured prefab part the recorder wrote for the target (27.09): its model, armour and layers.
-            self.fix_prefabs(hit.get('target'), deferred)
-        else:
-            # Another client's record: its prefab is read from no XML (as its wheels) - the page says so.
-            for part in (hit.get('target') or {}).get('parts') or ():
-                if isinstance(part, dict) and part.get('prefab') and 'resource' not in part:
-                    part['prefabError'] = 'recorded by another client version'
+        target = hit.get('target') if isinstance(hit.get('target'), dict) else {}
+        # Its inputs: the vehicle XML, the nation's tables and the code that decode the descriptor, the common armour XML, the
+        # material names and the added parts' .havok - recorded for the running client's battle too (review #5).
+        if EXTRA_PARTS_WARNING in (hit.get('warnings') or ()):
+            trial = copy.deepcopy(hit)
+            done = False
+            if fix_extra_parts(trial):
+                known = set(p.get('id') for p in target.get('parts') or () if isinstance(p, dict))
+                added = [str(p['resource']).rsplit('.', 1)[0] + '.havok' for p in (trial.get('target') or {}).get('parts') or ()
+                         if isinstance(p, dict) and p.get('id') not in known and p.get('resource')]
+                if self.fill_allowed(battle, [vehicle_xml(target.get('type')), 'scripts/item_defs/vehicles/common/vehicle.xml',
+                                              MATERIAL_KINDS] + nation_tables(target.get('type')) + added, code=True):
+                    hit, done = trial, True
+                    target = hit.get('target') if isinstance(hit.get('target'), dict) else {}
+            if not done and canonical(battle.get('clientVersion') or '') != self.version: self.keep_fills(battle, hit, 'pair')
+        # The wheels the recorder wrote (a record before them has none: old data stays as it is) get their body and rest
+        # place from the client's XML (the chassis by the descriptor: the nation's tables and the code count). During a battle
+        # before the type is read the hit goes out without them and waits (`deferred`) like one waiting for a model.
+        for side in ('target', 'attacker'):
+            vehicle = hit.get(side)
+            if not (isinstance(vehicle, dict) and any(isinstance(p, dict) and isinstance(p.get('id'), int) and p['id'] < 0
+                                                      and 'wheel' not in p for p in vehicle.get('parts') or ())): continue
+            if self.fill_allowed(battle, [vehicle_xml(vehicle.get('type'))] + nation_tables(vehicle.get('type')), code=True):
+                self.fix_wheels(vehicle, deferred)
+            else:
+                self.keep_fills(battle, hit, 'wheels')
+        # The armoured prefab part the recorder wrote for the target (27.09): its model, armour and layers - from the XML,
+        # the prefab and the material names (no descriptor is decoded: fix_prefabs goes by the recorded type).
+        bare = [p for p in target.get('parts') or () if isinstance(p, dict) and p.get('prefab') and 'resource' not in p]
+        if bare:
+            if self.fill_allowed(battle, [vehicle_xml(target.get('type')), MATERIAL_KINDS, MATERIAL_KINDS_CODE]
+                                 + [str(p['prefab']) for p in bare]):
+                self.fix_prefabs(target, deferred)
+            elif not self.keep_fills(battle, hit, 'prefab'):
+                # Another client's record whose prefab files are not known to be this client's and no file holding its prefab:
+                # read from no XML (as its wheels) - the page says so.
+                for part in bare: part['prefabError'] = 'recorded by another client version'
         fix_shells(hit)
         try:
             stamp_aim_origin(hit, raw, battle)
@@ -3992,7 +4977,7 @@ class Exporter(object):
             for side in ('target', 'attacker'):
                 for part in (hit.get(side) or {}).get('parts', []):
                     try:
-                        key = model_key(part['resource'], battle['clientVersion'])
+                        key = self.model_ref(part['resource'], battle['clientVersion'])
                         self.prepared_models.setdefault(key, set()).add(index)
                     except Exception:
                         pass
@@ -4015,6 +5000,9 @@ class Exporter(object):
             self.reset_prepared()
             self.prepared_identity = identity
         result = dict(battle)
+        # What the fill-ins read (fill_allowed): this publish's own, unless the slices before it prepared the hits.
+        if not active and prepared is None:
+            for state in (self.fill_reads, self.kept_files, self.kept_now): state.pop(battle['id'], None)
         if prepared is not None and not active and len(prepared) == len(battle.get('hits') or []):
             result['hits'] = list(prepared)
         else:
@@ -4048,7 +5036,13 @@ class Exporter(object):
             if active: self.damage_held = bool(held)
         except Exception: LOG.exception('Damage events failed; hits are published without them')
         result.pop('critEvents', None)
-        size = write_data(os.path.join(self.folder, 'data', 'battles', battle['id']+'.js'), 'battle:'+battle['id'], result)
+        target = os.path.join(self.folder, 'data', 'battles', battle['id']+'.js')
+        if active:
+            size, written = write_data(target, 'battle:'+battle['id'], result), True
+        else:
+            # A saved battle prepared again whose file comes out the same (the repair of a battle that had nothing to fill,
+            # BACKLOG 55): not written, and its revision stays - the page has nothing to read again.
+            size, written = write_data_changed(target, 'battle:'+battle['id'], result)
         # One walk over the parts: the models it references (the shooter's count too, or prune() would delete them as
         # unused; a model it still waits for counts the same way, or prune() would delete it between the job that writes it
         # and the republish that names it), those whose model failed (no file to look for at the next start), and whether
@@ -4068,7 +5062,7 @@ class Exporter(object):
                             absent.add(key)
                             if running and not str(error).startswith(PERMANENT_MODEL_ERRORS): redo = True
                     elif part.get('modelPending'):
-                        try: pending.add(model_key(part['resource'], battle['clientVersion']))
+                        try: pending.add(self.model_ref(part['resource'], battle['clientVersion']))
                         except Exception: pass
                     if running and not redo:
                         if str(part.get('prefabError') or '').startswith('vehicle XML unavailable'): redo = True
@@ -4076,6 +5070,7 @@ class Exporter(object):
                               and 'error' in (self.extras_cache.get(str(vehicle.get('type') or '')) or {})): redo = True
         references.update(pending)
         self.model_refs[battle['id']] = references
+        previous_rev = (self.summaries.get(battle['id']) or {}).get('rev')
         summary = self.summaries[battle['id']] = dict((k, battle.get(k)) for k in ('id', 'startedAt', 'map'))
         summary['hits'] = len(battle['hits'])
         try:
@@ -4083,8 +5078,24 @@ class Exporter(object):
         except Exception:
             summary['vehicle'] = None
         # Its revision in the index (C1): the page reads the battle it has open again only when this changes.
-        self.publish_serial += 1
-        summary['rev'] = '%s.%d' % (self.session, self.publish_serial)
+        if written or not previous_rev:
+            self.publish_serial += 1
+            summary['rev'] = '%s.%d' % (self.session, self.publish_serial)
+        else:
+            summary['rev'] = previous_rev
+        # Fill-ins its own client made, kept from its file because the files they were read from changed (keep_fills).
+        self.kept_files.pop(battle['id'], None)
+        kept = self.kept_now.pop(battle['id'], None)
+        if kept:
+            LOG.info('Saved battle %s: fill-ins kept from its file (%s) - the client files they were read from changed',
+                     battle['id'], ', '.join(sorted(kept)))
+        # Current now: no longer stale; its references known - the prune that waited for the last of them may run.
+        self.stale.discard(battle['id'])
+        if battle['id'] in self.refs_unknown:
+            self.refs_unknown.discard(battle['id'])
+            if not self.refs_unknown and self.prune_waits:
+                self.prune_waits = False
+                self.prune_now = True
         # What this file was built from (PUBLISHED_FILE): the next start takes it as it is when nothing of it changed.
         # A battle still waiting for a model or for its vehicle XML is published again then, which queues that wait anew.
         if offset is None and active: offset = self.raw_offsets.get(battle['id'])
@@ -4098,9 +5109,15 @@ class Exporter(object):
                 except OSError: raw_size = None
                 if raw_size != offset: raw_size = None
             waits = redo or bool(pending) or any(battle['id'] in ids for ids in self.waiting.values())
+            previous = self.published.get(battle['id']) or {}
             entry = {'stamp':self.stamp, 'raw':int(offset), 'rawSize':raw_size, 'size':size, 'refs':references,
-                     'waits':waits, 'summary':dict(summary)}
+                     'waits':waits, 'summary':dict(summary), 'client':version_hash(battle.get('clientVersion')),
+                     'built':version_hash(self.version)}
             if absent: entry['absent'] = sorted(absent)
+            # The inputs its fill-ins read (fill_allowed): kept from before for a file not read this time.
+            inputs = dict(previous.get('inputs') or {})
+            inputs.update(self.fill_reads.get(battle['id']) or {})
+            if inputs: entry['inputs'] = inputs
             self.published[battle['id']] = entry
         self.published_dirty = True
 
@@ -4326,6 +5343,7 @@ class Exporter(object):
         if self.has_pending_records(): return
         if self.drain_republish(): return
         if self.catalogue_dirty: self.write_catalogue()
+        if self.vehicle_keys_dirty or self.models_index_dirty: self.write_keys()
         # What the battle files were built from, now and then outside a battle (in one, the battle's end or the game's
         # close writes it; a crash only costs the battles it misses one more publish at the next start).
         if (self.published_dirty and self.xml_allowed()
@@ -4333,6 +5351,8 @@ class Exporter(object):
         self.run_job()
 
     def finish(self):
+        self.write_keys(force=True)
+        self.flush_code_seen()
         while self.has_pending_records():
             if not self.consume_records(count_budget=512, time_budget=1.0, force=True): break
         done = self.flush(force=True)
@@ -4417,9 +5437,13 @@ class Exporter(object):
             return True
 
     def run_job(self):
-        """One job per call, the lowest priority number first; with none queued, one slice of a sweep (run_sweeps)."""
+        """One job per call, the lowest priority number first; with none queued, one slice of a sweep (run_sweeps). A sweep
+        the user started goes before the background's jobs (JOB_BULK; BACKLOG 55: on 02.10 Export all models stood at 0
+        behind 222 battles and 196 checks) - only what the page, the player or a battle's hits wait for comes first."""
+        self.note_sweep_waits()
         if not self.jobs: return self.run_sweeps()
         index = self.best_job()
+        if self.jobs[index][0] >= JOB_BULK and any(self.sweep_ready(kind) for kind in USER_SWEEPS): return self.run_sweeps()
         page = self.jobs[index][0] == JOB_PAGE
         if not self.jobs_allowed(page): return False
         # What the page is waiting for runs at once; everything else keeps PACE
@@ -4433,7 +5457,11 @@ class Exporter(object):
             elif job[2] == 'ttx': self.run_ttx_job(job[3])
             elif job[2] == 'extras': self.run_extras_job(job[3])
             elif job[2] == 'prefabs': self.run_prefab_check()
-            elif job[2] == 'battle': more = self.run_battle_job(job[3])
+            elif job[2] == 'battle':
+                # The battle the page asked for (request_battle): through a drag, its vehicle XML read at once.
+                self.preparing_page = page
+                try: more = self.run_battle_job(job[3])
+                finally: self.preparing_page = False
             else: self.run_vehicle_job(job[3], page)
         except Exception:
             LOG.exception('Deferred %s job failed; the rest of the queue continues', job[2])
@@ -4461,9 +5489,13 @@ class Exporter(object):
         A failure marks them too: the part then carries the reason instead of the
         pending flag, so the page stops waiting for something that will not come.
         """
+        # The hits waited under the name the model had when they were published; a file of an earlier name found to hold the
+        # same model (model_extract -> adopt_model) answers them under that one: both are let go.
+        waited = self.model_ref(payload[0], payload[1])
         key, error = self.model_extract(payload[0], payload[1])
-        self.invalidate_model(key)
-        self.republish.update(self.waiting.pop(key, ()))
+        for name in set([waited, key]):
+            self.invalidate_model(name)
+            self.republish.update(self.waiting.pop(name, ()))
 
     def run_vehicle_job(self, request, page=False):
         """One vehicle record, exported exactly as before - only its turn has changed. One the page waits for says in the
@@ -4510,7 +5542,7 @@ class Exporter(object):
         prefabs, a missing extra track pair) - read from the file; None for any other type, and once a session per type
         (a re-export that fails is not tried again on every hit the page opens)."""
         summary = self.vehicles.get(vehicle_id(type_name))
-        if not summary or summary.get('descriptorHash') is not None or not self.vehicle_current(summary): return None
+        if not summary or summary.get('descriptorHash') is not None: return None
         if type_name in self.outdated_tried: return None
         self.outdated_tried.add(type_name)
         try:
@@ -4603,8 +5635,13 @@ class Exporter(object):
             self.attempts.pop(key, None)
 
     def write_index(self, prune=False):
-        if prune: self.prune()
-        battles = sorted(self.summaries.values(), key=lambda b:b.get('startedAt') or 0, reverse=True)
+        # The prune that waited for the references of the last stale battle without them (publish sets prune_now).
+        if prune or getattr(self, 'prune_now', False):
+            self.prune_now = False
+            self.prune()
+        # A battle whose file is not current says so ('stale', BACKLOG 55): the page shows that file and asks for the battle.
+        battles = sorted((dict(row, stale=True) if row.get('id') in self.stale else row for row in self.summaries.values()),
+                         key=lambda b:b.get('startedAt') or 0, reverse=True)
         write_data(os.path.join(self.folder, 'data', 'index.js'), 'index',
                    {'application':'local.armor_inspector', 'version':VERSION, 'updatedAt':time.time(), 'battles':battles})
 
@@ -4722,8 +5759,12 @@ class Exporter(object):
         summary = dict((key, record.get(key)) for key in
                        ('id', 'type', 'name', 'level', 'class', 'role', 'nation',
                         'premium', 'collector', 'special', 'source', 'exportedAt', 'clientVersion'))
-        summary['descriptorHash'] = descriptor_hash(record.get('clientVersion'), record.get('type'),
-                                                    record.get('compactDescriptor'))
+        summary['descriptorHash'] = descriptor_hash(record.get('type'), record.get('compactDescriptor'))
+        summary['format'] = record.get('format', 1)
+        # What its key is made of besides its type (vehicle_key): the descriptor and each part's model and prefab.
+        summary['compactDescriptor'] = record.get('compactDescriptor')
+        summary['parts'] = [dict((k, part[k]) for k in ('resource', 'prefab') if part.get(k))
+                            for part in record.get('parts') or [] if isinstance(part, dict)]
         self.vehicles[identifier] = summary
         self.model_refs['vehicle:'+identifier] = set(part['modelKey'] for part in record.get('parts') or []
                                                      if part.get('modelKey'))
@@ -4784,21 +5825,29 @@ class Exporter(object):
             self.queue_job(JOB_BULK, 'vehicle', dict(request, replay=True))
         # Files from before the armoured prefabs: one background check, not a descriptor per file (run_prefab_check).
         if getattr(self, 'prefab_unchecked', None): self.queue_job(JOB_BULK, 'prefabs', {'vehicleType':''})
+        # A request whose file is there in its configuration is done: whether the file is still this client's is the
+        # background check's (start_verify) - nothing is exported inside setup any more (BACKLOG 55: 02.10, 196 vehicles and
+        # their models, 31 s before the page heard a command). A request with no such file is one background job.
         for type_name in sorted(requests):
-            try:
-                self.export_vehicle(requests[type_name], replay=True)
-            except Exception:
-                LOG.exception('Could not rebuild an exported vehicle: %s', type_name)
+            request = requests[type_name]
+            identifier = vehicle_id(type_name)
+            known = self.vehicles.get(identifier)
+            if (known and known.get('descriptorHash') == descriptor_hash(type_name, request.get('compactDescriptor'))
+                    and os.path.isfile(os.path.join(self.folder, 'data', 'vehicles', identifier + '.js'))):
+                continue
+            self.queue_job(JOB_BULK, 'vehicle', dict(request, replay=True))
 
-    def export_vehicle(self, request, replay=False, sweep=False, descr=None):
+    def export_vehicle(self, request, replay=False, sweep=False, descr=None, verify=False):
         """One vehicle of the client, exported from its compact descriptor.
 
         Export thread only: rebuilding the descriptor, reading collision models out
         of the client packages and collecting armour tables is exactly the work the
-        game thread must never do. Returns False when the request was a duplicate.
+        game thread must never do. Returns False when the request was a duplicate -
+        or when the file built is the one on disk (BACKLOG 55: then it is not written).
         `sweep` (the model sweep): no line in the request log - the sweep's keys own
         such a file - and the catalogue is written by the idle tick, not per vehicle;
-        `descr` is the descriptor the sweep built the request from.
+        `descr` is the descriptor the sweep built the request from. `verify` (the client
+        change check, verify_step): built again whatever the duplicate shortcut says.
         """
         type_name = str(request.get('vehicleType') or '')
         compact = request.get('compactDescriptor')
@@ -4806,17 +5855,19 @@ class Exporter(object):
         if ':' not in type_name or not IDENTIFIER.match(identifier):
             raise ValueError('Invalid vehicle type')
         # The characteristics file of this type (TTX panel), checked BEFORE the duplicate shortcut below: a
-        # vehicle exported before this build would otherwise never get one. A replay at setup only queues it,
-        # so setup builds and reads nothing for it; any other request builds it here, on the thread that is
-        # busy with this vehicle anyway. It never costs the vehicle export.
+        # vehicle exported before this build would otherwise never get one. A replay or a check only queues it, and only
+        # when there is none (BACKLOG 55: one 'ttx' job per replayed vehicle on every start - 196 - read a current file
+        # each; a file whose key changed is the background check's); any other request builds it here, on the thread
+        # that is busy with this vehicle anyway. It never costs the vehicle export.
         try:
-            self.ensure_ttx(type_name, inline=not replay)
+            if not (replay or verify) or not os.path.isfile(self.ttx_path(type_name)):
+                self.ensure_ttx(type_name, inline=not (replay or verify))
         except Exception:
             LOG.exception('TTX check failed for %s; the vehicle export continues', type_name)
-        digest = descriptor_hash(self.version, type_name, compact)
+        digest = descriptor_hash(type_name, compact)
         path = os.path.join(self.folder, 'data', 'vehicles', identifier+'.js')
         known = self.vehicles.get(identifier)
-        if known and known.get('descriptorHash') == digest and os.path.isfile(path):
+        if not verify and known and known.get('descriptorHash') == digest and os.path.isfile(path) and self.vehicle_current(known):
             return False
         if not replay and not sweep: self.append_vehicle_request(request)
         if descr is None: descr = vehicle_descr(compact)
@@ -4826,6 +5877,8 @@ class Exporter(object):
             if record.get(key) is None and (request.get('identity') or {}).get(key) is not None:
                 record[key] = request['identity'][key]
         if record.get('name') is None and request.get('name'): record['name'] = request['name']
+        # Its format (second review F): written from VEHICLE_FORMAT 2 on - a file without it is of format 1 (0.9.3's).
+        if VEHICLE_FORMAT != 1: record['format'] = VEHICLE_FORMAT
         record.update({'id':identifier, 'type':type_name, 'source':request.get('source'),
                        'exportedAt':time.time(), 'clientVersion':self.version, 'compactDescriptor':compact})
         try:
@@ -4937,12 +5990,87 @@ class Exporter(object):
             record['parts'] = []
             record['warnings'].append('Collision parts unavailable')
             LOG.exception('Collision parts unavailable for %s', type_name)
+        # Never a worse file because something did not read (second review B): a rebuild with fewer parts, models, wheels or
+        # prefabs than the file on disk and a read error of its own keeps the file - and its old key, so it is tried again.
+        worse = self.degraded_vehicle(path, record)
+        if worse:
+            LOG.warning('Vehicle %s: the rebuild is degraded (%s) - its file and key are kept, tried again later', type_name, worse)
+            return False
+        # The same file as on disk (BACKLOG 55: a client update usually changes nothing of it): not written, only its key kept.
+        old = self.same_vehicle_file(path, record)
+        if old is not None:
+            self.remember_vehicle(old)
+            self.keep_vehicle_key(old)
+            return False
         write_data(path, 'vehicle:'+identifier, record)
         self.remember_vehicle(record)
+        self.keep_vehicle_key(record)
         # A replay writes no catalogue of its own: setup writes it after all of them, the background ones once at the end.
         if sweep: self.catalogue_dirty = True
         elif not replay: self.write_catalogue()
         return True
+
+    # Fields a vehicle file may differ in without being another file (when and by which client it was written).
+    VEHICLE_VOLATILE = ('exportedAt', 'clientVersion')
+
+    def same_vehicle_file(self, path, record):
+        """The file on disk when it is `record` but for VEHICLE_VOLATILE and the names of its model files (two names of one
+        model - model_identity - are the same part); None otherwise or when it does not read."""
+        try:
+            if not os.path.isfile(path): return None
+            old = read_data_file(path)
+        except Exception:
+            return None
+        def plain(value):
+            value = dict((k, v) for k, v in value.items() if k not in self.VEHICLE_VOLATILE)
+            parts = []
+            for part in value.get('parts') or []:
+                part = dict(part) if isinstance(part, dict) else part
+                if isinstance(part, dict) and part.get('modelKey'):
+                    part['modelKey'] = list(self.model_identity(str(part['modelKey'])))
+                parts.append(part)
+            value['parts'] = parts
+            return json.loads(json.dumps(value))
+        try:
+            return old if plain(old) == plain(record) else None
+        except Exception:
+            return None
+
+    @staticmethod
+    def vehicle_counts(record):
+        parts = [p for p in record.get('parts') or () if isinstance(p, dict)]
+        return {'parts': len(parts), 'models': len([p for p in parts if p.get('modelKey') and not p.get('modelError')]),
+                'wheels': len([p for p in parts if p.get('wheel')]), 'prefabs': len([p for p in parts if p.get('prefab')])}
+
+    def degraded_vehicle(self, path, record):
+        """Why a rebuilt vehicle record is worse than its file on disk because of a read error ('' when it is not): fewer
+        parts, models, wheels or prefabs, and a part's model or armour error or an 'unavailable' warning the file did not have."""
+        try:
+            if not os.path.isfile(path): return ''
+            old = read_data_file(path)
+        except Exception:
+            return ''
+        before, after = self.vehicle_counts(old), self.vehicle_counts(record)
+        fewer = [k for k in sorted(before) if after[k] < before[k]]
+        if not fewer: return ''
+        errors = [p.get('modelError') or p.get('armorError') for p in record.get('parts') or ()
+                  if isinstance(p, dict) and (p.get('modelError') or p.get('armorError'))]
+        errors += [w for w in record.get('warnings') or () if 'unavailable' in str(w) and w not in (old.get('warnings') or ())]
+        if not errors: return ''
+        return 'fewer %s; %s' % ('/'.join(fewer), errors[0])
+
+    def keep_vehicle_key(self, record):
+        """The key a vehicle file was just built or checked with (vehicle_keys); without a snapshot the fallback key of this
+        client (fallback_key), so a file checked once is not built again at every start (review 02.10 #1b)."""
+        identifier = str(record.get('id') or '')
+        if not identifier: return
+        try:
+            key = self.vehicle_key(record) if self.client() is not None else self.fallback_key()
+        except Exception:
+            key = self.fallback_key()
+        if self.vehicle_keys().get(identifier) != key:
+            self.vehicle_keys()[identifier] = key
+            self.vehicle_keys_dirty = True
 
     # ------------------------------------------------------- characteristics (TTX)
 
@@ -4950,7 +6078,8 @@ class Exporter(object):
         return os.path.join(self.folder, 'data', 'ttx', vehicle_id(type_name)+'.js')
 
     def ttx_current(self, type_name):
-        """True when data/ttx/<id>.js exists with the current schema and client version (a ~5 KB read)."""
+        """True when data/ttx/<id>.js exists with the current schema and format and its key is the one it was built or
+        checked with (a ~5 KB read; BACKLOG 55: not the client version - a file of another client whose key held is current)."""
         path = self.ttx_path(type_name)
         if not os.path.isfile(path): return False
         try:
@@ -4959,8 +6088,14 @@ class Exporter(object):
             return False
         if not (isinstance(value, dict) and value.get('schema') == TTX_SCHEMA):
             return False
-        # Another client version: current only when the progress file says its sources did not change (the keys).
-        if canonical(value.get('clientVersion') or '') != self.version and type_name not in ((self.ttx_state or {}).get('keys') or {}):
+        # Its key (the progress file's, start_ttx_sweep): changed - not current (built again and compared: build_ttx). No keys
+        # this session (no snapshot): current only when built or checked by this very client (its version text, or the
+        # fallback key a check under it left) - a key of another client says nothing (review 02.10 #1a).
+        state = self.ttx_state or {}
+        if state.get('now') is not None:
+            if type_name not in state['now'] or state['keys'].get(type_name) != state['now'][type_name]: return False
+        elif (canonical(value.get('clientVersion') or '') != self.version
+              and (state.get('keys') or {}).get(type_name) != self.fallback_key()):
             return False
         # Any file that predates the armour and the suspension's repair (23.09) is built again, once.
         if value.get('armorSchema') != TTX_ARMOR_SCHEMA:
@@ -4993,13 +6128,13 @@ class Exporter(object):
             return False
         return self.build_ttx(type_name)
 
-    def build_ttx(self, type_name, sweep=None):
+    def build_ttx(self, type_name, sweep=None, force=False):
         """Check the file of one type and build it when it is missing or outdated.
 
         `sweep` (the background sweep's state): the build logs nothing; a failure is counted in the sweep, whose one line
         names the first, instead of a traceback. The type it parsed stays in the client's cache (no eviction, 25.09): a
         type parsed twice in one session raises in the client."""
-        if self.ttx_current(type_name):
+        if not force and self.ttx_current(type_name):
             self.ttx_known[type_name] = TTX_CURRENT
             return False
         try:
@@ -5018,6 +6153,11 @@ class Exporter(object):
                 self.ttx_key_done(type_name, False)
             return False
         try:
+            # The same file as on disk but for when and by whom it was built (BACKLOG 55): not written, its key kept.
+            if self.same_ttx_file(type_name, block):
+                self.ttx_known[type_name] = TTX_CURRENT
+                self.ttx_key_done(type_name, True)
+                return False
             write_data(self.ttx_path(type_name), 'ttx:'+vehicle_id(type_name), block)
         except Exception as error:
             # The sweep's own: an ordinary failure of this vehicle, the sweep goes on (review #2). The page's request
@@ -5033,6 +6173,20 @@ class Exporter(object):
         if sweep is None and self.ttx_sweep is None and self.ttx_state is not None and self.ttx_state['now'] is not None:
             self.write_sweep('ttx', done=True)
         return True
+
+    # Fields a characteristics file may differ in without being another file.
+    TTX_VOLATILE = ('clientVersion', 'producedAt', 'buildMs')
+
+    def same_ttx_file(self, type_name, block):
+        """The file on disk is `block` but for TTX_VOLATILE (False when there is none or it does not read)."""
+        try:
+            path = self.ttx_path(type_name)
+            if not os.path.isfile(path): return False
+            old = read_data_file(path)
+            plain = lambda value: json.loads(json.dumps(dict((k, v) for k, v in value.items() if k not in self.TTX_VOLATILE)))
+            return plain(old) == plain(block)
+        except Exception:
+            return False
 
     def run_ttx_job(self, payload):
         """A queued 'ttx' job: the check and, when needed, the build."""
@@ -5052,10 +6206,14 @@ class Exporter(object):
     # progress file (the one owner of its sources' keys, how far it got, whether it runs), the same gates, slices, Start,
     # Stop and resume; a kind brings its stamp, its start (which types) and its step (one unit of work on one type).
     def sweep_stamp(self, kind):
+        """What a progress file's work was done for: the formats and the client's files (the snapshot's id - BACKLOG 55: a
+        reason to look at the keys again, not a key; the client version when there is no snapshot)."""
+        snapshot = self.client()
+        client = snapshot.id if snapshot is not None else self.version
         if kind == 'ttx':
-            return {'clientVersion': self.version, 'schema': TTX_SCHEMA, 'modesSchema': TTX_MODES_SCHEMA,
+            return {'client': client, 'schema': TTX_SCHEMA, 'modesSchema': TTX_MODES_SCHEMA,
                     'armorSchema': TTX_ARMOR_SCHEMA, 'format': TTX_FORMAT}
-        return {'clientVersion': self.version, 'format': MODELS_FORMAT}
+        return {'client': client, 'format': MODELS_FORMAT}
 
     def sweep_path(self, kind):
         return os.path.join(self.folder, *SWEEP_FILES[kind][0])
@@ -5089,6 +6247,14 @@ class Exporter(object):
         ever started it - 'opted' - and whether only failures are left), and 'estimate': the wall-clock seconds of what is
         left at this machine's measured pace ('pace', sweep_pace) - the one estimate, the page prints it. A sweep of the
         failed types alone is a completed one to the page (TTX: done from the start)."""
+        if kind == 'verify':
+            # No progress file of its own: what it did is in the characteristics' keys and the vehicle files' keys.
+            if self.sweeps.get('verify') is not None:
+                self.sweeps['verify']['reported'] = time.time()
+                self.sweeps['verify']['dirty'] = False
+            if self.ttx_state is not None: self.write_sweep('ttx', done=self.ttx_sweep is None)
+            self.write_keys(force=True)
+            return
         sweep, state = self.sweeps[kind], self.sweep_states[kind]
         if state is None: return
         if sweep is not None:
@@ -5109,7 +6275,11 @@ class Exporter(object):
         else:
             marker.update({'parts': state['parts'], 'extension': state['extension'], 'bytes': state['bytes'],
                            'opted': state['opted'], 'failedOnly': bool(sweep and sweep.get('failedOnly'))})
+        # What a started sweep waits for (BACKLOG 55): the page says it instead of standing at the same count.
+        wait = self.sweep_wait(kind) if sweep is not None and sweep['confirmed'] and not done else None
+        if wait: marker['waiting'] = wait
         if sweep is not None:
+            sweep['waitingFor'] = wait
             sweep['reported'] = time.time()
             sweep['dirty'] = False
         try:
@@ -5146,19 +6316,44 @@ class Exporter(object):
         self.write_sweep(kind, done=False)
         return True
 
-    def sweep_gates_open(self):
-        """Work of a sweep may start now: no battle, no drag of the page, the page open, the mod not shutting down."""
+    def sweep_gates_open(self, kind=None):
+        """Work of a sweep may start now: no battle, no drag of the page, the page open, the mod not shutting down. The
+        client change check ('verify') does not need the page: it rebuilds only what really changed (BACKLOG 55)."""
+        if kind == 'verify': return not self.ttx_stopped and self.jobs_allowed()
         return not self.ttx_stopped and self.jobs_allowed() and self.page_open()
 
     def sweep_ready(self, kind):
         """A slice may run now: confirmed, the page open, nothing queued before it, jobs allowed, not shutting down.
-        A page that has closed stops the sweep (stop_sweep)."""
+        A page that has closed stops the sweep (stop_sweep). Before a sweep the user started (USER_SWEEPS) only the jobs
+        above the background's (BACKLOG 55); the background check ('verify') waits for every job."""
         sweep = self.sweeps.get(kind)
         if sweep is None or not sweep['confirmed'] or self.ttx_stopped: return False
+        if kind == 'verify': return bool(not self.jobs and self.jobs_allowed())
         if not self.page_open():
             self.stop_sweep(kind)
             return False
-        return bool(not self.jobs and self.jobs_allowed())
+        return bool(not any(job[0] < JOB_BULK for job in self.jobs) and self.jobs_allowed())
+
+    def sweep_wait(self, kind):
+        """What a started sweep waits for now, for its progress file ('waiting', the page's "Waiting: ..."): a battle, or the
+        jobs above the background's ({'for': 'jobs', 'jobs': {kind: count}}); None when nothing holds it (a drag the page
+        knows itself)."""
+        recorder = self.recorder
+        try:
+            if recorder is not None and getattr(recorder, 'in_battle', False): return {'for': 'battle'}
+        except Exception:
+            pass
+        counts = {}
+        for job in self.jobs:
+            if job[0] < JOB_BULK: counts[job[2]] = counts.get(job[2], 0) + 1
+        return {'for': 'jobs', 'jobs': counts} if counts else None
+
+    def note_sweep_waits(self):
+        """The progress file of a started sweep is written again when what it waits for changed (run_job, every turn)."""
+        for kind in USER_SWEEPS:
+            sweep = self.sweeps.get(kind)
+            if sweep is None or not sweep['confirmed'] or self.sweep_states.get(kind) is None: continue
+            if self.sweep_wait(kind) != sweep.get('waitingFor'): self.write_sweep(kind, done=False)
 
     def export_hurry(self):
         """The export loop's wait for a message (Writer.run_export): none while a sweep's slices run (sweep_hurry), and none
@@ -5210,7 +6405,7 @@ class Exporter(object):
         sweep['frame'] = frame if sweep['frame'] is None else 0.8 * sweep['frame'] + 0.2 * frame
         until = end + min(SWEEP_REST_MAX, sweep['last'] * (1.0 - SWEEP_SHARE) / SWEEP_SHARE)
         for _ in range(SWEEP_REST_WAITS):
-            if TTX_TIMER() >= until or not self.sweep_gates_open() or self.sweep_waiting(): break
+            if TTX_TIMER() >= until or not self.sweep_gates_open(sweep.get('kind')) or self.sweep_waiting(): break
             self.wait_frame()
         sweep['slice'] = min(SWEEP_SLICE_MAX, max(TTX_SWEEP_SLICE, sweep['frame'] * SWEEP_SHARE / (1.0 - SWEEP_SHARE)))
 
@@ -5253,8 +6448,18 @@ class Exporter(object):
             for kind in SWEEP_ORDER:
                 if self.sweeps[kind] is not None and self.sweeps[kind].get('dirty'): self.write_sweep(kind)
             return False
-        for kind in SWEEP_ORDER:
-            if self.sweep_ready(kind): return self.run_sweep(kind)
+        # The sweeps the user started take turns (BACKLOG 55: the models stood behind the whole characteristics sweep); the
+        # one that ran last goes after the other. The next one rests from the last one's slice: the game keeps its share.
+        order = list(USER_SWEEPS)
+        if self.sweep_last in order: order.remove(self.sweep_last); order.append(self.sweep_last)
+        for kind in order + [k for k in SWEEP_ORDER if k not in USER_SWEEPS]:
+            if not self.sweep_ready(kind): continue
+            last = self.sweeps.get(self.sweep_last) if self.sweep_last not in (None, kind) else None
+            sweep = self.sweeps[kind]
+            if last is not None and last.get('sliceEnd') is not None and (sweep['sliceEnd'] is None or last['sliceEnd'] > sweep['sliceEnd']):
+                sweep['sliceEnd'], sweep['last'], sweep['sliced'] = last['sliceEnd'], last['last'], True
+            if kind in USER_SWEEPS: self.sweep_last = kind
+            return self.run_sweep(kind)
         return False
 
     def run_sweep(self, kind):
@@ -5268,12 +6473,12 @@ class Exporter(object):
             self.sweep_rest(sweep)
             # A gate closed or a command came during the rest (review 26.09): no slice now - it would read a file behind
             # a closed gate, or keep the page's click waiting a slice more. The rest is done; the next call slices at once.
-            if not self.sweep_gates_open() or self.sweep_waiting():
+            if not self.sweep_gates_open(kind) or self.sweep_waiting():
                 sweep['sliced'] = False
                 return False
         sweep['sliced'] = True
         if sweep['clock'] is None: sweep['clock'] = time.time()
-        step = self.ttx_step if kind == 'ttx' else self.models_step
+        step = {'ttx': self.ttx_step, 'models': self.models_step, 'verify': self.verify_step}[kind]
         worked = False
         try:
             began, types = TTX_TIMER(), sweep['types']
@@ -5310,7 +6515,15 @@ class Exporter(object):
         if kind == 'ttx' and state is not None and state['now'] is None:
             # The fallback keeps its failures by name, with no key.
             state['failed'] = dict((t, '') for t in sweep['failed'])
-        if kind == 'models': self.catalogue_dirty = True
+        if kind in ('models', 'verify'): self.catalogue_dirty = True
+        # The check ran to its end: what it was asked for is done (data/verify.json).
+        if kind == 'verify':
+            pending = self.verify_state()
+            pending['pending'], pending['everything'] = [], False
+            if sweep.get('stand'): pending['stand'] = STAND_CLIENT
+            self.write_verify_state()
+        # The modules its builds executed outside the stand's set (recorded_build): watched.
+        self.flush_code_seen()
         self.write_sweep(kind, done=True)
         if self.recorder is not None:
             try: self.recorder.frames_wanted = False
@@ -5324,6 +6537,11 @@ class Exporter(object):
                  time.time() - (sweep['clock'] or time.time()), sweep['workMs'] / max(1, sweep['built']),
                  100.0 * sweep['workMs'] / max(1e-9, sweep['wallMs']), 100.0 * SWEEP_SHARE, sweep['slices'],
                  1000.0 * sweep['last'], 1000.0 * (sweep['frame'] or 0.0))
+        if kind == 'verify':
+            changed, missed = sweep.get('changed') or [], sweep.get('missed') or []
+            LOG.info('Client change check: %d files built again and compared - %d differed and were written%s%s',
+                     len(sweep['types']), len(changed), ' (%s)' % ', '.join(changed[:5]) if changed else '',
+                     '; missed change: %s' % ', '.join(missed[:5]) if missed else '')
         if kind == 'models' and self.model_ms:
             times = sorted(self.model_ms)
             LOG.info('Model sweep: %d collision models extracted, %.1f ms median, %.1f ms p90, %.1f ms max (read, parse, write)',
@@ -5364,47 +6582,52 @@ class Exporter(object):
         return state
 
     # ---- The sources' keys (24.09, user: "do not do the work twice"): a type is built again only when a file it is read
-    # from changed. The client's files sit in its packages (zip); each member's CRC-32 and size are in the package's
-    # central directory, read without unpacking anything (TTX_SOURCE). One pass, read-only.
-    def ttx_sources(self, cached):
-        """({member: crc}, {package: [size, mtime, has]}): the CRC of every file the characteristics are read from, over
-        the packages the client mounts, the first package that has a member winning (as the client reads it). `cached`
-        is the progress file's package list: a package with the same size and time that had no such file is not opened."""
-        crcs, packages = {}, {}
-        for path in self.mounted_packages():
-            stat = os.stat(path)
-            base, size, mtime = os.path.basename(path), int(stat.st_size), int(stat.st_mtime)
-            old = (cached or {}).get(base)
-            if isinstance(old, list) and len(old) == 3 and old[0] == size and old[1] == mtime and old[2] is False:
-                packages[base] = old
-                continue
-            has = False
-            # The central directory's bytes first, one C-level search: the ~120 packages of models, maps and sounds
-            # have no characteristics file, and are passed without parsing their tens of thousands of entries.
-            directory = zip_directory(path)
-            if directory is not None and not any(mark in directory for mark in TTX_SOURCE_MARKS):
-                packages[base] = [size, mtime, False]
-                continue
-            with zipfile.ZipFile(path) as archive:
-                for info in archive.infolist():
-                    name = info.filename
-                    if name.endswith('/') or not TTX_SOURCE.match(name) or TTX_SOURCE_SKIP.search(name): continue
-                    has = True
-                    crcs.setdefault(name, '%08x' % (info.CRC & 0xffffffff))
-            packages[base] = [size, mtime, has]
-        if not any(name.startswith('scripts/') for name in crcs): raise ValueError('No characteristics sources in the client packages')
-        return crcs, packages
-
+    # from changed. Their CRCs come from the client's snapshot (BACKLOG 55: client_snapshot, the packages' central
+    # directories and the overrides); the client's code is not a source of a type but of all of them (code_generation).
     def source_crcs(self):
-        """The CRCs of the characteristics' sources (ttx_sources), read once a session for both sweeps; the packages' cache
-        goes to the TTX progress file. Raises when the packages cannot be read."""
+        """{path: crc} of the characteristics' data sources in this client (source_crcs_of), once a session. Raises without a
+        snapshot or without any source in it."""
         if self.crcs is None:
-            state = self.ttx_state
-            cached = state['packages'] if state is not None else (self.sweep_marker('ttx') or {}).get('packages')
-            crcs, packages = self.ttx_sources(cached)
+            files = self.client_files()
+            if files is None: raise ValueError('Client files unreadable')
+            crcs = self.source_crcs_of(files)
+            if not any(name.startswith('scripts/') for name in crcs): raise ValueError('No characteristics sources in the client packages')
             self.crcs = crcs
-            if state is not None: state['packages'] = packages
         return self.crcs
+
+    @staticmethod
+    def source_crcs_of(files):
+        """{path: crc} of the data the characteristics and vehicle files are built from, in a client's files: every vehicle's
+        own XML and its nation's files (TTX_SOURCE without the code), of the vehicles' common files only those a build opens
+        (SHARED_DATA; an event package's all of them), what items reads at its start, and the texts the builds translate from.
+        An unknown CRC (a derived snapshot) is '?'."""
+        shared = set(SHARED_DATA) | set('res/text/lc_messages/%s.mo' % d for d in TEXT_DOMAINS)
+        crcs = {}
+        for name, entry in files.items():
+            if name in shared or (TTX_SOURCE.match(name) and not name.endswith('.pyc')
+                                  and not name.startswith('scripts/item_defs/vehicles/common/')):
+                crcs[name] = '?' if entry[0] < 0 else '%08x' % entry[0]
+        return crcs
+
+    def sources_unknown(self):
+        """Some data source of the characteristics has an unknown CRC now (its package left out of the snapshot)."""
+        try:
+            return any(value == '?' for value in self.source_crcs().values())
+        except Exception:
+            return False
+
+    def ttx_keys(self, types):
+        """{type: '<data>.<generation>'}: the type's data sources (ttx_source_keys with TTX_FORMAT) and the client's code."""
+        generation = self.code_generation() or '-'
+        return dict((t, '%s.%s' % (k, generation)) for t, k in self.ttx_source_keys(types, self.source_crcs()).items())
+
+    @staticmethod
+    def key_change(stored, now):
+        """Which part of a key changed, for the log: 'no earlier key', 'vehicle data', 'client code', 'its models'."""
+        if not stored or stored.count('.') != now.count('.'): return 'no earlier key'
+        old, new = stored.split('.'), now.split('.')
+        names = ('vehicle data', 'client code', 'its models')
+        return ' and '.join(names[i] for i in range(len(new)) if old[i] != new[i]) or 'nothing'
 
     @staticmethod
     def split_sources(crcs):
@@ -5413,6 +6636,10 @@ class Exporter(object):
         for an event's own package."""
         shared, nation_files, own = {}, {}, {}
         for name in sorted(crcs):
+            if 'scripts/' not in name:
+                # A file outside the scripts (system/data, gui, the texts): shared by every type.
+                shared.setdefault('', []).append(name + '=' + crcs[name])
+                continue
             at = name.index('scripts/')
             root, rest = name[:at], name[at + len('scripts/'):]
             line = rest + '=' + crcs[name]
@@ -5433,8 +6660,14 @@ class Exporter(object):
         client's items code, the vehicles' common files - TTX_SOURCE_SKIP leaves out what no characteristic depends on), its
         nation's (components, list.xml) and its own XML (every file of its nation whose name begins with its own - a variant
         too: more rebuilds, never fewer). A type from an extension package (an event's) takes that package's common and
-        nation files too. The model sweep's keys start from these (models_key)."""
-        shared, nation_files, own = self.split_sources(crcs)
+        nation files too. The client's code is not here (ttx_keys, vehicle_key add code_generation)."""
+        # One split per sources' table (this client's, and an earlier client's for a proof): both are kept.
+        caches = getattr(self, 'split_caches', None)
+        if caches is None: caches = self.split_caches = {}
+        cached = caches.get(id(crcs))
+        if cached is None or cached[0] is not crcs:
+            cached = caches[id(crcs)] = (crcs, self.split_sources(crcs))
+        shared, nation_files, own = cached[1]
         keys, bases = {}, {}
         for type_name in types:
             nation, _, name = type_name.partition(':')
@@ -5465,10 +6698,10 @@ class Exporter(object):
     # ---- the characteristics (TTX)
     def start_ttx_sweep(self, rows):
         """Setup: which catalogue types need their file built, and the sweep over them - not running until the page's
-        Start of this session. Nothing outside the game (no client item modules). The same client and format as the
-        progress file, done: nothing is read at all. Otherwise the sources' keys (ttx_sources, a few ms a package): a type
-        whose key and file are unchanged is current; one that failed with the same key is retried without asking; the
-        rest is the sweep. Keys unavailable (a package unreadable...): every type of a new client version, one log line."""
+        Start of this session. Nothing outside the game (no client item modules). The sources' keys (ttx_keys, from the
+        client's snapshot): a type without a file is the sweep's; one that failed with the same key is retried without
+        asking; one with a file whose key changed is checked in the background (ttx_stale -> start_verify: built again,
+        written only when different - BACKLOG 55). Keys unavailable: every file is checked, one log line."""
         self.ttx_sweep = None
         self.ttx_state = None
         old = os.path.join(self.folder, TTX_SWEEP_OLD)
@@ -5489,33 +6722,52 @@ class Exporter(object):
         marker = self.sweep_marker('ttx') or {}
         same = marker.get('stamp') == self.sweep_stamp('ttx')
         state = self.sweep_state('ttx', marker, len(catalogue))
-        if same and marker.get('done') and not marker.get('failed'): return None
         started = TTX_TIMER()
         try:
-            state['now'] = self.ttx_source_keys(catalogue, self.source_crcs())
+            state['now'] = self.ttx_keys(catalogue)
         except Exception as error:
-            state['now'], state['keys'] = None, {}
-            LOG.warning('TTX sources unreadable (%r): every vehicle of this client version is built again', error)
+            state['now'] = None
+            LOG.warning('TTX sources unreadable (%r): every file is built again and compared', error)
+        known = set(catalogue)
+        state['keys'] = dict((t, k) for t, k in state['keys'].items() if t in known)
+        missing = [t for t in catalogue if not os.path.isfile(self.ttx_path(t))]
         if state['now'] is not None:
-            now, keys, failed = state['now'], state['keys'], state['failed']
-            # Only what this client still has; a failure with another key is a change like any other.
-            state['keys'] = keys = dict((t, k) for t, k in keys.items() if now.get(t) == k)
-            state['failed'] = failed = dict((t, k) for t, k in failed.items() if now.get(t) == k and t not in keys)
-            types = [t for t in catalogue if t not in failed and (t not in keys or not os.path.isfile(self.ttx_path(t)))]
-            retry = [t for t in catalogue if t in failed]
-            if not same and marker.get('startedAt') and not marker.get('done'):
-                try: state['started'] = float(marker['startedAt'])
-                except (TypeError, ValueError): pass
+            now = state['now']
+            # A failure with another key is a change like any other: the type is tried as one without a file.
+            state['failed'] = failed = dict((t, k) for t, k in state['failed'].items() if now.get(t) == k)
+            stale = [t for t in catalogue if t not in missing and state['keys'].get(t) != now.get(t)]
+            # Sources unreadable now (a package left out of the snapshot: CRCs unknown): nothing is taken for changed by
+            # them - looked at again next start (second review G); what is missing is still built.
+            if self.sources_unknown():
+                LOG.warning('TTX sources: some client files unreadable now - no file is checked by its data this session')
+                stale = []
+            # A file of 0.9.3 (no key of this kind) or of an earlier client: kept when that client had its very inputs (proven).
+            for type_name in list(stale):
+                if state['keys'].get(type_name) is not None and state['keys'].get(type_name).count('.') == now[type_name].count('.'):
+                    continue
+                try:
+                    value = read_data_file(self.ttx_path(type_name))
+                    ok = value.get('format', 1) == TTX_FORMAT and self.proven(type_name, value.get('clientVersion'))
+                except Exception:
+                    ok = False
+                if ok:
+                    state['keys'][type_name] = now[type_name]
+                    stale.remove(type_name)
         else:
-            # The fallback: the client version decides, as before the keys; a sweep cut short goes on by its files' times.
-            types, retry = catalogue, []
-            if same and not marker.get('done'):
-                try: state['started'] = float(marker.get('startedAt'))
-                except (TypeError, ValueError): pass
-            elif same:
-                types, retry = [], [t for t in catalogue if t in set(marker.get('failed') or {})]
-        LOG.info('TTX sources: %d of %d types to build, %d to retry (%s, %.0f ms)', len(types), len(catalogue), len(retry),
-                 'by their files' if state['now'] is not None else 'all of this client version', (TTX_TIMER() - started) * 1000.0)
+            failed = dict((t, '') for t in (marker.get('failed') or {}) if t in known) if same else {}
+            state['failed'] = failed
+            # No snapshot: what this very client checked (the fallback key) is current, nothing else (review 02.10 #1a).
+            stale = [t for t in catalogue if t not in missing and state['keys'].get(t) != self.fallback_key()]
+        types = [t for t in missing if t not in failed]
+        retry = [t for t in catalogue if t in failed]
+        # Those with a file whose key changed: built again and compared in the background (start_verify), not a question.
+        self.ttx_stale = [t for t in stale if t not in failed]
+        if same and marker.get('startedAt') and not marker.get('done'):
+            try: state['started'] = float(marker['startedAt'])
+            except (TypeError, ValueError): pass
+        LOG.info('TTX sources: %d of %d types to build, %d to retry, %d to check in the background (%s, %.0f ms)', len(types),
+                 len(catalogue), len(retry), len(self.ttx_stale), 'by their files' if state['now'] is not None else 'no keys',
+                 (TTX_TIMER() - started) * 1000.0)
         if not types and not retry:
             self.write_sweep('ttx', done=True)
             return None
@@ -5527,8 +6779,10 @@ class Exporter(object):
     def ttx_key_done(self, type_name, ok):
         """The file of a type was just written (ok) or failed: its key goes to the progress file's keys or failures."""
         state = self.ttx_state
-        if state is None or state['now'] is None or type_name not in state['now']: return
-        key = state['now'][type_name]
+        if state is None: return
+        if state['now'] is None: key = self.fallback_key()
+        elif type_name not in state['now']: return
+        else: key = state['now'][type_name]
         if ok:
             state['keys'][type_name] = key
             state['failed'].pop(type_name, None)
@@ -5552,7 +6806,7 @@ class Exporter(object):
         if known == TTX_CURRENT: return 'current'
         if not self.sweep_gates_open(): return None
         started = TTX_TIMER()
-        if self.build_ttx(type_name, sweep):
+        if self.recorded_build(self.build_ttx, type_name, sweep):
             ms = (TTX_TIMER() - started) * 1000.0
             sweep['buildMs'] += ms
             state['built'] += 1
@@ -5560,57 +6814,153 @@ class Exporter(object):
             return 'built'
         return 'failed' if self.ttx_known.get(type_name) == TTX_FAILED else 'current'
 
+    # ---- THE CLIENT CHANGE CHECK (BACKLOG 55): the files whose key changed - the characteristics of ttx_stale, the vehicle
+    # files whose vehicle_key is not the one kept; a file of 0.9.3 or of an earlier client whose inputs that client's snapshot
+    # proves the same is kept without a build (proven) - built again and compared in the background (the 'verify' kind: after
+    # every job and every sweep the user started, no page needed, never in a battle or a drag, the game's share of the time
+    # between slices); a file is written only where the result differs. When the game's exe or client code outside the code
+    # set changed (code_samples), a few files whose keys held are built and compared too (VERIFY_SAMPLE_*): one that differs is
+    # a change the keys missed - written, named in the log ('Missed change'), and every file joins the check.
+    def start_verify(self):
+        self.sweeps['verify'] = None
+        items, reasons = [], {}
+        state = self.ttx_state or {}
+        now = state.get('now') or {}
+        for type_name in self.ttx_stale or ():
+            items.append('ttx:' + type_name)
+            why = self.key_change((state.get('keys') or {}).get(type_name), now[type_name]) if type_name in now else 'no keys'
+            reasons['characteristics: ' + why] = reasons.get('characteristics: ' + why, 0) + 1
+        snapshot = self.client()
+        stored = self.vehicle_keys() if snapshot is not None else {}
+        unknown = snapshot is not None and self.sources_unknown()
+        for identifier in sorted(self.vehicles):
+            summary = self.vehicles[identifier]
+            if unknown: break   # the client's files unreadable now: no vehicle file is judged by them (second review G)
+            # A file a migration exports again from its own request (load_vehicles: no hash) is that job's.
+            if summary.get('descriptorHash') is None or self.vehicle_current(summary): continue
+            if not os.path.isfile(os.path.join(self.folder, 'data', 'vehicles', identifier + '.js')): continue
+            # A file of 0.9.3 (no key) or of an earlier client whose inputs were these very files: its key is kept, no build.
+            if snapshot is not None and identifier not in stored and self.proven(summary.get('type'), summary.get('clientVersion'), summary):
+                self.keep_vehicle_key(summary)
+                continue
+            items.append('vehicle:' + identifier)
+            try: why = self.key_change(stored.get(identifier), self.vehicle_key(summary))
+            except Exception: why = 'no keys'
+            reasons['vehicle files: ' + why] = reasons.get('vehicle files: ' + why, 0) + 1
+        if snapshot is not None:
+            self.code_generation()
+        # The types whose stand output changed for this client (STAND_CHANGED): rebuilt once, whatever their keys say.
+        pending = self.verify_state()
+        if snapshot is not None and STAND_CHANGED and STAND_CLIENT == snapshot.label() and pending.get('stand') != STAND_CLIENT:
+            for type_name in STAND_CHANGED:
+                if os.path.isfile(self.ttx_path(type_name)) and 'ttx:' + type_name not in items: items.append('stand-ttx:' + type_name)
+                identifier = vehicle_id(type_name)
+                if identifier in self.vehicles and 'vehicle:' + identifier not in items: items.append('stand-vehicle:' + identifier)
+            reasons['changed on the stand'] = len(STAND_CHANGED)
+        if snapshot is not None and self.code_samples:
+            import random
+            chance = random.Random(snapshot.id)
+            held = sorted(t for t in now if 'ttx:' + t not in items and os.path.isfile(self.ttx_path(t)))
+            items.extend('sample-ttx:' + t for t in sorted(chance.sample(held, min(VERIFY_SAMPLE_TTX, len(held)))))
+            held = sorted(i for i in self.vehicles if 'vehicle:' + i not in items and self.vehicles[i].get('descriptorHash')
+                          and os.path.isfile(os.path.join(self.folder, 'data', 'vehicles', i + '.js')))
+            items.extend('sample-vehicle:' + i for i in sorted(chance.sample(held, min(VERIFY_SAMPLE_VEHICLES, len(held)))))
+        if not items and not pending.get('everything'):
+            if pending.get('pending'):
+                pending['pending'] = []
+                self.write_verify_state()
+            return None
+        sweep = self.sweeps['verify'] = self.new_sweep(items, confirmed=True)
+        sweep.update({'kind': 'verify', 'changed': [], 'missed': [], 'stand': bool(STAND_CHANGED and pending.get('stand') != STAND_CLIENT)})
+        # A 'Missed change' of an earlier session that did not run to its end: every file still.
+        if pending.get('everything'): self.verify_everything(sweep)
+        LOG.info('Client change check: %d files to build again and compare in the background, written only where they differ '
+                 '(%s; %d samples of unchanged keys%s)', len(items),
+                 ', '.join('%s %d' % (why, count) for why, count in sorted(reasons.items())) or 'no key changed',
+                 len([i for i in items if i.startswith('sample-')]),
+                 ': ' + '; '.join(self.code_samples) + ' changed' if self.code_samples else '')
+        return sweep
+
+    def verify_step(self, item, sweep):
+        """The check's step on one file: 'ttx:<type>' or 'vehicle:<id>' (a sample: 'sample-...', built whatever its key)."""
+        kind, _, name = item.partition(':')
+        sample = kind.startswith('sample-')
+        forced = sample or kind.startswith('stand-')
+        if not self.sweep_gates_open('verify'): return None
+        try:
+            if kind.endswith('ttx'):
+                if not forced and self.ttx_current(name):
+                    self.ttx_known[name] = TTX_CURRENT
+                    return 'current'
+                written = self.recorded_build(self.build_ttx, name, sweep, force=True)
+                if self.ttx_known.get(name) == TTX_FAILED: return 'failed'
+            else:
+                summary = self.vehicles.get(name)
+                path = os.path.join(self.folder, 'data', 'vehicles', name + '.js')
+                if not summary or not os.path.isfile(path): return 'current'
+                if not forced and self.vehicle_current(summary): return 'current'
+                request = migration_request(read_data_file(path))
+                if not request.get('compactDescriptor') or not request.get('vehicleType'): return 'failed'
+                written = self.recorded_build(self.export_vehicle, dict(request, replay=True), replay=True, verify=True)
+        except Exception as error:
+            sweep['error'] = sweep['error'] or '%s: %r' % (item, error)
+            return 'failed'
+        if written:
+            sweep['changed'].append(name)
+            if sample:
+                sweep['missed'].append(name)
+                LOG.warning('Missed change: %s differed from its file although its key did not change - written; the keys '
+                            'miss an input of it: every file is built and compared now', name)
+                self.verify_everything(sweep)
+        return 'built'
+
+    def verify_everything(self, sweep):
+        """A sample differed (a change the keys missed): every characteristics and vehicle file joins the check, once - and
+        until that check ran to its end, from start to start (data/verify.json)."""
+        if sweep.get('everything'): return
+        sweep['everything'] = True
+        pending = self.verify_state()
+        if not pending.get('everything'):
+            pending['everything'] = True
+            self.write_verify_state()
+        listed = set(sweep['types'])
+        for type_name in sorted((self.ttx_state or {}).get('now') or ()):
+            if os.path.isfile(self.ttx_path(type_name)) and 'ttx:' + type_name not in listed and 'sample-ttx:' + type_name not in listed:
+                sweep['types'].append('sample-ttx:' + type_name)
+        for identifier in sorted(self.vehicles):
+            if 'vehicle:' + identifier not in listed and 'sample-vehicle:' + identifier not in listed and os.path.isfile(
+                    os.path.join(self.folder, 'data', 'vehicles', identifier + '.js')):
+                sweep['types'].append('sample-vehicle:' + identifier)
+
     # ---- the collision models (25.09, BACKLOG 51). Every regular vehicle of the catalogue - no battle-mode vehicle
     # (modeOnly), no event package's, no onboarding or Story Mode copy (MODELS_SKIP_NAME) - exported by the one vehicle
     # export (export_vehicle) in its top configuration, as the per-click path exports a vehicle the player does not own.
-    # Only after the user's Start (the page's Export all models); from then on a game update asks, like the TTX sweep, for
-    # the vehicles whose sources changed. A file of the player's own (the hangar, a battle, a click: any other source) is
-    # never touched. A type's key: the TTX sources' key with MODELS_FORMAT, and the CRC-32 of the collision models its last
-    # export used (parts), from the packages' directories (the collision index) - nothing is unpacked to key it.
-    def models_bases(self):
-        """{type: TTX-source key with MODELS_FORMAT} of the regular types, once a session (needs the sources' CRCs)."""
-        state = self.sweep_states['models']
-        if state['bases'] is None:
-            state['bases'] = self.ttx_source_keys(state['regular'], self.source_crcs(), 'models-%d' % MODELS_FORMAT)
-        return state['bases']
-
-    def models_key(self, type_name, resources):
-        """The key of one type's export: its base (models_bases) and each collision model's CRC in the package index."""
-        base = self.models_bases().get(type_name)
-        self.ensure_packages()
-        if base is None: return None
-        entries, lines = self.package_entries or {}, []
-        for resource in sorted(set(resources or ())):
-            havok = str(resource).rsplit('.', 1)[0] + '.havok'
-            entry = entries.get(havok)
-            lines.append('%s=%s' % (havok, '%08x' % (entry[4] & 0xffffffff) if entry else '-'))
-        return '%08x' % (zlib.crc32('\n'.join(lines).encode('utf-8'), int(base, 16)) & 0xffffffff)
-
-    def vehicle_current(self, summary):
-        """An exported vehicle file the page may show as this client's: written by this client version, or a sweep's file
-        whose key says nothing it was built from changed (the catalogue's 'exported')."""
-        if not summary: return False
-        if canonical(summary.get('clientVersion') or '') == self.version: return True
-        state = self.sweep_states.get('models')
-        return bool(state is not None and summary.get('source') == 'catalogue' and summary.get('type') in state['keys'])
+    # Only after the user's Start (the page's Export all models), and only the vehicles WITHOUT a file (BACKLOG 55): a file
+    # whose key changed with the client is built again and compared in the background (start_verify), whoever wrote it. A file
+    # of the player's own (the hangar, a battle, a click: any other source) is never replaced by the top configuration.
+    def models_key_safe(self, type_name, resources):
+        """The key a failure of the sweep is kept with (models_failed): the vehicle key of its type and models, or None."""
+        try:
+            return self.vehicle_key({'type': type_name, 'parts': [{'resource': r} for r in resources or ()]})
+        except Exception:
+            return None
 
     def models_current(self, type_name):
-        """The model sweep has nothing to do for this type: not failed, and its file is the player's own (any source but
-        the sweep's - its own path keeps it) or current (vehicle_current)."""
+        """The model sweep has nothing to do for this type: not failed, and it has a file (whose key, changed or not, is the
+        background check's - start_verify)."""
         state = self.sweep_states['models']
         if type_name in state['failed']: return False
         identifier = vehicle_id(type_name)
         summary = self.vehicles.get(identifier)
         # A file on disk that setup could not read (a lock of an antivirus or a backup) may be the player's own: it is
         # left alone this session rather than overwritten with the top configuration (review 25.09).
-        if not summary: return os.path.exists(os.path.join(self.folder, 'data', 'vehicles', identifier + '.js'))
-        return summary.get('source') != 'catalogue' or self.vehicle_current(summary)
+        return bool(summary) or os.path.exists(os.path.join(self.folder, 'data', 'vehicles', identifier + '.js'))
 
     def start_models_sweep(self, rows):
         """Setup: the plan of the model sweep - never running before the page's Start. Nothing outside the game. The same
-        client and format, done, nothing failed: nothing is read. Otherwise the regular types (event packages from the
-        sources' CRCs, once a client version) and, once the user has started a sweep before (opted), their keys: a type
-        whose key did not change keeps its file. Keys unavailable: every type of a new client version."""
+        client files and format, done, nothing failed: nothing is read. Otherwise the regular types (event packages from the
+        sources' CRCs, once a client) without a file, and the failed ones (BACKLOG 55: a file whose key changed is the
+        background check's, start_verify - not a question to the user)."""
         self.sweeps['models'] = None
         self.sweep_states['models'] = None
         try:
@@ -5625,7 +6975,9 @@ class Exporter(object):
         if same and marker.get('done') and not marker.get('failed'): return None
         started = TTX_TIMER()
         if not same:
-            state['keys'], state['failed'], state['extension'] = {}, {}, []
+            state['keys'], state['extension'] = {}, []
+            # A failure stays one across a client change (retried on the user's Start); a format raised forgets them.
+            if (marker.get('stamp') or {}).get('format') != MODELS_FORMAT: state['failed'] = {}
         catalogue = [row for row in rows or () if ':' in str(row.get('type') or '') and IDENTIFIER.match(vehicle_id(row['type']))]
         crcs = None
         if not same:
@@ -5642,18 +6994,6 @@ class Exporter(object):
             seen.add(type_name)
             state['regular'].append(type_name)
         state['catalogue'] = len(state['regular'])
-        if not same and crcs is not None and state['opted'] and (marker.get('keys') or marker.get('failed')):
-            # A new client or format: a type keeps its file when its sources and its collision models did not change.
-            try:
-                parts, now = dict(marker.get('parts') or {}), {}
-                for type_name in set(marker.get('keys') or {}) | set(marker.get('failed') or {}):
-                    if type_name in seen and type_name in parts: now[type_name] = self.models_key(type_name, parts[type_name])
-                state['now'] = now
-                state['keys'] = dict((t, k) for t, k in (marker.get('keys') or {}).items() if now.get(t) == k)
-                state['failed'] = dict((t, k) for t, k in (marker.get('failed') or {}).items() if now.get(t) == k and t not in state['keys'])
-            except Exception as error:
-                state['now'], state['keys'], state['failed'] = None, {}, {}
-                LOG.warning('Model sweep keys unavailable (%r): every vehicle of this client version is exported again', error)
         state['parts'] = dict((t, v) for t, v in state['parts'].items() if t in state['keys'] or t in state['failed'])
         types = [t for t in state['regular'] if not self.models_current(t)]
         failed_only = bool(types) and all(t in state['failed'] for t in types)
@@ -5704,7 +7044,7 @@ class Exporter(object):
             resource = work['resources'][work['next']]
             work['next'] += 1
             try:
-                key = model_key(resource, self.version)
+                key = self.model_ref(resource, self.version)
                 path = os.path.join(self.folder, 'data', 'models', key + '.js')
                 existed = os.path.isfile(path)
                 self.model_extract(resource, self.version)
@@ -5728,7 +7068,7 @@ class Exporter(object):
         state['bytes'] += work['bytes']
         errors = [] if work['resources'] else ['no collision parts']
         for resource in work['resources']:
-            try: error = self.attempts.get(model_key(resource, self.version), 'not extracted')
+            try: error = self.attempts.get(self.model_ref(resource, self.version), 'not extracted')
             except Exception as exc: error = str(exc)
             if error: errors.append(error)
         if errors: return self.models_failed(type_name, sweep, errors[0], work['resources'])
@@ -5737,12 +7077,6 @@ class Exporter(object):
         state['failed'].pop(type_name, None)
         if key is not None: state['keys'][type_name] = key
         return 'built'
-
-    def models_key_safe(self, type_name, resources):
-        try:
-            return self.models_key(type_name, resources)
-        except Exception:
-            return None
 
     def models_failed(self, type_name, sweep, error, resources):
         """One vehicle of the model sweep failed: by its key (tried again when the user starts the sweep again), the first
@@ -5797,14 +7131,16 @@ class Exporter(object):
         return rows
 
     def flag_rows(self, rows):
-        """The export flags of catalogue rows: 'exported' when the vehicle's file is this client's (vehicle_current), and
+        """The export flags of catalogue rows: 'exported' when the vehicle has a file (BACKLOG 55), and
         'regular': false on a vehicle no player has in the hangar (regular_vehicle) - the page's list leaves it out."""
         extension = set((self.sweep_states.get('models') or {}).get('extension') or ())
         for entry in rows:
             if regular_vehicle(entry, extension): entry.pop('regular', None)
             else: entry['regular'] = False
             summary = self.vehicles.get(entry['id'])
-            entry['exported'] = self.vehicle_current(summary)
+            # A file is there (BACKLOG 55: not "a file of this client version" - 817 vehicles exported on 28.09 showed as not
+            # exported after 02.10's update; a file whose key changed is checked in the background and kept when the same).
+            entry['exported'] = bool(summary)
             # A file this start found out of date (27.09: a wheeled type without its wheels, a prefab type without its
             # prefabs, a missing extra track pair) and exports again: the page asks for it at once when it is opened,
             # as for a vehicle without a file, and never shows the old one.

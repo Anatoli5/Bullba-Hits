@@ -34,6 +34,8 @@ __pycache__/
 !/tools/package.py
 !/tools/build_installer.py
 !/tools/client_version.py
+!/tools/client_code_set.py
+!/tools/client_code_set27.py
 !/tools/build_script_installer.py
 !/tools/fetch_installer_compiler.py
 !/tools/make_installer_icon.ps1

@@ -62,10 +62,12 @@ def write(path, text):
 
 
 def started(exporter):
-    """setup(), then the saved battles it left to the background (startup-republish-slow, 27.09), the job pace skipped."""
+    """setup(), then every saved battle it found stale prepared as the page asks for it when it is opened (BACKLOG 55: nothing
+    is published at the start any more), the job pace skipped."""
     exporter.setup()
+    for name in sorted(exporter.stale): exporter.request_battle(name)
     for _ in range(100):
-        if exporter.backlog is None: break
+        if not exporter.jobs: break
         exporter.last_job = 0
         exporter.run_job()
     return exporter

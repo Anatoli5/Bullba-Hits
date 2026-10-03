@@ -7394,7 +7394,19 @@
       (hit.warnings||[]).join('|'),(hit.shellCandidates||[]).length,(hit.availableShells||[]).length,
       target.name,attacker.name,attacker.gun,attacker.gunDispersion,attacker.gunHeight,attacker.gunHeightFrom,parts].join('\u0001');
   }
+  // A SAVED BATTLE WHOSE FILE IS OUT OF DATE (BACKLOG 55, the user's decision of 02.10): the mod no longer publishes every
+  // battle again after an update; the index marks such a one 'stale'. Opening it shows the file there is at once and, in the
+  // game, asks the mod to prepare it ('prepareBattle', once a page); the poll looks for its new revision every 2 s meanwhile
+  // and reads it again when it comes (openBattleCurrent). Outside the game nobody prepares it: the file there is shown.
+  var battleAsked={},battlePreparing=null;
+  function askPrepare(id){
+    var row=battleSummary(id);
+    if(!row||!row.stale||!host.game||!host.canSend()||battleAsked[id])return;
+    battleAsked[id]=true;battlePreparing=id;
+    sendCommand('prepareBattle',{battleId:String(id)});schedulePoll();
+  }
   function loadBattle(id,keep){
+    askPrepare(id);
     var request=++battleGeneration,rev=(battleSummary(id)||{}).rev||null;if(!current||current.id!==id)++generation;
     return ArmorInspectorData.battle(id).then(function(b){
       if(request!==battleGeneration)return;
@@ -7448,9 +7460,11 @@
     if(polling)return Promise.resolve();polling=true;
     return ArmorInspectorData.index().then(function(index){var pv=$('app-version').getAttribute('data-version');recordsVersion=index.version||'';$('app-version').textContent=[pv!=='dev'?pv:'',index.version&&index.version!==pv?'records '+index.version:''].filter(Boolean).join(' \u00b7 ');if(index.application!=='local.armor_inspector'||!Array.isArray(index.battles))throw new Error('Invalid battle list');verdictStatus();
       var revs=index.battles.some(function(b){return b&&b.rev;});
-      var stamp=(revs?'':String(index.updatedAt||''))+':'+index.battles.map(function(b){return b.id+'/'+b.hits+'/'+(b.rev||'');}).join(',');if(stamp===indexStamp)return;indexStamp=stamp;
+      var stamp=(revs?'':String(index.updatedAt||''))+':'+index.battles.map(function(b){return b.id+'/'+b.hits+'/'+(b.rev||'')+(b.stale?'/stale':'');}).join(',');if(stamp===indexStamp)return;indexStamp=stamp;
       var battles=index.battles,prior=$('battles').value;$('battles').replaceChildren();
       battleSummaries=battles.slice();
+      // The battle the game is preparing is current now (BACKLOG 55): the poll goes back to its pace.
+      if(battlePreparing){var asked=battleSummary(battlePreparing);if(!asked||!asked.stale){battlePreparing=null;schedulePoll();}}
       if(!battles.length){current=null;selected=null;++battleGeneration;$('battles').appendChild(node('option','No battles yet'));
         renderBattleList();syncBattlePick();
         if(sidebarMode!=='battles'){battlesDirty=true;return;}
@@ -9123,12 +9137,14 @@
       var ask=host.game&&!w.running&&(w.forced||show&&!w.asked&&spec.mayAsk(s));
       w.ask(ask?s:null,count,total);
       if(spec.after)spec.after(w,s,count,total);
-      var key=show?count+'/'+total:'';
+      // What a started sweep waits for (the mod's 'waiting', BACKLOG 55): one more point of the bar's tooltip.
+      var wait=running&&s?sweepWaitWords(s.waiting):'';
+      var key=show?count+'/'+total+'/'+wait:'';
       if(!show||key===w.key)return;
       w.key=key;
       $(id+'-count').textContent=count+' / '+total;
       $(id+'-fill').style.width=(100*count/total).toFixed(1)+'%';
-      box.title=tipJoin(spec.tip(count,total));
+      box.title=tipJoin(spec.tip(count,total).concat(wait?['• '+wait]:[]));
     };
     // The question (short, per the rules of the page's words): its heading, one sentence, Start or Continue and Later.
     w.ask=function(s,count,total){
@@ -9146,6 +9162,13 @@
     $(id+'-later').onclick=function(){w.asked=true;w.forced=false;$(id+'-ask').hidden=true;w.paint(w.state);};
     $(id+'-stop').onclick=function(){w.running=false;w.saidAt=Date.now();w.asked=true;sendCommand('sweepStop',spec.command);w.paint(w.state);};
     return w;
+  }
+  // What a started sweep waits for, in words (the progress file's 'waiting', BACKLOG 55); '' when nothing holds it.
+  function sweepWaitWords(w){
+    if(!w)return '';
+    if(w.for==='battle')return 'Waiting for the battle to end';
+    if(w.for==='jobs'){var n=0;Object.keys(w.jobs||{}).forEach(function(k){n+=Number(w.jobs[k])||0;});return n?'Waiting for '+n+' other task'+(n===1?'':'s'):'';}
+    return '';
   }
   // The mod's estimate of the time left, in words ("about 1 min 15 s"); '' from a mod that sends none.
   function sweepTime(s){
@@ -9193,8 +9216,9 @@
       var running=w.running&&!!s&&!s.done;
       b.disabled=running;
       // Running: the count and the mod's estimate of the time left (the pace the user watches, 28.09).
-      var left=running?sweepTime(s):'';
-      b.textContent=running?'Exporting models… '+count+' / '+total+(left?' · '+left+' left':''):s.done&&!Object.keys(s.failed||{}).length?'All models exported ✓':'Export all models';
+      var left=running?sweepTime(s):'',wait=running?sweepWaitWords(s.waiting):'';
+      // Started but held (BACKLOG 55: on 02.10 it stood at 0 for minutes and said nothing): what it waits for, and the count.
+      b.textContent=wait?wait+' · '+count+' / '+total:running?'Exporting models… '+count+' / '+total+(left?' · '+left+' left':''):s.done&&!Object.keys(s.failed||{}).length?'All models exported ✓':'Export all models';
       b.setAttribute('aria-pressed',String(running));}});
   // The user's own question: the characteristics' one, if it stands, gives way to it (it asks again on the next open).
   $('models-all').onclick=function(){if(modelsSweep.running)return;
@@ -9207,7 +9231,7 @@
   }
   function sweepRunning(){return ttxSweep.running||modelsSweep.running;}
   sweepTick();
-  function schedulePoll(){if(pollTimer)window.clearTimeout(pollTimer);pollTimer=window.setTimeout(pollTick,modelsPending||sweepRunning()?2000:5000);}
+  function schedulePoll(){if(pollTimer)window.clearTimeout(pollTimer);pollTimer=window.setTimeout(pollTick,modelsPending||sweepRunning()||battlePreparing?2000:5000);}
   schedulePoll();
   if(document.modelContext&&document.modelContext.registerTool){try{document.modelContext.registerTool({name:'select_saved_hit',description:'Open an existing recorded hit in the local 3D viewer.',inputSchema:{type:'object',properties:{battleId:{type:'string'},hitId:{type:'string'}},required:['battleId','hitId'],additionalProperties:false},execute:function(input){if(!input||!/^[-a-zA-Z0-9_]{1,100}$/.test(input.battleId)||!/^\d+$/.test(input.hitId))throw new Error('Invalid record identifiers');return loadBattle(input.battleId,true).then(function(){return selectHit(input.hitId);});}});}catch(e){console.warn('WebMCP unavailable',e);}}
 }());
