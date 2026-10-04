@@ -2,6 +2,13 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.2 from 0.9.3 on, 2.4.0.1 #950 from 0.7.6, 2.4.0.0 #945 before.
 
+## Unreleased
+
+- **Hits / Vehicles:** the switch only changes the list you pick from and never changes the scene. Opened from the game on a vehicle, the first click on Hits lists the battle's hits and leaves the vehicle as you turned it; a vehicle still being exported arrives whichever list is open.
+- **View:** every new scene keeps the camera, the turret and the gun of the scene on screen - ram and fire tiles, a hit whose point was not restored, the ⇅ of a hit too. A hit with its recorded shot still opens in the shot's own view.
+- **Saved battles:** a hit refreshed on screen (its models arrive, the game prepares the battle again) keeps your camera, turret, gun and pinned point, in either list.
+- **⇅:** two browsed vehicles can be swapped from the Hits list too.
+
 ## 0.9.4 (2026-10-03)
 
 - **Game updates:** the mod rebuilds only what the update really changed. A collision model is exported again only when its own file in the game changed; models exported by earlier versions of the mod are kept and reused. A characteristics or vehicle file is rebuilt only when its own game files changed, or when the game code that builds it changed; a change in game code the mod does not run (such as the crew tables of 2.4.0.2) rebuilds nothing. The rebuild runs in the background, and a file is written only when the result differs. After 2.4.0.2 the mod had rebuilt every model, vehicle and characteristics file with the same content.

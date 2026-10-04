@@ -113,6 +113,12 @@
       'Every vehicle of a battle you play, after it.',
       'Export all models: every regular vehicle; after a game update only the changed ones.']],
     ['In a browser',['Every vehicle: its characteristics.','The model only where the game exported it: open this viewer in the game for more.']]];
+  // THE SIDE PANEL'S MODE IS THE PICKER ONLY (user, 03.10): Hits or Vehicles is what the next pick is made FROM. The scene
+  // is not its business: a switch changes neither what is on screen nor its camera, pose, shell, Config or pin, and no
+  // scene code asks which panel is open. Only a pick changes the scene - a hit, a damage tile, a vehicle, a roster row, a
+  // battle, ⇅ - and so does the game's request for a vehicle (applyFragment). What reads the mode: setMode itself (the two
+  // lists, the heading tile, which is the picker's own), the lists' painters, and the first read of a battle nobody
+  // opened yet, which waits for the Hits list to be shown (battlesDirty) and then fills that list alone.
   var sidebarMode='battles',battlesDirty=false;
   var catalogue=null,catalogueStamp=null,catalogueError=null,catalogueLoading=null;
   var vehicleFilters={tier:[],nation:[],'class':[],role:[],flag:[],text:''},vehicleScope='battle';
@@ -122,7 +128,12 @@
   // picked with no shooter on screen takes him (the viewer mostly opens in Vehicles on the hangar's vehicle, with nothing
   // on screen); only a page that never showed a shooter makes the model its own.
   var lastShooterType='',SHOOTER_TYPE=/^[\w:.-]{1,64}$/;
-  var vehicleScene=null,vehicleGeneration=0,vehicleCache=Object.create(null),vehicleOrder=[];
+  // A vehicle picked and still on its way (its token; 0: none): the game may take seconds to export it. Another PICK takes
+  // its place (scenePick) - not a switch of the side panel, which used to end the wait (03.10).
+  var vehicleGeneration=0,vehiclePick=0,vehicleCache=Object.create(null),vehicleOrder=[];
+  function scenePick(){++vehicleGeneration;vehiclePick=0;}
+  // Nothing on the scene and nothing on its way to it: only then a read nobody asked the scene for may fill it.
+  function sceneFree(){return !activeHit&&!vehiclePick;}
   var listIds=null,listMarks=null,listRoles=null,lastFragment=null;
 
   // The game's CEF may refuse storage; the mode and the filters are a convenience, never a requirement.
@@ -505,18 +516,17 @@
       // picked from the roster (pickShooter: modelVehicleId).
       modelVehicleId:model.seat&&current&&current.id===model.seat.battle?model.seat.id:undefined};
   }
-  // keepCamera: true - the same model under another shooter: the camera and the pose kept as they stand, and with them
-  // what belongs to that model (viewer.cameraState('same'): the pinned point, the ⌖ aim on it); 'view' - ANOTHER model
-  // picked by hand (user, 26.09): it inherits the view on screen (viewer.cameraState(true): the camera round its own
-  // centre, the pose clamped to its limits), or of the last scene; nothing to inherit - the default view.
-  function showVehicleScene(keepCamera){
+  // how (sceneFrom): 'same' - the same model under another shooter: the camera and the pose as they stand, and with them
+  // what belongs to that model (the pinned point, the ⌖ aim on it); 'carry' - ANOTHER model picked by hand (user, 26.09):
+  // it inherits the view on screen, or of the last scene; nothing to inherit - the default view.
+  function showVehicleScene(how){
     if(!modelVehicle)return Promise.resolve(null);
     // A catalogue row carries no collision parts (adoptHitVehicles hands one over for a role the scene on screen cannot
     // give - a model still being extracted): the target of the scene is then the vehicle's own export, or the viewer is
     // given an empty model. One step only - readVehicle() rejects anything without parts. The model on screen handed over
     // by adoptHitVehicles has its parts and is never read again (keep-onscreen-model, 26.09).
     // The camera rule goes through it (audit APP1-06: a shooter picked in the list lost the camera here).
-    if(!modelVehicle.parts)return readVehicle(modelVehicle.id).then(function(record){modelVehicle=record;return showVehicleScene(keepCamera);});
+    if(!modelVehicle.parts)return readVehicle(modelVehicle.id).then(function(record){modelVehicle=record;return showVehicleScene(how);});
     // The shooter inherited from a hit on screen (inherit sweep, 26.09) comes without his shells - a catalogue row, or the
     // recorded model on screen after the Vehicles ⇅: his shells from his own export, else his characteristics file
     // (ttxRecord), else - nothing of his to be had - the model's. A shooter with parts (the model on screen) keeps his record
@@ -526,15 +536,15 @@
         .then(function(record){
           var full=row.parts||!Array.isArray(record.shells)?shallow(row.parts?row:record):record;
           if(!Array.isArray(full.shells))full.shells=(record.shells||[]).slice();
-          if(shooterVehicle===row)shooterVehicle=full;return showVehicleScene(keepCamera);});}
+          if(shooterVehicle===row)shooterVehicle=full;return showVehicleScene(how);});}
     var hit=vehicleHit(modelVehicle,shooterVehicle||modelVehicle);
-    var camera=keepCamera&&viewer&&viewer.cameraState?viewer.cameraState(keepCamera==='view'?true:'same'):null,token=++generation;
+    var sceneInputs=sceneFrom(how==='same'?'same':'carry'),token=++generation;
     // The same model stays on screen until the new scene replaces it (as another shooter from the roster does): what it
     // keeps is taken over from it by the load itself.
-    message('Preparing the model\u2026');if(viewer&&keepCamera!==true)viewer.clear();
+    message('Preparing the model\u2026');if(viewer&&how!=='same')viewer.clear();
     return ArmorInspectorData.sceneFor({warnings:[]},hit).then(function(data){
       if(token!==generation)return null;
-      vehicleScene=data;display(data,false,camera);   // the finisher paints the panel's heading and list too
+      display(data,false,sceneInputs);   // the finisher paints the panel's heading and list too
       return data;
     }).catch(function(e){if(token===generation){sceneCleared();message(e.message);warnings([e.message]);}throw e;});
   }
@@ -544,6 +554,8 @@
   function pickVehicle(id,role,options){
     role=role==='shooter'?'shooter':'model';options=options||{};
     var token=++vehicleGeneration,wait=!!options.deadline;
+    vehiclePick=token;
+    function over(){if(vehiclePick===token)vehiclePick=0;endLoading(token);}
     // A wait for the game's export (a deadline is given in the game only): the row and the scene spin until it ends.
     message(options.waiting||'Preparing the model\u2026',wait);
     markLoading(wait?id:null,token);
@@ -558,12 +570,12 @@
       // The model on screen: the catalogue the mod wrote right after its file marks the row exported. Read only now - read
       // before, it would hand the list's roles the scene still on screen (adoptHitVehicles).
       if(shown&&wait&&token===vehicleGeneration)loadCatalogue();
-      endLoading(token);return shown;
-    },function(e){endLoading(token);throw e;});
+      over();return shown;
+    },function(e){over();throw e;});
     function place(record){
-      var keepCamera='view';
+      var how='carry';
       if(role==='shooter'){
-        if(modelVehicle)keepCamera=true;else modelVehicle=record;
+        if(modelVehicle)how='same';else modelVehicle=record;
         shooterVehicle=record;
       }else{
         modelVehicle=record;
@@ -574,7 +586,7 @@
         if(!shooterVehicle&&!record.noModel)shooterVehicle=catalogueByType(lastShooterType);
         if(!shooterVehicle||record.noModel)shooterVehicle=record;
       }
-      return showVehicleScene(keepCamera);
+      return showVehicleScene(how);
     }
   }
   function catalogueByType(type){
@@ -602,30 +614,24 @@
     // the vehicle name (renderVehicleHeading) with no caret and nothing to open.
     $('battle-pick').disabled=mode!=='battles';if(mode!=='battles')openBattleList(false);
     storeSidebar();
+    // THE SCENE IS NOT TOUCHED (user, 03.10; before him 19.09 and audit APP1-03): no tile is laid again, no scene painter
+    // runs, nothing is loaded, cleared or put on screen, and no pick still on its way is dropped - an empty scene stays
+    // empty, with the words it has. Only this panel's own things are painted: its list and the heading tile, which read
+    // the scene (the Vehicles list marks the scene's vehicles in their roles), and the help dots, whose boxes the two
+    // panes show and hide.
     if(mode==='vehicles'){
       loadCatalogue();
       if(!changed)return Promise.resolve();
-      // ANY scene on screen stays there (user, 19.09: switching the side panel must not reset the scene; audit APP1-03:
-      // a browsed vehicle or a seat's model was built again, or replaced by the vehicle browsed long before). Its two
-      // tiles become the role controls - laid again, the ⇅ of two browsed vehicles belongs to this panel - and the one
-      // finisher paints the rest, the panel's heading and list with the scene's vehicles in their roles.
-      if(activeHit){sceneTiles(activeHit,false);sceneShown();return Promise.resolve();}
-      // Nothing on screen: the vehicle this panel showed last, or the list.
-      // It comes back in the view of the last scene (inherit sweep, 26.09; cameraState(true) = viewer.lastView), not reset.
-      if(vehicleScene&&modelVehicle){display(vehicleScene,false,viewer&&viewer.cameraState?viewer.cameraState(true):null);return Promise.resolve();}
-      if(modelVehicle)return showVehicleScene('view').catch(function(){});
-      ++generation;if(!sceneCleared()){renderVehicleHeading();renderVehicles(true);}
-      message('Pick a vehicle from the list.');warnings([]);
+      adoptHitVehicles();renderVehicleHeading();renderVehicles(true);
+      if(window.BullbaTips&&window.BullbaTips.refresh)window.BullbaTips.refresh();
       return Promise.resolve();
     }
-    ++vehicleGeneration;
     if(!changed)return Promise.resolve();
-    // Back to the battles: the scene stays as it is - the hit that was on screen, or the browsed vehicle until
-    // a hit is clicked, or nothing (activeHit is null on an empty scene). The tiles are laid again for this panel
-    // and the one finisher paints the rest; a battle list that went stale meanwhile is read again, and that read
-    // keeps a view the user built (loadBattle).
-    sceneTiles(activeHit,false);sceneShown();
-    if(battlesDirty||!current){battlesDirty=false;indexStamp=null;return refresh();}
+    if(window.BullbaTips&&window.BullbaTips.refresh)window.BullbaTips.refresh();
+    // The Hits list of a battle not read yet (the page opened on a vehicle, or with no battle then): read now, for the
+    // list alone ('list': loadBattle puts no hit on the scene - the first click on Hits used to put the newest battle's
+    // first hit over the vehicle on screen, 03.10).
+    if(battlesDirty||!current){battlesDirty=false;indexStamp=null;return refresh('list');}
     renderHits();
     return Promise.resolve();
   }
@@ -6766,8 +6772,8 @@
     }).then(function(data){
       if(!data||token!==generation)return;
       focusScene=data;focusSceneKey=key;focusNote=base+' · model shown with its own gun';
-      // It stands in the view of the scene before (inherit sweep, 26.09: viewer.lastView, the camera round its centre).
-      renderHits();displayOr(data,false,viewer&&viewer.cameraState?viewer.cameraState(true):null);   // the list says what is on screen; the scene's finisher marks the roster
+      // It stands in the view of the scene before (inherit sweep, 26.09: the camera round its centre, the pose).
+      renderHits();displayOr(data,false,sceneFrom('carry'));   // the list says what is on screen; the scene's finisher marks the roster
     },function(){fallback(base+' · model not exported yet');});   // a read that failed - never a fault of the page (PD-11)
   }
   // Another seat in the same battle: the list is rebuilt around that vehicle and a hit of his is opened at
@@ -6776,7 +6782,7 @@
     var box=$('vehicle-focus');box.open=false;
     var wanted=!current||id==null||id===playerId()?null:id;
     if(wanted===focusVehicle)return; // the row already in focus: the camera and the open hit stay
-    focusVehicle=wanted;
+    focusVehicle=wanted;scenePick();
     selected=null;++generation;focusScene=null;focusSceneKey=null;focusNote='';
     sceneCleared();warnings([]);$('details').replaceChildren();
     renderHits();
@@ -6825,9 +6831,9 @@
     var hit=activeHit,model=hit&&hit.target;
     if(!model||!(model.parts||[]).length)return void message('No collision model on screen to shoot at: pick a hit or a vehicle first.');
     // The model keeps its pose (inherit sweep, 26.09): the record's aim goes on with a shooter picked after another one too,
-    // and the viewer keeps the turn on top of it, the pin and the ⌖ aim on the model (cameraState('same')).
-    var known=recordedShooter(row.id),base=hit.synthetic?hit.base||null:hit.id,aim=hit.aim||null;
-    var camera=viewer&&viewer.cameraState?viewer.cameraState('same'):null,token=++generation;
+    // and the viewer keeps the turn on top of it, the pin and the ⌖ aim on the model (sceneFrom 'same').
+    var known=recordedShooter(row.id),base=hit.synthetic?hit.base||null:hit.id,aim=hit.aim||null;scenePick();
+    var sceneInputs=sceneFrom('same'),token=++generation;
     (known?Promise.resolve(known):catalogueShooter(row.type?String(row.type):'')).then(function(found){
       if(token!==generation)return null;
       message('Preparing the model…');
@@ -6839,7 +6845,7 @@
       return ArmorInspectorData.sceneFor(current||{warnings:[]},synthetic);
     }).then(function(data){
       if(!data||token!==generation)return null;
-      displayOr(data,false,camera);   // the hit list is unchanged; the finisher marks the new shooter in the roster
+      displayOr(data,false,sceneInputs);   // the hit list is unchanged; the finisher marks the new shooter in the roster
       return data;
     },function(){if(token===generation){message(NO_GUN_DATA);warnings([NO_GUN_DATA]);}});   // a read that failed (PD-11)
   }
@@ -6952,8 +6958,8 @@
   // The user, 24.09: "there must be ONE procedure that builds the screen by the same rules; instead, depending on
   // where the call came from, something is drawn or not". Every path that changes what is on screen ends HERE:
   // a hit clicked (selectHit -> display), a browsed vehicle (showVehicleScene), the ⇅ swap and its way back, another
-  // shooter from the roster (pickShooter), a seat with no hits (showFocusEmpty), the side panel switched (setMode)
-  // and every scene that is cleared (sceneCleared). The tiles are decided first (sceneTiles), because what follows
+  // shooter from the roster (pickShooter), a seat with no hits (showFocusEmpty) and every scene that is cleared
+  // (sceneCleared). The side panel's switch is not one of them (03.10): it changes nothing on screen. The tiles are decided first (sceneTiles), because what follows
   // reads them; then everything that depends on the scene is painted, by the same rules and once:
   //   - the target's switches (modsVisible) and the hit line's figures (shotStats);
   //   - the emulation's controls: the speed tile, the gun panel, Config and the gun strip (updateAim);
@@ -7034,8 +7040,10 @@
   // whose shooter has a collision model, or a view already swapped, which it takes back to the recorded hit.
   function swapTile(hit){
     var b=$('swap-roles'),back=!!(hit&&hit.synthetic&&!hit.vehicle&&hit.base);
-    // Vehicles mode: two different browsed vehicles simply change places (user, 19.09: the button must work there too).
-    var browsed=sidebarMode==='vehicles'&&!!(hit&&hit.vehicle)&&!!modelVehicle&&!!shooterVehicle&&shooterVehicle.id!==modelVehicle.id;
+    // Two different browsed vehicles simply change places (user, 19.09: the button must work there too) - in either
+    // panel (03.10: the button is the scene's, it read the side panel's mode and went in Hits). The scene itself says
+    // whether it is two vehicles: the roles the Vehicles list holds may be another scene's.
+    var browsed=!!(hit&&hit.vehicle&&hit.target&&hit.attacker&&hit.target.type&&hit.attacker.type&&hit.target.type!==hit.attacker.type);
     // A RECORDED hit keeps its swap in EITHER panel, and so does the way back from a swapped view (22.09:
     // switching the side panel to Vehicles took the button off a hit that was still on screen, which reads
     // exactly like the button having gone for good). The swap of a recorded hit is about the hit, not about
@@ -7047,16 +7055,49 @@
   // A scene that was read but could not be put on screen says so in its own words (audit PD-11, 24.09): the catch
   // of a read (showFocusEmpty, pickShooter) must not report a fault of the page as "model not exported yet" or
   // "no gun data". The real text goes to the scene and to the console (game.log in the game).
-  function displayOr(data,reference,camera){
-    try{display(data,reference,camera);}
+  function displayOr(data,reference,sceneInputs){
+    try{display(data,reference,sceneInputs);}
     catch(e){var text='The scene could not be shown: '+(e&&e.message||e);message(text);warnings([text]);
       if(window.console)console.error('Bullba Hits display: '+(e&&e.stack||e));}
   }
-  // A scene put on screen. `camera` (optional) is a camera to keep - only the shooter changed (showVehicleScene,
-  // pickShooter) - put back before the finisher, so the figures are taken once, on the camera the scene keeps; or the view
-  // carried to a model picked by hand (cameraState(true)), whose pose load() puts on the new vehicle.
-  function display(data,reference,camera){
-    var hit=data.hit;
+  // ===================== THE ONE OWNER OF A NEW SCENE'S INPUTS (03.10) =====================
+  // The user, 03.10: a scene needs its inputs anyway - the view angle, the turret's turn, the gun's elevation; the only
+  // question is where they come from, a made-up default or the scene before. From the scene before: it costs nothing, and
+  // vehicles can be switched back and forth and compared. So EVERY path that builds a scene asks here for them, and
+  // display() takes nothing else: a call without sceneFrom() throws, the viewer is loaded and its camera put back in
+  // display() alone, and the viewer's camera is read here alone (a static check in tests/page/aim3_dom.cjs holds the
+  // three). The 26.09 sweep (ce6e9dc, 7a9f522) gave the rule to the paths it listed, each with its own call of
+  // viewer.cameraState; the rest - a hit without a point, a ram or a fire tile, the same hit read again, the pose of a
+  // swapped view - kept the default, because nothing made a path ask.
+  //   how 'same'   THE SAME MODEL stays on screen - another shooter, its own record read again: the camera, the pose, the
+  //                pinned point and the ⌖ aim as they stand (the viewer keeps them only in the same pose, keepSame).
+  //   how 'carry'  ANOTHER MODEL: the camera round its own centre - angles, distance, zoom, pan, lens shift - and the
+  //                turret's yaw and the gun's pitch, clamped to its limits (the wish kept, A -> B -> A). The pin and the
+  //                shot belong to the model that went, and go with it.
+  //   how 'record' A RECORD PICKED - a hit, a damage tile. What the record has is the pick's own data and is not
+  //                inherited: the shot's view (a resolved point: the user's rule of 26.09, not a reset) and the pose its
+  //                parts stand in. What it lacks is carried: the camera when there is no shot to look along
+  //                (`ownShot`: display() decides once the scene is loaded), the pose when own.pose is false.
+  //   own {eye, pose}  (with 'carry') the record's own start of a swapped view: the eye at the hit point, the
+  //                shooter's pose from his motion (ArmorShotContext.swapStart).
+  // Nothing on screen: the view of the last scene (the viewer keeps it over a clear). No scene before at all: view is
+  // null, and the viewer's own default stands (Viewer.reset) - the only default there is.
+  var SCENE_OWNER={};
+  function sceneFrom(how,own){
+    var v=viewer&&viewer.cameraState?viewer:null,view=null;
+    if(how==='same'&&v&&v.loadedData)view=v.cameraState('same');
+    else if(own&&own.eye)view={eye:own.eye,pose:own.pose||null};
+    else if(v){
+      view=v.cameraState(true);
+      if(view&&how==='record'&&(!own||own.pose!==false))view=Object.assign({},view,{pose:null});
+    }
+    return {owner:SCENE_OWNER,how:how,view:view||null,ownShot:how==='record'};
+  }
+  // A scene put on screen, in the inputs the owner gave (sceneInputs: sceneFrom's answer). The camera is put back before the finisher, so
+  // the figures are taken once, on the camera the scene keeps; the pose is put on the new vehicle by the load itself.
+  function display(data,reference,sceneInputs){
+    if(!sceneInputs||sceneInputs.owner!==SCENE_OWNER)throw new Error('A scene shown without sceneFrom(): it takes its camera and pose from the scene before');
+    var hit=data.hit,camera=sceneInputs.view;
     sceneBuild=true;
     try{
     swapped=hit.synthetic&&!hit.vehicle?hit:null;sceneTiles(hit,reference);
@@ -7100,7 +7141,8 @@
     // report about missing rings can be read there instead of guessed at.
     if(window.console)console.info('Bullba Hits aim: hit '+hit.id+' '+(view||'other')+' saved='+!!aimReady+' estimate='+!!estimate+' reason='+reason);
     aimStatus=status;aimLegend=!!aimReady;   // shotStats() composes the tile's words with them (aimTitle), in the finisher
-    if(camera&&viewer)viewer.restoreCamera(camera);
+    // The inherited camera gives way to the record's own view: a shot to look along.
+    if(camera&&viewer&&!(sceneInputs.ownShot&&viewer.point))viewer.restoreCamera(camera);
     }finally{sceneBuild=false;}
     // The scene has just been rebuilt: the one finisher paints what depends on it. Another VEHICLE on screen is
     // full again with no Hitmarks; the same vehicle under another shooter keeps its health and gets its Hitmarks
@@ -7298,9 +7340,10 @@
     ['shells','warnings','schema','worldTransform','motion'].forEach(function(k){delete target[k];});
     ((side&&side.parts)||[]).forEach(function(p){if(p&&Array.isArray(p.transform)&&p.transform.length===16)poses[p.id]=p.transform;});
     target.parts=(target.parts||[]).map(function(p){var q=shallow(p);if(poses[p.id])q.transform=poses[p.id];return q;});
-    if(Object.keys(poses).length&&side&&Array.isArray(side.aim))aim=side.aim.slice(0,2);
+    var poseOwn=Object.keys(poses).length>0;   // the contact recorded the parts' places: the pose is the record's own
+    if(poseOwn&&side&&Array.isArray(side.aim))aim=side.aim.slice(0,2);
     var other=selfDamage(e)?null:eventShooter(e.attackerId);
-    return {id:'event:'+e.id,synthetic:true,damageEvent:e,direction:eventDirection(e)||'incoming',aim:aim,target:target,
+    return {id:'event:'+e.id,synthetic:true,damageEvent:e,poseOwn:poseOwn,direction:eventDirection(e)||'incoming',aim:aim,target:target,
       attacker:other?other.vehicle:null,attackerId:e.attackerId,targetId:e.targetId,points:[],rawHitPoints:[],warnings:[],
       shellCandidates:[],availableShells:other?other.shells.slice():[],shellStatus:'damage event',receivedAt:e.receivedAt,rangeAtImpact:null};
   }
@@ -7311,11 +7354,19 @@
     if(kind==='ram'&&Array.isArray(p)&&p.length===3&&p.every(Number.isFinite))look.point=[p[0],p[1],-p[2]];
     return look;
   }
-  function selectEvent(id){
+  // THE VIEW A PICKED RECORD STARTS IN (sceneFrom 'record'; inherit, 03.10). A hit with a resolved point has a view of
+  // its own - the shot's. A record WITHOUT one - a ram, a fire, a fall, a hit whose point was not restored - used to start
+  // in the default view, whatever stood on screen: it takes the camera of the scene before (the viewer keeps it over the
+  // clear below). The pose: a hit's parts and a ram's contact stand as recorded; a damage tile whose record has no pose
+  // (eventHit: poseOwn false - its model is borrowed from another record) takes the turret and the gun on screen.
+  // kept (optional, loadBattle): the SAME scene built again because its record changed - sceneFrom('same'), and the
+  // viewer keeps the old model until the new one stands.
+  function selectEvent(id,kept,auto){
     var e=eventOf(id);if(!e)return Promise.reject(new Error('Damage event not found'));
-    selected=id;markHits();var token=++generation;message('Preparing the model…');if(viewer)viewer.clear();
+    if(!kept&&!auto)scenePick();
+    selected=id;markHits();var token=++generation;message('Preparing the model…');if(viewer&&!kept)viewer.clear();
     return vehicleModel(e.targetId).then(function(source){return ArmorInspectorData.sceneFor({warnings:[]},eventHit(e,source));})
-      .then(function(data){if(token!==generation)return;display(data,false);return {battleId:current.id,eventId:id};})
+      .then(function(data){if(token!==generation)return;display(data,false,kept||sceneFrom('record',{pose:!!data.hit.poseOwn}));return {battleId:current.id,eventId:id};})
       .catch(function(err){if(token===generation){sceneCleared();message(err.message);warnings([err.message]);}throw err;});
   }
   // The details under the scene of an event: the same words as its tile, row by row.
@@ -7368,13 +7419,16 @@
   }
   // The pressed row of the list, without building the list again (audit APP1-08: opening a battle built it twice).
   function markHits(){var rows=$('hits').children||[];for(var i=0;i<rows.length;i++){var id=rows[i].getAttribute&&(rows[i].getAttribute('data-hit')||rows[i].getAttribute('data-event'));if(id!==null&&id!==undefined)rows[i].setAttribute('aria-pressed',String(id===String(selected)));}}
-  function selectHit(id){
-    if(current&&!current.hits.some(function(h){return h.id===id;})&&eventOf(id))return selectEvent(id);
+  // A pick (a row clicked, ⇅ back): any vehicle still on its way gives way to it (scenePick). auto (loadBattle): a read
+  // nobody asked the scene for - it is put on a free scene only, so there is nothing to give way.
+  function selectHit(id,kept,auto){
+    if(current&&!current.hits.some(function(h){return h.id===id;})&&eventOf(id))return selectEvent(id,kept,auto);
     if(!current||!current.hits.some(function(h){return h.id===id;}))return Promise.reject(new Error('Hit not found'));
-    selected=id;markHits();var token=++generation;message('Preparing the model…');if(viewer)viewer.clear();
+    if(!kept&&!auto)scenePick();
+    selected=id;markHits();var token=++generation;message('Preparing the model…');if(viewer&&!kept)viewer.clear();
     // A scene that could not be read or shown leaves an empty scene painted as one (sceneCleared, audit APP2-03),
     // not the tiles and the strip of the hit before over a cleared viewer.
-    return ArmorInspectorData.scene(current,id).then(function(data){if(token!==generation)return;display(data,false);return {battleId:current.id,hitId:id};}).catch(function(e){if(token===generation){sceneCleared();message(e.message);warnings([e.message]);}throw e;});
+    return ArmorInspectorData.scene(current,id).then(function(data){if(token!==generation)return;display(data,false,kept||sceneFrom('record'));return {battleId:current.id,hitId:id};}).catch(function(e){if(token===generation){sceneCleared();message(e.message);warnings([e.message]);}throw e;});
   }
   // The exporter bumps one shared index timestamp on every publish, so a shot in another battle used to reload
   // this battle, re-select the same hit and rebuild the scene from scratch - losing the camera, the pinned line
@@ -7405,9 +7459,17 @@
     battleAsked[id]=true;battlePreparing=id;
     sendCommand('prepareBattle',{battleId:String(id)});schedulePoll();
   }
-  function loadBattle(id,keep){
+  // how: WHO ASKED FOR THE READ (03.10). 'pick' - the user opened this battle in the picker: its first hit, or the seat's
+  // model, takes the scene. 'list' - the Hits list shown for a battle not read yet (setMode): the list is filled and the
+  // scene is left alone, whatever is or is not on it. None - the page's start and the poll: the scene is filled only when
+  // it is free (sceneFree), and a scene of this battle whose hit is gone from the record is replaced. In every case the hit
+  // on screen is built again only when its own record changed, and then in the view on screen.
+  function loadBattle(id,keep,how){
     askPrepare(id);
-    var request=++battleGeneration,rev=(battleSummary(id)||{}).rev||null;if(!current||current.id!==id)++generation;
+    if(how==='pick')scenePick();
+    // Another battle: the scene on its way from the one being left is dropped. The first battle read leaves nothing
+    // behind - a vehicle on its way stays (it used to be dropped with the first click on Hits).
+    var request=++battleGeneration,rev=(battleSummary(id)||{}).rev||null;if(current&&current.id!==id)++generation;
     return ArmorInspectorData.battle(id).then(function(b){
       if(request!==battleGeneration)return;
       loadedRev=rev;
@@ -7441,7 +7503,21 @@
       var first=b.hits.find(function(h){return !!viewDirection(h);});
       // selectHit has said what went wrong with the scene itself (its message and warnings): it is not a battle
       // that could not be read, which is what refresh() reports for an error that reaches it (audit PD-11).
-      if(existing||first)return selectHit(existing?selected:first.id).catch(function(){});
+      // THE SAME SCENE BUILT AGAIN - the hit or the damage tile on screen changed in the record (its models arrived, the
+      // game prepared a saved battle again): it keeps the camera, the pose, the pin and the ⌖ aim on screen, as another
+      // shooter does (sceneFrom 'same'; 03.10: it came back in the record's view). With nothing of it on screen
+      // it is simply read again - unless a vehicle is on its way there.
+      if(existing){
+        var shown=!!activeHit&&!!viewer&&!!viewer.loadedData&&(keptEvent?!!activeHit.damageEvent&&activeHit.damageEvent.id===keptEvent.id:!activeHit.synthetic&&activeHit.id===selected);
+        if(!shown&&vehiclePick)return;
+        return selectHit(selected,shown?sceneFrom('same'):null,true).catch(function(){});
+      }
+      // Nothing of this battle is selected. Whether this read may put something on the scene (how, above): a pick does;
+      // a scene of this battle whose hit went from the record is replaced; a vehicle on screen or on its way stays; an
+      // empty scene is filled, except by the read made for the Hits list alone.
+      var listOnly=how==='list'||(how!=='pick'&&pollHow==='list');
+      if(!(how==='pick'||(activeHit?!activeHit.vehicle:!listOnly&&!vehiclePick)))return;
+      if(first)return selectHit(first.id,null,true).catch(function(){});
       // No hit of the focused vehicle in this record: his own collision model takes the place of the empty
       // scene, and only a vehicle the exporter never wrote falls back to a message.
       return showFocusEmpty();
@@ -7456,7 +7532,10 @@
   // revisions (an earlier build's) reads it again on every change, as before.
   var loadedRev=null;
   function openBattleCurrent(id){var row=battleSummary(id);return !!(current&&current.id===id&&row&&row.rev&&row.rev===loadedRev);}
-  function refresh(){
+  // how (optional): 'list' - asked by the Hits list being shown (setMode); a read already under way takes it over.
+  var pollHow=null;
+  function refresh(how){
+    if(how)pollHow=how;
     if(polling)return Promise.resolve();polling=true;
     return ArmorInspectorData.index().then(function(index){var pv=$('app-version').getAttribute('data-version');recordsVersion=index.version||'';$('app-version').textContent=[pv!=='dev'?pv:'',index.version&&index.version!==pv?'records '+index.version:''].filter(Boolean).join(' \u00b7 ');if(index.application!=='local.armor_inspector'||!Array.isArray(index.battles))throw new Error('Invalid battle list');verdictStatus();
       var revs=index.battles.some(function(b){return b&&b.rev;});
@@ -7467,21 +7546,27 @@
       if(battlePreparing){var asked=battleSummary(battlePreparing);if(!asked||!asked.stale){battlePreparing=null;schedulePoll();}}
       if(!battles.length){current=null;selected=null;++battleGeneration;$('battles').appendChild(node('option','No battles yet'));
         renderBattleList();syncBattlePick();
-        if(sidebarMode!=='battles'){battlesDirty=true;return;}
-        ++generation;sceneCleared();renderHits();message('New hits appear here after a battle.');warnings([]);return;}
+        // The scene of a battle that is gone goes with it, and an empty scene says where hits come from - in either panel
+        // (03.10: only in Hits, and there a vehicle on screen was cleared too). A vehicle on screen or on its way is not the
+        // battles' to clear; the read made for the Hits list alone writes nothing on the scene.
+        if(activeHit?!activeHit.vehicle:!vehiclePick&&pollHow!=='list'){++generation;sceneCleared();renderHits();message('New hits appear here after a battle.');warnings([]);return;}
+        renderHits();return;}
       battles.forEach(function(b){var option=node('option',new Date(b.startedAt*1000).toLocaleDateString('en-GB')+' \u00b7 '+b.map+' \u00b7 '+b.hits);option.value=b.id;$('battles').appendChild(option);});var id=battles.some(function(b){return b.id===prior;})?prior:battles[0].id;$('battles').value=id;
       renderBattleList();syncBattlePick();
       // The open battle is as it was (its revision): nothing to read. A vehicle of it shown without its model yet is looked
       // for again - that fallback used to come back only with a read of the battle another publish caused.
       if(openBattleCurrent(id)){
-        if(sidebarMode==='battles'&&!selected&&!focusScene&&!current.hits.some(function(h){return !!viewDirection(h);}))return showFocusEmpty();
+        // Only an EMPTY scene waits for that model (03.10: asked of the Hits panel, whatever stood on screen).
+        if(sceneFree()&&pollHow!=='list'&&!selected&&!focusScene&&!current.hits.some(function(h){return !!viewDirection(h);}))return showFocusEmpty();
         return;
       }
-      // The battle list stays fresh while the Vehicles mode is on screen, but the scene there belongs to a
-      // vehicle: the reload waits for the switch back.
-      if(sidebarMode!=='battles'){battlesDirty=true;return;}
-      return loadBattle(id,current&&current.id===id);
-    }).catch(function(e){$('connection').textContent='No local records';if(!current&&sidebarMode==='battles'){message(e.message);warnings([e.message]);}}).then(function(){polling=false;});
+      // A battle nobody has opened yet is not read for a list nobody looks at (the page opened on a vehicle: 1-3 MB, and
+      // a saved battle the game would prepare for nothing): it waits for the Hits list (setMode). A battle already read
+      // is read again in either panel - the hit on screen gets its models whatever list stands beside it (03.10: the
+      // read waited for the switch back to Hits, and the scene changed on that click).
+      if(!current&&sidebarMode!=='battles'){battlesDirty=true;return;}
+      return loadBattle(id,current&&current.id===id,pollHow);
+    }).catch(function(e){$('connection').textContent='No local records';if(!current&&sceneFree()){message(e.message);warnings([e.message]);}}).then(function(){polling=false;pollHow=null;});
   }
   try{viewer=new ArmorViewer($('viewport'));}catch(e){message('WebGL unavailable: '+e.message);}
   if(viewer)viewer.setAutoFrame($('auto-frame').checked); // OFF by default (user, 22.09; it was on since 18.09)
@@ -7621,21 +7706,23 @@
   $('shooter-tile').onclick=function(){chooseRole('shooter');};
   $('swap-roles').onclick=function(){
     // Two BROWSED vehicles simply change places; a recorded hit below takes its own path in either panel.
-    if(sidebarMode==='vehicles'&&activeHit&&activeHit.vehicle){if(!modelVehicle||!shooterVehicle)return;var m=modelVehicle;modelVehicle=shooterVehicle;shooterVehicle=m;showVehicleScene('view').catch(function(){});return;}
+    // The roles are taken from the scene first (adoptHitVehicles): outside the Vehicles panel nobody keeps them.
+    if(activeHit&&activeHit.vehicle){adoptHitVehicles();if(!modelVehicle||!shooterVehicle||modelVehicle===shooterVehicle)return;scenePick();var m=modelVehicle;modelVehicle=shooterVehicle;shooterVehicle=m;showVehicleScene('carry').catch(function(){});return;}
     if(swapped){if(swapped.base)selectHit(swapped.base).catch(function(){});return;}
     var hit=activeHit;if(!hit||hit.synthetic||!swapReady(hit)||!current)return;
+    scenePick();
     // The swapped view starts from the shot (user, 26.09: it opened in the default view): the eye at the hit point looking
     // back at the shooter at the recorded range, his turret and gun as the record has them (ArmorShotContext.swapStart - an
-    // own shot and an incoming one with the shooter's motion). A record without them: the camera on screen round his
-    // centre, his vehicle in its rest pose - the target's pose is not his.
-    var start=ArmorShotContext.swapStart(hit,shotContext),view=start?{eye:start.eye,pose:start.pose}:viewer&&viewer.cameraState?viewer.cameraState(true):null;
-    if(view&&!start)view=Object.assign({},view,{pose:null});
+    // own shot and an incoming one with the shooter's motion). A record without them: the scene on screen - its camera
+    // round his centre, and its turret and gun (03.10: every new scene takes them from the scene before; his vehicle stood
+    // in its rest pose).
+    var start=ArmorShotContext.swapStart(hit,shotContext),sceneInputs=sceneFrom('carry',start?{eye:start.eye,pose:start.pose}:null);
     var token=++generation;message('Preparing the model\u2026');if(viewer)viewer.clear();
     // In the game the model can still be on its way: the same 30 s the vehicle browser waits. Outside it
     // there is nobody to extract anything, so what is published is all there will be.
     swapScene(hit,host.game?Date.now()+EXPORT_WAIT:0,function(){return token===generation;}).then(function(synthetic){
       if(token!==generation)return null;
-      return ArmorInspectorData.sceneFor(current,synthetic).then(function(data){if(token!==generation)return;display(data,false,view);});
+      return ArmorInspectorData.sceneFor(current,synthetic).then(function(data){if(token!==generation)return;display(data,false,sceneInputs);});
     }).catch(function(e){if(token===generation){var text=e&&e.timedOut?EXPORT_TIMEOUT:e.message;sceneCleared();message(text);warnings([text]);}});
   };
   if(viewer)viewer.onAim=function(text){analysisKey=null;$('spread-result').textContent=text;};
@@ -7686,7 +7773,7 @@
   document.querySelectorAll('#shell-types [data-kind]').forEach(function(b){b.onclick=function(){$('shell-choice').value=b.dataset.kind;selectShell();};});
   $('penetration').oninput=function(){if($('shell-choice').value.indexOf('saved:')!==0)manualPen=this.value;updateShell();};
   $('alpha').oninput=function(){if($('shell-choice').value.indexOf('saved:')!==0)manualAlpha=this.value;updateShell();};
-  $('battles').onchange=function(){loadBattle(this.value,false).catch(function(e){warnings([e.message]);});};
+  $('battles').onchange=function(){loadBattle(this.value,false,'pick').catch(function(e){warnings([e.message]);});};
   // The picker's own handlers. A row click is the change handler (chooseFocus); the rest is what a <details>
   // does not give: no disabled state, so a locked control refuses to open; Escape closes it and hands the
   // focus back to the summary; a click anywhere else closes it, the same pattern the toolbar's More uses.
@@ -9233,5 +9320,5 @@
   sweepTick();
   function schedulePoll(){if(pollTimer)window.clearTimeout(pollTimer);pollTimer=window.setTimeout(pollTick,modelsPending||sweepRunning()||battlePreparing?2000:5000);}
   schedulePoll();
-  if(document.modelContext&&document.modelContext.registerTool){try{document.modelContext.registerTool({name:'select_saved_hit',description:'Open an existing recorded hit in the local 3D viewer.',inputSchema:{type:'object',properties:{battleId:{type:'string'},hitId:{type:'string'}},required:['battleId','hitId'],additionalProperties:false},execute:function(input){if(!input||!/^[-a-zA-Z0-9_]{1,100}$/.test(input.battleId)||!/^\d+$/.test(input.hitId))throw new Error('Invalid record identifiers');return loadBattle(input.battleId,true).then(function(){return selectHit(input.hitId);});}});}catch(e){console.warn('WebMCP unavailable',e);}}
+  if(document.modelContext&&document.modelContext.registerTool){try{document.modelContext.registerTool({name:'select_saved_hit',description:'Open an existing recorded hit in the local 3D viewer.',inputSchema:{type:'object',properties:{battleId:{type:'string'},hitId:{type:'string'}},required:['battleId','hitId'],additionalProperties:false},execute:function(input){if(!input||!/^[-a-zA-Z0-9_]{1,100}$/.test(input.battleId)||!/^\d+$/.test(input.hitId))throw new Error('Invalid record identifiers');return loadBattle(input.battleId,true,'list').then(function(){return selectHit(input.hitId);});}});}catch(e){console.warn('WebMCP unavailable',e);}}
 }());

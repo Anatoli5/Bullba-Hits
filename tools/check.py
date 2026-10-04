@@ -220,7 +220,7 @@ def check_page(result):
 def check_browser(result):
     exe = node()
     if not exe: return result.fail('node not found: set BULLBA_NODE to node.exe')
-    code, out, _ = run([exe, 'tests/page/real_page.cjs'], timeout=300)
+    code, out, _ = run([exe, 'tests/page/real_page.cjs'], timeout=480)   # ~3 min alone since the inheritance matrix (03.10)
     harness_lines(result, 'real_page', code, out)
     total = re.search(r'(\d+) checks, (\d+) failed', out)
     if total: result.passed = int(total.group(1)) - int(total.group(2))

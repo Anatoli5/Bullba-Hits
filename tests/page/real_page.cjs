@@ -157,6 +157,265 @@ const LOOK = `(() => {
 
 const HP = {ROSTER: 'this battle’s roster', FILE: 'the vehicle’s characteristics, stock', OWN: 'the vehicle’s own export'};
 
+// ---- THE SIDE PANEL'S MODE IS THE PICKER ONLY (03.10, the user after 0.9.4) ---------------------------------------------------
+// The user: "from Hits to Vehicles the state is not kept - the tank may be the same, but it comes back in the default
+// position". His rule: the mode of the left panel is what you pick FROM; the scene on the right is not connected to it.
+// A switch changes neither the scene nor its camera, pose, shell or pin - only a pick does: a vehicle, a hit, a tile.
+// (Investigation: outputs/mode-state-2026-10-03.md.) What was wrong in 0.9.4, each a check here that was red on it:
+//   A. the page opened from the game on a vehicle: the first click on Hits read the battle and put its first hit over the
+//      vehicle on screen - nobody clicked a hit;
+//   B. the hit on screen changed in the record (its models arrived, the game prepared the saved battle again): the scene
+//      was built again in the record's view - and in the Vehicles panel only on the click back to Hits;
+//   C. a ram or a fire tile clicked after a hit the user had turned: the camera angles went to the default - asked in
+//      the walk of every entry path above ('inherit matrix'), with the rest of what a new scene inherits.
+// Pages of their own: the main run's page is not touched; the data file written here is put back.
+async function modeState(browser, folder) {
+  const LV = 'window.__bullbaViewers[window.__bullbaViewers.length - 1]';
+  const VIEW = `(() => { const v = ${LV}, h = v.loadedData ? v.loadedData.hit : null, rows = [].slice.call(document.querySelectorAll('#hits > .hit'));
+    return {side: document.querySelector('#sidebar-mode [aria-pressed="true"]').getAttribute('data-mode'), scene: h ? String(h.id) : null,
+      model: h && h.target ? h.target.name : null, yaw: v.yaw, pitch: v.pitch, distance: v.distance, zoom: v.camera.zoom, turret: v.turretAngle, gun: v.gunAngle,
+      pinned: !!v.pinned, shell: document.getElementById('shell-choice').value, source: document.getElementById('shot-source').textContent,
+      rows: rows.length, pressed: rows.filter((r) => r.getAttribute('aria-pressed') === 'true').map((r) => r.getAttribute('data-hit') || r.getAttribute('data-event')).join(),
+      armour: h && h.target && h.target.parts && h.target.parts[0] ? h.target.parts[0].armorSource : null}; })()`;
+  // What the user does by hand: the camera round the tank, its distance and zoom, the turret and the gun.
+  const TURN = (yaw, pitch, distance, zoom, turret, gun) => `(() => { const v = ${LV}; v.setOrbit(${yaw}, ${pitch}); v.setDistance(${distance}); v.setZoom(${zoom});
+    v.setTurret(${turret}); v.setGun(${gun}); v.render(); })()`;
+  const PIN = `(() => { const v = ${LV}, r = v.container.getBoundingClientRect(); v.pinAt({clientX: r.left + r.width / 2, clientY: r.top + r.height / 2}); return !!v.pinned; })()`;
+  const CAMERA = ['yaw', 'pitch', 'distance', 'zoom'], FIGURES = CAMERA.concat(['turret', 'gun']);
+  const near = (a, b, keys) => keys.every((k) => Math.abs(a[k] - b[k]) < 1e-6);
+  const same = (a, b) => a.scene === b.scene && a.model === b.model && near(a, b, FIGURES);
+  // The whole state a switch must leave alone: the scene, the camera, the pose, the pin, the shell and the pressed row.
+  const whole = (a, b) => same(a, b) && a.pinned === b.pinned && a.shell === b.shell && a.source === b.source && a.pressed === b.pressed;
+  const brief = (list) => JSON.stringify(list.map((s) => { const o = {side: s.side, scene: s.scene, model: s.model, pinned: s.pinned, shell: s.shell, pressed: s.pressed};
+    FIGURES.forEach((k) => { o[k] = Math.round(s[k] * 1000) / 1000; }); return o; }));
+  const open = async (hash, extra, ready) => {
+    const p = await browser.open(url.pathToFileURL(path.join(folder, 'Viewer.html')).href + hash, INIT + (extra || ''));
+    await p.evaluate(DRIVER);
+    await p.evaluate(`(async () => { for (let i = 0; i < 100 && !(${ready}); i++) await new Promise((r) => setTimeout(r, 100)); await __bt.settle(); })()`);
+    return p;
+  };
+  const go = async (p, js) => { await p.evaluate(js); await p.evaluate('__bt.settle()'); return p.evaluate(VIEW); };
+  const HOSTQ = `;window.jsHostQuery = function (q) { setTimeout(function () { q.onSuccess('ok'); }, 0); };`;
+
+  // A. THE PAGE AS THE GAME OPENS IT (the mods list button, 25.09): the Vehicles panel on the hangar's vehicle, no battle
+  // read yet. The first click on Hits reads the newest battle for the LIST; the vehicle stands as the user left it, there
+  // and after the click back. The hit's target here is that very vehicle (the player's own, as after his battle).
+  const game = await open('#host=game&vehicle=pm_papa', HOSTQ, `window.__bullbaViewers.length && ${LV}.loadedData && ${LV}.loadedData.hit.vehicle`);
+  const G0 = await go(game, TURN(1.1, .2, 16, 1.7, 40, 3));
+  const G1 = await go(game, "__bt.act.side('battles')");
+  ok('mode state: opened from the game on a vehicle, the user turns it (camera 1.1 / 0.2, 16 m, zoom 1.7, turret 40°, gun 3°); the first click on Hits fills the list - its hits, none pressed - and leaves the vehicle as it stands',
+     G0.model === 'Papa' && G0.scene.indexOf('vehicle:pm_papa/') === 0 && same(G1, G0) && G1.rows > 0 && G1.pressed === '', brief([G0, G1]) + ' rows ' + G1.rows);
+  const G2 = await go(game, "__bt.act.side('vehicles')");
+  ok('mode state: ... and back to Vehicles the vehicle stands as he left it', same(G2, G0), brief([G0, G2]));
+  const G3 = await go(game, '__bt.act.hit(0)');
+  ok('mode state: ... a hit clicked there is a pick: it takes the scene, in the shot\'s own view', G3.scene === 'pm-1' && G3.pressed === 'pm-1' && Math.abs(G3.distance - 123.004) < .01, brief([G3]));
+  ok('mode state: (the page opened from the game) no uncaught exception', game.errors.length === 0, game.errors.slice(0, 3).join(' | '));
+  await browser.send('Target.closeTarget', {targetId: game.targetId});
+
+  // THE PAGE OPENED AS A FILE: Hits first, the newest battle's first hit on screen (nothing was there: the default).
+  const file = await open('', '', `document.querySelector('#hits [data-hit]') && window.__bullbaViewers.length && ${LV}.loadedData`);
+  // Ten switches with a hit on screen that the user turned, pinned a point on and changed the shell of: the scene, the
+  // camera, the pose, the pin, the shell and the pressed row are the same after each of them.
+  await go(file, '__bt.act.hit(1)');
+  await go(file, TURN(.9, .3, 18, 1.5, 25, 2));
+  const pinned = await file.evaluate(PIN); await file.evaluate('__bt.settle()');
+  const L0 = await go(file, `(() => { const c = document.getElementById('shell-choice'); c.value = 'saved:1'; c.dispatchEvent(new Event('change')); })()`);
+  const flips = [];
+  for (let i = 0; i < 10; i++) flips.push(await go(file, "__bt.act.side('" + (i % 2 ? 'battles' : 'vehicles') + "')"));
+  ok('mode state: ten switches of the side panel with a hit on screen (turned, a point pinned, APCR picked) - the scene, the camera, the pose, the pin, the shell and the pressed row never change',
+     pinned && L0.scene === 'pm-2' && L0.pinned && L0.shell === 'saved:1' && L0.pressed === 'pm-2' && flips.every((s) => whole(s, L0)) && flips[9].side === 'battles',
+     brief([L0].concat(flips.filter((s) => !whole(s, L0)).slice(0, 2))));
+  // A vehicle browsed and turned; Hits with no hit clicked and back - it stands as it was (the battle was read at the start).
+  await go(file, "__bt.act.side('vehicles')");
+  await go(file, "__bt.act.list('pm_quebec')");
+  const V0 = await go(file, TURN(1.1, .2, 16, 1.7, 40, 3));
+  const V1 = await go(file, "__bt.act.side('battles')");
+  const V2 = await go(file, "__bt.act.side('vehicles')");
+  ok('mode state: a vehicle browsed and turned, Hits with no hit clicked and back - it stands as it was', V0.model === 'Quebec' && same(V1, V0) && same(V2, V0), brief([V0, V1, V2]));
+  // A hit clicked IS a pick (the user, 03.10 - not a defect): it takes the scene, in the shot's view (his rule of 26.09);
+  // the Vehicles panel then shows what is on the scene, not the vehicle browsed before.
+  await go(file, "__bt.act.side('battles')");
+  const P0 = await go(file, '__bt.act.hit(1)');
+  const H0 = await go(file, TURN(.9, .3, 18, 1.5, 25, 2));
+  const V3 = await go(file, "__bt.act.side('vehicles')");
+  ok('mode state: a hit clicked is a pick - it takes the scene in the shot\'s own view, and the Vehicles panel then shows that scene as the user left it',
+     P0.scene === 'pm-2' && Math.abs(P0.distance - 123.004) < .01 && H0.scene === 'pm-2' && same(V3, H0), brief([P0, H0, V3]));
+
+  // B. THE BATTLE'S FILE WRITTEN AGAIN under a view the user built: the hit on screen changed in the record (here a part's
+  // armour source), so its scene is built again (hitFingerprint) - in the camera and the pose on screen, with the pin,
+  // and in EITHER panel: the read used to wait for the click back to Hits, and the view went on that click.
+  const dataFile = (name) => path.join(folder, 'data', name), sources = {};
+  const rewrite = (name, change) => { const text = fs.readFileSync(dataFile(name), 'utf8'); if (!(name in sources)) sources[name] = text;
+    const value = JSON.parse(text.slice(text.indexOf('(') + 1, text.lastIndexOf(')'))); change(value[1]);
+    fs.writeFileSync(dataFile(name), 'ArmorInspectorData.receive(' + JSON.stringify(value) + ');\n'); };
+  const poll = () => file.evaluate('new Promise((r) => setTimeout(r, 6500)).then(() => __bt.settle())');   // one index poll (5 s)
+  try {
+    const pinnedB = await file.evaluate(PIN); await file.evaluate('__bt.settle()');
+    const B0 = await file.evaluate(VIEW);
+    rewrite('battles/pm.js', (b) => { b.hits[1].target.parts[0].armorSource = 'synthetic, prepared again'; });
+    rewrite('index.js', (i) => { i.updatedAt += 1; });
+    await poll();
+    const B1 = await file.evaluate(VIEW);
+    ok('mode state: the battle\'s file written again with the hit on screen changed - the scene is built again in the Vehicles panel too (the new record on it), in the user\'s camera and pose, the pinned point kept',
+       pinnedB && B0.pinned && B0.armour === 'synthetic' && B1.side === 'vehicles' && B1.armour === 'synthetic, prepared again' && same(B1, B0) && B1.pinned && B1.source === 'Pinned point',
+       brief([B0, B1]) + ' armour ' + B1.armour);
+    const B2 = await go(file, "__bt.act.side('battles')");
+    ok('mode state: ... and the click back to Hits changes nothing', whole(B2, B1), brief([B1, B2]));
+  } finally { Object.keys(sources).forEach((name) => fs.writeFileSync(dataFile(name), sources[name])); }
+  ok('mode state: (the page opened as a file) no uncaught exception', file.errors.length === 0, file.errors.slice(0, 3).join(' | '));
+  await browser.send('Target.closeTarget', {targetId: file.targetId});
+}
+
+// ---- THE INHERITANCE MATRIX (03.10): every way a scene is built, and what it takes from the scene before -----------------------
+// The user: a scene needs its view angle, its turret's turn and its gun's elevation anyway - from the scene before, not from
+// a made-up default; the default only when there is no scene before. One owner gives them (web/app.js sceneFrom), and
+// THIS WALK is its guard: every entry path is driven by clicks from a scene the user turned (a camera with a pan, a turret
+// and a gun of that path's own figures, a point pinned), and after it the camera and the pose are asked for. A path added
+// to the page belongs here; one that builds its scene without the owner throws in display() and fails here.
+//   carry    another model: the camera and the pose are the ones on screen; the pin goes with the model that went
+//   camera   a record with a pose of its own and no view: the camera on screen, the record's pose
+//   same     the same model: the camera, the pose and the pin stay
+//   record   a record picked with a view of its own - the shot's: that view and the record's pose (not a reset)
+//   none     not a scene at all (a switch, a tile, a mode, another gun): nothing of the scene changes
+//   default  no scene before (the page just opened): the viewer's own default, the only one there is
+//   node tests/page/real_page.cjs --matrix    only this walk, twice (a pinned point, then a ⌖ shot), and the table as JSON
+const MATRIX_ONLY = process.argv.includes('--matrix');
+async function inheritMatrix(browser, folder) {
+  const LV = 'window.__bullbaViewers[window.__bullbaViewers.length - 1]';
+  const VIEW = `(() => { const v = ${LV}, h = v.loadedData ? v.loadedData.hit : null, cfg = document.getElementById('aim-config');
+    return {scene: h ? String(h.id) : null, model: h && h.target ? h.target.name : null, shooter: h && h.attacker ? h.attacker.name : null,
+      yaw: v.yaw, pitch: v.pitch, distance: v.distance, zoom: v.camera.zoom, panX: v.pan.x, panY: v.pan.y, turret: v.turretAngle, gun: v.gunAngle,
+      pinned: !!v.pinned, ring: !!v.aimShotCircle, shell: document.getElementById('shell-choice').value, kind: (v.shell || {}).kind || null,
+      armour: h && h.target && h.target.parts && h.target.parts[0] ? h.target.parts[0].armorSource : null,
+      gunOf: (document.getElementById('ttx-pair') || {}).title || '', config: cfg ? (cfg.getAttribute('data-tip') || cfg.title || '') : ''}; })()`;
+  const TURN = (s) => `(() => { const v = ${LV}; v.setOrbit(${s.yaw}, ${s.pitch}); v.setDistance(${s.distance}); v.setZoom(${s.zoom});
+    v.setTurret(${s.turret}); v.setGun(${s.gun}); v.pan.set(${s.panX}, ${s.panY}); v.projection(); v.render(); })()`;
+  const PIN = `(() => { const v = ${LV}, r = v.container.getBoundingClientRect(); v.pinAt({clientX: r.left + r.width / 2, clientY: r.top + r.height / 2}); return !!v.pinned; })()`;
+  const FIRE = `(() => { const v = ${LV}, r = v.container.getBoundingClientRect(), caster = v.pointerRay({clientX: r.left + r.width / 2, clientY: r.top + r.height / 2}),
+    hit = v.pick(caster.ray.origin, caster.ray.direction); if (!hit) return false;
+    v.liveAimPoint = hit.point.clone(); v.aimCursorPoint = hit.point.clone(); v.drawLiveAim();
+    const down = v.onShotDown({}); v.onShotUp({}); return down && !!v.aimShotCircle; })()`;
+  const CAMERA = ['yaw', 'pitch', 'distance', 'zoom', 'panX', 'panY'], POSE = ['turret', 'gun'];
+  const near = (a, b, keys) => keys.every((k) => Math.abs(a[k] - b[k]) < 1e-6);
+  const brief = (s) => { const o = {scene: s.scene, model: s.model, pinned: s.pinned}; CAMERA.concat(POSE).forEach((k) => { o[k] = Math.round(s[k] * 1000) / 1000; }); return o; };
+  const HIT = (n) => ["side('battles')", "battle('pm')", 'hit(' + n + ')'];
+  // Papa on screen, shot by Quebec; the model's role in the list.
+  const VEH = ["side('vehicles')", "scope('all')", 'modelTile()', "list('pm_papa')", 'shooterTile()', "list('pm_quebec')", 'modelTile()'];
+  const TICK = (id) => `(() => { const e = document.getElementById('${id}'); e.checked = !e.checked; e.dispatchEvent(new Event('change')); })()`;
+  // The characteristics panel's quick list of guns: the one that is not the shooter's now.
+  const OTHER_GUN = ["(document.getElementById('ttx-pair').click())",
+    `(() => { const t = [].slice.call(document.querySelectorAll('#ttx-pair-list .ttx-pick')).filter((e) => e.getAttribute('aria-pressed') !== 'true')[0];
+      if (!t) throw new Error('the panel lists no other gun'); t.click(); })()`];
+  // The files this walk writes, put back at its end.
+  const dataFile = (name) => path.join(folder, 'data', name), sources = {};
+  const rewrite = (name, change) => { const text = fs.readFileSync(dataFile(name), 'utf8'); if (!(name in sources)) sources[name] = text;
+    const value = JSON.parse(text.slice(text.indexOf('(') + 1, text.lastIndexOf(')'))); change(value[1]);
+    fs.writeFileSync(dataFile(name), 'ArmorInspectorData.receive(' + JSON.stringify(value) + ');\n'); };
+  let written = 0;
+  // The battle's file written again with the hit on screen changed, and one index poll (5 s).
+  const REREAD = async (p) => { const mark = 'synthetic, read again ' + (++written);
+    rewrite('battles/pm.js', (b) => { b.hits[1].target.parts[0].armorSource = mark; });
+    rewrite('index.js', (i) => { i.updatedAt += 1; });
+    await p.evaluate('new Promise((r) => setTimeout(r, 6500))'); };
+  const GAME = '#host=game&vehicle=pm_papa';
+  const PATHS = [
+    {name: 'a vehicle picked in the Vehicles list, a browsed vehicle on screen', from: VEH, act: ["list('pm_quebec')"], want: 'carry', model: 'Quebec'},
+    {name: 'a vehicle picked in the Vehicles list, a recorded hit on screen (the Model tile, then its row)', from: HIT(1), act: ['modelTile()', "list('pm_quebec')"], want: 'carry', model: 'Quebec'},
+    {name: 'the game asks for a vehicle (#vehicle=) with a scene on screen', from: VEH, act: ["(location.hash = '#vehicle=test_vehicle')"], want: 'carry', model: 'Test vehicle',
+     after: ["(location.hash = '')"]},
+    {name: 'the ⇅ of two browsed vehicles', from: VEH, act: ['swap()'], want: 'carry', model: 'Quebec'},
+    {name: 'the ⇅ of a recorded hit whose record has no motion of the shooter', from: HIT(1), act: ['swap()'], want: 'carry', model: 'Quebec'},
+    {name: 'a seat with no hits in the battle - its own model', from: ["side('battles')", "battle('pm3')", 'hit(0)'], act: ['modelTile()', "side('battles')", 'roster(32)'], want: 'carry', model: 'Quebec'},
+    {name: 'a ram tile (its record has no pose of the parts)', from: HIT(1), act: ['event(0)'], want: 'carry', model: 'Papa'},
+    {name: 'a fire tile', from: HIT(1), act: ['event(1)'], want: 'carry', model: 'Papa'},
+    {name: 'a hit whose point was not restored (another battle picked: its first hit)', from: HIT(1), act: ["battle('pm2')"], want: 'camera', model: 'Papa'},
+    {name: 'another shooter from the Vehicles list', from: VEH, act: ['shooterTile()', "list('pm_papa')"], want: 'same', shooter: 'Papa'},
+    {name: 'another shooter from the battle\'s roster, a recorded hit on screen', from: HIT(0), act: ['shooterTile()', "side('battles')", 'roster(32)'], want: 'same', shooter: 'Quebec'},
+    {name: 'the same hit read again after its battle\'s file changed', from: HIT(1), act: [REREAD], want: 'same', shooter: 'Quebec', reread: true},
+    {name: 'another hit picked, its shot recorded', from: HIT(1), act: ['hit(0)'], want: 'record', scene: 'pm-1', view: {distance: 123.004}, pose: {turret: 0, gun: 0}},
+    {name: 'another battle picked: its first hit, the shot recorded', from: HIT(1), act: ["battle('pm3')"], want: 'record', scene: 'pm3-1', pose: {turret: 0, gun: 0}},
+    {name: 'the ⇅ of a recorded hit with the shooter\'s motion - from the shot', from: HIT(0), act: ['swap()'], want: 'record', model: 'Romeo', view: {distance: 117}, pose: {turret: .2 * 180 / Math.PI, gun: -.02 * 180 / Math.PI}},
+    {name: 'the ⇅ back to the recorded hit', from: HIT(1).concat(['swap()']), act: ['swap()'], want: 'record', scene: 'pm-2', view: {distance: 123.004}, pose: {turret: 0, gun: 0}},
+    {name: 'the side panel switched to Vehicles', from: HIT(1), act: ["side('vehicles')"], want: 'none'},
+    {name: 'the side panel switched to Hits', from: VEH, act: ["side('battles')"], want: 'none'},
+    {name: 'the first click on Hits after the game opened the page on a vehicle', fresh: GAME, from: [], act: ["side('battles')"], want: 'none', model: 'Papa'},
+    {name: 'a role tile clicked (Shooter, then Model)', from: HIT(1), act: ['shooterTile()', 'modelTile()'], want: 'none'},
+    {name: 'another gun of the shooter picked on the characteristics panel', from: HIT(1), act: OTHER_GUN, want: 'none', gun: true, shell: true, after: OTHER_GUN},
+    {name: 'the ⌖ mode switched', from: HIT(1), act: ["(document.getElementById('fun-mode-toggle').click())"], want: 'none'},
+    {name: 'the aim emulation switched off and on (Settings)', from: HIT(1), act: [TICK('aim-on'), TICK('aim-on')], want: 'none'},
+    {name: 'real reload ◔ switched', from: HIT(1), act: [TICK('real-reload')], want: 'none', after: [TICK('real-reload')]},
+    {name: 'another shell picked', from: HIT(1), act: [`(() => { const c = document.getElementById('shell-choice'); c.value = 'saved:1'; c.dispatchEvent(new Event('change')); })()`], want: 'none', shell: true}
+  ];
+  // The hit without a point: battle pm2's only hit loses its points for this walk. Another gun for Quebec: his
+  // characteristics file gains a second pair on the same turret.
+  rewrite('battles/pm2.js', (b) => { b.hits[0].points = []; });
+  rewrite('ttx/germany-Quebec.js', (t) => { t.configs.push(Object.assign({}, t.configs[0], {gun: '_105_alt', gunUserString: '105 mm alt', gunLevel: 7, top: false}));
+    t.shells._105_alt = t.shells._105_single; });
+  const table = [], pages = [];
+  const open = async (hash) => {
+    const game = hash.indexOf('host=game') >= 0;
+    const p = await browser.open(url.pathToFileURL(path.join(folder, 'Viewer.html')).href + hash,
+      INIT + (game ? `;window.jsHostQuery = function (q) { setTimeout(function () { q.onSuccess('ok'); }, 0); };` : ''));
+    pages.push(p);
+    await p.evaluate(DRIVER);
+    await p.evaluate(`(async () => { for (let i = 0; i < 100 && !(window.__bullbaViewers.length && ${LV}.loadedData && (${game} || document.querySelector('#hits [data-hit]'))); i++) await new Promise((r) => setTimeout(r, 100)); await __bt.settle(); })()`);
+    return p;
+  };
+  const close = async (p) => { pages.splice(pages.indexOf(p), 1); await browser.send('Target.closeTarget', {targetId: p.targetId}); };
+  const run = async (p, list) => { for (const js of list) { if (typeof js === 'function') await js(p); else await p.evaluate(js.charAt(0) === '(' ? js : '__bt.act.' + js); await p.evaluate('__bt.settle()'); } };
+  try {
+    // No scene before: the page the game opens on the hangar's vehicle starts in the viewer's default view and the rest pose.
+    const first = await open(GAME), F = await first.evaluate(VIEW);
+    ok('inherit matrix: opened from the game on a vehicle, no scene before - the default view (the nose towards the viewer and to the right) and the rest pose',
+       F.model === 'Papa' && Math.abs(F.yaw - (.65 + Math.PI / 2)) < 1e-6 && Math.abs(F.pitch - .25) < 1e-6 && F.turret === 0 && F.gun === 0 && F.panX === 0 && F.panY === 0, JSON.stringify(brief(F)));
+    table.push({path: 'opened from the game on a vehicle, no scene before', want: 'default', shot: false});
+    await close(first);
+    const main = await open('');
+    for (const shot of MATRIX_ONLY ? [false, true] : [false]) {
+      for (let i = 0; i < PATHS.length; i++) {
+        const path_ = PATHS[i], tag = 'inherit matrix' + (shot ? ', ⌖ shot' : '') + ': ' + path_.name + ' - ';
+        const p = path_.fresh ? await open(path_.fresh) : main;
+        await run(p, ['fun(' + shot + ')'].concat(path_.from));
+        // The scene the user left: figures of this path's own, so a view that merely stayed from the path before fails.
+        const set = {yaw: .7 + .02 * i, pitch: .12 + .005 * i, distance: 15 + .5 * i, zoom: 1.3 + .02 * i, panX: .3 + .01 * i, panY: -.2 - .01 * i, turret: 20 + i, gun: 1 + .1 * i};
+        await p.evaluate(TURN(set)); await p.evaluate('__bt.settle()');
+        const marked = await p.evaluate(shot ? FIRE : PIN); await p.evaluate('__bt.settle(1500)');
+        const a = await p.evaluate(VIEW);
+        await run(p, path_.act);
+        const b = await p.evaluate(VIEW);
+        const cam = near(b, a, CAMERA), pose = near(b, a, POSE);
+        table.push({path: path_.name, want: path_.want, shot: shot, camera: near(b, a, ['yaw', 'pitch', 'distance', 'zoom']), pan: near(b, a, ['panX', 'panY']),
+          turret: Math.abs(b.turret - a.turret) < 1e-6, gun: Math.abs(b.gun - a.gun) < 1e-6,
+          shell: b.kind === a.kind, config: b.config === a.config, pin: a.pinned ? b.pinned : null, ring: a.ring ? b.ring : null, model: a.model === b.model ? 'same' : 'other',
+          shooter: a.shooter === b.shooter ? 'same' : 'other'});
+        if (!shot) {
+          const extra = JSON.stringify([brief(a), brief(b)]);
+          ok(tag + '(the user\'s scene is set: turned, panned, a point pinned)', near(a, set, CAMERA.concat(POSE)) && marked === true && a.pinned, extra);
+          if (path_.want === 'carry') ok(tag + 'the camera with its pan and the pose of the scene before, on ' + path_.model + '; the pin went with the scene that went',
+            cam && pose && b.model === path_.model && b.scene !== a.scene && !b.pinned, extra);
+          else if (path_.want === 'camera') ok(tag + 'the camera of the scene before; the pose is the record\'s own',
+            cam && b.scene !== a.scene && b.turret === 0 && b.gun === 0, extra);
+          else if (path_.want === 'same') ok(tag + 'the same model: the camera, the pose and the pinned point stay; the shooter is ' + path_.shooter + (path_.reread ? '; the new record is on the scene' : ''),
+            cam && pose && b.pinned && b.model === a.model && b.shooter === path_.shooter && (!path_.reread || (b.scene === a.scene && b.armour !== a.armour)), extra + ' ' + b.shooter + ' ' + b.armour);
+          else if (path_.want === 'record') ok(tag + 'the record\'s own view and pose (the pick\'s data, not a reset)',
+            (!path_.scene || b.scene === path_.scene) && (!path_.model || b.model === path_.model) && (!path_.view || Math.abs(b.distance - path_.view.distance) < 1.5)
+            && Math.abs(b.turret - path_.pose.turret) < 1e-6 && Math.abs(b.gun - path_.pose.gun) < 1e-6 && !cam, extra);
+          else ok(tag + 'no scene is built: the scene, the camera, the pose and the pin are as they were' + (path_.shell ? '' : ', the shell too') + (path_.gun ? '; the panel shows the other gun, the shells are its own' : ''),
+            cam && pose && b.scene === a.scene && b.pinned === a.pinned && (path_.shell || b.shell === a.shell) && (!path_.model || b.model === path_.model) && (!path_.gun || b.gunOf !== a.gunOf),
+            extra + (path_.gun ? ' ' + JSON.stringify([a.gunOf.split('\n')[0], b.gunOf.split('\n')[0]]) : ''));
+        }
+        if (path_.after) await run(p, path_.after);
+        if (path_.fresh) { ok(tag + '(no uncaught exception in that page)', p.errors.length === 0, p.errors.slice(0, 3).join(' | ')); await close(p); }
+      }
+    }
+    ok('inherit matrix: no uncaught exception in the page', main.errors.length === 0, main.errors.slice(0, 3).join(' | '));
+    if (MATRIX_ONLY) console.log('MATRIX ' + JSON.stringify(table));
+  } finally {
+    Object.keys(sources).forEach((name) => fs.writeFileSync(dataFile(name), sources[name]));
+    for (const p of pages.slice()) await close(p);
+  }
+}
+
 async function main() {
   const started = Date.now();
   const browser = await launch({width: 1600, height: 1000});
@@ -164,6 +423,9 @@ async function main() {
   const folder = stage();
   let page;
   try {
+    await inheritMatrix(browser, folder);
+    if (MATRIX_ONLY) { console.log('real page, the inheritance matrix only (' + browser.product + '): ' + checks + ' checks, ' + failures + ' failed'); return failures ? 1 : 0; }
+    await modeState(browser, folder);
     page = await browser.open(url.pathToFileURL(path.join(folder, 'Viewer.html')).href, INIT);
     const ev = (js) => page.evaluate(js);
     await ev(DRIVER);
@@ -305,7 +567,8 @@ async function main() {
       await step("scope('battle')");
       const back = await step("side('battles')");
       expectScene('back to Hits with the browsed vehicle kept', fun, {model: true, shooter: true, hp: '2 200 / 2 200', source: HP.OWN}, back);
-      ok('matrix, ⌖ ' + (fun ? 'on' : 'off') + ': (no ⇅ for browsed vehicles in the Hits panel)', !(await ev("(() => { const e = document.getElementById('swap-roles'); return e.getClientRects().length > 0; })()")));
+      // 03.10: the ⇅ of two browsed vehicles is the scene's own button - it read the side panel's mode and went in Hits.
+      ok('matrix, ⌖ ' + (fun ? 'on' : 'off') + ': (the ⇅ of two browsed vehicles stands in the Hits panel as it stood in Vehicles)', await ev("(() => { const e = document.getElementById('swap-roles'); return e.getClientRects().length > 0; })()"));
       expectScene('another battle', fun, {model: true, shooter: true, hp: '2 750 / 2 750', source: HP.ROSTER}, await step("battle('pm2')"));
       await step('modelTile()'); await step("side('battles')");
       expectScene('a seat with no hits and no model - the scene emptied', fun, {model: false, shooter: false, hp: null}, await step('roster(33)'));
@@ -478,12 +741,20 @@ async function main() {
     const I5 = await ev(STATE);
     ok('inherit: another shooter from the roster keeps the camera, the turret 20° and the gun 1° on the record\'s pose, and the pinned point',
        pinned1 && close(I5.yaw, 1.1) && close(I5.distance, 16) && close(I5.turret, 20) && close(I5.gun, 1) && I5.pinned && I5.source === 'Pinned point' && who(I5.shooter, 'Quebec'), JSON.stringify(I5));
-    // 4: the Vehicles panel over an empty scene brings its vehicle back in the view of the last scene, not the default one.
+    // 4: the Vehicles panel over an empty scene. The switch itself changes nothing (03.10: the side panel is the picker
+    // only - it used to bring back the vehicle the panel showed last); a vehicle PICKED there comes in the view of the last
+    // scene, not the default one.
     await step('modelTile()'); await step("side('battles')"); await ORBIT(.6, .15, 22); await ev('__bt.settle()');
     await step('roster(33)');   // Sierra: no hits, no model - the scene emptied
-    await step("side('vehicles')");
+    const emptied = await ev('__bt.sig()'), said = await step("side('vehicles')");
+    ok('inherit: the switch to Vehicles over an empty scene leaves it empty, with its words', !emptied.model && !said.model && !said.shooter && said.message === emptied.message && said.message !== '',
+       JSON.stringify([emptied.message, said.message, said.model]));
+    await step("list('pm_quebec')");
+    const I6m = await ev(STATE);
+    await step('shooterTile()'); await step("list('pm_papa')");
     const I6 = await ev(STATE);
-    ok('inherit: the Vehicles panel over an empty scene - its vehicle in the last scene\'s view', close(I6.yaw, .6) && close(I6.pitch, .15) && close(I6.distance, 22), JSON.stringify(I6));
+    ok('inherit: a vehicle picked over an empty scene comes in the last scene\'s view', who(I6m.model, 'Quebec') && close(I6m.yaw, .6) && close(I6m.pitch, .15) && close(I6m.distance, 22)
+       && who(I6.shooter, 'Papa') && close(I6.yaw, .6) && close(I6.distance, 22), JSON.stringify([I6m, I6]));
     // 8: an emulated shot, then the same model under the same gun again - its ring, its pin and its figure stay; another model
     // takes the shot away, while the run (the reload of that shot) goes on for the shooter.
     const FIRE = `(() => { const v = ${LV}, r = v.container.getBoundingClientRect(), caster = v.pointerRay({clientX: r.left + r.width / 2, clientY: r.top + r.height / 2}),

@@ -9025,11 +9025,13 @@ function pathMatrix() {
   // web/local-data.js's rule for a vehicle without its model (tested on the real reader below, 'noModel'): no geometry,
   // its words as the reason, no warning.
   D.sceneFor = function (b, hit) {
+    sceneReads++;
     return hit && hit.target && hit.target.noModel ? Promise.resolve({hit: hit, models: {}, warnings: [], geometryIncomplete: true, geometryError: String(hit.target.noModel)})
       : keep.sceneFor(b, hit);
   };
   D.battle = function (id) { return BATTLES[id] ? Promise.resolve(BATTLES[id]) : Promise.reject(new Error('no battle')); };
-  D.scene = function (b, id) { return Promise.resolve({hit: b.hits.filter(function (h) { return h.id === id; })[0], models: {}, warnings: []}); };
+  let sceneReads = 0;   // every scene the page asks the data for: a hit's (scene) and a built one's (sceneFor)
+  D.scene = function (b, id) { sceneReads++; return Promise.resolve({hit: b.hits.filter(function (h) { return h.id === id; })[0], models: {}, warnings: []}); };
   D.ttx = function (id) { ttxAsked.push(id); return TTXS[id] ? Promise.resolve(TTXS[id]) : Promise.reject(new Error('Not found data/ttx/' + id + '.js')); };
   D.vehicles = function () { return Promise.resolve({updatedAt: 'pm', vehicles: CATALOGUE}); };
   D.vehicle = function (id) { return EXPORTS[id] ? Promise.resolve(EXPORTS[id]) : id === VEHICLE.id ? Promise.resolve(VEHICLE) : Promise.reject(new Error('no vehicle')); };
@@ -9059,7 +9061,10 @@ function pathMatrix() {
   };
   const dotFor = function (id) { return staticDots.filter(function (d) { return d.getAttribute('data-help-for').split(/\s+/).indexOf(id) >= 0; })[0]; };
   const ROSTER_HP = 'this battle’s roster', FILE_HP = 'the vehicle’s characteristics, stock', OWN_HP = 'the vehicle’s own export';
-  function expectScene(label, fun, want, d) {
+  // switched (03.10): the step is a switch of the side panel, which is the picker only - the scene stands as it stood
+  // (the same invariants) and NOTHING of it is painted or loaded: no finisher, no tile laid again, no scene painter, no
+  // scene read; only the help dots are refreshed once (the two panes show and hide their boxes).
+  function expectScene(label, fun, want, d, switched) {
     const tag = 'matrix, ⌖ ' + (fun ? 'on' : 'off') + ', ' + label + ': ';
     const tile = !$('model-tile').hidden, shooter = !$('shooter-tile').hidden;
     // A model DRAWN: the tile, and not a vehicle browsed without its model (want.drawn false: the tile alone).
@@ -9082,12 +9087,18 @@ function pathMatrix() {
        wrong.length === 0 && dotFor('fun-mode-toggle').hidden === !model,
        '(' + wrong.map(function (dt) { return dt.getAttribute('data-help-for').split(' ')[0] + (dt.hidden ? ' hidden' : ' shown'); }).join(', ') + ')');
     const once = ['sceneTiles', 'shotStats', 'updateAim', 'funModel', 'paintFun', 'ttxPaint', 'modsVisible', 'refresh'];
+    if (switched) {
+      ok(tag + 'the side panel is the picker only - no finisher, no tile laid again, no scene painter, no scene read; the help dots refreshed once',
+         !d.sceneShown && once.every(function (k) { return k === 'refresh' ? d[k] === 1 : !d[k]; }) && sceneReads === switched.reads,
+         '(' + JSON.stringify(d) + ', scene reads ' + (sceneReads - switched.reads) + ')');
+      return;
+    }
     ok(tag + 'ONE finisher, each scene painter once, the help dots refreshed once, the roster once beyond the hit list',
        d.sceneShown === 1 && once.every(function (k) { return d[k] === 1; }) && (d.renderFocus || 0) - (d.renderHits || 0) === 1,
        '(' + JSON.stringify(d) + ')');
   }
-  let was = null;
-  const step = function (fn, n) { was = counted(); fn(); return settle(n || 30); };
+  let was = null, at = null;
+  const step = function (fn, n) { was = counted(); at = {reads: sceneReads}; fn(); return settle(n || 30); };
   const loop = function (fun) {
     return Promise.resolve().then(function () {
       setFun(fun);
@@ -9136,17 +9147,17 @@ function pathMatrix() {
       expectScene('⇅ back', fun, {model: true, shooter: true, hp: '2 750 / 2 750', source: ROSTER_HP}, delta(was));
       return step(function () { $('shooter-tile').onclick(); });   // the shooter's role: the side panel goes to Vehicles
     }).then(function () {
-      expectScene('the side panel to Vehicles, the scene kept', fun, {model: true, shooter: true, hp: '2 750 / 2 750', source: ROSTER_HP}, delta(was));
+      expectScene('the side panel to Vehicles, the scene kept', fun, {model: true, shooter: true, hp: '2 750 / 2 750', source: ROSTER_HP}, delta(was), at);
       return step(function () { sidebarModes[0].onclick(); });
     }).then(function () {
-      expectScene('the side panel back to Hits', fun, {model: true, shooter: true, hp: '2 750 / 2 750', source: ROSTER_HP}, delta(was));
+      expectScene('the side panel back to Hits', fun, {model: true, shooter: true, hp: '2 750 / 2 750', source: ROSTER_HP}, delta(was), at);
       return step(function () { rosterRow(32).onclick(); });
     }).then(function () {
       expectScene('another shooter from the roster', fun, {model: true, shooter: true, hp: '2 750 / 2 750', source: ROSTER_HP}, delta(was));
       ok('matrix, ⌖ ' + (fun ? 'on' : 'off') + ': (the roster marks the new shooter)', !!rosterRow(32) && rosterRow(32).getAttribute('data-role') === 'shooter');
       return step(function () { $('model-tile').onclick(); });
     }).then(function () {
-      expectScene('the side panel to Vehicles again', fun, {model: true, shooter: true, hp: '2 750 / 2 750', source: ROSTER_HP}, delta(was));
+      expectScene('the side panel to Vehicles again', fun, {model: true, shooter: true, hp: '2 750 / 2 750', source: ROSTER_HP}, delta(was), at);
       ok('matrix: (the Vehicles list offers the two browsable vehicles)', !!listRow('pm_quebec') && !!listRow('pm_papa'));
       return step(function () { listRow('pm_quebec').onclick(); });
     }).then(function () {
@@ -9193,8 +9204,9 @@ function pathMatrix() {
       scopeTo('battle');
       return step(function () { sidebarModes[0].onclick(); });
     }).then(function () {
-      expectScene('back to Hits with the browsed vehicle kept', fun, {model: true, shooter: true, hp: '2 200 / 2 200', source: OWN_HP}, delta(was));
-      ok('matrix, ⌖ ' + (fun ? 'on' : 'off') + ': (no ⇅ for browsed vehicles in the Hits panel)', $('swap-roles').hidden === true);
+      expectScene('back to Hits with the browsed vehicle kept', fun, {model: true, shooter: true, hp: '2 200 / 2 200', source: OWN_HP}, delta(was), at);
+      // 03.10: the ⇅ of two browsed vehicles is the scene's own button - it read the side panel's mode and went in Hits.
+      ok('matrix, ⌖ ' + (fun ? 'on' : 'off') + ': (the ⇅ of two browsed vehicles stands in the Hits panel as it stood in Vehicles)', $('swap-roles').hidden === false);
       return step(function () { pickBattle('pm2'); }, 40);
     }).then(function () {
       expectScene('another battle', fun, {model: true, shooter: true, hp: '2 750 / 2 750', source: ROSTER_HP}, delta(was));
@@ -9262,8 +9274,157 @@ function pathMatrix() {
        && $('target-hp').title.indexOf('\n• Source: ' + FILE_HP) > 0,
        '(' + ttxAsked.join(', ') + ' · hidden ' + $('target-hp').hidden + ' · "' + $('target-hp-text').textContent + '")');
     setFun(false);
+    return pickerOnly();
+  }).then(function () {
     Object.keys(keep).forEach(function (k) { D[k] = keep[k]; });
   });
+
+  // ================= THE ONE OWNER OF A NEW SCENE'S INPUTS, HELD STATICALLY (03.10) =================
+  // The user: every new scene takes its view, its turret's turn and its gun's elevation from the scene before; he believed
+  // it was done on 26.09, and it was not - that sweep gave the rule to the paths it listed, each with its own call of
+  // viewer.cameraState, and any other path could still call display() with no camera and get the viewer's default.
+  // Now the page has ONE place that reads the viewer's camera (sceneFrom) and one that loads the viewer and puts the camera
+  // back (display), and display() takes its inputs from sceneFrom alone (it throws otherwise - the walk of every entry
+  // path in tests/page/real_page.cjs, 'inherit matrix', runs into that). This reads app.js itself, so a path added later
+  // that builds its scene another way fails here before anybody sees a reset.
+  function sceneOwnerStatic() {
+    // The code without its comments: whole-line ones and the ones after a statement.
+    const strip = function (src) { return src.split(/\r?\n/).map(function (l) { return /^\s*\/\//.test(l) ? '' : l.replace(/\s+\/\/\s.*$/, ''); }).join('\n'); };
+    // What breaks the rule in a source, as words (none: the rule holds).
+    const faults = function (code) {
+      const out = [];
+      // A function of the page's top level (two spaces in), from its head to its closing brace.
+      const body = function (name) {
+        const a = code.indexOf('\n  function ' + name + '('), b = a < 0 ? -1 : code.indexOf('\n  }', a + 1);
+        return a < 0 || b < 0 ? null : {from: a, to: b};
+      };
+      const inside = function (at, range) { return !!range && at > range.from && at < range.to; };
+      const places = function (re) { const list = []; let m; while ((m = re.exec(code))) list.push(m.index); return list; };
+      const line = function (at) { return code.slice(0, at).split('\n').length; };
+      const owner = body('sceneFrom'), shower = body('display');
+      if (!owner || !shower) return ['no sceneFrom() or no display() in app.js'];
+      places(/\.load\(data,/g).forEach(function (at) { if (!inside(at, shower)) out.push('line ' + line(at) + ': the viewer is loaded outside display()'); });
+      places(/\.restoreCamera\(/g).forEach(function (at) { if (!inside(at, shower)) out.push('line ' + line(at) + ': the camera is put back outside display()'); });
+      places(/\.cameraState\(/g).forEach(function (at) { if (!inside(at, owner)) out.push('line ' + line(at) + ': the viewer\'s camera is read outside sceneFrom()'); });
+      // Every call of display() / displayOr(): three arguments, the third the owner's answer - sceneFrom(...) itself, or
+      // `sceneInputs`, which is nowhere given anything else.
+      const args = function (open) {
+        const list = []; let depth = 0, start = open + 1;
+        for (let i = open; i < code.length; i++) {
+          const c = code.charAt(i);
+          if (c === '(' || c === '{' || c === '[') depth++;
+          else if (c === ')' || c === '}' || c === ']') { depth--; if (!depth) { list.push(code.slice(start, i)); return list; } }
+          else if (c === ',' && depth === 1) { list.push(code.slice(start, i)); start = i + 1; }
+        }
+        return list;
+      };
+      const re = /(^|[^.\w])(display|displayOr)\(/g;
+      let m, calls = 0;
+      while ((m = re.exec(code))) {
+        const at = m.index + m[1].length;
+        if (/function\s+$/.test(code.slice(Math.max(0, at - 12), at))) continue;   // the two definitions
+        const a = args(at + m[2].length), third = (a[2] || '').trim();
+        calls++;
+        if (a.length !== 3 || !(third === 'sceneInputs' || /(^|\|\|)sceneFrom\(/.test(third))) out.push('line ' + line(at) + ': ' + m[2] + '(' + a.join(',') + ') without the owner\'s answer');
+      }
+      if (calls < 7) out.push('only ' + calls + ' display() calls found - the reader of calls lost some');
+      const set = /[^.\w]sceneInputs=([^=][^,;)]*)/g;
+      while ((m = set.exec(code))) if (!/^sceneFrom\(/.test(m[1])) out.push('line ' + line(m.index) + ': `sceneInputs` given ' + m[1] + ', not sceneFrom()');
+      return out;
+    };
+    const code = strip(appSrc), found = faults(code);
+    ok('scene owner: in app.js the viewer is loaded and its camera put back in display() alone, its camera is read in sceneFrom() alone, and every display() call gives sceneFrom()\'s answer',
+       found.length === 0, found.join(' | '));
+    // The check itself checked: each way round the owner, written into a copy of the page, is caught.
+    const rogue = function (text) { return faults(code + '\n  function rogue(data){\n    ' + text + '\n  }\n').length; };
+    const tries = [['display(data,false);', 1], ['display(data,false,null);', 1], ['var camera=viewer.cameraState(true);displayOr(data,false,camera);', 2],
+      ['var sceneInputs=null;display(data,false,sceneInputs);', 1], ['viewer.load(data,shotContext,null);', 1], ['viewer.restoreCamera({yaw:1});', 1],
+      ['var sceneInputs=sceneFrom(\'carry\');display(data,false,sceneInputs);', 0]];
+    ok('scene owner: (a scene shown with no inputs or with a camera of the path\'s own making, a viewer loaded, a camera read or put back beside the owner - each is caught; the owner\'s way is not)',
+       tries.every(function (t) { return rogue(t[0]) === t[1]; }), tries.map(function (t) { return rogue(t[0]); }).join());
+  }
+
+  // ================= THE SIDE PANEL'S MODE IS THE PICKER ONLY (03.10) =================
+  // The user after 0.9.4: "from Hits to Vehicles the tank's position is not kept"; his rule: the mode is what you pick
+  // FROM, the scene is not connected to it - only a pick changes the scene. Here, on the stub DOM: what the page paints
+  // and reads (the camera and the pose themselves are asked of the real viewer in tests/page/real_page.cjs, 'mode state').
+  function pickerOnly() {
+    const scenePainters = ['sceneShown', 'sceneTiles', 'shotStats', 'updateAim', 'funModel', 'paintFun', 'ttxPaint', 'modsVisible'];
+    const painted = function (d) { return scenePainters.filter(function (k) { return d[k]; }); };
+    const pressed = function () { return $('hits').children.filter(function (c) { return c.getAttribute('aria-pressed') === 'true'; }).map(function (c) { return c.getAttribute('data-hit') || c.getAttribute('data-event'); }).join(); };
+    const tiles = function () { return $('model-tile').title + ' | ' + $('shooter-tile').title + ' | ' + $('scene-message').textContent; };
+    let battleReads = 0;
+    const battle = D.battle;
+    D.battle = function (id) { battleReads++; return battle(id); };
+    const indexOf = function (ids) {
+      const stamp = ++pollStamp;
+      D.index = function () { return Promise.resolve({application: 'local.armor_inspector', version: 'test', updatedAt: stamp,
+        battles: ids.map(function (id) { return {id: id, startedAt: 1, map: 'Test', hits: BATTLES[id].hits.length}; })}); };
+    };
+    let before = null, scene = null, reads = 0;
+    sceneOwnerStatic();
+    // 1. Eight switches with a hit on screen: nothing of the scene is painted, nothing is read, the same row is pressed.
+    return Promise.resolve().then(function () {
+      pickBattle('pm');
+      return settle(40);
+    }).then(function () {
+      hitRows()[1].onclick();
+      return settle(30);
+    }).then(function () {
+      before = counted(); scene = tiles(); reads = sceneReads + battleReads;
+      let chain = Promise.resolve();
+      for (let i = 0; i < 8; i++) chain = chain.then(function () { sidebarModes[i % 2 ? 0 : 1].onclick(); return settle(10); });
+      return chain;
+    }).then(function () {
+      const d = delta(before);
+      ok('picker only: eight switches of the side panel with a hit on screen - no scene painter runs, no scene or battle is read, the tiles and the pressed row are the same',
+         painted(d).length === 0 && sceneReads + battleReads === reads && tiles() === scene && pressed() === 'pm-2',
+         '(painted ' + painted(d).join() + ', reads ' + (sceneReads + battleReads - reads) + ', pressed ' + pressed() + ')');
+      // 2. THE USER'S PATH: no battle read yet (as when the game opens the page on a vehicle), a vehicle browsed; the
+      // first click on Hits reads the battle for the LIST alone - it used to put the battle's first hit over the vehicle.
+      indexOf([]);
+      tick(5.1); return settle(30);
+    }).then(function () {
+      ok('picker only: (the battles gone from the index - their scene goes with them, in the Hits panel as before)', $('model-tile').hidden === true && hitRows().length === 0);
+      sidebarModes[1].onclick();
+      return settle(20);
+    }).then(function () {
+      scopeTo('all');
+      $('model-tile');
+      listRow('pm_quebec').onclick();
+      return settle(40);
+    }).then(function () {
+      indexOf(['pm', 'pm2', 'pm3']);
+      battleReads = 0;
+      tick(5.1); return settle(30);
+    }).then(function () {
+      ok('picker only: a battle nobody opened yet is not read while the Vehicles list is shown', battleReads === 0 && $('model-tile').title.indexOf('Quebec') >= 0, '(battle reads ' + battleReads + ')');
+      before = counted(); scene = tiles(); reads = sceneReads;
+      sidebarModes[0].onclick();
+      return settle(40);
+    }).then(function () {
+      const d = delta(before);
+      ok('picker only: the first click on Hits reads the battle and fills the list - two hits, none pressed',
+         battleReads === 1 && hitRows().length === 2 && pressed() === '', '(battle reads ' + battleReads + ', rows ' + hitRows().length + ', pressed "' + pressed() + '")');
+      ok('picker only: ... and puts nothing on the scene - the browsed vehicle stands, no scene painter ran, no scene was read',
+         painted(d).length === 0 && sceneReads === reads && tiles() === scene && $('model-tile').title.indexOf('Quebec') >= 0,
+         '(painted ' + painted(d).join() + ', scene reads ' + (sceneReads - reads) + ', ' + tiles() + ')');
+      // The next poll with a new index (another battle published): the vehicle on screen is not the battles' to replace.
+      indexOf(['pm', 'pm2', 'pm3']);
+      tick(5.1); return settle(30);
+    }).then(function () {
+      ok('picker only: a later poll leaves the vehicle on screen too', sceneReads === reads && tiles() === scene && pressed() === '', '(scene reads ' + (sceneReads - reads) + ', ' + tiles() + ')');
+      // A pick: the hit clicked takes the scene, and the Vehicles panel then shows what is on the scene.
+      before = counted();
+      hitRows()[0].onclick();
+      return settle(30);
+    }).then(function () {
+      const d = delta(before);
+      ok('picker only: a hit clicked is a pick - it takes the scene (one finisher), its row pressed', d.sceneShown === 1 && pressed() === 'pm-1' && $('model-tile').title.indexOf('Papa') >= 0, '(' + JSON.stringify(d) + ', ' + pressed() + ')');
+      scopeTo('battle');
+      D.battle = battle;
+    });
+  }
 }
 
 // ================= A CLICK ON A VEHICLE NOT EXPORTED YET (click-export-fast, 26.09) =================
@@ -9365,6 +9526,19 @@ function clickExport() {
     return settle(10).then(function () {
       ok('click export: #vehicle= in the game - the scene and the row spin, no second request from the page',
          msg() === WAIT && loading().join() === 'germany-Whiskey' && sent.length === was, msg() + ' | ' + loading().join());
+      // 03.10: the side panel is the picker only - a switch to Hits used to end the wait, and the vehicle never came.
+      sidebarModes[0].onclick();
+      return settle(20);
+    }).then(function () {
+      const before = polls('germany-Whiskey');
+      tick(0.4);
+      return settle(10).then(function () {
+        ok('click export: a vehicle on its way survives a switch of the side panel - still polled, the scene still says so',
+           polls('germany-Whiskey') === before + 1 && msg() === WAIT, (polls('germany-Whiskey') - before) + ' polls | ' + msg());
+        sidebarModes[1].onclick();
+        return settle(10);
+      });
+    }).then(function () {
       rowOf(VEHICLE.id).onclick();
       return settle(10);
     });
