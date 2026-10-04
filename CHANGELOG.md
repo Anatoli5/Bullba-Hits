@@ -2,6 +2,10 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.2 from 0.9.3 on, 2.4.0.1 #950 from 0.7.6, 2.4.0.0 #945 before.
 
+## 0.9.6 (2026-10-04)
+
+- The same as 0.9.5, built again under a new number: with 0.9.5 installed, Windows refused to start the game's built-in browser on one machine. Nothing in the mod or the page is changed.
+
 ## 0.9.5 (2026-10-04)
 
 - **Hits / Vehicles:** the switch only changes the list you pick from and never changes the scene. Opened from the game on a vehicle, the first click on Hits lists the battle's hits and leaves the vehicle as you turned it; a vehicle still being exported arrives whichever list is open.
