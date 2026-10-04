@@ -8,6 +8,7 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 - **View:** every new scene keeps the camera, the turret and the gun of the scene on screen - ram and fire tiles, a hit whose point was not restored, the ⇅ of a hit too. A hit with its recorded shot still opens in the shot's own view.
 - **Saved battles:** a hit refreshed on screen (its models arrive, the game prepares the battle again) keeps your camera, turret, gun and pinned point, in either list.
 - **⇅:** two browsed vehicles can be swapped from the Hits list too.
+- **Window in the game:** the window sometimes opened blank - a blue background and nothing else - although the page in it was running; opening it again helped. The mod now asks the game to draw the window again once the page has loaded and when the game reports the window's picture, and writes the window's steps to game.log (lines `Bullba Hits window +… ms: …`). Whether this removes the blank window is not known yet: the cause is still being looked for, and those lines are what will show it.
 
 ## 0.9.4 (2026-10-03)
 

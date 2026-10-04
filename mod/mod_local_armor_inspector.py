@@ -1684,6 +1684,8 @@ def fini():
         presentation.set_open_request(None)
         presentation.set_sweep_request(None)
         presentation.set_battle_request(None)
+        # The open window's trace (blue window, 03.10): its listeners and wrappers leave the client's objects.
+        presentation.close_window_trace()
     except Exception: LOG.exception('Page export command cleanup failed')
     remove_context_menu(_context_menu)
     _context_menu = None
