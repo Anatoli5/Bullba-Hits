@@ -2,7 +2,7 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.2 from 0.9.3 on, 2.4.0.1 #950 from 0.7.6, 2.4.0.0 #945 before.
 
-## Unreleased
+## 0.9.5 (2026-10-04)
 
 - **Hits / Vehicles:** the switch only changes the list you pick from and never changes the scene. Opened from the game on a vehicle, the first click on Hits lists the battle's hits and leaves the vehicle as you turned it; a vehicle still being exported arrives whichever list is open.
 - **View:** every new scene keeps the camera, the turret and the gun of the scene on screen - ram and fire tiles, a hit whose point was not restored, the ⇅ of a hit too. A hit with its recorded shot still opens in the shot's own view.
