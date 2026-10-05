@@ -2,6 +2,10 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.2 from 0.9.3 on, 2.4.0.1 #950 from 0.7.6, 2.4.0.0 #945 before.
 
+## 1.0 (2026-10-05)
+
+- The same as 0.9.9, built again under a new number. From here on the versions go 1.01, 1.02 and so on.
+
 ## 0.9.9 (2026-10-04)
 
 - **Vehicles without a model in the game client:** a vehicle the client lists but has no collision model of (Nameless, Edelweiss) is no longer counted as a failed export. Export all models does not try it and does not ask about it again - the "2 vehicles failed" question is gone - until a game update brings its model. Its row in the Vehicles list is dimmed and says "not in the game client"; a click shows its characteristics and says why there is no model instead of waiting for an export.

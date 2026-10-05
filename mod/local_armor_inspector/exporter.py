@@ -41,7 +41,7 @@ STAND_CHANGED = tuple(getattr(_client_code, 'STAND_CHANGED', ()))
 STAND_CLIENT = getattr(_client_code, 'STAND_CLIENT', None)
 
 LOG = logging.getLogger('local.armor_inspector')
-VERSION = '0.9.9'
+VERSION = '1.0'
 RESOURCE = re.compile(r'^(?:[A-Za-z0-9_-]+/)?vehicles/[A-Za-z0-9_/-]+\.(?:model|havok)\Z')
 IDENTIFIER = re.compile(r'^[-a-zA-Z0-9_]{1,100}\Z')
 # The interface icons of the aim configuration (equipment, perks, shells) ship with the page in web/icons
