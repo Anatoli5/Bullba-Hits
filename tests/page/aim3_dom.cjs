@@ -3729,6 +3729,26 @@ settle(20).then(function () {
                     ok('models: and Export all models offers to try them again', failing.$('models-sweep-ask').hidden === false
                        && failing.$('models-sweep-ask-head').textContent === '2 vehicles failed' && failing.$('models-sweep-go').textContent === 'Start',
                        failing.$('models-sweep-ask-head').textContent);
+                    // 04.10, the user: "2 vehicles failed ... to try them again" for Nameless and Edelweiss, which the game
+                    // client lists without a collision model. The mod no longer counts them as to export or as failed (the
+                    // progress file's 'absent', his file in shape): no bar, no question, the export is complete - and its
+                    // words do not claim a model of all 1060.
+                    const gone = sweepPage(true, done, false, function () { return {done: true, count: 0, total: 0, catalogue: 1060, confirmed: false,
+                      opted: true, failedOnly: false, built: 1778, builtMs: 112134.6, bytes: 298016148, estimate: 0, failed: {}, returned: [],
+                      absent: {'japan:J29_Nameless': {resources: ['a', 'b', 'c', 'd'], whole: true, client: 'x'},
+                               'japan:J30_Edelweiss': {resources: ['a', 'b', 'c', 'd'], whole: true, client: 'x'}}}; });
+                    return settle().then(function () {
+                      ok('models: two vehicles not in the game client - no bar, no question, the export is complete',
+                         gone.$('models-sweep').hidden === true && gone.$('models-sweep-ask').hidden === true
+                         && gone.$('models-all').textContent === 'All models exported \u2713' && gone.sent.indexOf('sweepStart') < 0,
+                         gone.$('models-all').textContent + ' | ' + gone.$('models-sweep-ask-head').textContent);
+                      gone.$('models-all').onclick();
+                      ok('models: its click says how many have their models and that two have none in the client - OK only, nothing to start',
+                         gone.$('models-sweep-ask-head').textContent === 'All models exported'
+                         && gone.$('models-sweep-ask-text').textContent === '1058 regular vehicles have their models; 2 have no collision model in the game client. After a game update only the changed ones are exported.'
+                         && gone.$('models-sweep-go').hidden === true && gone.$('models-sweep-later').textContent === 'OK',
+                         gone.$('models-sweep-ask-text').textContent);
+                    });
                   });
                 });
               });
@@ -8918,6 +8938,8 @@ settle(20).then(function () {
 }).then(function () {
   return clickExportOutdated();
 }).then(function () {
+  return clickNotInClient();
+}).then(function () {
   return indexRevisions();
 }).then(function () {
   return staleBattleOpen().then(sweepWaitingWords);
@@ -9569,6 +9591,95 @@ function clickExport() {
     }).then(function () {
       ok('click export: offline #vehicle= of a vehicle not exported - its words at once, no spinner, no poll',
          msg() === GONE && !loading().length && polls('germany-Uniform2') === 0 && reads.indexOf('germany-Uniform2') >= 0, msg() + ' | ' + reads.join());
+    });
+  }).then(function () {
+    Object.keys(keep).forEach(function (k) { D[k] = keep[k]; });
+    Object.keys(keepHost).forEach(function (k) { H[k] = keepHost[k]; });
+  });
+}
+
+// ================= A VEHICLE THE GAME CLIENT HAS NO COLLISION MODEL OF (04.10) =================
+// The user's Nameless and Edelweiss: listed by the client, their models in no package. The mod flags such a row
+// 'notInClient' (never 'exported', whatever file an earlier build left). The row is dimmed like any row without a model and
+// its words say why; a click - in the game too - asks the game for no export and waits for nothing: the vehicle's
+// characteristics, and the scene says why there is no model.
+function clickNotInClient() {
+  const $ = function (id) { return document.getElementById(id); };
+  const D = global.ArmorInspectorData, H = global.BullbaHost;
+  const keep = {vehicles: D.vehicles, vehicle: D.vehicle, ttx: D.ttx, sceneFor: D.sceneFor}, keepHost = {game: H.game, canSend: H.canSend, send: H.send, params: H.params};
+  const WHY = 'No model: the game client has no collision model of this vehicle.';
+  // web/local-data.js's rule for a vehicle without its model (tested on the real reader, 'noModel'): its words as the reason.
+  D.sceneFor = function (b, hit) {
+    return hit && hit.target && hit.target.noModel ? Promise.resolve({hit: hit, models: {}, warnings: [], geometryIncomplete: true, geometryError: String(hit.target.noModel)})
+      : keep.sceneFor(b, hit);
+  };
+  const reads = [], sent = [];
+  // His row as the mod writes it now: the file 0.9.8's sweep left is still on disk (exportedAt, source), the row not exported.
+  const gone = {id: 'japan-Nameless', type: 'japan:Nameless', name: 'Nameless', level: 8, 'class': 'heavyTank', nation: 'japan', premium: true,
+                exported: false, notInClient: true, exportedAt: 5, source: 'catalogue'};
+  const stale = Object.assign({}, VEHICLE, {id: gone.id, type: gone.type, name: gone.name, exportedAt: 5, source: 'catalogue',
+    parts: [{id: 1, name: 'hull', resource: 'vehicles/japan/J29_Nameless/collision_client/Hull.model', modelError: 'Collision model not found in client'}]});
+  const ttx = {schema: 1, id: gone.id, type: gone.type,
+    vehicle: {invisibility: [0.1, 0.2], camouflageBonus: 0.03, projectileSpeedFactor: 0.8, modes: {}},
+    modules: {chassis: {terrainResistance: [1, 1.2, 2]}, engine: {power: 600 * 735.5}},
+    turrets: [{name: 'TurretX', userString: 'Turret X', level: 8, circularVisionRadius: 380, invisibilityFactor: 1}],
+    shells: {_105_single: [{kind: 'ARMOR_PIERCING', name: 'AP shell', caliber: 105, alpha: 400, penetration100: 250, speed: 800}]},
+    configs: [{turret: 0, gun: '_105_single', gunUserString: '105 mm single', gunLevel: 8, top: true,
+               aim: Object.assign({}, AIM_BLOCK, {afterShotFactor: 0, reloadTime: 7, clip: [1, 0]}), maxHealth: 1777, weight: 40000,
+               pitch: {absolute: [-0.35, 0.14]}, invisibilityFactorAtShot: 0.2}]};
+  D.vehicles = function () { return Promise.resolve({updatedAt: 'nc1', vehicles: [Object.assign({}, VEHICLE, {exported: true}), gone]}); };
+  D.vehicle = function (id, once) {
+    reads.push(id + (once ? ':poll' : ''));
+    return Promise.resolve(id === VEHICLE.id ? VEHICLE : stale);
+  };
+  D.ttx = function (id) { return id === gone.id ? Promise.resolve(ttx) : Promise.reject(new Error('no characteristics')); };
+  H.game = true; H.canSend = function () { return true; }; H.send = function (name, payload) { sent.push(payload); return new Promise(function () {}); };
+  H.params = function () { return {}; };
+  const rowOf = function (id) { return $('vehicles').children.filter(function (c) { return c.getAttribute('data-vehicle') === id; })[0]; };
+  const loading = function () { return $('vehicles').children.filter(function (c) { return c.getAttribute('data-loading') !== null; }).map(function (c) { return c.getAttribute('data-vehicle'); }); };
+  const msg = function () { return $('scene-message').textContent; };
+  const asked = function () { return sent.filter(function (p) { return p.action === 'exportVehicle' || p.action === 'prioritise'; }).map(function (p) { return p.action; }); };
+  const scopeAll = function () { document.querySelectorAll('#vehicle-scope [data-scope]').forEach(function (b) { if (b.getAttribute('data-scope') === 'all') b.onclick(); }); };
+  sidebarModes[1].onclick();
+  return settle(20).then(function () {
+    $('model-tile').onclick();   // a click fills the model's role
+    return settle(10);
+  }).then(function () {
+    scopeAll();
+    return settle(10);
+  }).then(function () {
+    const row = rowOf(gone.id);
+    ok('not in the client: the row is listed, dimmed like a row without a model, and its words say why',
+       !!row && row.getAttribute('data-exported') === 'false' && /\n• Collision model: not in the game client$/.test(row.title)
+       && row.title.indexOf('none yet') < 0 && row.title.indexOf('exported') < 0, row && row.title);
+    ok('not in the client: the count of vehicles with models leaves it out', $('vehicle-count').textContent === '1 with models \u00b7 2 total', $('vehicle-count').textContent);
+    row.onclick();
+    return settle(30);
+  }).then(function () {
+    ok('not in the client: a click in the game asks for no export (no exportVehicle, no prioritise)', asked().length === 0, JSON.stringify(sent));
+    ok('not in the client: nothing spins, and the scene says why there is no model', !loading().length && msg() === WHY, loading().join() + ' | ' + msg());
+    ok('not in the client: the vehicle is shown through its characteristics - both tiles, its panel',
+       $('ttx-panel').hidden === false && $('model-tile').title.indexOf('Nameless') >= 0 && $('shooter-tile').title.indexOf('Nameless') >= 0,
+       $('model-tile').title + ' | ' + $('shooter-tile').title);
+    ok('not in the client: the file an earlier build left is neither read nor waited for', reads.filter(function (r) { return r.indexOf(gone.id) === 0; }).length === 0, reads.join());
+    tick(0.4); return settle(10);
+  }).then(function () {
+    tick(0.4); return settle(10);
+  }).then(function () {
+    ok('not in the client: and no poll follows', reads.filter(function (r) { return r.indexOf(gone.id) === 0; }).length === 0 && msg() === WHY && asked().length === 0, reads.join() + ' | ' + msg());
+    rowOf(VEHICLE.id).onclick();
+    return settle(10);
+  }).then(function () {
+    // Outside the game the same row says the same - not "models come from the game", which no export there will bring.
+    H.game = false;
+    scopeAll();
+    return settle(10).then(function () {
+      rowOf(gone.id).onclick();
+      return settle(30);
+    }).then(function () {
+      ok('not in the client: outside the game the same words, nothing sent', msg() === WHY && asked().length === 0 && !loading().length, msg());
+      rowOf(VEHICLE.id).onclick();
+      return settle(10);
     });
   }).then(function () {
     Object.keys(keep).forEach(function (k) { D[k] = keep[k]; });

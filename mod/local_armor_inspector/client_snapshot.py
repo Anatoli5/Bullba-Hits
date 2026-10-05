@@ -536,6 +536,15 @@ class ClientSnapshot(object):
             return None
         return None
 
+    def packaged(self, path):
+        """Whether a package of the client itself holds an in-scope path - not res_mods, not a mod's .wotmod, which the
+        effective map (files) puts first: True, False, or None when a package did not read this time (not known). For the
+        collision models the client lacks (Exporter.models_review, 04.10)."""
+        self.files()
+        for source, members in self.sources or ():
+            if source.startswith('pkg:') and path in members: return True
+        return None if any(source.startswith('pkg:') for source in self.failed) else False
+
     def close(self):
         """Let go of the archives read() opened."""
         self.__dict__.pop('mounts', None)

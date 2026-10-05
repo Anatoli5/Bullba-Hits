@@ -56,7 +56,8 @@ sys.modules['items'] = items
 sys.modules['items.vehicles'] = client_vehicles
 
 # The catalogue: five regular vehicles (G5_Owned is the player's own, exported from the hangar), a battle-mode vehicle, an
-# onboarding copy, an event package's vehicle; G4_Broken's gun has no collision model in the client.
+# onboarding copy, an event package's vehicle; G4_Broken's gun model is in the client and does not parse - a failure that
+# may pass, retried on the user's Start (a model the client does not have at all is no failure: models_absent.py, 04.10).
 REGULAR = ['germany:G1_A', 'germany:G2_B', 'germany:G4_Broken', 'ussr:R1_C', 'usa:A1_E']
 OWNED = 'germany:G5_Owned'
 ROWS = ([{'id': t.replace(':', '-'), 'type': t} for t in REGULAR + [OWNED]]
@@ -117,7 +118,6 @@ try:
     HAVOK = {}
     for type_name in REGULAR + [OWNED]:
         for resource in resources_of(type_name):
-            if type_name == 'germany:G4_Broken' and 'Gun_01' in resource: continue
             HAVOK[resource.replace('.model', '.havok')] = resource + ' 1'
 
     def write_packages(sources, havok):
@@ -141,6 +141,7 @@ try:
     battle_on = [0]
 
     def fake_extract(data):
+        if 'G4_Broken' in data and 'Gun_01' in data: raise ValueError('Collision model does not parse')
         extracted.append(data)
         clock[0] += delay[0]  # the fake clock moves by the build's cost: no real sleep, no scheduler in the slice
         if battle_on[0] and len(extracted) == battle_on[0]: current[0].recorder.in_battle = True

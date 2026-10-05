@@ -81,6 +81,10 @@
   var SOURCE_TEXT={hangar:'the hangar',battle:'a battle',catalogue:'the catalogue',picker:'this list'};
   // A vehicle without a model outside the game (24.09): the scene says so, the characteristics panel shows its file.
   var NO_VEHICLE_MODEL='No model yet: models come from the game. Open this viewer in the game and click the vehicle, or use Export all models there.';
+  // A vehicle the game client lists without a collision model (04.10, the user's Nameless and Edelweiss; the catalogue row's
+  // 'notInClient', exporter.py models_absent): nothing to export and nothing to wait for - its row says so, and a click
+  // shows its characteristics with these words instead of asking the game for an export that can only fail.
+  var NOT_IN_CLIENT='No model: the game client has no collision model of this vehicle.';
   var NO_VEHICLE_TTX='No characteristics of this vehicle yet: the game writes them in the hangar, in the background.';
   var EXPORT_TIMEOUT='The model did not arrive in 30 s. See game.log.';
   // A click on a vehicle the game has not exported yet (click-export-fast, 26.09; in the game only): the mod exports it at
@@ -91,7 +95,7 @@
   // a wheeled vehicle without its wheels, a prefab one without its prefabs, an older build) - that one is never shown while
   // the page waits for the new one; the wait counts it as not there yet.
   var OUTDATED_FILE='The file of this vehicle is out of date; the game exports it again.';
-  function needsExport(row){return !!row&&(!row.exported||!!row.outdated);}
+  function needsExport(row){return !!row&&!row.notInClient&&(!row.exported||!!row.outdated);}
   // What the page sends the game for such a row: an out-of-date file is exported again from its own request, so its
   // configuration stays (review of 4b1c8c8 #1: exportVehicle made the game build the hangar's or the top one) - 'prioritise'
   // puts that job first; a vehicle without a file is exported as the game has it ('exportVehicle').
@@ -105,10 +109,11 @@
   var VEHICLE_INFO=[
     ['What is listed',['Every vehicle of your client, by class.',
       '\u201cThis battle\u201d: the open battle\u2019s allies and enemies.',
-      'Dimmed: no collision model yet.']],
+      'Dimmed: no collision model yet, or none in the game client.']],
     ['A click on a row',['Shows it as the model.',
       'After a click on the Shooter tile: as the shooter.',
-      'In the game, a dimmed row exports first.']],
+      'In the game, a dimmed row exports first.',
+      'No model in the game client: its characteristics only.']],
     ['Models come from the game',['The vehicle you select in the hangar.',
       'Every vehicle of a battle you play, after it.',
       'Export all models: every regular vehicle; after a game update only the changed ones.']],
@@ -356,7 +361,7 @@
   function vehicleRowWords(item){
     var v=item.v;
     return vehicleWords(v)+(item.side==='ally'||item.side==='enemy'?'\n\u2022 Team: '+(item.side==='ally'?'Ally':'Enemy'):'')
-      +'\n\u2022 Collision model: '+(v.outdated?(host.game?'out of date, a click exports it again':'out of date, the game exports it again'):v.exported?'exported'+(SOURCE_TAG[v.source]?' '+SOURCE_TAG[v.source]:''):'none yet');
+      +'\n\u2022 Collision model: '+(v.notInClient?'not in the game client':v.outdated?(host.game?'out of date, a click exports it again':'out of date, the game exports it again'):v.exported?'exported'+(SOURCE_TAG[v.source]?' '+SOURCE_TAG[v.source]:''):'none yet');
   }
   // One DOM node per row, up to about a thousand of them: the list is rebuilt only when the set of rows, the
   // roles or the export marks actually change, so the five-second poll of the catalogue costs nothing.
@@ -372,12 +377,13 @@
       ?(exported===shown.length?shown.length+' with models':exported+' with models \u00b7 '+shown.length+' total')
       :(catalogueError||'Reading the vehicle list\u2026');
     filterChip();
-    var ids=shown.map(function(item){return item.v.id;}).join(','),marks=shown.map(function(item){return item.v.exported?'1':'0';}).join('');
+    var ids=shown.map(function(item){return item.v.id;}).join(','),marks=shown.map(function(item){return item.v.notInClient?'x':item.v.exported?'1':'0';}).join('');
     var roles=(modelVehicle?modelVehicle.id:'')+'/'+(shooterVehicle?shooterVehicle.id:'')+'/'+activeRole+'/'+scope;
     if(!force&&ids===listIds&&roles===listRoles){
       if(marks!==listMarks){listMarks=marks;shown.forEach(function(item){
         var row=list.querySelector('[data-vehicle="'+item.v.id+'"]');
-        if(row&&row.getAttribute('data-exported')!==String(!!item.v.exported)){row.setAttribute('data-exported',String(!!item.v.exported));row.title=vehicleRowWords(item);}});}
+        var words=row?vehicleRowWords(item):'';
+        if(row&&(row.getAttribute('data-exported')!==String(!!item.v.exported)||row.title!==words)){row.setAttribute('data-exported',String(!!item.v.exported));row.title=words;}});}
       return;
     }
     listIds=ids;listMarks=marks;listRoles=roles;
@@ -420,8 +426,9 @@
   // does - 'Exporting the model…', a retry every 2 s for up to 30 s.
   // In the browser a row without a model is its characteristics alone (24.09): the same pick with the record built
   // from its file (ttxRecord), and the scene says the model is not there.
+  // A row the game client has no model of (notInClient), in the game too: its characteristics and the reason - no request.
   function chooseVehicle(v){
-    if(!v.exported&&!host.game)return void pickVehicle(v.id,activeRole,{row:v}).catch(function(e){
+    if(v.notInClient||!v.exported&&!host.game)return void pickVehicle(v.id,activeRole,{row:v}).catch(function(e){
       if(e&&e.superseded)return;message(e.message);warnings([e.message]);});
     // A request the game did not take ends the wait at once with its reason, not after EXPORT_WAIT.
     // Outside the game nobody exports: an out-of-date file is shown as it is (review of 4b1c8c8 #2).
@@ -489,7 +496,7 @@
       if(!t)throw new Error(NO_VEHICLE_TTX);
       var pair=t.configs[TTX.match(t,{})],turret=(t.turrets||[])[pair.turret]||{};
       var record={id:row.id,type:row.type,name:row.name,level:row.level,'class':row['class'],role:row.role,nation:row.nation,
-        premium:row.premium,collector:row.collector,special:row.special,source:null,noModel:NO_VEHICLE_MODEL,parts:[],warnings:[],
+        premium:row.premium,collector:row.collector,special:row.special,source:null,noModel:row.notInClient?NOT_IN_CLIENT:NO_VEHICLE_MODEL,parts:[],warnings:[],
         shells:ttxShellsOf(t,pair).slice(),aim:pair.aim,gun:pair.gunUserString||pair.gun,gunName:pair.gun,turretName:turret.name,
         gunDispersion:pair.aim&&pair.aim.dispersion,maxHealth:pair.maxHealth};
       // What he may mount, as an export carries it (TTX_FORMAT 4, 26.09): the tags - the device eligibility and the garage's
@@ -550,7 +557,8 @@
   }
   // Changing the model carries the view on screen over to it (showVehicleScene 'view'). Changing the shooter alone leaves
   // the model and the orbit centre where they are, so the camera is taken before the reload and put back after it.
-  // options.row: a catalogue row without a model, read from its characteristics file (the browser only).
+  // options.row: a catalogue row without a model, read from its characteristics file (the browser; in the game the row of a
+  // vehicle the client has no model of).
   function pickVehicle(id,role,options){
     role=role==='shooter'?'shooter':'model';options=options||{};
     var token=++vehicleGeneration,wait=!!options.deadline;
@@ -7026,6 +7034,7 @@
     if(parts.pending&&current)return swapExtracting(hit,deadline,alive);
     var row=swapVehicleRow(hit);
     if(!row)return Promise.reject(new Error('The shooter’s collision model is not exported yet.'));
+    if(row.notInClient)return Promise.reject(new Error(NOT_IN_CLIENT));   // nothing to ask the game for, nothing to wait for
     // Not exported yet (click-export-fast, 26.09): in the game the page asks for it as a click on its row does - the wait
     // below had nobody to wait for; a request the game did not take ends it at once.
     var refused=null;
@@ -7281,6 +7290,10 @@
     // back (user, 22.09 - the target did not change). Every branch below has already passed through here.
     sceneShown();
     if(reference){$('details').appendChild(node('p','The model is extracted from the installed client. There are no invented hits here. Once the recorder is installed, new battles appear in the list on the left.'));return;}
+    if(hit.vehicle&&hit.target&&hit.target.noModel===NOT_IN_CLIENT){
+      $('details').appendChild(node('p','Characteristics of '+(hit.target.name||'this vehicle')+' from its file: the top modules, the gun and turret picked on the panel. The game client lists this vehicle without a collision model, so there is nothing to export.'));
+      return;
+    }
     if(hit.vehicle&&hit.target&&hit.target.noModel){
       $('details').appendChild(node('p','Characteristics of '+(hit.target.name||'this vehicle')+' from its file: the top modules, the gun and turret picked on the panel. Its collision model was not exported yet: models come from the game - one click on it in the Vehicles list there, or Export all models.'));
       return;
@@ -9462,18 +9475,22 @@
         :(total>=all?'Preparing the characteristics of all '+total+' vehicles':total+(total===1?' vehicle changed: preparing its characteristics':' vehicles changed: preparing their characteristics'))
           +(time?' takes '+time+' (an estimate)':'')+'; the hangar stutters meanwhile.',count>0?'Continue':'Start'];}});
   // The models: asked by themselves only once the user has started them before (opted), never over the characteristics'
-  // question, never for the failures alone; Export all models asks for them at any time (forced).
+  // question, never for the failures alone; Export all models asks for them at any time (forced). A vehicle the game client
+  // has no collision model of is neither to export nor a failure (04.10; the progress file's 'absent'): never asked about,
+  // counted apart in the words of a finished export.
   var modelsSweep=sweepWidget('models',{id:'models-sweep',command:{kind:'models'},read:ArmorInspectorData.modelsSweep,
     mayAsk:function(s){return !!(s&&s.opted&&!s.failedOnly)&&ttxSweep.state!==undefined&&!ttxSweep.running&&$('ttx-sweep-ask').hidden;},
-    // No bar for a plan the user never started, nor for the failures alone (J29/J30 have no collision model in the client:
-    // they fail on every run, and a "0 / 2" bar would stand in the header every session); Export all models still asks.
+    // No bar for a plan the user never started, nor for the failures alone (a "0 / 2" bar would stand in the header every
+    // session); Export all models still asks.
     quiet:function(s){return !s.opted||!!s.failedOnly;},
     tip:function(count,total){return ['Collision models of every vehicle','The game exports the model of every regular vehicle, then after a game update only of the vehicles that changed.',
       '• Now: '+count+' of '+total,'','• Runs: while this page is open in the game, after your Start','• ■: stops it; what is done stays',
       '• Never in a battle'];},
     words:function(s,count,total){
-      var all=Number(s.catalogue)||total,left=total-count,failed=Object.keys(s.failed||{}).length;
-      if(s.done||!total)return failed?[failed+' vehicles failed',failed+' vehicles could not be exported (python.log names the first); the rest are current.','']
+      var all=Number(s.catalogue)||total,left=total-count,failed=Object.keys(s.failed||{}).length,absent=Object.keys(s.absent||{}).length;
+      var lacks=absent?absent+(absent===1?' has':' have')+' no collision model in the game client':'';
+      if(s.done||!total)return failed?[failed+' vehicles failed',failed+' vehicles could not be exported (python.log names the first); the rest are current'+(lacks?', '+lacks:'')+'.','']
+        :lacks?['All models exported',Math.max(0,all-absent)+' regular vehicles have their models; '+lacks+'. After a game update only the changed ones are exported.','']
         :['All models exported','All '+all+' regular vehicles have their models; after a game update only the changed ones are exported.',''];
       var per=s.built>0&&s.bytes>0?s.bytes/s.built:MODELS_BYTES,mb=Math.max(1,Math.round(left*per/1e6)),time=sweepTime(s);
       if(count>0)return ['Model export not finished',count+' of '+total+' vehicles done ('+Math.floor(100*count/total)+' %), '+(time?time+' and ':'about ')+mb+' MB left (an estimate).','Continue'];

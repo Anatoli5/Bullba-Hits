@@ -986,6 +986,44 @@ async function main() {
        E3.count === '40 / 917' && E3.bar && E3.text === 'Exporting models… 40 / 917 · about 4 min 50 s left' && page3.errors.length === 0,
        JSON.stringify([E3, page3.errors.slice(0, 2)]));
     await browser.send('Target.closeTarget', {targetId: page3.targetId});
+    // NOT IN THE GAME CLIENT (04.10, the user's Nameless and Edelweiss: "2 vehicles failed ... to try them again", and a
+    // Start that could never succeed). His progress file as the mod writes it now (1060 regular, the two 'absent', the user
+    // had started the sweep) and a catalogue row flagged 'notInClient' (Uniform: no model, its characteristics file is
+    // there). The page opened in the game asks nothing about the models and shows no bar; the row is dimmed and says why; a click asks the
+    // game for no export and the scene says why there is no model.
+    sweepFile({stamp: {client: 'x', format: 1}, startedAt: 1, done: true, count: 0, total: 0, catalogue: 1060, confirmed: false, retrying: false,
+      built: 1778, builtMs: 112134.6, keys: {}, failed: {}, incremental: false, updatedAt: 2, estimate: 0, parts: {}, extension: [], bytes: 298016148,
+      opted: true, failedOnly: false, returned: [], absent: {'japan:J29_Nameless': {resources: ['a', 'b', 'c', 'd'], whole: true, client: 'x'},
+                                                             'japan:J30_Edelweiss': {resources: ['a', 'b', 'c', 'd'], whole: true, client: 'x'}}});
+    const listFile = path.join(folder, 'data', 'vehicles.js'), listWas = fs.readFileSync(listFile, 'utf8');
+    fs.writeFileSync(listFile, listWas.replace('{"id":"germany-Uniform",', '{"notInClient":true,"id":"germany-Uniform",'));
+    const page4 = await browser.open(url.pathToFileURL(path.join(folder, 'Viewer.html')).href + '#host=game&vehicle=pm_quebec', INIT + HOSTQ);
+    const GONE_UI = `(() => { const $ = (id) => document.getElementById(id), laid = (e) => !!e && e.getClientRects().length > 0 && e.getBoundingClientRect().height > 0,
+      row = document.querySelector('#vehicles [data-vehicle="germany-Uniform"]');
+      return {ask: laid($('models-sweep-ask')), ttxAsk: laid($('ttx-sweep-ask')), bar: laid($('models-sweep')), all: $('models-all').textContent, allLaid: laid($('models-all')),
+        row: !!row, opacity: row ? getComputedStyle(row).opacity : '', tip: row ? (row.getAttribute('data-tip') || row.title || '') : '',
+        message: $('scene-message').textContent, spinning: document.querySelectorAll('#vehicles [data-loading]').length,
+        model: $('model-tile').getAttribute('data-tip') || $('model-tile').title || '',
+        sent: window.__sent.map((m) => m.params && m.params.action).filter((a) => a && a !== 'open')}; })()`;
+    const untilGone = (cond, ms) => page4.evaluate(`(async () => { const t = Date.now(); let s; while (Date.now() - t < ${ms}) { s = ${GONE_UI}; if (${cond}) break;
+      await new Promise((r) => setTimeout(r, 100)); } return s; })()`);
+    const N0 = await untilGone("s.allLaid && s.row && s.model.indexOf('Quebec') >= 0", 10000);
+    await page4.evaluate('new Promise((r) => setTimeout(r, 1500))');   // a question would be up by now
+    const N1 = await page4.evaluate(GONE_UI);
+    ok('not in the client, in the game: the page asks nothing about the models and shows no bar - the export is complete',
+       N0.allLaid && !N1.ask && !N1.bar && N1.all === 'All models exported ✓' && N1.sent.every((a) => !/^sweep/.test(a)), JSON.stringify(N1));
+    ok('not in the client: its row is dimmed like any row without a model, and its words say why',
+       N1.row && N1.opacity === '0.45' && /\n• Collision model: not in the game client$/.test(N1.tip), JSON.stringify([N1.opacity, N1.tip]));
+    await page4.evaluate(`document.querySelector('#vehicles [data-vehicle="germany-Uniform"]').click()`);
+    const N2 = await untilGone("s.model.indexOf('Uniform') >= 0 && s.message !== ''", 5000);
+    await page4.evaluate('new Promise((r) => setTimeout(r, 600))');   // an export's poll would have come by now
+    const N3 = await page4.evaluate(GONE_UI);
+    ok('not in the client: a click asks the game for no export and waits for nothing - the scene says why there is no model',
+       N3.message === 'No model: the game client has no collision model of this vehicle.' && N3.model.indexOf('Uniform') >= 0 && !N3.spinning
+       && N3.sent.indexOf('exportVehicle') < 0 && N3.sent.indexOf('prioritise') < 0 && page4.errors.length === 0,
+       JSON.stringify([N2.message, N3.message, N3.model.split('\n')[1], N3.spinning, N3.sent, page4.errors.slice(0, 2)]));
+    await browser.send('Target.closeTarget', {targetId: page4.targetId});
+    fs.writeFileSync(listFile, listWas);
     fs.rmSync(path.join(folder, 'data', 'models-sweep.js'), {force: true});
     // keep-onscreen-model (26.09, the Panther II of the Waffenträger event): pm4's target Victor has the complete model in
     // the record, while his export lacks the gun's model. Hits -> the Shooter tile -> another shooter in "This battle": the

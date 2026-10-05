@@ -41,7 +41,7 @@ STAND_CHANGED = tuple(getattr(_client_code, 'STAND_CHANGED', ()))
 STAND_CLIENT = getattr(_client_code, 'STAND_CLIENT', None)
 
 LOG = logging.getLogger('local.armor_inspector')
-VERSION = '0.9.8'
+VERSION = '0.9.9'
 RESOURCE = re.compile(r'^(?:[A-Za-z0-9_-]+/)?vehicles/[A-Za-z0-9_/-]+\.(?:model|havok)\Z')
 IDENTIFIER = re.compile(r'^[-a-zA-Z0-9_]{1,100}\Z')
 # The interface icons of the aim configuration (equipment, perks, shells) ship with the page in web/icons
@@ -6233,6 +6233,11 @@ class Exporter(object):
                 if field in ('keys', 'failed') and not all(isinstance(k, basestring_type) and isinstance(v, basestring_type) for k, v in value.items()): return None
                 if field == 'parts' and not all(isinstance(v, list) for v in value.values()): return None
             if not isinstance(marker.get('extension', []), list): return None
+            # The vehicles the client has no collision model of (04.10), and those of them it has gained one of.
+            absent = marker.get('absent', {})
+            if not isinstance(absent, dict) or not all(isinstance(k, basestring_type) and isinstance(v, dict)
+                                                       and isinstance(v.get('resources'), list) for k, v in absent.items()): return None
+            if not isinstance(marker.get('returned', []), list): return None
             float(marker.get('startedAt') or 0); int(marker.get('built') or 0); float(marker.get('builtMs') or 0)
             int(marker.get('bytes') or 0)
         except Exception:
@@ -6274,7 +6279,9 @@ class Exporter(object):
             marker['packages'] = state['packages']
         else:
             marker.update({'parts': state['parts'], 'extension': state['extension'], 'bytes': state['bytes'],
-                           'opted': state['opted'], 'failedOnly': bool(sweep and sweep.get('failedOnly'))})
+                           'opted': state['opted'], 'failedOnly': bool(sweep and sweep.get('failedOnly')),
+                           # Not in the client (models_absent): for the mod - what it was looked at under; the page counts them.
+                           'absent': state['absent'], 'returned': state['returned']})
         # What a started sweep waits for (BACKLOG 55): the page says it instead of standing at the same count.
         wait = self.sweep_wait(kind) if sweep is not None and sweep['confirmed'] and not done else None
         if wait: marker['waiting'] = wait
@@ -6466,8 +6473,9 @@ class Exporter(object):
         """One slice: after the rest since the slice before (sweep_rest), steps back to back for up to a slice's seconds,
         every step behind the gates (review #5: a battle, a drag, a closing page or the mod shutting down (#6) ends the slice
         before the next one). A step is the kind's own unit of work on the type at 'next' (ttx_step, models_step); it says
-        'built', 'current' or 'failed' when it is done with the type, 'partial' when the type needs more steps, None when
-        the gates closed before it did anything. True when it did any work."""
+        'built', 'current' or 'failed' when it is done with the type ('absent': a vehicle the client has no collision model
+        of - models_absent), 'partial' when the type needs more steps, None when the gates closed before it did anything.
+        True when it did any work."""
         sweep = self.sweeps[kind]
         if sweep['sliced']:
             self.sweep_rest(sweep)
@@ -6494,6 +6502,9 @@ class Exporter(object):
                     sweep['next'] += 1
                     if outcome == 'built': sweep['built'] += 1
                     elif outcome == 'failed': sweep['failed'].append(type_name)
+                    elif outcome == 'absent':
+                        sweep.setdefault('absent', []).append(type_name)
+                        sweep['dirty'] = True
                     else: sweep['current'] += 1
                 # A command of the page (a click's vehicle, Stop) ends the slice after this step, not after the slice's time.
                 if TTX_TIMER() - began >= sweep['slice'] or self.sweep_waiting(): break
@@ -6542,6 +6553,11 @@ class Exporter(object):
             LOG.info('Client change check: %d files built again and compared - %d differed and were written%s%s',
                      len(sweep['types']), len(changed), ' (%s)' % ', '.join(changed[:5]) if changed else '',
                      '; missed change: %s' % ', '.join(missed[:5]) if missed else '')
+        if kind == 'models' and sweep.get('absent'):
+            names = sweep['absent']
+            LOG.info("Model sweep: %d not in the client (%s%s) - the game's packages hold no collision model of them; not exported, "
+                     "not counted as failed, not asked about until the client's files change", len(names), ', '.join(names[:5]),
+                     ', ...' if len(names) > 5 else '')
         if kind == 'models' and self.model_ms:
             times = sorted(self.model_ms)
             LOG.info('Model sweep: %d collision models extracted, %.1f ms median, %.1f ms p90, %.1f ms max (read, parse, write)',
@@ -6561,7 +6577,9 @@ class Exporter(object):
         state = {'catalogue': catalogue, 'started': time.time(), 'built': 0, 'builtMs': 0.0, 'now': None,
                  'keys': dict(marker.get('keys') or {}), 'failed': dict(marker.get('failed') or {}),
                  'packages': dict(marker.get('packages') or {}), 'parts': dict(marker.get('parts') or {}),
-                 'extension': list(marker.get('extension') or []), 'bytes': 0, 'opted': bool(marker.get('opted')), 'bases': None}
+                 'extension': list(marker.get('extension') or []), 'bytes': 0, 'opted': bool(marker.get('opted')), 'bases': None,
+                 'absent': dict((t, dict(v)) for t, v in (marker.get('absent') or {}).items()),
+                 'returned': [t for t in marker.get('returned') or () if isinstance(t, basestring_type)]}
         try:
             state['built'], state['builtMs'] = int(marker.get('built') or 0), float(marker.get('builtMs') or 0)
             state['bytes'] = int(marker.get('bytes') or 0)
@@ -6833,9 +6851,15 @@ class Exporter(object):
         snapshot = self.client()
         stored = self.vehicle_keys() if snapshot is not None else {}
         unknown = snapshot is not None and self.sources_unknown()
+        # A vehicle the client has no collision model of at all (models_absent, 04.10): the file a click or an earlier build
+        # left is not built again for nothing - not for a changed key, not as a sample. Once its model is there it is not
+        # 'absent' any more (models_review), and its file is checked like any other.
+        absent = (self.sweep_states.get('models') or {}).get('absent') or {}
+        lacking = set(i for i in self.vehicles if (absent.get(str(self.vehicles[i].get('type') or '')) or {}).get('whole'))
         for identifier in sorted(self.vehicles):
             summary = self.vehicles[identifier]
             if unknown: break   # the client's files unreadable now: no vehicle file is judged by them (second review G)
+            if identifier in lacking: continue
             # A file a migration exports again from its own request (load_vehicles: no hash) is that job's.
             if summary.get('descriptorHash') is None or self.vehicle_current(summary): continue
             if not os.path.isfile(os.path.join(self.folder, 'data', 'vehicles', identifier + '.js')): continue
@@ -6862,7 +6886,7 @@ class Exporter(object):
             chance = random.Random(snapshot.id)
             held = sorted(t for t in now if 'ttx:' + t not in items and os.path.isfile(self.ttx_path(t)))
             items.extend('sample-ttx:' + t for t in sorted(chance.sample(held, min(VERIFY_SAMPLE_TTX, len(held)))))
-            held = sorted(i for i in self.vehicles if 'vehicle:' + i not in items and self.vehicles[i].get('descriptorHash')
+            held = sorted(i for i in self.vehicles if 'vehicle:' + i not in items and i not in lacking and self.vehicles[i].get('descriptorHash')
                           and os.path.isfile(os.path.join(self.folder, 'data', 'vehicles', i + '.js')))
             items.extend('sample-vehicle:' + i for i in sorted(chance.sample(held, min(VERIFY_SAMPLE_VEHICLES, len(held)))))
         if not items and not pending.get('everything'):
@@ -6946,12 +6970,18 @@ class Exporter(object):
             return None
 
     def models_current(self, type_name):
-        """The model sweep has nothing to do for this type: not failed, and it has a file (whose key, changed or not, is the
-        background check's - start_verify)."""
+        """The model sweep has nothing to do for this type: the client has no collision model of it (models_absent), or - not
+        failed - it has a file (whose key, changed or not, is the background check's - start_verify)."""
         state = self.sweep_states['models']
+        if type_name in state['absent']: return True
         if type_name in state['failed']: return False
         identifier = vehicle_id(type_name)
         summary = self.vehicles.get(identifier)
+        if type_name in state['returned']:
+            # The client gained its model (models_review): the sweep's own file without it is exported again - unless a click,
+            # the hangar or a battle wrote the player's own file meanwhile.
+            if (summary or {}).get('source') == 'catalogue': return False
+            state['returned'].remove(type_name)
         # A file on disk that setup could not read (a lock of an antivirus or a backup) may be the player's own: it is
         # left alone this session rather than overwritten with the top configuration (review 25.09).
         return bool(summary) or os.path.exists(os.path.join(self.folder, 'data', 'vehicles', identifier + '.js'))
@@ -6972,12 +7002,16 @@ class Exporter(object):
         same = marker.get('stamp') == self.sweep_stamp('models')
         state = self.sweep_state('models', marker, int(marker.get('catalogue') or 0) if same else 0)
         state['regular'] = []
-        if same and marker.get('done') and not marker.get('failed'): return None
+        if same and marker.get('done') and not marker.get('failed'):
+            # The same client files (the snapshot's id; without one the version): what it lacks, it still lacks - nothing read.
+            if state['absent']:
+                LOG.info('Model sweep: 0 of %d regular vehicles to export, %d not in the client', state['catalogue'], len(state['absent']))
+            return None
         started = TTX_TIMER()
         if not same:
             state['keys'], state['extension'] = {}, []
             # A failure stays one across a client change (retried on the user's Start); a format raised forgets them.
-            if (marker.get('stamp') or {}).get('format') != MODELS_FORMAT: state['failed'] = {}
+            if (marker.get('stamp') or {}).get('format') != MODELS_FORMAT: state['failed'], state['absent'], state['returned'] = {}, {}, []
         catalogue = [row for row in rows or () if ':' in str(row.get('type') or '') and IDENTIFIER.match(vehicle_id(row['type']))]
         crcs = None
         if not same:
@@ -6994,14 +7028,16 @@ class Exporter(object):
             seen.add(type_name)
             state['regular'].append(type_name)
         state['catalogue'] = len(state['regular'])
+        self.models_review(state)
         state['parts'] = dict((t, v) for t, v in state['parts'].items() if t in state['keys'] or t in state['failed'])
         types = [t for t in state['regular'] if not self.models_current(t)]
         failed_only = bool(types) and all(t in state['failed'] for t in types)
         if not same and marker.get('startedAt') and not marker.get('done'):
             try: state['started'] = float(marker['startedAt'])
             except (TypeError, ValueError): pass
-        LOG.info('Model sweep: %d of %d regular vehicles to export%s (%.0f ms)', len(types), len(state['regular']),
-                 ', all of them failed before' if failed_only else '', (TTX_TIMER() - started) * 1000.0)
+        LOG.info('Model sweep: %d of %d regular vehicles to export%s%s (%.0f ms)', len(types), len(state['regular']),
+                 ', all of them failed before' if failed_only else '',
+                 ', %d not in the client' % len(state['absent']) if state['absent'] else '', (TTX_TIMER() - started) * 1000.0)
         if not types:
             self.write_sweep('models', done=True)
             return None
@@ -7033,6 +7069,9 @@ class Exporter(object):
                 resources = [r for r in (part_resource(component) for _, _, component in static_parts(descr)) if r]
             except Exception as error:
                 return self.models_failed(type_name, sweep, error, None)
+            # The client lists it without (all of) its collision model: nothing to try - no extraction, no file, no failure.
+            missing = self.models_missing(resources)
+            if missing: return self.models_absent(type_name, resources, missing)
             sweep['work'] = {'type': type_name, 'descr': descr, 'resources': resources, 'next': 0, 'bytes': 0,
                              'ms': (TTX_TIMER() - started) * 1000.0,
                              'request': {'schema': 1, 'type': 'vehicle', 'vehicleType': type_name, 'source': 'catalogue',
@@ -7075,6 +7114,7 @@ class Exporter(object):
         key = self.models_key_safe(type_name, work['resources'])
         state['parts'][type_name] = list(work['resources'])
         state['failed'].pop(type_name, None)
+        if type_name in state['returned']: state['returned'].remove(type_name)
         if key is not None: state['keys'][type_name] = key
         return 'built'
 
@@ -7088,6 +7128,73 @@ class Exporter(object):
         state['keys'].pop(type_name, None)
         if resources: state['parts'][type_name] = list(resources)
         return 'failed'
+
+    # ---- NOT IN THE CLIENT (04.10, the user's J29_Nameless and J30_Edelweiss: listed in scripts.pkg, their .havok in no
+    # package - only in a mod pack's res_mods; "2 vehicles failed ... to try them again" every session, and a Start that could
+    # never succeed). The user's decision: such a vehicle is not exported and not asked about, and its model is not read from
+    # res_mods. It is not a failure: kept apart in the progress file ('absent': which resources, whether all of them - 'whole' -
+    # and what it was looked at under), looked at again only when the client's files change. A failure that may pass (a
+    # package that did not read, a model that did not parse) stays a failure, retried on the user's Start as before.
+    def models_client(self):
+        """What a vehicle not in the client was looked at under: the client's snapshot (its id - the files, not the version
+        text); without a snapshot this client's version (fallback_key - never a snapshot's id, so the next snapshot looks again)."""
+        snapshot = self.client()
+        return snapshot.id if snapshot is not None else self.fallback_key()
+
+    def models_missing(self, resources):
+        """Of a vehicle's collision resources, those no package of the client holds - by the collision index, the one
+        model_extract reads from (the packages alone: never res_mods, never a mod's package). None when that is not known now:
+        the index did not build or a package did not read (index_failed) - a failure to try again, not a model the client lacks."""
+        try:
+            self.ensure_packages()
+        except Exception:
+            return None
+        if self.index_failed: return None
+        return [r for r in resources if str(r).rsplit('.', 1)[0] + '.havok' not in self.packages]
+
+    def models_absent(self, type_name, resources, missing):
+        """A vehicle of the model sweep the client has no collision model of (`missing` of its `resources`): no failure and
+        nothing to export - 'absent' is the step's word for it (run_sweep)."""
+        state = self.sweep_states['models']
+        state['absent'][type_name] = {'resources': list(missing), 'whole': len(missing) >= len(resources), 'client': self.models_client()}
+        for field in ('failed', 'keys', 'parts'): state[field].pop(type_name, None)
+        if type_name in state['returned']: state['returned'].remove(type_name)
+        return 'absent'
+
+    def models_review(self, state):
+        """Setup: the vehicles not in the client, looked at again only when the client's files changed (models_client) - by
+        the snapshot's packages, no package read: still missing - they stay; all there - offered again (a file of the sweep's
+        own without its models is exported again: 'returned'). Without a snapshot another client version drops them, and the
+        sweep looks once (models_step). And the failures an earlier build kept for this very reason (0.9.8 and before: 'failed'
+        with their resources in 'parts') become what they are."""
+        snapshot, client = self.client(), self.models_client()
+
+        def lacking(resources):
+            """Those of the resources no package holds; None when not known (no snapshot, a package that did not read)."""
+            if snapshot is None or not resources: return None
+            held = [snapshot.packaged(str(r).rsplit('.', 1)[0] + '.havok') for r in resources]
+            return None if None in held else [r for r, there in zip(resources, held) if not there]
+
+        for type_name, entry in list(state['absent'].items()):
+            if entry.get('client') == client: continue
+            if snapshot is None:
+                del state['absent'][type_name]
+                continue
+            missing = lacking(entry.get('resources'))
+            if missing is None: continue
+            if missing:
+                if len(missing) != len(entry['resources']): entry['whole'] = False
+                entry['resources'], entry['client'] = missing, client
+                continue
+            del state['absent'][type_name]
+            summary = self.vehicles.get(vehicle_id(type_name))
+            if summary and summary.get('source') == 'catalogue' and type_name not in state['returned']: state['returned'].append(type_name)
+        for type_name in list(state['failed']):
+            resources = state['parts'].get(type_name)
+            missing = lacking(resources)
+            if missing:
+                state['absent'][type_name] = {'resources': missing, 'whole': len(missing) >= len(resources), 'client': client}
+                for field in ('failed', 'keys', 'parts'): state[field].pop(type_name, None)
 
     def catalogue_rows(self):
         """Every vehicle of the client, with the exported ones flagged.
@@ -7131,9 +7238,11 @@ class Exporter(object):
         return rows
 
     def flag_rows(self, rows):
-        """The export flags of catalogue rows: 'exported' when the vehicle has a file (BACKLOG 55), and
-        'regular': false on a vehicle no player has in the hangar (regular_vehicle) - the page's list leaves it out."""
+        """The export flags of catalogue rows: 'exported' when the vehicle has a file (BACKLOG 55), 'notInClient' when the
+        client has no collision model of it (never 'exported' then), and 'regular': false on a vehicle no player has in the
+        hangar (regular_vehicle) - the page's list leaves it out."""
         extension = set((self.sweep_states.get('models') or {}).get('extension') or ())
+        absent = (self.sweep_states.get('models') or {}).get('absent') or {}
         for entry in rows:
             if regular_vehicle(entry, extension): entry.pop('regular', None)
             else: entry['regular'] = False
@@ -7148,6 +7257,13 @@ class Exporter(object):
             else: entry.pop('outdated', None)
             entry['exportedAt'] = summary.get('exportedAt') if summary else None
             entry['source'] = summary.get('source') if summary else None
+            # The client has no collision model of it at all (models_absent, 04.10): never 'exported', whatever file an earlier
+            # build's sweep or a click left - the page says why and asks the game for nothing.
+            if (absent.get(str(entry.get('type') or '')) or {}).get('whole'):
+                entry['notInClient'] = True
+                entry['exported'] = False
+                entry.pop('outdated', None)
+            else: entry.pop('notInClient', None)
         return rows
 
     def write_catalogue(self, force=False, rows=None):
