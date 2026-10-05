@@ -2,6 +2,10 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.2 from 0.9.3 on, 2.4.0.1 #950 from 0.7.6, 2.4.0.0 #945 before.
 
+## 0.9.8 (2026-10-04)
+
+- **Shots from point-blank range:** a shot fired from a few metres opens with the hit point in view and the orbit centre - the vehicle's centre or the hit point, whichever is chosen - inside the frame. The view used to be shifted so far that both were off the top of the screen, the floor under the hull stood mid-screen and the camera seemed to turn round a point on the ground. The zoom still does not go below ×1, and the camera stays on the shot's line. Fit on any vehicle brought that close is fixed the same way.
+
 ## 0.9.7 (2026-10-04)
 
 - **⇅:** the camera stays where you put it, in both directions - it no longer jumps to the hit point and back to the shot's view. The shooter's vehicle stands as the record has it at the shot (else as the vehicle on screen stood); a turret or gun you turn on either vehicle is still there when you swap back to it. Clicking the hit's row shows the recorded view and pose again.

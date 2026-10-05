@@ -243,6 +243,12 @@ function checks(ok, web) {
     // the slider still goes below.
     const keptDistance = v.distance; v.distance = 3; v.placeCamera(); v.fit();
     ok('viewer-batch: Fit close up stops at x1, not below', v.camera.zoom === 1, '(' + v.camera.zoom + ')');
+    // 04.10 (the user's shots from 5 m): at x1 the armour does not fit the frame, and the frame used to be shifted to the
+    // "middle" of its projected box - screens below the vehicle, the floor mid-screen. The orbit centre stays in the frame.
+    v.placeCamera();
+    const centreAt = v.target.clone().project(v.camera);
+    ok('viewer-batch: ... and the orbit centre stays inside the frame, on the axis of the screen',Math.abs(centreAt.x) < 1e-6 && Math.abs(centreAt.y) <= .76,
+       '(' + centreAt.x.toFixed(3) + ', ' + centreAt.y.toFixed(3) + ')');
     v.setZoom(.5);
     ok('viewer-batch: and the Zoom slider still goes below x1 by hand', v.camera.zoom === .5, '(' + v.camera.zoom + ')');
     v.distance = keptDistance; v.placeCamera(); v.setZoom(1); e.settle();

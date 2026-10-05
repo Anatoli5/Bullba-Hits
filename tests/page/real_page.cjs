@@ -499,6 +499,76 @@ async function swapSides(browser, folder) {
   } finally { await browser.send('Target.closeTarget', {targetId: p.targetId}); }
 }
 
+// ---- THE FIRST VIEW OF A SHOT FIRED POINT-BLANK (04.10, the user on 0.9.7) -------------------------------------------------------
+// The user: his shots from a few metres were "centred strangely at first: the shot is outside the view, and the camera turns
+// round a point on the floor under the tank". Fit centres the middle of the armour's projected box, which is right while
+// the armour fits the frame; in a clinch it cannot fit (Fit stops at zoom x1 and never backs the camera off), the near
+// edge of the box is projected from under a metre, and its "middle" lay screens below the vehicle - the orbit centre and
+// the contact point went off the top of the frame. Now, when the armour does not fit, the ORBIT CENTRE stands mid-screen
+// (web/viewer.js fit). Here on synthetic hits on the turret's face - the shooter in front of the hull, his gun at the
+// turret's height - from 4, 6 and 12 m; the same on the user's own battle: tests/page/real_scene.cjs.
+async function closeRange(browser, folder) {
+  const LV = 'window.__bullbaViewers[window.__bullbaViewers.length - 1]';
+  const USABLE = 1 - 2 * .12;   // the frame between the tiles' bands (viewer.js FIT_TOP_BAND, FIT_BOTTOM_BAND), in screen half-heights
+  const FRAME = `(() => { const v = ${LV}, h = v.loadedData ? v.loadedData.hit : null, r3 = (x) => Math.round(x * 1000) / 1000;
+    const ndc = (p) => { const q = p.clone().project(v.camera); return [r3(q.x), r3(q.y)]; };
+    return {scene: h ? String(h.id) : null, range: h && h.rangeAtImpact, zoom: r3(v.camera.zoom), pivot: v.pivot, distance: r3(v.distance), yaw: r3(v.yaw), pitch: r3(v.pitch),
+      eyeToPoint: v.point ? r3(v.camera.position.distanceTo(v.point)) : null, atCentre: r3(v.target.distanceTo(v.pivotCentre())), atPoint: v.point ? r3(v.target.distanceTo(v.point)) : null,
+      orbit: ndc(v.target), contact: v.point ? ndc(v.point) : null, shift: r3(v.frameCenter.x / v.distance)}; })()`;
+  const inFrame = (xy) => !!xy && Math.abs(xy[0]) <= USABLE && Math.abs(xy[1]) <= USABLE;
+  // The three hits of this walk: battle pm's two and pm2's one, moved onto the turret's face (part 2, in its own frame:
+  // 0.45 m up its 0.9 m, on the front plate) and fired from 4, 12 and 6 m. The files are put back.
+  const dataFile = (name) => path.join(folder, 'data', name), sources = {};
+  const rewrite = (name, change) => { const text = fs.readFileSync(dataFile(name), 'utf8'); sources[name] = text;
+    const value = JSON.parse(text.slice(text.indexOf('(') + 1, text.lastIndexOf(')'))); change(value[1]);
+    fs.writeFileSync(dataFile(name), 'ArmorInspectorData.receive(' + JSON.stringify(value) + ');\n'); };
+  const onTurret = (hit, range) => { hit.rangeAtImpact = range; hit.attackerPositionAtImpact = [0, 2.15, range + 1.1];
+    Object.assign(hit.points[0], {part: 2, start: [0, .45, 6], end: [0, .45, -5], position: [0, .45, 1.3], direction: [0, 0, -1], normal: [0, 0, 1]}); };
+  rewrite('battles/pm.js', (b) => { onTurret(b.hits[0], 4); onTurret(b.hits[1], 12); });
+  rewrite('battles/pm2.js', (b) => { onTurret(b.hits[0], 6); });
+  let p;
+  try {
+    p = await browser.open(url.pathToFileURL(path.join(folder, 'Viewer.html')).href, INIT);
+    await p.evaluate(DRIVER);
+    await p.evaluate(`(async () => { for (let i = 0; i < 100 && !(document.querySelector('#hits [data-hit]') && window.__bullbaViewers.length && ${LV}.loadedData); i++) await new Promise((r) => setTimeout(r, 100)); await __bt.settle(); })()`);
+    const go = async (js) => { await p.evaluate(js.charAt(0) === '(' ? js : '__bt.act.' + js); await p.evaluate('__bt.settle()'); return p.evaluate(FRAME); };
+    const words = (s) => JSON.stringify({scene: s.scene, zoom: s.zoom, pivot: s.pivot, orbit: s.orbit, contact: s.contact, shift: s.shift, eyeToPoint: s.eyeToPoint});
+    await go("battle('pm')");
+    for (const shot of [{pick: 'hit(0)', range: 4}, {pick: "battle('pm2')", range: 6}]) {
+      const tag = 'close range: a hit on the turret\'s face from ' + shot.range + ' m, ';
+      const A = await go(shot.pick);
+      ok(tag + 'the first view - the orbit centre is the vehicle\'s centre, on the screen\'s axis and inside the frame; the contact point is inside the frame; zoom x1; the camera on the shot\'s line at its range',
+         A.range === shot.range && A.pivot === 'vehicle' && A.atCentre < 1e-6 && Math.abs(A.orbit[0]) < 1e-6 && Math.abs(A.orbit[1]) <= USABLE && inFrame(A.contact) && A.zoom === 1
+         && Math.abs(A.eyeToPoint - shot.range) < 1e-3, words(A));
+      const H = await go("(document.getElementById('pivot-hit').click())");
+      // (Not dead centre: the frame is not moved past the armour's top - no empty band above the turret - so the point
+      // stands a third of the way up; continuous with the framing of a hit whose armour just fits.)
+      ok(tag + 'the orbit round the hit point - the point is the centre and stands inside the frame, nearer its middle than its edge; the camera has not moved',
+         H.pivot === 'hit' && H.atPoint < 1e-6 && Math.abs(H.orbit[0]) < 1e-6 && Math.abs(H.orbit[1]) <= .5 && Math.abs(H.eyeToPoint - shot.range) < 1e-3, words(H));
+      const T = await go(`(() => { const v = ${LV}; v.setOrbit(v.yaw + .6, .3); v.render(); })()`);
+      ok(tag + '... turned by hand - it turns round the point, which stays where it stood', T.atPoint < 1e-6 && Math.abs(T.orbit[0] - H.orbit[0]) < 1e-6 && Math.abs(T.orbit[1] - H.orbit[1]) < 1e-6, words(T));
+      const F = await go("(document.getElementById('fit-camera').click())");
+      ok(tag + '... Fit - still the point, inside the frame, zoom not below x1', F.atPoint < 1e-6 && inFrame(F.orbit) && F.zoom >= 1, words(F));
+      const V = await go("(document.getElementById('pivot-vehicle').click())");
+      ok(tag + '... back round the vehicle\'s centre - the centre and the contact point inside the frame', V.pivot === 'vehicle' && V.atCentre < 1e-6 && Math.abs(V.orbit[1]) <= USABLE && inFrame(V.contact), words(V));
+    }
+    // An ordinary short range: the armour fits the frame, and the framing is what it was - its middle mid-screen.
+    await go("battle('pm')");
+    const N = await go('hit(1)');
+    ok('close range: a hit from 12 m - the armour fits, framed as before: zoomed in past x1, the orbit centre and the contact point inside the frame',
+       N.range === 12 && N.zoom > 1 && N.atCentre < 1e-6 && Math.abs(N.orbit[1]) <= USABLE && inFrame(N.contact), words(N));
+    // A browsed vehicle brought to 4 m and fitted: the same rule, no shot in it.
+    await go('modelTile()'); await go("scope('all')"); await go("list('pm_papa')");
+    await go(`(${LV}.setOrbit(.3, .05), ${LV}.setDistance(4))`);
+    const B = await go("(document.getElementById('fit-camera').click())");
+    ok('close range: a browsed vehicle brought to 4 m and fitted - its centre is the orbit centre and stands inside the frame', B.zoom >= 1 && B.atCentre < 1e-6 && Math.abs(B.orbit[1]) <= USABLE, words(B));
+    ok('close range: no uncaught exception in the page', p.errors.length === 0, p.errors.slice(0, 3).join(' | '));
+  } finally {
+    Object.keys(sources).forEach((name) => fs.writeFileSync(dataFile(name), sources[name]));
+    if (p) await browser.send('Target.closeTarget', {targetId: p.targetId});
+  }
+}
+
 async function main() {
   const started = Date.now();
   const browser = await launch({width: 1600, height: 1000});
@@ -506,12 +576,15 @@ async function main() {
   const folder = stage();
   let page;
   try {
+    // --close: only the first view of a shot fired point-blank.
+    if (process.argv.includes('--close')) { await closeRange(browser, folder); console.log('real page, the close range only (' + browser.product + '): ' + checks + ' checks, ' + failures + ' failed'); return failures ? 1 : 0; }
     // --sides: only the swap's two sides and the shooter row (a quick run while that rule is worked on).
     if (process.argv.includes('--sides')) { await swapSides(browser, folder); console.log('real page, the swap sides only (' + browser.product + '): ' + checks + ' checks, ' + failures + ' failed'); return failures ? 1 : 0; }
     await inheritMatrix(browser, folder);
     if (MATRIX_ONLY) { console.log('real page, the inheritance matrix only (' + browser.product + '): ' + checks + ' checks, ' + failures + ' failed'); return failures ? 1 : 0; }
     await modeState(browser, folder);
     await swapSides(browser, folder);
+    await closeRange(browser, folder);
     page = await browser.open(url.pathToFileURL(path.join(folder, 'Viewer.html')).href, INIT);
     const ev = (js) => page.evaluate(js);
     await ev(DRIVER);

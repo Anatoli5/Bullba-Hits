@@ -13,7 +13,10 @@
  * has its own angles and limits on the pose tile; the shells beside the Shooter tile are the shooter's in both states; ⇅
  * and the Shooter tile stand in one place. On 0.9.6 (BULLBA_WEB=<its web/>) 19 of these are red.
  *
- *   node tests/page/real_scene.cjs [--verbose]      exit 0 pass, 1 fail, 77 skip (no fixture, or no browser)
+ * The second case (04.10, on 0.9.7): the first view of his shots fired point-blank - the comment of closeCase below; its
+ * fixture is tests/fixtures-local/close-range-2026-10-04.
+ *
+ *   node tests/page/real_scene.cjs [--verbose]      exit 0 pass, 1 fail, 77 skip (no fixture at all, or no browser)
  */
 'use strict';
 const fs = require('fs'), path = require('path'), os = require('os'), url = require('url');
@@ -62,15 +65,17 @@ const pose = (s, p) => !!p && Math.abs(s.absolute[0] - p[0]) < 1e-4 && Math.abs(
 const brief = (list) => JSON.stringify(list.map((s) => ({swapped: s.swapped, yaw: +s.yaw.toFixed(3), pitch: +s.pitch.toFixed(3), distance: +s.distance.toFixed(2), zoom: +s.zoom.toFixed(2),
   pose: s.absolute.map((x) => +x.toFixed(2)), motion: s.motion ? s.motion.map((x) => +x.toFixed(2)) : null, swap: s.swap, shells: s.shells, calibre: s.calibre})));
 
-async function main() {
-  if (!fs.existsSync(path.join(DATA, 'index.js'))) { console.log('SKIP: the user\'s battle is not on this machine (python tests/fixtures-local/scene-state-2026-10-04/make.py)'); return 77; }
-  const started = Date.now();
-  const browser = await launch({width: 1600, height: 1000});
-  if (!browser) { console.log('SKIP: no Chrome or Edge found (set BULLBA_BROWSER)'); return 77; }
+// The page as the user has it, on a copy of one of his battles: web/ as Viewer.html beside that battle's data folder.
+function stage(data) {
   const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'bullba-scene-'));
   fs.cpSync(WEB, path.join(folder, 'web'), {recursive: true});
   fs.copyFileSync(path.join(WEB, 'index.html'), path.join(folder, 'Viewer.html'));
-  fs.cpSync(DATA, path.join(folder, 'data'), {recursive: true});
+  fs.cpSync(data, path.join(folder, 'data'), {recursive: true});
+  return folder;
+}
+
+async function swapCase(browser) {
+  const folder = stage(DATA);
   try {
     const p = await browser.open(url.pathToFileURL(path.join(folder, 'Viewer.html')).href, INIT);
     await p.evaluate(DRIVER);
@@ -124,10 +129,91 @@ async function main() {
     ok('the user\'s battle: no uncaught exception in the page', p.errors.length === 0, p.errors.slice(0, 3).join(' | '));
   } catch (e) {
     ok('the run completes', false, String(e && e.stack || e).split('\n').slice(0, 4).join(' | '));
-  } finally {
-    await browser.close();
-    fs.rmSync(folder, {recursive: true, force: true});
-  }
+  } finally { fs.rmSync(folder, {recursive: true, force: true}); }
+}
+
+// ---- THE FIRST VIEW OF A SHOT FIRED POINT-BLANK (04.10, on 0.9.7) --------------------------------------------------------------
+// The user: "in my last battle I shot from the TVP at a Blyskawica from very close. Those shots are centred strangely at
+// first: the shot is outside the view, and the point the camera turns round seems to lie on the floor under the tank - not
+// the tank's centre and not the contact point". His battle on Cliff: three of his shots there were fired from 4.8, 5.0 and
+// 6.1 m. What put the floor mid-screen: Fit centres the middle of the armour's projected box - right while the armour fits
+// the frame; since Fit stops at zoom x1 (25.09) and never backs the camera off (23.09) it does not fit in a clinch, the
+// near edge of the box is projected from half a metre, and its "middle" lay 2.6 screen half-heights below the vehicle.
+// Asked of EVERY hit of the battle at its first view: the orbit centre is the chosen one and stands inside the frame, the
+// contact point is inside the frame, the zoom is not below x1; of the three clinch shots also with the orbit round the hit
+// point, after Fit, and of a browsed vehicle brought to 4 m.
+const CLOSE = path.join(ROOT, 'tests', 'fixtures-local', 'close-range-2026-10-04', 'data');
+const USABLE = 1 - 2 * .12;   // the frame between the tiles' bands (viewer.js FIT_TOP_BAND, FIT_BOTTOM_BAND), in screen half-heights
+const FRAME = `(() => { const v = ${LV}, h = v.loadedData ? v.loadedData.hit : null, r3 = (x) => Math.round(x * 1000) / 1000;
+  const ndc = (p) => { const q = p.clone().project(v.camera); return [r3(q.x), r3(q.y)]; };
+  return {scene: h ? (h.vehicle ? 'vehicle' : h.synthetic ? 'swap' : 'hit') : null, direction: h && h.direction, range: h && h.rangeAtImpact, zoom: r3(v.camera.zoom), pivot: v.pivot, distance: r3(v.distance),
+    eyeToPoint: v.point ? r3(v.camera.position.distanceTo(v.point)) : null, atCentre: r3(v.target.distanceTo(v.pivotCentre())), atPoint: v.point ? r3(v.target.distanceTo(v.point)) : null,
+    orbit: ndc(v.target), contact: v.point ? ndc(v.point) : null, shift: r3(v.frameCenter.x / v.distance)}; })()`;
+const inFrame = (xy) => !!xy && Math.abs(xy[0]) <= USABLE && Math.abs(xy[1]) <= USABLE;
+async function closeCase(browser) {
+  const folder = stage(CLOSE);
+  try {
+    const p = await browser.open(url.pathToFileURL(path.join(folder, 'Viewer.html')).href, INIT);
+    await p.evaluate(DRIVER);
+    await p.evaluate(`(async () => { for (let i = 0; i < 300 && !(document.querySelector('#hits [data-hit]') && window.__viewers.length && ${LV}.loadedData); i++) await new Promise((r) => setTimeout(r, 100)); await __settle(); })()`);
+    const go = async (js) => { await p.evaluate(js); await p.evaluate('__settle()'); return p.evaluate(FRAME); };
+    const count = await p.evaluate("document.querySelectorAll('#hits [data-hit]').length");
+    const first = [];
+    for (let i = 0; i < count; i++) first.push(Object.assign(await go(HIT(i)), {row: i}));
+    const shown = first.filter((s) => s.contact), clinch = shown.filter((s) => s.direction === 'outgoing' && s.range < 7), far = shown.filter((s) => s.range > 100);
+    const words = (s) => 'row ' + s.row + ' ' + s.range.toFixed(1) + ' m: zoom ' + s.zoom + ', orbit centre on screen ' + JSON.stringify(s.orbit) + ', contact ' + JSON.stringify(s.contact) + ', shift ' + s.shift;
+    ok('the user\'s battle on Cliff: (its hits are on screen - ' + shown.length + ' with a contact point, three of his own shots from under 7 m, others from over 100 m)',
+       shown.length >= 20 && clinch.length === 3 && far.length >= 5, JSON.stringify(shown.map((s) => +s.range.toFixed(1))));
+    clinch.forEach((s) => {
+      const tag = 'the user\'s battle on Cliff, his shot from ' + s.range.toFixed(1) + ' m, the first view: ';
+      ok(tag + 'the orbit centre is the vehicle\'s centre and stands inside the frame, on the screen\'s axis - not two screens above it, with the floor mid-screen',
+         s.pivot === 'vehicle' && s.atCentre < 1e-6 && Math.abs(s.orbit[0]) < 1e-6 && Math.abs(s.orbit[1]) <= USABLE, words(s));
+      ok(tag + 'the contact point is inside the frame', inFrame(s.contact), words(s));
+      ok(tag + 'the zoom is not below x1, and the camera stands on the shot\'s line where it stood', s.zoom >= 1 && s.eyeToPoint >= 3 - 1e-6 && s.eyeToPoint < s.range, words(s));
+    });
+    ok('the user\'s battle on Cliff: every hit\'s first view has the orbit centre and the contact point inside the frame, at a zoom of x1 or more',
+       shown.every((s) => s.zoom >= 1 && Math.abs(s.orbit[0]) < 1e-6 && Math.abs(s.orbit[1]) <= USABLE && inFrame(s.contact)),
+       shown.filter((s) => !(s.zoom >= 1 && Math.abs(s.orbit[1]) <= USABLE && inFrame(s.contact))).map(words).join(' | '));
+    ok('the user\'s battle on Cliff: (a shot from over 100 m is framed as before - the armour\'s middle mid-screen, the orbit centre a little above it)',
+       far.every((s) => s.zoom > 10 && Math.abs(s.orbit[1]) < .5 && s.shift < 0), far.map(words).join(' | '));
+    // Both orbit centres, as he says: round the hit point the same shift put the point off the frame.
+    for (const s of clinch) {
+      const tag = 'the user\'s battle on Cliff, his shot from ' + s.range.toFixed(1) + ' m: ';
+      await go(HIT(s.row));
+      const H = await go("document.getElementById('pivot-hit').click()");
+      ok(tag + 'the orbit round the hit point - the point is the orbit centre and stands mid-frame', H.pivot === 'hit' && H.atPoint < 1e-6 && inFrame(H.orbit) && Math.abs(H.orbit[0]) < 1e-6, words(Object.assign({row: s.row}, H)));
+      const F = await go("document.getElementById('fit-camera').click()");
+      ok(tag + '... Fit keeps it there', F.atPoint < 1e-6 && inFrame(F.orbit) && F.zoom >= 1, words(Object.assign({row: s.row}, F)));
+      const V = await go("document.getElementById('pivot-vehicle').click()");
+      ok(tag + '... and back round the vehicle\'s centre: the centre and the contact point inside the frame', V.pivot === 'vehicle' && V.atCentre < 1e-6 && Math.abs(V.orbit[1]) <= USABLE && inFrame(V.contact), words(Object.assign({row: s.row}, V)));
+    }
+    // Not the shot's own trouble: any vehicle brought that close and fitted had the floor mid-screen.
+    await go(HIT(far[0].row));
+    await go("document.getElementById('model-tile').click()");
+    await go("document.querySelector('#vehicles [data-vehicle][data-exported=\"true\"]').click()");
+    await go(`${LV}.setDistance(4)`);
+    const B = await go("document.getElementById('fit-camera').click()");
+    ok('the user\'s battle on Cliff: a browsed vehicle brought to 4 m and fitted - its centre is the orbit centre and stands inside the frame',
+       B.scene === 'vehicle' && B.zoom >= 1 && B.atCentre < 1e-6 && Math.abs(B.orbit[1]) <= USABLE, JSON.stringify(B));
+    ok('the user\'s battle on Cliff: no uncaught exception in the page', p.errors.length === 0, p.errors.slice(0, 3).join(' | '));
+  } catch (e) {
+    ok('the close-range run completes', false, String(e && e.stack || e).split('\n').slice(0, 4).join(' | '));
+  } finally { fs.rmSync(folder, {recursive: true, force: true}); }
+}
+
+// Each case runs on its own fixture; one that is not on this machine says SKIP, and with none the run is a skip (77).
+async function main() {
+  const cases = [[DATA, 'scene-state-2026-10-04', swapCase], [CLOSE, 'close-range-2026-10-04', closeCase]].filter(function (c) {
+    if (fs.existsSync(path.join(c[0], 'index.js'))) return true;
+    console.log('SKIP: the user\'s battle of ' + c[1] + ' is not on this machine (python tests/fixtures-local/' + c[1] + '/make.py)');
+    return false;
+  });
+  if (!cases.length) return 77;
+  const started = Date.now();
+  const browser = await launch({width: 1600, height: 1000});
+  if (!browser) { console.log('SKIP: no Chrome or Edge found (set BULLBA_BROWSER)'); return 77; }
+  try { for (const c of cases) await c[2](browser); }
+  finally { await browser.close(); }
   console.log('real scene (' + browser.product + '): ' + checks + ' checks, ' + failures + ' failed, ' + ((Date.now() - started) / 1000).toFixed(1) + ' s');
   return failures ? 1 : 0;
 }

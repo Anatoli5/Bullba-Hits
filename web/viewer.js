@@ -834,7 +834,29 @@
     // horizontally and from the main armour's middle vertically.
     function limit(box,margin){var z=150,w=Math.max(-box[0],box[1]),h=Math.max(midY-box[2],box[3]-midY);if(w>0)z=Math.min(z,(1-margin)/w);if(h>0)z=Math.min(z,(halfUsable-margin)/h);return z;}
     var zoom=keepZoom?held:Math.max(1,Math.min(150,Math.min(limit(main,FIT_MARGIN),limit(all,0))));
-    this.frameCenter.set(midY*this.distance,centreY);
+    // WHAT STANDS MID-SCREEN WHEN THE ARMOUR DOES NOT FIT (04.10). The shift above centres the middle of the main armour -
+    // right while the armour is inside the frame, which the zoom just picked sees to. It is not when the zoom may not go
+    // as far out as that: Fit stops at x1 (25.09) and never backs the camera off (23.09), so in a clinch - a shot from
+    // 5 m, a camera 4 m from the hull - the armour runs off the frame, and the "middle" of a box whose near edge is
+    // projected from half a metre lies far below the vehicle: 2.6 screen half-heights on the user's own shots. The view
+    // was shifted by that much - the orbit centre and the hit point stood two screens above the frame, the middle of
+    // the screen showed the floor under the hull, and the camera seemed to turn round a point on the ground. Zoom
+    // lock with a zoom the armour does not fit at is the same case.
+    // Then the ORBIT CENTRE stands mid-screen - the vehicle's centre or the hit point, whichever is chosen - moved only
+    // as far as keeps the frame on the armour (no empty band past its top or bottom) and the hit point inside the
+    // frame; it never leaves the frame itself. Vertical only, as the shift is: horizontally the orbit centre stays on
+    // the screen's axis (13.09).
+    var shift=midY,room=(halfUsable-FIT_MARGIN)/zoom;
+    if((main[3]-main[2])/2>room+1e-9){
+      var within=function(value,lo,hi){return lo>hi?(lo+hi)/2:Math.max(lo,Math.min(hi,value));};
+      var seen=function(p){local.copy(p).applyMatrix4(cam.matrixWorldInverse);return local.z<-.05?v.copy(p).project(cam).y:null;};
+      var centre=seen(this.target);if(centre===null)centre=0;
+      shift=within(centre,main[2]+room,main[3]-room);
+      var hit=this.point?seen(this.point):null;
+      if(hit!==null)shift=within(shift,hit-room,hit+room);
+      shift=within(shift,centre-room,centre+room);
+    }
+    this.frameCenter.set(shift*this.distance,centreY);
     this.scaleFor(zoom);this.showZoom(zoom);
   };
   // Switching auto-frame on holds the size that is on screen right now: the scale is taken from a fresh framing.
