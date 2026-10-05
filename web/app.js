@@ -6154,7 +6154,12 @@
   // Verdict log (user, 14.09): one console line per recorded contact point - the server's result as a fact next to our
   // estimate along the drawn line. The game writes the page's console into game.log; tools/verdicts_from_log.py
   // tabulates the lines. Once per hit and shell, never on camera moves.
-  var verdictLines=0,verdictQueue=[],verdictDone={},verdictTimer=null,verdictBusy=false;
+  // The automatic pass keeps its books here (04.10): verdictBook - per battle, the revision of its file and the points
+  // written for it (the header's number); verdictOpen - per battle and revision still in the queue, how many hits are left
+  // and which could not be finished; verdictSaved - the page's hook, told when the last hit of such a pair is through
+  // (the mark in localStorage, below the pass; null where there is no page: tools/verdicts_offline.cjs cuts this one line
+  // and the functions of the pass out of the file, and a store of its own would have to be cut out with them).
+  var verdictLines=0,verdictQueue=[],verdictDone={},verdictTimer=null,verdictBusy=false,verdictBook={},verdictOpen={},verdictSaved=null,VERDICT_STEP=16;
   // A part's name on a log line: partNames, a wheel of a wheeled vehicle as the crit list names it (wheel<k-1>).
   function logPart(id,parts){var p=(parts||[]).find(function(q){return q&&q.id===id;});if(p&&p.prefab)return p.prefabKind||'prefab';return id<0?'wheel'+(-id-1):partNames[id]||id;}
   // An armoured prefab of the target on a log line (review of d1b372b): where it stood - prefabPose=<kind>/<hit|default|
@@ -6218,10 +6223,19 @@
     verdicts.forEach(function(v){verdictLine(current.id,activeHit,v,shell,'view',viewer.loadedData);});
   }
   // Every hit of a loaded battle, automatically (user, 14.09: the more data the better the analysis): the hit's own
-  // shell, its models from the cache, a throwaway flat ballistics engine, one hit every 150 ms so the page stays responsive.
+  // shell, its models from the cache, a throwaway flat ballistics engine, one hit per frame-sized step (VERDICT_STEP).
   // Nothing is displayed and nothing is sent anywhere - the lines go to the console, in the game to game.log.
-  function queueVerdicts(battle){
-    (battle.hits||[]).forEach(function(h){var key=battle.id+'/'+h.id+'/'+ArmorCrits.key(h);if(verdictDone[key]||!(h.points||[]).some(function(p){return p.status==='resolved';}))return;verdictDone[key]=true;verdictQueue.push({battle:battle,hit:h});});
+  // `rev`: the revision of the battle's file in the index (the mod's 'rev': new whenever the file was written with other
+  // bytes). With it a hit is queued once per revision, the hits of an older revision still waiting go, and verdictSaved
+  // hears when the battle is through. Without it (an index of an earlier build, the offline tool): once per hit and crit
+  // key, as before. `only` (optional): the ids of the hits to queue - the ones a pass before could not finish.
+  function queueVerdicts(battle,rev,only){
+    var tag=rev?battle.id+'|'+rev:null,book=verdictBook[battle.id],added=0;
+    if(!book||book.rev!==(rev||null))book=verdictBook[battle.id]={rev:rev||null,n:0};
+    if(tag){verdictQueue=verdictQueue.filter(function(j){return j.battle.id!==battle.id||j.tag===tag;});
+      Object.keys(verdictOpen).forEach(function(k){if(k!==tag&&verdictOpen[k].id===battle.id)delete verdictOpen[k];});}
+    (battle.hits||[]).forEach(function(h){var key=battle.id+'/'+h.id+'/'+(rev||ArmorCrits.key(h));if(verdictDone[key]||(only&&only.indexOf(h.id)===-1)||!(h.points||[]).some(function(p){return p.status==='resolved';}))return;verdictDone[key]=true;added++;verdictQueue.push({battle:battle,hit:h,tag:tag,key:key,rev:rev||null});});
+    if(tag&&added){var open=verdictOpen[tag]||(verdictOpen[tag]={id:battle.id,rev:rev,n:0,left:[]});open.n+=added;}
     // The hits on one set of target models go one after another (stable: the groups in the order they first
     // appear, the hits of a group in queue order). local-data.js keeps the last sixteen models, and a queue in
     // hit order read the same model files again and again as the targets alternated. Written out here and not
@@ -6230,18 +6244,27 @@
     verdictQueue=verdictQueue.map(function(job,i){var models=((job.hit.target||{}).parts||[]).map(function(p){return p.modelKey||'';}).join(',');
       if(groups[models]===undefined)groups[models]=count++;return [groups[models],i,job];})
       .sort(function(a,b){return a[0]-b[0]||a[1]-b[1];}).map(function(t){return t[2];});
-    verdictStatus();if(!verdictTimer)verdictTimer=setTimeout(drainVerdicts,150);
+    verdictStatus();if(!verdictTimer)verdictTimer=setTimeout(drainVerdicts,0);
   }
+  // ONE HIT A STEP, AND NO WAITING FOR THE USER (04.10). The pass used to wait 150 ms between two hits and for as long as the
+  // scene was "busy" - a drag, the cursor over it, the aim loop of ⌖ alive (it said so every frame): his battle of 104 hits
+  // took 74.9 s in the game, 60 s of it waiting. Measured in the client's own browser (outputs/stats-log-pass-2026-10-04.md):
+  // a hit costs the main thread under a millisecond (2.1 ms with no worker), and the frames of an orbit are the same with
+  // the pass running flat out as without it. So nothing the user does holds it - not the pointer, not the aim loop; only a
+  // hidden page waits. The step is paced all the same: a hit starts VERDICT_STEP ms after the one before it (about 60 a
+  // second, a battle of 100 hits in two seconds) - what the game pays for a burst of several hundred console lines a second
+  // into game.log is not known. A plain timer, so the pass runs when no frame is drawn. Its own time on the main thread is
+  // told to the frame loop (BullbaFrame.note 'verdicts'): the line `Bullba Hits frames` names it if it ever holds a frame.
   function drainVerdicts(){
     verdictTimer=null;if(verdictBusy||!verdictQueue.length||!window.ArmorViewer||!window.ArmorBallistics)return;
-    // The diagnostics wait while the user is working: a hidden page or a drag gets the frame, not a BVH build. Since 28.09
-    // (frame-sync) also any work of the scene in the last second - an orbit, the aim loop, the cursor over it: a hit's models
-    // are parsed on the main thread, and game.log put three of the emulation's slow frames beside this pass.
-    if(document.hidden||(viewer&&viewer.dragging)||(host.busy&&host.busy(1000))){verdictTimer=setTimeout(drainVerdicts,150);return;}
+    if(document.hidden){verdictTimer=setTimeout(drainVerdicts,150);return;}
     verdictBusy=true;
-    var job=verdictQueue.shift(),battle=job.battle,hit=job.hit;
+    var job=verdictQueue.shift(),battle=job.battle,hit=job.hit,started=Date.now(),complete=true;
+    var F=window.BullbaFrame&&window.BullbaFrame.note?window.BullbaFrame:null;
     ArmorInspectorData.sceneFor(battle,hit).then(function(data){
-      if(data.geometryIncomplete)return;
+      // A scene without all its models (one still on its way, one that could not be read) is not this hit's last word.
+      if(data.geometryIncomplete){complete=false;return;}
+      var at=F?F.now():0;
       // A hit whose shell the record does not name is logged with the shell THE PAGE WOULD SHOW - the one
       // ArmorShotContext.assume picks (the shells of the hit's own type, the damage band, then the deepest
       // penetration) - not with the first of the list, which was a different shell from the one on screen
@@ -6257,14 +6280,61 @@
       // cast through it here save, and the verdicts are the same. Built and cast in the page's worker when there is one
       // (ArmorViewer.verdictsFor, 28.09: the build was the pass's cost on the frame), else here.
       if(!shell)return;
-      return ArmorViewer.verdictsFor(data,ArmorViewer.points(hit,context),shell).then(function(list){
-        list.forEach(function(v){verdictLine(battle.id,hit,v,shell,context.index>=0?'auto':'auto-shell-guess',data);});});
-    }).catch(function(e){if(window.console)console.warn('Bullba Hits verdict: hit '+hit.id+' skipped: '+e.message);})
-      // The pass has nothing left: the worker drops the models it was sent for it (sent again with the next battle's).
-      .then(function(){verdictBusy=false;verdictStatus();if(verdictQueue.length)verdictTimer=setTimeout(drainVerdicts,150);else ArmorBallistics.release('models');});
+      var cast=ArmorViewer.verdictsFor(data,ArmorViewer.points(hit,context),shell);
+      if(F)F.note('verdicts',at);
+      return cast.then(function(list){
+        var at=F?F.now():0,book=verdictBook[battle.id];
+        list.forEach(function(v){verdictLine(battle.id,hit,v,shell,context.index>=0?'auto':'auto-shell-guess',data);});
+        if(book&&book.rev===job.rev)book.n+=list.length;   // a revision the queue has dropped is not counted
+        if(F)F.note('verdicts',at);});
+    }).catch(function(e){complete=false;if(window.console)console.warn('Bullba Hits verdict: hit '+hit.id+' skipped: '+e.message);})
+      .then(function(){
+        verdictBusy=false;
+        // The books of the battle's revision: a hit that could not be finished is named, and may be queued again; the
+        // last hit through tells the page (verdictSaved). A revision the queue has dropped meanwhile has no books.
+        var open=job.tag?verdictOpen[job.tag]:null;
+        if(open){if(!complete){open.left.push(hit.id);delete verdictDone[job.key];}
+          if(--open.n<=0){delete verdictOpen[job.tag];if(verdictSaved)verdictSaved(open);}}
+        verdictStatus();
+        // The pass has nothing left: the worker drops the models it was sent for it (sent again with the next battle's).
+        if(verdictQueue.length)verdictTimer=setTimeout(drainVerdicts,Math.max(0,VERDICT_STEP-(Date.now()-started)));else ArmorBallistics.release('models');});
   }
-  // Header line: the verdict log is on, with the count so far; the (i) explains what it is for.
-  function verdictStatus(){var e=$('connection');if(!e)return;e.textContent='Statistics log \u00b7 '+verdictLines+' points'+(verdictQueue.length?' \u00b7 checking '+verdictQueue.length+' more':'');}
+  // Header line: the points written for the battle that is open - by this pass, or by an earlier one whose mark says so -
+  // and, while the pass runs, how many hits are still queued; the (i) explains what it is for.
+  function verdictStatus(){var e=$('connection');if(!e)return;var book=current?verdictBook[current.id]:null;
+    e.textContent='Statistics log'+(book?' \u00b7 '+book.n+' points':'')+(verdictQueue.length?' \u00b7 checking '+verdictQueue.length+' more':'');}
+  // THE MARK "ALREADY WRITTEN" (04.10, the user: never compute again what is computed). One object in localStorage,
+  // bullba-verdicts: {v, stamp, battles: {<battle id>: {r, n, left}}} - r the revision of the battle's file the pass went
+  // through, n the points it wrote, left the hits it could not finish (a scene without all its models). What a line is made
+  // of decides what the mark must not outlive: the battle's file (its revision: new when the mod wrote other bytes - a
+  // battle prepared again, fill-ins, a model's key), the page's build and the records' build (the stamp; another one drops
+  // every mark). A battle whose index row has no revision is never marked. Kept here, outside the functions of the pass:
+  // tools/verdicts_offline.cjs cuts those out, and has no store. No localStorage, or one that throws: no mark is read or
+  // written and every opening checks its battle, as before 04.10. Losing the store (the game's update of 01.10 wiped the
+  // browser's profile) costs one pass over a battle that is opened again.
+  var VERDICT_STORE='bullba-verdicts';
+  function verdictStamp(){return ($('app-version').getAttribute('data-version')||'dev')+'|'+(recordsVersion||'-');}
+  function verdictMarks(){
+    try{var s=JSON.parse(window.localStorage.getItem(VERDICT_STORE));if(s&&s.v===1&&s.stamp===verdictStamp()&&s.battles&&typeof s.battles==='object'&&!Array.isArray(s.battles))return s;}catch(e){}
+    return {v:1,stamp:verdictStamp(),battles:{}};
+  }
+  verdictSaved=function(open){
+    var book=verdictBook[open.id];if(!open.rev||!book||book.rev!==open.rev)return;
+    try{var s=verdictMarks(),row={r:open.rev,n:book.n};if(open.left.length)row.left=open.left.slice();
+      s.battles[open.id]=row;
+      // The marks of battles that are no longer in the list go with them.
+      if(battleSummaries.length)Object.keys(s.battles).forEach(function(id){if(!battleSummary(id))delete s.battles[id];});
+      window.localStorage.setItem(VERDICT_STORE,JSON.stringify(s));}catch(e){}
+  };
+  // The battle just read, for the pass: all of it, or - its revision already marked - nothing but the hits left for later;
+  // the header then takes the battle's points from the mark.
+  function logBattle(battle,rev){
+    var mark=rev?verdictMarks().battles[battle.id]:null;
+    if(!mark||mark.r!==rev||!(mark.n>=0))return queueVerdicts(battle,rev);
+    var book=verdictBook[battle.id];
+    if(!book||book.rev!==rev)verdictBook[battle.id]={rev:rev,n:Number(mark.n)||0};
+    if(Array.isArray(mark.left)&&mark.left.length)queueVerdicts(battle,rev,mark.left);else verdictStatus();
+  }
   // THE SHOT RANGE (user, 24.09; audit VIEW-03): how far the shell flies - from the camera to the HIT POINT, not to the
   // orbit centre - which the shell, the panels, the map and the verdict line are all taken at. The viewer owns the figure
   // (viewer.shotRange); switching the orbit centre keeps the camera and so keeps it.
@@ -7549,7 +7619,7 @@
       // Another battle is read from its own player's seat again, and the model of a vehicle without hits in
       // the battle that is being left goes with it.
       if(!sameBattle){focusVehicle=null;focusStamp=null;focusScene=null;focusSceneKey=null;focusNote='';}
-      current=b;ArmorShotTelemetry.load(b.shotEvents||[]);queueVerdicts(b);
+      current=b;ArmorShotTelemetry.load(b.shotEvents||[]);logBattle(b,rev);
       var keptEvent=keep&&selected&&!kept?eventIn(b,selected):null;
       var existing=keep&&selected&&(b.hits.some(function(h){return h.id===selected;})||!!keptEvent);
       if(!existing)selected=null;

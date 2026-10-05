@@ -2,12 +2,15 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.2 from 0.9.3 on, 2.4.0.1 #950 from 0.7.6, 2.4.0.0 #945 before.
 
-## Unreleased
+## 0.9.7 (2026-10-04)
 
 - **⇅:** the camera stays where you put it, in both directions - it no longer jumps to the hit point and back to the shot's view. The shooter's vehicle stands as the record has it at the shot (else as the vehicle on screen stood); a turret or gun you turn on either vehicle is still there when you swap back to it. Clicking the hit's row shows the recorded view and pose again.
 - **⇅:** the vehicle that was the shooter is a vehicle like any other now: the pose tile shows its own angles and gun range (it said "from the recorded pose" and let the gun turn ±45°).
 - **Shooter row:** the shell icons beside the Shooter tile stay after ⇅ and are the new shooter's own shells, and the ⇅ button and the Shooter tile no longer move when the row's contents change - ⇅ can be pressed again and again without moving the pointer.
 - **Pose tile:** the note about the recorded shot's hidden marks shows only on a scene that has a recorded shot.
+- **Statistics log:** the check of a battle's hits no longer stops while you rotate the scene, keep the cursor over it or aim with ⌖ on, and takes a hit every 16 ms instead of every 150 ms - a battle of 100 hits is checked in about two seconds.
+- **Statistics log:** a battle is checked once. Opening the page or the battle again writes nothing a second time; a battle is checked again when its file changes or the mod is updated. The header shows the points of the open battle.
+- **Statistics log (offline):** `tools/verdicts_offline.cjs` runs again (it stopped with "host is not defined" since 0.9.2).
 
 ## 0.9.6 (2026-10-04)
 

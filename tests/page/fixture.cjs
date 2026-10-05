@@ -15,6 +15,13 @@
  * and armour, parent 3), hit on the crest raised to its "1 position layer" (3.3 degrees).
  *
  *   require('./fixture.cjs').write(folder)   // writes folder/data/**
+ *
+ * For the Statistics log's pass (04.10; tests/page/stats_pass.cjs, frame_cost.cjs, tests/test_verdicts_offline.cjs), asked
+ * for by options - the plain call writes what it always wrote:
+ *   write(folder, {revs: true})    every battle of the index carries a revision ('rev', as the mod's index does)
+ *   write(folder, {bulk: N})       one more battle, pmx, last in the list: N incoming hits on Papa
+ *   write(folder, {broken: true})  one more battle, pmb: its second hit's hull model is not on disk - the scene of that
+ *                                  hit is incomplete; options.late = {file, text} is that model's file, for the test to write
  */
 'use strict';
 const fs = require('fs'), path = require('path'), crypto = require('crypto');
@@ -76,7 +83,8 @@ function payload(key, value) {
   return 'ArmorInspectorData.receive(' + json + ');\n';
 }
 
-function write(folder) {
+function write(folder, options) {
+  options = options || {};
   const data = path.join(folder, 'data');
   ['battles', 'models', 'vehicles', 'ttx'].forEach(function (d) { fs.mkdirSync(path.join(data, d), {recursive: true}); });
   const put = function (file, key, value) { fs.writeFileSync(path.join(data, file), payload(key, value), 'ascii'); };
@@ -203,11 +211,25 @@ function write(folder) {
     start: [0, 0.6, 0], end: [0, -0.6, 0], position: [0, 0.25, 0], direction: [0, -1, 0], normal: [0, 1, 0], parentPart: 3}];
   battles.push(Object.assign(BATTLE('pm6', 'Synthetic ridge', T0 - 10800, [pm6hit]),
     {roster: ROSTER.concat([{id: 37, name: 'Xray', type: 'italy:Xray', team: 1, player: 'bot3', maxHealth: 1900, defaultMaxHealth: 1900}])}));
+  if (options.bulk > 0) {
+    const many = [];
+    for (let i = 1; i <= options.bulk; i++) many.push(HIT('pmx-' + i, 31, 30, 'incoming', T0 - 21000 + i));
+    battles.push(BATTLE('pmx', 'Synthetic range', T0 - 21600, many));
+  }
+  if (options.broken) {
+    const lost = HIT('pmb-2', 32, 30, 'incoming', T0 - 24900), hull = lost.target.parts[1];
+    const model = {kind: 'client-shot-collision', resource: 'vehicles/synthetic/collision_client/hull_late.model',
+      groups: [box([-1.4, 0.4, -3.0], [1.4, 1.7, 3.0], 'armor_1')], note: 'late'};
+    hull.modelKey = crypto.createHash('sha256').update(JSON.stringify(model)).digest('hex');
+    model.sha256 = hull.modelKey; hull.resource = model.resource;
+    options.late = {file: path.join(data, 'models', hull.modelKey + '.js'), text: payload('model:' + hull.modelKey, model)};
+    battles.push(BATTLE('pmb', 'Synthetic quarry', T0 - 25200, [HIT('pmb-1', 31, 30, 'incoming', T0 - 25000), lost]));
+  }
   battles.forEach(function (b) { put('battles/' + b.id + '.js', 'battle:' + b.id, b); });
   put('index.js', 'index', {application: 'local.armor_inspector', version: 'synthetic', updatedAt: T0 + 9000,
     battles: battles.map(function (b) {
-      return {id: b.id, map: b.map, startedAt: b.startedAt, hits: b.hits.length,
-              vehicle: {name: 'Papa', type: 'germany:Papa', level: 10, 'class': 'heavyTank', nation: 'germany', role: 'role_HT_break'}};
+      return Object.assign(options.revs ? {rev: 'fx.' + (battles.indexOf(b) + 1)} : {}, {id: b.id, map: b.map, startedAt: b.startedAt, hits: b.hits.length,
+              vehicle: {name: 'Papa', type: 'germany:Papa', level: 10, 'class': 'heavyTank', nation: 'germany', role: 'role_HT_break'}});
     })});
 
   // Characteristics files: each type's stock health (Romeo's is the one the swapped enemy gets; Tango's is read only

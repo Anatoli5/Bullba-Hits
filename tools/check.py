@@ -13,7 +13,8 @@ it before a build and refuses to build on red. Suites (they run side by side, ~1
   version   VERSION equal in exporter.py and mod_local_armor_inspector.py; CHANGELOG.md has its section and no
             heading twice
   pytest    tests/test_*.py under CPython 3 (the exporter, the records, the page channel, the recorder on stubs)
-  node      tests/*.cjs: ballistics against the client's functions, shot context, page channel, compact data reader
+  node      tests/*.cjs: ballistics against the client's functions, shot context, page channel, compact data reader,
+            tools/verdicts_offline.cjs end to end on a synthetic folder (it was dead from 28.09 to 04.10, unnoticed)
   page      tests/page/*: aim3_dom (app.js on a stub DOM: wiring, emulation, Config, the path matrix with painter
             counts), tooltips_dom, gs_page, viewer_batch (the real viewer.js + screen-armor.js on a counting fake
             renderer: passes per zoom/distance notch, shot range, camera reports, picking), ttx_samples and ttx_accept
@@ -26,7 +27,10 @@ it before a build and refuses to build on red. Suites (they run side by side, ~1
             tests/page/gpu_wheels.cjs: the same for the wheels of a wheeled vehicle (synthetic, and the bench's EBRs);
             tests/page/gpu_prefabs.cjs: the armoured prefabs (the CAV mod. 71's crest, the AS-XX 40 t's containers)
             tests/page/frame_cost.cjs: the emulation's frame cost - the live ring's JS per frame while the cursor and the
-            shooter move and at rest, on a heavy model's ray cost, within a budget; its figure the exact integral at rest
+            shooter move and at rest, on a heavy model's ray cost, within a budget; its figure the exact integral at rest;
+            the Statistics log's pass under an orbit;
+            tests/page/stats_pass.cjs: the Statistics log's pass - a battle written once (the mark, a reload), its pace,
+            the aim loop alive, what computes a battle again; and the user's battle of 04.10 (a local fixture)
   py27      tests/py27/*.py under the client's own python27.dll (the recorder through two battles, ...)
   installer (only with --installer) tests/installer_cleanup_check.py: a test build of the installer into a fake game
 
@@ -255,6 +259,13 @@ def check_browser(result):
     code, out, _ = run([exe, 'tests/page/frame_cost.cjs'], timeout=300)
     passed = result.passed
     harness_lines(result, 'frame_cost', code, out)
+    total = re.search(r'(\d+) checks, (\d+) failed', out)
+    if total: result.passed = passed + int(total.group(1)) - int(total.group(2))
+    # The Statistics log's pass (04.10): written once, its pace, no waiting for the user; and the user's own battle of
+    # 04.10 (tests/fixtures-local/stats-log-2026-10-04: absent, that part of the test says SKIP).
+    code, out, _ = run([exe, 'tests/page/stats_pass.cjs'], timeout=300)
+    passed = result.passed
+    harness_lines(result, 'stats_pass', code, out)
     total = re.search(r'(\d+) checks, (\d+) failed', out)
     if total: result.passed = passed + int(total.group(1)) - int(total.group(2))
 

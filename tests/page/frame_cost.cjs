@@ -31,6 +31,9 @@
  *     integral over the same ring gives (liveAimProbability), text for text;
  *   - a shot's own figure, fired at rest and on the move, lands on its tile as the one-piece integral over its ring;
  *   - no uncaught exception.
+ * THE STATISTICS LOG'S PASS UNDER AN ORBIT (04.10): the pass no longer waits for the user to stop. A battle of 450 hits is
+ * opened and the scene dragged: the pass goes on, the frames of the drag are no worse than without it, and each of its
+ * steps tells the frame loop its time (the rest of the pass's checks: tests/page/stats_pass.cjs).
  * The budget applies to the plain run only (no --throttle, no --data).
  *
  *   node tests/page/frame_cost.cjs [--verbose] [--measure] [--throttle=N] [--ray-us=N] [--gpu] [--data=<data folder>]
@@ -64,6 +67,9 @@ const BUDGET_MS = 10, SPIKE_MS = 40;
 // frame time, over the steady middle of a drag / a cursor circle. Measured 0.04-0.05 / 0.05-0.19 after, 0.37-0.39 / 0.36-0.59
 // before (scratch stand, cadences 7 and 16 ms).
 const EVEN_CV = 0.15, EVEN_CV_RING = 0.3;
+// The Statistics log's pass under an orbit (04.10): the hits of the battle opened for it (about 8 s of pass at a hit per
+// frame-sized step), the hits it must get through during a 2.5 s drag, and how long one of its steps may hold the main thread.
+const PASS_HITS = 450, PASS_DRAG_HITS = 60, PASS_STEP_MS = 8;
 
 let checks = 0, failures = 0;
 function ok(name, cond, extra) {
@@ -77,7 +83,7 @@ function stage() {
   fs.cpSync(WEB, path.join(folder, 'web'), {recursive: true});
   fs.copyFileSync(path.join(WEB, 'index.html'), path.join(folder, 'Viewer.html'));
   if (DATA) fs.symlinkSync(path.resolve(DATA), path.join(folder, 'data'), 'junction');
-  else fixture.write(folder);
+  else fixture.write(folder, {bulk: PASS_HITS});   // pmx: the battle whose Statistics log pass runs under the last orbit
   return folder;
 }
 
@@ -394,6 +400,37 @@ async function main() {
     ok('the ring moves by even steps while the cursor circles: CV at most ' + EVEN_CV_RING + ', at most two repeated pictures',
        ringEven.n > 60 && ringEven.cv <= EVEN_CV_RING && ringEven.repeats <= 2, JSON.stringify(ringEven));
     if (MEASURE) console.log('evenness: orbit ' + JSON.stringify(orbitEven) + ', ring ' + JSON.stringify(ringEven));
+    // ---- the Statistics log's pass while the scene is orbited (04.10) -------------------------------------------------------
+    // The user: the pass "stands still while the mouse is over the scene". It waited for a pause in the user's work (a drag,
+    // the aim loop, the cursor) and now waits for nothing: a battle of PASS_HITS hits is opened and the scene dragged at once.
+    // Asked: the pass goes on under the drag; the frames of that drag are no worse than the frames of the same drag with
+    // nothing queued; the pass tells the frame loop its own time (BullbaFrame.note 'verdicts') and no step of it is long.
+    if (!DATA) {
+      await ev('ArmorBallistics.useWorker(true)');
+      await ev(`(() => { const F = window.BullbaFrame, note = F.note; window.__vnotes = []; F.note = function (name, since) { const d = note.call(F, name, since); if (name === 'verdicts') window.__vnotes.push(d); return d; }; return true; })()`);
+      const written = () => page.console.filter((l) => l.indexOf('Bullba Hits verdict: battle=pmx ') >= 0 && l.indexOf(' mode=auto') > 0).length;
+      const drag = async () => {
+        await send('mouseMoved', dx0, dy0); await new Promise((r) => setTimeout(r, 150));
+        await send('mousePressed', dx0, dy0); await new Promise((r) => setTimeout(r, 60));
+        const rec = await drawn(() => sweep(2500, (s) => [dx0 - 400 * s, dy0], true));
+        await send('mouseReleased', dx0 - 1000, dy0);
+        const gaps = []; for (let i = 1; i < rec.frames.length; i++) gaps.push(rec.frames[i] - rec.frames[i - 1]);
+        return {frames: gaps.length, slow: gaps.filter((g) => g > 25).length, p50: pct(gaps, 50), p95: pct(gaps, 95), max: Math.max(0, ...gaps)};
+      };
+      await ev(`(() => { if (document.getElementById('battle-list').hidden) document.getElementById('battle-pick').click(); document.querySelector('#battle-list [data-id="pmx"]').click(); return true; })()`);
+      await new Promise((r) => setTimeout(r, 1200));   // the battle's own scene is on screen: its load is not the drag's
+      const w0 = written(), under = await drag(), w1 = written();
+      for (let i = 0; i < 300 && written() < PASS_HITS; i++) await new Promise((r) => setTimeout(r, 100));
+      await new Promise((r) => setTimeout(r, 500));
+      const alone = await drag(), notes = await ev('window.__vnotes'), worst = Math.max(0, ...notes);
+      if (MEASURE) console.log('pass under an orbit: ' + (w1 - w0) + ' hits in the drag; frames with the pass ' + JSON.stringify(under) + ', without ' + JSON.stringify(alone) + '; ' + notes.length + ' steps noted, the longest ' + fix(worst) + ' ms');
+      ok('Statistics log: the pass goes on while the scene is dragged (at least ' + PASS_DRAG_HITS + ' hits in 2.5 s; before 04.10 none)', w1 - w0 >= PASS_DRAG_HITS && written() === PASS_HITS, '(' + (w1 - w0) + ' hits in the drag, ' + written() + ' of ' + PASS_HITS + ' in all)');
+      // A machine busy with the other suites gives either drag a slow frame or two: the allowance is three and 3 % of the frames.
+      ok('Statistics log: the frames of a drag are no worse with the pass running than without it (frames over 25 ms, the median interval)',
+         under.frames > 60 && under.slow <= alone.slow + Math.max(3, Math.round(under.frames * 0.03)) && under.p50 <= alone.p50 * 1.25 + 1, JSON.stringify({pass: under, alone: alone}));
+      ok('Statistics log: the pass tells the frame loop its own time, and no step holds the main thread ' + PASS_STEP_MS + ' ms',
+         notes.length >= PASS_HITS && worst < PASS_STEP_MS, '(' + notes.length + ' notes, the longest ' + fix(worst) + ' ms)');
+    }
     ok('no uncaught exception in the page', page.errors.length === 0, page.errors.slice(0, 3).join(' | '));
   } finally {
     await browser.close();

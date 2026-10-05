@@ -241,8 +241,13 @@ function main(argv) {
     verdictsFor: function (data, pts, shell) { const here = job; return RealViewer.verdictsFor(data, pts, shell).then(function (v) { if (here) here.verdicts = v.length; return v; }); }
   };
 
-  // The page paces itself at 150 ms a hit so the user keeps his frames; offline the queue is drained as fast
-  // as the CPU allows, so the timers are a plain list that the loop below empties.
+  // The page paces itself - a hit per frame-sized step, so game.log gets no burst of lines; offline the queue is drained
+  // as fast as the CPU allows, so the timers are a plain list that the loop below empties.
+  // WHAT THE CUT-OUT PASS MAY TOUCH (04.10): only the collaborators named below. From 28.09 the page's drainVerdicts read
+  // `host.busy`, which is not among them, and this tool died with "host is not defined" on every run until 04.10 - only
+  // its cutters were under test. tests/test_verdicts_offline.cjs now runs the whole tool on a synthetic folder. The page's
+  // mark "already written" (localStorage) lives outside the functions cut out here, behind the hook verdictSaved, which
+  // stays null in this tool: offline every hit is always computed. queueVerdicts is called without a revision.
   const timers = [];
   let timerId = 0;
   const fakeTimeout = function (fn) { timers.push(fn); return ++timerId; };

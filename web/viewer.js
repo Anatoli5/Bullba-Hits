@@ -1140,10 +1140,11 @@
     return ArmorBallistics.verdicts(engine,plainPoints(pts),shell);
   };
   // The verdicts of a scene the page does not show (the Statistics log's background pass, app.js drainVerdicts): a promise.
-  // In the worker when there is one - the flat engine is built there, off the frame - else here, the same law either way.
+  // In the worker when there is one - the flat engine is built there, off the frame - else here, the same law either way;
+  // here its time is told to the frame loop as the pass's own ('verdicts', as app.js names its steps).
   Viewer.verdictsFor=function(data,pts,shell){
     var plain=plainPoints(pts);
-    function here(){return ArmorBallistics.verdicts(ArmorBallistics.build(data,false,true),plain,shell);}
+    function here(){var at=clock();try{return ArmorBallistics.verdicts(ArmorBallistics.build(data,false,true),plain,shell);}finally{noteWork('verdicts',at);}}
     if(!shell||!plain.length)return Promise.resolve([]);
     var job=ArmorBallistics.remoteVerdicts(data,plain,shell);
     return job?job.then(null,here):Promise.resolve().then(here);

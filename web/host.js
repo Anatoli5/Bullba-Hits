@@ -206,9 +206,9 @@
   }
   // One call per frame or event at most is cheap: a time stamp, and a frame asked for only when the clock is not running.
   host.activity=function(label){var now=clockNow();fr.noted[label]=now;fr.seen=now;if(!FL||document.hidden)return;if(!fr.task)fr.task=FL.task('stats','frames',frameTick);fr.task.want();};
-  // Whether the user worked the scene within the last `ms` (an orbit, the aim loop, the cursor over it): background work of
-  // the page (the Statistics log's pass) waits for a pause instead of putting a model load into a moving frame.
-  host.busy=function(ms){return clockNow()-fr.seen<ms;};
+  // Nothing of the page waits on this clock (04.10): the Statistics log's pass used to (host.busy - "the scene was worked
+  // within the last second"), and stood still for as long as the aim loop was alive. A pointer event or a loop that merely
+  // runs is no work to give way to; what a piece of background work costs a frame is told by BullbaFrame.note instead.
   document.addEventListener('visibilitychange',function(){fr.last=null;fr.lastStamp=null;fr.viewAt=0;});
   function overScene(e){var vp=document.getElementById('viewport');return !!(vp&&e.target&&vp.contains(e.target));}
   // The pointer as the page receives it: one event per frame or fewer, each carrying the samples the browser coalesced.
