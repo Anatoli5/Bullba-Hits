@@ -783,11 +783,16 @@
   // A shell type and the types that stand in for it, nearest first (prepareShell, another shooter).
   var SHELL_NEAR={ARMOR_PIERCING:['ARMOR_PIERCING','ARMOR_PIERCING_CR'],ARMOR_PIERCING_CR:['ARMOR_PIERCING_CR','ARMOR_PIERCING'],
     HIGH_EXPLOSIVE:['HIGH_EXPLOSIVE'],HOLLOW_CHARGE:['HOLLOW_CHARGE']};
+  // A SCENE WHOSE SHOOTER HAS A GUN OF HIS OWN AND NO SHOT IN IT - a browsed vehicle, a shooter picked from the roster,
+  // the vehicle ⇅ made the shooter (04.10: swapScene gives it his shells; with none of his to be had the shell on screen
+  // stays as a manual one). One answer for the shell list (prepareShell) and for its caption (updateShell), which each
+  // asked in their own words.
+  function ownGunScene(hit){return !!(hit&&(hit.vehicle||hit.chosenShooter||(hit.synthetic&&!hit.damageEvent&&(hit.availableShells||[]).length)));}
   function prepareShell(hit){
     // A swapped view has no shot and therefore no shells: keep the shell that is on screen - type,
     // penetration and calibre - instead of falling back to the empty manual defaults. A browsed vehicle and a
     // shooter picked from the roster do carry a gun of their own, so they take their own shells instead.
-    var browsing=!!(hit&&(hit.vehicle||hit.chosenShooter)),keep=null;
+    var browsing=ownGunScene(hit),keep=null;
     // What the scene before stood on (26.09): the same shooter over a model picked by hand keeps his shell, below.
     var prev=activeHit,was0=$('shell-choice').value,held=was0.indexOf('saved:')===0?candidates[Number(was0.slice(6))]||null:null;
     if(hit&&hit.synthetic&&!browsing){var was=$('shell-choice').value,c0=was.indexOf('saved:')===0?candidates[Number(was.slice(6))]:null;
@@ -4000,6 +4005,8 @@
       box.appendChild(b);
     });
     box.hidden = !shown;
+    // The row stands by its tile (layoutShooterRow): more or fewer icons change what lies right of it.
+    if (box.shownCount !== shown) { box.shownCount = shown; scheduleLayout(LAYOUT_POSE | LAYOUT_TTX); }
   }
   // The load state, small and iconic, no prose: the countdown while the next round is loading, otherwise the
   // gun's own reload time, and the magazine beside it. A record with no reload at all says so with a dash - the
@@ -6437,7 +6444,7 @@
     // The shell the page assumed for a hit whose own is not known: its own marker, never the hit's ●.
     var assumed=!actual&&!edited&&shotContext&&shotContext.index<0
       &&(shellAssumed>=0?choice==='saved:'+shellAssumed:!c&&!!shotContext.kind&&choice===shotContext.kind);
-    var browsing=!!(activeHit&&(activeHit.vehicle||activeHit.chosenShooter));
+    var browsing=ownGunScene(activeHit);
     // The caption band under the fields is gone (user, 18.09: the line read as noise). Its sentence is now the
     // title of the shell group, and the two states that are a warning keep their words in #parameters-notice.
     // A manual shell says whose alpha it is using: the type, the penetration and the calibre are the user's,
@@ -6892,13 +6899,39 @@
     return p.key||p.pending||!!swapVehicleRow(hit);
   }
   // The swapped view as a hit the scene loader and the viewer understand: the recorded shooter becomes the
-  // target (his parts carry the models), the recorded target becomes the shooter. No points, so no hit line,
-  // no reticle and no shells - the vehicle now on screen never fired in this record.
+  // target (his parts carry the models), the recorded target becomes the shooter. No points, so no hit line and
+  // no reticle - the vehicle now on screen was not fired at in this record.
+  // The vehicle now on screen is A VEHICLE LIKE ANY OTHER (04.10, the user: "the one that was the shooter gets
+  // some nonsense"): its parts stand in the rest pose, so its aim is [0, 0] - the zero the viewer measures the turret
+  // and the gun from, as a browsed vehicle's is (vehicleHit); and its limits are its own (swapLimits). Without the aim
+  // the pose tile said "from the recorded pose", the gun's range was not known and the gun turned a free ±45°.
   function swapHit(hit){
     var attacker=shallow(hit.target);delete attacker.parts;
-    return {id:hit.id+':swap',synthetic:true,base:hit.id,direction:viewDirection(hit)==='incoming'?'outgoing':'incoming',
-      attacker:attacker,target:shallow(hit.attacker),points:[],rawHitPoints:[],warnings:[],
+    return {id:hit.id+':swap',synthetic:true,base:hit.id,direction:viewDirection(hit)==='incoming'?'outgoing':'incoming',aim:[0,0],
+      attacker:attacker,target:swapLimits(shallow(hit.attacker),hit.attackerId),points:[],rawHitPoints:[],warnings:[],
       shellCandidates:[],availableShells:[],receivedAt:hit.receivedAt,rangeAtImpact:hit.rangeAtImpact};
+  }
+  // The turret and gun limits of a vehicle the record holds only as a shooter (his block carries none): the ones recorded
+  // where he was hit in this battle - the same vehicle - or his export's (`from`). None: the viewer's free range, as before.
+  var POSE_LIMITS=['gunPitchLimits','turretYawLimits','staticTurretYaw','staticPitch'];
+  function swapLimits(target,id,from){
+    var hits=(current&&current.hits)||[],known=from||null,i;
+    for(i=0;i<hits.length&&!known;i++)if(id!=null&&hits[i].targetId===id&&hits[i].target&&hits[i].target.gunPitchLimits)known=hits[i].target;
+    if(known)POSE_LIMITS.forEach(function(k){if((target[k]===undefined||target[k]===null)&&known[k]!==undefined)target[k]=known[k];});
+    return target;
+  }
+  // THE GUN of the vehicle ⇅ puts in the shooter's role (04.10: the shell icons beside the Shooter tile went with ⇅,
+  // because the swapped hit carried no shells - "the vehicle never fired in this record" - and the ⇅ button moved by
+  // half their width). They are HIS, and so is his aim block where his block as a target has none: of a hit he fired in
+  // this battle, else of his own export, else of his characteristics file - the order a roster shooter is found in
+  // (pickShooter). None of the three: no shells and no emulation for him, as before.
+  var SHOOTER_GUN=['aim','gun','gunName','gunDispersion','turretName'];
+  function shooterGun(id,type){
+    var known=id!=null?recordedShooter(id):null;
+    if(known&&known.shells.length)return Promise.resolve(known);
+    return catalogueShooter(type).then(function(found){if(!found.shells.length)throw new Error(NO_GUN_DATA);return found;})
+      .catch(function(){var row=catalogueByType(type);if(!row)return null;return ttxRecord(row).then(function(r){return {vehicle:r,shells:r.shells||[]};});})
+      .catch(function(){return null;});
   }
   // The swapped hit with a model under it, whichever of the three ways this shooter's model can be had.
   // Parts with a key are ready at once; parts still being extracted are asked for at the front of the mod's
@@ -6908,6 +6941,16 @@
   // `alive` (the click's own token, audit APP2-02): a wait that another scene has overtaken stops there - it neither
   // writes its spinner over that scene nor reads the battle again.
   function swapScene(hit,deadline,alive){
+    return swapModel(hit,deadline,alive).then(function(synthetic){
+      return shooterGun(hit.targetId,String((hit.target||{}).type||'')).then(function(his){
+        if(!his)return synthetic;
+        synthetic.availableShells=his.shells.slice();
+        SHOOTER_GUN.forEach(function(k){if((synthetic.attacker[k]===undefined||synthetic.attacker[k]===null)&&his.vehicle&&his.vehicle[k]!==undefined)synthetic.attacker[k]=his.vehicle[k];});
+        return synthetic;
+      });
+    });
+  }
+  function swapModel(hit,deadline,alive){
     var parts=swapParts(hit);
     if(parts.key)return Promise.resolve(swapHit(hit));
     if(parts.pending&&current)return swapExtracting(hit,deadline,alive);
@@ -6919,7 +6962,7 @@
     if(deadline&&needsExport(row))askExport(row).then(function(sent){if(!sent)refused=NO_EXPORT_CHANNEL;});
     return readVehicle(row.id,deadline,alive,function(){return refused;}).then(function(record){
       var synthetic=swapHit(hit);
-      synthetic.target.parts=(record.parts||[]).slice();
+      synthetic.target.parts=(record.parts||[]).slice();swapLimits(synthetic.target,null,record);
       if(record.exportedAt!==undefined)synthetic.target.exportedAt=record.exportedAt;
       if(record.source!==undefined)synthetic.target.source=record.source;
       return synthetic;
@@ -6980,7 +7023,7 @@
   // and the others still paint - a half-painted scene is exactly the unevenness this finisher is for.
   var SCENE_PAINTERS=[['target switches',function(){modsVisible();}],['hit line',function(){shotStats();}],
     ['emulation',function(){updateAim();}],['target HP',function(){funModel();}],['characteristics',function(){ttxPaint();}],
-    ['roster',function(){renderFocus();}],
+    ['roster',function(){renderFocus();}],['pose tile',function(){paintPose();}],
     ['vehicle list',function(){if(sidebarMode==='vehicles'){adoptHitVehicles();renderVehicleHeading();renderVehicles();}}],['help dots',function(){if(window.BullbaTips&&window.BullbaTips.refresh)window.BullbaTips.refresh();}]];
   function sceneShown(){
     sceneBuild=false;
@@ -7078,26 +7121,46 @@
   //                inherited: the shot's view (a resolved point: the user's rule of 26.09, not a reset) and the pose its
   //                parts stand in. What it lacks is carried: the camera when there is no shot to look along
   //                (`ownShot`: display() decides once the scene is loaded), the pose when own.pose is false.
-  //   own {eye, pose}  (with 'carry') the record's own start of a swapped view: the eye at the hit point, the
-  //                shooter's pose from his motion (ArmorShotContext.swapStart).
+  //   own {pose}   (with 'carry') a pose that is this vehicle's own and is not taken from the screen: the two sides of
+  //                a hit under ⇅ (sideFrom, below).
   // Nothing on screen: the view of the last scene (the viewer keeps it over a clear). No scene before at all: view is
   // null, and the viewer's own default stands (Viewer.reset) - the only default there is.
   var SCENE_OWNER={};
   function sceneFrom(how,own){
     var v=viewer&&viewer.cameraState?viewer:null,view=null;
     if(how==='same'&&v&&v.loadedData)view=v.cameraState('same');
-    else if(own&&own.eye)view={eye:own.eye,pose:own.pose||null};
     else if(v){
       view=v.cameraState(true);
       if(view&&how==='record'&&(!own||own.pose!==false))view=Object.assign({},view,{pose:null});
+      else if(view&&own&&own.pose)view=Object.assign({},view,{pose:own.pose});
     }
     return {owner:SCENE_OWNER,how:how,view:view||null,ownShot:how==='record'};
   }
+  // THE TWO SIDES OF A HIT UNDER ⇅ (04.10). The user: ⇅ put the camera wherever it liked, and the vehicle that had been
+  // the shooter came in a pose of nobody's choosing. ⇅ is not a pick of a record: it turns the same hit round, so
+  //   - THE CAMERA STAYS, in both directions (it used to jump to the hit point looking back at the shooter, and back
+  //     to the shot's view);
+  //   - each side has a pose of its own: the target's is the record's (the hit's aim), the shooter's the record's when
+  //     the record has it (his motion at the shot, or the own shot's tracer: ArmorShotContext.swapStart), else the one
+  //     on screen;
+  //   - a pose the user set on a side is there when he comes back to it: what stands on a side when ⇅ leaves it is
+  //     kept (sidePose), for as long as the scene is this hit or its swapped view. A hit row clicked is a pick again:
+  //     the record's view and pose, and nothing kept.
+  var sidePose=null;
+  function sideFrom(base,to,record){
+    var v=viewer&&viewer.loadedData?viewer:null,from=to==='shooter'?'target':'shooter';
+    if(!sidePose||sidePose.base!==base)sidePose={base:base};
+    if(v)sidePose[from]=v.poseHeld();
+    return sceneFrom('carry',{pose:sidePose[to]||record||null});
+  }
+  // The memory lasts while the scene is the hit or its swapped view; any other scene ends it (display).
+  function sideKeep(hit){if(sidePose&&!(hit&&(hit.id===sidePose.base||hit.id===sidePose.base+':swap')))sidePose=null;}
   // A scene put on screen, in the inputs the owner gave (sceneInputs: sceneFrom's answer). The camera is put back before the finisher, so
   // the figures are taken once, on the camera the scene keeps; the pose is put on the new vehicle by the load itself.
   function display(data,reference,sceneInputs){
     if(!sceneInputs||sceneInputs.owner!==SCENE_OWNER)throw new Error('A scene shown without sceneFrom(): it takes its camera and pose from the scene before');
     var hit=data.hit,camera=sceneInputs.view;
+    sideKeep(hit);
     sceneBuild=true;
     try{
     swapped=hit.synthetic&&!hit.vehicle?hit:null;sceneTiles(hit,reference);
@@ -7114,15 +7177,14 @@
     prepareShell(hit);var drawn=viewer&&viewer.load(data,shotContext,camera);funLaid=false;
     if(drawn&&viewer.setRecordedOffset)viewer.setRecordedOffset(recordedOffset(hit));   // the record view's camera stands at this shot's barrel (aimMuzzle)
     if(!(viewer&&viewer.aimShotCircle)){aimShot=null;aimShotJob=null;}
-    $('shot-source').textContent=viewer&&viewer.pinned?'Pinned point':hit.synthetic?'No recorded shot':'Hit line';
+    paintShotSource();
     // A damage event's own look, set before the first frame is drawn, so no penetration map shows under it.
     if(drawn&&hit.damageEvent)viewer.setLook(eventLook(hit));
     // A part on its way is not a missing model: the spinner outranks both the empty
     // message and the “geometry unavailable” one, which belongs to a broken record.
     if(pend.target)message(EXTRACTING,true);else message(drawn?'':data.geometryError||'Geometry unavailable. The original event is kept.');
-    // Nothing drawn (a vehicle without its model, a broken record): the viewer notified no pose, so the pose tile of the
-    // scene before would stay - its owner reads the empty viewer and puts it away.
-    if(!drawn)poseChanged();
+    // Nothing drawn (a vehicle without its model, a broken record): the viewer notified no pose - the finisher paints the
+    // pose tile from the viewer as it stands (paintPose), as it does for every scene.
     pivotButtons();warnings(pendingWarnings(data.warnings||[],hit));$('details').replaceChildren();
     // The saved reticle exists only for the player's own shots: with an ally in focus his gun has no
     // telemetry at all, so his outgoing hit reads exactly like an incoming one does today - no recorded
@@ -7359,14 +7421,17 @@
   // in the default view, whatever stood on screen: it takes the camera of the scene before (the viewer keeps it over the
   // clear below). The pose: a hit's parts and a ram's contact stand as recorded; a damage tile whose record has no pose
   // (eventHit: poseOwn false - its model is borrowed from another record) takes the turret and the gun on screen.
-  // kept (optional, loadBattle): the SAME scene built again because its record changed - sceneFrom('same'), and the
-  // viewer keeps the old model until the new one stands.
-  function selectEvent(id,kept,auto){
+  // given (optional): the scene's inputs when the caller has them - the SAME scene built again because its record
+  // changed (loadBattle: sceneFrom('same'), and the viewer keeps the old model until the new one stands), the way back
+  // from a swapped view (⇅: sideFrom). Without them the record is PICKED: its own view and pose, nothing kept from ⇅.
+  function selectEvent(id,given,auto){
     var e=eventOf(id);if(!e)return Promise.reject(new Error('Damage event not found'));
-    if(!kept&&!auto)scenePick();
+    var kept=given&&given.how==='same'?given:null;
+    if(!given&&!auto)scenePick();
+    if(!given)sidePose=null;
     selected=id;markHits();var token=++generation;message('Preparing the model…');if(viewer&&!kept)viewer.clear();
     return vehicleModel(e.targetId).then(function(source){return ArmorInspectorData.sceneFor({warnings:[]},eventHit(e,source));})
-      .then(function(data){if(token!==generation)return;display(data,false,kept||sceneFrom('record',{pose:!!data.hit.poseOwn}));return {battleId:current.id,eventId:id};})
+      .then(function(data){if(token!==generation)return;display(data,false,given||sceneFrom('record',{pose:!!data.hit.poseOwn}));return {battleId:current.id,eventId:id};})
       .catch(function(err){if(token===generation){sceneCleared();message(err.message);warnings([err.message]);}throw err;});
   }
   // The details under the scene of an event: the same words as its tile, row by row.
@@ -7421,14 +7486,16 @@
   function markHits(){var rows=$('hits').children||[];for(var i=0;i<rows.length;i++){var id=rows[i].getAttribute&&(rows[i].getAttribute('data-hit')||rows[i].getAttribute('data-event'));if(id!==null&&id!==undefined)rows[i].setAttribute('aria-pressed',String(id===String(selected)));}}
   // A pick (a row clicked, ⇅ back): any vehicle still on its way gives way to it (scenePick). auto (loadBattle): a read
   // nobody asked the scene for - it is put on a free scene only, so there is nothing to give way.
-  function selectHit(id,kept,auto){
-    if(current&&!current.hits.some(function(h){return h.id===id;})&&eventOf(id))return selectEvent(id,kept,auto);
+  function selectHit(id,given,auto){
+    if(current&&!current.hits.some(function(h){return h.id===id;})&&eventOf(id))return selectEvent(id,given,auto);
     if(!current||!current.hits.some(function(h){return h.id===id;}))return Promise.reject(new Error('Hit not found'));
-    if(!kept&&!auto)scenePick();
+    var kept=given&&given.how==='same'?given:null;
+    if(!given&&!auto)scenePick();
+    if(!given)sidePose=null;
     selected=id;markHits();var token=++generation;message('Preparing the model…');if(viewer&&!kept)viewer.clear();
     // A scene that could not be read or shown leaves an empty scene painted as one (sceneCleared, audit APP2-03),
     // not the tiles and the strip of the hit before over a cleared viewer.
-    return ArmorInspectorData.scene(current,id).then(function(data){if(token!==generation)return;display(data,false,kept||sceneFrom('record'));return {battleId:current.id,hitId:id};}).catch(function(e){if(token===generation){sceneCleared();message(e.message);warnings([e.message]);}throw e;});
+    return ArmorInspectorData.scene(current,id).then(function(data){if(token!==generation)return;display(data,false,given||sceneFrom('record'));return {battleId:current.id,hitId:id};}).catch(function(e){if(token===generation){sceneCleared();message(e.message);warnings([e.message]);}throw e;});
   }
   // The exporter bumps one shared index timestamp on every publish, so a shot in another battle used to reload
   // this battle, re-select the same hit and rebuild the scene from scratch - losing the camera, the pinned line
@@ -7612,7 +7679,13 @@
   $('camera-zoom').oninput=function(){if(viewer)viewer.setZoom(.1*Math.pow(1000,Number(this.value)/1000));}; // ×0.1 … ×100, ×1 at a third
   // No “back to the recorded shot” button any more (user, 18.09): clicking the hit in the list again
   // re-runs selectHit, which clears the viewer and rebuilds the scene, so the pin and the pose reset with it.
-  if(viewer)viewer.onPin=function(on){$('shot-source').textContent=on?'Pinned point':activeHit&&activeHit.synthetic?'No recorded shot':'Hit line';shotStats();};
+  // What the hit line's panel stands on: the pinned point, the recorded shot, or neither. One painter for the scene just
+  // loaded (display) and for a pin put or taken (the viewer's onPin) - each had the words of its own (04.10).
+  function paintShotSource(){
+    var words=viewer&&viewer.pinned?'Pinned point':activeHit&&activeHit.synthetic?'No recorded shot':'Hit line';
+    if($('shot-source').textContent!==words)$('shot-source').textContent=words;
+  }
+  if(viewer)viewer.onPin=function(){paintShotSource();shotStats();};
   $('auto-frame').onchange=function(){if(viewer)viewer.setAutoFrame(this.checked);};
   $('zoom-lock').onchange=function(){if(viewer)viewer.zoomLock=this.checked;};
   $('track-opacity').oninput=function(){if(viewer)viewer.setTrackOpacity(Number(this.value)/100);$('track-opacity-value').textContent=this.value+' %';};
@@ -7651,12 +7724,16 @@
   // that rebuild reaches the page through onCamera when the pose is committed (viewer.js commitPose) - except
   // when the pose crosses the recorded one, which hides or brings back the hit marks and the line's figure.
   var poseOff=null,poseShown='';
-  function poseChanged(){
-    if(!viewer)return;
+  // THE POSE TILE, painted from the scene on the viewer and from nothing else (04.10): by the scene's finisher for
+  // every scene (a scene shown without a pose event - nothing drawn, the same pose carried - kept the words of the one
+  // before), and by the viewer's own pose events while the user turns the turret or the gun (poseChanged). Each word is
+  // written only when it changes. Returns whether the pose is off the scene's own, or null with nothing loaded.
+  function paintPose(){
+    if(!viewer)return null;
     var loaded=!!viewer.loadedData;
     // The tile is measured again only when it appears, goes, or its text (and so its width) changes.
     if($('pose-info').hidden!==!loaded){$('pose-info').hidden=!loaded;scheduleLayout(LAYOUT_POSE);}
-    if(!loaded)return;
+    if(!loaded)return null;
     var hit=viewer.loadedData.hit||{},aim=hit.aim||[],absolute=Number.isFinite(aim[0])&&Number.isFinite(aim[1]);
     var off=!(Math.abs(viewer.turretAngle)<.1&&Math.abs(viewer.gunAngle)<.1),DEG=180/Math.PI;
     var sign=function(v){return (v>0?'+':'')+Math.round(v)+'°';},wrap=function(v){return ((v+180)%360+360)%360-180;};
@@ -7669,14 +7746,24 @@
       turret='Turret '+sign(viewer.turretAngle)+' from the recorded pose';
       gun='Gun '+sign(-viewer.gunAngle)+' from the recorded pose';
     }
-    $('pose-turret').textContent=turret;$('pose-gun').textContent=gun;
+    if($('pose-turret').textContent!==turret)$('pose-turret').textContent=turret;
+    if($('pose-gun').textContent!==gun)$('pose-gun').textContent=gun;
     // A turret and gun the client holds still (viewer.poseLocks, 23.09): the words only in the tile's tooltip.
     var locks=(viewer.poseLocks&&viewer.poseLocks())||{},held=locks.turret&&locks.gun?'Turret and gun':locks.turret?'Turret':locks.gun?'Gun':'';
     var them=locks.turret&&locks.gun?'them':'it';
     var lockWords=held?held+' fixed\nThe game holds '+them+' in this pose; neither the garage armour view nor this page lets '+them+' be dragged.':'';
     if($('pose-info').title!==lockWords)$('pose-info').title=lockWords;
-    $('pose-note').textContent=off?'The recorded shot’s own marks are hidden until the recorded pose returns':'';$('pose-note').hidden=!off;
-    var shown=turret+'|'+gun+'|'+off;if(shown!==poseShown){poseShown=shown;scheduleLayout(LAYOUT_POSE);}
+    // The note is about a recorded shot's marks: only a scene that has one says it (04.10: a browsed vehicle and a
+    // swapped view, turned, said their "recorded shot's marks" were hidden).
+    var note=off&&viewer.point?'The recorded shot’s own marks are hidden until the recorded pose returns':'';
+    if($('pose-note').textContent!==note)$('pose-note').textContent=note;
+    if($('pose-note').hidden!==!note)$('pose-note').hidden=!note;
+    var shown=turret+'|'+gun+'|'+note;if(shown!==poseShown){poseShown=shown;scheduleLayout(LAYOUT_POSE);}
+    return off;
+  }
+  function poseChanged(){
+    var off=paintPose();
+    if(off===null)return;
     // The figures vanish at the viewer's own 0.001° (recordedShown, shotProbability), the note at 0.1°.
     var state=off+'|'+(Math.abs(viewer.turretAngle)<.001&&Math.abs(viewer.gunAngle)<.001);
     if(viewer.dragging&&state===poseOff)return;
@@ -7708,15 +7795,24 @@
     // Two BROWSED vehicles simply change places; a recorded hit below takes its own path in either panel.
     // The roles are taken from the scene first (adoptHitVehicles): outside the Vehicles panel nobody keeps them.
     if(activeHit&&activeHit.vehicle){adoptHitVehicles();if(!modelVehicle||!shooterVehicle||modelVehicle===shooterVehicle)return;scenePick();var m=modelVehicle;modelVehicle=shooterVehicle;shooterVehicle=m;showVehicleScene('carry').catch(function(){});return;}
-    if(swapped){if(swapped.base)selectHit(swapped.base).catch(function(){});return;}
+    // BACK TO THE RECORDED HIT (04.10): the camera on screen stays, and the hit's target stands as the user left it
+    // (sideFrom) - it used to come back in the shot's view and the record's pose, as if its row had been clicked. From a
+    // roster shooter's view of the same model (pickShooter) the model simply stays: its camera, pose and pin.
+    if(swapped){
+      if(!swapped.base)return;
+      var back=(current&&current.hits||[]).find(function(h){return h.id===swapped.base;});
+      var sameModel=!!back&&!!viewer&&!!viewer.loadedData&&ArmorViewer.targetKey&&ArmorViewer.targetKey({hit:back})===ArmorViewer.targetKey(viewer.loadedData);
+      scenePick();
+      selectHit(swapped.base,sameModel?sceneFrom('same'):sideFrom(swapped.base,'target',null)).catch(function(){});
+      return;
+    }
     var hit=activeHit;if(!hit||hit.synthetic||!swapReady(hit)||!current)return;
     scenePick();
-    // The swapped view starts from the shot (user, 26.09: it opened in the default view): the eye at the hit point looking
-    // back at the shooter at the recorded range, his turret and gun as the record has them (ArmorShotContext.swapStart - an
-    // own shot and an incoming one with the shooter's motion). A record without them: the scene on screen - its camera
-    // round his centre, and its turret and gun (03.10: every new scene takes them from the scene before; his vehicle stood
-    // in its rest pose).
-    var start=ArmorShotContext.swapStart(hit,shotContext),sceneInputs=sceneFrom('carry',start?{eye:start.eye,pose:start.pose}:null);
+    // TO THE SHOOTER'S VEHICLE (04.10): the camera on screen stays - it used to start from the shot, the eye at the hit point
+    // looking back at him, so every ⇅ moved it (26.09; before that it was the default view). His turret and gun: as the
+    // record has them at the shot (ArmorShotContext.swapStart - an own shot, an incoming one with the shooter's motion),
+    // else the ones on screen; and the ones the user left on him, once he has been here (sideFrom).
+    var start=ArmorShotContext.swapStart(hit,shotContext),sceneInputs=sideFrom(hit.id,'shooter',start?start.pose:null);
     var token=++generation;message('Preparing the model\u2026');if(viewer)viewer.clear();
     // In the game the model can still be on its way: the same 30 s the vehicle browser waits. Outside it
     // there is nobody to extract anything, so what is published is all there will be.
@@ -9126,6 +9222,23 @@
     if(p.right+10>r.left&&p.left-10<r.right&&p.bottom>r.top&&p.top<r.bottom){el.style.bottom=(r.height+20)+'px';return true;}
     return false;
   }
+  // THE SHOOTER ROW STANDS BY ITS TILE (04.10; the user: "when I swap the shooter and the model the ⇅ button jumps"). The
+  // row was centred as a whole, so every widget that came or went in it - the shell icons, the speed tile, Config - and
+  // every shell more or less moved all the others, the ⇅ button with them. Now the Shooter tile's LEFT edge stands
+  // SHOOTER_TILE_AT px left of the scene's middle (a tile of the usual width is centred under the model's), ⇅ right
+  // before it: both stay where they are whatever stands in the row, and ⇅ can be pressed again and again without
+  // moving the pointer. A scene too narrow for the row keeps it inside the scene instead (12 px from an edge).
+  var SHOOTER_TILE_AT=110;
+  function layoutShooterRow(){
+    var row=document.querySelector('.shooter-row'),tile=$('shooter-tile'),box=row&&row.offsetParent;
+    if(!row||!tile||!row.style)return;
+    if(!box||tile.hidden||!row.offsetWidth){if(row.style.left){row.style.left='';row.style.transform='';}return;}
+    // The tile's place in the row to the fraction of a pixel (the widths before it are fractional; offsetLeft is whole).
+    var room=box.clientWidth,width=row.offsetWidth,inRow=tile.getBoundingClientRect().left-row.getBoundingClientRect().left;
+    var x=Math.round((room/2-SHOOTER_TILE_AT-inRow)*100)/100;
+    x=width>room-24?12:Math.max(12,Math.min(room-12-width,x));
+    if(row.style.left!==x+'px'){row.style.left=x+'px';row.style.transform='none';}
+  }
   function layoutPose(){layoutCorner($('pose-info'));}
   // The characteristics panel: measured in its full form first; raised over the shooter row on a scene lower than
   // ~420 px or narrower than ~720 px it folds into one button instead (spec 3.4.2), the modifier groups' mechanism.
@@ -9150,7 +9263,9 @@
   }
   var layoutTask; // no initialiser, as tbParts
   function layoutFrame(){var p=tbParts;tbParts=0;
-      if(p&LAYOUT_HEADING)layoutHeading();if(p&LAYOUT_TOOLBAR)layoutToolbar();if(p&LAYOUT_MODS)layoutMods();if(p&LAYOUT_POSE)layoutPose();
+      if(p&LAYOUT_HEADING)layoutHeading();if(p&LAYOUT_TOOLBAR)layoutToolbar();if(p&LAYOUT_MODS)layoutMods();
+      if(p&(LAYOUT_POSE|LAYOUT_TTX))layoutShooterRow();   // first: both corners are measured against the row
+      if(p&LAYOUT_POSE)layoutPose();
       // The shooter row decides both corners, so what moves the pose tile lays the panel out again too.
       if(p&(LAYOUT_POSE|LAYOUT_TTX))layoutTtx();}
   window.addEventListener('resize',function(){scheduleLayout();}); // not the handler itself: the Event would be read as a mask
@@ -9165,7 +9280,7 @@
   document.addEventListener('click',function(e){document.querySelectorAll('.toolbar-more[open]').forEach(function(d){if(!clickedIn(e,d))d.open=false;});
     var pick=document.querySelector('.heading-pick');
     if(pick&&!$('battle-list').hidden&&!clickedIn(e,pick))openBattleList(false);});
-  layoutHeading();layoutToolbar();layoutMods();layoutPose();layoutTtx();
+  layoutHeading();layoutToolbar();layoutMods();layoutShooterRow();layoutPose();layoutTtx();
   if(host.interrupted){$('host-note').hidden=false;$('host-note').textContent='The previous session was interrupted during “'+host.interrupted.action+'» ('+(host.interrupted.host==='game'?'in the game':'in the browser')+', '+new Date(host.interrupted.at).toLocaleString('en-GB')+'). Mention this when reporting.';}
   (function(){var pv=$('app-version').getAttribute('data-version');if(pv!=='dev')$('app-version').textContent=pv;}());
   host.done();

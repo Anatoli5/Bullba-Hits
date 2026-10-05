@@ -19,7 +19,8 @@ it before a build and refuses to build on red. Suites (they run side by side, ~1
             renderer: passes per zoom/distance notch, shot range, camera reports, picking), ttx_samples and ttx_accept
             (the panel against the client's own strings)
   browser   tests/page/real_page.cjs: the REAL page in a local headless Chrome/Edge on synthetic data - the path
-            matrix on the rendered DOM and a leak counter over 50 scene switches; tests/page/gpu_bounce.cjs: the real
+            matrix on the rendered DOM and a leak counter over 50 scene switches; tests/page/real_scene.cjs: the real
+            page on the user's own battle (a local fixture: the swap's two sides, the shooter row); tests/page/gpu_bounce.cjs: the real
             screen-armor.js composite on software WebGL against the CPU walk, pixel by pixel, on the bounced leg
             (coincident plates, both directions), and the composite without the leg and with Soft lighting;
             tests/page/gpu_wheels.cjs: the same for the wheels of a wheeled vehicle (synthetic, and the bench's EBRs);
@@ -226,6 +227,13 @@ def check_browser(result):
     if total: result.passed = int(total.group(1)) - int(total.group(2))
     leak = re.search(r'leak counter .*', out)
     if leak: result.note = leak.group(0)[:160]
+    # The user's own battle of 04.10 (04.10, rule B17): the swap's two sides and the shooter row on his real records.
+    # Its fixture is local (tests/fixtures-local/scene-state-2026-10-04): absent, the test says SKIP.
+    code, out, _ = run([exe, 'tests/page/real_scene.cjs'], timeout=300)
+    passed = result.passed
+    harness_lines(result, 'real_scene', code, out)
+    total = re.search(r'(\d+) checks, (\d+) failed', out)
+    if total: result.passed = passed + int(total.group(1)) - int(total.group(2))
     code, out, _ = run([exe, 'tests/page/gpu_bounce.cjs'], timeout=300)
     passed = result.passed
     harness_lines(result, 'gpu_bounce', code, out)

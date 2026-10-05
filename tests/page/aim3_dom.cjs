@@ -9142,6 +9142,11 @@ function pathMatrix() {
     }).then(function () {
       // THE USER'S CASE (24.09): the enemy's row has no figure - his characteristics file gives it now.
       expectScene('⇅ puts the Onslaught enemy on screen', fun, {model: true, shooter: true, hp: '1 950 / 1 950', source: FILE_HP}, delta(was));
+      // 04.10 (the user: the shell icons beside the Shooter tile went with ⇅): the vehicle ⇅ made the shooter has his own
+      // shells - here from his export, the battle holds no shot of his - in the gun panel and in the heading's list.
+      ok('matrix, ⌖ ' + (fun ? 'on' : 'off') + ': (⇅ - the shells of the new shooter stand beside his tile and in the list, not a manual shell left from the hit)',
+         $('aim-gun').hidden === false && $('aim-gun-shells').children.length > 0 && $('shell-choice').value.indexOf('saved:') === 0,
+         '(panel hidden ' + $('aim-gun').hidden + ', ' + $('aim-gun-shells').children.length + ' icons, choice ' + $('shell-choice').value + ')');
       return step(function () { $('swap-roles').onclick(); });
     }).then(function () {
       expectScene('⇅ back', fun, {model: true, shooter: true, hp: '2 750 / 2 750', source: ROSTER_HP}, delta(was));
@@ -9306,7 +9311,8 @@ function pathMatrix() {
       places(/\.load\(data,/g).forEach(function (at) { if (!inside(at, shower)) out.push('line ' + line(at) + ': the viewer is loaded outside display()'); });
       places(/\.restoreCamera\(/g).forEach(function (at) { if (!inside(at, shower)) out.push('line ' + line(at) + ': the camera is put back outside display()'); });
       places(/\.cameraState\(/g).forEach(function (at) { if (!inside(at, owner)) out.push('line ' + line(at) + ': the viewer\'s camera is read outside sceneFrom()'); });
-      // Every call of display() / displayOr(): three arguments, the third the owner's answer - sceneFrom(...) itself, or
+      // Every call of display() / displayOr(): three arguments, the third the owner's answer - sceneFrom(...) itself (or
+      // sideFrom(...), its word for the two sides of a hit under the swap, which returns sceneFrom's answer), or
       // `sceneInputs`, which is nowhere given anything else.
       const args = function (open) {
         const list = []; let depth = 0, start = open + 1;
@@ -9325,11 +9331,13 @@ function pathMatrix() {
         if (/function\s+$/.test(code.slice(Math.max(0, at - 12), at))) continue;   // the two definitions
         const a = args(at + m[2].length), third = (a[2] || '').trim();
         calls++;
-        if (a.length !== 3 || !(third === 'sceneInputs' || /(^|\|\|)sceneFrom\(/.test(third))) out.push('line ' + line(at) + ': ' + m[2] + '(' + a.join(',') + ') without the owner\'s answer');
+        if (a.length !== 3 || !(third === 'sceneInputs' || /(^|\|\|)(sceneFrom|sideFrom)\(/.test(third))) out.push('line ' + line(at) + ': ' + m[2] + '(' + a.join(',') + ') without the owner\'s answer');
       }
       if (calls < 7) out.push('only ' + calls + ' display() calls found - the reader of calls lost some');
       const set = /[^.\w]sceneInputs=([^=][^,;)]*)/g;
-      while ((m = set.exec(code))) if (!/^sceneFrom\(/.test(m[1])) out.push('line ' + line(m.index) + ': `sceneInputs` given ' + m[1] + ', not sceneFrom()');
+      while ((m = set.exec(code))) if (!/^(sceneFrom|sideFrom)\(/.test(m[1])) out.push('line ' + line(m.index) + ': `sceneInputs` given ' + m[1] + ', not sceneFrom()');
+      const side = body('sideFrom');
+      if (!side || !/return sceneFrom\(/.test(code.slice(side.from, side.to))) out.push('sideFrom() does not return the answer of sceneFrom()');
       return out;
     };
     const code = strip(appSrc), found = faults(code);

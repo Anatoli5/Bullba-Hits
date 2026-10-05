@@ -2,6 +2,13 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.2 from 0.9.3 on, 2.4.0.1 #950 from 0.7.6, 2.4.0.0 #945 before.
 
+## Unreleased
+
+- **⇅:** the camera stays where you put it, in both directions - it no longer jumps to the hit point and back to the shot's view. The shooter's vehicle stands as the record has it at the shot (else as the vehicle on screen stood); a turret or gun you turn on either vehicle is still there when you swap back to it. Clicking the hit's row shows the recorded view and pose again.
+- **⇅:** the vehicle that was the shooter is a vehicle like any other now: the pose tile shows its own angles and gun range (it said "from the recorded pose" and let the gun turn ±45°).
+- **Shooter row:** the shell icons beside the Shooter tile stay after ⇅ and are the new shooter's own shells, and the ⇅ button and the Shooter tile no longer move when the row's contents change - ⇅ can be pressed again and again without moving the pointer.
+- **Pose tile:** the note about the recorded shot's hidden marks shows only on a scene that has a recorded shot.
+
 ## 0.9.6 (2026-10-04)
 
 - The same as 0.9.5, built again under a new number: with 0.9.5 installed, Windows refused to start the game's built-in browser on one machine. Nothing in the mod or the page is changed.

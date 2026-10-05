@@ -274,6 +274,7 @@ async function modeState(browser, folder) {
 // to the page belongs here; one that builds its scene without the owner throws in display() and fails here.
 //   carry    another model: the camera and the pose are the ones on screen; the pin goes with the model that went
 //   camera   a record with a pose of its own and no view: the camera on screen, the record's pose
+//   side     the other side of a hit under the swap (04.10): the camera on screen, that side's own pose
 //   same     the same model: the camera, the pose and the pin stay
 //   record   a record picked with a view of its own - the shot's: that view and the record's pose (not a reset)
 //   none     not a scene at all (a switch, a tile, a mode, another gun): nothing of the scene changes
@@ -334,8 +335,8 @@ async function inheritMatrix(browser, folder) {
     {name: 'the same hit read again after its battle\'s file changed', from: HIT(1), act: [REREAD], want: 'same', shooter: 'Quebec', reread: true},
     {name: 'another hit picked, its shot recorded', from: HIT(1), act: ['hit(0)'], want: 'record', scene: 'pm-1', view: {distance: 123.004}, pose: {turret: 0, gun: 0}},
     {name: 'another battle picked: its first hit, the shot recorded', from: HIT(1), act: ["battle('pm3')"], want: 'record', scene: 'pm3-1', pose: {turret: 0, gun: 0}},
-    {name: 'the ⇅ of a recorded hit with the shooter\'s motion - from the shot', from: HIT(0), act: ['swap()'], want: 'record', model: 'Romeo', view: {distance: 117}, pose: {turret: .2 * 180 / Math.PI, gun: -.02 * 180 / Math.PI}},
-    {name: 'the ⇅ back to the recorded hit', from: HIT(1).concat(['swap()']), act: ['swap()'], want: 'record', scene: 'pm-2', view: {distance: 123.004}, pose: {turret: 0, gun: 0}},
+    {name: 'the ⇅ of a recorded hit with the shooter\'s motion', from: HIT(0), act: ['swap()'], want: 'side', model: 'Romeo', pose: {turret: .2 * 180 / Math.PI, gun: -.02 * 180 / Math.PI}},
+    {name: 'the ⇅ back to the recorded hit', from: HIT(1).concat(['swap()']), act: ['swap()'], want: 'side', scene: 'pm-2', model: 'Papa', pose: {turret: 0, gun: 0}},
     {name: 'the side panel switched to Vehicles', from: HIT(1), act: ["side('vehicles')"], want: 'none'},
     {name: 'the side panel switched to Hits', from: VEH, act: ["side('battles')"], want: 'none'},
     {name: 'the first click on Hits after the game opened the page on a vehicle', fresh: GAME, from: [], act: ["side('battles')"], want: 'none', model: 'Papa'},
@@ -395,6 +396,8 @@ async function inheritMatrix(browser, folder) {
             cam && pose && b.model === path_.model && b.scene !== a.scene && !b.pinned, extra);
           else if (path_.want === 'camera') ok(tag + 'the camera of the scene before; the pose is the record\'s own',
             cam && b.scene !== a.scene && b.turret === 0 && b.gun === 0, extra);
+          else if (path_.want === 'side') ok(tag + 'the camera of the scene before stays; the pose is that side\'s own (' + Math.round(path_.pose.turret) + '° / ' + Math.round(path_.pose.gun) + '°), on ' + path_.model,
+            cam && b.scene !== a.scene && b.model === path_.model && (!path_.scene || b.scene === path_.scene) && Math.abs(b.turret - path_.pose.turret) < 1e-6 && Math.abs(b.gun - path_.pose.gun) < 1e-6 && !b.pinned, extra);
           else if (path_.want === 'same') ok(tag + 'the same model: the camera, the pose and the pinned point stay; the shooter is ' + path_.shooter + (path_.reread ? '; the new record is on the scene' : ''),
             cam && pose && b.pinned && b.model === a.model && b.shooter === path_.shooter && (!path_.reread || (b.scene === a.scene && b.armour !== a.armour)), extra + ' ' + b.shooter + ' ' + b.armour);
           else if (path_.want === 'record') ok(tag + 'the record\'s own view and pose (the pick\'s data, not a reset)',
@@ -416,6 +419,86 @@ async function inheritMatrix(browser, folder) {
   }
 }
 
+// ---- THE TWO SIDES OF A HIT UNDER ⇅, AND THE SHOOTER ROW (04.10, the user after 0.9.6) -------------------------------------------
+// The user, on his own battles: "after the swap the vehicle that was the shooter gets some nonsense; the swap button jumps,
+// because the shell icons beside the Shooter tile go somewhere; the position changes as it likes". What 0.9.6 did:
+//   - ⇅ to the shooter put the camera at the hit point looking back at him (26.09), ⇅ back put the shot's view and the
+//     record's pose - so every ⇅ moved the camera, and a turret the user had turned came back as recorded;
+//   - the swapped hit had no aim, no limits and no shells: the pose tile said "from the recorded pose", the gun turned a
+//     free ±45°, the shell icons went - and the row, centred as a whole, moved ⇅ by half their width.
+// The rule now (web/app.js sideFrom, layoutShooterRow): the camera stays in both directions; each side has its pose - the
+// record's first (the shooter's from his motion, else the one on screen), then the one the user left on it; a hit row
+// clicked is a pick again, the record's view and pose; the shells are the shooter's in both states; ⇅ and the Shooter tile
+// stand in one place whatever is in the row. The same case on the user's own battle: tests/page/real_scene.cjs.
+async function swapSides(browser, folder) {
+  const LV = 'window.__bullbaViewers[window.__bullbaViewers.length - 1]';
+  const VIEW = `(() => { const v = ${LV}, h = v.loadedData ? v.loadedData.hit : null, $ = (id) => document.getElementById(id);
+    const at = (id) => { const e = $(id); if (!e.getClientRects().length) return null; const b = e.getBoundingClientRect(); return [Math.round(b.left * 10) / 10, Math.round(b.width * 10) / 10]; };
+    return {scene: h ? String(h.id) : null, model: h && h.target ? h.target.name : null, shooter: h && h.attacker ? h.attacker.name : null,
+      yaw: v.yaw, pitch: v.pitch, distance: v.distance, zoom: v.camera.zoom, turret: v.turretAngle, gun: v.gunAngle,
+      tile: $('pose-turret').textContent + ' | ' + $('pose-gun').textContent, note: $('pose-note').hidden ? '' : $('pose-note').textContent,
+      swap: at('swap-roles'), shooterTile: at('shooter-tile'), gunPanel: at('aim-gun'), shells: $('aim-gun-shells').children.length,
+      listed: [].filter.call($('shell-choice').options, (o) => o.value.indexOf('saved:') === 0).length, choice: $('shell-choice').value}; })()`;
+  const TURN = (yaw, pitch, distance, zoom, turret, gun) => `(() => { const v = ${LV}; v.setOrbit(${yaw}, ${pitch}); v.setDistance(${distance}); v.setZoom(${zoom});
+    v.setTurret(${turret}); v.setGun(${gun}); v.render(); })()`;
+  const TICK = (id) => `(() => { const e = document.getElementById('${id}'); e.checked = !e.checked; e.dispatchEvent(new Event('change')); })()`;
+  const CAMERA = ['yaw', 'pitch', 'distance', 'zoom'];
+  const near = (a, b, keys) => keys.every((k) => Math.abs(a[k] - b[k]) < 1e-6);
+  const posed = (s, turret, gun) => Math.abs(s.turret - turret) < 1e-6 && Math.abs(s.gun - gun) < 1e-6;
+  const brief = (list) => JSON.stringify(list.map((s) => ({scene: s.scene, model: s.model, yaw: +s.yaw.toFixed(3), pitch: +s.pitch.toFixed(3), distance: +s.distance.toFixed(2), zoom: +s.zoom.toFixed(2),
+    turret: +s.turret.toFixed(3), gun: +s.gun.toFixed(3), swap: s.swap, shells: s.shells})));
+  const p = await browser.open(url.pathToFileURL(path.join(folder, 'Viewer.html')).href, INIT);
+  try {
+    await p.evaluate(DRIVER);
+    await p.evaluate(`(async () => { for (let i = 0; i < 100 && !(document.querySelector('#hits [data-hit]') && window.__bullbaViewers.length && ${LV}.loadedData); i++) await new Promise((r) => setTimeout(r, 100)); await __bt.settle(); })()`);
+    const go = async (js) => { await p.evaluate(js.charAt(0) === '(' ? js : '__bt.act.' + js); await p.evaluate('__bt.settle()'); return p.evaluate(VIEW); };
+    const REC = {turret: .2 * 180 / Math.PI, gun: -.02 * 180 / Math.PI};   // pm-1's shooter at the shot: his motion
+    // pm-1: Romeo's hit on Papa, the shooter's motion on record.
+    await go("battle('pm')"); await go('hit(0)');
+    const T1 = await go(TURN(.9, .3, 18, 1.5, 30, 2));
+    const S1 = await go('swap()');
+    ok('swap sides: ⇅ to the shooter - the camera on screen stays (it used to jump to the hit point), and he stands as the record has him at the shot: turret 11.5°, gun 1.1° up',
+       S1.model === 'Romeo' && S1.scene === 'pm-1:swap' && near(S1, T1, CAMERA) && posed(S1, REC.turret, REC.gun), brief([T1, S1]));
+    ok('swap sides: ... he is a vehicle like any other - the pose tile gives his angles from the hull, not "from the recorded pose", and no note of a recorded shot\'s marks',
+       /^Turret \+11° \| Gun \+1°/.test(S1.tile) && S1.tile.indexOf('from the recorded pose') < 0 && S1.note === '', S1.tile + ' / ' + S1.note);
+    const S2 = await go(TURN(.5, .2, 16, 1.4, 50, -3));
+    ok('swap sides: (the shooter turned by hand: still no note of a recorded shot - this scene has none)', S2.note === '' && posed(S2, 50, -3), S2.tile + ' / ' + S2.note);
+    const T2 = await go('swap()');
+    ok('swap sides: ⇅ back - the camera stays again (it used to return to the shot\'s view), and the target stands as the user left it: turret 30°, gun 2°',
+       T2.scene === 'pm-1' && T2.model === 'Papa' && near(T2, S2, CAMERA) && posed(T2, 30, 2), brief([S2, T2]));
+    const S3 = await go('swap()');
+    ok('swap sides: ⇅ again - the shooter as the user left him (turret 50°, gun 3° up), not the record\'s pose over his', S3.model === 'Romeo' && near(S3, S2, CAMERA) && posed(S3, 50, -3), brief([S2, S3]));
+    const T3 = await go('swap()');
+    const R1 = await go('hit(0)');
+    ok('swap sides: the hit\'s row clicked is a pick - the shot\'s own view and the record\'s pose', R1.scene === 'pm-1' && Math.abs(R1.distance - 123.004) < .01 && posed(R1, 0, 0) && posed(T3, 30, 2), brief([T3, R1]));
+    const S4 = await go('swap()');
+    ok('swap sides: ... and nothing is kept from before the pick: ⇅ gives the shooter the record\'s pose again, in the camera on screen', S4.model === 'Romeo' && near(S4, R1, CAMERA) && posed(S4, REC.turret, REC.gun), brief([R1, S4]));
+    // pm-2: Quebec's hit on Papa, no motion of the shooter on record - his pose is the one on screen.
+    await go('swap()'); await go('hit(1)');
+    const T4 = await go(TURN(1.1, .25, 20, 1.6, 35, 1));
+    const S5 = await go('swap()');
+    ok('swap sides: a record without the shooter\'s motion - the camera stays, his turret and gun are the ones on screen', S5.model === 'Quebec' && near(S5, T4, CAMERA) && posed(S5, 35, 1), brief([T4, S5]));
+    const T5 = await go('swap()');
+    // THE ROW: ⇅ and the Shooter tile in one place through all of it, the shells the shooter's own in both states.
+    const states = [T1, S1, S2, T2, S3, T3, R1, S4, T4, S5, T5];
+    ok('shooter row: the shell icons stand in both states of ⇅ - the shooter\'s own (the swapped view used to have none), the list the same',
+       states.every((s) => s.gunPanel && s.shells === 2 && s.listed === 2 && s.choice.indexOf('saved:') === 0), JSON.stringify(states.map((s) => [s.scene, s.gunPanel, s.shells, s.listed, s.choice])));
+    ok('shooter row: ⇅ stands in one place through every swap - the same button under the pointer',
+       states.every((s) => s.swap && s.swap[0] === T1.swap[0] && s.swap[1] === T1.swap[1]) && states.every((s) => s.shooterTile && s.shooterTile[0] === T1.shooterTile[0]),
+       JSON.stringify(states.map((s) => [s.swap, s.shooterTile])));
+    // ... and whatever is in the row: without the emulation its speed tile, shell icons and Config go, ⇅ stays put.
+    const E0 = await go(TICK('aim-on'));
+    ok('shooter row: the emulation switched off - the speed tile, the shells and Config go, ⇅ and the tile stay where they were',
+       !E0.gunPanel && !!E0.swap && E0.swap[0] === T1.swap[0] && E0.shooterTile[0] === T1.shooterTile[0], JSON.stringify([T1.swap, E0.swap, T1.shooterTile, E0.shooterTile, E0.gunPanel]));
+    await go(TICK('aim-on'));
+    // A browsed pair: the tile of a vehicle that is its own shooter has no ⇅, and the tile is where it was.
+    await go("side('vehicles')"); await go("scope('all')"); await go('modelTile()');
+    const V1 = await go("list('pm_papa')");
+    ok('shooter row: a browsed vehicle - the Shooter tile where it stood beside ⇅', !!V1.shooterTile && V1.shooterTile[0] === T1.shooterTile[0] && (!V1.swap || V1.swap[0] === T1.swap[0]), JSON.stringify([T1.shooterTile, V1.shooterTile, V1.swap]));
+    ok('swap sides: no uncaught exception in the page', p.errors.length === 0, p.errors.slice(0, 3).join(' | '));
+  } finally { await browser.send('Target.closeTarget', {targetId: p.targetId}); }
+}
+
 async function main() {
   const started = Date.now();
   const browser = await launch({width: 1600, height: 1000});
@@ -423,9 +506,12 @@ async function main() {
   const folder = stage();
   let page;
   try {
+    // --sides: only the swap's two sides and the shooter row (a quick run while that rule is worked on).
+    if (process.argv.includes('--sides')) { await swapSides(browser, folder); console.log('real page, the swap sides only (' + browser.product + '): ' + checks + ' checks, ' + failures + ' failed'); return failures ? 1 : 0; }
     await inheritMatrix(browser, folder);
     if (MATRIX_ONLY) { console.log('real page, the inheritance matrix only (' + browser.product + '): ' + checks + ' checks, ' + failures + ' failed'); return failures ? 1 : 0; }
     await modeState(browser, folder);
+    await swapSides(browser, folder);
     page = await browser.open(url.pathToFileURL(path.join(folder, 'Viewer.html')).href, INIT);
     const ev = (js) => page.evaluate(js);
     await ev(DRIVER);
@@ -726,12 +812,15 @@ async function main() {
     ok('inherit: ⇅ of a recorded hit opens the shooter\'s vehicle in the camera on screen', close(I4.yaw, .8) && close(I4.pitch, .25) && close(I4.distance, 25) && who(I4.model, 'Quebec'), JSON.stringify(I4));
     await step('swap()');
     // ... and where the record has the shooter at the shot (pm-1: his motion - 120 m out facing the player, turret 0.2 rad
-    // right, gun 0.02 rad up), the view starts from the shot: the eye at the hit point looking back at him, his pose.
-    await step('hit(0)'); await step('swap()');
+    // right, gun 0.02 rad up), he stands in that pose - in the camera on screen (04.10; from 26.09 the view started from
+    // the shot, the eye at the hit point looking back at him, and every ⇅ moved the camera).
+    await step('hit(0)');
+    const I4a = await ev(STATE);
+    await step('swap()');
     const I4b = await ev(STATE);
-    ok('inherit: ⇅ of a recorded hit with the shooter\'s motion - the camera from the hit point back at him (117 m), his turret 11.5° and gun 1.1° up',
-       Math.abs(Math.cos(I4b.yaw) + 1) < 1e-3 && Math.abs(I4b.distance - 117) < 1.5 && close(I4b.turret, .2 * 180 / Math.PI) && close(I4b.gun, -.02 * 180 / Math.PI) && who(I4b.model, 'Romeo'),
-       JSON.stringify(I4b));
+    ok('inherit: ⇅ of a recorded hit with the shooter\'s motion - the camera on screen stays, his turret 11.5° and gun 1.1° up',
+       close(I4b.yaw, I4a.yaw) && close(I4b.pitch, I4a.pitch) && close(I4b.distance, I4a.distance) && close(I4b.turret, .2 * 180 / Math.PI) && close(I4b.gun, -.02 * 180 / Math.PI) && who(I4b.model, 'Romeo'),
+       JSON.stringify([I4a, I4b]));
     await step('swap()');
     // 2 in Hits: another shooter from the roster over a recorded hit - the record's pose with the user's turn on it, the pin.
     await step('hit(0)'); await step('shooterTile()'); await step("side('battles')");

@@ -925,7 +925,11 @@
     if(state.eye){this.dropTargets();this.pan.set(0,0);this.frameCenter.set(0,0);this.pivotHeight=null;this.target.copy(this.pivotCentre());
       this.lookFrom(new THREE.Vector3(state.eye[0],state.eye[1],-state.eye[2]));this.distanceSet=true;this.fitPending=true;this.render();return;}
     this.setOrbit(state.yaw,state.pitch);this.distance=state.distance;
-    if(state.relative){this.target.copy(this.pivotCentre());this.pivotHeight=null;if(state.lift!==null){var r=this.heightRange();this.target.y=this.pivotHeight=Math.max(r[0],Math.min(r[1],this.target.y+state.lift));}this.distanceSet=true;}
+    if(state.relative){this.target.copy(this.pivotCentre());this.pivotHeight=null;if(state.lift!==null){var r=this.heightRange();this.target.y=this.pivotHeight=Math.max(r[0],Math.min(r[1],this.target.y+state.lift));}
+      // A view carried onto a scene with a hit point while the orbit is round the hit (04.10: the way back from a swapped
+      // view keeps the camera): the centre is that scene's own hit point, as the pressed button says.
+      if(this.pivot==='hit'&&this.point){this.target.copy(this.point);this.pivotHeight=null;}
+      this.distanceSet=true;}
     else{this.target.copy(state.target);this.pivotHeight=state.pivotHeight;}
     this.dropTargets();this.pan.copy(state.pan);this.frameCenter.copy(state.frameCenter);this.frameScale=state.frameScale;
     this.fitPending=false;this.camera.zoom=Math.max(.1,Math.min(150,state.zoom));this.projection();this.render();};
