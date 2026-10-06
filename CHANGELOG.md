@@ -4,18 +4,10 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 
 ## 1.0 (2026-10-05)
 
-- The same as 0.9.9, built again under a new number. From here on the versions go 1.01, 1.02 and so on.
-
-## 0.9.9 (2026-10-04)
+Builds 0.9.3 to 0.9.9 were never released; their changes are listed here. From here on the versions go 1.01, 1.02 and so on.
 
 - **Vehicles without a model in the game client:** a vehicle the client lists but has no collision model of (Nameless, Edelweiss) is no longer counted as a failed export. Export all models does not try it and does not ask about it again - the "2 vehicles failed" question is gone - until a game update brings its model. Its row in the Vehicles list is dimmed and says "not in the game client"; a click shows its characteristics and says why there is no model instead of waiting for an export.
-
-## 0.9.8 (2026-10-04)
-
 - **Shots from point-blank range:** a shot fired from a few metres opens with the hit point in view and the orbit centre - the vehicle's centre or the hit point, whichever is chosen - inside the frame. The view used to be shifted so far that both were off the top of the screen, the floor under the hull stood mid-screen and the camera seemed to turn round a point on the ground. The zoom still does not go below ×1, and the camera stays on the shot's line. Fit on any vehicle brought that close is fixed the same way.
-
-## 0.9.7 (2026-10-04)
-
 - **⇅:** the camera stays where you put it, in both directions - it no longer jumps to the hit point and back to the shot's view. The shooter's vehicle stands as the record has it at the shot (else as the vehicle on screen stood); a turret or gun you turn on either vehicle is still there when you swap back to it. Clicking the hit's row shows the recorded view and pose again.
 - **⇅:** the vehicle that was the shooter is a vehicle like any other now: the pose tile shows its own angles and gun range (it said "from the recorded pose" and let the gun turn ±45°).
 - **Shooter row:** the shell icons beside the Shooter tile stay after ⇅ and are the new shooter's own shells, and the ⇅ button and the Shooter tile no longer move when the row's contents change - ⇅ can be pressed again and again without moving the pointer.
@@ -23,21 +15,11 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 - **Statistics log:** the check of a battle's hits no longer stops while you rotate the scene, keep the cursor over it or aim with ⌖ on, and takes a hit every 16 ms instead of every 150 ms - a battle of 100 hits is checked in about two seconds.
 - **Statistics log:** a battle is checked once. Opening the page or the battle again writes nothing a second time; a battle is checked again when its file changes or the mod is updated. The header shows the points of the open battle.
 - **Statistics log (offline):** `tools/verdicts_offline.cjs` runs again (it stopped with "host is not defined" since 0.9.2).
-
-## 0.9.6 (2026-10-04)
-
-- The same as 0.9.5, built again under a new number: with 0.9.5 installed, Windows refused to start the game's built-in browser on one machine. Nothing in the mod or the page is changed.
-
-## 0.9.5 (2026-10-04)
-
 - **Hits / Vehicles:** the switch only changes the list you pick from and never changes the scene. Opened from the game on a vehicle, the first click on Hits lists the battle's hits and leaves the vehicle as you turned it; a vehicle still being exported arrives whichever list is open.
 - **View:** every new scene keeps the camera, the turret and the gun of the scene on screen - ram and fire tiles, a hit whose point was not restored, the ⇅ of a hit too. A hit with its recorded shot still opens in the shot's own view.
 - **Saved battles:** a hit refreshed on screen (its models arrive, the game prepares the battle again) keeps your camera, turret, gun and pinned point, in either list.
 - **⇅:** two browsed vehicles can be swapped from the Hits list too.
 - **Window in the game:** the window sometimes opened blank - a blue background and nothing else - although the page in it was running; opening it again helped. The mod now asks the game to draw the window again once the page has loaded and when the game reports the window's picture, and writes the window's steps to game.log (lines `Bullba Hits window +… ms: …`). Whether this removes the blank window is not known yet: the cause is still being looked for, and those lines are what will show it.
-
-## 0.9.4 (2026-10-03)
-
 - **Game updates:** the mod rebuilds only what the update really changed. A collision model is exported again only when its own file in the game changed; models exported by earlier versions of the mod are kept and reused. A characteristics or vehicle file is rebuilt only when its own game files changed, or when the game code that builds it changed; a change in game code the mod does not run (such as the crew tables of 2.4.0.2) rebuilds nothing. The rebuild runs in the background, and a file is written only when the result differs. After 2.4.0.2 the mod had rebuilt every model, vehicle and characteristics file with the same content.
 - **Startup:** no vehicle is exported while the game starts any more (after 2.4.0.2 this took 31 s, and the page could not be used meanwhile), and an ordinary start queues no work.
 - **Vehicles list:** a vehicle exported before a game update stays shown as exported.
@@ -45,9 +27,6 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 - **Saved battles:** a battle of the previous game version keeps its outer track pair, its wheels and its armoured parts when it is prepared again, as long as the game files they come from did not change. The battles that lost them after 2.4.0.2 get them back when you open them.
 - **Export all models:** it no longer waits behind background work, and it no longer waits for the characteristics to finish. When it has to wait, the button says what for - the battle or the game's other tasks.
 - game.log: one line says which game files changed since the last start, and one says what the background check rebuilt and how many files differed. A difference the mod did not expect is logged as "Missed change".
-
-## 0.9.3 (2026-10-01)
-
 - **Client 2.4.0.2:** the mod is built for World of Tanks PC NA 2.4.0.2 and installs into `mods.4.0.2`. The recorder and the viewer are unchanged; your recorded battles are kept.
 - **Installer:** it checks the client's version and region, not its build number, so a small game update that keeps the version needs no new installer. A recorder left in the folder of an earlier client is removed.
 
