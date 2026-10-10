@@ -244,9 +244,23 @@ if (require.main === module) {
   const opt = function (k) { const i = args.indexOf(k); return i > 0 ? args[i + 1] : null; };
   const ref = JSON.parse(fs.readFileSync(args[0], 'utf8'));
   const page = opt('--page') ? JSON.parse(fs.readFileSync(opt('--page'), 'utf8')) : pureStrings(ref, args[1]);
-  const rows = compare(ref, page), by = summary(rows), bad = rows.filter(function (r) { return !good(r); });
+  // --known <json>: rows this run on its own cannot match, each with its reason - [{row: "<vehicle> <mode> <where> <key>",
+  // why}] (the pure strings print one mode of a vehicle built twice, where the garage prints both; the DOM harness's
+  // modes set covers those). They are counted apart; one that matches now, or is not in the run, is a mismatch again.
+  const known = opt('--known') ? JSON.parse(fs.readFileSync(opt('--known'), 'utf8')) : [];
+  const rowName = function (r) { return r.vehicle + ' ' + r.mode + ' ' + r.where + ' ' + r.key; };
+  const knownRows = {};
+  known.forEach(function (k) { knownRows[k.row] = 0; });
+  const rows = compare(ref, page), by = summary(rows);
+  const bad = rows.filter(function (r) {
+    if (good(r)) return false;
+    if (knownRows[rowName(r)] === undefined) return true;
+    knownRows[rowName(r)]++; return false;
+  });
+  const stale = Object.keys(knownRows).filter(function (k) { return !knownRows[k]; });
+  stale.forEach(function (k) { bad.push({vehicle: k, mode: '', where: '', key: '(listed as known, but it matches now or is not in this run: take it off the list)', client: '', page: ''}); });
   Object.keys(by).forEach(function (k) { console.log(k + ': ' + by[k].ok + '/' + by[k].all); });
-  console.log('rows ' + rows.length + ', mismatches ' + bad.length);
+  console.log('rows ' + rows.length + ', mismatches ' + bad.length + (known.length ? ', known ' + (known.length - stale.length) : ''));
   bad.forEach(function (r) { console.log('  MISMATCH ' + r.vehicle + ' ' + r.mode + ' ' + r.where + ' ' + r.key + ': client ' + r.client + ' page ' + r.page); });
   rows.filter(function (r) { return /rounding/.test(r.match); }).forEach(function (r) { console.log('  ambiguous ' + r.vehicle + ' ' + r.mode + ' ' + r.key + ': client ' + r.client + ' page ' + r.page); });
   if (opt('--json')) fs.writeFileSync(opt('--json'), JSON.stringify(rows, null, 1));

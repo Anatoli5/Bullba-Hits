@@ -16,7 +16,9 @@
  * The second case (04.10, on 0.9.7): the first view of his shots fired point-blank - the comment of closeCase below; its
  * fixture is tests/fixtures-local/close-range-2026-10-04.
  *
- *   node tests/page/real_scene.cjs [--verbose]      exit 0 pass, 1 fail, 77 skip (no fixture at all, or no browser)
+ * The third case (09.10): a recorded ricochet is drawn as a ricochet - the comment of ricochetCase below; the same fixture.
+ *
+ *   node tests/page/real_scene.cjs [--verbose] [--only=ricochetCase]      exit 0 pass, 1 fail, 77 skip (no fixture at all, or no browser)
  */
 'use strict';
 const fs = require('fs'), path = require('path'), os = require('os'), url = require('url');
@@ -201,9 +203,103 @@ async function closeCase(browser) {
   } finally { fs.rmSync(folder, {recursive: true, force: true}); }
 }
 
+// ---- A RICOCHET IS DRAWN AS A RICOCHET (09.10) ----------------------------------------------------------------------------------
+// The user: "when a ricochet is drawn, the second arrow, the dashed one that shows the bounce, is drawn only if the shell
+// meets the armour again after the ricochet ... make the reflected arrow be drawn even if the shell goes off into the
+// blue - a dashed bounce arrow at the angle of entry, purely decorative ... so that one can see it is a ricochet".
+// The same battle on Cliff has them all: recorded ricochets whose shell left the vehicle (the last point is effect 1,
+// INTERMEDIATE_RICOCHET, or 2, FINAL_RICOCHET), two with a real second leg (1 then 3; 1 then 4), plain hits, and one
+// "final ricochet" recorded on a plate the line meets at 79 degrees - no plate a shell bounces off, so nothing to mirror.
+// Asked: the arrow starts at the ricochet point, leaves the plate at the angle the shot came in at (the plate's normal
+// taken a second way here - the page's own pick, not the code that draws), is the decorative length, dashed, with a
+// head; a real second leg and a plain hit get nothing new. And the analysed shot (a pinned line - what the vehicle mode
+// and the aim emulation draw) goes through the same owner: its leg into the air is that very arrow.
+const BOUNCE = `(() => { const v = ${LV}, h = v.loadedData ? v.loadedData.hit : null, pts = v.shotPoints || [], last = pts[pts.length - 1], D = 180 / Math.PI, r4 = (x) => Math.round(x * 1e4) / 1e4;
+  const legs = (root) => { const out = []; if (root) root.traverse((o) => { if (o.userData && o.userData.bounceLeg) out.push(o); }); return out; };
+  const shape = (o) => { let dashed = false, head = false, from = null; o.traverse((c) => { if (c.material && c.material.isLineDashedMaterial && c.visible) { dashed = true; const a = c.geometry.getAttribute('position'); from = [a.getX(0), a.getY(0), a.getZ(0)]; }
+    if (c.type === 'ArrowHelper' && c.cone.visible) head = true; });
+    let shown = true; for (let q = o; q; q = q.parent) if (!q.visible) shown = false;
+    const b = o.userData.bounceLeg; return {start: b.start.toArray(), out: b.out.toArray(), length: b.length, air: b.air, dashed: dashed, head: head, from: from, shown: shown}; };
+  const res = {id: h && h.id, effects: pts.map((x) => x.effect), kids: v.root.children.length, legs: legs(v.root).map(shape), pinLegs: legs(v.pinGroup).map(shape)};
+  if (last) { const d = last.line.clone().normalize(), met = v.pick(last.pos.clone().addScaledVector(d, -0.05), d), n = met && met.face ? met.face.normal.clone().transformDirection(met.object.matrixWorld).normalize() : null;
+    res.point = last.pos.toArray(); res.line = d.toArray(); res.normal = n && met.point.distanceTo(last.pos) < 0.02 ? n.toArray() : null; res.plateDeg = res.normal ? r4(Math.asin(Math.abs(d.dot(n))) * D) : null; }
+  const r = v.pinResult; res.pin = r ? {reason: r.reason, bounce: r.bounce ? {point: r.bounce.point, direction: r.bounce.direction} : null, distance: r.distance === undefined ? null : r.distance, final: !!r.final} : null;
+  return res; })()`;
+const PIN_LINE = `(() => { const v = ${LV}, pts = v.shotPoints || [], last = pts[pts.length - 1], d = last.line.clone().normalize();
+  v.pinned = {origin: last.pos.clone().addScaledVector(d, -5), direction: d, point: last.pos.clone(), normal: null}; v.refreshPin(); })()`;
+const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2], gap = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+const BOUNCE_LENGTH = 2.3;   // the incoming arrow's own (viewer.js ARROW_LENGTH)
+async function ricochetCase(browser) {
+  const folder = stage(CLOSE);
+  try {
+    const p = await browser.open(url.pathToFileURL(path.join(folder, 'Viewer.html')).href, INIT);
+    await p.evaluate(DRIVER);
+    await p.evaluate(`(async () => { for (let i = 0; i < 300 && !(document.querySelector('#hits [data-hit]') && window.__viewers.length && ${LV}.loadedData); i++) await new Promise((r) => setTimeout(r, 100)); await __settle(); })()`);
+    const go = async (js) => { await p.evaluate(js); await p.evaluate('__settle()'); return p.evaluate(BOUNCE); };
+    // The hits of another vehicle of the battle: its row of the roster first.
+    const focus = (id) => go(`(() => { const d = document.getElementById('vehicle-focus'); if (!d.open) d.querySelector('summary').click(); document.querySelector('#focus-list [data-id="${id}"]').click(); })()`);
+    const hit = (id) => go(`document.querySelector('#hits [data-hit="${id}"]').click()`);
+    const tag = 'the user\'s battle on Cliff, ';
+    // The arrow of one leg against the plate: [angle in, angle out, leaves the plate, lies in the plane of the shot and the normal].
+    const mirror = (s, leg) => { const D = 180 / Math.PI, n = s.normal, d = s.line, o = leg.out, cross = [d[1] * n[2] - d[2] * n[1], d[2] * n[0] - d[0] * n[2], d[0] * n[1] - d[1] * n[0]];
+      return {inDeg: Math.asin(Math.abs(dot(d, n))) * D, outDeg: Math.asin(Math.abs(dot(o, n))) * D, leaves: dot(d, n) * dot(o, n) < 0, plane: Math.abs(dot(o, cross)), unit: Math.hypot(o[0], o[1], o[2])}; };
+    let airPins = 0;
+    // The recorded ricochets whose shell left the vehicle: [the roster row, the hit, the effect of its last point].
+    for (const c of [['5250486', '5', 1], ['5250486', '13', 1], ['5250485', '19', 1], ['5250481', '24', 2]]) {
+      await focus(c[0]);
+      const s = await hit(c[1]), leg = s.legs[0], m = leg && s.normal ? mirror(s, leg) : null;
+      const words = JSON.stringify({effects: s.effects, plateDeg: s.plateDeg, legs: s.legs.length, mirror: m, leg: leg});
+      ok(tag + 'hit ' + c[1] + ' (a recorded ricochet, effect ' + c[2] + ', the shell left the vehicle; the shot meets the plate at ' + s.plateDeg + ' degrees): (the record is as the fixture has it)',
+         s.id === c[1] && s.effects[s.effects.length - 1] === c[2] && !!s.normal && s.plateDeg < 35, words);
+      ok(tag + 'hit ' + c[1] + ': ONE bounce arrow, from the ricochet point, of the decorative length ' + BOUNCE_LENGTH + ' m, ending in the air - dashed, with a head, on screen with the recorded shot',
+         s.legs.length === 1 && gap(leg.start, s.point) < 1e-6 && leg.length === BOUNCE_LENGTH && leg.air === true && leg.dashed && leg.head && leg.shown && gap(leg.from, s.point) < 1e-6, words);
+      ok(tag + 'hit ' + c[1] + ': it is the shot mirrored in the plate - the angle between the plate and the bounce arrow equals the angle between the plate and the shot (to 0.01 degrees), it leaves the plate, and it lies in the plane of the shot and the plate\'s normal',
+         !!m && Math.abs(m.inDeg - m.outDeg) < 0.01 && m.leaves && m.plane < 1e-6 && Math.abs(m.unit - 1) < 1e-9, words);
+      // The same line as an analysed shot (a pin: the vehicle mode's own shot and the aim emulation's go this way).
+      const pinned = await go(PIN_LINE), pl = pinned.pinLegs[0], r = pinned.pin;
+      const ricochets = !!r && (!!r.bounce || r.reason === 'ricochet');
+      if (ricochets) {
+        const air = r.distance === null || !r.bounce;
+        if (air) airPins++;
+        ok(tag + 'hit ' + c[1] + ', its line pinned (our law says ' + r.reason + (r.bounce ? ', a bounce' : '') + (air ? ', into the air' : ', a second contact ' + r.distance.toFixed(2) + ' m on') + '): the leg comes from the same owner - '
+           + (air ? 'the decorative arrow, ' + BOUNCE_LENGTH + ' m, dashed, with a head' : 'dashed to the second contact, no head, as before') + ', along the bounce our law gives; the recorded arrow is put away with the recorded shot',
+           pinned.pinLegs.length === 1 && pl.dashed && pl.air === air && pl.head === air && (air ? pl.length === BOUNCE_LENGTH : Math.abs(pl.length - r.distance) < 1e-9)
+           && (!r.bounce || (gap(pl.out, r.bounce.direction) < 1e-9 && gap(pl.start, r.bounce.point) < 1e-9)) && pinned.legs.length === 1 && pinned.legs[0].shown === false,
+           JSON.stringify({pin: r, pinLegs: pinned.pinLegs, recorded: pinned.legs}));
+      } else ok(tag + 'hit ' + c[1] + ', its line pinned (our law says ' + (r ? r.reason : 'nothing') + ' - no ricochet): no bounce leg on the pin', pinned.pinLegs.length === 0, JSON.stringify(pinned.pin));
+      const back = await go(`${LV}.unpin()`);
+      ok(tag + 'hit ' + c[1] + ': the pin dropped - its leg is gone, the recorded arrow is back', back.pinLegs.length === 0 && back.legs.length === 1 && back.legs[0].shown === true, JSON.stringify(back.legs));
+    }
+    ok(tag + '(of those four lines our law sends at least one off the vehicle after its ricochet - the pinned leg into the air was really asked)', airPins >= 1, '(' + airPins + ')');
+    // A real second leg: nothing new.
+    for (const c of [['5250486', '1', [1, 3], 9], ['5250485', '30', [1, 4], 10]]) {
+      await focus(c[0]);
+      const s = await hit(c[1]);
+      ok(tag + 'hit ' + c[1] + ' (a ricochet with a real second leg, effects ' + c[2].join(' then ') + '): unchanged - no decorative arrow, the scene holds what it held (' + c[3] + ' objects)',
+         JSON.stringify(s.effects) === JSON.stringify(c[2]) && s.legs.length === 0 && s.kids === c[3], JSON.stringify({effects: s.effects, legs: s.legs.length, kids: s.kids}));
+    }
+    // Not a ricochet plate: a "final ricochet" recorded where the line meets the plate at 79 degrees.
+    await focus('5250481');
+    const odd = await hit('50');
+    ok(tag + 'hit 50 (effects 0 then 2, but the line meets the plate at its point at ' + odd.plateDeg + ' degrees - no plate a shell bounces off): nothing is mirrored, no arrow',
+       JSON.stringify(odd.effects) === '[0,2]' && odd.plateDeg > 60 && odd.legs.length === 0, JSON.stringify({effects: odd.effects, plateDeg: odd.plateDeg, legs: odd.legs.length}));
+    // Plain hits: every row of this vehicle's list whose last point is no ricochet.
+    const rows = JSON.parse(await p.evaluate("JSON.stringify([].slice.call(document.querySelectorAll('#hits [data-hit]')).map((e) => e.getAttribute('data-hit')))"));
+    const plain = [];
+    for (const id of rows.slice(0, 8)) { const s = await hit(id), e = s.effects[s.effects.length - 1]; if (e !== 1 && e !== 2) plain.push(s); }
+    ok(tag + 'plain hits (' + plain.length + ' of the first rows of that list, none ending in a ricochet): no bounce arrow on any',
+       plain.length >= 4 && plain.every((s) => s.legs.length === 0 && s.pinLegs.length === 0), JSON.stringify(plain.map((s) => [s.id, s.effects, s.legs.length])));
+    ok(tag + 'the ricochet walk: no uncaught exception in the page', p.errors.length === 0, p.errors.slice(0, 3).join(' | '));
+  } catch (e) {
+    ok('the ricochet run completes', false, String(e && e.stack || e).split('\n').slice(0, 4).join(' | '));
+  } finally { fs.rmSync(folder, {recursive: true, force: true}); }
+}
+
 // Each case runs on its own fixture; one that is not on this machine says SKIP, and with none the run is a skip (77).
 async function main() {
-  const cases = [[DATA, 'scene-state-2026-10-04', swapCase], [CLOSE, 'close-range-2026-10-04', closeCase]].filter(function (c) {
+  const only = process.argv.filter((a) => a.indexOf('--only=') === 0).map((a) => a.slice(7))[0];   // one case by its function's name, for a quick run
+  const cases = [[DATA, 'scene-state-2026-10-04', swapCase], [CLOSE, 'close-range-2026-10-04', closeCase], [CLOSE, 'close-range-2026-10-04', ricochetCase]].filter(function (c) {
+    if (only && c[2].name !== only) return false;
     if (fs.existsSync(path.join(c[0], 'index.js'))) return true;
     console.log('SKIP: the user\'s battle of ' + c[1] + ' is not on this machine (python tests/fixtures-local/' + c[1] + '/make.py)');
     return false;

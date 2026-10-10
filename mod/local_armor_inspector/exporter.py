@@ -41,7 +41,7 @@ STAND_CHANGED = tuple(getattr(_client_code, 'STAND_CHANGED', ()))
 STAND_CLIENT = getattr(_client_code, 'STAND_CLIENT', None)
 
 LOG = logging.getLogger('local.armor_inspector')
-VERSION = '1.0'
+VERSION = '1.01'
 RESOURCE = re.compile(r'^(?:[A-Za-z0-9_-]+/)?vehicles/[A-Za-z0-9_/-]+\.(?:model|havok)\Z')
 IDENTIFIER = re.compile(r'^[-a-zA-Z0-9_]{1,100}\Z')
 # The interface icons of the aim configuration (equipment, perks, shells) ship with the page in web/icons
@@ -116,7 +116,7 @@ CRIT_ICON_FILES = tuple('web/icons/crits/%s.png' % name for name in (
 # web/ttx.js (23.09) is the arithmetic of the characteristics panel; index.html loads it before app.js, and without it
 # here the panel would stay hidden in the package the way the modifier group did.
 ASSETS = ('Viewer.html', 'web/style.css', 'web/icon.svg', 'web/viewer.js',
-          'web/local-data.js', 'web/frame.js', 'web/host.js', 'web/app.js', 'web/modifiers.js', 'web/equipment.js', 'web/vehicle-modes.js', 'web/ballistics.js', 'web/shot-telemetry.js', 'web/shot-context.js', 'web/crits.js', 'web/ttx.js', 'web/tooltips.js', 'web/screen-armor.js', 'web/vendor/three.min.js',
+          'web/local-data.js', 'web/frame.js', 'web/host.js', 'web/app.js', 'web/modifiers.js', 'web/equipment.js', 'web/vehicle-modes.js', 'web/ballistics.js', 'web/shot-telemetry.js', 'web/shot-context.js', 'web/crits.js', 'web/ttx.js', 'web/tooltips.js', 'web/aim-sound.js', 'web/aim-sound-samples.js', 'web/screen-armor.js', 'web/vendor/three.min.js',
           'web/vendor/three.LICENSE', 'web/vendor/three-mesh-bvh.umd.js',
           # THIRD_PARTY.md ships with the page and points at these two: the packed-XML reader's licence and
           # the vendor manifest with the sources and hashes of three.js / three-mesh-bvh (inspection, 20.09).
@@ -2759,6 +2759,15 @@ TTX_SOURCE = re.compile(r'^(?:[^/]+/)?scripts/(?:item_defs/vehicles/|common/item
 TTX_SOURCE_SKIP = re.compile(r'item_defs/vehicles/common/(?:customization|damage_stickers|player_emblems|'
                              r'forbidden_vehicles_to_battle_config|equipments|optional_devices|post_progression|prefab_effects)'
                              r'|item_defs/vehicles/common/[^/]*effects\.xml$|item_defs/vehicles/[^/]+/customization\.xml$')
+# THE FILES OF A SKILL TREE (09.10): veh_skill_configs/<Vehicle>_tree.xml and <Vehicle>_modifications.xml, named after their
+# vehicle (28 pairs of files for the 28 trees of client 2.4.0.2). They are in the keys of THAT vehicle - its characteristics
+# file and its vehicle file, which both carry the tree - and of nothing else (source_crcs_of, split_sources,
+# ttx_source_keys): a client update that changes a tree rebuilds that vehicle's two files; the first start of the build that
+# put the tree into the files finds 28 changed keys of each kind and builds those again, every other key is the same text as
+# before - TTX_FORMAT and VEHICLE_FORMAT are not raised for this, they would rebuild every file. A vehicle file built again
+# takes its collision models by their content (model_content_key): none is extracted again. The rest of post_progression/
+# stays out (TTX_SOURCE_SKIP): the role trees are the page's Config, not these files.
+TTX_TREE = re.compile(r'^scripts/item_defs/vehicles/common/post_progression/veh_skill_configs/(.+)_(?:tree|modifications)\.xml$')
 TTX_SWEEP_REPORT = 2.0
 TTX_SWEEP_DATA = ('data', 'ttx-sweep.js')
 TTX_SWEEP_KEY = 'ttxSweep'
@@ -2840,6 +2849,93 @@ TTX_MODE_FLAGS = (('siege', 'hasSiegeMode'), ('wheeled', 'isWheeledVehicle'),
                   ('trackWithinTrack', 'isTrackWithinTrack'))
 
 
+# THE TIER-XI SKILL TREE IS IN THE FILE, WHOLE (09.10; the user: "the panel says 40 km/h, the upgrade gives plus 2 - for tier
+# XI the upgrades stand in for the field modification and must be counted in full"; the decision of 26.09, docs/CONTEXT.md: a
+# tier-XI tree has no sides to choose, only "researched or not", so it is always taken as researched to its end). A vehicle the
+# client marks eliteByProgression whose post-progression tree has no pair (28 vehicles of client 2.4.0.2, all tier XI: 23
+# modifications and 3 features each) gets every modification of its tree installed by the client's own
+# VehicleDescriptor.installModifications before anything is read - what the garage does for a researched tree
+# (gui_items/Vehicle.installPostProgression). The client edits COPIES of the type and of the modules on that one descriptor
+# (descr_modify_attrs.VehDescrWrapper; the shared g_cache keeps the bare ones - checked: a descriptor made afterwards is bare),
+# applies them again by itself after every installTurret (__updateAttributes) and, for a vehicle built twice, hands them to both
+# descriptors with each mode's own filter. So the panel, the shooter read from the file, the shells and the second mode all get
+# the tree by the one path they are read by. A role tree (tiers VI-X: a pair on every level) is left alone: its sides are the
+# user's choice in the page's Config. What a node writes into miscAttrs only: the gun's own two factors are taken from there
+# (ttx_misc_gun_factors); the parameters of the tier-XI mechanics and the module strengths are not in this file at all.
+def skill_tree_modifications(vtype):
+    """The ids of every modification of the vehicle's skill tree, sorted; () for a vehicle without one - no tree, or a role
+    tree. One attribute read for every vehicle below tier XI. Raises when the client's post-progression cache does not read."""
+    if not getattr(vtype, 'eliteByProgression', False): return ()
+    tree_id = getattr(vtype, 'postProgressionTree', None)
+    if tree_id is None: return ()
+    from items import vehicles as client_vehicles
+    from post_progression_common import ACTION_TYPES
+    tree = client_vehicles.g_cache.postProgression().trees[tree_id]
+    actions = [step.action for step in tree.steps.values()]
+    # A tree with a pair has no "all of it": the two sides of a pair exclude each other.
+    if any(kind == ACTION_TYPES.PAIR_MODIFICATION for kind, _ in actions): return ()
+    return tuple(sorted(item for kind, item in actions if kind == ACTION_TYPES.MODIFICATION))
+
+
+def install_skill_tree(descr):
+    """Install the whole skill tree of the descriptor's vehicle on it - THE one place a tree is installed, for the
+    characteristics file (ttx_block) and for the vehicle file (export_vehicle). Returns how many modifications it carries now:
+    0 for a vehicle without a skill tree, which is not touched. Raises when the client refuses the tree; the descriptor may
+    then be half edited (the list stays in it and every later installTurret raises again), so the caller takes another one.
+    Never on a descriptor somebody else reads: not on vehicle_descr's memo, not on the arena's."""
+    modifications = skill_tree_modifications(descr.type)
+    if not modifications: return 0
+    descr.installModifications(list(modifications))
+    if sorted(descr.modifications) != sorted(modifications): raise ValueError('Modifications not installed')
+    return len(modifications)
+
+
+def skill_tree_marker(vtype, installed):
+    """{'tree': id, 'modifications': n} for the file of a vehicle the client marks eliteByProgression - which tree its
+    figures carry and how many of its modifications (0: none - refused by the client, or a tree with pairs); None for every
+    other vehicle. The key's presence is what ttx_tree_current and vehicle_tree_current read."""
+    if not installed and not getattr(vtype, 'eliteByProgression', False): return None
+    return {'tree': str(getattr(vtype, 'postProgressionTree', '') or ''), 'modifications': int(installed)}
+
+
+SKILL_TREE_WARNING = 'Skill tree unavailable; these are the characteristics of the bare vehicle'
+
+
+def ttx_tree_current(value):
+    """False for the file of a skill-tree vehicle written before the tree went into it (no vehicle.skillTree): built again,
+    once - the rule of the modes' and the armour's markers, for a file whose key is not kept (ttx_current, start_ttx_sweep)."""
+    vehicle = value.get('vehicle') or {}
+    return not (vehicle.get('fitment') or {}).get('eliteByProgression') or 'skillTree' in vehicle
+
+
+def vehicle_tree_current(record):
+    """The same for a vehicle file (export_vehicle writes eliteByProgression and skillTree at its top level)."""
+    return not record.get('eliteByProgression') or 'skillTree' in record
+
+
+# The gun's own factors the client keeps a copy of in miscAttrs (vehicles __updateAttributes): a node of a skill tree
+# multiplies the copy, never the gun, and the copy is what the battle's circle is computed with. By the aim block's name.
+TTX_MISC_GUN_FACTORS = (('turretRotationFactor', 'gun/shotDispersionFactors/turretRotation'),
+                        ('afterShotFactor', 'gun/shotDispersionFactors/afterShot'))
+
+
+def ttx_misc_gun_factors(descr, block):
+    """Lay the descriptor's miscAttrs copies of the gun's factors over an aim block of a descriptor with a skill tree
+    (15 trees of client 2.4.0.2 tighten the turret term x0.9-0.95, the AMX 67's the after-shot term x0.9). Nothing for a
+    descriptor without modifications: its copies are the gun's own figures. Never raises."""
+    try:
+        if not block or not descr.modifications: return
+        misc = descr.miscAttrs
+    except Exception:
+        return
+    for key, attribute in TTX_MISC_GUN_FACTORS:
+        try:
+            value = float(misc[attribute])
+            if key in block and value > 0 and value - value == 0: block[key] = value
+        except Exception:
+            pass
+
+
 def ttx_take(target, key, action, warnings, label):
     """target[key] = action(), or a line in warnings: one field the client refuses costs that field only."""
     try:
@@ -2905,6 +3001,25 @@ def ttx_repair_times(chassis):
         return [] if any(time is None for time in times) else [float(time) for time in times]
     time = getattr(chassis, 'repairTime', None)
     return [] if time is None else [float(time)]
+
+
+def ttx_repair_speed(descr):
+    """The garage's factor on the suspension's repair speed from the installed skill tree; 1.0 without one.
+
+    The one figure of the panel the garage does not read off the descriptor: params.__calcRealChassisRepairTime divides the
+    XML time by the KPI vehicleChassisRepairSpeed of the researched steps (functions.getKpiFactors), and its KPI multiply -
+    two nodes of x1.1 make x1.21 there (the Szakal, the Breaker, the T803, the Object 432U; the battle's own miscAttrs
+    chassisRepairSpeedFactor adds their deviations: x1.2). A node's KPI is its modifier's figure in all 16 trees that have
+    one (the stand's reference with the client's own KPI reader: tools/ttx_reference.py, 09.10), and the modifiers are what
+    the descriptor itself hands out, so they are read here - the product, as the garage counts."""
+    factor = 1.0
+    if not getattr(descr, 'modifications', None): return factor
+    for modifiers in descr.getPostProgressionModifications():
+        for modifier in modifiers:
+            op, kind, name, value = tuple(modifier)[:4]
+            if str(op) == 'mul' and str(kind).rstrip('/') == 'miscAttrs' and str(name) == 'chassisRepairSpeedFactor':
+                factor *= float(value)
+    return factor
 
 
 def ttx_reload_extra(descr):
@@ -2980,11 +3095,14 @@ def ttx_pair(descr, turret_index, gun_name, top):
     def aim():
         block = aims['default'] if aims and aims.get('default') else aim_block(descr)
         if not block: raise ValueError('No aim block')
-        # A bare descriptor rebuilt by the client: no battle, no field modifications, no devices.
+        # A descriptor rebuilt by the client: no battle, no devices, no field modification of a role tree - and the whole
+        # skill tree of a tier-XI vehicle (ttx_block), whose miscAttrs nodes on the gun's own factors are laid over here.
+        ttx_misc_gun_factors(mode_descr(descr, 0), block)
         block['aimFrom'] = 'compact'
         return block
     ttx_take(config, 'aim', aim, warnings, 'Aim parameters')
     if aims and not aims['same'] and aims.get('siege'):
+        ttx_misc_gun_factors(mode_descr(descr, 1), aims['siege'])
         aims['siege']['aimFrom'] = 'compact'
         config['modeAim'] = aims['siege']
         config['modeAimMode'] = 1
@@ -3010,7 +3128,7 @@ def ttx_pair(descr, turret_index, gun_name, top):
     return config, warnings
 
 
-def ttx_mode_values(descr, vehicle, modules, turrets, modes):
+def ttx_mode_values(descr, vehicle, modules, turrets, modes, siege_turrets=None):
     """The vehicle's own figures of its second mode, only the ones that differ from the first (23.09, second modes M2):
 
       enginePower            W        the siege engine's power (the turbine: 740 -> 1150 hp on the CS-63)
@@ -3019,7 +3137,9 @@ def ttx_mode_values(descr, vehicle, modules, turrets, modes):
       maxSteeringLockAngle   deg      a wheeled vehicle without on-the-spot turning, its Rapid wheels (33 -> 15)
 
     Read off the siege descriptor of the composite the pairs were mounted on (mode_descr): the top engine and chassis
-    are installed in both. {} for a vehicle built once.
+    are installed in both. `siege_turrets`: {index: the turret that descriptor carried while the pair was mounted} - under a
+    skill tree the client's edited copy, whose view range is the mode's (the type's own list is the bare vehicle's).
+    {} for a vehicle built once.
     """
     if not modes.get('siege'):
         return {}
@@ -3038,7 +3158,8 @@ def ttx_mode_values(descr, vehicle, modules, turrets, modes):
     except Exception:
         pass
     try:
-        vision = [float(turret.circularVisionRadius) for turret in siege.type.turrets[0]]
+        mounted = siege_turrets or {}
+        vision = [float((mounted.get(index) or turret).circularVisionRadius) for index, turret in enumerate(siege.type.turrets[0])]
         if len(vision) == len(turrets) and vision != [entry.get('circularVisionRadius') for entry in turrets]:
             values['circularVisionRadius'] = vision
     except Exception:
@@ -3076,7 +3197,8 @@ def ttx_block(type_name, version, log=True):
 
     A fresh VehicleDescr(typeID) of the running client - never the memo of vehicle_descr: its modules are
     replaced here - raised to the best chassis, engine, radio and fuel tank (best_component, the rule of
-    top_descriptor, which itself stays as it is: it decides the compact descriptor of the model sweep). Then
+    top_descriptor, which itself stays as it is: it decides the compact descriptor of the model sweep), with
+    the whole skill tree of a tier-XI vehicle installed (skill_tree_modifications; vehicle.skillTree says so). Then
     one installTurret per pair of vtype.turrets[0][i].guns: the client applies the turret's own overrides of
     the gun (reload, aiming, dispersion factors, pitch limits) and picks the hull variant itself. The shells
     are read once per gun, the modules once per type. Every field is read on its own; a refusal is a line in
@@ -3085,18 +3207,38 @@ def ttx_block(type_name, version, log=True):
     started = TTX_TIMER()
     from items import vehicles as client_vehicles
     nation_id, innation_id = client_vehicles.g_list.getIDsByName(type_name)
-    descr = client_vehicles.VehicleDescr(typeID=(nation_id, innation_id))
+
+    def raised():
+        """A fresh descriptor on its top chassis, engine, radio and fuel tank, and the lines of what stayed stock."""
+        descr = client_vehicles.VehicleDescr(typeID=(nation_id, innation_id))
+        lines = []
+        for attribute, listing in TTX_TOP_MODULES:
+            try:
+                best = best_component(getattr(descr.type, listing))
+                current = getattr(descr, attribute, None)
+                if best is not None and (current is None or current.name != best.name):
+                    descr.installComponent(best.compactDescr)
+            except Exception:
+                lines.append('Top %s unavailable; the stock one is kept' % attribute)
+        return descr, lines
+    descr, warnings = raised()
+    # The whole skill tree of a tier-XI vehicle (skill_tree_modifications above), before anything is read. A tree the client
+    # refuses costs this vehicle its tree, never its file or the next vehicle's (D-044): the refusal may leave the descriptor
+    # half edited, so the bare one is made again.
+    installed, refused = 0, False
+    try:
+        installed = install_skill_tree(descr)
+    except Exception:
+        refused = True
+        descr, warnings = raised()
+        warnings.append(SKILL_TREE_WARNING)
+    # The type as the descriptor carries it now: a tree edits a copy of it (the client makes that copy anew at every
+    # installTurret, with the same type-level figures).
     vtype = descr.type
-    warnings = []
-    for attribute, listing in TTX_TOP_MODULES:
-        try:
-            best = best_component(getattr(vtype, listing))
-            current = getattr(descr, attribute, None)
-            if best is not None and (current is None or current.name != best.name):
-                descr.installComponent(best.compactDescr)
-        except Exception:
-            warnings.append('Top %s unavailable; the stock one is kept' % attribute)
     vehicle = {}
+    # Which tree the figures below carry and how many of its modifications; the page says "full skill tree" by the count.
+    marker = skill_tree_marker(vtype, installed) or (refused and {'tree': str(getattr(vtype, 'postProgressionTree', '') or ''), 'modifications': 0})
+    if marker: vehicle['skillTree'] = marker
     ttx_take(vehicle, 'invisibility', lambda: [float(item) for item in vtype.invisibility], warnings, 'Concealment')
     ttx_take(vehicle, 'camouflageBonus', lambda: float(vtype.invisibilityDeltas['camouflageBonus']), warnings,
              'Camouflage bonus')
@@ -3140,6 +3282,12 @@ def ttx_block(type_name, version, log=True):
             physics = vtype.xphysics['chassis'][component.name]
             block['maxSteeringLockAngle'] = ttx_steering_lock(physics.get('axleSteeringLockAngles'))
         ttx_take(block, 'repairTime', lambda: ttx_repair_times(component), warnings, 'Suspension repair time')
+        # What the skill tree does to that time in the garage (ttx_repair_speed): only where it does anything.
+        try:
+            speed = ttx_repair_speed(descr)
+            if speed != 1.0: block['repairSpeed'] = speed
+        except Exception:
+            warnings.append('Suspension repair speed of the skill tree unavailable')
         return block
 
     def engine():
@@ -3154,18 +3302,23 @@ def ttx_block(type_name, version, log=True):
     top_index = candidates.index(top_turret) if top_turret is not None else -1
     top_gun = best_component(top_turret.guns) if top_turret is not None else None
     tags = set()
+    # The second mode's descriptor's own turret, per turret of the list (ttx_mode_values).
+    siege_turrets = {}
+
+    def turret_fields(entry, component, lines):
+        ttx_take(entry, 'circularVisionRadius', lambda: float(component.circularVisionRadius), lines,
+                 'View range of ' + entry['name'])
+        ttx_take(entry, 'invisibilityFactor', lambda: float(component.invisibilityFactor), lines,
+                 'Turret concealment of ' + entry['name'])
+        # The turret's nominal armour front / sides / rear, mm (params.VehicleParams.turretArmor 461): the garage prints
+        # it only on a real turret (vehicle.hasTurret); a fake one has figures of its own that nobody shows.
+        ttx_take(entry, 'primaryArmor', lambda: [float(item) for item in component.primaryArmor], lines,
+                 'Turret armour of ' + entry['name'])
     for index, turret in enumerate(candidates):
         entry = {}
         ttx_take(entry, 'module', lambda: ttx_module(turret), warnings, 'Turret')
         entry = entry.get('module') or {'name': str(getattr(turret, 'name', index))}
-        ttx_take(entry, 'circularVisionRadius', lambda: float(turret.circularVisionRadius), warnings,
-                 'View range of ' + entry['name'])
-        ttx_take(entry, 'invisibilityFactor', lambda: float(turret.invisibilityFactor), warnings,
-                 'Turret concealment of ' + entry['name'])
-        # The turret's nominal armour front / sides / rear, mm (params.VehicleParams.turretArmor 461): the garage prints
-        # it only on a real turret (vehicle.hasTurret); a fake one has figures of its own that nobody shows.
-        ttx_take(entry, 'primaryArmor', lambda: [float(item) for item in turret.primaryArmor], warnings,
-                 'Turret armour of ' + entry['name'])
+        turret_fields(entry, turret, warnings)
         turrets.append(entry)
         for gun in turret.guns:
             name = str(gun.name)
@@ -3174,6 +3327,14 @@ def ttx_block(type_name, version, log=True):
             except Exception:
                 warnings.append('Pair %s x %s could not be mounted' % (entry['name'], name))
                 continue
+            # The turret as the descriptor carries it: the type's own object, or - under a skill tree - the copy the client
+            # edited (the view range of five trees); the mounted one's figures are the vehicle's. Once per turret.
+            try:
+                if index not in siege_turrets:
+                    siege_turrets[index] = mode_descr(descr, 1).turret
+                    if descr.turret is not turret: turret_fields(entry, descr.turret, [])
+            except Exception:
+                pass
             top = index == top_index and top_gun is not None and name == str(top_gun.name)
             config, lines = ttx_pair(descr, index, name, top)
             warnings.extend('%s x %s: %s' % (entry['name'], name, line) for line in lines)
@@ -3197,7 +3358,7 @@ def ttx_block(type_name, version, log=True):
     vehicle['modes'] = modes
     # The second mode's own figures of the vehicle, and the rocket booster (23.09, second modes M2).
     try:
-        values = ttx_mode_values(descr, vehicle, modules, turrets, modes)
+        values = ttx_mode_values(descr, vehicle, modules, turrets, modes, siege_turrets)
         if values: vehicle['modeValues'] = values
     except Exception:
         warnings.append('Second-mode values unavailable')
@@ -4254,6 +4415,8 @@ class Exporter(object):
         if not version: return False
         # Built by this build's format, whichever client (second review F): a vehicle file names it (none: format 1).
         if record is not None and record.get('format', 1) != VEHICLE_FORMAT: return False
+        # A tier-XI vehicle's file from before its skill tree went into it (09.10): never proven, built again.
+        if record is not None and not vehicle_tree_current(record): return False
         if version != self.version:
             then = self.client_files(version)
             if then is None or not self.code_inputs_same(version): return False
@@ -4269,6 +4432,9 @@ class Exporter(object):
         """An exported vehicle file is what this client and this build would write now: its key (vehicle_key) is the one it
         was last built or checked with (vehicle_keys). Without a snapshot: written by this client version, as before."""
         if not summary: return False
+        # (The skill tree's marker - vehicle_tree_current - is NOT asked here, only where a file has no key, in proven: a file
+        # that cannot be built again - an event's copy of a tier-XI vehicle after its event left the client - would be tried
+        # and fail at every start for ever, as the stand showed, 09.10. Its key decides, like every other file's.)
         stored = self.vehicle_keys().get(str(summary.get('id') or ''))
         if self.client() is not None:
             try:
@@ -5761,6 +5927,9 @@ class Exporter(object):
                         'premium', 'collector', 'special', 'source', 'exportedAt', 'clientVersion'))
         summary['descriptorHash'] = descriptor_hash(record.get('type'), record.get('compactDescriptor'))
         summary['format'] = record.get('format', 1)
+        # A tier-XI vehicle's skill tree (09.10): what vehicle_tree_current reads, for a file whose key is not kept (proven).
+        for key in ('eliteByProgression', 'skillTree'):
+            if record.get(key): summary[key] = record[key]
         # What its key is made of besides its type (vehicle_key): the descriptor and each part's model and prefab.
         summary['compactDescriptor'] = record.get('compactDescriptor')
         summary['parts'] = [dict((k, part[k]) for k in ('resource', 'prefab') if part.get(k))
@@ -5872,7 +6041,26 @@ class Exporter(object):
         if not replay and not sweep: self.append_vehicle_request(request)
         if descr is None: descr = vehicle_descr(compact)
         record = {'schema':1, 'warnings':[]}
+        # THE WHOLE SKILL TREE OF A TIER-XI VEHICLE (09.10, D-112; the rule and the one installer: skill_tree_modifications,
+        # install_skill_tree). The page takes a browsed vehicle's shooter - its aim block, its shells, its gun limits, its
+        # health - from this file, so a bare one left the panel's build column, the emulator and the shell list at 40 km/h
+        # beside the characteristics file's 42. On a descriptor of this export's OWN: the one handed in is vehicle_descr's
+        # memo, which the records' fix_* read, or the sweep's. The collision parts and their armour are the same either way
+        # (no node of a tree touches them). A tree the client refuses: the bare vehicle and a warning, never a lost export.
+        installed = 0
+        try:
+            if skill_tree_modifications(getattr(descr, 'type', None)):
+                import base64
+                from items import vehicles as client_vehicles
+                own = client_vehicles.VehicleDescr(compactDescr=base64.b64decode(compact))
+                installed = install_skill_tree(own)
+                descr = own
+        except Exception:
+            installed = 0
+            record['warnings'].append(SKILL_TREE_WARNING)
         record.update(descr_identity(descr))
+        marker = skill_tree_marker(getattr(descr, 'type', None), installed)
+        if marker: record['skillTree'] = marker
         for key in ('name', 'level', 'class', 'role', 'nation'):
             if record.get(key) is None and (request.get('identity') or {}).get(key) is not None:
                 record[key] = request['identity'][key]
@@ -5901,7 +6089,9 @@ class Exporter(object):
             # Everything the page's dispersion circle needs about this vehicle as a shooter.
             block = aim_block(descr)
             if block:
-                # Rebuilt from the compact descriptor: no battle, no field modifications (S3, 22.09).
+                # Rebuilt from the compact descriptor: no battle, no field modifications (S3, 22.09) - and a tier-XI
+                # vehicle's whole skill tree, with the gun's two factors its nodes multiply in miscAttrs (as ttx_pair).
+                ttx_misc_gun_factors(descr, block)
                 block['aimFrom'] = 'compact'
                 record['aim'] = block
             else: record['warnings'].append('Aim parameters unavailable')
@@ -6102,6 +6292,9 @@ class Exporter(object):
             return False
         # So is a file of another TTX_FORMAT (a file without the field is format 1: before the shells' traceRicochet).
         if value.get('format', 1) != TTX_FORMAT:
+            return False
+        # And a skill-tree vehicle's file that predates the tree in it (09.10).
+        if not ttx_tree_current(value):
             return False
         # A vehicle with a second mode or a rocket booster whose file predates their fields is built again, once.
         vehicle = value.get('vehicle') or {}
@@ -6617,13 +6810,13 @@ class Exporter(object):
     def source_crcs_of(files):
         """{path: crc} of the data the characteristics and vehicle files are built from, in a client's files: every vehicle's
         own XML and its nation's files (TTX_SOURCE without the code), of the vehicles' common files only those a build opens
-        (SHARED_DATA; an event package's all of them), what items reads at its start, and the texts the builds translate from.
-        An unknown CRC (a derived snapshot) is '?'."""
+        (SHARED_DATA; an event package's all of them), what items reads at its start, the texts the builds translate from, and
+        the files of the skill trees (TTX_TREE: each is its own vehicle's). An unknown CRC (a derived snapshot) is '?'."""
         shared = set(SHARED_DATA) | set('res/text/lc_messages/%s.mo' % d for d in TEXT_DOMAINS)
         crcs = {}
         for name, entry in files.items():
-            if name in shared or (TTX_SOURCE.match(name) and not name.endswith('.pyc')
-                                  and not name.startswith('scripts/item_defs/vehicles/common/')):
+            if name in shared or TTX_TREE.match(name) or (TTX_SOURCE.match(name) and not name.endswith('.pyc')
+                                                          and not name.startswith('scripts/item_defs/vehicles/common/')):
                 crcs[name] = '?' if entry[0] < 0 else '%08x' % entry[0]
         return crcs
 
@@ -6650,10 +6843,14 @@ class Exporter(object):
     @staticmethod
     def split_sources(crcs):
         """The source files by what they are to a type: (shared {root: [line]}, the nations' {(root, nation): [line]}, each
-        nation's own vehicle files {nation: [(file, root, line)]}). A root is '' for the client's scripts.pkg, '<event>/'
-        for an event's own package."""
-        shared, nation_files, own = {}, {}, {}
+        nation's own vehicle files {nation: [(file, root, line)]}, the skill trees' files {vehicle: [line]} - TTX_TREE). A
+        root is '' for the client's scripts.pkg, '<event>/' for an event's own package."""
+        shared, nation_files, own, trees = {}, {}, {}, {}
         for name in sorted(crcs):
+            tree = TTX_TREE.match(name)
+            if tree:
+                trees.setdefault(tree.group(1), []).append(name[len('scripts/'):] + '=' + crcs[name])
+                continue
             if 'scripts/' not in name:
                 # A file outside the scripts (system/data, gui, the texts): shared by every type.
                 shared.setdefault('', []).append(name + '=' + crcs[name])
@@ -6671,21 +6868,23 @@ class Exporter(object):
                 own.setdefault(parts[0], []).append((parts[1], root, line))
             else:
                 nation_files.setdefault((root, parts[0]), []).append(line)
-        return shared, nation_files, own
+        return shared, nation_files, own, trees
 
     def ttx_source_keys(self, types, crcs, format_tag=None):
         """{type: key}: the format (TTX_FORMAT; the model sweep passes its own), the files every type is read with (the
         client's items code, the vehicles' common files - TTX_SOURCE_SKIP leaves out what no characteristic depends on), its
         nation's (components, list.xml) and its own XML (every file of its nation whose name begins with its own - a variant
         too: more rebuilds, never fewer). A type from an extension package (an event's) takes that package's common and
-        nation files too. The client's code is not here (ttx_keys, vehicle_key add code_generation)."""
+        nation files too. The files of the vehicle's own skill tree last (TTX_TREE: its characteristics and its vehicle file
+        both carry the tree) - a vehicle without one gets the very text it got before them. The client's code is not here
+        (ttx_keys, vehicle_key add code_generation)."""
         # One split per sources' table (this client's, and an earlier client's for a proof): both are kept.
         caches = getattr(self, 'split_caches', None)
         if caches is None: caches = self.split_caches = {}
         cached = caches.get(id(crcs))
         if cached is None or cached[0] is not crcs:
             cached = caches[id(crcs)] = (crcs, self.split_sources(crcs))
-        shared, nation_files, own = cached[1]
+        shared, nation_files, own, tree_files = cached[1]
         keys, bases = {}, {}
         for type_name in types:
             nation, _, name = type_name.partition(':')
@@ -6698,7 +6897,8 @@ class Exporter(object):
                     text.extend(shared.get(root, ()))
                     text.extend(nation_files.get((root, nation), ()))
                 bases[(roots, nation)] = zlib.crc32('\n'.join(text).encode('utf-8'))
-            own_text = '\n'.join(sorted(line for root, line in mine)).encode('utf-8')
+            lines = sorted(line for root, line in mine) + sorted(tree_files.get(name, ()))
+            own_text = '\n'.join(lines).encode('utf-8')
             keys[type_name] = '%08x' % (zlib.crc32(own_text, bases[(roots, nation)]) & 0xffffffff)
         return keys
 
@@ -6765,7 +6965,8 @@ class Exporter(object):
                     continue
                 try:
                     value = read_data_file(self.ttx_path(type_name))
-                    ok = value.get('format', 1) == TTX_FORMAT and self.proven(type_name, value.get('clientVersion'))
+                    ok = (value.get('format', 1) == TTX_FORMAT and ttx_tree_current(value)
+                          and self.proven(type_name, value.get('clientVersion')))
                 except Exception:
                     ok = False
                 if ok:

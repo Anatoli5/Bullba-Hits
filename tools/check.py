@@ -6,7 +6,8 @@ it before a build and refuses to build on red. Suites (they run side by side, ~1
   lists     the build lists against the disk and the page: ASSETS entries exist and are well-formed; every web/ file
             and every script/stylesheet index.html loads is in ASSETS (web/modifiers.js once shipped without it);
             the icons on disk = ICON_FILES + CRIT_ICON_FILES; CRIT_ICON_FILES = what tools/extract_crit_icons.py
-            writes; the icon names of web/equipment.js are in ICON_FILES
+            writes; the icon names of web/equipment.js are in ICON_FILES; web/aim-sound-samples.js is what the mod
+            Bullba Countdown's synthesis renders (tools/build_aim_sounds.py; that project absent: SKIP)
   client    the installed client is the one tools/client_version.py names (another version or realm: another mods
             folder; the same version with another build number: a micro-update) and every client name the recorder
             hooks is in its bytecode (tools/inspect_hook_names.py, rule W7). No client or no game Python: SKIP
@@ -135,6 +136,13 @@ def check_lists(result):
     for icon in sorted(set(re.findall(r'"icon":\s*"([^"]+)"', read('web/equipment.js')))):
         if icon in names: result.passed += 1
         else: result.fail('web/equipment.js names icon %s, ICON_FILES lacks it' % icon)
+    # The emulation's sounds are the mod Bullba Countdown's own samples (08.10): web/aim-sound-samples.js is what that
+    # project's synthesis renders now, byte for byte. The other project is local to this machine: absent, SKIP.
+    import build_aim_sounds
+    if not build_aim_sounds.available():
+        result.skip('lists: Bullba Countdown is not at %s - web/aim-sound-samples.js not compared with its samples' % build_aim_sounds.COUNTDOWN)
+    elif build_aim_sounds.text() == io.open(build_aim_sounds.TARGET, encoding='utf-8', newline='').read(): result.passed += 1
+    else: result.fail('web/aim-sound-samples.js is not what Bullba Countdown renders now: run tools/build_aim_sounds.py')
 
 
 def check_version(result):
@@ -221,6 +229,19 @@ def check_page(result):
     rows = re.search(r'rows (\d+), mismatches (\d+)', out)
     if code == 0 and rows and rows.group(2) == '0': result.passed += int(rows.group(1))
     else: result.fail('ttx_accept: ' + tail(out, 4))
+    # The tier-XI vehicles with their whole skill tree (09.10, D-112): the page's strings from the files the mod's ttx_block
+    # writes for them against the garage's with the tree researched (tools/ttx_reference.py), every vehicle that has one. The
+    # rows that mismatch on the bare vehicle too - one mode printed of two - are listed with their reason (known.json).
+    xi, xi_ref = os.path.join(local, 'ttx-offline', 'out', 'mod', 'ttx-xi'), os.path.join(local, 'ttx-reference', 'xi')
+    if not os.path.isdir(xi) or not os.path.isfile(os.path.join(xi_ref, 'ttx_reference.json')):
+        result.skip('ttx_accept, the skill trees: the tier-XI characteristics are not on this machine (tests/fixtures-local/ttx-*/xi)')
+        return
+    command = [exe, 'tests/page/ttx_accept.cjs', os.path.join(xi_ref, 'ttx_reference.json'), xi + os.sep]
+    if os.path.isfile(os.path.join(xi_ref, 'known.json')): command += ['--known', os.path.join(xi_ref, 'known.json')]
+    code, out, _ = run(command)
+    rows = re.search(r'rows (\d+), mismatches (\d+)(?:, known (\d+))?', out)
+    if code == 0 and rows and rows.group(2) == '0': result.passed += int(rows.group(1)) - int(rows.group(3) or 0)
+    else: result.fail('ttx_accept, the skill trees: ' + tail(out, 4))
 
 
 def check_browser(result):

@@ -2,6 +2,12 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.0.2 from 0.9.3 on, 2.4.0.1 #950 from 0.7.6, 2.4.0.0 #945 before.
 
+## 1.01 (2026-10-10)
+
+- **Tier XI vehicles:** a tier XI vehicle picked in the list is shown with its skill tree fully researched - the characteristics panel in both views, the emulated gun and its shells (a Pz.Kpfw. Neu: 42 km/h, not 40; 280 mm of penetration, not 275), and ⚙'s tooltip says so. The mod writes the files of these 28 vehicles again by itself after the update; no model is exported again. Recorded shots keep what the battle recorded.
+- **A ricochet looks like a ricochet:** a recorded ricochet whose shell left the vehicle now gets its bounce arrow too - dashed, from the ricochet point, at the angle the shot came in at. It is decorative: it shows the bounce, not where the shell went. Before, the second arrow was drawn only when the bounced shell met the vehicle again. A pinned shot's bounce into the air is that same arrow, with a head.
+- **Autoreloader (⌖ with ◔):** a shot fired while a round is loading back now starts that load over, as in the game - before, the emulated magazine kept the part of the load already done, so rounds came back too soon (on a Progetto 65 emptied in one go, the first round after about 3 s instead of 14 s). The magazine's tooltip says so.
+
 ## 1.0 (2026-10-05)
 
 Builds 0.9.3 to 0.9.9 were never released; their changes are listed here. From here on the versions go 1.01, 1.02 and so on.

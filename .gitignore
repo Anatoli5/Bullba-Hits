@@ -49,6 +49,7 @@ __pycache__/
 !/tools/shot_spread_from_records.py
 !/tools/build_equipment_catalogue.py
 !/tools/build_vehicle_modes.py
+!/tools/build_aim_sounds.py
 !/tools/check.py
 !/tools/havok_parity.py
 

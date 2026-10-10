@@ -744,12 +744,15 @@
     var range=context&&context.range;this.recordedDistance=Number.isFinite(range)&&range>0?range:Number.isFinite(hit.rangeAtImpact)&&hit.rangeAtImpact>0?hit.rangeAtImpact:null;
     this.loadedData=data;this.posedData=null;this.poseBuilt=null;this.turretAngle=0;this.gunAngle=0;this.rebuild();
     this.root.updateMatrixWorld(true);
+    // The recorded points, and the bounce of a ricochet that ends them - asked of the model as the record posed it,
+    // which is the engine of this very moment (a carried pose is put on below).
+    var pts=Viewer.points(hit,context);pts.bounce=this.recordedBounce(pts);
     var box=new T.Box3().setFromObject(this.root);this.bounds=box.isEmpty()?null:box;this.centre=this.vehicleCentre();
     // The bounds and the centre are the rest pose's, as for any load (a drag never re-measures them), so a carried pose
     // goes on after them: one more build of the posed model, exactly the one a drag ends with (applyTurret).
     var posed=carry?this.poseCarry(carry):null;if(posed&&(this.turretAngle||this.gunAngle))this.applyTurret();
     if(held)this.keptSame(held);   // the same model under another shooter: its pin, the shot's ring, the gun's aim point
-    var pts=Viewer.points(hit,context);pts.forEach(function(p){self.addReticle(p.pos);});
+    pts.forEach(function(p){self.addReticle(p.pos);});
     // shotPath: the shell's flight carried onto the first point (Viewer.shellPath), null without a tracer; focus()
     // stands the camera at its origin, the horizon and the page's marks read it.
     this.shotPoints=pts;this.shotPath=pts.path||null;this.drawTracers(pts);if(pts.length){var at=pts[pts.anchor||0];this.point=at.pos.clone();this.travel=at.line.clone();}
@@ -1089,7 +1092,68 @@
     for(var i=0;i<pts.length;i++){var p=pts[i];
       if(i===a){if(!path)this.root.add(this.shotSegment(p.pos.clone().addScaledVector(p.line,-ARROW_LENGTH),p.pos,TRACER,false));}
       else if(p.stretch&&i>a)this.root.add(this.shotSegment(p.stretch.from,p.stretch.to,TRACER,p.stretch.dashed));}
+    // A ricochet that ends the record - the shell left the vehicle: its bounce, for the picture (bounceLeg below).
+    if(pts.bounce)this.root.add(this.bounceLeg(pts.bounce.start,pts.bounce.out,undefined,TRACER));
   };
+  /* THE LEG AFTER A RICOCHET, DRAWN: ONE OWNER for every path that shows a shot - the recorded hit (drawTracers) and the
+     analysed line (refreshPin: a pinned point, the vehicle mode's own shot, the shots of the aim emulation).
+     User, 09.10: "when a ricochet is drawn, the second arrow, the dashed one that shows the bounce, is drawn only if the
+     shell meets the armour again ... make the reflected arrow be drawn even if the shell goes off into the blue - a
+     dashed bounce arrow at the angle of entry, purely decorative ... so that one can see it is a ricochet".
+       distance given: the shell meets the vehicle again - a dashed line to that contact, which its caller marks;
+       distance undefined: it leaves the vehicle - THE DECORATIVE ARROW: the shot mirrored in the plate (the client's
+         rule since 9.3: a ricocheted shell "flies on mirrored", WoT-Base KNOWLEDGE-mechanics - a hypothesis there, and
+         the same mirror our law flies its second leg on), BOUNCE_AIR long - the length of the incoming arrow, so the two
+         read as one reflection - dashed, with a head, ending in the air. It says nothing of where the shell went: no
+         mark, no figure, no verdict; nothing reads it back.
+     Made once per scene or per pin, never on a frame. userData.bounceLeg tells the tests what was drawn. */
+  var BOUNCE_AIR=ARROW_LENGTH,BOUNCE_PLATE=Math.sin(35*Math.PI/180);
+  Viewer.prototype.bounceLeg=function(start,out,distance,color){
+    var T=THREE,air=distance===undefined||distance===null,length=air?BOUNCE_AIR:distance,dir=out.clone().normalize(),end=start.clone().addScaledVector(dir,length),head=air?.12:0,group=new T.Group();
+    var line=new T.Line(new T.BufferGeometry().setFromPoints([start.clone(),end.clone().addScaledVector(dir,-head)]),new T.LineDashedMaterial({color:color,dashSize:.12,gapSize:.08,depthTest:false,depthWrite:false,transparent:true}));
+    line.computeLineDistances();line.renderOrder=4;line.frustumCulled=false;group.add(line);var owned=[line.geometry,line.material];
+    if(air){var tip=arrowHead(end,dir,color);tip.userData.shotArc=false;group.add(tip);owned.push(tip.line.material,tip.cone.material);}
+    group.userData.bounceLeg={start:start.clone(),out:dir,length:length,air:air};
+    return Viewer.own(group,owned);
+  };
+  // The plate under a recorded point: the unit normal of the engine's triangle the point lies on (within 2 cm of its
+  // plane and inside it; the nearest of several), or null. A scan of the triangles - once, for a hit that ends in a
+  // ricochet - so no picking tree is built for it and a screen standing before the plate cannot answer instead.
+  Viewer.prototype.plateNormal=function(pos){
+    var list=this.engine&&this.engine.triangles,best=null,bestGap=.02,P=[pos.x,pos.y,pos.z];if(!list)return null;
+    for(var i=0;i<list.length;i++){
+      var t=list[i],n=t.normal,a=t.a,x=P[0]-a[0],y=P[1]-a[1],z=P[2]-a[2],off=Math.abs(x*n[0]+y*n[1]+z*n[2]);if(!(off<bestGap))continue;
+      var e1=t.e1,e2=t.e2,d11=e1[0]*e1[0]+e1[1]*e1[1]+e1[2]*e1[2],d12=e1[0]*e2[0]+e1[1]*e2[1]+e1[2]*e2[2],d22=e2[0]*e2[0]+e2[1]*e2[1]+e2[2]*e2[2],det=d11*d22-d12*d12;if(!(det>1e-18))continue;
+      var p1=x*e1[0]+y*e1[1]+z*e1[2],p2=x*e2[0]+y*e2[1]+z*e2[2],u=(d22*p1-d12*p2)/det,v=(d11*p2-d12*p1)/det;
+      if(u<-.02||v<-.02||u+v>1.02)continue;
+      best=n;bestGap=off;
+    }
+    return best?new THREE.Vector3(best[0],best[1],best[2]):null;
+  };
+  // The bounce of a recorded shot whose LAST point is a ricochet (effect 1 or 2: the shell left the vehicle, or was
+  // lost): {start, out} - the line drawn through that point mirrored in the plate under it - or null: no such point,
+  // a part not posed at the hit (p.rest: its plate is not where the point is), no plate found, or a plate the line
+  // meets at more than 35 degrees - no plate a shell bounces off (the game's ricochet starts at 70 degrees from the
+  // normal; the recorded direction wanders by up to ten), so there is nothing to mirror.
+  Viewer.prototype.recordedBounce=function(pts){
+    var last=pts&&pts.length?pts[pts.length-1]:null;
+    if(!last||!(last.effect===1||last.effect===2)||last.rest||pts.length-1<(pts.anchor||0))return null;
+    var n=this.plateNormal(last.pos);if(!n)return null;
+    var d=last.line.clone().normalize();if(Math.abs(d.dot(n))>BOUNCE_PLATE)return null;
+    return {start:last.pos.clone(),out:d.reflect(n).normalize()};
+  };
+  // The flight after the ricochet of an analysed line, as its drawing needs it: {start, out, distance} - distance
+  // undefined when the shell meets nothing more - or null: no ricochet. Where our law flies the shell on it is the
+  // law's own bounce (engine.ray: result.bounce); a shell it loses at its first ricochet (one that never flies on) is
+  // mirrored here in the plate it met, for the picture alone.
+  function pinBounce(result){
+    var T=THREE,b=result&&result.bounce;
+    if(b)return {start:new T.Vector3().fromArray(b.point),out:new T.Vector3().fromArray(b.direction),distance:result.distance};
+    var h=result&&result.reason==='ricochet'?result.hit:null;
+    if(!h||!h.triangle||!result.origin||!result.direction)return null;
+    var d=new T.Vector3().fromArray(result.direction).normalize();
+    return {start:new T.Vector3().fromArray(result.origin).addScaledVector(d,h.distance),out:d.clone().reflect(new T.Vector3().fromArray(h.triangle.normal)).normalize(),distance:undefined};
+  }
   // An arrowhead alone at `tip` along `dir` (the full tracer's end): three's ArrowHelper with its shaft hidden, so the head
   // is the same cone as every other arrow of the scene (its geometry shared, never freed by clear()).
   function arrowHead(tip,dir,color){
@@ -1192,7 +1256,7 @@
   // What of a pinned line's drawing depends on the shell: the flight after a ricochet (its start, direction and
   // length) and whether it ends in a second contact or is lost. Everything else - the contact on the model, the
   // arrow, the crosshair - depends on the line and the model alone.
-  function pinLeg(result){var b=result&&result.bounce;return b?b.point.join(',')+'|'+b.direction.join(',')+'|'+result.distance+'|'+result.reason:'';}
+  function pinLeg(result){var b=result&&result.bounce;return b?b.point.join(',')+'|'+b.direction.join(',')+'|'+result.distance+'|'+result.reason:result&&result.reason==='ricochet'&&result.hit?'lost|'+result.hit.distance:'';}
   // `point`: the contact the caller has just found along this very line (pinAt, pinAtPoint cast it already), or
   // null when that cast met nothing; left out, the line is cast here.
   Viewer.prototype.refreshPin=function(point){
@@ -1219,12 +1283,12 @@
     this.pinCache={pinned:p,engine:this.engine,contact:contact,leg:pinLeg(result)};
     var group=new THREE.Group(),tip=contact||(result&&result.bounce?new THREE.Vector3().fromArray(result.bounce.point):p.point);
     group.add(this.shotArrow(p.direction,tip,0x9fdcff));
-    if(result&&result.bounce){
-      // The flight after the ricochet: dashed leg to the second contact (or 2.3 m into the air) and its own reticle.
-      var b=result.bounce,start=new THREE.Vector3().fromArray(b.point),out=new THREE.Vector3().fromArray(b.direction),end=start.clone().addScaledVector(out,result.distance!==undefined?result.distance:2.3);
-      var leg=new THREE.Line(new THREE.BufferGeometry().setFromPoints([start,end]),new THREE.LineDashedMaterial({color:0xfb8580,dashSize:.12,gapSize:.08,depthTest:false,depthWrite:false,transparent:true}));
-      leg.computeLineDistances();leg.renderOrder=4;leg.frustumCulled=false;group.add(leg);Viewer.own(leg,[leg.geometry,leg.material]);
-      if(result.distance!==undefined)this.pinReticleAt(end,result.reason==='ricochet'?'pinned lost':'pinned second');
+    var bounce=pinBounce(result);
+    if(bounce){
+      // The flight after the ricochet, from the one owner of that drawing (bounceLeg): dashed to the second contact,
+      // which gets its own reticle - or, when the shell meets nothing more, the decorative arrow into the air.
+      group.add(this.bounceLeg(bounce.start,bounce.out,bounce.distance,0xfb8580));
+      if(bounce.distance!==undefined)this.pinReticleAt(bounce.start.clone().addScaledVector(bounce.out,bounce.distance),result.reason==='ricochet'?'pinned lost':'pinned second');
     }
     this.pinGroup=group;this.scene.add(group);
     // The mode on: an EMULATED shot marks its impact with a Hitmark on the armour instead of the cross

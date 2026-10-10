@@ -179,6 +179,19 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 .aim-gun[hidden],.fun-strip[hidden],.fun-gun[hidden]{display:none}
 .fun-strip{flex-wrap:wrap;justify-content:center;row-gap:4px;max-width:100%;padding:2px 9px}
 .fun-gun{display:flex;align-items:center;gap:10px;flex:0 0 auto}
+/* The emulation's sound (08.10): its switch after the gun's load and, while it is on, its three choices - Signals 2 / 3 / 4,
+   Countdown 3 / 4 / 5 and Time ticks one tone / the tone of the shot. Every button is the page's lit switch (.swap-roles), the chosen one of a choice lit; a
+   choice is a tight group of them, as tall as the switch. */
+.aim-sound,.aim-sound-pick{display:flex;align-items:center;flex:0 0 auto}
+.aim-sound{gap:8px}
+.aim-sound-pick{gap:2px}
+.aim-sound-pick[hidden]{display:none}
+/* The whole cluster is a developer's bench (10.10): hidden, and taking no room, until Settings -> Developer shows it. */
+.aim-sound[hidden]{display:none}
+.aim-sound-pick .swap-roles{padding:6px 5px;min-width:24px}
+/* The two choices of a number wear a small mark each - a shell for Signals (shots), a stopwatch for Countdown (seconds) -
+   so that 2 3 4 beside 3 4 5 is not read as one row. */
+.aim-sound-mark{flex:0 0 auto;margin-right:2px;opacity:.8}
 .aim-gun-shells{display:flex;align-items:center;gap:5px}
 .aim-gun-shells[hidden]{display:none}
 .aim-shell{position:relative;display:flex;align-items:center;justify-content:center;width:30px;height:30px;min-height:0;flex:0 0 auto;padding:2px;border:1px solid #35475a;border-radius:4px;background:#0c151f;cursor:pointer}

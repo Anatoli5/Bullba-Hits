@@ -47,7 +47,15 @@ def gun_limits(descr, key=None):
         mode = int(getattr(descr, 'vehicleMode', 0) or 0) if getattr(descr, 'hasSiegeMode', False) else 0
     except Exception:
         mode = 0
-    key = (key, mode)
+    # ... AND the modifications installed on the descriptor (09.10, D-112): the compact descriptor does not pack them, and a
+    # tier-XI skill tree widens the gun's limits (17 trees of client 2.4.0.2: a degree or two) - so two descriptors of one
+    # compact descriptor, the bare one a record's fix_* rebuild and the one with the tree (a vehicle file; in a battle, two
+    # players with different trees on the same vehicle), must not share a table, whichever came first.
+    try:
+        modifications = tuple(getattr(descr, 'modifications', None) or ())
+    except Exception:
+        modifications = ()
+    key = (key, mode, modifications)
     table = _limits.get(key)
     if table is not None:
         return table

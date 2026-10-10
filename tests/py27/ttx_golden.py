@@ -24,7 +24,9 @@ GAME = os.environ.get('BULLBA_GAME', 'C:/Games/World_of_Tanks_NA')
 STAND = os.path.join(REPO, 'tests', 'fixtures-local', 'ttx-offline')
 GOLDEN = os.path.join(REPO, 'tests', 'golden', 'ttx-outputs.json')
 RESULT = os.environ.get('BULLBA_PY27_RESULT')
-TYPES = ('ussr:R45_IS-7', 'czech:Cz17_Vz_55', 'france:F108_Panhard_EBR_105', 'usa:A144_M_VI_Y', 'sweden:S11_Strv_103B')
+# The last one is a tier-XI vehicle (09.10): its file carries its whole skill tree, and its tree's files are among its inputs.
+TYPES = ('ussr:R45_IS-7', 'czech:Cz17_Vz_55', 'france:F108_Panhard_EBR_105', 'usa:A144_M_VI_Y', 'sweden:S11_Strv_103B',
+         'germany:G197_Pz_Kpfw_Neu')
 
 
 def finish(lines, code):
@@ -52,7 +54,8 @@ def main():
     # The inputs of these types in this client: their data sources and the client's code (the keys' own rule).
     members = client_snapshot.package_members(os.path.join(GAME, 'res', 'packages', 'scripts.pkg'))
     crcs = dict((name, '%08x' % crc) for name, (crc, size) in members.items()
-                if exporter.TTX_SOURCE.match(name) and not exporter.TTX_SOURCE_SKIP.search(name) and not name.endswith('.pyc'))
+                if exporter.TTX_TREE.match(name)
+                or exporter.TTX_SOURCE.match(name) and not exporter.TTX_SOURCE_SKIP.search(name) and not name.endswith('.pyc'))
     import tempfile
     keys = exporter.Exporter(tempfile.gettempdir(), tempfile.gettempdir(), 'golden').ttx_source_keys(TYPES, crcs, 'golden')
     code = sorted('%s=%08x' % (name, entry[0]) for name, entry in members.items() if name in exporter.CODE_MODULES)

@@ -302,10 +302,12 @@
     // the stock and with rations and Brothers in Arms alike). The page's crew has no Repairs skill (crewFactors gives no
     // `repair`) and Config carries no repair KPI of a device, directive or kit - the panel says so - so the page's
     // figure is XML / 0.57 in both views. The situational perk (driver_suspensionRepair) is not in the main figure.
+    // A tier-XI vehicle's skill tree (09.10): its repair-speed nodes are the garage's KPI vehicleChassisRepairSpeed, the last
+    // divisor of that formula - the file's modules.chassis.repairSpeed (exporter.ttx_repair_speed), absent without one.
     var repairXml = modules.chassis && Array.isArray(modules.chassis.repairTime) ? modules.chassis.repairTime : null;
     if (repairXml) {
-      var repairCrew = crew.repair > 0 ? Number(crew.repair) : 0.57;
-      out.chassisRepairTime = repairXml.map(function (x) { return Number(x) / repairCrew; }).reverse();
+      var repairCrew = crew.repair > 0 ? Number(crew.repair) : 0.57, repairTree = Number(modules.chassis.repairSpeed) > 0 ? Number(modules.chassis.repairSpeed) : 1;
+      out.chassisRepairTime = repairXml.map(function (x) { return Number(x) / repairCrew / repairTree; }).reverse();
     }
     // The vertical and the horizon WITH THE HULL AIMING (23.09, params __getPitchLimitsValues 1311-1336 and 698-710,
     // outputs/second-modes-2026-09-23.md 3.7): where the hull tilts (isPitchHullAimingAvailable - available, in both

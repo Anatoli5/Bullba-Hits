@@ -423,6 +423,9 @@ global.ArmorCrits = window.ArmorCrits;
 // TTX (23.09): the characteristics panel's arithmetic, loaded before app.js as the page loads it.
 try { require(path + 'ttx.js'); } catch (e) { if (e.code !== 'MODULE_NOT_FOUND') throw e; }
 global.BullbaTtx = window.BullbaTtx;
+// The emulation's sound (08.10): its samples and its owner, loaded before app.js as the page loads them. No audio
+// context exists here until the sound checks at the end give the window a stand-in one.
+try { require(path + 'aim-sound-samples.js'); require(path + 'aim-sound.js'); } catch (e) { if (e.code !== 'MODULE_NOT_FOUND') throw e; }
 // In a browser `window.X` and the bare global X are one and the same; here they are not, so the two
 // libraries the page loads before app.js are bridged onto the global object by hand.
 global.ArmorBallistics = window.ArmorBallistics;
@@ -5449,6 +5452,19 @@ settle(20).then(function () {
   ok('mag: from empty the rounds come in at 16 s and 16 + 14 s, one at a time', R.state().clip === 1 && near(R.state().refill.until, 130), '(' + R.state().clip + ')');
   R.settle(100 + 16 + 14 + 12 + 10);
   ok('mag: and the magazine is full at 16 + 14 + 12 + 10 s, nothing loading any more', R.state().clip === 4 && R.state().refill === null);
+  // THE GAME'S RULE for a shot while a round is loading (Wargaming, "Update 1.0.1: Lowdown on Tier VIII-X Italian Tanks":
+  // the next shell starts loading right after a shot; "If you fire again, before the shell is reloaded, reloading is
+  // interrupted and starts anew"). Until 09.10 the page kept the share of the load already done and carried it over to
+  // the time of the new count (D-111: the user heard the two loads "overlap").
+  const R2 = new Function('env', 'var aimClip=4,aimClipSize=4;function realReload(){return true;}function panelWake(){}\n' +
+    appSrc.slice(rStart, rEnd) + '\nreturn {shot:function(times,now){aimClip--;refillShot(times,now);},settle:refillSettle,' +
+    'state:function(){return {clip:aimClip,refill:aimRefill};}};')({});
+  const TUPLE = [10, 12, 14, 16], seen = [];
+  [100, 105, 107.5, 110].forEach(function (at) { R2.shot(TUPLE, at); seen.push([R2.state().clip, R2.state().refill.at, R2.state().refill.until]); });
+  ok('mag: a round fired while another is loading DROPS that load - it starts anew from zero, in the time of the new count: full, a shot at 100 - 10 s, in at 110; a shot at 105 - 12 s from 105, in at 117 (not 111: nothing of the 5 s is kept); at 107.5 - 14 s, in at 121.5; the last at 110 - 16 s, in at 126',
+     JSON.stringify(seen) === JSON.stringify([[3, 100, 110], [2, 105, 117], [1, 107.5, 121.5], [0, 110, 126]]), '(' + JSON.stringify(seen) + ')');
+  R2.settle(126 + 14 + 12 + 10);
+  ok('mag: ... and from there the rounds come in one after another as before: 14, 12 and 10 s, full at 162', R2.state().clip === 4 && R2.state().refill === null);
   ok('mag: not an autoloader, or not under real reload - no per-round times',
      R.times({reloadTime: 10}, {reload: 10}) === null && R.times({reloadTime: 10, autoreload: {reloadTime: []}}, {reload: 10}) === null);
 
@@ -5514,8 +5530,8 @@ settle(20).then(function () {
     ok('mag: autoloader at rest - four slots loaded, the next to fire lit; the reload figure is the empty-magazine round (16 s × the reload’s factors)',
        magStates() === 'on,on,on,next' && gunReload.getAttribute('data-running') === '0' && k > 0.5 && k < 1.5,
        '(' + magStates() + ' / ' + gunReload.textContent + ')');
-    const tm = /^Magazine 4 \/ 4\n• Rounds: 2\.5 s apart\n• Load back: one round at a time, each on its own timer — from empty ([\d.]+), ([\d.]+), ([\d.]+), ([\d.]+) s$/.exec(gunMag.title);
-    ok('mag: its tooltip carries the numbers - the count, the gap and the per-round times in loading order, 16 14 12 10 × k',
+    const tm = /^Magazine 4 \/ 4\n• Rounds: 2\.5 s apart\n• Load back: one round at a time, each on its own timer — from empty ([\d.]+), ([\d.]+), ([\d.]+), ([\d.]+) s\n• A shot while a round is loading starts that load over$/.exec(gunMag.title);
+    ok('mag: its tooltip carries the numbers - the count, the gap and the per-round times in loading order, 16 14 12 10 × k - and says that a shot starts the load over',
        tm && near(+tm[1], 16 * k, 0.06) && near(+tm[2], 14 * k, 0.06) && near(+tm[3], 12 * k, 0.06) && near(+tm[4], 10 * k, 0.06), '(' + gunMag.title + ')');
     const p0 = view.pinnedPoints;
     tap();
@@ -5528,8 +5544,8 @@ settle(20).then(function () {
        '(' + shareBefore + ' vs ' + (2.6 / (10 * k)).toFixed(3) + ')');
     tap();
     const fills = magFills();
-    ok('mag: a second shot - two in; still ONE slot loading, and it keeps the share it had done',
-       view.pinnedPoints === p0 + 2 && magStates() === 'on,wait,fill,off' && near(fills[2], shareBefore, 0.035), '(' + magStates() + ' / ' + fills + ')');
+    ok('mag: a second shot - two in; still ONE slot loading, and it starts over from empty: nothing of the share it had done is kept (the game\'s rule: the load "is interrupted and starts anew")',
+       view.pinnedPoints === p0 + 2 && magStates() === 'on,wait,fill,off' && shareBefore > 0.2 && fills[2] < 0.01, '(' + magStates() + ' / ' + fills + ' after ' + shareBefore + ')');
     ok('mag: the reload figure counts that round down while the gun may fire', gunReload.getAttribute('data-running') === '1', '(' + gunReload.textContent + ')');
     run(2.6); tap(); run(2.6); tap();
     ok('mag: two more shots empty the magazine - one slot loading, three spent', view.pinnedPoints === p0 + 4 && magStates() === 'fill,off,off,off', '(' + magStates() + ')');
@@ -5538,17 +5554,18 @@ settle(20).then(function () {
     ok('mag: an empty magazine does not fire, and the ring shows the load of the round coming in',
        view.pinnedPoints === p0 + 4 && partNow !== null && near(partNow, magFills()[0], 0.03), '(' + partNow + ' / ' + magFills()[0] + ')');
     const first = untilChange(20);
-    ok('mag: the round comes in - lit as the next to fire, the next one loading', first > 0 && magStates() === 'next,fill,off,off', '(' + first.toFixed(2) + ' s, ' + magStates() + ')');
+    ok('mag: the round comes in - lit as the next to fire, the next one loading - a whole empty-magazine load (16 s × k) after the round that emptied it, not sooner',
+       near(first, 16 * k, 0.26) && magStates() === 'next,fill,off,off', '(' + first.toFixed(2) + ' s against ' + (16 * k).toFixed(2) + ', ' + magStates() + ')');
     tap();
     ok('mag: and it fires at once', view.pinnedPoints === p0 + 5 && magStates() === 'fill,off,off,off', '(' + magStates() + ')');
-    // From empty with nothing fired any more: 16 s for the loading round (its share kept), then 14, 12 and 10.
+    // From empty with nothing fired any more: 16 s for the loading round - started over by that shot - then 14, 12 and 10.
     const t1 = untilChange(30), t2 = untilChange(30), t3 = untilChange(30), t4 = untilChange(30);
     // k off the tooltip's own 16 s × k (two decimals), not off the reload figure's 0.1 s; and the margin is the panel timer's
     // 100 ms step at each end of an interval, read in 0.05 s ticks whose sum drifts - 0.16 s broke whenever the fake clock's
     // phase moved (27.09: manual-motion's checks before this page shifted it, 13.55 s against 13.39).
     const kt = tm ? +tm[1] / 16 : k;
-    ok('mag: left alone the rounds come back one at a time: the second after 14 s × k, the third 12 s × k, the fourth 10 s × k',
-       t1 > 0 && near(t2, 14 * kt, 0.21) && near(t3, 12 * kt, 0.21) && near(t4, 10 * kt, 0.21),
+    ok('mag: left alone the rounds come back one at a time: the first 16 s × k after that shot, the second after 14 s × k, the third 12 s × k, the fourth 10 s × k',
+       near(t1, 16 * kt, 0.21) && near(t2, 14 * kt, 0.21) && near(t3, 12 * kt, 0.21) && near(t4, 10 * kt, 0.21),
        '(' + [t1, t2, t3, t4].map(function (v) { return v.toFixed(2); }).join(', ') + ' s)');
     run(0.3);
     ok('mag: full again - four loaded, the panel timer stopped, the figure back at rest',
@@ -5722,6 +5739,15 @@ settle(20).then(function () {
   ok('circle: a vehicle without the node - the same tracer still contradicts the shell',
      realShot.resolve(treeHit('uk:Other'), treeEvents(1040)).index === -1);
   ok('circle: and a tracer off both the stock and the tree ratio does too', realShot.resolve(treeHit('uk:GB152_AT_FV230_Breaker'), treeEvents(1075)).index === -1);
+  // D-112 (09.10): a shell that ALREADY carries the node - the live record of a shooter who has it, or his characteristics
+  // file, which holds the whole skill tree now - is checked as it stands: the node is never added a second time.
+  const withNode = function (speed) {
+    const h = treeHit('uk:GB152_AT_FV230_Breaker'); h.availableShells = [Object.assign({}, APDS, {speed: 1040})];
+    return realShot.resolve(h, treeEvents(speed));
+  };
+  ok('circle: a shell that already carries the tree’s node names its own tracer, and the node is not added again',
+     (function () { const r = withNode(1040); return r.index === 0 && r.treeSpeed === null && !/XI/.test(r.source); })());
+  ok('circle: a tracer one more node faster than such a shell contradicts it', withNode(1080).index === -1);
   ok('circle: the tree table is the client’s (17 vehicles, the nodes ×0.8 as projectileSpeedFactor) and lives in shot-context.js alone',
      /'uk:GB152_AT_FV230_Breaker':\[\[1000,50\],\[1250,50\]\]/.test(fs.readFileSync(path + 'shot-context.js', 'utf8')) && appSrc.indexOf('XI_TREE_SPEED') < 0);
   ok('circle: the new ✸ block is inside the one ✸ block of app.js and casts no ray',
@@ -5957,11 +5983,12 @@ settle(20).then(function () {
     ok('circle: its tooltip says so, with the numbers and the reading marked as the page’s',
        /\n• Improved autoreloader: a round fired after a rest loads the next one in ×0\.5 of its time \(⌖ with ◔\)\n• Rest: at least 3\.5 s into a round’s load and within 2 s of its end, or a full magazine\nThe game’s numbers; this page reads ×0\.5 as the share of the time kept, not the share cut\./.test(gunMag.title), '(' + gunMag.title.slice(-260) + ')');
     tap(); run(2.6); tap();
-    // The second round went 2.6 s into the boosted 5k load: WAITING, so its load goes on at the time of two rounds in
-    // (12 s × k) with the share already done - (1 − 2.6 / 5k) × 12k. k is read off the panel's one-decimal figure and
-    // the steps are 0.05 s, so 0.1 s of slack; a cut would have made it half that, 2.6 s.
-    const t2 = back(20), expect = (1 - 2.6 / (5 * k)) * 12 * k;
-    ok('circle: a round fired before the gun has rested gets no cut - its load goes on at 12 s × k with the share it had',
+    // The second round went 2.6 s into the boosted 5k load: WAITING, so no cut - and, as on every autoreloader (the
+    // game's rule, D-111), the load that was running is dropped and starts over: the whole time of two rounds in,
+    // 12 s × k, from that shot. k is read off the panel's one-decimal figure and the steps are 0.05 s, so 0.1 s of
+    // slack; a cut would have made it half that.
+    const t2 = back(20), expect = 12 * k;
+    ok('circle: a round fired before the gun has rested gets no cut - its load starts over and takes the whole 12 s × k, nothing of the 2.6 s kept',
        near(t2, expect, 0.1) && t2 > expect * 0.75, '(' + t2.toFixed(2) + ' s against ' + expect.toFixed(2) + ')');
     setFun(false); run(60);
     return openHit(8);
@@ -7288,6 +7315,7 @@ settle(20).then(function () {
   const BR = 'usa:A179_Black_Rock';
   files[BR].configs.forEach(function (c) { c.turretYawLimits = [-0.2618, 0.2618]; });
   let sectorOrder = null;
+  const treeWords = {};
   const parts = function () {
     return [{id: 0, name: 'chassis', modelKey: 'k0'}, {id: 1, name: 'hull', modelKey: 'k1'}, {id: 2, name: 'turret', modelKey: 'k2'}, {id: 3, name: 'gun', modelKey: 'k3'}];
   };
@@ -7339,8 +7367,34 @@ settle(20).then(function () {
         };
         sectorOrder = {turret: order(true), none: order(false), old: order(undefined)};
       }
+      // D-112 (09.10): what ⚙ and the repair row say on a tier-XI vehicle (the Black Rock: its file carries its skill tree)
+      // and on any other one (the IS-7), in the stock and in the build.
+      if (r.vehicle === BR || r.vehicle === 'ussr:R45_IS-7') {
+        const toggleT = document.getElementById('ttx-build-toggle'), stockTitle = toggleT.title;
+        more.open = false; document.getElementById('ttx-more-button').onclick({}); more.open = true;
+        const repairRow = ttxRowsIn(full).filter(function (x) { return x.getAttribute('data-key') === 'chassisRepairTime'; })[0];
+        const repair = repairRow ? {text: repairRow.ttx.value.textContent, title: repairRow.title} : null;
+        more.open = false;
+        click(toggleT); const buildTitle = toggleT.title; click(toggleT);
+        treeWords[r.vehicle] = {stock: stockTitle, build: buildTitle, repair: repair, tree: byId[files[r.vehicle].id].vehicle.skillTree || null,
+                                speed: byId[files[r.vehicle].id].modules.chassis.repairSpeed};
+      }
       page[[r.vehicle, r.turret, r.gun, r.mode].join('|')] = out;
     });
+  });
+  chain = chain.then(function () {
+    // D-112 (09.10). The fixture's Black Rock is built with its whole skill tree (ttx-offline/README.txt); an older copy of
+    // the fixture has no vehicle.skillTree, and this part says so instead of failing.
+    const br = treeWords[BR], is7 = treeWords['ussr:R45_IS-7'];
+    if (!br || !br.tree) { console.log('SKIP skill tree words: the Black Rock of the reload fixture carries no skill tree (rebuild it: tests/fixtures-local/ttx-offline/README.txt)'); return; }
+    const line = /\n• Tier XI: the vehicle’s skill tree is always counted as fully researched - all (\d+) modifications, in the stock and in the build/;
+    ok('skill tree: ⚙ says a tier-XI vehicle’s skill tree is always counted in full, with the number of its modifications - in the stock and in the build',
+       line.test(br.stock) && line.test(br.build) && Number(line.exec(br.stock)[1]) === br.tree.modifications && br.tree.modifications > 0
+       && !/names no field modification tree/.test(br.build), br.stock.slice(0, 400));
+    ok('skill tree: and says nothing of it on a vehicle without one', !!is7 && !/Tier XI/.test(is7.stock) && !/Tier XI/.test(is7.build));
+    ok('skill tree: the repair row counts the tree’s repair speed and says so; a vehicle without one reads as before',
+       !!br.repair && br.speed > 1 && br.repair.title.indexOf('\n• Skill tree: ÷ ' + TX.nice(br.speed) + ', its repair-speed modifications, as the garage counts them') > 0
+       && !!is7.repair && !/Skill tree/.test(is7.repair.title) && is7.repair.text === '12.03', JSON.stringify([br.repair, br.speed]));
   });
   // ---- GUN SWITCH ACCEPTANCE (24.09, gun-switch-owner) ----------------------------------------------------------
   // The user, 24.09: the gun picked on the chip must be the gun the emulation fires. For every pair B of a vehicle with
@@ -8524,9 +8578,10 @@ settle(20).then(function () {
      && /^<div id="fun-strip" class="fun-strip" hidden><button type="button" id="real-reload-toggle"/.test(stripSrc));
   ok('strip: in it ◔, then the live part (reload figure, magazine, heat bar), then the health bar and ↺ - the mode button went to the characteristics panel (27.09)',
      /<span id="fun-gun" class="fun-gun" hidden><span id="aim-gun-load" class="aim-gun-load" title="[^"]+"><b id="aim-gun-reload">—<\/b><\/span><span id="aim-gun-mag"/.test(stripSrc)
-     && ['real-reload-toggle', 'fun-gun', 'aim-gun-load', 'aim-gun-mag', 'aim-gun-heat', 'target-hp', 'target-hp-reset'].every(function (id, i, a) {
+     // 08.10: the sound's switch closes the live part, after the heat bar (the sound checks at the end of this file).
+     && ['real-reload-toggle', 'fun-gun', 'aim-gun-load', 'aim-gun-mag', 'aim-gun-heat', 'aim-sound', 'target-hp', 'target-hp-reset'].every(function (id, i, a) {
        return stripSrc.indexOf('id="' + id + '"') > 0 && (!i || stripSrc.indexOf('id="' + a[i - 1] + '"') < stripSrc.indexOf('id="' + id + '"')); })
-     && /<span id="aim-gun-heat-warn" class="aim-gun-heat-warn"><\/span><\/span><\/span><span id="target-hp"/.test(stripSrc) && stripSrc.indexOf('ttx-mode') < 0);
+     && /<span id="aim-gun-heat-warn" class="aim-gun-heat-warn"><\/span><\/span><span id="aim-sound" class="aim-sound" hidden>.*?<\/button><\/span><\/span><\/span><span id="target-hp"/.test(stripSrc) && stripSrc.indexOf('ttx-mode') < 0);
   ok('strip: the same nodes, moved - every id once in the page, none of them left in the gun panel, and the page builds no copy',
      MOVED.every(once) && MOVED.every(function (id) { return gunSrc.indexOf('id="' + id + '"') < 0; })
      && /^<div id="aim-gun" class="aim-gun" hidden><span id="aim-gun-shells" class="aim-gun-shells" role="group" aria-label="Shells of this gun"><\/span><\/div>$/.test(gunSrc)
@@ -8943,6 +8998,10 @@ settle(20).then(function () {
   return indexRevisions();
 }).then(function () {
   return staleBattleOpen().then(sweepWaitingWords);
+}).then(function () {
+  return soundChecks();
+}).then(function () {
+  return xiBrowsed();
 }).then(function () {
 
 
@@ -9959,5 +10018,1335 @@ function sweepWaitingWords() {
        /^Waiting/.test(text(jobs)) && /12/.test(text(jobs)) && /0 \/ 888/.test(text(jobs)), text(jobs));
     ok('sweep wait: in a battle - it says so', /^Waiting/.test(text(battle)) && /battle/i.test(text(battle)), text(battle));
     ok('sweep wait: running - the progress as before', /^Exporting models… 0 \/ 888/.test(text(going)), text(going));
+  });
+}
+
+// ================= A TIER-XI VEHICLE BROWSED FROM THE VEHICLES LIST, WITH ITS EXPORT (09.10, D-112) =================
+// The user, 09.10, on the Pz.Kpfw. Neu: "the characteristics say 40 km/h, the upgrade gives +2 ... the upgrades must be
+// counted in full". His vehicle has an EXPORT (data/vehicles/<id>.js) beside its characteristics FILE (data/ttx/<id>.js),
+// and a vehicle browsed from the Vehicles list takes its figures from both: the shooter - the aim block the emulation and
+// the ⚙ column of the panel read, the shells of the heading list and of the gun panel, the health under ⌖, the gun's
+// vertical range the viewer turns it in - from the export; the stock column and the shells' table of the panel from the
+// file. The mod builds both with the whole skill tree now, so EVERY place a browsed Pz.Kpfw. Neu shows a figure of its
+// own must show the garage's with the tree researched: 42/14 km/h, penetration 280 / 345 / 60, damage 450 / 450 / 550,
+// hull traverse 35.46 °/s, 2600 HP, elevation -11/20. Driven here through the page as the user does it: the row in the
+// list for the model, the same row for the shooter.
+// The fixtures are local (tests/fixtures-local/xi-tree-2026-10-09: his own export with the fields of the descriptor with
+// the tree, and the numbers measured on the offline stand - pz-neu-expected.json; the file with the tree is
+// ttx-offline's ttx-xi); absent, the section says SKIP. In that export the table gunPitchLimits is still the bare
+// vehicle's (the client's native calcPitchLimitsFromDesc does not run on the stand), so of the viewer's range only its
+// SOURCE is asked here.
+// THE RED RUN (rule B17) is this very scenario on his files of before the fix - 16 of the 20 checks fail (40/13 km/h,
+// 275 / 340, 440 HP, 33.38 °/s, 2500 HP, -10/18):
+//   BULLBA_XI_BROWSE_EXPORT=tests/fixtures-local/xi-tree-2026-10-09/vehicles-bare/germany-G197_Pz_Kpfw_Neu.js
+//   BULLBA_XI_BROWSE_TTX=tests/fixtures-local/xi-tree-2026-10-09/ttx-bare/germany-G197_Pz_Kpfw_Neu.js
+// One of the two alone shows which place reads which file.
+function xiBrowsed() {
+  if (RELOAD) return Promise.resolve();
+  const $ = function (id) { return document.getElementById(id); };
+  const NAME = 'germany-G197_Pz_Kpfw_Neu', LOCAL = HERE + '../fixtures-local/', CASE = LOCAL + 'xi-tree-2026-10-09/';
+  const given = function (v, own) { return v ? require('node:path').resolve(v).replace(/\\/g, '/') : own; };
+  const EXPORT = given(process.env.BULLBA_XI_BROWSE_EXPORT, CASE + 'vehicles-tree/' + NAME + '.js');
+  const FILE = given(process.env.BULLBA_XI_BROWSE_TTX, LOCAL + 'ttx-offline/out/mod/ttx-xi/' + NAME + '.js');
+  const WANT = CASE + 'pz-neu-expected.json';
+  const absent = [EXPORT, FILE, WANT].filter(function (p) { return !fs.existsSync(p); });
+  if (absent.length) { console.log('SKIP xi browse: the Pz.Kpfw. Neu of the user’s case is not on this machine (' + absent[0] + ')'); return Promise.resolve(); }
+  const read = function (p) { let got = null; new Function('ArmorInspectorData', fs.readFileSync(p, 'utf8'))({receive: function (x) { got = x[1]; }}); return got; };
+  const E = read(EXPORT), T = read(FILE), MEASURED = JSON.parse(fs.readFileSync(WANT, 'utf8')), F = MEASURED.full, NODES = MEASURED.modifications;
+  // What the page must show, from the stand's measurements of the vehicle with its 23 modifications (F) ...
+  const KMH = F.speedForwardKmh + '/' + F.speedBackwardKmh;                                       // 42/14
+  const PEN = F.penetration100.map(String), ALPHA = F.alpha.map(String);                          // 280 345 60, 450 450 550
+  const FLIGHT = F.shellSpeed.map(function (v) { return String(Math.round(v / 0.8)); });          // 1200 1040 900 m/s
+  const PITCH = F.pitchAbsolute.map(function (p) { return Math.round(-p * 180 / Math.PI); }).sort(function (a, b) { return a - b; }).join('/');   // -11/20
+  // ... and the garage's own strings with the tree researched (outputs/xi-tree-ttx-2026-10-09.md section 11; the whole
+  // stock column against the garage is ttx_accept's, tools/check.py).
+  const HULL = '35.46', POWER = '1330', STAB = '0.13';
+  // His export is his vehicle as it went to battle - Improved Hardening on it: the bare figure +11 %, up to whole tens.
+  const BAR = Math.ceil(F.maxHealth * 1.11 / 10) * 10;                                            // 2890
+  const D = global.ArmorInspectorData, CTX = global.ArmorShotContext;
+  const keep = {vehicles: D.vehicles, vehicle: D.vehicle, ttx: D.ttx, resolve: CTX.resolve, modeLabel: CTX.modeLabel};
+  D.vehicles = function () {
+    return Promise.resolve({updatedAt: 'xi-browse', vehicles: [VEHICLE,
+      {id: NAME, type: E.type, name: E.name, level: E.level, 'class': E['class'], nation: E.nation, role: E.role, exported: true, exportedAt: E.exportedAt}]});
+  };
+  D.vehicle = function (id) { return id === NAME ? Promise.resolve(E) : keep.vehicle(id); };
+  D.ttx = function (id) { return id === NAME ? Promise.resolve(T) : keep.ttx ? keep.ttx(id) : Promise.reject(new Error('none')); };
+  // The shells of the scene are the shooter's own: the page's real rule, not the harness's three stand-in shells.
+  CTX.resolve = REAL_SHOT_CONTEXT.resolve; CTX.modeLabel = REAL_SHOT_CONTEXT.modeLabel;
+  // The scene and the shell the page hands the viewer (the stub keeps neither).
+  let scene = null, fired = null;
+  view.load = function (data) { scene = data; view.marks = []; return false; };
+  view.configure = function (shell) { fired = shell; };
+  const listRow = function (id) { return $('vehicles').children.filter(function (c) { return c.getAttribute('data-vehicle') === id; })[0]; };
+  const scopeTo = function (scope) { document.querySelectorAll('#vehicle-scope [data-scope]').forEach(function (b) { if (b.getAttribute('data-scope') === scope) b.onclick(); }); };
+  const key = function (code, down) { document.fire(down ? 'keydown' : 'keyup', {code: code, key: code.slice(3).toLowerCase(), target: document.body, preventDefault: function () {}}); };
+  const funBox = $('fun-mode'), realBox = $('real-reload'), mech = $('ttx-mode');
+  const setFun = function (on) { if (funBox.checked !== on) click($('fun-mode-toggle')); };
+  const compact = $('ttx-compact'), full = $('ttx-full'), more = $('ttx-more'), buildBox = $('ttx-build'), toggle = $('ttx-build-toggle');
+  // The panel as it stands: the expanded view's rows, the compact one's, the HP of the head, the shells' table.
+  const panelNow = function () {
+    const out = {rows: {}, compact: {}, hp: $('ttx-hp').children[0] ? $('ttx-hp').children[0].ttx.value.textContent : null, shells: []};
+    ttxRowsIn(compact).forEach(function (r) { out.compact[r.getAttribute('data-key')] = r.ttx.value.textContent; });
+    more.open = false; $('ttx-more-button').onclick({}); more.open = true;
+    ttxRowsIn(full).forEach(function (r) { if (!(r.parentNode && r.parentNode.getAttribute('data-side'))) out.rows[r.getAttribute('data-key')] = r.ttx.value.textContent; });
+    const sec = ttxFind(full, function (s) { return s.className === 'ttx-shells'; })[0];
+    (sec ? sec.children.slice(1) : []).forEach(function (line) { out.shells.push([1, 2, 3].map(function (i) { return line.children[i].textContent; }).join('/')); });
+    more.open = false;
+    return out;
+  };
+  const TABLE = [0, 1, 2].map(function (i) { return ALPHA[i] + '/' + PEN[i] + '/' + FLIGHT[i]; }).join(' ');   // damage / penetration / velocity
+  const tag = 'xi browse: ';
+  if (!onBox.checked) switchOn(true);
+  setFun(false);
+  sidebarModes[1].onclick();
+  return settle(30).then(function () {
+    scopeTo('all');
+    return settle(20);
+  }).then(function () {
+    const row = listRow(NAME);
+    if (!row) throw new Error('xi browse: the Vehicles list does not offer ' + NAME);
+    $('model-tile').onclick();   // the model's role, then its row
+    return settle(10).then(function () { row.onclick(); return settle(40); });
+  }).then(function () {
+    $('shooter-tile').onclick();   // the shooter's role, the same row: the vehicle fires its own gun
+    return settle(10).then(function () { listRow(NAME).onclick(); return settle(40); });
+  }).then(function () {
+    const hit = scene && scene.hit || {};
+    ok(tag + 'the Vehicles list offers the Pz.Kpfw. Neu with its export; picked for the model and for the shooter, both tiles are it and the panel shows it',
+       listRow(NAME).getAttribute('data-exported') !== 'false' && hit.id === 'vehicle:' + NAME + '/' + NAME
+       && $('model-tile').title.indexOf(E.name) >= 0 && $('shooter-tile').title.indexOf(E.name) >= 0 && $('ttx-panel').hidden === false,
+       '(scene ' + hit.id + ', panel hidden ' + $('ttx-panel').hidden + ')');
+    // Nothing fitted: the build of ⚙ is then the stock, figure for figure.
+    stockBuild(); config.open = false; config.fire('toggle');
+    run(20);
+    if (buildBox.checked) click(toggle);
+    const stock = panelNow(), stockWords = toggle.title;
+    click(toggle);
+    const build = panelNow(), buildWords = toggle.title;
+    click(toggle);
+    // ---- the panel, the stock column: the characteristics file ----
+    ok(tag + 'the panel, stock - top speed ' + KMH + ' km/h forward / reverse, in the compact view and in the expanded one',
+       stock.compact.speedLimits === KMH && stock.rows.speedLimits === KMH, '(' + stock.compact.speedLimits + ' / ' + stock.rows.speedLimits + ')');
+    ok(tag + 'the panel, stock - the hull turns ' + HULL + ' °/s, the engine gives ' + POWER + ' hp, the stabilisation on the move and on hull traverse is ' + STAB,
+       stock.rows.chassisRotationSpeed === HULL && stock.compact.hull === HULL && stock.rows.enginePower === POWER
+       && stock.rows.stabMovement === STAB && stock.rows.stabRotation === STAB,
+       '(' + [stock.rows.chassisRotationSpeed, stock.rows.enginePower, stock.rows.stabMovement, stock.rows.stabRotation].join(' / ') + ')');
+    ok(tag + 'the panel, stock - ' + F.maxHealth + ' HP in the head and in the row, view range ' + F.circularVisionRadius + ' m, ' + F.maxAmmo + ' rounds',
+       stock.hp === String(F.maxHealth) && stock.rows.maxHealth === String(F.maxHealth) && stock.rows.circularVisionRadius === String(F.circularVisionRadius)
+       && stock.rows.maxAmmo === String(F.maxAmmo), '(' + [stock.hp, stock.rows.maxHealth, stock.rows.circularVisionRadius, stock.rows.maxAmmo].join(' / ') + ')');
+    ok(tag + 'the panel, stock - the gun’s elevation ' + PITCH + '°', stock.rows.pitchLimits === PITCH, '(' + stock.rows.pitchLimits + ')');
+    ok(tag + 'the panel, stock - the shells’ table: damage / penetration / velocity ' + TABLE, stock.shells.join(' ') === TABLE, '(' + stock.shells.join(' ') + ')');
+    const treeLine = '\n• Tier XI: the vehicle’s skill tree is always counted as fully researched - all ' + NODES + ' modifications, in the stock and in the build';
+    ok(tag + '⚙ says the skill tree is counted in full - all ' + NODES + ' modifications - in the stock and in the build',
+       stockWords.indexOf(treeLine) > 0 && buildWords.indexOf(treeLine) > 0, '(' + stockWords.split('\n').slice(3).join(' / ').slice(0, 160) + ')');
+    // ---- the panel, the build of ⚙: the emulator's own block (the export's) under the file's other figures ----
+    ok(tag + 'the panel, ⚙ with nothing fitted - top speed ' + KMH + ' km/h: the block the emulation drives with',
+       build.compact.speedLimits === KMH && build.rows.speedLimits === KMH, '(' + build.compact.speedLimits + ' / ' + build.rows.speedLimits + ')');
+    ok(tag + 'the panel, ⚙ - the hull turns ' + HULL + ' °/s and the chassis’ stabilisation is ' + STAB + ' on the move and on hull traverse (the block’s own factors)',
+       build.rows.chassisRotationSpeed === HULL && build.compact.hull === HULL && build.rows.stabMovement === STAB && build.rows.stabRotation === STAB,
+       '(' + [build.rows.chassisRotationSpeed, build.rows.stabMovement, build.rows.stabRotation].join(' / ') + ')');
+    ok(tag + 'the panel, ⚙ - the shells’ table ' + TABLE + ', ' + F.maxHealth + ' HP, elevation ' + PITCH + '°, view range ' + F.circularVisionRadius + ' m, ' + F.maxAmmo + ' rounds',
+       build.shells.join(' ') === TABLE && build.hp === String(F.maxHealth) && build.rows.maxHealth === String(F.maxHealth) && build.rows.pitchLimits === PITCH
+       && build.rows.circularVisionRadius === String(F.circularVisionRadius) && build.rows.maxAmmo === String(F.maxAmmo),
+       '(' + [build.shells.join(' '), build.hp, build.rows.pitchLimits, build.rows.circularVisionRadius, build.rows.maxAmmo].join(' / ') + ')');
+    const apart = Object.keys(stock.rows).filter(function (k) { return stock.rows[k] !== build.rows[k]; });
+    ok(tag + 'the panel - with nothing fitted the build is the stock in every row: the export’s block and the file say the same vehicle',
+       apart.length === 0 && Object.keys(stock.rows).length > 20, '(' + apart.map(function (k) { return k + ' ' + stock.rows[k] + ' → ' + build.rows[k]; }).join(', ') + ')');
+    // ---- the shells: the heading's chips, the gun panel's icons, the fields, what the viewer is given ----
+    const chips = $('shell-quick').children, WORDS = ['APCR ' + PEN[0], 'HEAT ' + PEN[1], 'HE ' + PEN[2]];
+    ok(tag + 'the heading’s shell chips - ' + WORDS.join(', '), chips.map(function (b) { return b.textContent; }).join(', ') === WORDS.join(', '),
+       '(' + chips.map(function (b) { return b.textContent; }).join(', ') + ')');
+    const icons = gunShells.children.map(function (b) { const m = /\n• Penetration: (\d+) mm\n• Damage: (\d+) HP/.exec(b.title); return m ? m[1] + '/' + m[2] : b.title; });
+    ok(tag + 'the gun panel’s shell icons - penetration / damage ' + [0, 1, 2].map(function (i) { return PEN[i] + '/' + ALPHA[i]; }).join(', '),
+       icons.join(', ') === [0, 1, 2].map(function (i) { return PEN[i] + '/' + ALPHA[i]; }).join(', '), '(' + icons.join(', ') + ')');
+    const picked = [0, 1, 2].map(function (i) {
+      click(chips[i]);
+      return {pen: $('penetration').value, alpha: $('alpha').value, shell: fired && {penetration: fired.penetration, alpha: fired.alpha}};
+    });
+    click(chips[0]);
+    // The viewer's shell is the field's at the scene's distance: the HEAT and the HE do not fall off, the APCR does.
+    ok(tag + 'each shell pressed - the fields read its penetration and damage, and the viewer is given them (the HEAT ' + PEN[1] + ' mm / ' + ALPHA[1] + ' HP, the HE ' + PEN[2] + ' / ' + ALPHA[2] + ', the APCR’s ' + ALPHA[0] + ' HP)',
+       picked.every(function (p, i) { return String(p.pen) === PEN[i] && String(p.alpha) === ALPHA[i] && !!p.shell && String(p.shell.alpha) === ALPHA[i]; })
+       && String(picked[1].shell.penetration) === PEN[1] && String(picked[2].shell.penetration) === PEN[2],
+       JSON.stringify(picked));
+    // ---- the emulation: the aim block of the scene's shooter (aimBlockData) ----
+    const rest = view.liveRadius100;
+    key('KeyW', true); run(15);
+    const forward = speed.textContent, moving = view.liveRadius100;
+    key('KeyW', false); run(25);
+    key('KeyS', true); run(15);
+    const reverse = speed.textContent;
+    key('KeyS', false); run(25);
+    view.turned = []; view.gap = 0;
+    key('KeyD', true); run(3);
+    const steps = view.turned.slice(-30), turn = steps.length ? steps.reduce(function (s, a) { return s + a; }, 0) / steps.length * 60 : 0;
+    key('KeyD', false); run(25);
+    view.turned = []; view.gap = 0;
+    ok(tag + 'the emulation - W held reaches ' + F.speedForwardKmh + ' km/h, S ' + F.speedBackwardKmh + ' km/h in reverse',
+       forward === F.speedForwardKmh + ' km/h' && reverse === '-' + F.speedBackwardKmh + ' km/h', '(' + forward + ' / ' + reverse + ')');
+    ok(tag + 'the emulation - D held turns the hull at ' + (F.hullRotationSpeed * 180 / Math.PI).toFixed(1) + ' °/s',
+       Math.abs(turn - F.hullRotationSpeed) < 1e-4, '(' + (turn * 180 / Math.PI).toFixed(2) + ' °/s)');
+    const bloom = Math.hypot(1, F.movementFactor * F.speedForwardKmh * 0.27778);
+    ok(tag + 'the emulation - at the top speed the circle is ×' + bloom.toFixed(3) + ' of the standing one: the chassis’ own movement factor at ' + F.speedForwardKmh + ' km/h',
+       rest > 0 && Math.abs(moving / rest - bloom) < 2e-3, '(×' + (moving / rest).toFixed(4) + ')');
+    // ---- ⌖: the health of the vehicle on screen, the second mode ----
+    setFun(true);
+    const timed = realBox.checked;
+    if (!timed) click($('real-reload-toggle'));
+    run(1);
+    ok(tag + '⌖ - the health bar holds ' + BAR + ' HP, the figure of the vehicle’s own export',
+       $('target-hp').hidden === false && $('target-hp-text').textContent.replace(/\s/g, '') === BAR + '/' + BAR
+       && $('target-hp').title.indexOf('\n• Source: the vehicle’s own export') > 0, '(hidden ' + $('target-hp').hidden + ', "' + $('target-hp-text').textContent + '")');
+    // The Pz.Kpfw. Neu's second mode is its shells' other state (shellParamsSwitcher). A browsed vehicle has no second
+    // set of shells - neither its export nor its file carries one (only a battle's record does, attacker.modeShells) -
+    // so the page shows no mode button for it; were there one, its switch must be the tree's 0.5 s, not the bare 1 s.
+    ok(tag + '⌖ with ◔ - the mode button: none for a browsed shell switcher (no second set of shells outside a battle’s record), or one that switches in ' + F.switchOnTime + ' s',
+       mech.hidden === true || new RegExp(' - ' + String(F.switchOnTime).replace('.', '\\.') + ' s, the gun waiting').test(mech.title),
+       '(hidden ' + mech.hidden + (mech.hidden ? '' : ', ' + mech.title.split('\n').filter(function (l) { return /Press/.test(l); }).join()) + ')');
+    if (!timed) click($('real-reload-toggle'));
+    setFun(false);
+    run(1);
+    // ---- the gun's vertical range in the viewer: the export's own table ----
+    const target = hit.target || {}, shooter = hit.attacker || {};
+    ok(tag + 'the viewer turns the gun within the EXPORT’s own table (target.gunPitchLimits of the scene is the export’s object; the shooter’s copy carries none) - the panel’s elevation row is the file’s',
+       !!E.gunPitchLimits && target.gunPitchLimits === E.gunPitchLimits && shooter.gunPitchLimits === undefined,
+       '(' + (target.gunPitchLimits ? target.gunPitchLimits.source : 'no table') + ')');
+  }).then(function () {
+    scopeTo('battle');
+    sidebarModes[0].onclick();
+    return settle(20);
+  }).then(function () {
+    delete view.load; delete view.configure;
+    D.vehicles = keep.vehicles; D.vehicle = keep.vehicle; D.ttx = keep.ttx;
+    CTX.resolve = keep.resolve;
+    if (keep.modeLabel === undefined) delete CTX.modeLabel; else CTX.modeLabel = keep.modeLabel;
+  });
+}
+
+// ================= THE SOUND OF THE EMULATION (08.10) =================
+// The countdown scheme of the mod Bullba Countdown, played by the page's own emulation (web/aim-sound.js and the block
+// "⌖: the sound of the load" of app.js): the user listens to it in the preview on real vehicles, so what is scheduled
+// must be exactly what the emulation is doing. Driven here through the page, on the fake clock, with a STAND-IN AUDIO
+// CONTEXT that records every sound scheduled - which sample, for which second, and whether it was cancelled before it
+// began. Its clock runs AUDIO_SHIFT seconds off the page's, so a sound scheduled by the page's own clock would show.
+// The guns are REAL: the aim blocks of four vehicles as the mod exports them from the client (the local fixtures
+// tests/fixtures-local/ttx-offline; absent, the section says SKIP) - an ordinary gun (IS-7), a drum (the Vz. 55's two
+// rounds), an autoreloader (Progetto 65) and an Ares 90. The length of each wait is read back from the emulation
+// itself (the fill of the live ring), not worked out here.
+function soundChecks() {
+  if (RELOAD) return Promise.resolve();
+  const $ = function (id) { return document.getElementById(id); };
+  const near = function (a, b, eps) { return Math.abs(a - b) <= (eps || 1e-6); };
+  const appSrc = fs.readFileSync(path + 'app.js', 'utf8'), pageSrc = fs.readFileSync(path + 'index.html', 'utf8');
+  const lib = window.BullbaAimSamples, S = window.BullbaAimSound;
+  ok('sound: web/aim-sound-samples.js and web/aim-sound.js are scripts of the page, loaded before app.js',
+     !!lib && !!S && /<script src="web\/aim-sound-samples\.js"><\/script><script src="web\/aim-sound\.js"><\/script>.*<script src="web\/app\.js"><\/script>/.test(pageSrc));
+  if (!lib || !S) return Promise.resolve();
+
+  // ---- 0. the samples: the mod's own and its proposal's, by pitch and by shape ----
+  // Ten pitches of the stock - the mod's 4186, 3136, 2637, 2093, 1568 Hz and the proposal's 1319, 1047, 784, 659, 523 Hz -
+  // each as a bell struck once (bellNNNN) and twice (bellNNNNx2); and the dry tick. Nothing else: the user, 09.10 -
+  // "I would not introduce new sounds for a start ... too many different sounds will throw people off".
+  const PITCH = {'4186': 4186, '3136': 3136, '2637': 2637, '2093': 2093, '1568': 1568, '1319': 1318.5, '1047': 1046.5, '784': 784, '659': 659.3, '523': 523.3};
+  const SHAPE = ['', 'x2'];
+  const NAMES = {dry880: 880};
+  Object.keys(PITCH).forEach(function (p) { SHAPE.forEach(function (shape) { NAMES['bell' + p + shape] = PITCH[p]; }); });
+  // The pitch of a readiness, by its ordinary sound: the bell of its stock, the high double (one shot), the low double (full).
+  const PITCH_OF = {bell4186x2: '4186', bell3136: '3136', bell2637: '2637', bell2093: '2093', bell1568: '1568',
+    bell1319: '1319', bell1047: '1047', bell784: '784', bell659: '659', bell523x2: '523'};
+  const pcm = {};
+  Object.keys(lib.samples).forEach(function (name) {
+    const raw = Buffer.from(lib.samples[name].pcm16, 'base64');
+    pcm[name] = new Float32Array(raw.length >> 1);
+    for (let i = 0; i < pcm[name].length; i++) pcm[name][i] = raw.readInt16LE(2 * i) / 32767;
+  });
+  // The energy of ONE STRIKE of a sample - 40 ms from `from` seconds - at one frequency (a single-bin transform): its
+  // pitch is the strongest of the scheme's eleven. One strike, not the file: two strikes 48 ms apart at 2093 Hz are
+  // half a cycle apart, and a transform of the whole file would show their second harmonic above the fundamental.
+  const energyAt = function (data, hz, from) {
+    let re = 0, im = 0;
+    const first = Math.round((from || 0) * lib.rate), last = Math.min(data.length, first + Math.round(0.040 * lib.rate));
+    for (let i = first; i < last; i++) { const a = 2 * Math.PI * hz * i / lib.rate; re += data[i] * Math.cos(a); im += data[i] * Math.sin(a); }
+    return re * re + im * im;
+  };
+  const pitched = function (data, own, from) { const e = energyAt(data, own, from); return pitches.every(function (hz) { return hz === own || energyAt(data, hz, from) < e; }); };
+  const pitches = [880].concat(Object.keys(PITCH).map(function (p) { return PITCH[p]; }));
+  ok('sound: twenty-one samples at 48 kHz and no more - the one dry tick at 880 Hz, and the bell of each of the ten pitches of the stock struck once and struck twice - each loudest at its own pitch, peak 0.97',
+     lib.rate === 48000 && Object.keys(lib.samples).sort().join() === Object.keys(NAMES).sort().join()
+     && Object.keys(NAMES).every(function (name) {
+       const peak = pcm[name].reduce(function (m, v) { return Math.max(m, Math.abs(v)); }, 0);
+       return near(lib.samples[name].hz, NAMES[name], 0.05) && near(peak, 0.97, 0.001) && pitched(pcm[name], NAMES[name], 0);
+     }), '(' + Object.keys(lib.samples).length + ' samples)');
+  // The loudest moment of a stretch of a sample.
+  const loud = function (data, from, to) { let m = 0; for (let i = Math.round(from * lib.rate); i < Math.round(to * lib.rate) && i < data.length; i++) m = Math.max(m, Math.abs(data[i])); return m; };
+  // EVERY double is built as the mod's final double is - the same 48 ms between the strikes, the same short strike,
+  // a 98 ms file - whatever its pitch, the low double of a full stock included (user, 09.10, hearing the lower ones
+  // 70 ms apart: "not a doubled one - like two separate sounds, there is a real break ... I expected the same one as
+  // the critical one on the Ares, only the tone changing with the number of the round"). Pinned for all ten: the
+  // length, a strike at 0 and at 48 ms, each at the pitch, the first fallen away before the second - and no strike
+  // anywhere else: the loudest of every other 8 ms of the file stays under the strikes.
+  const GAP = 0.048, FILE = 0.098;
+  const built = Object.keys(PITCH).map(function (p) {
+    const data = pcm['bell' + p + 'x2'];
+    if (!data || data.length !== Math.round(FILE * lib.rate)) return 'length ' + (data ? data.length : 0);
+    for (let k = 0; k < 2; k++) {
+      if (loud(data, k * GAP, k * GAP + 0.008) < 0.9) return 'no strike at ' + (k * GAP * 1000) + ' ms';
+      if (!pitched(data, PITCH[p], k * GAP)) return 'strike ' + k + ' off the pitch';
+    }
+    const trough = loud(data, GAP - 0.008, GAP - 0.0005), tail = loud(data, FILE - 0.010, FILE);
+    if (trough > 0.1) return 'the first strike still rings before the second: ' + trough.toFixed(2);
+    if (loud(data, 0.020, 0.028) > 0.75 || loud(data, 0.028, 0.036) > 0.45 || tail > 0.1) return 'the strike rings long';
+    return trough.toFixed(3);
+  });
+  ok('sound: all ten doubles are ONE build, the mod\'s final double\'s - a 98 ms file, a strike at 0 and at 48 ms at that pitch, the first fallen under a tenth of the peak before the second - only the pitch differs; none is two sounds 70 ms apart',
+     built.every(function (b) { return /^0\.\d+$/.test(b); }), '(before the second strike: ' + built.join(' ') + ')');
+  ok('sound: a bell struck once is an 80 ms file at every pitch and over by its end, the dry tick 40 ms; there is no bell of three or four strikes and no long bell',
+     Object.keys(PITCH).every(function (p) { return pcm['bell' + p].length === 3840 && loud(pcm['bell' + p], 0.07, 0.08) < 0.05; })
+     && pcm.dry880.length === 1920 && !lib.samples.dry988 && !lib.samples.edge330 && !lib.samples.tick4186
+     && !lib.samples.bell4186x3 && !lib.samples.bell4186x4 && !lib.samples.bell4186long);
+  ok('sound: the time tick (880 Hz, dry, 40 ms) stands apart from every bell - the nearest of the ladder, 784 Hz, is two semitones under it, 1047 Hz three above',
+     [4186, 3136, 2637, 2093, 1568, 1318.5, 1046.5, 784, 659.3, 523.3].every(function (hz) { return Math.abs(12 * Math.log(hz / 880) / Math.LN2) >= 1.99; }));
+
+  // ---- 1. the markup and the wiring ----
+  const strip = pageSrc.slice(pageSrc.indexOf('<div id="fun-strip"'), pageSrc.indexOf('<div id="target-mods-slot"'));
+  const gunSpan = strip.slice(strip.indexOf('<span id="fun-gun"'), strip.indexOf('<span id="target-hp"'));
+  // NOT A FEATURE OF BULLBA HITS (user, 10.10: "the sound is a demonstration for the emulation ... if it goes in, it must
+  // be hidden and switched on in the settings, in some developer's section, by a checkbox of its own"): ONE checkbox,
+  // Settings -> Developer -> Countdown sound (demo), unticked by default - a plain visible control of the menu, so the
+  // settings machinery keeps it, restores it and "Reset to defaults" unticks it. The cluster under ⌖ is hidden in the
+  // markup itself and the stylesheet gives a hidden cluster no room.
+  const cssSrc = fs.readFileSync(path + 'style.css', 'utf8'), ownerSrc = fs.readFileSync(path + 'aim-sound.js', 'utf8');
+  const devAt = pageSrc.indexOf('id="aim-sound-dev"'), menuSrc = pageSrc.slice(pageSrc.indexOf('class="settings-content"'), pageSrc.indexOf('id="reset-settings"'));
+  ok('sound: the developer\'s checkbox - Settings, a section "Developer" after the shot ring lab, ONE checkbox "Countdown sound (demo)", unticked, not hidden; its help says in one sentence what it is - a bench of the mod Bullba Countdown\'s sound scheme, not a feature of Bullba Hits; the section has its own "?"',
+     /<\/details>\n<details id="dev-lab" class="settings-lab"><summary title="Developer&#10;[^"]+">Developer<\/summary><div class="lab-help" id="dev-lab-help"><\/div><div class="settings-grid"><label title="Countdown sound \(demo\)&#10;A listening bench for the sound scheme of the mod Bullba Countdown, not a feature of Bullba Hits\.&#10;[^"]+">Countdown sound \(demo\)<span class="hatch-row"><input type="checkbox" id="aim-sound-dev"><\/span><\/label><\/div><\/details>/.test(menuSrc)
+     && pageSrc.indexOf('id="shot-ring-lab"') < devAt && menuSrc.split('<details id="dev-lab"')[1].split('</details>')[0].split('<input').length === 2
+     && /\$\('dev-lab-help'\)\.appendChild\(helpDotFor\(\['aim-sound-dev'\]\)\);/.test(appSrc));
+  ok('sound: it is a plain control of the menu with the sound\'s one handler - the settings machinery (every input with an id in the menu) stores it, restores it and resets it to its markup, unticked; only the two scene switches are kept out of the restore',
+     /\$\('aim-sound-dev'\)\.onchange=aimSoundSettings;/.test(appSrc)
+     && /var settingControls=settingsBox\?\[\]\.slice\.call\(settingsBox\.querySelectorAll\('input\[id\],select\[id\]'\)\):\[\];/.test(appSrc)
+     && /\$\('reset-settings'\)\.onclick=function\(\)\{\n    settingControls\.forEach\(function\(el\)\{settingSet\(el,settingDefaults\[el\.id\]\);settingRun\(el\);\}\);/.test(appSrc)
+     && appSrc.split("'aim-sound-dev'").length === 4 && appSrc.indexOf("el.id!=='aim-sound-dev'") < 0);
+  ok('sound: ONE owner of what the checkbox gates - the sound\'s handler alone reads it: unticked, it puts the switch out before the owner of the sound is asked and hides the cluster; no other line of the page shows or hides the cluster, and a hidden cluster takes no room',
+     /var dev = !!\(\$\('aim-sound-dev'\) \|\| \{\}\)\.checked;\n    if \(!dev\) box\.checked = false;\n/.test(appSrc)
+     && /if \(cluster && cluster\.hidden !== !dev\) \{ cluster\.hidden = !dev; wide = true; \}/.test(appSrc)
+     && appSrc.split("$('aim-sound')").length === 3 && appSrc.split('cluster.hidden').length === 3
+     && appSrc.indexOf('var on = S.on(!!box.checked);') > appSrc.indexOf('if (!dev) box.checked = false;')
+     && /\.aim-sound\[hidden\]\{display:none\}/.test(cssSrc));
+  ok('sound: the switch stands in the strip beside ⌖ with the gun\'s load (the part that needs a live emulation), after the heat bar, dark by default; the cluster is hidden in the markup (the developer\'s checkbox shows it), its choices are hidden until the switch is on',
+     /<span id="aim-sound" class="aim-sound" hidden><button type="button" id="aim-sound-toggle" class="swap-roles" aria-pressed="false" title="Countdown sound&#10;[^"]+" aria-label="Countdown sound">/.test(gunSpan)
+     && /<span id="aim-sound-signals" class="aim-sound-pick" role="group" aria-label="Signals" title="Signals&#10;[^"]+" hidden>/.test(gunSpan)
+     && /<span id="aim-sound-ticks" class="aim-sound-pick" role="group" aria-label="Time ticks" title="Time ticks&#10;[^"]+" hidden>/.test(gunSpan)
+     && gunSpan.indexOf('id="aim-gun-heat"') < gunSpan.indexOf('id="aim-sound"'));
+  ok('sound: Signals 2 / 3 / 4 with 3 lit (user, 08.10: "three last ones - ideal: they set the interval"), Time ticks one tone / the tone of the shot with THE TONE OF THE SHOT lit (user, 09.10: "let us start with the doubled sound"), each told in one line of the help - the page\'s lit switch (.swap-roles), each button with an id',
+     [2, 3, 4].every(function (v) { return new RegExp('<button type="button" id="aim-sound-signals-' + v + '" class="swap-roles" aria-pressed="' + (v === 3) + '"[^>]*>' + v + '</button>').test(gunSpan); })
+     && /<button type="button" id="aim-sound-ticks-one" class="swap-roles" aria-pressed="false" aria-label="Time ticks: one tone"/.test(gunSpan)
+     && /<button type="button" id="aim-sound-ticks-shot" class="swap-roles" aria-pressed="true" aria-label="Time ticks: the tone of the shot"/.test(gunSpan)
+     && gunSpan.indexOf('aim-sound-ticks-strikes') < 0 && pageSrc.indexOf('strikes') < 0 && appSrc.indexOf("'strikes'") < 0
+     && /Time ticks&#10;[^"]*&#10;• One tone: [^&"]+&#10;• Tone of the shot: [^&"]+"/.test(gunSpan)
+     && gunSpan.indexOf('ladder') < 0 && appSrc.indexOf('ladder') < 0 && ownerSrc.indexOf('ladder') < 0);
+  ok('sound: Countdown 3 / 4 / 5 with 4 lit - the ticks of a wait, its final sound counted - a group of its own between Signals and Time ticks, hidden until the sound is on',
+     /<span id="aim-sound-count" class="aim-sound-pick" role="group" aria-label="Countdown" title="Countdown&#10;[^"]+" hidden>/.test(gunSpan)
+     && [3, 4, 5].every(function (v) { return new RegExp('<button type="button" id="aim-sound-count-' + v + '" class="swap-roles" aria-pressed="' + (v === 4) + '"[^>]*>' + v + '</button>').test(gunSpan); })
+     && gunSpan.indexOf('id="aim-sound-signals"') < gunSpan.indexOf('id="aim-sound-count"') && gunSpan.indexOf('id="aim-sound-count"') < gunSpan.indexOf('id="aim-sound-ticks"')
+     && /<select id="aim-sound-count-value" hidden aria-hidden="true" tabindex="-1"><option value="3">3<\/option><option value="4" selected>4<\/option><option value="5">5<\/option><\/select>/.test(pageSrc)
+     && /Signals&#10;[^"]*in rapid fire[^"]*&#10;• Rapid fire only: [^"]*&#10;• A wait long enough for a countdown always ends in its sound[^"]*"/.test(gunSpan)
+     && gunSpan.indexOf('while you fire') < 0 && /Countdown&#10;[^"]*before a wait ends[^"]*"/.test(gunSpan));
+  ok('sound: the state is four hidden controls of the Settings menu - the switch OFF by default, 3 signals, a countdown of 4, ticks in the tone of the shot - kept by the settings machinery',
+     /<input type="checkbox" id="aim-sound-on" hidden aria-hidden="true" tabindex="-1">/.test(pageSrc)
+     && /<select id="aim-sound-signals-value" hidden aria-hidden="true" tabindex="-1"><option value="2">2<\/option><option value="3" selected>3<\/option><option value="4">4<\/option><\/select>/.test(pageSrc)
+     && /<select id="aim-sound-ticks-value" hidden aria-hidden="true" tabindex="-1"><option value="one">one<\/option><option value="shot" selected>shot<\/option><\/select>/.test(pageSrc)
+     && ['aim-sound-on', 'aim-sound-signals-value', 'aim-sound-count-value', 'aim-sound-ticks-value'].every(function (id) {
+       return pageSrc.indexOf('class="settings-content"') < pageSrc.indexOf('id="' + id + '"') && pageSrc.indexOf('id="' + id + '"') < pageSrc.indexOf('id="reset-settings"'); }));
+  ok('sound: the switch itself is not remembered (a browser gives a page sound only from a user\'s action, and a switch shown lit without sound would lie); its three choices are',
+     /if\(stored&&el\.id!=='fun-mode'&&el\.id!=='aim-sound-on'&&Object\.prototype\.hasOwnProperty\.call\(stored,el\.id\)/.test(appSrc));
+  ok('sound: Signals was 4 by default in the first previews - a store written then lets that 4 go for the new default once (the store\'s version 5, as the earlier changes of a default did); a choice made after it is kept',
+     /if\(!\(box\.v>=5\)&&String\(box\.values\['aim-sound-signals-value'\]\)==='4'\)delete box\.values\['aim-sound-signals-value'\];/.test(appSrc)
+     && /JSON\.stringify\(\{v:6,values:values,aim:aimStored\(\)\}\)/.test(appSrc));
+  ok('sound: Time ticks was "one tone" by default in the previews before 09.10 - a store written then lets its choice of the ticks go for the new default, the tone of the shot, once (the store\'s version 6); a choice made after it is kept',
+     /if\(!\(box\.v>=6\)\)delete box\.values\['aim-sound-ticks-value'\];/.test(appSrc)
+     && /if \(kind !== 'one'\) kind = 'shot';/.test(appSrc));
+  ok('sound: every click goes through the stored control, its handler and the save - as ◔ does',
+     /\$\('aim-sound-toggle'\)\.onclick=function\(\)\{var box=\$\('aim-sound-on'\);box\.checked=!box\.checked;aimSoundSettings\(\);persistSettings\(\);\}/.test(appSrc)
+     && /\$\('aim-sound-on'\)\.onchange=aimSoundSettings;/.test(appSrc));
+  const soundBox = $('aim-sound'), dot = soundBox.children.filter(function (c) { return c.className === 'help-dot'; })[0];
+  ok('sound: the cluster has its own "?" (helpDotFor): the switch and the three choices',
+     !!dot && dot.getAttribute('data-help-for') === 'aim-sound-toggle aim-sound-signals aim-sound-count aim-sound-ticks');
+  // MAGAZINE SWEEP IS GONE (user, 10.10, having heard a machine gun's whole magazine rung, the strike's length his to
+  // set: "that is too much ... the three last ticks for a machine gun, as it was, so let it stay"): no switch, no box
+  // of the strike length, no stored control, nothing of it in the owner; a store that still holds the two controls'
+  // keys loses them when it is read (and the restore reads the store by the ids of the controls the menu has).
+  ok('sound: Magazine sweep is gone whole - no switch and no strike box in the page, no handler, no rule in the owner, no style; the store\'s keys of its two controls are dropped when the store is read',
+     !/sweep|strike/i.test(gunSpan) && pageSrc.indexOf('aim-sound-sweep') < 0 && pageSrc.indexOf('aim-sound-strike') < 0 && cssSrc.indexOf('aim-sound-ms') < 0
+     && appSrc.indexOf("$('aim-sound-sweep") < 0 && appSrc.indexOf("$('aim-sound-strike") < 0 && !/S\.set\('(sweep|strike)'/.test(appSrc)
+     && !/sweep|strikeOf|strikeMs|playbackRate|state\.rounds|state\.left/i.test(ownerSrc)
+     && /delete box\.values\['aim-sound-sweep-on'\];delete box\.values\['aim-sound-strike-value'\];/.test(appSrc)
+     && /if\(stored&&[^\n]*Object\.prototype\.hasOwnProperty\.call\(stored,el\.id\)&&settingValid\(el,stored\[el\.id\]\)\)settingSet\(el,stored\[el\.id\]\);/.test(appSrc));
+
+  // ONE OWNER, told at every change of the load (static). Each function of app.js that writes the load's state - the
+  // reload, the magazine, the round loading back, the heat, the emulation being live - tells the sound itself or goes
+  // through one of the two owners of a reset (aimLoadFull, gunHeatReset), which tell; except the five that only carry
+  // the state on with the time or inside a shot (fireShot tells for them).
+  const WRITES = /\b(aimReload|aimRefill|aimClip|aimClipSize|gunHeat|aimLive)\s*=[^=]|\bgunHeat\.(t|at|locked)\s*=[^=]/;
+  const CARRY = ['refillSettle', 'refillShot', 'heatNow', 'heatShot', 'reloadJustFinished'];
+  const writers = {};
+  let fn = '';
+  appSrc.split('\n').forEach(function (line) {
+    const head = /^  function (\w+)\(/.exec(line);
+    if (head) fn = head[1];
+    else if (/^  \S/.test(line)) fn = '';   // a statement of the module itself, between two functions
+    if (!fn) return;
+    const body = line.replace(/^  function \w+\([^)]*\) ?\{/, '').replace(/\/\/.*$/, '');
+    const w = writers[fn] || (writers[fn] = {writes: false, tells: false});
+    if (WRITES.test(body)) w.writes = true;
+    if (/\baimSoundTell\(/.test(body) || (fn !== 'aimLoadFull' && fn !== 'gunHeatReset' && /\b(aimLoadFull|gunHeatReset)\(/.test(body))) w.tells = true;
+  });
+  const silent = Object.keys(writers).filter(function (name) { return writers[name].writes && !writers[name].tells && CARRY.indexOf(name) < 0; });
+  const told = function (name) { return !!writers[name] && writers[name].writes && writers[name].tells; };
+  ok('sound: every function of app.js that writes the gun\'s load tells the sound, or goes through aimLoadFull / gunHeatReset, which do',
+     silent.length === 0 && ['fireShot', 'endShot', 'burstNext', 'aimLoadFull', 'gunHeatReset', 'updateAim', 'xiWeapon', 'xiSurge'].every(told)
+     && CARRY.every(function (name) { return !!writers[name] && writers[name].writes; }),
+     '(silent: ' + silent.join(', ') + '; writers: ' + Object.keys(writers).filter(function (n) { return writers[n].writes; }).join(', ') + ')');
+  const tickSrc = appSrc.slice(appSrc.indexOf('  function aimTickRun()'), appSrc.indexOf('  // The shooter\'s horizontal sector'));
+  const paintSrc = appSrc.slice(appSrc.indexOf('  function paintGunLoad()'), appSrc.indexOf('  // One shot (user\'s decision'));
+  ok('sound: nothing of it is on the frame path - the aim loop and the painters of the load never call it',
+     tickSrc.length > 500 && paintSrc.length > 500 && !/aimSound|BullbaAimSound/.test(tickSrc) && !/aimSound|BullbaAimSound/.test(paintSrc));
+
+  // ONE FUNCTION S(temperature) FOR BOTH TRIGGERS (the property the user asked for, 08.10: "it does not matter whether
+  // the gun is loading or firing, the principle is the same"). The stock of a gun that locks by heat is its shots left
+  // at a temperature, the one that overheats counted (aimSoundStock: the safe shots and one more). The block of app.js
+  // is cut out as the heat checks cut it and asked, over the whole range of temperatures, what it tells the owner:
+  //   - after a round (the readiness of the next one, at the end of the gun's interval under ◔; at once without ◔);
+  //   - while the gun cools (each shot coming back, all the way to the full stock of a cold gun).
+  // Both must be that one function of the temperature at their moment, for the Ares 90's numbers and for two others.
+  const cFrom = appSrc.indexOf('  // --- ✸: real reload and the heat'), cTo = appSrc.indexOf('  // --- The fun layer', cFrom);
+  const cut = {now: 0, block: null, real: true};
+  const CUT = new Function('$', 'window', 'env',
+    'var aimReload=null,aimClipDry=false,aimClipSize=1,aimClip=1,aimLive=true,aimNow=null,aimLastState=null;' +
+    'function funOn(){return true;}function aimBlockData(){return env.block;}function aimSeconds(){return env.now;}' +
+    'function aimReloadLeft(){return aimReload?Math.max(0,aimReload.until-env.now):0;}function aimClipRounds(){return aimClipSize;}function paintFun(){}function paintAim(){}function aimState(){return {};}' +
+    'function startAimLoop(){}function aimNum(v){return String(v);}function xiApply(m){return m;}function xiReset(){}function paintXi(){}function xiBurstOn(){return false;}function xiSwitching(){return false;}' +
+    'function xiRetime(){}function xiNow(){return null;}function xiModePanel(){}function xiWake(){}var xiMech=null;function aimLoadFull(){}function paintStrip(){}function stripLayout(){}\n' +
+    appSrc.slice(cFrom, cTo) +
+    '\nreturn {stock:function(t){return aimSoundStock(heatParams(),t);},' +
+    'heat:function(t,at){heatNow();gunHeat.t=t;gunHeat.at=at;gunHeat.locked=false;},' +
+    'gate:function(until){aimReload=until?{at:env.now,until:until,clip:true}:null;aimClip=240;aimClipSize=250;},' +
+    'shot:heatShot,temp:function(){return heatNow().t;},locked:function(){return heatNow().locked;},' +
+    'state:function(shot){return aimSoundState(env.now,!!shot);}};')(
+    function (id) { return {checked: id === 'real-reload' ? cut.real : true, hidden: false, style: {}, setAttribute: function () {}, getAttribute: function () { return null; }}; },
+    {setTimeout: function () { return 1; }, clearTimeout: function () {}}, {get now() { return cut.now; }, get block() { return cut.block; }});
+  const GUN = function (per, on, cool, delay) {
+    return {dispersion: 0.0036, reloadTime: 8, clip: [250, 0.3], autoShoot: {shotDispersionPerShot: 0.45},
+      temperatureGun: {heatingPerShot: per, coolingDelay: delay, coolingPerSec: cool, maxTemperature: 100, thermalStateHysteresis: 1, thermalStates: []},
+      overheatGun: {coolingPerSecFactor: 0.5, tempOverheatOnThreshold: on, tempOverheatOffThreshold: 0, tempOverheatWarnThreshold: on - 11}};
+  };
+  // The definition, written out here once: the rounds of `per` that fit under `on` from the temperature t - the safe
+  // ones - and the one after them, which overheats.
+  const left = function (t, per, on) { let k = 0; while (t + (k + 1) * per < on - 1e-9) k++; return k + 1; };
+  const property = function (per, on, cool, delay) {
+    cut.block = GUN(per, on, cool, delay);
+    const bad = [];
+    let asked = 0;
+    // 1. the function itself against its definition, every 0.01 of a degree and at every edge of it
+    for (let i = 0; i <= on * 100; i++) { const t = i / 100; asked++; if (CUT.stock(t) !== left(t, per, on)) bad.push('S(' + t + ') = ' + CUT.stock(t) + ', ' + left(t, per, on) + ' by the definition'); }
+    // 2. after a round: the stock told for the readiness of the next round is S of the temperature the round left -
+    //    under ◔ at the end of the interval, without ◔ at once; a round that locks the gun tells no readiness of a shot
+    [true, false].forEach(function (real) {
+      cut.real = real;
+      for (let i = 0; i < on * 20; i++) {
+        const t = i / 20;
+        cut.now = 1000; CUT.heat(t, 1000); CUT.shot(); CUT.gate(real ? 1000.3 : 0);
+        const state = CUT.state(true), want = CUT.locked() ? null : CUT.stock(CUT.temp());
+        const told = real ? (state.waits.length && state.waits[0].zone ? state.waits[0].stock : null) : state.shot;
+        asked++;
+        if (told !== want) bad.push((real ? '◔' : 'no ◔') + ' after a round from ' + t + ': told ' + told + ', S = ' + want);
+        if (real && !CUT.locked() && !(state.shot === null && near(state.waits[0].at, 1000.3, 1e-9))) bad.push('◔: the readiness after a round from ' + t + ' is not at the end of the interval');
+        if (state.full !== CUT.stock(0)) bad.push('the full stock told from ' + t + ' is ' + state.full + ', a cold gun has ' + CUT.stock(0));
+      }
+    });
+    cut.real = true;
+    // 3. cooling: from just under the lock down to cold, the stock announced so far - the stock at the start, then each
+    //    bell's - is S of the temperature at every moment (asked off the edges themselves: there the bell IS the change)
+    const t0 = on - 0.004;
+    cut.now = 0; CUT.heat(t0, 0); CUT.gate(0);
+    const back = CUT.state(false).back;
+    for (let i = 0; i * 0.01 < t0; i++) {
+      const x = t0 - i * 0.01, when = delay + (t0 - x) / cool;
+      if (back.some(function (b) { return Math.abs(b.at - when) < 1e-4; })) continue;
+      const announced = back.reduce(function (s, b) { return b.at <= when ? b.stock : s; }, CUT.stock(t0));
+      cut.now = when; asked++;
+      if (announced !== CUT.stock(CUT.temp())) bad.push('cooling at ' + x.toFixed(3) + ': announced ' + announced + ', S = ' + CUT.stock(CUT.temp()));
+    }
+    cut.now = 0;
+    const edges = back.every(function (b, i) { return b.stock === i + 2 && near(b.at, delay + (t0 - (on - (b.stock - 1) * per)) / cool, 1e-9); })
+      && back.length > 0 && back[back.length - 1].stock === CUT.stock(0);
+    return {bad: bad, asked: asked, back: back, edges: edges};
+  };
+  const pAres = property(11, 100, 10, 2), pTen = property(10, 100, 10, 2), pOdd = property(7.5, 93, 4, 1.5);
+  ok('sound: one function S(temperature) - the shots left, the overheating one counted - is what the firing side tells after a round (with ◔ and without) and what the cooling side announces, at every temperature: the Ares 90\'s numbers (11 a round, the lock at 100), a gun whose rounds divide the scale exactly (10, 100) and an odd one (7.5, 93)',
+     [pAres, pTen, pOdd].every(function (p) { return p.bad.length === 0 && p.asked > 20000; }),
+     '(' + [pAres, pTen, pOdd].map(function (p) { return p.asked + ' asked, ' + p.bad.length + ' differ' + (p.bad.length ? ': ' + p.bad.slice(0, 3).join('; ') : ''); }).join(' | ') + ')');
+  ok('sound: ... the cooling side\'s moments are the edges of that function, every one of them up to the full stock of a cold gun: k shots are there once the temperature is under on - (k - 1) × per - Ares 90: stock 2 at 89 degrees, 3 at 78 ... 10 at 1',
+     pAres.edges && pAres.back.length === 9 && pTen.edges && pTen.back.length === 9 && pOdd.edges && pOdd.back.length === 12,
+     '(' + [pAres, pTen, pOdd].map(function (p) { return p.back.length; }).join(', ') + ' bells)');
+  // A gun that heats and never locks (the STK-2: +50 a round, no overheatGun) has no edge to count shots to: nothing of
+  // its heat is told on either side, and it sounds as the single-shot gun it is.
+  cut.block = {dispersion: 0.0036, reloadTime: 9.7, clip: [1, 0], temperatureGun: {heatingPerShot: 50, coolingDelay: 1, coolingPerSec: 2.8, maxTemperature: 100, thermalStateHysteresis: 1, thermalStates: []}};
+  cut.now = 500; CUT.heat(0, 400); CUT.shot(); CUT.gate(0);
+  const stk = CUT.state(true);
+  ok('sound: a gun that heats and never locks (the STK-2) - its heat tells nothing, firing or cooling: there is no shot it forbids', stk && stk.shot === null && stk.back.length === 0 && stk.waits.length === 0, JSON.stringify(stk));
+
+  // ---- 2. the stand-in audio context ----
+  const AUDIO_SHIFT = 1000;
+  const audio = {contexts: 0, made: [], latency: 0};
+  const nameOf = function (buffer) {
+    const d = buffer.data;
+    const starts = function (n) { for (let i = 0; i < 400; i++) if (Math.abs(pcm[n][i] - d[i]) > 1e-6) return false; return true; };
+    // A sample itself, whole: the owner plays nothing else (a part of one, or one played faster, would be '?').
+    return Object.keys(pcm).filter(function (n) { return pcm[n].length === d.length && starts(n); })[0] || '?';
+  };
+  function FakeContext() { audio.contexts++; this.state = 'running'; this.destination = {}; }
+  Object.defineProperty(FakeContext.prototype, 'currentTime', {get: function () { return clock + AUDIO_SHIFT; }});
+  // The output timestamp: the audio second being HEARD now - the context's clock less the output's latency - against
+  // the page's clock; 'none' is a context that has not started its output yet and answers with zeros.
+  FakeContext.prototype.getOutputTimestamp = function () {
+    return audio.latency === 'none' ? {contextTime: 0, performanceTime: 0} : {contextTime: clock + AUDIO_SHIFT - audio.latency, performanceTime: clock * 1000};
+  };
+  FakeContext.prototype.createGain = function () { return {gain: {value: 1}, connect: function () {}}; };
+  FakeContext.prototype.createBuffer = function (channels, length, rate) {
+    const data = new Float32Array(length);
+    return {data: data, length: length, sampleRate: rate, channels: channels, getChannelData: function () { return data; }};
+  };
+  FakeContext.prototype.createBufferSource = function () {
+    const s = {buffer: null, when: null, madeAt: clock, cancelledAt: null, playbackRate: {value: 1}, connect: function () {}, disconnect: function () {},
+      start: function (when) { s.when = when; audio.made.push(s); }, stop: function () { if (s.cancelledAt === null) s.cancelledAt = clock; }};
+    return s;
+  };
+  FakeContext.prototype.resume = function () { this.state = 'running'; return Promise.resolve(); };
+  FakeContext.prototype.suspend = function () { this.state = 'suspended'; return Promise.resolve(); };
+  window.AudioContext = FakeContext; window.atob = atob;
+  // What was (or will be) heard: every sound scheduled and not cancelled before its own start - {t, id}, t in the
+  // PAGE's seconds - in the order of time; `from`: only those at or after that second.
+  const heard = function (from) {
+    return audio.made.filter(function (s) { return !(s.cancelledAt !== null && s.cancelledAt + AUDIO_SHIFT < s.when - 1e-9); })
+      .map(function (s) { return {t: s.when - AUDIO_SHIFT, id: s.playbackRate.value === 1 ? nameOf(s.buffer) : '?', madeAt: s.madeAt}; })
+      .filter(function (h) { return from === undefined || h.t >= from - 1e-9; })
+      .sort(function (a, b) { return a.t - b.t; });
+  };
+  const show = function (list, zero) { return list.map(function (h) { return h.id + '@' + (h.t - (zero || 0)).toFixed(3); }).join(' '); };
+  // The list is exactly `want` ([[seconds after zero, id], ...]), each within a microsecond.
+  const same = function (list, zero, want) {
+    return list.length === want.length && want.every(function (w, i) { return list[i].id === w[1] && near(list[i].t - zero, w[0], 1e-6); });
+  };
+  // The time ticks by the seconds before the end, in the two positions of Time ticks, for a readiness whose ordinary
+  // sound is `bell`: ONE - the dry tone, the final that ordinary sound; SHOT, "the tone of the shot", the default
+  // (user, 09.10: "the doubled one must mark exactly the readiness of the next round - it must differ from the
+  // preliminary ticks not by tone but by form") - the bell of that pitch struck once for every second, the final
+  // its DOUBLE.
+  const ONE = ['', 'dry880', 'dry880', 'dry880', 'dry880'];
+  const SHOT = function (bell) { const b = 'bell' + PITCH_OF[bell]; return {ticks: ['', b, b, b, b], end: b + 'x2'}; };
+  // A wait counted in the tone of the shot: [[t, id]...].
+  const counted2 = function (span, bell, kind, start, count) { const k = kind(bell); return waitOf(span, k.end, k.ticks, start, count); };
+  // The rule for one wait of `span` seconds begun at `start` (0): its time ticks - none in a wait under 1 s, none
+  // within 0.1 s of its start - and its bell, [[t, id]...].
+  const waitOf = function (span, bell, set, start, count) {
+    const out = [];
+    for (let s = (count || 4) - 1; s >= 1; s--) if (span >= 1 - 1e-9 && span - s >= 0.1 - 1e-9) out.push([(start || 0) + span - s, (set || ONE)[s]]);
+    if (bell) out.push([(start || 0) + span, bell]);
+    return out;
+  };
+
+  // ---- 3. the battle: four real guns ----
+  const DIR = HERE + '../fixtures-local/ttx-offline/out/mod/';
+  const FILES = {is7: 'ttx/ussr-R45_IS-7.js', vz55: 'ttx/czech-Cz17_Vz_55.js', prog: 'ttx/italy-It08_Progetto_M40_mod_65.js', ares: 'ttx/usa-A189_Ares_90.js'};
+  if (!Object.keys(FILES).every(function (k) { return fs.existsSync(DIR + FILES[k]); })) {
+    console.log('SKIP sound: the real guns are not on this machine (tests/fixtures-local/ttx-offline) - the emulation was not driven');
+    delete window.AudioContext;
+    return Promise.resolve();
+  }
+  const aimOf = function (key, pick) {
+    let file = null;
+    new Function('ArmorInspectorData', fs.readFileSync(DIR + FILES[key], 'utf8'))({receive: function (x) { file = x[1]; }});
+    return JSON.parse(JSON.stringify(file.configs.filter(pick)[0].aim));
+  };
+  const top = function (c) { return c.top; };
+  const IS7 = aimOf('is7', top), VZ55 = aimOf('vz55', function (c) { return c.aim.clip[0] === 2; }), PROG = aimOf('prog', top), ARES = aimOf('ares', top);
+  ok('sound: (the four guns as the client has them - IS-7 one round, 13.7 s; Vz. 55 a drum of 2, 2.5 s apart, 25 s; Progetto 65 an autoreloader of 4, 2.5 s apart, 10/12/14/16 s; Ares 90 heat 11 a round, the lock at 100, cooling 10 a second - half that locked - after 2 s, rounds 0.3 s apart)',
+     IS7.clip[0] === 1 && near(IS7.reloadTime, 13.7, 1e-3) && VZ55.clip[1] === 2.5 && VZ55.reloadTime === 25
+     && PROG.clip[0] === 4 && PROG.clip[1] === 2.5 && PROG.autoreload.reloadTime.join() === '10,12,14,16'
+     && ARES.temperatureGun.heatingPerShot === 11 && ARES.overheatGun.tempOverheatOnThreshold === 100 && ARES.temperatureGun.coolingPerSec === 10
+     && ARES.overheatGun.coolingPerSecFactor === 0.5 && ARES.temperatureGun.coolingDelay === 2 && !!ARES.autoShoot && ARES.clip[1] === 0.3);
+  // Two drums more (09.10; tests/fixtures-local/ttx-offline/README.txt, out/mod/ttx-sound): the Bat.-Chatillon 25 t the
+  // user fired - five rounds 2.73 s apart - and the AMX 13 57 - eight rounds 1 s apart, a gap too short for a countdown.
+  const DRUMS = {bat: DIR + 'ttx-sound/france-F18_Bat_Chatillon25t.js', amx: DIR + 'ttx-sound/france-F69_AMX13_57_100.js', blesk: DIR + 'ttx-sound/czech-Cz24_Vz_64_Blesk.js'};
+  const drumOf = function (key) {
+    if (!fs.existsSync(DRUMS[key])) return null;
+    let file = null;
+    new Function('ArmorInspectorData', fs.readFileSync(DRUMS[key], 'utf8'))({receive: function (x) { file = x[1]; }});
+    return JSON.parse(JSON.stringify(file.configs.filter(top)[0].aim));
+  };
+  const BLESK = drumOf('blesk');   // an automatic gun with a magazine of 104, a round every 0.03 s, no heat
+  const BAT = BLESK ? drumOf('bat') : null, AMX = drumOf('amx');
+  // Guns that fire a burst on one pull (10.10; out/mod/ttx-reload): the Char Mle. 75 - a magazine of six, bursts of
+  // three - and the Donnola, whose one burst is its whole magazine. The MBT-B's fixture is not on the stand: the
+  // client gives it the Char's own magazine (6 rounds, 3.5 s between bursts) with bursts of TWO, so it is the Char's
+  // block with that burst - three pulls to a magazine.
+  DRUMS.char = DIR + 'ttx-reload/france-F118_Char_Mle_75.js'; DRUMS.donnola = DIR + 'ttx-reload/italy-It38_Donnola.js';
+  const CHAR = drumOf('char'), DONNOLA = drumOf('donnola');
+  const PAIRS = CHAR ? JSON.parse(JSON.stringify(CHAR)) : null;
+  if (PAIRS) PAIRS.burst = [2, CHAR.burst[1], false];
+  const BURSTS = !!(BAT && AMX && CHAR && DONNOLA);
+  const PARTS = function () {
+    return [{id: 0, name: 'chassis', modelKey: 'k0'}, {id: 1, name: 'hull', modelKey: 'k1'}, {id: 2, name: 'turret', modelKey: 'k2'}, {id: 3, name: 'gun', modelKey: 'k3'}];
+  };
+  const HIT = function (id, attackerId, type, aim) {
+    return {id: id, attackerId: attackerId, targetId: 7, direction: 'incoming', damage: 0, receivedAt: 100, points: [],
+            attacker: {name: type, type: type, parts: PARTS(), gunDispersion: aim.dispersion, aim: aim},
+            target: {name: 'Alpha', type: 'germany:Alpha', parts: PARTS()}, warnings: []};
+  };
+  const ROW = function (id, type) { return {id: id, name: type, type: type, team: 2, player: '', maxHealth: 2000, defaultMaxHealth: 2000}; };
+  const BATTLE = {id: 'snd1', playerVehicleId: 7, map: 'Test', warnings: [], shotEvents: [],
+    roster: [{id: 7, name: 'Alpha', type: 'germany:Alpha', team: 1, player: '', maxHealth: 1850, defaultMaxHealth: 1800},
+             ROW(61, 'sound:IS7'), ROW(62, 'sound:Vz55'), ROW(63, 'sound:Progetto65'), ROW(64, 'sound:Ares90')],
+    hits: [HIT('s-is7', 61, 'sound:IS7', IS7), HIT('s-vz55', 62, 'sound:Vz55', VZ55), HIT('s-prog', 63, 'sound:Progetto65', PROG), HIT('s-ares', 64, 'sound:Ares90', ARES)]};
+  if (BAT && AMX) {
+    BATTLE.roster.push(ROW(65, 'sound:BatChat25t'), ROW(66, 'sound:AMX1357'));
+    BATTLE.roster.push(ROW(67, 'sound:Blesk'));
+    BATTLE.hits.push(HIT('s-bat', 65, 'sound:BatChat25t', BAT), HIT('s-amx', 66, 'sound:AMX1357', AMX), HIT('s-blesk', 67, 'sound:Blesk', BLESK));
+  }
+  if (BURSTS) {
+    BATTLE.roster.push(ROW(68, 'sound:CharMle75'), ROW(69, 'sound:Pairs'), ROW(70, 'sound:Donnola'));
+    BATTLE.hits.push(HIT('s-char', 68, 'sound:CharMle75', CHAR), HIT('s-pairs', 69, 'sound:Pairs', PAIRS), HIT('s-donnola', 70, 'sound:Donnola', DONNOLA));
+  }
+  const D = global.ArmorInspectorData, keep = {battle: D.battle, scene: D.scene, ttx: D.ttx, index: D.index};
+  // The page reads the index every 5 s and opens what it lists: it lists this battle alone, so a read that comes in the
+  // middle of a check leaves the scene to the check (the index of the sections before would open another battle).
+  D.index = function () { return Promise.resolve({application: 'local.armor_inspector', version: 'test', updatedAt: 20261008, battles: [{id: 'snd1', startedAt: 1, map: 'Test', hits: 4}]}); };
+  D.battle = function (id) { return id === 'snd1' ? Promise.resolve(BATTLE) : Promise.reject(new Error('no battle')); };
+  D.scene = function (b, id) { return Promise.resolve({hit: b.hits.filter(function (x) { return x.id === id; })[0], models: {}, warnings: []}); };
+  D.ttx = function () { return Promise.reject(new Error('none')); };
+  if (!onBox.checked) { onBox.checked = true; onBox.onchange.call(onBox); }
+  const funBox = $('fun-mode'), realBox = $('real-reload'), star = $('fun-mode-toggle'), sub = $('real-reload-toggle');
+  const soundOn = $('aim-sound-on'), toggle = $('aim-sound-toggle'), heatBox = $('aim-gun-heat'), devBox = $('aim-sound-dev');
+  // The developer's checkbox, as a click on it in the menu: the box and its own handler.
+  const setDev = function (flag) { devBox.checked = flag; devBox.onchange.call(devBox); };
+  // The settings machinery runs every control's own handler at startup, which is what puts the choices away; this
+  // stub registers only the emulation's switch with it, so the sound's handler is run here the same way.
+  soundOn.onchange.call(soundOn);
+  const setFun = function (on) { if (funBox.checked !== on) click(star); };
+  const setReal = function (on) { if (realBox.checked !== on) click(sub); };
+  const prepare = function (view) {
+    view.shell = {alpha: 400, damageRandomization: .25, kind: 'ARMOR_PIERCING', penetration: 250, caliber: 120};
+    view.pinResult = {reason: 'penetration', chance: 100, screenPass: 1, nominal: 100, nonPen: 0};
+    window.BullbaHitsRng = function () { return .5; };
+  };
+  const tap = function () { press(); release(); };
+  const openHit = function (i) { $('hits').children[i].onclick(); return settle(20); };
+  // Frames of 1/60 s until the gun has fired `want` rounds in all (at most `most` seconds): the second that round left.
+  const fireTo = function (view, want, most) {
+    for (let i = 0; i < most * 60 && view.pinnedPoints < want; i++) tick(1 / 60);
+    return clock;
+  };
+  // The length of the wait the gun is in (the reload, or the gap between two rounds), read off the live ring's fill
+  // `after` seconds into it - the emulation's own figure.
+  const waitFrom = function (view, t0, after) { run(after); return (clock - t0) / view.reloadPart; };
+  // One pull of a burst gun: a tap, and the seconds its `k` rounds left at.
+  const pull = function (k) { const p0 = view.pinnedPoints, at = []; tap(); for (let n = 1; n <= k; n++) at.push(fireTo(view, p0 + n, 3)); return at; };
+  // A magazine of the gun on screen emptied pull by pull: what was heard after each pull (from its first round) against
+  // the rule - nothing before the burst's last round, then the countdown to `bells[i]` in the tone of the shot over the
+  // gap between bursts; after the last pull, over the reload.
+  const magazine = function (aim, bells) {
+    view = viewerInstance; prepare(view); run(0.1);
+    const k = aim.burst[0], G = aim.clip[1], out = {ok: true, text: [], rounds: [], R: 0};
+    bells.forEach(function (bell, i) {
+      fresh();
+      const at = pull(k), last = i === bells.length - 1;
+      const span = last ? (out.R = waitFrom(view, at[k - 1], 1)) : G;
+      if (!last) run(0.1);
+      const got = heard();
+      out.rounds.push(at.map(function (t) { return (t - at[0]).toFixed(2); }).join(' '));
+      out.text.push(show(got, at[0]));
+      if (!same(got, at[0], counted2(span, bell, SHOT, at[k - 1] - at[0]))) out.ok = false;
+      run(span + 0.5);
+    });
+    return out;
+  };
+  let tells = 0;
+  const realTell = S.tell;
+  S.tell = function (state) { tells++; return realTell.call(S, state); };
+  const fresh = function () { audio.made.length = 0; tells = 0; };
+  const sb = $('battles');
+  sb.value = 'snd1'; sb.onchange.call(sb);
+  let view = null;
+  return settle(20).then(function () {
+    run(6);   // one read of the index: the page takes this battle as the list's own
+    return settle(20);
+  }).then(function () {
+    // ---- A. the ordinary gun: IS-7 ----
+    view = viewerInstance; prepare(view); setFun(true); setReal(true); run(0.1);
+    ok('sound: (the IS-7 is on screen, ⌖ and ◔ on, the sound switch dark, its choices hidden)',
+       view.liveRadius100 > 0 && funBox.checked && realBox.checked && soundOn.checked === false && toggle.getAttribute('aria-pressed') !== 'true'
+       && $('aim-sound-signals').hidden === true && $('aim-sound-count').hidden === true && $('aim-sound-ticks').hidden === true);
+    let p = view.pinnedPoints;
+    // THE DEVELOPER'S CHECKBOX UNTICKED - as the page opens. The cluster is not there; and whatever reaches the switch
+    // - a click on it, a stored "sound on" put back into its control - switches nothing on: no audio context is made.
+    fresh();
+    const devOff = {hidden: $('aim-sound').hidden, box: devBox.checked};
+    click(toggle);
+    const clicked = {box: soundOn.checked, lit: toggle.getAttribute('aria-pressed'), choices: $('aim-sound-signals').hidden};
+    soundOn.checked = true; soundOn.onchange.call(soundOn);
+    const storedOn = {box: soundOn.checked, lit: toggle.getAttribute('aria-pressed')};
+    tap(); run(30);
+    ok('sound: the developer\'s checkbox unticked (the default) - the cluster under ⌖ is hidden; a click on its switch and a stored "sound on" switch nothing on (the control is put back off, the switch stays dark, its choices hidden); a shot and its whole reload: no audio context, nothing scheduled, the owner not told',
+       devOff.box === false && devOff.hidden === true && clicked.box === false && clicked.lit !== 'true' && clicked.choices === true && storedOn.box === false && storedOn.lit !== 'true'
+       && view.pinnedPoints === p + 1 && $('aim-sound').hidden === true && audio.contexts === 0 && audio.made.length === 0 && tells === 0,
+       '(' + JSON.stringify([devOff, clicked, storedOn]) + ', ' + audio.contexts + ' contexts, ' + tells + ' tells)');
+    setDev(true);
+    ok('sound: the developer\'s checkbox ticked - the cluster is there, its switch dark and its choices hidden; still no audio context: the sound waits for its own click',
+       $('aim-sound').hidden === false && soundOn.checked === false && toggle.getAttribute('aria-pressed') !== 'true' && $('aim-sound-signals').hidden === true && audio.contexts === 0);
+    p = view.pinnedPoints;
+    fresh();
+    tap(); run(30);
+    ok('sound: OFF (the default) - a shot and its whole reload: no audio context is made, nothing is scheduled, the owner is not even told',
+       view.pinnedPoints === p + 1 && audio.contexts === 0 && audio.made.length === 0 && tells === 0, '(' + audio.contexts + ' contexts, ' + tells + ' tells)');
+    click(toggle);
+    ok('sound: the switch makes the audio context - on the click, a user\'s action - lights, and shows its two choices',
+       audio.contexts === 1 && soundOn.checked === true && toggle.getAttribute('aria-pressed') === 'true'
+       && $('aim-sound-signals').hidden === false && $('aim-sound-count').hidden === false && $('aim-sound-ticks').hidden === false && audio.made.length === 0);
+    fresh();
+    const t0 = clock;
+    tap();
+    const made0 = audio.made.length, at0 = audio.made.every(function (s) { return s.madeAt === t0; }), tellsAtShot = tells;
+    const R = waitFrom(view, t0, 1);
+    ok('sound: IS-7, as the page opens (Time ticks: the tone of the shot) - the shot itself is silent; its reload is scheduled AT the shot, ahead on the audio clock: three time ticks 3, 2 and 1 s before its end - the bell of the readiness\' own pitch (4186 Hz), struck once - and at its end that bell struck TWICE: the same tone, another form',
+       made0 === 4 && at0 && R > 10 && R < 14 && $('aim-sound-ticks-shot').getAttribute('aria-pressed') === 'true' && $('aim-sound-ticks-one').getAttribute('aria-pressed') === 'false' && same(heard(), t0, counted2(R, 'bell4186x2', SHOT)), '(reload ' + R.toFixed(3) + ' s: ' + show(heard(), t0) + ')');
+    console.log('     sound: IS-7, the tone of the shot, seconds after the shot: ' + show(heard(), t0));
+    run(3);
+    ok('sound: while the reload runs nothing more is called - no sound made, the owner not told (60 frames a second for 4 s)',
+       audio.made.length === 4 && tellsAtShot >= 1 && tells === tellsAtShot && S.pending() === 4, '(' + audio.made.length + ' sounds, ' + tellsAtShot + ' tells at the shot, ' + (tells - tellsAtShot) + ' after)');
+    click($('aim-sound-ticks-one'));
+    ok('sound: "Time ticks: one tone" in the middle of the wait - the three bells are cancelled and three dry ticks (880 Hz, whatever the second) stand at their seconds; the final is the ordinary sound of the stock - here the very double it was, not made again',
+       $('aim-sound-ticks-value').value === 'one' && $('aim-sound-ticks-one').getAttribute('aria-pressed') === 'true' && $('aim-sound-ticks-shot').getAttribute('aria-pressed') === 'false'
+       && audio.made.length === 7 && same(heard(), t0, waitOf(R, 'bell4186x2')), '(' + show(heard(), t0) + ')');
+    console.log('     sound: IS-7, one tone, seconds after the shot: ' + show(heard(), t0));
+    run(R - 4 + 0.5);
+    ok('sound: the reload is over: exactly those four were heard, nothing is left scheduled', same(heard(), t0, waitOf(R, 'bell4186x2')) && S.pending() === 0);
+    // The resets: each leaves nothing scheduled.
+    const cut = function (name, act, back) {
+      fresh();
+      const z = clock;
+      tap(); run(2);
+      const before = S.pending();
+      act();
+      const left = S.pending(), will = heard(clock);
+      if (back) back();
+      prepare(viewerInstance); run(0.1);
+      ok('sound: ' + name + ' in the middle of a reload - everything scheduled is cancelled, nothing sounds after it', before === 4 && left === 0 && will.length === 0,
+         '(' + before + ' → ' + left + '; ' + show(will, z) + ')');
+      run(R + 1);
+    };
+    cut('↺ (the gun starts over)', function () { click($('target-hp-reset')); });
+    cut('◔ switched (the other rule)', function () { click(sub); }, function () { click(sub); });
+    cut('⌖ switched off', function () { click(star); }, function () { click(star); });
+    cut('the emulation switched off (Settings)', function () { switchOn(false); }, function () { switchOn(true); });
+    // The developer's checkbox unticked with the sound on, in the middle of a reload: the sound goes with the cluster,
+    // and ticking it again brings the cluster back with its switch DARK - the sound is not on again by itself.
+    fresh();
+    tap(); run(2);
+    const devBefore = S.pending();
+    setDev(false);
+    const devGone = {left: S.pending(), will: heard(clock).length, hidden: $('aim-sound').hidden, box: soundOn.checked, lit: toggle.getAttribute('aria-pressed')};
+    click(toggle);
+    const devClick = {box: soundOn.checked, lit: toggle.getAttribute('aria-pressed'), left: S.pending()};
+    setDev(true);
+    ok('sound: the developer\'s checkbox unticked in the middle of a reload, the sound on - everything scheduled is cancelled, the cluster is hidden, the switch put out; a click on the switch then switches nothing on; ticked again - the cluster is back, its switch dark, nothing scheduled',
+       devBefore === 4 && devGone.left === 0 && devGone.will === 0 && devGone.hidden === true && devGone.box === false && devGone.lit === 'false'
+       && devClick.box === false && devClick.lit === 'false' && devClick.left === 0
+       && $('aim-sound').hidden === false && soundOn.checked === false && toggle.getAttribute('aria-pressed') === 'false' && $('aim-sound-signals').hidden === true && S.pending() === 0 && audio.contexts === 1,
+       '(' + devBefore + ' → ' + JSON.stringify(devGone) + ', ' + JSON.stringify(devClick) + ')');
+    run(R + 1);
+    click(toggle);
+    cut('the sound switched off', function () { click(toggle); });
+    ok('sound: (off: the choices are put away again)', $('aim-sound-signals').hidden === true && soundOn.checked === false);
+    // Switched on in the middle of a wait: what is left of it sounds.
+    fresh();
+    const z = clock;
+    tap(); run(1); click(toggle);
+    ok('sound: switched ON a second into a reload - what is left of it is scheduled: the three ticks and the bell, at the reload\'s own end; the context is the one made before',
+       same(heard(), z, waitOf(R, 'bell4186x2')) && audio.contexts === 1, '(' + show(heard(), z) + ')');
+    // 2.5 s before the end the page is hidden: the tick at -3 s has sounded, the rest is cancelled. Shown again 1.2 s
+    // later: the tick at -1 s and the bell are scheduled again; the tick at -2 s is past and is not played late.
+    run(R - 1 - 2.5);
+    document.hidden = true; document.fire('visibilitychange', {});
+    const hiddenLeft = S.pending(), heardHidden = heard();
+    run(1.2);
+    document.hidden = false; document.fire('visibilitychange', {});
+    ok('sound: the page hidden - nothing stays scheduled; shown again - what is still ahead sounds at its own seconds (here the last tick and the bell)',
+       hiddenLeft === 0 && same(heardHidden, z, [[R - 3, 'dry880']]) && same(heard(), z, [[R - 3, 'dry880'], [R - 1, 'dry880'], [R, 'bell4186x2']]),
+       '(' + show(heardHidden, z) + ' | ' + show(heard(), z) + ')');
+    run(2);
+    // The simplified rule (◔ off): a hold fires on the gun's cooldown and the release leaves it loaded - there is no
+    // wait the player sits through, and no sound.
+    click(sub); fresh();
+    p = view.pinnedPoints;
+    press(); run(R * 2 + 1); release(); run(1);
+    ok('sound: ◔ off, IS-7 - a hold fires three rounds on the cooldown and nothing sounds: the simplified rule has no reload to wait through',
+       view.pinnedPoints === p + 3 && audio.made.length === 0, '(' + (view.pinnedPoints - p) + ' rounds, ' + audio.made.length + ' sounds)');
+    click(sub);
+    // A new shooter in the middle of a reload.
+    fresh();
+    tap(); run(2);
+    const beforeShooter = S.pending();
+    return openHit(1).then(function () { return beforeShooter; });
+  }).then(function (beforeShooter) {
+    // ---- B. the drum: Vz. 55, two rounds ----
+    view = viewerInstance; prepare(view); run(0.1);
+    ok('sound: another shooter in the middle of a reload - everything scheduled is cancelled', beforeShooter === 4 && S.pending() === 0 && heard(clock).length === 0,
+       '(' + beforeShooter + ' → ' + S.pending() + ')');
+    fresh();
+    const t0 = clock;
+    tap();
+    const gap = waitFrom(view, t0, 0.25);
+    // The stock of a magazine is its rounds, the last one - the critical one, after which the long reload comes -
+    // counted (user, 08.10, the last word: "the extra sound is one too many ... let us try the offset as in the
+    // classic"): the double is "the critical shot is ready". A magazine FULL again has a sound of its own, the LOW
+    // double (user, 08.10: "a doubled sound, but low, which says the drum is reloaded in full").
+    ok('sound: Vz. 55 - after the first round, the 2.5 s to the second: ticks 2 and 1 s before it is ready (3 s before would be ahead of the shot), then the DOUBLE - the last round of the drum is ready',
+       near(gap, 2.5, 1e-6) && same(heard(), t0, [[0.5, 'dry880'], [1.5, 'dry880'], [2.5, 'bell4186x2']]), '(gap ' + gap.toFixed(4) + ': ' + show(heard(), t0) + ')');
+    run(gap);
+    const t1 = clock;
+    tap();
+    const reload = waitFrom(view, t1, 1);
+    ok('sound: Vz. 55 - the last round empties the drum, in silence; its reload ends in three ticks and the LOW double (523 Hz): the drum is full again',
+       reload > 15 && reload < 25.1 && same(heard(t1), t1, waitOf(reload, 'bell523x2')), '(reload ' + reload.toFixed(3) + ' s: ' + show(heard(t1), t1) + ')');
+    console.log('     sound: Vz. 55, seconds after the first shot (the second at ' + (t1 - t0).toFixed(3) + '): ' + show(heard(), t0));
+    run(reload);
+    ok('sound: (all of it was heard; the drum shows full again)', S.pending() === 0 && magStates() === 'on,next', '(' + magStates() + ')');
+    click($('aim-sound-signals-2'));
+    fresh();
+    const t2 = clock;
+    tap(); run(0.1);
+    ok('sound: Signals 2 - the choice is lit and kept; the drum\'s last round is within any count and rings',
+       $('aim-sound-signals-value').value === '2' && $('aim-sound-signals-2').getAttribute('aria-pressed') === 'true' && $('aim-sound-signals-3').getAttribute('aria-pressed') === 'false'
+       && same(heard(), t2, [[0.5, 'dry880'], [1.5, 'dry880'], [2.5, 'bell4186x2']]), '(' + show(heard(), t2) + ')');
+    run(3); tap(); run(reload + 1);
+    click($('aim-sound-signals-3'));
+    // THE TONE OF THE SHOT ON A DRUM - the user's own case (09.10, hearing the double of the drum's last round as
+    // "critical"): a double is the end of a countdown and nothing more - the round, or the drum, is ready.
+    click($('aim-sound-ticks-shot'));
+    fresh();
+    const t3 = clock;
+    tap(); run(gap);
+    const t4 = clock;
+    tap();
+    const reload2 = waitFrom(view, t4, 1);
+    ok('sound: Vz. 55, the tone of the shot - the 2.5 s to the second round: the bell of its pitch (4186 Hz) once at 2 and 1 s before it and TWICE when it is ready; the reload: the bell of the full drum (523 Hz) once at 3, 2 and 1 s before its end and TWICE when the drum is full - each double ends a countdown, the same tone as its ticks',
+       same(heard(), t3, [[0.5, 'bell4186'], [1.5, 'bell4186'], [2.5, 'bell4186x2']].concat(counted2(reload2, 'bell523x2', SHOT, t4 - t3))), '(' + show(heard(), t3) + ')');
+    console.log('     sound: Vz. 55, the tone of the shot, seconds after the first shot (the second at ' + (t4 - t3).toFixed(3) + '): ' + show(heard(), t3));
+    run(reload2 + 1);
+    click($('aim-sound-ticks-one'));
+    return openHit(2);
+  }).then(function () {
+    // ---- C. the autoreloader: Progetto 65, four rounds ----
+    view = viewerInstance; prepare(view); run(0.1);
+    fresh();
+    const t0 = clock;
+    tap();
+    const gap = waitFrom(view, t0, 0.25);
+    const first = heard();
+    // One round fired from a full magazine: the gap, then that round loading back - the tuple's 10 s, scaled as the
+    // reload is. Its length is taken from the sound and held against the page's own figures: the magazine's tooltip
+    // (to 0.1 s) and the slot filling on the panel.
+    const back = first.length ? first[first.length - 1].t - t0 : 0, k = back / 10;
+    const listed = (/from empty ([\d.]+), ([\d.]+), ([\d.]+), ([\d.]+) s/.exec($('aim-gun-mag').title) || []).slice(1).map(Number);
+    ok('sound: Progetto 65, one round fired - two ticks and the bell of THREE in stock (2637 Hz) when the next round is ready 2.5 s later; then the round loading back: three ticks and the LOW double (523 Hz) when it is in - the magazine is full. All scheduled at the shot',
+       near(gap, 2.5, 1e-6) && same(first, t0, waitOf(gap, 'bell2637').concat(waitOf(back, 'bell523x2'))) && first.every(function (h) { return h.madeAt === t0; }),
+       '(' + show(first, t0) + ')');
+    ok('sound: ... the round\'s load is the gun\'s own: the magazine\'s tooltip lists it (from empty 16, 14, 12, 10 s, scaled), and the last of them is that wait',
+       listed.length === 4 && near(listed[3], back, 0.051) && near(listed[0], 16 * k, 0.051), '(' + listed.join(', ') + ' against ' + back.toFixed(3) + ')');
+    console.log('     sound: Progetto 65, one round, seconds after the shot: ' + show(first, t0));
+    let inAt = 0;
+    for (let i = 0; i < (back + 0.5) * 60; i++) { tick(1 / 60); if (!inAt && magStates() === 'on,on,on,next') inAt = clock; }
+    ok('sound: ... and the magazine shows the round in at the second its bell rang (the panel repaints ten times a second)',
+       inAt > 0 && inAt - t0 >= back - 1e-9 && inAt - t0 < back + 0.12, '(' + (inAt - t0).toFixed(3) + ' against ' + back.toFixed(3) + ')');
+    // Signals 2: three in stock is outside the count - but the count is for a readiness that comes WITHOUT a countdown
+    // (user, 09.10, on a drum whose second round came ready in silence after its ticks: "the readiness of every round
+    // must be marked"). The Progetto's gap is 2.5 s: it is counted, so its final sounds whatever the count.
+    click($('aim-sound-signals-2'));
+    fresh();
+    const t1 = clock;
+    tap(); run(0.1);
+    ok('sound: Signals 2 on the Progetto 65 - three in stock is outside the count, and the next round still comes ready WITH its bell: the 2.5 s gap is a countdown, and no countdown is left without its final; the round loading back rings as before',
+       same(heard(), t1, waitOf(gap, 'bell2637').concat(waitOf(back, 'bell523x2'))) && audio.made.length === 7, '(' + show(heard(), t1) + ')');
+    click($('aim-sound-signals-3'));
+    ok('sound: back to Signals 3 a moment later - nothing is made or cancelled: the count never touched this gun',
+       same(heard(), t1, waitOf(gap, 'bell2637').concat(waitOf(back, 'bell523x2'))) && audio.made.length === 7, '(' + show(heard(), t1) + '; ' + audio.made.length + ' sounds made)');
+    run(back + 1);
+    // THE USER'S CASE (09.10, by ear on the autoreloaders: "as if these two reloads somehow overlap ... the mechanics
+    // sometimes slips"), D-111. The game's rule (Wargaming, "Update 1.0.1: Lowdown on Tier VIII-X Italian Tanks"): the
+    // next shell starts loading right after a shot; "If you fire again, before the shell is reloaded, reloading is
+    // interrupted and starts anew." Fire, wait 5 s of the returning round's load, fire again: that load is dropped and
+    // the round loads from zero in the time of the new count - 12 s (scaled) with two rounds in - nothing carried over.
+    // The sound follows: the countdown of the dropped load is cancelled, the new one is planned from zero.
+    fresh();
+    const u0 = clock;
+    tap(); run(5);
+    const u1 = clock, d = u1 - u0;
+    tap();
+    const dropped = audio.made.filter(function (x) { return x.cancelledAt === u1; }).map(function (x) { return [x.when - AUDIO_SHIFT - u0, nameOf(x.buffer)]; })
+      .sort(function (a, b) { return a[0] - b[0]; });
+    const again = 12 * k, plan = waitOf(gap, 'bell2637').concat(waitOf(gap, 'bell3136', ONE, d), waitOf(again, 'bell2637', ONE, d), waitOf(back, 'bell523x2', ONE, d + again));
+    ok('sound: Progetto 65, fire - wait 5 s - fire (the user\'s case): the round that was loading back (5 s of its 10 s × k done) starts ANEW at the second shot and takes the whole 12 s × k of a magazine with two rounds in - it is in 12 s × k after that shot, with three in stock (2637 Hz), and the fourth 10 s × k later (the low double)',
+       near(d, 5, 0.02) && same(heard(), u0, plan), '(second shot at ' + d.toFixed(3) + ': ' + show(heard(), u0) + ')');
+    ok('sound: ... the countdown of the dropped load - its three ticks and its low double, due 10 s × k after the first shot - is cancelled at the second shot',
+       JSON.stringify(dropped.map(function (x) { return x[1]; })) === JSON.stringify(['dry880', 'dry880', 'dry880', 'bell523x2'])
+       && near(dropped[3][0], back, 1e-6), '(' + dropped.map(function (x) { return x[1] + '@' + x[0].toFixed(3); }).join(' ') + ')');
+    console.log('     sound: Progetto 65, fire - 5 s - fire, seconds after the first shot: ' + show(heard(), u0));
+    let in3 = 0;
+    for (let i = 0; i < (again + 0.5) * 60; i++) { tick(1 / 60); if (!in3 && magStates().split(',').filter(function (x) { return x === 'on' || x === 'next'; }).length === 3) in3 = clock; }
+    ok('sound: ... and the magazine shows the third round in at that second, not before (the panel repaints ten times a second)',
+       in3 - u1 >= again - 1e-9 && in3 - u1 < again + 0.12, '(' + (in3 - u1).toFixed(3) + ' against ' + again.toFixed(3) + ')');
+    run(back + 1);
+    // All four in one hold: each next round ready by its bell - three, two, the double for the last - and then the
+    // magazine loads back round by round, EVERY step rung: the double when the first is in (the gun fires again, with
+    // its last round), two, three, and the low double when it is full.
+    fresh();
+    const p = view.pinnedPoints, shots = [];
+    press();
+    for (let n = 1; n <= 4; n++) shots.push(fireTo(view, p + n, 4));
+    release();
+    const firing = heard().filter(function (h) { return h.madeAt < shots[3] - 1e-9; }), loading = heard().filter(function (h) { return h.madeAt >= shots[3] - 1e-9; });
+    // The round loading back meanwhile, by the game's rule (app.js refillShot): every round fired drops the load that
+    // was running and starts it anew - 10, 12, 14 s scaled with 3, 2, 1 rounds in. A time tick of it would sound only
+    // if it came due before the next round is fired; with the rounds 2.5 s apart none does.
+    let wantFiring = [], load = null;
+    ['bell2637', 'bell3136', 'bell4186x2'].forEach(function (bell, i) {
+      const span = [10, 12, 14][i] * k;
+      load = {at: shots[i], until: shots[i] + span};
+      wantFiring = wantFiring.concat(waitOf(gap, bell, ONE, shots[i] - shots[0]));
+      [[3, 'dry880'], [2, 'dry880'], [1, 'dry880']].forEach(function (tk) {
+        const at = load.until - tk[0];
+        if (at >= shots[i] + 0.1 - 1e-9 && at <= shots[i + 1]) wantFiring.push([at - shots[0], tk[1]]);
+      });
+    });
+    wantFiring.sort(function (a, b) { return a[0] - b[0]; });
+    ok('sound: Progetto 65, four rounds in one hold - after each of the first three: two ticks, and when the next round is ready the bell of what is left - three (2637 Hz), two (3136 Hz), the DOUBLE for the last; the rounds leave 2.5 s apart, the fourth in silence. Nothing of the round loading back sounds in between: each shot starts its load over, and one countdown runs at a time',
+       view.pinnedPoints === p + 4 && shots.every(function (s, i) { return i === 0 || (s - shots[i - 1] >= 2.5 - 1e-9 && s - shots[i - 1] < 2.5 + 1 / 60 + 1e-9); })
+       && wantFiring.length === 9 && same(firing, shots[0], wantFiring), '(' + show(firing, shots[0]) + ')');
+    const bells = loading.filter(function (h, i) { return i % 4 === 3; }), T = bells.map(function (h) { return h.t; });
+    const each = bells.every(function (b, i) { return same(loading.slice(4 * i, 4 * i + 4), b.t, [[-3, 'dry880'], [-2, 'dry880'], [-1, 'dry880'], [0, b.id]]); });
+    ok('sound: ... the magazine empty - four waits, all scheduled at the last shot: the DOUBLE when the first round is in (one in stock: the gun fires again, with its last round), 3136 and 2637 Hz with two and three in, and the LOW double when the fourth is in and the magazine full - each after its three ticks',
+       loading.length === 16 && bells.map(function (h) { return h.id; }).join() === 'bell4186x2,bell3136,bell2637,bell523x2' && each && S.pending() === 16,
+       '(' + show(loading, shots[3]) + ')');
+    ok('sound: ... each round on the gun\'s own timer: the first a whole 16 s (scaled as the reload is) after the round that emptied the magazine - that shot started the load over - then 14, 12 and 10 s after the round before it',
+       near((T[0] - shots[3]) / k, 16, 1e-6) && near((T[1] - T[0]) / k, 14, 1e-6) && near((T[2] - T[1]) / k, 12, 1e-6) && near((T[3] - T[2]) / k, 10, 1e-6),
+       '(' + [(T[0] - shots[3]) / k, (T[1] - T[0]) / k, (T[2] - T[1]) / k, (T[3] - T[2]) / k].map(function (v) { return v.toFixed(4); }).join(', ') + ')');
+    console.log('     sound: Progetto 65, four rounds in a hold, seconds after the first (rounds at ' + shots.map(function (s) { return (s - shots[0]).toFixed(2); }).join(' ') + '): ' + show(heard(), shots[0]));
+    // The emulation against the bell: the gun refuses a press before the first round is in and fires after it.
+    run(T[0] - clock - 0.05);
+    const pa = view.pinnedPoints;
+    tap();
+    const refused = view.pinnedPoints === pa;
+    run(0.1); tap();
+    ok('sound: ... and the gun is the bell\'s: 50 ms before the double a press is refused, 50 ms after it the round leaves', refused && view.pinnedPoints === pa + 1);
+    run(60);
+    // THE TONE OF THE SHOT, four rounds in one hold and the way back from empty.
+    const progetto = function (name, kind) {
+      click($('aim-sound-ticks-' + name));
+      fresh();
+      const p2 = view.pinnedPoints, s2 = [];
+      press();
+      for (let n = 1; n <= 4; n++) s2.push(fireTo(view, p2 + n, 4));
+      release();
+      // The gaps of the hold: after rounds 1, 2, 3 the readiness of three (2637), two (3136) and one (the double) in stock.
+      let gaps = [];
+      ['bell2637', 'bell3136', 'bell4186x2'].forEach(function (bell, i) { gaps = gaps.concat(counted2(2.5, bell, kind, s2[i] - s2[0])); });
+      const firing = heard().filter(function (h) { return h.madeAt < s2[3] - 1e-9 && near((h.t - h.madeAt) * 2, Math.round((h.t - h.madeAt) * 2), 1e-6); });
+      const loading = heard().filter(function (h) { return h.madeAt >= s2[3] - 1e-9; });
+      // The way back: one round in (the double's pitch), two, three, and the full four (the low double's pitch).
+      const ends = loading.filter(function (h, i) { return i % 4 === 3; });
+      const each = ['bell4186x2', 'bell3136', 'bell2637', 'bell523x2'].every(function (bell, i) {
+        const k = kind(bell);
+        return ends[i] && same(loading.slice(4 * i, 4 * i + 4), ends[i].t, [[-3, k.ticks[3]], [-2, k.ticks[2]], [-1, k.ticks[1]], [0, k.end]]);
+      });
+      const out = {firing: same(firing, s2[0], gaps), loading: loading.length === 16 && each, text: show(loading, s2[3]), gaps: show(firing, s2[0])};
+      run(60);
+      return out;
+    };
+    const pShot = progetto('shot', SHOT);
+    ok('sound: Progetto 65, the tone of the shot, four rounds in one hold - each gap is counted by the bell of the stock that will be ready, struck once a second, and ends in the DOUBLE at that pitch: 2637, 2637, 2637x2; 3136, 3136, 3136x2; 4186, 4186, 4186x2',
+       pShot.firing, '(' + pShot.gaps + ')');
+    ok('sound: ... and back from empty, each round: three single bells of its pitch and the DOUBLE at that pitch - 4186 (one round in), 3136 (two), 2637 (three), 523 (full). A double here ends a countdown, whatever the stock',
+       pShot.loading, '(' + pShot.text + ')');
+    console.log('     sound: Progetto 65, the tone of the shot, back from empty, seconds after the fourth round: ' + pShot.text);
+    click($('aim-sound-ticks-one'));
+    return openHit(3);
+  }).then(function () {
+    // ---- D. the Ares 90 ----
+    // The stock of a gun that locks by heat is its shots left before the lock, the one that overheats counted - so the
+    // double is "the critical shot is ready" (user, 08.10, the last word: no extra sound for it; "if the three last ones
+    // are marked it comes out ideal: they set the interval"). There is no mark AT a shot (user, 08.10: "only the
+    // readiness of a round is marked; the triggers differ - the gun cooling, or the shot before"): a bell is at the
+    // moment the NEXT shot is ready - the shot before plus the gun's fire interval, or the moment the cooling gun gets a
+    // shot back. The count of Signals (3 by default) is the FIRING side's; the way back is rung at every step, each with
+    // the tone of its stock on a ladder that goes on down, and the stock full again with the LOW double (user, 08.10:
+    // "back it may count as long as you like ... a doubled sound, but low, which says everything is reloaded").
+    view = viewerInstance; prepare(view); run(0.1);
+    const T = ARES.temperatureGun, ON = ARES.overheatGun.tempOverheatOnThreshold, PER = T.heatingPerShot;
+    // The tone of a stock (index = the stock), and of the full stock of this gun - ten shots when cold.
+    const TONE = ['', 'bell4186x2', 'bell3136', 'bell2637', 'bell2093', 'bell1568', 'bell1319', 'bell1047', 'bell784', 'bell659'], FULL = 10;
+    const toneOf = function (stock) { return stock === FULL ? 'bell523x2' : TONE[stock]; };
+    const stockAt = function (t) { return Math.max(1, Math.ceil((ON - t) / PER - 1e-9)); };
+    // The second, after the round that left the temperature `from`, at which `k` shots are there again: the gun stands
+    // for the cooling delay and then cools to the edge of that stock, on - (k - 1) x per.
+    const backAt = function (k, from) { return T.coolingDelay + (from - (ON - (k - 1) * PER)) / T.coolingPerSec; };
+    // Every step of the way back from the temperature `from`, the round at the second `zero`: [[t, id]...] up to full.
+    const cooling = function (from, zero) {
+      const out = [];
+      for (let k = stockAt(from) + 1; k <= FULL; k++) out.push([zero + backAt(k, from), toneOf(k)]);
+      return out;
+    };
+    fresh();
+    const tg = clock;
+    tap();
+    const gap = waitFrom(view, tg, 0.1);
+    ok('sound: (Ares 90: the emulation\'s interval between two rounds is 0.3 s. One round from cold: nine shots are left, outside the count - no bell when the next is ready; the gun cools back to its full ten 3.0 s later - the low double)',
+       near(gap, 0.3, 1e-6) && same(heard(), tg, [[3.0, 'bell523x2']]), '(' + gap.toFixed(4) + ' s; ' + show(heard(), tg) + ')');
+    run(40);
+    const burst = function (rounds) {
+      fresh();
+      const p = view.pinnedPoints, shots = [];
+      press();
+      for (let n = 1; n <= rounds; n++) shots.push(fireTo(view, p + n, 2));
+      release();
+      return shots;
+    };
+    // The readiness bells of a run from cold: after round i, at its second + the interval, the bell of the shots left.
+    const ready = function (shots, from) {
+      const out = [];
+      for (let i = from; i <= 9 && i <= shots.length; i++) out.push([shots[i - 1] + gap, TONE[10 - i]]);
+      return out;
+    };
+    let shots = burst(10);
+    const locked = heatBox.getAttribute('data-locked') === '1';
+    let h = heard();
+    const unlock = shots[9] + 22;
+    const firing = h.filter(function (x) { return x.t <= shots[9] + 1e-9; });
+    ok('sound: Ares 90 from cold, ten rounds in one hold, Signals 3 (the default) - no bell AT a shot: each is at the moment the next round is ready, 0.3 s after the round before, and is scheduled at that round. After rounds 1 to 6 four shots and more are left - silence; after round 7 the bell of THREE (2637 Hz), after 8 two (3136 Hz), after 9 the DOUBLE - the shot that overheats is ready',
+       locked && same(firing, 0, ready(shots, 7)) && firing.length === 3
+       && firing.every(function (x, i) { return x.madeAt === shots[6 + i]; }), '(' + show(h, shots[0]) + ')');
+    ok('sound: ... held, the gun fires each round the frame it is ready, so these bells fall on rounds 8, 9 and 10 (within one frame) - the double on the round that overheats',
+       firing.length === 3 && firing.every(function (x, i) { return shots[7 + i] - x.t >= -1e-9 && shots[7 + i] - x.t < 1 / 60 + 1e-9; }),
+       '(' + firing.map(function (x, i) { return ((shots[7 + i] - x.t) * 1000).toFixed(1) + ' ms'; }).join(', ') + ' before the round)');
+    const lock = h.filter(function (x) { return x.t > shots[9] + 1e-9; });
+    ok('sound: ... the lock is a wait like any other - 22 s (2 s, then 100 degrees at 5 a second): three ticks, and the gun unlocks cold with its full ten shots - the LOW double (523 Hz); all scheduled at the overheating shot',
+       same(lock, shots[9], waitOf(22, 'bell523x2')) && lock.every(function (x) { return x.madeAt === shots[9]; }), '(' + show(lock, shots[9]) + ')');
+    console.log('     sound: Ares 90, ten rounds in a hold, seconds after the first (rounds at ' + shots.map(function (s) { return (s - shots[0]).toFixed(3); }).join(' ') + '): ' + show(h, shots[0]));
+    run(unlock - clock - 0.05);
+    let pa = view.pinnedPoints;
+    tap();
+    const refused = view.pinnedPoints === pa;
+    run(0.1); tap();
+    ok('sound: ... and the gun is the bell\'s: 50 ms before it a press is refused, 50 ms after it the gun fires', refused && view.pinnedPoints === pa + 1);
+    run(40);
+    // RELEASED AFTER ROUND 9, AND THE WAY BACK. Nine rounds from cold leave 99 degrees and one shot, the overheating
+    // one: its readiness - the double - sounds 0.3 s after round 9 with no shot. Hands off: the gun stands for the
+    // cooling delay, then cools, and EVERY shot that comes back is rung with the bell of the new stock, the tone going
+    // down (the double is not repeated: the stock is 1 already when the cooling starts), to the low double of the full ten.
+    const BACK = cooling(99, 0);
+    shots = burst(9); h = heard();
+    ok('sound: Ares 90, nine rounds from cold and hands off - three (2637 Hz), two (3136 Hz), and 0.3 s after the last round the double with no shot; then every regained shot, by the gun\'s own numbers: two shots 3.0 s after the last round (3136 Hz), three at 4.1 s (2637), four at 5.2 s (2093), five at 6.3 s (1568), six at 7.4 s (1319), seven at 8.5 s (1047), eight at 9.6 s (784), nine at 10.7 s (659) and the full ten at 11.8 s - the LOW double. All scheduled at the last round, no time ticks before them',
+       BACK.length === 9 && BACK.every(function (b, i) { return near(b[0], 3.0 + 1.1 * i, 1e-9); })
+       && BACK.map(function (b) { return b[1]; }).join() === 'bell3136,bell2637,bell2093,bell1568,bell1319,bell1047,bell784,bell659,bell523x2'
+       && same(h, 0, ready(shots, 7).concat(cooling(99, shots[8])))
+       && h.slice(2).every(function (x) { return x.madeAt === shots[8]; }) && S.pending() === 10, '(' + show(h, shots[8]) + ')');
+    console.log('     sound: Ares 90, nine rounds in a hold and hands off, seconds after the first (rounds at ' + shots.map(function (s) { return (s - shots[0]).toFixed(3); }).join(' ') + '): ' + show(h, shots[0]));
+    const madeByThen = audio.made.length;
+    run(20);
+    ok('sound: ... and silence after the low double: nothing more is made, nothing is left scheduled',
+       same(heard(), 0, h.map(function (x) { return [x.t, x.id]; })) && heard().length === 12 && S.pending() === 0 && audio.made.length === madeByThen,
+       '(' + heard().length + ' heard, ' + (audio.made.length - madeByThen) + ' made after the last round)');
+    run(20);
+    // OUTSIDE A COUNTDOWN the position of Time ticks changes nothing (user, 09.10): the readiness 0.3 s after a round
+    // and every shot a cooling gun gets back are the ordinary sounds of the stock - single bells, the high double
+    // when only the critical shot is left, the low double at full. Only the lock - a wait of 22 s, counted - is
+    // counted the position's way.
+    click($('aim-sound-ticks-shot'));
+    const s9 = burst(9), h9 = heard();
+    ok('sound: Ares 90, the tone of the shot - nine rounds and hands off sound exactly as with one tone: the bells of three and two, the double of the critical shot 0.3 s after the last round, every regained shot by its single bell and the low double of the full ten',
+       same(h9, 0, ready(s9, 7).concat(cooling(99, s9[8]))), '(' + show(h9, s9[8]) + ')');
+    run(40);
+    const s10 = burst(10), h10 = heard().filter(function (x) { return x.t > s10[9] + 1e-9; });
+    ok('sound: ... and the lock, a counted wait: the bell of the full stock (523 Hz) once at 3, 2 and 1 s before the gun unlocks and twice when it does',
+       same(h10, s10[9], counted2(22, 'bell523x2', SHOT)), '(' + show(h10, s10[9]) + ')');
+    run(40);
+    click($('aim-sound-ticks-one'));
+    // The count of Signals is the firing side's: it takes nothing from the way back.
+    click($('aim-sound-signals-4'));
+    shots = burst(9); h = heard();
+    ok('sound: Signals 4 - firing: four (2093 Hz, after round 6), three, two, the double; the way back: all nine steps as before',
+       same(h, 0, ready(shots, 6).concat(cooling(99, shots[8]))), '(' + show(h, shots[8]) + ')');
+    run(40);
+    click($('aim-sound-signals-2'));
+    shots = burst(7);
+    const none = heard(shots[6] - 1e-6).filter(function (x) { return x.t < shots[6] + 1; });
+    click($('aim-sound-signals-3'));
+    const three = heard(shots[6] - 1e-6).filter(function (x) { return x.t < shots[6] + 1; });
+    ok('sound: Signals 2, seven rounds - three shots left is outside the count: the next round comes ready in silence; Signals 3 chosen at that moment - its bell (2637 Hz) is scheduled after all, 0.3 s after the round',
+       none.length === 0 && same(three, shots[6], [[gap, 'bell2637']]), '(' + show(none, shots[6]) + ' | ' + show(three, shots[6]) + ')');
+    run(40);
+    click($('aim-sound-signals-2'));
+    shots = burst(9); h = heard();
+    ok('sound: Signals 2 - firing: two (after round 8) and the double; the way back: all nine steps as before',
+       same(h, 0, ready(shots, 8).concat(cooling(99, shots[8]))), '(' + show(h, shots[8]) + ')');
+    run(40);
+    click($('aim-sound-signals-3'));
+    // A round fired in the middle of the way back: what was still to come is cancelled, the readiness of the round
+    // after it obeys the count - here four shots are left: silence - and the way back is planned again from the new
+    // temperature.
+    shots = burst(9);
+    run(6.5);
+    const tm = clock, warm = 99 - (tm - shots[8] - T.coolingDelay) * T.coolingPerSec + PER;
+    pa = view.pinnedPoints;
+    tap();
+    h = heard(shots[8] + 0.5);
+    ok('sound: a round fired 6.5 s into the cooling (54 degrees, five shots; after it 65 and four) - two, three, four and five have rung; the bells still to come are cancelled; four shots left is outside Signals 3, so the next round comes ready in silence; and the way back starts over from 65: five shots 2.9 s after the round (1568 Hz), then six, seven, eight, nine and the low double at 8.4 s',
+       view.pinnedPoints === pa + 1 && near(warm, 65, 1e-6) && near(backAt(5, 65), 2.9, 1e-9) && near(backAt(10, 65), 8.4, 1e-9)
+       && same(h, 0, cooling(99, shots[8]).slice(0, 4).concat(cooling(warm, tm))), '(' + show(h, shots[8]) + ')');
+    run(40);
+    // The gun against the bell: 50 ms before the first bell of the cooling - two shots: one safe again - a round still
+    // overheats the gun; 50 ms after it, it does not.
+    shots = burst(9);
+    run(BACK[0][0] - 0.05);
+    tap();
+    const early = heatBox.getAttribute('data-locked');
+    run(40);
+    shots = burst(9);
+    run(BACK[0][0] + 0.05);
+    fresh();
+    const tl = clock;
+    tap();
+    h = heard();
+    ok('sound: ... and the gun is the bell\'s: a round fired 50 ms before the cooling\'s first bell (two shots) overheats the gun; fired 50 ms after it, it does not - it leaves one shot: the double 0.3 s later, and two again when the gun has cooled to them (3.05 s after the round)',
+       early === '1' && heatBox.getAttribute('data-locked') === '0' && h.length > 1 && same(h.slice(0, 2), tl, [[gap, 'bell4186x2'], [backAt(2, 99.5), 'bell3136']]),
+       '(' + early + ' / ' + heatBox.getAttribute('data-locked') + '; ' + show(h, tl) + ')');
+    run(40);
+    // TAPPING instead of holding: the bell comes one interval after each round, never at the round; a press inside the
+    // interval is refused by the gun and leaves what is scheduled alone.
+    fresh();
+    const taps = [];
+    let inside = null;
+    for (let n = 1; n <= 9; n++) {
+      taps.push(clock); tap();
+      if (n === 8) { run(0.1); const made = audio.made.length, pr = view.pinnedPoints; tap(); inside = view.pinnedPoints === pr && audio.made.length === made; run(0.4); }
+      else if (n < 9) run(0.5);
+    }
+    h = heard();
+    ok('sound: Ares 90, nine taps half a second apart - the bell of the shots left comes 0.3 s after rounds 7, 8 and 9 (2637 Hz, 3136 Hz, the double), none at a round\'s own second; the way back follows the last round',
+       same(h, 0, ready(taps, 7).concat(cooling(99, taps[8])))
+       && taps.every(function (t) { return h.every(function (x) { return Math.abs(x.t - t) > 0.01; }); }),
+       '(taps at ' + taps.map(function (t) { return (t - taps[0]).toFixed(2); }).join(' ') + ': ' + show(h, taps[0]) + ')');
+    ok('sound: ... a press 0.1 s after round 8 - inside the interval - is refused and touches nothing that is scheduled', inside === true);
+    console.log('     sound: Ares 90, nine taps, seconds after the first (taps at ' + taps.map(function (t) { return (t - taps[0]).toFixed(2); }).join(' ') + '): ' + show(h, taps[0]));
+    run(40);
+    // The count is the live temperature's: eight rounds (88 degrees, two shots left), then a rest - 2 s, and 2.2 s of
+    // cooling: 66 - and the next round (77) leaves THREE shots, where a ninth round in a row would have left one.
+    shots = burst(8);
+    run(4.2);
+    const rest = heard(shots[7] + 0.5).filter(function (x) { return x.t <= clock; });
+    fresh();
+    const tb = clock;
+    tap();
+    ok('sound: the count is the live temperature\'s - eight rounds; at rest three shots back at 3.0 s (2637 Hz) and four at 4.1 s (2093 Hz); a round fired after 4.2 s of rest (66 degrees) rings three 0.3 s later (2637 Hz) - a ninth round in a row would have rung the double',
+       same(rest, shots[7], [[backAt(3, 88), 'bell2637'], [backAt(4, 88), 'bell2093']]) && near(backAt(3, 88), 3.0, 1e-9) && same(heard().slice(0, 1), tb, [[gap, 'bell2637']]),
+       '(' + show(rest, shots[7]) + ' | ' + show(heard().slice(0, 2), tb) + ')');
+    run(40);
+    // The simplified rule (◔ off): every press fires - the next round is ready the instant the one before has left, so
+    // its bell falls on that instant; the heat, its cooling and its lock run as under ◔.
+    click(sub); fresh();
+    const quick = [];
+    for (let n = 0; n < 10; n++) { quick.push(clock); tap(); run(0.05); }
+    h = heard();
+    ok('sound: ◔ off, Ares 90 - ten taps 50 ms apart: the next round is ready at once, so the bells of three and two shots and the double fall on rounds 7, 8 and 9; nothing at round 10, which overheats; then the lock\'s three ticks and the low double',
+       same(h, 0, [[quick[6], 'bell2637'], [quick[7], 'bell3136'], [quick[8], 'bell4186x2']].concat(waitOf(22, 'bell523x2', ONE, quick[9]))),
+       '(' + show(h, quick[0]) + ')');
+    run(40);
+    click(sub);
+    return BAT && AMX ? openHit(4) : null;
+  }).then(function () {
+    // ---- D2. the drums: Bat.-Chatillon 25 t (the user's case, 09.10) and AMX 13 57 ----
+    // The user, on the Bat.-Chatillon in preview 12:10: "with the autoreloader all seems fine, but the drums are strange
+    // again: the first charge in the drum seems to have no readiness signal". A full drum of five, one round fired: four
+    // are left - outside Signals 3 - and the 2.73 s to the next round had its ticks and then NO final.
+    // THE RULE (his, all along: "the readiness of every round must be marked"; the count of Signals was made for guns
+    // that fire several rounds a second): Signals limits only a readiness that comes WITHOUT a countdown - a gap too
+    // short for time ticks. A wait long enough for ticks always ends in its final, whatever the stock.
+    if (!BAT || !AMX) { console.log('SKIP sound: the two drums are not on this machine (tests/fixtures-local/ttx-offline/out/mod/ttx-sound) - the Bat.-Chatillon case was not driven'); return openHit(0); }
+    view = viewerInstance; prepare(view); run(0.1);
+    click($('aim-sound-ticks-shot'));   // as the page opens: what he heard
+    const G = BAT.clip[1];
+    ok('sound: (the Bat.-Chatillon 25 t as the client has it: a drum of five, 2.73 s apart, 40 s to reload; Signals 3, Countdown 4, the tone of the shot)',
+       BAT.clip[0] === 5 && near(G, 2.7273, 1e-3) && BAT.reloadTime === 40 && !BAT.autoreload && $('aim-sound-signals-value').value === '3' && magStates() === 'on,on,on,on,next', '(' + BAT.clip.join(' / ') + ', ' + magStates() + ')');
+    // HIS CASE: the first round of a full drum, and the 2.73 s to the second.
+    fresh();
+    const b0 = clock;
+    tap(); run(0.1);
+    const one = heard();
+    ok('sound: Bat.-Chatillon 25 t, the first round of a full drum (the user\'s case) - the 2.73 s to the second round are counted by the bell of four in stock (2093 Hz) 2 and 1 s before, AND END IN THEIR FINAL: that bell struck twice when the round is ready. Four in stock is outside Signals 3 - the count has no say over a wait that is counted',
+       same(one, b0, [[G - 2, 'bell2093'], [G - 1, 'bell2093'], [G, 'bell2093x2']]), '(' + show(one, b0) + ')');
+    console.log('     sound: Bat.-Chatillon 25 t, one round of a full drum, seconds after the shot: ' + show(one, b0));
+    run(G + 0.5);
+    // The whole drum, round by round, and its reload. (Four are left; the hold fires each the frame it is ready.)
+    fresh();
+    const pb = view.pinnedPoints, sb2 = [];
+    press();
+    for (let n = 1; n <= 4; n++) sb2.push(fireTo(view, pb + n, 4));
+    release();
+    const Rb = waitFrom(view, sb2[3], 1);
+    let wantBat = [];
+    ['bell2637', 'bell3136', 'bell4186x2'].forEach(function (bell, i) { wantBat = wantBat.concat(counted2(G, bell, SHOT, sb2[i] - sb2[0])); });
+    wantBat = wantBat.concat(counted2(Rb, 'bell523x2', SHOT, sb2[3] - sb2[0]));
+    ok('sound: Bat.-Chatillon 25 t, the other four in one hold - every gap is a countdown with its final, at the pitch of what is left: 2637, 2637, 2637x2 (three); 3136, 3136, 3136x2 (two); 4186, 4186, 4186x2 (the last); the fifth round empties the drum in silence, and its reload ends in three bells at 523 Hz and that bell struck twice: the drum is full',
+       view.pinnedPoints === pb + 4 && Rb > 25 && Rb < 40.1 && same(heard(), sb2[0], wantBat), '(reload ' + Rb.toFixed(3) + ' s: ' + show(heard(), sb2[0]) + ')');
+    console.log('     sound: Bat.-Chatillon 25 t, rounds two to five in a hold (at ' + sb2.map(function (x) { return (x - sb2[0]).toFixed(2); }).join(' ') + '), seconds after the second: ' + show(heard(), sb2[0]));
+    run(Rb + 1);
+    // Signals 2 and 4 change nothing here: every wait of this gun is counted.
+    const firstOf = function (n) {
+      click($('aim-sound-signals-' + n)); fresh();
+      const z = clock; tap(); run(0.1);
+      const got = heard(); run(G + 0.5);
+      press(); fireTo(view, view.pinnedPoints + 4, 16); release(); run(Rb + 2);
+      return same(got, z, [[G - 2, 'bell2093'], [G - 1, 'bell2093'], [G, 'bell2093x2']]);
+    };
+    ok('sound: ... Signals 2 and Signals 4 - the same three sounds after the first round: the count takes nothing from a gun whose every wait is counted', firstOf(2) && firstOf(4));
+    click($('aim-sound-signals-3'));
+    return openHit(5);
+  }).then(function () {
+    if (!BAT || !AMX) return openHit(0);
+    // THE AMX 13 57: eight rounds 1 s apart. A gap of 1 s has no room for a time tick (none within 0.1 s of the wait's
+    // start), so it is no countdown: the readiness of the next round comes without one, and Signals has its say - the
+    // three last rounds ring, with the ordinary sounds of the stock (the high double: only the last is left).
+    view = viewerInstance; prepare(view); run(0.1);
+    fresh();
+    const pa2 = view.pinnedPoints, sa = [];
+    press();
+    for (let n = 1; n <= 8; n++) sa.push(fireTo(view, pa2 + n, 3));
+    release();
+    const Ra = waitFrom(view, sa[7], 1), g2 = AMX.clip[1];
+    const wantAmx = [[sa[4] - sa[0] + g2, 'bell2637'], [sa[5] - sa[0] + g2, 'bell3136'], [sa[6] - sa[0] + g2, 'bell4186x2']].concat(counted2(Ra, 'bell523x2', SHOT, sa[7] - sa[0]));
+    ok('sound: AMX 13 57, eight rounds 1 s apart in one hold - no countdown fits a 1 s gap, so no ticks, and Signals 3 applies as on any rapid fire: silence after rounds 1 to 4, then the bells of three (2637 Hz) and two (3136 Hz) and the high double as each next round comes ready; the reload - a countdown - ends in 523 Hz struck twice',
+       AMX.clip[0] === 8 && g2 === 1 && view.pinnedPoints === pa2 + 8 && same(heard(), sa[0], wantAmx), '(reload ' + Ra.toFixed(3) + ' s: ' + show(heard(), sa[0]) + ')');
+    console.log('     sound: AMX 13 57, eight rounds in a hold (at ' + sa.map(function (x) { return (x - sa[0]).toFixed(2); }).join(' ') + '), seconds after the first: ' + show(heard(), sa[0]));
+    run(Ra + 1);
+    click($('aim-sound-ticks-one'));
+    return openHit(6);
+  }).then(function () {
+    if (!BAT || !AMX) return openHit(0);
+    // ---- D3. A MACHINE GUN: the Blesk - 104 rounds, one every 0.03 s ----
+    // Its readiness comes without a countdown, so Signals has its say: silence down the magazine, then the bells of
+    // three and two and the high double as the last rounds come ready, 33 ms apart - they run together - and the
+    // reload's countdown. (An option that rang the whole magazine, "Magazine sweep", was tried on 09.10 and taken out
+    // on 10.10 - the user: "the three last ticks for a machine gun, as it was, so let it stay".)
+    view = viewerInstance; prepare(view); run(0.1);
+    const N = BLESK.clip[0], g3 = BLESK.clip[1];
+    const spray = function (k) { const p0 = view.pinnedPoints, at = []; press(); for (let n = 1; n <= k; n++) at.push(fireTo(view, p0 + n, 2)); release(); return at; };
+    ok('sound: (the Blesk as the client has it: an automatic gun, a magazine of 104, a round every 0.031 s, no heat)',
+       N === 104 && near(g3, 0.0308, 1e-3) && !!BLESK.autoShoot && !BLESK.temperatureGun);
+    // Twelve rounds from a full magazine, then the rest of it and its reload.
+    fresh();
+    const first = spray(12); run(0.5);
+    const early = show(heard(), first[0]);
+    fresh();
+    const rest = spray(N - 12), R3 = waitFrom(view, rest[N - 13], 1), late = heard();
+    const want = [[rest[N - 16] - rest[0] + g3, 'bell2637'], [rest[N - 15] - rest[0] + g3, 'bell3136'], [rest[N - 14] - rest[0] + g3, 'bell4186x2']].concat(waitOf(R3, 'bell523x2', ONE, rest[N - 13] - rest[0]));
+    ok('sound: Blesk - twelve rounds from a full magazine: silence; the rest of the magazine: the bells of three and two and the high double as the last rounds come ready (Signals 3), then the reload\'s countdown - every sound a whole sample at its own pitch',
+       early === '' && same(late, rest[0], want), '(' + early + ' | ' + show(late, rest[0]).slice(-150) + ')');
+    run(R3 + 1);
+    return BURSTS ? openHit(7) : null;
+  }).then(function () {
+    // ---- D4. A BURST ON ONE PULL IS ONE SHOT (user, 10.10) ----
+    // "In essence it is one shot ... it has one readiness: you pressed, and two rounds went at once - there is no sense
+    // in splitting them." The stock of such a gun is counted in PULLS - the bursts left in the magazine - not in rounds:
+    // the readiness after a burst rings once, at the pitch of the pulls left; the last burst is the high double, a full
+    // magazine the low one. The rounds inside a burst stay silent. HIS CASE (outputs/hits-sound-2026-10-08.md, the
+    // thirteen places, 6): the Char Mle. 75 - six rounds, bursts of three - rang "three" after its first burst, though
+    // the next pull empties the magazine, and the high double never rang on it at all.
+    if (!BURSTS) { console.log('SKIP sound: the burst guns are not on this machine (tests/fixtures-local/ttx-offline/out/mod/ttx-reload) - a burst on one pull was not driven'); return null; }
+    click($('aim-sound-ticks-shot'));
+    ok('sound: (the Char Mle. 75 as the client has it: a magazine of six fired in bursts of three 0.5 s apart on one pull, 3.5 s between bursts, 42 s to reload - two pulls to a magazine)',
+       CHAR.clip[0] === 6 && near(CHAR.clip[1], 3.5006, 1e-3) && CHAR.burst[0] === 3 && CHAR.burst[1] === 0.5 && CHAR.reloadTime === 42 && !CHAR.autoreload && magStates().split(',').length === 6, '(' + CHAR.clip.join(' / ') + '; ' + CHAR.burst.join(' / ') + ')');
+    const ch = magazine(CHAR, ['bell4186x2', 'bell523x2']);
+    ok('sound: Char Mle. 75 (the user\'s case) - the first pull: its three rounds are silent, and the 3.5 s to the next burst are counted at 4186 Hz and end in the HIGH DOUBLE: one pull is left, the last one; the second pull empties the magazine, and its reload ends in the low double - both pulls are back',
+       ch.ok && ch.R > 25 && ch.R < 42.1, '(rounds at ' + ch.rounds.join(' | ') + '; reload ' + ch.R.toFixed(3) + ' s: ' + ch.text.join(' | ') + ')');
+    console.log('     sound: Char Mle. 75, two pulls (rounds at ' + ch.rounds.join(' | ') + '), seconds after each pull: ' + ch.text.join(' | '));
+    return openHit(8);
+  }).then(function () {
+    if (!BURSTS) return null;
+    const pr = magazine(PAIRS, ['bell3136', 'bell4186x2', 'bell523x2']);
+    ok('sound: the same magazine fired in bursts of TWO (the MBT-B\'s burst: three pulls to its six rounds) - after the first pull the countdown at the pitch of two pulls left (3136 Hz, struck twice at its end), after the second the high double - the last pull - and the reload ends in the low double',
+       pr.ok, '(rounds at ' + pr.rounds.join(' | ') + ': ' + pr.text.join(' | ') + ')');
+    console.log('     sound: bursts of two from a magazine of six, three pulls, seconds after each pull: ' + pr.text.join(' | '));
+    return openHit(9);
+  }).then(function () {
+    if (!BURSTS) return openHit(0);
+    ok('sound: (the Donnola as the client has it: a magazine of three, and its burst is all three 0.3 s apart - one pull to a magazine, 6 s to reload)',
+       DONNOLA.clip[0] === 3 && DONNOLA.burst[0] === 3 && DONNOLA.burst[1] === 0.3 && DONNOLA.reloadTime === 6, '(' + DONNOLA.clip.join(' / ') + '; ' + DONNOLA.burst.join(' / ') + ')');
+    const dn = magazine(DONNOLA, ['bell4186x2']);
+    ok('sound: Donnola - one pull is its whole magazine, so it sounds as the single-shot gun it is to the player: three silent rounds, and the reload counted at 4186 Hz and ended in the high double - not the low double of a magazine',
+       dn.ok && dn.R > 3 && dn.R < 6.1, '(rounds at ' + dn.rounds.join(' | ') + '; reload ' + dn.R.toFixed(3) + ' s: ' + dn.text.join(' | ') + ')');
+    console.log('     sound: Donnola, one pull (rounds at ' + dn.rounds.join(' | ') + '), seconds after it: ' + dn.text.join(' | '));
+    click($('aim-sound-ticks-one'));
+    return openHit(0);
+  }).then(function () {
+    // ---- E. back on the IS-7: the frame path counted, and the output's latency ----
+    view = viewerInstance; prepare(view); run(0.1);
+    fresh();
+    let t0 = clock;
+    tap();
+    const atShot = tells;
+    const R = waitFrom(view, t0, 1);
+    run(R + 1);
+    ok('sound: the frame path - one shot and its whole reload, ' + Math.round((R + 2) * 60) + ' frames: the owner is told at the shot and at nothing else, four sounds are made',
+       atShot >= 1 && tells === atShot && audio.made.length === 4, '(' + atShot + ' at the shot, ' + (tells - atShot) + ' after, ' + audio.made.length + ' sounds)');
+    // COUNTDOWN (user, 08.10: "marking every second is not needed - it would be a constant nagging sound ... a setting
+    // of the countdown: no more than 5 for sure, most likely 4 or 3"): the ticks of a wait, its final sound counted.
+    const counted = function (n, set, end) {
+      fresh();
+      const z = clock;
+      tap(); run(0.1);
+      const got = heard();
+      run(R + 1);
+      return {ok: same(got, z, waitOf(R, end || 'bell4186x2', set, 0, n)), text: show(got, z)};
+    };
+    click($('aim-sound-count-5'));
+    const c5 = counted(5);
+    ok('sound: Countdown 5 on the IS-7, one tone - four time ticks, 4, 3, 2 and 1 s before the end, and the double: five sounds; the choice is lit and kept',
+       c5.ok && $('aim-sound-count-value').value === '5' && $('aim-sound-count-5').getAttribute('aria-pressed') === 'true' && $('aim-sound-count-4').getAttribute('aria-pressed') === 'false', '(' + c5.text + ')');
+    click($('aim-sound-ticks-shot'));
+    const c5l = counted(5, SHOT('bell4186x2').ticks, SHOT('bell4186x2').end);
+    ok('sound: ... in the tone of the shot: four single bells at 4186 Hz and the double that ends them', c5l.ok, '(' + c5l.text + ')');
+    click($('aim-sound-ticks-one'));
+    click($('aim-sound-count-3'));
+    const c3 = counted(3);
+    ok('sound: Countdown 3 - two time ticks, 2 and 1 s before the end, and the double', c3.ok, '(' + c3.text + ')');
+    click($('aim-sound-count-4'));
+    const c4 = counted(4);
+    ok('sound: Countdown 4 (the default) - three time ticks and the double; the count has nothing to do with Signals', c4.ok && $('aim-sound-signals-value').value === '3', '(' + c4.text + ')');
+    // With the context's output timestamp a sound is scheduled to be HEARD at its second: 40 ms of output latency
+    // put every start 40 ms earlier on the audio clock. A context that answers with zeros is taken by its clock.
+    audio.latency = 0.04; fresh();
+    t0 = clock;
+    tap();
+    ok('sound: an output 40 ms late - every sound is started 40 ms early, to be heard at its own second', same(heard(), t0 - 0.04, waitOf(R, 'bell4186x2')), '(' + show(heard(), t0) + ')');
+    run(R + 1);
+    audio.latency = 'none'; fresh();
+    t0 = clock;
+    tap();
+    ok('sound: a context with no output timestamp yet - the sounds go by its clock', same(heard(), t0, waitOf(R, 'bell4186x2')), '(' + show(heard(), t0) + ')');
+    run(R + 1);
+    click(toggle);
+    ok('sound: (switched off at the end: nothing scheduled, one context for the whole run)', S.pending() === 0 && audio.contexts === 1 && soundOn.checked === false);
+    S.tell = realTell;
+    D.battle = keep.battle; D.scene = keep.scene; D.ttx = keep.ttx; D.index = keep.index;
+    delete window.AudioContext;
   });
 }

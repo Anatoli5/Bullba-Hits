@@ -1,0 +1,116 @@
+"""The sounds of the aim emulation's countdown, carried into the page: web/aim-sound-samples.js.
+
+    python tools/build_aim_sounds.py            writes web/aim-sound-samples.js
+    python tools/build_aim_sounds.py --check    compares the file on disk with what would be written; exit 1 on a difference
+
+The page plays the SAME samples the mod Bullba Countdown ships and its proposal page plays: they are not designed
+here, they are rendered by that project's own synthesis and copied -
+  the dry time tick of the scheme's proposal (tools/scheme.py TIME): the one at 880 Hz, which the page plays for every
+    second of a countdown in its "one tone" position;
+  the bells of the stock (tools/scheme.py countdown_bells()), ten pitches - the mod's own 4186, 3136, 2637, 2093,
+    1568 Hz and the proposal's 1319, 1047, 784, 659, 523 Hz - each struck once and twice. Among them are the mod's
+    own bells and its final double (4186 Hz twice) as tools/ticks.py renders them: this tool refuses to write if
+    they are not the same samples, or if the ten doubles are not one build - the length of the mod's double, and
+    one level as the ear weighs them (within 0.5 dB of their middle).
+The container is a classic script (window.BullbaAimSamples) with each sample as base64 of 16-bit little-endian PCM,
+48 kHz mono: it loads from file:// and in the game's browser like every other script of the page, with no fetch and
+no decoding by the browser (the page fills an AudioBuffer itself): 21 samples, about a third of a megabyte.
+
+The other project is found at BULLBA_COUNTDOWN or C:/Projects/Bullba-Countdown; without it this tool cannot run
+(tools/check.py says SKIP for its comparison then - the file in web/ is what ships).
+"""
+import base64
+import hashlib
+import io
+import os
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+COUNTDOWN = os.environ.get('BULLBA_COUNTDOWN') or 'C:/Projects/Bullba-Countdown'
+TARGET = os.path.join(ROOT, 'web', 'aim-sound-samples.js')
+# The page's names. A bell is named by its pitch and its shape: bell2637 (one strike), bell2637x2 (two) - in the
+# order of scheme.PITCHES, the highest first.
+DRY = 'dry880'
+PITCHES = ('4186', '3136', '2637', '2093', '1568', '1319', '1047', '784', '659', '523')
+SHAPES = ((1, ''), (2, 'x2'))
+
+
+def available():
+    return os.path.isfile(os.path.join(COUNTDOWN, 'tools', 'ticks.py')) and os.path.isfile(os.path.join(COUNTDOWN, 'tools', 'scheme.py'))
+
+
+def source_hash():
+    digest = hashlib.sha256()
+    for name in ('ticks.py', 'scheme.py'):
+        with io.open(os.path.join(COUNTDOWN, 'tools', name), 'rb') as stream:
+            digest.update(stream.read().replace(b'\r\n', b'\n'))
+    return digest.hexdigest()[:16]
+
+
+def render():
+    """[(name, Hz, audible ms, samples)] in the order of the file, by the other project's own code."""
+    sys.path.insert(0, os.path.join(COUNTDOWN, 'tools'))
+    import ticks
+    import scheme
+    rows = [(DRY, ticks.pitch(scheme.TIME[3]), ticks.render(scheme.TIME[3]))]
+    ladder = scheme.countdown_bells()
+    if len(ladder) != len(PITCHES) or any(abs(row['hz'] - float(name)) > 1.0 for name, row in zip(PITCHES, ladder)):
+        raise ValueError('scheme.countdown_bells() is not the ten pitches this tool names: %s' % [row['hz'] for row in ladder])
+    made = dict(((name, shape), ticks.render(row[shape])) for name, row in zip(PITCHES, ladder) for shape, _ in SHAPES)
+    # The mod's own sounds are among them, sample for sample: its four counting bells and its final double.
+    own = ticks.rendered(ticks.PRODUCT)
+    for name, position in (('3136', 1), ('2637', 2), ('2093', 3), ('1568', 4)):
+        if made[(name, 1)] != own[position]: raise ValueError("the bell at %s Hz is not the mod's own" % name)
+    if made[('4186', 2)] != own[0]: raise ValueError("two strikes at 4186 Hz are not the mod's final double")
+    # ONE double at ten pitches (the user, 09.10: a lower double built wider is "like two separate sounds"): each as
+    # long as the mod's, and all at one level as the ear weighs them - within 0.5 dB of the middle of the ten.
+    levels = [ticks.loudness(made[(name, 2)])['a'] for name in PITCHES]
+    middle = (max(levels) + min(levels)) / 2.0
+    for name, level in zip(PITCHES, levels):
+        if len(made[(name, 2)]) != len(own[0]): raise ValueError("the double at %s Hz is not as long as the mod's" % name)
+        if abs(level - middle) > 0.5: raise ValueError('the double at %s Hz is %+.2f dB off the middle of the doubles' % (name, level - middle))
+    rows += [('bell' + name + suffix, row['hz'], made[(name, shape)]) for name, row in zip(PITCHES, ladder) for shape, suffix in SHAPES]
+    if ticks.RATE != 48000: raise ValueError('ticks.py renders at %s Hz, the page expects 48000' % ticks.RATE)
+    return [(name, hz, ticks.audible_length(samples) * 1000.0, ticks.pcm16(samples)) for name, hz, samples in rows]
+
+
+def text():
+    rows = render()
+    lines = ['// GENERATED by tools/build_aim_sounds.py - do not edit. The sounds of the aim emulation (web/aim-sound.js), copied',
+             '// from Bullba Countdown: the dry time tick and the bells of the stock of its scheme proposal (tools/scheme.py; the',
+             "// mod's own bells and final double among them), rendered by that project's own code; source %s. Each sample:" % source_hash(),
+             '// base64 of 16-bit little-endian PCM, 48 kHz mono, peak 0.97 of full scale. hz: the pitch; ms: the audible length',
+             '// (above -40 dB). bellNNNN: one strike; bellNNNNx2: two.',
+             'window.BullbaAimSamples = {rate: 48000, samples: {']
+    for index, (name, hz, ms, pcm) in enumerate(rows):
+        lines.append('  %s: {hz: %s, ms: %d, pcm16: \'%s\'}%s' % (
+            name, ('%.1f' % hz).rstrip('0').rstrip('.'), round(ms), base64.b64encode(pcm).decode('ascii'),
+            ',' if index < len(rows) - 1 else ''))
+    lines.append('}};')
+    return '\n'.join(lines) + '\n'
+
+
+def main(argv):
+    if not available():
+        print('Bullba Countdown is not at %s (set BULLBA_COUNTDOWN)' % COUNTDOWN)
+        return 77
+    wanted = text()
+    if '--check' in argv:
+        try:
+            with io.open(TARGET, encoding='utf-8', newline='') as stream:
+                found = stream.read()
+        except IOError:
+            found = None
+        if found == wanted:
+            print('ok   web/aim-sound-samples.js is what Bullba Countdown renders now')
+            return 0
+        print('FAIL web/aim-sound-samples.js differs from what Bullba Countdown renders now: run tools/build_aim_sounds.py')
+        return 1
+    with io.open(TARGET, 'w', encoding='utf-8', newline='') as stream:
+        stream.write(wanted)
+    print('written: %s (%d bytes)' % (TARGET, len(wanted.encode('utf-8'))))
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv[1:]))

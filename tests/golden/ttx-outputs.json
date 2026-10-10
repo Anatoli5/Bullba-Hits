@@ -1,10 +1,11 @@
 {
- "client": "e7a26954d56f5dfa", 
+ "client": "e54d72de42b6ea25", 
  "format": 4, 
  "note": "hashes only (tests/py27/ttx_golden.py); no characteristic of the client", 
  "types": {
   "czech:Cz17_Vz_55": "3249db43427de3d5d4ce883221375c5aec8e6db09f7aad763f2c9c250d6c9154", 
   "france:F108_Panhard_EBR_105": "36ac447d871af8b041f6077d31c62b4ad47994790f744d822963a1d3a652058b", 
+  "germany:G197_Pz_Kpfw_Neu": "aa86106934edce0bcd19dee85a21331e9000b22a0bd72469d60a39dd4f9bfe93", 
   "sweden:S11_Strv_103B": "f5998cb31d5cf202b46e5044774e303b379d2c11410c5504fc49001a11ea50bc", 
   "usa:A144_M_VI_Y": "3f28aab30cc639d511e4558da92e73c322ac45242c8640746086ae2237e1ea0a", 
   "ussr:R45_IS-7": "eb61468ae62829a3f150fd28d49cd8280b90f4e0311df563154b0e0c5c69281f"

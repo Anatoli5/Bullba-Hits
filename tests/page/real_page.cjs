@@ -1292,6 +1292,33 @@ async function main() {
     ok('leaks: no uncaught exception during the switches', page.errors.length === 0, page.errors.slice(0, 3).join(' | '));
     console.log('real page: leak counter ' + SWITCHES + ' switches in ' + (switchMs / 1000).toFixed(1) + ' s; growth ' + JSON.stringify(g));
     if (VERBOSE) console.log('  ' + line);
+
+    // ---- the emulation's sound is a developer's bench, behind a checkbox of Settings (user, 10.10) -----------------
+    // "The sound is a demonstration for the emulation ... if it goes in, it must be hidden and switched on in the
+    // settings, in some developer's section, by a checkbox of its own." Asked of the rendered page, under ⌖ with the
+    // gun's load in the strip: unticked (the default) the cluster is not laid out at all; ticked, it is there with its
+    // switch dark, and the settings machinery has stored the checkbox; "Reset to defaults" unticks it and the cluster
+    // is gone again. Last in this file: the reset puts every setting of the page back.
+    const SOUND = `(() => { const $ = (id) => document.getElementById(id), laid = (e) => !!e && e.getClientRects().length > 0;
+      let stored = null; try { stored = JSON.parse(localStorage.getItem('bullba-settings')).values; } catch (x) {}
+      const box = $('aim-sound-dev'), cluster = $('aim-sound');
+      return {box: box.checked, inMenu: !!box.closest('.settings-menu .settings-content details#dev-lab'), load: laid($('aim-gun-load')), cluster: laid(cluster), width: cluster.getBoundingClientRect().width,
+        toggle: laid($('aim-sound-toggle')), lit: $('aim-sound-toggle').getAttribute('aria-pressed'), choices: laid($('aim-sound-signals')), dot: laid(cluster.querySelector('.help-dot')),
+        on: $('aim-sound-on').checked, stored: stored ? stored['aim-sound-dev'] : null, storedOn: stored ? stored['aim-sound-on'] : null}; })()`;
+    await home(); await step('fun(true)');
+    const s0 = await ev(SOUND);
+    ok('sound bench: unticked by default - under ⌖, with the gun\'s load in the strip, the sound cluster is not laid out and takes no room; its checkbox is in Settings, section Developer',
+       s0.load && s0.box === false && s0.inMenu && !s0.cluster && s0.width === 0 && !s0.toggle && !s0.dot, JSON.stringify(s0));
+    await ev("(() => { document.getElementById('aim-sound-dev').click(); return true; })()"); await ev('__bt.settle()');
+    await new Promise((r) => setTimeout(r, 400));
+    const s1 = await ev(SOUND);
+    ok('sound bench: ticked - the cluster is in the strip with its "?", its switch dark and its choices put away (the sound itself still waits for its own click); the checkbox is stored by the settings machinery',
+       s1.box === true && s1.cluster && s1.width > 0 && s1.toggle && s1.dot && s1.lit === 'false' && !s1.choices && s1.on === false && s1.stored === true, JSON.stringify(s1));
+    await ev("(() => { document.getElementById('reset-settings').click(); return true; })()"); await ev('__bt.settle()');
+    await step('fun(true)');
+    const s2 = await ev(SOUND);
+    ok('sound bench: "Reset to defaults" unticks it - under ⌖ again the cluster is gone', s2.load && s2.box === false && !s2.cluster && s2.width === 0 && s2.on === false, JSON.stringify(s2));
+    ok('sound bench: no uncaught exception in the page', page.errors.length === 0, page.errors.slice(0, 3).join(' | '));
   } catch (e) {
     ok('the run completes', false, String(e && e.stack || e).split('\n').slice(0, 4).join(' | '));
     if (page && page.errors.length) console.log('  page errors: ' + page.errors.slice(0, 3).join(' | '));

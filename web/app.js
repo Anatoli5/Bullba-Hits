@@ -1428,7 +1428,7 @@
   // gun of the client - the eligibility tags above stay the only rule.
   // The tooltip markup (tooltips.js): '\n' between lines, '• Key: text' a point, an empty line a group.
   var AIM_MECHANICS_WORDS = {
-    autoreload: '• Autoreloader: spent rounds load back one by one, each on its own timer\n• ⌖ with ◔: these timers run\n• Otherwise: a hold fires at the clip interval, nothing loads back',
+    autoreload: '• Autoreloader: spent rounds load back one by one, each on its own timer\n• A shot while a round is loading starts that load over\n• ⌖ with ◔: these timers run\n• Otherwise: a hold fires at the clip interval, nothing loads back',
     clip: '• Magazine: rounds at the clip interval, then the whole clip reloads\n• ⌖ with ◔: that reload runs\n• Otherwise: a burst stops when the clip is empty',
     burst: '• Burst gun: one pull fires several rounds\n• Under ⌖: one press, the whole burst; each round but the last widens the circle by the burst’s factor',
     dualGun: '• Dual gun: barrels fire singly or as a charged volley; emulated: single rounds only',
@@ -3491,8 +3491,9 @@
   // is fired as a single-shot gun.
   function clipRoundsOf(rl) { return rl && rl.shots > 1 && rl.interval > 0 ? rl.shots : 1; }
   // The gun loaded in full with nothing loading: a new shooter, the emulation starting over, a rule switched, a
-  // press under the simplified rule. `rounds` when the caller has the clip size already.
-  function aimLoadFull(rounds) { aimClipSize = rounds || aimClipRounds(); aimClip = aimClipSize; aimRefill = null; }
+  // press under the simplified rule. `rounds` when the caller has the clip size already. Every reset of the load ends
+  // here, so this is where the sound is told of one (aimSoundTell, 08.10).
+  function aimLoadFull(rounds) { aimClipSize = rounds || aimClipRounds(); aimClip = aimClipSize; aimRefill = null; aimSoundTell(); }
   // THE AIM LOOP AND THE FIGURE'S SLICES ARE TASKS OF THE PAGE'S ONE FRAME LOOP (28.09, frame-sync; web/frame.js): they run
   // after the camera and the hover of their frame and before its render, so the ring a frame draws is the one computed in it.
   // Made when first asked for: the module may ask before it has run down to here.
@@ -4136,7 +4137,8 @@
       if (auto) {
         var k = a.reloadTime > 0 ? rl.reload / a.reloadTime : 1, boost = Number(a.autoreload.boostFraction);
         out += '\n• Load back: one round at a time, each on its own timer — from empty ' +
-          list.slice().reverse().map(function (v) { return sec(Number(v) * k); }).join(', ') + ' s';
+          list.slice().reverse().map(function (v) { return sec(Number(v) * k); }).join(', ') + ' s' +
+          '\n• A shot while a round is loading starts that load over';
         if (boost > 0 && boost < 1) out += '\n• Improved autoreloader: a round fired after a rest loads the next one in ×' + aimNum(boost) + ' of its time (⌖ with ◔)' +
           '\n• Rest: at least ' + sec(rl.interval + (Number(a.autoreload.boostStartTime) || 0)) + ' s into a round’s load and within ' +
           sec(Number(a.autoreload.boostResidueTime) || 0) + ' s of its end, or a full magazine' +
@@ -4217,7 +4219,7 @@
     if (!rl) { aimReload = null; aimClipDry = true; }
     else if (times) {
       // An autoloader under real reload (the rule is with the ✸ code below): the round leaves the magazine and
-      // one starts loading back - or the one already loading goes on - and the next round waits for the gap
+      // one starts loading back - the one already loading starts over - and the next round waits for the gap
       // between rounds or, with the magazine empty, for that load, whose progress the ring then shows. An
       // improved autoloader rested long enough loads that round faster (boostAt).
       var cut = boostAt(a, rl.interval, now);
@@ -4234,6 +4236,7 @@
       else if (real) aimReload = {at: now, until: now + rl.reload, clip: false};
       else { aimClipDry = true; aimReload = null; }
     } else aimReload = more ? {at: now, until: now + gap, clip: true} : {at: now, until: now + rl.reload, clip: false};
+    aimSoundTell(true);   // the load as this round left it: every readiness ahead is scheduled, the next round's first
     return true;
   }
   // --- The pointer: a tap is one shot, a hold is a burst on the gun's own cooldown (user, 20.09) ------
@@ -4286,6 +4289,7 @@
     // changes nothing: the reload runs on and its fill stays on the ring. A gun's burst on its way (✸) runs on
     // through the release, and does this itself once its last round is out (burstNext).
     if (!realReload() && !(burstLeft > 0)) { aimReload = null; aimClip = aimClipSize; }
+    aimSoundTell();
     aimAutoRounds = 0;   // ✸: the release ends an automatic gun's stream, and its term leaves the circle
     paintAim(aimLastState || aimState());
     startAimLoop();
@@ -4368,8 +4372,13 @@
   // CLIENT RULE for the order (getFirstReloadTime, ammo_ctrl _GunSettings.fromVehicle, the garage's
   // VehicleParams.autoReloadTime): the LAST entry is the first round into an empty magazine and the garage lists
   // the tuple reversed, in loading order - so with k rounds in, the next one takes reloadTime[N-1-k].
-  // OUR APPROXIMATION (the timing itself is the server's): a round fired while another is loading leaves that
-  // load its share done, and it goes on at the time of the new count.
+  // THE GAME'S RULE for a round fired while another is loading (Wargaming, "Update 1.0.1: Lowdown on Tier VIII-X
+  // Italian Tanks"; C:/Projects/WoT-Base/KNOWLEDGE-mechanics.md): the next shell starts loading right after a shot,
+  // and "If you fire again, before the shell is reloaded, reloading is interrupted and starts anew" - the load is
+  // dropped and begins from zero, in the time of the new count. (Until 09.10 this page kept the share of the load
+  // already done - our approximation of 22.09, which the game contradicts: D-111.) Not known and not emulated:
+  // autoreload/revertFraction, which five guns carry (Carro 45 t, Caliban, AMBT, Object 590, Cavalier SH) and the
+  // client never reads.
   var aimRefill = null;   // {at, until, times} of the round loading now, or null with the magazine full
   // The gun's per-round times, scaled, in the tuple's own order - or null: not under real reload, not an
   // autoloader, no times in the record. `a` and `rl` come from the caller, who has them already.
@@ -4389,13 +4398,13 @@
       else aimRefill = {at: aimRefill.until, until: aimRefill.until + refillSeconds(aimRefill.times, aimClip), times: aimRefill.times};
     }
   }
-  // A round has just left the magazine (fireShot, after the count went down): one starts loading back, or the
-  // one loading goes on at the time of the new count with the share it has done. `fraction` (boostAt below) is
-  // the improved autoloader's cut of that load, 1 or nothing for every other round.
+  // A round has just left the magazine (fireShot, after the count went down): a round starts loading back from
+  // zero, in the time of the new count - whether or not one was loading; what that one had done is lost (the game's
+  // rule above). `fraction` (boostAt below) is the improved autoloader's cut of that load, 1 or nothing for every
+  // other round.
   function refillShot(times, now, fraction) {
-    var d = refillSeconds(times, aimClip) * (fraction > 0 && fraction < 1 ? fraction : 1), done = 0;
-    if (aimRefill) done = Math.max(0, Math.min(1, (now - aimRefill.at) / (aimRefill.until - aimRefill.at)));
-    aimRefill = {at: now - done * d, until: now + (1 - done) * d, times: times};
+    var d = refillSeconds(times, aimClip) * (fraction > 0 && fraction < 1 ? fraction : 1);
+    aimRefill = {at: now, until: now + d, times: times};
     panelWake();
   }
   // THE IMPROVED AUTOLOADER (C2, 23.09; autoLoaderGunBoost - the seven guns whose aim.autoreload.boostFraction is
@@ -4404,7 +4413,7 @@
   // interval + boostStartTime, CHARGES until the end of that load - boostResidueTime, and is CHARGED from there on;
   // with the magazine full the last load is long over. A round fired while it is CHARGED "reduces the standard time
   // for autoreloading the next shell" (the client's own text). OUR ASSUMPTION, which only a battle on the Bélier can
-  // confirm: the load that shot leaves running takes ×boostFraction of its time - the other reading, less by the
+  // confirm: the load that shot starts takes ×boostFraction of its time - the other reading, less by the
   // fraction, differs only on the Bélier's 0.25 (3.75 s against 11.25 s of a 15 s round). The fraction of this shot,
   // or 1: not an improved autoloader, or not rested long enough. Read before the round leaves the magazine.
   function boostAt(a, interval, now) {
@@ -4536,6 +4545,7 @@
     panelTimer = 0;
     paintHeat(null);
     circleReset(keepMode);
+    aimSoundTell();   // every reset of the heat ends here: no lock is left to wait for
   }
   // Seconds until a locked gun fires again: what is left of the delay, then the slow fall to the unlock mark.
   function heatUnlockIn(h) {
@@ -4669,7 +4679,7 @@
   // the gun as a release does - full, nothing running - once its last round is out.
   function burstNext() {
     if (!fireShot(true)) { burstLeft = 0; return; }
-    if (!(burstLeft > 0) && !aimDown && !realReload()) { aimReload = null; aimClip = aimClipSize; aimClipDry = false; }
+    if (!(burstLeft > 0) && !aimDown && !realReload()) { aimReload = null; aimClip = aimClipSize; aimClipDry = false; aimSoundTell(); }
   }
   // Nothing of the above survives ✸ switching, a new shooter or the emulation starting over (gunHeatReset). The mode
   // button's mode survives ⌖ switching (`keepMode`, xiRetime); a new shooter starts it over from the record (xiReset).
@@ -4680,6 +4690,200 @@
     if (keepMode) xiRetime(true); else xiReset();
     paintXi();
   }
+  // --- ⌖: the sound of the load (08.10) --------------------------------------------------------------------------------
+  // NOT A FEATURE OF BULLBA HITS (user, 10.10: "the sound is a demonstration for the emulation ... it is not the standard
+  // function of this mod; if it goes in, it must be hidden and switched on in the settings, in some developer's
+  // section, by a checkbox of its own"): the whole of it stands behind Settings -> Developer -> Countdown sound (demo),
+  // OFF by default (aimSoundSettings, the one owner of that condition).
+  // A LISTENING BENCH for the countdown scheme of the mod Bullba Countdown (user, 08.10: here "it will be more or less
+  // clear how it would really be in the game", and the logic is checked "in conditions close to the field"): the
+  // emulated gun's load, as it runs here on real vehicles' own timings, is played by web/aim-sound.js - the ONE owner
+  // of the sound, which holds the rule (the bell by the stock, the time ticks, the signals) and alone schedules, cancels
+  // and plays. This block only TELLS it the state of the load, in the scheme's terms, whenever something other than
+  // the passing of time changes it: a round fired (fireShot), the release or a burst's end under the simplified rule,
+  // every reset of the load (aimLoadFull) and of the heat (gunHeatReset) - a new shooter, another gun or build, a rule
+  // switched, ↺ and the emulation going off all end in those two - the second gun taken up, the CAV's surge, the
+  // emulation leaving or joining the scene (updateAim), the page hidden or shown. Telling twice costs nothing: the
+  // owner plans from the state and touches only what differs. Nothing here runs on a frame, and with the switch off
+  // (the default) a call is one test of a flag.
+  //
+  // THE STATE TOLD (the head of web/aim-sound.js). The STOCK is how many shots can be fired now, the CRITICAL one - the
+  // shot that brings the penalty - counted: a gun that locks by heat (the Ares) its shots left before the lock by the
+  // live temperature, the one that overheats included; a magazine (a drum, an autoreloader) its rounds, the last
+  // included - its PULLS where one pull fires a burst (aimSoundPer); a single-shot gun 1; a gun with both (an Ares
+  // magazine holds 250 rounds) the smaller of the two. So a
+  // stock of 1 - the double bell - is "the critical shot is ready" (user, 08.10, after trying a signal of its own for
+  // it: "the extra sound is one too many, it will confuse ... the offset as in the classic: if the three last ones are
+  // marked it comes out ideal - they set the interval").
+  // ONLY THE READINESS OF A SHOT IS MARKED, never the shot (user, 08.10: "only the readiness of a round is marked; the
+  // triggers differ - the gun cooling, or the shot before ... not at the moment of the shot before, but when the next
+  // one is ready"). What is told is every readiness ahead:
+  //   - a WAIT: the reload or the gap between rounds running (aimReload), the lock of an overheated gun, a round of an
+  //     autoreloader loading back (aimRefill, and the rounds after it, each on its own timer). The gap between two
+  //     rounds - of a magazine, and of an automatic gun: its fire interval - is a readiness "while firing" (`zone`): its
+  //     bell only within the signals, the firing side's count - and that only where the gap is too short for a
+  //     countdown (the owner decides: a counted gap always ends in its sound). Every other wait is one the player sat
+  //     through;
+  //   - a shot BACK: a gun that locks by heat cools (after its delay, at its rate), and each time the temperature
+  //     falls under an edge of the stock one more shot is there - the same event, the other trigger, the same tone of
+  //     the same stock (aimSoundBack). The way back is told whole, to the full stock (user, 08.10: "back it may count
+  //     as long as you like"), and so is every round of an autoreloader coming in;
+  //   - `full`: the stock when everything is back - a cold gun's, a full magazine's - which has a sound of its own.
+  // Firing and cooling read ONE function of the temperature, aimSoundStock, so they cannot disagree about the stock.
+  // WHERE THE RULE MEETS A GUN IT DOES NOT FIT, and what is done there:
+  //   - the simplified rule (◔ off) has no reload and no interval a player waits through - every press fires, a hold
+  //     fires on the cooldown, the release leaves the gun loaded - so nothing of the reload or the magazine sounds, no
+  //     time tick either. The heat runs under both rules: there the next round is ready the instant the one before has
+  //     left, so its bell falls on that instant (`shot`); the cooling and the lock sound as under ◔;
+  //   - a gun's burst (one pull, several rounds) IS ONE SHOT (user, 10.10: "in essence one shot ... it has one
+  //     readiness: you pressed, and two rounds went at once - no sense in splitting them"): the rounds go out by
+  //     themselves in silence, only the readiness after the last of them sounds, and the stock is a count of PULLS -
+  //     the bursts the magazine still holds (aimSoundPer). So the last burst is the high double and a full magazine
+  //     the low one (the Char Mle. 75: two pulls; the MBT-B: three), and a gun whose one burst is its whole magazine
+  //     (the Donnola) sounds as the single-shot gun it is to the player;
+  //   - a round of an autoreloader that comes in while the gun waits anyway (the gap, the lock) has no bell of its own:
+  //     the bell at the end of that wait carries the new stock, and always sounds; a round that comes in with the gun
+  //     ready rings although a shot was ready already (the stock grew), with its own time ticks before it;
+  //   - a fast automatic gun with a magazine and no heat (the Blesk: a round every 0.03 s): the readiness bells of its
+  //     last rounds fall 30 ms apart and run together (user, 10.10: "the three last ticks for a machine gun, as it
+  //     was" - an option that rang the whole magazine was tried and taken out);
+  //   - an Ares gun at the end of its magazine: the last rounds ring like the last shots before the lock - the stock
+  //     is the smaller of the two counts;
+  //   - a gun that heats and never locks (the STK-2) has no shot its heat forbids, so its heat tells nothing;
+  //   - the second gun of a two-gun vehicle, put away, loads on in silence: the gun in hand is the one that sounds;
+  //   - a mode switch that holds the gun (◔), the charged volley of a dual gun, the salvo of a twin gun are not in the
+  //     scheme: the emulation fires those guns as single-shot ones, and that is how they sound.
+  var aimSoundOn = false;
+  function aimSoundTell(shot) {
+    if (!aimSoundOn) return;
+    window.BullbaAimSound.tell(aimSoundState(aimSeconds(), !!shot));
+  }
+  // THE STOCK OF A GUN THAT LOCKS BY HEAT at the temperature `t`: the shots left before the lock, the one that
+  // overheats counted - its safe shots (the most rounds k with t + k × per < on, the lock's threshold: heatShot locks
+  // at >=) and one more. The one function both triggers read: the readiness after a round (aimSoundHeat) and the shots
+  // coming back as the gun cools (aimSoundBack).
+  function aimSoundStock(p, t) { return Math.max(1, Math.ceil((p.on - t) / p.per - 1e-9)); }
+  // That stock at the second `at`, by the live temperature; 0 while the gun is locked; Infinity for a gun that never locks.
+  function aimSoundHeat(p, at) {
+    if (!p || !gunHeat) return Infinity;
+    var s = heatAt(gunHeat, p, at + 1e-6);
+    return s.locked ? 0 : aimSoundStock(p, s.t);
+  }
+  // THE ROUNDS ONE PULL FIRES: the count of the gun's burst under ✸ (burstRule: its one owner - the Black Rock only in
+  // its Burst mode), 1 for every other gun. The burst is the record's own: no build changes it.
+  function aimSoundPer(a) { var b = burstRule(a, ArmorBallistics.reloadSeconds(a)); return b ? b.count : 1; }
+  // The pulls `rounds` of the magazine make at `per` rounds a pull: the last pull fires what is left of it (fireShot).
+  function aimSoundPulls(rounds, per) { return per > 1 ? Math.ceil(rounds / per) : rounds; }
+  // THE STOCK OF THE MAGAZINE at the second `at` under real reload: its rounds, as pulls of `per` rounds (a single-shot
+  // gun: 1). `chain` is the round of an autoreloader loading back, each next one on its own timer after it
+  // (refillSettle's rule); a drum emptied and reloaded is taken full by its next shot (fireShot), so it counts as full.
+  function aimSoundRounds(chain, at, per) {
+    if (!(aimClipSize > 1)) return 1;
+    if (!chain) return aimSoundPulls(aimClip > 0 ? aimClip : aimClipSize, per);
+    var k = aimClip, t = chain.until;
+    while (k < aimClipSize && t <= at + 1e-6) { k++; t += refillSeconds(chain.times, k); }
+    return aimSoundPulls(k, per);
+  }
+  // THE SHOTS A COOLING GUN GETS BACK, pushed on `out` as {at, stock}, every one up to a cold gun's: k shots are there
+  // once the temperature is under on - (k - 1) × per - the edges of aimSoundStock - and the gun cools from what its
+  // last round left (gunHeat.t at gunHeat.at) after the delay, at its rate: at = last round + delay + (its temperature
+  // - the edge) / rate. A locked gun announces nothing until it unlocks (the wait of the lock has its own bell) and
+  // cools on from there. Only the moments after `after` (the gun may fire again) and only where the magazine holds
+  // that many shots (`real`; `per`: the rounds of one pull).
+  function aimSoundBack(p, h, after, chain, real, per, out) {
+    var from = h.locked ? h.now + heatUnlockIn(h) : gunHeat.at + p.delay, t0 = h.locked ? p.off : gunHeat.t, k, edge, at;
+    for (k = aimSoundStock(p, t0) + 1; ; k++) {
+      edge = p.on - (k - 1) * p.per;
+      if (!(edge > 0)) break;
+      at = from + (t0 - edge) / p.cool;
+      if (at > after + 1e-6 && (!real || aimSoundRounds(chain, at, per) >= k)) out.push({at: at, stock: k});
+    }
+  }
+  // The state of the load at `now` (null: nothing to sound). `shot`: a round has just left the barrel.
+  function aimSoundState(now, shot) {
+    var a = aimLive && funOn() && !document.hidden ? aimBlockData() : null;
+    if (!a) return null;
+    var real = realReload(), h = heatNow(), p = h && h.p.lock ? h.p : null;
+    if (real) refillSettle(now);
+    var chain = real ? aimRefill : null, per = real ? aimSoundPer(a) : 1;
+    var unlock = p && h.locked ? now + heatUnlockIn(h) : 0;
+    var gate = real && aimReload && aimReload.until > now ? aimReload : null;
+    // The full stock: a cold gun's shots, a full magazine's rounds (its pulls), the smaller of the two.
+    var state = {now: now, shot: null, waits: [], back: [],
+      full: Math.min(real ? (aimClipSize > 1 ? aimSoundPulls(aimClipSize, per) : 1) : Infinity, p ? aimSoundStock(p, 0) : Infinity)}, ready = unlock;
+    // The simplified rule: the next round is ready at once - the stock of a gun that locks by heat, now. A round that
+    // has locked the gun leaves no shot ready: the wait of the lock is told below.
+    if (shot && !real && p && !h.locked) state.shot = aimSoundHeat(p, now);
+    if (gate) {
+      ready = Math.max(gate.until, unlock);
+      // Not a readiness of its own: a round of a burst on its way.
+      if (!(burstLeft > 0)) {
+        state.waits.push({from: unlock > gate.until ? gunHeat.at : gate.at, at: ready,
+          stock: Math.min(aimSoundRounds(chain, ready, per), aimSoundHeat(p, ready)),
+          zone: gate.clip && !(unlock > 0) && !(chain && chain.until <= ready + 1e-6)});
+      }
+    } else if (unlock > 0) {
+      state.waits.push({from: gunHeat.at, at: unlock, zone: false,
+        stock: Math.min(real ? aimSoundRounds(chain, unlock, per) : Infinity, aimSoundHeat(p, unlock))});
+    }
+    // The rounds of an autoreloader that come in after the gun may fire again: each ends a wait of its own.
+    if (chain) {
+      var k = aimClip, t = chain.until, from = chain.at;
+      while (k < aimClipSize) {
+        k++;
+        if (t > Math.max(ready, now) + 1e-6) state.waits.push({from: from, at: t, stock: Math.min(aimSoundPulls(k, per), aimSoundHeat(p, t)), zone: false});
+        from = t; t += refillSeconds(chain.times, k);
+      }
+    }
+    if (p) aimSoundBack(p, h, Math.max(ready, now), chain, real, per, state.back);
+    return state;
+  }
+  // THE SWITCH AND ITS THREE CHOICES, in the strip beside ⌖ after the gun's load: sound on / off (OFF by default, and
+  // not remembered - a browser gives a page sound only from a user's action, which is this click: the owner makes the
+  // audio context then), and, remembered: Signals 2 / 3 / 4 - the firing side's count, 3 by default (user, 08.10: "the
+  // three last ones set the interval"); Countdown 3 / 4 / 5 - the sounds of a wait, its final one counted, 4 by default
+  // as the mod has it (user, 08.10: "no more than 5 for sure, most likely 4 or 3"); Time ticks shot / one - how a
+  // counted wait sounds: the tone of the shot, the default (user, 09.10: "the doubled one must mark exactly the
+  // readiness of the next round - it must differ from the preliminary ticks not by tone but by form") - the bell of
+  // the coming readiness once a second and twice at the end; or one dry tone before any shot and the ordinary sound
+  // of the stock at the end (web/aim-sound.js holds the rule). Their state is four hidden controls of the Settings
+  // menu, as ◔'s is; this is their one handler (wired at the foot of this file). A value that is not one of a
+  // choice's own - the stores of the first previews held other names for the ticks' sound - is its default.
+  // THE DEVELOPER'S CHECKBOX (user, 10.10; the head of this block) is the fifth control this handler reads, a plain
+  // visible control of the menu - Settings -> Developer -> Countdown sound (demo), #aim-sound-dev, OFF by default, kept
+  // and reset by the settings machinery like any other. THIS HANDLER IS THE ONE OWNER OF WHAT IT GATES: unticked, the
+  // whole cluster #aim-sound is hidden (it takes no room in the strip), the switch is put out and the owner of the
+  // sound is off - no click, no stored value and no other handler can make a sound; ticked, everything is as it was,
+  // the switch dark until it is clicked.
+  var AIM_SOUND_NONE = '\n• This browser gives the page no sound';
+  function aimSoundSettings() {
+    var S = window.BullbaAimSound, box = $('aim-sound-on'), toggle = $('aim-sound-toggle'), cluster = $('aim-sound');
+    if (!S || !box || !toggle) return;
+    var dev = !!($('aim-sound-dev') || {}).checked;
+    if (!dev) box.checked = false;
+    var n = Number(($('aim-sound-signals-value') || {}).value), count = Number(($('aim-sound-count-value') || {}).value);
+    var kind = ($('aim-sound-ticks-value') || {}).value;
+    if (kind !== 'one') kind = 'shot';
+    if (n !== 2 && n !== 4) n = 3;
+    if (count !== 3 && count !== 5) count = 4;
+    S.set('signals', n); S.set('countdown', count); S.set('ticks', kind);
+    var on = S.on(!!box.checked);
+    if (box.checked && !on) {
+      box.checked = false;
+      if (String(toggle.title).indexOf(AIM_SOUND_NONE) < 0) toggle.title += AIM_SOUND_NONE;
+    }
+    aimSoundOn = on;
+    var wide = false;
+    if (cluster && cluster.hidden !== !dev) { cluster.hidden = !dev; wide = true; }
+    aimSoundPress(toggle, on);
+    ['aim-sound-signals', 'aim-sound-count', 'aim-sound-ticks'].forEach(function (id) { var g = $(id); if (g && g.hidden !== !on) { g.hidden = !on; wide = true; } });
+    [2, 3, 4].forEach(function (v) { aimSoundPress($('aim-sound-signals-' + v), v === n); });
+    [3, 4, 5].forEach(function (v) { aimSoundPress($('aim-sound-count-' + v), v === count); });
+    ['one', 'shot'].forEach(function (v) { aimSoundPress($('aim-sound-ticks-' + v), v === kind); });
+    if (wide) stripLayout();   // the strip beside ⌖ changed its width (an event)
+    aimSoundTell();            // switched on in the middle of a wait: what is left of it sounds
+  }
+  function aimSoundPress(el, on) { var v = String(!!on); if (el && el.getAttribute('aria-pressed') !== v) el.setAttribute('aria-pressed', v); }
   // --- The fun layer: target HP, a rolled shot and Hitmarks (user, 22.09) --------------------------
   // ONE switch, and it stands ON THE SCENE beside the collision-model tile, not in Settings (user, 22.09:
   // the health bar appears there, and it has to be plain that the switch turns on more than the bar). It
@@ -5693,6 +5897,7 @@
     burstLeft = 0; aimClipDry = false; aimAutoRounds = 0;
     if (back) { aimReload = back.reload; aimClip = back.clip; aimClipSize = back.size; aimRefill = back.refill; }
     else { aimReload = null; aimLoadFull(); }
+    aimSoundTell();   // the gun in hand is the one that sounds; the one put away loads on in silence
     var a = aimBlockData();
     if (a) { aimNow = ArmorBallistics.aimStep(null, aimLastState || aimState(), a, aimHeated(aimModifiers()), 0); aimNowBlock = a; }
     aimEstReset();
@@ -5730,6 +5935,7 @@
     if (m.charges >= m.spec.maxCharges) m.chargeAt = now;
     m.charges--; m.boostUntil = aimRefill.until;
     panelWake();
+    aimSoundTell();   // the round loading back ends sooner
   }
   // THE BUTTON: graphics only, the page's lit switch - lit while the mode or ability is on (or, for a passive
   // mechanic, while it gives anything), dashed while something runs down (a switch, a cooldown, a deployment, the
@@ -6074,6 +6280,7 @@
     if (live !== aimLive) {
       aimLive = live;
       if (viewer) viewer.setAimEmulation(live);
+      aimSoundTell();   // the emulation left the scene, or came back to it
     }
     aimCursorClass();
     aimSyncCentre();   // a mode going off closed the popover above, and the hold goes with it
@@ -8166,18 +8373,26 @@
   var TTX_BUILD_HEAD = ['Stock or this build',
     '• Off: the stock, as the garage shows a bare vehicle - top modules, a crew at 100 % with no skills (+10 % commander’s bonus on every role he does not hold himself), no equipment, directive, consumables, paint or field modification',
     '• On: this shooter’s build from Config on top; a figure better than the stock is mint, a worse one red'];
+  // A TIER-XI VEHICLE'S SKILL TREE IS IN ITS FILE, WHOLE (09.10; the user's decision of 26.09: the tree has no sides to
+  // choose, so it is always taken as researched to the end). The mod installs every modification of the tree before it
+  // reads anything (exporter.ttx_block, the client's own installModifications) and says so in vehicle.skillTree; the
+  // page adds nothing of the tree on top - one line here, in both views, tells the user where the figures stand.
+  function ttxTreeLine() {
+    var st = ttxData && ttxData.vehicle ? ttxData.vehicle.skillTree : null, n = st ? Number(st.modifications) : 0;
+    return n > 0 ? '• Tier XI: the vehicle’s skill tree is always counted as fully researched - all ' + n + ' modifications, in the stock and in the build' : null;
+  }
   function ttxBuildTitle(ctx) {
-    if (!ctx.build) return tipJoin(TTX_BUILD_HEAD);
+    if (!ctx.build) return tipJoin(TTX_BUILD_HEAD.concat([ttxTreeLine()]));
     var fitted = aimSummaryLines(), live = ctx.cur.source === 'live', offered = aimFieldOffer().levels.length > 0;
     var sit = AIM_SKILLS.some(function (s) { return s.situational && shooterConfig.skills[s.id]; });
-    return tipJoin(TTX_BUILD_HEAD.concat(['', 'This build: top modules, a crew at 100 % with the commander’s bonus'
+    return tipJoin(TTX_BUILD_HEAD.concat([ttxTreeLine(), '', 'This build: top modules, a crew at 100 % with the commander’s bonus'
         + (fitted.length ? ', and from Config:' : '; nothing fitted in Config.')], fitted,
       [sit ? 'The situational perks switched on in Config are counted, which the garage’s main figure does not do.' : null, '',
        live ? '• From the gun on the scene: the fire figures - the very circle, reload and aiming the emulator uses, with what the record carries (field modifications, the battle’s own modifiers)' : null,
        live ? '• From the characteristics file: the rest' : '• From the characteristics file: every figure',
        aimFieldOn() ? 'The field modification set in Config is counted by the client’s law' + (live ? '; any the record carries is left out.' : '.')
          : offered ? 'No field modification is on in Config' + (live && aimKept() ? '; the fire figures keep the record’s own.' : '.')
-         : 'The record names no field modification tree for this vehicle.']));
+         : ttxTreeLine() ? null : 'The record names no field modification tree for this vehicle.']));
   }
   // The rows a characteristics file of before 23.09 has no figures for (the mod's TTX_ARMOR_SCHEMA; readTtx reads it again).
   var TTX_OLD_FILE = 'This vehicle’s characteristics file was written before the armour and the suspension’s repair were added: the mod writes it anew when the page asks for it in the game.';
@@ -8187,6 +8402,12 @@
   // of the mod once a session (exportTtx) and read again every 2 s for up to 30 s, the way a vehicle export is
   // waited for; outside it a missing file is simply not there. A file of another schema counts as missing.
   function ttxUsable(t, id) { return !!(t && Number(t.schema) === 1 && (!t.id || t.id === id) && Array.isArray(t.configs) && t.configs.length); }
+  // A file the mod writes anew when asked (ttxRefresh): one from before the armour (23.09), and a tier-XI vehicle's from
+  // before its skill tree was counted (09.10: the mod's ttx_tree_current - eliteByProgression and no vehicle.skillTree).
+  function ttxOld(t) {
+    var v = t && t.vehicle;
+    return !!t && (!t.armorSchema || !!(v && v.fitment && v.fitment.eliteByProgression && !v.skillTree));
+  }
   function readTtx(type) {
     var id = typeId(type);
     if (!id || !TTX || !ArmorInspectorData.ttx) return Promise.resolve(null);
@@ -8209,20 +8430,20 @@
     ttxPending[id] = attempt().then(function (t) {
       delete ttxPending[id];
       if (t) { ttxCache[id] = t; ttxOrder.push(id); delete ttxTried[id]; while (ttxOrder.length > 8) delete ttxCache[ttxOrder.shift()]; }
-      if (t && host.game && !t.armorSchema) ttxRefresh(id, t);
+      if (t && host.game && ttxOld(t)) ttxRefresh(id, t);
       return t;
     });
     return ttxPending[id];
   }
-  // A file written before the armour and the suspension's repair (23.09, the mod's TTX_ARMOR_SCHEMA) is shown at once,
-  // and in the game read again in the background - the mod builds it anew on the exportTtx above - every 2 s for up to
+  // A file written before the armour and the suspension's repair (23.09, the mod's TTX_ARMOR_SCHEMA) - or a tier-XI
+  // vehicle's from before its skill tree (ttxOld) - is shown at once, and in the game read again in the background - the mod builds it anew on the exportTtx above - every 2 s for up to
   // 30 s: the new one takes its place in the cache, and the panel is painted again if it shows that vehicle.
   function ttxRefresh(id, old) {
     var deadline = Date.now() + TTX_WAIT_MS;
     function again() {
       window.setTimeout(function () {
         ArmorInspectorData.ttx(id).then(function (t) {
-          if (!ttxUsable(t, id) || !t.armorSchema) throw new Error('Not rebuilt yet');
+          if (!ttxUsable(t, id) || ttxOld(t)) throw new Error('Not rebuilt yet');
           if (ttxCache[id] === old) ttxCache[id] = t;
           if (ttxData === old) { ttxData = t; emuChanged(); }
         }).catch(function () { if (Date.now() < deadline) again(); });
@@ -8519,8 +8740,11 @@
     if (key === 'chassisRepairTime') {
       if (!v.chassisRepairTime.length) return ['The client has no repair time for this suspension, and the garage prints none.'];
       var modes = ttxData && ttxData.vehicle && ttxData.vehicle.modes;
+      // The repair-speed nodes of a tier-XI skill tree (09.10): the file's modules.chassis.repairSpeed, which ttx.js divides by.
+      var treeRepair = ttxData && ttxData.modules && ttxData.modules.chassis ? Number(ttxData.modules.chassis.repairSpeed) : 0;
       return ['A broken track (or wheel), nobody in the crew having Repairs.',
         '• Time: the vehicle’s own ÷ 0.57, the client’s factor of a group skill nobody has',
+        treeRepair > 0 && treeRepair !== 1 ? '• Skill tree: ÷ ' + TTX.nice(treeRepair) + ', its repair-speed modifications, as the garage counts them' : null,
         '• Rations and Brothers in Arms: do not change it',
         v.chassisRepairTime.length > 1 ? '• Two figures: ' + (modes && modes.trackWithinTrack ? 'the main track / the reserve' : 'two pairs of tracks, each with its own time, in the garage’s order') : null,
         build ? 'Config has no Repairs skill and does not carry the repair figures of equipment, directives, consumables or a field modification, so this build shows the stock’s time.' : null];
@@ -8920,6 +9144,19 @@
   // ✸'s sub-switch, real reload: the same pattern - a hidden control of the menu keeps it, the button on the scene flips it.
   $('real-reload').onchange=realReloadSettings;
   $('real-reload-toggle').onclick=function(){var box=$('real-reload');box.checked=!box.checked;realReloadSettings();persistSettings();};
+  // The emulation's sound (08.10): the same pattern - four hidden controls of the menu keep the switch and its three choices,
+  // the buttons in the strip set them, run the one handler and save. The cluster wears its own "?" (web/tooltips.js).
+  // The developer's checkbox that lets any of it be there (10.10) is a visible control of the menu with the same handler.
+  $('aim-sound-dev').onchange=aimSoundSettings;
+  $('dev-lab-help').appendChild(helpDotFor(['aim-sound-dev']));
+  $('aim-sound-on').onchange=aimSoundSettings;$('aim-sound-signals-value').onchange=aimSoundSettings;$('aim-sound-count-value').onchange=aimSoundSettings;$('aim-sound-ticks-value').onchange=aimSoundSettings;
+  $('aim-sound-toggle').onclick=function(){var box=$('aim-sound-on');box.checked=!box.checked;aimSoundSettings();persistSettings();};
+  [2,3,4].forEach(function(v){$('aim-sound-signals-'+v).onclick=function(){$('aim-sound-signals-value').value=String(v);aimSoundSettings();persistSettings();};});
+  [3,4,5].forEach(function(v){$('aim-sound-count-'+v).onclick=function(){$('aim-sound-count-value').value=String(v);aimSoundSettings();persistSettings();};});
+  ['one','shot'].forEach(function(v){$('aim-sound-ticks-'+v).onclick=function(){$('aim-sound-ticks-value').value=v;aimSoundSettings();persistSettings();};});
+  $('aim-sound').appendChild(helpDotFor(['aim-sound-toggle','aim-sound-signals','aim-sound-count','aim-sound-ticks']));
+  // A hidden page plays nothing: what is scheduled is cancelled, and scheduled again from the gun's state when the page is back.
+  document.addEventListener('visibilitychange',function(){aimSoundTell();});
   // How deep the soft light shades (user, 22.09): the slider only scales the composite's brightness range.
   // It sits in the checkbox's own row, like the ricochet tint and dots, so the Settings grid keeps its pairs.
   $('light-strength').oninput=function(){
@@ -8996,6 +9233,14 @@
         // holding the 250 it was given by the previous default takes the new one. A depth the user set
         // himself to anything else is his own and is kept.
         if(!(box.v>=4)&&String(box.values['light-strength'])==='250')delete box.values['light-strength'];
+        // v5 (user, 08.10): the emulation's sound counts the three last shots by default, not four. A store written by
+        // the first previews of that evening holds the 4 it was given by the old default and takes the new one; a
+        // number of signals chosen from then on is the user's own and is kept.
+        if(!(box.v>=5)&&String(box.values['aim-sound-signals-value'])==='4')delete box.values['aim-sound-signals-value'];
+        // v6 (user, 09.10): the time ticks sound in the tone of the shot by default, not in one tone. A store written
+        // by the previews before that holds the choice of a selector that meant something else and takes the new
+        // default once; a choice made from then on is the user's own and is kept.
+        if(!(box.v>=6))delete box.values['aim-sound-ticks-value'];
         // The fun layer's two rows of 0.7.25 (Target HP, Hit marks) became ONE switch on the scene
         // (user, 22.09). The controls are gone, so their stored values belong to nothing: they are
         // dropped here rather than left to ride along in the box for ever. No version gate - the keys
@@ -9003,6 +9248,8 @@
         delete box.values['target-hp-on'];delete box.values['hit-marks-on'];
         // Settings -> Mode switch time (26.09) is gone (user, 27.09): the switch time follows ⌖ and ◔ now (xiTimed).
         delete box.values['mode-switch-time'];
+        // The sound's Magazine sweep and its strike length (previews of 09-10.10) are gone (user, 10.10): the same.
+        delete box.values['aim-sound-sweep-on'];delete box.values['aim-sound-strike-value'];
         return box.values;}}catch(e){}
     return null;
   }
@@ -9024,7 +9271,7 @@
   function persistNow(){
     if(persistTimer!==null){window.clearTimeout(persistTimer);persistTimer=null;}
     var values={};settingControls.forEach(function(el){values[el.id]=settingValue(el);});
-    try{window.localStorage.setItem(SETTINGS_KEY,JSON.stringify({v:4,values:values,aim:aimStored()}));}catch(e){}
+    try{window.localStorage.setItem(SETTINGS_KEY,JSON.stringify({v:6,values:values,aim:aimStored()}));}catch(e){}
   }
   function persistSettings(){if(persistTimer===null)persistTimer=window.setTimeout(persistNow,300);}
   window.addEventListener('pagehide',function(){if(persistTimer!==null)persistNow();});
@@ -9036,7 +9283,10 @@
       settingDefaults[el.id]=settingDefault(el);
       // ✸ is not remembered (user, 23.09): every opening of the page shows the recorded shot as it was, the emulation
       // layer (HP bar, RNG shots, Hitmarks) waits for its switch. Its own sub-switches (real reload) still are.
-      if(stored&&el.id!=='fun-mode'&&Object.prototype.hasOwnProperty.call(stored,el.id)&&settingValid(el,stored[el.id]))settingSet(el,stored[el.id]);
+      // Nor is the emulation's sound (08.10): a browser gives a page sound only from a user's action, so a switch
+      // restored as ON would stand lit and silent. Its choices (signals, countdown, time ticks) are remembered, and so
+      // is the developer's checkbox that shows the switch at all (#aim-sound-dev, 10.10).
+      if(stored&&el.id!=='fun-mode'&&el.id!=='aim-sound-on'&&Object.prototype.hasOwnProperty.call(stored,el.id)&&settingValid(el,stored[el.id]))settingSet(el,stored[el.id]);
       settingRun(el);
       // One shared listener per control instead of a save inside every handler; a programmatic change below
       // fires no event, so a restore and a reset never write anything back.
