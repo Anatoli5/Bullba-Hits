@@ -5,6 +5,7 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 ## 1.02 (2026-10-13)
 
 - **Client 2.4.1.0:** the mod is built for World of Tanks PC NA 2.4.1.0 and installs into `mods\2.4.1.0`. The game's 18 new vehicles are in the Vehicles list; your recorded battles are kept.
+- **Installer:** it no longer adds the hangar mods panel (ModsList and OpenWG Gameface): the builds of them it carried do not start on 2.4.1.0. A modpack's own panel lists Bullba Hits as before; without one, open the page by a right-click on a vehicle or with the desktop shortcut.
 - **Modules:** the expanded characteristics panel lists the durability of the vehicle’s modules under Survivability - ammo rack, engine, fuel tanks, radio, gun, turret ring, vision devices and tracks, each whole / after the crew’s own repair - and the engine’s chance to catch fire. The mod writes these into each vehicle’s characteristics file; the files already on disk are written anew in the background after the first start, without a question.
 - **Tracks:** when the line of a hit, of a pinned point or under the cursor meets a track first, the panel shows what that spot of the track takes - its durability at a driving wheel, three times that between the wheels - beside the damage the shell deals with its spread, and for a recorded hit whether the track was broken. Facts, not a verdict: the target’s equipment (Improved Hardening makes a track 1.5 times as durable) is not in a record.
 

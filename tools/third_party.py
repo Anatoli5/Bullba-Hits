@@ -5,9 +5,17 @@ distribution to your mod", and ModsList itself requires OpenWG Gameface. The fil
 they sit in work/third-party/ (fetched from the official releases) and every build verifies them by hash.
 The installer copies each one only when the game folder does not already have that file, never removes it on
 uninstall, and the game loads the newest version of a package id when a modpack brings another.
+
+Client 2.4.1.0 (13.10.2026): neither pinned build starts there - gui/impl/gen_utils.pyc is gone from the client and
+OpenWG Gameface 1.1.6 imports it at its top level, ModsList 1.7.9 imports that Gameface (read in their bytecode;
+C:/Projects/WoT-Base/KNOWLEDGE-client.md, 13.10). So a build for a client outside WORKS_ON ships no panel package:
+a modpack's own ModsList still lists our entry, and the page opens by a right-click on a vehicle or the shortcut.
+New pins (builds made for 2.4.1) put the panel back: add them to PACKAGES and the client to WORKS_ON.
 """
 import hashlib
 from pathlib import Path
+
+import client_version
 
 ROOT = Path(__file__).resolve().parent.parent
 FOLDER = ROOT / 'work' / 'third-party'
@@ -18,11 +26,14 @@ PACKAGES = (
     ('net.openwg.gameface_1.1.6.wotmod', '26b190d216c758ccffa824766cbd6bb7cbfc9dfa041e530b99b0d1f02129d5e1',
      'https://gitlab.com/openwg/wot.gameface/-/releases'),
 )
+WORKS_ON = ('2.4.0.0', '2.4.0.1', '2.4.0.2')   # the clients the pinned builds start on
 
 
 def collect():
-    """Return the verified package paths, or raise with what is missing and where it comes from."""
+    """Return the verified package paths, or raise with what is missing and where it comes from; none for a client the
+    pinned builds do not start on."""
     paths = []
+    if client_version.VERSION not in WORKS_ON: return paths
     for name, sha256, source in PACKAGES:
         path = FOLDER / name
         if not path.is_file():
