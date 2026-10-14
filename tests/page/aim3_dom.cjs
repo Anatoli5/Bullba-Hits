@@ -7211,6 +7211,70 @@ settle(20).then(function () {
       ok('ttx: Survivability - the reading again stops with the new file', reads === settled, reads + ' / ' + settled);
     });
   }).then(function () {
+    // ---- Modules (12.10): the durability of the vehicle's devices under Survivability in the expanded view -------------
+    // The file on the panel is one of before the mod carried them (its format 4 or earlier): no block at all. Then the very
+    // object the page holds gets the fields a file of format 5 carries (exporter.device_health; figures of this test, not
+    // the client's): one cell per device in the order of the game's damage panel - the client's icon, whole / after the
+    // crew's own repair - the engine's fire chance in a cell beside the engine, no turret ring on a fake turret, and the
+    // tooltips in the page's markup (a heading, one sentence, items).
+    const cells = function () {
+      more.open = false; document.getElementById('ttx-more-button').onclick({}); more.open = true;
+      const sec = full.children.filter(function (s) { return s.getAttribute('data-group') === 'relativeArmor'; })[0];
+      const box = sec ? sec.children.filter(function (c) { return c.className === 'ttx-devices'; })[0] : null;
+      more.open = false;
+      return !box ? null : {title: box.title, label: box.getAttribute('aria-label'), cells: box.children.map(function (c) {
+        return {key: c.getAttribute('data-device'), src: c.children[0].src, text: c.children[1].textContent, title: c.title}; })};
+    };
+    const none = cells();
+    ok('ttx: Modules - a characteristics file without the devices\' durability (written before the mod carried it) shows no block, and the rows above it are as they were',
+       none === null && armour().hullArmor.text === '200/120/150', JSON.stringify(none));
+    // The same vehicle under a type of its own, its file carrying the devices from the first read.
+    const H = function (whole, regen) { return {maxHealth: whole, maxRegenHealth: regen}; };
+    const mod = JSON.parse(JSON.stringify(fresh));
+    mod.id = 'germany-SurvE100M'; mod.type = 'germany:SurvE100M';
+    mod.modules.chassis.health = H(310, 233); mod.modules.chassis.drivingWheelsSizes = [0.9, 1.1];
+    mod.modules.engine.health = H(401, 199); mod.modules.engine.fireStartingChance = 0.12;
+    mod.modules.radio = {name: 'r', health: H(250, 125)}; mod.modules.fuelTank = {name: 'f', health: H(225, 90)};
+    mod.configs.forEach(function (c) { c.devices = {gun: H(240, 120), turretRotator: H(200, 100), surveyingDevice: H(130, 65), ammoBay: H(270, 203)}; });
+    const MBATTLE = JSON.parse(JSON.stringify(SBATTLE));
+    MBATTLE.id = 't-surv-m'; MBATTLE.hits[0].id = 'svm-0'; MBATTLE.hits[0].attacker.type = mod.type;
+    const ttxBefore = global.ArmorInspectorData.ttx, battleBefore = global.ArmorInspectorData.battle;
+    global.ArmorInspectorData.ttx = function (id) { return id === mod.id ? Promise.resolve(mod) : ttxBefore(id); };
+    global.ArmorInspectorData.battle = function (id) { return id === 't-surv-m' ? Promise.resolve(MBATTLE) : battleBefore(id); };
+    tb.value = 't-surv-m'; tb.onchange.call(tb);
+    return settle(20).then(function () { document.getElementById('hits').children[0].onclick(); return settle(20); }).then(function () {
+    const got = cells(), by = {};
+    (got ? got.cells : []).forEach(function (c) { by[c.key] = c; });
+    const order = (got ? got.cells : []).map(function (c) { return c.key; }).join(',');
+    ok('ttx: Modules - with them, one line of cells under Survivability in the damage panel\'s order: ammo rack, engine and its fire chance, fuel tanks, radio, gun, vision devices, track - and no turret ring on a fake turret',
+       !!got && got.label === 'Modules' && order === 'ammoBay,engine,fire,fuelTank,radio,gun,surveyingDevice,track', '(' + order + ')');
+    ok('ttx: Modules - each cell prints whole / after the crew\'s own repair, the fire chance in per cent',
+       !!got && by.ammoBay.text === '270/203' && by.engine.text === '401/199' && by.fire.text === '12 %' && by.fuelTank.text === '225/90' && by.radio.text === '250/125'
+       && by.gun.text === '240/120' && by.surveyingDevice.text === '130/65' && by.track.text === '310/233',
+       JSON.stringify((got ? got.cells : []).map(function (c) { return c.key + ' ' + c.text; })));
+    ok('ttx: Modules - each cell wears the client\'s own icon of its module (the damage panel\'s), the fire the damage log\'s',
+       !!got && got.cells.every(function (c) { return c.src === (c.key === 'fire' ? 'web/icons/crits/damageLog_fire_16x16.png' : 'web/icons/crits/' + c.key + 'CriticalSmall.png'); })
+       && got.cells.every(function (c) { return c.key === 'fire' || fs.existsSync(path + c.src.slice(4)); }),
+       JSON.stringify((got ? got.cells : []).map(function (c) { return c.src; })));
+    const heads = function (t) { const l = String(t).split('\n'); return {head: l[0], second: l[1] || '', items: l.filter(function (x) { return x.indexOf('• ') === 0; }).length}; };
+    ok('ttx: Modules - the tooltips are the page\'s markup: a heading, one sentence of what it is, then items - the block\'s and every cell\'s',
+       !!got && heads(got.title).head === 'Modules' && /\.$/.test(heads(got.title).second) && heads(got.title).items >= 3
+       && got.cells.every(function (c) { const h = heads(c.title); return h.head && !/[.:]$/.test(h.head) && /\.$/.test(h.second) && h.items >= 2; })
+       && /^Engine\n/.test(by.engine.title) && /• Whole: 401/.test(by.engine.title) && /• After the crew’s own repair: 199/.test(by.engine.title)
+       && /^Engine fire\n/.test(by.fire.title) && /12 %/.test(by.fire.title) && /between them a track takes 3 times as much/.test(by.track.title),
+       JSON.stringify([got && got.title, by.engine && by.engine.title, by.track && by.track.title]).slice(0, 500));
+    // The pure half (web/ttx.js): a real turret gets its ring, two pairs of tracks a cell each, wheels the wheel's key.
+    const T = global.BullbaTtx, real = JSON.parse(JSON.stringify(mod));
+    real.vehicle.hasTurret = true;
+    real.modules.chassis.pairsHealth = [H(110, 80), H(220, 165)];
+    const keys = function (file, modes) { return T.devices(file, file.configs[0], modes || {}).map(function (d) { return d.key + (d.pair !== undefined ? d.pair : '') + ' ' + T.deviceText(d); }).join(','); };
+    ok('ttx: Modules (web/ttx.js devices) - a real turret has its ring; two pairs of tracks are a cell each with their own figures; a wheeled vehicle\'s suspension is the wheels',
+       keys(real) === 'ammoBay 270/203,engine 401/199,fuelTank 225/90,radio 250/125,gun 240/120,turretRotator 200/100,surveyingDevice 130/65,track0 110/80,track1 220/165'
+       && /,wheel 310\/233$/.test(keys(mod, {wheeled: true})) && T.devices({modules: {}}, {}, {}).length === 0 && T.devices(null, null, null).length === 0,
+       '(' + keys(real) + ' | ' + keys(mod, {wheeled: true}) + ')');
+    global.ArmorInspectorData.ttx = ttxBefore; global.ArmorInspectorData.battle = battleBefore;
+    });
+  }).then(function () {
     global.BullbaHost.game = false;
     global.ArmorInspectorData.battle = keepBattle; global.ArmorInspectorData.ttx = keepTtx; global.ArmorInspectorData.scene = keepScene;
   });
@@ -10152,6 +10216,19 @@ function xiBrowsed() {
     const apart = Object.keys(stock.rows).filter(function (k) { return stock.rows[k] !== build.rows[k]; });
     ok(tag + 'the panel - with nothing fitted the build is the stock in every row: the export’s block and the file say the same vehicle',
        apart.length === 0 && Object.keys(stock.rows).length > 20, '(' + apart.map(function (k) { return k + ' ' + stock.rows[k] + ' → ' + build.rows[k]; }).join(', ') + ')');
+    // ---- his case of 10.10: "I put the turbocharger and it writes 42; it must be 47 ... the equipment is not counted" ----
+    // The default build - rammer, hardening, turbocharger - on this vehicle: the build column must show what the devices
+    // give, as on any other vehicle; then back to nothing fitted for the checks below.
+    openConfigMenu(); choosePreset('Rammer, hardening, turbo'); config.open = false; config.fire('toggle');
+    run(20);
+    if (!buildBox.checked) click(toggle);
+    const fitted = panelNow(), fittedWords = toggle.title;
+    const kmh = function (t) { return String(t).split('/').map(Number); };
+    ok(tag + 'the panel, ⚙ with the default build (rammer, hardening, turbocharger) - the turbocharger raises the top speed over the stock ' + KMH + ' and the engine power, the hardening the HP over ' + F.maxHealth,
+       kmh(fitted.rows.speedLimits)[0] >= F.speedForwardKmh + 4 && kmh(fitted.rows.speedLimits)[1] >= F.speedBackwardKmh + 2 && Number(fitted.rows.maxHealth) > F.maxHealth
+       && Number(fitted.rows.enginePower) > Number(POWER),
+       '(speed ' + fitted.rows.speedLimits + ', HP ' + fitted.rows.maxHealth + ', power ' + fitted.rows.enginePower + '; ' + fittedWords.split('\n').slice(0, 5).join(' | ').slice(0, 300) + ')');
+    click(toggle); stockBuild(); config.open = false; config.fire('toggle'); run(20);
     // ---- the shells: the heading's chips, the gun panel's icons, the fields, what the viewer is given ----
     const chips = $('shell-quick').children, WORDS = ['APCR ' + PEN[0], 'HEAT ' + PEN[1], 'HE ' + PEN[2]];
     ok(tag + 'the heading’s shell chips - ' + WORDS.join(', '), chips.map(function (b) { return b.textContent; }).join(', ') === WORDS.join(', '),

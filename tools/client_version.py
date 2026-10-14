@@ -17,17 +17,20 @@ tools/check.py.
 History: 2.4.0.0 #945 (up to 0.7.5); 2.4.0.1 #950 (0.7.6 - 0.9.2); 2.4.0.2 #964 since 0.9.3 (01.10.2026): all 38
 hooked names are in the new bytecode and the hooked functions keep their arguments (Vehicle.showDamageFromShot,
 PlayerAvatar.showTracer / updateGunMarker / updateTargetingInfo / __startWaitingForShot,
-DamageFromShotDecoder.parseHitPoint, BrowserController.load, calcPitchLimitsFromDesc).
+DamageFromShotDecoder.parseHitPoint, BrowserController.load, calcPitchLimitsFromDesc). 2.4.1.0 #970 since 1.02
+(13.10.2026): the 38 names are there again and the bytecode of those functions, of the aim, shell, browser and
+gun pitch contracts (tools/inspect_*_contract.py) is the same; of what they print only browser_filters.pyc changed
+(its imports and the handlers of two in-game links), which the mod does not call.
 """
 import re
 from pathlib import Path
 
-VERSION = '2.4.0.2'             # the folder: <game>/mods/<VERSION>
-BUILD = '964'                   # the build of that version the hooked names were last checked on
+VERSION = '2.4.1.0'             # the folder: <game>/mods/<VERSION>
+BUILD = '970'                   # the build of that version the hooked names were last checked on
 REALM = 'NA'
 VERSION_XML = 'v.%s #%s' % (VERSION, BUILD)                        # <version> of <game>/version.xml
 LABEL = 'World of Tanks PC %s %s #%s' % (REALM, VERSION, BUILD)    # as README, CHANGELOG and the catalogue say it
-PREVIOUS = ('2.4.0.1', '2.4.0.0')   # folders of earlier clients a recorder of ours may still lie in
+PREVIOUS = ('2.4.0.2', '2.4.0.1')   # folders of earlier clients a recorder of ours may still lie in
 GAME = Path('C:/Games/World_of_Tanks_NA')
 
 

@@ -836,6 +836,10 @@ header>.settings-menu>.settings-content{top:calc(100% + 8px);right:0;max-height:
 .ttx-shell-row .ttx-shell-kind{justify-self:start}
 .ttx-shell-kind img{display:block;width:24px;height:24px}
 .ttx-shell-row[data-selected=true]{background:#302b23;box-shadow:0 0 0 1px var(--gold) inset}
+/* The modules' durability under Survivability (12.10): one wrapping line of cells across the view's grid - the client's
+   icon of the module, then whole / after a field repair. */
+.ttx-devices{grid-column:1/-1;display:flex;flex-wrap:wrap;align-items:center;gap:3px 12px;max-width:340px}
+.ttx-device{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
 /* The quick list of the turret's guns and the Turret row of Config: the .aim-pick tiles of Config. */
 .aim-config-grid>[hidden]{display:none}
 .ttx-pick{flex-direction:column;gap:1px;font-size:12px;color:#e5edf5}

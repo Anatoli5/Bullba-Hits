@@ -18,6 +18,9 @@
  *
  * The third case (09.10): a recorded ricochet is drawn as a ricochet - the comment of ricochetCase below; the same fixture.
  *
+ * The fourth (12.10): the track under a recorded hit - the comment of trackCase below; the same battle with the
+ * characteristics files of tests/fixtures-local/track-2026-10-12 laid over it.
+ *
  *   node tests/page/real_scene.cjs [--verbose] [--only=ricochetCase]      exit 0 pass, 1 fail, 77 skip (no fixture at all, or no browser)
  */
 'use strict';
@@ -295,13 +298,107 @@ async function ricochetCase(browser) {
   } finally { fs.rmSync(folder, {recursive: true, force: true}); }
 }
 
+// ---- THE TRACK UNDER A HIT (12.10) ------------------------------------------------------------------------------------------------
+// The user: "I am very interested in what it takes to break a track ... how it happens I do not know". The same battle on
+// Cliff has his own cases: a hit at the front driving wheel of an AMX 50 B that broke the track, one between the wheels of
+// another that did not, and a hit at the driving wheel of an E 50 M whose every damage roll is above the track's durability
+// - and the track held (the reason the chip gives facts and no verdict: the target's equipment is not in a record). The
+// characteristics files with the suspension's durability and the driving wheels' sizes are built on the offline stand
+// (tests/fixtures-local/track-2026-10-12/make.py) and laid over the battle's data/ttx; without them: SKIP.
+// Asked of the Hit line panel: one chip, on the row of the screens, when the line's first plate is a track - the durability
+// of the zone the point is in, the shell's damage with its spread, and what the record says of the track; the zone is
+// worked out here a second way - from the record's own first point and the collision model's track, not from the page's ray;
+// a pinned line keeps the facts and drops the record's; a vehicle whose file has no such figures gets no chip.
+const TRACK = path.join(ROOT, 'tests', 'fixtures-local', 'track-2026-10-12', 'ttx');
+const TRACK_STATE = `(() => { const v = ${LV}, h = v.loadedData ? v.loadedData.hit : null, $ = (id) => document.getElementById(id);
+  const chips = (id) => [].slice.call($(id).children).map((c) => ({cls: c.className, text: c.textContent, title: c.title}));
+  const p0 = h && h.points && h.points[0], model = v.loadedData && v.loadedData.models ? v.loadedData.models['0'] : null;
+  let span = null;
+  if (p0 && model) { const g = model.groups.filter((x) => x.material === (p0.position[0] < 0 ? 'leftTrack' : 'rightTrack'))[0];
+    if (g) { const zs = g.v ? Array.from(g.v).filter((x, i) => i % 3 === 2) : g.vertices.map((x) => x[2]); span = [Math.min.apply(null, zs), Math.max.apply(null, zs)]; } }
+  return {id: h && h.id, target: h && h.target && h.target.type, extra: chips('shot-extra'), track: chips('shot-extra').concat(chips('shot-details'), chips('shot-pen')).filter((c) => / track$/.test(' ' + c.cls)),
+    alpha: Number($('alpha').value), spread: v.shell ? v.shell.damageRandomization : null, parts: ((h && h.points) || []).map((x) => x.part), z: p0 ? p0.position[2] : null, span: span, pinned: !!v.pinned}; })()`;
+function trackFile(name) {
+  let file = null;
+  new Function('ArmorInspectorData', fs.readFileSync(path.join(TRACK, name + '.js'), 'utf8'))({receive: function (x) { file = x[1]; }});
+  return file;
+}
+async function trackCase(browser) {
+  const folder = stage(CLOSE);
+  try {
+    fs.cpSync(TRACK, path.join(folder, 'data', 'ttx'), {recursive: true});
+    const p = await browser.open(url.pathToFileURL(path.join(folder, 'Viewer.html')).href, INIT);
+    await p.evaluate(DRIVER);
+    await p.evaluate(`(async () => { for (let i = 0; i < 300 && !(document.querySelector('#hits [data-hit]') && window.__viewers.length && ${LV}.loadedData); i++) await new Promise((r) => setTimeout(r, 100)); await __settle(); })()`);
+    // The characteristics file of the vehicle on screen is read when the first track is met: the panel is painted again then.
+    const go = async (js) => { await p.evaluate(js); await p.evaluate('__settle()'); await new Promise((r) => setTimeout(r, 300)); await p.evaluate('__settle()'); return JSON.parse(await p.evaluate('JSON.stringify(' + TRACK_STATE + ')')); };
+    const focus = (id) => go(`(() => { const d = document.getElementById('vehicle-focus'); if (!d.open) d.querySelector('summary').click(); document.querySelector('#focus-list [data-id="${id}"]').click(); })()`);
+    const hit = (id) => go(`document.querySelector('#hits [data-hit="${id}"]').click()`);
+    const tag = 'the user\'s battle on Cliff, ';
+    const band = (s) => Math.ceil(s.alpha * (1 - s.spread)) + '–' + Math.floor(s.alpha * (1 + s.spread));
+    // The zone a second way: the record's first point (the chassis's own coordinates, +z the front) against the model's track.
+    const zoneOf = (s, sizes) => s.span[1] - s.z <= sizes[0] ? 'front' : s.z - s.span[0] <= sizes[1] ? 'rear' : 'bulk';
+    const heads = (t) => { const l = String(t).split('\n'); return {head: l[0], second: l[1] || '', items: l.filter((x) => x.indexOf('• ') === 0).length}; };
+    // [the roster row of the target, the hit, its characteristics file, the zone, what the record says of the track]
+    const CASES = [['5250485', '47', 'france-F10_AMX_50B', 'front', 'broken'], ['5250487', '106', 'france-F10_AMX_50B', 'bulk', 'held'],
+                   ['5250486', '10', 'germany-G73_E50_Ausf_M', 'front', 'held'], ['5250485', '98', 'france-F10_AMX_50B', 'front', 'broken']];
+    for (const c of CASES) {
+      const file = trackFile(c[2]), chassis = file.modules.chassis, whole = chassis.health.maxHealth, sizes = chassis.drivingWheelsSizes;
+      await focus(c[0]);
+      const s = await hit(c[1]), chip = s.track[0] || {text: '', title: ''}, zone = s.span ? zoneOf(s, sizes) : null, words = JSON.stringify({chip: chip.text, parts: s.parts, z: s.z, span: s.span, sizes: sizes, alpha: s.alpha, spread: s.spread});
+      const name = tag + 'hit ' + c[1] + ' (first contact the track, ' + (c[3] === 'bulk' ? 'between the driving wheels' : 'at the ' + c[3] + ' driving wheel') + '; the record: ' + (c[4] === 'broken' ? 'the track was broken' : 'no track broken') + '): ';
+      ok(name + '(the record and the model are as the fixture has them: the first point is on the chassis, ' + (c[3] === 'bulk' ? 'farther than a driving wheel\'s size from both ends of the track' : 'within the ' + c[3] + ' driving wheel\'s size of the track\'s end') + ')',
+         s.id === c[1] && s.parts[0] === 0 && zone === c[3] && whole > 0 && s.alpha > 0, words);
+      const figure = c[3] === 'bulk' ? 'track ' + Math.round(whole * 3) + ' HP (' + Math.round(whole) + ' × 3)' : 'track ' + Math.round(whole) + ' HP at the driving wheel';
+      ok(name + 'ONE track chip on the row of the screens - the durability of that zone from the vehicle\'s characteristics, the shell\'s damage with its spread' + (c[4] === 'broken' ? ', and that the track was broken' : ''),
+         s.track.length === 1 && s.extra.some((x) => x.text === chip.text) && chip.text === figure + ' · shell ' + band(s) + (c[4] === 'broken' ? ' · broken' : ''), words);
+      ok(name + 'no verdict in it - no chance, no "enough": facts only, and the tooltip says what is not known',
+         chip.text.indexOf('%') < 0 && /facts, not a verdict\.$/.test(heads(chip.title).second) && /• Not known here: the target’s equipment/.test(chip.title) && /Improved Hardening on the target: durability × 1\.5, × 1\.65/.test(chip.title), chip.title.split('\n').slice(0, 3).join(' | '));
+      const zoneWords = c[3] === 'bulk' ? '• Zone: between the driving wheels\n• Durability here: ' + Math.round(whole * 3) + ' HP = ' + Math.round(whole) + ' × 3\n• At a driving wheel: ' + Math.round(whole) + ' HP\n'
+        : '• Zone: at the ' + c[3] + ' driving wheel, within ' + sizes[c[3] === 'front' ? 0 : 1].toFixed(2) + ' m of the track’s end\n• Durability here: ' + Math.round(whole) + ' HP\n• Between the driving wheels: ' + Math.round(whole * 3) + ' HP (× 3)\n';
+      ok(name + 'the tooltip - the zone' + (c[3] === 'bulk' ? '' : ' with the client\'s size of that wheel') + ', both durabilities, the damage, the record\'s word; a heading, one sentence, items',
+         heads(chip.title).head === 'Track under the point' && heads(chip.title).items >= 8 && chip.title.indexOf(zoneWords) > 0
+         && chip.title.indexOf('• Shell damage: ' + band(s) + ' HP (' + Math.round(s.alpha) + ' ± ' + Math.round(s.spread * 100) + ' %)') > 0
+         && (c[4] === 'broken' ? /• Record: the (left|right) track was broken at this hit \(matched by vehicle and time\)/ : /• Record: no track was reported broken at this hit/).test(chip.title), chip.title);
+      if (c[1] === '10') ok(name + '(his counter-example: the lowest damage roll, ' + band(s).split('–')[0] + ' HP, is above the durability at the wheel, ' + Math.round(whole) + ' HP - and the track held; a "breaks on any roll" would have been wrong here)',
+         Number(band(s).split('–')[0]) > whole && chip.text.indexOf('broken') < 0, words);
+      if (c[1] === '47') {
+        // The same line as an analysed shot (a pin): the facts stay, the record's word is the recorded shot's alone.
+        const pinned = await go(PIN_LINE + '; ' + LV + '.onPin(true)'), pc = pinned.track[0] || {text: '', title: ''};   // the page hears of a pin as the viewer tells it
+        ok(name + 'its line pinned - the same durability and damage, without the record\'s word in the chip or the tooltip',
+           pinned.pinned && pinned.track.length === 1 && pc.text === figure + ' · shell ' + band(pinned) && pc.title.indexOf('Record:') < 0 && /• Zone: at the front driving wheel/.test(pc.title), JSON.stringify(pc.text));
+        const back = await go(`${LV}.unpin()`);
+        ok(name + 'the pin dropped - the record\'s word is back', back.track.length === 1 && back.track[0].text === chip.text, JSON.stringify(back.track.map((x) => x.text)));
+      }
+    }
+    // A vehicle whose characteristics are not in the folder (as a file of before the mod carried the durability has no figure): no chip.
+    await focus('5250484');
+    const bare = await hit('44');
+    ok(tag + 'hit 44 (the first contact a track of a vehicle with no such figures in its characteristics): the screens\' chip as before and no track chip',
+       bare.id === '44' && bare.parts[0] === 0 && bare.track.length === 0 && bare.extra.length === 1 && /screen$/.test(bare.extra[0].text), JSON.stringify(bare.extra.map((x) => x.text)));
+    // The hits of that list the record gives no chassis point: none wears a track chip.
+    await focus('5250485');
+    const rows = JSON.parse(await p.evaluate("JSON.stringify([].slice.call(document.querySelectorAll('#hits [data-hit]')).map((e) => e.getAttribute('data-hit')))"));
+    const others = [];
+    for (const id of rows.slice(0, 10)) { const s = await hit(id); if (s.parts.length && s.parts.indexOf(0) < 0) others.push(s); }
+    ok(tag + 'the hits of the AMX 50 B that met no track (' + others.length + ' of the first rows): no track chip on any', others.length >= 3 && others.every((s) => s.track.length === 0),
+       JSON.stringify(others.map((s) => [s.id, s.parts, s.track.map((x) => x.text)])));
+    ok(tag + 'the track walk: no uncaught exception in the page', p.errors.length === 0, p.errors.slice(0, 3).join(' | '));
+  } catch (e) {
+    ok('the track run completes', false, String(e && e.stack || e).split('\n').slice(0, 4).join(' | '));
+  } finally { fs.rmSync(folder, {recursive: true, force: true}); }
+}
+
 // Each case runs on its own fixture; one that is not on this machine says SKIP, and with none the run is a skip (77).
 async function main() {
   const only = process.argv.filter((a) => a.indexOf('--only=') === 0).map((a) => a.slice(7))[0];   // one case by its function's name, for a quick run
-  const cases = [[DATA, 'scene-state-2026-10-04', swapCase], [CLOSE, 'close-range-2026-10-04', closeCase], [CLOSE, 'close-range-2026-10-04', ricochetCase]].filter(function (c) {
+  const cases = [[DATA, 'scene-state-2026-10-04', swapCase], [CLOSE, 'close-range-2026-10-04', closeCase], [CLOSE, 'close-range-2026-10-04', ricochetCase],
+                 [CLOSE, 'close-range-2026-10-04', trackCase, TRACK, 'track-2026-10-12']].filter(function (c) {
     if (only && c[2].name !== only) return false;
-    if (fs.existsSync(path.join(c[0], 'index.js'))) return true;
-    console.log('SKIP: the user\'s battle of ' + c[1] + ' is not on this machine (python tests/fixtures-local/' + c[1] + '/make.py)');
+    // A case's second fixture (the track case's characteristics files): its folder with something in it.
+    const second = !c[3] || (fs.existsSync(c[3]) && fs.readdirSync(c[3]).length > 0);
+    if (fs.existsSync(path.join(c[0], 'index.js')) && second) return true;
+    console.log('SKIP: ' + (second ? 'the user\'s battle of ' + c[1] : 'the fixture ' + c[4]) + ' is not on this machine (python tests/fixtures-local/' + (second ? c[1] : c[4]) + '/make.py)');
     return false;
   });
   if (!cases.length) return 77;

@@ -1,13 +1,13 @@
 {
- "client": "e54d72de42b6ea25", 
- "format": 4, 
+ "client": "18c99dfa078404f7", 
+ "format": 5, 
  "note": "hashes only (tests/py27/ttx_golden.py); no characteristic of the client", 
  "types": {
-  "czech:Cz17_Vz_55": "3249db43427de3d5d4ce883221375c5aec8e6db09f7aad763f2c9c250d6c9154", 
-  "france:F108_Panhard_EBR_105": "36ac447d871af8b041f6077d31c62b4ad47994790f744d822963a1d3a652058b", 
-  "germany:G197_Pz_Kpfw_Neu": "aa86106934edce0bcd19dee85a21331e9000b22a0bd72469d60a39dd4f9bfe93", 
-  "sweden:S11_Strv_103B": "f5998cb31d5cf202b46e5044774e303b379d2c11410c5504fc49001a11ea50bc", 
-  "usa:A144_M_VI_Y": "3f28aab30cc639d511e4558da92e73c322ac45242c8640746086ae2237e1ea0a", 
-  "ussr:R45_IS-7": "eb61468ae62829a3f150fd28d49cd8280b90f4e0311df563154b0e0c5c69281f"
+  "czech:Cz17_Vz_55": "463365e73d7218ae5f69cf0f6930eca39cd3671d0a9af5dfc3aa104cfdf42401", 
+  "france:F108_Panhard_EBR_105": "85e5f70a85c1d9675150c83ce5e1b5e7e4144e3755cf48ff49cb76bc7c9b3982", 
+  "germany:G197_Pz_Kpfw_Neu": "fd1a829c4c70e00e86bbb378e93d943dcc0ad9add619d8b77a3ac1574c9ae2df", 
+  "sweden:S11_Strv_103B": "2d80d758b97a8a8c5e91417d3b2cd6d0f91d388791ff6cbcd4a62d75c458d2bc", 
+  "usa:A144_M_VI_Y": "f7a1e080b2415483de3eb787c9ce506b98828e719531ce67eba5e3c57bbb05c0", 
+  "ussr:R45_IS-7": "b6187dda2c984f9516b4f435b82f2e8a1f86f81afd664609cd4ab2b9030033dc"
  }
 }

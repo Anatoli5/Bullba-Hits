@@ -142,6 +142,44 @@
   }
   function catalogueAdd(dev, input) { var e = dev && dev.eff && dev.eff[input]; return e && e[0] === 'add' ? last(e.slice(1)) || 0 : 0; }
 
+  // --- The modules' durability (12.10; the file's format 5, exporter.device_health) ---------------------------------
+  // [whole, after the crew's own repair in the field] of one health block of the file, or null. The client keeps the
+  // two as maxHealth and maxRegenHealth (shared_components.DeviceHealth); the crew has no such figures in the client.
+  function health(h) {
+    var whole = h ? num(h.maxHealth) : null, regen = h ? num(h.maxRegenHealth) : null;
+    return whole > 0 && regen !== null ? [whole, regen] : null;
+  }
+  // The devices of a vehicle in the order of the game's damage panel, each {key, health: [whole, regen]}: the pair's own
+  // (ammunition rack of its hull, gun, turret ring, vision devices) and the type's top modules (engine - with `fire`, its
+  // fireStartingChance - fuel tank, radio, suspension). The key is the client's device name, which is also its icon's:
+  // 'track' - one per pair of tracks (`pair`: 0 the main one) - or 'wheel' on a wheeled vehicle. No turret ring where the
+  // turret is the hull's fake one (vehicle.hasTurret false - the client's hasTurretRotator rule). [] for a file without them.
+  function devices(t, pair, modes) {
+    var m = (t && t.modules) || {}, d = (pair && pair.devices) || {}, out = [];
+    function add(key, block, more) {
+      var h = health(block);
+      if (!h) return;
+      var row = {key: key, health: h};
+      if (more) Object.keys(more).forEach(function (k) { row[k] = more[k]; });
+      out.push(row);
+    }
+    var fire = m.engine ? num(m.engine.fireStartingChance) : null;
+    add('ammoBay', d.ammoBay);
+    add('engine', m.engine && m.engine.health, fire !== null ? {fire: fire} : null);
+    add('fuelTank', m.fuelTank && m.fuelTank.health);
+    add('radio', m.radio && m.radio.health);
+    add('gun', d.gun);
+    if (!(t && t.vehicle && t.vehicle.hasTurret === false)) add('turretRotator', d.turretRotator);
+    add('surveyingDevice', d.surveyingDevice);
+    var chassis = m.chassis || {}, running = modes && modes.wheeled ? 'wheel' : 'track';
+    var pairs = Array.isArray(chassis.pairsHealth) && chassis.pairsHealth.length > 1 ? chassis.pairsHealth : null;
+    if (pairs) pairs.forEach(function (block, i) { add(running, block, {pair: i, pairs: pairs.length}); });
+    else add(running, chassis.health);
+    return out;
+  }
+  // A device's two figures as the panel prints them: "200/135".
+  function deviceText(row) { return row && row.health ? integral(row.health[0]) + '/' + integral(row.health[1]) : '—'; }
+
   function values(input) {
     input = input || {};
     var t = input.ttx || null, pair = input.pair || null, a = input.aim || (pair && pair.aim) || null;
@@ -309,6 +347,8 @@
       var repairCrew = crew.repair > 0 ? Number(crew.repair) : 0.57, repairTree = Number(modules.chassis.repairSpeed) > 0 ? Number(modules.chassis.repairSpeed) : 1;
       out.chassisRepairTime = repairXml.map(function (x) { return Number(x) / repairCrew / repairTree; }).reverse();
     }
+    // The modules (12.10): what each takes before it is knocked out. A file written before the mod carried them has none.
+    out.devices = devices(t, pair, modes);
     // The vertical and the horizon WITH THE HULL AIMING (23.09, params __getPitchLimitsValues 1311-1336 and 698-710,
     // outputs/second-modes-2026-09-23.md 3.7): where the hull tilts (isPitchHullAimingAvailable - available, in both
     // modes) a gun with a static pitch shows the hull's own (pitchMin, pitchMax), any other gun its absolute limits
@@ -565,7 +605,7 @@
   }
 
   root.BullbaTtx = {values: values, display: display, better: better, compare: compare, loading: loading,
-    reloadLine: reloadLine, lineCompare: lineCompare, GROUPS: GROUPS,
+    reloadLine: reloadLine, lineCompare: lineCompare, GROUPS: GROUPS, devices: devices, deviceText: deviceText,
     match: match, pairKey: pairKey, pairIndex: pairIndex, groups: groups,
     dr: dr, rp: rp, nice: nice, integral: integral, ceilTo: ceilTo, shotsPerMinute: shotsPerMinute};
 }(typeof window === 'undefined' ? globalThis : window));

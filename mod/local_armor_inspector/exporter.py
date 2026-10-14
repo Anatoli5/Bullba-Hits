@@ -41,7 +41,7 @@ STAND_CHANGED = tuple(getattr(_client_code, 'STAND_CHANGED', ()))
 STAND_CLIENT = getattr(_client_code, 'STAND_CLIENT', None)
 
 LOG = logging.getLogger('local.armor_inspector')
-VERSION = '1.01'
+VERSION = '1.02'
 RESOURCE = re.compile(r'^(?:[A-Za-z0-9_-]+/)?vehicles/[A-Za-z0-9_/-]+\.(?:model|havok)\Z')
 IDENTIFIER = re.compile(r'^[-a-zA-Z0-9_]{1,100}\Z')
 # The interface icons of the aim configuration (equipment, perks, shells) ship with the page in web/icons
@@ -2754,7 +2754,9 @@ SWEEP_PACE_ITEMS = 10
 # page's own per-type request as well as the sweep (whose keys it changes). 2 (26.09): the shells' traceRicochet.
 # 3 (26.09): the aim blocks' gunPitchSpeed and shotOffsets (gun_statics). 4 (26.09): vehicle.fitment (fitment_block: the
 # tags and the field modification tree), so a shooter known only from this file gets his tree and the garage's rules.
-TTX_FORMAT = 4
+# 5 (12.10): the modules' durability (device_health: modules.chassis/engine/radio/fuelTank 'health', a pair's 'devices'),
+# the engine's fireStartingChance and the suspension's drivingWheelsSizes.
+TTX_FORMAT = 5
 TTX_SOURCE = re.compile(r'^(?:[^/]+/)?scripts/(?:item_defs/vehicles/|common/items/)')
 TTX_SOURCE_SKIP = re.compile(r'item_defs/vehicles/common/(?:customization|damage_stickers|player_emblems|'
                              r'forbidden_vehicles_to_battle_config|equipments|optional_devices|post_progression|prefab_effects)'
@@ -2958,6 +2960,15 @@ def ttx_module(component):
     return {'name': str(component.name), 'userString': ttx_text(component), 'level': int(component.level)}
 
 
+def device_health(source):
+    """The durability of one module as the client keeps it (shared_components.DeviceHealth, read by
+    shared_readers.readDeviceHealthParams): maxHealth - whole - and maxRegenHealth - what the crew's own repair in the field
+    brings a destroyed module back to. `source` is the DeviceHealth itself (the hull's
+    ammoBayHealth, a turret's turretRotatorHealth and surveyingDeviceHealth) or a module that carries the two figures as
+    its own (the suspension - its main track pair's - the engine, the radio, the fuel tank, the gun)."""
+    return {'maxHealth': float(source.maxHealth), 'maxRegenHealth': float(source.maxRegenHealth)}
+
+
 def ttx_levels_factor(value):
     """One factor of type.optDevsOverrides. The client keeps it as a LevelsFactor (items/components/
     supply_slot_categories.pyc, __slots__ opType and values): values holds one number per level of the
@@ -3125,6 +3136,15 @@ def ttx_pair(descr, turret_index, gun_name, top):
         except Exception:
             warnings.append('Second-mode pitch limits unavailable')
     ttx_take(config, 'reloadExtra', lambda: ttx_reload_extra(descr), warnings, 'Mechanics reload')
+    # The durability of the modules that go with the pair (12.10): the gun's own, the turret's ring and vision devices, and
+    # the ammunition rack of the hull the client picked with this turret. The crew has no such figures in the client.
+    devices = {}
+    ttx_take(devices, 'gun', lambda: device_health(gun), warnings, 'Gun durability')
+    ttx_take(devices, 'turretRotator', lambda: device_health(descr.turret.turretRotatorHealth), warnings, 'Turret ring durability')
+    ttx_take(devices, 'surveyingDevice', lambda: device_health(descr.turret.surveyingDeviceHealth), warnings,
+             'Vision devices durability')
+    ttx_take(devices, 'ammoBay', lambda: device_health(descr.hull.ammoBayHealth), warnings, 'Ammunition rack durability')
+    if devices: config['devices'] = devices
     return config, warnings
 
 
@@ -3288,14 +3308,39 @@ def ttx_block(type_name, version, log=True):
             if speed != 1.0: block['repairSpeed'] = speed
         except Exception:
             warnings.append('Suspension repair speed of the skill tree unavailable')
+        # The suspension's durability (12.10) - a track's, the main pair's - and, on tracks, the sizes of its two driving
+        # wheels as the client counts them (vehicles._readChassis: the radius of the wheels the XML names in drivingWheels,
+        # front then rear, x WHEEL_SIZE_COEF 2.2). The XML's bulkHealthFactor - what the durability is multiplied by away
+        # from those wheels - is not here: the client does not load it (read only `if not IS_CLIENT and not IS_BOT`; the
+        # descriptor holds the class default 0.0), and this file carries what the client itself holds.
+        ttx_take(block, 'health', lambda: device_health(component), warnings, 'Suspension durability')
+        pairs = getattr(component, 'trackPairs', None) or ()
+        if pairs:
+            ttx_take(block, 'drivingWheelsSizes', lambda: [float(item) for item in component.drivingWheelsSizes], warnings,
+                     'Driving wheels')
+        # Two pairs of tracks (the M-VI-Yoh): each pair's own durability, in the chassis's own order, as repairTime is.
+        if len(pairs) > 1:
+            ttx_take(block, 'pairsHealth', lambda: [device_health(pair.healthParams) for pair in pairs], warnings,
+                     'Track pairs durability')
         return block
 
     def engine():
         block = ttx_module(descr.engine)
         block['power'] = float(descr.engine.power)
+        ttx_take(block, 'health', lambda: device_health(descr.engine), warnings, 'Engine durability')
+        ttx_take(block, 'fireStartingChance', lambda: float(descr.engine.fireStartingChance), warnings, 'Engine fire chance')
+        return block
+
+    def carried(attribute, label):
+        """The radio or the fuel tank the descriptor was raised to: its name and its durability."""
+        component = getattr(descr, attribute)
+        block = ttx_module(component)
+        ttx_take(block, 'health', lambda: device_health(component), warnings, label + ' durability')
         return block
     ttx_take(modules, 'chassis', chassis, warnings, 'Chassis')
     ttx_take(modules, 'engine', engine, warnings, 'Engine')
+    ttx_take(modules, 'radio', lambda: carried('radio', 'Radio'), warnings, 'Radio')
+    ttx_take(modules, 'fuelTank', lambda: carried('fuelTank', 'Fuel tank'), warnings, 'Fuel tank')
     turrets, configs, shells = [], [], {}
     candidates = list(vtype.turrets[0])
     top_turret = best_component(candidates)

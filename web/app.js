@@ -6560,7 +6560,7 @@
     var range=shotRange();
     var pen=Number($('penetration').value),cal=Number($('caliber').value),alphaValue=$('alpha').value,pool=manualPool();
     var shell=shellAt(c,choice,pen,cal,range,activeHit,pool,alphaValue),r=viewer&&viewer.shotProbability(shell),output=$('shot-chance');
-    var pinned=!!(viewer&&viewer.pinned),line=armorLine(r,shell?shell.penetration:null,range);fillPanel('shot',line,shell&&shell.alpha);
+    var pinned=!!(viewer&&viewer.pinned),line=armorLine(r,shell?shell.penetration:null,range,{shell:shell,hit:pinned?null:activeHit});fillPanel('shot',line,shell&&shell.alpha);
     // A shell of a gun picked on the characteristics panel (24.09) is not the record's: the Statistics log keeps one
     // line per point and shell TYPE (tools/verdicts_from_log.py), and another gun's AP would take the recorded AP's place.
     if(!(c&&c.emuGun))logVerdicts(shell);
@@ -6810,7 +6810,13 @@
   }
   // Compact reading of one ballistic result: the chance first, then the numbers that explain it.
   // One ballistic result as readable groups: chance, then "effective ← nominal – angle", then "pen / range", then screens.
-  function armorLine(r,pen,range){
+  // `of` (12.10): {shell, hit} - the shell the line was judged with and, on the recorded line, its hit - for the track chip.
+  function armorLine(r,pen,range,of){
+    var line=armorLineOf(r,pen,range),track=r?trackGroup(r,of||{}):null;
+    if(track)line.groups.push(track);
+    return line;
+  }
+  function armorLineOf(r,pen,range){
     if(!r)return {label:'—',color:'',groups:[]};
     var prefix=[],hp=damageView&&r.expected!==null&&r.expected!==undefined;
     // After a ricochet (ballistics.js engine.bounced): the chip names what the shell had left at the ricochet and what the
@@ -6839,16 +6845,113 @@
     if(prefab&&prefab.prefab)armor.title=prefabTitle(prefab,parts);
     return {label:hp?damageShare(r):r.chance+'%',color:chanceRgb(r),groups:prefix.concat([armor],hp?damageGroups(r):[],shell,extra)};
   }
+  // THE TRACK UNDER THE POINT (12.10, user: what it takes to break a track). When the first plate a line meets is a track,
+  // the panel gets one chip of FACTS: what the track takes at that spot and what the shell deals. What is known and from where
+  // (outputs/modules-research-2026-10-12.md, WoT-Base KNOWLEDGE-mechanics 12.10):
+  //   - a track with armour takes the shell's ALPHA, rolled like any damage (vehicles._readArmor: damageKind 'armor');
+  //   - its durability is the suspension's maxHealth (the target type's characteristics file, the TOP suspension) at the two
+  //     driving wheels and TRACK_BULK times that along the rest - the XML's bulkHealthFactor, 3.0 on 1775 of the 1776 chassis
+  //     of client 2.4.0.2 and 5.0 on one (TRACK_BULK_OF). The game client does not load that figure (_readChassis reads it only
+  //     off the client), so no file of the mod can carry it per vehicle: a constant here, checked against the XML on 12.10.2026;
+  //   - the zone of a driving wheel: the client gives its SIZE (chassis.drivingWheelsSizes: front and rear, the wheel's radius
+  //     x 2.2), not its place. MEASURED on the user's records (4828 hits with a track as the first contact): the size counted
+  //     from the track's own end along the hull - the front size at the front end, the rear at the rear. Among the hits whose
+  //     alpha breaks a track at a wheel on any roll and never elsewhere, 76 % broke it inside that distance (1384 hits) and
+  //     13 % outside (1442); the step is at 0.95-1.05 of the size. The track's ends are the collision model's (trackSpan).
+  // NO VERDICT (the same records): where "any roll breaks it" by these figures, 78 % of 1517 hits did - the share reaches
+  // 100 % only from alpha = 2.2 x durability. The target's Improved Hardening multiplies a track's durability by 1.5, by 1.65
+  // in a slot of its own category (TRACK_HARDENING: the client's optional_devices.xml, miscAttrs/chassisHealthFactor), and
+  // 1.65 / 0.75 = 2.2; a record does not say what the target mounts, nor what damage its track already carries. So the chip
+  // says what is known and the tooltip names what is not.
+  var TRACK_BULK=3,TRACK_BULK_OF={'germany:G107_PzKpfwIII_AusfK':5},TRACK_HARDENING=[1.5,1.65],TRACK_ASK_MS=5000;
+  function trackBulk(type){return TRACK_BULK_OF[String(type||'')]||TRACK_BULK;}
+  // [lowest, highest] z of one track in the engine's frame (the vehicle's own with z mirrored: the FRONT end is the
+  // lowest), kept on the engine that holds the triangles; null when the engine has no such track.
+  function trackSpan(engine,part,material){
+    var memo=engine.trackSpans||(engine.trackSpans={}),key=part+':'+material,span=memo[key];
+    if(span===undefined){
+      var lo=Infinity,hi=-Infinity;
+      (engine.triangles||[]).forEach(function(t){if(t.part===part&&t.name===material){if(t.min[2]<lo)lo=t.min[2];if(t.max[2]>hi)hi=t.max[2];}});
+      span=memo[key]=hi>lo?[lo,hi]:null;
+    }
+    return span;
+  }
+  // The characteristics file of the vehicle on screen, for its suspension: from the cache, else asked for once (readTtx -
+  // the health bar's and the panel's own read when they have asked) and the hit line painted again when it comes.
+  var trackAsked='',trackAskedAt=0;
+  function trackFile(type){
+    var id=type?typeId(type):'',file=id&&ttxCache?ttxCache[id]:null;
+    if(file||!id||!TTX)return file||null;
+    // A file that is not there is not asked for again on every move of the cursor over a track: once per vehicle, and
+    // again after TRACK_ASK_MS (the cache keeps eight files; one dropped from it is read again).
+    var now=Date.now();
+    if(trackAsked!==id||now-trackAskedAt>TRACK_ASK_MS){trackAsked=id;trackAskedAt=now;readTtx(type).then(function(t){if(t&&viewer&&!sceneBuild)shotStats();});}
+    return null;
+  }
+  // What is under the first contact of a judged line, when that is a track: {side, whole, bulk, zone, size} - the durability
+  // at a driving wheel, the factor of the rest, and the zone the point is in ('front', 'rear' - within `size` metres of that
+  // end - 'bulk', or '' when it cannot be told: no sizes in the file, no track in the model). null: not a track, a vehicle
+  // with two pairs of tracks (which pair a face belongs to is not told apart here), or no figures for this vehicle.
+  function trackFacts(r){
+    if(!r||!viewer||!viewer.engine)return null;
+    var b=r.bounce,first=((b?b.layers:r.layers)||[])[0],o=b?b.from:r.origin,d=b?b.along:r.direction;
+    var m=first&&/^(left|right)Track$/.exec(String(first.material||''));
+    if(!m)return null;
+    var target=viewer.loadedData&&viewer.loadedData.hit&&viewer.loadedData.hit.target,type=target&&target.type?String(target.type):'';
+    var file=trackFile(type),chassis=file&&file.modules&&file.modules.chassis,health=chassis&&chassis.health,whole=health?Number(health.maxHealth):0;
+    if(!(whole>0)||(Array.isArray(chassis.pairsHealth)&&chassis.pairsHealth.length>1))return null;
+    var out={side:m[1],whole:whole,bulk:trackBulk(type),zone:'',size:0};
+    var sizes=chassis.drivingWheelsSizes,span=trackSpan(viewer.engine,first.part,first.material);
+    if(Array.isArray(sizes)&&sizes.length===2&&sizes[0]>0&&sizes[1]>0&&span&&o&&d&&isFinite(first.distance)){
+      var z=o[2]+d[2]*first.distance;
+      if(z-span[0]<=sizes[0]){out.zone='front';out.size=Number(sizes[0]);}
+      else if(span[1]-z<=sizes[1]){out.zone='rear';out.size=Number(sizes[1]);}
+      else out.zone='bulk';
+    }
+    return out;
+  }
+  // What the record says of this hit's track: 'broken' with the track's name, 'held' when the battle's log of the vehicles'
+  // public state is there and names no track at this hit, '' when the record cannot tell (no such log, not a recorded line).
+  function trackRecord(hit){
+    if(!hit||hit.synthetic||hit.vehicle||!Array.isArray(hit.points)||!hit.points.length)return {state:'',name:''};
+    var item=ArmorCrits.items(hit).filter(function(it){return it.type==='track'&&it.state==='destroyed';})[0];
+    if(item){var m=/^(left|right)Track/.exec(String(item.extra||''));return {state:'broken',name:m?m[1]+' track':'track'};}
+    var events=current&&current.critStats&&current.critStats.events;
+    return {state:events&&events.publicState>0?'held':'',name:''};
+  }
+  function trackGroup(r,of){
+    var f=trackFacts(r);if(!f)return null;
+    var hp=function(x){return Math.round(x)+' HP';},rest=f.whole*f.bulk,here=f.zone==='bulk'?rest:f.zone?f.whole:0;
+    var shell=of.shell,alpha=shell&&shell.alpha>0?Number(shell.alpha):0,spread=funRandomization(shell);
+    var dealt=alpha?Math.ceil(alpha*(1-spread))+'–'+Math.floor(alpha*(1+spread)):'',record=trackRecord(of.hit);
+    var text=(f.zone==='bulk'?'track '+hp(rest)+' ('+Math.round(f.whole)+' × '+f.bulk+')':f.zone?'track '+hp(f.whole)+' at the driving wheel':'track '+hp(f.whole)+' at a driving wheel, '+Math.round(rest)+' elsewhere')+
+      (dealt?' · shell '+dealt:'')+(record.state==='broken'?' · broken':'');
+    var where=f.zone==='bulk'?'between the driving wheels':f.zone?'at the '+f.zone+' driving wheel, within '+f.size.toFixed(2)+' m of the track’s end':'';
+    return {kind:'track',text:text,title:tipJoin(['Track under the point','What this spot of the '+f.side+' track takes and what the shell deals: facts, not a verdict.',
+      where?'• Zone: '+where:null,
+      here?'• Durability here: '+hp(here)+(f.zone==='bulk'?' = '+Math.round(f.whole)+' × '+f.bulk:''):null,
+      f.zone!=='bulk'||!here?'• '+(here?'Between':'Durability between')+' the driving wheels: '+hp(rest)+' (× '+f.bulk+')':null,
+      f.zone==='bulk'||!here?'• '+(here?'At':'Durability at')+' a driving wheel: '+hp(f.whole):null,
+      dealt?'• Shell damage: '+dealt+' HP ('+Math.round(alpha)+' ± '+Math.round(spread*100)+' %)':null,
+      record.state==='broken'?'• Record: the '+record.name+' was broken at this hit (matched by vehicle and time)':record.state==='held'?'• Record: no track was reported broken at this hit':null,
+      '',
+      '• Not known here: the target’s equipment, the damage its track already has',
+      '• Improved Hardening on the target: durability × '+TRACK_HARDENING[0]+', × '+TRACK_HARDENING[1]+' in its own slot',
+      '',
+      '• Durability: the vehicle’s top suspension, from its characteristics',
+      '• × '+f.bulk+': the figure of the client’s files; the game client does not load it',
+      where?'• Zone: the client’s size of the driving wheel, placed from the track’s end as recorded hits show':null])};
+  }
   function chips(container,line){container.replaceChildren();line.groups.forEach(function(g){var chip=node('span',g.text,'chip '+g.kind);if(g.title)chip.title=g.title;container.appendChild(chip);});}
   // Fill an info panel: the title, the chance, then the penetration chip on a row of its own above the armour chips.
   // The shell's alpha rides on the chance line as a muted "/ 390 alpha" (user, 20.09): the line has the room, and
   // the share figures around it are read against that number.
-  function fillPanel(prefix,line,alpha){var by=function(k){return line.groups.filter(function(g){return (g.kind==='screen')===(k==='screen')&&(k==='screen'||(g.kind==='pen')===(k==='pen'));});};
+  function fillPanel(prefix,line,alpha){var low=function(g){return g.kind==='screen'||g.kind==='track';},by=function(k){return line.groups.filter(function(g){return low(g)===(k==='screen')&&(k==='screen'||(g.kind==='pen')===(k==='pen'));});};
     var chance=$(prefix+'-chance');chance.replaceChildren(document.createTextNode(line.label));chance.style.color=line.color;
     if(alpha>0){var a=node('span','/ '+Math.round(alpha),'info-alpha');a.title='The shell’s alpha damage, HP';chance.appendChild(a);}chips($(prefix+'-pen'),{groups:by('pen')});chips($(prefix+'-details'),{groups:by('rest')});chips($(prefix+'-extra'),{groups:by('screen')});}
   function inspectArmor(r){
     var range=shotRange();
-    fillPanel('probe',armorLine(r,viewer&&viewer.shell?viewer.shell.penetration:null,range),viewer&&viewer.shell&&viewer.shell.alpha);
+    fillPanel('probe',armorLine(r,viewer&&viewer.shell?viewer.shell.penetration:null,range,{shell:viewer&&viewer.shell}),viewer&&viewer.shell&&viewer.shell.alpha);
   }
   // Heading: which battle this is - date and start time, the map, and the vehicle the player was in.
   function battleStamp(seconds){if(!Number.isFinite(seconds))return '';var d=new Date(seconds*1000);return d.toLocaleDateString('en-GB')+' \u00b7 '+d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});}
@@ -9057,13 +9160,58 @@
       'avgDamagePerMinute', 'stabMovement', 'stabRotation', 'stabTurret', 'stabAfterShot', cur.kind === 'overheat' ? 'overheat' : '', 'maxAmmo']);
     // RELATIVE_ARMOR_PARAMS: the hit points, the hull's and the turret's armour - no turret line where the turret is the
     // hull's fake one (the garage's __hasTurret, vehicle.hasTurret) - and the suspension's repair time.
-    rows(ttxSection(box, 'relativeArmor'), ['maxHealth', 'hullArmor', ttxData.vehicle && ttxData.vehicle.hasTurret === false ? '' : 'turretArmor', 'chassisRepairTime']);
+    var armour = ttxSection(box, 'relativeArmor');
+    rows(armour, ['maxHealth', 'hullArmor', ttxData.vehicle && ttxData.vehicle.hasTurret === false ? '' : 'turretArmor', 'chassisRepairTime']);
+    ttxPaintDevices(armour, cur);
     // RELATIVE_MOBILITY_PARAMS: weight, power, specific power, speed, the hull (or the wheels' lock), the mode's switch;
     // the terrain is an extra KPI of the group (medium / soft ground factors).
     rows(ttxSection(box, 'relativeMobility'), ['vehicleWeight', 'enginePower', 'enginePowerPerTon', 'speedLimits', ttxRowKey('hull', cur),
       cur.switchTime ? 'switchTime' : '', cur.autoSiege ? 'autoSiege' : '', 'terrainResistance']);
     rows(ttxSection(box, 'relativeCamouflage'), ['invisibilityStillFactor', 'invisibilityMovingFactor', 'invisibilityAfterShot']);
     rows(ttxSection(box, 'relativeVisibility'), ['circularVisionRadius']);
+  }
+  // THE MODULES (12.10, user: the modules' durability goes into the file with the other characteristics). One line of
+  // cells under Survivability in the expanded view, in the order of the game's damage panel: the client's own icon of
+  // the module and its two figures - whole / after the crew's own repair in the field (web/ttx.js devices; the file's
+  // format 5). The engine's fire chance is a cell of its own beside the engine. The figures are the client's XML: no
+  // device, skill or field modification is counted in them, in either view. A file without them: no block at all.
+  var TTX_DEVICE_NAMES = {ammoBay: 'Ammo rack', engine: 'Engine', fuelTank: 'Fuel tanks', radio: 'Radio', gun: 'Gun',
+    turretRotator: 'Turret ring', surveyingDevice: 'Vision devices', track: 'Track', wheel: 'Wheels'};
+  var TTX_DEVICE_OF = {ammoBay: 'of this pair’s hull', gun: 'of the gun on the panel', turretRotator: 'of this pair’s turret',
+    surveyingDevice: 'of this pair’s turret', engine: 'of the top engine', fuelTank: 'of the top fuel tank', radio: 'of the top radio',
+    track: 'of the top suspension', wheel: 'of the top suspension'};
+  function ttxDeviceCell(key, src, text, title) {
+    var cell = node('span', undefined, 'ttx-device'), img = node('img', undefined, 'crit-icon');
+    cell.setAttribute('data-device', key);
+    img.alt = ''; img.setAttribute('aria-hidden', 'true'); img.draggable = false; img.src = src;
+    cell.appendChild(img); cell.appendChild(node('b', text, 'ttx-val'));
+    cell.title = title;
+    return cell;
+  }
+  function ttxPaintDevices(sec, v) {
+    var list = v && v.devices;
+    if (!list || !list.length) return;
+    var box = node('div', undefined, 'ttx-devices');
+    box.setAttribute('data-block', 'modules');
+    box.setAttribute('role', 'group');
+    box.setAttribute('aria-label', 'Modules');
+    box.title = tipJoin(['Modules', 'The durability of each module, HP.',
+      '• First figure: a whole module', '• Second: after the crew’s own repair in the field',
+      '• Flame: the engine’s chance to catch fire', '',
+      '• The client’s own figures; equipment, skills and field modifications are not counted']);
+    list.forEach(function (d) {
+      var name = TTX_DEVICE_NAMES[d.key] || d.key;
+      if (d.key === 'track' && d.pairs > 1) name = d.pair === 0 ? 'Track, the main pair' : 'Track, pair ' + (d.pair + 1);
+      box.appendChild(ttxDeviceCell(d.key, 'web/icons/crits/' + d.key + 'CriticalSmall.png', BullbaTtx.deviceText(d), tipJoin([name,
+        'The module’s durability ' + (TTX_DEVICE_OF[d.key] || '') + ', HP.',
+        '• Whole: ' + BullbaTtx.integral(d.health[0]), '• After the crew’s own repair: ' + BullbaTtx.integral(d.health[1]),
+        d.key === 'track' ? '• At the driving wheels; between them a track takes ' + trackBulk(ttxType) + ' times as much' : null])));
+      if (d.fire !== undefined && d.fire !== null) box.appendChild(ttxDeviceCell('fire', 'web/icons/crits/damageLog_fire_16x16.png',
+        BullbaTtx.nice(d.fire * 100) + ' %', tipJoin(['Engine fire',
+          'The engine’s chance to catch fire when a shell damages it.', '• The top engine: ' + BullbaTtx.nice(d.fire * 100) + ' %',
+          '• Not counted: what lowers it - equipment, consumables, skills'])));
+    });
+    sec.appendChild(box);
   }
   // The panel's controls, wired once (index.html holds the markup; the settings menu keeps ⚙'s state). The compact
   // view (TTX_COMPACT): the hit points in the head, then Firepower, Mobility and Concealment - every figure a row of the

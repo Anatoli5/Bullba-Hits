@@ -113,9 +113,13 @@ try:
     for name, mod in list(sys.modules.items()):
         if mod is None or not hasattr(mod, '__dict__'): continue
         for value in vars(mod).values():
-            for fn in (value, getattr(value, '__init__', None)):
+            # A dict2model field at a module's top level (client 2.4.1.0) raises on any attribute read: data, not code.
+            try:
+                fns, owner = (value, getattr(value, '__init__', None)), getattr(value, '__module__', None)
+            except Exception: continue
+            for fn in fns:
                 code = getattr(fn, 'func_code', None) or getattr(getattr(fn, 'im_func', None), 'func_code', None)
-                if code is not None and getattr(value, '__module__', None) == name:
+                if code is not None and owner == name:
                     module_of.setdefault(code.co_filename, name)
     pkg = zipfile.ZipFile(GAME + '/res/packages/scripts.pkg')
 

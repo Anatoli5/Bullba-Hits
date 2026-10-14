@@ -697,8 +697,9 @@
         // penetration: the leg's nominal (the scale its chance and `effective` are read against); remaining: what the
         // first leg had left at the ricochet; carried: what the second leg starts with.
         var keep=1-s.ricochetLoss;
+        // from, along: the first leg's own line - where its plates (layers, each with its distance along it) were met.
         second.bounce={point:point,normal:n,direction:out,nominal:r.nominal,angle:r.angle,penetration:s.penetration*keep,remaining:r.remaining,
-          carried:carried(s,r.remaining),shell:s.penetration,loss:s.ricochetLoss,layers:r.layers,part:h.triangle.part};
+          carried:carried(s,r.remaining),shell:s.penetration,loss:s.ricochetLoss,layers:r.layers,part:h.triangle.part,from:o,along:d};
         return second;
       }
       return r;

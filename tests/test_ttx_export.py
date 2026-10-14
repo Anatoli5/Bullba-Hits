@@ -16,10 +16,17 @@ from unittest.mock import patch
 from mod.local_armor_inspector import exporter as ex
 
 
+def health(whole, regen):
+    """A device's durability as the client keeps it (DeviceHealth): the two figures the file takes."""
+    return types.SimpleNamespace(maxHealth=whole, maxRegenHealth=regen)
+
+
 class Item(object):
     def __init__(self, name, level, **fields):
         self.name, self.level, self.compactDescr = name, level, 'cd:' + name
         self.userString = name.upper()
+        # Every installable module carries its durability as its own two figures (12.10): 100 and 50 a level here.
+        self.maxHealth, self.maxRegenHealth = 100 * level, 50 * level
         self.__dict__.update(fields)
 
 
@@ -46,16 +53,19 @@ def fake_type(unmountable=None):
     g1a, g1b = Gun('g_75', 8), BrokenGun('g_88', 9)
     g2a, g2b = Gun('g_75', 8), Gun('g_105', 9, tags=('dualGun',))
     turrets = [Item('turret_1', 8, guns=[g1a, g1b], circularVisionRadius=380.0, invisibilityFactor=1.0,
-                    primaryArmor=(120.0, 80.0, 60.0)),
+                    primaryArmor=(120.0, 80.0, 60.0), turretRotatorHealth=health(140, 70), surveyingDeviceHealth=health(90, 45)),
                Item('turret_2', 9, guns=[g2a, g2b], circularVisionRadius=400.0, invisibilityFactor=0.95,
-                    primaryArmor=(152.39999389648438, 80.0, 60.0))]
+                    primaryArmor=(152.39999389648438, 80.0, 60.0), turretRotatorHealth=health(160, 80),
+                    surveyingDeviceHealth=health(110, 55))]
     # The suspension's repair (23.09): the top chassis has two track pairs, the other one its own healthParams only.
-    track = lambda t: types.SimpleNamespace(healthParams=types.SimpleNamespace(repairTime=t))
+    track = lambda t, whole=120, regen=85: types.SimpleNamespace(
+        healthParams=types.SimpleNamespace(repairTime=t, maxHealth=whole, maxRegenHealth=regen))
     vtype = types.SimpleNamespace(
         name='germany:G1_Test', turrets=[turrets],
         chassis=[Item('ch_1', 8, terrainResistance=(1.0, 1.2, 2.0), trackPairs=(), repairTime=7.0),
-                 Item('ch_2', 9, terrainResistance=(0.9, 1.1, 1.9), trackPairs=(track(5.2941179275512695), track(6.857142925262451)))],
-        engines=[Item('en_1', 8, power=500000.0), Item('en_2', 9, power=600000.0)],
+                 Item('ch_2', 9, terrainResistance=(0.9, 1.1, 1.9), drivingWheelsSizes=(0.5, 0.75), maxHealth=120, maxRegenHealth=85,
+                      trackPairs=(track(5.2941179275512695), track(6.857142925262451, 240, 180)))],
+        engines=[Item('en_1', 8, power=500000.0, fireStartingChance=0.2), Item('en_2', 9, power=600000.0, fireStartingChance=0.15)],
         radios=[Item('ra_1', 9)], fuelTanks=[Item('ft_1', 1)],
         invisibility=(0.1, 0.2), invisibilityDeltas={'camouflageBonus': 0.03},
         optDevsOverrides={'camouflageNet': {'invisibilityBonus': types.SimpleNamespace(opType=None, values=(0.05, 0.075))}},
@@ -77,7 +87,7 @@ class Descriptor(object):
         self.mechanicsParams = {}
         # A real turret unless the type says its turret is the hull's fake one (params __hasTurret).
         self.hull = types.SimpleNamespace(fakeTurrets={'lobby': getattr(vtype, 'fakeTurrets', ()), 'battle': ()},
-                                          primaryArmor=(150.0, 150.0, 100.0))
+                                          primaryArmor=(150.0, 150.0, 100.0), ammoBayHealth=health(200, 135))
 
     @property
     def turrets(self):
@@ -148,7 +158,8 @@ class TtxBlockTests(unittest.TestCase):
         self.assertEqual(block['modules']['chassis']['terrainResistance'], [0.9, 1.1, 1.9])
         self.assertIsNone(block['modules']['chassis']['maxSteeringLockAngle'])
         self.assertEqual(block['modules']['engine'], {'name': 'en_2', 'userString': 'EN_2', 'level': 9,
-                                                       'power': 600000.0})
+                                                       'power': 600000.0, 'health': {'maxHealth': 900.0, 'maxRegenHealth': 450.0},
+                                                       'fireStartingChance': 0.15})
         self.assertEqual([t['name'] for t in block['turrets']], ['turret_1', 'turret_2'])
         self.assertEqual(block['turrets'][1]['circularVisionRadius'], 400.0)
 
@@ -201,6 +212,47 @@ class TtxBlockTests(unittest.TestCase):
         self.assertEqual(block['modules']['chassis']['repairTime'], [5.2941179275512695, 6.857142925262451])
         self.assertIs(block['vehicle']['modes']['trackWithinTrack'], False)
         self.assertEqual(block['warnings'], ['turret_1 x g_88: Ammunition unavailable'])
+
+    def test_the_modules_durability_is_in_the_file(self):
+        # 12.10 (TTX_FORMAT 5): whole / after the crew's own repair of every device the client keeps figures for - the top
+        # modules of the type, and per pair the gun, the turret's two and the ammunition rack of the hull.
+        block = self.build(fake_type())
+        self.assertEqual(block['format'], ex.TTX_FORMAT)
+        self.assertGreaterEqual(ex.TTX_FORMAT, 5)
+        modules = block['modules']
+        self.assertEqual(modules['chassis']['health'], {'maxHealth': 120.0, 'maxRegenHealth': 85.0})
+        self.assertEqual(modules['chassis']['pairsHealth'], [{'maxHealth': 120.0, 'maxRegenHealth': 85.0},
+                                                             {'maxHealth': 240.0, 'maxRegenHealth': 180.0}])
+        self.assertEqual(modules['chassis']['drivingWheelsSizes'], [0.5, 0.75])
+        self.assertNotIn('bulkHealthFactor', modules['chassis'])   # the client does not load it
+        self.assertEqual(modules['radio'], {'name': 'ra_1', 'userString': 'RA_1', 'level': 9,
+                                            'health': {'maxHealth': 900.0, 'maxRegenHealth': 450.0}})
+        self.assertEqual(modules['fuelTank']['health'], {'maxHealth': 100.0, 'maxRegenHealth': 50.0})
+        self.assertEqual([c['devices'] for c in block['configs']], [
+            {'gun': {'maxHealth': 100.0 * level, 'maxRegenHealth': 50.0 * level}, 'turretRotator': {'maxHealth': ring[0], 'maxRegenHealth': ring[1]},
+             'surveyingDevice': {'maxHealth': optics[0], 'maxRegenHealth': optics[1]}, 'ammoBay': {'maxHealth': 200.0, 'maxRegenHealth': 135.0}}
+            for level, ring, optics in ((8, (140.0, 70.0), (90.0, 45.0)), (9, (140.0, 70.0), (90.0, 45.0)),
+                                        (8, (160.0, 80.0), (110.0, 55.0)), (9, (160.0, 80.0), (110.0, 55.0)))])
+
+    def test_a_device_the_client_refuses_costs_that_figure_only(self):
+        # A turret without its ring's figures, an engine without a fire chance, a chassis on wheels: a line each, the rest stays.
+        vtype = fake_type()
+        del vtype.turrets[0][1].turretRotatorHealth
+        del vtype.engines[1].fireStartingChance
+        vtype.chassis[1].trackPairs = ()
+        vtype.chassis[1].repairTime = 9.0
+        block = self.build(vtype)
+        self.assertEqual([sorted(c['devices']) for c in block['configs']],
+                         [['ammoBay', 'gun', 'surveyingDevice', 'turretRotator']] * 2 + [['ammoBay', 'gun', 'surveyingDevice']] * 2)
+        self.assertNotIn('fireStartingChance', block['modules']['engine'])
+        self.assertEqual(block['modules']['engine']['health'], {'maxHealth': 900.0, 'maxRegenHealth': 450.0})
+        # No track pairs: the suspension's own figures, and neither driving wheels nor pairs.
+        self.assertEqual(block['modules']['chassis']['health'], {'maxHealth': 120.0, 'maxRegenHealth': 85.0})
+        self.assertNotIn('drivingWheelsSizes', block['modules']['chassis'])
+        self.assertNotIn('pairsHealth', block['modules']['chassis'])
+        self.assertEqual(block['warnings'], ['Engine fire chance unavailable', 'turret_1 x g_88: Ammunition unavailable',
+                                             'turret_2 x g_75: Turret ring durability unavailable',
+                                             'turret_2 x g_105: Turret ring durability unavailable'])
 
     def test_the_repair_times_as_the_garage_reads_them(self):
         # params.VehicleParams.chassisRepairTime 883-897: every track pair's own time, [] when one has none; a chassis
