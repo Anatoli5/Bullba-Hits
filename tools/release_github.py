@@ -82,6 +82,17 @@ def changelog_section(version, text=None):
     return text
 
 
+def with_unreleased(version, text, published):
+    """The notes of <version>: its own section, then - each under its own heading - the sections of the builds after the
+    newest published release that were never released themselves (1.02 after the release of 1.0 carries 1.01's)."""
+    names = [l[3:].split(' ')[0] for l in text.splitlines() if l.startswith('## ')]
+    parts = [changelog_section(version, text)]
+    for name in (names[names.index(version) + 1:] if version in names else []):
+        if name in published: break
+        parts.append('### ' + name + ' (not released on its own)\n\n' + changelog_section(name, text))
+    return '\n\n'.join(parts)
+
+
 tag = 'v' + VERSION
 report = json.loads((ROOT / 'dist' / 'build.json').read_text(encoding='utf-8'))
 head = report.get('commit')
@@ -96,7 +107,8 @@ else:
     if not git('branch', '-r', '--contains', head):
         raise RuntimeError('The build commit ' + head[:10] + ' is not on the remote; push it before releasing')
     # The notes are the CHANGELOG of the build commit, not of the working copy.
-    changelog = changelog_section(VERSION, git('show', head + ':CHANGELOG.md'))
+    published = set(r['tag_name'].lstrip('v') for r in api('/repos/' + OWNER + '/' + NAME + '/releases?per_page=100'))
+    changelog = with_unreleased(VERSION, git('show', head + ':CHANGELOG.md'), published)
 # Two files, named so that GitHub's alphabetical asset list shows the installer first ("Setup" < "Sources").
 # The bare .wotmod is inside the ZIP; it is not attached on its own any more (user, 19.09: a pile of files nobody
 # can explain).
