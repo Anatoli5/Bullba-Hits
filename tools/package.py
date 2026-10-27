@@ -10,10 +10,11 @@ sys.path.insert(0,str(ROOT/'mod'))
 from local_armor_inspector.exporter import VERSION
 sys.path.insert(0,str(ROOT/'tools'))
 import third_party
+import client_version
 
 
 def package():
-    name='BullbaHits-'+VERSION+'-Sources-and-manual-install'
+    name='BullbaHits-'+VERSION+'-WoT-'+client_version.VERSION+'-Sources-and-manual-install'  # WoT-Base W17
     dest=ROOT/'dist'/name
     dest.mkdir(parents=True,exist_ok=True)
     sources=[ROOT/n for n in ('README.md','CHANGELOG.md','THIRD_PARTY.md')]

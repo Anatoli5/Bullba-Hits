@@ -1,7 +1,7 @@
 {
  "clients": {
-  "v.2.4.0.2 #964": {
-   "order": 1,
+  "v.2.4.1.0 #970": {
+   "order": 2,
    "types": {
     "china:Ch00_ClingeBot_SH": [
      "838472d37113b93b",
@@ -320,7 +320,7 @@
      "f01122de5683a046"
     ],
     "china:Ch61_DZT_159": [
-     "e1aff4391bd2540f",
+     "f73b689c79f2169b",
      "ba6d3a5ecef07e56"
     ],
     "china:Ch61_DZT_159_CFE_A": [
@@ -360,8 +360,8 @@
      "cc10613adcf5e329"
     ],
     "china:Ch72_Yongshi": [
-     "56589ea566a613e2",
-     "7ef28d1e985c8e4c"
+     "c24b4645a335dfae",
+     "59bd32cd214f08c7"
     ],
     "china:Ch74_Waffentrager_15": [
      "86a331e25a9a768a",
@@ -522,6 +522,10 @@
     "czech:Cz40_DBV_152": [
      "e7ce527985b90010",
      "9e00a89dfd9e1047"
+    ],
+    "czech:Cz41_Petra": [
+     "0493eb1c4b29670e",
+     "0772818fc024955f"
     ],
     "czech:Cz43_Ogar": [
      "9e1fffe5af471742",
@@ -735,9 +739,13 @@
      "a5b43485799a36f5",
      "415e659087b6f457"
     ],
+    "france:F145_Scarabee": [
+     "277d7f753f71ff30",
+     "e11f66a62d8077f5"
+    ],
     "france:F147_AMX29_Belier": [
-     "89099b12d2308b1c",
-     "4203e0a8f6694904"
+     "ab7876cdabdf305a",
+     "14c900d0940fa519"
     ],
     "france:F14_AMX40": [
      "5e51e43024fc44bf",
@@ -1315,6 +1323,10 @@
      "dd67c69d6ecd5543",
      "00aa4822deedfee2"
     ],
+    "germany:G121_Grille_15_L63_FR": [
+     "cc0b6b9a0fe37643",
+     "221e755cca9ec1f4"
+    ],
     "germany:G122_VK6501H": [
      "1a2c2d55e3f7122c",
      "9d9420cd77e7df5b"
@@ -1372,7 +1384,7 @@
      "664b037c365af037"
     ],
     "germany:G142_M48RPz": [
-     "ddae0478d4cc00f7",
+     "16411dd9dda4e589",
      "1d2097e2f3046ba8"
     ],
     "germany:G143_E75_TS": [
@@ -1580,8 +1592,8 @@
      "f33874fe15146654"
     ],
     "germany:G204_PzVI_Tiger_P_CFE_A": [
-     "5c69175bb6a98f56",
-     "c99a80bf4ea32113"
+     "0ec979d45ae7b006",
+     "f4076a1fbba91815"
     ],
     "germany:G20_Marder_II": [
      "677e7fb9d3863a38",
@@ -1911,6 +1923,10 @@
      "eed1218118ddd6db",
      "4799ae7c84b262a2"
     ],
+    "germany:G89_Leopard1_CFE_A": [
+     "ce42141135c5571f",
+     "dde582fcd412bc73"
+    ],
     "germany:G89_Leopard1_bob": [
      "5278aadd5dd287c2",
      "f42fce5daa4bac88"
@@ -2128,8 +2144,8 @@
      "35a31108edf2d6a6"
     ],
     "italy:It41_Cerbero": [
-     "525ed7f778cf9c41",
-     "cf6f14b696b7539f"
+     "126e2b266211760c",
+     "907a309208e245c9"
     ],
     "italy:It43_CAV_mod_71": [
      "41da5f9e698ae792",
@@ -2487,6 +2503,10 @@
      "7dcda229e6f0ad51",
      "81d02c1f51a682b1"
     ],
+    "poland:Pl27_SDP_Wz_66T_CFE_D": [
+     "0b2edeb87f72ec9e",
+     "3280e91bc1fcb20b"
+    ],
     "poland:Pl28_SDP_Wz_60": [
      "9a51d28b624fc7fa",
      "7d7a7f93efab055d"
@@ -2528,8 +2548,8 @@
      "47874029076c6321"
     ],
     "poland:Pl38_63TP_Rycerski": [
-     "b60759e4ca7c5369",
-     "b90ecba8fa3fb50b"
+     "8ea37bd9fa147edd",
+     "68047e3654fc0dbd"
     ],
     "poland:Pl39_Husarz": [
      "1e195da602b3d624",
@@ -2538,6 +2558,10 @@
     "poland:Pl40_Krazownik": [
      "7f5fcb2bcb64e579",
      "b22b8d076266c283"
+    ],
+    "poland:Pl43_Kruk": [
+     "16384c05fbaee39b",
+     "a51f50b1d1088a3c"
     ],
     "poland:Pl44_Kolczatka": [
      "a3982321531df024",
@@ -2711,6 +2735,10 @@
      "f710cea5ed6b3f85",
      "8560bea72b3c6677"
     ],
+    "sweden:S38_Huggorm": [
+     "26f1c418607bbc79",
+     "5008c7689f703380"
+    ],
     "sweden:S39_Strv_m31": [
      "61e0378ee8469964",
      "989fa2495440baf9"
@@ -2718,6 +2746,10 @@
     "sweden:S41_BV_111": [
      "fa0fea7e5c0d7754",
      "4a9ce225c5adcd16"
+    ],
+    "sweden:S42_Strv_T_fm_53": [
+     "f36cddd6b76509da",
+     "f45b3103d8b0d623"
     ],
     "uk:GB01_Medium_Mark_I": [
      "fc520af63d0169d3",
@@ -2840,7 +2872,7 @@
      "59246745f489cb01"
     ],
     "uk:GB116_Harry_Hopkins_I": [
-     "2a07d9181e658d5d",
+     "4cf31852c96608f1",
      "eaba41d03152fb65"
     ],
     "uk:GB11_Caernarvon": [
@@ -2908,8 +2940,8 @@
      "5db244cb9ba26e59"
     ],
     "uk:GB132_Taurus_CAT": [
-     "f4dc084b7485d352",
-     "8f46e21c46ba35c3"
+     "cdebfdad183c77db",
+     "795df96fcdaa6972"
     ],
     "uk:GB133_Charioteer_MkVII": [
      "382a094ccffe204b",
@@ -2971,6 +3003,10 @@
      "16df3cc7970883a3",
      "ce7690f1f17d5046"
     ],
+    "uk:GB147_FV4025_Contriver_7x7": [
+     "b9dd44140c1a470d",
+     "f6c853139819bb9c"
+    ],
     "uk:GB148_FV227_Conceiver": [
      "3f0d4ed72900303d",
      "03b03c80d88a29b7"
@@ -2980,7 +3016,7 @@
      "c587b753d423c863"
     ],
     "uk:GB14_M2": [
-     "0bb0694128c501c2",
+     "ce56bee9726bf33f",
      "2b1782379a2cc824"
     ],
     "uk:GB150_Churchill_VII_A": [
@@ -3011,8 +3047,12 @@
      "810ebd5cc267ebdf",
      "62ab780f1241d8f7"
     ],
+    "uk:GB159_FV4602_Victorious": [
+     "2b73ccabc0a28028",
+     "307222451be337f6"
+    ],
     "uk:GB15_Stuart_I": [
-     "8bd2d6d84875f564",
+     "c9ee67910213a0d6",
      "0be8104c8b0c3819"
     ],
     "uk:GB17_Grant_I": [
@@ -3255,6 +3295,10 @@
      "54bad05f4d12cc59",
      "6f7f37d5cbc2673f"
     ],
+    "uk:GB86_Centurion_Action_X_FR": [
+     "9646430f29facd2f",
+     "f7e559d9fc89d186"
+    ],
     "uk:GB87_Chieftain_T95_turret": [
      "e0887078452e39f7",
      "0be5872b40a957f2"
@@ -3404,7 +3448,7 @@
      "f385f30a4ba5375a"
     ],
     "usa:A106_M48A2_120": [
-     "6cd38c3a5e8f5994",
+     "a31c93c32de2f112",
      "bc205c8fc5d82598"
     ],
     "usa:A107_T1_HMC": [
@@ -3516,7 +3560,7 @@
      "a583d9e46cafe52e"
     ],
     "usa:A128_concept_1b": [
-     "cf86467931fcfe3f",
+     "bb1267bd24bf0956",
      "e95d857b9be6dc07"
     ],
     "usa:A129_T6_medium": [
@@ -3763,9 +3807,13 @@
      "b586c36332c3ec29",
      "1757ef66950396b1"
     ],
+    "usa:A183_XM69_Hacker_7x7": [
+     "9e0dfaf8798f5375",
+     "3e62f14a406a5af1"
+    ],
     "usa:A186_XM94_Shadow": [
-     "0aba6836ef204754",
-     "fc2b61f0b57f3043"
+     "aba329420587ae72",
+     "3b18edd8fa93d5f1"
     ],
     "usa:A187_Ares_75": [
      "a502dca047626613",
@@ -3803,9 +3851,13 @@
      "b444b7a17ef7c6f0",
      "e73e36e89fb6dfdd"
     ],
+    "usa:A195_Gorilla_7x7": [
+     "9ebbae35b056f094",
+     "63067801ccaa64cc"
+    ],
     "usa:A197_Jezevec": [
-     "060ec6ffdae720da",
-     "77abee68450537c3"
+     "541ce05404854f8f",
+     "862536d20e1164cf"
     ],
     "usa:A19_T2_lt": [
      "8c07d78e9a73ed4d",
@@ -3979,9 +4031,13 @@
      "be551ebbdc6f4b7a",
      "e5d1c80c9093f123"
     ],
+    "usa:A69_T110E5_FR": [
+     "468da450a966163a",
+     "fb9e3497618d759e"
+    ],
     "usa:A69_T110E5_cl": [
-     "291b1c56bf05cd24",
-     "9b6136980211551f"
+     "d21b83bcfd46d1f6",
+     "7a49bd84ccf9966e"
     ],
     "usa:A71_T21": [
      "da3b773dad2e9b24",
@@ -4064,11 +4120,11 @@
      "d4aa4a72eaf1e969"
     ],
     "usa:A92_M60": [
-     "a83b54c1eaf8d9aa",
+     "8f581d32b66ee51f",
      "decabc33cb2825fc"
     ],
     "usa:A93_T7_Combat_Car": [
-     "bc842044ad0d7873",
+     "67c51753e64f8a76",
      "55919b5b8cf1fa10"
     ],
     "usa:A94_T37": [
@@ -4148,7 +4204,7 @@
      "9c6401c038b2de2e"
     ],
     "ussr:R104_Object_430_II": [
-     "e2ae5dd7f48c8f52",
+     "425e9ff70d2246b7",
      "918b44177bbf71bf"
     ],
     "ussr:R105_BT_7A": [
@@ -4172,7 +4228,7 @@
      "5b6b52d3b57a294b"
     ],
     "ussr:R109_T54S": [
-     "3537f2804d07bca8",
+     "0b74ddba9b080b80",
      "818e2c28a3f6f5c6"
     ],
     "ussr:R10_AT-1": [
@@ -4204,7 +4260,7 @@
      "95519e62245845ea"
     ],
     "ussr:R115_IS-3_auto": [
-     "7945a89e600e8039",
+     "d8be5fbe41547ead",
      "75d9dfd872425025"
     ],
     "ussr:R115_IS-3_auto_S": [
@@ -4212,7 +4268,7 @@
      "2633aa60e2310166"
     ],
     "ussr:R115_IS-3_auto_test": [
-     "d37fd8bf829c6f8f",
+     "559d45f402168d2c",
      "d49ba3aca097ef54"
     ],
     "ussr:R116_ISU122C_Berlin": [
@@ -4306,6 +4362,10 @@
     "ussr:R132_VNII_100LT": [
      "d45deb55a6c22706",
      "d03aeb50f32ecea2"
+    ],
+    "ussr:R132_VNII_100LT_FR": [
+     "5bbb6e1d247bd213",
+     "2ff74544d7ca2a52"
     ],
     "ussr:R133_KV_122": [
      "5857b06e7fba363d",
@@ -4604,7 +4664,7 @@
      "403c1c669c581333"
     ],
     "ussr:R204_ISU_122_2": [
-     "f7c062d96fd5e1f7",
+     "df9d6994af29fbce",
      "854332db135600ae"
     ],
     "ussr:R205_Tank_Rozanova": [
@@ -4647,6 +4707,10 @@
      "246d65f9b83ca8c1",
      "ae37cb19f7ac96d7"
     ],
+    "ussr:R228_KR_1_7x7": [
+     "1c2d25d7d6fe682e",
+     "b31580dd2ed9f28e"
+    ],
     "ussr:R22_T-46": [
      "6345c2762a9859e6",
      "6f7e2f30a7e70cfd"
@@ -4654,6 +4718,10 @@
     "ussr:R230_Object_432U": [
      "1449a6417e02e656",
      "63e49c0a1f34b421"
+    ],
+    "ussr:R230_Object_432U_7x7": [
+     "d8dce43659d12646",
+     "4304a1699719eb21"
     ],
     "ussr:R231_Buryan": [
      "1bf062adb0d202b6",
@@ -4672,12 +4740,16 @@
      "028b14a59ebb70c3"
     ],
     "ussr:R236_Object_265_II": [
-     "23883e17ac2bc2a0",
-     "7b827ba7a6872e7a"
+     "33bcdd8db158cf90",
+     "856f0afb939fd109"
+    ],
+    "ussr:R236_Object_265_II_CFE_A": [
+     "91a014d44ffdd3ac",
+     "687872d8ea7bf311"
     ],
     "ussr:R239_Object_Veles": [
-     "b2c9981e19b1a0a1",
-     "008af1e113fd10b3"
+     "888f8518e5ae16c1",
+     "5ae198a622bc4c81"
     ],
     "ussr:R23_T-43": [
      "cb36f512b8465019",
@@ -4840,7 +4912,7 @@
      "30929a34cb9a5b29"
     ],
     "ussr:R60_Object416": [
-     "1feb3fef42438e61",
+     "46324f94e45795a0",
      "a1bf83bff92889a2"
     ],
     "ussr:R61_Object252": [
@@ -4960,7 +5032,7 @@
      "caadda3c0edbf3af"
     ],
     "ussr:R93_Object263": [
-     "9f5239c44792f96b",
+     "cf4ec8504a07294b",
      "e3cad3457b88781b"
     ],
     "ussr:R93_Object263B": [
@@ -4992,8 +5064,8 @@
      "f13826da88015753"
     ],
     "ussr:R97_Object_140_cl": [
-     "f2ae191fa85c9ae9",
-     "aecc54ca378a4cf0"
+     "c0d73034b8805bce",
+     "53c55c4c9ba86830"
     ],
     "ussr:R98_T44_85": [
      "797bbea184a4d14b",
@@ -5013,8 +5085,8 @@
     ]
    }
   },
-  "v.2.4.1.0 #970": {
-   "order": 2,
+  "v.2.4.1.1 #987": {
+   "order": 3,
    "types": {
     "china:Ch00_ClingeBot_SH": [
      "838472d37113b93b",

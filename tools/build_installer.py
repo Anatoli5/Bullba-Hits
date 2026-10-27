@@ -145,7 +145,8 @@ def build(test=False,sign_command=None,require_signature=False,only=None):
         if test: args.extend(['/DTestBuild','/DTestRoot='+str(ROOT/'work/installer-tests')])
         args.append(str(ROOT/'installer/ArmorInspector.iss'))
         subprocess.run(args,check=True)
-        base='BullbaHits-'+VERSION+'-Setup'+('-Test' if test else '')
+        # The game client is in the name (WoT-Base W17, 13.10): otherwise it is unclear which game version a build is for.
+        base='BullbaHits-'+VERSION+'-WoT-'+client_version.VERSION+'-Setup'+('-Test' if test else '')
         output=out_dir/(base+'.exe')
         signature=signature_info(output)
         signed=signature['status']=='Valid' and signature['publicKeyAlgorithm']=='1.2.840.113549.1.1.1'

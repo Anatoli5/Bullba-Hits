@@ -73,7 +73,8 @@ before = dict((rel, hashlib.sha256((game / rel).read_bytes()).hexdigest()) for r
 
 import re
 version = re.search(r'ProductVersion "([^"]+)"', (src / 'generated/build.iss').read_text(encoding='utf-8-sig')).group(1)
-exe = out / ('BullbaHits-' + version + '-Setup-Test.exe')
+client = re.search(r'ClientVersion "([^"]+)"', (src / 'generated/build.iss').read_text(encoding='utf-8-sig')).group(1)
+exe = out / ('BullbaHits-' + version + '-WoT-' + client + '-Setup-Test.exe')
 print('exe sha256', hashlib.sha256(exe.read_bytes()).hexdigest())
 log = SCRATCH / 'install.log'
 new_mod = game / MODS / ('local.armor_inspector_' + version + '.wotmod')

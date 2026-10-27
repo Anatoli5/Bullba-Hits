@@ -46,7 +46,7 @@ VersionInfoOriginalFileName=BullbaHits-Setup.exe
 #else
 VersionInfoVersion={#ProductVersion}
 VersionInfoProductVersion={#ProductVersion}
-VersionInfoOriginalFileName=BullbaHits-{#ProductVersion}-Setup.exe
+VersionInfoOriginalFileName=BullbaHits-{#ProductVersion}-WoT-{#ClientVersion}-Setup.exe
 #endif
 #ifdef SignBuild
 ; Sign both the outer EXE and the temporary setup/uninstaller executables.
@@ -63,10 +63,10 @@ UseSetupLdr=no
 CreateUninstallRegKey=no
 UsePreviousAppDir=no
 UsePreviousTasks=no
-OutputBaseFilename=BullbaHits-{#ProductVersion}-Setup-Test
+OutputBaseFilename=BullbaHits-{#ProductVersion}-WoT-{#ClientVersion}-Setup-Test
 #else
 UsePreviousAppDir=yes
-OutputBaseFilename=BullbaHits-{#ProductVersion}-Setup
+OutputBaseFilename=BullbaHits-{#ProductVersion}-WoT-{#ClientVersion}-Setup
 #endif
 
 [Languages]

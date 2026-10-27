@@ -112,7 +112,8 @@ else:
 # Two files, named so that GitHub's alphabetical asset list shows the installer first ("Setup" < "Sources").
 # The bare .wotmod is inside the ZIP; it is not attached on its own any more (user, 19.09: a pile of files nobody
 # can explain).
-assets = [ROOT / 'dist' / ('BullbaHits-' + VERSION + '-Setup.exe'), ROOT / 'dist' / ('BullbaHits-' + VERSION + '-Sources-and-manual-install.zip')]
+named = 'BullbaHits-' + VERSION + '-WoT-' + client_version.VERSION   # the client in the name: WoT-Base W17
+assets = [ROOT / 'dist' / (named + '-Setup.exe'), ROOT / 'dist' / (named + '-Sources-and-manual-install.zip')]
 wotmod = ROOT / 'dist' / ('local.armor_inspector_' + VERSION + '.wotmod')
 for asset in assets + [wotmod]:
     if not asset.is_file():
