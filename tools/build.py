@@ -16,8 +16,9 @@ ROOT=Path(__file__).resolve().parent.parent
 import sys
 sys.path.insert(0, str(ROOT/'mod'))
 from local_armor_inspector.exporter import ASSETS, CRIT_ICON_FILES, VERSION
-COMPILER=ROOT/'work/research-options/sources/openwg--openwg.build/bin/windows_amd64/owg_python_compiler/owg_python_compiler.exe'
-EXPECTED='d36dbe2ffd4d77710750fbd9814e45bb7086d2ff7a38b33afce0c142383ffd13'
+# The .pyc are made by the client's own python27.dll (tools/compile27.py through tests/py27/run27.py), as in Bullba
+# Countdown and Angles: Smart App Control refused the unsigned OpenWG compiler used up to 1.03 (30.10.2026).
+COMPILER='python27.dll of the client (tools/compile27.py)'
 
 
 def git(*args):
@@ -45,13 +46,16 @@ def build(skip_check=False):
     commit=clean_commit()
     checked={'skipped':True,'reason':'--skip-check'} if skip_check else run_check()
     if skip_check: print('WARNING: tools/check.py skipped (--skip-check); build.json records it.',file=sys.stderr)
-    if hashlib.sha256(COMPILER.read_bytes()).hexdigest()!=EXPECTED: raise ValueError('Compiler checksum mismatch')
     # The crit icons are the client's own art and come out of the installed game (22.09): say which and how.
     missing=[asset for asset in CRIT_ICON_FILES if not (ROOT/asset).is_file()]
     if missing: raise FileNotFoundError('Crit icons missing: '+', '.join(missing)+'. Run tools/extract_crit_icons.py first; it copies them from the installed client.')
     out=ROOT/'dist';out.mkdir(exist_ok=True)
     compiled=out/'compiled'
-    subprocess.run([str(COMPILER),'compile','--source',str(ROOT/'mod'),'--target',str(compiled),'--python-version','2.7','--jobs','1','--timestamp','0','--filename-root','.'],check=True)
+    sources=[p[len('mod/'):] for p in git('ls-files','--','mod/*.py').split() if p]
+    proc=subprocess.run([sys.executable,str(ROOT/'tests/py27/run27.py'),str(ROOT/'tools/compile27.py'),str(ROOT/'mod'),str(compiled)]+sources,
+                        cwd=ROOT,capture_output=True,text=True)
+    print(proc.stdout.strip())
+    if proc.returncode: raise SystemExit('Compile failed:\n'+proc.stdout+proc.stderr)
     files={'meta.xml':('<root><id>local.armor_inspector</id><version>'+VERSION+'</version><name>Bullba Hits</name><description>Hit recorder with serverless HTML viewer</description></root>').encode('utf-8')}
     files['res/gui/maps/bullba_hits/modsListApi.png']=(ROOT/'web/menu-icon.png').read_bytes()
     # The tracked sources only (audit QA-18): a local .py left in mod/ would otherwise ship. The tree is clean, so
@@ -79,7 +83,7 @@ def build(skip_check=False):
         if z.testzip() is not None: raise ValueError('Corrupt archive')
     if git('status','--porcelain','--untracked-files=all').strip() or git('rev-parse','HEAD').strip()!=commit:
         raise SystemExit('Build refused: the tree changed while building; build again from a clean commit.')
-    report={'artifact':archive.name,'sha256':hashlib.sha256(archive.read_bytes()).hexdigest(),'bytes':archive.stat().st_size,'python':'2.7','compilerSha256':EXPECTED,
+    report={'artifact':archive.name,'sha256':hashlib.sha256(archive.read_bytes()).hexdigest(),'bytes':archive.stat().st_size,'python':'2.7','compiler':COMPILER,
             'commit':commit,'check':checked,'installed':False,'gameRuntimeTested':False}
     (out/'build.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
     print(json.dumps(report,indent=2))

@@ -31,6 +31,7 @@ __pycache__/
 
 /tools/*
 !/tools/build.py
+!/tools/compile27.py
 !/tools/package.py
 !/tools/build_installer.py
 !/tools/client_version.py
