@@ -1,11 +1,11 @@
 # Changelog
 
-All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.1.1 from 1.04 on, 2.4.1.0 from 1.02 on, 2.4.0.2 from 0.9.3 on, 2.4.0.1 #950 from 0.7.6, 2.4.0.0 #945 before.
+All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.1.1 from 1.05 on, 2.4.1.0 from 1.02 on, 2.4.0.2 from 0.9.3 on, 2.4.0.1 #950 from 0.7.6, 2.4.0.0 #945 before.
 
-## 1.04 (2026-10-30)
+## 1.05 (2026-10-30)
 
 - **Client 2.4.1.1:** the mod is built for World of Tanks PC NA 2.4.1.1 and installs into `mods\2.4.1.1`; the recorder itself is unchanged. The event vehicle lists follow the new client (Halloween, Last Stand, Story Mode); your recorded battles are kept.
-- **File names:** the installer and the archive name the game client they are for: `BullbaHits-1.04-WoT-2.4.1.1-Setup.exe`.
+- **File names:** the installer and the archive name the game client they are for: `BullbaHits-1.05-WoT-2.4.1.1-Setup.exe`.
 
 ## 1.02 (2026-10-13)
 
