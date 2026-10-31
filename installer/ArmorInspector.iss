@@ -50,7 +50,9 @@ VersionInfoOriginalFileName=BullbaHits-{#ProductVersion}-WoT-{#ClientVersion}-Se
 #ifdef BuildStamp
 ; Build stamp (BULLBA_BUILD_STAMP, tools/build_installer.py): new bytes for the same version, so an installer Smart
 ; App Control refused is rebuilt as a new file without a new number (C:/Projects/CoreMap/KNOWLEDGE.md, SAC).
-VersionInfoTextVersion={#ProductVersion} build {#BuildStamp}
+; The text is cut at 20 characters (measured 30.10: "1.05 build 2026103020411132302" came out "1.05 build 202610302"),
+; so the stamp is short and comes first.
+VersionInfoTextVersion={#BuildStamp} {#ProductVersion}
 #endif
 #endif
 #ifdef SignBuild
