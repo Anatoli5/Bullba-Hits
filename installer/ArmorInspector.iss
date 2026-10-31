@@ -47,6 +47,11 @@ VersionInfoOriginalFileName=BullbaHits-Setup.exe
 VersionInfoVersion={#ProductVersion}
 VersionInfoProductVersion={#ProductVersion}
 VersionInfoOriginalFileName=BullbaHits-{#ProductVersion}-WoT-{#ClientVersion}-Setup.exe
+#ifdef BuildStamp
+; Build stamp (BULLBA_BUILD_STAMP, tools/build_installer.py): new bytes for the same version, so an installer Smart
+; App Control refused is rebuilt as a new file without a new number (C:/Projects/CoreMap/KNOWLEDGE.md, SAC).
+VersionInfoTextVersion={#ProductVersion} build {#BuildStamp}
+#endif
 #endif
 #ifdef SignBuild
 ; Sign both the outer EXE and the temporary setup/uninstaller executables.

@@ -141,6 +141,7 @@ def build(test=False,sign_command=None,require_signature=False,only=None):
         out_dir.mkdir(parents=True,exist_ok=True)
         args=[str(compiler),'/Qp','/O'+str(out_dir)]
         if variant=='noloader': args.append('/DNoLoader')
+        if os.environ.get('BULLBA_BUILD_STAMP'): args.append('/DBuildStamp='+os.environ['BULLBA_BUILD_STAMP'])
         if sign_command: args.extend(['/DSignBuild','/SBullbaHitsSign='+sign_command])
         if test: args.extend(['/DTestBuild','/DTestRoot='+str(ROOT/'work/installer-tests')])
         args.append(str(ROOT/'installer/ArmorInspector.iss'))
