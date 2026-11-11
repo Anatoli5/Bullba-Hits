@@ -23,13 +23,17 @@ gun pitch contracts (tools/inspect_*_contract.py) is the same; of what they prin
 (its imports and the handlers of two in-game links), which the mod does not call. 2.4.1.1 #987 since 1.03
 (27.10.2026): the 38 names are there and every contract tools/inspect_*_contract.py prints is the same as on 2.4.1.0
 #970 but for the code objects' memory addresses; the patches since #970 changed in scripts.pkg no .pyc, only
-destructibles, AccountVersion.def and one vehicle (G204_PzVI_Tiger_P_CFE_A.xml).
+destructibles, AccountVersion.def and one vehicle (G204_PzVI_Tiger_P_CFE_A.xml). 2.4.1.1 #992 since 1.06
+(11.11.2026): every hooked name is in the new bytecode (tools/inspect_hook_names.py, 0 missing, now with the names
+of the replay source: BattleReplay, the account events, Avatar.onBecomeNonPlayer); the aim, browser and gun pitch
+contracts are the same but for memory addresses; scripts/common/constants lost one name, RANDOM_FLAGS, which the
+mod does not use.
 """
 import re
 from pathlib import Path
 
 VERSION = '2.4.1.1'             # the folder: <game>/mods/<VERSION>
-BUILD = '987'                   # the build of that version the hooked names were last checked on
+BUILD = '992'                   # the build of that version the hooked names were last checked on
 REALM = 'NA'
 VERSION_XML = 'v.%s #%s' % (VERSION, BUILD)                        # <version> of <game>/version.xml
 LABEL = 'World of Tanks PC %s %s #%s' % (REALM, VERSION, BUILD)    # as README, CHANGELOG and the catalogue say it

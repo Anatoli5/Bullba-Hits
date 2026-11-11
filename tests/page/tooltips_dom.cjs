@@ -739,6 +739,42 @@ ok('help: closed - the observer back to the page\'s titles and the dots\' boxes,
    bubble.hidden && !modeOn() && obs.targets.every(function (t) { return t.el === html || (t.filter && t.filter.join() === 'hidden'); })
    && frames.length === 0 && timers.length === 0 && document.listeners.concat(win.listeners).every(function (l) { return l.type !== 'pointermove'; }));
 
+// --- The scene switch (11.11): the snapshot or the scene rebuilt from the replay ------------------------------------
+// Two buttons with a picture and the page's own words (SCENE_WORDS of app.js, cut out of the file), a dot of their own. A
+// scene the hit lacks is a button marked data-tip-own: its click says why (its words), as an icon with words of its own
+// inside a control does - the handler still hears the click (pickScene, which then does nothing).
+const sceneWordsMatch = /\n  var SCENE_WORDS=(\{[\s\S]*?\});\n/.exec(appSrc);
+const SW = sceneWordsMatch ? new Function('return ' + sceneWordsMatch[1] + ';')() : null;
+ok('scene switch: the page\'s words for the switch were found in app.js', !!SW && ['snapshot', 'replay', 'noSnapshot', 'noReplayBattle', 'noReplayHit', 'noScene'].every(function (k) { return typeof SW[k] === 'string'; }));
+if (SW) {
+  ok('scene switch: every state\'s words follow the markup - a heading of 2-6 words, then a sentence; the two that act say "• Click:", the four that say why do not',
+     Object.keys(SW).every(function (k) { const l = SW[k].split('\n'), words = l[0].split(/\s+/).length; return words >= 2 && words <= 6 && !/\.$/.test(l[0]) && /\.$/.test(l[1])
+       && (/^(snapshot|replay)$/.test(k) === /\n• Click: /.test(SW[k])); }), Object.keys(SW).map(function (k) { return SW[k].split('\n')[0]; }).join(' | '));
+  ok('scene switch: the rebuilt scene says where it is weaker - the hull at rest, the turret and gun in steps',
+     /hull at rest/.test(SW.replay) && /steps of about 0\.35/.test(SW.replay) && /death camera/.test(SW.noSnapshot) && /replay has not been read/.test(SW.noReplayBattle));
+  const sw = node('span', body, {id: 'sx-switch', role: 'group', 'aria-label': 'Scene of the hit'});
+  let flips = 0;
+  const swSnap = node('button', sw, {id: 'sx-snapshot', type: 'button', 'aria-pressed': 'true', 'aria-label': 'In-game snapshot', title: SW.snapshot});
+  node('svg', swSnap, {'aria-hidden': 'true'}); swSnap.onclick = function () { flips++; };
+  const swRep = node('button', sw, {id: 'sx-replay', type: 'button', 'aria-pressed': 'false', 'aria-disabled': 'true', 'data-tip-own': '', 'aria-label': 'Rebuilt from the replay', title: SW.noReplayHit});
+  node('svg', swRep, {'aria-hidden': 'true'}); swRep.onclick = function () { flips++; };
+  const dotS = node('button', sw, {'class': 'help-dot', 'data-help-for': 'sx-snapshot sx-replay', 'aria-label': 'Help'}); dotS.textContent = '?';
+  flushMicro();
+  press(swSnap, 300, 400);
+  ok('scene switch: the scene the hit has is a control - its click acts and shows nothing', bubble.hidden && flips === 1);
+  press(swRep, 330, 400);
+  ok('scene switch: the scene the hit lacks says why when touched - its own words at the pointer',
+     !bubble.hidden && bubble.textContent.indexOf('Rebuilt from the replay: none') === 0 && /could not|did not give/.test(bubble.textContent), bubble.textContent.slice(0, 80));
+  press(swRep, 330, 400);
+  ok('scene switch: touched again - closed', bubble.hidden);
+  press(dotS, 360, 400);
+  ok('scene switch: its own "?" - one row per button, the help mode on', !bubble.hidden && bubble.hasAttribute('data-help') && bubble.children.length === 2
+     && /In-game snapshot/.test(bubble.children[0].textContent) && /Rebuilt from the replay: none/.test(bubble.children[1].textContent) && modeOn(),
+     '(' + bubble.children.length + ' rows)');
+  press(dotS, 360, 400);
+  ok('scene switch: (the mode ends with its dot)', bubble.hidden && !modeOn());
+}
+
 // --- The second run: el.title fixed ------------------------------------------------------------------------------
 const child = cp.spawnSync(process.execPath, [__filename], {env: Object.assign({}, process.env, {BULLBA_TIPS_FALLBACK: '1'}), encoding: 'utf8'});
 const lines = String(child.stdout || '').split('\n').filter(function (l) { return /^(ok {3}|FAIL )tooltips/.test(l); });

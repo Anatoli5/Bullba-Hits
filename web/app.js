@@ -6395,8 +6395,12 @@
     if(missing.length){var met=v.part!=null&&missing.indexOf(v.part)!==-1||((hit.points||[]).some(function(p,pi){return (v.pi==null||pi<=v.pi)&&missing.indexOf(p.part)!==-1;}));
       partial=' partial='+missing.map(function(id){return logPart(id,parts);}).join(',')+' partialRay='+(met?1:0);}
     partial+=prefabColumns(parts);
-    console.info('Bullba Hits verdict: battle='+battleId+' hit='+hit.id+' point='+v.index+' part='+logPart(v.part,parts)+partial+' server='+String(effects[v.effect]||v.effect).replace(/ /g,'_')+' ours='+ours+' angle='+(r.angle!=null?Math.round(r.angle):'-')+' eff='+(r.effective!=null?Math.round(r.effective):'-')+' pen='+Math.round(shell.penetration)+' shell='+shell.kind+' dir='+v.source+' chordDev='+(v.chordDev==null?'-':(v.chordDev*180/Math.PI).toFixed(1))+' mode='+mode+shellModeColumns(hit,shell)+damageColumns(hit,r,shell)+ArmorCrits.columns(hit,v)+' v='+($('app-version').getAttribute('data-version')||'dev').replace(/\s+/g,'_')+' rec='+(recordsVersion||'-'));
+    console.info('Bullba Hits verdict: battle='+battleId+' hit='+hit.id+' point='+v.index+' part='+logPart(v.part,parts)+partial+' server='+String(effects[v.effect]||v.effect).replace(/ /g,'_')+' ours='+ours+' angle='+(r.angle!=null?Math.round(r.angle):'-')+' eff='+(r.effective!=null?Math.round(r.effective):'-')+' pen='+Math.round(shell.penetration)+' shell='+shell.kind+' dir='+v.source+' chordDev='+(v.chordDev==null?'-':(v.chordDev*180/Math.PI).toFixed(1))+' mode='+mode+shellModeColumns(hit,shell)+damageColumns(hit,r,shell)+ArmorCrits.columns(hit,v)+sceneColumns(hit)+' v='+($('app-version').getAttribute('data-version')||'dev').replace(/\s+/g,'_')+' rec='+(recordsVersion||'-'));
     verdictLines++;verdictStatus();}
+  // The scene a line was cast in (11.11): none written - the snapshot, as every line before; scene=replay - the scene
+  // rebuilt from the replay, which the log takes only for a hit with no snapshot (the death camera), and shellsFrom= the
+  // hit of the same shooter whose loadable shells it borrowed (the replay names no shell list).
+  function sceneColumns(hit){return (hit&&hit.sceneSource==='replay'?' scene=replay':'')+(hit&&hit.shellsFrom!=null?' shellsFrom='+hit.shellsFrom:'');}
   // The shooter's vehicle mode on a log line that already carries the shell (22.09): which of the two
   // modes the shell used belongs to, whether the record held a second set at all and the siege state the
   // recorder read. Only for a shooter whose vehicle really has two modes - a line without these fields
@@ -6432,6 +6436,9 @@
   // The displayed hit, with whatever shell is on screen: logged once per hit and shell, never on camera moves.
   function logVerdicts(shell){
     if(!viewer||!shell||!activeHit||activeHit.synthetic||!current||!window.console)return;
+    // The log stays the snapshot's where the hit has one (11.11): the scene rebuilt from the replay on screen writes no
+    // line over it (the log keeps the last line per point and shell). A hit with no snapshot writes its rebuilt scene's.
+    if(activeHit.sceneSource==='replay'&&ArmorInspectorData.scenesOf((current.hits||[]).find(function(h){return h.id===activeHit.id;})).snapshot)return;
     var key=current.id+'/'+activeHit.id+'|'+JSON.stringify(shell);if(key===verdictKey)return;
     // Before load() the previous hit's points would be logged under the new id: wait for the points of this hit.
     var verdicts=viewer.pointVerdicts(shell)||[];if(!verdicts.length||viewer.loadedData.hit!==activeHit)return;verdictKey=key;
@@ -6449,7 +6456,9 @@
     if(!book||book.rev!==(rev||null))book=verdictBook[battle.id]={rev:rev||null,n:0};
     if(tag){verdictQueue=verdictQueue.filter(function(j){return j.battle.id!==battle.id||j.tag===tag;});
       Object.keys(verdictOpen).forEach(function(k){if(k!==tag&&verdictOpen[k].id===battle.id)delete verdictOpen[k];});}
-    (battle.hits||[]).forEach(function(h){var key=battle.id+'/'+h.id+'/'+(rev||ArmorCrits.key(h));if(verdictDone[key]||(only&&only.indexOf(h.id)===-1)||!(h.points||[]).some(function(p){return p.status==='resolved';}))return;verdictDone[key]=true;added++;verdictQueue.push({battle:battle,hit:h,tag:tag,key:key,rev:rev||null});});
+    // The scene a hit is cast in (11.11): its snapshot where it has one, so the statistics stay comparable with every line
+    // before; a hit of the death camera has none and is cast in the scene rebuilt from the replay (its line says scene=replay).
+    (battle.hits||[]).forEach(function(h){if(ArmorInspectorData.sceneHit)h=ArmorInspectorData.sceneHit(h,'snapshot',battle).hit;var key=battle.id+'/'+h.id+'/'+(rev||ArmorCrits.key(h));if(verdictDone[key]||(only&&only.indexOf(h.id)===-1)||!(h.points||[]).some(function(p){return p.status==='resolved';}))return;verdictDone[key]=true;added++;verdictQueue.push({battle:battle,hit:h,tag:tag,key:key,rev:rev||null});});
     if(tag&&added){var open=verdictOpen[tag]||(verdictOpen[tag]={id:battle.id,rev:rev,n:0,left:[]});open.n+=added;}
     // The hits on one set of target models go one after another (stable: the groups in the order they first
     // appear, the hits of a group in queue order). local-data.js keeps the last sixteen models, and a queue in
@@ -6563,7 +6572,7 @@
     var pinned=!!(viewer&&viewer.pinned),line=armorLine(r,shell?shell.penetration:null,range,{shell:shell,hit:pinned?null:activeHit});fillPanel('shot',line,shell&&shell.alpha);
     // A shell of a gun picked on the characteristics panel (24.09) is not the record's: the Statistics log keeps one
     // line per point and shell TYPE (tools/verdicts_from_log.py), and another gun's AP would take the recorded AP's place.
-    if(!(c&&c.emuGun))logVerdicts(shell);
+    if(!(c&&c.emuGun)){logVerdicts(shell);compareScenes(shell);}
     // The tile's own tooltip says what its number is before it says where the line comes from.
     $('shot-panel').title=(damageView?'Expected damage on the hit line\nPer shot, as a share of the shell’s alpha:\n• Penetration: the chance × alpha\n• No penetration: the reconstructed non-penetration damage\nThe expectation the shot had, not the rolled RNG: the record holds what it did.':shotPanelTitle)+markNote(shell&&shell.alpha);
     aimTitle();
@@ -7412,7 +7421,7 @@
   // and the others still paint - a half-painted scene is exactly the unevenness this finisher is for.
   var SCENE_PAINTERS=[['target switches',function(){modsVisible();}],['hit line',function(){shotStats();}],
     ['emulation',function(){updateAim();}],['target HP',function(){funModel();}],['characteristics',function(){ttxPaint();}],
-    ['roster',function(){renderFocus();}],['pose tile',function(){paintPose();}],
+    ['roster',function(){renderFocus();}],['pose tile',function(){paintPose();}],['scene switch',function(){paintSceneSwitch();}],
     ['vehicle list',function(){if(sidebarMode==='vehicles'){adoptHitVehicles();renderVehicleHeading();renderVehicles();}}],['help dots',function(){if(window.BullbaTips&&window.BullbaTips.refresh)window.BullbaTips.refresh();}]];
   function sceneShown(){
     sceneBuild=false;
@@ -7481,8 +7490,63 @@
     // exactly like the button having gone for good). The swap of a recorded hit is about the hit, not about
     // which list is open beside it.
     var recorded=!!current&&!!hit&&!hit.synthetic&&swapReady(hit);
-    b.hidden=!(browsed||recorded||(!!current&&back));
-    b.title=back?'Back to the recorded hit and its shot line':'Swap the model and the shooter';
+    // A scene with no recorded hit to turn round (D-114): by its content - see contentSwap.
+    var event=eventBack(hit),content=!event&&contentSwap(hit);
+    b.hidden=!(browsed||recorded||(!!current&&back)||event||content);
+    b.title=back?'Back to the recorded hit and its shot line':event?'Back to the damage event':'Swap the model and the shooter';
+    // The catalogue not read yet (the Battles panel does not need it): the model the swap would draw may be its export,
+    // so the button is decided again once it is read - for the same scene only.
+    if(!catalogue&&b.hidden&&!event&&contentSwap(hit,true))loadCatalogue().then(function(){
+      if(catalogue&&activeHit===hit&&contentSwap(hit)){swapTile(hit);if(window.BullbaTips&&window.BullbaTips.refresh)window.BullbaTips.refresh();}
+    });
+  }
+  // THE SWAP BY CONTENT (D-114; 02.11, the user: "in some modes the swap button is gone"). swapTile() listed three
+  // cases - a recorded hit, two browsed vehicles, a view with a recorded hit to go back to - and hid ⇅ on every scene
+  // built another way: a ram or a fire tile, a roster shooter picked on one or beside a browsed vehicle, with two
+  // different vehicles in the two roles. Such a scene is read by what it holds: two different vehicles hold the two
+  // roles (by their battle ids when both have one, else by type), and the one that would become the model has a model
+  // to draw - a recorded block of his in this battle or his export in the catalogue (the sources vehicleModel reads).
+  // anyModel: the model is not asked (the catalogue is still to be read).
+  function roleId(v){return v===undefined||v===null||v===0?null:v;}
+  function modelRoleId(hit){return roleId(hit.targetId!==undefined&&hit.targetId!==null?hit.targetId:hit.modelVehicleId);}
+  function contentSwap(hit,anyModel){
+    if(!current||!hit||!hit.synthetic||hit.vehicle||hit.base||hit.eventBase||!hit.target||!hit.attacker)return false;
+    var model=modelRoleId(hit),shooter=roleId(hit.attackerId),mt=String(hit.target.type||''),st=String(hit.attacker.type||'');
+    if(shooter===null)return false;
+    if(model!==null?model===shooter:!(mt&&st&&mt!==st))return false;
+    return !!anyModel||modelToDraw(shooter,st);
+  }
+  function modelToDraw(id,type){
+    var hits=current.hits||[],i,h;
+    for(i=0;i<hits.length;i++){h=hits[i];
+      if(h.targetId===id&&h.target&&(h.target.parts||[]).some(function(p){return p.modelKey;}))return true;
+      if(h.attackerId===id&&swapParts(h).key)return true;}
+    var row=catalogueByType(type||String((vehicleInfo(id)||{}).type||''));
+    return !!row&&!row.notInClient;
+  }
+  // The swapped view of a damage event goes back to the event itself - its contact, its look - as a recorded hit's does.
+  function eventBack(hit){return !!current&&!!hit&&hit.eventBase!==undefined&&hit.eventBase!==null&&!!eventOf(hit.eventBase);}
+  // The swap itself: the shooter's vehicle becomes the model (vehicleModel: his recorded block in his pose, else his
+  // export), the vehicle that was the model becomes the shooter with his own gun (shooterGun, the order swapScene uses).
+  // Nothing was fired between these two in this role (a ram, a fire, a pick): the scene is a roster shooter's - no hit
+  // line, no reticle - and says so (display: chosenShooter). The camera stays; the two sides of an event keep their poses
+  // as the two sides of a hit do (sideFrom).
+  function swapContent(hit){
+    var e=hit.damageEvent||null,side=e?'event:'+e.id:null,was=modelRoleId(hit),now=roleId(hit.attackerId);
+    scenePick();
+    var sceneInputs=sideFrom(side||hit.id,'shooter',null),token=++generation;
+    message('Preparing the model…');if(viewer)viewer.clear();
+    vehicleModel(now).then(function(source){
+      return shooterGun(was,String(hit.target.type||'')).then(function(his){
+        var shooter=shallow(hit.target);
+        if(his&&his.vehicle)SHOOTER_GUN.forEach(function(k){if((shooter[k]===undefined||shooter[k]===null)&&his.vehicle[k]!==undefined)shooter[k]=his.vehicle[k];});
+        var synthetic=shooterHit(source.block,shooter,his?his.shells:[],was,null,source.aim);
+        synthetic.modelVehicleId=now===null?undefined:now;
+        if(e){synthetic.id=side+':swap';synthetic.eventBase=e.id;}
+        return ArmorInspectorData.sceneFor(current||{warnings:[]},synthetic);
+      });
+    }).then(function(data){if(token===generation)display(data,false,sceneInputs);})
+      .catch(function(err){if(token===generation){var text=err&&err.timedOut?EXPORT_TIMEOUT:(err&&err.message)||String(err);sceneCleared();message(text);warnings([text]);}});
   }
   // A scene that was read but could not be put on screen says so in its own words (audit PD-11, 24.09): the catch
   // of a read (showFocusEmpty, pickShooter) must not report a fault of the page as "model not exported yet" or
@@ -7510,6 +7574,10 @@
   //                inherited: the shot's view (a resolved point: the user's rule of 26.09, not a reset) and the pose its
   //                parts stand in. What it lacks is carried: the camera when there is no shot to look along
   //                (`ownShot`: display() decides once the scene is loaded), the pose when own.pose is false.
+  //   how 'scene'  THE SAME HIT FROM ITS OTHER SCENE (11.11: the snapshot or the scene rebuilt from the replay, the switch
+  //                of the toolbar, sceneSourceChanged). The pose is the scene's own, as a record's; the camera stays as it
+  //                stands - an A/B flip of one shot, so the two lines and poses are seen from the same place. The pin and
+  //                the shot go with the scene that went, as with 'carry'.
   //   own {pose}   (with 'carry') a pose that is this vehicle's own and is not taken from the screen: the two sides of
   //                a hit under ⇅ (sideFrom, below).
   // Nothing on screen: the view of the last scene (the viewer keeps it over a clear). No scene before at all: view is
@@ -7520,7 +7588,7 @@
     if(how==='same'&&v&&v.loadedData)view=v.cameraState('same');
     else if(v){
       view=v.cameraState(true);
-      if(view&&how==='record'&&(!own||own.pose!==false))view=Object.assign({},view,{pose:null});
+      if(view&&(how==='record'||how==='scene')&&(!own||own.pose!==false))view=Object.assign({},view,{pose:null});
       else if(view&&own&&own.pose)view=Object.assign({},view,{pose:own.pose});
     }
     return {owner:SCENE_OWNER,how:how,view:view||null,ownShot:how==='record'};
@@ -7619,7 +7687,7 @@
       return;}
     if(hit.damageEvent){eventDetails(hit.damageEvent);return;}
     if(hit.synthetic){$('details').appendChild(node('p','The shooter\u2019s collision model, swapped in from the hit at '+clock(hit.receivedAt)+'. Nothing was fired at this vehicle in the record, so there is no hit line, no reticle and no shell of its own. The \u21c5 button next to the shooter tile goes back to the recorded hit.'));return;}
-    detail('Direction',view==='incoming'?'Incoming':view==='outgoing'?'Outgoing':'Not this vehicle',clock(hit.receivedAt));detail('Result',result(hit));var critRow=critDetail(hit);if(critRow)$('details').appendChild(critRow);
+    detail('Direction',view==='incoming'?'Incoming':view==='outgoing'?'Outgoing':'Not this vehicle',hitClock(hit));detail('Result',result(hit));var critRow=critDetail(hit);if(critRow)$('details').appendChild(critRow);
     var points=hit.points||[],point=points.find(function(p){return p.status==='resolved';});
     var onPart=point&&partOf(point.part,(hit.target||{}).parts);
     detail('Point on the model',point?partLabel(point.part,(hit.target||{}).parts):'Not restored',onPart&&onPart.prefab?prefabPlaceText(onPart,hit.target.parts):point?'Per the client collision handler':'Segment kept for diagnostics');
@@ -7643,7 +7711,7 @@
   // ===================== Damage no shell dealt (25.09, BACKLOG 3) =====================
   // The user, 25.09: the damage log holds ALL damage - per vehicle the logged damage adds up to the HP it lost. The
   // exporter publishes every HP lost to something other than a shell as current.damageEvents
-  // (mod/local_armor_inspector/damage_log.py): one per ram, per fire (at its end, with the total) and per other episode
+  // (mod/local_armor_inspector/damage_log.py): one per damaged vehicle of a ram, per fire (at its end, with the total) and per other episode
   // (an artillery strike, a fall, an event ability), with the attacker and target ids a hit has. They stand in the hit
   // list at their time, filtered like the hits, each with its own glyph, and open a scene of their own through display()
   // and the one finisher: the damaged vehicle without a penetration map - a ram's touched part red with a mark at the
@@ -7684,8 +7752,34 @@
     var p=prefabPlace(part,parts);
     return partLabel(part.id,parts)+'\n'+what+(p?'\n\n• '+p.key+': '+p.where+(p.note?'\n• '+p.note:''):'');
   }
-  function damageEvents(){return current&&Array.isArray(current.damageEvents)?current.damageEvents:[];}
-  function eventIn(battle,id){var list=battle&&Array.isArray(battle.damageEvents)?battle.damageEvents:[];for(var i=0;i<list.length;i++)if(list[i].id===id)return list[i];return null;}
+  // A RAM IS MUTUAL (the user, 09.11.2026): each vehicle's loss is its own row, dealt by the other vehicle of the pair,
+  // as the server credits it. A battle file of DERIVED_FORMAT 1 holds one event per ram with a "rammer" and the
+  // rammer's own loss beside it (selfDamage), which stood in no row - 486 of the user's 2090 HP in his 1v1 of 09.11.
+  // Such an event becomes here the two rows a newer file carries; a side that lost nothing has no row.
+  function mutualRams(list){
+    var out=[];
+    list.forEach(function(e){
+      if(!e||e.kind!=='ram'||e.selfDamage===undefined){out.push(e);return;}
+      var back=e.selfDamage>0&&e.attackerId!=null&&e.attackerId!==0&&e.attackerId!==e.targetId,a=shallow(e);
+      a.returned=back?e.selfDamage:0;a.collision=e.id;
+      ['selfDamage','rammerFrom','attackerKilled','attackerHealthAfter'].forEach(function(k){delete a[k];});
+      if(e.damage>0||!back)out.push(a);
+      if(back){
+        var b=shallow(a);b.id=e.id+':back';b.attackerId=e.targetId;b.targetId=e.attackerId;b.damage=e.selfDamage;b.returned=e.damage||0;
+        delete b.killed;delete b.healthAfter;if(e.attackerKilled)b.killed=true;if(e.attackerHealthAfter!=null)b.healthAfter=e.attackerHealthAfter;
+        out.push(b);
+      }
+    });
+    return out;
+  }
+  var mutualCache=new WeakMap();
+  function eventsOf(battle){
+    var list=battle&&Array.isArray(battle.damageEvents)?battle.damageEvents:[],rows=list.length?mutualCache.get(list):list;
+    if(!rows){rows=mutualRams(list);mutualCache.set(list,rows);}
+    return rows;
+  }
+  function damageEvents(){return eventsOf(current);}
+  function eventIn(battle,id){var list=eventsOf(battle);for(var i=0;i<list.length;i++)if(list[i].id===id)return list[i];return null;}
   function eventOf(id){return eventIn(current,id);}
   // As the focused vehicle sees it: damage he took (incoming, his own fall or overload too), damage he did (outgoing).
   function eventDirection(e){var f=focusId();if(!e||f==null)return null;return e.targetId===f?'incoming':e.attackerId===f?'outgoing':null;}
@@ -7726,11 +7820,10 @@
   function eventLines(e){
     var r=eventReason(e),target=vehicleName(e.targetId),by=selfDamage(e)?null:vehicleName(e.attackerId),lines=[r.name],dealt=e.damage+' HP'+(e.killed?', destroyed':'');
     if(e.kind==='ram'){
-      // A ram whose record names no second vehicle (1 of 202 ticks names the vehicle itself): said so, no rammer line.
-      if(by)lines.push(by+' rammed '+target+'.','• Damage: '+dealt+' to '+target,'• Rammer took: '+(e.selfDamage||0)+' HP'+(e.attackerKilled?', destroyed':''));
+      // A ram whose record names no second vehicle (1 of 202 ticks names the vehicle itself): said so, no second line.
+      if(by){lines.push(target+' and '+by+' collided.','• Damage: '+dealt+' to '+target);if(e.returned>0)lines.push('• '+by+' lost: '+e.returned+' HP');}
       else lines.push(target+' took ram damage; the record names no other vehicle.','• Damage: '+dealt);
       var c=e.contact;lines.push('• Contact: '+(c?'recorded'+(Number.isFinite(c.closingSpeed)?', closing at '+Math.round(c.closingSpeed*3.6)+' km/h':''):'not recorded'));
-      if(e.rammerFrom==='damage')lines.push('• Rammer: the one who took less');
     }else if(e.kind==='fire'){
       var shot=causeHit(e),out={destroyed:'the vehicle destroyed',extinguished:'put out'}[e.out]||'not seen';
       lines.push(target+' burned'+(eventSeconds(e)?' for '+eventSeconds(e):'')+'.','• Damage: '+dealt+(e.ticks>1?' in '+e.ticks+' ticks':''),
@@ -7835,7 +7928,7 @@
     if(e.kind==='ram'){
       var part=viewer&&viewer.look&&viewer.look.part!=null?partLabel(viewer.look.part,viewer.loadedData&&viewer.loadedData.hit.target.parts):null;
       detail('Contact',e.contact?(part||'Recorded'):'Not recorded',e.contact?'Client physics'+(Number.isFinite(e.contact.closingSpeed)?', closing at '+Math.round(e.contact.closingSpeed*3.6)+' km/h':''):'Battles before the contact log');
-      if(!selfDamage(e))detail('Rammer took',(e.selfDamage||0)+' HP'+(e.attackerKilled?', destroyed':''),vehicleName(e.attackerId));
+      if(!selfDamage(e)&&e.returned>0)detail('Other side lost',e.returned+' HP',vehicleName(e.attackerId));
     }else if(e.kind==='fire'){
       var shot=causeHit(e);
       detail('Burned',eventSeconds(e)||'—',e.ticks+' ticks · '+({destroyed:'the vehicle destroyed',extinguished:'put out'}[e.out]||'end not seen'));
@@ -7860,8 +7953,10 @@
       // One tooltip for the whole row (the tile inside is bare): who, then the result and the critical damage.
       // result() speaks for a details row labelled Result: after the key its own leading "Result" goes.
       var critWords=ArmorCrits.describe(h,true),said=result(h).replace(/^Result (\d)/,'Effect $1').replace(/^Result not/,'Not');
-      b.title=(view==='incoming'?'Incoming from '+((h.attacker||{}).name||'?'):'Outgoing at '+((h.target||{}).name||'?'))+'\n• Result: '+said+(critWords?'\n• Critical damage: '+critWords:'');
-      b.appendChild(vehicleTile(view==='incoming'?h.attacker:h.target,true));
+      // A hit of the death camera (11.11) has no recorded blocks of its vehicles: the roster names them.
+      var other=view==='incoming'?h.attacker||vehicleInfo(h.attackerId):h.target||vehicleInfo(h.targetId),only=replayOnlyWords(h);
+      b.title=(view==='incoming'?'Incoming from '+((other||{}).name||'?'):'Outgoing at '+((other||{}).name||'?'))+'\n• Result: '+said+(critWords?'\n• Critical damage: '+critWords:'')+(only?'\n• Scene: '+only.row:'');
+      b.appendChild(vehicleTile(other,true));
       // Critical damage (22.09): the client's own icons of the damaged modules and injured crew, up to four, every
       // word in the icon's title. The column is on every row, empty when nothing is known about the crits (25.09).
       b.appendChild(iconColumn(ArmorCrits.badges(h,view).slice(0,4)));
@@ -7871,12 +7966,169 @@
       var outcome=node('span',undefined,'hit-outcome'),line=node('span',undefined,'outcome-line');
       line.appendChild(node('span',view==='incoming'?'\u2199':'\u2197','outcome-dir'));
       line.appendChild(hasDamage?node('span',String(h.damage),'hit-damage'):node('span',resultIcon(h).replace(/▰ ?/,''),'hit-result'));
-      outcome.appendChild(line);outcome.appendChild(node('span',clock(h.receivedAt),'hit-time'));b.appendChild(outcome);
+      var time=node('span',hitClock(h),'hit-time');
+      if(only){var mark=sceneMark('replay');mark.classList.add('replay-only');mark.title=only.mark;mark.setAttribute('data-tip-own','');time.insertBefore(mark,time.firstChild);}
+      outcome.appendChild(line);outcome.appendChild(time);b.appendChild(outcome);
       b.onclick=function(){selectHit(h.id).catch(function(){});};container.appendChild(b);});
     flush(Infinity);
   }
   // The pressed row of the list, without building the list again (audit APP1-08: opening a battle built it twice).
   function markHits(){var rows=$('hits').children||[];for(var i=0;i<rows.length;i++){var id=rows[i].getAttribute&&(rows[i].getAttribute('data-hit')||rows[i].getAttribute('data-event'));if(id!==null&&id!==undefined)rows[i].setAttribute('aria-pressed',String(id===String(selected)));}}
+  // ===================== THE TWO SCENES OF A HIT (11.11) =====================
+  // The user, 11.11 (docs/PRODUCT.md, the battle log from the replay): a hit of a battle made from its replay keeps the
+  // in-game SNAPSHOT of its scene and gets a scene REBUILT from the replay; the page shows the snapshot and can switch -
+  // "which picture to take, the reconstruction or the actual one" - so a disputed hit (100 % and no penetration, 0 % and
+  // a penetration) shows which of the two agrees with what the server did. The data side is local-data.js sceneHit.
+  //   - The choice is a remembered setting (#scene-source-value, a hidden control of the menu: stored, restored and reset
+  //     with the rest), set by the two buttons of the scene's toolbar. It is an INPUT OF THE SCENE: its one owner,
+  //     sceneSourceChanged, shows the hit on screen again from the other scene (sceneFrom 'scene': the scene's own pose,
+  //     the camera as it stands) and touches nothing else - the shell, the settings, the list stay.
+  //   - The switch stands while a recorded hit is on screen. The pressed button is the scene SHOWN: a hit with one scene
+  //     shows that one whatever the choice (the snapshot of a battle recorded before 11.11; the rebuilt scene of a death-
+  //     camera hit, which has no snapshot), and the other button says why it is not there when touched (data-tip-own).
+  //   - Both scenes: the Hit line tile's scene row gives the page's verdict in each with the server's outcome, and its words
+  //     how the two differ (the mod's comparison block; compareScenes, for the hit on screen only, paintSceneChips); the
+  //     button of the other scene is marked when its verdict differs.
+  function hitClock(h){return Number.isFinite(h&&h.receivedAt)?clock(h.receivedAt):h&&Number.isFinite(h.gameTime)?gameClock(h.gameTime):'—';}
+  function sceneWanted(){var e=$('scene-source-value');return e&&e.value==='replay'?'replay':'snapshot';}
+  // A row of the list for a hit the recorder never saw: its words, or null.
+  function replayOnlyWords(h){
+    if(!h||h.source!=='replay'||h.target)return null;
+    var rebuilt=ArmorInspectorData.scenesOf(h).replay;
+    return {row:rebuilt?'from the replay only: no in-game snapshot':'from the replay only: no scene',
+      mark:rebuilt?'Recorded from the replay\nNo in-game snapshot: the recorder did not see this hit (the death camera). Its scene is rebuilt from the replay.'
+        :'Recorded from the replay\nNo in-game snapshot: the recorder did not see this hit (the death camera), and the replay could not rebuild its scene. Its damage and parties are the replay’s.'};
+  }
+  var SCENE_GLYPHS={snapshot:['M2 5.2h2.9l1.2-1.8h3.8l1.2 1.8H14v7.4H2z',[8,8.8,2.3]],replay:['M7.4 13h7.1',[7.4,7.6,5.4],[7.4,4.9,1.1],[4.8,8.9,1.1],[10,8.9,1.1]]};
+  function sceneMark(kind){
+    var NS='http://www.w3.org/2000/svg',span=node('span',undefined,'scene-mark'),svg=document.createElementNS(NS,'svg'),g=SCENE_GLYPHS[kind];
+    svg.setAttribute('viewBox','0 0 16 16');svg.setAttribute('aria-hidden','true');
+    var path=document.createElementNS(NS,'path');path.setAttribute('d',g[0]);svg.appendChild(path);
+    g.slice(1).forEach(function(c){var circle=document.createElementNS(NS,'circle');circle.setAttribute('cx',c[0]);circle.setAttribute('cy',c[1]);circle.setAttribute('r',c[2]);svg.appendChild(circle);});
+    span.appendChild(svg);span.setAttribute('role','img');span.setAttribute('aria-label',kind==='replay'?'From the replay':'In-game snapshot');return span;
+  }
+  // The recorded hit on screen and its scenes; null when the scene is not a recorded hit (a browsed vehicle, ⇅, an event).
+  function sceneState(){
+    if(!current||!activeHit||activeHit.synthetic||activeHit.vehicle||activeHit.damageEvent)return null;
+    var base=current.hits.find(function(h){return h.id===activeHit.id;});if(!base)return null;
+    var have=ArmorInspectorData.scenesOf(base);
+    return {base:base,have:have,shown:activeHit.sceneSource==='replay'?'replay':have.snapshot?'snapshot':null};
+  }
+  // A click on a button of the switch. One whose scene this hit lacks only says why (its words, data-tip-own).
+  function pickScene(which){
+    var st=sceneState(),box=$('scene-source-value');
+    if(st&&!st.have[which])return;
+    if(box.value!==which){box.value=which;persistSettings();}
+    sceneSourceChanged();
+  }
+  // THE ONE OWNER OF THE SCENE CHOICE: a click, the settings' restore and their reset all come here. The hit on screen is
+  // shown again when the scene it would be shown from is another one; nothing else is reset.
+  function sceneSourceChanged(){
+    var st=sceneState();
+    if(st&&ArmorInspectorData.sceneHit(st.base,sceneWanted(),current).shown!==st.shown){selectHit(st.base.id,sceneFrom('scene')).catch(function(){});return;}
+    paintSceneSwitch();
+  }
+  var SCENE_WORDS={
+    snapshot:'In-game snapshot\nThe target’s pose and armour as the recorder read them in the battle, the scene the game drew.\n• Click: show this hit from the snapshot; the page remembers the choice',
+    replay:'Rebuilt from the replay\nThe same hit in the pose the replay gives: the vehicle’s place and hull 0.2 s before the hit, the turret and gun from the replay’s angles.\n• Click: show this hit rebuilt; the page remembers the choice\n• Same as the snapshot: the point on the armour, its angle, the armour\n• Weaker: the hull at rest - the replay has no suspension tilt; another vehicle’s turret and gun in steps of about 0.35°',
+    noSnapshot:'In-game snapshot: none\nThe recorder did not see this hit (the death camera). It is in the replay only, so the scene rebuilt from the replay is its one scene.',
+    noReplayBattle:'Rebuilt from the replay: none\nThis battle was published from the recorder alone: its replay has not been read, so each hit has its snapshot only.',
+    noReplayHit:'Rebuilt from the replay: none\nThe replay did not give what this hit’s scene needs (the target’s place, its vehicle or a part model), so the snapshot is its one scene.',
+    noScene:'No scene\nThe recorder did not see this hit and the replay could not rebuild its scene: its damage and parties are all there is.'};
+  function paintSceneSwitch(){
+    var box=$('scene-switch');if(!box)return;
+    var st=sceneState(),was=box.hidden;showEl(box,!!st);
+    if(was!==box.hidden)scheduleLayout(LAYOUT_TOOLBAR);
+    paintSceneChips(st);
+    if(!st)return;
+    var shown=st.shown,cmp=sceneCmp.last&&sceneCmp.last.id===st.base.id?sceneCmp.last:null;
+    ['snapshot','replay'].forEach(function(k){
+      var b=$('scene-'+k),there=st.have[k],differs=!!(there&&cmp&&cmp.differs&&k!==shown);
+      b.setAttribute('aria-pressed',String(k===shown));
+      b.classList.toggle('absent',!there);
+      if(there){b.removeAttribute('aria-disabled');b.removeAttribute('data-tip-own');}else{b.setAttribute('aria-disabled','true');b.setAttribute('data-tip-own','');}
+      if(differs)b.setAttribute('data-differs','');else b.removeAttribute('data-differs');
+      var words=there?SCENE_WORDS[k]:!shown?SCENE_WORDS.noScene:k==='snapshot'?SCENE_WORDS.noSnapshot:current.source==='replay'?SCENE_WORDS.noReplayHit:SCENE_WORDS.noReplayBattle;
+      if(differs)words+='\n• Amber dot: the page’s verdict in this scene is another one (the Hit line tile shows both)';
+      if(b.title!==words)b.title=words;
+    });
+  }
+  // THE HIT LINE TILE'S SCENE ROW (#shot-scenes): a hit with a scene rebuilt from the replay says so on the tile it is read
+  // on. Both scenes: the page's verdict on the first point in each - the snapshot's and the rebuilt one's, the scene on
+  // screen framed - and the server's outcome beside them, amber where the two disagree; its words hold the rest: every
+  // point, how the scenes differ (the mod's comparison block, rebuilt minus snapshot) and where the rebuilt one is weaker.
+  // The rebuilt scene only: one chip that says so. A hit with its snapshot only (every battle before 11.11): no row.
+  function paintSceneChips(st){
+    var row=$('shot-scenes');if(!row)return;
+    var s=st&&st.have.replay?st.base.replayScene:null;
+    if(!s){if(!row.hidden){row.hidden=true;row.replaceChildren();}return;}
+    row.replaceChildren();row.hidden=false;
+    var f=function(x,d){return (x>0?'+':x<0?'−':'')+Math.abs(x).toFixed(d);},limits=(s.limits||[]).concat(s.problems||[]);
+    var weaker=limits.length?['','Weaker in the rebuilt scene'].concat(limits.map(function(l){return '• '+l;})):[];
+    var chip=function(kind,text,cls){var c=node('span',undefined,'chip scene-chip'+(cls?' '+cls:''));if(kind)c.appendChild(sceneMark(kind));c.appendChild(document.createTextNode(text));row.appendChild(c);return c;};
+    if(!st.have.snapshot){
+      chip('replay','Rebuilt · no snapshot','shown');
+      row.title=tipJoin(['Rebuilt from the replay','The recorder did not see this hit (the death camera): this scene, rebuilt from the replay, is its only one.'].concat(weaker));
+      return;
+    }
+    var last=sceneCmp.last&&sceneCmp.last.id===st.base.id&&sceneCmp.last.key===sceneCmp.key?sceneCmp.last:null,first=last&&last.lines[0];
+    var a=chip('snapshot',first?first.a:last?'—':'…',st.shown==='snapshot'?'shown':''),b=chip('replay',first?first.b:last?'—':'…',st.shown==='replay'?'shown':'');
+    if(last&&last.differs)(st.shown==='snapshot'?b:a).classList.add('differs');
+    chip(null,'server: '+serverWords(st.base),'server');
+    var c=s.comparison,lines=['Two scenes of this hit','The page’s verdict in the in-game snapshot and in the scene rebuilt from the replay, for the shell on screen; the framed one is on screen.'];
+    if(last)last.lines.forEach(function(l){lines.push('• '+l.part+': '+l.a+' / '+l.b+' (server: '+l.server+')');});
+    else lines.push('• Computing…');
+    lines.push('• Hit: '+result(st.base));
+    if(c&&!c.why){
+      var pts=(c.points||[]).filter(function(p){return p&&p.distance!=null;}),max=function(k){return pts.reduce(function(m,p){return p[k]!=null&&Math.abs(p[k])>Math.abs(m)?p[k]:m;},0);};
+      lines.push('','Rebuilt minus snapshot');
+      if(pts.length)lines.push('• Point: '+max('distance').toFixed(2)+' m apart, angle '+f(max('incidenceDiff'),1)+'°, armour '+f(max('nominalDiff'),0)+' mm');
+      if(c.turretYawDiff!=null)lines.push('• Turret '+f(c.turretYawDiff,1)+'°, gun '+f(c.gunPitchDiff,1)+'°');
+      if(c.worldShift!=null)lines.push('• Vehicle: '+c.worldShift.toFixed(2)+' m, '+c.worldRotation.toFixed(1)+'°'+(c.hullFromRest?'; the snapshot’s hull sways '+c.hullFromRest.rotation.toFixed(1)+'° off rest':''));
+      if(c.rangeDiff!=null)lines.push('• Range: '+f(c.rangeDiff,1)+' m');
+      if(c.stopDistance&&c.stopDistance.replay!=null)lines.push('• From the server’s stop: '+c.stopDistance.snapshot.toFixed(2)+' m snapshot, '+c.stopDistance.replay.toFixed(2)+' m rebuilt');
+    }
+    lines=lines.concat(weaker);lines.push('','Nominal penetration against the armour, not the rolled RNG.');
+    row.title=tipJoin(lines);
+  }
+  function serverWords(hit){
+    if(hit.damage>0)return hit.damage+' HP';
+    var p=(hit.points||[]).filter(function(q){return q.effect!==undefined;});
+    return p.length?String(effects[p[p.length-1].effect]||p[p.length-1].effect).toLowerCase():'—';
+  }
+  // THE PAGE'S VERDICT IN BOTH SCENES, for the hit on screen and the shell on screen (shotStats asks; a camera move does
+  // not): each scene is cast the way the Statistics log casts a hit (ArmorViewer.verdictsFor, the record's pose), so the
+  // two figures differ by the scene alone. Never for the whole battle. The result stands for the same hit and shell, so
+  // the switch flipped back and forth casts nothing again.
+  var sceneCmp={key:null,timer:null,last:null};
+  function compareScenes(shell){
+    var st=sceneState();if(!st||!st.have.snapshot||!st.have.replay||!shell||!window.ArmorViewer||!ArmorViewer.verdictsFor)return;
+    var key=current.id+'/'+st.base.id+'|'+JSON.stringify(shell);if(key===sceneCmp.key)return;
+    sceneCmp.key=key;window.clearTimeout(sceneCmp.timer);paintSceneChips(st);
+    var battle=current,base=st.base;
+    sceneCmp.timer=window.setTimeout(function(){
+      var cast=function(which){var h=ArmorInspectorData.sceneHit(base,which,battle).hit;
+        return ArmorInspectorData.sceneFor(battle,h).then(function(data){if(data.geometryIncomplete)return [];
+          var context=ArmorShotContext.resolve(h,battle.shotEvents||[]);return ArmorViewer.verdictsFor(data,ArmorViewer.points(h,context),shell);});};
+      Promise.all([cast('snapshot'),cast('replay')]).then(function(both){
+        if(sceneCmp.key!==key)return;
+        sceneCmp.last=sceneVerdicts(base,both[0]||[],both[1]||[],key);
+        paintSceneSwitch();
+      }).catch(function(e){if(window.console)console.warn('Bullba Hits scenes: hit '+base.id+' not compared: '+(e&&e.message||e));});
+    },120);
+  }
+  function verdictWords(v){var r=v&&v.result||{};return !v?'—':r.reason==='ricochet'?'ricochet':r.chance==null?'—':Math.round(r.chance)+' %';}
+  function verdictClass(v){var r=v&&v.result||{};return !v?null:r.reason==='ricochet'?'ricochet':r.chance==null?null:r.chance>=50?'pen':'no-pen';}
+  // Point by point: the part, the two verdicts, the server's effect there; differs - the class (pen, no pen, ricochet) of
+  // some point is another in the other scene.
+  function sceneVerdicts(base,snap,rebuilt,key){
+    var by=function(list,i){return list.find(function(v){return v.index===i;})||null;},indices=[],differs=false,lines=[];
+    snap.concat(rebuilt).forEach(function(v){if(indices.indexOf(v.index)===-1)indices.push(v.index);});indices.sort(function(x,y){return x-y;});
+    indices.forEach(function(i){var a=by(snap,i),b=by(rebuilt,i),any=a||b;
+      if(verdictClass(a)!==verdictClass(b))differs=true;
+      lines.push({part:partLabel(any.part,(base.target||{}).parts),a:verdictWords(a),b:verdictWords(b),server:String(effects[any.effect]||any.effect)});});
+    return {id:base.id,key:key,lines:lines,differs:differs};
+  }
   // A pick (a row clicked, ⇅ back): any vehicle still on its way gives way to it (scenePick). auto (loadBattle): a read
   // nobody asked the scene for - it is put on a free scene only, so there is nothing to give way.
   function selectHit(id,given,auto){
@@ -7888,7 +8140,7 @@
     selected=id;markHits();var token=++generation;message('Preparing the model…');if(viewer&&!kept)viewer.clear();
     // A scene that could not be read or shown leaves an empty scene painted as one (sceneCleared, audit APP2-03),
     // not the tiles and the strip of the hit before over a cleared viewer.
-    return ArmorInspectorData.scene(current,id).then(function(data){if(token!==generation)return;display(data,false,given||sceneFrom('record'));return {battleId:current.id,hitId:id};}).catch(function(e){if(token===generation){sceneCleared();message(e.message);warnings([e.message]);}throw e;});
+    return ArmorInspectorData.scene(current,id,sceneWanted()).then(function(data){if(token!==generation)return;display(data,false,given||sceneFrom('record'));return {battleId:current.id,hitId:id};}).catch(function(e){if(token===generation){sceneCleared();message(e.message);warnings([e.message]);}throw e;});
   }
   // The exporter bumps one shared index timestamp on every publish, so a shot in another battle used to reload
   // this battle, re-select the same hit and rebuild the scene from scratch - losing the camera, the pinned line
@@ -7901,12 +8153,14 @@
   function hitFingerprint(hit){
     if(!hit)return null;
     var stamp=function(p){return [p.id,p.name,p.modelKey,p.modelPending,p.modelError,p.armorSource,p.resource,(p.transform||[]).join(' ')].join('~');};
+    // The scene rebuilt from the replay (11.11) is the hit's second scene: its arrival, and its models, change the hit.
+    var second=hit.replayScene&&hit.replayScene.target?[hit.replayScene.poseTime,(hit.replayScene.target.parts||[]).map(stamp).join(';')].join('/'):'';
     var parts=((hit.target||{}).parts||[]).map(stamp).join(';')+'/'+((hit.attacker||{}).parts||[]).map(stamp).join(';');
     var attacker=hit.attacker||{},target=hit.target||{};
     return [hit.id,hit.receivedAt,hit.damage,viewDirection(hit),hit.rangeAtImpact,hit.shellStatus,hit.effectsIndex,hit.shellVelocity,
       JSON.stringify(hit.points||[]),JSON.stringify(hit.rawHitPoints||[]),JSON.stringify(hit.aim||[]),
       (hit.warnings||[]).join('|'),(hit.shellCandidates||[]).length,(hit.availableShells||[]).length,
-      target.name,attacker.name,attacker.gun,attacker.gunDispersion,attacker.gunHeight,attacker.gunHeightFrom,parts].join('\u0001');
+      target.name,attacker.name,attacker.gun,attacker.gunDispersion,attacker.gunHeight,attacker.gunHeightFrom,parts,second].join('\u0001');
   }
   // A SAVED BATTLE WHOSE FILE IS OUT OF DATE (BACKLOG 55, the user's decision of 02.10): the mod no longer publishes every
   // battle again after an update; the index marks such a one 'stale'. Opening it shows the file there is at once and, in the
@@ -8188,6 +8442,10 @@
     // Two BROWSED vehicles simply change places; a recorded hit below takes its own path in either panel.
     // The roles are taken from the scene first (adoptHitVehicles): outside the Vehicles panel nobody keeps them.
     if(activeHit&&activeHit.vehicle){adoptHitVehicles();if(!modelVehicle||!shooterVehicle||modelVehicle===shooterVehicle)return;scenePick();var m=modelVehicle;modelVehicle=shooterVehicle;shooterVehicle=m;showVehicleScene('carry').catch(function(){});return;}
+    // D-114: a damage event's swapped view goes back to the event (its camera and the pose left on it, sideFrom); a scene
+    // with no recorded hit to turn round swaps by what it holds (contentSwap).
+    if(eventBack(activeHit)){var side='event:'+activeHit.eventBase;scenePick();selectEvent(activeHit.eventBase,sideFrom(side,'target',null)).catch(function(){});return;}
+    if(contentSwap(activeHit)){swapContent(activeHit);return;}
     // BACK TO THE RECORDED HIT (04.10): the camera on screen stays, and the hit's target stands as the user left it
     // (sideFrom) - it used to come back in the shot's view and the record's pose, as if its row had been clicked. From a
     // roster shooter's view of the same model (pickShooter) the model simply stays: its camera, pose and pin.
@@ -9303,6 +9561,11 @@
   [3,4,5].forEach(function(v){$('aim-sound-count-'+v).onclick=function(){$('aim-sound-count-value').value=String(v);aimSoundSettings();persistSettings();};});
   ['one','shot'].forEach(function(v){$('aim-sound-ticks-'+v).onclick=function(){$('aim-sound-ticks-value').value=v;aimSoundSettings();persistSettings();};});
   $('aim-sound').appendChild(helpDotFor(['aim-sound-toggle','aim-sound-signals','aim-sound-count','aim-sound-ticks']));
+  // The scene a hit is shown from (11.11): the same pattern - a hidden control of the menu keeps the choice, the two buttons
+  // of the scene's toolbar set it and run its one handler (sceneSourceChanged), the cluster wears its own "?".
+  $('scene-source-value').onchange=sceneSourceChanged;
+  ['snapshot','replay'].forEach(function(v){$('scene-'+v).onclick=function(){pickScene(v);};});
+  $('scene-switch').appendChild(helpDotFor(['scene-snapshot','scene-replay']));
   // A hidden page plays nothing: what is scheduled is cancelled, and scheduled again from the gun's state when the page is back.
   document.addEventListener('visibilitychange',function(){aimSoundTell();});
   // How deep the soft light shades (user, 22.09): the slider only scales the composite's brightness range.

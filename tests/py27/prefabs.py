@@ -423,6 +423,10 @@ def recorder_checks(temp):
             check(group, 'a later hit on the hull: the remembered index gives the crest its pose at that hit',
                   len(again) == 1 and len(again[0].get('transform') or []) == 16 and hits[1]['points'][0].get('status') == 'resolved'
                   and calls[1] == (1, 1), ([p['id'] for p in hits[1]['target']['parts']], calls[1]))
+            # 11.11: a contact on a static part keeps the part's client box too (the scene rebuilt from the replay decodes the
+            # point on it; Exporter.prepare_hit keeps it out of the published hit - tests/test_replay_run.py).
+            check(group, 'a contact on the hull (a static part) keeps the client box of the part',
+                  hits[1]['points'][0].get('partBounds') == [[-0.4, -0.3, -1.3], [0.4, 0.2, 0.0]], hits[1]['points'][0])
             check(group, 'the remembered index answering the chassis frame (identity): no crest, the index forgotten',
                   not crest(hits[2]) and not crest(hits[3]) and calls[3] == (0, 0), (calls[2], calls[3]))
             for number, why in ((4, 'a parent with no slot'), (5, 'a matrix of NaN'), (6, 'a place 20 m from the gun')):

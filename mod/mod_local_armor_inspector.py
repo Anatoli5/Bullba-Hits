@@ -13,7 +13,7 @@ try:
 except ImportError:
     import queue
 
-VERSION = '1.05'
+VERSION = '1.06'
 VIEWER_PATH = os.path.join('mods', 'configs', 'local.armor_inspector', 'Viewer.html')
 LOG = logging.getLogger('local.armor_inspector')
 PARTS = ('chassis', 'hull', 'turret', 'gun')
@@ -584,6 +584,9 @@ class Writer(object):
                     elif name == 'battle': self.exporter.request_battle(payload)
                     elif name == 'sweepStart': self.exporter.confirm_sweep(payload or 'ttx')
                     elif name == 'sweepStop': self.exporter.stop_sweep(payload or 'ttx')
+                    # The replay stream of one battle (replay_source.ReplaySource.handover): its consumer is the
+                    # exporter's replay_stream; an exporter without it lets the message go (the copy stays on disk).
+                    elif name == 'replay' and hasattr(self.exporter, 'replay_stream'): self.exporter.replay_stream(payload)
                 except Exception: LOG.exception('HTML export command failed')
                 finally: self.export_queue.task_done()
             dirty = self.take_dirty()
@@ -710,6 +713,9 @@ class VehicleEvents(object):
         except Exception: LOG.exception('Motion sampler unavailable; hit recording continues')
         self.attempts = 0
         self.attach_arena()
+        # The replay stream's copy of this battle starts (replay_source): attribute reads and one message here.
+        replay = getattr(self.recorder, 'replay', None)
+        if replay is not None: replay.on_avatar_become_player(self.recorder.bw.player())
 
     def attach_arena(self):
         """Subscribe to the arena roster; the arena appears slightly after the avatar."""
@@ -755,6 +761,9 @@ class VehicleEvents(object):
         except Exception: LOG.exception('Motion sampler stop failed')
         self.detach_arena()
         self.flush_roster()
+        # The avatar's own onBecomeNonPlayer stopped the recording before this event: the stream's end and hand-over.
+        replay = getattr(self.recorder, 'replay', None)
+        if replay is not None: replay.on_avatar_become_non_player()
 
     def note_roster_vehicle(self, descr):
         """Remember a roster vehicle for export after the battle; the game thread does nothing else."""
@@ -1345,6 +1354,15 @@ class Recorder(object):
                         'shellType':shell_type, 'caliber':caliber, 'start':vector(start), 'end':vector(end)})
                     from constants import SHELL_TYPES_LIST
                     if 0 <= shell_type < len(SHELL_TYPES_LIST): point['shellKind'] = SHELL_TYPES_LIST[shell_type]
+                    # The static part's client box, the very box parseHitPoint decoded start/end on (11.11): the scene
+                    # rebuilt from the replay decodes the same point on it (replay_scene.recover_boxes). Not published for
+                    # a live battle (Exporter.prepare_hit). A failure costs only this field, never the hit.
+                    try:
+                        if 0 <= idx <= collisions.maxStaticPartIndex:
+                            box = collisions.getBoundingBox(idx)
+                            point['partBounds'] = [vector(box[0]), vector(box[1])]
+                    except Exception:
+                        pass
                     if vector(start) == vector(end): continue
                     resolved = Decoder.collideHitPoint(idx, start, end, collisions)
                     if resolved is None: continue
@@ -1646,6 +1664,17 @@ def init():
             _events = VehicleEvents(_recorder)
             _events.install()
         except Exception: LOG.exception('Vehicle export hooks unavailable; hit recording continues')
+        try:
+            # The battle's replay stream: the game records every live battle, the copy lands beside the battle's
+            # record and goes to the export thread after the battle (and, after a crash, at this start).
+            # Its gate is the recording gate without the arena (the arena comes after the avatar): a replay being
+            # played is refused inside, a spectator seat here.
+            from local_armor_inspector.replay_source import ReplaySource
+            from local_armor_inspector.telemetry import observer_seat
+            _recorder.replay = ReplaySource(_recorder.writer.folder, _recorder.session, _recorder.writer.put_export,
+                                            gate=lambda player: recorder.enabled and not observer_seat(player))
+            _recorder.replay.install()
+        except Exception: LOG.exception('Replay source unavailable; hit recording continues')
         try: _context_menu = install_context_menu()
         except Exception: LOG.exception('Hangar context menu unavailable; hit recording continues')
         try:
@@ -1703,5 +1732,10 @@ def fini():
             if _hit_hook is not None: unwrap([_hit_hook])
         except Exception: LOG.exception('Hook cleanup failed')
         _hit_hook = None
+        # Before the writer closes: a battle ending now still reaches the export thread's queue.
+        replay = getattr(_recorder, 'replay', None)
+        if replay is not None:
+            try: replay.close()
+            except Exception: LOG.exception('Replay source cleanup failed')
         _recorder.writer.close()
         _recorder = None

@@ -33,12 +33,15 @@ def main():
                          {'vehicleId': 2, 'local': [0.0, 1.0, 0.0], 'approach': 4.0}]}]
     hits = [{'id': '1', 'gameTime': 5.0, 'targetId': 2, 'attackerId': 1, 'damage': 0}]
     out, result, held = damage_log(hits, events, [{'id': 1, 'maxHealth': 1000}, {'id': 2, 'maxHealth': 1200}], 1030.0)
-    check('a ram and a fire, one event each', [e['kind'] for e in out] == ['ram', 'fire'], [e['kind'] for e in out])
-    ram = out[0] if out else {}
-    check('the ram: the one who drove into the contact rams, both sides counted, the contact kept',
-          (ram.get('attackerId'), ram.get('targetId'), ram.get('damage'), ram.get('selfDamage'), ram.get('rammerFrom')) == (2, 1, 150, 20, 'contact')
-          and ram.get('contact', {}).get('sides', {}).get('1', {}).get('local') == [1.0, 2.0, 3.0], json.dumps(ram)[:300])
-    fire = out[1] if len(out) > 1 else {}
+    check('a ram is two events, one per damaged vehicle, and a fire is one',
+          [e['kind'] for e in out] == ['ram', 'ram', 'fire'], [e['kind'] for e in out])
+    ram, back = (out + [{}, {}])[:2]
+    check('the ram is mutual: each loss dealt by the other vehicle, nobody the rammer, the contact kept on both',
+          [(e.get('attackerId'), e.get('targetId'), e.get('damage'), e.get('returned')) for e in (ram, back)] == [(2, 1, 150, 20), (1, 2, 20, 150)]
+          and ram.get('collision') == back.get('collision') and 'selfDamage' not in ram and 'rammerFrom' not in ram
+          and all(e.get('contact', {}).get('sides', {}).get('1', {}).get('local') == [1.0, 2.0, 3.0] for e in (ram, back)),
+          json.dumps([ram, back])[:400])
+    fire = out[2] if len(out) > 2 else {}
     check('the fire destroys: its total is the HP it had, closed, at its end',
           (fire.get('damage'), fire.get('killed'), fire.get('out'), fire.get('gameTime')) == (850, True, 'destroyed', 20.5), json.dumps(fire)[:300])
     check('the check: four anchors, all of them add up; nothing held back',

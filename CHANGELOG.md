@@ -2,6 +2,14 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.1.1 from 1.05 on, 2.4.1.0 from 1.02 on, 2.4.0.2 from 0.9.3 on, 2.4.0.1 #950 from 0.7.6, 2.4.0.0 #945 before.
 
+## 1.06 (2026-11-11)
+
+- **Battle log from the replay:** a battle's hits now come from its replay, so the hits the recorder never saw - the ones in the death camera after you are destroyed - are in the list too, with their damage and both vehicles. Their rows carry a small reel mark: they have no in-game snapshot.
+- **Two scenes of a hit:** a hit keeps the in-game snapshot of the target (its pose and armour as the game drew them) and also gets a scene rebuilt from the replay. A small switch in the scene's toolbar - a camera for the snapshot, a reel for the replay - shows the same hit from the other scene without moving the camera; the page remembers your choice, and the snapshot is the default. A hit of the death camera is shown from the rebuilt scene, its only one. When a hit has both, the Hit line tile shows the page's chance in each beside what the server did, in amber where the two disagree, and its tooltip says how far apart the two scenes are. The rebuilt scene puts the hull at rest (the replay has no suspension tilt) and takes another vehicle's turret and gun in steps of about a third of a degree.
+- **Ram damage adds up:** a ram is shown from both sides. The HP each vehicle lost in a collision is a row of its own, dealt by the other vehicle, the way the server counts it. Until now one vehicle was called the rammer and the HP it lost stood in no row, so the damage you dealt could add up to less than the HP the enemy lost. Battles recorded earlier show the missing rows as well.
+- **⇅ on every scene:** the swap button no longer disappears on a ram or fire row, or after you pick a shooter from the roster there or beside a vehicle from the Vehicles list. Whenever two different vehicles hold the two roles and the other one has a collision model, ⇅ swaps them; on a ram or fire row the same button takes you back to the event.
+- **Faster aim figures:** the penetration figure of the aim circle is worked out about 1.5-1.8 times faster, the verdicts of the Statistics log a little faster, and a scene with a turned turret is ready sooner. The figures themselves are exactly the same as before.
+
 ## 1.05 (2026-10-30)
 
 - **Client 2.4.1.1:** the mod is built for World of Tanks PC NA 2.4.1.1 and installs into `mods\2.4.1.1`; the recorder itself is unchanged. The event vehicle lists follow the new client (Halloween, Last Stand, Story Mode); your recorded battles are kept.

@@ -441,6 +441,9 @@ try:
 
     # =================== repair: the battles damaged on 02.10 ===================
     group = 'repair'
+    # The entries below are 0.9.3's, of DERIVED_FORMAT 1: the group runs under that format (under a later one every
+    # such entry is stale whatever built it, and there is nothing to tell apart).
+    ex.DERIVED_FORMAT = 1
     game2, folder2, archive2 = make('game2', 'local.armor_inspector')
     damaged = ['w-1', 'd-1', 'p-1', 'n-1']
     for number, (name, kind) in enumerate(zip(damaged, 'WDPN')):
@@ -535,6 +538,7 @@ try:
               and os.path.getmtime(os.path.join(folder2, 'data', 'battles', 'o-1.js')) == times['o-1'],
               [(n, done[n].get('stale')) for n in done])
         check(group, 'only the opened battles were read', sorted(reads) == sorted(n + '.jsonl' for n in damaged), sorted(reads))
+    ex.DERIVED_FORMAT = REAL_FORMAT
     # =================== code: what decodes the descriptor is an input of the fill-ins too (review #7) ===================
     group = 'code'
 

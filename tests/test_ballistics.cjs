@@ -92,6 +92,117 @@ assert.ok(result.effective>190&&result.effective<210);
     assert.equal(a.effective,eff,'tree, '+name);assert.equal(b.effective,eff,'flat, '+name);
   }
 }
+// THE RAY CORE AGAINST BRUTE FORCE (10.11.2026: the core became flat arrays, an explicit stack and a cut-off - this holds
+// it to the plain definition, with no tree and no cut-off): every triangle of the scene tested, the contacts beyond EPS
+// sorted by distance and, within TIE of the first of a run, by material id - the page's order - then walked (evaluate),
+// against engine.ray on the kd-tree and on the one-leaf engine, every field (the struck facet by its distance and cosine:
+// two coplanar facets of one material at one distance are the same plate to the walk). Synthetic scenes built here -
+// coplanar grids with shared edges and vertices, a coplanar copy of another material, plates TIE apart, stacked main
+// plates, a soup - and the local fixture models when present.
+{
+  const EPS=1e-5,TIE=B.TIE;
+  const plate=(armor,vdf,extra)=>({armor:armor,vehicleDamageFactor:vdf,useHitAngle:true,mayRicochet:true,checkCaliberForRicochet:true,checkCaliberForHitAngleNorm:true,collideOnceOnly:false,...extra});
+  const KINDS=[plate(60,1),plate(15,0),plate(25,0,{collideOnceOnly:true}),plate(null,1),plate(120,1,{useHitAngle:false}),plate(8,0,{mayRicochet:false}),undefined];
+  function unitOf(d){const n=Math.sqrt(d[0]*d[0]+d[1]*d[1]+d[2]*d[2]);return n>EPS?d.map(x=>x/n):[0,0,0];}
+  function bruteHits(engine,o,d){
+    const u=unitOf(d),hits=[];
+    engine.triangles.forEach(t=>{
+      const e1=t.e1,e2=t.e2,hx=u[1]*e2[2]-u[2]*e2[1],hy=u[2]*e2[0]-u[0]*e2[2],hz=u[0]*e2[1]-u[1]*e2[0],det=e1[0]*hx+e1[1]*hy+e1[2]*hz;
+      if(Math.abs(det)<1e-10)return;
+      const sx=o[0]-t.a[0],sy=o[1]-t.a[1],sz=o[2]-t.a[2],a=(sx*hx+sy*hy+sz*hz)/det;if(a<-1e-8||a>1+1e-8)return;
+      const qx=sy*e1[2]-sz*e1[1],qy=sz*e1[0]-sx*e1[2],qz=sx*e1[1]-sy*e1[0],b=(u[0]*qx+u[1]*qy+u[2]*qz)/det;if(b<-1e-8||a+b>1+1e-8)return;
+      const distance=(e2[0]*qx+e2[1]*qy+e2[2]*qz)/det;
+      if(distance>EPS)hits.push({distance:distance,triangle:t,cos:Math.abs(u[0]*t.normal[0]+u[1]*t.normal[1]+u[2]*t.normal[2])});
+    });
+    const mat=t=>{const m=engine.materialId(t);return m===undefined?engine.materialCount:m;};
+    hits.sort((x,y)=>x.distance-y.distance);
+    for(let i=0;i<hits.length;){let j=i+1;while(j<hits.length&&hits[j].distance-hits[i].distance<=TIE)j++;
+      const run=hits.slice(i,j).sort((x,y)=>mat(x.triangle)-mat(y.triangle));for(let k=i;k<j;k++)hits[k]=run[k-i];i=j;}
+    return hits;
+  }
+  const plain=r=>JSON.stringify(r,(k,v)=>k==='normal'||k==='origin'||k==='direction'?undefined:k==='hit'?[v.distance,v.cos]:v);
+  const shells=[B.shell('ARMOR_PIERCING',140,100),B.shell('ARMOR_PIERCING_CR',260,85),B.shell('HOLLOW_CHARGE',300,105),Object.assign(B.shell('HIGH_EXPLOSIVE',50,152),{alpha:750,spallDamage:375,mechanics:'MODERN'})];
+  shells[0].alpha=390;shells.forEach(s=>{s.ricochetContinue=false;});
+  let checked=0,contacts=0,ties=0;
+  function against(name,tris,rays){
+    const tree=B.fromTriangles(tris),flat=B.fromTriangles(tris,true);
+    // the tree's own shape: pre-order arrays, leaves of at most 10, every triangle in exactly one leaf
+    const acc=tree.acceleration,nodes=acc.box.length/6,seen=new Uint8Array(tris.length);
+    for(let i=0;i<nodes;i++)if(acc.run[i*2+1]>=0){assert.ok(acc.run[i*2+1]<=10&&acc.kid[i*2]===-1,name+': leaf '+i);for(let k=0;k<acc.run[i*2+1];k++)seen[acc.pool[acc.run[i*2]+k]]++;}
+      else assert.ok(acc.kid[i*2]===i+1&&acc.kid[i*2+1]>i+1,name+': pre-order '+i);
+    assert.ok(seen.every(x=>x===1),name+': every triangle in one leaf');
+    rays.forEach(([o,d],i)=>{
+      const hits=bruteHits(tree,o,d);contacts+=hits.length;
+      for(let k=1;k<hits.length;k++)if(hits[k].distance-hits[k-1].distance<=TIE)ties++;
+      shells.forEach(s=>{
+        const want=plain(B.evaluate(hits,s));
+        assert.equal(plain(tree.ray(o,d,s)),want,name+': ray '+i+' '+s.kind+' (kd-tree)');
+        assert.equal(plain(flat.ray(o,d,s)),want,name+': ray '+i+' '+s.kind+' (one leaf)');
+        checked++;
+      });
+    });
+  }
+  let seed=11;const rnd=()=>{seed=(seed*16807)%2147483647;return seed/2147483647;};
+  const tri=(a,b,c,part,k)=>B.triangle(a,b,c,part,'armor_'+k,KINDS[k]);
+  // 1. Coplanar grids: 20 x 20 quads at z = 0 (shared edges and vertices), the same grid as another material (a track face
+  // in the plane of a side plate), a plate 5 um above (within TIE), one 20 um above (beyond it), a main plate 1 m below.
+  {
+    const tris=[],g=(z,part,k,step)=>{for(let i=0;i<20;i++)for(let j=0;j<20;j++){const x=i*step-10*step,y=j*step-10*step;
+      tris.push(tri([x,y,z],[x+step,y,z],[x+step,y+step,z],part,k),tri([x,y,z],[x+step,y+step,z],[x,y+step,z],part,k));}};
+    g(0,1,1,.25);g(0,2,0,.25);g(5e-6,3,2,.25);g(2e-5,4,4,.25);g(-1,1,0,.3);
+    const rays=[];
+    for(let i=0;i<=20;i+=2)for(let j=0;j<=20;j+=3){const x=i*.25-2.5,y=j*.25-2.5;rays.push([[x,y,3],[0,0,-1]],[[x,y,-3],[0,0,1]],[[x+.01,y+.02,3],[0.1,-0.05,-1]]);}
+    for(let i=0;i<150;i++){const o=[(rnd()-.5)*8,(rnd()-.5)*8,(rnd()<.5?-1:1)*(2+rnd()*3)];rays.push([o,[(rnd()-.5)*4-o[0],(rnd()-.5)*4-o[1],-o[2]*(rnd()*.5+.6)]]);}
+    for(let i=0;i<40;i++)rays.push([[-6,(rnd()-.5)*4,1e-6*(i%5)],[1,(rnd()-.5)*.1,-1e-3*rnd()]]);   // grazing the planes
+    against('coplanar grids',tris,rays);
+  }
+  // 2. Stacked plates along x: screens, main plates (the cut-off), plates behind them, plates TIE apart, tilted plates.
+  {
+    const tris=[],quad=(x,s,tilt,part,k)=>{tris.push(tri([x,-s,-s],[x+tilt,s,-s],[x+tilt,s,s],part,k),tri([x,-s,-s],[x+tilt,s,s],[x,-s,s],part,k));};
+    for(let i=0;i<60;i++)quad(i*.2+(i%7===3?4e-6:0),1+rnd(),(rnd()-.5)*.8,1+(i%4),i%KINDS.length);
+    const rays=[];
+    for(let i=0;i<250;i++)rays.push([[-3,(rnd()-.5)*2,(rnd()-.5)*2],[1,(rnd()-.5)*.6,(rnd()-.5)*.6]],[[15,(rnd()-.5)*2,(rnd()-.5)*2],[-1,(rnd()-.5)*.6,(rnd()-.5)*.6]]);
+    for(let i=0;i<30;i++)rays.push([[-3,(rnd()-.5)*1.5,(rnd()-.5)*1.5],[1,0,0]],[[2+rnd()*5,(rnd()-.5),(rnd()-.5)],[1,0,0]]);   // axis-aligned, some from inside
+    against('stacked plates',tris,rays);
+  }
+  // 3. Twins: main plates along x, each with a screen 5 um behind it (within TIE) of a LOWER material id (its triangles come
+  // first), often in a box the ray enters after the main plate has set the cut-off - the box kept within TIE of it, the
+  // screen sorted first. Rays from inside the stack, so every plate is the first one some ray meets.
+  {
+    const twins=[],mains=[],quad=(list,x,s,part,k)=>{list.push(tri([x,-s,-s],[x,s,-s],[x,s,s],part,k),tri([x,-s,-s],[x,s,s],[x,-s,s],part,k));};
+    for(let i=0;i<50;i++){const x=i*.25,s=.8+.4*rnd();quad(mains,x,s,1,0);quad(twins,x+5e-6,s,2,1);}
+    const rays=[];
+    for(let i=0;i<300;i++)rays.push([[-.1+rnd()*12.5,(rnd()-.5)*1.4,(rnd()-.5)*1.4],[1,(rnd()-.5)*.02,(rnd()-.5)*.02]]);
+    against('TIE twins',twins.concat(mains),rays);
+  }
+  // 4. A soup of 600 triangles of every kind, rays from all sides.
+  {
+    const tris=[];
+    for(let i=0;i<600;i++){const c=[(rnd()-.5)*6,(rnd()-.5)*3,(rnd()-.5)*8],e=()=>(rnd()-.5)*1.5;tris.push(tri(c,[c[0]+e(),c[1]+e(),c[2]+e()],[c[0]+e(),c[1]+e(),c[2]+e()],1+i%3,i%KINDS.length));}
+    const rays=[];
+    for(let i=0;i<400;i++){const z=2*rnd()-1,ph=2*Math.PI*rnd(),q=Math.sqrt(1-z*z),o=[12*q*Math.cos(ph),12*z,12*q*Math.sin(ph)];rays.push([o,[(rnd()-.5)*4-o[0],(rnd()-.5)*2-o[1],(rnd()-.5)*5-o[2]]]);}
+    against('soup',tris,rays);
+  }
+  console.log('PASS: the ray core equals brute force on '+checked+' ray-shell pairs ('+contacts+' contacts, '+ties+' within TIE), kd-tree and one leaf.');
+  // 5. The local fixture models (published client models; not tracked): each group a plate of a kind in turn.
+  const dir=['tests/fixtures-local/close-range-2026-10-04/data/models','tests/fixtures-local/stats-log-2026-10-04/data/models'].find(p=>fs.existsSync(p));
+  if(!dir)console.log('SKIP (no local fixture models: tests/fixtures-local/close-range-2026-10-04/data/models)');
+  else{
+    const files=fs.readdirSync(dir).filter(f=>f.endsWith('.js')).sort().slice(0,40),before=checked;let used=0;
+    for(const f of files){
+      const s=fs.readFileSync(dir+'/'+f,'utf8'),m=JSON.parse(s.slice(s.indexOf('['),s.lastIndexOf(']')+1))[1];
+      if(!m||!m.groups)continue;const tris=[];
+      m.groups.forEach((g,gi)=>{const v=g.vertices;for(let i=0;i<g.indices.length;i+=3)tris.push(tri(v[g.indices[i]],v[g.indices[i+1]],v[g.indices[i+2]],1,gi%KINDS.length));});
+      if(tris.length<200)continue;
+      const lo=[0,1,2].map(i=>Math.min(...tris.map(t=>t.min[i]))),hi=[0,1,2].map(i=>Math.max(...tris.map(t=>t.max[i]))),c=lo.map((x,i)=>(x+hi[i])/2),R=2*Math.hypot(hi[0]-lo[0],hi[1]-lo[1],hi[2]-lo[2])+5,rays=[];
+      for(let i=0;i<300;i++){const z=2*rnd()-1,ph=2*Math.PI*rnd(),q=Math.sqrt(1-z*z),o=[c[0]+R*q*Math.cos(ph),c[1]+R*z,c[2]+R*q*Math.sin(ph)];
+        rays.push([o,[0,1,2].map(k=>lo[k]+rnd()*(hi[k]-lo[k])-o[k])]);}
+      against('fixture model '+f.slice(0,12),tris,rays);
+      if(++used===3)break;
+    }
+    console.log('PASS: the ray core equals brute force on '+used+' local fixture models ('+(checked-before)+' ray-shell pairs).');
+  }
+}
 assert.equal(B.chance(100,100,100,0,'NORMAL'),100);
 assert.equal(B.chance(100,100,100,.25,'UNKNOWN'),null);
 assert.deepEqual(B.color({chance:0},'accessible'),[.63,.18,.55]);

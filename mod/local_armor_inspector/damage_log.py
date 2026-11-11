@@ -161,7 +161,7 @@ def fire_marks(events):
 
 
 def build_events(hits, events, now=None, held=None):
-    """The battle's damage events, one per ram, fire and other episode, in time order.
+    """The battle's damage events in time order: one per fire and other episode, one per damaged vehicle of a ram.
 
     now: the wall clock of a live publish (time.time()); an episode whose last tick is younger than its gap may still
     grow, so it is held back and counted in held['count'] - the tile of a fire goes out at its end, with the total.
@@ -177,37 +177,35 @@ def build_events(hits, events, now=None, held=None):
         reason, kind = episode.reason, kind_of(episode.reason)
         event = {'id':kind + ':' + str(first[2].get('id') or '%.3f' % start), 'kind':kind, 'reason':reason,
                  'start':round(start, 3), 'end':round(end, 3), 'ticks':len(episode.rows)}
+        made = []
         if kind == 'ram':
-            taken = {}
+            # A ram is mutual (the user, 09.11.2026): each vehicle's loss is its own event, dealt by the vehicle its
+            # ticks name - the other one of the pair, as the server credits it (KNOWLEDGE 10). Nobody is "the
+            # rammer": until DERIVED_FORMAT 2 one event held the pair, and the loss of the side called the rammer
+            # stood in no row of the log (the user's 1v1 of 09.11: 486 of his 2090 HP of damage).
+            sides, order = {}, []
             for row in episode.rows:
                 vehicle = row[2].get('vehicleId')
-                side = taken.setdefault(vehicle, {'damage':0, 'killed':False, 'healthAfter':None, 'by':row[2].get('attackerId')})
+                if vehicle not in sides:
+                    sides[vehicle] = {'first':row, 'damage':0, 'ticks':0, 'killed':False, 'healthAfter':None,
+                                      'by':row[2].get('attackerId')}
+                    order.append(vehicle)
+                side = sides[vehicle]
                 side['damage'] += dealt(row[4], row[5])
+                side['ticks'] += 1
                 side['killed'] = side['killed'] or row[5] <= 0
                 side['healthAfter'] = max(row[5], 0)
-            pair = episode.key[1]
-            contact = ram_contact(pair, start, end, collisions)
-            ids = sorted(pair, key=lambda v: (v is None, v))
-            if len(ids) == 1: ids = ids * 2
-            # The rammer: the one who drove INTO the contact (its speed toward the point), when the contact is
-            # recorded; else the one whose side took less (the server spares the rammer, KNOWLEDGE 10).
-            approach = dict((v, number(((contact or {}).get('sides') or {}).get(str(v), {}).get('approach'))) for v in ids)
-            if all(approach[v] is not None for v in ids) and approach[ids[0]] != approach[ids[1]]:
-                rammer = max(ids, key=lambda v: approach[v])
-                event['rammerFrom'] = 'contact'
-            else:
-                rammer = min(ids, key=lambda v: (taken.get(v, {}).get('damage', 0), ids.index(v)))
-                event['rammerFrom'] = 'damage'
-            target = ids[1] if rammer == ids[0] else ids[0]
-            mine, theirs = taken.get(rammer) or {}, taken.get(target) or {}
-            event.update({'attackerId':rammer, 'targetId':target, 'damage':theirs.get('damage', 0),
-                          'selfDamage':mine.get('damage', 0)})
-            if theirs.get('killed'): event['killed'] = True
-            if mine.get('killed'): event['attackerKilled'] = True
-            if theirs.get('healthAfter') is not None: event['healthAfter'] = theirs['healthAfter']
-            if mine.get('healthAfter') is not None: event['attackerHealthAfter'] = mine['healthAfter']
-            if contact: event['contact'] = contact
-            when_row = first
+            contact = ram_contact(episode.key[1], start, end, collisions)
+            for vehicle in order:
+                side = sides[vehicle]
+                # 'collision': the id both events of one ram share; 'returned': what the other vehicle lost in it.
+                ev = dict(event, id='ram:' + str(side['first'][2].get('id') or '%.3f:%s' % (side['first'][0], vehicle)),
+                          ticks=side['ticks'], attackerId=side['by'], targetId=vehicle, damage=side['damage'],
+                          healthAfter=side['healthAfter'], collision=event['id'],
+                          returned=sum(o['damage'] for v, o in sides.items() if v != vehicle))
+                if side['killed']: ev['killed'] = True
+                if contact: ev['contact'] = contact
+                made.append((ev, side['first']))
         else:
             vehicle, attacker = first[2].get('vehicleId'), first[2].get('attackerId')
             event.update({'attackerId':attacker, 'targetId':vehicle,
@@ -228,17 +226,19 @@ def build_events(hits, events, now=None, held=None):
                 if cause is not None: event['cause'] = {'hitId':cause, 'from':how}
                 # The tile stands at the END of the fire, with the total (user, 25.09).
                 when_row = last
-        if event.get('killed'): episode.closed = True
+        if kind != 'ram': made.append((event, when_row))
+        if any(ev.get('killed') for ev, _ in made): episode.closed = True
         # An episode still ticking in a live battle waits: its tile goes out once it is over.
         gap = RAM_GAP if kind == 'ram' else TICK_GAP
         last_seen = number(last[2].get('receivedAt'))
         if not episode.closed and now is not None and last_seen is not None and now - last_seen <= gap + HOLD_MARGIN:
             if held is not None: held['count'] = held.get('count', 0) + 1
             continue
-        event['gameTime'] = round(event['end'] if kind == 'fire' else when_row[0], 3)
-        received = number(when_row[2].get('receivedAt'))
-        if received is not None: event['receivedAt'] = received
-        out.append(event)
+        for ev, when_row in made:
+            ev['gameTime'] = round(ev['end'] if kind == 'fire' else when_row[0], 3)
+            received = number(when_row[2].get('receivedAt'))
+            if received is not None: ev['receivedAt'] = received
+            out.append(ev)
     out.sort(key=lambda e: e['gameTime'])
     return out
 

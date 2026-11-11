@@ -16,7 +16,7 @@ const make = new Function('console', '$', 'ArmorCrits', 'recordsVersion', 'Armor
   'var effects=' + takeLiteral(app, /var\s+effects=(\{[^}]*\})/, 'effects') + ';',
   'var partNames=' + takeLiteral(app, /partNames=(\[[^\]]*\])/, 'partNames') + ';',
   'var verdictLines=0;function verdictStatus(){}function shellModeColumns(){return \'\';}function damageColumns(){return \'\';}',
-  takeFunction(app, 'logPart'), takeFunction(app, 'prefabColumns'), takeFunction(app, 'verdictLine'), 'return verdictLine;'].join('\n'));
+  takeFunction(app, 'logPart'), takeFunction(app, 'prefabColumns'), takeFunction(app, 'sceneColumns'), takeFunction(app, 'verdictLine'), 'return verdictLine;'].join('\n'));
 const line = make({info: function (s) { lines.push(s); }}, function () { return {getAttribute: function () { return 'test'; }}; },
   {columns: function () { return ''; }}, 'r', Data);
 const shell = {penetration: 200, kind: 'ARMOR_PIERCING'}, v = {index: 0, pi: 0, part: -3, effect: 5, source: 'segment', chordDev: null, result: {chance: 90, reason: 'penetration'}};
@@ -46,4 +46,14 @@ Data.settlePrefabs(off);
 line('b', {id: 'h', target: off.target, points: [{part: 3}]}, Object.assign({}, v, {part: 3}), shell, 'auto', {partial: []});
 assert.ok(/ prefabPose=crest\/rejected\/0_position_layer prefabFit=120\.0 /.test(lines[6]) && off.target.parts[1].poseFrom === 'rejected'
   && off.target.parts[1].transform[13] === 2.3, lines[6]);
-console.log(JSON.stringify({passed: true, cases: 7}));
+// The scene a line was cast in (11.11): a snapshot line carries no new column (every line before reads the same); a hit
+// of the death camera, cast in the scene rebuilt from the replay with the shells of another hit of its shooter, says both.
+assert.ok(lines.slice(0, 7).every(function (l) { return l.indexOf(' scene=') < 0 && l.indexOf(' shellsFrom=') < 0; }), lines.join('\n'));
+const replayOnly = Data.sceneHit({id: 'r9', source: 'replay', attackerId: 5, targetId: 6, points: [{part: 1, effect: 4, status: 'replay-raw'}],
+  replayScene: {target: {type: 'x:t', turretYaw: 0, gunPitch: 0, parts: [{id: 1, name: 'hull', transform: I(0, 0, 0), armor: {}}]},
+    points: [{part: 1, effect: 4, status: 'resolved', position: [0, 0, 0], direction: [0, 0, 1]}]}},
+'snapshot', {hits: [{id: '3', attackerId: 5, attacker: {name: 'Shooter'}, availableShells: [{kind: 'ARMOR_PIERCING'}]}], roster: []});
+assert.strictEqual(replayOnly.shown, 'replay');
+line('b', replayOnly.hit, Object.assign({}, v, {part: 1}), shell, 'auto', {partial: []});
+assert.ok(/ part=hull server=.* scene=replay shellsFrom=3 v=/.test(lines[7]), lines[7]);
+console.log(JSON.stringify({passed: true, cases: 8}));

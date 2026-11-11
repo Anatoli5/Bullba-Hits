@@ -246,11 +246,86 @@
       return result;
     });
   }
-  function scene(battle,id){
-    return sceneFor(battle,(battle.hits||[]).find(function(h){return h.id===id;}));
+  // THE TWO SCENES OF A HIT (11.11.2026, docs/PRODUCT.md, the section on the battle log from the replay). A battle made from
+  // its replay (battle.source 'replay', mod replay_battle.py) keeps on a hit the recorder's SNAPSHOT of the scene where it
+  // always was (target, points, aim, rangeAtImpact) and beside it the scene REBUILT from the replay under the one key
+  // 'replayScene' (mod replay_scene.py): the same field names, plus how it was made ('limits', 'problems', 'approximate')
+  // and, where both exist, 'comparison'. A hit of the death camera has no snapshot (no target block): the rebuilt scene is
+  // its only one. sceneHit(hit, want, battle) is the one place a hit is turned into the scene the page shows:
+  //   want 'snapshot' (the default) or 'replay' - the user's choice; the scene that exists is shown when the wanted one
+  //   does not. {hit, shown: 'snapshot'|'replay'|null, have: {snapshot, replay}}.
+  // The snapshot is the hit object itself, untouched, so every older battle reads exactly as before. The rebuilt scene is
+  // a new object: the hit's identity, damage, crits and shells as they are, and its scene fields from the block - the
+  // target's parts and pose (a part marked armorFrom 'snapshot' takes the snapshot part's armour table: the mod writes the
+  // table once when both are equal), the points (the snapshot point's other fields under the rebuilt geometry), the aim
+  // (turret yaw, gun pitch), the range and the shooter's place (none when the replay has none - never the snapshot's).
+  // A hit without a target block takes the name, tier, class and limits of the same vehicle from another hit of this
+  // battle, else its roster row, and the shooter's block and loadable shells from a hit he fired in this battle
+  // (shellsFrom names it): the replay holds neither; nothing else is borrowed, nothing guessed.
+  var SECOND_SCENE='replayScene',POINT_GEOMETRY=['start','end','position','direction','normal','status','partBounds'];
+  function scenesOf(hit){
+    var t=object(hit&&hit.target),r=object(hit&&hit[SECOND_SCENE]);
+    return {snapshot:!!t,replay:!!(r&&object(r.target)&&Array.isArray(r.target.parts)&&r.target.parts.length)};
+  }
+  function borrowedTarget(hit,battle){
+    var hits=(battle&&battle.hits)||[],i,h;
+    for(i=0;i<hits.length;i++){h=hits[i];if(h&&h!==hit&&h.targetId===hit.targetId&&object(h.target))return h.target;}
+    var row=((battle&&battle.roster)||[]).find(function(r){return r&&r.id===hit.targetId;});
+    return row?{name:row.name,type:row.type}:{};
+  }
+  function borrowedShooter(hit,battle){
+    var hits=(battle&&battle.hits)||[],i,h;
+    for(i=0;i<hits.length;i++){h=hits[i];if(h&&h!==hit&&h.attackerId===hit.attackerId&&object(h.attacker)&&h.attacker.name)return h;}
+    return null;
+  }
+  function replayHit(hit,battle){
+    var s=hit[SECOND_SCENE],st=s.target,base=object(hit.target),snap={},out=Object.assign({},hit),t={};
+    ((base&&base.parts)||[]).forEach(function(p){if(object(p))snap[p.id]=p;});
+    var who=base||borrowedTarget(hit,battle);
+    Object.keys(who).forEach(function(k){if(k!=='parts'&&k!=='worldTransform')t[k]=who[k];});
+    ['type','compactDescriptor','turretYaw','gunPitch','worldTransform'].forEach(function(k){if(has(st,k))t[k]=st[k];});
+    t.parts=st.parts.map(function(p){
+      var q=Object.assign({},p);
+      if(q.armorFrom==='snapshot'){
+        var same=snap[q.id];
+        if(same&&object(same.armor)){q.armor=same.armor;if(same.armorError)q.armorError=same.armorError;}
+        else{q.armor={};q.armorError='Recorded armor table unavailable';}
+        delete q.armorFrom;
+      }
+      return q;
+    });
+    out.target=t;
+    if(Number.isFinite(st.turretYaw)&&Number.isFinite(st.gunPitch))out.aim=[st.turretYaw,st.gunPitch];else delete out.aim;
+    var live=hit.points||[];
+    out.points=(s.points||[]).map(function(p,k){
+      var q={},lp=object(live[k]);
+      if(lp&&lp.part===p.part)Object.keys(lp).forEach(function(key){if(POINT_GEOMETRY.indexOf(key)===-1)q[key]=lp[key];});
+      return Object.assign(q,p);
+    });
+    ['rangeAtImpact','attackerPositionAtImpact'].forEach(function(k){if(has(s,k))out[k]=s[k];else delete out[k];});
+    if(!object(hit.attacker)){
+      var lend=borrowedShooter(hit,battle);
+      if(lend){out.attacker=lend.attacker;out.availableShells=(lend.availableShells||lend.shellCandidates||[]).slice();out.shellsFrom=lend.id;}
+    }
+    out.sceneSource='replay';
+    return out;
+  }
+  function sceneHit(hit,want,battle){
+    var have=scenesOf(hit),shown=want==='replay'&&have.replay?'replay':have.snapshot?'snapshot':have.replay?'replay':null;
+    return {hit:shown==='replay'?replayHit(hit,battle):hit,shown:shown,have:have};
+  }
+  // A hit with neither scene (the death camera, where the replay could not rebuild one either): its row stands with its
+  // damage and parties, and the scene area says why there is nothing to draw.
+  var NO_SCENE='No scene for this hit: the recorder did not see it (the death camera), and the replay could not rebuild one.';
+  function scene(battle,id,want){
+    var hit=(battle.hits||[]).find(function(h){return h.id===id;});
+    if(!hit)return sceneFor(battle,hit);
+    var pick=sceneHit(hit,want,battle);
+    if(!pick.shown&&hit.source==='replay')return Promise.resolve({hit:hit,models:{},warnings:(battle.warnings||[]).concat(hit.warnings||[]),partial:[],geometryIncomplete:true,geometryError:NO_SCENE});
+    return sceneFor(battle,pick.hit);
   }
   // expandBattle is published so the offline tools that read a battle file straight from disk
   // (tools/check_shot_selection.cjs, tests/test_ballistics.cjs) use this one
   // reader instead of a second copy of the rules.
-  window.ArmorInspectorData={receive:receive,index:function(){return read('index');},battle:function(id){return read('battle:'+id);},vehicles:function(){return read('vehicles');},vehicle:function(id,once){return read('vehicle:'+id,once?RETRIES:0);},ttx:function(id){return read('ttx:'+id);},ttxSweep:function(){return read('ttxSweep');},modelsSweep:function(){return read('modelsSweep');},scene:scene,sceneFor:sceneFor,wheelModel:wheelModel,prefabPose:prefabPose,settlePrefabs:settlePrefabs,PREFAB_FIT_MAX:PREFAB_FIT_MAX,expandBattle:expandBattle};
+  window.ArmorInspectorData={receive:receive,index:function(){return read('index');},battle:function(id){return read('battle:'+id);},vehicles:function(){return read('vehicles');},vehicle:function(id,once){return read('vehicle:'+id,once?RETRIES:0);},ttx:function(id){return read('ttx:'+id);},ttxSweep:function(){return read('ttxSweep');},modelsSweep:function(){return read('modelsSweep');},scene:scene,sceneFor:sceneFor,sceneHit:sceneHit,scenesOf:scenesOf,NO_SCENE:NO_SCENE,wheelModel:wheelModel,prefabPose:prefabPose,settlePrefabs:settlePrefabs,PREFAB_FIT_MAX:PREFAB_FIT_MAX,expandBattle:expandBattle};
 }());

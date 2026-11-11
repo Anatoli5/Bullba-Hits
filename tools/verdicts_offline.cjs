@@ -165,6 +165,8 @@ function verdictModule(appSource, deps) {
     // The shooter's vehicle mode on the line (22.09): verdictLine calls it, so it has to come along.
     takeFunction(appSource, 'shellModeColumns'),
     takeFunction(appSource, 'damageColumns'),
+    // The scene a line was cast in (11.11: scene=replay for a hit with no snapshot): verdictLine calls it.
+    takeFunction(appSource, 'sceneColumns'),
     takeFunction(appSource, 'queueVerdicts'),
     takeFunction(appSource, 'drainVerdicts'),
     takeFunction(appSource, 'verdictStatus'),
@@ -227,6 +229,8 @@ function main(argv) {
   }
   const probeData = {
     index: Data.index, battle: Data.battle, vehicles: Data.vehicles, vehicle: Data.vehicle, scene: Data.scene,
+    // The scene each hit is cast in (11.11): queueVerdicts asks, as in the page.
+    sceneHit: Data.sceneHit,
     sceneFor: function (battle, hit) {
       close();
       job = {points: null, verdicts: null, error: null};
@@ -311,6 +315,8 @@ function main(argv) {
           tally.battles++;
           tally.hits += (battle.hits || []).length;
           tally.queued += (battle.hits || []).filter(function (h) {
+            // The scene the page casts a hit in (11.11): its snapshot, else the scene rebuilt from the replay.
+            if (Data.sceneHit) h = Data.sceneHit(h, 'snapshot', battle).hit;
             return (h.points || []).some(function (p) { return p.status === 'resolved'; });
           }).length;
           api.queueVerdicts(battle);

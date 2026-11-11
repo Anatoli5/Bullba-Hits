@@ -40,11 +40,11 @@ function ok(name, cond, extra) {
   else if (VERBOSE) console.log('ok   ' + name + (extra ? ' ' + extra : ''));
 }
 
-function stage() {
+function stage(options) {
   const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'bullba-page-'));
   fs.cpSync(WEB, path.join(folder, 'web'), {recursive: true});
   fs.copyFileSync(path.join(WEB, 'index.html'), path.join(folder, 'Viewer.html'));
-  fixture.write(folder);
+  fixture.write(folder, options);
   return folder;
 }
 
@@ -328,7 +328,7 @@ async function inheritMatrix(browser, folder) {
     {name: 'the ⇅ of a recorded hit whose record has no motion of the shooter', from: HIT(1), act: ['swap()'], want: 'carry', model: 'Quebec'},
     {name: 'a seat with no hits in the battle - its own model', from: ["side('battles')", "battle('pm3')", 'hit(0)'], act: ['modelTile()', "side('battles')", 'roster(32)'], want: 'carry', model: 'Quebec'},
     {name: 'a ram tile (its record has no pose of the parts)', from: HIT(1), act: ['event(0)'], want: 'carry', model: 'Papa'},
-    {name: 'a fire tile', from: HIT(1), act: ['event(1)'], want: 'carry', model: 'Papa'},
+    {name: 'a fire tile', from: HIT(1), act: ['event(2)'], want: 'carry', model: 'Papa'},
     {name: 'a hit whose point was not restored (another battle picked: its first hit)', from: HIT(1), act: ["battle('pm2')"], want: 'camera', model: 'Papa'},
     {name: 'another shooter from the Vehicles list', from: VEH, act: ['shooterTile()', "list('pm_papa')"], want: 'same', shooter: 'Papa'},
     {name: 'another shooter from the battle\'s roster, a recorded hit on screen', from: HIT(0), act: ['shooterTile()', "side('battles')", 'roster(32)'], want: 'same', shooter: 'Quebec'},
@@ -569,6 +569,119 @@ async function closeRange(browser, folder) {
   }
 }
 
+// ---- THE TWO SCENES OF A HIT (11.11, docs/PRODUCT.md: the battle log from the replay) -----------------------------------
+// A battle made from its replay (fixture pmr): the switch in the scene's toolbar shows the hit on screen from the scene
+// rebuilt from the replay and back, keeps the camera and the rest of the page, and is remembered across a reload; a hit of
+// the death camera is shown from its rebuilt scene whatever the choice, its row marked; a hit with no scene says so. Its
+// own folder and page: the main run's data has no such battle.
+async function twoScenes(browser) {
+  const folder = stage({replay: true});
+  const LV = 'window.__bullbaViewers[window.__bullbaViewers.length - 1]';
+  const STATE = `(() => { const v = ${LV}, h = v && v.loadedData ? v.loadedData.hit : null, $ = (id) => document.getElementById(id), laid = (e) => !!e && e.getClientRects().length > 0;
+    let stored = null; try { stored = JSON.parse(localStorage.getItem('bullba-settings')).values; } catch (x) {}
+    const rows = [].slice.call(document.querySelectorAll('#hits > .hit')), b = (k) => $('scene-' + k);
+    return {scene: h ? String(h.id) : null, from: h ? (h.sceneSource || 'snapshot') : null, yawAim: h && h.aim ? h.aim[0] : null, shift: h && h.target && h.target.worldTransform ? h.target.worldTransform[12] : null,
+      armour: h && h.target && h.target.parts[1] && h.target.parts[1].armor ? Object.keys(h.target.parts[1].armor).join() : null,
+      switchLaid: laid($('scene-switch')), dot: laid($('scene-switch').querySelector('.help-dot')),
+      pressed: ['snapshot', 'replay'].filter((k) => b(k).getAttribute('aria-pressed') === 'true').join(),
+      absent: ['snapshot', 'replay'].filter((k) => b(k).getAttribute('aria-disabled') === 'true').join(),
+      chips: laid($('shot-scenes')) ? $('shot-scenes').textContent : null, stored: stored ? stored['scene-source-value'] : undefined,
+      message: laid($('scene-message')) ? $('scene-message').textContent : '', marks: rows.filter((r) => laid(r.querySelector('.replay-only'))).map((r) => r.getAttribute('data-hit')).join(),
+      selected: rows.filter((r) => r.getAttribute('aria-pressed') === 'true').map((r) => r.getAttribute('data-hit')).join(), shell: $('shell-choice').value,
+      camera: v ? [v.yaw, v.pitch, v.distance, v.camera.zoom] : null, others: stored ? Object.keys(stored).filter((k) => k !== 'scene-source-value').map((k) => k + '=' + stored[k]).join('|') : ''}; })()`;
+  const page = await browser.open(url.pathToFileURL(path.join(folder, 'Viewer.html')).href, INIT);
+  const ev = (js) => page.evaluate(js);
+  const ready = async () => {
+    await ev(DRIVER);
+    await ev(`(async () => { for (let i = 0; i < 100 && !(document.querySelector('#hits [data-hit]') && window.__bullbaViewers.length); i++) await new Promise((r) => setTimeout(r, 100)); await __bt.settle(); })()`);
+  };
+  const step = async (js) => { await ev('__bt.act.' + js); await ev('__bt.settle()'); await new Promise((r) => setTimeout(r, 400)); return ev(STATE); };
+  const flip = async (k) => { await ev("document.getElementById('scene-" + k + "').click()"); await ev('__bt.settle()'); await new Promise((r) => setTimeout(r, 400)); return ev(STATE); };
+  const near = (a, b) => !!a && !!b && a.every((x, i) => Math.abs(x - b[i]) < 1e-6);
+  try {
+    await ready();
+    await step("side('battles')"); await step("battle('pmr')");
+    const s0 = await step('hit(0)');
+    ok('two scenes: a hit of a replay-made battle opens from its snapshot (the default), the switch laid out in the toolbar with its "?", both scenes there; the Hit line tile shows both verdicts and the server\'s',
+       s0.scene === 'pmr-1' && s0.from === 'snapshot' && s0.switchLaid && s0.dot && s0.pressed === 'snapshot' && s0.absent === '' && /server: 400 HP/.test(s0.chips || ''), JSON.stringify(s0));
+    const s1 = await flip('replay');
+    ok('two scenes: the switch shows the SAME hit from the scene rebuilt from the replay - its pose (turret 0.3 rad, 0.4 m aside), the armour the snapshot\'s',
+       s1.scene === 'pmr-1' && s1.from === 'replay' && Math.abs(s1.yawAim - 0.3) < 1e-9 && Math.abs(s1.shift - 0.4) < 1e-9 && s1.armour === s0.armour && s1.pressed === 'replay', JSON.stringify(s1));
+    ok('two scenes: ... and nothing else moves - the row, the shell, the camera, every other setting', s1.selected === s0.selected && s1.shell === s0.shell && near(s1.camera, s0.camera) && s1.others === s0.others,
+       JSON.stringify({before: [s0.selected, s0.shell, s0.camera], after: [s1.selected, s1.shell, s1.camera]}));
+    ok('two scenes: the choice is a remembered setting', s1.stored === 'replay', String(s1.stored));
+    await page.send('Page.reload');
+    await new Promise((r) => setTimeout(r, 800));
+    await ready();
+    await step("side('battles')"); await step("battle('pmr')");
+    const s2 = await step('hit(1)');
+    ok('two scenes: after a reload the page still shows a hit from the rebuilt scene', s2.scene === 'pmr-2' && s2.from === 'replay' && s2.pressed === 'replay', JSON.stringify(s2));
+    const s3 = await step('hit(2)');
+    ok('two scenes: a hit of the death camera - its row marked, shown from its rebuilt scene (drawn), the snapshot button there but saying it has none',
+       s3.scene === 'r3' && s3.from === 'replay' && s3.marks === 'r3,r4' && s3.pressed === 'replay' && s3.absent === 'snapshot' && s3.message === '' && /no snapshot/.test(s3.chips || ''), JSON.stringify(s3));
+    const s3b = await flip('snapshot');
+    ok('two scenes: ... its snapshot button touched changes nothing (its words say why)', s3b.scene === 'r3' && s3b.from === 'replay' && s3b.stored === 'replay', JSON.stringify(s3b));
+    const s4 = await step('hit(3)');
+    ok('two scenes: a hit with neither scene - its row with its damage, the scene says in one line why there is none, both buttons say why',
+       s4.absent === 'snapshot,replay' && s4.pressed === '' && /No scene for this hit/.test(s4.message), JSON.stringify(s4));
+    await step('hit(0)');
+    const s5 = await flip('snapshot');
+    ok('two scenes: back to the snapshot, and that is remembered', s5.from === 'snapshot' && s5.stored === 'snapshot', JSON.stringify(s5));
+    ok('two scenes: no uncaught exception in the page', page.errors.length === 0, page.errors.slice(0, 3).join(' | '));
+  } finally {
+    await browser.send('Target.closeTarget', {targetId: page.targetId});
+    if (!KEEP) fs.rmSync(folder, {recursive: true, force: true});
+  }
+}
+
+// ---- THE TWO SCENES ON THE USER'S OWN BATTLES (local fixture, not in git) -------------------------------------------------
+// tests/fixtures-local/page-two-scenes-2026-11-11/data: two battles published from their replays with the mod's own
+// Exporter.publish_replay on the local replay fixtures (as tests/test_replay_scene.py publishes them): 02.11 19:13 - every
+// hit with both scenes - and 15.10 21:55 - nine hits of the death camera. The test exporter extracts no snapshot model, so
+// the snapshot parts' modelKey was filled from the rebuilt scene's part of the same resource (the same model file); the
+// models are the client's, copied. The case of outputs/replay-scene-recompute-2026-11-11.md section 4: the own shot on the
+// A150 MBT-B's gun (hit 6, 518 HP) - the page says 0 % in the snapshot and 88 % in the rebuilt scene, and the server
+// penetrated. SKIP where the folder is absent.
+const LOCAL_SCENES = path.join(ROOT, 'tests', 'fixtures-local', 'page-two-scenes-2026-11-11', 'data');
+async function twoScenesLocal(browser) {
+  if (!fs.existsSync(path.join(LOCAL_SCENES, 'index.js'))) { console.log('SKIP two scenes on the local battles: no ' + LOCAL_SCENES); return; }
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'bullba-page-'));
+  fs.cpSync(WEB, path.join(folder, 'web'), {recursive: true});
+  fs.copyFileSync(path.join(WEB, 'index.html'), path.join(folder, 'Viewer.html'));
+  fs.cpSync(LOCAL_SCENES, path.join(folder, 'data'), {recursive: true});
+  const page = await browser.open(url.pathToFileURL(path.join(folder, 'Viewer.html')).href, INIT);
+  const ev = (js) => page.evaluate(js);
+  const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+  const STATE = `(() => { const v = window.__bullbaViewers[window.__bullbaViewers.length - 1], h = v && v.loadedData ? v.loadedData.hit : null, $ = (id) => document.getElementById(id);
+    return {scene: h ? String(h.id) : null, from: h ? (h.sceneSource || 'snapshot') : null, chance: $('shot-chance').textContent.split('/')[0].trim(),
+      chips: [].slice.call($('shot-scenes').children).map((c) => c.textContent + (c.classList.contains('differs') ? '!' : '') + (c.classList.contains('shown') ? '*' : '')),
+      dot: ['snapshot', 'replay'].filter((k) => $('scene-' + k).hasAttribute('data-differs')).join(), message: $('scene-message').hidden ? '' : $('scene-message').textContent}; })()`;
+  const clickRow = async (id) => { await ev(`document.querySelector('#hits [data-hit="${id}"]').click()`); await ev('__bt.settle(15000)'); await pause(1500); return ev(STATE); };
+  try {
+    await ev(DRIVER);
+    await ev(`(async () => { for (let i = 0; i < 150 && !(document.querySelector('#hits [data-hit]') && window.__bullbaViewers.length); i++) await new Promise((r) => setTimeout(r, 100)); await __bt.settle(); })()`);
+    await ev("__bt.act.battle('1754641962968727-e0ab2c1f479d')"); await ev('__bt.settle(15000)');
+    const a = await clickRow('6');
+    ok('two scenes, local: the A150 MBT-B hit (518 HP) from its snapshot - the page 0 %, the rebuilt scene\'s 88 % beside it in amber, the server\'s 518 HP; the rebuilt button marked',
+       a.scene === '6' && a.from === 'snapshot' && a.chance === '0 %' && a.chips.join('|') === '0 %*|88 %!|server: 518 HP' && a.dot === 'replay', JSON.stringify(a));
+    await ev("document.getElementById('scene-replay').click()"); await ev('__bt.settle(15000)'); await pause(1500);
+    const b = await ev(STATE);
+    ok('two scenes, local: ... switched - the same hit from the rebuilt scene: 88 %, the snapshot\'s 0 % now the one in amber',
+       b.scene === '6' && b.from === 'replay' && b.chance === '88 %' && b.chips.join('|') === '0 %!|88 %*|server: 518 HP' && b.dot === 'snapshot', JSON.stringify(b));
+    await ev("__bt.act.battle('16434853064049700-d0002b38cfca')"); await ev('__bt.settle(15000)');
+    await ev("__bt.act.roster(5414726)"); await ev('__bt.settle(15000)');
+    const c = await clickRow('r25');
+    ok('two scenes, local: a death-camera hit (r25, 430 HP on the T110E5) - shown from its rebuilt scene, drawn, 100 %',
+       c.scene === 'r25' && c.from === 'replay' && c.chance === '100 %' && c.message === '' && /no snapshot/.test(c.chips.join()), JSON.stringify(c));
+    // The choice back to the snapshot for the pages after this one (one browser profile, one store): the menu's control.
+    await ev("(() => { const s = document.getElementById('scene-source-value'); s.value = 'snapshot'; s.dispatchEvent(new Event('change')); return true; })()"); await pause(500);
+    ok('two scenes, local: no uncaught exception in the page', page.errors.length === 0, page.errors.slice(0, 3).join(' | '));
+  } finally {
+    await browser.send('Target.closeTarget', {targetId: page.targetId});
+    if (!KEEP) fs.rmSync(folder, {recursive: true, force: true});
+  }
+}
+
 async function main() {
   const started = Date.now();
   const browser = await launch({width: 1600, height: 1000});
@@ -585,6 +698,8 @@ async function main() {
     await modeState(browser, folder);
     await swapSides(browser, folder);
     await closeRange(browser, folder);
+    await twoScenes(browser);
+    await twoScenesLocal(browser);
     page = await browser.open(url.pathToFileURL(path.join(folder, 'Viewer.html')).href, INIT);
     const ev = (js) => page.evaluate(js);
     await ev(DRIVER);
@@ -648,9 +763,9 @@ async function main() {
       expectScene('a ram tile clicked', fun, {model: true, shooter: true, hp: '2 750 / 2 750', source: HP.ROSTER}, await step('event(0)'));
       const ram = await ev(LOOK);
       ok('matrix, ⌖ ' + (fun ? 'on' : 'off') + ': (the ram: rows in time order, no map, the turret it touched red, the red cross on the contact, drawn)',
-         ram.order === 'event,hit,hit,event' && ram.kind === 'ram' && ram.part === 2 && ram.map === false && ram.contact === true
+         ram.order === 'event,event,hit,hit,event' && ram.kind === 'ram' && ram.part === 2 && ram.map === false && ram.contact === true
          && ram.red > 0 && ram.details.indexOf('ContactTurret') >= 0, JSON.stringify(ram));
-      expectScene('a fire tile clicked', fun, {model: true, shooter: true, hp: '2 750 / 2 750', source: HP.ROSTER}, await step('event(1)'));
+      expectScene('a fire tile clicked', fun, {model: true, shooter: true, hp: '2 750 / 2 750', source: HP.ROSTER}, await step('event(2)'));
       const fire = await ev(LOOK);
       ok('matrix, ⌖ ' + (fun ? 'on' : 'off') + ': (the fire: the model burnt, no map, no contact cross)',
          fire.kind === 'fire' && fire.map === false && fire.contact === false && fire.dark > .7, JSON.stringify(fire));
@@ -1255,7 +1370,7 @@ async function main() {
 
     // ---- the leak counter ----------------------------------------------------------------------------------
     const CYCLE = ["side('battles')", "battle('pm')", 'hit(0)', 'swap()', 'swap()', 'roster(32)', "battle('pm2')", 'hit(0)',
-                   'modelTile()', "list('pm_quebec')", "side('battles')", "battle('pm')", 'hit(1)', 'event(0)', 'event(1)', "battle('pm3')", 'hit(0)', 'roster(33)'];
+                   'modelTile()', "list('pm_quebec')", "side('battles')", "battle('pm')", 'hit(1)', 'event(0)', 'event(2)', "battle('pm3')", 'hit(0)', 'roster(33)'];
     const home = async () => { await step("side('battles')"); await step("battle('pm')"); await step('hit(0)'); };
     // Counted at a quiet moment: the page settled, and no data read in flight or started between the GC and the count -
     // the 5-second index poll's two reads (two <script>s, four listeners) caught by the GC were counted as growth.

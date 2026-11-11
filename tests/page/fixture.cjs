@@ -22,6 +22,9 @@
  *   write(folder, {bulk: N})       one more battle, pmx, last in the list: N incoming hits on Papa
  *   write(folder, {broken: true})  one more battle, pmb: its second hit's hull model is not on disk - the scene of that
  *                                  hit is incomplete; options.late = {file, text} is that model's file, for the test to write
+ *   write(folder, {replay: true})  one more battle, pmr, made from its replay (11.11): two hits with both scenes (the
+ *                                  in-game snapshot and replayScene), a death-camera hit with the rebuilt scene only, one
+ *                                  with neither
  */
 'use strict';
 const fs = require('fs'), path = require('path'), crypto = require('crypto');
@@ -224,6 +227,45 @@ function write(folder, options) {
     model.sha256 = hull.modelKey; hull.resource = model.resource;
     options.late = {file: path.join(data, 'models', hull.modelKey + '.js'), text: payload('model:' + hull.modelKey, model)};
     battles.push(BATTLE('pmb', 'Synthetic quarry', T0 - 25200, [HIT('pmb-1', 31, 30, 'incoming', T0 - 25000), lost]));
+  }
+  if (options.replay) {
+    // pmr (11.11): a battle made from its replay (mod replay_battle.py + replay_scene.py): every hit keeps its in-game
+    // snapshot and carries the scene rebuilt from the replay ('replayScene': its target turned 0.3 rad on the hull and
+    // 0.4 m aside, the armour marked as the snapshot's); r3 is a hit of the death camera - no snapshot, the rebuilt scene
+    // its only one, the shooter's shells those of his other hit; r4 has neither scene.
+    const rebuilt = function (hit, own) {
+      const t = hit.target, turned = [Math.cos(0.3), 0, -Math.sin(0.3), 0, 0, 1, 0, 0, Math.sin(0.3), 0, Math.cos(0.3), 0, 0, 1.7, -0.2, 1];
+      return {format: 1, source: 'replay', poseDelay: 0.2, poseTime: hit.gameTime - 0.2,
+        limits: ['hull at rest on the chassis: the replay has no suspension tilt', 'turret yaw and gun pitch from the packed angles: steps of 0.35 and 0.40 degrees, 0.2 s before the hit'],
+        target: {type: t.type, compactDescriptor: 'synthetic', turretYaw: 0.3, gunPitch: 0, worldTransform: translate(0.4, 0, 0),
+          parts: t.parts.map(function (p) {
+            const q = {id: p.id, name: p.name, resource: p.resource, modelKey: p.modelKey, transform: p.id === 2 ? turned : p.transform, boundsFrom: 'recovered'};
+            if (own) q.armor = p.armor; else q.armorFrom = 'snapshot';
+            return q;
+          })},
+        points: hit.points.map(function (p) { return Object.assign({}, p, {boxFrom: 'recovered', collision: 'direct', material: 'armor_1', incidence: 0, nominal: 120}); }),
+        rangeAtImpact: 120.5, attackerPositionAtImpact: [0.4, 2.1, 120.5],
+        comparison: own ? undefined : {turretYawDiff: 17.19, gunPitchDiff: 0, worldShift: 0.4, worldRotation: 0, rangeDiff: 0.5,
+          points: [{distance: 0, segmentDistance: 0, snapshotIncidence: 0, incidenceDiff: 0, snapshotNominal: 120, nominalDiff: 0}]}};
+    };
+    const tango = {id: 34, name: 'Tango', type: 'germany:Tango', team: 1, player: 'enemy2', maxHealth: 1800};
+    const r1 = Object.assign(HIT('pmr-1', 30, 34, 'outgoing', T0 - 28700), {damage: 400}), r2 = Object.assign(HIT('pmr-2', 34, 30, 'incoming', T0 - 28690), {damage: 380});
+    r1.replayScene = rebuilt(r1); r2.replayScene = rebuilt(r2);
+    // The death camera: the replay's own fields only (replay_records.py) - no receivedAt, no target or attacker block.
+    const bare = function (id, gameTime, damage) {
+      return {schema: 1, type: 'hit', id: id, source: 'replay', direction: 'other', attackerId: 34, targetId: 30, damage: damage, damageFactor: 1,
+        effectsIndex: 11, gunInstallationIndex: 0, shellVelocity: 900, gameTime: gameTime,
+        points: [{part: 1, effect: 3, hitType: 0, shellType: 2, caliber: 105, status: 'replay-raw'}],
+        warnings: ['Replay hit: part poses, armour, the resolved point, aim and gun state were not recorded'],
+        replayAbsent: ['target', 'attacker', 'aim', 'points.resolved', 'shellCandidates', 'availableShells', 'rangeAtImpact']};
+    };
+    const r3 = bare('r3', 130, 390);
+    r3.replayScene = rebuilt(Object.assign({}, r2, {gameTime: 130}), true);
+    const r4 = bare('r4', 140, 100);
+    battles.push(Object.assign(BATTLE('pmr', 'Synthetic replay', T0 - 28800, [r1, r2, r3, r4]),
+      {roster: ROSTER.filter(function (r) { return r.id !== 34; }).concat([tango]),
+       replay: {format: 1, liveRecord: true, hits: 4, hitsWithScene: 2, hitsWithoutScene: 2, scenes: {format: 1, made: 3, compared: 2}}}));
+    battles[battles.length - 1].source = 'replay';
   }
   battles.forEach(function (b) { put('battles/' + b.id + '.js', 'battle:' + b.id, b); });
   put('index.js', 'index', {application: 'local.armor_inspector', version: 'synthetic', updatedAt: T0 + 9000,

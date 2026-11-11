@@ -115,6 +115,8 @@ const document = {
   // fillPanel() has put the chance figure in a text node beside the alpha span since 20.09; without this
   // the whole load path threw and two later checks failed for no reason of their own.
   createTextNode: function (text) { const n = new Element('#text'); n.textContent = String(text); return n; },
+  // A drawn mark of the page (11.11: the replay's picture on a hit row and the scene chips): an element like any here.
+  createElementNS: function (ns, tag) { return new Element(tag); },
   getElementById: function (id) { if (byId[id]) return byId[id]; const e = new Element('div'); e.id = id; return e; },
   querySelector: function (sel) { return byId['sel:' + sel] || (byId['sel:' + sel] = new Element('div')); },
   querySelectorAll: function () { return []; },
@@ -385,6 +387,14 @@ global.ArmorInspectorData = {
   scene: function () { return Promise.reject(new Error('no scene')); },
   sceneFor: function (battle, hit) { return Promise.resolve({hit: hit, models: {}, warnings: []}); }
 };
+// The two scenes of a hit (11.11): which scene a hit has and how it is turned into the one shown are the real rules of
+// web/local-data.js (an older web/ under BULLBA_WEB without them: the page's hits have their snapshot only).
+const REAL_DATA = (function () {
+  const box = {window: {}, document: {head: {appendChild: function () {}}, createElement: function () { return {}; }}};
+  try { require('vm').runInNewContext(fs.readFileSync(path + 'local-data.js', 'utf8'), box); } catch (e) { return {}; }
+  return box.window.ArmorInspectorData || {};
+}());
+if (REAL_DATA.sceneHit) ['scenesOf', 'sceneHit', 'NO_SCENE'].forEach(function (k) { global.ArmorInspectorData[k] = REAL_DATA[k]; });
 global.BullbaHost = {game: false, interrupted: null, guard: function (a, fn) { return fn; }, done: function () {},
   canSend: function () { return false; }, send: function () { return Promise.reject(new Error('no channel')); },
   mark: function () {}, params: function () { return {vehicle: VEHICLE.id}; }};
@@ -6948,7 +6958,7 @@ settle(20).then(function () {
        && document.getElementById('shell-quick').children.some(function (b) { return / ⇆$/.test(b.textContent) && /the gun the emulation fires/.test(b.title); }),
        pickedShell + ' ' + document.getElementById('caliber').value + ' ' + gunShellsBox.children.length);
     ok('gun switch: a picked gun\'s shell writes no Statistics log line - the log keeps one line per point and shell type, and it is the record\'s',
-       /if\(!\(c&&c\.emuGun\)\)logVerdicts\(shell\);/.test(appSrc));
+       /if\(!\(c&&c\.emuGun\)\)\{?logVerdicts\(shell\);/.test(appSrc));
     // The panel's build figures are read off the emulator's own block (ttxValues live): with ⚙ on they are the picked gun's.
     click(buildToggle);
     ok('gun switch: ⚙ on - the build\'s reload is the picked gun\'s, read off the emulator\'s block (not the clip gun\'s)',
@@ -9067,6 +9077,8 @@ settle(20).then(function () {
 }).then(function () {
   return xiBrowsed();
 }).then(function () {
+  return twoScenes();
+}).then(function () {
 
 
   if (thrown.length) console.log('\nEXCEPTIONS: ' + thrown.map(function (e) { return e && e.stack; }).join('\n'));
@@ -9184,6 +9196,7 @@ function pathMatrix() {
   const hitRows = function () { return $('hits').children.filter(function (c) { return c.getAttribute('data-hit') !== null; }); };
   let pollStamp = 5000;
   const eventRows = function () { return $('hits').children.filter(function (c) { return c.getAttribute('data-event') !== null; }); };
+  const eventRowOf = function (id) { return eventRows().filter(function (c) { return c.getAttribute('data-event') === id; })[0]; };
   const rosterRow = function (id) { return $('focus-list').children.filter(function (c) { return c.getAttribute('data-id') === String(id); })[0]; };
   const listRow = function (id) { return $('vehicles').children.filter(function (c) { return c.getAttribute('data-vehicle') === id; })[0]; };
   const scopeTo = function (scope) { document.querySelectorAll('#vehicle-scope [data-scope]').forEach(function (b) { if (b.getAttribute('data-scope') === scope) b.onclick(); }); };
@@ -9215,6 +9228,14 @@ function pathMatrix() {
     // A model DRAWN: the tile, and not a vehicle browsed without its model (want.drawn false: the tile alone).
     const model = tile && want.drawn !== false;
     ok(tag + 'the tiles show the scene', tile === want.model && shooter === want.shooter, '(model ' + tile + ', shooter ' + shooter + ')');
+    // THE ⇅ ON EVERY PATH (02.11, the user: "in some modes the swap button is gone ... collision model and shooter ...
+    // I went through the menu, and the button is just gone"). swapTile() offers it in three listed cases only - a recorded
+    // hit, two browsed vehicles of different types, a view with a recorded hit to go back to - so a scene built any other
+    // way (a ram or fire tile, a roster shooter picked on one) hides it with two different vehicles in the two roles.
+    const vehicleOf = function (id) { const m = /\n• Vehicle: ([^\n]*)/.exec($(id).title); return m ? m[1] : ''; };
+    const two = tile && shooter && want.drawn !== false && !!vehicleOf('model-tile') && vehicleOf('model-tile') !== vehicleOf('shooter-tile');
+    if (two) ok(tag + '⇅ stands: two different vehicles hold the two roles', $('swap-roles').hidden === false,
+                '(model ' + vehicleOf('model-tile') + ', shooter ' + vehicleOf('shooter-tile') + ', ⇅ hidden)');
     ok(tag + 'the ⌖ switch stands with a model, lit with the mode; the strip and ↺ only under ⌖ with a model',
        $('fun-mode-toggle').hidden === !model && $('fun-mode-toggle').getAttribute('aria-pressed') === String(fun)
        && $('fun-strip').hidden === !(fun && model) && $('target-hp-reset').hidden === !(fun && model),
@@ -9242,6 +9263,8 @@ function pathMatrix() {
        d.sceneShown === 1 && once.every(function (k) { return d[k] === 1; }) && (d.renderFocus || 0) - (d.renderHits || 0) === 1,
        '(' + JSON.stringify(d) + ')');
   }
+  // The vehicle a role tile names (its tooltip's "• Vehicle:" line).
+  const vehicleOfTile = function (id) { const m = /\n• Vehicle: ([^\n]*)/.exec($(id).title); return m ? m[1] : ''; };
   let was = null, at = null;
   const step = function (fn, n) { was = counted(); at = {reads: sceneReads}; fn(); return settle(n || 30); };
   const loop = function (fun) {
@@ -9257,6 +9280,29 @@ function pathMatrix() {
       ok('matrix, ⌖ ' + (fun ? 'on' : 'off') + ': (the ram tile is pressed, the hit is not; the details name the contact)',
          eventRows()[0].getAttribute('aria-pressed') === 'true' && hitRows()[0].getAttribute('aria-pressed') === 'false'
          && $('details').children.some(function (c) { return c.children && c.children[0] && c.children[0].textContent === 'Contact'; }));
+      // D-114 (02.11, the user's ⇅ gone): ⇅ on the ram's scene really swaps - the rammer's model on screen, the vehicle
+      // that took the ram in the shooter's role with his gun, no shot drawn and the scene saying so; the event row stays
+      // pressed (the swap is a view of it) and the same button goes back to the event, its contact and its look.
+      const before = {model: vehicleOfTile('model-tile'), shooter: vehicleOfTile('shooter-tile')};
+      return step(function () { $('swap-roles').onclick(); }).then(function () {
+        const d = delta(was);
+        ok('matrix, ⌖ ' + (fun ? 'on' : 'off') + ', ⇅ on the ram tile: the two vehicles change roles, the event row stays pressed, ⇅ offers the way back',
+           !!before.model && vehicleOfTile('model-tile') === before.shooter && vehicleOfTile('shooter-tile') === before.model
+           && eventRows()[0].getAttribute('aria-pressed') === 'true' && $('swap-roles').hidden === false && $('swap-roles').title === 'Back to the damage event',
+           '(before ' + JSON.stringify(before) + ', now ' + vehicleOfTile('model-tile') + ' / ' + vehicleOfTile('shooter-tile') + ', ⇅ hidden ' + $('swap-roles').hidden + ' "' + $('swap-roles').title + '")');
+        ok('matrix, ⌖ ' + (fun ? 'on' : 'off') + ', ⇅ on the ram tile: no shot is made up - the scene says nothing was fired between the two, ONE finisher',
+           $('details').children.some(function (c) { return /Nothing was fired between these two/.test(c.textContent || ''); })
+           && !$('details').children.some(function (c) { return c.children && c.children[0] && c.children[0].textContent === 'Contact'; })
+           && d.sceneShown === 1,
+           '(' + JSON.stringify(d) + ' | ' + $('details').children.map(function (c) { return c.textContent; }).join(' | ') + ')');
+        return step(function () { $('swap-roles').onclick(); });
+      }).then(function () {
+        expectScene('⇅ back to the ram tile', fun, {model: true, shooter: true, hp: '2 750 / 2 750', source: ROSTER_HP}, delta(was));
+        ok('matrix, ⌖ ' + (fun ? 'on' : 'off') + ': (⇅ back - the ram\'s own scene again: the roles as recorded, its contact in the details)',
+           vehicleOfTile('model-tile') === before.model && vehicleOfTile('shooter-tile') === before.shooter && eventRows()[0].getAttribute('aria-pressed') === 'true'
+           && $('swap-roles').title === 'Swap the model and the shooter'
+           && $('details').children.some(function (c) { return c.children && c.children[0] && c.children[0].textContent === 'Contact'; }),
+           '(' + vehicleOfTile('model-tile') + ' / ' + vehicleOfTile('shooter-tile') + ' "' + $('swap-roles').title + '")');
       // Review 25.09 #1: a shooter picked from the roster on the event's scene outlives the next index poll.
       // The shooter's role first (its tile opens Vehicles; back to Hits keeps the scene), then the roster row.
       $('shooter-tile').onclick();
@@ -9272,11 +9318,15 @@ function pathMatrix() {
         ok('matrix, ⌖ ' + (fun ? 'on' : 'off') + ': (a shooter picked on the event scene stays through an index poll, the event still pressed)',
            !!rosterRow(32) && rosterRow(32).getAttribute('data-role') === 'shooter' && eventRows()[0].getAttribute('aria-pressed') === 'true',
            '(' + (rosterRow(32) && rosterRow(32).getAttribute('data-role')) + ' ' + $('hits').children.map(function (c) { return (c.getAttribute('data-event') || c.getAttribute('data-hit')) + '=' + c.getAttribute('aria-pressed'); }).join() + ')');
-        return step(function () { eventRows()[1].onclick(); });
+        // 02.11 (the user's ⇅ gone): a roster shooter picked on an event's scene has no recorded hit to go back to.
+        ok('matrix, ⌖ ' + (fun ? 'on' : 'off') + ', a roster shooter on the ram tile: ⇅ stands: two different vehicles hold the two roles',
+           $('swap-roles').hidden === false, '(' + $('model-tile').title.split('\n')[1] + ' / ' + $('shooter-tile').title.split('\n')[2] + ', ⇅ hidden ' + $('swap-roles').hidden + ')');
+        return step(function () { eventRowOf('fire:c5').onclick(); });
+      });
       });
     }).then(function () {
       expectScene('a fire tile clicked', fun, {model: true, shooter: true, hp: '2 750 / 2 750', source: ROSTER_HP}, delta(was));
-      return step(function () { eventRows()[2].onclick(); });
+      return step(function () { eventRowOf('other:c9').onclick(); });
     }).then(function () {
       // His own fall: nobody in the shooter's role.
       expectScene('a tile of damage the vehicle did itself', fun, {model: true, shooter: false, hp: '2 750 / 2 750', source: ROSTER_HP}, delta(was));
@@ -9357,6 +9407,12 @@ function pathMatrix() {
       expectScene('back to Hits with the browsed vehicle kept', fun, {model: true, shooter: true, hp: '2 200 / 2 200', source: OWN_HP}, delta(was), at);
       // 03.10: the ⇅ of two browsed vehicles is the scene's own button - it read the side panel's mode and went in Hits.
       ok('matrix, ⌖ ' + (fun ? 'on' : 'off') + ': (the ⇅ of two browsed vehicles stands in the Hits panel as it stood in Vehicles)', $('swap-roles').hidden === false);
+      // 02.11 (the user's ⇅ gone): a roster shooter picked on a browsed vehicle - the Battles panel beside a catalogue model.
+      return step(function () { rosterRow(32).onclick(); });
+    }).then(function () {
+      ok('matrix, ⌖ ' + (fun ? 'on' : 'off') + ', a roster shooter on a browsed vehicle: ⇅ stands: two different vehicles hold the two roles',
+         !$('model-tile').hidden && !$('shooter-tile').hidden && $('swap-roles').hidden === false,
+         '(' + $('model-tile').title.split('\n')[1] + ' / ' + $('shooter-tile').title.split('\n')[2] + ', ⇅ hidden ' + $('swap-roles').hidden + ')');
       return step(function () { pickBattle('pm2'); }, 40);
     }).then(function () {
       expectScene('another battle', fun, {model: true, shooter: true, hp: '2 750 / 2 750', source: ROSTER_HP}, delta(was));
@@ -9389,25 +9445,35 @@ function pathMatrix() {
     $('swap-roles').onclick();
     return settle(30);
   }).then(function () {
-    // 25.09: the list of battle pm - its hits, then its three damage events with the damage log's icon each (in the
+    // 25.09: the list of battle pm - its hits, then its damage events with the damage log's icon each (in the
     // icon column every row has, right after the vehicle tile), the check's mark.
+    // 09.11.2026 (the user's 1v1: 486 HP of his ram damage stood in no row): a ram is mutual - the file's one event
+    // of a "rammer" (DERIVED_FORMAT 1: damage 150 to the player, selfDamage 20) is two rows: the 150 he took and the
+    // 20 he dealt, with the dealt variant of the icon.
+    const back = eventRowOf('ram:c1:back'), took = eventRowOf('ram:c1');
+    ok('events: a ram is two rows - what the vehicle in focus took and what it dealt to the other one',
+       !!back && !!took && back.getAttribute('data-direction') === 'outgoing' && back.getAttribute('data-kind') === 'ram'
+       && back.title.indexOf('• Damage: 20 HP to Romeo') >= 0 && back.title.indexOf('• Papa lost: 150 HP') >= 0
+       && took.title.indexOf('• Damage: 150 HP to Papa') >= 0 && took.title.indexOf('• Romeo lost: 20 HP') >= 0
+       && /collided/.test(back.title) && !/[Rr]ammer/.test(back.title + took.title),
+       '(' + (back ? back.getAttribute('data-direction') + ' ' + back.textContent + ' | ' + back.title.split('\n').join(' / ') : 'no row') + ')');
     const ev = eventRows(), cols = ev.map(function (r) { return r.children.filter(function (c) { return c.className === 'hit-crits'; }); });
     const marks = cols.map(function (c) { const m = c.length === 1 ? c[0].children[0] : null; return !m ? null : m.tagName === 'IMG' ? m.src.replace(/^.*\//, '') : m.getAttribute('data-glyph'); });
-    ok('events: the damage no shell dealt stands in the hit list, one row each, the game\u2019s damage-log icon of its reason, the taken variant (ram, fire, fall)',
-       ev.length === 3 && marks.join() === 'damageLog_ram_enemy_16x16.png,damageLog_fire_enemy_16x16.png,damageLog_damage_enemy_16x16.png'
+    ok('events: the damage no shell dealt stands in the hit list, one row each, the game\u2019s damage-log icon of its reason in the row\u2019s direction (ram taken, ram dealt, fire, fall)',
+       ev.length === 4 && marks.join() === 'damageLog_ram_enemy_16x16.png,damageLog_ram_16x16.png,damageLog_fire_enemy_16x16.png,damageLog_damage_enemy_16x16.png'
        && ev.every(function (r, i) { return cols[i].length === 1 && r.children.indexOf(cols[i][0]) === 1; })
-       && ev.map(function (r) { return r.getAttribute('data-direction'); }).join() === 'incoming,incoming,incoming', marks.join());
+       && ev.map(function (r) { return r.getAttribute('data-direction'); }).join() === 'incoming,outgoing,incoming,incoming', marks.join());
     ok('events: the icon is titled with the row\u2019s own heading and sentence, and a click shows it (data-tip-own)',
        ev.every(function (r, i) { const m = cols[i][0].children[0]; return m.hasAttribute('data-tip-own') && m.title === r.title.split('\n').slice(0, 2).join('\n'); }),
        ev.map(function (r, i) { return cols[i][0].children[0].title; }).join(' | '));
     const tipLines = ev.map(function (r) { return r.title.split('\n'); });
     ok('events: each tooltip is a heading, one sentence of what happened, then points (the fire names the hit that set it)',
        tipLines.every(function (l) { return l.length > 3 && !/[.]$/.test(l[0]) && /[.]$/.test(l[1]) && l[2].indexOf('• ') === 0; })
-       && tipLines[0][0] === 'Ram' && tipLines[1][0] === 'Fire' && tipLines[1].join('\n').indexOf('• Set by: Quebec’s hit at') >= 0
-       && tipLines[2][1] === 'Papa lost 60 HP on its own.', tipLines.map(function (l) { return l.slice(0, 2).join(' / '); }).join(' | '));
+       && tipLines[0][0] === 'Ram' && tipLines[1][0] === 'Ram' && tipLines[2][0] === 'Fire' && tipLines[2].join('\n').indexOf('• Set by: Quebec’s hit at') >= 0
+       && tipLines[3][1] === 'Papa lost 60 HP on its own.', tipLines.map(function (l) { return l.slice(0, 2).join(' / '); }).join(' | '));
     const mark = $('hit-count').children.filter(function (c) { return c.className === 'damage-check'; })[0];
     ok('events: the count says them and the damage check marks the player’s own gap quietly (≠, its words in the tooltip)',
-       /^2 hits · 3 other damage/.test($('hit-count').textContent) && !!mark && mark.title.indexOf('Damage log incomplete\n') === 0
+       /^2 hits · 4 other damage/.test($('hit-count').textContent) && !!mark && mark.title.indexOf('Damage log incomplete\n') === 0
        && mark.title.indexOf('lost 900 HP, logged 750') > 0 && mark.title.indexOf('lost 10 HP') < 0, $('hit-count').textContent);
     ok('matrix: (the three shooters’ characteristics files are read once before the matrix)',
        ['germany-Romeo', 'germany-Quebec', 'germany-Papa'].every(function (id) { return ttxAsked.indexOf(id) >= 0; }), '(' + ttxAsked.join(', ') + ')');
@@ -9910,6 +9976,133 @@ function clickExportOutdated() {
   }).then(function () {
     Object.keys(keep).forEach(function (k) { D[k] = keep[k]; });
     Object.keys(keepHost).forEach(function (k) { H[k] = keepHost[k]; });
+  });
+}
+
+// ================= THE TWO SCENES OF A HIT (11.11, docs/PRODUCT.md: the battle log from the replay) =================
+// A battle made from its replay keeps on a hit the in-game SNAPSHOT of its scene and the scene REBUILT from the replay
+// (hit.replayScene); the page shows the snapshot and switches (the user, 11.11). Driven through the page: the switch in
+// the toolbar on each kind of hit - both scenes, the snapshot only (and a battle recorded before 11.11), the rebuilt one
+// only (the death camera: its row marked), neither (the scene says why) - the flip re-showing the SAME hit from the
+// other scene and moving nothing else, the scene's one owner held statically. Which scene a hit has and how it is turned
+// into the one shown are local-data.js's real rules (REAL_DATA); the stub scene reader below only stands in for the
+// model files. The remembered setting and the drawn scene: tests/page/real_page.cjs twoScenes.
+function twoScenes() {
+  if (RELOAD) return Promise.resolve();
+  const $ = function (id) { return document.getElementById(id); };
+  const D = global.ArmorInspectorData;
+  if (!D.sceneHit) { ok('two scenes: (a web/ without the two scenes - skipped)', true); return Promise.resolve(); }
+  const keep = {index: D.index, battle: D.battle, scene: D.scene}, view = viewerInstance, keepLoad = view.load;
+  let loaded = null;
+  const asked = [];
+  view.load = function (data) { loaded = data; this.marks = []; return false; };
+  const I = function (x) { return [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x || 0, 0, 0, 1]; };
+  const ARMOR = {armor_1: {armor: 120}};
+  const block = function (name, type) { return {name: name, type: type, parts: [{id: 1, name: 'hull', transform: I(), modelKey: 'k1', armor: ARMOR}], worldTransform: I()}; };
+  const rebuilt = function (own) {
+    return {format: 1, source: 'replay', limits: ['hull at rest on the chassis: the replay has no suspension tilt'],
+      target: {type: 'germany:Tango', compactDescriptor: 'c', turretYaw: 0.3, gunPitch: 0.02, worldTransform: I(0.4),
+        parts: [Object.assign({id: 1, name: 'hull', transform: I(), modelKey: 'k1'}, own ? {armor: ARMOR} : {armorFrom: 'snapshot'})]},
+      points: [{part: 1, status: 'resolved', position: [0, 1, 2.9], direction: [0, 0, -1], effect: 4}], rangeAtImpact: 101,
+      comparison: own ? undefined : {turretYawDiff: 17.2, gunPitchDiff: 1.1, worldShift: 0.4, worldRotation: 0, points: [{distance: 0.1, incidenceDiff: 0, nominalDiff: 0}]}};
+  };
+  const HIT = function (id, extra) {
+    return Object.assign({id: id, attackerId: 30, targetId: 34, direction: 'outgoing', damage: 300, receivedAt: 10, gameTime: 100, warnings: [], aim: [0, 0],
+      points: [{part: 1, status: 'resolved', position: [0, 1, 3], direction: [0, 0, -1], effect: 4, shellKind: 'ARMOR_PIERCING'}], rangeAtImpact: 100,
+      attacker: {name: 'Papa', parts: []}, availableShells: SHELLS, target: block('Tango', 'germany:Tango')}, extra || {});
+  };
+  const both = Object.assign(HIT('t1'), {replayScene: rebuilt(false)});
+  const fired = HIT('t3', {attackerId: 34, targetId: 30, direction: 'incoming', attacker: {name: 'Tango', parts: []}, target: block('Papa', 'germany:Papa')});
+  const bare = function (id, damage, scene) {
+    const h = {id: id, source: 'replay', direction: 'other', attackerId: 34, targetId: 30, damage: damage, gameTime: 130, warnings: [], replayAbsent: ['target', 'attacker'],
+      points: [{part: 1, effect: 4, status: 'replay-raw'}]};
+    if (scene) h.replayScene = scene;
+    return h;
+  };
+  const battles = {
+    tw: {id: 'tw', source: 'replay', map: 'Twin', playerVehicleId: 30, warnings: [], shotEvents: [],
+         roster: [{id: 30, name: 'Papa', type: 'germany:Papa'}, {id: 34, name: 'Tango', type: 'germany:Tango'}],
+         hits: [both, HIT('t2'), fired, bare('r4', 390, rebuilt(true)), bare('r5', 100, null)]},
+    old: {id: 'old', map: 'Old', playerVehicleId: 30, warnings: [], shotEvents: [], roster: [{id: 30, name: 'Papa', type: 'germany:Papa'}], hits: [HIT('o1')]}};
+  D.index = function () {
+    return Promise.resolve({application: 'local.armor_inspector', version: 'test', battles: [{id: 'tw', startedAt: 2, map: 'Twin', hits: 5}, {id: 'old', startedAt: 1, map: 'Old', hits: 1}]});
+  };
+  D.battle = function (id) { return battles[id] ? Promise.resolve(JSON.parse(JSON.stringify(battles[id]))) : Promise.reject(new Error('no battle')); };
+  // As local-data.js scene(): the hit turned into the scene shown (sceneHit, the real rule), a scene-less replay hit's words.
+  D.scene = function (b, id, want) {
+    asked.push(id + ':' + want);
+    const h = b.hits.filter(function (x) { return x.id === id; })[0], pick = D.sceneHit(h, want, b);
+    if (!pick.shown && h.source === 'replay') return Promise.resolve({hit: h, models: {}, warnings: [], partial: [], geometryIncomplete: true, geometryError: D.NO_SCENE});
+    return Promise.resolve({hit: pick.hit, models: {}, warnings: []});
+  };
+  const open = function (id) { const p = $('battles'); p.value = id; p.onchange.call(p); return settle(30); };
+  const row = function (id) { return $('hits').children.filter(function (r) { return r.getAttribute('data-hit') === id; })[0]; };
+  const pickRow = function (id) { row(id).onclick(); return settle(30); };
+  const flip = function (k) { click($('scene-' + k)); return settle(30); };
+  const pressed = function () { return ['snapshot', 'replay'].filter(function (k) { return $('scene-' + k).getAttribute('aria-pressed') === 'true'; }).join(); };
+  const absent = function () { return ['snapshot', 'replay'].filter(function (k) { return $('scene-' + k).getAttribute('aria-disabled') === 'true'; }).join(); };
+  const ownWords = function (el) { if (!el) return null; if (el.getAttribute && el.getAttribute('data-tip-own') !== null) return el; for (const c of el.children || []) { const f = ownWords(c); if (f) return f; } return null; };
+  const scenePick = $('scene-source-value');
+  sidebarModes[0].onclick();
+  return settle(20).then(function () { return open('tw'); }).then(function () { return pickRow('t1'); }).then(function () {
+    const dot = $('scene-switch').children.filter(function (c) { return c.getAttribute('data-help-for') === 'scene-snapshot scene-replay'; })[0];
+    ok('two scenes: a hit with both scenes opens from its snapshot (the default) - the switch stands in the toolbar with its own "?", the snapshot pressed, both there',
+       !$('scene-switch').hidden && !!dot && pressed() === 'snapshot' && absent() === '' && asked[asked.length - 1] === 't1:snapshot' && !loaded.hit.sceneSource && loaded.hit.target.worldTransform[12] === 0,
+       asked.join() + ' ' + pressed() + '/' + absent());
+    ok('two scenes: the Hit line tile carries the scene row - its words compare the two scenes (the mod\'s comparison) and say where the rebuilt one is weaker',
+       !$('shot-scenes').hidden && /Rebuilt minus snapshot/.test($('shot-scenes').title) && /Turret \+17\.2°, gun \+1\.1°/.test($('shot-scenes').title) && /hull at rest/.test($('shot-scenes').title),
+       $('shot-scenes').title.slice(0, 200));
+    const before = {shell: $('shell-choice').value, mode: $('armor-mode').value, fun: $('fun-mode').checked, row: row('t1').getAttribute('aria-pressed'), rows: $('hits').children.length, n: asked.length};
+    return flip('replay').then(function () {
+      const h = loaded.hit;
+      ok('two scenes: the switch shows the SAME hit again from the scene rebuilt from the replay - its pose, its points, its range; the armour the snapshot\'s table',
+         asked.slice(before.n).join() === 't1:replay' && h.id === 't1' && h.sceneSource === 'replay' && h.aim[0] === 0.3 && h.aim[1] === 0.02 && h.target.worldTransform[12] === 0.4
+         && h.points[0].position[2] === 2.9 && h.points[0].shellKind === 'ARMOR_PIERCING' && h.rangeAtImpact === 101 && JSON.stringify(h.target.parts[0].armor) === JSON.stringify(ARMOR)
+         && h.target.name === 'Tango' && pressed() === 'replay' && scenePick.value === 'replay', asked.slice(before.n).join() + ' ' + JSON.stringify(h.aim));
+      ok('two scenes: ... and nothing else changes - the shell, the display, ⌖, the pressed row, the list',
+         $('shell-choice').value === before.shell && $('armor-mode').value === before.mode && $('fun-mode').checked === before.fun
+         && row('t1').getAttribute('aria-pressed') === 'true' && $('hits').children.length === before.rows);
+      ok('two scenes: (held statically) the switch\'s one owner re-shows the hit through sceneFrom \'scene\' - the scene\'s own pose, the camera as it stands - and the log keeps the snapshot\'s lines',
+         /selectHit\(st\.base\.id,sceneFrom\('scene'\)\)/.test(appSrc) && /\(how==='record'\|\|how==='scene'\)&&\(!own\|\|own\.pose!==false\)\)view=Object\.assign\(\{\},view,\{pose:null\}\)/.test(appSrc)
+         && /ownShot:how==='record'\}/.test(appSrc) && /h=ArmorInspectorData\.sceneHit\(h,'snapshot',battle\)\.hit/.test(appSrc)
+         && /if\(activeHit\.sceneSource==='replay'&&ArmorInspectorData\.scenesOf\([^\n]*?\)\.snapshot\)return;/.test(appSrc));
+      return pickRow('t2');
+    }).then(function () {
+      const n = asked.length;
+      ok('two scenes: a hit with its snapshot only, the choice on the rebuilt scene - the snapshot shown and pressed; the other button stands, saying why it has none when touched',
+         asked[n - 1] === 't2:replay' && !loaded.hit.sceneSource && pressed() === 'snapshot' && absent() === 'replay' && $('scene-replay').getAttribute('data-tip-own') !== null
+         && /^Rebuilt from the replay: none\n/.test($('scene-replay').title) && $('shot-scenes').hidden, absent() + ' ' + $('scene-replay').title.split('\n')[0]);
+      return flip('replay').then(function () {
+        ok('two scenes: ... touched, it changes nothing: no scene read, the choice as it was', asked.length === n && scenePick.value === 'replay');
+        return flip('snapshot');
+      });
+    }).then(function () {
+      ok('two scenes: the snapshot button of a hit that has it sets the choice back, without showing it again', scenePick.value === 'snapshot' && pressed() === 'snapshot');
+      return pickRow('r4');
+    }).then(function () {
+      const h = loaded.hit, mark = ownWords(row('r4'));
+      ok('two scenes: a hit of the death camera - its row marked with words of their own ("recorded from the replay: no in-game snapshot"), named from the roster',
+         !!mark && /^Recorded from the replay\nNo in-game snapshot/.test(mark.title) && /• Scene: from the replay only: no in-game snapshot/.test(row('r4').title) && /Incoming from Tango/.test(row('r4').title)
+         && !ownWords(row('t1')), mark ? mark.title.split('\n')[0] : 'no mark');
+      ok('two scenes: ... shown from its rebuilt scene whatever the choice; the snapshot button says it has none; the shooter and his shells borrowed from his other hit',
+         asked[asked.length - 1] === 'r4:snapshot' && h.sceneSource === 'replay' && pressed() === 'replay' && absent() === 'snapshot' && /^In-game snapshot: none\n/.test($('scene-snapshot').title)
+         && h.shellsFrom === 't3' && h.attacker.name === 'Tango' && h.target.name === 'Papa' && h.availableShells.length === SHELLS.length && !$('shot-scenes').hidden && /no snapshot/.test($('shot-scenes').children.map(function (c) { return c.textContent + c.children.map(function (x) { return x.textContent; }).join(''); }).join()),
+         JSON.stringify({src: h.sceneSource, from: h.shellsFrom, p: pressed(), a: absent()}));
+      return pickRow('r5');
+    }).then(function () {
+      ok('two scenes: a hit with neither scene - its row with its damage, the scene says in one line why there is none, both buttons say why',
+         !!row('r5') && /100/.test(JSON.stringify(row('r5').children.map(function (c) { return c.textContent + c.children.map(function (x) { return x.textContent + x.children.map(function (y) { return y.textContent; }).join(); }).join(); })))
+         && $('scene-message').textContent === D.NO_SCENE && !$('scene-message').hidden && absent() === 'snapshot,replay' && pressed() === '' && /^No scene\n/.test($('scene-replay').title),
+         $('scene-message').textContent);
+      return open('old');
+    }).then(function () {
+      ok('two scenes: a battle recorded before 11.11 reads as before - its hit as recorded, the switch on the snapshot and the other button saying the replay was not read; no scene row on the tile',
+         asked[asked.length - 1] === 'o1:snapshot' && !loaded.hit.sceneSource && loaded.hit.target.worldTransform[12] === 0 && pressed() === 'snapshot' && absent() === 'replay'
+         && /replay has not been read/.test($('scene-replay').title) && $('shot-scenes').hidden, asked.slice(-2).join());
+    });
+  }).then(function () {
+    Object.keys(keep).forEach(function (k) { D[k] = keep[k]; });
+    view.load = keepLoad;
   });
 }
 

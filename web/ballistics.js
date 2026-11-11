@@ -25,35 +25,63 @@
     return {a:a,b:b,c:c,e1:e1,e2:e2,normal:unit(cross(e1,e2)),center:a.map(function(x,i){return (x+b[i]+c[i])/3;}),part:part,name:name,armor:armor,
       min:a.map(function(x,i){return Math.min(x,b[i],c[i]);}),max:a.map(function(x,i){return Math.max(x,b[i],c[i]);})};
   }
-  // The kd-tree over triangle INDICES (28.09: a leaf's idx is what collisions keeps; the split, the sort by centre and
-  // the halves are the ones the tree over the triangle objects had - the same stable sort on the same keys).
-  function tree(all,idx){
-    if(!idx.length)return null;
-    var lo=[Infinity,Infinity,Infinity],hi=[-Infinity,-Infinity,-Infinity];
-    idx.forEach(function(k){var t=all[k];for(var i=0;i<3;i++){lo[i]=Math.min(lo[i],t.min[i]);hi[i]=Math.max(hi[i],t.max[i]);}});
-    var node={min:lo,max:hi};if(idx.length<=10){node.idx=Int32Array.from(idx);return node;}
-    var axis=0;for(var i=1;i<3;i++)if(hi[i]-lo[i]>hi[axis]-lo[axis])axis=i;
-    idx.sort(function(a,b){return all[a].center[axis]-all[b].center[axis];});var half=idx.length>>1;
-    node.left=tree(all,idx.slice(0,half));node.right=tree(all,idx.slice(half));return node;
-  }
-  // The distance at which the ray enters the box (0 when it starts inside), or -1 for a miss. Callers test
-  // `< 0`, never falsiness: 0 is an ordinary hit - the second leg after a ricochet starts 1 mm off the surface.
-  function intersectsBox(node,o,d){
-    var near=0,far=Infinity;
-    for(var i=0;i<3;i++){
-      if(Math.abs(d[i])<1e-12){if(o[i]<node.min[i]-EPS||o[i]>node.max[i]+EPS)return -1;continue;}
-      var a=(node.min[i]-o[i])/d[i],b=(node.max[i]-o[i])/d[i];
-      near=Math.max(near,Math.min(a,b));far=Math.min(far,Math.max(a,b));if(near>far+EPS)return -1;
+  // ---- THE RAY CORE (10.11.2026, outputs/rust-gate-2026-11-10.md variant B: 1.7-1.8x faster than the object tree and
+  // recursion it replaces, the same contacts to the bit) ----------------------------------------------------------------
+  // THE KD-TREE as flat arrays in pre-order - the very layout the worker receives (packEngine), so the page and the worker
+  // walk one structure: node i's box in box[6i..6i+5] (min x y z, max x y z); its children kid[2i], kid[2i+1] (-1 at a
+  // leaf); its leaf run run[2i] (first slot in pool), run[2i+1] (how many; -1 at an inner node); pool: the leaves'
+  // triangle indices. The tree the page has built since 20.09, node for node: a node of more than 10 triangles is split at
+  // the median of its triangles' centres along the longest axis of its box, after a STABLE sort by that centre (the order
+  // Array.prototype.sort gave, so the halves are the same), left half first. `flat`: one leaf holding every triangle, for
+  // a caller that casts only a handful of rays through a throwaway engine (the Statistics log pass: 1-3 rays a hit);
+  // building the tree costs far more than those rays save, and the rays and their results are the same either way.
+  // No triangles: no node.
+  function kdNodes(len){return len<=10?1:1+kdNodes(len>>1)+kdNodes(len-(len>>1));}
+  function kdTree(tris,flat){
+    var n=tris.length,count=!n?0:flat?1:kdNodes(n),i,k,t;
+    var lo3=new Float64Array(n*3),hi3=new Float64Array(n*3),cen=new Float64Array(n*3);
+    for(i=0;i<n;i++){t=tris[i];k=i*3;lo3[k]=t.min[0];lo3[k+1]=t.min[1];lo3[k+2]=t.min[2];hi3[k]=t.max[0];hi3[k+1]=t.max[1];hi3[k+2]=t.max[2];
+      cen[k]=t.center[0];cen[k+1]=t.center[1];cen[k+2]=t.center[2];}
+    var box=new Float64Array(count*6),kid=new Int32Array(count*2),run=new Int32Array(count*2),pool=new Int32Array(n),next=0,pp=0;
+    var idx=new Int32Array(n),key=new Float64Array(n),tmpI=new Int32Array(n),tmpK=new Float64Array(n);
+    for(i=0;i<n;i++)idx[i]=i;
+    // Stable merge sort of idx[lo,hi) by key: a later element passes an earlier one only when strictly smaller - the order
+    // of a stable sort with the comparator key(a) - key(b).
+    function sort(lo,hi){
+      var p,j,x,xi;
+      if(hi-lo<=12){for(p=lo+1;p<hi;p++){x=key[p];xi=idx[p];j=p-1;while(j>=lo&&key[j]>x){key[j+1]=key[j];idx[j+1]=idx[j];j--;}key[j+1]=x;idx[j+1]=xi;}return;}
+      var mid=(lo+hi)>>1;sort(lo,mid);sort(mid,hi);
+      if(!(key[mid]<key[mid-1]))return;
+      var a=lo,b=mid,w=lo;
+      while(a<mid&&b<hi){if(key[b]<key[a]){tmpK[w]=key[b];tmpI[w++]=idx[b++];}else{tmpK[w]=key[a];tmpI[w++]=idx[a++];}}
+      while(a<mid){tmpK[w]=key[a];tmpI[w++]=idx[a++];}
+      while(b<hi){tmpK[w]=key[b];tmpI[w++]=idx[b++];}
+      for(w=lo;w<hi;w++){key[w]=tmpK[w];idx[w]=tmpI[w];}
     }
-    return far>=0?near:-1;
+    function node(lo,hi){
+      var me=next++,b=me*6,l0=Infinity,l1=Infinity,l2=Infinity,h0=-Infinity,h1=-Infinity,h2=-Infinity,p,q;
+      for(p=lo;p<hi;p++){q=idx[p]*3;l0=Math.min(l0,lo3[q]);h0=Math.max(h0,hi3[q]);l1=Math.min(l1,lo3[q+1]);h1=Math.max(h1,hi3[q+1]);l2=Math.min(l2,lo3[q+2]);h2=Math.max(h2,hi3[q+2]);}
+      box[b]=l0;box[b+1]=l1;box[b+2]=l2;box[b+3]=h0;box[b+4]=h1;box[b+5]=h2;
+      if(flat||hi-lo<=10){run[me*2]=pp;run[me*2+1]=hi-lo;kid[me*2]=kid[me*2+1]=-1;for(p=lo;p<hi;p++)pool[pp++]=idx[p];return me;}
+      var axis=0;if(h1-l1>h0-l0)axis=1;if(h2-l2>(axis?h1-l1:h0-l0))axis=2;
+      for(p=lo;p<hi;p++)key[p]=cen[idx[p]*3+axis];
+      sort(lo,hi);
+      var half=(hi-lo)>>1;run[me*2]=0;run[me*2+1]=-1;
+      kid[me*2]=node(lo,lo+half);kid[me*2+1]=node(lo+half,hi);return me;
+    }
+    if(n)node(0,n);
+    return {box:box,kid:kid,run:run,pool:pool};
   }
-  // The distance to triangle t along the ray, or -1: the caller keeps a contact only beyond EPS. No object per triangle.
-  function intersect(t,o,d){
-    var e1=t.e1,e2=t.e2,hx=d[1]*e2[2]-d[2]*e2[1],hy=d[2]*e2[0]-d[0]*e2[2],hz=d[0]*e2[1]-d[1]*e2[0];
-    var det=e1[0]*hx+e1[1]*hy+e1[2]*hz;if(Math.abs(det)<1e-10)return -1;
-    var sx=o[0]-t.a[0],sy=o[1]-t.a[1],sz=o[2]-t.a[2],u=(sx*hx+sy*hy+sz*hz)/det;if(u<-1e-8||u>1+1e-8)return -1;
-    var qx=sy*e1[2]-sz*e1[1],qy=sz*e1[0]-sx*e1[2],qz=sx*e1[1]-sy*e1[0],v=(d[0]*qx+d[1]*qy+d[2]*qz)/det;if(v<-1e-8||u+v>1+1e-8)return -1;
-    return (e2[0]*qx+e2[1]*qy+e2[2]*qz)/det;
+  // The triangles as flat records for the walk, TRI numbers each: corner a, edges e1 = b - a and e2 = c - a, the unit normal
+  // - the triangle objects' own numbers, copied - and `main`: 1 where the triangle stops the cut-off (castCore below).
+  var TRI=12;
+  function rayCore(tris,acc){
+    var n=tris.length,rec=new Float64Array(n*TRI),main=new Uint8Array(n),nodes=acc.box.length/6;
+    for(var i=0;i<n;i++){var t=tris[i],o=i*TRI,a=t.armor;
+      rec[o]=t.a[0];rec[o+1]=t.a[1];rec[o+2]=t.a[2];rec[o+3]=t.e1[0];rec[o+4]=t.e1[1];rec[o+5]=t.e1[2];
+      rec[o+6]=t.e2[0];rec[o+7]=t.e2[1];rec[o+8]=t.e2[2];rec[o+9]=t.normal[0];rec[o+10]=t.normal[1];rec[o+11]=t.normal[2];
+      main[i]=a&&a.armor!=null&&a.vehicleDamageFactor>EPS?1:0;}
+    return {rec:rec,main:main,box:acc.box,kid:acc.kid,run:acc.run,pool:acc.pool,nodes:nodes,stack:new Int32Array(Math.max(1,nodes))};
   }
   // THE CONTACTS OF ONE RAY WITHOUT GARBAGE (28.09, steady-60: ~1.5 KiB of objects a ray made 4-9 collections in 4 s of
   // emulation). An engine keeps one buffer: the distance, the cosine and the triangle's index of every contact, and an
@@ -68,21 +96,51 @@
   Contacts.prototype.keys=function(count){if(this.seenGen&&this.seenGen.length>=count)return;count=Math.max(1,count);this.seenGen=new Int32Array(count);this.seenDist=new Float64Array(count);this.ignGen=new Int32Array(count);this.gen=0;};
   Contacts.prototype.stamp=function(){if(++this.gen>1e9){this.seenGen.fill(0);this.ignGen.fill(0);this.gen=1;}return this.gen;};
   Contacts.prototype.push=function(distance,cos,ti){if(this.n===this.cap)this.grow(this.cap*2);var k=this.n++;this.dist[k]=distance;this.cos[k]=cos;this.tri[k]=ti;};
-  // Every contact of the ray, cut off past the nearest MAIN armour met so far (st.best): walk() below stops at
-  // the first main plate, so nothing behind it can change the result, and a box the ray enters beyond it is
-  // skipped. The condition that moves st.best is exactly walk()'s exit - armour with a value and a damage
-  // factor - so a plate walk() would pass (no armour table, armour null) never cuts anything. A contact at x
-  // lies inside every box above it (each is entered at or before x), so the kept contacts are the ones the
-  // full walk would have found up to best, in the same order; the stable sort leaves them as they were.
-  // Keep this condition and walk()'s exits in step.
+  // THE CONTACTS OF ONE RAY into C (o: origin, d: unit direction; C.n, C.dist, C.cos, C.tri - by triangle index - in the
+  // order the tree is walked; sortContacts orders them). An explicit stack, the left child first; no allocation unless C
+  // must grow. Every contact, cut off past the nearest MAIN armour met so far (best): walk() below stops at the first main
+  // plate, so nothing behind it can change the result, and a box the ray enters beyond it is skipped. The condition that
+  // moves best (core.main) is exactly walk()'s exit - armour with a value and a damage factor - so a plate walk() would pass
+  // (no armour table, armour null) never cuts anything. A contact at x lies inside every box above it (each is entered at
+  // or before x), so the kept contacts are the ones the full walk would have found up to best, in the same order; the
+  // stable sort leaves them as they were. Keep this condition and walk()'s exits in step.
   // The cut-off keeps a box entered within TIE of best: a surface coincident with that plate is still met, whatever order
   // the tree is walked in, and the sort below puts the pair in the order of their material ids.
-  // A leaf lists its triangles' indices in `idx` (fromTriangles), which the contacts keep.
-  function collisions(node,o,d,C,st,tris){
-    if(!node)return;var near=intersectsBox(node,o,d);if(near<0||near>st.best+TIE)return;
-    if(node.idx){var idx=node.idx;for(var i=0;i<idx.length;i++){var ti=idx[i],t=tris[ti],distance=intersect(t,o,d);if(distance>EPS){C.push(distance,Math.abs(dot(d,t.normal)),ti);var a=t.armor;
-      if(a&&a.armor!=null&&a.vehicleDamageFactor>EPS&&distance<st.best)st.best=distance;}}}
-    else{collisions(node.left,o,d,C,st,tris);collisions(node.right,o,d,C,st,tris);}
+  // The box test: the distance at which the ray enters (0 when it starts inside), a miss past EPS; the triangle test:
+  // Moller-Trumbore, a contact only beyond EPS. The arithmetic of the object tree before 10.11 in the same order, so the
+  // same bits (Math.min/max as there: they keep a NaN where a ternary would drop it).
+  function castCore(K,o,d,C){
+    var o0=o[0],o1=o[1],o2=o[2],d0=d[0],d1=d[1],d2=d[2],rec=K.rec,main=K.main,box=K.box,kid=K.kid,run=K.run,pool=K.pool,stack=K.stack;
+    var dist=C.dist,cos=C.cos,tri=C.tri,cap=C.cap,n=0,best=Infinity,sp=0;
+    var x0=Math.abs(d0)<1e-12,x1=Math.abs(d1)<1e-12,x2=Math.abs(d2)<1e-12;
+    if(K.nodes)stack[sp++]=0;
+    while(sp>0){
+      var i=stack[--sp],b=i*6,near=0,far=Infinity,a1,a2;
+      if(x0){if(o0<box[b]-EPS||o0>box[b+3]+EPS)continue;}
+      else{a1=(box[b]-o0)/d0;a2=(box[b+3]-o0)/d0;near=Math.max(near,Math.min(a1,a2));far=Math.min(far,Math.max(a1,a2));if(near>far+EPS)continue;}
+      if(x1){if(o1<box[b+1]-EPS||o1>box[b+4]+EPS)continue;}
+      else{a1=(box[b+1]-o1)/d1;a2=(box[b+4]-o1)/d1;near=Math.max(near,Math.min(a1,a2));far=Math.min(far,Math.max(a1,a2));if(near>far+EPS)continue;}
+      if(x2){if(o2<box[b+2]-EPS||o2>box[b+5]+EPS)continue;}
+      else{a1=(box[b+2]-o2)/d2;a2=(box[b+5]-o2)/d2;near=Math.max(near,Math.min(a1,a2));far=Math.min(far,Math.max(a1,a2));if(near>far+EPS)continue;}
+      if(!(far>=0)||near>best+TIE)continue;
+      var cnt=run[i*2+1];
+      if(cnt<0){stack[sp++]=kid[i*2+1];stack[sp++]=kid[i*2];continue;}
+      for(var k=run[i*2],end=k+cnt;k<end;k++){
+        var ti=pool[k],t=ti*TRI,e1x=rec[t+3],e1y=rec[t+4],e1z=rec[t+5],e2x=rec[t+6],e2y=rec[t+7],e2z=rec[t+8];
+        var hx=d1*e2z-d2*e2y,hy=d2*e2x-d0*e2z,hz=d0*e2y-d1*e2x,det=e1x*hx+e1y*hy+e1z*hz;
+        if(Math.abs(det)<1e-10)continue;
+        var sx=o0-rec[t],sy=o1-rec[t+1],sz=o2-rec[t+2],u=(sx*hx+sy*hy+sz*hz)/det;
+        if(u<-1e-8||u>1+1e-8)continue;
+        var qx=sy*e1z-sz*e1y,qy=sz*e1x-sx*e1z,qz=sx*e1y-sy*e1x,v=(d0*qx+d1*qy+d2*qz)/det;
+        if(v<-1e-8||u+v>1+1e-8)continue;
+        var distance=(e2x*qx+e2y*qy+e2z*qz)/det;
+        if(!(distance>EPS))continue;
+        if(n===cap){C.n=n;C.grow(cap*2);dist=C.dist;cos=C.cos;tri=C.tri;cap=C.cap;}
+        dist[n]=distance;cos[n]=Math.abs(d0*rec[t+9]+d1*rec[t+10]+d2*rec[t+11]);tri[n]=ti;n++;
+        if(main[ti]&&distance<best)best=distance;
+      }
+    }
+    C.n=n;
   }
   function erf(x){var sign=x<0?-1:1;x=Math.abs(x);var t=1/(1+.3275911*x);return sign*(1-(((((1.061405429*t-1.453152027)*t)+1.421413741)*t-.284496736)*t+.254829592)*t*Math.exp(-x*x));}
   // Same Gaussian scale as the 2.4 #936 client's _computePenetrationChance.
@@ -594,9 +652,7 @@
     if(out){out.chance=0;out.reason='no-hull';out.screenPass=screenPass;out.remaining=remaining;return out;}
     return {chance:0,reason:'no-hull',layers:layers,screenPass:screenPass,remaining:remaining};
   }
-  // `flat`: one leaf holding every triangle instead of the kd-tree, for a caller that casts only a handful of
-  // rays through a throwaway engine (the Statistics log pass: 1-3 rays a hit). Building the tree costs far more
-  // than those rays save; the rays and their results are the same either way.
+  // `flat`: one leaf holding every triangle instead of the kd-tree (kdTree above).
   // A group's vertices: [x,y,z] arrays (the page's models), or `v` - the same corners as one Float64Array (a model as the
   // worker keeps it, packModel: 28.09, steady-60-fix) - transformed by the very arithmetic of transform().
   function transformFlat(v,m){
@@ -616,12 +672,6 @@
     });
     return fromTriangles(tris,flat);
   }
-  function leaf(tris){
-    if(!tris.length)return null;
-    var lo=[Infinity,Infinity,Infinity],hi=[-Infinity,-Infinity,-Infinity],idx=new Int32Array(tris.length);
-    tris.forEach(function(t,k){idx[k]=k;for(var i=0;i<3;i++){lo[i]=Math.min(lo[i],t.min[i]);hi[i]=Math.max(hi[i],t.max[i]);}});
-    return {min:lo,max:hi,idx:idx};
-  }
   // By distance; contacts within TIE of the first of a run are one depth and go by material id (stable within one id).
   // Before 26.09 a tie went by the order the tree was walked in: coincident plates of two materials (a track face in
   // the plane of a side plate) could come either way round, and CPU and GPU could disagree. Insertion sorts over C.order
@@ -638,9 +688,9 @@
   }
   function unitInto(out,v){var n=Math.sqrt(dot(v,v));if(n>EPS){out[0]=v[0]/n;out[1]=v[1]/n;out[2]=v[2]/n;}else{out[0]=0;out[1]=0;out[2]=0;}return out;}
   // `built` (optional): the acceleration already built for these very triangles - the kd-tree or the one leaf a page's
-  // engine had, handed to the worker by packEngine (28.09, steady-60-fix: the worker no longer builds it a second time).
+  // engine had (kdTree's arrays), handed to the worker by packEngine (28.09, steady-60-fix: the worker does not build it again).
   function fromTriangles(tris,flat,built){
-    var acceleration=built!==undefined?built:flat?leaf(tris):tree(tris,tris.map(function(t,i){return i;}));
+    var acceleration=built||kdTree(tris,flat),core=rayCore(tris,acceleration);
     // THE material id of every part:material (review 26.09 R4: one owner), in the order they first appear; triangles
     // with armour null take none. It orders contacts that tie in distance here, and the GPU surface takes the same ids
     // from engine.materialId (Surface.update) for its peel and bounced leg - so both sides break a tie alike.
@@ -652,22 +702,22 @@
     var n=tris.length,keys=new Int32Array(n),mats=new Int32Array(n),keyOf=new Map();
     for(var i=0;i<n;i++){var t=tris[i],key=t.part+':'+t.name,k=keyOf.get(key);if(k===undefined){k=keyOf.size;keyOf.set(key,k);}
       keys[i]=k;var m=order[key];mats[i]=m===undefined?count:m;}
-    // The engine's scratch: the contact buffer, the cut-off, the lean result and its vectors. One thread uses an engine.
-    var C=new Contacts(),st={best:Infinity},dir=[0,0,0],bdir=[0,0,0],bo=[0,0,0];
+    // The engine's scratch: the contact buffer, the core's stack, the lean result and its vectors. One thread uses an engine.
+    var C=new Contacts(),dir=[0,0,0],bdir=[0,0,0],bo=[0,0,0];
     var lean={chance:null,reason:'',expected:undefined,nominal:0,screenPass:1,remaining:0,final:false,hitK:-1};
     C.keys(keyOf.size);
-    // One leg: every contact of the ray, cut off past its first main plate (collisions), walked from `start` against the
+    // One leg: every contact of the ray, cut off past its first main plate (castCore), walked from `start` against the
     // leg's `nominal`. `out`: the lean result (the direction normalised into scratch), else a full result as before.
     function cast(o,d,s,start,nominal,ricocheted,out){
       var u=out?unitInto(dir,d):unit(d);
-      C.n=0;C.hits=null;st.best=Infinity;collisions(acceleration,o,u,C,st,tris);sortContacts(C,mats);
+      C.hits=null;castCore(core,o,u,C);sortContacts(C,mats);
       var r=walk(C,s,start,nominal,ricocheted,keys,tris,out);
       if(out)return leanDamage(out,s);
       if(s&&s.alpha>0)withDamage(r,s);
       r.origin=o;r.direction=u;return r;
     }
     // materialId(triangle): its id, undefined for one that takes none; materialCount: how many ids there are.
-    // flat: the one-leaf engine (packEngine hands it on, so the worker builds the same acceleration).
+    // acceleration: the kd-tree's arrays (kdTree); flat: the one-leaf engine (packEngine hands both on).
     var engine={triangles:tris,acceleration:acceleration,materialId:materialId,materialCount:count,flat:!!flat};
     // THE LEG AFTER A RICOCHET (user's decision 26.09, variant B of outputs/ricochet-second-leg-2026-09-26.md): the shell
     // flies on from the ricochet point with 75 % of what it had LEFT there - the first leg's screens stay spent -
@@ -685,7 +735,7 @@
     engine.bounced=function(o,d,s,remaining){return bouncedLeg(o,d,s,remaining,null);};
     engine.ray=function(o,d,s){
       if(!s||!(s.penetration>0)||!(s.caliber>0))return evaluate([],s);
-      // A fresh cut-off for every ray, the second leg after a ricochet included (collisions above).
+      // A fresh cut-off for every ray, the second leg after a ricochet included (castCore above).
       var r=cast(o,d,s,undefined,s.penetration,false,null);d=r.direction;
       // Client rule since 9.3: after a ricochet the shell flies on along the mirrored direction (engine.bounced) and may
       // hit the same vehicle again; a second ricochet destroys it, and a shell with traceRicochet false is lost at the
@@ -814,37 +864,17 @@
   // index into small lists. The armour tables go by structured clone; one table shared by many triangles stays one object
   // there too. THE ACCELERATION GOES WITH THEM (28.09, steady-60-fix): the worker used to build the kd-tree again from the
   // triangles - 0.1 / 0.5 / 1.5 s for 20 / 60 / 120 thousand, the figure's delay after every new pose - so the page's own
-  // tree travels as flat arrays (packTree: pre-order, a node's box, its children, or its leaf's run of triangle indices) and
-  // the worker puts the very same nodes back: the same walk, the same order, the same bits. One builder: the page.
-  function packTree(top){
-    var count=0,leaves=0;
-    (function scan(n){if(!n)return;count++;if(n.idx)leaves+=n.idx.length;else{scan(n.left);scan(n.right);}}(top));
-    var box=new Float64Array(count*6),kid=new Int32Array(count*2),run=new Int32Array(count*2),pool=new Int32Array(leaves),k=0,p=0;
-    (function put(n){
-      if(!n)return -1;var i=k++;
-      for(var j=0;j<3;j++){box[i*6+j]=n.min[j];box[i*6+3+j]=n.max[j];}
-      if(n.idx){pool.set(n.idx,p);run[i*2]=p;run[i*2+1]=n.idx.length;kid[i*2]=kid[i*2+1]=-1;p+=n.idx.length;return i;}
-      run[i*2]=0;run[i*2+1]=-1;kid[i*2]=put(n.left);kid[i*2+1]=put(n.right);return i;
-    }(top));
-    return {box:box,kid:kid,run:run,pool:pool};
-  }
-  function unpackTree(box,kid,run,pool){
-    if(!box.length)return null;
-    return (function node(i){
-      if(i<0)return null;
-      var n={min:[box[i*6],box[i*6+1],box[i*6+2]],max:[box[i*6+3],box[i*6+4],box[i*6+5]]};
-      if(run[i*2+1]>=0){n.idx=pool.subarray(run[i*2],run[i*2]+run[i*2+1]);return n;}
-      n.left=node(kid[i*2]);n.right=node(kid[i*2+1]);return n;
-    }(0));
-  }
+  // tree travels as its own flat arrays (kdTree: pre-order, a node's box, its children, or its leaf's run of triangle
+  // indices; copied here, since the buffers are transferred) and the worker walks the very same nodes: the same walk, the
+  // same order, the same bits. One builder: the page.
   function listIndex(list,map,value){var k=map.get(value);if(k===undefined){k=list.length;list.push(value);map.set(value,k);}return k;}
   function packEngine(engine){
     var tris=engine.triangles,n=tris.length,v=new Float64Array(n*9),t=new Int32Array(n*3),parts=[],names=[],armors=[],pm=new Map(),nm=new Map(),am=new Map();
     for(var i=0;i<n;i++){var tr=tris[i],o=i*9,c=[tr.a,tr.b,tr.c];
       for(var j=0;j<3;j++){v[o+3*j]=c[j][0];v[o+3*j+1]=c[j][1];v[o+3*j+2]=c[j][2];}
       t[i*3]=listIndex(parts,pm,tr.part);t[i*3+1]=listIndex(names,nm,tr.name);t[i*3+2]=tr.armor===undefined?-1:listIndex(armors,am,tr.armor);}
-    var tree=packTree(engine.acceleration);
-    return {v:v,t:t,parts:parts,names:names,armors:armors,flat:!!engine.flat,box:tree.box,kid:tree.kid,run:tree.run,pool:tree.pool};
+    var acc=engine.acceleration;
+    return {v:v,t:t,parts:parts,names:names,armors:armors,flat:!!engine.flat,box:acc.box.slice(),kid:acc.kid.slice(),run:acc.run.slice(),pool:acc.pool.slice()};
   }
   // The buffers of a packed engine, handed over (transferred) rather than copied.
   function engineBuffers(pk){return [pk.v.buffer,pk.t.buffer,pk.box.buffer,pk.kid.buffer,pk.run.buffer,pk.pool.buffer];}
@@ -852,7 +882,7 @@
     var v=pk.v,t=pk.t,n=t.length/3,tris=new Array(n);
     for(var i=0;i<n;i++){var o=i*9;
       tris[i]=triangle([v[o],v[o+1],v[o+2]],[v[o+3],v[o+4],v[o+5]],[v[o+6],v[o+7],v[o+8]],pk.parts[t[i*3]],pk.names[t[i*3+1]],t[i*3+2]<0?undefined:pk.armors[t[i*3+2]]);}
-    return fromTriangles(tris,pk.flat,pk.box?unpackTree(pk.box,pk.kid,pk.run,pk.pool):undefined);
+    return fromTriangles(tris,pk.flat,pk.box?{box:pk.box,kid:pk.kid,run:pk.run,pool:pk.pool}:undefined);
   }
   // A model as the worker keeps it (28.09, steady-60-fix): each group's corners as one Float64Array `v` - build() reads it
   // as it is (transformFlat, the arithmetic of transform()) - instead of an [x, y, z] array per vertex, ~3x the memory.

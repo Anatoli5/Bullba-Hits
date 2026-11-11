@@ -52,8 +52,9 @@ function scope() {
   s.idle = async () => { for (let i = 0; i < 50; i++) await new Promise((r) => setImmediate(r)); };
   return s;
 }
-// The kd-tree as a plain structure (boxes, children, leaf indices), to compare the page's with the worker's node for node.
-const shape = (n) => (n ? {min: n.min.slice(), max: n.max.slice(), idx: n.idx ? Array.from(n.idx) : null, left: n.idx ? null : shape(n.left), right: n.idx ? null : shape(n.right)} : null);
+// The kd-tree as plain lists (its pre-order arrays since 10.11: boxes, children, leaf runs, leaf indices), to compare the
+// page's with the worker's node for node.
+const shape = (a) => ({box: Array.from(a.box), kid: Array.from(a.kid), run: Array.from(a.run), pool: Array.from(a.pool)});
 const shells = [B.shell('ARMOR_PIERCING', 140, 100), B.shell('ARMOR_PIERCING_CR', 90, 85), B.shell('HOLLOW_CHARGE', 200, 105), Object.assign(B.shell('HIGH_EXPLOSIVE', 50, 152), {alpha: 750, spallDamage: 375, mechanics: 'MODERN'})];
 shells[0].alpha = 390;
 
@@ -73,12 +74,12 @@ for (const flat of [false, true]) {
     rays++;
   }
 }
-// The tree is not built again: the kd-tree build sorts at every node, the unpacking sorts nothing.
+// The tree is not built again: the unpacked engine walks the very arrays it was sent; and the page's own engine keeps its
+// arrays (packEngine copies them, since the worker's message transfers the buffers).
 {
-  const engine = B.build(data, false), pk = B.packEngine(engine), sort = Array.prototype.sort;
-  let sorts = 0; Array.prototype.sort = function () { sorts++; return sort.apply(this, arguments); };
-  try { B.unpackEngine(structuredClone(pk)); } finally { Array.prototype.sort = sort; }
-  assert.equal(sorts, 0, 'unpacking an engine builds no tree');
+  const engine = B.build(data, false), pk = B.packEngine(engine), sent = structuredClone(pk), back = B.unpackEngine(sent);
+  assert.ok(back.acceleration.box === sent.box && back.acceleration.pool === sent.pool, 'unpacking an engine builds no tree');
+  assert.ok(pk.box !== engine.acceleration.box && pk.pool !== engine.acceleration.pool, 'the packed tree is a copy');
 }
 console.log('ok   packed engines carry their kd-tree and cast the same ' + rays + ' rays, every field (kd-tree and flat)');
 

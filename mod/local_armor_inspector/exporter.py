@@ -41,7 +41,7 @@ STAND_CHANGED = tuple(getattr(_client_code, 'STAND_CHANGED', ()))
 STAND_CLIENT = getattr(_client_code, 'STAND_CLIENT', None)
 
 LOG = logging.getLogger('local.armor_inspector')
-VERSION = '1.05'
+VERSION = '1.06'
 RESOURCE = re.compile(r'^(?:[A-Za-z0-9_-]+/)?vehicles/[A-Za-z0-9_/-]+\.(?:model|havok)\Z')
 IDENTIFIER = re.compile(r'^[-a-zA-Z0-9_]{1,100}\Z')
 # The interface icons of the aim configuration (equipment, perks, shells) ship with the page in web/icons
@@ -174,12 +174,17 @@ PUBLISHED_PAUSE = 30.0
 # compares publish()'s output for a fixture battle with tests/golden/derived-battle-<N>.js and fails when it changes while
 # this stays; after a raise it stores the new one beside the previous, which the page must still read
 # (tests/test_derived_formats.cjs) until the background has published every battle again.
-DERIVED_FORMAT = 1
+# 2 (09.11.2026): a ram is one damage event per damaged vehicle, dealt by the other one of the pair (damage_log.py);
+# format 1 held one event per ram with a "rammer" and its loss in 'selfDamage', which the page showed in no row.
+DERIVED_FORMAT = 2
 # One slice of a saved battle's background publication (run_battle_job): lines of its raw file, then hits prepared, then the
 # file written (~60 ms for the largest, 53 MB raw / 405 hits - the one part that does not split). Between two lines or hits
 # the slice ends early for a battle, a drag, a command of the page or the mod closing; after it the game gets its share
 # (SWEEP_SHARE) of the time the slice took, with no cap.
 BATTLE_SLICE = 0.1
+# Battles published from their replay kept in memory this session (Exporter.replay_battles), the oldest out first: one
+# such battle is its raw records (a few MB); an evicted one keeps its file until something publishes it again.
+REPLAY_BATTLES_KEPT = 16
 # A model failure that the next start cannot undo (the other failures - a package scan, a mod overriding the model, anything
 # unexpected - leave the battle to be published again at the next start, 'waits').
 PERMANENT_MODEL_ERRORS = ('Client version changed', 'Collision model not found in client')
@@ -244,6 +249,9 @@ def job_key(kind, payload):
     # 'battle' (a saved battle the page asked for, request_battle) is one job per battle.
     if kind == 'battle':
         return ('battle', str((payload or {}).get('battleId') or ''))
+    # 'replay' (the replay stream of a battle, Exporter.replay_stream) is one job per battle too.
+    if kind == 'replay':
+        return ('replay', str((payload or {}).get('battle') or ''))
     # 'vehicle', 'ttx' (the characteristics file of a type) and 'extras' (Exporter.type_extras) are one job per type each.
     return (kind, str((payload or {}).get('vehicleType') or ''))
 
@@ -2336,6 +2344,64 @@ def parts_from_descr(descr, armor_source='client descriptor rebuilt from the rec
     return parts
 
 
+def client_bounds(component):
+    """The client's own box of a static part's collision model, [[min], [max]] in the part's frame, or None.
+
+    model_assembler.setupCollisions (CommonTankAppearance._connectCollider, for every vehicle the client builds) stores
+    collisions.getBoundingBox(part) on the part's hit tester ('bbox') - the very box DamageFromShotDecoder.parseHitPoint
+    decodes a hit's segment on. Only the client sets it (ModelHitTester.loadBspModel runs on the cell app and the editor
+    only, items/vehicles._readHitTester), so it is None until the client built a collision of that model this session:
+    then the caller falls back (replay_scene.part_box). Read, never asked for: no call into the collision component."""
+    try:
+        box = component.hitTesterManager.activeHitTester.bbox
+        if not box: return None
+        return [[float(v[0]), float(v[1]), float(v[2])] for v in (box[0], box[1])]
+    except Exception:
+        return None
+
+
+def scene_statics(descr):
+    """What replay_scene needs of a vehicle descriptor to rebuild a hit (one dict per compact descriptor): the stacking
+    of rest_columns (chassis.hullPosition, hull.turretPositions[0] with hull.turretPitches[0], turret.gunPosition), the
+    gun's absolute pitch limits (gunAnglesPacked's range) and per static part its model resource, live armour and the
+    client's box when the client has one (client_bounds)."""
+    from .armor import live_materials
+    triple = lambda v: [float(v[0]), float(v[1]), float(v[2])]
+    pitches = getattr(descr.hull, 'turretPitches', None)
+    limits = descr.gun.pitchLimits
+    absolute = limits.get('absolute') if hasattr(limits, 'get') else None
+    parts = []
+    for idx, name, component in static_parts(descr):
+        part = {'id':idx, 'name':name}
+        try: part['armor'] = live_materials(component)
+        except Exception: pass
+        try: part['resource'] = part_resource(component)
+        except Exception: pass
+        bounds = client_bounds(component)
+        if bounds: part['bounds'] = bounds
+        parts.append(part)
+    return {'type':str(descr.type.name), 'hullPosition':triple(descr.chassis.hullPosition),
+            'turretPosition':triple(descr.hull.turretPositions[0]),
+            'turretPitch':float(pitches[0]) if pitches else 0.0, 'gunPosition':triple(descr.turret.gunPosition),
+            'pitchLimits':[float(absolute[0]), float(absolute[1])] if absolute is not None else None, 'parts':parts}
+
+
+class SceneSource(object):
+    """replay_scene's source in the game: statics from the client's descriptor, a part's model from its model file
+    (extracted now when it is not written yet - the export thread, after the battle)."""
+
+    def __init__(self, exporter, client_version):
+        self.exporter, self.version = exporter, client_version
+
+    def statics(self, compact):
+        return scene_statics(vehicle_descr(compact))
+
+    def model(self, resource):
+        key, error = self.exporter.model_extract(resource, self.version)
+        if error: raise ValueError(error)
+        return key, read_data_file(self.exporter.model_path(key))
+
+
 def fix_extra_parts(hit):
     """The outer track pair of a double-track target recorded before the recorder wrote it.
 
@@ -3557,6 +3623,17 @@ class Exporter(object):
         # (keep_fills: {battle id: kinds}) - for the one log line of its publish.
         self.kept_files = {}
         self.kept_now = {}
+        # Battles published from their replay this session (publish_replay): {battle id: the battle replay_battle.build
+        # made}. Every later publish of that id (a model arriving, the page asking, the tail) publishes this one, not the
+        # live record. Empty for every other battle: their publish is unchanged.
+        self.replay_battles = OrderedDict()
+        # THE REPLAY PATH AT RUN TIME (11.11.2026, replay_run.py): the 'replay' job being worked on in slices (a
+        # replay_run.Consumption, None between two); the entity definitions of the session (replay_run.Definitions, built by
+        # the first battle that needs them); CFG/replay/index.json - {battle id: what became of its replay stream} - read
+        # when first needed.
+        self.replay_work = None
+        self.replay_defs_value = None
+        self.replay_index = None
         # The started sweep that ran last (run_sweeps): the other started one goes next - both get slices.
         self.sweep_last = None
         # Each publish gives its battle a revision in the index ('rev', optimisation plan C1): the page reads again only the
@@ -3613,6 +3690,9 @@ class Exporter(object):
         # are 'stale' - none is published here or in the background (BACKLOG 55): the page asks for the one it opens.
         named, current, stale, refs_known = self.saved_battles()
         complete = complete and named
+        # The replay streams collected and never consumed (the game closed first): queued again (replay_setup).
+        try: self.replay_setup()
+        except Exception: LOG.exception('Replay streams left from the last session not looked for; they stay on disk')
         step = lap('battles')
         self.replay_vehicle_requests()
         step = lap('replay')
@@ -3815,6 +3895,360 @@ class Exporter(object):
         self.raw_offsets[battle_id] = reader.offset
         self.publish(battle, reader.offset, raw_size=reader.size)
 
+    def publish_replay(self, battle_id, records, live=None, stream=None, notes=None, store=False):
+        """Publish one battle from its replay (11.11.2026, replay_battle.py): `records` the replay's records of the battle
+        (replay_records.Converter, made with the run-time Names), `live` its live battle as read_battle gives it - read
+        here from its raw file (or taken from memory when it is the tail's battle) when not passed; a battle with no raw
+        file is published from the replay alone under `battle_id`. Every event is the replay's; the live record gives the
+        shown hits' scenes and the own shots' snapshots. The file has today's shape (the page reads it as it is), marked
+        source 'replay' with its 'replay' block; the battle stays replay-made (publish). The battle is over, so it is
+        published as final (an episode still ticking is not held back). Returns the 'replay' block.
+        `stream`: what the records were decoded from (the 'replay' block's 'stream'); `notes`: the battle's warnings about
+        its replay (cut short); `store`: keep the records, their poses, the statics and the scenes in
+        CFG/replay/<id>.records.z, so every later publish builds the battle again from them (replay_restore) - the run-time
+        path (replay_run.Consumption) stores, a test may not. All at once; the run-time path takes publish_replay_steps."""
+        out = {}
+        for _ in self.publish_replay_steps(battle_id, records, live, stream, notes, store, out): pass
+        return out['report']
+
+    def publish_replay_steps(self, battle_id, records, live=None, stream=None, notes=None, store=False, out=None):
+        """publish_replay in steps for the export thread's slices (replay_run.Consumption): yields after reading the live
+        record, after the assembly, after each hit's rebuilt scene, after the store and after every few hits prepared; the
+        'replay' block is put in out['report']. The longest step is the write of the file (~60 ms for the largest)."""
+        from .replay_run import StoredSource, battle_scenes, pack_store, write_bytes
+        name = str(battle_id or '')
+        if not IDENTIFIER.match(name): raise ValueError('Invalid battle id')
+        out = {} if out is None else out
+        source = StoredSource(self.scene_source(self.replay_client_version(name, live)))
+        assembled = {}
+        for _ in self.replay_assemble_steps(name, records, live, source, stream, None, assembled): yield
+        battle, report, offset, size = assembled['battle'], assembled['report'], assembled['offset'], assembled['size']
+        entry = self.replay_entry(name)
+        entry['warnings'] = list(notes or ())
+        if store:
+            started = TTX_TIMER()
+            try:
+                data = pack_store(name, records, source.known, stream, battle_scenes(battle, report))
+                write_bytes(self.replay_records_path(name), data)
+                entry['records'] = len(data)
+                LOG.info('Battle %s: its replay records stored, %.2f MB compressed, in %.0f ms', name, len(data) / 1e6,
+                         (TTX_TIMER() - started) * 1000.0)
+            except Exception:
+                entry.pop('records', None)
+                LOG.exception('Replay records of %s not stored; a restart publishes it from its kept stream again', name)
+            yield
+        # Its hits prepared a few at a time, as the background prepares a saved battle (run_battle_job).
+        for state in (self.fill_reads, self.kept_files, self.kept_now): state.pop(name, None)
+        prepared = []
+        for index, raw in enumerate(battle.get('hits') or []):
+            prepared.append(self.prepare_hit(raw, index, battle))
+            if index % 8 == 7: yield
+        # Published meanwhile from memory (the tail, a model arriving): the same battle; the hits prepared here are its.
+        final = getattr(self, 'publishing_final', False)
+        self.publishing_final = True
+        try: self.publish(battle, offset, prepared=prepared, raw_size=size)
+        finally: self.publishing_final = final
+        self.write_index()
+        LOG.info('Battle %s published from its replay: %d hits (%d without a scene), %d shot and %d crit records',
+                 name, report['hits'], report['hitsWithoutScene'], report['shots'], report['crits'])
+        out['report'] = report
+
+    def replay_client_version(self, name, live=None):
+        """The client version of a battle's replay records: its live record's (header line), else the running client's."""
+        if live is not None and live.get('clientVersion'): return live['clientVersion']
+        if self.current is not None and self.current.get('id') == name and self.current.get('clientVersion'):
+            return self.current['clientVersion']
+        header = read_header(os.path.join(self.folder, 'battles', name + '.jsonl')) or {}
+        return header.get('clientVersion') or self.version
+
+    def replay_assemble(self, name, records, live=None, source=None, stream=None, scenes=None):
+        """(battle, report, raw offset, raw size): replay_assemble_steps at once (replay_restore)."""
+        out = {}
+        for _ in self.replay_assemble_steps(name, records, live, source, stream, scenes, out): pass
+        return out['battle'], out['report'], out['offset'], out['size']
+
+    def replay_assemble_steps(self, name, records, live, source, stream, scenes, out):
+        """The battle replay_battle.build makes of the replay's records and the live battle (read here when not passed),
+        with the scenes rebuilt from the replay (replay_scene.attaching, a hit a step, when the records carry their poses)
+        - or `scenes`, those a first build of the same records stored (replay_run.battle_scenes), while replay_scene's
+        format is theirs -, kept in replay_battles: every later publish of that id publishes it (publish). Puts battle,
+        report, the raw offset and size in `out`."""
+        from .replay_battle import build, SECOND_SCENE
+        from .replay_scene import FORMAT as SCENE_FORMAT, attaching
+        offset = size = None
+        if live is None:
+            if self.current is not None and self.current.get('id') == name:
+                live, offset = self.current, self.raw_offsets.get(name)
+            else:
+                path = os.path.join(self.folder, 'battles', name + '.jsonl')
+                if os.path.isfile(path):
+                    # Read in steps of ~50 ms (the 17:42 battle's 2.9 MB took 0.2 s at once under the client's Python 2.7).
+                    reader = BattleReader(path)
+                    while True:
+                        until = TTX_TIMER() + 0.05
+                        if reader.step(lambda: TTX_TIMER() >= until): break
+                        yield
+                    live, offset, size = reader.result(), reader.offset, reader.size
+                    self.raw_offsets[name] = offset
+                yield
+        battle, report = build(records, live, name)
+        battle['id'] = name
+        if stream: report['stream'] = dict(stream)
+        yield
+        # The scene rebuilt from the replay beside each hit's snapshot (11.11, replay_scene.py): once per battle, here,
+        # when the records carry the replay's poses (Converter poses=True); the publishes after it copy the block.
+        poses = next((r for r in records if r.get('type') == 'poses'), None)
+        if poses is not None and scenes and scenes.get('format') == SCENE_FORMAT:
+            stored = scenes.get('hits') or {}
+            for hit in battle.get('hits') or ():
+                scene = stored.get(str(hit.get('id')))
+                if scene is not None: hit[SECOND_SCENE] = scene
+            if scenes.get('report') is not None: report['scenes'] = scenes['report']
+        elif poses is not None:
+            started = TTX_TIMER()
+            made = {}
+            try:
+                if source is None: source = self.scene_source(battle.get('clientVersion'))
+                for _ in attaching(battle, poses, live, source, SECOND_SCENE, made): yield
+                report['scenes'] = made
+                LOG.info('Battle %s: %d hit scene(s) rebuilt from the replay in %.0f ms', name, made['made'],
+                         (TTX_TIMER() - started) * 1000.0)
+            except Exception:
+                for hit in battle.get('hits') or (): hit.pop(SECOND_SCENE, None)
+                LOG.exception('Replay scenes failed; the battle is published without them')
+        self.drop_battle_work(name)
+        self.replay_battles.pop(name, None)
+        self.replay_battles[name] = battle
+        while len(self.replay_battles) > REPLAY_BATTLES_KEPT: self.replay_battles.popitem(last=False)
+        out.update({'battle':battle, 'report':report, 'offset':offset, 'size':size})
+
+    # ---- THE REPLAY PATH AT RUN TIME (11.11.2026, replay_run.py) --------------------------------------------------------
+    def replay_folder(self):
+        return os.path.join(self.folder, 'replay')
+
+    def replay_records_path(self, name):
+        from .replay_run import RECORDS_EXT
+        return os.path.join(self.replay_folder(), name + RECORDS_EXT)
+
+    def replay_stream_path(self, name):
+        from .replay_run import STREAM_EXT
+        return os.path.join(self.replay_folder(), name + STREAM_EXT)
+
+    def replay_state(self):
+        """CFG/replay/index.json: {battle id: {'status': pending|used|cut|failed, 'warnings', 'message', 'stream',
+        'kept', 'records', 'at'}}, read once; {} when there is none or it does not read."""
+        if getattr(self, 'replay_index', None) is None:
+            from .replay_run import INDEX_FILE, INDEX_FORMAT
+            self.replay_index = {}
+            path = os.path.join(self.replay_folder(), INDEX_FILE)
+            try:
+                if os.path.isfile(path):
+                    with open(path, 'rb') as stream: value = json.loads(stream.read().decode('utf-8'))
+                    if value.get('format') == INDEX_FORMAT:
+                        self.replay_index = dict((str(k), v) for k, v in (value.get('battles') or {}).items()
+                                                 if IDENTIFIER.match(str(k)) and isinstance(v, dict))
+            except Exception:
+                LOG.warning('Replay index unreadable; the replay streams on disk are looked at again', exc_info=True)
+        return self.replay_index
+
+    def write_replay_state(self):
+        from .replay_run import INDEX_FILE, INDEX_FORMAT
+        try:
+            if not os.path.isdir(self.replay_folder()): os.makedirs(self.replay_folder())
+            atomic_write(os.path.join(self.replay_folder(), INDEX_FILE),
+                         json.dumps({'format':INDEX_FORMAT, 'battles':self.replay_state()}, sort_keys=True,
+                                    ensure_ascii=True, separators=(',', ':')).encode('ascii'))
+        except Exception:
+            LOG.exception('Replay index not written; the next start looks at the streams again')
+
+    def replay_entry(self, name):
+        return self.replay_state().setdefault(name, {'status':'pending'})
+
+    def replay_notes(self, name):
+        """The battle's warnings about its replay (not used, cut short): every publish of it carries them."""
+        entry = self.replay_state().get(name)
+        return (entry or {}).get('warnings') or ()
+
+    def replay_kept(self, name):
+        """The battle was published from its replay and its records are stored: every publish of it goes the replay way."""
+        entry = self.replay_state().get(name)
+        return bool(entry and entry.get('status') in ('used', 'cut') and entry.get('records'))
+
+    def replay_stream(self, message):
+        """The replay source's message of one battle (replay_source.ReplaySource.handover; fields in docs/map/mod.md
+        «Replay source»): noted in the index as pending (a restart before it is consumed queues it again) and queued as a
+        'replay' job of the player's priority - never run in a battle, paced like a saved battle's slices."""
+        message = dict(message or {})
+        name = str(message.get('battle') or '')
+        if not IDENTIFIER.match(name):
+            LOG.warning('Replay message without a valid battle id ignored: %r', name)
+            return False
+        entry = self.replay_entry(name)
+        if entry.get('status') not in (None, 'pending'):
+            LOG.info('Replay of %s already consumed (%s); the message is not taken again', name, entry.get('status'))
+            return False
+        entry.update({'status':'pending', 'message':message, 'at':time.time()})
+        self.write_replay_state()
+        work = self.replay_work
+        if work is not None and work.name == name:
+            self.replay_work = None
+        key = ('replay', name)
+        if key in self.job_index: self.job_index[key][3] = {'battle':name, 'message':message}
+        else: self.queue_job(JOB_PLAYER, 'replay', {'battle':name, 'message':message})
+        LOG.info('Replay stream of %s queued: %s bytes, final file %s, end %s', name, message.get('streamBytes'),
+                 message.get('final'), message.get('end'))
+        return True
+
+    def replay_setup(self):
+        """At the start: every battle whose stream was collected and never consumed - pending in the index (the game closed
+        before its job ran) or a raw copy beside its record the index does not know (the message was lost) - is queued
+        again. A raw copy the replay source is still to hand over (its state not 'handed') is left to it."""
+        from .replay_run import RAW_EXT
+        state = self.replay_state()
+        source_state = {}
+        try:
+            path = os.path.join(self.folder, 'replay-source.json')
+            if os.path.isfile(path):
+                with open(path, 'rb') as stream: source_state = json.loads(stream.read().decode('utf-8')) or {}
+        except Exception:
+            source_state = {}
+        waiting = source_state.get('battle') if not source_state.get('handed') else None
+        queued = 0
+        for name, entry in sorted(state.items()):
+            # Used, but its records were not stored (a write that failed): decoded again from its kept stream.
+            if entry.get('status') in ('used', 'cut') and not entry.get('records'):
+                message = dict(entry.get('message') or {'battle':name})
+                message.pop('final', None)
+                entry.update({'status':'pending', 'message':message})
+            if entry.get('status') == 'pending' and name != waiting:
+                self.queue_job(JOB_PLAYER, 'replay', {'battle':name, 'message':entry.get('message') or {'battle':name}})
+                queued += 1
+        for path in sorted(glob.glob(os.path.join(self.folder, 'battles', '*' + RAW_EXT))):
+            name = os.path.basename(path)[:-len(RAW_EXT)]
+            if not IDENTIFIER.match(name) or name in state or name == waiting: continue
+            message = {'battle':name, 'arenaId':name.split('-', 1)[0], 'stream':os.path.abspath(path), 'end':'found at start'}
+            state[name] = {'status':'pending', 'message':message, 'at':time.time()}
+            self.queue_job(JOB_PLAYER, 'replay', {'battle':name, 'message':message})
+            queued += 1
+        if queued:
+            self.write_replay_state()
+            LOG.info('Replay streams of %d battle(s) not consumed in the last session queued again', queued)
+        return queued
+
+    def replay_defs(self):
+        """The entity definitions of the session (replay_run.Definitions): built once, from the client snapshot."""
+        if self.replay_defs_value is None:
+            from .replay_run import Definitions
+            self.replay_defs_value = Definitions(self.game, self.client())
+            LOG.info('Replay: entity definitions from the %s in %.2f s', self.replay_defs_value.source,
+                     self.replay_defs_value.seconds)
+        return self.replay_defs_value
+
+    def replay_names(self):
+        """The run-time names of the conversion (replay_records.ClientNames: the client's own modules); without the game's
+        modules the names are left out (replay_records.Names), as the conversion's rule says."""
+        from .replay_records import ClientNames, Names
+        try: return ClientNames()
+        except Exception:
+            LOG.warning('Replay: the client\'s names unavailable; crit names are left out', exc_info=True)
+            return Names()
+
+    def replay_converter(self, name, header, definitions):
+        from .replay_records import Converter
+        return Converter(session=name.split('-', 1)[-1], header=header,
+                         client_version=self.replay_client_version(name), recorder_version=VERSION,
+                         names=self.replay_names(), vehicle_names=definitions.vehicle_names, poses=True)
+
+    def run_replay_job(self, payload):
+        """One slice of a battle's replay (replay_run.Consumption.steps) for BATTLE_SLICE seconds, ended early by a battle,
+        a drag, a command of the page or the mod closing. True when another slice is needed (run_job puts the job back)."""
+        from .replay_run import Consumption
+        name = str((payload or {}).get('battle') or '')
+        # The mod is closing: nothing more; the index keeps the battle pending for the next start (replay_setup).
+        if self.ttx_stopped: return True
+        work = self.replay_work
+        if work is None or work.name != name:
+            work = self.replay_work = Consumption(self, (payload or {}).get('message') or {'battle':name})
+            work.gen = work.steps()
+        began = TTX_TIMER()
+        deadline = began + BATTLE_SLICE
+        done = False
+        try:
+            while True:
+                try: next(work.gen)
+                except StopIteration:
+                    done = True
+                    break
+                if TTX_TIMER() >= deadline or self.battle_stop(): break
+        except Exception as error:
+            from .replay_run import W_UNREADABLE
+            done = True
+            work.outcome = ('failed', [W_UNREADABLE % ('%s: %s' % (type(error).__name__, error))], None)
+            LOG.exception('Replay of %s failed; the battle stays as the live record publishes it', name)
+            try:
+                self.replay_consumed(name, 'failed', work.outcome[1], work.message, {}, None)
+                self.replay_live_again(name)
+            except Exception:
+                LOG.exception('Replay failure of %s not noted', name)
+        work.work += TTX_TIMER() - began
+        work.slices += 1
+        if not done: return True
+        self.replay_work = None
+        LOG.info('Replay of %s: %s in %.1f s (%.2f s of work in %d slices: %s)', name,
+                 (work.outcome or ('failed',))[0], TTX_TIMER() - work.began, work.work, work.slices,
+                 ', '.join('%s %.2f s' % kv for kv in sorted(work.times.items())))
+        return False
+
+    def replay_consumed(self, name, status, notes, message, info, kept_bytes):
+        """The battle's replay is consumed: its index entry says how (used, cut, failed), with its warnings."""
+        entry = self.replay_entry(name)
+        entry.update({'status':status, 'warnings':list(notes or ()), 'message':message, 'stream':info or {},
+                      'at':time.time()})
+        if kept_bytes is not None: entry['kept'] = kept_bytes
+        if status == 'failed': entry.pop('records', None)
+        self.write_replay_state()
+
+    def replay_live_again(self, name):
+        """A battle whose replay was not used: published again from its live record, as before, now with the warning."""
+        self.replay_battles.pop(name, None)
+        if not os.path.isfile(os.path.join(self.folder, 'battles', name + '.jsonl')) or name in self.skipped: return
+        try:
+            self.republish_saved(name)
+            self.write_index()
+        except Exception:
+            LOG.exception('Battle %s not published again with its replay warning', name)
+
+    def replay_restore(self, name, live):
+        """The replay-made battle built again from its stored records (replay_run: records, poses, the statics its scenes
+        used) and its live record - a restart, the page's request, a format change, a model arriving. None when the store
+        does not read: the battle is then published from the live record with a warning, and its kept stream is queued to be
+        decoded again."""
+        from .replay_run import StoredSource, unpack_store, W_RESTORE
+        started = TTX_TIMER()
+        try:
+            with open(self.replay_records_path(name), 'rb') as stream:
+                records, statics, info, scenes = unpack_store(stream.read())
+            loaded = TTX_TIMER()
+            source = StoredSource(self.scene_source(self.replay_client_version(name, live)), statics)
+            battle = self.replay_assemble(name, records, live, source, info, scenes)[0]
+            LOG.info('Battle %s built again from its stored replay records in %.0f ms (%.0f ms to read them)', name,
+                     (TTX_TIMER() - started) * 1000.0, (loaded - started) * 1000.0)
+            return battle
+        except Exception as error:
+            LOG.exception('Stored replay records of %s unreadable; it is published from its live record', name)
+            entry = self.replay_entry(name)
+            entry.update({'status':'pending', 'warnings':[W_RESTORE % error]})
+            entry.pop('records', None)
+            message = dict(entry.get('message') or {'battle':name})
+            message.pop('final', None)
+            self.write_replay_state()
+            self.queue_job(JOB_PLAYER, 'replay', {'battle':name, 'message':message})
+            return None
+
+    def scene_source(self, client_version):
+        """Where replay_scene takes a vehicle's statics and a part's model from (SceneSource; the tests give a table)."""
+        return SceneSource(self, client_version)
+
     def drop_battle_work(self, battle_id=None):
         """Forget the background's slices of this battle (of any, without an id): its job, still queued, starts it anew."""
         work = self.battle_work
@@ -3863,6 +4297,12 @@ class Exporter(object):
                 elif (str(((self.published.get(name) or {}).get('summary') or {}).get('rev') or '').startswith(self.session + '.')
                       and self.published_current(name, self.published.get(name))): done = True
                 elif self.current is not None and self.current.get('id') == name:
+                    self.republish_saved(name)
+                    self.write_index()
+                    done = True
+                # Made from its replay: built again from its stored records and its live record, in one go (replay_restore;
+                # under 1 s for the largest local battle) - its live hits prepared in slices would be thrown away.
+                elif self.replay_kept(name):
                     self.republish_saved(name)
                     self.write_index()
                     done = True
@@ -5119,6 +5559,15 @@ class Exporter(object):
 
     def prepare_hit(self, raw, index, battle, track=False):
         hit = copy.deepcopy(raw)
+        # The client's box of a static part the recorder writes on every point since 11.11 (Recorder.capture: the scene
+        # rebuilt from the replay decodes the point on it, replay_scene.recover_boxes) is not published: a battle's file
+        # stays what it was. A wheel's, a prefab's and an unknown part's point published its box before and still does.
+        static = set(p.get('id') for p in (hit.get('target') or {}).get('parts') or ()
+                     if isinstance(p, dict) and isinstance(p.get('id'), int) and p['id'] >= 0 and not p.get('prefab'))
+        for point in hit.get('points') or ():
+            if (isinstance(point, dict) and 'partBounds' in point and point.get('status') != 'unsupported-part'
+                    and point.get('part') in static):
+                del point['partBounds']
         for side in ('attacker', 'target'):
             try:
                 enrich_vehicle(hit.get(side))
@@ -5204,6 +5653,16 @@ class Exporter(object):
         file's size then; the active battle's are its tail's. Known, they go to data/published.json with what else the
         file was built from. `prepared`: the hits of a saved battle already prepared (the background's slices)."""
         if not IDENTIFIER.match(battle['id']): raise ValueError('Invalid battle id')
+        # A battle published from its replay stays so whichever path publishes it again (publish_replay).
+        replays = getattr(self, 'replay_battles', None)
+        replayed = replays.get(battle['id']) if replays else None
+        # Not in memory (a restart, evicted): built again from its stored records - never the live record alone, which
+        # would drop the hits only the replay has (replay_restore; None: the store does not read, the live one it is).
+        if replayed is None and battle.get('source') != 'replay' and self.replay_kept(battle['id']):
+            replayed = self.replay_restore(battle['id'], battle)
+        if replayed is not None and battle is not replayed:
+            battle, prepared = replayed, None
+            if offset is None: offset = self.raw_offsets.get(battle['id'])
         active = battle is self.current
         identity = (battle['id'], canonical(battle.get('clientVersion') or ''), self.version)
         if active and (self.prepared_identity != identity or
@@ -5247,6 +5706,9 @@ class Exporter(object):
             if active: self.damage_held = bool(held)
         except Exception: LOG.exception('Damage events failed; hits are published without them')
         result.pop('critEvents', None)
+        # What became of the battle's replay when it was not used or is cut short (replay_run): said on the battle.
+        notes = [note for note in self.replay_notes(battle['id']) if note not in (result.get('warnings') or ())]
+        if notes: result['warnings'] = list(result.get('warnings') or []) + notes
         target = os.path.join(self.folder, 'data', 'battles', battle['id']+'.js')
         if active:
             size, written = write_data(target, 'battle:'+battle['id'], result), True
@@ -5262,8 +5724,12 @@ class Exporter(object):
         running = canonical(battle.get('clientVersion') or '') == self.version
         references, pending, absent, redo = set(), set(), set(), False
         for hit in result['hits']:
-            for side in ('target', 'attacker'):
+            # A replay-made battle's second scene names models too (replay_scene: its parts' modelKey): kept from prune.
+            scene = hit.get('replayScene')
+            sides = ('target', 'attacker') if not isinstance(scene, dict) else ('target', 'attacker', 'replayScene')
+            for side in sides:
                 vehicle = hit.get(side) or {}
+                if side == 'replayScene': vehicle = vehicle.get('target') or {}
                 for part in vehicle.get('parts', []):
                     key = part.get('modelKey')
                     if key:
@@ -5325,6 +5791,8 @@ class Exporter(object):
                      'waits':waits, 'summary':dict(summary), 'client':version_hash(battle.get('clientVersion')),
                      'built':version_hash(self.version)}
             if absent: entry['absent'] = sorted(absent)
+            # Made from its replay (replay_run): every later publish of it goes that way (publish, replay_restore).
+            if battle.get('source') == 'replay': entry['replay'] = True
             # The inputs its fill-ins read (fill_allowed): kept from before for a file not read this time.
             inputs = dict(previous.get('inputs') or {})
             inputs.update(self.fill_reads.get(battle['id']) or {})
@@ -5673,6 +6141,8 @@ class Exporter(object):
                 self.preparing_page = page
                 try: more = self.run_battle_job(job[3])
                 finally: self.preparing_page = False
+            # A battle's replay stream (replay_stream): in slices, like a saved battle.
+            elif job[2] == 'replay': more = self.run_replay_job(job[3])
             else: self.run_vehicle_job(job[3], page)
         except Exception:
             LOG.exception('Deferred %s job failed; the rest of the queue continues', job[2])
@@ -5691,7 +6161,7 @@ class Exporter(object):
         rest = spent * (1.0 - SWEEP_SHARE) / SWEEP_SHARE
         # A slice of a saved battle of setup's backlog (27.09) is no extraction either: the game's share after it, all of it
         # (review of 4b1c8c8 #4: a 1 s cap left the work 85-95 % of the time when a battle took seconds in one go).
-        self.job_rest = rest if job[2] == 'battle' else min(SWEEP_REST_MAX, rest) if job[2] == 'ttx' else PACE
+        self.job_rest = rest if job[2] in ('battle', 'replay') else min(SWEEP_REST_MAX, rest) if job[2] == 'ttx' else PACE
         return True
 
     def run_model_job(self, payload):
