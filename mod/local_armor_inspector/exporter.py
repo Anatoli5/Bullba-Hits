@@ -4137,12 +4137,20 @@ class Exporter(object):
 
     def replay_defs(self):
         """The entity definitions of the session (replay_run.Definitions): built once, from the client snapshot."""
-        if self.replay_defs_value is None:
-            from .replay_run import Definitions
-            self.replay_defs_value = Definitions(self.game, self.client())
-            LOG.info('Replay: entity definitions from the %s in %.2f s', self.replay_defs_value.source,
-                     self.replay_defs_value.seconds)
+        for _ in self.replay_defs_steps(): pass
         return self.replay_defs_value
+
+    def replay_defs_steps(self):
+        """replay_defs in steps for the replay job's slices (replay_run.Consumption): nothing when the session has them;
+        else built here, yielding between their parts, and kept in replay_defs_value only once whole (a job dropped halfway
+        leaves nothing half-built: the next one builds them from the start)."""
+        if self.replay_defs_value is not None: return
+        from .replay_run import Definitions
+        building = Definitions(self.game, self.client(), build=False)
+        for _ in building.stages(): yield
+        if self.replay_defs_value is None:
+            self.replay_defs_value = building
+            LOG.info('Replay: entity definitions from the %s in %.2f s of work', building.source, building.seconds)
 
     def replay_names(self):
         """The run-time names of the conversion (replay_records.ClientNames: the client's own modules); without the game's

@@ -148,31 +148,57 @@ def snapshot_components(packages):
 
 class Definitions(object):
     """The decoder's Client, Defs and Registry and the roster's vehicle names, built once a session (Exporter.replay_defs).
-    `source`: 'client snapshot' or 'package scan'; `seconds`: what building them took."""
+    `source`: 'client snapshot' or 'package scan'; `seconds`: what building them took (work only, not the pauses between
+    stages). `build=False`: nothing built yet - stages() builds them in steps (the replay job's slices, Exporter.
+    replay_defs_steps): at once they took 0.21 s under the client's Python 2.7 with the client idle, 0.31 s with it busy,
+    the longest indivisible step of the first replay of a session (measured 11.11)."""
 
-    def __init__(self, game, snapshot=None):
-        started = TIMER()
+    def __init__(self, game, snapshot=None, build=True):
+        self.game, self.snapshot = game, snapshot
         self.source = None
+        self.seconds = 0.0
+        if build:
+            for _ in self.stages(): pass
+
+    def stages(self):
+        """Build them, yielding between the parts (on the 17:42 stand, a 0.23 s build: package list 0.03 s, client 0.01,
+        Defs 0.05, components 0.05, vehicle names 0.09 - a nation's list.xml a step)."""
+        started = TIMER()
         packages = None
-        try: packages = snapshot_packages(snapshot)
+        try: packages = snapshot_packages(self.snapshot)
         except Exception: LOG.warning('Replay: the client snapshot does not give the definitions; the packages are scanned', exc_info=True)
         if packages:
             try:
-                client = SnapshotClient(game, packages)
+                client = SnapshotClient(self.game, packages)
                 if 'scripts/entities.xml' not in client.files: raise ValueError('no scripts/entities.xml in the snapshot')
+                self.seconds += TIMER() - started
+                yield
+                started = TIMER()
                 defs = rd.Defs(client)
-                self.client, self.defs = client, defs
-                self.registry = FixedRegistry(client, defs, snapshot_components(packages))
+                self.seconds += TIMER() - started
+                yield
+                started = TIMER()
+                registry = FixedRegistry(client, defs, snapshot_components(packages))
+                self.client, self.defs, self.registry = client, defs, registry
                 self.source = 'client snapshot'
             except Exception:
                 LOG.warning('Replay: definitions from the client snapshot failed; the packages are scanned', exc_info=True)
         if self.source is None:
-            self.client = rd.Client(game)
+            # The fallback: the decoder's own scan of every package, 3.9-5.9 s in one go (no snapshot this session).
+            self.client = rd.Client(self.game)
             self.defs = rd.Defs(self.client)
             self.registry = rc.Registry(self.client, self.defs)
             self.source = 'package scan'
-        self.vehicle_names = self.client.vehicle_names()
-        self.seconds = TIMER() - started
+        self.seconds += TIMER() - started
+        yield
+        names = {}
+        started = TIMER()
+        for _ in self.client.vehicle_names_steps(names):
+            self.seconds += TIMER() - started
+            yield
+            started = TIMER()
+        self.seconds += TIMER() - started
+        self.vehicle_names = names
 
 
 _DONE = object()
@@ -452,8 +478,12 @@ class Consumption(object):
         info = {'from':source}
         try:
             if stream is None or not len(stream): raise Unusable(W_NO_STREAM)
-            # The definitions, once a session.
+            # The definitions, once a session, built in steps (the first replay of a session: 0.21-0.31 s at once).
             started = TIMER()
+            for _ in exporter.replay_defs_steps():
+                self.lap('definitions', started)
+                yield
+                started = TIMER()
             definitions = exporter.replay_defs()
             self.lap('definitions', started)
             yield

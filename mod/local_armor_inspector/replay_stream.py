@@ -201,6 +201,12 @@ class Client(object):
     def vehicle_names(self):
         """(nationID, vehicleTypeID) -> 'nation:Name' from every package's item_defs/vehicles/<nation>/list.xml."""
         out = {}
+        for _ in self.vehicle_names_steps(out):
+            pass
+        return out
+
+    def vehicle_names_steps(self, out):
+        """vehicle_names into `out`, yielding after each nation's list.xml (the mod's replay job builds them in steps)."""
         for name in sorted(self.files):
             if not name.endswith('/list.xml') or 'item_defs/vehicles/' not in name:
                 continue
@@ -211,7 +217,7 @@ class Client(object):
                 vid = (v.findtext('id') or '').strip()
                 if vid.isdigit():
                     out.setdefault((self.NATIONS.index(nation), int(vid)), '%s:%s' % (nation, v.tag))
-        return out
+            yield
 
     def xml(self, name):
         z, _ = self.files[name]

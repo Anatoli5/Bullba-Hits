@@ -57,6 +57,7 @@ def definitions():
         _CACHE['defs'].snapshot_seconds = took
         _CACHE['defs'].built_in = TIMER() - started
         _CACHE['snapshot folder'] = folder
+        _CACHE['snapshot'] = snapshot
     return _CACHE['defs']
 
 
@@ -268,6 +269,29 @@ class RunTimeTests(unittest.TestCase):
             self.assertEqual(strip_rev(stand.published(arena)), strip_rev(first), arena)
             print('%s: republished after a restart in %.2f s' % (name, took))
 
+    def test_the_definitions_are_built_in_steps(self):
+        """The first replay of a session builds the definitions in stages, a pause between them (Exporter.
+        replay_defs_steps; at once they were the longest step of the job, 0.21-0.31 s under the client's Python 2.7):
+        the same definitions as at once, in at least five steps, kept by the exporter only once whole."""
+        whole = definitions()
+        stand = self.stand(sorted(KILL_CAM)[0])
+        e = stand.exporter(None)
+        e.replay_defs_value = None
+        e.client = lambda: _CACHE['snapshot']
+        e.game = GAME
+        steps = 0
+        for _ in e.replay_defs_steps():
+            steps += 1
+            self.assertIsNone(e.replay_defs_value)
+        built = e.replay_defs_value
+        self.assertGreaterEqual(steps, 5)
+        self.assertEqual(built.source, 'client snapshot')
+        self.assertEqual(built.vehicle_names, whole.vehicle_names)
+        self.assertEqual(sorted(built.client.files), sorted(whole.client.files))
+        self.assertEqual(list(built.registry.dynamic), list(whole.registry.dynamic))
+        self.assertIs(e.replay_defs(), built)
+        self.assertEqual(list(e.replay_defs_steps()), [])
+
     def test_a_final_file_with_more_than_the_copy(self):
         """The copy holds 60 % of the stream, the mod's own final file all of it: decrypted, checked, used, deleted."""
         arena = '16434853064049700'
@@ -356,7 +380,13 @@ class RunTimeTests(unittest.TestCase):
         e.replay_defs_value = None
         built = []
         original = rr.Definitions
-        rr.Definitions = lambda game, snapshot: built.append(1) or definitions()
+        def counted(game, snapshot, build=True):
+            # The session's definitions, built already: counted, their stages (Exporter.replay_defs_steps) nothing to do.
+            built.append(1)
+            ready = copy.copy(definitions())
+            ready.stages = lambda: iter(())
+            return ready
+        rr.Definitions = counted
         try:
             for arena in sorted(KILL_CAM):
                 e.replay_stream(stand.message(arena, self.copy_of(stand, arena)))
