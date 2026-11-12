@@ -2,6 +2,13 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.1.1 from 1.05 on, 2.4.1.0 from 1.02 on, 2.4.0.2 from 0.9.3 on, 2.4.0.1 #950 from 0.7.6, 2.4.0.0 #945 before.
 
+## Unreleased
+
+- **Turning a recorded hit's turret or gun:** the scene now simply stays as you turned it - the hit's row in the list is no longer highlighted, and its shot line becomes a pinned line like one you click on the armour, judged by the page against the vehicle as it now stands ("Pinned point" in the Hit line panel). The note under the pose tile ("The recorded shot's own marks are hidden ...") is gone. Click the hit's row to get the recorded shot back.
+- **Armour line easier to read:** the plate and its angle are now joined by the angle sign - "eff 310 mm ← 190 mm ∠ 54°" instead of a dash; the same in the ricochet line.
+- **Penetration beside the armour:** the shell's penetration now stands on the armour line, right before the effective armour it is compared with, so the Hit line and Under the cursor panels are one line shorter; the range it is taken at moved into the penetration chip's tooltip.
+- **HP bar with ⌖ only again:** the health bar over the scene shows only while the shooting emulation (⌖) is on, as before 1.07; the battle's HP stays in the target's characteristics panel.
+
 ## 1.08 (2026-11-12)
 
 - **Opening the page during a replay's processing:** opening Bullba Hits from the mods list while a battle's replay was still being processed failed to move the hangar vehicle to the front of the queue (an error line in the game's log); it now goes first as intended.

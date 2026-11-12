@@ -321,6 +321,10 @@ StubViewer.prototype.shotProbability = function (shell) { return shell ? {chance
 // nothing to say - but it must say it with a list: since 22.09 a hit whose shell the record does not name
 // still gets an assumed one, so this path is reached for hits that used to have no shell at all.
 StubViewer.prototype.pointVerdicts = function () { return []; };
+// BACKLOG 90 (12.11): the recorded pose to the viewer's one threshold, and the recorded line pinned when a scene leaves it
+// (the page's detachFromRecord); the stub counts the asks and pins nothing.
+StubViewer.prototype.recordedPose = function () { return Math.abs(this.turretAngle) < .001 && Math.abs(this.gunAngle) < .001; };
+StubViewer.prototype.pinRecorded = function () { this.recordedPins = (this.recordedPins || 0) + 1; return false; };
 StubViewer.prototype.hideSpread = function () {};
 StubViewer.prototype.configure = function () {};
 StubViewer.prototype.showSavedAim = function () {};
@@ -2813,6 +2817,9 @@ settle(20).then(function () {
   ok('S2: the same pose again measures nothing', poseReads === 0 && styleReads === 0, '(' + poseReads + ')');
   view.loadedData = null; view.onTurret({}); tick(0.02);
   ok('S2: the tile going away is measured once more', poseInfo.hidden === true);
+  // The stub keeps its angles over a load (the real viewer's load puts the record's pose back): the scenes after this one
+  // must not stand turned off their record (BACKLOG 90: that would take their rows' selection).
+  view.turretAngle = 0; view.gunAngle = 0;
   window.getComputedStyle = computed;
   delete view.shotProbability; delete view.hideSpread; delete view.drawLiveAim; delete view.gunRangeAbsolute;
   // D3: a wheel glide redoes the shell (its penetration at the new distance, the panels, the map's shell)
@@ -4045,16 +4052,17 @@ settle(20).then(function () {
      '(' + fun.hp().max + ' HP · hidden=' + fx['target-hp'].hidden + ')');
   fx['fun-mode'].checked = false;
   fun.paintFun();
-  // 11.11: off ⌖ the bar stays - full, the vehicle's whole HP alone - and the ↺ goes.
-  ok('fun: with the switch off the ↺ is off the scene, the bar shows the whole HP alone, and the switch itself is not lit',
-     fx['target-hp'].hidden === false && fx['target-hp-text'].textContent === '1' + NB + '850' && fx['target-hp-fill'].style.width === '100.0%'
-     && fx['target-hp-reset'].hidden === true
+  // 12.11 (BACKLOG 92, user: the target's characteristics panel has the battle's HP now): off ⌖ the bar goes again with the
+  // ↺ and the strip, as before 11.11 (BACKLOG 78 had kept it standing off ⌖).
+  ok('fun: with the switch off the bar, the ↺ and the strip are off the scene, and the switch itself stands, not lit',
+     fx['target-hp'].hidden === true && fx['target-hp-reset'].hidden === true && fx['fun-strip'].hidden === true
      && fx['fun-mode-toggle'].getAttribute('aria-pressed') === 'false' && fx['fun-mode-toggle'].hidden === false,
-     '(' + fx['target-hp-text'].textContent + ')');
+     '(hidden=' + fx['target-hp'].hidden + ' · strip hidden=' + fx['fun-strip'].hidden + ')');
   // 11.11, the user: he wants the vehicle's ACTUAL HP of the battle at hand without ⌖, and to know whether the figure is
   // the battle's own or a nominal one - the damage of all its hits should add up to it. His battles of 11.11 are published
   // from the replay: a row of `vehiclesInfo` with the server's figure (AMX 67 Imbattable 2 820, its stock 2 500). The
-  // bar shows that figure off ⌖, says its source, and sums the damage the battle logged against the vehicle.
+  // bar shows that figure (under ⌖ only since 12.11, BACKLOG 92), says its source, and sums the damage the battle logged
+  // against the vehicle.
   const REPLAY = {id: 'f11', roster: [{id: 31, type: 'france:Imb', maxHealth: 2820, maxHealthFrom: 'vehiclesInfo'},
                                       {id: 32, type: 'france:Imb', defaultMaxHealth: 2500},
                                       {id: 33, type: 'france:Other', maxHealth: 1900, maxHealthFrom: 'vehicle'}],
@@ -4062,13 +4070,14 @@ settle(20).then(function () {
            {id: 'r3', attackerId: 31, targetId: 32, damage: 2500}, {id: 'r4', synthetic: true, targetId: 31, damage: 999},
            {id: 'r5', attackerId: 31, targetId: 33, damage: 1900}],
     damageEvents: [{id: 'e1', kind: 'fire', targetId: 31, attackerId: 32, damage: 120}, {id: 'e2', kind: 'ram', targetId: 33, attackerId: 31, damage: 100}]};
+  fx['fun-mode'].checked = true;
   fun.set(fviewer, REPLAY, {targetId: 31, target: {type: 'france:Imb'}});
   fun.funReset();
   const t31 = fx['target-hp'].title;
-  ok('fun: off ⌖ a replay battle’s vehicle shows its recorded maximum - the server’s figure from the replay, not the stock',
-     fx['target-hp'].hidden === false && fx['target-hp-text'].textContent === '2' + NB + '820' && fun.hp().from === 'replay'
+  ok('fun: a replay battle’s vehicle shows its recorded maximum - the server’s figure from the replay, not the stock',
+     fx['target-hp'].hidden === false && fx['target-hp-text'].textContent === '2' + NB + '820 / 2' + NB + '820' && fun.hp().from === 'replay'
      && fx['target-hp'].getAttribute('data-nominal') === null
-     && t31.indexOf('\n• Max: 2' + NB + '820 HP\n• Source: this battle’s replay, the server’s own figure (equipment included)\n') > 0,
+     && t31.indexOf('\n• Left: 2' + NB + '820 / 2' + NB + '820 HP\n• Source: this battle’s replay, the server’s own figure (equipment included)\n') > 0,
      '(' + fx['target-hp-text'].textContent + ' · ' + fun.hp().from + ' · ' + t31 + ')');
   ok('fun: its tooltip sums the damage logged against it - its hits (not a synthetic one) and the other rows - and what is not in the log',
      t31.indexOf('\n• Logged damage taken: 958 HP (hits 838, other 120)\n• Not in the log: 1' + NB + '862 HP - kept, or missed by the log if it was destroyed') > 0,
@@ -4077,7 +4086,7 @@ settle(20).then(function () {
   fun.funModel();
   const t32 = fx['target-hp'].title;
   ok('fun: a row with the stock figure only - the bar is framed as nominal and says so; the log that reaches it says destroyed, nothing missing',
-     fx['target-hp-text'].textContent === '2' + NB + '500' && fun.hp().from === 'default' && fx['target-hp'].getAttribute('data-nominal') === 'true'
+     fx['target-hp-text'].textContent === '2' + NB + '500 / 2' + NB + '500' && fun.hp().from === 'default' && fx['target-hp'].getAttribute('data-nominal') === 'true'
      && t32.indexOf('\n• Source: the roster’s stock figure - this battle’s own is not in the record\n• Nominal: not the figure this vehicle had in this battle\n') > 0
      && t32.indexOf('\n• Logged damage taken: 2' + NB + '500 HP\n• The log adds up to its HP: destroyed, nothing missing') > 0,
      '(' + t32 + ')');
@@ -4089,19 +4098,18 @@ settle(20).then(function () {
   fun.set(fviewer, REPLAY, {vehicle: true, synthetic: true, target: {type: 'france:Browsed', maxHealth: 1500}});
   fun.funModel();
   ok('fun: a browsed vehicle has its own export only - framed nominal, and no battle log to sum',
-     fx['target-hp-text'].textContent === '1' + NB + '500' && fx['target-hp'].getAttribute('data-nominal') === 'true'
+     fx['target-hp-text'].textContent === '1' + NB + '500 / 1' + NB + '500' && fx['target-hp'].getAttribute('data-nominal') === 'true'
      && fx['target-hp'].title.indexOf('Logged damage') < 0 && fx['target-hp'].title.indexOf('\n• Nominal: not the figure this vehicle had in this battle') > 0,
      '(' + fx['target-hp'].title + ')');
-  fx['fun-mode'].checked = true;
   fun.set(fviewer, REPLAY, {targetId: 31, target: {type: 'france:Imb'}});
   fun.funModel();
   seed([.1, .5]); fun.funShot(HE);
-  ok('fun: under ⌖ the same vehicle reads left / max as before, and a shot takes its damage off',
+  ok('fun: a shot takes its damage off the same vehicle',
      fx['target-hp-text'].textContent === '2' + NB + '420 / 2' + NB + '820' && fx['target-hp'].title.indexOf('\n• Left: 2' + NB + '420 / 2' + NB + '820 HP\n• Source: this battle’s replay') > 0,
      '(' + fx['target-hp-text'].textContent + ')');
   fx['fun-mode'].checked = false;
   fun.paintFun();
-  ok('fun: and switched off it shows the whole HP again, full', fx['target-hp-text'].textContent === '2' + NB + '820' && fx['target-hp-fill'].style.width === '100.0%');
+  ok('fun: and switched off the bar goes (BACKLOG 92)', fx['target-hp'].hidden === true && fx['fun-strip'].hidden === true);
   ok('fun: the nominal frame is the page’s own rule', /\.target-hp\[data-nominal\]\{border-style:dashed;/.test(styleSrc));
 
   // ---- 2. the wiring, driven through the page with the stub viewer -------------------------------
@@ -4151,12 +4159,10 @@ settle(20).then(function () {
        + ', radius=' + view.liveRadius100 + ', mode=' + document.getElementById('armor-mode').value
        + ', model hidden=' + document.getElementById('model-tile').hidden
        + ', aimOn=' + onBox.checked + ')');
-    // 11.11 (user: the vehicle's own HP of this battle at hand, not only under ⌖): the bar stands off ⌖ with the whole HP.
-    ok('fun: the switch starts off and unlit; of the layer only the health bar is on screen - the battle’s recorded maximum, the figure alone',
+    // 12.11 (BACKLOG 92, user: the target's characteristics panel has the battle's HP now): off ⌖ the bar is off the scene again.
+    ok('fun: the switch starts off and unlit, and nothing of the layer is on screen',
        funBox.checked === false && toggle.getAttribute('aria-pressed') === 'false' && toggle.hidden === false
-       && bar.hidden === false && reset.hidden === true && hpText() === '1' + NB + '850'
-       && bar.title.indexOf('Target HP\nHit points of the vehicle on screen in this battle; ⌖ shoots them down.\n• Max: 1' + NB + '850 HP\n• Source: this battle’s roster') === 0
-       && bar.getAttribute('data-nominal') === null, '(' + hpText() + ' · ' + bar.title.slice(0, 160) + ')');
+       && bar.hidden === true && reset.hidden === true, '(bar hidden=' + bar.hidden + ')');
     // The page never sets these itself: the stub's configure() is a no-op, so the shell and the verdict of
     // the pinned line are put in by hand - they are what the real viewer would have handed back.
     view.shell = {alpha: 400, damageRandomization: .25, kind: 'ARMOR_PIERCING', penetration: 250, caliber: 120};
@@ -8816,10 +8822,9 @@ settle(20).then(function () {
     setFun(false); if (!realBox.checked) click(sub); run(10);
     // The user's word (23.09): the reload, the magazine and the rest of the strip only in the emulation mode - off ⌖
     // nothing blocks a shot (gunBlock), so the whole strip waits for ⌖; the gun panel at the bottom keeps the shells.
-    // 11.11 (user: the vehicle's own HP at hand): off ⌖ the strip carries the health bar alone - its whole HP.
-    ok('strip: ⌖ OFF - the strip carries the health bar alone (the reload, magazine, heat and mode button wait for ⌖, the user 23.09); the gun panel at the bottom has the shells; the switch stands by the tile, dark',
-       view.liveRadius100 > 0 && strip.hidden === false && live.hidden === true && sub.hidden === true && document.getElementById('target-hp').hidden === false
-       && /^1.850$/.test(document.getElementById('target-hp-text').textContent)
+    // 12.11 (BACKLOG 92, user: the target's characteristics panel has the battle's HP now): the health bar waits for ⌖ again too (BACKLOG 78 had kept it off ⌖).
+    ok('strip: ⌖ OFF - no strip at all (the reload, magazine, heat, mode button and health bar wait for ⌖, the user 23.09 and 12.11); the gun panel at the bottom has the shells; the switch stands by the tile, dark',
+       view.liveRadius100 > 0 && strip.hidden === true && document.getElementById('target-hp').hidden === true
        && document.getElementById('target-hp-reset').hidden === true && gunPanel.hidden === false && star.hidden === false && star.getAttribute('aria-pressed') === 'false');
     let p = view.pinnedPoints, f = view.flashes;
     tap(); tap(); tap();
@@ -8882,15 +8887,15 @@ settle(20).then(function () {
     delete row.offsetTop; delete row.offsetHeight; strip.offsetWidth = 100;
     box.clientWidth = 375; scheduleLayoutNow();
     setFun(false); scheduleLayoutNow();
-    ok('strip: ⌖ OFF on the narrow scene - the strip keeps the health bar alone, its gun part gone with ⌖ (the user 23.09)',
-       strip.hidden === false && live.hidden === true && sub.hidden === true && document.getElementById('target-hp-reset').hidden === true);
+    ok('strip: ⌖ OFF on the narrow scene - the strip is gone with ⌖ (the user 23.09, 12.11)',
+       strip.hidden === true);
     // Its width moves on events only: ◔/the bar/↺ with ⌖, the health bar coming late with the characteristics file, the
     // heat bar - each asks the top band's pass (stripLayout), never a frame.
     ok('strip: the health bar, ◔, ↺ and the heat bar coming or going ask the top band to be laid out again (stripLayout), only then',
        /if \(bar\.hidden !== !show\) \{ bar\.hidden = !show; wide = true; \}/.test(appSrc) && /if \(wide\) stripLayout\(\);/.test(appSrc)
        && /if \(box\.hidden !== !h\) \{ box\.hidden = !h; stripLayout\(\); \}/.test(appSrc));
     onBox.checked = false; onBox.onchange.call(onBox); run(0.1);
-    ok('strip: ⌖ and the aim emulation both OFF - the strip carries the health bar alone, beside the tile and the switch', strip.hidden === false && live.hidden === true && document.getElementById('target-hp').hidden === false);
+    ok('strip: ⌖ and the aim emulation both OFF - no strip at all: the tile and the switch alone', strip.hidden === true && document.getElementById('target-hp').hidden === true);
     onBox.checked = true; onBox.onchange.call(onBox); run(0.1);
     box.clientWidth = keepW; row.offsetWidth = keepR; scheduleLayoutNow();
     delete window.BullbaHitsRng;
@@ -9363,17 +9368,16 @@ function pathMatrix() {
     const two = tile && shooter && want.drawn !== false && !!vehicleOf('model-tile') && vehicleOf('model-tile') !== vehicleOf('shooter-tile');
     if (two) ok(tag + '⇅ stands: two different vehicles hold the two roles', $('swap-roles').hidden === false,
                 '(model ' + vehicleOf('model-tile') + ', shooter ' + vehicleOf('shooter-tile') + ', ⇅ hidden)');
-    // 11.11 (user: the vehicle's own HP at hand, not only under ⌖): off ⌖ the strip stands with the health bar alone.
-    ok(tag + 'the ⌖ switch stands with a model, lit with the mode; ↺ only under ⌖ with a model, the strip under ⌖ or with the health bar',
+    // 12.11 (BACKLOG 92, user: the target's characteristics panel has the battle's HP now): the strip, the bar and ↺ only under ⌖ again.
+    ok(tag + 'the ⌖ switch stands with a model, lit with the mode; the strip and ↺ only under ⌖ with a model',
        $('fun-mode-toggle').hidden === !model && $('fun-mode-toggle').getAttribute('aria-pressed') === String(fun)
-       && $('fun-strip').hidden === !(model && (fun || !!want.hp)) && $('target-hp-reset').hidden === !(fun && model)
+       && $('fun-strip').hidden === !(fun && model) && $('target-hp-reset').hidden === !(fun && model)
        && (fun || !model || $('fun-gun').hidden === true),
        '(switch hidden ' + $('fun-mode-toggle').hidden + ', strip hidden ' + $('fun-strip').hidden + ', ↺ hidden ' + $('target-hp-reset').hidden + ')');
-    const bar = model && !!want.hp, whole = want.hp ? fig(want.hp.split(' / ')[1]) : '';
-    ok(tag + (bar ? 'the health bar stands with ' + (fun ? want.hp : whole + ' (the figure alone off ⌖)') + ' inside it, from ' + want.source : 'no health bar'),
+    const bar = fun && model && !!want.hp;
+    ok(tag + (bar ? 'the health bar stands with ' + want.hp + ' inside it, from ' + want.source : 'no health bar'),
        $('target-hp').hidden === !bar
-       && (!bar || ($('target-hp-text').textContent === (fun ? fig(want.hp) : whole)
-         && $('target-hp').title.indexOf('\n• ' + (fun ? 'Left: ' + fig(want.hp) : 'Max: ' + whole) + ' HP\n• Source: ' + want.source) > 0)),
+       && (!bar || ($('target-hp-text').textContent === fig(want.hp) && $('target-hp').title.indexOf('\n• Left: ' + fig(want.hp) + ' HP\n• Source: ' + want.source) > 0)),
        '(hidden ' + $('target-hp').hidden + ', "' + $('target-hp-text').textContent + '")');
     ok(tag + 'the emulation’s controls go with the model' + (want.drawn === false ? ' - Config stays for the panel\'s build' : ''),
        model || ($('aim-drive').hidden && $('aim-gun').hidden && $('fun-gun').hidden && $('aim-config').hidden === (want.drawn !== false)),

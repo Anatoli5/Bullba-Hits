@@ -1300,6 +1300,18 @@
   Viewer.prototype.pinReticleAt=function(position,classes){
     this.addReticle(position);var r=this.reticles[this.reticles.length-1];r.pinned=true;classes.split(' ').forEach(function(c){r.element.classList.add(c);});this.pinReticles.push(r);
   };
+  // THE RECORDED SHOT'S LINE, PINNED (BACKLOG 90, user 12.11): a scene turned off the recorded pose is no longer the recorded
+  // shot. Its line stays where it stood in the world - the one shotProbability casts for the recorded line, from beyond the
+  // vehicle along the shot's travel to the recorded point - and from then on it is a pinned line like one put with the mouse
+  // (pinAt): the page casts and judges it on the vehicle as it now stands (refreshPin), the recorded marks go with any pin.
+  // Returns whether a line was pinned: none without a recorded point, or with a pin already there.
+  Viewer.prototype.pinRecorded=function(){
+    if(!this.engine||!this.point||!this.travel||this.pinned)return false;
+    var span=this.bounds?this.bounds.getSize(new THREE.Vector3()).length():20,direction=this.travel.clone().normalize();
+    this.pinned={origin:this.point.clone().addScaledVector(direction,-span*2-2),direction:direction,point:this.point.clone(),normal:null};
+    this.refreshPin();this.showSavedAim(false);if(this.onPin)this.onPin(true);
+    return true;
+  };
   Viewer.prototype.unpin=function(){this.pinned=null;this.refreshPin();this.showSavedAim(aimShown());if(this.onPin)this.onPin(false);this.draw();};
   // Recorded markers (arrows, reticles, aim circles) belong to the saved pose and the saved shot: an explored
   // pose or a pinned shot replaces them until the user returns.

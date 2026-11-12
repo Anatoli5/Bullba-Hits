@@ -5111,29 +5111,29 @@
   // THE STRIP BESIDE ⌖ (23.09): the emulated gun - its load, magazine, heat and mode button (#fun-gun, while the aim
   // emulation runs: updateAim) - ◔ and ↺, ONLY under ⌖ (the user's word, 23.09: "only in the emulation mode, otherwise
   // they are not needed" - off ⌖ nothing blocks a shot, gunBlock, so a reload count there would explain nothing). The
-  // target's health bar stands in it off ⌖ too since 11.11 (user: the vehicle's own HP of this battle at hand, to
-  // compare with the damage of its hits): the strip then carries the bar alone. The top band is laid out again only
-  // when it comes or goes (the full pass of updateAim covers #fun-gun). Called by paintFun alone - the switch, a shot,
-  // ↺ and every scene (sceneShown) - never per frame.
+  // target's health bar too: from 11.11 (BACKLOG 78) it stood off ⌖ as well, and since 12.11 (BACKLOG 92, user: the
+  // target's characteristics panel carries the battle's HP now, ttxBattleHp) it is ⌖'s again. The top band is laid out
+  // again only when it comes or goes (the full pass of updateAim covers #fun-gun). Called by paintFun alone - the switch,
+  // a shot, ↺ and every scene (sceneShown) - never per frame.
   // A model drawn on screen - what ⌖, its strip and bar, the target's switches and the emulation stand with. The model
   // tile stays for a browsed vehicle without a model (it is the role control), but there is nothing to shoot at.
   function modelOnScreen() { var t = activeHit && activeHit.target; return !$('model-tile').hidden && !(t && t.noModel); }
   function paintStrip() {
-    var strip = $('fun-strip'), bar = $('target-hp');
+    var strip = $('fun-strip');
     if (!strip) return;
-    var show = modelOnScreen() && (funOn() || !!(bar && !bar.hidden));
+    var show = modelOnScreen() && funOn();
     if (strip.hidden !== !show) { strip.hidden = !show; scheduleLayout(LAYOUT_MODS); }
   }
   // THE BAR (24.09, user: "is there no way to get the number?"): the fill and, inside it as the game's own health bars
-  // carry it, the figure - "left / max" under ⌖, the vehicle's whole HP alone off it (11.11: there nothing takes HP
-  // off); plain numbers and no word, the details stay in its tooltip. A figure that is not this battle's own wears a
+  // carry it, the figure - "left / max", under ⌖ only (BACKLOG 92); plain numbers and no word, the details stay in its
+  // tooltip. A figure that is not this battle's own wears a
   // dashed frame (data-nominal). Called on a shot, on a reset, on a model change and when the switch moves; never per
   // frame. Every write only when its value changes.
   function paintFun() {
     if (sceneBuild) return;   // a scene half built: its finisher (sceneShown -> funModel) paints the layer once
     var bar = $('target-hp'), fill = $('target-hp-fill'), reset = $('target-hp-reset'), toggle = $('fun-mode-toggle');
     if (!bar || !fill || !reset) return;
-    var on = funOn(), model = modelOnScreen(), show = model && hpMax > 0;
+    var on = funOn(), model = modelOnScreen(), show = on && model && hpMax > 0;
     // The switch lives with the model: it is there whenever there is something to shoot at, and it is lit
     // while the mode is on. One attribute write, and only when the state has really changed.
     if (toggle) {
@@ -5142,7 +5142,7 @@
       if (pressed !== hpPressed) { hpPressed = pressed; toggle.setAttribute('aria-pressed', pressed); }
     }
     // Its sub-switch, real reload, stands in the strip beside it only while the mode is on, lit while it is on itself;
-    // ↺ likewise; the health bar whenever the vehicle's figure is known. Any of the three coming or going changes the
+    // ↺ likewise, and the health bar when the vehicle's figure is known. Any of the three coming or going changes the
     // strip's width: the top band is laid out again then (stripLayout), and only then - the health bar may come late,
     // with the characteristics file.
     var sub = $('real-reload-toggle'), subBox = $('real-reload'), wide = false;
@@ -5157,28 +5157,22 @@
     if (!show) { if (wide) stripLayout(); return; }
     var nominal = HP_NOMINAL[hpFrom] ? 'true' : null;
     if (bar.getAttribute('data-nominal') !== nominal) { if (nominal) bar.setAttribute('data-nominal', nominal); else bar.removeAttribute('data-nominal'); }
-    var left = on ? hpLeft : hpMax;
-    var share = Math.max(0, Math.min(1, left / hpMax)), width = (share * 100).toFixed(1) + '%';
+    var share = Math.max(0, Math.min(1, hpLeft / hpMax)), width = (share * 100).toFixed(1) + '%';
     if (fill.style.width !== width) fill.style.width = width;
     var rgb = chanceRgb({chance: Math.round(share * 100), expectedShare: share});
     if (fill.style.backgroundColor !== rgb) fill.style.backgroundColor = rgb;
-    var figures = on ? hpNumber(hpLeft) + ' / ' + hpNumber(hpMax) : hpNumber(hpMax), text = $('target-hp-text');
+    var figures = hpNumber(hpLeft) + ' / ' + hpNumber(hpMax), text = $('target-hp-text');
     if (text && figures !== hpText) { hpText = figures; text.textContent = figures; }
     if (wide) stripLayout();
     // The sentence is long and paintFun runs on every shell or distance step too: it is composed only when
     // one of the things in it has really changed.
-    var mark = on ? xiMarkNow() : null, log = hpLogged();
-    var key = on + '|' + hpKey + '|' + hpLeft + '/' + hpMax + '|' + hpFrom + '|' + hpRoll + '|' + funRandomization(viewer && viewer.shell) + '|' +
+    var mark = xiMarkNow(), log = hpLogged();
+    var key = hpKey + '|' + hpLeft + '/' + hpMax + '|' + hpFrom + '|' + hpRoll + '|' + funRandomization(viewer && viewer.shell) + '|' +
       (mark ? Math.ceil(mark.left) + mark.from : '') + '|' + (log ? log.hits + '+' + log.other : '');
     if (key === hpTitleKey) return;
     hpTitleKey = key;
     var source = [HP_FROM[hpFrom] || null, nominal ? '• Nominal: not the figure this vehicle had in this battle' : null].concat(hpLoggedLines(log));
     // Tooltip markup (tooltips.js): the heading, the one line of what it shows, then the figures and the roll.
-    if (!on) {
-      bar.title = tipJoin(['Target HP', 'Hit points of the vehicle on screen in this battle; ⌖ shoots them down.',
-        '• Max: ' + figures + ' HP'].concat(source));
-      return;
-    }
     bar.title = tipJoin(['Target HP', 'Health of the vehicle on screen; every ⌖ shot takes its rolled damage off.',
       hpLeft <= 0 ? '• Destroyed: ' + figures + ' HP - further shots still leave Hitmarks' : '• Left: ' + figures + ' HP']
       .concat(source, [hpRoll || '• Last shot: nothing fired yet', '',
@@ -5230,7 +5224,7 @@
     if (xiMech && xiMech.stash) xiMech.stash = [null, null];   // a second gun put away loads under the new rule too
     xiWake();
     aimReload = null; aimClipDry = false; aimLoadFull();
-    updateAim();   // the gun's load state in the strip stands with ⌖ (11.11: the strip stays off ⌖ for the health bar)
+    updateAim();   // the gun's load state in the strip stands with ⌖
     paintFun();
     startAimLoop();
     // The characteristics panel's mode switch follows ✸ (the emulator's mode under it, the panel's own off it).
@@ -6318,8 +6312,8 @@
     // The gun panel rides with the mode, exactly as the speed tile and Config do, and the heading shell list carries
     // the shells when the mode is off. Since 23.09 it holds the shells alone (an empty one is no panel at all); the
     // load state - the emulation's own - is the part of the strip beside ⌖ that needs a live emulation (#fun-gun).
-    // The strip itself stands with ⌖ and a model (paintStrip, from paintFun: the scene's finisher and the switch); off ⌖
-    // it carries the target's health bar alone since 11.11, so the load state waits for ⌖ here (the user's word, 23.09).
+    // The strip itself stands with ⌖ and a model (paintStrip, from paintFun: the scene's finisher and the switch), and the
+    // load state waits for ⌖ here as well (the user's word, 23.09).
     showEl($('fun-gun'), live && funOn());
     paintGunLoad();
     showEl($('aim-gun'), live && !!candidates.length);
@@ -6867,7 +6861,7 @@
     $('penetration').setAttribute('aria-invalid',String(mapMode&&!(penetration>0&&penetration<=3000)));$('caliber').setAttribute('aria-invalid',String(mapMode&&!(caliber>0&&caliber<=1000)));
     // The alpha may be left empty - that is "no alpha", not a mistake - but a number outside 1..5000 is one.
     $('alpha').setAttribute('aria-invalid',String(!!alphaField&&!(alpha>0&&alpha<=5000)));
-    $('probe-chance').textContent='—';$('probe-chance').style.color='';$('probe-pen').replaceChildren();$('probe-extra').replaceChildren();$('probe-details').replaceChildren(node('span','Hover over the armour','placeholder'));
+    $('probe-chance').textContent='—';$('probe-chance').style.color='';$('probe-extra').replaceChildren();$('probe-details').replaceChildren(node('span','Hover over the armour','placeholder'));
     modsVisible();
     staleEstimate();if(viewer)viewer.configure(shell,mapMode,$('palette').value,mode);shotStats();updateAim();
     paintFun();   // the health bar is painted on the chance scale, so a palette or Display change repaints it
@@ -6916,7 +6910,9 @@
     return groups;
   }
   // Compact reading of one ballistic result: the chance first, then the numbers that explain it.
-  // One ballistic result as readable groups: chance, then "effective ← nominal – angle", then "pen / range", then screens.
+  // One ballistic result as readable groups: chance, then "pen" and "effective ← nominal ∠ angle" side by side (12.11, BACKLOG
+  // 91: the angle sign, not a dash, binds the plate to its angle; the penetration next to the armour it is read against),
+  // then screens.
   // `of` (12.10): {shell, hit} - the shell the line was judged with and, on the recorded line, its hit - for the track chip.
   function armorLine(r,pen,range,of){
     var line=armorLineOf(r,pen,range),track=r?trackGroup(r,of||{}):null;
@@ -6931,26 +6927,28 @@
     // A negative remainder (screens thicker than the shell) is a figure too: "pen −1 → 0 mm"; only a missing one hides it.
     if(r.bounce){var b=r.bounce,known=typeof b.remaining==='number'&&typeof b.carried==='number',carried=b.loss&&known;pen=b.penetration;
       var spent=b.shell>0&&known?b.shell-b.remaining:0,firstScreens=(b.layers||[]).filter(function(l){return !l.main;});
-      prefix.push({kind:'ricochet',text:'ricochet '+Math.round(b.nominal)+' mm – '+Math.round(b.angle)+'°'+(carried?' · pen '+Math.round(b.remaining)+' → '+Math.round(b.carried)+' mm':''),
+      prefix.push({kind:'ricochet',text:'ricochet '+Math.round(b.nominal)+' mm ∠ '+Math.round(b.angle)+'°'+(carried?' · pen '+Math.round(b.remaining)+' → '+Math.round(b.carried)+' mm':''),
         title:'Ricochet\nThe shell flies on along the mirrored line'+(b.loss?' with '+Math.round((1-b.loss)*100)+' % of the penetration it had left.':', penetration unchanged (HEAT).')+
           '\n• Plate: '+Math.round(b.nominal)+' mm at '+Math.round(b.angle)+'°'+
           (carried?'\n\n• Shell: '+Math.round(b.shell)+' mm'+(firstScreens.length?'\n• Screens before it: '+firstScreens.map(function(l){return Math.round(l.nominal)+' mm';}).join(' + ')+' (−'+Math.round(spent)+' mm)':'')+
             '\n• Left at the ricochet: '+Math.round(b.remaining)+' mm\n• After it: '+Math.round(b.carried)+' mm (×'+(1-b.loss).toFixed(2)+')'+
             '\n\n• The chance is scaled by '+Math.round(b.penetration)+' mm ('+Math.round((1-b.loss)*100)+' % of the shell)':'')});}
     var layers=r.layers||[],screens=layers.filter(function(l){return !l.main;}),extra=screens.length?[{kind:'screen',text:'+ '+screens.map(function(s){return Math.round(s.nominal)+' mm';}).join(' + ')+' screen'}]:[];
-    var shell=pen?[{kind:'pen',text:'pen '+Math.round(pen)+' mm'+(range?' / '+Math.round(range)+' m':'')}]:[];
+    // The penetration stands on the armour's line, next to the effective armour it is read against (12.11, BACKLOG 91: the
+    // block one line shorter); the range it is taken at is no longer written on the line - its tooltip says it.
+    var shell=pen?[{kind:'pen',text:'pen '+Math.round(pen)+' mm',title:'Penetration\nThe shell’s nominal penetration at the range the line is judged at.'+(range?'\n• Range: '+Math.round(range)+' m':'')}]:[];
     var zero=chanceRgb({chance:0,expectedShare:0}),bounced=chanceRgb({chance:0,expectedShare:0,reason:'ricochet'});
-    if(r.reason==='ricochet')return {label:'Ricochet',color:bounced,groups:prefix.concat([{kind:'armor',text:(r.final?(r.bounce?'again, shell lost: ':'shell lost: '):'')+Math.round(r.nominal)+' mm – '+Math.round(r.angle)+'°'}],shell,extra)};
-    if(r.reason==='screen')return {label:hp?'0 %':'0%',color:zero,groups:prefix.concat([{kind:'armor',text:'explodes on the screen (this HE cannot pass screens)'}],shell,extra)};
+    if(r.reason==='ricochet')return {label:'Ricochet',color:bounced,groups:prefix.concat(shell,[{kind:'armor',text:(r.final?(r.bounce?'again, shell lost: ':'shell lost: '):'')+Math.round(r.nominal)+' mm ∠ '+Math.round(r.angle)+'°'}],extra)};
+    if(r.reason==='screen')return {label:hp?'0 %':'0%',color:zero,groups:prefix.concat(shell,[{kind:'armor',text:'explodes on the screen (this HE cannot pass screens)'}],extra)};
     if(r.reason==='no-hull')return r.bounce?{label:hp?'0 %':'0%',color:bounced,groups:prefix.concat(shell)}:{label:'—',color:'',groups:[{kind:'armor',text:'no main armour on this line'}]};
     if(r.reason==='parameters')return {label:'—',color:'',groups:[{kind:'armor',text:'set penetration and calibre'}]};
     if(r.reason==='armor')return {label:'—',color:'',groups:prefix.concat([{kind:'armor',text:'no armour data for this surface'}])};
     if(r.chance===null)return {label:'—',color:'',groups:prefix.concat([{kind:'armor',text:'no estimate for this penetration distribution'}])};
     // The plate on an armoured prefab (27.09): the chip says whose it is and where the part stands, on a click.
     var main=layers[layers.length-1],parts=viewer&&viewer.loadedData&&viewer.loadedData.hit&&viewer.loadedData.hit.target?viewer.loadedData.hit.target.parts:null,
-      prefab=main&&partOf(main.part,parts),armor={kind:'armor',text:'eff '+Math.round(r.effective)+' mm ← '+Math.round(r.nominal)+' mm – '+Math.round(r.angle)+'°'};
+      prefab=main&&partOf(main.part,parts),armor={kind:'armor',text:'eff '+Math.round(r.effective)+' mm ← '+Math.round(r.nominal)+' mm ∠ '+Math.round(r.angle)+'°'};
     if(prefab&&prefab.prefab)armor.title=prefabTitle(prefab,parts);
-    return {label:hp?damageShare(r):r.chance+'%',color:chanceRgb(r),groups:prefix.concat([armor],hp?damageGroups(r):[],shell,extra)};
+    return {label:hp?damageShare(r):r.chance+'%',color:chanceRgb(r),groups:prefix.concat(shell,[armor],hp?damageGroups(r):[],extra)};
   }
   // THE TRACK UNDER THE POINT (12.10, user: what it takes to break a track). When the first plate a line meets is a track,
   // the panel gets one chip of FACTS: what the track takes at that spot and what the shell deals. What is known and from where
@@ -7050,12 +7048,13 @@
       where?'• Zone: the client’s size of the driving wheel, placed from the track’s end as recorded hits show':null])};
   }
   function chips(container,line){container.replaceChildren();line.groups.forEach(function(g){var chip=node('span',g.text,'chip '+g.kind);if(g.title)chip.title=g.title;container.appendChild(chip);});}
-  // Fill an info panel: the title, the chance, then the penetration chip on a row of its own above the armour chips.
+  // Fill an info panel: the title, the chance, then one row of the penetration and the armour chips (12.11, BACKLOG 91: the
+  // penetration had a row of its own above them), then the screens and the track.
   // The shell's alpha rides on the chance line as a muted "/ 390 alpha" (user, 20.09): the line has the room, and
   // the share figures around it are read against that number.
-  function fillPanel(prefix,line,alpha){var low=function(g){return g.kind==='screen'||g.kind==='track';},by=function(k){return line.groups.filter(function(g){return low(g)===(k==='screen')&&(k==='screen'||(g.kind==='pen')===(k==='pen'));});};
+  function fillPanel(prefix,line,alpha){var low=function(g){return g.kind==='screen'||g.kind==='track';},by=function(k){return line.groups.filter(function(g){return low(g)===(k==='screen');});};
     var chance=$(prefix+'-chance');chance.replaceChildren(document.createTextNode(line.label));chance.style.color=line.color;
-    if(alpha>0){var a=node('span','/ '+Math.round(alpha),'info-alpha');a.title='The shell’s alpha damage, HP';chance.appendChild(a);}chips($(prefix+'-pen'),{groups:by('pen')});chips($(prefix+'-details'),{groups:by('rest')});chips($(prefix+'-extra'),{groups:by('screen')});}
+    if(alpha>0){var a=node('span','/ '+Math.round(alpha),'info-alpha');a.title='The shell’s alpha damage, HP';chance.appendChild(a);}chips($(prefix+'-details'),{groups:by('rest')});chips($(prefix+'-extra'),{groups:by('screen')});}
   function inspectArmor(r){
     var range=shotRange();
     fillPanel('probe',armorLine(r,viewer&&viewer.shell?viewer.shell.penetration:null,range,{shell:viewer&&viewer.shell}),viewer&&viewer.shell&&viewer.shell.alpha);
@@ -7519,7 +7518,7 @@
   var sceneBuild=false;
   // Each painter on its own (audit APP2 §3.7): one that throws is told in the console and in the host's breadcrumb,
   // and the others still paint - a half-painted scene is exactly the unevenness this finisher is for.
-  var SCENE_PAINTERS=[['target switches',function(){modsVisible();}],['hit line',function(){shotStats();}],
+  var SCENE_PAINTERS=[['recorded shot',function(){detachFromRecord();}],['target switches',function(){modsVisible();}],['hit line',function(){shotStats();}],
     ['emulation',function(){updateAim();}],['target HP',function(){funModel();}],['characteristics',function(){ttxPaint();ttxTargetSync();}],
     ['roster',function(){renderFocus();}],['pose tile',function(){paintPose();}],['scene chips',function(){paintSceneChips();}],
     ['vehicle list',function(){if(sidebarMode==='vehicles'){adoptHitVehicles();renderVehicleHeading();renderVehicles();}}],['help dots',function(){if(window.BullbaTips&&window.BullbaTips.refresh)window.BullbaTips.refresh();}]];
@@ -7548,6 +7547,7 @@
     if(viewer)viewer.clear();
     var shown=!!activeHit||!$('model-tile').hidden||!$('shooter-tile').hidden;
     activeHit=null;swapped=null;currentHitKey=null;
+    if(poseDetached){poseDetached=false;markHits();}
     if(shown){sceneTiles(null,false);sceneShown();}
     return shown;
   }
@@ -7718,6 +7718,7 @@
     if(!sceneInputs||sceneInputs.owner!==SCENE_OWNER)throw new Error('A scene shown without sceneFrom(): it takes its camera and pose from the scene before');
     var hit=data.hit,camera=sceneInputs.view;
     sideKeep(hit);
+    if(sceneInputs.how!=='same'&&poseDetached){poseDetached=false;markHits();}
     sceneBuild=true;
     try{
     swapped=hit.synthetic&&!hit.vehicle?hit:null;sceneTiles(hit,reference);
@@ -8017,6 +8018,7 @@
     var kept=given&&given.how==='same'?given:null;
     if(!given&&!auto)scenePick();
     if(!given)sidePose=null;
+    if(!kept)poseDetached=false;
     selected=id;markHits();var token=++generation;message('Preparing the model…');if(viewer&&!kept)viewer.clear();
     return vehicleModel(e.targetId).then(function(source){return ArmorInspectorData.sceneFor({warnings:[]},eventHit(e,source));})
       .then(function(data){if(token!==generation)return;display(data,false,given||sceneFrom('record',{pose:!!data.hit.poseOwn}));return {battleId:current.id,eventId:id};})
@@ -8051,7 +8053,7 @@
       container.appendChild(node('p',!current?'No records yet. Start the game with the recorder and play a battle. The viewer can stay open.':any?'No hits for the chosen filter.':focusNote||'No hits for '+focusName()+' in this battle','empty'));
       return;}
     var next=0,flush=function(before){while(next<events.length&&!(events[next].gameTime>=before)){container.appendChild(eventRow(events[next],eventDirection(events[next])));next++;}};
-    hits.forEach(function(h){if(Number.isFinite(h.gameTime))flush(h.gameTime);var hasDamage=h.damage>0,view=viewDirection(h),b=node('button',undefined,'hit');b.setAttribute('aria-pressed',String(selected===h.id));b.setAttribute('data-hit',String(h.id));b.setAttribute('data-direction',view);b.setAttribute('data-result',hasDamage?'damage':'none');
+    hits.forEach(function(h){if(Number.isFinite(h.gameTime))flush(h.gameTime);var hasDamage=h.damage>0,view=viewDirection(h),b=node('button',undefined,'hit');b.setAttribute('aria-pressed',String(selected===h.id&&!poseDetached));b.setAttribute('data-hit',String(h.id));b.setAttribute('data-direction',view);b.setAttribute('data-result',hasDamage?'damage':'none');
       // One tooltip for the whole row (the tile inside is bare): who, then the result and the critical damage.
       // result() speaks for a details row labelled Result: after the key its own leading "Result" goes.
       var critWords=ArmorCrits.describe(h,true),said=result(h).replace(/^Result (\d)/,'Effect $1').replace(/^Result not/,'Not');
@@ -8075,7 +8077,7 @@
     flush(Infinity);
   }
   // The pressed row of the list, without building the list again (audit APP1-08: opening a battle built it twice).
-  function markHits(){var rows=$('hits').children||[];for(var i=0;i<rows.length;i++){var id=rows[i].getAttribute&&(rows[i].getAttribute('data-hit')||rows[i].getAttribute('data-event'));if(id!==null&&id!==undefined)rows[i].setAttribute('aria-pressed',String(id===String(selected)));}}
+  function markHits(){var rows=$('hits').children||[];for(var i=0;i<rows.length;i++){var id=rows[i].getAttribute&&(rows[i].getAttribute('data-hit')||rows[i].getAttribute('data-event'));if(id!==null&&id!==undefined)rows[i].setAttribute('aria-pressed',String(id===String(selected)&&!poseDetached));}}
   // ===================== THE TWO SCENES OF A HIT (11.11) =====================
   // The user, 11.11 (docs/PRODUCT.md, the battle log from the replay): a hit of a battle made from its replay keeps the
   // in-game SNAPSHOT of its scene and gets a scene REBUILT from the replay; the page can switch - "which picture to take,
@@ -8252,6 +8254,7 @@
     var kept=given&&given.how==='same'?given:null;
     if(!given&&!auto)scenePick();
     if(!given)sidePose=null;
+    if(!kept)poseDetached=false;
     selected=id;markHits();var token=++generation;message('Preparing the model…');if(viewer&&!kept)viewer.clear();
     // A scene that could not be read or shown leaves an empty scene painted as one (sceneCleared, audit APP2-03),
     // not the tiles and the strip of the hit before over a cleared viewer.
@@ -8515,13 +8518,10 @@
     var them=locks.turret&&locks.gun?'them':'it';
     var lockWords=held?held+' fixed\nThe game holds '+them+' in this pose; neither the garage armour view nor this page lets '+them+' be dragged.':'';
     if($('pose-info').title!==lockWords)$('pose-info').title=lockWords;
-    // The note is about a recorded shot's marks: only a scene that has one says it (04.10: a browsed vehicle and a
-    // swapped view, turned, said their "recorded shot's marks" were hidden).
-    var note=off&&viewer.point?'The recorded shot’s own marks are hidden until the recorded pose returns':'';
-    if($('pose-note').textContent!==note)$('pose-note').textContent=note;
-    if($('pose-note').hidden!==!note)$('pose-note').hidden=!note;
+    // No note under the lines (12.11, BACKLOG 90): the tile said "the recorded shot's own marks are hidden until the
+    // recorded pose returns"; a scene turned off its record is no longer the recorded shot (detachFromRecord) - nothing to warn of.
     paintHull();
-    var shown=turret+'|'+gun+'|'+note;if(shown!==poseShown){poseShown=shown;scheduleLayout(LAYOUT_POSE);}
+    var shown=turret+'|'+gun;if(shown!==poseShown){poseShown=shown;scheduleLayout(LAYOUT_POSE);}
     return off;
   }
   // THE HULL TO THE CAMERA (BACKLOG 88, user 12.11): how the hull of the model on screen is turned to the line of sight -
@@ -8555,9 +8555,24 @@
     if(text&&e.title!==HULL_TIP)e.title=HULL_TIP;
     if(text.length!==hullLength){hullLength=text.length;scheduleLayout(LAYOUT_POSE);}
   }
+  // THE SCENE LEFT BY ITS RECORDED SHOT (BACKLOG 90, user 12.11). A recorded hit's scene with the turret or the gun turned off the
+  // record's pose is no longer that shot: it stays drawn as it is, the hit's row in the list is no longer pressed, and the shot's
+  // line is pinned where it stood (viewer.pinRecorded) - from then on the page's own reckoning, exactly as a line pinned with a
+  // click: the Hit line panel says "Pinned point" and judges it on the vehicle as it now stands, and the recorded marks (circles,
+  // tracer, crosses) go as they go with any pin. Turning back to the recorded pose does not tie it again; the row clicked does
+  // (selectHit: the record's view and pose). It lasts while this scene does: a new scene ends it (display, sceneCleared), the same
+  // hit built again in the view on screen (sceneFrom 'same', a poll) keeps it. Until 12.11 the marks were hidden and the pose
+  // tile said so in a line of its own.
+  var poseDetached=false;
+  function detachFromRecord(){
+    if(!viewer||!viewer.loadedData||viewer.recordedPose()||!viewer.point||!activeHit||activeHit.synthetic)return;
+    if(!poseDetached){poseDetached=true;markHits();}
+    if(!viewer.pinned)viewer.pinRecorded();
+  }
   function poseChanged(){
     var off=paintPose();
     if(off===null)return;
+    detachFromRecord();
     // The figures vanish at the viewer's own 0.001° (recordedShown, shotProbability), the note at 0.1°.
     var state=off+'|'+(Math.abs(viewer.turretAngle)<.001&&Math.abs(viewer.gunAngle)<.001);
     if(viewer.dragging&&state===poseOff)return;
@@ -10249,7 +10264,9 @@
       var f=forms[i];rowForm(row,f);
       var rw=rowWidth(row,f[2]),cx=(w-rw)/2;
       if(!f[2]&&cx>=L&&cx+rw<=R)place={left:null,top:null,how:'top'};
-      else if(rw<=R-L)place={left:L+(R-L-rw)/2,top:null,how:'top',width:f[2]?R-L:0};
+      // A narrow form takes the whole band (width R-L), so it starts at the band's left edge: centred by its own natural width it
+      // ran past the band's right end into the target's panel (12.11: seen once the ⌖-less strip left the row, BACKLOG 92).
+      else if(rw<=R-L)place={left:f[2]?L:L+(R-L-rw)/2,top:null,how:'top',width:f[2]?R-L:0};
       else if(under!==null&&rw<=w-14-L)place={left:f[2]?L:w-14-rw,top:under,how:'under',width:f[2]?w-14-L:0};
     }
     if(!place)place={left:14,top:low,how:'low',width:f[2]?Math.max(rw,L-22):0};

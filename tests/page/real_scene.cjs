@@ -57,7 +57,7 @@ const VIEW = `(() => { const v = ${LV}, h = v.loadedData ? v.loadedData.hit : nu
   return {swapped: !!(h && h.synthetic), model: h && h.target ? h.target.type : null, shooter: h && h.attacker ? h.attacker.type : null,
     yaw: v.yaw, pitch: v.pitch, distance: v.distance, zoom: v.camera.zoom, turret: v.turretAngle, gun: v.gunAngle,
     absolute: h ? [v.poseNow().yaw * D, v.poseNow().pitch * D] : null, motion: start ? [start.pose.yaw * D, start.pose.pitch * D] : null,
-    tile: $('pose-turret').textContent + ' | ' + $('pose-gun').textContent, note: $('pose-note').hidden ? '' : $('pose-note').textContent,
+    tile: $('pose-turret').textContent + ' | ' + $('pose-gun').textContent, note: $('pose-note') ? $('pose-note').textContent : '',
     swap: at('swap-roles'), shooterTile: at('shooter-tile'), gunPanel: at('aim-gun'), shells: $('aim-gun-shells').children.length,
     calibre: $('caliber').value, choice: $('shell-choice').value}; })()`;
 const TURN = (yaw, pitch, distance, zoom, turret, gun) => `(() => { const v = ${LV}; v.setOrbit(${yaw}, ${pitch}); v.setDistance(${distance}); v.setZoom(${zoom});
@@ -316,7 +316,7 @@ const TRACK_STATE = `(() => { const v = ${LV}, h = v.loadedData ? v.loadedData.h
   let span = null;
   if (p0 && model) { const g = model.groups.filter((x) => x.material === (p0.position[0] < 0 ? 'leftTrack' : 'rightTrack'))[0];
     if (g) { const zs = g.v ? Array.from(g.v).filter((x, i) => i % 3 === 2) : g.vertices.map((x) => x[2]); span = [Math.min.apply(null, zs), Math.max.apply(null, zs)]; } }
-  return {id: h && h.id, target: h && h.target && h.target.type, extra: chips('shot-extra'), track: chips('shot-extra').concat(chips('shot-details'), chips('shot-pen')).filter((c) => / track$/.test(' ' + c.cls)),
+  return {id: h && h.id, target: h && h.target && h.target.type, extra: chips('shot-extra'), track: chips('shot-extra').concat(chips('shot-details')).filter((c) => / track$/.test(' ' + c.cls)),
     alpha: Number($('alpha').value), spread: v.shell ? v.shell.damageRandomization : null, parts: ((h && h.points) || []).map((x) => x.part), z: p0 ? p0.position[2] : null, span: span, pinned: !!v.pinned}; })()`;
 function trackFile(name) {
   let file = null;

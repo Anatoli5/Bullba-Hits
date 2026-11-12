@@ -46,13 +46,13 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 .info-alpha{margin-left:8px;font-size:.85em;font-weight:500;color:#c9d3dd}
 .info-panel .chips{font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;min-width:0}
 .info-panel .chip{margin:0 6px 0 0}
-.info-panel .placeholder{color:var(--muted)}.info-extra{grid-column:2;min-height:20px}/* The chip rows of the Hit line panel keep their height with no chip in them: it sits above #viewport, and a shot-less swapped view must not resize the scene. */#shot-pen{min-height:20px}
+.info-panel .placeholder{color:var(--muted)}.info-extra{grid-column:2;min-height:20px}
 /* The damage chips carry the two halves of the expected damage; a shade of their own so they do not read as armour figures. */
 .chip.damage{background:#26303f;color:#cfe0f2}
 .hover-panel{pointer-events:none;background:rgba(23,35,48,.15);text-shadow:0 1px 2px rgba(0,0,0,.7)}/* The hover panel is a column (user, 13.09): the title, the chance, then the details under them. The pen chip
    (penetration at the range) is a row of its own right under the chance, above the effective armour line - the
    two read alike and belong together (user, 20.09). */
-#armor-probe{grid-template-columns:auto 1fr;grid-template-rows:auto auto auto auto auto;column-gap:10px}#armor-probe .info-title{grid-row:1;grid-column:1/3}#armor-probe #probe-pen{grid-row:3;grid-column:1/3}#armor-probe .info-chance{grid-row:2;grid-column:1;align-self:center}#armor-probe #probe-details{grid-row:4;grid-column:1/3}#armor-probe .info-extra{grid-row:5;grid-column:1/3}
+#armor-probe{grid-template-columns:auto 1fr;grid-template-rows:auto auto auto auto;column-gap:10px}#armor-probe .info-title{grid-row:1;grid-column:1/3}#armor-probe .info-chance{grid-row:2;grid-column:1;align-self:center}#armor-probe #probe-details{grid-row:3;grid-column:1/3}#armor-probe .info-extra{grid-row:4;grid-column:1/3}
 
 
 /* Vehicle tile: tier | name | class+role, with the nation flag faded into the right side.
@@ -519,7 +519,7 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 /* Inside the scene the tiles no longer set the height of anything above the canvas, so an empty chip row costs
    nothing instead of holding its old placeholder height: the pair stays as short as the reserved band. */
 .viewport-tiles .chips:empty{display:none}
-.viewport-tiles #shot-pen,.viewport-tiles .info-extra{min-height:0}
+.viewport-tiles .info-extra{min-height:0}
 .viewport-tiles .info-chance{font-size:20px}
 #shot-panel{pointer-events:auto}
 #shot-panel{grid-template-columns:auto 1fr;grid-template-rows:auto auto auto auto auto;column-gap:10px}
@@ -534,10 +534,9 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 .hit-mark svg .ghost{stroke-dasharray:2.2 1.6;opacity:.8}
 .hit-mark.height{color:#d8b56a}.hit-mark.height svg{stroke:#d8b56a}.hit-mark.height svg .level{stroke-dasharray:2.6 1.8}
 .hit-mark b{font-weight:600}
-#shot-panel #shot-pen{grid-row:3;grid-column:1/3}
 #shot-panel .info-chance{grid-row:2;grid-column:1;align-self:center}
-#shot-panel #shot-details{grid-row:4;grid-column:1/3}
-#shot-panel .info-extra{grid-row:5;grid-column:1/3}
+#shot-panel #shot-details{grid-row:3;grid-column:1/3}
+#shot-panel .info-extra{grid-row:4;grid-column:1/3}
 /* The figure of the aiming circle (user, 22.09 - the figure is worth as much as the point figure): since 11.11 inside
    the panel it goes with, on the row of that panel's chance, at its right end - the hit line's figure in the Hit line
    panel, the live one in Under the cursor (user 11.11: the top-right corner became the target's characteristics) - in
@@ -694,7 +693,6 @@ input.lab-track::-moz-range-thumb{width:10px;height:18px;border-radius:3px;backg
 .aim-marker[data-shape=dot]{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20'%3E%3Ccircle cx='10' cy='10' r='1.7' fill='%235ee0ff' stroke='%23000' stroke-opacity='.35' stroke-width='1.2'/%3E%3C/svg%3E")}
 .aim-marker[hidden]{display:none}
 
-#pose-note{font-size:12px;color:var(--muted)}
 
 /* #battles is the state holder only since 19.09 - refresh() fills its options, its 'change' loads the battle -
    and never shows itself: the visible control is the .heading-tile above, which mirrors its value. The tile
@@ -884,7 +882,7 @@ header>.settings-menu>.settings-content{top:calc(100% + 8px);right:0;max-height:
    replay's picture. */
 .scene-mark{display:inline-flex;vertical-align:-2px;margin-right:4px;color:var(--warn);cursor:help}
 .scene-mark svg{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:1.5}
-#shot-panel #shot-scenes{grid-row:6;grid-column:1/3;display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin-top:3px;min-width:0}
+#shot-panel #shot-scenes{grid-row:5;grid-column:1/3;display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin-top:3px;min-width:0}
 #shot-panel #shot-scenes[hidden]{display:none}
 .scene-chip{display:inline-flex;align-items:center;gap:3px;margin:0;border:1px solid transparent}
 .scene-chip .scene-mark{margin:0;color:inherit}

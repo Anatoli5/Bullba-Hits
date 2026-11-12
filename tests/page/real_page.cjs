@@ -7,8 +7,8 @@
  *    browsed vehicles, another battle, a seat with no hits (the scene emptied) - is driven by CLICKS, with ⌖ off and on,
  *    and after each the same invariants are asked of the rendered page (layout and computed style, not the markup):
  *      - the tiles show the scene;
- *      - the ⌖ switch stands with a model, lit with the mode; ↺ only under ⌖ with a model, the strip under ⌖ or with the
- *        health bar (11.11: the bar stands off ⌖ too, the vehicle's whole HP alone);
+ *      - the ⌖ switch stands with a model, lit with the mode; the strip and ↺ only under ⌖ with a model (12.11, BACKLOG 92:
+ *        the health bar is ⌖'s again - from 11.11 it had stood off ⌖ too);
  *      - the health bar iff ⌖, a model and a known figure - the figure inside it, the tooltip's source line;
  *      - the emulation's controls (speed tile, gun panel, Config) go with the model;
  *      - every help dot is laid out iff at least one control it lists is laid out;
@@ -216,7 +216,9 @@ async function modeState(browser, folder) {
   // THE PAGE OPENED AS A FILE: Hits first, the newest battle's first hit on screen (nothing was there: the default).
   const file = await open('', '', `document.querySelector('#hits [data-hit]') && window.__bullbaViewers.length && ${LV}.loadedData`);
   // Ten switches with a hit on screen that the user turned, pinned a point on and changed the shell of: the scene, the
-  // camera, the pose, the pin, the shell and the pressed row are the same after each of them.
+  // camera, the pose, the pin, the shell and the pressed row are the same after each of them. The turn has already taken the
+  // row's press (12.11, BACKLOG 90: a scene turned off its record is no longer the recorded shot): none is pressed, and none
+  // gets pressed again by the switches.
   await go(file, '__bt.act.hit(1)');
   await go(file, TURN(.9, .3, 18, 1.5, 25, 2));
   const pinned = await file.evaluate(PIN); await file.evaluate('__bt.settle()');
@@ -224,7 +226,7 @@ async function modeState(browser, folder) {
   const flips = [];
   for (let i = 0; i < 10; i++) flips.push(await go(file, "__bt.act.side('" + (i % 2 ? 'battles' : 'vehicles') + "')"));
   ok('mode state: ten switches of the side panel with a hit on screen (turned, a point pinned, APCR picked) - the scene, the camera, the pose, the pin, the shell and the pressed row never change',
-     pinned && L0.scene === 'pm-2' && L0.pinned && L0.shell === 'saved:1' && L0.pressed === 'pm-2' && flips.every((s) => whole(s, L0)) && flips[9].side === 'battles',
+     pinned && L0.scene === 'pm-2' && L0.pinned && L0.shell === 'saved:1' && L0.pressed === '' && flips.every((s) => whole(s, L0)) && flips[9].side === 'battles',
      brief([L0].concat(flips.filter((s) => !whole(s, L0)).slice(0, 2))));
   // A vehicle browsed and turned; Hits with no hit clicked and back - it stands as it was (the battle was read at the start).
   await go(file, "__bt.act.side('vehicles')");
@@ -437,7 +439,7 @@ async function swapSides(browser, folder) {
     const at = (id) => { const e = $(id); if (!e.getClientRects().length) return null; const b = e.getBoundingClientRect(); return [Math.round(b.left * 10) / 10, Math.round(b.width * 10) / 10]; };
     return {scene: h ? String(h.id) : null, model: h && h.target ? h.target.name : null, shooter: h && h.attacker ? h.attacker.name : null,
       yaw: v.yaw, pitch: v.pitch, distance: v.distance, zoom: v.camera.zoom, turret: v.turretAngle, gun: v.gunAngle,
-      tile: $('pose-turret').textContent + ' | ' + $('pose-gun').textContent, note: $('pose-note').hidden ? '' : $('pose-note').textContent,
+      tile: $('pose-turret').textContent + ' | ' + $('pose-gun').textContent, note: $('pose-note') ? $('pose-note').textContent : '',
       swap: at('swap-roles'), shooterTile: at('shooter-tile'), gunPanel: at('aim-gun'), shells: $('aim-gun-shells').children.length,
       listed: [].filter.call($('shell-choice').options, (o) => o.value.indexOf('saved:') === 0).length, choice: $('shell-choice').value}; })()`;
   const TURN = (yaw, pitch, distance, zoom, turret, gun) => `(() => { const v = ${LV}; v.setOrbit(${yaw}, ${pitch}); v.setDistance(${distance}); v.setZoom(${zoom});
@@ -714,6 +716,56 @@ async function hullLine(browser, folder) {
   }
 }
 
+// ---- A RECORDED HIT'S SCENE TURNED OFF ITS POSE (BACKLOG 90, user 12.11) ------------------------------------------------------
+// The user: turning the turret or the gun of a recorded shot's scene put a line under the pose tile - "The recorded shot's own
+// marks are hidden until the recorded pose returns" - which took room and said nothing he could use. Now the scene stays drawn,
+// the hit's row is no longer pressed (the scene is not the recorded shot any more), and the shot's line is a pinned line like
+// one put with a click: the page judges it on the vehicle as it stands, the panel says "Pinned point". No note at all. The
+// recorded pose turned back does not tie it again; the row clicked does.
+async function poseDetach(browser, folder) {
+  const page = await browser.open(url.pathToFileURL(path.join(folder, 'Viewer.html')).href, INIT);
+  const ev = (js) => page.evaluate(js);
+  const LV = 'window.__bullbaViewers[window.__bullbaViewers.length - 1]';
+  const STATE = `(() => { const v = ${LV}, $ = (id) => document.getElementById(id), p = v.pinned;
+    const pressed = [].filter.call(document.querySelectorAll('#hits [data-hit]'), (b) => b.getAttribute('aria-pressed') === 'true').map((b) => b.getAttribute('data-hit'));
+    let onLine = null;
+    if (p && v.point && v.travel) { const t = v.travel.clone().normalize(), d = p.direction.clone().normalize(), w = v.point.clone().sub(p.origin);
+      onLine = {parallel: d.dot(t) > 0.999999, off: w.clone().sub(d.clone().multiplyScalar(w.dot(d))).length()}; }
+    return {scene: v.loadedData ? String(v.loadedData.hit.id) : null, pressed: pressed, turret: v.turretAngle, gun: v.gunAngle, pinned: !!p, onLine: onLine,
+      judged: !!v.pinResult, recordedShown: v.recordedShown(), source: $('shot-source').textContent, chanceTip: $('shot-chance').title,
+      note: !!$('pose-note'), tile: $('pose-info').textContent}; })()`;
+  try {
+    await ev(DRIVER);
+    await ev(`(async () => { for (let i = 0; i < 100 && !(document.querySelector('#hits [data-hit]') && window.__bullbaViewers.length); i++) await new Promise((r) => setTimeout(r, 100)); await __bt.settle(); })()`);
+    await ev("__bt.act.side('battles')"); await ev('__bt.settle()');
+    await ev("__bt.act.battle('pm')"); await ev('__bt.settle()');
+    await ev('__bt.act.hit(0)'); await ev('__bt.settle()');
+    const A = await ev(STATE);
+    ok('pose detach: a recorded hit opened - its row pressed, no pinned line, the recorded marks shown, the panel on the hit line',
+       A.scene === 'pm-1' && A.pressed.join() === 'pm-1' && !A.pinned && A.recordedShown && A.source === 'Hit line', JSON.stringify(A));
+    await ev(`(() => { const v = ${LV}; v.setTurret(25); v.setGun(2); v.render(); })()`); await ev('__bt.settle()');
+    const B = await ev(STATE);
+    ok('pose detach: the turret and gun turned - the scene stays, no row of the list is pressed any more',
+       B.scene === 'pm-1' && B.pressed.length === 0 && Math.abs(B.turret - 25) < 1e-6, JSON.stringify(B));
+    ok('pose detach: ... the shot\'s line is now a pinned line, the recorded one where it stood in the world, judged by the page as one pinned with a click',
+       B.pinned && B.onLine && B.onLine.parallel && B.onLine.off < 1e-6 && B.judged && !B.recordedShown
+       && B.source === 'Pinned point' && B.chanceTip === 'Along the pinned line from the current view', JSON.stringify(B));
+    ok('pose detach: ... and no note anywhere - the pose tile carries its lines alone',
+       !B.note && B.tile.indexOf('hidden') < 0 && B.tile.indexOf('recorded pose returns') < 0, JSON.stringify(B.tile));
+    await ev(`(() => { const v = ${LV}; v.setTurret(0); v.setGun(0); v.render(); })()`); await ev('__bt.settle()');
+    const C = await ev(STATE);
+    ok('pose detach: the recorded pose turned back does not tie the scene again - the row stays unpressed, the pinned line stays',
+       C.pressed.length === 0 && C.pinned && C.source === 'Pinned point', JSON.stringify(C));
+    await ev('__bt.act.hit(0)'); await ev('__bt.settle()');
+    const D = await ev(STATE);
+    ok('pose detach: the row clicked is a pick - the recorded shot again: its row pressed, the record\'s pose, no pin, its marks',
+       D.scene === 'pm-1' && D.pressed.join() === 'pm-1' && Math.abs(D.turret) < 1e-9 && !D.pinned && D.recordedShown && D.source === 'Hit line', JSON.stringify(D));
+    ok('pose detach: no uncaught exception in the page', page.errors.length === 0, page.errors.slice(0, 3).join(' | '));
+  } finally {
+    await browser.send('Target.closeTarget', {targetId: page.targetId});
+  }
+}
+
 // ---- THE TOP BAND OF THE SCENE (user 11.11, BACKLOG 78-80) ------------------------------------------------------------------
 // The target's characteristics panel (the same widget as the shooter's) in the top-right corner, the circle figures inside
 // the Hit line and Under the cursor panels, and the Collision model row with the HP bar in the top band - at the page
@@ -855,6 +907,8 @@ async function main() {
     if (process.argv.includes('--top')) { await topBand(browser, folder); console.log('real page, the top band only (' + browser.product + '): ' + checks + ' checks, ' + failures + ' failed'); return failures ? 1 : 0; }
     // --hull: only the hull's line on the pose tile.
     if (process.argv.includes('--hull')) { await hullLine(browser, folder); console.log('real page, the hull line only (' + browser.product + '): ' + checks + ' checks, ' + failures + ' failed'); return failures ? 1 : 0; }
+    // --detach: only a recorded hit's scene turned off its pose (BACKLOG 90).
+    if (process.argv.includes('--detach')) { await poseDetach(browser, folder); console.log('real page, the pose detach only (' + browser.product + '): ' + checks + ' checks, ' + failures + ' failed'); return failures ? 1 : 0; }
     if (process.argv.includes('--sides')) { await swapSides(browser, folder); console.log('real page, the swap sides only (' + browser.product + '): ' + checks + ' checks, ' + failures + ' failed'); return failures ? 1 : 0; }
     await inheritMatrix(browser, folder);
     if (MATRIX_ONLY) { console.log('real page, the inheritance matrix only (' + browser.product + '): ' + checks + ' checks, ' + failures + ' failed'); return failures ? 1 : 0; }
@@ -865,6 +919,7 @@ async function main() {
     await twoScenesLocal(browser);
     await topBand(browser, folder);
     await hullLine(browser, folder);
+    await poseDetach(browser, folder);
     page =await browser.open(url.pathToFileURL(path.join(folder, 'Viewer.html')).href, INIT);
     const ev = (js) => page.evaluate(js);
     await ev(DRIVER);
@@ -886,15 +941,14 @@ async function main() {
       ok(tag + 'the tiles show the scene', s.model === want.model && s.shooter === want.shooter, '(model ' + s.model + ', shooter ' + s.shooter + ')');
       // A model DRAWN: the tile, unless it is a vehicle browsed without its model (want.drawn false, 24.09).
       const drawn = s.model && want.drawn !== false;
-      // 11.11 (user: the vehicle's own HP at hand, not only under ⌖): off ⌖ the strip stands with the health bar alone.
-      ok(tag + 'the ⌖ switch stands with a model, lit with the mode; ↺ only under ⌖ with a model, the strip under ⌖ or with the health bar',
-         s.funToggle === drawn && s.funPressed === String(fun) && s.strip === (drawn && (fun || !!want.hp)) && s.reset === (fun && drawn)
+      // 12.11 (BACKLOG 92, user: the target's characteristics panel has the battle's HP now): the strip, the bar and ↺ only under ⌖ again.
+      ok(tag + 'the ⌖ switch stands with a model, lit with the mode; the strip and ↺ only under ⌖ with a model',
+         s.funToggle === drawn && s.funPressed === String(fun) && s.strip === (fun && drawn) && s.reset === (fun && drawn)
          && (fun || !s.funGun),
          '(switch ' + s.funToggle + ' pressed ' + s.funPressed + ', strip ' + s.strip + ', ↺ ' + s.reset + ')');
-      const bar = drawn && !!want.hp, whole = want.hp ? want.hp.split(' / ')[1] : '';
-      ok(tag + (bar ? 'the health bar stands with ' + (fun ? want.hp : whole + ' (the figure alone off ⌖)') + ' inside it, from ' + want.source : 'no health bar'),
-         s.hp === bar && (!bar || (s.hpText === (fun ? want.hp : whole)
-           && s.hpTip.indexOf('• ' + (fun ? 'Left: ' + want.hp : 'Max: ' + whole) + ' HP • Source: ' + want.source) >= 0)),
+      const bar = fun && drawn && !!want.hp;
+      ok(tag + (bar ? 'the health bar stands with ' + want.hp + ' inside it, from ' + want.source : 'no health bar'),
+         s.hp === bar && (!bar || (s.hpText === want.hp && s.hpTip.indexOf('• Left: ' + want.hp + ' HP • Source: ' + want.source) >= 0)),
          '(shown ' + s.hp + ', "' + s.hpText + '", tip "' + s.hpTip.slice(0, 160) + '")');
       ok(tag + 'the emulation’s controls go with the model' + (want.drawn === false ? ' - Config stays for the panel’s build' : ''),
          drawn || (!s.drive && !s.gun && !s.funGun && s.config === (want.drawn === false)),
