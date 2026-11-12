@@ -13,7 +13,7 @@ import math
 import numbers
 import re
 import time
-from .telemetry import recording, wrap, unwrap, matrix_columns, snapshots_only
+from .telemetry import recording, wrap, unwrap, matrix_columns, snapshots_only, CLOCK, OTHER
 
 LOG = logging.getLogger('local.armor_inspector')
 # Extras the common map may not list (vehicle-specific ones: wheels, a second pair of tracks), typed by name.
@@ -454,17 +454,24 @@ class CritLog(object):
             except Exception:
                 LOG.warning('Optional crit hook class missing: %s.%s', module, name)
                 return None
+        # The time of the mod's own part of every crit hook (the client's original is not timed): telemetry.Cost, OTHER.
+        cost = getattr(self.recorder, 'cost', None)
+        add = cost.add if cost is not None else (lambda group, seconds: None)
         def hook(cls, name, callback, mode='before'):
             def make(original):
                 def wrapped(instance, *args, **kwargs):
                     if mode == 'after':
                         result = original(instance, *args, **kwargs)
+                        t0 = CLOCK()
                         try: callback(instance, *args, **kwargs)
                         except Exception: LOG.debug('Optional crit record unavailable: %s', name, exc_info=True)
+                        add(OTHER, CLOCK() - t0)
                         return result
                     # Before the original (corr. 1): its early returns cannot hide an event.
+                    t0 = CLOCK()
                     try: callback(instance, *args, **kwargs)
                     except Exception: LOG.debug('Optional crit record unavailable: %s', name, exc_info=True)
+                    add(OTHER, CLOCK() - t0)
                     if mode != 'around': return original(instance, *args, **kwargs)
                     self.in_component = True
                     try: return original(instance, *args, **kwargs)

@@ -12,6 +12,8 @@ try:
     import Queue as queue
 except ImportError:
     import queue
+# The clock and the groups of the recorder's per-battle cost (telemetry.Cost); the module needs nothing of the client.
+from local_armor_inspector.telemetry import CLOCK, HIT, ROSTER
 
 VERSION = '1.06'
 VIEWER_PATH = os.path.join('mods', 'configs', 'local.armor_inspector', 'Viewer.html')
@@ -765,6 +767,8 @@ class VehicleEvents(object):
         # in a battle. The hits themselves are written and published throughout.
         try: self.recorder.in_battle = True
         except Exception: LOG.exception('Battle state could not be noted')
+        try: self.recorder.start_cost()
+        except Exception: LOG.exception('Recorder cost unavailable; hit recording continues')
         # The motion sampler lives exactly as long as the battle does: armed here, stopped when the
         # avatar stops being the player. It never runs in the hangar and never per frame.
         try: self.recorder.motion.start()
@@ -819,6 +823,13 @@ class VehicleEvents(object):
         except Exception: LOG.exception('Motion sampler stop failed')
         self.detach_arena()
         self.flush_roster()
+        # What the recorder took on the game thread in this battle: one log line (Recorder.log_cost).
+        try:
+            import BigWorld
+            try: arena_id = str(BigWorld.player().arena.arenaUniqueID)
+            except Exception: arena_id = None
+            self.recorder.log_cost(arena_id)
+        except Exception: LOG.exception('Recorder cost could not be logged')
         # The avatar's own onBecomeNonPlayer stopped the recording before this event: the stream's end and hand-over.
         replay = getattr(self.recorder, 'replay', None)
         if replay is not None: replay.on_avatar_become_non_player()
@@ -839,23 +850,27 @@ class VehicleEvents(object):
             except Exception: LOG.exception('Battle vehicle export request failed')
 
     def on_vehicle_list(self, *args):
-        """Every vehicle of the roster - the opponents' exact configurations."""
+        """Every vehicle of the roster - the opponents' exact configurations. Its time is the battle's ROSTER cost."""
+        t0 = CLOCK()
         try:
             if self.arena is None: return
             for info in list(getattr(self.arena, 'vehicles', {}).values()):
                 self.note_roster_vehicle((info or {}).get('vehicleType'))
             self.write_roster()
         except Exception: LOG.exception('Battle roster unavailable for vehicle export')
+        finally: self.recorder.cost.add(ROSTER, CLOCK() - t0)
 
     def on_vehicle_info(self, vehicle_id, *args):
         """A vehicle added to the arena list or its arena info changed: note it for export, write the roster (the
-        recorder writes it only when a row really changed, so a death or a frag count costs no record)."""
+        recorder writes it only when a row really changed, so a death or a frag count costs no record). ROSTER cost."""
+        t0 = CLOCK()
         try:
             if self.arena is None: return
             info = getattr(self.arena, 'vehicles', {}).get(vehicle_id) or {}
             self.note_roster_vehicle(info.get('vehicleType'))
             self.write_roster()
         except Exception: LOG.exception('Battle vehicle export request failed')
+        finally: self.recorder.cost.add(ROSTER, CLOCK() - t0)
 
     def write_roster(self):
         try:
@@ -914,7 +929,11 @@ class Recorder(object):
         self.scope = None
         # The reader of the gun mechanics' live state is bound once here, beside the telemetry it lives in,
         # so the hit path does not run an import statement per hit (22.09).
-        from local_armor_inspector.telemetry import ShotTelemetry, mechanic_state, designator_mark, recording
+        from local_armor_inspector.telemetry import ShotTelemetry, mechanic_state, designator_mark, recording, Cost
+        # What the recorder's own code costs the game thread in this battle, per hook group (telemetry.Cost): made
+        # before every hook that adds to it, reset when the avatar becomes the player, logged at the battle's end.
+        self.cost = Cost()
+        self.cost_scope = None
         # The one gate of every recording path (REC-01, 24.09): the hit capture and the roster here, the shot
         # telemetry, the motion sampler and the crit log there. A replay or a spectated battle opens no file.
         self.recording = recording
@@ -1153,6 +1172,21 @@ class Recorder(object):
         if reduced: LOG.info('recorder: snapshots only - battle %s: %s', arena_id, why)
         else: LOG.info('recorder: full, because %s - battle %s', why, arena_id)
         return reduced
+
+    def start_cost(self):
+        """The avatar became the player: this battle's cost starts from nothing (telemetry.Cost). Game thread."""
+        self.cost.reset()
+        self.cost_scope = self.scope
+
+    def log_cost(self, arena_id=None):
+        """The avatar left the battle: one log line of what the recorder's code took on the game thread in it, by group
+        (telemetry.Cost.line), and the battle's length - the wall seconds the avatar was the player. The scope is the
+        battle's decision (snapshots_only) when it was made in this battle; 'not recorded' when no record path asked
+        (a replay played, a spectator seat). No record is written: the raw record has no closing record. Game thread."""
+        scope = self.scope
+        if scope is None or (scope is self.cost_scope and scope[0] != arena_id): label = 'not recorded'
+        else: label = ('snapshots only' if scope[1] else 'full') + ', battle ' + scope[0]
+        LOG.info('recorder: %s', self.cost.line(label, time.time() - self.cost.started))
 
     def ensure_battle(self, player):
         arena = getattr(player, 'arena', None)
@@ -1730,10 +1764,13 @@ def init():
         from local_armor_inspector.telemetry import wrap
         _recorder = Recorder(os.path.join('mods', 'configs', 'local.armor_inspector', 'battles'))
         recorder = _recorder
+        add = recorder.cost.add
         def make(original):
             def wrapper(vehicle, *args, **kwargs):
+                t0 = CLOCK()
                 try: recorder.capture(vehicle, *args, **kwargs)
                 except Exception: LOG.exception('Recorder failed; game handler continues')
+                add(HIT, CLOCK() - t0)
                 return original(vehicle, *args, **kwargs)
             return wrapper
         # The same wrapper as every other hook of the recorder (REC-10): fini() puts back the class's own entry.

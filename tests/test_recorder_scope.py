@@ -83,6 +83,48 @@ class RuleTests(unittest.TestCase):
         self.assertEqual(m.RECORDING_SNAPSHOTS, rb.SNAPSHOTS)
 
 
+class CostTests(unittest.TestCase):
+    """The recorder's per-battle cost line (telemetry.Cost, Recorder.log_cost); the hooks that feed it run under the
+    client's Python in tests/py27/recorder_snapshots.py."""
+
+    def logged(self, recorder, arena_id):
+        import logging
+        records = []
+        handler = logging.Handler()
+        handler.emit = records.append
+        logger = logging.getLogger('local.armor_inspector')
+        logger.addHandler(handler)
+        level, logger.level = logger.level, logging.INFO
+        try: m.Recorder.log_cost(recorder, arena_id)
+        finally:
+            logger.removeHandler(handler)
+            logger.level = level
+        return [r.getMessage() for r in records]
+
+    def test_the_line_counts_totals_and_longest_per_group(self):
+        from local_armor_inspector import telemetry as t
+        cost = t.Cost()
+        for group, seconds in ((t.HIT, 0.002), (t.HIT, 0.004), (t.OWN, 0.0001), (t.SAMPLER, 0.0005), (t.SAMPLER, 0.0003)):
+            cost.add(group, seconds)
+        cost.started -= 360.0
+        stand = type('Stand', (), {})()
+        stand.cost, stand.cost_scope, stand.scope = cost, None, ('77', True, 'mode REGULAR')
+        lines = self.logged(stand, '77')
+        self.assertEqual(len(lines), 1)
+        line = lines[0]
+        self.assertTrue(line.startswith('recorder: cost in this battle (snapshots only, battle 77): '), line)
+        for part in ('hit snapshots 2, total 0.006 s, longest 4.00 ms', 'own shot hooks 1, total 0.000 s, longest 0.10 ms',
+                     'other hooks 0, total 0.000 s, longest 0.00 ms', 'roster events 0,',
+                     'sampler ticks 2, total 0.001 s, longest 0.50 ms', 'game thread total 0.007 s', 'battle length 360 s'):
+            self.assertIn(part, line)
+        # A battle no record path asked about (a replay played): the scope of the battle before is not claimed.
+        stand.cost_scope = stand.scope
+        self.assertIn('(not recorded)', self.logged(stand, '78')[0])
+        self.assertIn('(snapshots only, battle 77)', self.logged(stand, '77')[0])   # the same battle entered again
+        stand.scope, stand.cost_scope = ('79', False, 'client'), None
+        self.assertIn('(full, battle 79)', self.logged(stand, None)[0])
+
+
 def synthetic():
     import test_replay_battle as tb
     replay, live = tb.synthetic_pair()

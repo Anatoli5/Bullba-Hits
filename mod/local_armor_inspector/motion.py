@@ -42,6 +42,7 @@ an unstarted entity's speed provider still reads as a stationary vehicle, which 
 from __future__ import absolute_import
 import logging
 from collections import deque
+from .telemetry import CLOCK, SAMPLER
 
 LOG = logging.getLogger('local.armor_inspector')
 
@@ -106,10 +107,16 @@ class MotionSampler(object):
         self.handle = None
         if not self.running:
             return
+        # The tick's time goes to the battle's cost (telemetry.Cost, SAMPLER); a recorder without one (tests) skips it.
+        cost = getattr(self.recorder, 'cost', None)
+        if cost is not None:
+            t0 = CLOCK()
         try:
             self.sample()
         except Exception:
             LOG.debug('Motion sample skipped', exc_info=True)
+        if cost is not None:
+            cost.add(SAMPLER, CLOCK() - t0)
         if self.running:
             self.arm()
 

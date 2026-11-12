@@ -18,12 +18,16 @@ Checks, by group:
   full       a mode not on the list, a battle with no recording, another client: one log line 'recorder: full, because'
              naming that condition; the records of today (recorder_two_battles: command, three tracers, a stop, two
              gunAfterShot; seven crits) and no 'recording' key in the header
+  cost       in both: one line 'recorder: cost in this battle (<scope>, battle <id>)' at the battle's end whose calls per
+             group (hit snapshots, own shot hooks, other hooks, roster events, sampler ticks) are the stand's own count of
+             the calls of the hooks the recorder installed (an outer counting layer, Calls)
 
 --measure drives one live record of the user's (its tracers, ends, commands, server aim updates, hits, health changes,
 hit directions, ram, shot results) through the hooks of the stub client, with the motion sampler ticking every 0.2 s of
 its gameTime over the 30 vehicles of its roster - first in full, then snapshots only, twice each - and prints the time
 the hooks took on the game thread, the process CPU time (both threads), the sampler's share and the raw file size. The
 stub client's own work is nearly nothing: the figures are the mod's Python work, not the game's cost of a real read.
+It also prints the recorder's own cost line of each mode and what the measurement itself costs a call.
 
 Verdict through BULLBA_PY27_RESULT (see run27.py).
 """
@@ -108,7 +112,81 @@ def battle(arena_id, first, bonus, recording, version, recorder):
 
 def scope_lines(capture, arena_id):
     return [r.getMessage() for r in capture.records if r.getMessage().startswith('recorder: ')
-            and str(arena_id) in r.getMessage()]
+            and not r.getMessage().startswith(COST_LINE) and str(arena_id) in r.getMessage()]
+
+
+COST_LINE = 'recorder: cost in this battle ('
+COST_NAMES = ('hit snapshots', 'own shot hooks', 'other hooks', 'roster events', 'sampler ticks')
+
+
+def cost_lines(capture, arena_id):
+    return [r.getMessage() for r in capture.records if r.getMessage().startswith(COST_LINE) and str(arena_id) in r.getMessage()]
+
+
+def cost_counts(line):
+    """{group name: (calls, total s, longest ms)} of one cost line."""
+    import re
+    out = {}
+    for name in COST_NAMES:
+        found = re.search(re.escape(name) + r' (\d+), total ([0-9.]+) s, longest ([0-9.]+) ms', line)
+        if found: out[name] = (int(found.group(1)), float(found.group(2)), float(found.group(3)))
+    return out
+
+
+class Calls(object):
+    """The stand's own count of the calls of every hook the recorder installed, by the group telemetry.Cost puts them
+    in: an outer counting layer over the mod's wrappers, the sampler's sample() and the roster events. Taken off before
+    fini() so the mod's unwrap finds its own wrappers."""
+    OTHER_SHOT = ('stopTracer', 'explodeProjectile')
+
+    def __init__(self, mod, recorder):
+        self.counts = collections.Counter()
+        self.saved = []
+        hooks = [('hit snapshots', h) for h in [mod._hit_hook]]
+        hooks += [('own shot hooks' if h[1] not in self.OTHER_SHOT else 'other hooks', h) for h in recorder.telemetry.hooks]
+        hooks += [('other hooks', h) for h in recorder.crits.hooks]
+        for group, (cls, name, _, wrapper) in hooks: self.layer(cls, name, wrapper, group)
+        events = mod._events
+        for name in ('on_vehicle_list', 'on_vehicle_info'):
+            setattr(events, name, self.counting(getattr(events, name), 'roster events'))
+        motion = recorder.motion
+        motion.sample = self.counting(motion.sample, 'sampler ticks')
+        self.events, self.motion = events, motion
+
+    def counting(self, fn, group):
+        def run(*args, **kwargs):
+            self.counts[group] += 1
+            return fn(*args, **kwargs)
+        return run
+
+    def layer(self, cls, name, wrapper, group):
+        counts = self.counts
+        def outer(instance, *args, **kwargs):
+            if name == 'showTracer' and args and args[0] != getattr(instance, 'playerVehicleID', None):
+                counts['other hooks'] += 1
+            else: counts[group] += 1
+            return wrapper(instance, *args, **kwargs)
+        self.saved.append((cls, name, wrapper))
+        setattr(cls, name, outer)
+
+    def close(self):
+        for cls, name, wrapper in reversed(self.saved): setattr(cls, name, wrapper)
+        for name in ('on_vehicle_list', 'on_vehicle_info'): self.events.__dict__.pop(name, None)
+        self.motion.__dict__.pop('sample', None)
+
+
+def check_cost(capture, arena_id, scope, counts, group):
+    """One cost line at the battle's end, its scope, and each group's calls as the stand counted them."""
+    lines = cost_lines(capture, arena_id)
+    check(group, 'cost: one log line at the battle end', len(lines) == 1, lines)
+    if len(lines) != 1: return
+    line = lines[0]
+    check(group, 'cost: the line names the scope and the battle', line.startswith(COST_LINE + scope + ', battle %s)' % arena_id), line)
+    found = cost_counts(line)
+    want = dict((name, counts.get(name, 0)) for name in COST_NAMES)
+    check(group, "cost: every group's calls are the stand's", dict((k, v[0]) for k, v in found.items()) == want, (found, want))
+    check(group, 'cost: the hits, the hooks and the ticks were all called', all(want[k] for k in COST_NAMES if k != 'other hooks'), want)
+    check(group, 'cost: the longest call is within the total', all(v[2] <= 1000.0 * v[1] + 0.5 for v in found.values()), found)
 
 
 def run_checks(temp):
@@ -131,13 +209,17 @@ def run_checks(temp):
         return original_side(*args, **kwargs)
     crits.emit, crits.contact_side = counted_emit, counted_side
 
+    calls = Calls(mod, recorder)
+
     # ---- snapshots only -------------------------------------------------------------------------------------------
     r = battle(7000000000000000001, 41, 1, True, CHECKED, recorder)
     del read_state[:], built[:], measured[:]
+    calls.counts.clear()
     r.enter(events)
     r.play(last_shot=True)
     name = recorder.file
     r.leave(events)
+    check_cost(capture, r.arena_id, 'snapshots only', calls.counts, 'snapshots')
     rows = rows_of(recorder, folder, name)
     lines = scope_lines(capture, r.arena_id)
     check('snapshots', 'one log line: snapshots only', len(lines) == 1 and lines[0].startswith('recorder: snapshots only'), lines)
@@ -172,10 +254,12 @@ def run_checks(temp):
         arena = 7000000000000000100 + bonus * 10 + int(bool(recording))
         f = battle(arena, 51, bonus, recording, version, recorder)
         del read_state[:], built[:], measured[:]
+        calls.counts.clear()
         f.enter(events)
         f.play(last_shot=True)
         name = recorder.file
         f.leave(events)
+        check_cost(capture, arena, 'full', calls.counts, 'full')
         rows = rows_of(recorder, folder, name)
         lines = scope_lines(capture, arena)
         check('full', label + ': one log line "full, because" naming it',
@@ -192,6 +276,7 @@ def run_checks(temp):
         check('full', label + ': the other vehicle\'s tracer read its gun state', f.enemy in read_state and measured, list(read_state))
 
     telemetry_module.mechanic_state = original_state
+    calls.close()
     mod.fini()
     errors = [x for x in capture.records if x.levelno >= logging.ERROR]
     check('log', 'no ERROR logged', not errors, '; '.join(x.getMessage() for x in errors[:5]))
@@ -327,6 +412,7 @@ def measure(temp, path):
             cpu = sum(os.times()[:2]) - cpu0
             size = os.path.getsize(os.path.join(folder, name + '.jsonl'))
             results[label].append((hooks, sampled, ticks, cpu, size, len(rows)))
+            if round_ == 1: lines.extend(cost_lines(capture, arena_id))
             if round_ == 0 and label == 'full':
                 lines.append('driven: ' + ', '.join('%s %d' % kv for kv in sorted(driven.items())))
     for label in ('full', 'snapshots'):
@@ -334,8 +420,26 @@ def measure(temp, path):
         lines.append('%-9s hooks %.3f s on the game thread, sampler %.3f s in %d ticks (%.2f ms a tick), process CPU %.2f s '
                      '(incl. the stand\'s own and the writer), raw file %d bytes, %d records'
                      % (label, hooks, sampled, ticks, 1000.0 * sampled / max(ticks, 1), cpu, size, n))
+    lines.append(overhead(recorder.cost))
     mod.fini()
     note('\n'.join(lines))
+
+
+def overhead(cost, n=200000):
+    """What the measurement itself costs: two clock reads and Cost.add per call, against the same loop without them."""
+    from local_armor_inspector.telemetry import CLOCK, OWN
+    add, clock = cost.add, time.clock
+    t0 = clock()
+    for _ in xrange(n):
+        a = CLOCK()
+        add(OWN, CLOCK() - a)
+    timed_ = clock() - t0
+    t0 = clock()
+    for _ in xrange(n): pass
+    bare = clock() - t0
+    per = (timed_ - bare) / n
+    cost.reset()
+    return 'the measurement itself: %.2f us a call (two clock reads and Cost.add, %d calls)' % (1e6 * per, n)
 
 
 def main():

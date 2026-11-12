@@ -357,6 +357,50 @@ def snapshots_only(recorder, player):
     return bool(ask(player)) if ask is not None else False
 
 
+# --- what the recorder costs the game thread, per battle (BACKLOG 87 follow-up, 12.11.2026) --------------------------
+# The clock of the measurement: Python 2.7 on Windows has time.clock (QueryPerformanceCounter, sub-microsecond; its
+# time.time ticks in 15.6 ms steps there); CPython 3 has perf_counter and no clock.
+CLOCK = getattr(time, 'perf_counter', None) or time.clock
+# The groups of Cost, by index. HIT the shown-hit snapshot hook (Vehicle.showDamageFromShot); OWN the own-shot hooks
+# (the command, the own tracer, the gun marker and aim updates the snapshot caches); OTHER every other per-event hook
+# (another vehicle's tracer, the end of a shell, every crit hook); ROSTER the arena's vehicle-list events; SAMPLER the
+# motion sampler's tick.
+HIT, OWN, OTHER, ROSTER, SAMPLER = 0, 1, 2, 3, 4
+COST_GROUPS = 5
+
+
+class Cost(object):
+    """Count, total and longest single call of the recorder's own code on the game thread, per group, for one battle.
+
+    A hook reads CLOCK before and after the mod's own part of it (the client's original is not timed) and calls add():
+    three list items updated in place, no record, dict or list made per call. Reset when the avatar becomes the
+    player; read once at the battle's end (Recorder.log_cost). Game thread only."""
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.count = [0] * COST_GROUPS
+        self.total = [0.0] * COST_GROUPS
+        self.longest = [0.0] * COST_GROUPS
+        self.started = time.time()
+
+    def add(self, group, seconds):
+        self.count[group] += 1
+        self.total[group] += seconds
+        if seconds > self.longest[group]: self.longest[group] = seconds
+
+    def line(self, scope, length):
+        """The one log line of the battle, after the logger's 'recorder: ': 'cost in this battle (<scope>): ...' - each
+        group's calls, total seconds and the longest call in ms, the sum, then the battle's length in seconds."""
+        def part(name, group):
+            return '%s %d, total %.3f s, longest %.2f ms' % (name, self.count[group], self.total[group],
+                                                            1000.0 * self.longest[group])
+        return ('cost in this battle (%s): %s; %s; %s; %s; %s; game thread total %.3f s; battle length %.0f s'
+                % (scope, part('hit snapshots', HIT), part('own shot hooks', OWN), part('other hooks', OTHER),
+                   part('roster events', ROSTER), part('sampler ticks', SAMPLER), sum(self.total), length))
+
+
 def wrap(cls, name, make):
     """The one way the recorder wraps a client method (REC-10): cls.name becomes make(original).
 
@@ -623,11 +667,25 @@ class ShotTelemetry(object):
     def install(self):
         from Avatar import PlayerAvatar
         from AvatarInputHandler import AvatarInputHandler
+        cost = getattr(self.recorder, 'cost', None)
         def hook(cls, name, callback):
+            # The own-shot hooks' time goes to OWN, the end of a shell's to OTHER, a tracer's by its shooter (Cost).
+            group = OTHER if name in ('stopTracer', 'explodeProjectile') else OWN
             def make(original):
+                if cost is None:
+                    def wrapped(instance, *args, **kwargs):
+                        try: callback(instance, *args, **kwargs)
+                        except Exception: LOG.debug('Optional shot telemetry unavailable: %s', name, exc_info=True)
+                        return original(instance, *args, **kwargs)
+                    return wrapped
+                add, tracer = cost.add, name == 'showTracer'
                 def wrapped(instance, *args, **kwargs):
+                    t0 = CLOCK()
                     try: callback(instance, *args, **kwargs)
                     except Exception: LOG.debug('Optional shot telemetry unavailable: %s', name, exc_info=True)
+                    t1 = CLOCK()
+                    if tracer and args and args[0] != getattr(instance, 'playerVehicleID', None): add(OTHER, t1 - t0)
+                    else: add(group, t1 - t0)
                     return original(instance, *args, **kwargs)
                 return wrapped
             record = wrap(cls, name, make)
