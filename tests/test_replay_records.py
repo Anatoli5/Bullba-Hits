@@ -27,6 +27,7 @@ sys.path.insert(0, os.path.join(ROOT, 'mod'))
 sys.path.insert(0, HERE)
 from local_armor_inspector import replay_records as rr  # noqa: E402
 from local_armor_inspector import replay_stream as rd  # noqa: E402
+from local_armor_inspector import replay_battle as rb  # noqa: E402
 from local_armor_inspector import damage_log  # noqa: E402
 from local_armor_inspector.records import RecordDecoder  # noqa: E402
 
@@ -396,6 +397,96 @@ class SyntheticTests(unittest.TestCase):
         self.assertEqual(held, 0)
         ram = [e for e in events if e['kind'] == 'ram'][0]
         self.assertEqual(sorted(ram['contact']['sides']), ['10', '20'])
+
+
+def tracer_event(t, shooter, shot):
+    return {'t':t, 'ev':'method', 'id':1, 'entity':'Avatar', 'name':'showTracer', 'args':{'shooterID':shooter, 'shotID':shot,
+            'isRicochet':0, 'effectsIndex':4, 'prefabEffIndex':0, 'shellTypeIdx':1, 'shellCaliber':120.0,
+            'refStartPoint':[0.0, 0.0, 0.0], 'velocity':[1.0, 0.0, 0.0], 'gravity':9.8, 'maxShotDist':720.0, 'gunIndex':0,
+            'gunInstallationIndex':0}}
+
+
+class KnownNames(rr.Names):
+    """The descriptor's answers of ClientNames for the vehicles of shooter_events."""
+    def siege_mode(self, vehicle_id): return vehicle_id in (10, 20)
+    def mechanics(self, vehicle_id): return set(['shellParamsSwitcher', 'autoShoot']) if vehicle_id in (10, 20) else set()
+
+
+def shooter_events():
+    """The own vehicle 10 and an enemy 20, both with two modes and a shell switcher and an autocannon's component; the
+    enemy's states change, he leaves the area of interest and comes back; a vehicle 30 never sends a siege state."""
+    head = synthetic()[:3]
+    switch = lambda owner, cid: {'t':1.0, 'ev':'component', 'cid':cid, 'owner':owner, 'component':'ShellParamsSwitcherController',
+                                 'state':{'status':{'state':1, 'endTime':-1.0}, 'publicStatus':{'isActive':1, 'lastActiveShotTimestamp':0.0}}}
+    return head + [
+        {'t':1.0, 'ev':'entity_create', 'id':10, 'entity':'Vehicle', 'props':{}},
+        {'t':1.0, 'ev':'entity_create', 'id':20, 'entity':'Vehicle', 'props':{'siegeState':1}},
+        {'t':1.0, 'ev':'entity_create', 'id':30, 'entity':'Vehicle', 'props':{}},
+        switch(10, 41), switch(20, 42),
+        {'t':1.0, 'ev':'component', 'cid':43, 'owner':20, 'component':'AutoShootGunController',
+         'state':{'defaultShotRate':0.30000001192092896, 'stateStatus':{'state':4, 'rateMultFactor':1.0}, 'dispersionStatus':None}},
+        tracer_event(2.0, 20, 1),                                                       # 20: siege 1, both components
+        tracer_event(2.0, 10, 2),                                                       # own: the private status too
+        tracer_event(2.0, 30, 3),                                                       # 30: nothing to say
+        {'t':3.0, 'ev':'property', 'id':20, 'entity':'Vehicle', 'name':'siegeState', 'value':2},
+        {'t':3.0, 'ev':'component_property', 'owner':20, 'component':'AutoShootGunController', 'name':'stateStatus',
+         'value':{'state':2, 'rateMultFactor':1.0}},
+        {'t':3.0, 'ev':'component_removed', 'cid':42, 'owner':20, 'component':'ShellParamsSwitcherController'},
+        tracer_event(3.5, 20, 4),                                                       # 20: siege 2, the autocannon only
+        {'t':4.0, 'ev':'entity_leave', 'id':20},
+        tracer_event(4.5, 20, 5),                                                       # out of the area: nothing
+        {'t':5.0, 'ev':'entity_create', 'id':20, 'entity':'Vehicle', 'props':{}},
+        tracer_event(5.5, 20, 6),                                                       # back: siege 0, no component yet
+    ]
+
+
+class ShooterStateTests(unittest.TestCase):
+    """replay_records.Converter.shooter_state: the live tracer's siegeState and gunState from the replay's packets."""
+
+    def tracers(self, names=None):
+        out = rr.convert(shooter_events(), names=names)[0]
+        return dict((r['shotId'], r) for r in of(out, 'shot', 'tracer'))
+
+    def test_the_state_of_the_packets_before_each_tracer(self):
+        t = self.tracers(KnownNames())
+        self.assertEqual(t['1']['siegeState'], 1)
+        self.assertEqual(t['1']['gunState'], {
+            'shellParamsSwitcher':{'publicStatus':{'isActive':1, 'lastActiveShotTimestamp':0.0}, 'status':{'state':1, 'endTime':-1.0}},
+            'autoShoot':{'stateStatus':{'state':4, 'rateMultFactor':1.0}, 'defaultShotRate':0.30000001192092896}})
+        self.assertEqual((t['2']['siegeState'], sorted(t['2']['gunState']['shellParamsSwitcher'])), (0, ['publicStatus', 'status']))
+        self.assertEqual((t['4']['siegeState'], t['4']['gunState']), (2, {'autoShoot':{'stateStatus':{'state':2, 'rateMultFactor':1.0},
+                                                                                       'defaultShotRate':0.30000001192092896}}))
+        self.assertFalse(set(rb.SHOOTER_STATE) & set(t['5']))       # outside the area of interest: no read, as live
+        self.assertEqual(t['6']['siegeState'], 0)
+        self.assertNotIn('gunState', t['6'])
+        self.assertFalse(set(rb.SHOOTER_STATE) & set(t['3']))       # no two modes, no mechanic
+
+    def test_private_fields_for_the_own_shot_only(self):
+        # shellParamsSwitcher.status is public; dispersionStatus of the autocannon is private (None here: left out).
+        names = KnownNames()
+        names.mechanics = lambda vid: set(['autoShoot'])
+        t = self.tracers(names)
+        self.assertEqual(sorted(t['1']['gunState']), ['autoShoot'])   # the descriptor's mechanics only
+        self.assertNotIn('gunState', t['2'])
+
+    def test_without_the_descriptor_a_vehicle_the_replay_set_a_siege_state_for(self):
+        t = self.tracers()
+        self.assertEqual(t['1']['siegeState'], 1)
+        self.assertNotIn('siegeState', t['2'])     # the own vehicle never sent one: unknown, left out
+        self.assertEqual(t['6']['siegeState'], 0)  # 20 has had one
+
+
+class ShooterStateBuildTests(unittest.TestCase):
+    def test_a_matched_tracer_keeps_the_live_state_and_a_replay_only_one_the_replays(self):
+        records = rr.convert(shooter_events(), names=KnownNames())[0]
+        tracer = [r for r in records if r.get('type') == 'shot' and r.get('shotId') == '1'][0]
+        live_tracer = {'type':'shot', 'event':'tracer', 'id':'s9', 'shotId':'1', 'shooterId':20, 'gameTime':tracer['gameTime'],
+                       'receivedAt':5000.0, 'gunState':{'autoShoot':{'defaultShotRate':0.3}}}
+        battle, _ = rb.build(records, {'hits':[], 'shotEvents':[live_tracer], 'critEvents':[]})
+        shots = dict((s['shotId'], s) for s in battle['shotEvents'] if s.get('event') == 'tracer')
+        self.assertEqual(shots['1']['gunState'], {'autoShoot':{'defaultShotRate':0.3}})
+        self.assertNotIn('siegeState', shots['1'])                 # the live read had none: none
+        self.assertEqual(shots['4']['siegeState'], 2)              # no live twin: the replay's
 
 
 def fixtures_ready():

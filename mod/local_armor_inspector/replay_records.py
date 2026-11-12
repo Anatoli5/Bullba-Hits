@@ -34,6 +34,7 @@ import math
 import time
 
 from .crit_log import CRIT_EVENTS, RAM_REASON, CONTACT_PACE, CONTACT_WINDOW, num, vec
+from .telemetry import GUN_MECHANIC_STATE, state_value
 from . import replay_stream
 
 SOURCE = 'replay'
@@ -45,6 +46,17 @@ HIT_ABSENT = ('target', 'attacker', 'aim', 'points.resolved', 'shellCandidates',
 HIT_WARNING = 'Replay hit: part poses, armour, the resolved point, aim and gun state were not recorded'
 ROSTER_FIELDS = ('name', 'fakeName', 'team', 'compDescr', 'maxHealth', 'vehPostProgression', 'customRoleSlotTypeId',
                  'avatarSessionID')
+# The shooter's state at his shot, as the live tracer carries it (telemetry.ShotTelemetry.tracer; BACKLOG 87 follow-up,
+# 12.11.2026): 'siegeState' (Vehicle.siegeState, a property of the entity) and 'gunState' (telemetry.mechanic_state: the
+# gun mechanics' dynamic components). The replay has both as the client received them - the entity's create blob and its
+# property packets, each component's create and property packets - so the state at a tracer is the state the packets
+# before it in the stream left. GUN_MECHANIC_STATE keys a component by the def's DefaultKeyName
+# ('shellParamsSwitcherController'), the replay by its class ('ShellParamsSwitcherController'): matched ignoring case.
+# component key, lower case -> ((mechanic, property, field written, fields or None, private), ...)
+MECHANIC_COMPONENTS = {}
+for _mechanic, _entries in GUN_MECHANIC_STATE.items():
+    for _key, _prop, _out, _fields, _private in _entries:
+        MECHANIC_COMPONENTS.setdefault(_key.lower(), []).append((_mechanic, _prop, _out, _fields, _private))
 
 
 class Names(object):
@@ -82,6 +94,16 @@ class Names(object):
     def vehicle(self, vehicle_id, compact):
         """The converter names each roster vehicle's compact descriptor (vehiclesInfo / publicInfo compDescr) before it
         asks for that vehicle's extras: a run-time Names builds its descriptor here. This one keeps nothing."""
+
+    def siege_mode(self, vehicle_id):
+        """Whether the vehicle has two modes (its descriptor's hasSiegeMode: the live tracer writes siegeState only then),
+        or None when not known - the converter then takes a vehicle whose siege state the replay has set."""
+        return None
+
+    def mechanics(self, vehicle_id):
+        """The gun mechanics its descriptor carries (telemetry.mechanic_names), or None when not known - the converter
+        then takes every mechanic component the vehicle has."""
+        return None
 
 
 class ClientNames(Names):
@@ -124,6 +146,21 @@ class ClientNames(Names):
             self.short[str(descr.type.name)] = descr.type.shortUserString
         except Exception: descr = None
         self.descrs[vehicle_id] = (compact, descr)
+
+    def descr(self, vehicle_id):
+        return (self.descrs.get(vehicle_id) or (None, None))[1]
+
+    def siege_mode(self, vehicle_id):
+        descr = self.descr(vehicle_id)
+        if descr is None: return None
+        try: return bool(getattr(descr, 'hasSiegeMode', False))
+        except Exception: return None
+
+    def mechanics(self, vehicle_id):
+        descr = self.descr(vehicle_id)
+        if descr is None: return None
+        from .telemetry import mechanic_names
+        return mechanic_names(descr)
 
     def constant(self, table, index):
         return self.log.constant(table, index)
@@ -232,6 +269,12 @@ class Converter(object):
         self.damage_lists = {}   # OwnVehicle owner -> vehicleDamageInfoList
         self.seen = {}           # owner -> damage-info positions written
         self.tracers = {}        # shot id -> tracer record
+        # The shooter's state at his shot (shooter_state): what the vehicles in the area of interest hold now.
+        self.present = set()     # vehicle ids created and not left (live: BigWorld.entity is None outside the area)
+        self.siege = {}          # vehicle id -> siegeState (a create blob carries a non-default value only: 0 else)
+        self.sieged = set()      # vehicle ids whose siege state the replay set (for Names.siege_mode unknown)
+        self.mechanic = {}       # vehicle id -> {component key, lower case: {property: value}}
+        self.component_of = {}   # component id -> (vehicle id, component key)
         self.contact = None      # last own contact {'at', 'point', 'energy'}
         self.rams = {}           # pair -> last ram tick time
         self.written = {}        # pair -> last contact written
@@ -425,18 +468,33 @@ class Converter(object):
             self.component_method(ev, t)
         elif kind == 'component_removed':
             if ev.get('component') == 'Fire': self.fire(self.fires.pop(ev.get('cid'), ev.get('owner')), 'removed', t)
+            known = self.component_of.pop(ev.get('cid'), None)
+            if known is not None: (self.mechanic.get(known[0]) or {}).pop(known[1], None)
         elif kind in ('entity_create', 'entity_properties') and ev.get('entity') == 'Vehicle':
             props = ev.get('props') or {}
+            if kind == 'entity_create':
+                self.present.add(ev['id'])
+                self.siege[ev['id']] = integer(props.get('siegeState')) or 0
+            elif 'siegeState' in props: self.siege[ev['id']] = integer(props['siegeState']) or 0
+            if 'siegeState' in props: self.sieged.add(ev['id'])
             if 'publicStateModifiers' in props:
                 self.modifiers[ev['id']] = list(props['publicStateModifiers'] or ())
             if isinstance(props.get('publicInfo'), dict): self.public_info(ev['id'], props['publicInfo'])
         elif kind in ('property', 'nested_property') and ev.get('entity') == 'Vehicle':
-            if name == 'publicStateModifiers': self.public_state(ev, t)
+            if name == 'siegeState' and kind == 'property':
+                self.siege[ev['id']] = integer(ev.get('value')) or 0
+                self.sieged.add(ev['id'])
+            elif name == 'publicStateModifiers': self.public_state(ev, t)
             elif name == 'publicInfo' and kind == 'property' and isinstance(ev.get('value'), dict):
                 self.public_info(ev['id'], ev['value'])
         elif kind == 'entity_leave':
             # Fire.onLeaveWorld calls onDestroy: the live recorder logs the fire as removed when its vehicle leaves.
             vid = ev.get('id')
+            # Out of the area of interest the live tracer reads no state of him; his components come again with him.
+            self.present.discard(vid)
+            self.mechanic.pop(vid, None)
+            for cid, owner in list(self.component_of.items()):
+                if owner[0] == vid: del self.component_of[cid]
             for cid, owner in list(self.fires.items()):
                 if owner == vid:
                     del self.fires[cid]
@@ -543,7 +601,36 @@ class Converter(object):
                   'maxDistance':num(a.get('maxShotDist')), 'gunIndex':int(a['gunIndex']),
                   'gunInstallationIndex':int(a['gunInstallationIndex']), 'source':'replay Avatar.showTracer',
                   'own':shooter == self.player}
+        self.shooter_state(shooter, values)
         self.tracers[str(a['shotID'])] = self.event('shot', 'tracer', t, values)
+
+    def shooter_state(self, shooter, values):
+        """The live tracer's 'siegeState' and 'gunState' of the shooter (telemetry.ShotTelemetry.tracer, mechanic_state),
+        from the packets before this tracer: nothing for a vehicle outside the area of interest; siegeState for a vehicle
+        with two modes; per mechanic its components' fields, the private ones for the player's own shot only."""
+        if shooter not in self.present: return
+        siege = self.names.siege_mode(shooter)
+        if siege or (siege is None and shooter in self.sieged): values['siegeState'] = self.siege.get(shooter, 0)
+        components = self.mechanic.get(shooter)
+        if not components: return
+        own, wanted = shooter == self.player, self.names.mechanics(shooter)
+        state = {}
+        for key, props in components.items():
+            for mechanic, prop, out, fields, private in MECHANIC_COMPONENTS.get(key, ()):
+                if (private and not own) or (wanted is not None and mechanic not in wanted): continue
+                value = props.get(prop)
+                if value is None: continue
+                if fields is None:
+                    item = state_value(value)
+                    if item is not None: state.setdefault(str(mechanic), {})[out] = item
+                    continue
+                if not isinstance(value, dict): continue
+                packed = {}
+                for field in fields:
+                    item = state_value(value.get(field))
+                    if item is not None: packed[field] = item
+                if packed: state.setdefault(str(mechanic), {})[out] = packed
+        if state: values['gunState'] = state
 
     def endpoint(self, a, t, event, extra=None):
         tracer = self.tracers.get(str(a['shotID']))
@@ -577,6 +664,11 @@ class Converter(object):
     # ---- components: own vehicle, fire, vehicles info --------------------------------------------------------------
     def component(self, ev, t):
         name, owner, state = ev.get('component'), ev.get('owner'), ev.get('state') or {}
+        key = str(name).lower()
+        if key in MECHANIC_COMPONENTS:
+            # A copy: an event's value may be the decoder's own object, which a later packet changes.
+            self.mechanic.setdefault(owner, {})[key] = copy.deepcopy(dict(state))
+            self.component_of[ev.get('cid')] = (owner, key)
         if name == 'Fire':
             self.fires[ev.get('cid')] = owner
             self.fire(owner, 'appeared', t)
@@ -594,6 +686,10 @@ class Converter(object):
 
     def component_property(self, ev, t):
         name, owner, comp = ev.get('name'), ev.get('owner'), ev.get('component')
+        key = str(comp).lower()
+        if key in MECHANIC_COMPONENTS:
+            props = self.mechanic.setdefault(owner, {}).setdefault(key, {})
+            props[name] = apply_update(copy.deepcopy(props.get(name)), ev)
         if comp == 'AvatarVehiclesInfo' and name == 'vehiclesInfo':
             self.info = apply_update(self.info, ev)
             path = ev.get('path') or []

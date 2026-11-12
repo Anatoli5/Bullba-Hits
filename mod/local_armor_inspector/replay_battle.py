@@ -19,7 +19,8 @@ read_battle gives), so the published file is the one the page reads today:
     hit   its scene: the fields replay_records.HIT_ABSENT names (part poses, armour, aim, shell candidates...), the
           resolved points (when their raw fields are the replay's), the warnings of the live record;
     shot  the own shot's snapshot (aimAtTracer, motion, the command link) and the shooter's state at the tracer
-          (siegeState, gunState: the page's scene of a hit reads them), and the live 'command' and 'gunAfterShot'
+          (siegeState, gunState: the page's scene of a hit reads them; a tracer without a live twin has the replay's
+          own, replay_records.Converter.shooter_state, since 12.11.2026), and the live 'command' and 'gunAfterShot'
           records, placed where they were among the shot records;
     crit  nothing but id and receivedAt: its names come from the run-time Names of the conversion, as everywhere.
 - A replay hit without a live one (the death camera: the recorder sees no vehicle event for ~15 s) is published as it
@@ -72,9 +73,18 @@ LIVE_SOURCE = 'live'
 # twin, so the receipt time the page links and clocks them by (receivedAt) is made from the replay: the receipt of a
 # matched snapshot of the same tick, else the gameTime on the battle's wall clock (the median of live receivedAt - replay
 # gameTime over the matched hits and own shots). Measured 12.11 on the four battles with both sources, the live record cut
-# to the snapshots: the page's shot of a hit (tracer, stop, aim) the same for 175 of 176 hits (one loses its stop: a
-# receipt 0.1-0.3 s off); every receipt time but one within 0.05 s of the live one. A full battle's records are as before.
+# to the snapshots: the page's shot of a hit (tracer, stop, aim) the same for 175 of 176 hits; every receipt time but one
+# within 0.05 s of the live one. A full battle's records are as before.
+# Why a hit's stop can differ (12.11.2026): the page takes a shell's end as a hit's only within 0.1 s of receipt - one
+# server tick - and a stop one tick before its hit was received 0.092-0.112 s before it in the live records (the client's
+# receipt jitter, which the replay does not have): the one hit's stop came 0.094 s before it live, 0.102 s on the wall
+# clock. On the 33 battles of 11.11 (offline names): 2 226 of 2 284 hits keep the full record's shot, 40 gain a stop, 18
+# lose one; the stop of the next tick's receipt instead (tried) made it 2 190, 85, 9. Linked by the replay clock
+# (gameTime, the same on both records) the page gives both the same shot for 2 284 of 2 284: the cure is the page's.
 SNAPSHOTS = 'snapshots'
+# The fields of a tracer that say the shooter's state at his shot (telemetry.ShotTelemetry.tracer; the replay's own since
+# 12.11.2026, replay_records.Converter.shooter_state): a matched tracer takes the live one's.
+SHOOTER_STATE = ('siegeState', 'gunState')
 
 
 def number(value):
@@ -223,6 +233,9 @@ def build(records, live=None, battle_id=None):
         m = shot_live.get(id(r))
         s = copy.deepcopy(r)
         if m is not None:
+            # The shooter's state at his shot is the live tracer's where there is one (the in-game read, present or
+            # not); the replay's (replay_records.Converter.shooter_state) stands for a tracer the live record lacks.
+            for k in SHOOTER_STATE: s.pop(k, None)
             for k, v in m.items():
                 if k not in s: s[k] = copy.deepcopy(v)
             s['id'], s['receivedAt'] = m.get('id'), m.get('receivedAt')

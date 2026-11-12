@@ -117,6 +117,20 @@ def main():
                      if v['id'] in roster_live and plain(roster_live[v['id']].get('name')) != plain(v.get('name'))]
         check(not bad and not names_bad, '%s: %d named crit fields and %d roster names equal the live record\'s'
               % (name, compared, len(roster)), repr(bad[:5] + names_bad[:5]))
+        # The shooter's state at his shot (Converter.shooter_state with the descriptor's hasSiegeMode and mechanics):
+        # each matched tracer's siegeState and gunState as the live tracer's, present or not.
+        tracers = [r for r in records if r.get('type') == 'shot' and r.get('event') == 'tracer']
+        live_tracers = [r for r in live['shotEvents'] if r.get('event') == 'tracer']
+        paired = rb.pair(live_tracers, tracers, rb.shot_key, rb.SHOT_WINDOW)
+        states, wrong = 0, []
+        for r in tracers:
+            m = paired.get(id(r))
+            if m is None: continue
+            for field in rb.SHOOTER_STATE:
+                if field in m: states += 1
+                if plain(m.get(field)) != plain(r.get(field)): wrong.append((r['shotId'], field, m.get(field), r.get(field)))
+        check(not wrong, '%s: %d shooter states of %d matched tracers as the live tracer\'s' % (name, states, len(paired)),
+              repr(wrong[:4]))
         table[name] = plain(names.table())
         # The assembly under this Python: every live hit gets its scene, the window's hits stay scene-less.
         battle, report = rb.build(records, live)

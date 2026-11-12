@@ -54,7 +54,8 @@ class RecordingNames(rr.Names):
 
     def ask(self, method, *args):
         answer = getattr(self.inner, method)(*args)
-        self.answers[name_key(method, args)] = answer
+        # A set (mechanics) is kept as its sorted list: the table is JSON.
+        self.answers[name_key(method, args)] = sorted(answer) if isinstance(answer, (set, frozenset)) else answer
         return answer
 
     def constant(self, table, index): return self.ask('constant', table, index)
@@ -63,6 +64,8 @@ class RecordingNames(rr.Names):
     def crit_mask(self, mask): return self.ask('crit_mask', mask)
     def ammo_bay_mode(self, mode): return self.ask('ammo_bay_mode', mode)
     def short_name(self, type_name): return self.ask('short_name', type_name)
+    def siege_mode(self, vehicle_id): return self.ask('siege_mode', vehicle_id)
+    def mechanics(self, vehicle_id): return self.ask('mechanics', vehicle_id)
 
     def table(self):
         return {'critEvents':list(self.crit_events), 'ramReason':self.ram_reason,
@@ -91,6 +94,8 @@ class TableNames(rr.Names):
     def crit_mask(self, mask): return self.ask('crit_mask', mask)
     def ammo_bay_mode(self, mode): return self.ask('ammo_bay_mode', mode)
     def short_name(self, type_name): return self.ask('short_name', type_name)
+    def siege_mode(self, vehicle_id): return self.ask('siege_mode', vehicle_id)
+    def mechanics(self, vehicle_id): return self.ask('mechanics', vehicle_id)
 
 
 def names_table():
