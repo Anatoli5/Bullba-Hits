@@ -2427,6 +2427,25 @@ def scene_statics(descr):
             'pitchLimits':[float(absolute[0]), float(absolute[1])] if absolute is not None else None, 'parts':parts}
 
 
+AIM_ESTIMATE_KEYS = ('dispersion', 'aimingTime', 'movementFactor', 'rotationFactor', 'turretRotationFactor', 'afterShotFactor',
+                     'turretRotationSpeed', 'gunPitchSpeed', 'gunTags', 'burst', 'autoShoot', 'dualAccuracy')
+
+
+def aim_estimate_inputs(descr):
+    """What replay_aim_other needs of another vehicle's descriptor to estimate its circle at a shot (BACKLOG 82, 12.11):
+    the formula's inputs of aim_block (the bare descriptor's: a compact descriptor of another vehicle carries no
+    equipment), its traverse and elevation speeds, the tags that say a gun is not modelled (automatic, dual accuracy,
+    bursts), the gun's absolute pitch limits (gunAnglesPacked's range, as scene_statics) and whether it has a second mode."""
+    aim = aim_block(descr)
+    out = dict((key, aim[key]) for key in AIM_ESTIMATE_KEYS if key in aim)
+    limits = descr.gun.pitchLimits
+    absolute = limits.get('absolute') if hasattr(limits, 'get') else None
+    out['pitchLimits'] = [float(absolute[0]), float(absolute[1])] if absolute is not None else None
+    try: out['hasSiegeMode'] = bool(getattr(descr, 'hasSiegeMode', False))
+    except Exception: out['hasSiegeMode'] = False
+    return json_copy(out)
+
+
 def scene_extras(descr, extras):
     """The wheels and armoured prefabs of a vehicle for replay_scene (12.11), as the snapshot path gives them: {'wheels':
     wheel_parts with their body and rest place (fill_wheels; a wheel without its body is left out), 'prefabs':
@@ -2466,6 +2485,10 @@ class SceneSource(object):
 
     def compact_extras(self, compact):
         return self.extras(vehicle_descr(compact))
+
+    def aim_inputs(self, compact):
+        """aim_estimate_inputs of a vehicle's compact descriptor (replay_aim_other); raises outside the game."""
+        return aim_estimate_inputs(vehicle_descr(compact))
 
     def model(self, resource):
         key, error = self.exporter.model_extract(resource, self.version)
@@ -4028,6 +4051,33 @@ class Exporter(object):
         LOG.info('Battle %s published from its replay: %d hits (%d without a scene), %d shot and %d crit records',
                  name, report['hits'], report['hitsWithoutScene'], report['shots'], report['crits'])
         out['report'] = report
+
+    def replay_estimates_steps(self, battle_id, records, out=None):
+        """Every other vehicle's tracer of a battle's replay records gets its estimated aim circle (replay_aim_other, BACKLOG
+        82, 12.11) on the record, before the records are published and stored - so every later build of the battle has it.
+        In steps for the replay job's slices (a vehicle's preparation, a stretch of its size model, a tracer, its circles);
+        the vehicles' guns from the client's descriptors (SceneSource.aim_inputs). A failure leaves the tracers without a
+        block. The counts go into out['report'] and the log."""
+        from .replay_aim_other import attaching
+        out = {} if out is None else out
+        report, work, steps = {}, 0.0, 0
+        try:
+            started = TTX_TIMER()
+            source = self.scene_source(self.replay_client_version(str(battle_id or '')))
+            for _ in attaching(records, source.aim_inputs, report):
+                work += TTX_TIMER() - started
+                steps += 1
+                yield
+                started = TTX_TIMER()
+            work += TTX_TIMER() - started
+        except Exception:
+            LOG.exception('Battle %s: the other vehicles\' aim circles were not estimated', battle_id)
+            return
+        report['work'], report['steps'] = round(work, 3), steps
+        out['report'] = report
+        LOG.info('Battle %s: %d other vehicles\' tracers, %d aim circles estimated (without: %s), %.0f ms of work in %d steps',
+                 battle_id, report.get('tracers', 0), report.get('circles', 0),
+                 ', '.join('%s %d' % kv for kv in sorted((report.get('absent') or {}).items())) or 'none', work * 1000.0, steps)
 
     def store_definitions_steps(self, hits):
         """The shared definitions the prepared `hits` refer to (records.shared_definitions) put in the store before the

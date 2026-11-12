@@ -710,6 +710,14 @@ class Consumption(object):
             if str(got) != self.arena: raise Unusable(W_FOREIGN % (got, self.arena))
             if not any(r.get('type') == 'roster' for r in records): raise Unusable(W_NO_START % 'no vehicle list')
             yield
+            # The other vehicles' aim circles estimated on their tracers (BACKLOG 82, replay_aim_other), a vehicle's
+            # preparation, a stretch of its size model, a tracer a step; published and stored with the records below.
+            started = TIMER()
+            for _ in exporter.replay_estimates_steps(name, records):
+                self.lap('estimates', started)
+                yield
+                started = TIMER()
+            self.lap('estimates', started)
             published = {}
             started = TIMER()
             for _ in exporter.publish_replay_steps(name, records, None, info, notes, True, published):

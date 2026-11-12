@@ -47,6 +47,7 @@ import copy
 import json
 
 from . import replay_aim
+from . import replay_aim_other
 
 SOURCE = 'replay'
 # Version of this assembly, in the battle's 'replay' block.
@@ -268,6 +269,8 @@ def build(records, live=None, battle_id=None):
     # The own shots' aim blocks rebuilt from the replay (BACKLOG 82): receipt times, and the comparison with the snapshot
     # the page draws where the live record has one.
     aim_blocks, aim_compared = replay_aim.attach(published_shots)
+    # The other vehicles' estimated circles (replay_aim_other, put on the records by the replay job): counted.
+    estimates, estimated = replay_aim_other.count(published_shots)
 
     # ---- hits: the replay's, the scene of the live ones -------------------------------------------------------------
     out_hits, sceneless, points_differ, candidates_dropped = [], 0, 0, 0
@@ -327,7 +330,8 @@ def build(records, live=None, battle_id=None):
               'shots':len(out_shots), 'shotsMatched':len(shot_live),
               'liveShotRecordsAttached':len(published_shots) - len(out_shots) - len(extra['shot']),
               'crits':len(out_crits) - len(extra['crit']), 'critsMatched':len(crit_live), 'liveOnly':live_only,
-              'livePublished':published_live, 'clockOffset':offset, 'aimBlocks':aim_blocks, 'aimCompared':aim_compared}
+              'livePublished':published_live, 'clockOffset':offset, 'aimBlocks':aim_blocks, 'aimCompared':aim_compared,
+              'aimEstimates':estimates, 'aimEstimateCircles':estimated}
     for k, name in (('replayServerTimeAtStart', 'serverTimeAtStart'), ('replayClientVersion', 'clientVersion')):
         if header.get(k) is not None: report[name] = header[k]
     if wall is not None or live.get('recording') == SNAPSHOTS:
