@@ -619,7 +619,7 @@
   function setMode(mode){
     scheduleLayout();
     mode=mode==='vehicles'?'vehicles':'battles';
-    var changed=mode!==sidebarMode;sidebarMode=mode;
+    var changed=mode!==sidebarMode;sidebarMode=mode;followSync();
     document.querySelectorAll('#sidebar-mode [data-mode]').forEach(function(b){b.setAttribute('aria-pressed',String(b.getAttribute('data-mode')===mode));});
     $('battles-pane').hidden=mode!=='battles';$('vehicles-pane').hidden=mode!=='vehicles';
     // One heading tile in both modes: in Battles it is the battle picker, in Vehicles the same slot carries
@@ -679,11 +679,16 @@
   }
   // #host=game&vehicle=<id>: open the Vehicles mode on that vehicle. The game window may also be navigated to a
   // new fragment while it is open, so the same path serves 'hashchange'.
+  // A fragment the mod sent because the hangar's vehicle changed (BACKLOG 94) carries 'follow=<n>', a count of its own -
+  // the key below holds it, so the same vehicle asked again is a new fragment - and is taken only while the page still
+  // browses vehicles: a battle on screen stays (followSync).
   function applyFragment(initial){
-    var id=String(fragment().vehicle||'');
+    var params=fragment(),id=String(params.vehicle||''),follow=params.follow?String(params.follow):'';
     if(!id||!VEHICLE_ID.test(id)){if(!initial)lastFragment=null;return;}
-    if(!initial&&id===lastFragment)return;
-    lastFragment=id;var list=loadCatalogue();setMode('vehicles');   // the shooter picked stays (inherit sweep, 26.09)
+    var key=follow?id+'#'+follow:id;
+    if(!initial&&key===lastFragment)return;
+    if(!initial&&follow&&!browsingVehicles()){lastFragment=key;if(window.console)console.info('Bullba Hits page: the hangar’s '+id+' is not shown - a battle is on screen');return;}
+    lastFragment=key;var list=loadCatalogue();setMode('vehicles');   // the shooter picked stays (inherit sweep, 26.09)
     // In the game the mod exports it if it has to (page_waits puts it first); outside it nobody will: no wait.
     function open(){
       pickVehicle(id,'model',host.game?{deadline:Date.now()+EXPORT_WAIT,waiting:EXPORTING}:{})
@@ -695,7 +700,7 @@
     var generation=vehicleGeneration;
     message(EXPORTING,true);
     list.then(function(){
-      if(generation!==vehicleGeneration||lastFragment!==id)return;
+      if(generation!==vehicleGeneration||lastFragment!==key)return;
       var row=catalogueRow(id);
       if(row&&row.outdated)askExport(row);
       open();
@@ -760,6 +765,18 @@
     if(params)Object.keys(params).forEach(function(k){payload[k]=params[k];});
     return host.send('bullba_hits',payload).then(function(){return true;},function(e){
       if(window.console)console.warn('Bullba Hits '+action+' command failed: '+e.message);return false;});
+  }
+  // THE PAGE FOLLOWS THE HANGAR (BACKLOG 94, user 12.11): a vehicle picked in the hangar's carousel while this window is
+  // open is shown here - but only while the page browses vehicles: the Vehicles panel, and no recorded hit on screen. A
+  // battle being studied is never taken off the screen by a click in the hangar (docs/PRODUCT.md does not say otherwise;
+  // the open point is in the backlog row). The mod is told when that changes ('follow'); a fragment it sends with
+  // 'follow=<n>' is taken only if the page still browses then (applyFragment), so a late word cannot pull a battle away.
+  var followSent=null;
+  function browsingVehicles(){return sidebarMode==='vehicles'&&!(activeHit&&!activeHit.vehicle);}
+  function followSync(){
+    if(!host.game)return;
+    var on=browsingVehicles();if(on===followSent)return;
+    followSent=on;sendCommand('follow',{on:on});
   }
   // The mod holds its extractions back while the user is working in the page: one
   // message a second is enough for the two-second window on the mod's side.
@@ -7521,7 +7538,7 @@
   var SCENE_PAINTERS=[['recorded shot',function(){detachFromRecord();}],['target switches',function(){modsVisible();}],['hit line',function(){shotStats();}],
     ['emulation',function(){updateAim();}],['target HP',function(){funModel();}],['characteristics',function(){ttxPaint();ttxTargetSync();}],
     ['roster',function(){renderFocus();}],['pose tile',function(){paintPose();}],['scene chips',function(){paintSceneChips();}],
-    ['vehicle list',function(){if(sidebarMode==='vehicles'){adoptHitVehicles();renderVehicleHeading();renderVehicles();}}],['help dots',function(){if(window.BullbaTips&&window.BullbaTips.refresh)window.BullbaTips.refresh();}]];
+    ['vehicle list',function(){if(sidebarMode==='vehicles'){adoptHitVehicles();renderVehicleHeading();renderVehicles();}}],['hangar follow',function(){followSync();}],['help dots',function(){if(window.BullbaTips&&window.BullbaTips.refresh)window.BullbaTips.refresh();}]];
   function sceneShown(){
     sceneBuild=false;
     // The key the index poll compares (loadBattle): the RECORDED hit the view is built from - the hit itself, the
@@ -10003,6 +10020,30 @@
   function persistSettings(){if(persistTimer===null)persistTimer=window.setTimeout(persistNow,300);}
   window.addEventListener('pagehide',function(){if(persistTimer!==null)persistNow();});
   document.addEventListener('visibilitychange',function(){if(document.hidden&&persistTimer!==null)persistNow();});
+  // THE GAME WINDOW'S SIZE (BACKLOG 94, user 12.11): − and + in the header step it, from the whole screen (step 1 of 7)
+  // through the usual size (2), the hangar's vehicle carousel left free - one row (3), two rows (4) - to three smaller
+  // ones. The step is a setting like the others (#window-size-value in the Settings box: remembered, restored, reset);
+  // its own handler tells the mod, which sizes the open window and opens the next one at that size (the mod knows the
+  // screen, the interface scale and the carousel; the page does not). Outside the game nothing can size the window:
+  // the buttons stand disabled and say why.
+  var WINDOW_STEPS=7,WINDOW_STEP_WORDS=['the whole screen','the usual size','a one-row vehicle carousel free','a two-row vehicle carousel free','smaller','smaller still','the smallest'];
+  function windowStep(){var n=Math.round(Number($('window-size-value').value));return n>=0&&n<WINDOW_STEPS?n:1;}
+  function paintWindowSize(){
+    var n=windowStep(),live=host.canSend(),now='\n• Now: step '+(n+1)+' of '+WINDOW_STEPS+', '+WINDOW_STEP_WORDS[n];
+    var away=live?'':'\n• Here: the browser sizes its own window; these work in the game';
+    $('window-smaller').disabled=!live||n>=WINDOW_STEPS-1;$('window-larger').disabled=!live||n<=0;
+    $('window-smaller').title='Smaller window\nMakes the game’s window of this page one step smaller.'+now
+      +'\n• Steps 3 and 4: the hangar’s vehicle carousel stays free below - one row, two rows\n• Kept with the other settings'+away;
+    $('window-larger').title='Larger window\nMakes the game’s window of this page one step larger.'+now
+      +'\n• Step 1: the whole screen\n• Kept with the other settings'+away;
+  }
+  $('window-size-value').onchange=function(){paintWindowSize();sendCommand('windowSize',{step:windowStep()});};
+  function stepWindow(by){
+    var el=$('window-size-value'),n=Math.max(0,Math.min(WINDOW_STEPS-1,windowStep()+by));if(n===windowStep())return;
+    el.value=String(n);el.dispatchEvent(new Event('change'));   // its handler, and the Settings' one save
+  }
+  $('window-smaller').onclick=function(){stepWindow(1);};
+  $('window-larger').onclick=function(){stepWindow(-1);};
   function restoreSettings(){
     var stored=settingsStored(),migrated=false;
     if(!stored){stored=settingsLegacy();migrated=!!stored;}
@@ -10383,7 +10424,9 @@
   // The catalogue is read once at start when the fragment names a vehicle, whatever the remembered mode is.
   restoreSidebar();
   refresh();applyFragment(true);
-  window.addEventListener('hashchange',function(){applyFragment(false);});
+  // One console line per fragment that reached this page without a reload (game.log in the game): whether the game's
+  // window re-navigated to a new fragment keeps the page or loads it again (BACKLOG 94) is read from it.
+  window.addEventListener('hashchange',function(){if(window.console)console.info('Bullba Hits page: new fragment without a reload ('+String(fragment().vehicle||'no vehicle')+')');applyFragment(false);});
   // The same poll watches the viewer's frame loop: a frame that the host never delivered is dropped here, and
   // the frame-rate figure is refreshed (or cleared) even when nothing is being drawn. It is a chain of
   // timeouts rather than one interval because the period changes: 2 s while a collision model is still being

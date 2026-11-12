@@ -841,6 +841,97 @@ async function topBand(browser, folder) {
   }
 }
 
+// ---- THE GAME WINDOW'S SIZE AND THE PAGE FOLLOWING THE HANGAR (BACKLOG 94, user 12.11) --------------------------------------
+// The user wants to see the hangar's vehicle carousel with the page open, pick a tank there and have the page show it; and
+// everyone picks the window size that suits his monitor. On the page: − and + at the header's right edge step the window
+// (the step is a setting: kept and restored with the others; the mod sizes the window), disabled outside the game; the page
+// tells the mod whether it browses vehicles ('follow'), and a fragment the mod sends for a hangar change ('follow=<n>') is
+// taken only while it does - a recorded battle on screen stays. The game's own window is the mod's side: tests/py27/window_blank.py.
+async function windowAndFollow(browser, folder) {
+  const ev0 = async (page, js) => page.evaluate(js);
+  const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+  const HEAD = `(() => { const $ = (id) => document.getElementById(id), laid = (e) => e.getClientRects().length > 0, h = document.querySelector('header').getBoundingClientRect();
+    const r = $('window-size').getBoundingClientRect(), s = $('window-smaller'), l = $('window-larger');
+    return {laid: laid(s) && laid(l), right: Math.round(h.right - r.right), inHeader: r.top >= h.top && r.bottom <= h.bottom, smaller: s.disabled, larger: l.disabled,
+      tipS: s.getAttribute('data-tip') || s.title || '', tipL: l.getAttribute('data-tip') || l.title || '', value: $('window-size-value').value,
+      stored: (() => { try { return (JSON.parse(localStorage.getItem('bullba-settings')) || {values: {}}).values['window-size-value']; } catch (e) { return 'unreadable'; } })()}; })()`;
+  const setStep = (n) => `(() => { const e = document.getElementById('window-size-value'); e.value = '${n}'; e.dispatchEvent(new Event('change')); return true; })()`;
+  // Outside the game: the buttons stand, disabled, and say why; the step is a setting of the page.
+  let page = await browser.open(url.pathToFileURL(path.join(folder, 'Viewer.html')).href, INIT);
+  try {
+    await ev0(page, DRIVER);
+    await ev0(page, `(async () => { for (let i = 0; i < 100 && !(document.querySelector('#hits [data-hit]') && window.__bullbaViewers.length); i++) await new Promise((r) => setTimeout(r, 100)); await __bt.settle(); })()`);
+    const a = await ev0(page, HEAD);
+    ok('window size: − and + stand at the header\'s right edge, in the header; outside the game both disabled, their words say so and name the step',
+       a.laid && a.inHeader && a.right < 80 && a.smaller && a.larger && /^Smaller window\nMakes the game’s window of this page one step smaller\.\n• Now: step 2 of 7, the usual size\n/.test(a.tipS)
+       && /^Larger window\n/.test(a.tipL) && /these work in the game/.test(a.tipS) && /these work in the game/.test(a.tipL), JSON.stringify(a));
+    await ev0(page, setStep(3)); await pause(500);
+    const b = await ev0(page, HEAD);
+    ok('window size: the step is kept with the other settings (bullba-settings)', b.stored === '3' && /step 4 of 7, a two-row vehicle carousel free/.test(b.tipS), JSON.stringify(b));
+  } finally {
+    await browser.send('Target.closeTarget', {targetId: page.targetId});
+  }
+  // In the game: the channel stubbed, every command the page sends kept.
+  const GAME = INIT + `;(() => { window.__sent = []; window.jsHostQuery = (q) => { try { window.__sent.push(JSON.parse(q.request).params); } catch (e) {} q.onSuccess('ok'); }; })();`;
+  page = await browser.open(url.pathToFileURL(path.join(folder, 'Viewer.html')).href + '#host=game', GAME);
+  const ev = (js) => ev0(page, js);
+  const sent = (action) => ev(`window.__sent.filter((p) => p.action === '${action}')`);
+  const STATE = `(() => { const v = window.__bullbaViewers[window.__bullbaViewers.length - 1], h = v && v.loadedData ? v.loadedData.hit : null;
+    return {side: document.querySelector('#sidebar-mode [aria-pressed="true"]').getAttribute('data-mode'), scene: h ? String(h.id) : null, vehicle: !!(h && h.vehicle),
+      heading: document.getElementById('battle-map').textContent}; })()`;
+  try {
+    await ev(DRIVER);
+    await ev(`(async () => { for (let i = 0; i < 100 && !(document.querySelector('#hits [data-hit]') && window.__bullbaViewers.length); i++) await new Promise((r) => setTimeout(r, 100)); await __bt.settle(); })()`);
+    const boot = await sent('windowSize'), c = await ev(HEAD);
+    ok('window size, in the game: the page tells the mod the kept step when it starts (the one a page before it chose); the buttons are live',
+       boot.length >= 1 && boot[boot.length - 1].step === 3 && !c.smaller && !c.larger, JSON.stringify({boot: boot, head: c}));
+    await ev("document.getElementById('window-larger').click()"); await ev("document.getElementById('window-larger').click()"); await ev("document.getElementById('window-larger').click()");
+    const up = await sent('windowSize'), d = await ev(HEAD);
+    ok('window size, in the game: + three times - steps 3, 2, 1 of the store\'s 4 sent, one each; at the whole screen + is disabled',
+       up.slice(-3).map((p) => p.step).join() === '2,1,0' && d.larger && !d.smaller && d.value === '0', JSON.stringify({sent: up.map((p) => p.step), head: d}));
+    await ev("document.getElementById('window-larger').click()");
+    ok('window size, in the game: + at the whole screen sends nothing', (await sent('windowSize')).length === up.length);
+    await ev("document.getElementById('window-smaller').click()");
+    const down = await sent('windowSize');
+    ok('window size, in the game: − sends the next smaller step', down.length === up.length + 1 && down[down.length - 1].step === 1, JSON.stringify(down.map((p) => p.step)));
+    // Following: a recorded battle on screen is never pulled away by the hangar.
+    await ev("__bt.act.side('battles')"); await ev('__bt.settle()');
+    await ev('__bt.act.hit(0)'); await ev('__bt.settle()');
+    const battle = await ev(STATE), f1 = await sent('follow');
+    ok('follow: a recorded hit in the Hits panel - the mod is told the page does not follow (or was never told it does)',
+       battle.scene && !battle.vehicle && (!f1.length || f1[f1.length - 1].on === false), JSON.stringify({battle: battle, follow: f1}));
+    await ev(`location.hash = '#host=game&vehicle=pm_quebec&follow=1'`); await pause(300); await ev('__bt.settle()');
+    const kept = await ev(STATE);
+    ok('follow: the mod\'s fragment for a hangar change while a battle is on screen - the battle stays, the panel too',
+       kept.side === 'battles' && kept.scene === battle.scene && !kept.vehicle, JSON.stringify(kept));
+    await ev("__bt.act.side('vehicles')"); await ev('__bt.settle()');
+    // Another exported vehicle of the list, for the hangar to pick.
+    const ids = await ev(`[].filter.call(document.querySelectorAll('#vehicles [data-vehicle]'), (b) => b.getAttribute('data-exported') !== 'false').map((b) => b.getAttribute('data-vehicle'))`);
+    const other = ids.filter((id) => id !== 'pm_quebec')[0];
+    const picker = await ev(STATE), f2 = await sent('follow');
+    ok('follow: the Vehicles panel opened over the recorded hit - still not following (the battle is on screen)',
+       picker.scene === battle.scene && (!f2.length || f2[f2.length - 1].on === false), JSON.stringify({picker: picker, follow: f2}));
+    await ev("__bt.act.list('pm_quebec')"); await ev('__bt.settle(15000)');
+    const browsing = await ev(STATE), f3 = await sent('follow');
+    ok('follow: a vehicle browsed - the mod is told the page follows', browsing.vehicle && f3.length && f3[f3.length - 1].on === true, JSON.stringify({browsing: browsing, follow: f3}));
+    await ev(`location.hash = '#host=game&vehicle=${other}&follow=2'`); await pause(300); await ev('__bt.settle(15000)');
+    const moved = await ev(STATE);
+    ok('follow: the hangar\'s vehicle while browsing - the page shows it', !!other && moved.vehicle && moved.side === 'vehicles' && moved.heading !== browsing.heading, JSON.stringify({other: other, before: browsing.heading, moved: moved}));
+    await ev("__bt.act.list('pm_quebec')"); await ev('__bt.settle(15000)');
+    await ev(`location.hash = '#host=game&vehicle=${other}&follow=3'`); await pause(300); await ev('__bt.settle(15000)');
+    const again = await ev(STATE);
+    ok('follow: the same hangar vehicle again after another was picked on the page - shown again (the count makes it a new fragment)',
+       !!other && again.heading === moved.heading && again.heading !== browsing.heading, JSON.stringify({again: again, moved: moved.heading}));
+    await ev("__bt.act.side('battles')"); await ev('__bt.settle()');
+    const f4 = await sent('follow');
+    ok('follow: back to the Hits panel - the mod is told the page no longer follows', f4.length && f4[f4.length - 1].on === false, JSON.stringify(f4));
+    await ev(setStep(1)); await pause(500);
+    ok('window size and follow: no uncaught exception in the page', page.errors.length === 0, page.errors.slice(0, 3).join(' | '));
+  } finally {
+    await browser.send('Target.closeTarget', {targetId: page.targetId});
+  }
+}
+
 // ---- THE TWO SCENES ON THE USER'S OWN BATTLES (local fixture, not in git) -------------------------------------------------
 // tests/fixtures-local/page-two-scenes-2026-11-11/data: two battles published from their replays with the mod's own
 // Exporter.publish_replay on the local replay fixtures (as tests/test_replay_scene.py publishes them): 02.11 19:13 - every
@@ -910,6 +1001,8 @@ async function main() {
     // --detach: only a recorded hit's scene turned off its pose (BACKLOG 90).
     if (process.argv.includes('--detach')) { await poseDetach(browser, folder); console.log('real page, the pose detach only (' + browser.product + '): ' + checks + ' checks, ' + failures + ' failed'); return failures ? 1 : 0; }
     if (process.argv.includes('--sides')) { await swapSides(browser, folder); console.log('real page, the swap sides only (' + browser.product + '): ' + checks + ' checks, ' + failures + ' failed'); return failures ? 1 : 0; }
+    // --window: only the game window's size buttons and the page following the hangar (BACKLOG 94).
+    if (process.argv.includes('--window')) { await windowAndFollow(browser, folder); console.log('real page, the window size and follow only (' + browser.product + '): ' + checks + ' checks, ' + failures + ' failed'); return failures ? 1 : 0; }
     await inheritMatrix(browser, folder);
     if (MATRIX_ONLY) { console.log('real page, the inheritance matrix only (' + browser.product + '): ' + checks + ' checks, ' + failures + ' failed'); return failures ? 1 : 0; }
     await modeState(browser, folder);
@@ -920,6 +1013,7 @@ async function main() {
     await topBand(browser, folder);
     await hullLine(browser, folder);
     await poseDetach(browser, folder);
+    await windowAndFollow(browser, folder);
     page =await browser.open(url.pathToFileURL(path.join(folder, 'Viewer.html')).href, INIT);
     const ev = (js) => page.evaluate(js);
     await ev(DRIVER);

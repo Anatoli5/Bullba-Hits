@@ -10,6 +10,8 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 - **HP bar with ⌖ only again:** the health bar over the scene shows only while the shooting emulation (⌖) is on, as before 1.07; the battle's HP stays in the target's characteristics panel.
 - **Opening from a vehicle preview:** while you are looking at a vehicle in the preview (including one you do not own), the Bullba Hits button in the mods list now opens the page on that vehicle instead of the one selected in your hangar - your own configuration if you own it, the top one otherwise. With no preview open it opens on the hangar vehicle as before.
 - **Bullba Hits in the Vehicle Comparison menu:** right-clicking a vehicle in the Vehicle Comparison screen now offers "Bullba Hits", like the hangar carousel; it opens the page on that vehicle with the modules (turret, gun, chassis) chosen for it in the comparison.
+- **Window size buttons:** − and + at the right end of the page's header make the game's Bullba Hits window one step smaller or larger, from the whole screen through the usual size to two sizes that leave the hangar's vehicle carousel free below the window (one row, then two rows) and three smaller ones. The chosen size is kept with the page's other settings and used the next time the window opens. Outside the game the buttons are greyed out.
+- **The page follows the hangar:** while the page shows a vehicle from the Vehicles panel, picking another vehicle in the hangar's carousel shows that vehicle on the page. A recorded battle you are looking at is never replaced this way.
 
 ## 1.08 (2026-11-12)
 

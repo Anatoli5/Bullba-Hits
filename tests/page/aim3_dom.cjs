@@ -573,8 +573,8 @@ if (window.BullbaTips && window.BullbaTips.refresh) {
   const own = window.BullbaTips.refresh;
   window.BullbaTips.refresh = function () { tipRefreshes++; return own.apply(this, arguments); };
 }
-ok('scene-one-path: web/tooltips.js runs beside it and takes the page’s seven static help dots (the circle tiles’ one since 24.09; the shell row’s gone 25.09)',
-   !tipsError && staticDots.length === 7 && !!(window.BullbaTips && window.BullbaTips.refresh),
+ok('scene-one-path: web/tooltips.js runs beside it and takes the page’s eight static help dots (the circle tiles’ one since 24.09; the shell row’s gone 25.09; the window size’s since 12.11)',
+   !tipsError && staticDots.length === 8&& !!(window.BullbaTips && window.BullbaTips.refresh),
    tipsError ? String(tipsError.stack) : '(' + staticDots.length + ' dots)');
 // Since 22.09 the page keeps listeners of its own on the document from the start (the slider under the
 // cursor takes the wheel and the arrows), so the aim mode's handlers are counted against that baseline.

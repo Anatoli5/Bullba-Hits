@@ -896,3 +896,7 @@ header>.settings-menu>.settings-content{top:calc(100% + 8px);right:0;max-height:
 #shot-scenes button.scene-chip.differs{border-color:var(--warn);color:var(--warn)}
 .scene-chip.differs{border-color:var(--warn);color:var(--warn)}
 .scene-chip.server{background:transparent;padding-left:2px}
+/* The game window's size (BACKLOG 94, 12.11): − and + at the header's right edge, the page's glyph buttons (.swap-roles),
+   their own help dot beside them. Outside the game (no host) they stand disabled: the browser sizes its own window. */
+.window-size{display:flex;align-items:center;gap:6px;flex-shrink:0}
+.window-size .window-step{min-width:34px;padding:5px 9px;font-size:18px}

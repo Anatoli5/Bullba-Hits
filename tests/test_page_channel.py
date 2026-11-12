@@ -129,6 +129,69 @@ class WebCommandTests(unittest.TestCase):
             modmain.page_ttx('czech:Cz17_Vz_55')
         self.assertEqual(requests, ['czech:Cz17_Vz_55'])
 
+    def test_window_size_steps_on_the_users_screen(self):
+        # BACKLOG 94 (12.11): his screen 2474 x 1354 at interface scale 1 (game.log 12.11). Step 1 is the size the window
+        # always had (the log's 2276 x 1191); steps 2-3 leave the carousel's 122 / 234 strip free under a centred window.
+        sizes = presentation.window_sizes(2474.0, 1354.0)
+        self.assertEqual(sizes, [(2458, 1306), (2276, 1191), (2276, 1046), (2276, 822), (1979, 704), (1682, 622), (1434, 541)])
+        frame_h = presentation.FRAME_GUESS[0]
+        for step, strip in ((2, 122), (3, 234)):
+            self.assertLessEqual(sizes[step][1] + frame_h + 2 * strip, 1354)
+        # A small screen: no step under the readable minimum, none over the screen, none larger than the one before.
+        small = presentation.window_sizes(1280.0, 720.0)
+        self.assertTrue(all(w >= 960 and h >= 540 and w <= 1280 and h <= 720 for w, h in small))
+        self.assertTrue(all(a[0] >= b[0] and a[1] >= b[1] for a, b in zip(small, small[1:])))
+
+    def test_window_size_and_follow_commands_reach_presentation_only(self):
+        handler = presentation.web_handlers()[0].handler
+        steps = []
+        with patch.object(presentation, 'set_window_step', steps.append):
+            for step in (0, 6, 2, 7, -1, True, '3', None):
+                handler(Command(action='windowSize', step=step), {})
+        self.assertEqual((steps, self.calls), ([0, 6, 2], []))
+        self.addCleanup(presentation.set_page_follows, False)
+        with patch.object(presentation, 'window_open', lambda: True):
+            handler(Command(action='follow', on=True), {})
+            self.assertTrue(presentation.page_follows())
+            handler(Command(action='follow', on='yes'), {})
+            self.assertFalse(presentation.page_follows())
+        handler(Command(action='follow', on=True), {})
+        with patch.object(presentation, 'window_open', lambda: False):
+            self.assertFalse(presentation.page_follows())
+
+    def test_the_page_follows_a_change_of_the_hangar_vehicle_type_only_while_it_browses(self):
+        # BACKLOG 94: g_currentVehicle.onChanged fires for the same vehicle too (modules, crew, a return from a preview);
+        # only another TYPE is a choice in the carousel, and only a page browsing vehicles is pointed at it.
+        opened, waited, requested = [], [], []
+        recorder = types.SimpleNamespace(request_vehicle=lambda descr, source: requested.append((descr.type.name, source)),
+                                         prioritise=lambda types_: waited.append(list(types_)))
+        def vehicle(name):
+            return types.SimpleNamespace(descriptor=types.SimpleNamespace(type=types.SimpleNamespace(name=name)))
+        hangar = types.SimpleNamespace(item=vehicle('germany:G42_Maus'), isPresent=lambda: True)
+        events = modmain.VehicleEvents(recorder)
+        events.hangar = hangar
+        follows = [True]
+        with patch.dict(sys.modules, TOP_LEVEL), patch.object(modmain, '_recorder', recorder), \
+                patch.object(presentation, 'page_follows', lambda: follows[0]), \
+                patch.object(presentation, 'open_in_game', lambda path, fragment: opened.append(fragment)):
+            events.on_hangar_vehicle()                       # the first vehicle seen: nothing to follow from
+            events.on_hangar_vehicle()                       # the same vehicle again (its crew, a return from a preview)
+            hangar.item = vehicle('ussr:R45_IS-7')
+            events.on_hangar_vehicle()                       # another vehicle picked in the carousel
+            events.on_hangar_vehicle()
+            follows[0] = False                               # a battle on the page now
+            hangar.item = vehicle('china:Ch67_BZ_79')
+            events.on_hangar_vehicle()
+            follows[0] = True
+            hangar.item = vehicle('ussr:R45_IS-7')
+            events.on_hangar_vehicle()                       # the same vehicle as the page's last: a new fragment all the same
+        self.assertEqual(len(requested), 6)                  # every change still asks for its export, as before
+        self.assertEqual(len(opened), 2)
+        self.assertRegex(opened[0], r'^host=game&vehicle=ussr-R45_IS-7&follow=\d+$')
+        self.assertRegex(opened[1], r'^host=game&vehicle=ussr-R45_IS-7&follow=\d+$')
+        self.assertNotEqual(opened[0], opened[1])
+        self.assertEqual(waited, [['ussr:R45_IS-7'], ['ussr:R45_IS-7']])
+
     def test_open_command_marks_the_page_open_for_the_ttx_sweep(self):
         # 24.09: the page, open in the game, says so every few seconds; the recorder holds it open for 12 s.
         opened = []

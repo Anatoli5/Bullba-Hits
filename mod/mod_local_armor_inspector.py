@@ -783,6 +783,7 @@ class VehicleEvents(object):
         self.hangar = None
         self.events = None
         self.arena = None
+        self.shown = None       # the type name of the hangar's vehicle last seen (follow_hangar)
         self.attempts = 0
         # Roster descriptors seen during the battle, exported only after it: the
         # export thread shares the interpreter lock with the game, and thirty
@@ -817,12 +818,19 @@ class VehicleEvents(object):
         self.hangar, self.events = None, None
 
     def on_hangar_vehicle(self, *args):
-        """The vehicle selected in the hangar, on every change. Duplicates are dropped."""
+        """The vehicle selected in the hangar, on every change. Duplicates are dropped.
+
+        The open page follows a change of the vehicle's TYPE (BACKLOG 94, follow_hangar): onChanged also fires for the
+        same vehicle - its modules, crew, repair, a return from a preview or the comparison (during those the hangar's
+        vehicle stays as it was) - and none of that is a choice in the carousel."""
         try:
             if self.hangar is None or not self.hangar.isPresent(): return
             vehicle = self.hangar.item
             if vehicle is None: return
             self.recorder.request_vehicle(vehicle.descriptor, 'hangar')
+            type_name = str(vehicle.descriptor.type.name)
+            previous, self.shown = self.shown, type_name
+            if previous is not None and previous != type_name: follow_hangar(type_name)
         except Exception: LOG.exception('Hangar vehicle export request failed')
 
     def on_avatar_become_player(self, *args):
@@ -1822,6 +1830,29 @@ def hangar_fragment(type_name=None):
     except Exception:
         LOG.exception('Hangar vehicle unavailable; the viewer opens on the battles')
     return 'host=game'
+
+
+_follow_count = 0
+
+
+def follow_hangar(type_name):
+    """The hangar's vehicle changed to another type (VehicleEvents.on_hangar_vehicle): the open page shows it, if it
+    browses vehicles (BACKLOG 94, user 12.11). The page says when it does ('follow'): a recorded battle the user studies
+    is never taken off the screen, and outside the Vehicles mode nothing is pointed anywhere (no decision of the user
+    on that; docs/BACKLOG.md row 94). The path is the context menu's: the vehicle first in the export queue, the open
+    window re-navigated. The fragment carries a count of its own ('follow=<n>'): a navigation to the address the window
+    already has is no change of its fragment and the page would not see it (measured in Chrome 157, 12.11), and the page
+    takes a 'follow' fragment only while it still browses vehicles."""
+    global _follow_count
+    try:
+        from local_armor_inspector import presentation
+        if not presentation.page_follows(): return
+        _follow_count += 1
+        LOG.info('Bullba Hits page follows the hangar to %s', type_name)
+        page_waits(type_name)
+        presentation.open_in_game(VIEWER_PATH, hangar_fragment(type_name) + '&follow=%d' % _follow_count)
+    except Exception:
+        LOG.exception('Bullba Hits could not follow the hangar vehicle')
 
 
 def page_waits(type_name):

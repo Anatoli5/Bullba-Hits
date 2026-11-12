@@ -3,6 +3,7 @@
 from __future__ import absolute_import
 import logging
 import math
+import numbers
 import os
 import re
 import time
@@ -20,6 +21,12 @@ _open_request = None
 _sweep_request = None
 _battle_request = None
 _warned = set()
+# The page's window size step (BACKLOG 94): the page's Settings own it ('windowSize'); this is the session's copy of the
+# last step the page told, so the next open of the window takes that size at once. None until a page said one.
+_window_step = None
+# Whether the page browses vehicles now ('follow', BACKLOG 94): only then does a change of the hangar's vehicle point
+# the open window at it. A new window starts without it, until its page says.
+_page_follows = False
 BATTLE_ID = re.compile(r'^[-a-zA-Z0-9_]{1,100}\Z')
 
 
@@ -152,15 +159,17 @@ def _warn_once(key, message, *args):
 def _handle_web_command(command, ctx):
     """One w2c command from the page, on the game thread. Only the request is done here.
 
-    Eight fire-and-forget actions: 'exportVehicle' asks for one vehicle type,
+    Ten fire-and-forget actions: 'exportVehicle' asks for one vehicle type,
     'exportTtx' for the characteristics file of one type (no collision models),
     'busy' says the user is dragging or zooming the page right now,
     'prioritise' names the vehicle types whose collision models the page is
     waiting for, 'open' says the page is open (a sweep may run) and
     'sweepStart'/'sweepStop' are the user's Start and Stop of a sweep, its
     'kind' - 'ttx' when absent, or 'models' - and 'prepareBattle' names the saved
-    battle the page opened whose file is stale ('battleId').
-    None of them may cost the game thread more than a flag.
+    battle the page opened whose file is stale ('battleId'), 'windowSize' is the
+    step of the window's size the page's Settings hold ('step', BACKLOG 94) and
+    'follow' says whether the page browses vehicles now ('on').
+    None of them may cost the game thread more than a flag (a resize goes out on the next tick).
     """
     try:
         action = getattr(command, 'action', None)
@@ -186,6 +195,16 @@ def _handle_web_command(command, ctx):
                 _warn_once('open', 'Bullba Hits page command: the recorder is not running')
                 return
             _open_request()
+            return
+        if action == 'windowSize':
+            step = getattr(command, 'step', None)
+            if isinstance(step, bool) or not isinstance(step, numbers.Integral) or not 0 <= step < WINDOW_STEPS:
+                _warn_once('window-step', 'Bullba Hits page command: no window size step in %r', step)
+                return
+            set_window_step(int(step))
+            return
+        if action == 'follow':
+            set_page_follows(getattr(command, 'on', None) is True)
             return
         if action == 'prepareBattle':
             battle_id = getattr(command, 'battleId', None)
@@ -278,10 +297,126 @@ def web_handlers():
             kind = Field(type=basestring)
             # 'prepareBattle': the saved battle the page opened (BACKLOG 55).
             battleId = Field(type=basestring)
+            # 'windowSize': the step of the window's size (0 full screen .. WINDOW_STEPS - 1); 'follow': whether the page
+            # browses vehicles, so the hangar's choice may point it at another (BACKLOG 94).
+            step = Field(type=int)
+            on = Field(type=bool)
         return [createCommandHandler(WEB_COMMAND, BullbaHitsSchema, _handle_web_command, None)]
     except Exception:
         LOG.exception('Bullba Hits page command could not be registered')
         return []
+
+
+# ---- the window's size, by steps (BACKLOG 94, user 12.11) ----------------------------------------------------------
+# Everything here is in Flash units, the units the window is laid out in: one screen pixel at interface scale 1, `scale`
+# pixels at another (GUI.screenResolution is in pixels and the client divides by the scale for its Flash positions -
+# WoT-Base KNOWLEDGE-client, the crosshair's position; checked). The steps, from the largest: 0 the whole screen; 1 the
+# size the window always had (92 % x 88 %); 2 and 3 the hangar's vehicle carousel left free - the client centres the
+# window (BrowserWindow.updatePosition), so the strip at the bottom is free when window <= screen - 2 x strip; then three
+# smaller ones that narrow the window too. Steps 1-3 keep the width: the carousel needs height only.
+WINDOW_STEPS = 7
+WINDOW_STEP_DEFAULT = 1
+# The carousel's strip from the bottom edge: 122 for one row or a small double row, 234 for two big rows (TankCarousel,
+# client 2.4.1.1 bytecode; outputs/browser-window-abilities-2026-11-12.md section 6). Checked.
+CAROUSEL_STRIPS = (122, 234)
+# NOT READ - AN ESTIMATE: the window's frame around the page (the title bar with the close button, the paddings), height
+# and width. It is Flash art; Python is given only the page's size and the mod has no way to read it. If the real frame
+# is taller, a "carousel free" step overlaps the strip by half the difference; the game will show it.
+FRAME_GUESS = (48, 16)
+# NOT READ - AN ESTIMATE: the carousel's art above its background and its hover mask (12 in the client's code), kept free too.
+CAROUSEL_MARGIN = 16
+# The smallest page kept readable (a choice): the page's layout is checked down to 1024 wide (tests/page/real_page.cjs
+# topBand), and 540 high still holds the scene and its toolbar.
+WINDOW_MIN = (960, 540)
+# The smaller steps below the carousel ones: share of the screen's width and the most of its height.
+WINDOW_SMALL = ((.80, .52), (.68, .46), (.58, .40))
+
+
+def interface_scale():
+    """The client's interface scale (1.0 at 100 %): settingsCore.interfaceScale.get() - InterfaceScaleManager.get, its
+    names read in the 2.4.1.1 bytecode. 1.0 when it cannot be read."""
+    try:
+        from helpers import dependency
+        from skeletons.account_helpers.settings_core import ISettingsCore
+        scale = float(dependency.instance(ISettingsCore).interfaceScale.get())
+        return scale if 0.5 <= scale <= 4 else 1.0
+    except Exception:
+        return 1.0
+
+
+def stage_size():
+    """(width, height, scale): the game's screen in Flash units - the smaller of GUI.screenResolution and
+    BigWorld.screenSize (what the open always took), divided by the interface scale - and that scale."""
+    import GUI
+    width, height = GUI.screenResolution()
+    try:
+        import BigWorld as _bw
+        client_w, client_h = _bw.screenSize()
+        width, height = min(width, int(client_w)), min(height, int(client_h))
+    except Exception:
+        pass
+    scale = interface_scale()
+    return float(width) / scale, float(height) / scale, scale
+
+
+def window_sizes(width, height):
+    """The page's size at each step, from the largest, for a screen of width x height Flash units: WINDOW_STEPS pairs,
+    none larger than the one before it, none smaller than WINDOW_MIN (unless the screen itself is) nor over the screen."""
+    frame_h, frame_w = FRAME_GUESS
+    usual = (int(width * .92), int(height * .88))
+    rows = [(int(width - frame_w), int(height - frame_h)), usual]
+    for strip in CAROUSEL_STRIPS:
+        rows.append((usual[0], min(rows[-1][1], int(height - 2 * strip - frame_h - CAROUSEL_MARGIN))))
+    for share_w, share_h in WINDOW_SMALL:
+        rows.append((int(width * share_w), min(rows[-1][1], int(height * share_h))))
+    top_w, top_h = int(width - frame_w), int(height - frame_h)
+    low_w, low_h = min(WINDOW_MIN[0], top_w), min(WINDOW_MIN[1], top_h)
+    out = []
+    for w, h in rows:
+        w, h = max(low_w, min(w, top_w)), max(low_h, min(h, top_h))
+        if out: w, h = min(w, out[-1][0]), min(h, out[-1][1])
+        out.append((w, h))
+    return out
+
+
+def window_size(step):
+    """The page's size at this step on the screen of now, in Flash units."""
+    width, height, scale = stage_size()
+    return window_sizes(width, height)[max(0, min(WINDOW_STEPS - 1, int(step)))]
+
+
+def window_open():
+    """True while the mod's window is open: the controller still knows its browser."""
+    if _browser_id is None: return False
+    try:
+        from helpers import dependency
+        from skeletons.gui.game_control import IBrowserController
+        return dependency.instance(IBrowserController).getBrowser(_browser_id) is not None
+    except Exception:
+        return False
+
+
+def set_window_step(step):
+    """The page's step of the window's size (its Settings own it): kept for the next open, and the open window takes it
+    now (WindowTrace.resize) unless it already has it."""
+    global _window_step
+    _window_step = step
+    trace = _trace
+    if trace is None or trace.closed or not window_open(): return
+    if trace.step == step: return
+    trace.resize(step)
+
+
+def set_page_follows(on):
+    """The page says whether it browses vehicles now: only then does the hangar's choice point it at another."""
+    global _page_follows
+    if on != _page_follows: LOG.info('Bullba Hits page %s the hangar vehicle', 'follows' if on else 'does not follow')
+    _page_follows = on
+
+
+def page_follows():
+    """True when the window is open and its page browses vehicles (BACKLOG 94)."""
+    return _page_follows and window_open()
 
 
 # The mod's own requests to draw the window again, per page of a window: a bound, in case a redraw makes the engine
@@ -332,7 +467,10 @@ class WindowTrace(object):
     EVENTS = ('onReady', 'onLoadStart', 'onLoadEnd', 'onResized', 'onTextureStateChanged')
     VIEW_CALLS = ('as_loadBitmapS', 'as_resizeS', 'as_loadingStartS', 'as_loadingStopS')
 
-    def __init__(self, controller, browser_id, web, at, ticket=None):
+    def __init__(self, controller, browser_id, web, at, ticket=None, step=WINDOW_STEP_DEFAULT):
+        self.step = step        # the size step this window has now (BACKLOG 94)
+        self.window = None      # the client's BrowserWindow view of this window: the one that can change its size
+        self.window_hook = None # telemetry.wrap record of BrowserWindow._onRegisterFlashComponent, while it stands
         self.controller = controller
         self.browser_id = browser_id
         self.web = web
@@ -405,6 +543,58 @@ class WindowTrace(object):
         except Exception:
             _warn_once('trace-view', 'Bullba Hits window: its Flash side could not be followed')
             LOG.debug('Bullba Hits window: Browser view', exc_info=True)
+        # The window's own view (BACKLOG 94): BrowserWindow._onRegisterFlashComponent(viewPy, alias) is what calls the Browser
+        # view's init above, on the window that carries this browser's id (_BrowserWindow__browserID, 2.4.1.1 bytecode);
+        # its as_setSizeS is the one call that changes the size of an open window. Taken back with the init hook.
+        try:
+            from gui.Scaleform.daapi.view.lobby.BrowserWindow import BrowserWindow
+            from .telemetry import wrap
+            trace = self
+            def make_window(original):
+                def register(window, *args, **kwargs):
+                    try:
+                        trace.bind_window(window)
+                    except Exception:
+                        _warn_once('trace-window', 'Bullba Hits window: its frame was not found; a new size waits for the next open')
+                    return original(window, *args, **kwargs)
+                return register
+            self.window_hook = wrap(BrowserWindow, '_onRegisterFlashComponent', make_window)
+            if self.window_hook is None:
+                _warn_once('trace-window', 'Bullba Hits window: its frame was not found; a new size waits for the next open')
+        except Exception:
+            _warn_once('trace-window', 'Bullba Hits window: its frame was not found; a new size waits for the next open')
+            LOG.debug('Bullba Hits window: BrowserWindow view', exc_info=True)
+
+    def bind_window(self, window):
+        """BrowserWindow._onRegisterFlashComponent of some window: this one's carries this browser's id."""
+        if self.closed or self.window is not None: return
+        if getattr(window, '_BrowserWindow__browserID', None) != self.browser_id: return
+        self.window = window
+
+    def resize(self, step):
+        """The open window to the size of this step (the page asked, set_window_step). On the next tick, never from inside the
+        page's command; the client re-centres the window and the page is drawn again at its new size (as_setSize ->
+        Browser.updateSize -> the engine's resize -> as_resize -> the bitmap again, the path of every open), so the redraw
+        requests start again as for a new page. False when this window's view was not found: the size waits for the next open."""
+        if self.closed: return False
+        window = self.window
+        if window is None:
+            _warn_once('window-resize', 'Bullba Hits window: its frame was not found; the new size applies at the next open')
+            return False
+        width, height = window_size(step)
+        self.step = step
+        if 'invalidateView' in self.original: self.redraws = 0
+        self.say('size step %d of %d asked: %dx%d', step + 1, WINDOW_STEPS, width, height)
+        def apply():
+            if self.closed or self.window is not window: return
+            window.as_setSizeS(width, height)
+        try:
+            import BigWorld
+            BigWorld.callback(0, self.guarded('resize', apply))
+            return True
+        except Exception:
+            _warn_once('window-resize-later', 'Bullba Hits window: no timer; the new size applies at the next open')
+            return False
 
     def patch(self, target, name, note, keep=False):
         """An instance attribute over target.name: `note` sees the arguments, the client's method does the work."""
@@ -438,11 +628,12 @@ class WindowTrace(object):
         for name in self.VIEW_CALLS: self.patch(view, name, notes[name])
 
     def unhook(self):
-        hook, self.hook = self.hook, None
-        if hook is None: return
+        hooks = [hook for hook in (self.window_hook, self.hook) if hook is not None]
+        self.hook = self.window_hook = None
+        if not hooks: return
         try:
             from .telemetry import unwrap
-            unwrap([hook])
+            unwrap(hooks)
         except Exception:
             _warn_once('trace-unhook', 'Bullba Hits window: the Browser view hook could not be taken back')
 
@@ -505,6 +696,8 @@ class WindowTrace(object):
         if self.hook is not None:
             self.unhook()
             self.say('no Flash component registered in %d s', TRACE_VIEW_WAIT)
+        elif self.window_hook is not None:
+            self.unhook()
         self.dropped()
 
     def on_ready(self, *args):
@@ -571,10 +764,10 @@ class WindowTrace(object):
                 event = self.controller.onBrowserDeleted
                 event -= deleted
             except Exception: pass
-        self.view = self.web = None
+        self.view = self.web = self.window = None
 
 
-def follow_window(controller, browser_id, at, ticket=None):
+def follow_window(controller, browser_id, at, ticket=None, step=WINDOW_STEP_DEFAULT):
     """The window's trace for this open: a new browser gets a new one, an open window keeps its own."""
     global _trace
     try:
@@ -586,7 +779,7 @@ def follow_window(controller, browser_id, at, ticket=None):
         if web is None:
             _warn_once('trace-browser', 'Bullba Hits window: the browser is not known to the controller; its steps are not followed')
             return
-        _trace = WindowTrace(controller, browser_id, web, at, ticket)
+        _trace = WindowTrace(controller, browser_id, web, at, ticket, step)
         _trace.follow()
     except Exception:
         _warn_once('trace', 'Bullba Hits window: its steps could not be followed')
@@ -647,10 +840,15 @@ def open_in_game(path, fragment='host=game'):
             import BigWorld as _bw
             client_w, client_h = _bw.screenSize()
             LOG.info('Bullba Hits window sizing: GUI %sx%s, client %sx%s', width, height, client_w, client_h)
-            width, height = min(width, int(client_w)), min(height, int(client_h))
         except Exception:
             LOG.info('Bullba Hits window sizing: GUI %sx%s (client size unavailable)', width, height)
-        global _browser_id
+        # The size of the step the page's Settings hold (the session's copy of its last word; BACKLOG 94), else the usual one.
+        step = _window_step if _window_step is not None else WINDOW_STEP_DEFAULT
+        stage_w, stage_h, scale = stage_size()
+        size = window_sizes(stage_w, stage_h)[step]
+        LOG.info('Bullba Hits window size step %d of %d: %dx%d (screen %dx%d at interface scale %s)', step + 1, WINDOW_STEPS,
+                 size[0], size[1], int(stage_w), int(stage_h), scale)
+        global _browser_id, _page_follows
         opened = time.time()
         ticket = object()      # this open, for the trace it makes and for its 20 s check
         LOG.info('Opening Bullba Hits in-game window: %s', url)
@@ -658,7 +856,7 @@ def open_in_game(path, fragment='host=game'):
             global _browser_id
             _browser_id = browser_id
             # The window's steps from here on, one line each (WindowTrace); it cannot break the open.
-            follow_window(browser, browser_id, opened, ticket)
+            follow_window(browser, browser_id, opened, ticket, step)
         # An open window is re-navigated by the controller (BrowserController.load: 'Re-navigating an
         # existing browser', browser.navigate(url)) and never calls showBrowserCallback again, so the
         # 20 s check below would cry wolf every time the hangar menu points the open window at a
@@ -670,6 +868,7 @@ def open_in_game(path, fragment='host=game'):
             existing = None
         shown = [existing is not None]
         if existing is not None: LOG.info('Bullba Hits window already open; re-navigating')
+        else: _page_follows = False     # a new page follows the hangar only once it says it browses vehicles
         def on_shown(*args):
             shown[0] = True
             LOG.info('Bullba Hits in-game window shown (+%d ms)', int(round((time.time() - opened) * 1000)))
@@ -682,7 +881,7 @@ def open_in_game(path, fragment='host=game'):
         operation = browser.load(url=url, title='Bullba Hits', browserID=_browser_id,
                      showActionBtn=False, showCloseBtn=True, showWaiting=True,
                      showCreateWaiting=False, useBrowserWindow=True, isModal=False,
-                     browserSize=(max(640, int(width * .92)), max(480, int(height * .88))),
+                     browserSize=size,
                      showBrowserCallback=on_shown, handlers=web_handlers())
         operation(loaded)
         import BigWorld

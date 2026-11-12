@@ -31,7 +31,10 @@ Checked:
   4. the client is left as it was: its calls pass through with their results, a view of another window is not touched,
      a failure inside the mod never reaches the client's handlers, a browser without these events still opens;
   5. nothing stays on the client when the window closes, when the mod leaves, or when the client drops the browser
-     silently; the view class's init is the mod's for 20 s at most.
+     silently; the view class's init is the mod's for 20 s at most;
+  6. (BACKLOG 94, 12.11) the window's size by steps: the table of steps, the page's 'windowSize' sizing the open window
+     through its own BrowserWindow view (as_setSizeS, on the next tick), the next open at that step, a bad step ignored;
+     'follow' - the page says whether it browses vehicles, and a closed or new window follows nothing.
 
 The first 16 of these checks were the red test of 03.10 (8 red on 3de626e: nothing listened, nothing written).
 
@@ -265,10 +268,30 @@ class Browser(object):
     def as_loadingStopS(self): self.flash.append(('loadingStop',))
 
 
+class BrowserWindow(object):
+    """lobby/BrowserWindow.pyc (2.4.1.1): keeps its ctx's browser id (__browserID); _onRegisterFlashComponent(viewPy, alias)
+    calls the Browser view's init with it; meta/BrowserWindowMeta.pyc as_setSizeS(width, height) - the one size call."""
+    def __init__(self, browser_id):
+        self.__browserID = browser_id
+        self.sizes = []
+
+    def _onRegisterFlashComponent(self, viewPy, alias):
+        if alias == 'browser': return viewPy.init(self.__browserID)
+
+    def as_setSizeS(self, width, height): self.sizes.append((width, height))
+
+
+class Command(object):
+    """A page command as the client's W2C schema hands it over: its fields as attributes."""
+    def __init__(self, **fields):
+        for key, value in fields.items(): setattr(self, key, value)
+
+
 controller = FakeController()
 timers = []
 messages = []
 CLIENT_INIT = Browser.__dict__['init']
+CLIENT_REGISTER = BrowserWindow.__dict__['_onRegisterFlashComponent']
 
 
 def fire(pick, limit=None):
@@ -297,6 +320,7 @@ def install_client():
     module('gui', SystemMessages=system_messages)
     for name in ('gui.Scaleform', 'gui.Scaleform.daapi', 'gui.Scaleform.daapi.view', 'gui.Scaleform.daapi.view.lobby'): module(name)
     module('gui.Scaleform.daapi.view.lobby.Browser', Browser=Browser)
+    module('gui.Scaleform.daapi.view.lobby.BrowserWindow', BrowserWindow=BrowserWindow)
 
     class IBrowserController(object): pass
     dependency = types.ModuleType('helpers.dependency')
@@ -333,6 +357,7 @@ def nothing_left(web, view, what):
         own = [n for n in ('as_loadBitmapS', 'as_resizeS', 'as_loadingStartS', 'as_loadingStopS', 'setBrowserSize') if n in vars(view)]
         if own: left.append('view attributes %s' % own)
     if Browser.__dict__['init'] is not CLIENT_INIT: left.append('the view class init')
+    if BrowserWindow.__dict__['_onRegisterFlashComponent'] is not CLIENT_REGISTER: left.append('the window class registration')
     if len(controller.onBrowserDeleted): left.append('%d onBrowserDeleted listener(s)' % len(controller.onBrowserDeleted))
     return check(not left, what, left)
 
@@ -361,11 +386,14 @@ try:
         # The window's Flash file loads: a view of ANOTHER window registers first (the game's own browser), then this one's.
         other = Browser()
         controller.browsers[99] = FakeWebBrowser(99, 'https://example.invalid/')
-        other.init(99)
+        other_frame = BrowserWindow(99)
+        other_frame._onRegisterFlashComponent(other, 'browser')
         check(not [n for n in vars(other) if n.startswith('as_')] and logged('Flash component registered') == 0,
               'a view of another window is not touched and not written')
         view = Browser()
-        result = view.init(web.id)                     # Browser.init -> __prepareBrowser -> as_loadBitmapS
+        frame = BrowserWindow(web.id)
+        # BrowserWindow._onRegisterFlashComponent -> Browser.init -> __prepareBrowser -> as_loadBitmapS
+        result = frame._onRegisterFlashComponent(view, 'browser')
         view.setBrowserSize(2355, 1267, 1.0)           # Flash draw(): the size, sent on through WebBrowser.updateSize
         view.invalidateView()                          # Flash updatePosition(): the client's one request to draw
         web.report('onLoadStart', web.url)
@@ -404,7 +432,10 @@ try:
               'the client\'s calls pass through with their arguments and results', (result, view.bitmap, web.sizes))
         check(view.flash == [('loadBitmap', 'img://webview/1'), ('resize', 2355, 1267)], 'Flash is told what it was told before',
               view.flash)
-        check(Browser.__dict__['init'] is CLIENT_INIT, 'the view class has its own init back once the window\'s view registered')
+        check(Browser.__dict__['init'] is CLIENT_INIT and BrowserWindow.__dict__['_onRegisterFlashComponent'] is CLIENT_REGISTER,
+              'the view class has its own init back once the window\'s view registered, the window class its registration')
+        check(presentation._trace is not None and presentation._trace.window is frame and other_frame.sizes == [],
+              'the window\'s own view is known (the one that can size it), another window\'s is not', presentation._trace and presentation._trace.window)
         check(other.flash == [('loadBitmap', 'img://webview/99')] and controller.browsers[99].invalidated == 0,
               'the other window got its own calls and no redraw request')
 
@@ -459,6 +490,43 @@ try:
               and web.invalidated == asked + 1 and web.reentered == 0,
               'the re-navigation is a step and its page load asks for a redraw again', steps()[-2:])
 
+        # ---- the window's size by steps (BACKLOG 94): the page's +/- -> 'windowSize' -> the open window sized ----
+        sizes = presentation.window_sizes(2560.0, 1440.0)
+        check(len(sizes) == presentation.WINDOW_STEPS and sizes[1] == (2355, 1267) and sizes[0] == (2544, 1392)
+              and sizes[2] == (2355, 1440 - 2 * 122 - 48 - 16) and sizes[3] == (2355, 1440 - 2 * 234 - 48 - 16)
+              and all(sizes[i][0] >= sizes[i + 1][0] and sizes[i][1] >= sizes[i + 1][1] for i in range(len(sizes) - 1))
+              and min(w for w, h in sizes) >= 960 and min(h for w, h in sizes) >= 540,
+              'the steps on a 2560x1440 screen: the whole screen, the usual 92 % x 88 %, the carousel strips free when centred, then smaller; none larger than the one before',
+              sizes)
+        handle = presentation._handle_web_command
+        asked = web.invalidated
+        handle(Command(action='windowSize', step=3), None)
+        check(frame.sizes == [] and steps()[-1] == 'size step 4 of 7 asked: %dx%d' % sizes[3],
+              'a new step is a step of the window, and the size goes to the window only on the next tick', (frame.sizes, steps()[-1:]))
+        fire(lambda d: d == 0)
+        check(frame.sizes == [sizes[3]], 'the open window is given the size of that step (as_setSizeS)', frame.sizes)
+        web.report('onResized', sizes[3][0], sizes[3][1])
+        web.report('onTextureStateChanged', True)
+        fire(lambda d: d == 0)
+        check(web.invalidated == asked + 1 and steps()[-1] == 'texture ok; redraw asked',
+              'the window drawn at its new size gets its redraw requests again', (web.invalidated - asked, steps()[-2:]))
+        handle(Command(action='windowSize', step=3), None)
+        check(not [t for t in timers if t[0] == 0] and frame.sizes == [sizes[3]], 'the step it already has is not asked again')
+        count = len(lines())
+        for bad in (7, -1, True, '2', None):
+            handle(Command(action='windowSize', step=bad), None)
+        check(not [t for t in timers if t[0] == 0] and frame.sizes == [sizes[3]] and len(lines(logging.WARNING)) == 3,
+              'a step that is no step changes nothing and is said once', lines(logging.WARNING)[2:])
+        del logs.records[count:]
+
+        # ---- the page says whether it browses vehicles (BACKLOG 94): only then may the hangar point it elsewhere ----
+        check(presentation.page_follows() is False, 'a new window does not follow the hangar before its page says so')
+        handle(Command(action='follow', on=True), None)
+        check(presentation.page_follows() is True and logged('page follows the hangar vehicle') == 1, 'the page browses vehicles: it follows')
+        handle(Command(action='follow', on=False), None)
+        check(presentation.page_follows() is False, 'a battle on the page: it does not')
+        handle(Command(action='follow', on=True), None)
+
         # ---- the 20 s alarm of the path as it is: silent for a window that was shown ----
         count = len(lines())
         fire(lambda d: d >= 20)
@@ -471,7 +539,8 @@ try:
         controller.onBrowserDeleted += behind.append       # a listener of the client's own, behind the mod's
         controller.delBrowser(web.id)
         controller.onBrowserDeleted -= behind.append
-        check(steps()[-1] == 'destroyed; redraws %d' % (presentation.TRACE_REDRAWS + 1),
+        # (the bound's worth, the re-navigation's one and the one after the new size)
+        check(steps()[-1] == 'destroyed; redraws %d' % (presentation.TRACE_REDRAWS + 2),
               'the closing is the last step and says how many redraws were asked', steps()[-1:])
         check(behind == [web.id], 'the client\'s listener behind the mod\'s is still called', behind)
         nothing_left(web, view, 'a closed window leaves nothing of the mod on the client, at once')
@@ -483,8 +552,12 @@ try:
               (web.invalidated, asked))
 
         # ---- and opens it again: a new browser under the same id, followed again; the size comes before the bitmap ----
+        check(presentation.page_follows() is False, 'a closed window follows nothing')
         presentation.open_in_game(viewer, 'host=game&vehicle=china-Ch67_BZ_79')
         again = controller.getBrowser(presentation._browser_id)
+        check(controller.calls[-1].get('browserSize') == sizes[3] and logged('window size step 4 of 7: %dx%d' % sizes[3]) == 1,
+              'the next open takes the step the page chose last, and says so', (controller.calls[-1].get('browserSize'), sizes[3]))
+        check(presentation._page_follows is False, 'and its page follows nothing until it says it browses vehicles')
         if check(again is not None and again is not web, 'the reopened window is a new browser'):
             controller.ready(again.id)
             check(len(again.onTextureStateChanged) >= 1 and len(again.onResized) >= 1 and len(again.onLoadEnd) >= 1,
