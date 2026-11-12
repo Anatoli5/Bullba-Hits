@@ -2,6 +2,12 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.1.1 from 1.05 on, 2.4.1.0 from 1.02 on, 2.4.0.2 from 0.9.3 on, 2.4.0.1 #950 from 0.7.6, 2.4.0.0 #945 before.
 
+## Unreleased
+
+- **Opening the page during a replay's processing:** opening Bullba Hits from the mods list while a battle's replay was still being processed failed to move the hangar vehicle to the front of the queue (an error line in the game's log); it now goes first as intended.
+- **Less work right after a battle:** the replay's game definitions are now prepared in the hangar once per game session, before the first battle, instead of right after that battle while the hangar is loading.
+- **The hull line last:** in the pose tile under the scene, the hull's angle to the camera now comes after the turret and gun lines.
+
 ## 1.07 (2026-11-12)
 
 - **A battle's replay read sooner after the fight:** when the copy the mod made during the battle reaches the end of the fight or the moment you left, the game's final replay file is no longer decrypted - the copy already holds every hit; the final file is read only when the copy cannot be trusted (a crash, a cut copy). On a test battle the replay's processing took about 2 s instead of about 3.9 s, with the same published battle. The first replay of a game session is also built in smaller steps, so it no longer takes one longer pause.

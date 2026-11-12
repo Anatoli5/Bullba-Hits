@@ -205,6 +205,32 @@ try:
     check(recorder.battle is None, 'observer: roster opens no battle')
     state['observer'] = False
     recorder.note_roster(arena, player)
+    # An export command that fails says which and why in its own tagged line (12.11: 'HTML export command failed' alone).
+    import logging
+
+    class Lines(logging.Handler):
+        def __init__(self):
+            logging.Handler.__init__(self, logging.ERROR)
+            self.lines = []
+
+        def emit(self, record):
+            self.lines.append(record.getMessage())
+
+    class Failing(object):
+        def prioritise(self, names): return {}[0]
+
+    seen = Lines()
+    log = logging.getLogger('local.armor_inspector')
+    log.addHandler(seen)
+    saved = recorder.writer.exporter
+    try:
+        recorder.writer.exporter = Failing()
+        failed = recorder.writer.export_command('prioritise', ['germany:G1'])
+    finally:
+        recorder.writer.exporter = saved
+        log.removeHandler(seen)
+    check(failed is False and seen.lines == ["HTML export command 'prioritise' failed: KeyError: 0"],
+          'a failed export command names itself and its exception in one tagged line: %r' % seen.lines)
     recorder.writer.close()
     files = sorted(os.listdir(battles)) if os.path.isdir(battles) else []
     check(recorder.battle == '987' and len(files) == 1, 'live roster opens exactly one battle file')

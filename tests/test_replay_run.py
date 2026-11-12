@@ -330,6 +330,29 @@ class SyntheticTests(unittest.TestCase):
         self.assertEqual(job['gcEnabled'], gc.isenabled())
         self.assertEqual(job['gcThreshold'], list(gc.get_threshold()))
 
+    def test_the_page_prioritises_while_a_replay_job_is_queued(self):
+        """The user's case of 12.11 13:12:26 ('HTML export command failed'): the first battle on 1.07 had its replay job
+        queued between two slices when the mods-list button opened the page on the hangar vehicle (page_waits ->
+        'prioritise'); Exporter.prioritise read a model's payload from the replay job's dict and raised KeyError 0, so the
+        page's vehicle was not lifted. The message is that battle's, as its index entry holds it."""
+        from local_armor_inspector.exporter import Exporter, JOB_PAGE
+        root = tempfile.mkdtemp()
+        try:
+            os.makedirs(os.path.join(root, 'battles'))
+            e = Exporter(root, root, 'v\n', os.path.join(root, 'none.wotmod'))
+            message = {'arenaChecked':True, 'arenaId':'2307565181224747078', 'battle':'2307565181224747078-3f3e98ea825e',
+                       'complete':False, 'copyFailure':None, 'end':'battle', 'fightEnd':None, 'final':None,
+                       'finalOwned':False, 'finalStreamBytes':5215893, 'lastClock':294.32000732421875, 'packets':118317,
+                       'partialBytes':50, 'recordingOwned':False, 'schema':1, 'stream':None, 'streamBytes':5206016,
+                       'temp':'foreign (shorter)'}
+            e.replay_stream(message)
+            e.request_vehicle_export({'vehicleType':'germany:G187_Taschenratte', 'source':'battle'})
+            self.assertEqual(sorted(job[2] for job in e.jobs), ['replay', 'vehicle'])
+            self.assertEqual(e.prioritise(['germany:G187_Taschenratte']), 1)
+            self.assertEqual([job[2] for job in e.jobs if job[0] == JOB_PAGE], ['vehicle'])
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
     def test_the_static_part_box_is_not_published(self):
         from local_armor_inspector.exporter import Exporter
         root = tempfile.mkdtemp()
@@ -454,6 +477,43 @@ class RunTimeTests(unittest.TestCase):
         self.assertEqual(list(built.registry.dynamic), list(whole.registry.dynamic))
         self.assertIs(e.replay_defs(), built)
         self.assertEqual(list(e.replay_defs_steps()), [])
+
+    def test_the_first_battle_of_a_session_finds_the_definitions_built(self):
+        """The user's case of 12.11 13:12 (the first battle on 1.07, the first of its session): its replay job built the
+        entity definitions right after the battle, while the game loaded the hangar - 6.82 s of the export thread's clock,
+        one step of 6.145 s. Setup now queues them (replay_defs_prepare) and the hangar builds them in slices before the
+        battle: the first battle's job spends nothing on them, and their build goes in steps."""
+        definitions()
+        arena = sorted(KILL_CAM)[0]
+        stand = self.stand(arena)
+        e = stand.exporter(KILL_CAM[arena])
+        e.replay_defs_value = None
+        e.client = lambda: _CACHE['snapshot']
+        e.game = GAME
+        seen = Lines()
+        log = logging.getLogger('local.armor_inspector')
+        log.addHandler(seen)
+        level = log.level
+        log.setLevel(logging.INFO)
+        try:
+            e.replay_defs_prepare()                      # setup
+            self.assertEqual([job[2] for job in e.jobs], ['definitions'])
+            run_jobs(e)                                  # the hangar before the battle
+            self.assertIsNotNone(e.replay_defs_value)
+            built = [l for l in seen.lines if l.startswith('Replay: entity definitions from the client snapshot in ')]
+            self.assertEqual(len(built), 1, seen.lines)
+            # Its steps (a clock, so not asserted under the check's parallel load): logged for the game's next battle.
+            self.assertGreaterEqual(int(built[0].split(' of work, ', 1)[1].split(' ')[0]), 5, built[0])
+            print(built[0])
+            consume(e, stand.message(arena, self.copy_of(stand, arena)))
+        finally:
+            log.removeHandler(seen)
+            log.setLevel(level)
+        used = [l for l in seen.lines if l.startswith('Replay of %s: used in ' % stand.names[arena])]
+        self.assertEqual(len(used), 1, seen.lines)
+        self.assertIn('definitions 0.00 s', used[0])
+        self.assertEqual(len([l for l in seen.lines if 'entity definitions' in l]), 1, seen.lines)
+        self.assertNotEqual(e.replay_state()[stand.names[arena]]['job']['longestPart'], 'definitions')
 
     def test_a_final_file_with_more_than_the_copy(self):
         """The copy holds 60 % of the stream and cannot be trusted as the battle (backlog 84: no orderly end - the crash

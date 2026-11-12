@@ -326,9 +326,10 @@ else:
         # ---- phase 4: the same client again ---------------------------------------------------------------------
         del extracted[:], ttx_built[:]
         fourth = session(v3)
-        queued = [job[2] for job in fourth.jobs]
-        check(not queued, 'an ordinary start queues nothing (0.9.3: one "ttx" job per requested vehicle on every start - 196)',
-              queued[:5])
+        # The one job a start always queues: the session's replay definitions, built in the hangar (12.11, replay_defs_prepare).
+        queued = [job[2] for job in fourth.jobs if job[2] != 'definitions']
+        check(not queued, 'an ordinary start queues nothing but the session\'s replay definitions (0.9.3: one "ttx" job per '
+              'requested vehicle on every start - 196)', queued[:5])
         drain(fourth)
         check(not extracted and not ttx_built and files('vehicles') == now_vehicles,
               'the same client again: nothing built, nothing exported', '%d models, %d ttx' % (len(extracted), len(ttx_built)))

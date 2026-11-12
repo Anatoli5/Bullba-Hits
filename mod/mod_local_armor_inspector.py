@@ -676,6 +676,25 @@ class Writer(object):
         finally:
             self.raw_done.set()
 
+    def export_command(self, name, payload):
+        """One message of the export queue, on the export thread. A failure is one line with the mod's tag that names the
+        command and the exception (12.11: 'HTML export command failed' alone; its traceback follows untagged in game.log,
+        so the cause could not be read from our own lines). False when it failed."""
+        try:
+            if name == 'vehicle': self.exporter.request_vehicle_export(payload)
+            elif name == 'prioritise': self.exporter.prioritise(payload)
+            elif name == 'ttx': self.exporter.request_ttx(payload)
+            elif name == 'battle': self.exporter.request_battle(payload)
+            elif name == 'sweepStart': self.exporter.confirm_sweep(payload or 'ttx')
+            elif name == 'sweepStop': self.exporter.stop_sweep(payload or 'ttx')
+            # The replay stream of one battle (replay_source.ReplaySource.handover): its consumer is the
+            # exporter's replay_stream; an exporter without it lets the message go (the copy stays on disk).
+            elif name == 'replay' and hasattr(self.exporter, 'replay_stream'): self.exporter.replay_stream(payload)
+            return True
+        except Exception as error:
+            LOG.exception('HTML export command %r failed: %s: %s', name, type(error).__name__, error)
+            return False
+
     def run_export(self):
         try: self.exporter.setup()
         except Exception:
@@ -692,18 +711,7 @@ class Writer(object):
             try: message = self.export_queue.get_nowait() if hurry else self.export_queue.get(timeout=0.05)
             except queue.Empty: pass
             if message is not None:
-                name, payload = message
-                try:
-                    if name == 'vehicle': self.exporter.request_vehicle_export(payload)
-                    elif name == 'prioritise': self.exporter.prioritise(payload)
-                    elif name == 'ttx': self.exporter.request_ttx(payload)
-                    elif name == 'battle': self.exporter.request_battle(payload)
-                    elif name == 'sweepStart': self.exporter.confirm_sweep(payload or 'ttx')
-                    elif name == 'sweepStop': self.exporter.stop_sweep(payload or 'ttx')
-                    # The replay stream of one battle (replay_source.ReplaySource.handover): its consumer is the
-                    # exporter's replay_stream; an exporter without it lets the message go (the copy stays on disk).
-                    elif name == 'replay' and hasattr(self.exporter, 'replay_stream'): self.exporter.replay_stream(payload)
-                except Exception: LOG.exception('HTML export command failed')
+                try: self.export_command(message[0], message[1])
                 finally: self.export_queue.task_done()
             dirty = self.take_dirty()
             try:

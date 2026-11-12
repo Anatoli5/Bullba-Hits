@@ -3724,11 +3724,13 @@ class Exporter(object):
         # live record. Empty for every other battle: their publish is unchanged.
         self.replay_battles = OrderedDict()
         # THE REPLAY PATH AT RUN TIME (11.11.2026, replay_run.py): the 'replay' job being worked on in slices (a
-        # replay_run.Consumption, None between two); the entity definitions of the session (replay_run.Definitions, built by
-        # the first battle that needs them); CFG/replay/index.json - {battle id: what became of its replay stream} - read
-        # when first needed.
+        # replay_run.Consumption, None between two); the entity definitions of the session (replay_run.Definitions, built in
+        # the hangar after setup by a 'definitions' job, else by the first battle that needs them) and the one build in
+        # progress both continue (replay_defs_steps); CFG/replay/index.json - {battle id: what became of its replay
+        # stream} - read when first needed.
         self.replay_work = None
         self.replay_defs_value = None
+        self.replay_defs_building = None
         self.replay_index = None
         # The started sweep that ran last (run_sweeps): the other started one goes next - both get slices.
         self.sweep_last = None
@@ -3789,6 +3791,7 @@ class Exporter(object):
         # The replay streams collected and never consumed (the game closed first): queued again (replay_setup).
         try: self.replay_setup()
         except Exception: LOG.exception('Replay streams left from the last session not looked for; they stay on disk')
+        self.replay_defs_prepare()
         step = lap('battles')
         self.replay_vehicle_requests()
         step = lap('replay')
@@ -4281,16 +4284,57 @@ class Exporter(object):
         return self.replay_defs_value
 
     def replay_defs_steps(self):
-        """replay_defs in steps for the replay job's slices (replay_run.Consumption): nothing when the session has them;
-        else built here, yielding between their parts, and kept in replay_defs_value only once whole (a job dropped halfway
-        leaves nothing half-built: the next one builds them from the start)."""
+        """replay_defs in steps for the replay job's slices (replay_run.Consumption) and the hangar's 'definitions' job
+        (run_defs_job): nothing when the session has them; else the one build in progress (replay_defs_building) goes on,
+        yielding between its parts, and is kept in replay_defs_value only once whole. Two callers continue the same build
+        (the hangar's job left halfway by a battle, then the battle's replay job); a part that raises drops it, and the next
+        call builds them from the start.
+        Why the hangar builds them (12.11): the first battle on 1.07 built them in its replay job right after the battle,
+        while the game loaded the hangar - 6.82 s of the export thread's time, one step of 6.145 s, against 0.22 s and
+        steps of at most 0.05 s on the stand under the client's Python 2.7. A step's clock runs on while the game's own
+        thread holds the interpreter (the stand: a 1.25 s hold made one step 1.28 s), so that time was the hangar
+        load's, not this work's; built in the idle hangar before the first battle, they are no part of that window."""
         if self.replay_defs_value is not None: return
         from .replay_run import Definitions
-        building = Definitions(self.game, self.client(), build=False)
-        for _ in building.stages(): yield
-        if self.replay_defs_value is None:
+        if self.replay_defs_building is None:
+            building = Definitions(self.game, self.client(), build=False)
+            self.replay_defs_building = [building, building.stages(), 0, 0.0]
+        state = self.replay_defs_building
+        building = state[0]
+        while True:
+            started, ended = TTX_TIMER(), False
+            try:
+                next(state[1])
+            except StopIteration:
+                ended = True
+            except BaseException:
+                self.replay_defs_building = None
+                raise
+            state[2] += 1
+            state[3] = max(state[3], TTX_TIMER() - started)
+            if ended: break
+            yield
+        if self.replay_defs_building is state: self.replay_defs_building = None
+        if self.replay_defs_value is None and getattr(building, 'vehicle_names', None) is not None:
             self.replay_defs_value = building
-            LOG.info('Replay: entity definitions from the %s in %.2f s of work', building.source, building.seconds)
+            LOG.info('Replay: entity definitions from the %s in %.2f s of work, %d steps, the longest %.3f s', building.source,
+                     building.seconds, state[2], state[3])
+
+    def replay_defs_prepare(self):
+        """Setup: the session's entity definitions queued to be built in the hangar, in slices, before the first battle's
+        replay needs them (replay_defs_steps: built after the battle they fell in the hangar's load, 12.11). Not without
+        the client's packages (a test's folder)."""
+        if self.replay_defs_value is None and os.path.isdir(os.path.join(self.game, 'res', 'packages')):
+            self.queue_job(JOB_OTHER, 'definitions', {})
+
+    def run_defs_job(self):
+        """One slice (BATTLE_SLICE) of the session's entity definitions, queued by setup so the hangar builds them before
+        the first battle needs them (replay_defs_steps). True while more is to do."""
+        if self.ttx_stopped or self.replay_defs_value is not None: return False
+        deadline = TTX_TIMER() + BATTLE_SLICE
+        for _ in self.replay_defs_steps():
+            if TTX_TIMER() >= deadline or self.battle_stop(): return True
+        return False
 
     def replay_names(self):
         """The run-time names of the conversion (replay_records.ClientNames: the client's own modules); without the game's
@@ -6333,9 +6377,11 @@ class Exporter(object):
                 finally: self.preparing_page = False
             # A battle's replay stream (replay_stream): in slices, like a saved battle.
             elif job[2] == 'replay': more = self.run_replay_job(job[3])
+            # The session's entity definitions, built in the hangar before the first battle's replay needs them.
+            elif job[2] == 'definitions': more = self.run_defs_job()
             else: self.run_vehicle_job(job[3], page)
-        except Exception:
-            LOG.exception('Deferred %s job failed; the rest of the queue continues', job[2])
+        except Exception as error:
+            LOG.exception('Deferred %s job failed (%s: %s); the rest of the queue continues', job[2], type(error).__name__, error)
         # A saved battle with slices to go goes back in its own place (its priority and order): the next of them after the
         # rest, unless something the page waits for comes first.
         if more and job_key(job[2], job[3]) not in self.job_index:
@@ -6351,7 +6397,7 @@ class Exporter(object):
         rest = spent * (1.0 - SWEEP_SHARE) / SWEEP_SHARE
         # A slice of a saved battle of setup's backlog (27.09) is no extraction either: the game's share after it, all of it
         # (review of 4b1c8c8 #4: a 1 s cap left the work 85-95 % of the time when a battle took seconds in one go).
-        self.job_rest = rest if job[2] in ('battle', 'replay') else min(SWEEP_REST_MAX, rest) if job[2] == 'ttx' else PACE
+        self.job_rest = rest if job[2] in ('battle', 'replay', 'definitions') else min(SWEEP_REST_MAX, rest) if job[2] == 'ttx' else PACE
         return True
 
     def run_model_job(self, payload):
@@ -6444,10 +6490,12 @@ class Exporter(object):
             if job[0] == JOB_PAGE: continue
             if job[2] in ('vehicle', 'ttx', 'extras', 'prefabs'):
                 match = str((job[3] or {}).get('vehicleType') or '') in wanted
-            elif job[2] == 'battle':
-                match = False
-            else:
+            elif job[2] == 'model':
                 match = bool(self.job_types.get(job[3][0], ()) and self.job_types[job[3][0]] & wanted)
+            else:
+                # A saved battle or a battle's replay (its payload a dict, 12.11: a queued 'replay' job made this raise
+                # KeyError 0 and the page's prioritise was lost) belongs to no vehicle type.
+                match = False
             if match:
                 self.lifted[job_key(job[2], job[3])] = job[0]
                 job[0] = JOB_PAGE
