@@ -8028,9 +8028,12 @@
   function markHits(){var rows=$('hits').children||[];for(var i=0;i<rows.length;i++){var id=rows[i].getAttribute&&(rows[i].getAttribute('data-hit')||rows[i].getAttribute('data-event'));if(id!==null&&id!==undefined)rows[i].setAttribute('aria-pressed',String(id===String(selected)));}}
   // ===================== THE TWO SCENES OF A HIT (11.11) =====================
   // The user, 11.11 (docs/PRODUCT.md, the battle log from the replay): a hit of a battle made from its replay keeps the
-  // in-game SNAPSHOT of its scene and gets a scene REBUILT from the replay; the page shows the snapshot and can switch -
-  // "which picture to take, the reconstruction or the actual one" - so a disputed hit (100 % and no penetration, 0 % and
-  // a penetration) shows which of the two agrees with what the server did. The data side is local-data.js sceneHit.
+  // in-game SNAPSHOT of its scene and gets a scene REBUILT from the replay; the page can switch - "which picture to take,
+  // the reconstruction or the actual one" - so a disputed hit (100 % and no penetration, 0 % and a penetration) shows
+  // which of the two agrees with what the server did. The data side is local-data.js sceneHit.
+  //   - The DEFAULT is the rebuilt scene (user 11.11 evening, after his battles on 1.06: it shows the picture more
+  //     accurately than the snapshot; until then the snapshot was the default): a hit that has one is shown from it, the
+  //     snapshot is one click away; a hit without one is shown from its snapshot. A choice the player made stays his.
   //   - The choice is a remembered setting (#scene-source-value, a hidden control of the menu: stored, restored and reset
   //     with the rest), set by the two scene chips of the Hit line tile (paintSceneChips; until 11.11 evening two icon
   //     buttons in the scene's toolbar, which the user did not find). It is an INPUT OF THE SCENE: its one owner,
@@ -8043,7 +8046,7 @@
   //     differ (the mod's comparison block; compareScenes, for the hit on screen only); the chip of the other scene is
   //     amber when its verdict differs.
   function hitClock(h){return Number.isFinite(h&&h.receivedAt)?clock(h.receivedAt):h&&Number.isFinite(h.gameTime)?gameClock(h.gameTime):'—';}
-  function sceneWanted(){var e=$('scene-source-value');return e&&e.value==='replay'?'replay':'snapshot';}
+  function sceneWanted(){var e=$('scene-source-value');return e&&e.value==='snapshot'?'snapshot':'replay';}
   // A row of the list for a hit the recorder never saw: its words, or null.
   function replayOnlyWords(h){
     if(!h||h.source!=='replay'||h.target)return null;
@@ -8085,8 +8088,8 @@
   // scene is not there. A hit of a battle published from the recorder alone has no chip: its one scene is the snapshot,
   // as on every battle before 11.11; a hit with no scene at all says so on the scene itself (D.NO_SCENE).
   var SCENE_WORDS={
-    snapshot:['In-game snapshot','A click shows this hit from the in-game snapshot; the page remembers the choice.','The target’s pose and armour as the recorder read them in the battle, the scene the game drew.'],
-    replay:['Rebuilt from the replay','A click shows this hit rebuilt from the replay; the page remembers the choice.','The same hit in the pose the replay gives: the vehicle’s place and hull 0.2 s before the hit, the turret and gun from the replay’s angles.'],
+    snapshot:['In-game snapshot','A click shows this hit from the in-game snapshot; the page remembers the choice.','The target’s pose and armour as the recorder read them in the battle, the scene the game drew.','• Default: the rebuilt scene, where the hit has one'],
+    replay:['Rebuilt from the replay','A click shows this hit rebuilt from the replay; the page remembers the choice.','The same hit in the pose the replay gives: the vehicle’s place and hull 0.2 s before the hit, the turret and gun from the replay’s angles.','• Default: the page shows a hit from its rebuilt scene where it has one'],
     noSnapshot:['Rebuilt from the replay','No in-game snapshot: the recorder did not see this hit (the death camera). It is in the replay only, so the scene rebuilt from the replay is its one scene.'],
     noReplayHit:['In-game snapshot','Not rebuilt from the replay: the replay did not give what this hit’s scene needs (the target’s place, its vehicle or a part model), so the snapshot is its one scene.']};
   // THE HIT LINE TILE'S SCENE ROW (#shot-scenes) IS THE SWITCH (user 11.11: he looked for the switch there). Both scenes:
@@ -9697,6 +9700,10 @@
         // by the previews before that holds the choice of a selector that meant something else and takes the new
         // default once; a choice made from then on is the user's own and is kept.
         if(!(box.v>=6))delete box.values['aim-sound-ticks-value'];
+        // v7 (user, 11.11 evening): a hit is shown from its scene rebuilt from the replay by default, not from the snapshot.
+        // A store written before that holds the snapshot the old default gave it (every save writes every control) and
+        // takes the new default once; a rebuilt scene chosen then is kept, and a choice made from now on is the player's own.
+        if(!(box.v>=7)&&String(box.values['scene-source-value'])==='snapshot')delete box.values['scene-source-value'];
         // The fun layer's two rows of 0.7.25 (Target HP, Hit marks) became ONE switch on the scene
         // (user, 22.09). The controls are gone, so their stored values belong to nothing: they are
         // dropped here rather than left to ride along in the box for ever. No version gate - the keys
@@ -9727,7 +9734,7 @@
   function persistNow(){
     if(persistTimer!==null){window.clearTimeout(persistTimer);persistTimer=null;}
     var values={};settingControls.forEach(function(el){values[el.id]=settingValue(el);});
-    try{window.localStorage.setItem(SETTINGS_KEY,JSON.stringify({v:6,values:values,aim:aimStored()}));}catch(e){}
+    try{window.localStorage.setItem(SETTINGS_KEY,JSON.stringify({v:7,values:values,aim:aimStored()}));}catch(e){}
   }
   function persistSettings(){if(persistTimer===null)persistTimer=window.setTimeout(persistNow,300);}
   window.addEventListener('pagehide',function(){if(persistTimer!==null)persistNow();});

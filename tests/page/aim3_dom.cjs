@@ -10164,16 +10164,27 @@ function twoScenes() {
   sidebarModes[0].onclick();
   return settle(20).then(function () { return open('tw'); }).then(function () { return pickRow('t1'); }).then(function () {
     const dot = sceneRow().children.filter(function (c) { return c.getAttribute('data-help-for') === 'scene-chip-snapshot scene-chip-replay'; })[0];
-    ok('two scenes: a hit with both scenes opens from its snapshot (the default) - the Hit line tile\'s two scene chips are buttons with their own "?", the snapshot pressed',
-       !sceneRow().hidden && !!dot && buttons().length === 2 && pressed() === 'snapshot' && chipOf('replay').getAttribute('aria-pressed') === 'false'
-       && asked[asked.length - 1] === 't1:snapshot' && !loaded.hit.sceneSource && loaded.hit.target.worldTransform[12] === 0,
-       asked.join() + ' ' + pressed() + ' ' + buttons().length);
+    ok('two scenes: a hit with both scenes opens from its scene rebuilt from the replay (the default since 11.11 evening) - the Hit line tile\'s two scene chips are buttons with their own "?", the reel chip pressed',
+       !sceneRow().hidden && !!dot && buttons().length === 2 && pressed() === 'replay' && chipOf('snapshot').getAttribute('aria-pressed') === 'false'
+       && asked[asked.length - 1] === 't1:replay' && loaded.hit.sceneSource === 'replay' && loaded.hit.target.worldTransform[12] === 0.4,
+       asked.join() + ' ' + pressed() + ' ' + buttons().length + ' ' + scenePick.value + ' ' + loaded.hit.sceneSource + ' ' + loaded.hit.target.worldTransform[12]);
+    ok('two scenes: (held statically) the default in the page is the rebuilt scene - the option marked selected, sceneWanted reads anything but snapshot as replay; a store of version 6 lets the snapshot its old default gave go once, a later one keeps the choice; the chips\' words name the default',
+       /<select id="scene-source-value"[^>]*><option value="replay" selected>replay<\/option><option value="snapshot">snapshot<\/option><\/select>/.test(pageSrc)
+       && /function sceneWanted\(\)\{var e=\$\('scene-source-value'\);return e&&e\.value==='snapshot'\?'snapshot':'replay';\}/.test(appSrc)
+       && /if\(!\(box\.v>=7\)&&String\(box\.values\['scene-source-value'\]\)==='snapshot'\)delete box\.values\['scene-source-value'\];/.test(appSrc)
+       && /• Default: /.test(chipOf('snapshot').title) && /• Default: /.test(chipOf('replay').title));
     ok('two scenes: each chip\'s words - its title, then one sentence that a click shows the hit from that scene, then how the two scenes differ (the mod\'s comparison) and where the rebuilt one is weaker',
        ['snapshot', 'replay'].every(function (k) { const t = chipOf(k).title;
          return new RegExp('^' + (k === 'snapshot' ? 'In-game snapshot' : 'Rebuilt from the replay') + '\nA click shows this hit ').test(t)
            && /Rebuilt minus snapshot/.test(t) && /Turret \+17\.2°, gun \+1\.1°/.test(t) && /hull at rest/.test(t); }),
        chipOf('replay').title.slice(0, 200));
     ok('two scenes: (held statically) the toolbar has no scene switch any more - one path for the choice', !/scene-switch|id="scene-snapshot"|id="scene-replay"/.test(pageSrc) && !/\$\('scene-switch'\)/.test(appSrc));
+    const pre = asked.length;
+    return flip('snapshot').then(function () {
+      ok('two scenes: a click on the camera chip shows the same hit from its snapshot - the camera chip pressed, the setting on snapshot',
+         asked.slice(pre).join() === 't1:snapshot' && !loaded.hit.sceneSource && loaded.hit.target.worldTransform[12] === 0 && pressed() === 'snapshot' && scenePick.value === 'snapshot',
+         asked.slice(pre).join() + ' ' + pressed());
+    }).then(function () {
     const before = {shell: $('shell-choice').value, mode: $('armor-mode').value, fun: $('fun-mode').checked, row: row('t1').getAttribute('aria-pressed'), rows: $('hits').children.length, n: asked.length};
     return flip('replay').then(function () {
       const h = loaded.hit;
@@ -10198,6 +10209,7 @@ function twoScenes() {
         ok('two scenes: the setting changed in Settings moves the chips with it (one owner)', pressed() === 'replay' && loaded.hit.sceneSource === 'replay' && asked[asked.length - 1] === 't1:replay', pressed());
         return pickRow('t2');
       });
+    });
     }).then(function () {
       const n = asked.length, one = single();
       ok('two scenes: a hit with its snapshot only, the choice on the rebuilt scene - the snapshot shown; its one chip is not a button and its words say why there is no rebuilt scene',
@@ -10759,7 +10771,7 @@ function soundChecks() {
      /if\(stored&&el\.id!=='fun-mode'&&el\.id!=='aim-sound-on'&&Object\.prototype\.hasOwnProperty\.call\(stored,el\.id\)/.test(appSrc));
   ok('sound: Signals was 4 by default in the first previews - a store written then lets that 4 go for the new default once (the store\'s version 5, as the earlier changes of a default did); a choice made after it is kept',
      /if\(!\(box\.v>=5\)&&String\(box\.values\['aim-sound-signals-value'\]\)==='4'\)delete box\.values\['aim-sound-signals-value'\];/.test(appSrc)
-     && /JSON\.stringify\(\{v:6,values:values,aim:aimStored\(\)\}\)/.test(appSrc));
+     && /JSON\.stringify\(\{v:7,values:values,aim:aimStored\(\)\}\)/.test(appSrc));
   ok('sound: Time ticks was "one tone" by default in the previews before 09.10 - a store written then lets its choice of the ticks go for the new default, the tone of the shot, once (the store\'s version 6); a choice made after it is kept',
      /if\(!\(box\.v>=6\)\)delete box\.values\['aim-sound-ticks-value'\];/.test(appSrc)
      && /if \(kind !== 'one'\) kind = 'shot';/.test(appSrc));

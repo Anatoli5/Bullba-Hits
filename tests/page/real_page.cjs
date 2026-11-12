@@ -609,23 +609,28 @@ async function twoScenes(browser) {
     await ready();
     await step("side('battles')"); await step("battle('pmr')");
     const s0 = await step('hit(0)');
-    ok('two scenes: a hit of a replay-made battle opens from its snapshot (the default); the Hit line tile\'s two scene chips are the switch - buttons with a pointer and their "?", the snapshot pressed - beside the server\'s outcome; no switch in the toolbar',
-       s0.scene === 'pmr-1' && s0.from === 'snapshot' && !s0.toolbarSwitch && s0.dot && s0.buttons === 2 && s0.pressed === 'snapshot' && s0.pointer === 'pointer' && /server: 400 HP/.test(s0.chips || ''), JSON.stringify(s0));
-    const s1 = await flip('replay');
-    ok('two scenes: a click on the reel chip shows the SAME hit from the scene rebuilt from the replay - its pose (turret 0.3 rad, 0.4 m aside), the armour the snapshot\'s; the reel chip pressed',
-       s1.scene === 'pmr-1' && s1.from === 'replay' && Math.abs(s1.yawAim - 0.3) < 1e-9 && Math.abs(s1.shift - 0.4) < 1e-9 && s1.armour === s0.armour && s1.pressed === 'replay', JSON.stringify(s1));
-    ok('two scenes: ... and nothing else moves - the row, the shell, the camera, every other setting', s1.selected === s0.selected && s1.shell === s0.shell && near(s1.camera, s0.camera) && s1.others === s0.others,
+    ok('two scenes: a hit of a replay-made battle opens from its scene rebuilt from the replay (the default since 11.11 evening) - its pose (turret 0.3 rad, 0.4 m aside); the Hit line tile\'s two scene chips are the switch - buttons with a pointer and their "?", the reel chip pressed - beside the server\'s outcome; no switch in the toolbar',
+       s0.scene === 'pmr-1' && s0.from === 'replay' && Math.abs(s0.yawAim - 0.3) < 1e-9 && Math.abs(s0.shift - 0.4) < 1e-9 && !s0.toolbarSwitch && s0.dot && s0.buttons === 2 && s0.pressed === 'replay' && s0.pointer === 'pointer' && /server: 400 HP/.test(s0.chips || ''), JSON.stringify(s0));
+    const s1 = await flip('snapshot');
+    ok('two scenes: a click on the camera chip shows the SAME hit from its in-game snapshot - its own pose, the same armour; the camera chip pressed',
+       s1.scene === 'pmr-1' && s1.from === 'snapshot' && Math.abs(s1.shift) < 1e-9 && s1.armour === s0.armour && s1.pressed === 'snapshot', JSON.stringify(s1));
+    ok('two scenes: ... and nothing else moves - the row, the shell, the camera, every other setting', s1.selected === s0.selected && s1.shell === s0.shell && near(s1.camera, s0.camera) && (!s0.others || s1.others === s0.others),
        JSON.stringify({before: [s0.selected, s0.shell, s0.camera, s0.others], after: [s1.selected, s1.shell, s1.camera, s1.others]}));
-    ok('two scenes: the choice is a remembered setting', s1.stored === 'replay', String(s1.stored));
-    await page.send('Page.reload');
-    await new Promise((r) => setTimeout(r, 800));
-    await ready();
-    await step("side('battles')"); await step("battle('pmr')");
+    ok('two scenes: the choice is a remembered setting', s1.stored === 'snapshot', String(s1.stored));
+    const reload = async () => { await page.send('Page.reload'); await new Promise((r) => setTimeout(r, 800)); await ready(); await step("side('battles')"); await step("battle('pmr')"); };
+    await reload();
     const s2 = await step('hit(1)');
-    ok('two scenes: after a reload the page still shows a hit from the rebuilt scene', s2.scene === 'pmr-2' && s2.from === 'replay' && s2.pressed === 'replay', JSON.stringify(s2));
+    ok('two scenes: the player\'s own choice stays his - after a reload the page shows a hit from the snapshot he picked', s2.scene === 'pmr-2' && s2.from === 'snapshot' && s2.pressed === 'snapshot', JSON.stringify(s2));
+    // A store written by a build before the default changed (version 6) holds the snapshot every save wrote: it gives way to
+    // the new default once. Its other values stay.
+    await ev(`(() => { const box = JSON.parse(localStorage.getItem('bullba-settings')); box.v = 6; box.values['scene-source-value'] = 'snapshot'; localStorage.setItem('bullba-settings', JSON.stringify(box)); return true; })()`);
+    await reload();
+    const s2b = await step('hit(1)');
+    ok('two scenes: a store of an earlier build (version 6) holding the old default\'s snapshot - the page shows the rebuilt scene, the new default; every other setting kept',
+       s2b.scene === 'pmr-2' && s2b.from === 'replay' && s2b.pressed === 'replay' && s2b.others === s1.others, JSON.stringify(s2b));
     const s3 = await step('hit(2)');
     ok('two scenes: a hit of the death camera - its row marked, shown from its rebuilt scene (drawn), its one chip not a button and saying it has no snapshot',
-       s3.scene === 'r3' && s3.from === 'replay' && s3.marks === 'r3,r4' && s3.buttons === 0 && s3.message === '' && /no snapshot/.test(s3.chips || '') && s3.stored === 'replay', JSON.stringify(s3));
+       s3.scene === 'r3' && s3.from === 'replay' && s3.marks === 'r3,r4' && s3.buttons === 0 && s3.message === '' && /no snapshot/.test(s3.chips || ''), JSON.stringify(s3));
     const s4 = await step('hit(3)');
     ok('two scenes: a hit with neither scene - its row with its damage, the scene says in one line why there is none; no chips',
        s4.chips === null && /No scene for this hit/.test(s4.message), JSON.stringify(s4));
@@ -637,6 +642,9 @@ async function twoScenes(browser) {
       ok('two scenes: at the page width ' + w + ' px the chips are laid out inside the Hit line tile', sw.width === w && sw.buttons === 2 && sw.inside === true, JSON.stringify({width: sw.width, buttons: sw.buttons, inside: sw.inside}));
     }
     await page.send('Emulation.clearDeviceMetricsOverride'); await new Promise((r) => setTimeout(r, 600));
+    // The choice back to the default for the pages after this one (one browser profile, one store).
+    const s6 = await flip('replay');
+    ok('two scenes: the reel chip again - the rebuilt scene, remembered', s6.from === 'replay' && s6.stored === 'replay', JSON.stringify(s6));
     ok('two scenes: no uncaught exception in the page', page.errors.length === 0, page.errors.slice(0, 3).join(' | '));
   } finally {
     await browser.send('Target.closeTarget', {targetId: page.targetId});
@@ -670,21 +678,23 @@ async function twoScenesLocal(browser) {
   try {
     await ev(DRIVER);
     await ev(`(async () => { for (let i = 0; i < 150 && !(document.querySelector('#hits [data-hit]') && window.__bullbaViewers.length); i++) await new Promise((r) => setTimeout(r, 100)); await __bt.settle(); })()`);
+    // The default scene (the rebuilt one) whatever the profile's store holds from an earlier page: the menu's control.
+    await ev("(() => { const s = document.getElementById('scene-source-value'); s.value = 'replay'; s.dispatchEvent(new Event('change')); return true; })()"); await pause(300);
     await ev("__bt.act.battle('1754641962968727-e0ab2c1f479d')"); await ev('__bt.settle(15000)');
-    const a = await clickRow('6');
-    ok('two scenes, local: the A150 MBT-B hit (518 HP) from its snapshot - the page 0 %, the rebuilt scene\'s 88 % beside it in amber, the server\'s 518 HP; the rebuilt chip marked',
-       a.scene === '6' && a.from === 'snapshot' && a.chance === '0 %' && a.chips.join('|') === '0 %*|88 %!|server: 518 HP' && a.dot === 'replay', JSON.stringify(a));
-    await ev("document.getElementById('scene-chip-replay').click()"); await ev('__bt.settle(15000)'); await pause(1500);
-    const b = await ev(STATE);
-    ok('two scenes, local: ... switched - the same hit from the rebuilt scene: 88 %, the snapshot\'s 0 % now the one in amber',
+    const b = await clickRow('6');
+    ok('two scenes, local: the A150 MBT-B hit (518 HP) opens from its rebuilt scene (the default): 88 %, the snapshot\'s 0 % beside it in amber, the server\'s 518 HP',
        b.scene === '6' && b.from === 'replay' && b.chance === '88 %' && b.chips.join('|') === '0 %!|88 %*|server: 518 HP' && b.dot === 'snapshot', JSON.stringify(b));
+    await ev("document.getElementById('scene-chip-snapshot').click()"); await ev('__bt.settle(15000)'); await pause(1500);
+    const a = await ev(STATE);
+    ok('two scenes, local: ... switched - the same hit from its snapshot: the page 0 %, the rebuilt scene\'s 88 % now the one in amber',
+       a.scene === '6' && a.from === 'snapshot' && a.chance === '0 %' && a.chips.join('|') === '0 %*|88 %!|server: 518 HP' && a.dot === 'replay', JSON.stringify(a));
     await ev("__bt.act.battle('16434853064049700-d0002b38cfca')"); await ev('__bt.settle(15000)');
     await ev("__bt.act.roster(5414726)"); await ev('__bt.settle(15000)');
     const c = await clickRow('r25');
     ok('two scenes, local: a death-camera hit (r25, 430 HP on the T110E5) - shown from its rebuilt scene, drawn, 100 %',
        c.scene === 'r25' && c.from === 'replay' && c.chance === '100 %' && c.message === '' && /no snapshot/.test(c.chips.join()), JSON.stringify(c));
-    // The choice back to the snapshot for the pages after this one (one browser profile, one store): the menu's control.
-    await ev("(() => { const s = document.getElementById('scene-source-value'); s.value = 'snapshot'; s.dispatchEvent(new Event('change')); return true; })()"); await pause(500);
+    // The choice back to the default for the pages after this one (one browser profile, one store): the menu's control.
+    await ev("(() => { const s = document.getElementById('scene-source-value'); s.value = 'replay'; s.dispatchEvent(new Event('change')); return true; })()"); await pause(500);
     ok('two scenes, local: no uncaught exception in the page', page.errors.length === 0, page.errors.slice(0, 3).join(' | '));
   } finally {
     await browser.send('Target.closeTarget', {targetId: page.targetId});

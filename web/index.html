@@ -41,9 +41,10 @@
 <input type="checkbox" id="aim-sound-on" hidden aria-hidden="true" tabindex="-1"><select id="aim-sound-signals-value" hidden aria-hidden="true" tabindex="-1"><option value="2">2</option><option value="3" selected>3</option><option value="4">4</option></select><select id="aim-sound-count-value" hidden aria-hidden="true" tabindex="-1"><option value="3">3</option><option value="4" selected>4</option><option value="5">5</option></select><select id="aim-sound-ticks-value" hidden aria-hidden="true" tabindex="-1"><option value="one">one</option><option value="shot" selected>shot</option></select>
 <!-- The characteristics panel's ⚙ (23.09): off = the stock, on = this build. Kept here for the same reason. -->
 <input type="checkbox" id="ttx-build" hidden aria-hidden="true" tabindex="-1">
-<!-- The scene a hit is shown from (11.11): the in-game snapshot or the scene rebuilt from the replay. Its switch stands in the
-     scene's toolbar; the choice is kept here for the same reason as the ones above. -->
-<select id="scene-source-value" hidden aria-hidden="true" tabindex="-1"><option value="snapshot" selected>snapshot</option><option value="replay">replay</option></select>
+<!-- The scene a hit is shown from (11.11): the scene rebuilt from the replay (the default since 11.11 evening, the user's
+     word after his battles on 1.06) or the in-game snapshot. Its switch is the Hit line tile's scene chips; the choice is
+     kept here for the same reason as the ones above. -->
+<select id="scene-source-value" hidden aria-hidden="true" tabindex="-1"><option value="replay" selected>replay</option><option value="snapshot">snapshot</option></select>
 <div class="settings-actions"><button type="button" id="reset-settings" title="All settings here back to default">Reset to defaults</button></div>
 </div></details></header>
 <main>
