@@ -13,7 +13,7 @@ try:
 except ImportError:
     import queue
 
-VERSION = '1.06'
+VERSION = '1.07'
 VIEWER_PATH = os.path.join('mods', 'configs', 'local.armor_inspector', 'Viewer.html')
 LOG = logging.getLogger('local.armor_inspector')
 PARTS = ('chassis', 'hull', 'turret', 'gun')
