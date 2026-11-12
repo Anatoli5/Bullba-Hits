@@ -17,7 +17,8 @@ sys.path.insert(0, str(ROOT / 'mod'))
 from local_armor_inspector.records import (ArmorTable, PitchTable, RecordDecoder, RecordEncoder,
                                           config_key, pack_battle, snapshot_refs, stamp_snapshot,
                                           unpack_battle, SNAPSHOT_KEY, STATIC_FIELD, STATIC_RECORD,
-                                          VehicleStatic, split_hit, split_vehicle)
+                                          VehicleStatic, split_hit, split_vehicle, DefinitionStore,
+                                          DEFINITION_KINDS, SHARED_FIELD, SHARED_MARKER, definition_name, raw_store)
 from local_armor_inspector import armor as armor_module
 
 
@@ -468,19 +469,169 @@ class RawStaticRecordTests(unittest.TestCase):
         self.assertIsNone(exporter.apply_record('1-test', {'schema': 1, 'type': STATIC_RECORD}), 'nothing to publish')
 
 
+def store_write(encoder, store, record):
+    """What Writer.run appends for one record with the shared store: the store entries first, then the line(s)."""
+    encoded = encoder.encode(record)
+    for kind, key, value in encoder.stored:
+        store.put(kind, key, value)
+    rows = []
+    if encoder.definitions is not None:
+        rows.append(json.loads(json.dumps(encoder.definitions)))
+    rows.append(json.loads(json.dumps(encoded)))
+    encoder.commit()
+    return rows
+
+
+def write_jsonl(path, rows):
+    with open(path, 'w') as stream:
+        for row in rows: stream.write(json.dumps(row, separators=(',', ':')) + '\n')
+
+
+def store_files(store):
+    return sorted(os.path.join(kind, name) for kind in DEFINITION_KINDS
+                  if os.path.isdir(os.path.join(store.folder, kind)) for name in os.listdir(os.path.join(store.folder, kind)))
+
+
+class SharedStoreTests(unittest.TestCase):
+    """BACKLOG 27 (12.11): a vehicle's unchanging data stored once for all battles, CFG/definitions."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = self.temp.name
+        os.makedirs(os.path.join(self.root, 'battles'))
+        self.store = DefinitionStore(os.path.join(self.root, 'definitions'))
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def battle(self, name, hits, store=True):
+        """A raw battle written the recorder's way (with or without the store); its path."""
+        encoder = RecordEncoder(self.store if store else None)
+        rows = [{'schema': 1, 'type': 'battle', 'id': name, 'clientVersion': 'client 1\n', 'startedAt': 1.0}]
+        for record in hits:
+            rows.extend(store_write(encoder, self.store, split_hit(record)) if store else write(encoder, split_hit(record)))
+        path = os.path.join(self.root, 'battles', name + '.jsonl')
+        write_jsonl(path, rows)
+        return path, rows
+
+    def test_an_entry_is_written_once_across_two_battles(self):
+        first, rows = self.battle('1-a', [battle_hit('1'), battle_hit('2', pose=[1, 0, 0, 5])])
+        self.assertNotIn(STATIC_RECORD, [r['type'] for r in rows], 'no definition in the battle file')
+        files = store_files(self.store)
+        self.assertTrue(files)
+        written = self.store.written
+        stamps = dict((f, os.path.getmtime(os.path.join(self.store.folder, f))) for f in files)
+        encoder = RecordEncoder(DefinitionStore(self.store.folder))     # a new session: it looks on the disk
+        encoded = encoder.encode(split_hit(battle_hit('3')))
+        self.assertEqual(encoder.stored, [], 'every definition of the same vehicles is there already')
+        self.assertIsNone(encoder.definitions)
+        self.assertIn('vehicleRef', encoded['target'])
+        self.battle('2-b', [battle_hit('3')])
+        self.assertEqual(self.store.written, written)
+        self.assertEqual(store_files(self.store), files)
+        self.assertEqual(stamps, dict((f, os.path.getmtime(os.path.join(self.store.folder, f))) for f in files),
+                         'an entry is never written again')
+        kind, name = files[0].split(os.sep)
+        self.assertFalse(self.store.put(kind, name[:-3] if kind == 'armor' else 'x:' + name[:-3], {'other': 1}),
+                         'put of an existing key leaves it as it is')
+
+    def test_both_formats_and_the_store_read_the_same(self):
+        hits = [battle_hit('1'), prefab_hit('2'), battle_hit('3', pose=[1, 0, 0, 7], mode=1)]
+        path, rows = self.battle('1-a', copy.deepcopy(hits))
+        perfile = []
+        encoder = RecordEncoder()
+        for record in copy.deepcopy(hits): perfile.extend(write(encoder, split_hit(record)))
+        inline = plain(read([RecordDecoder().decode(r) for r in copy.deepcopy(hits)]))
+        self.assertEqual(plain(read(perfile)), inline, 'the per-file form (one static record per file)')
+        decoder = RecordDecoder(raw_store(path))
+        decoded = [decoder.decode(r) for r in rows[1:]]
+        self.assertEqual(plain(decoded), inline, 'the store form')
+        self.assertEqual(decoder.missing, [])
+        from local_armor_inspector.exporter import read_battle
+        battle = read_battle(path)
+        self.assertEqual(plain(battle['hits']), inline)
+        self.assertNotIn('damaged', battle)
+
+    def test_a_missing_entry_is_named_and_the_battle_listed_as_damaged(self):
+        path, rows = self.battle('10-lost', [battle_hit('1'), battle_hit('2')])
+        gone = rows[1]['target']['vehicleRef']
+        os.remove(self.store.path('static', definition_name('static', gone)))
+        from local_armor_inspector import exporter as ex
+        battle = ex.read_battle(path)
+        self.assertEqual(len(battle['hits']), 2, 'the battle is not dropped')
+        self.assertEqual(battle['damaged'], ['static ' + gone])
+        self.assertIn('Recorded definition unavailable: static ' + gone, battle['warnings'])
+        self.assertIn('Recorded vehicle data unavailable: target', battle['hits'][0]['warnings'])
+        exporter = ex.Exporter(self.root, self.root, 'client 1\n', os.path.join(self.root, 'unused.wotmod'))
+        exporter.publishing_final = True
+        exporter.republish_saved('10-lost')
+        exporter.write_index()
+        index = ex.read_data_file(os.path.join(self.root, 'data', 'index.js'))
+        row = [r for r in index['battles'] if r['id'] == '10-lost'][0]
+        self.assertEqual(row['damaged'], 1, 'listed as damaged')
+        self.assertEqual(row['hits'], 2)
+        published = ex.read_data_file(os.path.join(self.root, 'data', 'battles', '10-lost.js'))
+        self.assertIn('Recorded definition unavailable: static ' + gone, published['warnings'])
+
+    def test_a_store_that_cannot_write_keeps_the_definitions_in_the_file(self):
+        class Broken(DefinitionStore):
+            def put(self, kind, key, value): raise OSError('disk full')
+        broken = Broken(os.path.join(self.root, 'definitions'))
+        encoder = RecordEncoder(broken)
+        encoded = encoder.encode(split_hit(battle_hit('1')))
+        self.assertTrue(encoder.stored)
+        try:
+            for kind, key, value in encoder.stored: broken.put(kind, key, value)
+        except OSError:
+            encoder.in_file()
+        self.assertEqual(encoder.stored, [])
+        self.assertEqual(encoder.definitions['type'], STATIC_RECORD)
+        rows = [json.loads(json.dumps(encoder.definitions)), json.loads(json.dumps(encoded))]
+        self.assertEqual(plain(read(rows)), plain(read([RecordDecoder().decode(battle_hit('1'))])),
+                         'readable on its own, with no store')
+
+    def test_a_published_battle_refers_to_the_store_and_reads_the_same(self):
+        from local_armor_inspector import exporter as ex
+        battle = {'id': '7-p', 'hits': [battle_hit('1'), prefab_hit('2'), battle_hit('3', mode=1)], 'warnings': []}
+        own = os.path.join(self.root, 'own.js')
+        ex.write_data(own, 'battle:7-p', copy.deepcopy(battle))
+        os.makedirs(os.path.join(self.root, 'data', 'battles'))
+        shared = os.path.join(self.root, 'data', 'battles', '7-p.js')
+        ex.write_data(shared, 'battle:7-p', copy.deepcopy(battle), self.store)
+        with open(shared, 'rb') as stream: text = stream.read().decode('ascii')
+        value = json.loads(text[len('ArmorInspectorData.receive('):-3])[1]
+        self.assertEqual(value[SHARED_MARKER], 1)
+        for name in ('staticTables', 'pitchTables', 'armorTables'): self.assertNotIn(name, value)
+        for kind, keys in value[SHARED_FIELD].items():
+            self.assertEqual(keys, sorted(keys))
+            for key in keys: self.assertTrue(self.store.has(kind, key), key)
+        self.assertEqual(plain(ex.read_data_file(shared)), plain(ex.read_data_file(own)), 'the same value once expanded')
+        written = self.store.written
+        ex.write_data(shared, 'battle:7-p', copy.deepcopy(battle), self.store)
+        self.assertEqual(self.store.written, written, 'published again: no entry written again')
+        # Raw and published share the store: the armour and pitch tables of the raw battle are the published ones.
+        path, rows = self.battle('8-r', [battle_hit('1')])
+        self.assertEqual(self.store.written, written)
+        self.assertLess(os.path.getsize(shared), os.path.getsize(own))
+        with self.assertRaises(ValueError):
+            unpack_battle({SHARED_MARKER: 2, 'hits': []})
+
+
 RAW = os.path.join('C:/', 'Games', 'World_of_Tanks_NA', 'mods', 'configs', 'local.armor_inspector', 'battles')
 LOCAL = ('2311244215850685716-90c9fc0d82f8', '2310458541778197335-90c9fc0d82f8', '3637817619308026-90c9fc0d82f8',
          '6520676977801102-90c9fc0d82f8', '2311242673957423690-90c9fc0d82f8')
 
 
-def convert(path):
+def convert(path, store=None):
     """A raw battle of an earlier build turned into the reference form by the writer's own code: every record decoded,
-    split (records.split_hit) and encoded (RecordEncoder) - what the recorder writes for the same hits."""
-    decoder, encoder, rows = RecordDecoder(), RecordEncoder(), []
+    split (records.split_hit) and encoded (RecordEncoder) - what the recorder writes for the same hits; with `store` (a
+    DefinitionStore, BACKLOG 27) its definitions go there, as Writer.run puts them."""
+    decoder, encoder, rows = RecordDecoder(), RecordEncoder(store), []
     with open(path, 'rb') as stream:
         for line in stream:
             if line.endswith(b'\n'):
-                rows.extend(write(encoder, split_hit(decoder.decode(json.loads(line.decode('utf-8'))))))
+                record = split_hit(decoder.decode(json.loads(line.decode('utf-8'))))
+                rows.extend(store_write(encoder, store, record) if store is not None else write(encoder, record))
     return rows
 
 
@@ -490,10 +641,12 @@ class LocalBattleTests(unittest.TestCase):
     """Five battles of 11.11 (1.06, 1 120 hits; the game folder is read, never written): converted to the reference
     form they read back the same and publish the same file."""
 
-    def publish(self, name, rows):
+    def publish(self, name, rows, store=None):
         from local_armor_inspector.exporter import Exporter
+        import shutil
         with tempfile.TemporaryDirectory() as root:
             os.makedirs(os.path.join(root, 'battles'))
+            if store is not None: shutil.copytree(store.folder, os.path.join(root, 'definitions'))
             with open(os.path.join(root, 'battles', name + '.jsonl'), 'w') as stream:
                 for row in rows: stream.write(json.dumps(row, separators=(',', ':')) + '\n')
             exporter = Exporter(root, root, 'version\n', os.path.join(root, 'unused.wotmod'))
@@ -515,6 +668,16 @@ class LocalBattleTests(unittest.TestCase):
             self.assertLess(len(json.dumps(new)), 0.9 * len(json.dumps(old)), name)
             self.assertEqual(plain(read(new)), plain(read(old)), name)
             self.assertEqual(self.publish(name, new), self.publish(name, old), name)
+            # The shared store (BACKLOG 27): no definition left in the file; read and published the same.
+            with tempfile.TemporaryDirectory() as folder:
+                store = DefinitionStore(os.path.join(folder, 'definitions'))
+                stored = convert(path, store)
+                self.assertNotIn(STATIC_RECORD, [r.get('type') for r in stored], name)
+                self.assertLess(len(json.dumps(stored)), 0.6 * len(json.dumps(new)), name)
+                decoder = RecordDecoder(store)
+                self.assertEqual(plain([decoder.decode(r) for r in stored]), plain(read(old)), name)
+                self.assertEqual(decoder.missing, [], name)
+                self.assertEqual(self.publish(name, stored, store), self.publish(name, old), name)
 
 
 

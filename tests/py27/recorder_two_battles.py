@@ -436,7 +436,10 @@ def read_jsonl(path, raw=False):
     """The records of a raw file as every reader of the mod sees them (records.RecordDecoder: references resolved, the
     `static` definition records taken and left out); `raw` - the lines as written."""
     from local_armor_inspector import records
-    decoder, STATIC_RECORD = records.RecordDecoder(), getattr(records, 'STATIC_RECORD', 'static')   # a MOD_DIR of an older build
+    # The shared definitions the file refers to (BACKLOG 27): the store beside its folder; a MOD_DIR of an older build has none.
+    store = records.raw_store(path) if hasattr(records, 'raw_store') else None
+    decoder = records.RecordDecoder(store) if store is not None else records.RecordDecoder()
+    STATIC_RECORD = getattr(records, 'STATIC_RECORD', 'static')
     rows, bad = [], 0
     with open(path, 'rb') as stream:
         for line in stream:

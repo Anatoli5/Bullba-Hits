@@ -17,7 +17,15 @@ ctx.document = {createElement() { return {remove() {}}; }, head: {appendChild(sc
   const file = script.src.split('?')[0];
   setImmediate(function () {
     try {
-      if (/^data\/battles\//.test(file)) vm.runInContext(source, ctx);
+      // A golden of format 3 on (BACKLOG 27): the battle file, then the shared store's definitions it refers to, one a
+      // line - each served as the file it was (definitions/<kind>/<hash>.js); a missing one is a missing file.
+      if (/^data\/battles\//.test(file)) vm.runInContext(source.split('\n')[0], ctx);
+      else if (/^definitions\/(armor|pitch|static)\/[a-f0-9]+\.js$/.test(file)) {
+        const m = /^definitions\/(\w+)\/(\w+)\.js$/.exec(file), key = '["definition:' + m[1] + ':' + m[2] + '"';
+        const line = source.split('\n').find(function (l) { return l.indexOf(key) !== -1; });
+        if (!line) throw new Error('no such file');
+        vm.runInContext(line, ctx);
+      }
       else if (/^data\/models\/[a-f0-9]{64}\.js$/.test(file)) ctx.ArmorInspectorData.receive(['model:' + file.slice(12, -3), JSON.parse(JSON.stringify(MODEL))]);
       script.onload();
     } catch (e) { script.onerror(); }

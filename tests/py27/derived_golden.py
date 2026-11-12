@@ -8,7 +8,8 @@ data/published.json stamps a battle's derived file with DERIVED_FORMAT (not the 
 again only when that stamp changed. So a change of publish()'s output that does not raise DERIVED_FORMAT would leave every
 saved battle in its old form for good. This test publishes one synthetic battle (every block publish() fills: the hits with
 their four parts and armour, the shooter's parts, a roster, a shot, crit ties, a fire and a ram) and compares the file byte
-for byte with tests/golden/derived-battle-<DERIVED_FORMAT>.js:
+for byte with tests/golden/derived-battle-<DERIVED_FORMAT>.js (from format 3 on: the battle file, then each definition of the
+shared store it refers to, one a line):
 
   - the same: ok;
   - different: raise DERIVED_FORMAT in exporter.py, then run with 'update' - the file of the new format is stored beside the
@@ -109,6 +110,14 @@ try:
     e = ex.Exporter(os.path.join(temp, 'game'), folder, VERSION)
     e.republish_saved(BATTLE)
     with open(os.path.join(folder, 'data', 'battles', BATTLE + '.js'), 'rb') as stream: data = stream.read()
+    # Since DERIVED_FORMAT 3 (BACKLOG 27) the battle file keeps references; its definitions are files of the shared store
+    # (CFG/definitions/<kind>/<hash>.js). The golden is the battle file followed by each of them, in name order: one
+    # statement a line, the page test serves each line as the file it was.
+    shared = json.loads(data[len('ArmorInspectorData.receive('):-3])[1].get('sharedDefinitions') or {}
+    for kind in sorted(shared):
+        names = sorted(set(key if kind == 'armor' else key.rsplit(':', 1)[1] for key in shared[kind]))
+        for name in names:
+            with open(os.path.join(folder, 'definitions', kind, name + '.js'), 'rb') as stream: data += stream.read()
     value = ex.read_data_file(os.path.join(folder, 'data', 'battles', BATTLE + '.js'))
     check(len(value['hits']) == 2 and value.get('damageEvents') and value.get('critStats') is not None
           and all(p.get('modelKey') for h in value['hits'] for p in h['target']['parts']),

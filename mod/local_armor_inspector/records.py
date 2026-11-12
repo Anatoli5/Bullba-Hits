@@ -25,10 +25,21 @@ What actually happened in the battle stays on its own record: points, the target
 verdict, tracers, crits, the gun's state, the siege state, the shot's aim. Readers expand every
 reference back into the old in-memory shape, so consumers see the hit exactly as before. A
 reference with no definition leaves the field unfilled and adds a warning - never a made-up value.
+
+The shared definition store (BACKLOG 27, 12.11.2026, DefinitionStore): a definition is the same
+whichever battle needs it, so the writer of a new raw battle and the publisher of a battle file put
+it ONCE into `CFG/definitions/<kind>/<content hash>.js` and the battle keeps only the reference.
+An entry is addressed by its content, written before the first line that refers to it, never
+changed and never deleted by code; a decoder looks a reference up in its own file first, then in
+the store, and keeps every reference it found in neither (RecordDecoder.missing) for its reader to
+name. Files written before the store (every format above) keep their own tables and read as they did.
 """
 from __future__ import absolute_import
 import hashlib
 import json
+import os
+import re
+import threading
 
 
 def _json(value):
@@ -103,6 +114,9 @@ SNAPSHOT_KEY = '_snapshotRefs'
 # vehicle's static half (in memory only: the encoder replaces it with `vehicleRef`).
 STATIC_RECORD = 'static'
 STATIC_FIELD = '_static'
+# A published snapshot whose definitions are in the shared store: the marker and the list of the keys it uses.
+SHARED_MARKER = 'sharedDefinitionsFormat'
+SHARED_FIELD = 'sharedDefinitions'
 
 
 def _sides(record):
@@ -193,12 +207,163 @@ def _lookup(tables, key):
         return None
 
 
+# ---- THE SHARED DEFINITION STORE (BACKLOG 27, 12.11.2026) ----
+# Measured on the user's 1 021 stored battles (the 33 of 11.11 among them): every battle file repeated the same
+# vehicles' armour tables, pitch tables and static blocks - 42 % of the published bytes, 957 MB, of which 46.7 MB are
+# distinct (12 030 definitions). One file per definition (not a pack): the page reads each one by a <script> tag from
+# file://, so a definition must be a file of its own; 12 030 files of 3.9 KB on average need no folders of their own.
+# A bundle per vehicle (its block with all its tables) was measured too: 338 MB, since one armour table serves many
+# configurations. The raw and the published side share the store: their armour and pitch tables are the same content
+# (all 413 and 123 of the 33 battles), only the published static blocks carry the publication's fill-ins.
+DEFINITIONS_FOLDER = 'definitions'
+DEFINITION_KINDS = ('armor', 'pitch', 'static')
+DEFINITION_PREFIX = 'ArmorInspectorData.receive('
+_DEFINITION_NAME = {'armor': re.compile(r'^[0-9a-f]{64}\Z'), 'pitch': re.compile(r'^[0-9a-f]{32}\Z'),
+                    'static': re.compile(r'^[0-9a-f]{32}\Z')}
+
+
+def definition_name(kind, key):
+    """The file name of a reference: its content hash - an armour key is one (64 hex), a table key ends in one
+    (`<configuration>:<32 hex>`). The configuration in front is not in the name: the same content is one entry
+    whichever configuration refers to it (a shell list of two turrets with the same gun). None for anything else."""
+    pattern = _DEFINITION_NAME.get(kind)
+    if pattern is None or not isinstance(key, (str, type(u''))):
+        return None
+    key = str(key)
+    if kind != 'armor':
+        if ':' not in key:
+            return None
+        key = key.rsplit(':', 1)[1]
+    return key if pattern.match(key) else None
+
+
+def definition_bytes(kind, name, value):
+    """An entry as the page reads it (a classic script, like every data file): `definition:<kind>:<name>`."""
+    payload = json.dumps(['definition:%s:%s' % (kind, name), value], ensure_ascii=True, allow_nan=False,
+                         separators=(',', ':'))
+    payload = payload.replace('<', '\\u003c').replace('>', '\\u003e').replace('&', '\\u0026')
+    return (DEFINITION_PREFIX + payload + ');\n').encode('ascii')
+
+
+def raw_store(path):
+    """The store of a raw battle file `CFG/battles/<id>.jsonl`: `CFG/definitions`."""
+    return DefinitionStore(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(path))), DEFINITIONS_FOLDER))
+
+
+def published_store(path):
+    """The store of a published battle file `CFG/data/battles/<id>.js`: the same `CFG/definitions`."""
+    folder = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(path))))
+    return DefinitionStore(os.path.join(folder, DEFINITIONS_FOLDER))
+
+
+class DefinitionStore(object):
+    """`CFG/definitions/<kind>/<content hash>.js`: one file per definition, shared by every battle.
+
+    put() writes an entry only when there is none (checked by its name, the content is never read), whole and
+    flushed to the disk before it returns - the line that refers to it is written after - under a temporary name
+    renamed at the end, so a reader finds the whole entry or none; an existing entry is never written again: the
+    rename does not replace a file. Nothing here deletes an entry. get() reads one, None when it is not there or
+    does not read; the decoder checks armour and pitch tables against their key as it always has."""
+
+    def __init__(self, folder):
+        self.folder = folder
+        # Entries seen on the disk or written: they never go away, so one look per session is enough.
+        self.present = set()
+        self.written = 0
+
+    def path(self, kind, name):
+        return os.path.join(self.folder, kind, name + '.js')
+
+    def has(self, kind, key):
+        name = definition_name(kind, key)
+        if name is None:
+            return False
+        if (kind, name) in self.present:
+            return True
+        if os.path.isfile(self.path(kind, name)):
+            self.present.add((kind, name))
+            return True
+        return False
+
+    def put(self, kind, key, value):
+        """True when the entry was written now, False when it was there. Raises when it could not be written."""
+        name = definition_name(kind, key)
+        if name is None:
+            raise ValueError('Not a definition reference')
+        if self.has(kind, key):
+            return False
+        path = self.path(kind, name)
+        folder = os.path.dirname(path)
+        if not os.path.isdir(folder):
+            try:
+                os.makedirs(folder)
+            except OSError:
+                if not os.path.isdir(folder):
+                    raise
+        data = definition_bytes(kind, name, value)
+        temporary = '%s.%d-%d.tmp' % (path, os.getpid(), threading.current_thread().ident or 0)
+        with open(temporary, 'wb') as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        try:
+            os.rename(temporary, path)
+        except OSError:
+            # Another writer (the recorder's thread, the export thread) put the same content first: it stays.
+            try:
+                os.remove(temporary)
+            except OSError:
+                pass
+            if not os.path.isfile(path):
+                raise
+            self.present.add((kind, name))
+            return False
+        self.present.add((kind, name))
+        self.written += 1
+        return True
+
+    def get(self, kind, key):
+        name = definition_name(kind, key)
+        if name is None:
+            return None
+        try:
+            with open(self.path(kind, name), 'rb') as stream:
+                text = stream.read().decode('ascii')
+            if not text.startswith(DEFINITION_PREFIX) or not text.endswith(');\n'):
+                return None
+            label, value = json.loads(text[len(DEFINITION_PREFIX):-3])
+        except (IOError, OSError, ValueError, TypeError, UnicodeError):
+            return None
+        if label != 'definition:%s:%s' % (kind, name):
+            return None
+        self.present.add((kind, name))
+        return value
+
+
+class _Tables(dict):
+    """One kind of a decoder's definitions: those of the file read so far, then the store's (RecordDecoder)."""
+
+    def __init__(self, decoder, kind):
+        dict.__init__(self)
+        self.decoder = decoder
+        self.kind = kind
+
+    def get(self, key, default=None):
+        try:
+            if dict.__contains__(self, key):
+                return dict.__getitem__(self, key)
+        except TypeError:
+            return default
+        value = self.decoder.from_store(self.kind, key)
+        return default if value is None else value
+
+
 class RecordEncoder(object):
     """One per raw file. Commit only after the complete encoded line is written.
 
     After encode(), `definitions` is the `static` record that must be written right before the
     encoded hit (the definitions of its shared halves this file does not hold yet), or None."""
-    def __init__(self):
+    def __init__(self, store=None):
         self.known = set()
         self.pending = set()
         self.known_pitch = set()
@@ -206,11 +371,17 @@ class RecordEncoder(object):
         self.known_static = set()
         self.pending_static = set()
         self.definitions = None
+        # With a DefinitionStore (the recorder's, BACKLOG 27): the definitions of the shared halves the store lacks,
+        # [(kind, key, value)], for the writer to put there before it writes the hit (Writer.run); none go to the file.
+        self.store = store
+        self.stored = []
 
     def shared(self, result):
         """The vehicle halves and shell lists the recorder shares (VehicleStatic, SharedList) -> references; the
-        definitions this file lacks go to the `static` record. Each object's references are taken once."""
+        definitions this file lacks go to the shared store (with one), else to the `static` record. Each object's
+        references are taken once."""
         armor, pitch, static = {}, {}, {}
+        store = self.store
         configs = {}
         for side in ('attacker', 'target'):
             vehicle = result.get(side)
@@ -230,8 +401,11 @@ class RecordEncoder(object):
                                               ('static', self.known_static, self.pending_static, static)):
                 for ref, value in refs[kind].items():
                     if ref not in known and ref not in pending:
-                        out[ref] = value
                         pending.add(ref)
+                        if store is None:
+                            out[ref] = value
+                        elif not store.has(kind, ref):
+                            self.stored.append((kind, ref, value))
         used = 'vehicleRef' in (result.get('attacker') or {}) or 'vehicleRef' in (result.get('target') or {})
         for field in SHELL_LIST_FIELDS:
             value = result.get(field)
@@ -242,8 +416,11 @@ class RecordEncoder(object):
             result[field+'Ref'] = key
             used = True
             if key not in self.known_static and key not in self.pending_static:
-                static[key] = value
                 self.pending_static.add(key)
+                if store is None:
+                    static[key] = value
+                elif not store.has('static', key):
+                    self.stored.append(('static', key, value))
         if used:
             result['staticTableFormat'] = 1
         if armor or pitch or static:
@@ -256,11 +433,26 @@ class RecordEncoder(object):
                     record[name] = definitions
             self.definitions = record
 
+    def in_file(self):
+        """The store could not take this hit's definitions: they go into the file instead, in the `static` record
+        before the hit - the file stays readable on its own, as before the store."""
+        if not self.stored:
+            return
+        record = self.definitions or {'schema': 1, 'type': STATIC_RECORD}
+        for kind, key, value in self.stored:
+            marker, name = {'armor': ('armorTableFormat', 'armorTables'), 'pitch': ('pitchTableFormat', 'pitchTables'),
+                            'static': ('staticTableFormat', 'staticTables')}[kind]
+            record[marker] = 1
+            record.setdefault(name, {})[key] = value
+        self.definitions = record
+        self.stored = []
+
     def encode(self, record):
         self.pending = set()
         self.pending_pitch = set()
         self.pending_static = set()
         self.definitions = None
+        self.stored = []
         if record.get('type') != 'hit':
             return record
         result = _sides(record)
@@ -305,25 +497,55 @@ class RecordEncoder(object):
         self.pending_pitch = set()
         self.pending_static = set()
         self.definitions = None
+        self.stored = []
 
     def rollback(self):
         self.pending = set()
         self.pending_pitch = set()
         self.pending_static = set()
         self.definitions = None
+        self.stored = []
 
 
 class RecordDecoder(object):
-    def __init__(self):
-        self.tables = {}
-        self.pitch = {}
+    def __init__(self, store=None):
+        # Each kind looks in the file's own definitions first, then in the shared store (DefinitionStore, BACKLOG 27).
+        self.store = store
+        self.tables = _Tables(self, 'armor')
+        self.pitch = _Tables(self, 'pitch')
         # Old records carry the table inline. Interning them by (hull pitch, joint pitch, sample
         # count) plus an exact comparison shares one object between hits without hashing 22 KB per
         # hit; tables of old battles are never recomputed from the client that runs today.
         self.pitch_intern = {}
         # The static blocks by reference: of the raw file read so far (its `static` records), or of the published
         # snapshot being unpacked (unpack_battle). Not re-fingerprinted: written by the same writer as the references.
-        self.static = {}
+        self.static = _Tables(self, 'static')
+        # The references found neither in the file nor in the store, in the order met: [(kind, key)]. The reader
+        # names them (missing_warnings) and lists the battle as damaged; the hits say what they lack as before.
+        self.missing = []
+        self.absent = set()
+
+    def from_store(self, kind, key):
+        """A definition the file does not hold, from the store - checked as the file's own are (define, define_pitch)."""
+        try:
+            if (kind, key) in self.absent:
+                return None
+        except TypeError:
+            return None
+        value = self.store.get(kind, key) if self.store is not None else None
+        if value is not None:
+            if kind == 'armor':
+                self.define({key: value})
+            elif kind == 'pitch':
+                self.define_pitch({key: value})
+            else:
+                self.define_static({key: value})
+            tables = {'armor': self.tables, 'pitch': self.pitch, 'static': self.static}[kind]
+            if dict.__contains__(tables, key):
+                return dict.__getitem__(tables, key)
+        self.absent.add((kind, key))
+        self.missing.append((kind, str(key)))
+        return None
 
     def define_static(self, definitions):
         if isinstance(definitions, dict):
@@ -602,23 +824,48 @@ def pack_hit(hit, armor, pitch, static):
     return result
 
 
-def pack_battle(battle):
-    """A complete snapshot carries its own dictionaries; never needs an earlier file."""
+def pack_battle(battle, store=None):
+    """A snapshot with its static blocks by reference. Without a store it carries its own dictionaries and never needs
+    another file. With one (DefinitionStore, BACKLOG 27) every definition is put there first - an entry already there
+    is not written again - and the snapshot keeps only the list of the references it uses, `sharedDefinitions`
+    {kind: [key, ...]} under the marker `sharedDefinitionsFormat` 1, so the page loads them all in one round. When the
+    store cannot take them (put raises), the snapshot carries them itself, as before."""
     result = dict(battle)
     armor, pitch, static = {}, {}, {}
     hits = []
     for hit in battle.get('hits') or []:
         hits.append(pack_hit(hit, armor, pitch, static))
     result['hits'] = hits
+    result.pop(SHARED_MARKER, None)
+    result.pop(SHARED_FIELD, None)
+    shared = None
+    if store is not None and (armor or pitch or static):
+        try:
+            for kind, definitions in (('armor', armor), ('pitch', pitch), ('static', static)):
+                for key, value in definitions.items():
+                    store.put(kind, key, value)
+            shared = {}
+            for kind, definitions in (('armor', armor), ('pitch', pitch), ('static', static)):
+                if definitions:
+                    shared[kind] = sorted(definitions)
+        except Exception:
+            shared = None
+            store.failed = getattr(store, 'failed', 0) + 1
     for definitions, marker, name in ((armor, 'armorTableFormat', 'armorTables'),
                                       (pitch, 'pitchTableFormat', 'pitchTables'),
                                       (static, 'staticTableFormat', 'staticTables')):
         if definitions:
             result[marker] = 1
-            result[name] = definitions
+            if shared is None:
+                result[name] = definitions
+            else:
+                result.pop(name, None)
         else:
             result.pop(marker, None)
             result.pop(name, None)
+    if shared is not None:
+        result[SHARED_MARKER] = 1
+        result[SHARED_FIELD] = shared
     return result
 
 
@@ -695,7 +942,9 @@ def _expand_static(hit, tables):
     return result
 
 
-def unpack_battle(battle):
+def unpack_battle(battle, store=None):
+    """A snapshot expanded back into its hits. `store`: the DefinitionStore its shared references live in (read_data_file
+    finds it beside the file); a reference found neither in the snapshot nor there is named on the battle."""
     if not isinstance(battle, dict):
         return battle
     if battle.get('armorTableFormat') not in (None, 1):
@@ -704,13 +953,40 @@ def unpack_battle(battle):
         raise ValueError('Unknown pitch table format')
     if battle.get('staticTableFormat') not in (None, 1):
         raise ValueError('Unknown static table format')
-    decoder = RecordDecoder()
+    if battle.get(SHARED_MARKER) not in (None, 1):
+        raise ValueError('Unknown shared definitions format')
+    decoder = RecordDecoder(store)
     decoder.define(battle.get('armorTables'))
     decoder.define_pitch(battle.get('pitchTables'))
     decoder.define_static(battle.get('staticTables'))
     result = dict(battle)
     for name in ('armorTables', 'armorTableFormat', 'pitchTables', 'pitchTableFormat',
-                 'staticTables', 'staticTableFormat'):
+                 'staticTables', 'staticTableFormat', SHARED_MARKER, SHARED_FIELD):
         result.pop(name, None)
     result['hits'] = [decoder.decode(hit) for hit in battle.get('hits') or []]
+    note_missing(result, decoder)
     return result
+
+
+def missing_warnings(decoder):
+    """The battle's own words for each reference its decoder found nowhere: which kind, which key."""
+    return ['Recorded definition unavailable: %s %s' % (kind, key) for kind, key in decoder.missing]
+
+
+def note_missing(battle, decoder):
+    """Name on the battle what its decoder could not find (once each): the warnings, and `damaged` - the keys, which
+    the exporter's index carries as the count, so the battle is listed as damaged instead of dropped."""
+    if not decoder.missing:
+        return battle
+    warnings = list(battle.get('warnings') or [])
+    for text in missing_warnings(decoder):
+        if text not in warnings:
+            warnings.append(text)
+    battle['warnings'] = warnings
+    damaged = list(battle.get('damaged') or [])
+    for kind, key in decoder.missing:
+        name = '%s %s' % (kind, key)
+        if name not in damaged:
+            damaged.append(name)
+    battle['damaged'] = damaged
+    return battle

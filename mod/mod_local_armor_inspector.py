@@ -553,6 +553,8 @@ class Writer(object):
         self.dirty_lock = threading.Lock()
         self.dirty = {}
         self.encoders = {}
+        # The shared definition store beside the battles folder (BACKLOG 27): CFG/definitions. Built in run().
+        self.store = None
         # File name -> its size after the last clean append of this session. Writer thread only.
         self.ends = {}
         self.export_queue = queue.Queue(1024)
@@ -613,15 +615,27 @@ class Writer(object):
             return bool(self.dirty)
 
     def run(self):
-        try: from local_armor_inspector.records import RecordEncoder
-        except ImportError: from mod.local_armor_inspector.records import RecordEncoder
+        try: from local_armor_inspector.records import RecordEncoder, DefinitionStore, DEFINITIONS_FOLDER
+        except ImportError: from mod.local_armor_inspector.records import RecordEncoder, DefinitionStore, DEFINITIONS_FOLDER
+        if self.store is None:
+            self.store = DefinitionStore(os.path.join(os.path.dirname(os.path.abspath(self.folder)), DEFINITIONS_FOLDER))
         try:
             while not self.stopping.is_set() or not self.queue.empty():
                 try: name, record = self.queue.get(timeout=0.1)
                 except queue.Empty: continue
-                encoder = self.encoders.setdefault(name, RecordEncoder())
+                encoder = self.encoders.get(name)
+                if encoder is None: encoder = self.encoders[name] = RecordEncoder(self.store)
                 try:
                     encoded = encoder.encode(record)
+                    # The definitions of this hit's shared halves the store lacks (BACKLOG 27): each put there whole and
+                    # flushed before the line that refers to them; an entry already there is not written again. When
+                    # the store cannot take them they go into the file instead, in the `static` record before the hit.
+                    if encoder.stored:
+                        try:
+                            for kind, key, value in encoder.stored: self.store.put(kind, key, value)
+                        except Exception:
+                            LOG.exception('Shared definition store not written; the definitions stay in %s', name)
+                            encoder.in_file()
                     line = (json.dumps(encoded, ensure_ascii=True, allow_nan=False,
                                        separators=(',', ':'))+'\n').encode('utf-8')
                     # The definitions this hit's references need and the file does not hold yet (BACKLOG 27): their own

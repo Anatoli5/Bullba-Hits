@@ -28,7 +28,8 @@ import xml.etree.ElementTree as ET
 from collections import OrderedDict
 from .geometry import extract
 from .armor import ArmorCatalog
-from .records import RecordDecoder, STATIC_RECORD, pack_battle, stamp_snapshot, unpack_battle
+from .records import (RecordDecoder, STATIC_RECORD, DEFINITIONS_FOLDER, DefinitionStore, note_missing, pack_battle,
+                      published_store, raw_store, stamp_snapshot, unpack_battle)
 from .telemetry import mechanics_params
 from .crit_tie import attach_crits, moves_tie
 from .damage_log import damage_log
@@ -177,7 +178,10 @@ PUBLISHED_PAUSE = 30.0
 # (tests/test_derived_formats.cjs) until the background has published every battle again.
 # 2 (09.11.2026): a ram is one damage event per damaged vehicle, dealt by the other one of the pair (damage_log.py);
 # format 1 held one event per ram with a "rammer" and its loss in 'selfDamage', which the page showed in no row.
-DERIVED_FORMAT = 2
+# 3 (12.11.2026, BACKLOG 27): the battle file keeps only the references; its definitions are in the shared store
+# CFG/definitions (records.pack_battle, `sharedDefinitions`). The same values once expanded; a saved battle takes the new
+# form when the page opens it (it is 'stale' until then) or when it is published for another reason - never in bulk.
+DERIVED_FORMAT = 3
 # One slice of a saved battle's background publication (run_battle_job): lines of its raw file, then hits prepared, then the
 # file written (~60 ms for the largest, 53 MB raw / 405 hits - the one part that does not split). Between two lines or hits
 # the slice ends early for a battle, a drag, a command of the page or the mod closing; after it the game gets its share
@@ -458,26 +462,28 @@ def same_as_member(path, info):
     return len(data) == info.file_size and (zlib.crc32(data) & 0xffffffff) == info.CRC
 
 
-def data_bytes(key, value):
+def data_bytes(key, value, store=None):
     # JSON is serialized, never interpolated into executable text unescaped.
+    # A battle's definitions go to the shared store first (BACKLOG 27): `store`, a records.DefinitionStore; the file
+    # that refers to them is written after this returns.
     if str(key).startswith('battle:'):
-        value = pack_battle(value)
+        value = pack_battle(value, store)
     payload = json.dumps([key, value], ensure_ascii=True, allow_nan=False, separators=(',', ':'))
     payload = payload.replace('<', '\\u003c').replace('>', '\\u003e').replace('&', '\\u0026')
     return ('ArmorInspectorData.receive('+payload+');\n').encode('ascii')
 
 
-def write_data(path, key, value):
-    data = data_bytes(key, value)
+def write_data(path, key, value, store=None):
+    data = data_bytes(key, value, store)
     atomic_write(path, data)
     # The size written: data/published.json compares it with the file on disk at the next start.
     return len(data)
 
 
-def write_data_changed(path, key, value):
+def write_data_changed(path, key, value, store=None):
     """(size, written): write_data, unless the file on disk holds these very bytes (BACKLOG 55, 02.10: 138 of 145 battles
     published again after the client update were byte for byte the old files) - then nothing is written."""
-    data = data_bytes(key, value)
+    data = data_bytes(key, value, store)
     try:
         if os.path.getsize(path) == len(data):
             with open(path, 'rb') as stream:
@@ -502,7 +508,8 @@ def read_data_file(path):
     if not payload.startswith(prefix) or not payload.endswith(suffix):
         raise ValueError('Not an exported data file')
     key, value = json.loads(payload[len(prefix):-len(suffix)])
-    return unpack_battle(value) if str(key).startswith('battle:') else value
+    # A battle file of data/battles: its shared definitions are in the store of its folder (CFG/definitions).
+    return unpack_battle(value, published_store(path)) if str(key).startswith('battle:') else value
 
 
 class HeaderUnavailable(ValueError):
@@ -521,7 +528,8 @@ class BattleReader(object):
 
     def __init__(self, path, decoder=None):
         self.path = path
-        self.decoder = decoder or RecordDecoder()
+        # The shared definitions the file refers to (BACKLOG 27): CFG/definitions beside its battles folder.
+        self.decoder = decoder or RecordDecoder(raw_store(path))
         self.header, self.hits, self.warnings, self.shot_events, self.crit_events, self.roster = None, [], [], [], [], None
         self.offset, self.number, self.size, self.done = 0, 0, None, False
 
@@ -585,6 +593,11 @@ class BattleReader(object):
             result.update({'roster':roster.get('vehicles') or [], 'playerTeam':roster.get('playerTeam')})
             # The header may hold 0 when the battle record was opened before the client knew its vehicle.
             if roster.get('playerVehicleId'): result['playerVehicleId'] = roster['playerVehicleId']
+        # A reference found neither in the file nor in the shared store: named on the battle, which is listed as damaged.
+        if self.decoder.missing:
+            note_missing(result, self.decoder)
+            LOG.warning('Battle %s: recorded definitions unavailable (not in the file nor in %s) - %s', result['id'],
+                        DEFINITIONS_FOLDER, ', '.join('%s %s' % pair for pair in self.decoder.missing))
         return result
 
 
@@ -3598,6 +3611,8 @@ class Exporter(object):
         self.raw_targets = {}
         self.raw_decoders = {}
         self.raw_oversize = {}
+        # The shared definition store (BACKLOG 27): what the raw battles refer to and what the published ones put there.
+        self.definitions = DefinitionStore(os.path.join(self.folder, DEFINITIONS_FOLDER))
         # Battle files passed over for the rest of the session (skip_battle): no header line, or a publication
         # that keeps failing the same way. Never retried; the next start reads them again.
         self.skipped = set()
@@ -5789,12 +5804,13 @@ class Exporter(object):
         notes = [note for note in self.replay_notes(battle['id']) if note not in (result.get('warnings') or ())]
         if notes: result['warnings'] = list(result.get('warnings') or []) + notes
         target = os.path.join(self.folder, 'data', 'battles', battle['id']+'.js')
+        # Its definitions go to the shared store first, the file that refers to them after (BACKLOG 27).
         if active:
-            size, written = write_data(target, 'battle:'+battle['id'], result), True
+            size, written = write_data(target, 'battle:'+battle['id'], result, getattr(self, 'definitions', None)), True
         else:
             # A saved battle prepared again whose file comes out the same (the repair of a battle that had nothing to fill,
             # BACKLOG 55): not written, and its revision stays - the page has nothing to read again.
-            size, written = write_data_changed(target, 'battle:'+battle['id'], result)
+            size, written = write_data_changed(target, 'battle:'+battle['id'], result, getattr(self, 'definitions', None))
         # One walk over the parts: the models it references (the shooter's count too, or prune() would delete them as
         # unused; a model it still waits for counts the same way, or prune() would delete it between the job that writes it
         # and the republish that names it), those whose model failed (no file to look for at the next start), and whether
@@ -5833,6 +5849,8 @@ class Exporter(object):
             summary['vehicle'] = player_vehicle(result)
         except Exception:
             summary['vehicle'] = None
+        # A battle whose records refer to definitions found nowhere (BACKLOG 27): listed as damaged, with their count.
+        if battle.get('damaged'): summary['damaged'] = len(battle['damaged'])
         # Its revision in the index (C1): the page reads the battle it has open again only when this changes.
         if written or not previous_rev:
             self.publish_serial += 1
@@ -5935,13 +5953,13 @@ class Exporter(object):
             self.load_tail(name)
         else:
             self.current = None
-            self.raw_decoders = {name:RecordDecoder()}
+            self.raw_decoders = {name:RecordDecoder(getattr(self, 'definitions', None))}
         return True
 
     def load_tail(self, name):
         """Make the whole battle file the current battle, read by read_battle: the one reader that also restores
         a lost header from its recovery file. Raises HeaderUnavailable when the file has neither."""
-        decoder = RecordDecoder()
+        decoder = RecordDecoder(getattr(self, 'definitions', None))
         battle, offset = read_battle(os.path.join(self.folder, 'battles', name+'.jsonl'), return_offset=True,
                                      decoder=decoder)
         self.current = battle
@@ -5949,6 +5967,16 @@ class Exporter(object):
         self.raw_decoders = {name:decoder}
         self.reset_prepared()
         self.pending_publish = True
+
+    def note_missing(self, name, decoder, since=0):
+        """The tail's decoder met references it found neither in the file nor in the shared store (BACKLOG 27): each
+        named once in the log with its battle, and on the active battle (warnings, `damaged`) - listed, never dropped."""
+        for kind, key in decoder.missing[since:]:
+            LOG.warning('Battle %s: recorded definition unavailable - %s %s (not in the file nor in %s)',
+                        name, kind, key, DEFINITIONS_FOLDER)
+        if self.current is not None and self.current.get('id') == name:
+            note_missing(self.current, decoder)
+            self.pending_publish = True
 
     def skip_battle(self, name, reason):
         """Pass a battle file over for the rest of the session (EXP-01/REC-02, review F3, 24.09).
@@ -6021,7 +6049,10 @@ class Exporter(object):
                     if not line or not line.endswith(b'\n') or next_offset > target:
                         return consumed
                     try:
-                        row = self.raw_decoders[name].decode(json.loads(line.decode('utf-8')))
+                        decoder = self.raw_decoders[name]
+                        missed = len(decoder.missing)
+                        row = decoder.decode(json.loads(line.decode('utf-8')))
+                        if len(decoder.missing) != missed: self.note_missing(name, decoder, missed)
                         if row.get('schema') != 1: raise ValueError('Unknown schema')
                         if row.get('type') not in ('battle', 'hit', 'shot', 'crit', 'roster', STATIC_RECORD):
                             raise ValueError('Unexpected record')

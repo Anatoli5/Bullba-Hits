@@ -5,19 +5,25 @@ Run:  python tests/py27/run27.py tests/py27/recorder_statics.py [MOD_DIR]
 
 The real mod with the client stubs of recorder_two_battles.py, under the client's own Python 2.7 (the start of
 recorder_snapshots.py, imported). Checks, by group:
-  once      six hits between three vehicles, each pair twice: one `static` record before the first hit that needs a
-            half (three in all), none before the second round; the second round reads none of the static half from
-            the client (aim block, armour, shells, identity, pitch table, wheels) and its hits refer to the same halves
+  once      six hits between three vehicles, each pair twice: the definitions of the halves go to the shared store
+            (CFG/definitions, BACKLOG 27) - each entry whole before the first hit line that refers to it, none during
+            the second round - and the battle file holds no `static` record; the second round reads none of the static
+            half from the client (aim block, armour, shells, identity, pitch table, wheels) and its hits refer to the
+            same halves
+  store     a second battle of the same vehicles writes no entry (once for all battles; an existing entry is never
+            written again), and reads back whole from the store; an entry taken away is named on the battle, which
+            exporter.read_battle still reads, listed as damaged
   equal     the same hits recorded with the halves kept and with every hit read in full (the recorder of 1.06): the
             records every reader gets (records.RecordDecoder) are the same but for the receipt time, and the file of the
             first is smaller; exporter.read_battle reads it with no warning
-  change    a new half - and a new `static` record - when the vehicle changes: another descriptor for the same vehicle id
+  change    a new half - and new store entries - when the vehicle changes: another descriptor for the same vehicle id
             (an Onslaught switch, a respawn), the mode of a vehicle built twice, another collision model of a part;
             the decoded hit then carries the new vehicle
   hangar    leaving the battle keeps no half (no descriptor of the battle held in the hangar)
 
 Verdict through BULLBA_PY27_RESULT (see run27.py).
 """
+import glob
 import imp
 import json
 import os
@@ -75,9 +81,45 @@ def hits_of(b, rounds=2):
         b.hit(b.ally, b.enemy)
 
 
+PUTS = []
+
+
+def watch_store():
+    """Every DefinitionStore.put: (kind, key, written now, the bytes of all battle files at that moment)."""
+    from local_armor_inspector import records
+    original = records.DefinitionStore.put
+    def put(self, kind, key, value):
+        written = original(self, kind, key, value)
+        folder = os.path.join(os.path.dirname(self.folder), 'battles')
+        PUTS.append((kind, key, written, battle_bytes(folder)))
+        return written
+    records.DefinitionStore.put = put
+
+
+def battle_bytes(folder):
+    return sum(os.path.getsize(p) for p in glob.glob(os.path.join(folder, '*.jsonl')))
+
+
+def hit_starts(path):
+    """The byte offset of each hit line of a raw file."""
+    starts, offset = [], 0
+    with open(path, 'rb') as stream:
+        for line in stream:
+            if json.loads(line).get('type') == 'hit': starts.append(offset)
+            offset += len(line)
+    return starts
+
+
+def store_files(store):
+    return sum(len(os.listdir(os.path.join(store.folder, kind))) for kind in ('armor', 'pitch', 'static')
+               if os.path.isdir(os.path.join(store.folder, kind)))
+
+
 def play(recorder, events, folder, arena_id, first, steps, shared=True):
-    """One battle: its raw lines as written and its records as every reader gets them."""
+    """One battle: its raw lines as written and its records as every reader gets them; also the store puts made during
+    it, each with its offset in the battle's file (the bytes of the battle files at the put minus those before it)."""
     b = rs.battle(arena_id, first, 1, False, rs.CHECKED, recorder)
+    before, mark = battle_bytes(folder), len(PUTS)
     saved = recorder.keep_shooter, recorder.keep_target
     if not shared:
         recorder.keep_shooter = lambda *args: None
@@ -93,7 +135,8 @@ def play(recorder, events, folder, arena_id, first, steps, shared=True):
     rows = rs.rows_of(recorder, folder, name)
     path = os.path.join(folder, name + '.jsonl')
     raw = rtb.read_jsonl(path, raw=True)[0]
-    return b, name, path, raw, rows, held
+    puts = [(kind, key, written, size - before) for kind, key, written, size in PUTS[mark:]]
+    return b, name, path, raw, rows, held, puts
 
 
 def lean(hit):
@@ -104,7 +147,8 @@ def lean(hit):
 
 def run_checks(temp):
     mod, recorder, events, folder, capture = rs.start(temp)
-    from local_armor_inspector.records import STATIC_RECORD, PitchTable
+    watch_store()
+    from local_armor_inspector.records import STATIC_RECORD, PitchTable, raw_store, definition_name
     import local_armor_inspector.presentation as presentation
     # The stub client has no gun_rotation_shared: one pitch table per compact descriptor and mode, as the real one keeps.
     tables = {}
@@ -123,14 +167,24 @@ def run_checks(temp):
         hits_of(b, 1)
         marks.append(reads.take())
     reads.take()
-    b, name, path, raw, rows, held = play(recorder, events, folder, 7100000000000000001, 61, steps)
+    b, name, path, raw, rows, held, puts = play(recorder, events, folder, 7100000000000000001, 61, steps)
     kinds = [r.get('type') for r in raw if r.get('type') in ('hit', STATIC_RECORD)]
-    check('once', 'a static record right before each of the first three hits, none in the second round',
-          kinds == [STATIC_RECORD, 'hit', STATIC_RECORD, 'hit', STATIC_RECORD, 'hit', 'hit', 'hit', 'hit'], kinds)
-    statics = [r for r in raw if r.get('type') == STATIC_RECORD]
-    defined = [k for r in statics for k in (r.get('staticTables') or {})]
-    check('once', 'no definition written twice', len(defined) == len(set(defined)), defined)
+    check('once', 'the battle file holds no static record: six hits', kinds == ['hit'] * 6, kinds)
+    written = [(kind, key) for kind, key, now, at in puts if now]
+    check('once', 'the definitions went to the store, each once', written and len(written) == len(set(written)), puts)
+    store = raw_store(path)
+    check('once', 'every entry is a file of the store',
+          all(os.path.isfile(store.path(kind, definition_name(kind, key))) for kind, key in written), written)
+    starts = hit_starts(path)
+    check('once', 'every entry was put before the fourth hit line (the second round puts none)',
+          all(at <= starts[3] for kind, key, now, at in puts), [(p[3], starts) for p in puts][-1:])
     raw_hits = [r for r in raw if r.get('type') == 'hit']
+    late = []
+    for i, h in enumerate(raw_hits):
+        for key in (h['attacker'].get('vehicleRef'), h['target'].get('vehicleRef'), h.get('availableShellsRef'),
+                    h.get('shellCandidatesRef')):
+            late.extend((i, key) for kind, key2, now, at in puts if key2 == key and now and at > starts[i])
+    check('once', "each hit's halves and shell lists were in the store before its line was written", not late, late)
     refs = [((h.get('attacker') or {}).get('vehicleRef'), (h.get('target') or {}).get('vehicleRef')) for h in raw_hits]
     check('once', 'every hit refers to its halves; the second round to the very same ones',
           all(a and t for a, t in refs) and refs[3:] == refs[:3], refs)
@@ -159,15 +213,20 @@ def run_checks(temp):
 
     # ---- equal -----------------------------------------------------------------------------------------------------
     def both(b): hits_of(b, 2)
-    shared = play(recorder, events, folder, 7100000000000000011, 71, both, shared=True)
-    full = play(recorder, events, folder, 7100000000000000012, 71, both, shared=False)
+    files = store_files(store)
+    shared = play(recorder, events, folder, 7100000000000000011, 61, both, shared=True)   # the vehicles of the first
+    full = play(recorder, events, folder, 7100000000000000012, 61, both, shared=False)
+    refs = [h[side]['vehicleRef'] for h in shared[3] if h.get('type') == 'hit' for side in ('attacker', 'target')]
+    check('store', 'a second battle of the same vehicles writes no entry: once for all battles; it refers to them',
+          not [p for p in shared[6] if p[2]] and refs and all(store.has('static', key) for key in refs), shared[6])
+    check('store', 'the store has as many files as before it', files == store_files(store), (files, store_files(store)))
     a = [lean(r) for r in shared[4] if r.get('type') == 'hit']
     c = [lean(r) for r in full[4] if r.get('type') == 'hit']
     check('equal', 'six hits each way', len(a) == 6 and len(c) == 6, (len(a), len(c)))
     differ = [i for i, (x, y) in enumerate(zip(a, c)) if x != y]
     check('equal', 'kept halves and full reading: the same records but for the receipt time', not differ and a, differ[:3])
     check('equal', 'the full reading writes no static record and no reference (the recorder of 1.06)',
-          not [r for r in full[3] if r.get('type') == STATIC_RECORD]
+          not [r for r in full[3] if r.get('type') == STATIC_RECORD] and not full[6]
           and not [r for r in full[3] if r.get('type') == 'hit' and 'vehicleRef' in (r.get('target') or {})])
     size_shared, size_full = os.path.getsize(shared[2]), os.path.getsize(full[2])
     check('equal', 'the file with the halves by reference is smaller', size_shared < size_full, (size_shared, size_full))
@@ -175,7 +234,23 @@ def run_checks(temp):
     from local_armor_inspector.exporter import read_battle
     battle = read_battle(shared[2])
     check('equal', 'exporter.read_battle reads it whole, with no warning',
-          len(battle['hits']) == 6 and not battle['warnings'], battle['warnings'])
+          len(battle['hits']) == 6 and not battle['warnings'] and not battle.get('damaged'), battle['warnings'])
+    # An entry taken away (the test's own copy of the battle and its store): named on the battle, which still reads.
+    lost = os.path.join(temp, 'lost')
+    os.makedirs(os.path.join(lost, 'battles'))
+    shutil.copy(shared[2], os.path.join(lost, 'battles'))
+    shutil.copytree(store.folder, os.path.join(lost, 'definitions'))
+    gone = [r for r in shared[3] if r.get('type') == 'hit'][-1]['target']['vehicleRef']
+    os.remove(os.path.join(lost, 'definitions', 'static', definition_name('static', gone) + '.js'))
+    damaged = read_battle(os.path.join(lost, 'battles', os.path.basename(shared[2])))
+    check('store', 'a missing entry: the battle reads with all its hits, names the key and is listed as damaged',
+          len(damaged['hits']) == 6 and damaged.get('damaged') == ['static ' + gone]
+          and 'Recorded definition unavailable: static ' + gone in damaged['warnings']
+          and [h for h in damaged['hits'] if 'Recorded vehicle data unavailable: target' in (h.get('warnings') or [])],
+          (damaged.get('damaged'), damaged['warnings']))
+    log = [r.getMessage() for r in capture.records if 'recorded definitions unavailable' in r.getMessage()]
+    check('store', 'the log names the battle and the key',
+          log and gone in log[-1] and os.path.basename(shared[2])[:-6] in log[-1], log)
 
     # ---- change ----------------------------------------------------------------------------------------------------
     def changes(b):
@@ -199,10 +274,12 @@ def run_checks(temp):
         mine.vehicleMode = 1
         b.hit(b.enemy, b.me)                                       # 5: my shooter half new (mode 1)
         b.hit(b.enemy, b.me)                                       # 6: nothing new
-    b, name, path, raw, rows, held = play(recorder, events, folder, 7100000000000000021, 81, changes)
-    kinds = [r.get('type') for r in raw if r.get('type') in ('hit', STATIC_RECORD)]
-    check('change', 'a static record before hits 1-5 (each brings a new half), none before 6',
-          kinds == [STATIC_RECORD, 'hit'] * 5 + ['hit'], kinds)
+    b, name, path, raw, rows, held, puts = play(recorder, events, folder, 7100000000000000021, 81, changes)
+    starts = hit_starts(path)
+    bounds = [-1] + starts
+    news = [len([p for p in puts if p[2] and bounds[k] < p[3] <= bounds[k + 1]]) for k in range(6)]
+    check('change', 'new entries in the store before hits 1-5 (each brings a new half), none before 6',
+          all(news[:5]) and not news[5] and not [p for p in puts if p[2] and p[3] > starts[5]], news)
     raw_hits = [r for r in raw if r.get('type') == 'hit']
     targets = [h['target']['vehicleRef'] for h in raw_hits]
     shooters = [h['attacker']['vehicleRef'] for h in raw_hits]

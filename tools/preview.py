@@ -56,12 +56,27 @@ def link_data():
     return 'data: junction to the installed mod'
 
 
+def link_definitions():
+    """The shared definition store beside data/ (BACKLOG 27): the page reads definitions/<kind>/<hash>.js."""
+    target = os.path.join(PREVIEW, 'definitions')
+    source = os.path.join(os.path.dirname(GAME_DATA), 'definitions')
+    if os.path.isdir(target):
+        return 'definitions: present'
+    if not os.path.isdir(source):
+        return 'definitions: none in the game folder yet (battles published before the store read without it)'
+    result = subprocess.run(['cmd', '/c', 'mklink', '/J', target, source], capture_output=True, text=True)
+    if result.returncode:
+        return 'definitions: not linked (%s)' % result.stderr.strip()
+    return 'definitions: junction to the installed mod'
+
+
 def main():
     if not os.path.isdir(PREVIEW):
         os.makedirs(PREVIEW)
     copy_web()
     write_page()
     print(link_data())
+    print(link_definitions())
     print('open: ' + os.path.join(PREVIEW, 'Viewer.html'))
     return 0
 
