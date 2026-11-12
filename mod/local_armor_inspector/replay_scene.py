@@ -25,6 +25,8 @@ only one. The method is the one measured on 11.11 (outputs/replay-scene-recomput
   turret_yaw/gun_pitch floats OWN_TURRET_DELAY back, interpolated. The hull sits at rest on the chassis: the replay has
   no suspension tilt. Parts stacked as the client does: hull T(hullPosition), turret hull T(turretPosition)
   Rx(turretPitch) Ry(yaw), gun turret T(gunPosition) Rx(pitch).
+- Wheels and armoured prefabs (12.11), as the snapshot carries them: a wheel part -k at its rest place with its
+  procedural body, a prefab at its default layer on its parent (statics 'wheels', 'prefabs': exporter.scene_extras).
 - The range: the two vehicles' packet positions at the target's drawn moment (none when the shooter is not in view, as
   live; each at its own drawn moment was measured no closer to the snapshot's range).
 
@@ -75,7 +77,43 @@ LIMIT_HULL = 'hull at rest on the chassis: the replay has no suspension tilt'
 LIMIT_PACKED = ('turret yaw and gun pitch from the packed angles (steps of %.2f and %.2f degrees), interpolated to the '
                 'drawn moment %.2f s before the hit')
 LIMIT_BOX = 'part %s: the client box is unknown, the box of the model vertices is taken - its points are approximate'
+LIMIT_EXTRAS = 'wheels and armoured prefabs left out: the vehicle XML was not read (%s)'
+LIMIT_PREFAB = 'prefab %s at its default position: the replay has no state of it'
 STATIC_PARTS = 4
+# cgf_network.C_INVALID_NETWORK_OBJECT_ID as the replay carries it: every contact on a static part or a wheel has 0
+# (measured on the 2 625 contacts of the 33 battles of 11.11).
+INVALID_NETWORK_ID = 0
+WHEEL_SIDES = 16
+
+
+def wheel_document(wheel, material):
+    """A wheel's procedural collision body as a model file's value - the very prism the page builds
+    (ArmorInspectorData.wheelModel, exporter.wheel_shapes): `sides` faces with their corners on `radius`, one of them on
+    +y, `width` along the axle (x), centred on the part's frame, outward winding."""
+    r, h, n = float(wheel['radius']), float(wheel['width']) / 2.0, int(round(float(wheel.get('sides') or WHEEL_SIDES)))
+    vertices, indices = [], []
+    for side in (-h, h):
+        for k in range(n):
+            a = 2.0 * math.pi * k / n
+            vertices.append([side, r * math.cos(a), r * math.sin(a)])
+    for k in range(n):
+        b = (k + 1) % n
+        indices.extend((k, n + b, n + k, k, b, n + b))
+    for k in range(1, n - 1):
+        indices.extend((n, n + k, n + k + 1, 0, k + 1, k))
+    return {'groups':[{'material':material, 'vertices':vertices, 'indices':indices}]}
+
+
+def wheel_model(spec):
+    """(Model, box) of a wheel part, or (None, None): the box is the client's for that collision - [-w/2, -r, -r] to
+    [w/2, r, r] (the partBounds the recorder wrote on 1 081 wheel contacts, 7 types)."""
+    wheel, material = spec.get('wheel'), spec.get('material')
+    try:
+        r, h = float(wheel['radius']), float(wheel['width']) / 2.0
+        if not (r > 0 and h > 0 and material): return None, None
+        return Model(wheel_document(wheel, material), None), ([-h, -r, -r], [h, r, r])
+    except (TypeError, KeyError, ValueError):
+        return None, None
 
 
 # ---- the replay's poses, collected while the replay is converted -----------------------------------------------------
@@ -567,8 +605,11 @@ class Scenes(object):
             else:
                 part['modelError'] = error
             target['parts'].append(part)
+        self.extra_parts(statics, poses, snapshot_parts, target, parts, out)
         out['target'] = target
         self.part_ids = set(spec.get('id') for spec in statics.get('parts') or ())
+        self.max_static = max(self.part_ids or [3])
+        self.prefab_ids = [p['id'] for p in target['parts'] if p.get('prefab') and p['id'] in parts]
         out['points'] = []
         for raw in hit.get('rawHitPoints') or ():
             out['points'].append(self.point(raw, parts))
@@ -589,17 +630,70 @@ class Scenes(object):
         if not out['problems']: del out['problems']
         return out, None
 
+    def extra_parts(self, statics, poses, snapshot_parts, target, parts, out):
+        """The wheels and armoured prefabs (12.11) as the snapshot carries them: a wheel (part -k, the wheel of XML index
+        k-1) at its rest place in the chassis frame with its procedural body (poseFrom 'rest', as exporter.fill_wheels
+        gives the snapshot's), a prefab at its default layer on its parent part (poseFrom 'default', as a vehicle export:
+        the replay has no prefab state). Statics without them (the vehicle XML not read) leave them out, said in limits."""
+        if 'wheels' not in statics and 'prefabs' not in statics:
+            if statics.get('extrasError') or statics.get('wheelsExpected'):
+                out['limits'].append(LIMIT_EXTRAS % (statics.get('extrasError') or 'not read'))
+            return
+        for spec in statics.get('wheels') or ():
+            if not (isinstance(spec.get('id'), int) and spec['id'] < 0 and spec.get('wheel') and spec.get('transform')): continue
+            part = dict((k, spec[k]) for k in ('id', 'name', 'material', 'wheel') if k in spec)
+            part['transform'] = rounded(spec['transform'])
+            part['poseFrom'] = 'rest'
+            same = snapshot_parts.get(spec['id'])
+            armor = spec.get('armor')
+            if armor is not None and same is not None and same.get('armor') == armor: part['armorFrom'] = 'snapshot'
+            elif armor is not None: part['armor'] = armor
+            model, box = wheel_model(spec)
+            if model is not None:
+                part['bounds'], part['boundsFrom'] = [rounded(box[0], 7), rounded(box[1], 7)], 'wheel'
+                parts[spec['id']] = (part, model, box, armor if armor is not None else (same or {}).get('armor'))
+            target['parts'].append(part)
+        number = max([p['id'] for p in target['parts']] + [3]) + 1
+        for spec in statics.get('prefabs') or ():
+            parent = spec.get('parentPart')
+            if not (isinstance(parent, int) and 0 <= parent < len(poses) and spec.get('prefabBase')): continue
+            part = {'id':number}
+            number += 1
+            part.update(spec)
+            part['poseFrom'] = 'default'
+            part['transform'] = rounded(mm(poses[parent], spec['prefabBase']))
+            model, error = self.model(spec['resource']) if spec.get('resource') else (None, 'no part model resource')
+            if model is not None:
+                part['modelKey'] = model.key
+                box, box_from = part_box(spec, model, self.recovered)
+                part['bounds'], part['boundsFrom'] = [rounded(box[0], 7), rounded(box[1], 7)], box_from
+                if box_from in APPROXIMATE_BOXES: part['approximate'] = True
+                parts[part['id']] = (part, model, box, spec.get('armor'))
+            else:
+                part['modelError'] = error
+            target['parts'].append(part)
+            out['limits'].append(LIMIT_PREFAB % (spec.get('name') or 'prefab'))
+
     def point(self, raw, parts):
         try: seg = int(raw['segment'])
         except (TypeError, KeyError, ValueError): return {'status':'unresolved', 'why':'no segment'}
         params = int(raw.get('params') or 0)
         pid = (seg >> 8) & 255
+        try: network = int(raw.get('networkID') or 0)
+        except (TypeError, ValueError): network = 0
+        # The client's part index (DamageFromShotDecoder.parseHitPoint): a contact with a network id is on a dynamic
+        # collision (an armoured prefab: the vehicle's one, when it has exactly one); an index above the static parts is a
+        # wheel, maxStaticPartIndex - index (convertComponentIndex).
+        if network and network != INVALID_NETWORK_ID:
+            pid = self.prefab_ids[0] if len(self.prefab_ids) == 1 else pid
+        elif pid > self.max_static:
+            pid = self.max_static - pid
         p = {'part':pid, 'effect':seg & 255, 'hitType':params & 15, 'shellType':(params >> 4) & 15,
              'caliber':((params >> 8) & 0xffff) * 0.1, 'status':'unresolved'}
         if pid not in parts:
-            # A part the descriptor does not list (a wheel or an armoured prefab, beyond the static parts): not rebuilt.
+            # A part the scene does not have (a wheel or a prefab whose vehicle XML was not read): not rebuilt.
             p['status'] = 'unresolved' if pid in self.part_ids else 'unsupported-part'
-            p['why'] = 'no model of this part' if pid in self.part_ids else 'not a static part: not rebuilt'
+            p['why'] = 'no model of this part' if pid in self.part_ids else 'a wheel or prefab the scene does not have'
             return p
         part, model, box, armor = parts[pid]
         s, e = decode_segment(seg, box)

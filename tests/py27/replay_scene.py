@@ -59,9 +59,12 @@ def xml_resources(xmls, descr):
     return dict((k, (v or '').strip() or None) for k, v in found.items())
 
 
-def statics_of(exporter, xmls, compact):
+def statics_of(exporter, xmls, compact, source=None):
     descr = exporter.vehicle_descr(compact)
     value = exporter.scene_statics(descr)
+    # The wheels and armoured prefabs (12.11) as the game's SceneSource gives them: the descriptor's wheel parts with the
+    # vehicle XML's bodies and rest places, the mounted components' armoured prefabs.
+    if source is not None: value.update(source.extras(descr))
     resources = xml_resources(xmls, descr)
     for part in value['parts']:
         part['resource'] = resources.get(part['name'])
@@ -95,8 +98,28 @@ def main():
     from local_armor_inspector.armor import ArmorCatalog
     xmls = ArmorCatalog(GAME)
     table = S.statics_table() or {}
+    import tempfile as tf
+    owner = exporter.Exporter(GAME, tf.mkdtemp(), 'stand\n', os.path.join(tf.mkdtemp(), 'unused.wotmod'))
+    extras = exporter.SceneSource(owner, 'stand\n')
     battles = T.FOUR + T.KILL_CAM if UPDATE else [b for b in T.FOUR if b[1] == CHECKED]
     clock = getattr(time, 'clock')
+    # A wheeled vehicle and the two with armoured prefabs (none is a target of the six battles): their statics carry what
+    # the snapshot path gives them - 8 EBR 105 wheels with bodies at rest, the CAV mod. 71's crest on the gun, the AS-XX
+    # 40 t's containers on the hull.
+    if not UPDATE:
+        import base64
+        from items import vehicles as iv
+        for name, wheels, prefab in (('france:F108_Panhard_EBR_105', 8, None), ('italy:It43_CAV_mod_71', 0, ('crest_module', 3)),
+                                     ('france:F135_AS_XX_40_t', 0, ('HP_pod', 1))):
+            try:
+                compact = base64.b64encode(iv.VehicleDescr(typeName=name).makeCompactDescr())
+                value = statics_of(exporter, xmls, compact, extras)
+                got = (len(value.get('wheels') or ()), [(p['name'], p['parentPart']) for p in value.get('prefabs') or ()],
+                       all(w.get('wheel') and w.get('transform') and w.get('armor') for w in value.get('wheels') or ()))
+                want = (wheels, [prefab] if prefab else [], True)
+                check(got == want, '%s: wheels and armoured prefabs of its scene statics' % name, repr((got, want)))
+            except Exception:
+                check(False, '%s: wheels and armoured prefabs of its scene statics' % name, traceback.format_exc())
     new = {}
     for name, arena, folder in battles:
         d = t.defs()
@@ -114,8 +137,15 @@ def main():
               '%s: poses=True adds one poses record after the same records' % name)
         targets = set(r.get('targetId') for r in records if r.get('type') == 'hit')
         compacts = sorted(set(poses['compact'][v] for v in targets if v in poses['compact']))
-        for compact in compacts: new[compact] = statics_of(exporter, xmls, compact)
+        for compact in compacts: new[compact] = statics_of(exporter, xmls, compact, extras)
         if UPDATE: continue
+        # every target's wheels and prefabs were read (an empty list for a tracked vehicle without armoured prefabs), and a
+        # wheeled one has as many wheels with a body as its descriptor has wheel parts
+        bad = [c[:12] for c in compacts if 'wheels' not in new[c] or 'prefabs' not in new[c]
+               or len(new[c]['wheels']) != len(exporter.wheel_parts(exporter.vehicle_descr(c)))]
+        check(not bad, '%s: the wheels and armoured prefabs of its %d target descriptors are read (%d with wheels, %d with '
+              'prefabs)' % (name, len(compacts), sum(1 for c in compacts if new[c].get('wheels')),
+                            sum(1 for c in compacts if new[c].get('prefabs'))), ', '.join(bad))
         same = [c for c in compacts if table.get(c) == new[c]]
         check(len(same) == len(compacts), '%s: the statics of its %d target descriptors equal the table' % (name, len(compacts)),
               ', '.join(c[:12] for c in compacts if c not in same))

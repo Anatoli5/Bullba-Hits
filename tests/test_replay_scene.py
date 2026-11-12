@@ -311,6 +311,49 @@ class SyntheticTests(unittest.TestCase):
         self.assertAlmostEqual(scene['target']['gunPitch'], -0.05, 5)
         self.assertTrue(scene['angles']['interpolated'])
 
+    def test_wheels_and_prefabs_as_the_snapshot_carries_them(self):
+        """12.11: a wheel is part -k at its rest place with its procedural body (the page draws it from 'wheel' and
+        'material'); a contact past the static parts is the wheel maxStaticPartIndex - index, decoded on the wheel's box and
+        resolved on its prism; a contact with a network id is on the armoured prefab, posed at its default layer on its parent."""
+        tracks = rs.Tracks()
+        for k in range(50):
+            tracks.position(7, k * 0.1, [0, 0, 0], 0, 0, 0)
+        tracks.gun(7, 0.0, 512 << 6)
+        tracks.public(7, b'\x01\x02')
+        rec = tracks.record(1, 100.0)
+        armor = {'wheel':{'armor':10.0}}
+        base = [1.0, 0, 0, 0, 0, 1.0, 0, 0, 0, 0, 1.0, 0, 0.0, 0.5, 2.0, 1.0]
+        statics = {'type':'x:y', 'hullPosition':[0, 1, 0], 'turretPosition':[0, 1, 0], 'turretPitch':0.0,
+                   'gunPosition':[0, 0, 1], 'pitchLimits':[-0.2, 0.1],
+                   'parts':[{'id':i, 'name':n, 'resource':'cube.model'} for i, n in enumerate(('chassis', 'hull', 'turret', 'gun'))],
+                   'wheels':[{'id':-1, 'name':'W_L0', 'material':'wheel', 'armor':armor,
+                              'wheel':{'radius':0.5, 'width':0.4, 'sides':16},
+                              'transform':[1.0, 0, 0, 0, 0, 1.0, 0, 0, 0, 0, 1.0, 0, -1.2, 0.5, 1.5, 1.0]}],
+                   'prefabs':[{'name':'crest_module', 'prefab':'p.prefab', 'parentPart':3, 'resource':'cube.model',
+                               'armor':{'armor_1':{'armor':5.0}}, 'prefabLayers':[], 'prefabDefault':'0 position layer',
+                               'prefabBase':base}]}
+
+        class Source(object):
+            def statics(self, compact): return statics
+
+            def model(self, resource): return 'key', box_model()
+
+        # a wheel contact straight down the axle (network 0, index 4 = wheel -1), one on the prefab (a network id)
+        wheel_seg = encode([0, 127, 127], [255, 127, 127], part=4)
+        prefab_seg = encode([127, 127, 0], [127, 127, 255], part=0)
+        scene, why = rs.Scenes(rec, None, Source()).scene({'gameTime':103.0, 'targetId':7, 'attackerId':9, 'rawHitPoints':[
+            {'networkID':'0', 'segment':str(wheel_seg), 'params':'0'}, {'networkID':'77', 'segment':str(prefab_seg), 'params':'0'}]})
+        self.assertIsNone(why)
+        parts = dict((p['id'], p) for p in scene['target']['parts'])
+        self.assertEqual((parts[-1]['poseFrom'], parts[-1]['material'], parts[-1]['wheel']['radius']), ('rest', 'wheel', 0.5))
+        self.assertEqual(parts[-1]['bounds'], [[-0.2, -0.5, -0.5], [0.2, 0.5, 0.5]])
+        self.assertEqual((parts[4]['poseFrom'], parts[4]['parentPart'], parts[4]['modelKey']), ('default', 3, 'key'))
+        for a, b in zip(parts[4]['transform'], rs.mm(parts[3]['transform'], base)): self.assertAlmostEqual(a, b, 5)
+        wheel, prefab = scene['points']
+        self.assertEqual((wheel['part'], wheel['status'], wheel['material'], wheel['nominal']), (-1, 'resolved', 'wheel', 10.0))
+        self.assertAlmostEqual(abs(wheel['position'][0]), 0.2, 6)       # the prism's side face, at the axle
+        self.assertEqual((prefab['part'], prefab['status']), (4, 'resolved'))
+
     def test_own_turret_floats_are_interpolated(self):
         tracks = rs.Tracks()
         for k in range(100):

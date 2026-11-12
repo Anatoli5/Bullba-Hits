@@ -2387,6 +2387,20 @@ def scene_statics(descr):
             'pitchLimits':[float(absolute[0]), float(absolute[1])] if absolute is not None else None, 'parts':parts}
 
 
+def scene_extras(descr, extras):
+    """The wheels and armoured prefabs of a vehicle for replay_scene (12.11), as the snapshot path gives them: {'wheels':
+    wheel_parts with their body and rest place (fill_wheels; a wheel without its body is left out), 'prefabs':
+    prefab_statics of the mounted components' armoured prefabs}. `extras` is Exporter.type_extras of its type; None
+    (not read: a battle) gives {} - the scene is then made without them and says so."""
+    if extras is None: return {}
+    wheels = {'parts':wheel_parts(descr, 'client vehicle descriptor')}
+    if wheels['parts']:
+        fill_wheels(wheels, extras['wheels'].get(descr.chassis.name) or {})
+    names = prefab_components(descr)
+    prefabs = [prefab_statics(entry) for entry in extras['prefabs'] if names.get(entry['parent']) == entry['component']]
+    return {'wheels':[part for part in wheels['parts'] if 'wheel' in part], 'prefabs':prefabs}
+
+
 class SceneSource(object):
     """replay_scene's source in the game: statics from the client's descriptor, a part's model from its model file
     (extracted now when it is not written yet - the export thread, after the battle)."""
@@ -2395,7 +2409,23 @@ class SceneSource(object):
         self.exporter, self.version = exporter, client_version
 
     def statics(self, compact):
-        return scene_statics(vehicle_descr(compact))
+        descr = vehicle_descr(compact)
+        value = scene_statics(descr)
+        value.update(self.extras(descr))
+        return value
+
+    def extras(self, descr):
+        """scene_extras of a descriptor; the vehicle XML is read here (the export thread, after the battle) - no slot and
+        no wheel, nothing read. A failure leaves them out, named in 'extrasError'."""
+        try:
+            if not descriptor_slots(descr) and not wheel_parts(descr):
+                return {'wheels':[], 'prefabs':[]}
+            return scene_extras(descr, self.exporter.type_extras(descr.type.name))
+        except Exception as exc:
+            return {'extrasError':str(exc) or type(exc).__name__}
+
+    def compact_extras(self, compact):
+        return self.extras(vehicle_descr(compact))
 
     def model(self, resource):
         key, error = self.exporter.model_extract(resource, self.version)

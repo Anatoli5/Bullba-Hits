@@ -370,7 +370,13 @@ class StoredSource(object):
 
     def statics(self, compact):
         if compact not in self.known: self.known[compact] = self.inner.statics(compact)
-        return copy.deepcopy(self.known[compact])
+        value = self.known[compact]
+        # Statics stored before the wheels and prefabs were part of them (12.11): those two are added from the client,
+        # the rest (the part boxes the first build had) stays as stored.
+        if 'wheels' not in value and 'extrasError' not in value and hasattr(self.inner, 'compact_extras'):
+            try: value.update(self.inner.compact_extras(compact))
+            except Exception as exc: value['extrasError'] = str(exc) or type(exc).__name__
+        return copy.deepcopy(value)
 
     def model(self, resource):
         return self.inner.model(resource)
