@@ -9200,6 +9200,52 @@ function pathMatrix() {
   const rosterRow = function (id) { return $('focus-list').children.filter(function (c) { return c.getAttribute('data-id') === String(id); })[0]; };
   const listRow = function (id) { return $('vehicles').children.filter(function (c) { return c.getAttribute('data-vehicle') === id; })[0]; };
   const scopeTo = function (scope) { document.querySelectorAll('#vehicle-scope [data-scope]').forEach(function (b) { if (b.getAttribute('data-scope') === scope) b.onclick(); }); };
+  // D-116 (11.11, the user in 1.06): "This battle" chosen, a class pill clicked - the list jumped to "All vehicles" by
+  // itself. A filter narrows the scope that is chosen; only the scope buttons change the scope. The pills are found in
+  // the filter box the page built (buildFilters), and clicked through their own onclick.
+  const pillOf = function (row, value) {
+    let found = null;
+    const walk = function (e) { if (found || !e) return; if (e.getAttribute && e.getAttribute('data-row') === row && e.getAttribute('data-value') === value) { found = e; return; } (e.children || []).forEach(walk); };
+    walk($('vehicle-filters'));
+    return found;
+  };
+  const listed = function () { return $('vehicles').children.filter(function (c) { return c.getAttribute('data-vehicle') !== null; }); };
+  const listedIds = function () { return listed().map(function (c) { return c.getAttribute('data-vehicle'); }).sort().join(); };
+  function filterKeepsScope(fun) {
+    const tag = 'filter keeps the scope, ⌖ ' + (fun ? 'on' : 'off') + ': ';
+    const heavy = pillOf('class', 'heavyTank'), light = pillOf('class', 'lightTank');
+    ok(tag + '(the Class pills are on the page)', !!heavy && !!light);
+    if (!heavy || !light) return;
+    scopeTo('battle');
+    const battleRows = listed();
+    ok(tag + '(the list is the battle\'s: every row carries its team)', battleRows.length > 0 && battleRows.every(function (c) { return !!c.getAttribute('data-side'); }),
+       '(' + listedIds() + ')');
+    heavy.onclick();
+    const heavyRows = listed();
+    ok(tag + 'heavy tanks in "This battle": the list stays the battle\'s and keeps its heavy tanks only (Papa, Quebec - not the catalogue\'s Uniform)',
+       listedIds() === 'pm_papa,pm_quebec' && heavyRows.every(function (c) { return !!c.getAttribute('data-side'); }),
+       '(' + listedIds() + ' | ' + $('vehicle-count').textContent + ')');
+    heavy.onclick(); light.onclick();
+    const empty = $('vehicles').children.filter(function (c) { return c.className === 'empty'; })[0];
+    ok(tag + 'light tanks in "This battle", which has none: an empty list that says why - still the battle\'s, no jump to the catalogue',
+       listed().length === 0 && !!empty && empty.textContent === 'No vehicles of this battle match the filters.',
+       '(' + listedIds() + ' | ' + (empty ? empty.textContent : 'no message') + ')');
+    light.onclick();
+    ok(tag + 'every pill off: the whole battle again', listedIds() === battleRows.map(function (c) { return c.getAttribute('data-vehicle'); }).sort().join(), '(' + listedIds() + ')');
+    scopeTo('all');
+    const allIds = listedIds();
+    heavy.onclick();
+    ok(tag + 'the same click in "All vehicles" still filters the catalogue (Uniform, a heavy tank not in the battle, stays; no team stripes)',
+       listedIds().split(',').indexOf('germany-Uniform') >= 0 && listed().every(function (c) { return !c.getAttribute('data-side'); }),
+       '(' + listedIds() + ')');
+    heavy.onclick(); light.onclick();
+    const none = $('vehicles').children.filter(function (c) { return c.className === 'empty'; })[0];
+    ok(tag + 'light tanks in "All vehicles", which has none here: the catalogue\'s own empty message, as before',
+       listed().length === 0 && !!none && none.textContent === 'No vehicles match the filters.', '(' + listedIds() + ')');
+    light.onclick();
+    ok(tag + '(every pill off: the catalogue as before)', listedIds() === allIds);
+    scopeTo('battle');
+  }
   const setFun = function (on) { if ($('fun-mode').checked !== on) click($('fun-mode-toggle')); };
   const pickBattle = function (id) { const s = $('battles'); s.value = id; s.onchange.call(s); };
   const counted = function () { const c = Object.assign({}, paints); c.refresh = tipRefreshes; return c; };
@@ -9359,6 +9405,7 @@ function pathMatrix() {
     }).then(function () {
       expectScene('the side panel to Vehicles again', fun, {model: true, shooter: true, hp: '2 750 / 2 750', source: ROSTER_HP}, delta(was), at);
       ok('matrix: (the Vehicles list offers the two browsable vehicles)', !!listRow('pm_quebec') && !!listRow('pm_papa'));
+      filterKeepsScope(fun);
       return step(function () { listRow('pm_quebec').onclick(); });
     }).then(function () {
       // Audit PD-01 г: a browsed vehicle takes its export's figure, never the roster row of the battle beside it.

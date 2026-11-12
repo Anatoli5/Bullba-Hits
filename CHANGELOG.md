@@ -2,6 +2,10 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.1.1 from 1.05 on, 2.4.1.0 from 1.02 on, 2.4.0.2 from 0.9.3 on, 2.4.0.1 #950 from 0.7.6, 2.4.0.0 #945 before.
 
+## Unreleased
+
+- **Vehicle filters keep the list you chose:** with "This battle" selected, a filter (a class, tier, nation or the search) now narrows the battle's vehicles instead of switching the list to "All vehicles"; only the two list buttons switch it. A filter that leaves none of the battle's vehicles shows an empty list that says so.
+
 ## 1.06 (2026-11-11)
 
 - **Battle log from the replay:** a battle's hits now come from its replay, so the hits the recorder never saw - the ones in the death camera after you are destroyed - are in the list too, with their damage and both vehicles. Their rows carry a small reel mark: they have no in-game snapshot.

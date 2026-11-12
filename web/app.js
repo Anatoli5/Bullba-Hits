@@ -147,14 +147,17 @@
 
   // ---- filters -----------------------------------------------------------
   // No filter means every vehicle is listed - a filter only takes rows away (user, 19.09: an empty filter
-  // used to read as an empty list). The filters belong to the catalogue, so touching one while the list shows
-  // a battle's roster means "the whole catalogue, narrowed": the scope follows the click.
+  // used to read as an empty list). The filters narrow the scope that is chosen, "This battle" or "All vehicles";
+  // only the scope buttons change the scope (user, 11.11, D-116: a class pill used to move the list to the catalogue).
   function toggleFilter(row,value,button){
     var list=vehicleFilters[row],at=list.indexOf(value);
     if(at<0)list.push(value);else list.splice(at,1);
-    button.setAttribute('aria-pressed',String(at<0));leaveBattleScope();storeSidebar();filterSummary();renderVehicles();
+    button.setAttribute('aria-pressed',String(at<0));storeSidebar();filterSummary();renderVehicles();
   }
-  function leaveBattleScope(){if(vehicleScope==='battle')vehicleScope='all';}
+  function filtersOn(){
+    var f=vehicleFilters;
+    return !!(f.tier.length||f.nation.length||f['class'].length||f.role.length||f.flag.length||String(f.text||'').trim());
+  }
   // The caret's badge at the right end of the Class row: how many of the secondary pills (Role, Flags) are
   // pressed. They are out of sight in its popover, so the badge is the only sign that they narrow the list.
   function filterSummary(){
@@ -176,7 +179,6 @@
   }
   function searchText(value){
     vehicleFilters.text=value;
-    if(value)leaveBattleScope();
     storeSidebar();renderVehicles();
   }
   function filterChip(){
@@ -287,7 +289,8 @@
   // ---- the list ----------------------------------------------------------
   // Two scopes (user, 19.09). "This battle" lists the roster of the battle on screen in the two groups the
   // roster picker uses, so a scene tile is filled from the vehicles that actually fought; "All vehicles" is
-  // the client's catalogue grouped by class and narrowed by the filters. Without a roster there is nothing
+  // the client's catalogue grouped by class. The filters narrow either (11.11): a roster vehicle whose class or
+  // tier the battle did not record matches no filter of that kind. Without a roster there is nothing
   // to scope to: the control is hidden and the catalogue is the only list.
   function scopeReady(){return !!current&&rosterRows().length>0;}
   function activeScope(){return scopeReady()&&vehicleScope==='battle'?'battle':'all';}
@@ -323,7 +326,8 @@
     var groups=pickerList(),out=[];
     [['ALLIES','ally',groups.allies],['ENEMIES','enemy',groups.enemies]].forEach(function(group){
       if(!group[2].length)return;
-      out.push([group[0],group[2].map(function(r){return {v:rosterVehicle(r),side:group[1]};})]);
+      var rows=group[2].map(function(r){return {v:rosterVehicle(r),side:group[1]};}).filter(function(item){return vehicleMatches(item.v);});
+      if(rows.length)out.push([group[0],rows]);
     });
     return out;
   }
@@ -388,7 +392,7 @@
     }
     listIds=ids;listMarks=marks;listRoles=roles;
     var top=list.scrollTop;list.replaceChildren();
-    if(!shown.length){list.appendChild(node('p',scope==='battle'?'No vehicles in this battle.':catalogue?'No vehicles match the filters.':(catalogueError||'Reading the vehicle list\u2026'),'empty'));return;}
+    if(!shown.length){list.appendChild(node('p',scope==='battle'?(filtersOn()?'No vehicles of this battle match the filters.':'No vehicles in this battle.'):catalogue?'No vehicles match the filters.':(catalogueError||'Reading the vehicle list\u2026'),'empty'));return;}
     groups.forEach(function(group){
       list.appendChild(node('div',group[0],'vehicle-group'));
       group[1].forEach(function(item){list.appendChild(vehicleRow(item));});
