@@ -251,7 +251,8 @@ def main():
         snap.files()
         e.client = lambda: snap
         e.game = R.GAME
-        message = stand.message(BIG, copy_path, complete=False, final=final, finalOwned=True)
+        # The copy is not trusted as the battle (no orderly end, the crash path - backlog 84): the final file is decrypted.
+        message = stand.message(BIG, copy_path, complete=False, final=final, finalOwned=True, end='restart')
         # The wall-clock part on one core, the fastest found now (see SLICE_LIMIT).
         core = pin_fastest()
         pinned.append(core)
@@ -343,6 +344,8 @@ def main():
         try:
             near_end = R.packet_cut(stream, 1.0 - 20000.0 / len(stream))
             end = rr.fight_end(near_end)
+            # and a copy of a player who left 2 KB before the end: the battle up to his exit, the tail not read
+            left = R.packet_cut(stream, (rr.fight_end(stream)[0] - 2000.0) / len(stream))
             path_end = stand_end.stream_file(BIG, near_end)
             final_end = os.path.join(stand_end.root, 'bullba_hits_battle.wotreplay')
             shutil.copyfile(os.path.join(t.REPLAYS, big_file), final_end)
@@ -369,6 +372,32 @@ def main():
                       took_end, took_end / max(calm, after_end), ', '.join('%s %.2f s' % kv for kv in sorted(times.items()))))
         finally:
             stand_end.close()
+        stand_left = R.Stand([BIG])
+        try:
+            path_left = stand_left.stream_file(BIG, left)
+            final_left = os.path.join(stand_left.root, 'bullba_hits_battle.wotreplay')
+            shutil.copyfile(os.path.join(t.REPLAYS, big_file), final_left)
+            e_left = Exporter(stand_left.root, stand_left.root, R.T.VERSION, os.path.join(stand_left.root, 'unused.wotmod'))
+            e_left.replay_defs_value = defs
+            e_left.scene_source = lambda version: S.make_source(table)
+            calm = calibrate()
+            started = clock()
+            e_left.replay_stream(stand_left.message(BIG, path_left, complete=False, final=final_left, finalOwned=True,
+                                                    finalStreamBytes=len(stream)))
+            work = []
+            drain(e_left, work, [])
+            took_left = clock() - started
+            after_left = calibrate()
+            info = stand_left.published(BIG)['replay']['stream']
+            times = work[0].times if work else {}
+            check(info.get('from') == 'stream copy' and not info.get('cut') and 'decrypt' not in times
+                  and info.get('tail') == 'left before the end, tail not read (%d bytes)' % (len(stream) - len(left))
+                  and not os.path.exists(final_left),
+                  '17:42, a player who left before the end: the copy is the battle, the final file not decrypted '
+                  '(%.2f s = %.1f calibrations; %s)' % (took_left, took_left / max(calm, after_left),
+                                                         ', '.join('%s %.2f s' % kv for kv in sorted(times.items()))))
+        finally:
+            stand_left.close()
 
         # ---- 20.10: the next battle of the session ------------------------------------------------------------------
         _, stream2 = rd.read_replay(os.path.join(t.LIVE, next_file))

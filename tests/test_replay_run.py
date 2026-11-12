@@ -404,14 +404,16 @@ class RunTimeTests(unittest.TestCase):
         self.assertEqual(list(e.replay_defs_steps()), [])
 
     def test_a_final_file_with_more_than_the_copy(self):
-        """The copy holds 60 % of the stream, the mod's own final file all of it: decrypted, checked, used, deleted."""
+        """The copy holds 60 % of the stream and cannot be trusted as the battle (backlog 84: no orderly end - the crash
+        path -, or a copy on disk shorter than the source copied), the mod's own final file all of it: decrypted, checked,
+        used, deleted."""
         arena = '16434853064049700'
         stand = self.stand(arena)
         e = stand.exporter(KILL_CAM[arena])
         path = self.copy_of(stand, arena, 0.6)
         final = os.path.join(stand.root, 'bullba_hits_battle.wotreplay')
         shutil.copyfile(os.path.join(t.LIVE, KILL_CAM[arena]), final)
-        consume(e, stand.message(arena, path, complete=False, final=final, finalOwned=True))
+        consume(e, stand.message(arena, path, complete=False, final=final, finalOwned=True, end='restart'))
         value = stand.published(arena)
         self.assert_window(value, arena)
         self.assertEqual(value['replay']['stream']['from'], 'final replay file')
@@ -420,12 +422,30 @@ class RunTimeTests(unittest.TestCase):
         import zlib
         with open(e.replay_stream_path(stand.names[arena]), 'rb') as stream: kept = zlib.decompress(stream.read())
         self.assertEqual(kept, bytes(final_stream(KILL_CAM[arena], t.LIVE)[1]))
+        # The other reasons distrust() can see, each with the final file read for it.
+        _, whole = final_stream(KILL_CAM[arena], t.LIVE)
+        copy = bytearray(packet_cut(whole, 0.6))
+        shape = rr.copy_shape(copy)
+        base = {'end':'battle', 'temp':'foreign (shorter)', 'streamBytes':len(copy), 'packets':shape[0],
+                'partialBytes':shape[1]}
+        self.assertIsNone(rr.distrust(base, copy, shape))
+        for change, expected in (({'end':'next battle'}, 'no orderly end'), ({'temp':'foreign (other recording)'}, 'the temp'),
+                                 ({'streamBytes':len(copy) + 4096}, 'the copy on disk is shorter'),
+                                 ({'packets':shape[0] + 3}, 'the copy\'s packets are not')):
+            self.assertTrue(rr.distrust(dict(base, **change), copy, shape).startswith(expected), change)
+        broken = copy + struct.pack('<IIf', 10 ** 6, 7, 1.0) + b'x' * (rr.BROKEN_TAIL + 10)
+        self.assertTrue(rr.distrust(dict(base, streamBytes=len(broken), packets=None), broken, rr.copy_shape(broken))
+                        .startswith('the copy\'s packets break'))
+        self.assertEqual(rr.distrust(base, bytearray(), rr.copy_shape(bytearray())), 'no stream copy')
+        ended = bytearray(packet_cut(whole, 0.999))
+        self.assertIsNone(rr.distrust(dict(base, end='restart'), ended, rr.copy_shape(ended)))
 
     def test_a_copy_that_reaches_the_end_of_the_fight_needs_no_final_file(self):
         """Backlog 84: the copy holds the packet that ends the fight (arena period 4, rr.fight_end) and the mod's own final
         file the rest: the final file is not read (no decryption), the battle is whole and the final file deleted - and the
         published battle is the one the decrypted final file gives but for the stream's own figures in its replay block.
-        A message whose replay source saw no end in the copy ('fightEnd': None) takes the final file as before."""
+        A player who left before the end: the copy is the battle up to his exit, the final file's tail not read either.
+        Only a copy that cannot be trusted (here: no orderly end, the crash path) has the final file decrypted."""
         arena = '16434853064049700'
         _, stream = final_stream(KILL_CAM[arena], t.LIVE)
         end = rr.fight_end(stream)
@@ -438,16 +458,20 @@ class RunTimeTests(unittest.TestCase):
         values = {}
         rr.FinalFile = counted
         try:
-            for case, share, seen in (('end in the copy', (end[0] + 2000.0) / len(stream), [end[0], end[1]]),
-                                      ('no end in the copy', 0.6, None),
-                                      ('the source saw none', (end[0] + 2000.0) / len(stream), None)):
+            before_end = (end[0] - 2000.0) / len(stream)
+            for case, share, extra in (('end in the copy', (end[0] + 2000.0) / len(stream), {}),
+                                       ('left before the end', before_end, {}),
+                                       ('no orderly end', before_end, {'end':'restart'}),
+                                       ('the final file', 0.6, {'end':'restart'})):
                 del opened[:]
                 stand = self.stand(arena)
                 e = stand.exporter(KILL_CAM[arena])
-                path = stand.stream_file(arena, packet_cut(stream, share))
+                data = packet_cut(stream, share)
+                path = stand.stream_file(arena, data)
                 final = os.path.join(stand.root, 'bullba_hits_battle.wotreplay')
                 shutil.copyfile(os.path.join(t.LIVE, KILL_CAM[arena]), final)
-                consume(e, stand.message(arena, path, complete=False, final=final, finalOwned=True, fightEnd=seen))
+                consume(e, stand.message(arena, path, complete=False, final=final, finalOwned=True,
+                                         finalStreamBytes=len(stream), **extra))
                 value = strip_rev(stand.published(arena))
                 self.assert_window(value, arena)
                 info = value['replay']['stream']
@@ -455,14 +479,20 @@ class RunTimeTests(unittest.TestCase):
                 self.assertFalse(any(w.startswith('Replay cut off:') for w in value['warnings']), case)
                 self.assertFalse(os.path.exists(final), case)
                 if case == 'end in the copy':
-                    self.assertEqual((opened, info['from'], info['fightEnd']), ([], 'stream copy', round(end[1], 3)))
+                    self.assertEqual((opened, info['from'], info['fightEnd'], info['tail']),
+                                     ([], 'stream copy', round(end[1], 3), 'fight ended in the copy'))
+                elif case == 'left before the end':
+                    self.assertEqual((opened, info['from'], info['tail']), ([], 'stream copy',
+                                     'left before the end, tail not read (%d bytes)' % (len(stream) - len(data))))
                 else:
-                    self.assertEqual((len(opened), info['from']), (1, 'final replay file'), case)
+                    self.assertEqual((len(opened), info['from'], info['tail']),
+                                     (1, 'final replay file', 'final file read: no orderly end of the battle (restart)'), case)
                 value['replay'].pop('stream')
                 values[case] = value
         finally:
             rr.FinalFile = original
-        self.assertEqual(values['end in the copy'], values['no end in the copy'])
+        self.assertEqual(values['end in the copy'], values['the final file'])
+        self.assertEqual(values['no orderly end'], values['the final file'])
 
     def test_the_lean_decode_gives_the_same_records(self):
         """Backlog 84: the run-time decode leaves out what nothing reads (replay_run.LEAN_TYPES, LEAN_PROPERTIES) - the
@@ -495,13 +525,16 @@ class RunTimeTests(unittest.TestCase):
                 self.assertFalse({'net_stats', 'camera'} & lean[4])
 
     def test_a_cut_off_stream_is_used_as_far_as_it_goes(self):
+        """A copy that cannot be trusted as the battle (backlog 84: here no orderly end) and no final file: used as far as it
+        goes, said cut off. (A copy of a battle left before its end with an orderly end is the battle: not cut.)"""
         arena = '16434853064049700'
         stand = self.stand(arena)
         e = stand.exporter(KILL_CAM[arena])
-        consume(e, stand.message(arena, self.copy_of(stand, arena, 0.5), complete=False))
+        consume(e, stand.message(arena, self.copy_of(stand, arena, 0.5), complete=False, end='restart'))
         value = stand.published(arena)
         self.assertEqual(value['source'], 'replay')
         self.assertTrue(value['replay']['stream']['cut'])
+        self.assertEqual(value['replay']['stream']['tail'], 'final file not given: no orderly end of the battle (restart)')
         self.assertTrue(any(w.startswith('Replay cut off:') for w in value['warnings']), value['warnings'])
         self.assertEqual(e.replay_state()[stand.names[arena]]['status'], 'cut')
 
