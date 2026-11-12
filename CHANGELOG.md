@@ -4,8 +4,10 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 
 ## Unreleased
 
+- **The target's HP is always on screen:** the HP bar by the Collision model tile now stands without the shooting emulation too, showing the hit points the vehicle had in that battle (the server's figure from the battle or its replay). A stock or exported figure, when the battle did not record one, has a dashed frame and says "Nominal". Its tooltip sums the damage the battle logged against the vehicle and how much of its HP is not in the log.
 - **Vehicle filters keep the list you chose:** with "This battle" selected, a filter (a class, tier, nation or the search) now narrows the battle's vehicles instead of switching the list to "All vehicles"; only the two list buttons switch it. A filter that leaves none of the battle's vehicles shows an empty list that says so.
 - **The scene switch is on the Hit line tile:** the two scene chips there - the camera for the in-game snapshot, the reel for the scene rebuilt from the replay, each with the page's chance in that scene - are now the switch: click one to see the hit from that scene; the one on screen is framed. The small icon switch in the scene's toolbar is gone (in a narrow window it was folded into More, out of sight).
+- **Nothing the recorder saw is lost to the replay:** when a battle's replay lacks a hit, an HP change or a shell's end that the in-game recorder caught (a special mode's replay may not be read in full), the battle now shows it as the recorder had it, and its warnings say how many; before, it was left out.
 
 ## 1.06 (2026-11-11)
 

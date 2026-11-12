@@ -4946,12 +4946,17 @@
   // vehicle's own export and its characteristics file, not this battle's figure: `from` says which, and the bar's
   // tooltip says it.
   function targetHp(hit) {
-    var row = targetRow(hit), t = hit && hit.target, hp = 0;
+    var row = targetRow(hit), t = hit && hit.target, hp;
     // A roster row speaks for this vehicle only when it names the same type: Onslaught records up to 0.7.42 kept an
     // ally's row on the vehicle he had before switching, with that vehicle's health (recorder fix 24.09).
     var same = row && (!row.type || !t || !t.type || String(row.type) === String(t.type));
-    if (row && same) hp = Number(row.maxHealth) > 0 ? Number(row.maxHealth) : Number(row.defaultMaxHealth) > 0 ? Number(row.defaultMaxHealth) : 0;
-    if (hp > 0) return {hp: hp, from: row.maxHealthFrom === 'vehicle' ? 'server' : row.maxHealthFrom === 'descriptor' ? 'descriptor' : 'roster'};
+    // 11.11 (user: is the figure the battle's own or a nominal one?): the stock `defaultMaxHealth` of a row without a
+    // battle figure is said to be the stock (`default`, a nominal), and a row the replay wrote (`vehiclesInfo`) says so.
+    if (row && same && Number(row.maxHealth) > 0) {
+      var by = row.maxHealthFrom;
+      return {hp: Number(row.maxHealth), from: by === 'vehicle' ? 'server' : by === 'descriptor' ? 'descriptor' : by === 'vehiclesInfo' ? 'replay' : 'roster'};
+    }
+    if (row && same && Number(row.defaultMaxHealth) > 0) return {hp: Number(row.defaultMaxHealth), from: 'default'};
     if (t && Number(t.maxHealth) > 0) return {hp: Number(t.maxHealth), from: 'export'};
     hp = t ? ttxHealth(t) : 0;
     return hp > 0 ? {hp: hp, from: 'ttx'} : {hp: 0, from: ''};
@@ -4974,11 +4979,12 @@
     hpKey = targetKey(activeHit); hpMax = h.hp; hpFrom = h.from; hpLeft = hpMax; hpRoll = '';
     if (!(hpMax > 0)) hpAsk();
   }
-  // Under ⌖ only - off it nobody reads the figure. The file is read once per type (readTtx: the shooter's own read is
-  // the same promise), and the bar is filled when it comes, if the same vehicle is still on screen without a figure.
+  // The bar stands off ⌖ too since 11.11, so the figure is asked for either way. The file is read once per type (readTtx:
+  // the shooter's own read is the same promise), and the bar is filled when it comes, if the same vehicle is still on
+  // screen without a figure.
   function hpAsk() {
     var t = activeHit && activeHit.target, type = t && t.type ? String(t.type) : '', key = hpKey;
-    if (!type || !funOn()) return;
+    if (!type) return;
     readTtx(type).then(function (file) {
       if (!file || hpKey !== key || hpMax > 0) return;
       var h = targetHp(activeHit);
@@ -4989,9 +4995,34 @@
   }
   var HP_FROM = {roster: '• Source: this battle’s roster',
     server: '• Source: this battle, the server’s own figure (equipment included)',
+    replay: '• Source: this battle’s replay, the server’s own figure (equipment included)',
     descriptor: '• Source: this battle’s roster, before the vehicle was seen - without equipment that adds health',
+    'default': '• Source: the roster’s stock figure - this battle’s own is not in the record',
     export: '• Source: the vehicle’s own export - its figure then, not this battle’s',
     ttx: '• Source: the vehicle’s characteristics, stock - this battle’s own figure is not in the record'};
+  // A figure that is not the one the vehicle had in this battle (11.11, docs/RULES.md B7: a nominal is never shown as
+  // the recorded one): the bar wears a dashed frame and its tooltip says so.
+  var HP_NOMINAL = {descriptor: 1, 'default': 1, export: 1, ttx: 1};
+  // The damage this battle logged against the vehicle on screen (11.11, user: the damage of all its hits adds up to its
+  // HP if nothing was lost): every recorded hit on it and every other damage row (ram, fire, ...) of the log, as the
+  // list shows them (eventsOf). Null when the vehicle is no seat of the open battle.
+  function hpLogged() {
+    var row = targetRow(activeHit);
+    if (!current || !row) return null;
+    var id = row.id, hits = 0, other = 0;
+    (current.hits || []).forEach(function (h) { if (h && h.targetId === id && !h.synthetic && Number(h.damage) > 0) hits += Number(h.damage); });
+    eventsOf(current).forEach(function (e) { if (e && e.targetId === id && Number(e.damage) > 0) other += Number(e.damage); });
+    return {hits: hits, other: other, sum: hits + other};
+  }
+  function hpLoggedLines(log) {
+    if (!log) return [];
+    var out = ['• Logged damage taken: ' + hpNumber(log.sum) + ' HP' + (log.other > 0 ? ' (hits ' + hpNumber(log.hits) + ', other ' + hpNumber(log.other) + ')' : '')];
+    var gap = hpMax - log.sum;
+    if (gap > 0) out.push('• Not in the log: ' + hpNumber(gap) + ' HP - kept, or missed by the log if it was destroyed');
+    else if (gap < 0) out.push('• Log over its HP by ' + hpNumber(-gap) + ' - a respawn, or a wrong maximum');
+    else out.push('• The log adds up to its HP: destroyed, nothing missing');
+    return out;
+  }
   // What the Hitmarks are made of, kept so they can be laid again on a scene the viewer has rebuilt under
   // the SAME vehicle: viewer.load() drops everything the viewer holds, and picking another shooter loads
   // the model again although the target has not changed. ONE record per SHOT (funMark) - every plate it
@@ -5074,27 +5105,31 @@
     while (funMarks.length > cap) funMarks.shift();
   }
   // THE STRIP BESIDE ⌖ (23.09): the emulated gun - its load, magazine, heat and mode button (#fun-gun, while the aim
-  // emulation runs: updateAim) - ◔, the target's health bar and ↺, ONLY under ⌖ (the user's word, 23.09: "only in the
-  // emulation mode, otherwise they are not needed" - off ⌖ nothing blocks a shot, gunBlock, so a reload count there
-  // would explain nothing). The top band is laid out again only when it comes or goes (the full pass of updateAim
-  // covers #fun-gun). Called by paintFun alone - the switch, a shot, ↺ and every scene (sceneShown) - never per frame.
+  // emulation runs: updateAim) - ◔ and ↺, ONLY under ⌖ (the user's word, 23.09: "only in the emulation mode, otherwise
+  // they are not needed" - off ⌖ nothing blocks a shot, gunBlock, so a reload count there would explain nothing). The
+  // target's health bar stands in it off ⌖ too since 11.11 (user: the vehicle's own HP of this battle at hand, to
+  // compare with the damage of its hits): the strip then carries the bar alone. The top band is laid out again only
+  // when it comes or goes (the full pass of updateAim covers #fun-gun). Called by paintFun alone - the switch, a shot,
+  // ↺ and every scene (sceneShown) - never per frame.
   // A model drawn on screen - what ⌖, its strip and bar, the target's switches and the emulation stand with. The model
   // tile stays for a browsed vehicle without a model (it is the role control), but there is nothing to shoot at.
   function modelOnScreen() { var t = activeHit && activeHit.target; return !$('model-tile').hidden && !(t && t.noModel); }
   function paintStrip() {
-    var strip = $('fun-strip');
+    var strip = $('fun-strip'), bar = $('target-hp');
     if (!strip) return;
-    var show = modelOnScreen() && funOn();
+    var show = modelOnScreen() && (funOn() || !!(bar && !bar.hidden));
     if (strip.hidden !== !show) { strip.hidden = !show; scheduleLayout(LAYOUT_MODS); }
   }
   // THE BAR (24.09, user: "is there no way to get the number?"): the fill and, inside it as the game's own health bars
-  // carry it, the figure - "left / max", plain numbers and no word; the details stay in its tooltip. Called on a shot,
-  // on a reset, on a model change and when the switch moves; never per frame. Every write only when its value changes.
+  // carry it, the figure - "left / max" under ⌖, the vehicle's whole HP alone off it (11.11: there nothing takes HP
+  // off); plain numbers and no word, the details stay in its tooltip. A figure that is not this battle's own wears a
+  // dashed frame (data-nominal). Called on a shot, on a reset, on a model change and when the switch moves; never per
+  // frame. Every write only when its value changes.
   function paintFun() {
     if (sceneBuild) return;   // a scene half built: its finisher (sceneShown -> funModel) paints the layer once
     var bar = $('target-hp'), fill = $('target-hp-fill'), reset = $('target-hp-reset'), toggle = $('fun-mode-toggle');
     if (!bar || !fill || !reset) return;
-    var on = funOn(), model = modelOnScreen(), show = on && model && hpMax > 0;
+    var on = funOn(), model = modelOnScreen(), show = model && hpMax > 0;
     // The switch lives with the model: it is there whenever there is something to shoot at, and it is lit
     // while the mode is on. One attribute write, and only when the state has really changed.
     if (toggle) {
@@ -5103,8 +5138,9 @@
       if (pressed !== hpPressed) { hpPressed = pressed; toggle.setAttribute('aria-pressed', pressed); }
     }
     // Its sub-switch, real reload, stands in the strip beside it only while the mode is on, lit while it is on itself;
-    // the health bar and ↺ likewise. Any of the three coming or going changes the strip's width: the top band is laid
-    // out again then (stripLayout), and only then - the health bar may come late, with the characteristics file.
+    // ↺ likewise; the health bar whenever the vehicle's figure is known. Any of the three coming or going changes the
+    // strip's width: the top band is laid out again then (stripLayout), and only then - the health bar may come late,
+    // with the characteristics file.
     var sub = $('real-reload-toggle'), subBox = $('real-reload'), wide = false;
     if (sub) {
       if (sub.hidden !== !(on && model)) { sub.hidden = !(on && model); wide = true; }
@@ -5114,29 +5150,39 @@
     if (bar.hidden !== !show) { bar.hidden = !show; wide = true; }
     if (reset.hidden !== !(on && model)) { reset.hidden = !(on && model); wide = true; }
     paintStrip();
-    if (wide) stripLayout();
-    if (!show) return;
-    var share = Math.max(0, Math.min(1, hpLeft / hpMax)), width = (share * 100).toFixed(1) + '%';
+    if (!show) { if (wide) stripLayout(); return; }
+    var nominal = HP_NOMINAL[hpFrom] ? 'true' : null;
+    if (bar.getAttribute('data-nominal') !== nominal) { if (nominal) bar.setAttribute('data-nominal', nominal); else bar.removeAttribute('data-nominal'); }
+    var left = on ? hpLeft : hpMax;
+    var share = Math.max(0, Math.min(1, left / hpMax)), width = (share * 100).toFixed(1) + '%';
     if (fill.style.width !== width) fill.style.width = width;
     var rgb = chanceRgb({chance: Math.round(share * 100), expectedShare: share});
     if (fill.style.backgroundColor !== rgb) fill.style.backgroundColor = rgb;
-    var figures = hpNumber(hpLeft) + ' / ' + hpNumber(hpMax), text = $('target-hp-text');
+    var figures = on ? hpNumber(hpLeft) + ' / ' + hpNumber(hpMax) : hpNumber(hpMax), text = $('target-hp-text');
     if (text && figures !== hpText) { hpText = figures; text.textContent = figures; }
+    if (wide) stripLayout();
     // The sentence is long and paintFun runs on every shell or distance step too: it is composed only when
     // one of the things in it has really changed.
-    var mark = xiMarkNow();
-    var key = hpLeft + '/' + hpMax + '|' + hpFrom + '|' + hpRoll + '|' + funRandomization(viewer && viewer.shell) + '|' + (mark ? Math.ceil(mark.left) + mark.from : '');
+    var mark = on ? xiMarkNow() : null, log = hpLogged();
+    var key = on + '|' + hpKey + '|' + hpLeft + '/' + hpMax + '|' + hpFrom + '|' + hpRoll + '|' + funRandomization(viewer && viewer.shell) + '|' +
+      (mark ? Math.ceil(mark.left) + mark.from : '') + '|' + (log ? log.hits + '+' + log.other : '');
     if (key === hpTitleKey) return;
     hpTitleKey = key;
+    var source = [HP_FROM[hpFrom] || null, nominal ? '• Nominal: not the figure this vehicle had in this battle' : null].concat(hpLoggedLines(log));
     // Tooltip markup (tooltips.js): the heading, the one line of what it shows, then the figures and the roll.
+    if (!on) {
+      bar.title = tipJoin(['Target HP', 'Hit points of the vehicle on screen in this battle; ⌖ shoots them down.',
+        '• Max: ' + figures + ' HP'].concat(source));
+      return;
+    }
     bar.title = tipJoin(['Target HP', 'Health of the vehicle on screen; every ⌖ shot takes its rolled damage off.',
-      hpLeft <= 0 ? '• Destroyed: ' + figures + ' HP - further shots still leave Hitmarks' : '• Left: ' + figures + ' HP',
-      HP_FROM[hpFrom] || null, hpRoll || '• Last shot: nothing fired yet', '',
+      hpLeft <= 0 ? '• Destroyed: ' + figures + ' HP - further shots still leave Hitmarks' : '• Left: ' + figures + ' HP']
+      .concat(source, [hpRoll || '• Last shot: nothing fired yet', '',
       '• Damage roll: alpha × (1 ± ' + Math.round(funRandomization(viewer && viewer.shell) * 100) +
         ' %), the shell’s spread; a non-penetration rolls its reconstructed damage alike',
       mark ? '• leKpz Borkenkäfer mark' + (mark.from === 'record' ? ' (the record’s, at this hit)' : '') + ': ' + Math.ceil(mark.left) +
         ' s left — every hit on it rolls ×' + mark.factor + ' (×1.15 with the marker’s full skill tree, which the record cannot tell)' : null,
-      'The uniform shape of the roll is this page’s assumption.']);
+      'The uniform shape of the roll is this page’s assumption.']));
   }
   // Full health again and no Hitmarks: the ↺ button, and every change of the vehicle on screen. The
   // health is looked up for the vehicle ON SCREEN, so ↺ brings the bar back whenever the record knows it.
@@ -5180,6 +5226,7 @@
     if (xiMech && xiMech.stash) xiMech.stash = [null, null];   // a second gun put away loads under the new rule too
     xiWake();
     aimReload = null; aimClipDry = false; aimLoadFull();
+    updateAim();   // the gun's load state in the strip stands with ⌖ (11.11: the strip stays off ⌖ for the health bar)
     paintFun();
     startAimLoop();
     // The characteristics panel's mode switch follows ✸ (the emulator's mode under it, the panel's own off it).
@@ -6267,8 +6314,9 @@
     // The gun panel rides with the mode, exactly as the speed tile and Config do, and the heading shell list carries
     // the shells when the mode is off. Since 23.09 it holds the shells alone (an empty one is no panel at all); the
     // load state - the emulation's own - is the part of the strip beside ⌖ that needs a live emulation (#fun-gun).
-    // The strip itself stands with ⌖ and a model (paintStrip, from paintFun: the scene's finisher and the switch).
-    showEl($('fun-gun'), live);
+    // The strip itself stands with ⌖ and a model (paintStrip, from paintFun: the scene's finisher and the switch); off ⌖
+    // it carries the target's health bar alone since 11.11, so the load state waits for ⌖ here (the user's word, 23.09).
+    showEl($('fun-gun'), live && funOn());
     paintGunLoad();
     showEl($('aim-gun'), live && !!candidates.length);
     // The manual estimate of 0.7.13 is the fallback and nothing more: it appears exactly when the user

@@ -7,7 +7,8 @@
  *    browsed vehicles, another battle, a seat with no hits (the scene emptied) - is driven by CLICKS, with ⌖ off and on,
  *    and after each the same invariants are asked of the rendered page (layout and computed style, not the markup):
  *      - the tiles show the scene;
- *      - the ⌖ switch stands with a model, lit with the mode; the strip and ↺ only under ⌖ with a model;
+ *      - the ⌖ switch stands with a model, lit with the mode; ↺ only under ⌖ with a model, the strip under ⌖ or with the
+ *        health bar (11.11: the bar stands off ⌖ too, the vehicle's whole HP alone);
  *      - the health bar iff ⌖, a model and a known figure - the figure inside it, the tooltip's source line;
  *      - the emulation's controls (speed tile, gun panel, Config) go with the model;
  *      - every help dot is laid out iff at least one control it lists is laid out;
@@ -732,12 +733,15 @@ async function main() {
       ok(tag + 'the tiles show the scene', s.model === want.model && s.shooter === want.shooter, '(model ' + s.model + ', shooter ' + s.shooter + ')');
       // A model DRAWN: the tile, unless it is a vehicle browsed without its model (want.drawn false, 24.09).
       const drawn = s.model && want.drawn !== false;
-      ok(tag + 'the ⌖ switch stands with a model, lit with the mode; the strip and ↺ only under ⌖ with a model',
-         s.funToggle === drawn && s.funPressed === String(fun) && s.strip === (fun && drawn) && s.reset === (fun && drawn),
+      // 11.11 (user: the vehicle's own HP at hand, not only under ⌖): off ⌖ the strip stands with the health bar alone.
+      ok(tag + 'the ⌖ switch stands with a model, lit with the mode; ↺ only under ⌖ with a model, the strip under ⌖ or with the health bar',
+         s.funToggle === drawn && s.funPressed === String(fun) && s.strip === (drawn && (fun || !!want.hp)) && s.reset === (fun && drawn)
+         && (fun || !s.funGun),
          '(switch ' + s.funToggle + ' pressed ' + s.funPressed + ', strip ' + s.strip + ', ↺ ' + s.reset + ')');
-      const bar = fun && drawn && !!want.hp;
-      ok(tag + (bar ? 'the health bar stands with ' + want.hp + ' inside it, from ' + want.source : 'no health bar'),
-         s.hp === bar && (!bar || (s.hpText === want.hp && s.hpTip.indexOf('• Left: ' + want.hp + ' HP • Source: ' + want.source) >= 0)),
+      const bar = drawn && !!want.hp, whole = want.hp ? want.hp.split(' / ')[1] : '';
+      ok(tag + (bar ? 'the health bar stands with ' + (fun ? want.hp : whole + ' (the figure alone off ⌖)') + ' inside it, from ' + want.source : 'no health bar'),
+         s.hp === bar && (!bar || (s.hpText === (fun ? want.hp : whole)
+           && s.hpTip.indexOf('• ' + (fun ? 'Left: ' + want.hp : 'Max: ' + whole) + ' HP • Source: ' + want.source) >= 0)),
          '(shown ' + s.hp + ', "' + s.hpText + '", tip "' + s.hpTip.slice(0, 160) + '")');
       ok(tag + 'the emulation’s controls go with the model' + (want.drawn === false ? ' - Config stays for the panel’s build' : ''),
          drawn || (!s.drive && !s.gun && !s.funGun && s.config === (want.drawn === false)),

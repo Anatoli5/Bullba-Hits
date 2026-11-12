@@ -122,6 +122,9 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 .fun-icon .fun-icon-dot{fill:currentColor;stroke:none}
 .target-hp{position:relative;flex:0 1 140px;width:140px;min-width:64px;height:16px;padding:2px;border:1px solid rgba(157,174,191,.55);border-radius:6px;background:rgba(23,35,48,.35);box-shadow:0 1px 2px rgba(0,0,0,.7)}
 .target-hp[hidden]{display:none}
+/* 11.11: a figure that is not the vehicle's own in this battle (a stock or exported one) - a dashed frame, said in the tooltip */
+.target-hp[data-nominal]{border-style:dashed;border-color:rgba(230,190,110,.8)}
+.target-hp[data-nominal] .target-hp-text{font-style:italic}
 .target-hp-fill{display:block;height:100%;width:100%;border-radius:4px;background:#5ac8a0}
 .target-hp-text{position:absolute;left:0;top:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;padding:0 4px;overflow:hidden;white-space:nowrap;font-size:11px;font-weight:600;line-height:1;color:#fff;font-variant-numeric:tabular-nums;text-shadow:0 0 2px #000,0 0 2px #000,0 1px 1px #000;pointer-events:none}
 /* The swap left the shooter tile for a button of its own (19.09): the tile picks the role now. The two share
