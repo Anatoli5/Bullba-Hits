@@ -413,6 +413,16 @@ class FixtureTests(unittest.TestCase):
                 diffs.append(('pose', key, quantile(theirs[key], 0.9), quantile(values, 0.9)))
         self.assertEqual(diffs, [])
 
+    def test_the_hulls_are_compared_in_the_world(self):
+        """12.11: every compared hit with both world transforms says how far apart the two hulls are in the world (the
+        packet's orientation is the hull's for a hydropneumatic vehicle, the chassis's otherwise)."""
+        for name, arena, folder in four():
+            for h in published(name, arena, folder)['hits']:
+                c = (h.get('replayScene') or {}).get('comparison') or {}
+                if c.get('worldRotation') is not None:
+                    self.assertGreaterEqual(c['hullWorld']['rotation'], 0.0)
+                    self.assertGreaterEqual(c['hullWorld']['shift'], 0.0)
+
     def test_death_camera_hits_get_their_only_scene(self):
         """Proof 2: the 10 replay-only hits of the two October battles have a scene, every point on the model."""
         k = summary()['killCam']

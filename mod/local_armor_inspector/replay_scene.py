@@ -73,7 +73,10 @@ BOX_RESIDUAL = 1e-5
 NUDGES = ((1, -1), (1, 1), (0, -1), (0, 1), (2, -1), (2, 1))
 YAW_STEP = 360.0 / 1024.0
 # The scene's own words for what the replay cannot give (the block says it rather than hiding it).
-LIMIT_HULL = 'hull at rest on the chassis: the replay has no suspension tilt'
+# The hull's tilt (12.11, docs/KNOWLEDGE.md 18): the replay's orientation is the chassis's (the hull's for a
+# hydropneumatic vehicle); the game sets the chassis on the map's terrain and sways the hull on it after shots and hits
+# (a native SwingingAnimator) - neither the terrain nor the sway is in the replay.
+LIMIT_HULL = 'hull at rest on the chassis, both at the replay\'s orientation: the game\'s placing on the terrain and the hull\'s sway after shots are not in the replay'
 LIMIT_PACKED = ('turret yaw and gun pitch from the packed angles (steps of %.2f and %.2f degrees), interpolated to the '
                 'drawn moment %.2f s before the hit')
 LIMIT_BOX = 'part %s: the client box is unknown, the box of the model vertices is taken - its points are approximate'
@@ -748,6 +751,15 @@ class Scenes(object):
         if world_s and world_r:
             out['worldShift'] = round(length(sub(world_s[12:15], world_r[12:15])), 4)
             out['worldRotation'] = round(rotation_angle(world_s, world_r), 4)
+            # The hull in the world (12.11): the packet's orientation is the CHASSIS's for most vehicles and the HULL's for
+            # a hydropneumatic one (the client sets its chassis on the ground and tilts the hull to it), so the hull's own
+            # place in the world is the fair measure of the two scenes' hulls; hullFromRest only says how the snapshot's
+            # hull sits on its chassis.
+            try:
+                hs, hr = mm(world_s, snap[1]['transform']), mm(world_r, scene_parts[1]['transform'])
+                out['hullWorld'] = {'rotation':round(rotation_angle(hs, hr), 4), 'shift':round(length(sub(hs[12:15], hr[12:15])), 4)}
+            except Exception:
+                pass
         if hit.get('rangeAtImpact') is not None and scene.get('rangeAtImpact') is not None:
             out['rangeDiff'] = round(scene['rangeAtImpact'] - float(hit['rangeAtImpact']), 4)
         rows = []
