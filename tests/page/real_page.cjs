@@ -629,8 +629,10 @@ async function twoScenes(browser) {
     ok('two scenes: a store of an earlier build (version 6) holding the old default\'s snapshot - the page shows the rebuilt scene, the new default; every other setting kept',
        s2b.scene === 'pmr-2' && s2b.from === 'replay' && s2b.pressed === 'replay' && s2b.others === s1.others, JSON.stringify(s2b));
     const s3 = await step('hit(2)');
-    ok('two scenes: a hit of the death camera - its row marked, shown from its rebuilt scene (drawn), its one chip not a button and saying it has no snapshot',
-       s3.scene === 'r3' && s3.from === 'replay' && s3.marks === 'r3,r4' && s3.buttons === 0 && s3.message === '' && /no snapshot/.test(s3.chips || ''), JSON.stringify(s3));
+    const off3 = await ev("(() => { const c = document.getElementById('scene-chip-snapshot'); return c && c.getClientRects().length ? {off: c.classList.contains('off'), disabled: c.getAttribute('aria-disabled'), tip: c.getAttribute('data-tip') || c.title, reel: !!document.getElementById('scene-chip-replay')} : null; })()");
+    ok('two scenes: a hit of the death camera - its row marked, shown from its rebuilt scene (drawn); both icons, no words, no button: the camera dimmed and not pressable, "no snapshot" in its tooltip',
+       s3.scene === 'r3' && s3.from === 'replay' && s3.marks === 'r3,r4' && s3.buttons === 0 && s3.message === '' && !/[a-z]/i.test(s3.chips || '')
+       && !!off3 && off3.off && off3.disabled === 'true' && off3.reel && /^In-game snapshot: none\nThe recorder did not see this hit/.test(off3.tip || ''), JSON.stringify({s3: s3, off: off3}));
     const s4 = await step('hit(3)');
     ok('two scenes: a hit with neither scene - its row with its damage, the scene says in one line why there is none; no chips',
        s4.chips === null && /No scene for this hit/.test(s4.message), JSON.stringify(s4));
@@ -766,8 +768,8 @@ async function twoScenesLocal(browser) {
     await ev("__bt.act.battle('16434853064049700-d0002b38cfca')"); await ev('__bt.settle(15000)');
     await ev("__bt.act.roster(5414726)"); await ev('__bt.settle(15000)');
     const c = await clickRow('r25');
-    ok('two scenes, local: a death-camera hit (r25, 430 HP on the T110E5) - shown from its rebuilt scene, drawn, 100 %',
-       c.scene === 'r25' && c.from === 'replay' && c.chance === '100 %' && c.message === '' && /no snapshot/.test(c.chips.join()), JSON.stringify(c));
+    ok('two scenes, local: a death-camera hit (r25, 430 HP on the T110E5) - shown from its rebuilt scene, drawn, 100 %; its two icons carry no words',
+       c.scene === 'r25' && c.from === 'replay' && c.chance === '100 %' && c.message === '' && c.chips.join('|') === '|*', JSON.stringify(c));
     // The choice back to the default for the pages after this one (one browser profile, one store): the menu's control.
     await ev("(() => { const s = document.getElementById('scene-source-value'); s.value = 'replay'; s.dispatchEvent(new Event('change')); return true; })()"); await pause(500);
     ok('two scenes, local: no uncaught exception in the page', page.errors.length === 0, page.errors.slice(0, 3).join(' | '));

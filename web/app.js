@@ -8090,16 +8090,20 @@
   var SCENE_WORDS={
     snapshot:['In-game snapshot','A click shows this hit from the in-game snapshot; the page remembers the choice.','The target’s pose and armour as the recorder read them in the battle, the scene the game drew.','• Default: the rebuilt scene, where the hit has one'],
     replay:['Rebuilt from the replay','A click shows this hit rebuilt from the replay; the page remembers the choice.','The same hit in the pose the replay gives: the vehicle’s place and hull 0.2 s before the hit, the turret and gun from the replay’s angles.','• Default: the page shows a hit from its rebuilt scene where it has one'],
-    noSnapshot:['Rebuilt from the replay','No in-game snapshot: the recorder did not see this hit (the death camera). It is in the replay only, so the scene rebuilt from the replay is its one scene.'],
-    noReplayHit:['In-game snapshot','Not rebuilt from the replay: the replay did not give what this hit’s scene needs (the target’s place, its vehicle or a part model), so the snapshot is its one scene.']};
+    noSnapshot:['In-game snapshot: none','The recorder did not see this hit (the death camera): it is in the replay only, so it is shown rebuilt from the replay.'],
+    noReplayHit:['Rebuilt from the replay: none','The replay did not give what this hit’s scene needs (the target’s place, its vehicle or a part model), so it is shown from its in-game snapshot.']};
+  // The icon of the one scene a hit has: its title, then that it is the scene on screen.
+  var SCENE_ONLY='This hit has only this scene: it is the one on screen.';
   // THE HIT LINE TILE'S SCENE ROW (#shot-scenes) IS THE SWITCH (user 11.11: he looked for the switch there). Both scenes:
   // two buttons - the page's verdict on the first point in the snapshot and in the rebuilt scene - the one on screen
   // pressed (framed); a click shows the hit from that scene through the one owner of the choice (pickScene ->
   // sceneSourceChanged), the setting #scene-source-value with it. Beside them the server's outcome; the button of the other
   // scene amber when its verdict differs. Each button's words: its title, what a click does, then every point, how the
   // scenes differ (the mod's comparison block, rebuilt minus snapshot) and where the rebuilt one is weaker. A hit with one
-  // scene of a battle made from its replay: one chip, not a button, whose words say why there is no other. A hit of a battle
-  // published from the recorder alone, or with no scene at all: no row.
+  // scene of a battle made from its replay: BOTH icons still (user 11.11 night: no explanation text on the screen) - the
+  // scene it has framed as the one on screen, the one it lacks dimmed and not pressable (aria-disabled, not a button), the
+  // reason it is absent only in that icon's tooltip (a click shows it, web/tooltips.js); no words on the row. A hit of a
+  // battle published from the recorder alone, or with no scene at all: no row.
   function paintSceneChips(st){
     var row=$('shot-scenes');if(!row)return;
     if(st===undefined)st=sceneState();
@@ -8111,10 +8115,18 @@
     var chip=function(kind,text,cls,button){
       var c=node(button?'button':'span',undefined,'chip scene-chip'+(cls?' '+cls:''));
       if(button){c.type='button';c.id='scene-chip-'+kind;c.setAttribute('aria-pressed',String(st.shown===kind));c.onclick=function(){pickScene(kind);};}
-      if(kind)c.appendChild(sceneMark(kind));c.appendChild(document.createTextNode(text));row.appendChild(c);return c;};
+      if(kind)c.appendChild(sceneMark(kind));if(text)c.appendChild(document.createTextNode(text));row.appendChild(c);return c;};
     if(!st.have.snapshot||!st.have.replay){
-      var only=st.have.snapshot?'snapshot':'replay',w=SCENE_WORDS[only==='snapshot'?'noReplayHit':'noSnapshot'];
-      chip(only,only==='snapshot'?'Snapshot · not rebuilt':'Rebuilt · no snapshot','shown single').title=tipJoin(w.concat(only==='replay'?weaker:[]));
+      var only=st.have.snapshot?'snapshot':'replay',absent=only==='snapshot'?'replay':'snapshot';
+      ['snapshot','replay'].forEach(function(kind){
+        var here=kind===only,c=chip(kind,'',here?'shown single':'off single');
+        c.id='scene-chip-'+kind;
+        if(here){c.setAttribute('role','img');c.setAttribute('aria-label',SCENE_WORDS[kind][0]);
+          c.title=tipJoin([SCENE_WORDS[kind][0],SCENE_ONLY,SCENE_WORDS[kind][2]].concat(kind==='replay'?weaker:[]));}
+        else{c.setAttribute('role','img');c.setAttribute('aria-disabled','true');c.setAttribute('aria-label',SCENE_WORDS[absent==='snapshot'?'noSnapshot':'noReplayHit'][0]);
+          c.title=tipJoin(SCENE_WORDS[absent==='snapshot'?'noSnapshot':'noReplayHit']);}
+      });
+      row.appendChild(helpDotFor(['scene-chip-snapshot','scene-chip-replay']));
       return;
     }
     var last=sceneCmp.last&&sceneCmp.last.id===st.base.id&&sceneCmp.last.key===sceneCmp.key?sceneCmp.last:null,first=last&&last.lines[0];

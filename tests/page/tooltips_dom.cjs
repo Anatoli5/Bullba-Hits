@@ -742,7 +742,8 @@ ok('help: closed - the observer back to the page\'s titles and the dots\' boxes,
 // --- The scene switch (11.11): the snapshot or the scene rebuilt from the replay ------------------------------------
 // Since 11.11 evening the switch is the Hit line tile's scene chips (paintSceneChips): two buttons with a picture and the
 // page's own words (SCENE_WORDS of app.js, cut out of the file: [title, sentence, ...]), a dot of their own; a hit with one
-// scene has one chip that is not a button - a picture whose click shows why there is no other scene.
+// scene has both icons, the absent one dimmed and not a button - a picture whose click shows why that scene is not there
+// (user 11.11 night: no words on the row).
 const sceneWordsMatch = /\n  var SCENE_WORDS=(\{[\s\S]*?\});\n/.exec(appSrc);
 const SW = sceneWordsMatch ? new Function('return ' + sceneWordsMatch[1] + ';')() : null;
 ok('scene switch: the page\'s words for the scene chips were found in app.js', !!SW && ['snapshot', 'replay', 'noSnapshot', 'noReplayHit'].every(function (k) { return Array.isArray(SW[k]); }));
@@ -765,7 +766,7 @@ if (SW) {
   ok('scene switch: a scene chip is a control - its click acts and shows nothing', bubble.hidden && flips === 1);
   press(one, 330, 400);
   ok('scene switch: the single chip of a hit with one scene says why when touched - its own words at the pointer',
-     !bubble.hidden && bubble.textContent.indexOf('In-game snapshot') === 0 && /did not give/.test(bubble.textContent), bubble.textContent.slice(0, 80));
+     !bubble.hidden && bubble.textContent.indexOf('Rebuilt from the replay: none') === 0 && /did not give/.test(bubble.textContent), bubble.textContent.slice(0, 80));
   press(one, 330, 400);
   ok('scene switch: touched again - closed', bubble.hidden);
   press(dotS, 360, 400);

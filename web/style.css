@@ -886,6 +886,8 @@ header>.settings-menu>.settings-content{top:calc(100% + 8px);right:0;max-height:
 .scene-chip .scene-mark{margin:0;color:inherit}
 .scene-chip.shown{border-color:var(--gold);color:#e5edf5}
 .scene-chip.single{cursor:help}
+/* The scene a hit lacks (user 11.11 night): its icon stays, dimmed and not pressable; why it is absent is its tooltip. */
+.scene-chip.off{opacity:.38;border-style:dashed;border-color:#4d637a}
 #shot-scenes button.scene-chip{flex:none;min-height:0;padding:2px 8px;font:inherit;font-variant-numeric:tabular-nums;line-height:inherit;border:1px solid #4d637a;border-radius:4px;background:#1f2c3b;color:#dbe5ef;cursor:pointer}
 #shot-scenes button.scene-chip:hover{border-color:#7f97ad;background:#263749;color:#e5edf5}
 #shot-scenes button.scene-chip[aria-pressed=true]{border-color:var(--gold);background:#302b23;color:#e5edf5}

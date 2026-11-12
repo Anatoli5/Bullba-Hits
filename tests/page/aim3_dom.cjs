@@ -10291,9 +10291,14 @@ function twoScenes() {
     });
     }).then(function () {
       const n = asked.length, one = single();
-      ok('two scenes: a hit with its snapshot only, the choice on the rebuilt scene - the snapshot shown; its one chip is not a button and its words say why there is no rebuilt scene',
-         asked[n - 1] === 't2:replay' && !loaded.hit.sceneSource && buttons().length === 0 && !!one && one.tagName !== 'BUTTON' && /not rebuilt/.test(textOf(one))
-         && /^In-game snapshot\nNot rebuilt from the replay: /.test(one.title), one ? one.title.split('\n').slice(0, 2).join(' | ') : 'no chip');
+      // User 11.11 night: both icons always, no words on the row; the absent scene's icon dimmed, not pressable, its reason
+      // in its tooltip alone.
+      const snap = chipOf('snapshot'), reel = chipOf('replay');
+      ok('two scenes: a hit with its snapshot only, the choice on the rebuilt scene - the snapshot shown; BOTH icons stand, no button and no words: the camera framed, the reel dimmed and not pressable with the reason in its tooltip',
+         asked[n - 1] === 't2:replay' && !loaded.hit.sceneSource && buttons().length === 0 && !!snap && !!reel && snap.tagName !== 'BUTTON' && reel.tagName !== 'BUTTON'
+         && /\bshown\b/.test(snap.className) && /\boff\b/.test(reel.className) && reel.getAttribute('aria-disabled') === 'true' && !/[a-z]/i.test(textOf(snap) + textOf(reel))
+         && /^Rebuilt from the replay: none\nThe replay did not give /.test(reel.title) && /^In-game snapshot\nThis hit has only this scene/.test(snap.title),
+         reel ? reel.title.split('\n').slice(0, 2).join(' | ') : 'no chip');
       return setting('snapshot').then(function () {
         ok('two scenes: ... the setting set back reads no scene again (the snapshot is on screen already)', asked.length === n && scenePick.value === 'snapshot');
       });
@@ -10304,8 +10309,10 @@ function twoScenes() {
       ok('two scenes: a hit of the death camera - its row marked with words of their own ("recorded from the replay: no in-game snapshot"), named from the roster',
          !!mark && /^Recorded from the replay\nNo in-game snapshot/.test(mark.title) && /• Scene: from the replay only: no in-game snapshot/.test(row('r4').title) && /Incoming from Tango/.test(row('r4').title)
          && !ownWords(row('t1')), mark ? mark.title.split('\n')[0] : 'no mark');
-      ok('two scenes: ... shown from its rebuilt scene whatever the choice; its one chip, not a button, says it has no snapshot; the shooter and his shells borrowed from his other hit',
-         asked[asked.length - 1] === 'r4:snapshot' && h.sceneSource === 'replay' && buttons().length === 0 && !!one && /no snapshot/.test(textOf(one)) && /^Rebuilt from the replay\nNo in-game snapshot: /.test(one.title)
+      const cam = chipOf('snapshot'), reel4 = chipOf('replay');
+      ok('two scenes: ... shown from its rebuilt scene whatever the choice; both icons, no words - the reel framed, the camera dimmed with "no snapshot" in its tooltip; the shooter and his shells borrowed from his other hit',
+         asked[asked.length - 1] === 'r4:snapshot' && h.sceneSource === 'replay' && buttons().length === 0 && !!cam && !!reel4 && /\boff\b/.test(cam.className) && cam.getAttribute('aria-disabled') === 'true'
+         && /\bshown\b/.test(reel4.className) && !/[a-z]/i.test(textOf(cam) + textOf(reel4)) && /^In-game snapshot: none\nThe recorder did not see this hit/.test(cam.title) && /hull at rest/.test(reel4.title)
          && h.shellsFrom === 't3' && h.attacker.name === 'Tango' && h.target.name === 'Papa' && h.availableShells.length === SHELLS.length,
          JSON.stringify({src: h.sceneSource, from: h.shellsFrom, chip: one ? one.title.split('\n')[0] : null}));
       return pickRow('r5');
