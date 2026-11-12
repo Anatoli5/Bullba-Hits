@@ -824,6 +824,25 @@ def pack_hit(hit, armor, pitch, static):
     return result
 
 
+def shared_definitions(hits):
+    """(kind, key, value) of every definition the hits refer to, each once - what pack_battle puts in the store. A job
+    that publishes in slices puts them beforehand, one written entry a step (Exporter.store_definitions_steps): each
+    new entry is flushed to the disk (~1 ms), and the 223 of the first battle in a fresh store were 0.26 s in one step
+    (12.11.2026); pack_battle then finds them there and writes nothing."""
+    seen = set()
+    for hit in hits or ():
+        if not isinstance(hit, dict) or hit.get('type') != 'hit':
+            continue
+        refs = hit.get(SNAPSHOT_KEY)
+        if refs is None:
+            refs = snapshot_refs(hit)
+        for kind in ('armor', 'pitch', 'static'):
+            for key, value in refs[kind].items():
+                if (kind, key) not in seen:
+                    seen.add((kind, key))
+                    yield kind, key, value
+
+
 def pack_battle(battle, store=None):
     """A snapshot with its static blocks by reference. Without a store it carries its own dictionaries and never needs
     another file. With one (DefinitionStore, BACKLOG 27) every definition is put there first - an entry already there

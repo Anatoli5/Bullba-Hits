@@ -29,7 +29,7 @@ from collections import OrderedDict
 from .geometry import extract
 from .armor import ArmorCatalog
 from .records import (RecordDecoder, STATIC_RECORD, DEFINITIONS_FOLDER, DefinitionStore, note_missing, pack_battle,
-                      published_store, raw_store, stamp_snapshot, unpack_battle)
+                      published_store, raw_store, shared_definitions, stamp_snapshot, unpack_battle)
 from .telemetry import mechanics_params
 from .crit_tie import attach_crits, moves_tie
 from .damage_log import damage_log
@@ -3986,7 +3986,8 @@ class Exporter(object):
 
     def publish_replay_steps(self, battle_id, records, live=None, stream=None, notes=None, store=False, out=None):
         """publish_replay in steps for the export thread's slices (replay_run.Consumption): yields after reading the live
-        record, after the assembly, after each hit's rebuilt scene, after the store and after every few hits prepared; the
+        record, after the assembly, after each hit's rebuilt scene, after the store, after every few hits prepared and after
+        each shared definition written (store_definitions_steps); the
         'replay' block is put in out['report']. The longest step is the write of the file (~60 ms for the largest)."""
         from .replay_run import StoredSource, battle_scenes, pack_store, write_bytes
         name = str(battle_id or '')
@@ -4016,6 +4017,8 @@ class Exporter(object):
         for index, raw in enumerate(battle.get('hits') or []):
             prepared.append(self.prepare_hit(raw, index, battle))
             if index % 8 == 7: yield
+        # Their definitions put in the shared store a written entry a step; the publish below finds them there.
+        for _ in self.store_definitions_steps(prepared): yield
         # Published meanwhile from memory (the tail, a model arriving): the same battle; the hits prepared here are its.
         final = getattr(self, 'publishing_final', False)
         self.publishing_final = True
@@ -4025,6 +4028,20 @@ class Exporter(object):
         LOG.info('Battle %s published from its replay: %d hits (%d without a scene), %d shot and %d crit records',
                  name, report['hits'], report['hitsWithoutScene'], report['shots'], report['crits'])
         out['report'] = report
+
+    def store_definitions_steps(self, hits):
+        """The shared definitions the prepared `hits` refer to (records.shared_definitions) put in the store before the
+        publish that writes their file, yielding after each entry written now - an entry is flushed to the disk, ~1 ms;
+        the first replay battle of a fresh store had 223 of them, 0.26 s inside its one publish step (12.11.2026). The
+        publish's own pack_battle then finds every one there. A put that fails ends this quietly: that publish tries them
+        again and, failing, keeps the definitions in the battle's file (pack_battle)."""
+        store = getattr(self, 'definitions', None)
+        if store is None: return
+        try:
+            for kind, key, value in shared_definitions(hits):
+                if store.put(kind, key, value): yield
+        except Exception:
+            return
 
     def replay_client_version(self, name, live=None):
         """The client version of a battle's replay records: its live record's (header line), else the running client's."""
@@ -4424,8 +4441,19 @@ class Exporter(object):
                         if stop():
                             stopped = True
                             break
+                    # Their shared definitions put in the store, a written entry at a time (store_definitions_steps).
+                    if len(prepared) == len(hits) and not stopped and not work.get('stored'):
+                        steps = work.get('defining')
+                        if steps is None: steps = work['defining'] = self.store_definitions_steps(prepared)
+                        for _ in steps:
+                            worked = True
+                            if stop():
+                                stopped = True
+                                break
+                        else:
+                            work['stored'] = True
                     # The file: in this slice when it has time left, else first thing in the next.
-                    if len(prepared) == len(hits) and not (worked and stop()):
+                    if len(prepared) == len(hits) and work.get('stored') and not (worked and stop()):
                         self.raw_offsets[name] = reader.offset
                         self.publish(battle, reader.offset, prepared=prepared, raw_size=reader.size)
                         self.write_index()
