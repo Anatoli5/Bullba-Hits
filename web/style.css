@@ -809,6 +809,8 @@ header>.settings-menu>.settings-content{top:calc(100% + 8px);right:0;max-height:
 .ttx-val{font-weight:600}
 .ttx-row[data-cmp=better] .ttx-val{color:var(--mint)}
 .ttx-row[data-cmp=worse] .ttx-val{color:var(--red)}
+/* The target's hit points of this battle, not the stock (row 80): underlined, its tooltip says so. */
+.ttx-row[data-battle] .ttx-val{text-decoration:underline dotted;text-underline-offset:3px}
 /* The head: the pair tile and the glyph buttons are the .swap-roles widget at the panel's size. */
 .ttx-panel .toolbar-more>summary,.ttx-panel .ttx-tools>.swap-roles{display:flex;align-items:center;gap:5px;min-height:0;padding:3px 7px;font-size:13px;line-height:1;border:1px solid rgba(157,174,191,.55);border-radius:6px;background:rgba(23,35,48,.15);color:inherit;white-space:nowrap}
 .ttx-panel .ttx-tools>.swap-roles[aria-pressed=true],.ttx-more[open]>summary.swap-roles{border-color:var(--gold);color:var(--gold);background:#302b23}

@@ -52,7 +52,9 @@ def parse(paths):
             fields['at'] = stamp
             # The last line for a point and shell wins: the same hit is re-logged when the shell changes or the
             # hit is opened again; 'mode' says whether the line came from the automatic pass or from viewing.
-            rows[(fields['battle'], fields['hit'], fields['point'], fields.get('shell', ''))] = fields
+            # The scene is part of the key (12.11): a view of a hit's scene rebuilt from the replay (scene=replay)
+            # is logged too and must not take the place of its snapshot's line.
+            rows[(fields['battle'], fields['hit'], fields['point'], fields.get('shell', ''), fields.get('scene', 'snapshot'))] = fields
     return list(rows.values())
 
 

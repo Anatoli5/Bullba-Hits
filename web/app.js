@@ -6450,7 +6450,8 @@
     console.info('Bullba Hits verdict: battle='+battleId+' hit='+hit.id+' point='+v.index+' part='+logPart(v.part,parts)+partial+' server='+String(effects[v.effect]||v.effect).replace(/ /g,'_')+' ours='+ours+' angle='+(r.angle!=null?Math.round(r.angle):'-')+' eff='+(r.effective!=null?Math.round(r.effective):'-')+' pen='+Math.round(shell.penetration)+' shell='+shell.kind+' dir='+v.source+' chordDev='+(v.chordDev==null?'-':(v.chordDev*180/Math.PI).toFixed(1))+' mode='+mode+shellModeColumns(hit,shell)+damageColumns(hit,r,shell)+ArmorCrits.columns(hit,v)+sceneColumns(hit)+' v='+($('app-version').getAttribute('data-version')||'dev').replace(/\s+/g,'_')+' rec='+(recordsVersion||'-'));
     verdictLines++;verdictStatus();}
   // The scene a line was cast in (11.11): none written - the snapshot, as every line before; scene=replay - the scene
-  // rebuilt from the replay, which the log takes only for a hit with no snapshot (the death camera), and shellsFrom= the
+  // rebuilt from the replay (the automatic pass: only a hit with no snapshot, the death camera; a view: whenever it is the
+  // scene on screen, since 12.11), and shellsFrom= the
   // hit of the same shooter whose loadable shells it borrowed (the replay names no shell list).
   function sceneColumns(hit){return (hit&&hit.sceneSource==='replay'?' scene=replay':'')+(hit&&hit.shellsFrom!=null?' shellsFrom='+hit.shellsFrom:'');}
   // The shooter's vehicle mode on a log line that already carries the shell (22.09): which of the two
@@ -6488,10 +6489,11 @@
   // The displayed hit, with whatever shell is on screen: logged once per hit and shell, never on camera moves.
   function logVerdicts(shell){
     if(!viewer||!shell||!activeHit||activeHit.synthetic||!current||!window.console)return;
-    // The log stays the snapshot's where the hit has one (11.11): the scene rebuilt from the replay on screen writes no
-    // line over it (the log keeps the last line per point and shell). A hit with no snapshot writes its rebuilt scene's.
-    if(activeHit.sceneSource==='replay'&&ArmorInspectorData.scenesOf((current.hits||[]).find(function(h){return h.id===activeHit.id;})).snapshot)return;
-    var key=current.id+'/'+activeHit.id+'|'+JSON.stringify(shell);if(key===verdictKey)return;
+    // The log says what is on screen (row 80, 12.11): the scene rebuilt from the replay writes its own lines too, marked
+    // scene=replay (sceneColumns), and tools/verdicts_from_log.py keeps them apart from the snapshot's - until then this view
+    // wrote nothing, so the line of what the user looked at was missing. The scene is part of the key: a flip of the
+    // scene chips with the same shell is another view.
+    var key=current.id+'/'+activeHit.id+'|'+(activeHit.sceneSource||'snapshot')+'|'+JSON.stringify(shell);if(key===verdictKey)return;
     // Before load() the previous hit's points would be logged under the new id: wait for the points of this hit.
     var verdicts=viewer.pointVerdicts(shell)||[];if(!verdicts.length||viewer.loadedData.hit!==activeHit)return;verdictKey=key;
     verdicts.forEach(function(v){verdictLine(current.id,activeHit,v,shell,'view',viewer.loadedData);});
@@ -8143,7 +8145,10 @@
       lines.push('','Rebuilt minus snapshot');
       if(pts.length)lines.push('• Point: '+max('distance').toFixed(2)+' m apart, angle '+f(max('incidenceDiff'),1)+'°, armour '+f(max('nominalDiff'),0)+' mm');
       if(c.turretYawDiff!=null)lines.push('• Turret '+f(c.turretYawDiff,1)+'°, gun '+f(c.gunPitchDiff,1)+'°');
-      if(c.worldShift!=null)lines.push('• Vehicle: '+c.worldShift.toFixed(2)+' m, '+c.worldRotation.toFixed(1)+'°'+(c.hullFromRest?'; the snapshot’s hull sways '+c.hullFromRest.rotation.toFixed(1)+'° off rest':''));
+      // The hull (row 80, 12.11): the mod's hullWorld - the two scenes' hulls compared in the world - where it gives it;
+      // an older battle file has only hullFromRest (how the snapshot's hull sits on its chassis).
+      if(c.worldShift!=null)lines.push('• Vehicle: '+c.worldShift.toFixed(2)+' m, '+c.worldRotation.toFixed(1)+'°'+(!c.hullWorld&&c.hullFromRest?'; the snapshot’s hull sways '+c.hullFromRest.rotation.toFixed(1)+'° off rest':''));
+      if(c.hullWorld&&c.hullWorld.shift!=null)lines.push('• Hull in the world: '+c.hullWorld.shift.toFixed(2)+' m, '+c.hullWorld.rotation.toFixed(1)+'°');
       if(c.rangeDiff!=null)lines.push('• Range: '+f(c.rangeDiff,1)+' m');
       if(c.stopDistance&&c.stopDistance.replay!=null)lines.push('• From the server’s stop: '+c.stopDistance.snapshot.toFixed(2)+' m snapshot, '+c.stopDistance.replay.toFixed(2)+' m rebuilt');
     }
@@ -9160,7 +9165,22 @@
   // Every row of both views is written here - a row of the grid or a part of the reload line: the figure, its colour
   // and the tooltip with the stock, this build and the first mode's figure.
   function ttxPaintAs(row, key, glyph, text, sText, fText, cmp, ctx) {
-    ttxSet(row, glyph, text, cmp, ttxTitle(key, sText, text, fText, ctx));
+    var battle = key === 'maxHealth' ? ttxBattleHp() : null, title = ttxTitle(key, sText, text, fText, ctx);
+    // The target's hit points (row 80, user 12.11: the panel said the stock 2500 beside the bar's 2780 of the battle): where
+    // the battle has the vehicle's own figure the panel shows that one, marked, and the stock goes into its tooltip.
+    if (battle) {
+      text = String(Math.round(battle.hp)); cmp = '';
+      title = tipJoin(['Hit points, HP', 'This battle’s own figure for this vehicle - the same as the HP bar’s.', HP_FROM[battle.from] || null, '• Stock: ' + sText]);
+    }
+    ttxSet(row, glyph, text, cmp, title);
+    if (row.hasAttribute('data-battle') !== !!battle) { if (battle) row.setAttribute('data-battle', ''); else row.removeAttribute('data-battle'); }
+  }
+  // The battle's own hit points of the vehicle on the target's panel - the HP bar's figure (targetHp) when it is the battle's
+  // and not a nominal (HP_NOMINAL: the stock, an export, a descriptor without equipment); null on the shooter's panel.
+  function ttxBattleHp() {
+    if (ttxSide !== TTX_TARGET || !activeHit || !modelOnScreen()) return null;
+    var h = targetHp(activeHit);
+    return h.hp > 0 && h.from && !HP_NOMINAL[h.from] ? h : null;
   }
   // The reload line (panel v2, web/ttx.js reloadLine): three sides - what the magazine holds, the reload, the time
   // between rounds - each on its own column of the view's grid, the reload in the middle one. Each part is a row of

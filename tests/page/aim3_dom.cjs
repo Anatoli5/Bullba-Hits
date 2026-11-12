@@ -10141,7 +10141,9 @@ function targetTtx() {
       attacker: {name: 'ShootX', type: 'germany:ShootX', parts: PARTS(), gunDispersion: 0.0036, aim: aimA},
       target: {name: type.split(':')[1], type: type, parts: PARTS(), aim: aim}};
   };
+  // The roster has Alpha's hit points of this battle (the server's 1850, the stock 1700); Bravo has no row.
   const B = {id: 'tt', map: 'Test', playerVehicleId: 40, warnings: [], shotEvents: [],
+    roster: [{id: 7, type: 'germany:TgtAlpha', maxHealth: 1850, maxHealthFrom: 'vehicle', defaultMaxHealth: 1700}],
     hits: [HIT('a1', 'germany:TgtAlpha', Object.assign({}, aimB, {dispersion: 0.00425})), HIT('b1', 'germany:TgtBravo', aimA), HIT('n1', 'germany:TgtNoFile', aimA)]};
   D.index = function () { return Promise.resolve({application: 'local.armor_inspector', version: 'test', battles: [{id: 'tt', startedAt: 3, map: 'Test', hits: 3}]}); };
   D.battle = function (id) { return id === 'tt' ? Promise.resolve(JSON.parse(JSON.stringify(B))) : Promise.reject(new Error('no battle')); };
@@ -10156,8 +10158,13 @@ function targetTtx() {
   return settle(20).then(open).then(function () { return pick('a1'); }).then(function () {
     const tip = chip().title || '';
     ok('target panel: a hit with the target\'s file - the second instance stands with the TARGET\'s figures (its HP 1700, not the shooter\'s 1300), the shooter\'s panel keeps his',
-       $('ttx-panel-target').hidden === false && hpOf('-target') === '1700' && hpOf('') === '1300' && $('ttx-panel').hidden === false,
+       $('ttx-panel-target').hidden === false && hpOf('-target') === '1850' && hpOf('') === '1300' && $('ttx-panel').hidden === false,
        JSON.stringify({target: hpOf('-target'), shooter: hpOf(''), hidden: $('ttx-panel-target').hidden}));
+    // Row 80 (user 12.11: the panel said the stock 2500 beside the bar's 2780 of the battle).
+    const hpRow = $('ttx-hp-target').children[0], hpTip = hpRow ? hpRow.title || '' : '';
+    ok('target panel: the battle has the target\'s hit points - the panel shows them (1850, the HP bar\'s figure), not the stock 1700: marked as the battle\'s, the source and the stock in its tooltip; the shooter\'s HP row unmarked',
+       hpOf('-target') === '1850' && hpRow.getAttribute('data-battle') === '' && /^Hit points, HP\nThis battle’s own figure/.test(hpTip) && /• Source: this battle, the server’s own figure/.test(hpTip) && /• Stock: 1700/.test(hpTip)
+       && !$('ttx-hp').children[0].hasAttribute('data-battle'), hpOf('-target') + ' | ' + hpTip.replace(/\n/g, ' | '));
     ok('target panel: ... its gun is the one the record\'s gun figures tell (122 mm, not the top pair), its chip says so, lists nothing (no ▾) and names the figures the stock',
        /^Gun: 122 mm\nThe target’s gun in this battle, told by its recorded gun figures/.test(tip) && /• Figures: the stock/.test(tip)
        && $('ttx-pairs-target').getAttribute('data-many') === 'false' && /122/.test(JSON.stringify(chip().children.map(function (c) { return c.textContent; }))),
@@ -10165,7 +10172,7 @@ function targetTtx() {
     return pick('b1');
   }).then(function () {
     ok('target panel: another target - the same door repaints it with that vehicle (HP 2100, its one gun said so)',
-       $('ttx-panel-target').hidden === false && hpOf('-target') === '2100' && /^Gun: 105 mm\nThe target’s gun: the vehicle has no other gun or turret\./.test(chip().title || ''),
+       $('ttx-panel-target').hidden === false && hpOf('-target') === '2100' && !$('ttx-hp-target').children[0].hasAttribute('data-battle') && /^Gun: 105 mm\nThe target’s gun: the vehicle has no other gun or turret\./.test(chip().title || ''),
        hpOf('-target') + ' ' + (chip().title || '').split('\n')[1]);
     return pick('n1');
   }).then(function () {
@@ -10195,7 +10202,8 @@ function twoScenes() {
       target: {type: 'germany:Tango', compactDescriptor: 'c', turretYaw: 0.3, gunPitch: 0.02, worldTransform: I(0.4),
         parts: [Object.assign({id: 1, name: 'hull', transform: I(), modelKey: 'k1'}, own ? {armor: ARMOR} : {armorFrom: 'snapshot'})]},
       points: [{part: 1, status: 'resolved', position: [0, 1, 2.9], direction: [0, 0, -1], effect: 4}], rangeAtImpact: 101,
-      comparison: own ? undefined : {turretYawDiff: 17.2, gunPitchDiff: 1.1, worldShift: 0.4, worldRotation: 0, points: [{distance: 0.1, incidenceDiff: 0, nominalDiff: 0}]}};
+      comparison: own ? undefined : {turretYawDiff: 17.2, gunPitchDiff: 1.1, worldShift: 0.4, worldRotation: 0, points: [{distance: 0.1, incidenceDiff: 0, nominalDiff: 0}],
+        hullFromRest: {rotation: 0.8, shift: 0.02}, hullWorld: {rotation: 1.5, shift: 0.12}}};
   };
   const HIT = function (id, extra) {
     return Object.assign({id: id, attackerId: 30, targetId: 34, direction: 'outgoing', damage: 300, receivedAt: 10, gameTime: 100, warnings: [], aim: [0, 0],
@@ -10257,6 +10265,10 @@ function twoScenes() {
          return new RegExp('^' + (k === 'snapshot' ? 'In-game snapshot' : 'Rebuilt from the replay') + '\nA click shows this hit ').test(t)
            && /Rebuilt minus snapshot/.test(t) && /Turret \+17\.2°, gun \+1\.1°/.test(t) && /hull at rest/.test(t); }),
        chipOf('replay').title.slice(0, 200));
+    // Row 80 (12.11): the mod's hullWorld - the two hulls compared in the world - where it is given, not hullFromRest.
+    ok('two scenes: the chips\' words compare the two hulls in the world (the mod\'s hullWorld: 0.12 m, 1.5°) and no longer say how the snapshot\'s hull sways off rest',
+       ['snapshot', 'replay'].every(function (k) { const t = chipOf(k).title; return /• Hull in the world: 0\.12 m, 1\.5°/.test(t) && !/sways/.test(t) && /• Vehicle: 0\.40 m, 0\.0°\n/.test(t); }),
+       (chipOf('replay').title.match(/• (Vehicle|Hull)[^\n]*/g) || []).join(' | '));
     ok('two scenes: (held statically) the toolbar has no scene switch any more - one path for the choice', !/scene-switch|id="scene-snapshot"|id="scene-replay"/.test(pageSrc) && !/\$\('scene-switch'\)/.test(appSrc));
     const pre = asked.length;
     return flip('snapshot').then(function () {
@@ -10274,10 +10286,11 @@ function twoScenes() {
       ok('two scenes: ... and nothing else changes - the shell, the display, ⌖, the pressed row, the list',
          $('shell-choice').value === before.shell && $('armor-mode').value === before.mode && $('fun-mode').checked === before.fun
          && row('t1').getAttribute('aria-pressed') === 'true' && $('hits').children.length === before.rows);
-      ok('two scenes: (held statically) the switch\'s one owner re-shows the hit through sceneFrom \'scene\' - the scene\'s own pose, the camera as it stands - and the log keeps the snapshot\'s lines',
+      ok('two scenes: (held statically) the switch\'s one owner re-shows the hit through sceneFrom \'scene\' - the scene\'s own pose, the camera as it stands - the automatic pass casts in the snapshot, and a view logs the scene on screen (row 80, 12.11: the rebuilt scene of a hit with a snapshot is no longer skipped; the scene is part of the view\'s key)',
          /selectHit\(st\.base\.id,sceneFrom\('scene'\)\)/.test(appSrc) && /\(how==='record'\|\|how==='scene'\)&&\(!own\|\|own\.pose!==false\)\)view=Object\.assign\(\{\},view,\{pose:null\}\)/.test(appSrc)
          && /ownShot:how==='record'\}/.test(appSrc) && /h=ArmorInspectorData\.sceneHit\(h,'snapshot',battle\)\.hit/.test(appSrc)
-         && /if\(activeHit\.sceneSource==='replay'&&ArmorInspectorData\.scenesOf\([^\n]*?\)\.snapshot\)return;/.test(appSrc));
+         && !/if\(activeHit\.sceneSource==='replay'&&ArmorInspectorData\.scenesOf\([^\n]*?\)\.snapshot\)return;/.test(appSrc)
+         && /var key=current\.id\+'\/'\+activeHit\.id\+'\|'\+\(activeHit\.sceneSource\|\|'snapshot'\)\+'\|'\+JSON\.stringify\(shell\);/.test(appSrc));
       const n = asked.length;
       return flip('snapshot').then(function () {
         ok('two scenes: a click on the camera chip shows it from the snapshot again - the camera chip pressed, the setting on snapshot',

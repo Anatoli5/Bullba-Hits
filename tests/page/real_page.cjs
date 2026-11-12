@@ -611,7 +611,14 @@ async function twoScenes(browser) {
     const s0 = await step('hit(0)');
     ok('two scenes: a hit of a replay-made battle opens from its scene rebuilt from the replay (the default since 11.11 evening) - its pose (turret 0.3 rad, 0.4 m aside); the Hit line tile\'s two scene chips are the switch - buttons with a pointer and their "?", the reel chip pressed - beside the server\'s outcome; no switch in the toolbar',
        s0.scene === 'pmr-1' && s0.from === 'replay' && Math.abs(s0.yawAim - 0.3) < 1e-9 && Math.abs(s0.shift - 0.4) < 1e-9 && !s0.toolbarSwitch && s0.dot && s0.buttons === 2 && s0.pressed === 'replay' && s0.pointer === 'pointer' && /server: 400 HP/.test(s0.chips || ''), JSON.stringify(s0));
+    // Row 80 (user 12.11): the Statistics log wrote no line for the rebuilt scene of a hit that also has a snapshot.
+    const viewLines = (replay) => page.console.filter((l) => l.indexOf('Bullba Hits verdict: battle=pmr hit=pmr-1 ') >= 0 && l.indexOf(' mode=view') > 0 && (l.indexOf(' scene=replay') > 0) === replay).length;
+    const logged0 = {replay: viewLines(true), snapshot: viewLines(false)};
+    ok('two scenes: the Statistics log says what is on screen - the rebuilt scene of a hit that also has a snapshot writes its view\'s line, marked scene=replay',
+       logged0.replay >= 1 && logged0.snapshot === 0, JSON.stringify(logged0));
     const s1 = await flip('snapshot');
+    const logged1 = {replay: viewLines(true), snapshot: viewLines(false)};
+    ok('two scenes: ... flipped to the snapshot with the same shell, the snapshot\'s view writes its own line (no scene= column)', logged1.snapshot >= 1 && logged1.replay === logged0.replay, JSON.stringify(logged1));
     ok('two scenes: a click on the camera chip shows the SAME hit from its in-game snapshot - its own pose, the same armour; the camera chip pressed',
        s1.scene === 'pmr-1' && s1.from === 'snapshot' && Math.abs(s1.shift) < 1e-9 && s1.armour === s0.armour && s1.pressed === 'snapshot', JSON.stringify(s1));
     ok('two scenes: ... and nothing else moves - the row, the shell, the camera, every other setting', s1.selected === s0.selected && s1.shell === s0.shell && near(s1.camera, s0.camera) && (!s0.others || s1.others === s0.others),

@@ -23,3 +23,15 @@ def test_partial_line_before_the_column_is_apart():
 def test_partial_ray_not_met_is_judged():
     assert tool.classify(dict(BASE, partial='crest', partialRay='0')) == 'DISAGREE'
     assert tool.classify(dict(BASE, partial='crest', partialRay='0', ours='pen_90%')) == 'agree'
+
+
+def test_rebuilt_scene_view_keeps_the_snapshot_line(tmp_path):
+    """Row 80 (12.11): the page now logs the view of a hit's scene rebuilt from the replay (scene=replay); that line is
+    kept beside the snapshot's line of the same point and shell, not over it."""
+    log = tmp_path / 'game.log'
+    log.write_text('Bullba Hits verdict: battle=b hit=1 point=0 part=hull server=Penetration ours=pen_90% shell=AP mode=auto\n'
+                   'Bullba Hits verdict: battle=b hit=1 point=0 part=hull server=Penetration ours=no-pen_10% shell=AP mode=view scene=replay\n'
+                   'Bullba Hits verdict: battle=b hit=1 point=0 part=hull server=Penetration ours=pen_80% shell=AP mode=view\n',
+                   encoding='utf-8')
+    rows = sorted(tool.parse([str(log)]), key=lambda r: r.get('scene', ''))
+    assert [(r.get('scene', 'snapshot'), r['ours']) for r in rows] == [('snapshot', 'pen_80%'), ('replay', 'no-pen_10%')]
