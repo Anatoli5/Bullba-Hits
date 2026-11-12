@@ -394,6 +394,45 @@ def wheel_parts_checked(descr, collisions):
 WHEEL_RETRY = 5.0
 
 
+def wheels_state(descr, collisions):
+    """What wheel_parts_checked keeps of a wheeled target's collision: True or False while it holds, None when it is to be
+    asked (again) - nothing kept yet, or a disagreement whose WHEEL_RETRY is due. Read, never asked: part of the key of
+    the target's shared static half (Recorder.shared_target), which carries the wheels only when they agreed."""
+    entry = _WHEEL_NAMES.get((id(collisions), str(descr.type.name)))
+    if entry is None or (entry[1] is not None and time.time() >= entry[1]): return None
+    return entry[0]
+
+
+def part_resources(descr):
+    """The collision model each static part's active hit tester reads now (exporter.part_resource), None where it cannot be
+    read: part of the key of a vehicle's shared static half. Whatever switches a part's model while the battle runs gets a
+    new half written instead of the old model under it - a few attribute reads a hit."""
+    from local_armor_inspector.exporter import static_parts, part_resource
+    resources = []
+    for idx, name, component in static_parts(descr):
+        try: resources.append(part_resource(component))
+        except Exception: resources.append(None)
+    return tuple(resources)
+
+
+class SharedStatic(object):
+    """One vehicle's static half in this battle (BACKLOG 27), kept by Recorder.statics under (side, id(descriptor)):
+      descr       the descriptor it was read from - kept, so its id cannot be reused by another object
+      check       (mode, part models[, wheel agreement]) at the reading; any change and the half is read again
+      static      records.VehicleStatic, the object every hit of this vehicle hands the writer (written once a file)
+      live        the shooter's live fields that come with the half (vehicleMode)
+      available, candidates
+                  the shooter's shell lists (records.SharedList): all its shells, and by (effectsIndex, gun slot)
+      ids, count, wheeled
+                  the target's parts in order (a pose read for each id >= 0), its static part count, whether it has wheels
+    """
+    __slots__ = ('descr', 'check', 'static', 'live', 'available', 'candidates', 'ids', 'count', 'wheeled')
+
+    def __init__(self, descr, check, static, live):
+        self.descr, self.check, self.static, self.live = descr, check, static, live
+        self.available, self.candidates, self.ids, self.count, self.wheeled = None, {}, (), 0, False
+
+
 def wheel_names_agree(names, parts):
     """The collision's wheel names are the descriptor's wheels, part -k under the name of the wheel of index k-1."""
     return bool(names) and len(names) == len(parts) and all(
@@ -585,6 +624,11 @@ class Writer(object):
                     encoded = encoder.encode(record)
                     line = (json.dumps(encoded, ensure_ascii=True, allow_nan=False,
                                        separators=(',', ':'))+'\n').encode('utf-8')
+                    # The definitions this hit's references need and the file does not hold yet (BACKLOG 27): their own
+                    # `static` record, in the same append right before the hit, so a reader meets them first.
+                    if encoder.definitions is not None:
+                        line = (json.dumps(encoder.definitions, ensure_ascii=True, allow_nan=False,
+                                           separators=(',', ':'))+'\n').encode('utf-8') + line
                     path = os.path.join(self.folder, name+'.jsonl')
                     # A failed earlier append may have left a partial tail. End it
                     # as an unreadable row so this complete record remains recoverable.
@@ -817,6 +861,8 @@ class VehicleEvents(object):
         except Exception: LOG.exception('Pending shot updates could not be written')
         try: self.recorder.in_battle = False
         except Exception: LOG.exception('Battle state could not be noted')
+        # The vehicles' static halves hold the battle's descriptors: not kept in the hangar (BACKLOG 27).
+        self.recorder.statics = {}
         try: self.recorder.motion.stop()
         except Exception: LOG.exception('Motion sampler stop failed')
         self.detach_arena()
@@ -891,6 +937,11 @@ class Recorder(object):
         # copies them. Keyed by id() with the descriptor itself kept in the value, so the key can
         # never be reused by another object; emptied in ensure_battle when the battle changes.
         self.mode_blocks = {}
+        # Each vehicle's static half in this battle (BACKLOG 27, SharedStatic): read from the client at the first hit that
+        # needs it, written once by the writer, and handed by every later hit as the same object. Emptied in ensure_battle.
+        self.statics = {}
+        from local_armor_inspector import records
+        self.records = records
         self.session = uuid.uuid4().hex[:12]
         self.enabled = True
         # Two flags the export thread reads before it runs deferred work (0.7.11):
@@ -1219,7 +1270,123 @@ class Recorder(object):
             self.roster_last = None
             self.roster_seen = {}
             self.mode_blocks = {}
+            self.statics = {}
         return True
+
+    def shared_shooter(self, attacker, record, effects, installation):
+        """The shooter's half kept by an earlier hit of this battle (keep_shooter), when it still is this descriptor's: the
+        same object, mode and part models. Puts the attacker block (its live fields and the shared half), both shell lists
+        and the shell status on the record and says True; False - nothing written - when the half must be read anew.
+        A gun slot or shell effect not met before reads its candidates once (shot_candidates). Game thread, never raises."""
+        entry = self.statics.get(('attacker', id(attacker)))
+        if entry is None or entry.descr is not attacker: return False
+        try:
+            from local_armor_inspector.presentation import descriptor_mode
+            if entry.check != (descriptor_mode(attacker), part_resources(attacker)): return False
+            candidates = entry.candidates.get((effects, installation))
+            if candidates is None:
+                from local_armor_inspector.armor import shot_candidates
+                candidates = self.records.SharedList(shot_candidates(attacker, effects, installation))
+                entry.candidates[(effects, installation)] = candidates
+        except Exception:
+            return False
+        side = dict(entry.live)
+        side[self.records.STATIC_FIELD] = entry.static
+        record['attacker'] = side
+        record['shellCandidates'] = candidates
+        record['availableShells'] = entry.available
+        record['shellStatus'] = 'matched' if candidates else 'no matching shell effects'
+        return True
+
+    def keep_shooter(self, attacker, record, before, effects, installation):
+        """After a full reading of the shooter: keep its static half for the battle's later hits and hand this hit the
+        shared form - only when the reading was whole (no warning since `before`, the shells read) and the block splits
+        (records.split_vehicle). Otherwise the hit keeps its block inline, as before, and the next hit reads again."""
+        try:
+            if len(record['warnings']) != before: return
+            if record.get('shellStatus') not in ('matched', 'no matching shell effects'): return
+            halves = self.records.split_vehicle(record.get('attacker'))
+            if halves is None: return
+            from local_armor_inspector.presentation import descriptor_mode
+            check = (descriptor_mode(attacker), part_resources(attacker))
+            if None in check[1]: return
+            live, static = halves
+            entry = SharedStatic(attacker, check, static, live)
+            entry.available = self.records.SharedList(record.get('availableShells') or [])
+            candidates = self.records.SharedList(record.get('shellCandidates') or [])
+            entry.candidates[(effects, installation)] = candidates
+            self.statics[('attacker', id(attacker))] = entry
+            side = dict(live)
+            side[self.records.STATIC_FIELD] = static
+            record['attacker'] = side
+            record['availableShells'] = entry.available
+            record['shellCandidates'] = candidates
+        except Exception:
+            LOG.debug('Shooter static half not kept', exc_info=True)
+
+    def shared_target(self, vehicle, descr, record):
+        """The target's half kept by an earlier hit of this battle (keep_target), when it still is this descriptor's: the
+        same object, mode, part models and wheel agreement. Reads only what is new at this shot - the chassis' world pose,
+        each static part's pose, the extra-part check, the Borkenkafer's mark - and puts the target block on the record:
+        (collisions, root, known part ids, {id: pose}, the list for the parts of this shot only). None, nothing written,
+        when the half must be read anew or any of these reads fails (the full reading then says what failed, as before)."""
+        entry = self.statics.get(('target', id(descr)))
+        if entry is None or entry.descr is not descr: return None
+        try:
+            import Math
+            from local_armor_inspector.presentation import descriptor_mode
+            from local_armor_inspector.exporter import EXTRA_PARTS_WARNING
+            collisions = vehicle.appearance.collisions
+            wheels = wheels_state(descr, collisions) if entry.wheeled else 'none'
+            if entry.check != (descriptor_mode(descr), part_resources(descr), wheels): return None
+            root = Math.Matrix(collisions.getPartTransform(0))
+            world_root = Math.Matrix(root)
+            root.invertOrthonormal()
+            transforms = [matrix_columns(Math.Matrix(collisions.getPartTransform(idx)), root) if idx >= 0 else None
+                          for idx in entry.ids]
+            extra = collisions.maxStaticPartIndex >= entry.count
+            world = matrix_columns(world_root, Math.Matrix())
+        except Exception:
+            return None
+        side = {self.records.STATIC_FIELD: entry.static, 'worldTransform': world, 'parts': []}
+        if [pose for pose in transforms if pose is not None]: side['partPoses'] = transforms
+        try:
+            mark = self.designator_mark(vehicle)
+            if mark: side['designatorMark'] = mark
+        except Exception:
+            pass
+        record['target'] = side
+        if extra: record['warnings'].append(EXTRA_PARTS_WARNING)
+        return collisions, root, set(entry.ids), dict(zip(entry.ids, transforms)), side['parts']
+
+    def keep_target(self, vehicle, descr, collisions, record, before):
+        """After a full reading of the target: keep its static half for the battle's later hits and hand this hit the
+        shared form - only when the reading was whole (no warning since `before` but the extra-part one, which every hit
+        checks for itself; every static part posed; the wheel agreement settled) and the block splits."""
+        try:
+            from local_armor_inspector.exporter import EXTRA_PARTS_WARNING, wheel_parts
+            from local_armor_inspector.presentation import descriptor_mode
+            if [text for text in record['warnings'][before:] if text != EXTRA_PARTS_WARNING]: return
+            side = record.get('target')
+            if [part for part in side.get('parts') or () if not isinstance(part, dict) or 'error' in part]: return
+            halves = self.records.split_vehicle(side)
+            if halves is None: return
+            wheeled = bool(wheel_parts(descr))
+            wheels = wheels_state(descr, collisions) if wheeled else 'none'
+            check = (descriptor_mode(descr), part_resources(descr), wheels)
+            if None in check[1] or wheels is None: return
+            live, static = halves
+            ids = [part.get('id') for part in static.get('parts') or ()]
+            if [idx for idx in ids if not isinstance(idx, int)]: return
+            # Every static part's pose is the hit's own (live partPoses): none may have stayed in the half.
+            if [part for part in static.get('parts') or () if part.get('id') >= 0 and 'transform' in part]: return
+            entry = SharedStatic(descr, check, static, None)
+            entry.ids, entry.count, entry.wheeled = ids, len([idx for idx in ids if idx >= 0]), wheeled
+            self.statics[('target', id(descr))] = entry
+            live[self.records.STATIC_FIELD] = static
+            record['target'] = live
+        except Exception:
+            LOG.debug('Target static half not kept', exc_info=True)
 
     def capture(self, vehicle, attackerID, hitPoints, effectsIndex, prefabEffIndex,
                 damage, damageFactor, lastMaterialIsShield, shellVelocity, gunInstallationIndex):
@@ -1247,9 +1414,14 @@ class Recorder(object):
             'shellVelocity':float(shellVelocity), 'gunInstallationIndex':gunInstallationIndex,
             'rawHitPoints':[], 'points':[], 'warnings':[]}
         attacker = None
+        # BACKLOG 27 (12.11): a shooter whose static half an earlier hit of this battle has built and written - the
+        # same descriptor, mode and part models - is not read from the client again; only what is new at this shot is.
+        shared = False
+        before = len(record['warnings'])
         try:
             attacker = getattr(arena, 'vehicles', {}).get(attackerID, {}).get('vehicleType')
-            if attacker is not None:
+            shared = attacker is not None and self.shared_shooter(attacker, record, effectsIndex, gunInstallationIndex)
+            if attacker is not None and not shared:
                 record['attacker'] = {'name':attacker.type.shortUserString, 'type':attacker.type.name,
                     'compactDescriptor':base64.b64encode(attacker.makeCompactDescr()).decode('ascii')}
                 record['attacker'].update(vehicle_identity(attacker))
@@ -1322,7 +1494,8 @@ class Recorder(object):
             from local_armor_inspector.armor import shot_candidates
             # The shell comes from the gun that fired: slot 0 is the main gun, slot 1 the secondary (ability)
             # gun of a vehicle that has one. The full list offers every gun's shells for comparison.
-            if attacker is not None:
+            if shared: pass
+            elif attacker is not None:
                 record['shellCandidates'] = shot_candidates(attacker, effectsIndex, gunInstallationIndex)
                 record['availableShells'] = shot_candidates(attacker)
                 record['shellStatus'] = 'matched' if record['shellCandidates'] else 'no matching shell effects'
@@ -1336,7 +1509,7 @@ class Recorder(object):
         # client handed us - and 'vehicleMode' now says which of the two modes that descriptor was in,
         # so the page can label both lists instead of guessing. Written only for the six vehicles whose
         # second mode really changes a shell; the block itself is read once per battle (mode_blocks).
-        if attacker is not None and 'attacker' in record:
+        if attacker is not None and 'attacker' in record and not shared:
             key = id(attacker)
             block = self.mode_blocks.get(key)
             if block is None or block['descr'] is not attacker:
@@ -1376,84 +1549,97 @@ class Recorder(object):
                         record['attacker']['modeAimMode'] = other
             except Exception:
                 record['warnings'].append('Shooter second-mode aim unavailable')
+        if attacker is not None and not shared:
+            self.keep_shooter(attacker, record, before, effectsIndex, gunInstallationIndex)
         for hit in hitPoints:
             record['rawHitPoints'].append({'networkID':str(hit['networkID']), 'segment':str(hit['segment']), 'params':str(hit['params'])})
         # Persist even when geometry cannot be recovered from a departed entity.
         try:
             descr = vehicle.typeDescriptor
-            # Packed once and reused for the pitch-limit cache key below (optimisation plan A4a).
-            compact = descr.makeCompactDescr()
-            record['target'] = {'name':descr.type.shortUserString, 'type':descr.type.name,
-                'compactDescriptor':base64.b64encode(compact).decode('ascii'), 'parts':[]}
-            record['target'].update(vehicle_identity(descr))
-            try:
-                # Spall-liner factor of the target: 1.0 without a liner, higher with one. The page divides the
-                # non-penetration HE damage by it; a client without the attribute simply leaves the field out.
-                record['target']['linerFactor'] = float(descr.miscAttrs.get('antifragmentationLiningFactor', 1.0))
-            except Exception:
-                pass
-            # BACKLOG 38: the leKpz Borkenkafer's mark on the TARGET at the impact - every shell deals a marked
-            # vehicle x1.1 (x1.15) from any shooter, above the page's damage window. One lookup on the entity this
-            # hit lands on, beside the reads above; no hook. A live field of the hit (records.LIVE_VEHICLE_KEYS).
-            try:
-                mark = self.designator_mark(vehicle)
-                if mark: record['target']['designatorMark'] = mark
-            except Exception:
-                pass
-            collisions = vehicle.appearance.collisions
-            root = Math.Matrix(collisions.getPartTransform(0))
-            world_root = Math.Matrix(root)
-            root.invertOrthonormal()
-            record['target']['worldTransform'] = matrix_columns(world_root, Math.Matrix())
-            limits = getattr(descr.gun, 'turretYawLimits', None)
-            if limits is not None: record['target']['turretYawLimits'] = [float(x) for x in limits]
-            try:
-                from local_armor_inspector.presentation import gun_limits
-                # One shared table per gun configuration; the encoder writes it once per file and
-                # every later hit carries only its fingerprint.
-                record['target']['gunPitchLimits'] = gun_limits(descr, compact)
-            except Exception:
-                record['warnings'].append('Gun pitch limits unavailable')
-            # Every static collision part (exporter.static_parts): the four, then the outer track pair of a vehicle
-            # with double tracks as part 4. Only an index the list does not know keeps the warning below.
-            from local_armor_inspector.exporter import static_parts, EXTRA_PARTS_WARNING
-            for idx, name, component in static_parts(descr):
-                part = {'id':idx, 'name':name}
+            # BACKLOG 27 (12.11): a target whose static half an earlier hit of this battle has built and written - the same
+            # descriptor, mode, part models and wheels - is not read from the client again: only its pose and what else is
+            # new at this shot (shared_target). Anything else, or any read of the live half that fails: the full reading below.
+            shared = self.shared_target(vehicle, descr, record)
+            if shared is not None:
+                collisions, root, known, poses, parts_out = shared
+            else:
+                before = len(record['warnings'])
+                wheels_failed = False
+                # Packed once and reused for the pitch-limit cache key below (optimisation plan A4a).
+                compact = descr.makeCompactDescr()
+                record['target'] = {'name':descr.type.shortUserString, 'type':descr.type.name,
+                    'compactDescriptor':base64.b64encode(compact).decode('ascii'), 'parts':[]}
+                record['target'].update(vehicle_identity(descr))
                 try:
-                    from local_armor_inspector.armor import live_materials
-                    part['armor'] = live_materials(component)
-                    part['armorSource'] = 'live vehicle descriptor'
+                    # Spall-liner factor of the target: 1.0 without a liner, higher with one. The page divides the
+                    # non-penetration HE damage by it; a client without the attribute simply leaves the field out.
+                    record['target']['linerFactor'] = float(descr.miscAttrs.get('antifragmentationLiningFactor', 1.0))
                 except Exception:
-                    # The export worker may recover stock metadata for this version.
                     pass
+                # BACKLOG 38: the leKpz Borkenkafer's mark on the TARGET at the impact - every shell deals a marked
+                # vehicle x1.1 (x1.15) from any shooter, above the page's damage window. One lookup on the entity this
+                # hit lands on, beside the reads above; no hook. A live field of the hit (records.LIVE_VEHICLE_KEYS).
                 try:
-                    part['resource'] = component.hitTesterManager.activeHitTester.bspModelName
-                    part['transform'] = matrix_columns(Math.Matrix(collisions.getPartTransform(idx)), root)
+                    mark = self.designator_mark(vehicle)
+                    if mark: record['target']['designatorMark'] = mark
                 except Exception:
-                    part['error'] = 'Part model or transform unavailable'
-                    record['warnings'].append('Part unavailable: '+name)
-                record['target']['parts'].append(part)
-            known = set(part['id'] for part in record['target']['parts'])
-            if collisions.maxStaticPartIndex >= len(known):
-                record['warnings'].append(EXTRA_PARTS_WARNING)
-            # The wheels of a wheeled vehicle, parts -1 ... -N (exporter.wheel_parts; their body and rest place are added
-            # on the export thread). Only when the collision itself has them under these names (wheel_names).
-            try:
-                wheels = wheel_parts_checked(descr, collisions)
-                if wheels:
-                    record['target']['parts'].extend(wheels)
-                    known.update(part['id'] for part in wheels)
-            except Exception:
-                LOG.exception('Wheel parts unavailable; the hit is recorded without them')
-            # An armoured prefab a contact met before on this collision component: its pose at this hit. An index that
-            # no longer gives the part a pose it can have (prefab_part) is forgotten - never recorded, never guessed.
-            poses = dict((part['id'], part.get('transform')) for part in record['target']['parts'])
+                    pass
+                collisions = vehicle.appearance.collisions
+                root = Math.Matrix(collisions.getPartTransform(0))
+                world_root = Math.Matrix(root)
+                root.invertOrthonormal()
+                record['target']['worldTransform'] = matrix_columns(world_root, Math.Matrix())
+                limits = getattr(descr.gun, 'turretYawLimits', None)
+                if limits is not None: record['target']['turretYawLimits'] = [float(x) for x in limits]
+                try:
+                    from local_armor_inspector.presentation import gun_limits
+                    # One shared table per gun configuration; the encoder writes it once per file and
+                    # every later hit carries only its fingerprint.
+                    record['target']['gunPitchLimits'] = gun_limits(descr, compact)
+                except Exception:
+                    record['warnings'].append('Gun pitch limits unavailable')
+                # Every static collision part (exporter.static_parts): the four, then the outer track pair of a vehicle
+                # with double tracks as part 4. Only an index the list does not know keeps the warning below.
+                from local_armor_inspector.exporter import static_parts, EXTRA_PARTS_WARNING
+                for idx, name, component in static_parts(descr):
+                    part = {'id':idx, 'name':name}
+                    try:
+                        from local_armor_inspector.armor import live_materials
+                        part['armor'] = live_materials(component)
+                        part['armorSource'] = 'live vehicle descriptor'
+                    except Exception:
+                        # The export worker may recover stock metadata for this version.
+                        pass
+                    try:
+                        part['resource'] = component.hitTesterManager.activeHitTester.bspModelName
+                        part['transform'] = matrix_columns(Math.Matrix(collisions.getPartTransform(idx)), root)
+                    except Exception:
+                        part['error'] = 'Part model or transform unavailable'
+                        record['warnings'].append('Part unavailable: '+name)
+                    record['target']['parts'].append(part)
+                known = set(part['id'] for part in record['target']['parts'])
+                if collisions.maxStaticPartIndex >= len(known):
+                    record['warnings'].append(EXTRA_PARTS_WARNING)
+                # The wheels of a wheeled vehicle, parts -1 ... -N (exporter.wheel_parts; their body and rest place are added
+                # on the export thread). Only when the collision itself has them under these names (wheel_names).
+                try:
+                    wheels = wheel_parts_checked(descr, collisions)
+                    if wheels:
+                        record['target']['parts'].extend(wheels)
+                        known.update(part['id'] for part in wheels)
+                except Exception:
+                    wheels_failed = True
+                    LOG.exception('Wheel parts unavailable; the hit is recorded without them')
+                # An armoured prefab a contact met before on this collision component: its pose at this hit. An index that
+                # no longer gives the part a pose it can have (prefab_part) is forgotten - never recorded, never guessed.
+                poses = dict((part['id'], part.get('transform')) for part in record['target']['parts'])
+                parts_out = record['target']['parts']
             try:
                 seen = _PREFAB_INDEX.get(id(collisions))
                 if seen is not None and seen[0] == str(descr.type.name) and seen[1] not in known:
                     part = prefab_part(seen[1], descr, prefab_probe(seen[1], collisions, root, Math.Matrix), poses, seen[2])
                     if part:
-                        record['target']['parts'].append(part)
+                        parts_out.append(part)
                         known.add(part['id'])
                     else:
                         _PREFAB_INDEX.pop(id(collisions), None)
@@ -1493,7 +1679,7 @@ class Recorder(object):
                         probe = prefab_probe(idx, collisions, root, Math.Matrix)
                         part = prefab_part(idx, descr, probe, poses)
                         if part:
-                            record['target']['parts'].append(part)
+                            parts_out.append(part)
                             known.add(idx)
                             remember_prefab(collisions, descr, part)
                     if idx not in known:
@@ -1510,6 +1696,11 @@ class Recorder(object):
                             point.update(extra_part_info(idx, collisions, vehicle.appearance, root, Math.Matrix))
                 except Exception:
                     LOG.exception('Hit point could not be decoded')
+            if shared is not None:
+                # The parts that exist at this shot only (an armoured prefab): none, then no key (records.split_vehicle).
+                if not parts_out: del record['target']['parts']
+            elif not wheels_failed:
+                self.keep_target(vehicle, descr, collisions, record, before)
         except Exception:
             record['warnings'].append('Target appearance unavailable; raw event retained')
             LOG.exception('Hit geometry unavailable')

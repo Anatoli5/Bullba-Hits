@@ -41,7 +41,7 @@ def snapshot_record(row):
     """What the recorder writes in a snapshots-only battle, of one record of a full one (None: not written)."""
     kind, event = row.get('type'), row.get('event')
     if kind == 'battle': return dict(row, recording=m.RECORDING_SNAPSHOTS)
-    if kind in ('hit', 'roster'): return row
+    if kind in ('hit', 'roster', 'static'): return row   # 'static': the definitions of the hits' references (BACKLOG 27)
     if kind == 'shot' and (event in ('command', 'gunAfterShot') or (event == 'tracer' and row.get('own'))): return row
     return None
 

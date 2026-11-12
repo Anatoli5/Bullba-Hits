@@ -19,7 +19,7 @@ a track wheel with no armour, the chassis XML in the client's layout. Checks, by
              is published as it was
   vehicles   load_vehicles: a wheeled vehicle's file from before the wheels is exported again once by the replay (its
              own source kept) even with no request line; a tracked one is marked and written back
-  recorder   a hit on a wheeled target: its wheels are parts -1..-4 with their armour (armorRef in the raw line), a
+  recorder   a hit on a wheeled target: its wheels are parts -1..-4 with their armour (by reference in the raw file), a
              contact on -3 is 'resolved' with the collision's name for it; the wheeled shooter's rest parts carry his;
              a collision whose names disagree gets no wheels and its contact stays 'unsupported-part'
 
@@ -406,7 +406,7 @@ def recorder_checks(temp):
             parts = first['target']['parts']
             check(group, 'the wheeled target (under the -k/index k-1 hypothesis of the stub): parts 0-3 then -1..-4 by name, each with its armour reference',
                   [(p['id'], p['name']) for p in parts][4:] == [(-1, 'WD_L1'), (-2, 'WD_R1'), (-3, 'W_L1'), (-4, 'W_R1')]
-                  and all(p.get('armorRef') and p.get('material') == 'wheel' and 'transform' not in p for p in parts[4:]),
+                  and all(p.get('armor') and p.get('material') == 'wheel' and 'transform' not in p for p in parts[4:]),
                   [(p['id'], p['name'], sorted(p)) for p in parts][4:6])
             point = first['points'][0]
             check(group, 'the contact on -3 is resolved and keeps the collision\'s name for it',

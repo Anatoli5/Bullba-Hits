@@ -2,7 +2,10 @@
 from __future__ import absolute_import
 
 import copy
+import json
+import os
 import sys
+import tempfile
 import types
 import unittest
 from pathlib import Path
@@ -13,7 +16,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / 'mod'))
 from local_armor_inspector.records import (ArmorTable, PitchTable, RecordDecoder, RecordEncoder,
                                           config_key, pack_battle, snapshot_refs, stamp_snapshot,
-                                          unpack_battle, SNAPSHOT_KEY)
+                                          unpack_battle, SNAPSHOT_KEY, STATIC_FIELD, STATIC_RECORD,
+                                          VehicleStatic, split_hit, split_vehicle)
 from local_armor_inspector import armor as armor_module
 
 
@@ -337,6 +341,180 @@ class SnapshotStaticTableTests(unittest.TestCase):
         stamped = record[SNAPSHOT_KEY]['sides']['attacker']['vehicleRef']
         self.assertEqual(packed['hits'][0]['attacker']['vehicleRef'], stamped)
         self.assertEqual(snapshot_refs(record)['sides']['attacker']['vehicleRef'], stamped)
+
+
+def prefab_hit(identifier='1', pose=None):
+    """battle_hit with the target's armoured prefab (a part of this shot only) after its static part and a wheel."""
+    record = battle_hit(identifier, pose=pose)
+    record['target']['parts'].append({'id': -1, 'name': 'W_L1', 'material': 'wheel', 'armor': ARMOR})
+    record['target']['parts'].append({'id': 5, 'name': 'crest', 'prefab': 'crest.prefab', 'parentPart': 3,
+                                      'transform': [0, 0, 0, 5]})
+    record['target']['designatorMark'] = {'creatorID': 7}
+    record['attacker']['vehicleMode'] = 1
+    return record
+
+
+def write(encoder, record):
+    """What Writer.run appends for one record: the `static` definitions first, then the record; committed."""
+    rows = []
+    encoded = encoder.encode(record)
+    if encoder.definitions is not None:
+        rows.append(json.loads(json.dumps(encoder.definitions)))
+    rows.append(json.loads(json.dumps(encoded)))
+    encoder.commit()
+    return rows
+
+
+def read(rows):
+    decoder = RecordDecoder()
+    return [row for row in (decoder.decode(r) for r in rows) if row.get('type') != STATIC_RECORD]
+
+
+def plain(value):
+    return json.loads(json.dumps(value, sort_keys=True))
+
+
+class RawStaticRecordTests(unittest.TestCase):
+    """BACKLOG 27 (12.11): the raw record writes a vehicle's static half once, in a record of its own kind."""
+
+    def test_split_and_read_back_is_the_hit_itself(self):
+        for record in (battle_hit('1'), prefab_hit('2')):
+            halves = split_vehicle(record['target'])
+            self.assertIsNotNone(halves)
+            live, static = halves
+            self.assertIsInstance(static, VehicleStatic)
+            self.assertNotIn('worldTransform', static)
+            self.assertNotIn('transform', static['parts'][0], 'the pose at the shot is live')
+            self.assertEqual(live['partPoses'][0], record['target']['parts'][0]['transform'])
+            rows = write(RecordEncoder(), split_hit(record))
+            self.assertEqual(plain(read(rows)), plain([RecordDecoder().decode(record)]))
+
+    def test_definitions_once_per_file_in_their_own_record_before_the_hit(self):
+        encoder = RecordEncoder()
+        first = split_hit(prefab_hit('1'))
+        rows = write(encoder, first)
+        self.assertEqual([r['type'] for r in rows], [STATIC_RECORD, 'hit'])
+        static, line = rows
+        self.assertEqual((static['staticTableFormat'], static['armorTableFormat'], static['pitchTableFormat']), (1, 1, 1))
+        self.assertEqual(line['staticTableFormat'], 1)
+        for name in ('armorTables', 'pitchTables', 'availableShells', 'shellCandidates'):
+            self.assertNotIn(name, line)
+        self.assertEqual(sorted(line['target']), ['designatorMark', 'partPoses', 'parts', 'vehicleRef', 'worldTransform'])
+        self.assertEqual([p['id'] for p in line['target']['parts']], [5], 'only the part of this shot stays on the hit')
+        self.assertEqual(line['attacker'], {'vehicleMode': 1, 'vehicleRef': line['attacker']['vehicleRef']})
+        self.assertTrue(line['attacker']['vehicleRef'].startswith(DESCRIPTOR + '#1:'), 'configuration and mode name it')
+        # The same halves again (the recorder hands the very objects): nothing more to define.
+        again = split_hit(prefab_hit('2', pose=[1, 0, 0, 19]))
+        again['attacker'][STATIC_FIELD] = first['attacker'][STATIC_FIELD]
+        again['target'][STATIC_FIELD] = first['target'][STATIC_FIELD]
+        later = write(encoder, again)
+        self.assertEqual([r['type'] for r in later], ['hit'])
+        self.assertEqual(later[0]['target']['vehicleRef'], line['target']['vehicleRef'])
+        # Equal content in another object (a half read again): its references are the same, still nothing defined.
+        self.assertEqual([r['type'] for r in write(encoder, split_hit(prefab_hit('3')))], ['hit'])
+        decoded = read(rows + later)
+        self.assertEqual(plain(decoded), plain([RecordDecoder().decode(prefab_hit('1')),
+                                                RecordDecoder().decode(prefab_hit('2', pose=[1, 0, 0, 19]))]))
+
+    def test_another_vehicle_writes_a_new_half_and_a_failed_write_writes_it_again(self):
+        encoder = RecordEncoder()
+        write(encoder, split_hit(battle_hit('1')))
+        other = battle_hit('2')
+        other['target']['name'] = 'Switched'
+        encoded = encoder.encode(split_hit(other))
+        self.assertIsNotNone(encoder.definitions, 'a changed vehicle is a new half')
+        self.assertEqual(set(encoder.definitions), {'schema', 'type', 'staticTableFormat', 'staticTables'},
+                         'its armour and pitch tables are known already')
+        encoder.rollback()
+        self.assertIsNotNone(write(encoder, split_hit(other))[0].get('staticTables'), 'a lost line is defined again')
+        self.assertTrue(encoded['target']['vehicleRef'])
+
+    def test_a_dangling_raw_reference_keeps_the_hit_warns_and_invents_nothing(self):
+        rows = write(RecordEncoder(), split_hit(battle_hit('1')))
+        decoded = read(rows[1:])[0]
+        self.assertEqual(decoded['id'], '1')
+        self.assertNotIn('name', decoded['target'])
+        self.assertNotIn('availableShells', decoded)
+        self.assertIn('Recorded vehicle data unavailable: target', decoded['warnings'])
+        self.assertIn('Recorded shell list unavailable: availableShells', decoded['warnings'])
+
+    def test_an_unsplittable_block_stays_inline(self):
+        record = prefab_hit('1')
+        record['target']['parts'].append({'id': 2, 'name': 'turret', 'transform': [0, 0, 0, 1]})
+        self.assertIsNone(split_vehicle(record['target']), 'a static part after the prefab would not come back in order')
+        packed = split_hit(record)
+        self.assertNotIn(STATIC_FIELD, packed['target'])
+        self.assertEqual(plain(read(write(RecordEncoder(), packed))), plain([RecordDecoder().decode(record)]))
+
+    def test_an_unknown_static_format_in_a_raw_record_is_refused(self):
+        with self.assertRaises(ValueError):
+            RecordDecoder().decode({'schema': 1, 'type': STATIC_RECORD, 'staticTableFormat': 2})
+
+    def test_the_exporter_reads_both_forms_and_ignores_the_definition_record(self):
+        from local_armor_inspector.exporter import read_battle, Exporter
+        header = {'schema': 1, 'type': 'battle', 'id': 'x', 'clientVersion': 'v', 'map': 'm'}
+        encoder = RecordEncoder()
+        rows = [header] + write(encoder, split_hit(prefab_hit('1'))) + write(encoder, prefab_hit('2'))
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, '1-test.jsonl')
+            with open(path, 'w') as stream:
+                for row in rows: stream.write(json.dumps(row) + '\n')
+            battle = read_battle(path)
+        self.assertEqual(battle['warnings'], [])
+        self.assertEqual(plain(battle['hits']), plain([RecordDecoder().decode(prefab_hit('1')),
+                                                       RecordDecoder().decode(prefab_hit('2'))]))
+        exporter = Exporter.__new__(Exporter)
+        exporter.current = None
+        self.assertIsNone(exporter.apply_record('1-test', {'schema': 1, 'type': STATIC_RECORD}), 'nothing to publish')
+
+
+RAW = os.path.join('C:/', 'Games', 'World_of_Tanks_NA', 'mods', 'configs', 'local.armor_inspector', 'battles')
+LOCAL = ('2311244215850685716-90c9fc0d82f8', '2310458541778197335-90c9fc0d82f8', '3637817619308026-90c9fc0d82f8',
+         '6520676977801102-90c9fc0d82f8', '2311242673957423690-90c9fc0d82f8')
+
+
+def convert(path):
+    """A raw battle of an earlier build turned into the reference form by the writer's own code: every record decoded,
+    split (records.split_hit) and encoded (RecordEncoder) - what the recorder writes for the same hits."""
+    decoder, encoder, rows = RecordDecoder(), RecordEncoder(), []
+    with open(path, 'rb') as stream:
+        for line in stream:
+            if line.endswith(b'\n'):
+                rows.extend(write(encoder, split_hit(decoder.decode(json.loads(line.decode('utf-8'))))))
+    return rows
+
+
+@unittest.skipUnless(all(os.path.isfile(os.path.join(RAW, n + '.jsonl')) for n in LOCAL),
+                     'the battles of 11.11 recorded by 1.06 are not in the game folder')
+class LocalBattleTests(unittest.TestCase):
+    """Five battles of 11.11 (1.06, 1 120 hits; the game folder is read, never written): converted to the reference
+    form they read back the same and publish the same file."""
+
+    def publish(self, name, rows):
+        from local_armor_inspector.exporter import Exporter
+        with tempfile.TemporaryDirectory() as root:
+            os.makedirs(os.path.join(root, 'battles'))
+            with open(os.path.join(root, 'battles', name + '.jsonl'), 'w') as stream:
+                for row in rows: stream.write(json.dumps(row, separators=(',', ':')) + '\n')
+            exporter = Exporter(root, root, 'version\n', os.path.join(root, 'unused.wotmod'))
+            exporter.publishing_final = True
+            exporter.republish_saved(name)
+            # The value of the file: the order of an object's keys may differ (CPython keeps the order a dict was filled in, and
+            # a hit read back from its halves fills the shooter's live fields first); the client's Python 2.7 orders by hash.
+            with open(os.path.join(root, 'data', 'battles', name + '.js'), 'rb') as stream: text = stream.read().decode('ascii')
+            prefix = 'ArmorInspectorData.receive('
+            self.assertTrue(text.startswith(prefix) and text.endswith(');\n'), name)
+            return json.loads(text[len(prefix):-3])
+
+    def test_converted_battles_read_and_publish_the_same(self):
+        for name in LOCAL:
+            path = os.path.join(RAW, name + '.jsonl')
+            with open(path, 'rb') as stream: data = stream.read()
+            old = [json.loads(line) for line in data.decode('utf-8').splitlines() if line.strip()]
+            new = convert(path)
+            self.assertLess(len(json.dumps(new)), 0.9 * len(json.dumps(old)), name)
+            self.assertEqual(plain(read(new)), plain(read(old)), name)
+            self.assertEqual(self.publish(name, new), self.publish(name, old), name)
 
 
 

@@ -432,13 +432,22 @@ def closure_values(fn):
     return values
 
 
-def read_jsonl(path):
+def read_jsonl(path, raw=False):
+    """The records of a raw file as every reader of the mod sees them (records.RecordDecoder: references resolved, the
+    `static` definition records taken and left out); `raw` - the lines as written."""
+    from local_armor_inspector import records
+    decoder, STATIC_RECORD = records.RecordDecoder(), getattr(records, 'STATIC_RECORD', 'static')   # a MOD_DIR of an older build
     rows, bad = [], 0
     with open(path, 'rb') as stream:
         for line in stream:
             line = line.strip()
             if not line: continue
-            try: rows.append(json.loads(line))
+            try:
+                row = json.loads(line)
+                if raw: rows.append(row)
+                else:
+                    row = decoder.decode(row)
+                    if row.get('type') != STATIC_RECORD: rows.append(row)
             except ValueError: bad += 1
     return rows, bad
 
@@ -552,6 +561,8 @@ def run(temp):
     check('battle A', 'leaving: not in battle, sampler stopped, no callback pending',
           not recorder.in_battle and not recorder.motion.running and not WORLD.callbacks
           and not recorder.motion.buffers, (recorder.in_battle, recorder.motion.running, len(WORLD.callbacks)))
+    check('battle A', 'leaving: no vehicle\'s static half (its descriptor) kept in the hangar', not recorder.statics,
+          len(recorder.statics))
     left = []
     if recorder.telemetry.tracers: left.append('telemetry.tracers=%d' % len(recorder.telemetry.tracers))
     if recorder.telemetry.commands: left.append('telemetry.commands=%d' % len(recorder.telemetry.commands))

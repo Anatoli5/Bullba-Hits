@@ -6,10 +6,20 @@ reader that understands one of them is never confused by the others:
   * armour materials - `armorTables` / `armorRef` in a part (raw and snapshot, 0.7.17);
   * gun pitch tables - `pitchTables` / `gunPitchRef` (raw and snapshot, build after 0.7.25);
   * the vehicle's own static blocks - `staticTables` with `vehicleRef`, `partsRef`, `posesRef`,
-    `availableShellsRef` and `shellCandidatesRef` (published snapshot only, build after 0.7.25).
+    `availableShellsRef` and `shellCandidatesRef` (published snapshot, build after 0.7.25; the raw
+    record too since the build after 1.06, BACKLOG 27: there the definitions travel in a record of
+    their own kind, `{'type': 'static'}`, written once per file right before the first hit that
+    needs them, and a hit keeps only the references and what happened at that shot).
 
 Each marker is a key of its own and `armorTableFormat` is never raised: a reader that knows
 only the armour format keeps reading every record of a file instead of dropping lines.
+
+The raw record's half (12.11.2026): the recorder hands the writer a vehicle block split in two -
+its live fields, and under STATIC_FIELD one VehicleStatic object it builds once per vehicle,
+configuration and mode in a battle and shares between that vehicle's hits (shell lists likewise as
+SharedList). The writer's RecordEncoder takes each such object's references once (they are cached on
+the object) and writes its definitions once per file; RecordDecoder.decode puts them back, through
+the very expansion the published snapshot uses, so every reader sees the hit in its old shape.
 
 What actually happened in the battle stays on its own record: points, the target's pose, the
 verdict, tracers, crits, the gun's state, the siege state, the shot's aim. Readers expand every
@@ -52,6 +62,32 @@ class PitchTable(_SharedTable):
     """Gun pitch limits of one gun configuration: 365 samples, ~22 KB, one per configuration."""
 
 
+class VehicleStatic(_SharedTable):
+    """The static half of one recorded vehicle block (split_vehicle): every field but the live ones,
+    and its collision parts without their pose at the shot. One object per vehicle, configuration and
+    mode in a battle, shared by all its hits; its references are taken once and kept on it (refs)."""
+
+    def refs(self, config):
+        cached = getattr(self, '_refs', None)
+        if cached is None:
+            refs = {'armor': {}, 'pitch': {}, 'static': {}}
+            cached = self._refs = (refs, _side_refs(self, config, refs)['vehicleRef'])
+        return cached
+
+
+class SharedList(list):
+    """A shell list of one shooter configuration shared by its hits; its fingerprint is taken once."""
+    def __deepcopy__(self, memo):
+        return self
+
+    def fingerprint(self):
+        key = getattr(self, '_fingerprint', None)
+        if key is None:
+            key = hashlib.sha256(_json(self).encode('ascii')).hexdigest()
+            self._fingerprint = key
+        return key
+
+
 # Everything else of a vehicle block belongs to its configuration and is shared by reference.
 # These are the battle's own: the pose, the parts that carry it, the state of the vehicle at this
 # very shot, its motion and the Borkenkafer's mark on it (designatorMark, BACKLOG 38). A field
@@ -63,6 +99,10 @@ LIVE_VEHICLE_KEYS = ('parts', 'worldTransform', 'siegeStateAtImpact', 'vehicleMo
 SHELL_LIST_FIELDS = ('availableShells', 'shellCandidates')
 # Where the fingerprints of one hit are kept between prepare and publish.
 SNAPSHOT_KEY = '_snapshotRefs'
+# The raw record's own kind for definitions, and the key under which the recorder hands the writer a
+# vehicle's static half (in memory only: the encoder replaces it with `vehicleRef`).
+STATIC_RECORD = 'static'
+STATIC_FIELD = '_static'
 
 
 def _sides(record):
@@ -90,7 +130,7 @@ def _parts(record):
 
 
 def _fingerprint(value):
-    if isinstance(value, _SharedTable):
+    if isinstance(value, (_SharedTable, SharedList)):
         return value.fingerprint()
     return hashlib.sha256(_json(value).encode('ascii')).hexdigest()
 
@@ -154,19 +194,77 @@ def _lookup(tables, key):
 
 
 class RecordEncoder(object):
-    """One per raw file. Commit only after the complete encoded line is written."""
+    """One per raw file. Commit only after the complete encoded line is written.
+
+    After encode(), `definitions` is the `static` record that must be written right before the
+    encoded hit (the definitions of its shared halves this file does not hold yet), or None."""
     def __init__(self):
         self.known = set()
         self.pending = set()
         self.known_pitch = set()
         self.pending_pitch = set()
+        self.known_static = set()
+        self.pending_static = set()
+        self.definitions = None
+
+    def shared(self, result):
+        """The vehicle halves and shell lists the recorder shares (VehicleStatic, SharedList) -> references; the
+        definitions this file lacks go to the `static` record. Each object's references are taken once."""
+        armor, pitch, static = {}, {}, {}
+        configs = {}
+        for side in ('attacker', 'target'):
+            vehicle = result.get(side)
+            if not isinstance(vehicle, dict):
+                continue
+            half = vehicle.pop(STATIC_FIELD, None)
+            if not isinstance(half, VehicleStatic):
+                configs[side] = config_key(vehicle)
+                continue
+            config = config_key({'compactDescriptor': half.get('compactDescriptor'),
+                                 'vehicleMode': vehicle.get('vehicleMode')})
+            configs[side] = config
+            refs, key = half.refs(config)
+            vehicle['vehicleRef'] = key
+            for kind, known, pending, out in (('armor', self.known, self.pending, armor),
+                                              ('pitch', self.known_pitch, self.pending_pitch, pitch),
+                                              ('static', self.known_static, self.pending_static, static)):
+                for ref, value in refs[kind].items():
+                    if ref not in known and ref not in pending:
+                        out[ref] = value
+                        pending.add(ref)
+        used = 'vehicleRef' in (result.get('attacker') or {}) or 'vehicleRef' in (result.get('target') or {})
+        for field in SHELL_LIST_FIELDS:
+            value = result.get(field)
+            if not isinstance(value, SharedList) or not value:
+                continue
+            key = _reference(configs.get('attacker', ''), value)
+            result.pop(field)
+            result[field+'Ref'] = key
+            used = True
+            if key not in self.known_static and key not in self.pending_static:
+                static[key] = value
+                self.pending_static.add(key)
+        if used:
+            result['staticTableFormat'] = 1
+        if armor or pitch or static:
+            record = {'schema': 1, 'type': STATIC_RECORD}
+            for definitions, marker, name in ((armor, 'armorTableFormat', 'armorTables'),
+                                              (pitch, 'pitchTableFormat', 'pitchTables'),
+                                              (static, 'staticTableFormat', 'staticTables')):
+                if definitions:
+                    record[marker] = 1
+                    record[name] = definitions
+            self.definitions = record
 
     def encode(self, record):
         self.pending = set()
         self.pending_pitch = set()
+        self.pending_static = set()
+        self.definitions = None
         if record.get('type') != 'hit':
             return record
         result = _sides(record)
+        self.shared(result)
         tables = {}
         for part in _parts(result):
             table = part.get('armor')
@@ -175,7 +273,7 @@ class RecordEncoder(object):
             key = _fingerprint(table)
             part.pop('armor')
             part['armorRef'] = key
-            if key not in self.known:
+            if key not in self.known and key not in self.pending:
                 tables[key] = table
                 self.pending.add(key)
         if any('armorRef' in part for part in _parts(result)):
@@ -191,7 +289,7 @@ class RecordEncoder(object):
             table = target.pop('gunPitchLimits')
             key = _reference(config_key(target), table)
             target['gunPitchRef'] = key
-            if key not in self.known_pitch:
+            if key not in self.known_pitch and key not in self.pending_pitch:
                 pitch[key] = table
                 self.pending_pitch.add(key)
             result['pitchTableFormat'] = 1
@@ -202,12 +300,17 @@ class RecordEncoder(object):
     def commit(self):
         self.known.update(self.pending)
         self.known_pitch.update(self.pending_pitch)
+        self.known_static.update(self.pending_static)
         self.pending = set()
         self.pending_pitch = set()
+        self.pending_static = set()
+        self.definitions = None
 
     def rollback(self):
         self.pending = set()
         self.pending_pitch = set()
+        self.pending_static = set()
+        self.definitions = None
 
 
 class RecordDecoder(object):
@@ -218,6 +321,13 @@ class RecordDecoder(object):
         # count) plus an exact comparison shares one object between hits without hashing 22 KB per
         # hit; tables of old battles are never recomputed from the client that runs today.
         self.pitch_intern = {}
+        # The static blocks by reference: of the raw file read so far (its `static` records), or of the published
+        # snapshot being unpacked (unpack_battle). Not re-fingerprinted: written by the same writer as the references.
+        self.static = {}
+
+    def define_static(self, definitions):
+        if isinstance(definitions, dict):
+            self.static.update(definitions)
 
     def define(self, definitions):
         if not isinstance(definitions, dict):
@@ -256,15 +366,20 @@ class RecordDecoder(object):
             raise ValueError('Unknown armor table format')
         if record.get('pitchTableFormat') not in (None, 1):
             raise ValueError('Unknown pitch table format')
+        if record.get('staticTableFormat') not in (None, 1):
+            raise ValueError('Unknown static table format')
         self.define(record.get('armorTables'))
         self.define_pitch(record.get('pitchTables'))
+        self.define_static(record.get('staticTables'))
         if record.get('type') != 'hit':
             return record
+        if _has_static_refs(record):
+            # The one expansion of static references, raw and published alike: in the shape a raw record had.
+            record = _expand_static(record, self.static)
         result = _sides(record)
-        result.pop('armorTables', None)
-        result.pop('armorTableFormat', None)
-        result.pop('pitchTables', None)
-        result.pop('pitchTableFormat', None)
+        for name in ('armorTables', 'armorTableFormat', 'pitchTables', 'pitchTableFormat',
+                     'staticTables', 'staticTableFormat'):
+            result.pop(name, None)
         warnings = list(record.get('warnings') or [])
         for part in _parts(result):
             key = part.pop('armorRef', None)
@@ -328,50 +443,130 @@ def snapshot_refs(hit):
         vehicle = hit.get(side)
         if not isinstance(vehicle, dict) or not vehicle:
             continue
-        config = config_key(vehicle)
-        entry = {}
-        static = {}
-        for key, value in vehicle.items():
-            if key not in LIVE_VEHICLE_KEYS:
-                static[key] = value
-        table = static.get('gunPitchLimits')
-        if isinstance(table, dict):
-            static.pop('gunPitchLimits')
-            static['gunPitchRef'] = _define(refs['pitch'], config, table)
-        parts = vehicle.get('parts')
-        if isinstance(parts, list):
-            plain, poses = [], []
-            for part in parts:
-                if not isinstance(part, dict):
-                    plain.append(part)
-                    poses.append(None)
-                    continue
-                body = dict(part)
-                pose = body.pop('transform', None)
-                # A wheel (id < 0) sits at its rest place in the chassis frame (exporter.fill_wheels): its pose belongs
-                # to the configuration, so it stays in the static part and the hit's own poses get a null for it.
-                if pose is not None and isinstance(part.get('id'), int) and part['id'] < 0 and 'wheel' in part:
-                    body['transform'] = pose
-                    pose = None
-                poses.append(pose)
-                armor = body.pop('armor', None)
-                if isinstance(armor, dict):
-                    # Materials keep the 0.7.17 key space: the full content hash, and no
-                    # configuration - one table is shared by every vehicle built of that armour.
-                    body['armorRef'] = _armor_ref(refs['armor'], armor)
-                elif armor is not None:
-                    body['armor'] = armor
-                plain.append(body)
-            static['partsRef'] = _define(refs['static'], config, plain)
-            if vehicle.get('partsFrom') == 'rest pose':
-                # Proven static: all 151 shooter configurations of the published set have exactly
-                # one set of transforms (record-format audit 2026-09-22 section 2).
-                static['posesRef'] = _define(refs['static'], config, poses)
-            elif [pose for pose in poses if pose is not None]:
-                entry['partPoses'] = poses
-        entry['vehicleRef'] = _define(refs['static'], config, static)
-        refs['sides'][side] = entry
+        refs['sides'][side] = _side_refs(vehicle, config_key(vehicle), refs)
     return refs
+
+
+def _side_refs(vehicle, config, refs):
+    """One vehicle block -> {'vehicleRef'[, 'partPoses']}, its definitions added to `refs` by kind. The published
+    snapshot's (snapshot_refs) and the raw record's (VehicleStatic.refs, a block without its live fields)."""
+    entry = {}
+    static = {}
+    for key, value in vehicle.items():
+        if key not in LIVE_VEHICLE_KEYS:
+            static[key] = value
+    table = static.get('gunPitchLimits')
+    if isinstance(table, dict):
+        static.pop('gunPitchLimits')
+        static['gunPitchRef'] = _define(refs['pitch'], config, table)
+    parts = vehicle.get('parts')
+    if isinstance(parts, list):
+        plain, poses = [], []
+        for part in parts:
+            if not isinstance(part, dict):
+                plain.append(part)
+                poses.append(None)
+                continue
+            body = dict(part)
+            pose = body.pop('transform', None)
+            # A wheel (id < 0) sits at its rest place in the chassis frame (exporter.fill_wheels): its pose belongs
+            # to the configuration, so it stays in the static part and the hit's own poses get a null for it.
+            if pose is not None and isinstance(part.get('id'), int) and part['id'] < 0 and 'wheel' in part:
+                body['transform'] = pose
+                pose = None
+            poses.append(pose)
+            armor = body.pop('armor', None)
+            if isinstance(armor, dict):
+                # Materials keep the 0.7.17 key space: the full content hash, and no
+                # configuration - one table is shared by every vehicle built of that armour.
+                body['armorRef'] = _armor_ref(refs['armor'], armor)
+            elif armor is not None:
+                body['armor'] = armor
+            plain.append(body)
+        static['partsRef'] = _define(refs['static'], config, plain)
+        if vehicle.get('partsFrom') == 'rest pose':
+            # Proven static: all 151 shooter configurations of the published set have exactly
+            # one set of transforms (record-format audit 2026-09-22 section 2).
+            static['posesRef'] = _define(refs['static'], config, poses)
+        elif [pose for pose in poses if pose is not None]:
+            entry['partPoses'] = poses
+    entry['vehicleRef'] = _define(refs['static'], config, static)
+    return entry
+
+
+def split_vehicle(vehicle):
+    """(live, static) halves of one recorded vehicle block in its old shape, or None when the block cannot come back
+    whole from them (decode puts them together again with _expand_static).
+
+      static  a VehicleStatic: every field but LIVE_VEHICLE_KEYS, and `parts` - the static collision parts and wheels
+              without their pose at this shot; a shooter's parts at rest (partsFrom 'rest pose') keep their pose
+      live    the live fields; `partPoses` - each static part's pose at this shot, positionally (None: none recorded);
+              `parts` - the parts that exist at this shot only (an armoured prefab, 'prefab'), which come after the
+              static ones in every record (Recorder.capture) and are put after them again
+
+    One rule for the recorder's own split (it builds the halves the same way) and for a record of an older build
+    turned into the reference form (the equality check of BACKLOG 27)."""
+    if not isinstance(vehicle, dict):
+        return None
+    live, static = {}, VehicleStatic()
+    for key, value in vehicle.items():
+        if key == 'parts':
+            continue
+        if key in ('partPoses', STATIC_FIELD, 'vehicleRef'):
+            return None
+        (live if key in LIVE_VEHICLE_KEYS else static)[key] = value
+    if 'parts' in vehicle:
+        parts = vehicle['parts']
+        if not isinstance(parts, list):
+            return None
+        rest = vehicle.get('partsFrom') == 'rest pose'
+        bodies, poses, extras = [], [], []
+        for part in parts:
+            if isinstance(part, dict) and 'prefab' in part:
+                extras.append(part)
+                continue
+            if extras:
+                return None
+            if rest or not isinstance(part, dict) or part.get('transform') is None:
+                bodies.append(part)
+                poses.append(None)
+            else:
+                body = dict(part)
+                poses.append(body.pop('transform'))
+                bodies.append(body)
+        static['parts'] = bodies
+        if [pose for pose in poses if pose is not None]:
+            live['partPoses'] = poses
+        if extras:
+            live['parts'] = extras
+    return live, static
+
+
+def split_hit(hit):
+    """A hit of the old shape in the form the recorder hands the writer: each vehicle block split (split_vehicle), the
+    shell lists shared. What RecordEncoder then writes is what the recorder would have written for the same hit."""
+    if not isinstance(hit, dict) or hit.get('type') != 'hit':
+        return hit
+    result = dict(hit)
+    for side in ('attacker', 'target'):
+        halves = split_vehicle(hit.get(side)) if isinstance(hit.get(side), dict) and hit.get(side) else None
+        if halves is not None:
+            live, static = halves
+            live[STATIC_FIELD] = static
+            result[side] = live
+    for field in SHELL_LIST_FIELDS:
+        value = hit.get(field)
+        if isinstance(value, list) and value:
+            result[field] = SharedList(value)
+    return result
+
+
+def _has_static_refs(hit):
+    for side in ('attacker', 'target'):
+        vehicle = hit.get(side)
+        if isinstance(vehicle, dict) and 'vehicleRef' in vehicle:
+            return True
+    return any(field+'Ref' in hit for field in SHELL_LIST_FIELDS)
 
 
 def stamp_snapshot(hit):
@@ -451,26 +646,33 @@ def _expand_static(hit, tables):
         vehicle = result.get(side)
         if not isinstance(vehicle, dict):
             continue
+        if 'vehicleRef' not in vehicle:
+            continue
         vehicle = dict(vehicle)
         result[side] = vehicle
         poses = vehicle.pop('partPoses', None)
-        key = vehicle.pop('vehicleRef', None)
-        if key is None:
-            continue
+        key = vehicle.pop('vehicleRef')
+        # The parts that exist at this shot only (an armoured prefab, split_vehicle): after the static ones.
+        extras = vehicle.pop('parts', None)
+        extras = extras if isinstance(extras, list) else []
         block = _lookup(tables, key)
         if not isinstance(block, dict):
             warnings.append('Recorded vehicle data unavailable: '+side)
+            if extras:
+                vehicle['parts'] = extras
             continue
         for name, value in block.items():
             if name not in ('partsRef', 'posesRef'):
                 vehicle[name] = value
         parts_ref = block.get('partsRef')
         if parts_ref is None:
+            if extras:
+                vehicle['parts'] = extras
             continue
         rows = _lookup(tables, parts_ref)
         if not isinstance(rows, list):
             warnings.append('Recorded vehicle parts unavailable: '+side)
-            vehicle['parts'] = []
+            vehicle['parts'] = extras
             continue
         if poses is None and block.get('posesRef') is not None:
             poses = _lookup(tables, block['posesRef'])
@@ -487,7 +689,7 @@ def _expand_static(hit, tables):
             if pose is not None:
                 part['transform'] = pose
             parts.append(part)
-        vehicle['parts'] = parts
+        vehicle['parts'] = parts + extras
     if warnings:
         result['warnings'] = warnings
     return result
@@ -505,11 +707,10 @@ def unpack_battle(battle):
     decoder = RecordDecoder()
     decoder.define(battle.get('armorTables'))
     decoder.define_pitch(battle.get('pitchTables'))
-    static = battle.get('staticTables') or {}
+    decoder.define_static(battle.get('staticTables'))
     result = dict(battle)
     for name in ('armorTables', 'armorTableFormat', 'pitchTables', 'pitchTableFormat',
                  'staticTables', 'staticTableFormat'):
         result.pop(name, None)
-    result['hits'] = [decoder.decode(_expand_static(hit, static))
-                      for hit in battle.get('hits') or []]
+    result['hits'] = [decoder.decode(hit) for hit in battle.get('hits') or []]
     return result

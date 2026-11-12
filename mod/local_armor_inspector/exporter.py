@@ -28,7 +28,7 @@ import xml.etree.ElementTree as ET
 from collections import OrderedDict
 from .geometry import extract
 from .armor import ArmorCatalog
-from .records import RecordDecoder, pack_battle, stamp_snapshot, unpack_battle
+from .records import RecordDecoder, STATIC_RECORD, pack_battle, stamp_snapshot, unpack_battle
 from .telemetry import mechanics_params
 from .crit_tie import attach_crits, moves_tie
 from .damage_log import damage_log
@@ -545,6 +545,8 @@ class BattleReader(object):
                     elif row.get('type') == 'shot': self.shot_events.append(row)
                     elif row.get('type') == 'crit': self.crit_events.append(row)
                     elif row.get('type') == 'roster': self.roster = row
+                    # Definitions of the hits' static references (BACKLOG 27): the decoder has taken them.
+                    elif row.get('type') == STATIC_RECORD: pass
                     else: raise ValueError('Unexpected record')
                 except (ValueError, AttributeError): self.warnings.append('Unreadable record at line '+str(self.number+1))
                 self.number += 1
@@ -5886,8 +5888,10 @@ class Exporter(object):
 
     def apply_record(self, name, record):
         if record.get('schema') != 1: raise ValueError('Unknown schema')
-        if record.get('type') not in ('battle', 'hit', 'shot', 'crit', 'roster'):
+        if record.get('type') not in ('battle', 'hit', 'shot', 'crit', 'roster', STATIC_RECORD):
             raise ValueError('Unexpected record')
+        # Definitions of the hits' static references (BACKLOG 27): the tail's decoder has taken them; nothing to publish.
+        if record['type'] == STATIC_RECORD: return
         if record['type'] == 'battle':
             battle = dict(record)
             battle.update({'id':name, 'hits':[], 'shotEvents':[], 'critEvents':[], 'warnings':[]})
@@ -6019,7 +6023,7 @@ class Exporter(object):
                     try:
                         row = self.raw_decoders[name].decode(json.loads(line.decode('utf-8')))
                         if row.get('schema') != 1: raise ValueError('Unknown schema')
-                        if row.get('type') not in ('battle', 'hit', 'shot', 'crit', 'roster'):
+                        if row.get('type') not in ('battle', 'hit', 'shot', 'crit', 'roster', STATIC_RECORD):
                             raise ValueError('Unexpected record')
                     except (ValueError, AttributeError):
                         if self.current is not None and self.current.get('id') == name:

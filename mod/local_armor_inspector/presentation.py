@@ -23,6 +23,16 @@ _warned = set()
 BATTLE_ID = re.compile(r'^[-a-zA-Z0-9_]{1,100}\Z')
 
 
+def descriptor_mode(descr):
+    """The mode a descriptor of a vehicle built twice is in now (0 default, 1 siege; 0 for every other vehicle): the
+    composite descriptor answers every attribute from that mode's descriptor, so whatever is read from it - the pitch
+    limits here, a recorded vehicle's static half (Recorder.static_valid) - is that mode's."""
+    try:
+        return int(getattr(descr, 'vehicleMode', 0) or 0) if getattr(descr, 'hasSiegeMode', False) else 0
+    except Exception:
+        return 0
+
+
 def gun_limits(descr, key=None):
     """The gun's pitch limits of one configuration: ~365 samples, one shared object.
 
@@ -43,10 +53,7 @@ def gun_limits(descr, key=None):
     """
     if key is None:
         key = descr.makeCompactDescr()
-    try:
-        mode = int(getattr(descr, 'vehicleMode', 0) or 0) if getattr(descr, 'hasSiegeMode', False) else 0
-    except Exception:
-        mode = 0
+    mode = descriptor_mode(descr)
     # ... AND the modifications installed on the descriptor (09.10, D-112): the compact descriptor does not pack them, and a
     # tier-XI skill tree widens the gun's limits (17 trees of client 2.4.0.2: a degree or two) - so two descriptors of one
     # compact descriptor, the bare one a record's fix_* rebuild and the one with the tree (a vehicle file; in a battle, two
