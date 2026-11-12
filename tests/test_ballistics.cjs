@@ -227,7 +227,9 @@ if(process.argv[2]){
   // A battle file is compact since 0.7.17: the page's own reader expands its shared tables.
   global.window=global;vm.runInThisContext(fs.readFileSync('web/local-data.js','utf8'));
   const root=process.argv[2],read=(p)=>JSON.parse(fs.readFileSync(p,'utf8').slice('ArmorInspectorData.receive('.length,-3))[1];
-  const index=read(root+'/data/index.js'),battle=window.ArmorInspectorData.expandBattle(read(root+'/data/battles/'+index.battles[0].id+'.js'));
+  // Its shared definitions (BACKLOG 27): <root>/definitions/<kind>/<hash>.js.
+  const D=window.ArmorInspectorData,definition=(kind,name)=>{try{return read(root+'/definitions/'+kind+'/'+name+'.js');}catch(e){return undefined;}};
+  const index=read(root+'/data/index.js'),value=read(root+'/data/battles/'+index.battles[0].id+'.js'),battle=D.expandBattle(value,D.sharedTables(value,definition));
   const hit=battle.hits[0],scene={hit,models:{}};
   hit.target.parts.forEach(p=>{assert.ok(p.armor);scene.models[p.id]=read(root+'/data/models/'+p.modelKey+'.js');});
   const actual=B.build(scene,true),samples=[];actual.triangles.forEach(t=>B.subdivide(t,0,samples));

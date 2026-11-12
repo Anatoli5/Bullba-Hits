@@ -17,6 +17,9 @@
     if(key==='ttxSweep')return 'data/ttx-sweep.js';
     // The model sweep's progress (25.09): the page's Export all models and its bar.
     if(key==='modelsSweep')return 'data/models-sweep.js';
+    // A definition of the shared store (BACKLOG 27, 12.11.2026): definitions/<kind>/<content hash>.js beside data/.
+    var shared=/^definition:(armor|pitch|static):([a-f0-9]{32}(?:[a-f0-9]{32})?)$/.exec(key);
+    if(shared)return 'definitions/'+shared[1]+'/'+shared[2]+'.js';
     throw new Error('Invalid record identifier');
   }
   function read(key,retryCount){
@@ -110,30 +113,88 @@
       });
     });
   }
-  function expandBattle(value){
+  // THE SHARED DEFINITION STORE (BACKLOG 27, 12.11.2026). A battle published since then keeps only its references: its
+  // definitions are files of their own, definitions/<kind>/<content hash>.js, shared by every battle that uses them, and
+  // the battle lists the keys it uses (sharedDefinitions {armor, pitch, static: [key]}, marker sharedDefinitionsFormat 1)
+  // so all of them are read in one round. An entry is named by its content and never changes, so each is read once per
+  // session and kept (definitions). One that cannot be read leaves its fields unfilled with the words above, and the
+  // battle says which key it lacks. A battle published before carries its own tables and reads as it did.
+  var SHARED_KINDS=['armor','pitch','static'],definitions=Object.create(null),battleReads=Object.create(null);
+  function definitionName(kind,ref){
+    if(typeof ref!=='string')return null;
+    if(kind==='armor')return ARMOR_REF.test(ref)?ref:null;
+    return TABLE_REF.test(ref)?ref.slice(-32):null;
+  }
+  // {kind: {key: definition}} of a battle's shared references, through load(kind, name) -> the definition or undefined
+  // (sync: offline readers from disk). The keys it could not have go to `missing`.
+  function sharedTables(value,load,missing){
+    var tables={armor:Object.create(null),pitch:Object.create(null),static:Object.create(null)},lists=object(value&&value.sharedDefinitions)||{};
+    SHARED_KINDS.forEach(function(kind){(Array.isArray(lists[kind])?lists[kind]:[]).forEach(function(ref){
+      var name=definitionName(kind,ref),found=name?load(kind,name):undefined;
+      if(found!==undefined)tables[kind][ref]=found;else if(missing)missing.push(kind+' '+ref);
+    });});
+    return tables;
+  }
+  function sharedDefinition(kind,name){
+    var key=kind+':'+name;
+    if(!definitions[key])definitions[key]=read('definition:'+key).catch(function(e){delete definitions[key];throw e;});
+    return definitions[key];
+  }
+  // The battle as read -> its definitions read (each at most once a session) -> expanded.
+  function withShared(value){
+    if(!value||value.sharedDefinitionsFormat===undefined)return expandBattle(value);
+    var loaded=Object.create(null),lists=object(value.sharedDefinitions)||{};
+    return Promise.all(SHARED_KINDS.map(function(kind){
+      return Promise.all((Array.isArray(lists[kind])?lists[kind]:[]).map(function(ref){
+        var name=definitionName(kind,ref);if(!name)return null;
+        return sharedDefinition(kind,name).then(function(found){loaded[kind+':'+name]=found;},function(){});
+      }));
+    })).then(function(){
+      var missing=[],tables=sharedTables(value,function(kind,name){return loaded[kind+':'+name];},missing);
+      return expandBattle(value,tables,missing);
+    });
+  }
+  function expandBattle(value,shared,missing){
     if(!value)return value;
-    ['staticTableFormat','pitchTableFormat','armorTableFormat'].forEach(function(marker){
+    ['staticTableFormat','pitchTableFormat','armorTableFormat','sharedDefinitionsFormat'].forEach(function(marker){
       if(value[marker]!==undefined&&value[marker]!==1)throw new Error('Unsupported battle format: '+marker);
     });
     var hits=value.hits||[];
+    if(value.sharedDefinitionsFormat!==undefined&&!shared){missing=[];shared=sharedTables(value,function(){},missing);}
+    // A reference the store did not give: the battle names it (the hits say what they lack, below).
+    if(missing&&missing.length)value.warnings=(value.warnings||[]).concat(missing.map(function(m){return 'Recorded definition unavailable: '+m;}));
     // Order matters: the static tables hold the parts, so the armour and pitch references they
     // carry are resolved after those parts exist (optimisation plan B5 step 4).
-    [['staticTableFormat','staticTables',expandStatic],
-     ['pitchTableFormat','pitchTables',expandPitch],
-     ['armorTableFormat','armorTables',expandArmor]].forEach(function(pass){
+    [['staticTableFormat','staticTables',expandStatic,'static'],
+     ['pitchTableFormat','pitchTables',expandPitch,'pitch'],
+     ['armorTableFormat','armorTables',expandArmor,'armor']].forEach(function(pass){
       if(value[pass[0]]===undefined)return;
       var tables=value[pass[1]]||Object.create(null);
+      if(shared&&shared[pass[3]])tables=Object.assign(Object.create(null),shared[pass[3]],tables);
       hits.forEach(function(hit){if(hit)pass[2](hit,tables);});
       delete value[pass[1]];delete value[pass[0]];
     });
+    delete value.sharedDefinitions;delete value.sharedDefinitionsFormat;
     // After the parts have their poses: a recorded prefab pose the rule rejects stands at its default (settlePrefabs).
     hits.forEach(function(hit){if(hit)settlePrefabs(hit);});
     return value;
   }
+  function readBattle(id){
+    // One expansion per read: two callers asking at once share it.
+    if(battleReads[id])return battleReads[id];
+    var done=function(){delete battleReads[id];};
+    var promise=battleReads[id]=read('battle:'+id).then(withShared);
+    promise.then(done,done);
+    return promise;
+  }
   function receive(payload){
     if(!Array.isArray(payload)||payload.length!==2)return;
     var entry=pending[payload[0]];
-    if(entry){entry.value=String(payload[0]).indexOf('battle:')===0?expandBattle(payload[1]):payload[1];entry.received=true;}
+    // A battle of a format this page does not know reads as a corrupted file, as it always has (expandBattle checks).
+    if(entry&&String(payload[0]).indexOf('battle:')===0&&payload[1])['staticTableFormat','pitchTableFormat','armorTableFormat','sharedDefinitionsFormat'].forEach(function(marker){
+      if(payload[1][marker]!==undefined&&payload[1][marker]!==1)entry=null;
+    });
+    if(entry){entry.value=payload[1];entry.received=true;}
   }
   function model(key){
     var previous=modelOrder.indexOf(key);if(previous!==-1)modelOrder.splice(previous,1);
@@ -327,5 +388,5 @@
   // expandBattle is published so the offline tools that read a battle file straight from disk
   // (tools/check_shot_selection.cjs, tests/test_ballistics.cjs) use this one
   // reader instead of a second copy of the rules.
-  window.ArmorInspectorData={receive:receive,index:function(){return read('index');},battle:function(id){return read('battle:'+id);},vehicles:function(){return read('vehicles');},vehicle:function(id,once){return read('vehicle:'+id,once?RETRIES:0);},ttx:function(id){return read('ttx:'+id);},ttxSweep:function(){return read('ttxSweep');},modelsSweep:function(){return read('modelsSweep');},scene:scene,sceneFor:sceneFor,sceneHit:sceneHit,scenesOf:scenesOf,NO_SCENE:NO_SCENE,wheelModel:wheelModel,prefabPose:prefabPose,settlePrefabs:settlePrefabs,PREFAB_FIT_MAX:PREFAB_FIT_MAX,expandBattle:expandBattle};
+  window.ArmorInspectorData={receive:receive,index:function(){return read('index');},battle:readBattle,vehicles:function(){return read('vehicles');},vehicle:function(id,once){return read('vehicle:'+id,once?RETRIES:0);},ttx:function(id){return read('ttx:'+id);},ttxSweep:function(){return read('ttxSweep');},modelsSweep:function(){return read('modelsSweep');},scene:scene,sceneFor:sceneFor,sceneHit:sceneHit,scenesOf:scenesOf,NO_SCENE:NO_SCENE,wheelModel:wheelModel,prefabPose:prefabPose,settlePrefabs:settlePrefabs,PREFAB_FIT_MAX:PREFAB_FIT_MAX,expandBattle:expandBattle,sharedTables:sharedTables};
 }());

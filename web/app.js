@@ -7064,11 +7064,13 @@
     battleSummaries.forEach(function(b){
       var o=node('button',undefined,'battle-option');o.type='button';o.setAttribute('role','option');
       o.setAttribute('data-id',b.id);o.setAttribute('aria-selected',String(b.id===id));
-      o.appendChild(node('span',b.map||'Unknown map','battle-option-map'));
+      // A battle whose records refer to definitions found nowhere (BACKLOG 27, the index's `damaged`: how many) is listed
+      // with a mark; it opens, and its warnings name each missing key.
+      o.appendChild(node('span',(b.map||'Unknown map')+(b.damaged?' \u26a0':''),'battle-option-map'));
       var slot=node('span',undefined,'battle-option-vehicle');if(b.vehicle)slot.appendChild(vehicleTile(b.vehicle,true));
       o.appendChild(slot);o.appendChild(node('span',battleWhen(b.startedAt),'battle-option-when'));
       var line=[b.vehicle&&b.vehicle.name,battleWhen(b.startedAt)].filter(Boolean).join(' \u00b7 ');
-      o.title=(b.map||'Unknown map')+(line?'\n'+line:'');
+      o.title=(b.map||'Unknown map')+(line?'\n'+line:'')+(b.damaged?'\nDamaged: '+b.damaged+' recorded definition'+(b.damaged===1?' is':'s are')+' missing':'');
       o.onclick=function(){pickBattle(b.id);};
       list.appendChild(o);
     });
