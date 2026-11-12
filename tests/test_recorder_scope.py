@@ -10,8 +10,8 @@
   four        the four local battles with both sources (fixtures of test_replay_battle): the replay-made battle published
               from the full live record and from the same record cut to what the recorder now writes - the same but for
               the ids of the records the live record no longer has (and what names them), their receipt times (within
-              0.05 s for all but at most 1 of each battle), the hits' trace candidates, another vehicle's gun state at
-              his shot (the replay's tracer has none; the page then takes the state at impact) and the report's counts
+              0.05 s for all but at most 1 of each battle), the hits' trace candidates and the report's counts; another
+              vehicle's siege and gun state at his shot the same (made from the replay)
   fallback    a snapshots-only live record whose replay cannot be used is published and listed from what it has
 
 The recorder's own side (what it writes, what it no longer reads) runs under the client's Python 2.7:
@@ -88,18 +88,14 @@ class CostTests(unittest.TestCase):
     client's Python in tests/py27/recorder_snapshots.py."""
 
     def logged(self, recorder, arena_id):
-        import logging
-        records = []
-        handler = logging.Handler()
-        handler.emit = records.append
-        logger = logging.getLogger('local.armor_inspector')
-        logger.addHandler(handler)
-        level, logger.level = logger.level, logging.INFO
+        """The lines log_cost gives the mod's logger (a stand-in: other tests set the real logger's level and handlers)."""
+        lines = []
+        class Log(object):
+            def info(self, text, *args): lines.append(text % args)
+        logger, m.LOG = m.LOG, Log()
         try: m.Recorder.log_cost(recorder, arena_id)
-        finally:
-            logger.removeHandler(handler)
-            logger.level = level
-        return [r.getMessage() for r in records]
+        finally: m.LOG = logger
+        return lines
 
     def test_the_line_counts_totals_and_longest_per_group(self):
         from local_armor_inspector import telemetry as t
@@ -203,8 +199,9 @@ def differences(full, cut):
 
 
 # What may differ: the ids of the records the live record no longer has and what names them, their receipt time, the
-# hits' trace candidates, another vehicle's state at his shot, the header's mark and the report's counts.
-ALLOWED = set(['shot.id', 'shot.tracerId', 'shot.gunState', 'shot.siegeState', 'shot.receivedAt within', 'shot.receivedAt beyond',
+# hits' trace candidates, the header's mark and the report's counts. Another vehicle's state at his shot (siegeState,
+# gunState) is the replay's since 12.11.2026 and must be the live tracer's (the run-time names of the table).
+ALLOWED = set(['shot.id', 'shot.tracerId', 'shot.receivedAt within', 'shot.receivedAt beyond',
                '.hits[].traceCandidates', '.hits[].crits.items[].event', '.damageEvents[].id', '.damageEvents[].collision',
                '.damageEvents[].receivedAt within', '.recording'])
 

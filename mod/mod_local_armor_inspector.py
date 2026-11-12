@@ -12,8 +12,6 @@ try:
     import Queue as queue
 except ImportError:
     import queue
-# The clock and the groups of the recorder's per-battle cost (telemetry.Cost); the module needs nothing of the client.
-from local_armor_inspector.telemetry import CLOCK, HIT, ROSTER
 
 VERSION = '1.06'
 VIEWER_PATH = os.path.join('mods', 'configs', 'local.armor_inspector', 'Viewer.html')
@@ -851,6 +849,7 @@ class VehicleEvents(object):
 
     def on_vehicle_list(self, *args):
         """Every vehicle of the roster - the opponents' exact configurations. Its time is the battle's ROSTER cost."""
+        from local_armor_inspector.telemetry import CLOCK, ROSTER
         t0 = CLOCK()
         try:
             if self.arena is None: return
@@ -863,6 +862,7 @@ class VehicleEvents(object):
     def on_vehicle_info(self, vehicle_id, *args):
         """A vehicle added to the arena list or its arena info changed: note it for export, write the roster (the
         recorder writes it only when a row really changed, so a death or a frag count costs no record). ROSTER cost."""
+        from local_armor_inspector.telemetry import CLOCK, ROSTER
         t0 = CLOCK()
         try:
             if self.arena is None: return
@@ -1761,7 +1761,7 @@ def init():
     if _recorder is not None: return
     try:
         from Vehicle import Vehicle
-        from local_armor_inspector.telemetry import wrap
+        from local_armor_inspector.telemetry import wrap, CLOCK, HIT
         _recorder = Recorder(os.path.join('mods', 'configs', 'local.armor_inspector', 'battles'))
         recorder = _recorder
         add = recorder.cost.add
