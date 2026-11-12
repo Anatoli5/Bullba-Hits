@@ -570,21 +570,26 @@ async function closeRange(browser, folder) {
 }
 
 // ---- THE TWO SCENES OF A HIT (11.11, docs/PRODUCT.md: the battle log from the replay) -----------------------------------
-// A battle made from its replay (fixture pmr): the switch in the scene's toolbar shows the hit on screen from the scene
-// rebuilt from the replay and back, keeps the camera and the rest of the page, and is remembered across a reload; a hit of
-// the death camera is shown from its rebuilt scene whatever the choice, its row marked; a hit with no scene says so. Its
-// own folder and page: the main run's data has no such battle.
+// A battle made from its replay (fixture pmr): the two scene chips of the Hit line tile (the switch since 11.11 evening;
+// before, two icon buttons in the scene's toolbar the user did not find) show the hit on screen from the scene rebuilt from
+// the replay and back, keep the camera and the rest of the page, and the choice is remembered across a reload; the chips
+// stay inside the tile at the page widths 754 (the user's window), 1024 and 1280; a hit of the death camera is shown from
+// its rebuilt scene whatever the choice, its row marked, its one chip not a button; a hit with no scene says so. Its own
+// folder and page: the main run's data has no such battle.
 async function twoScenes(browser) {
   const folder = stage({replay: true});
   const LV = 'window.__bullbaViewers[window.__bullbaViewers.length - 1]';
   const STATE = `(() => { const v = ${LV}, h = v && v.loadedData ? v.loadedData.hit : null, $ = (id) => document.getElementById(id), laid = (e) => !!e && e.getClientRects().length > 0;
     let stored = null; try { stored = JSON.parse(localStorage.getItem('bullba-settings')).values; } catch (x) {}
-    const rows = [].slice.call(document.querySelectorAll('#hits > .hit')), b = (k) => $('scene-' + k);
+    const rows = [].slice.call(document.querySelectorAll('#hits > .hit')), row = $('shot-scenes'), b = (k) => row.querySelector('#scene-chip-' + k);
+    const tile = $('shot-panel').getBoundingClientRect(), inside = (e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.left >= tile.left - 0.5 && r.right <= tile.right + 0.5 && r.top >= tile.top - 0.5 && r.bottom <= tile.bottom + 0.5; };
     return {scene: h ? String(h.id) : null, from: h ? (h.sceneSource || 'snapshot') : null, yawAim: h && h.aim ? h.aim[0] : null, shift: h && h.target && h.target.worldTransform ? h.target.worldTransform[12] : null,
       armour: h && h.target && h.target.parts[1] && h.target.parts[1].armor ? Object.keys(h.target.parts[1].armor).join() : null,
-      switchLaid: laid($('scene-switch')), dot: laid($('scene-switch').querySelector('.help-dot')),
-      pressed: ['snapshot', 'replay'].filter((k) => b(k).getAttribute('aria-pressed') === 'true').join(),
-      absent: ['snapshot', 'replay'].filter((k) => b(k).getAttribute('aria-disabled') === 'true').join(),
+      toolbarSwitch: !!$('scene-switch'), dot: laid(row.querySelector('.help-dot')),
+      buttons: laid(row) ? [].slice.call(row.querySelectorAll('button.scene-chip')).filter(laid).length : 0,
+      pressed: ['snapshot', 'replay'].filter((k) => b(k) && b(k).getAttribute('aria-pressed') === 'true').join(),
+      pointer: b('replay') ? getComputedStyle(b('replay')).cursor : null,
+      inside: laid(row) ? [].slice.call(row.children).filter(laid).every(inside) : null, width: innerWidth,
       chips: laid($('shot-scenes')) ? $('shot-scenes').textContent : null, stored: stored ? stored['scene-source-value'] : undefined,
       message: laid($('scene-message')) ? $('scene-message').textContent : '', marks: rows.filter((r) => laid(r.querySelector('.replay-only'))).map((r) => r.getAttribute('data-hit')).join(),
       selected: rows.filter((r) => r.getAttribute('aria-pressed') === 'true').map((r) => r.getAttribute('data-hit')).join(), shell: $('shell-choice').value,
@@ -596,19 +601,20 @@ async function twoScenes(browser) {
     await ev(`(async () => { for (let i = 0; i < 100 && !(document.querySelector('#hits [data-hit]') && window.__bullbaViewers.length); i++) await new Promise((r) => setTimeout(r, 100)); await __bt.settle(); })()`);
   };
   const step = async (js) => { await ev('__bt.act.' + js); await ev('__bt.settle()'); await new Promise((r) => setTimeout(r, 400)); return ev(STATE); };
-  const flip = async (k) => { await ev("document.getElementById('scene-" + k + "').click()"); await ev('__bt.settle()'); await new Promise((r) => setTimeout(r, 400)); return ev(STATE); };
+  const flip = async (k) => { await ev("document.getElementById('scene-chip-" + k + "').click()"); await ev('__bt.settle()'); await new Promise((r) => setTimeout(r, 400)); return ev(STATE); };
+  const width = async (w) => { await page.send('Emulation.setDeviceMetricsOverride', {width: w, height: 1000, deviceScaleFactor: 1, mobile: false}); await new Promise((r) => setTimeout(r, 600)); return ev(STATE); };
   const near = (a, b) => !!a && !!b && a.every((x, i) => Math.abs(x - b[i]) < 1e-6);
   try {
     await ready();
     await step("side('battles')"); await step("battle('pmr')");
     const s0 = await step('hit(0)');
-    ok('two scenes: a hit of a replay-made battle opens from its snapshot (the default), the switch laid out in the toolbar with its "?", both scenes there; the Hit line tile shows both verdicts and the server\'s',
-       s0.scene === 'pmr-1' && s0.from === 'snapshot' && s0.switchLaid && s0.dot && s0.pressed === 'snapshot' && s0.absent === '' && /server: 400 HP/.test(s0.chips || ''), JSON.stringify(s0));
+    ok('two scenes: a hit of a replay-made battle opens from its snapshot (the default); the Hit line tile\'s two scene chips are the switch - buttons with a pointer and their "?", the snapshot pressed - beside the server\'s outcome; no switch in the toolbar',
+       s0.scene === 'pmr-1' && s0.from === 'snapshot' && !s0.toolbarSwitch && s0.dot && s0.buttons === 2 && s0.pressed === 'snapshot' && s0.pointer === 'pointer' && /server: 400 HP/.test(s0.chips || ''), JSON.stringify(s0));
     const s1 = await flip('replay');
-    ok('two scenes: the switch shows the SAME hit from the scene rebuilt from the replay - its pose (turret 0.3 rad, 0.4 m aside), the armour the snapshot\'s',
+    ok('two scenes: a click on the reel chip shows the SAME hit from the scene rebuilt from the replay - its pose (turret 0.3 rad, 0.4 m aside), the armour the snapshot\'s; the reel chip pressed',
        s1.scene === 'pmr-1' && s1.from === 'replay' && Math.abs(s1.yawAim - 0.3) < 1e-9 && Math.abs(s1.shift - 0.4) < 1e-9 && s1.armour === s0.armour && s1.pressed === 'replay', JSON.stringify(s1));
     ok('two scenes: ... and nothing else moves - the row, the shell, the camera, every other setting', s1.selected === s0.selected && s1.shell === s0.shell && near(s1.camera, s0.camera) && s1.others === s0.others,
-       JSON.stringify({before: [s0.selected, s0.shell, s0.camera], after: [s1.selected, s1.shell, s1.camera]}));
+       JSON.stringify({before: [s0.selected, s0.shell, s0.camera, s0.others], after: [s1.selected, s1.shell, s1.camera, s1.others]}));
     ok('two scenes: the choice is a remembered setting', s1.stored === 'replay', String(s1.stored));
     await page.send('Page.reload');
     await new Promise((r) => setTimeout(r, 800));
@@ -617,16 +623,19 @@ async function twoScenes(browser) {
     const s2 = await step('hit(1)');
     ok('two scenes: after a reload the page still shows a hit from the rebuilt scene', s2.scene === 'pmr-2' && s2.from === 'replay' && s2.pressed === 'replay', JSON.stringify(s2));
     const s3 = await step('hit(2)');
-    ok('two scenes: a hit of the death camera - its row marked, shown from its rebuilt scene (drawn), the snapshot button there but saying it has none',
-       s3.scene === 'r3' && s3.from === 'replay' && s3.marks === 'r3,r4' && s3.pressed === 'replay' && s3.absent === 'snapshot' && s3.message === '' && /no snapshot/.test(s3.chips || ''), JSON.stringify(s3));
-    const s3b = await flip('snapshot');
-    ok('two scenes: ... its snapshot button touched changes nothing (its words say why)', s3b.scene === 'r3' && s3b.from === 'replay' && s3b.stored === 'replay', JSON.stringify(s3b));
+    ok('two scenes: a hit of the death camera - its row marked, shown from its rebuilt scene (drawn), its one chip not a button and saying it has no snapshot',
+       s3.scene === 'r3' && s3.from === 'replay' && s3.marks === 'r3,r4' && s3.buttons === 0 && s3.message === '' && /no snapshot/.test(s3.chips || '') && s3.stored === 'replay', JSON.stringify(s3));
     const s4 = await step('hit(3)');
-    ok('two scenes: a hit with neither scene - its row with its damage, the scene says in one line why there is none, both buttons say why',
-       s4.absent === 'snapshot,replay' && s4.pressed === '' && /No scene for this hit/.test(s4.message), JSON.stringify(s4));
+    ok('two scenes: a hit with neither scene - its row with its damage, the scene says in one line why there is none; no chips',
+       s4.chips === null && /No scene for this hit/.test(s4.message), JSON.stringify(s4));
     await step('hit(0)');
     const s5 = await flip('snapshot');
     ok('two scenes: back to the snapshot, and that is remembered', s5.from === 'snapshot' && s5.stored === 'snapshot', JSON.stringify(s5));
+    for (const w of [754, 1024, 1280]) {
+      const sw = await width(w);
+      ok('two scenes: at the page width ' + w + ' px the chips are laid out inside the Hit line tile', sw.width === w && sw.buttons === 2 && sw.inside === true, JSON.stringify({width: sw.width, buttons: sw.buttons, inside: sw.inside}));
+    }
+    await page.send('Emulation.clearDeviceMetricsOverride'); await new Promise((r) => setTimeout(r, 600));
     ok('two scenes: no uncaught exception in the page', page.errors.length === 0, page.errors.slice(0, 3).join(' | '));
   } finally {
     await browser.send('Target.closeTarget', {targetId: page.targetId});
@@ -654,17 +663,17 @@ async function twoScenesLocal(browser) {
   const pause = (ms) => new Promise((r) => setTimeout(r, ms));
   const STATE = `(() => { const v = window.__bullbaViewers[window.__bullbaViewers.length - 1], h = v && v.loadedData ? v.loadedData.hit : null, $ = (id) => document.getElementById(id);
     return {scene: h ? String(h.id) : null, from: h ? (h.sceneSource || 'snapshot') : null, chance: $('shot-chance').textContent.split('/')[0].trim(),
-      chips: [].slice.call($('shot-scenes').children).map((c) => c.textContent + (c.classList.contains('differs') ? '!' : '') + (c.classList.contains('shown') ? '*' : '')),
-      dot: ['snapshot', 'replay'].filter((k) => $('scene-' + k).hasAttribute('data-differs')).join(), message: $('scene-message').hidden ? '' : $('scene-message').textContent}; })()`;
+      chips: [].slice.call($('shot-scenes').children).filter((c) => !c.classList.contains('help-dot')).map((c) => c.textContent + (c.classList.contains('differs') ? '!' : '') + (c.classList.contains('shown') ? '*' : '')),
+      dot: ['snapshot', 'replay'].filter((k) => { const c = document.getElementById('scene-chip-' + k); return !!c && c.parentNode === $('shot-scenes') && c.classList.contains('differs'); }).join(), message: $('scene-message').hidden ? '' : $('scene-message').textContent}; })()`;
   const clickRow = async (id) => { await ev(`document.querySelector('#hits [data-hit="${id}"]').click()`); await ev('__bt.settle(15000)'); await pause(1500); return ev(STATE); };
   try {
     await ev(DRIVER);
     await ev(`(async () => { for (let i = 0; i < 150 && !(document.querySelector('#hits [data-hit]') && window.__bullbaViewers.length); i++) await new Promise((r) => setTimeout(r, 100)); await __bt.settle(); })()`);
     await ev("__bt.act.battle('1754641962968727-e0ab2c1f479d')"); await ev('__bt.settle(15000)');
     const a = await clickRow('6');
-    ok('two scenes, local: the A150 MBT-B hit (518 HP) from its snapshot - the page 0 %, the rebuilt scene\'s 88 % beside it in amber, the server\'s 518 HP; the rebuilt button marked',
+    ok('two scenes, local: the A150 MBT-B hit (518 HP) from its snapshot - the page 0 %, the rebuilt scene\'s 88 % beside it in amber, the server\'s 518 HP; the rebuilt chip marked',
        a.scene === '6' && a.from === 'snapshot' && a.chance === '0 %' && a.chips.join('|') === '0 %*|88 %!|server: 518 HP' && a.dot === 'replay', JSON.stringify(a));
-    await ev("document.getElementById('scene-replay').click()"); await ev('__bt.settle(15000)'); await pause(1500);
+    await ev("document.getElementById('scene-chip-replay').click()"); await ev('__bt.settle(15000)'); await pause(1500);
     const b = await ev(STATE);
     ok('two scenes, local: ... switched - the same hit from the rebuilt scene: 88 %, the snapshot\'s 0 % now the one in amber',
        b.scene === '6' && b.from === 'replay' && b.chance === '88 %' && b.chips.join('|') === '0 %!|88 %*|server: 518 HP' && b.dot === 'snapshot', JSON.stringify(b));
@@ -692,6 +701,8 @@ async function main() {
     // --close: only the first view of a shot fired point-blank.
     if (process.argv.includes('--close')) { await closeRange(browser, folder); console.log('real page, the close range only (' + browser.product + '): ' + checks + ' checks, ' + failures + ' failed'); return failures ? 1 : 0; }
     // --sides: only the swap's two sides and the shooter row (a quick run while that rule is worked on).
+    // --scenes: only the two scenes of a hit (the scene chips).
+    if (process.argv.includes('--scenes')) { await twoScenes(browser); await twoScenesLocal(browser); console.log('real page, the two scenes only (' + browser.product + '): ' + checks + ' checks, ' + failures + ' failed'); return failures ? 1 : 0; }
     if (process.argv.includes('--sides')) { await swapSides(browser, folder); console.log('real page, the swap sides only (' + browser.product + '): ' + checks + ' checks, ' + failures + ' failed'); return failures ? 1 : 0; }
     await inheritMatrix(browser, folder);
     if (MATRIX_ONLY) { console.log('real page, the inheritance matrix only (' + browser.product + '): ' + checks + ' checks, ' + failures + ' failed'); return failures ? 1 : 0; }

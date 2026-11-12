@@ -10085,27 +10085,37 @@ function twoScenes() {
   const open = function (id) { const p = $('battles'); p.value = id; p.onchange.call(p); return settle(30); };
   const row = function (id) { return $('hits').children.filter(function (r) { return r.getAttribute('data-hit') === id; })[0]; };
   const pickRow = function (id) { row(id).onclick(); return settle(30); };
-  const flip = function (k) { click($('scene-' + k)); return settle(30); };
-  const pressed = function () { return ['snapshot', 'replay'].filter(function (k) { return $('scene-' + k).getAttribute('aria-pressed') === 'true'; }).join(); };
-  const absent = function () { return ['snapshot', 'replay'].filter(function (k) { return $('scene-' + k).getAttribute('aria-disabled') === 'true'; }).join(); };
+  // The scene chips of the Hit line tile ARE the switch (11.11 evening; the toolbar's two icon buttons were not found).
+  const sceneRow = function () { return $('shot-scenes'); };
+  const chipOf = function (k) { return sceneRow().hidden ? null : sceneRow().children.filter(function (c) { return c.id === 'scene-chip-' + k; })[0] || null; };
+  const buttons = function () { return sceneRow().hidden ? [] : sceneRow().children.filter(function (c) { return c.tagName === 'BUTTON' && !/help-dot/.test(c.className); }); };
+  const single = function () { return sceneRow().hidden ? null : sceneRow().children.filter(function (c) { return /\bsingle\b/.test(c.className); })[0] || null; };
+  const textOf = function (el) { return el ? el.textContent + el.children.map(function (x) { return x.textContent; }).join('') : ''; };
+  const flip = function (k) { click(chipOf(k)); return settle(30); };
+  const pressed = function () { return ['snapshot', 'replay'].filter(function (k) { const c = chipOf(k); return !!c && c.getAttribute('aria-pressed') === 'true'; }).join(); };
   const ownWords = function (el) { if (!el) return null; if (el.getAttribute && el.getAttribute('data-tip-own') !== null) return el; for (const c of el.children || []) { const f = ownWords(c); if (f) return f; } return null; };
   const scenePick = $('scene-source-value');
+  const setting = function (v) { scenePick.value = v; scenePick.onchange.call(scenePick); return settle(30); };
   sidebarModes[0].onclick();
   return settle(20).then(function () { return open('tw'); }).then(function () { return pickRow('t1'); }).then(function () {
-    const dot = $('scene-switch').children.filter(function (c) { return c.getAttribute('data-help-for') === 'scene-snapshot scene-replay'; })[0];
-    ok('two scenes: a hit with both scenes opens from its snapshot (the default) - the switch stands in the toolbar with its own "?", the snapshot pressed, both there',
-       !$('scene-switch').hidden && !!dot && pressed() === 'snapshot' && absent() === '' && asked[asked.length - 1] === 't1:snapshot' && !loaded.hit.sceneSource && loaded.hit.target.worldTransform[12] === 0,
-       asked.join() + ' ' + pressed() + '/' + absent());
-    ok('two scenes: the Hit line tile carries the scene row - its words compare the two scenes (the mod\'s comparison) and say where the rebuilt one is weaker',
-       !$('shot-scenes').hidden && /Rebuilt minus snapshot/.test($('shot-scenes').title) && /Turret \+17\.2°, gun \+1\.1°/.test($('shot-scenes').title) && /hull at rest/.test($('shot-scenes').title),
-       $('shot-scenes').title.slice(0, 200));
+    const dot = sceneRow().children.filter(function (c) { return c.getAttribute('data-help-for') === 'scene-chip-snapshot scene-chip-replay'; })[0];
+    ok('two scenes: a hit with both scenes opens from its snapshot (the default) - the Hit line tile\'s two scene chips are buttons with their own "?", the snapshot pressed',
+       !sceneRow().hidden && !!dot && buttons().length === 2 && pressed() === 'snapshot' && chipOf('replay').getAttribute('aria-pressed') === 'false'
+       && asked[asked.length - 1] === 't1:snapshot' && !loaded.hit.sceneSource && loaded.hit.target.worldTransform[12] === 0,
+       asked.join() + ' ' + pressed() + ' ' + buttons().length);
+    ok('two scenes: each chip\'s words - its title, then one sentence that a click shows the hit from that scene, then how the two scenes differ (the mod\'s comparison) and where the rebuilt one is weaker',
+       ['snapshot', 'replay'].every(function (k) { const t = chipOf(k).title;
+         return new RegExp('^' + (k === 'snapshot' ? 'In-game snapshot' : 'Rebuilt from the replay') + '\nA click shows this hit ').test(t)
+           && /Rebuilt minus snapshot/.test(t) && /Turret \+17\.2°, gun \+1\.1°/.test(t) && /hull at rest/.test(t); }),
+       chipOf('replay').title.slice(0, 200));
+    ok('two scenes: (held statically) the toolbar has no scene switch any more - one path for the choice', !/scene-switch|id="scene-snapshot"|id="scene-replay"/.test(pageSrc) && !/\$\('scene-switch'\)/.test(appSrc));
     const before = {shell: $('shell-choice').value, mode: $('armor-mode').value, fun: $('fun-mode').checked, row: row('t1').getAttribute('aria-pressed'), rows: $('hits').children.length, n: asked.length};
     return flip('replay').then(function () {
       const h = loaded.hit;
-      ok('two scenes: the switch shows the SAME hit again from the scene rebuilt from the replay - its pose, its points, its range; the armour the snapshot\'s table',
+      ok('two scenes: a click on the reel chip shows the SAME hit again from the scene rebuilt from the replay - its pose, its points, its range; the armour the snapshot\'s table; the reel chip pressed, the setting on replay',
          asked.slice(before.n).join() === 't1:replay' && h.id === 't1' && h.sceneSource === 'replay' && h.aim[0] === 0.3 && h.aim[1] === 0.02 && h.target.worldTransform[12] === 0.4
          && h.points[0].position[2] === 2.9 && h.points[0].shellKind === 'ARMOR_PIERCING' && h.rangeAtImpact === 101 && JSON.stringify(h.target.parts[0].armor) === JSON.stringify(ARMOR)
-         && h.target.name === 'Tango' && pressed() === 'replay' && scenePick.value === 'replay', asked.slice(before.n).join() + ' ' + JSON.stringify(h.aim));
+         && h.target.name === 'Tango' && pressed() === 'replay' && chipOf('snapshot').getAttribute('aria-pressed') === 'false' && scenePick.value === 'replay', asked.slice(before.n).join() + ' ' + JSON.stringify(h.aim) + ' ' + pressed());
       ok('two scenes: ... and nothing else changes - the shell, the display, ⌖, the pressed row, the list',
          $('shell-choice').value === before.shell && $('armor-mode').value === before.mode && $('fun-mode').checked === before.fun
          && row('t1').getAttribute('aria-pressed') === 'true' && $('hits').children.length === before.rows);
@@ -10113,39 +10123,45 @@ function twoScenes() {
          /selectHit\(st\.base\.id,sceneFrom\('scene'\)\)/.test(appSrc) && /\(how==='record'\|\|how==='scene'\)&&\(!own\|\|own\.pose!==false\)\)view=Object\.assign\(\{\},view,\{pose:null\}\)/.test(appSrc)
          && /ownShot:how==='record'\}/.test(appSrc) && /h=ArmorInspectorData\.sceneHit\(h,'snapshot',battle\)\.hit/.test(appSrc)
          && /if\(activeHit\.sceneSource==='replay'&&ArmorInspectorData\.scenesOf\([^\n]*?\)\.snapshot\)return;/.test(appSrc));
-      return pickRow('t2');
-    }).then(function () {
       const n = asked.length;
-      ok('two scenes: a hit with its snapshot only, the choice on the rebuilt scene - the snapshot shown and pressed; the other button stands, saying why it has none when touched',
-         asked[n - 1] === 't2:replay' && !loaded.hit.sceneSource && pressed() === 'snapshot' && absent() === 'replay' && $('scene-replay').getAttribute('data-tip-own') !== null
-         && /^Rebuilt from the replay: none\n/.test($('scene-replay').title) && $('shot-scenes').hidden, absent() + ' ' + $('scene-replay').title.split('\n')[0]);
-      return flip('replay').then(function () {
-        ok('two scenes: ... touched, it changes nothing: no scene read, the choice as it was', asked.length === n && scenePick.value === 'replay');
-        return flip('snapshot');
+      return flip('snapshot').then(function () {
+        ok('two scenes: a click on the camera chip shows it from the snapshot again - the camera chip pressed, the setting on snapshot',
+           asked.slice(n).join() === 't1:snapshot' && !loaded.hit.sceneSource && loaded.hit.target.worldTransform[12] === 0 && pressed() === 'snapshot' && scenePick.value === 'snapshot',
+           asked.slice(n).join() + ' ' + pressed() + ' ' + scenePick.value);
+        return setting('replay');
+      }).then(function () {
+        ok('two scenes: the setting changed in Settings moves the chips with it (one owner)', pressed() === 'replay' && loaded.hit.sceneSource === 'replay' && asked[asked.length - 1] === 't1:replay', pressed());
+        return pickRow('t2');
       });
     }).then(function () {
-      ok('two scenes: the snapshot button of a hit that has it sets the choice back, without showing it again', scenePick.value === 'snapshot' && pressed() === 'snapshot');
+      const n = asked.length, one = single();
+      ok('two scenes: a hit with its snapshot only, the choice on the rebuilt scene - the snapshot shown; its one chip is not a button and its words say why there is no rebuilt scene',
+         asked[n - 1] === 't2:replay' && !loaded.hit.sceneSource && buttons().length === 0 && !!one && one.tagName !== 'BUTTON' && /not rebuilt/.test(textOf(one))
+         && /^In-game snapshot\nNot rebuilt from the replay: /.test(one.title), one ? one.title.split('\n').slice(0, 2).join(' | ') : 'no chip');
+      return setting('snapshot').then(function () {
+        ok('two scenes: ... the setting set back reads no scene again (the snapshot is on screen already)', asked.length === n && scenePick.value === 'snapshot');
+      });
+    }).then(function () {
       return pickRow('r4');
     }).then(function () {
-      const h = loaded.hit, mark = ownWords(row('r4'));
+      const h = loaded.hit, mark = ownWords(row('r4')), one = single();
       ok('two scenes: a hit of the death camera - its row marked with words of their own ("recorded from the replay: no in-game snapshot"), named from the roster',
          !!mark && /^Recorded from the replay\nNo in-game snapshot/.test(mark.title) && /• Scene: from the replay only: no in-game snapshot/.test(row('r4').title) && /Incoming from Tango/.test(row('r4').title)
          && !ownWords(row('t1')), mark ? mark.title.split('\n')[0] : 'no mark');
-      ok('two scenes: ... shown from its rebuilt scene whatever the choice; the snapshot button says it has none; the shooter and his shells borrowed from his other hit',
-         asked[asked.length - 1] === 'r4:snapshot' && h.sceneSource === 'replay' && pressed() === 'replay' && absent() === 'snapshot' && /^In-game snapshot: none\n/.test($('scene-snapshot').title)
-         && h.shellsFrom === 't3' && h.attacker.name === 'Tango' && h.target.name === 'Papa' && h.availableShells.length === SHELLS.length && !$('shot-scenes').hidden && /no snapshot/.test($('shot-scenes').children.map(function (c) { return c.textContent + c.children.map(function (x) { return x.textContent; }).join(''); }).join()),
-         JSON.stringify({src: h.sceneSource, from: h.shellsFrom, p: pressed(), a: absent()}));
+      ok('two scenes: ... shown from its rebuilt scene whatever the choice; its one chip, not a button, says it has no snapshot; the shooter and his shells borrowed from his other hit',
+         asked[asked.length - 1] === 'r4:snapshot' && h.sceneSource === 'replay' && buttons().length === 0 && !!one && /no snapshot/.test(textOf(one)) && /^Rebuilt from the replay\nNo in-game snapshot: /.test(one.title)
+         && h.shellsFrom === 't3' && h.attacker.name === 'Tango' && h.target.name === 'Papa' && h.availableShells.length === SHELLS.length,
+         JSON.stringify({src: h.sceneSource, from: h.shellsFrom, chip: one ? one.title.split('\n')[0] : null}));
       return pickRow('r5');
     }).then(function () {
-      ok('two scenes: a hit with neither scene - its row with its damage, the scene says in one line why there is none, both buttons say why',
+      ok('two scenes: a hit with neither scene - its row with its damage, the scene says in one line why there is none; no chips',
          !!row('r5') && /100/.test(JSON.stringify(row('r5').children.map(function (c) { return c.textContent + c.children.map(function (x) { return x.textContent + x.children.map(function (y) { return y.textContent; }).join(); }).join(); })))
-         && $('scene-message').textContent === D.NO_SCENE && !$('scene-message').hidden && absent() === 'snapshot,replay' && pressed() === '' && /^No scene\n/.test($('scene-replay').title),
+         && $('scene-message').textContent === D.NO_SCENE && !$('scene-message').hidden && sceneRow().hidden,
          $('scene-message').textContent);
       return open('old');
     }).then(function () {
-      ok('two scenes: a battle recorded before 11.11 reads as before - its hit as recorded, the switch on the snapshot and the other button saying the replay was not read; no scene row on the tile',
-         asked[asked.length - 1] === 'o1:snapshot' && !loaded.hit.sceneSource && loaded.hit.target.worldTransform[12] === 0 && pressed() === 'snapshot' && absent() === 'replay'
-         && /replay has not been read/.test($('scene-replay').title) && $('shot-scenes').hidden, asked.slice(-2).join());
+      ok('two scenes: a battle recorded without its replay reads as before - its hit as recorded, nothing extra: no scene chips on the tile',
+         asked[asked.length - 1] === 'o1:snapshot' && !loaded.hit.sceneSource && loaded.hit.target.worldTransform[12] === 0 && sceneRow().hidden, asked.slice(-2).join());
     });
   }).then(function () {
     Object.keys(keep).forEach(function (k) { D[k] = keep[k]; });

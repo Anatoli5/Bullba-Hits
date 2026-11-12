@@ -7425,7 +7425,7 @@
   // and the others still paint - a half-painted scene is exactly the unevenness this finisher is for.
   var SCENE_PAINTERS=[['target switches',function(){modsVisible();}],['hit line',function(){shotStats();}],
     ['emulation',function(){updateAim();}],['target HP',function(){funModel();}],['characteristics',function(){ttxPaint();}],
-    ['roster',function(){renderFocus();}],['pose tile',function(){paintPose();}],['scene switch',function(){paintSceneSwitch();}],
+    ['roster',function(){renderFocus();}],['pose tile',function(){paintPose();}],['scene chips',function(){paintSceneChips();}],
     ['vehicle list',function(){if(sidebarMode==='vehicles'){adoptHitVehicles();renderVehicleHeading();renderVehicles();}}],['help dots',function(){if(window.BullbaTips&&window.BullbaTips.refresh)window.BullbaTips.refresh();}]];
   function sceneShown(){
     sceneBuild=false;
@@ -7984,15 +7984,16 @@
   // "which picture to take, the reconstruction or the actual one" - so a disputed hit (100 % and no penetration, 0 % and
   // a penetration) shows which of the two agrees with what the server did. The data side is local-data.js sceneHit.
   //   - The choice is a remembered setting (#scene-source-value, a hidden control of the menu: stored, restored and reset
-  //     with the rest), set by the two buttons of the scene's toolbar. It is an INPUT OF THE SCENE: its one owner,
+  //     with the rest), set by the two scene chips of the Hit line tile (paintSceneChips; until 11.11 evening two icon
+  //     buttons in the scene's toolbar, which the user did not find). It is an INPUT OF THE SCENE: its one owner,
   //     sceneSourceChanged, shows the hit on screen again from the other scene (sceneFrom 'scene': the scene's own pose,
   //     the camera as it stands) and touches nothing else - the shell, the settings, the list stay.
-  //   - The switch stands while a recorded hit is on screen. The pressed button is the scene SHOWN: a hit with one scene
-  //     shows that one whatever the choice (the snapshot of a battle recorded before 11.11; the rebuilt scene of a death-
-  //     camera hit, which has no snapshot), and the other button says why it is not there when touched (data-tip-own).
-  //   - Both scenes: the Hit line tile's scene row gives the page's verdict in each with the server's outcome, and its words
-  //     how the two differ (the mod's comparison block; compareScenes, for the hit on screen only, paintSceneChips); the
-  //     button of the other scene is marked when its verdict differs.
+  //   - The pressed chip is the scene SHOWN: a hit with one scene shows that one whatever the choice (the rebuilt scene of
+  //     a death-camera hit, which has no snapshot; the snapshot of a hit the replay could not rebuild), and its one chip
+  //     says why there is no other. A battle published from the recorder alone has no chips: the snapshot is all it has.
+  //   - Both scenes: the chips give the page's verdict in each with the server's outcome, and their words how the two
+  //     differ (the mod's comparison block; compareScenes, for the hit on screen only); the chip of the other scene is
+  //     amber when its verdict differs.
   function hitClock(h){return Number.isFinite(h&&h.receivedAt)?clock(h.receivedAt):h&&Number.isFinite(h.gameTime)?gameClock(h.gameTime):'—';}
   function sceneWanted(){var e=$('scene-source-value');return e&&e.value==='replay'?'replay':'snapshot';}
   // A row of the list for a hit the recorder never saw: its words, or null.
@@ -8018,7 +8019,7 @@
     var have=ArmorInspectorData.scenesOf(base);
     return {base:base,have:have,shown:activeHit.sceneSource==='replay'?'replay':have.snapshot?'snapshot':null};
   }
-  // A click on a button of the switch. One whose scene this hit lacks only says why (its words, data-tip-own).
+  // A click on a scene chip (paintSceneChips). A scene this hit lacks has no button to click.
   function pickScene(which){
     var st=sceneState(),box=$('scene-source-value');
     if(st&&!st.have[which])return;
@@ -8030,56 +8031,47 @@
   function sceneSourceChanged(){
     var st=sceneState();
     if(st&&ArmorInspectorData.sceneHit(st.base,sceneWanted(),current).shown!==st.shown){selectHit(st.base.id,sceneFrom('scene')).catch(function(){});return;}
-    paintSceneSwitch();
+    paintSceneChips();
   }
+  // The words of the scene chips (paintSceneChips): a chip's title, then one sentence of what a click does or why the other
+  // scene is not there. A hit of a battle published from the recorder alone has no chip: its one scene is the snapshot,
+  // as on every battle before 11.11; a hit with no scene at all says so on the scene itself (D.NO_SCENE).
   var SCENE_WORDS={
-    snapshot:'In-game snapshot\nThe target’s pose and armour as the recorder read them in the battle, the scene the game drew.\n• Click: show this hit from the snapshot; the page remembers the choice',
-    replay:'Rebuilt from the replay\nThe same hit in the pose the replay gives: the vehicle’s place and hull 0.2 s before the hit, the turret and gun from the replay’s angles.\n• Click: show this hit rebuilt; the page remembers the choice\n• Same as the snapshot: the point on the armour, its angle, the armour\n• Weaker: the hull at rest - the replay has no suspension tilt; another vehicle’s turret and gun in steps of about 0.35°',
-    noSnapshot:'In-game snapshot: none\nThe recorder did not see this hit (the death camera). It is in the replay only, so the scene rebuilt from the replay is its one scene.',
-    noReplayBattle:'Rebuilt from the replay: none\nThis battle was published from the recorder alone: its replay has not been read, so each hit has its snapshot only.',
-    noReplayHit:'Rebuilt from the replay: none\nThe replay did not give what this hit’s scene needs (the target’s place, its vehicle or a part model), so the snapshot is its one scene.',
-    noScene:'No scene\nThe recorder did not see this hit and the replay could not rebuild its scene: its damage and parties are all there is.'};
-  function paintSceneSwitch(){
-    var box=$('scene-switch');if(!box)return;
-    var st=sceneState(),was=box.hidden;showEl(box,!!st);
-    if(was!==box.hidden)scheduleLayout(LAYOUT_TOOLBAR);
-    paintSceneChips(st);
-    if(!st)return;
-    var shown=st.shown,cmp=sceneCmp.last&&sceneCmp.last.id===st.base.id?sceneCmp.last:null;
-    ['snapshot','replay'].forEach(function(k){
-      var b=$('scene-'+k),there=st.have[k],differs=!!(there&&cmp&&cmp.differs&&k!==shown);
-      b.setAttribute('aria-pressed',String(k===shown));
-      b.classList.toggle('absent',!there);
-      if(there){b.removeAttribute('aria-disabled');b.removeAttribute('data-tip-own');}else{b.setAttribute('aria-disabled','true');b.setAttribute('data-tip-own','');}
-      if(differs)b.setAttribute('data-differs','');else b.removeAttribute('data-differs');
-      var words=there?SCENE_WORDS[k]:!shown?SCENE_WORDS.noScene:k==='snapshot'?SCENE_WORDS.noSnapshot:current.source==='replay'?SCENE_WORDS.noReplayHit:SCENE_WORDS.noReplayBattle;
-      if(differs)words+='\n• Amber dot: the page’s verdict in this scene is another one (the Hit line tile shows both)';
-      if(b.title!==words)b.title=words;
-    });
-  }
-  // THE HIT LINE TILE'S SCENE ROW (#shot-scenes): a hit with a scene rebuilt from the replay says so on the tile it is read
-  // on. Both scenes: the page's verdict on the first point in each - the snapshot's and the rebuilt one's, the scene on
-  // screen framed - and the server's outcome beside them, amber where the two disagree; its words hold the rest: every
-  // point, how the scenes differ (the mod's comparison block, rebuilt minus snapshot) and where the rebuilt one is weaker.
-  // The rebuilt scene only: one chip that says so. A hit with its snapshot only (every battle before 11.11): no row.
+    snapshot:['In-game snapshot','A click shows this hit from the in-game snapshot; the page remembers the choice.','The target’s pose and armour as the recorder read them in the battle, the scene the game drew.'],
+    replay:['Rebuilt from the replay','A click shows this hit rebuilt from the replay; the page remembers the choice.','The same hit in the pose the replay gives: the vehicle’s place and hull 0.2 s before the hit, the turret and gun from the replay’s angles.'],
+    noSnapshot:['Rebuilt from the replay','No in-game snapshot: the recorder did not see this hit (the death camera). It is in the replay only, so the scene rebuilt from the replay is its one scene.'],
+    noReplayHit:['In-game snapshot','Not rebuilt from the replay: the replay did not give what this hit’s scene needs (the target’s place, its vehicle or a part model), so the snapshot is its one scene.']};
+  // THE HIT LINE TILE'S SCENE ROW (#shot-scenes) IS THE SWITCH (user 11.11: he looked for the switch there). Both scenes:
+  // two buttons - the page's verdict on the first point in the snapshot and in the rebuilt scene - the one on screen
+  // pressed (framed); a click shows the hit from that scene through the one owner of the choice (pickScene ->
+  // sceneSourceChanged), the setting #scene-source-value with it. Beside them the server's outcome; the button of the other
+  // scene amber when its verdict differs. Each button's words: its title, what a click does, then every point, how the
+  // scenes differ (the mod's comparison block, rebuilt minus snapshot) and where the rebuilt one is weaker. A hit with one
+  // scene of a battle made from its replay: one chip, not a button, whose words say why there is no other. A hit of a battle
+  // published from the recorder alone, or with no scene at all: no row.
   function paintSceneChips(st){
     var row=$('shot-scenes');if(!row)return;
-    var s=st&&st.have.replay?st.base.replayScene:null;
-    if(!s){if(!row.hidden){row.hidden=true;row.replaceChildren();}return;}
+    if(st===undefined)st=sceneState();
+    var s=st&&st.have.replay?st.base.replayScene:null,one=!!(st&&st.have.snapshot&&!st.have.replay&&current&&current.source==='replay');
+    if(!s&&!one){if(!row.hidden){row.hidden=true;row.replaceChildren();}return;}
     row.replaceChildren();row.hidden=false;
-    var f=function(x,d){return (x>0?'+':x<0?'−':'')+Math.abs(x).toFixed(d);},limits=(s.limits||[]).concat(s.problems||[]);
+    var f=function(x,d){return (x>0?'+':x<0?'−':'')+Math.abs(x).toFixed(d);},limits=s?(s.limits||[]).concat(s.problems||[]):[];
     var weaker=limits.length?['','Weaker in the rebuilt scene'].concat(limits.map(function(l){return '• '+l;})):[];
-    var chip=function(kind,text,cls){var c=node('span',undefined,'chip scene-chip'+(cls?' '+cls:''));if(kind)c.appendChild(sceneMark(kind));c.appendChild(document.createTextNode(text));row.appendChild(c);return c;};
-    if(!st.have.snapshot){
-      chip('replay','Rebuilt · no snapshot','shown');
-      row.title=tipJoin(['Rebuilt from the replay','The recorder did not see this hit (the death camera): this scene, rebuilt from the replay, is its only one.'].concat(weaker));
+    var chip=function(kind,text,cls,button){
+      var c=node(button?'button':'span',undefined,'chip scene-chip'+(cls?' '+cls:''));
+      if(button){c.type='button';c.id='scene-chip-'+kind;c.setAttribute('aria-pressed',String(st.shown===kind));c.onclick=function(){pickScene(kind);};}
+      if(kind)c.appendChild(sceneMark(kind));c.appendChild(document.createTextNode(text));row.appendChild(c);return c;};
+    if(!st.have.snapshot||!st.have.replay){
+      var only=st.have.snapshot?'snapshot':'replay',w=SCENE_WORDS[only==='snapshot'?'noReplayHit':'noSnapshot'];
+      chip(only,only==='snapshot'?'Snapshot · not rebuilt':'Rebuilt · no snapshot','shown single').title=tipJoin(w.concat(only==='replay'?weaker:[]));
       return;
     }
     var last=sceneCmp.last&&sceneCmp.last.id===st.base.id&&sceneCmp.last.key===sceneCmp.key?sceneCmp.last:null,first=last&&last.lines[0];
-    var a=chip('snapshot',first?first.a:last?'—':'…',st.shown==='snapshot'?'shown':''),b=chip('replay',first?first.b:last?'—':'…',st.shown==='replay'?'shown':'');
-    if(last&&last.differs)(st.shown==='snapshot'?b:a).classList.add('differs');
-    chip(null,'server: '+serverWords(st.base),'server');
-    var c=s.comparison,lines=['Two scenes of this hit','The page’s verdict in the in-game snapshot and in the scene rebuilt from the replay, for the shell on screen; the framed one is on screen.'];
+    var a=chip('snapshot',first?first.a:last?'—':'…',st.shown==='snapshot'?'shown':'',true),b=chip('replay',first?first.b:last?'—':'…',st.shown==='replay'?'shown':'',true);
+    var other=last&&last.differs?(st.shown==='snapshot'?b:a):null;
+    if(other)other.classList.add('differs');
+    chip(null,'server: '+serverWords(st.base),'server').title=tipJoin(['The server’s outcome','What the server reported for this hit; the two scenes’ verdicts are read against it.','• Hit: '+result(st.base)]);
+    var c=s.comparison,lines=['','The page’s verdict in the snapshot / in the rebuilt scene, for the shell on screen; the framed one is on screen.'];
     if(last)last.lines.forEach(function(l){lines.push('• '+l.part+': '+l.a+' / '+l.b+' (server: '+l.server+')');});
     else lines.push('• Computing…');
     lines.push('• Hit: '+result(st.base));
@@ -8093,7 +8085,10 @@
       if(c.stopDistance&&c.stopDistance.replay!=null)lines.push('• From the server’s stop: '+c.stopDistance.snapshot.toFixed(2)+' m snapshot, '+c.stopDistance.replay.toFixed(2)+' m rebuilt');
     }
     lines=lines.concat(weaker);lines.push('','Nominal penetration against the armour, not the rolled RNG.');
-    row.title=tipJoin(lines);
+    [a,b].forEach(function(el,i){var w=SCENE_WORDS[i?'replay':'snapshot'].slice();
+      if(el===other)w.push('• Amber: the page’s verdict in this scene is another one');
+      el.title=tipJoin(w.concat(lines));});
+    row.appendChild(helpDotFor(['scene-chip-snapshot','scene-chip-replay']));
   }
   function serverWords(hit){
     if(hit.damage>0)return hit.damage+' HP';
@@ -8117,7 +8112,7 @@
       Promise.all([cast('snapshot'),cast('replay')]).then(function(both){
         if(sceneCmp.key!==key)return;
         sceneCmp.last=sceneVerdicts(base,both[0]||[],both[1]||[],key);
-        paintSceneSwitch();
+        paintSceneChips();
       }).catch(function(e){if(window.console)console.warn('Bullba Hits scenes: hit '+base.id+' not compared: '+(e&&e.message||e));});
     },120);
   }
@@ -9565,11 +9560,9 @@
   [3,4,5].forEach(function(v){$('aim-sound-count-'+v).onclick=function(){$('aim-sound-count-value').value=String(v);aimSoundSettings();persistSettings();};});
   ['one','shot'].forEach(function(v){$('aim-sound-ticks-'+v).onclick=function(){$('aim-sound-ticks-value').value=v;aimSoundSettings();persistSettings();};});
   $('aim-sound').appendChild(helpDotFor(['aim-sound-toggle','aim-sound-signals','aim-sound-count','aim-sound-ticks']));
-  // The scene a hit is shown from (11.11): the same pattern - a hidden control of the menu keeps the choice, the two buttons
-  // of the scene's toolbar set it and run its one handler (sceneSourceChanged), the cluster wears its own "?".
+  // The scene a hit is shown from (11.11): the same pattern - a hidden control of the menu keeps the choice, the scene chips
+  // of the Hit line tile set it (paintSceneChips -> pickScene) and run its one handler (sceneSourceChanged).
   $('scene-source-value').onchange=sceneSourceChanged;
-  ['snapshot','replay'].forEach(function(v){$('scene-'+v).onclick=function(){pickScene(v);};});
-  $('scene-switch').appendChild(helpDotFor(['scene-snapshot','scene-replay']));
   // A hidden page plays nothing: what is scheduled is cancelled, and scheduled again from the gun's state when the page is back.
   document.addEventListener('visibilitychange',function(){aimSoundTell();});
   // How deep the soft light shades (user, 22.09): the slider only scales the composite's brightness range.

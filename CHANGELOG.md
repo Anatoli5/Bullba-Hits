@@ -5,6 +5,7 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 ## Unreleased
 
 - **Vehicle filters keep the list you chose:** with "This battle" selected, a filter (a class, tier, nation or the search) now narrows the battle's vehicles instead of switching the list to "All vehicles"; only the two list buttons switch it. A filter that leaves none of the battle's vehicles shows an empty list that says so.
+- **The scene switch is on the Hit line tile:** the two scene chips there - the camera for the in-game snapshot, the reel for the scene rebuilt from the replay, each with the page's chance in that scene - are now the switch: click one to see the hit from that scene; the one on screen is framed. The small icon switch in the scene's toolbar is gone (in a narrow window it was folded into More, out of sight).
 
 ## 1.06 (2026-11-11)
 
