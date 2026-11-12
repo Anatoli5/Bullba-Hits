@@ -809,7 +809,7 @@
     var prev=activeHit,was0=$('shell-choice').value,held=was0.indexOf('saved:')===0?candidates[Number(was0.slice(6))]||null:null;
     if(hit&&hit.synthetic&&!browsing){var was=$('shell-choice').value,c0=was.indexOf('saved:')===0?candidates[Number(was.slice(6))]:null;
       keep={kind:c0?c0.kind:was||'ARMOR_PIERCING',penetration:$('penetration').value,caliber:$('caliber').value,alpha:$('alpha').value};}
-    activeHit=hit;shotContext=ArmorShotContext.resolve(hit,hit&&(hit.vehicle||hit.damageEvent)?[]:(current&&current.shotEvents||[]));
+    activeHit=hit;shotContext=ArmorShotContext.resolve(hit,hit&&(hit.vehicle||hit.damageEvent)?[]:(current&&current.shotEvents||[]),current);
     // The shooter first (24.09): his gun - the recorded one, or the pair picked for his type (emuSync) - decides which
     // shells the list carries (emuShellList: the record's, then a picked gun's own), so the list is built after him.
     syncTargetMods(hit);syncShooterMods(hit);
@@ -6549,7 +6549,7 @@
       // and made the guessed lines of the Statistics log disagree with the view. Still marked as a guess.
       // The damage window of the assumed shell is taken at the hit's own range, the one prepareShell hands it
       // too: a Polish APCR's alpha falls off with it, and the window at the muzzle threw the right shell out.
-      var context=ArmorShotContext.resolve(hit,battle.shotEvents||[]),c=context.choices[context.index]||null;
+      var context=ArmorShotContext.resolve(hit,battle.shotEvents||[],battle),c=context.choices[context.index]||null;
       var range=context.range>0?context.range:hit.rangeAtImpact>0?hit.rangeAtImpact:100;
       // ArmorShotContext.pick: the same shell prepareShell shows - of the hit's type, else of its calibre, else the first.
       if(!c)c=context.choices[ArmorShotContext.pick(context,hit).index]||null;
@@ -8176,7 +8176,7 @@
     sceneCmp.timer=window.setTimeout(function(){
       var cast=function(which){var h=ArmorInspectorData.sceneHit(base,which,battle).hit;
         return ArmorInspectorData.sceneFor(battle,h).then(function(data){if(data.geometryIncomplete)return [];
-          var context=ArmorShotContext.resolve(h,battle.shotEvents||[]);return ArmorViewer.verdictsFor(data,ArmorViewer.points(h,context),shell);});};
+          var context=ArmorShotContext.resolve(h,battle.shotEvents||[],battle);return ArmorViewer.verdictsFor(data,ArmorViewer.points(h,context),shell);});};
       Promise.all([cast('snapshot'),cast('replay')]).then(function(both){
         if(sceneCmp.key!==key)return;
         sceneCmp.last=sceneVerdicts(base,both[0]||[],both[1]||[],key);

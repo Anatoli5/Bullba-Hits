@@ -211,6 +211,17 @@
      tracers of that instant (for one tracer, its own): every salvo then matches (0.003-0.004 m), nothing else changes.
      The recorder writes one gunAfterShot per salvo, naming its first tracer; it is found through the same group. */
   var STALE_GAP=.05,SAME_INSTANT=1e-3,NEAR_END=.75,FAR_END=5,END_WINDOW=.1,BURST_WINDOW=.3;
+  /* The clock a hit is linked to its shell by (BACKLOG 87, 12.11): a replay-made battle's records all carry the replay's
+     packet clock (`gameTime`, whole server ticks: one tick 0.099996-0.100006 s on its float32 clock), the same on the
+     full live record and on the snapshots-only one. The receipt time (`receivedAt`) of a stop one tick before its hit
+     was 0.092-0.112 s live (client jitter), and a cut record's stop has none of its own (replay_battle.build gives it
+     the wall clock), so at the 0.1 s window a one-tick pair linked or not by chance. On the replay clock the gaps
+     between a hit and the stops near it are whole ticks to 1e-5 s (measured on the 33 battles of 11.11), so each window
+     is its receipt window's ticks plus half a tick: no pair stands near the edge. A battle published from the live
+     record alone keeps the receipt rule: its gameTime is the client's server-time estimate AT RECEIPT (receivedAt less a
+     constant to a few ms, not on whole ticks - measured), the same jitter. GAME_ORDER: a tracer of the hit's own tick counts as before
+     it (the receipt order said so; the clock cannot). */
+  var GAME_END_WINDOW=.15,GAME_BURST_WINDOW=.35,GAME_ORDER=.05;
   function serverShot(tracer,events){
     var last=tracer&&tracer.own&&!tracer.isRicochet&&tracer.aimAtTracer&&tracer.aimAtTracer.lastServerGunUpdate;
     function valid(u){return !!(u&&Array.isArray(u.vector)&&Array.isArray(u.origin)&&u.dispersionAngle>0);}
@@ -227,10 +238,14 @@
     if(exact)return {update:exact,from:'after',stale:false,gap:gap,salvo:many};
     return {update:last,from:'last',stale:true,gap:gap,salvo:many,afterRecorded:!!after};
   }
-  function resolve(hit,events){
+  // `battle`: the battle the hit and the events are of (its `source` picks the clock, above); without it, the receipt rule.
+  function resolve(hit,events,battle){
     var target=hit.target||{},parts=target.parts||[],points=hit.points||[],world=[];
     if(target.worldTransform)points.forEach(function(p){var part=parts.find(function(v){return v.id===p.part;});if(p.status==='resolved'&&p.position&&part&&part.transform)world.push(point(target.worldTransform,point(part.transform,p.position)));});
-    var possible=events.filter(function(e){return e.event==='tracer'&&!e.isRicochet&&e.gunInstallationIndex===0&&e.shooterId===hit.attackerId&&e.effectsIndex===hit.effectsIndex&&e.receivedAt<=hit.receivedAt&&hit.receivedAt-e.receivedAt<10;});
+    var game=!!(battle&&battle.source==='replay')&&Number.isFinite(hit.gameTime),
+      END=game?GAME_END_WINDOW:END_WINDOW,BURST=game?GAME_BURST_WINDOW:BURST_WINDOW,ORDER=game?GAME_ORDER:0;
+    function at(e){return game?e.gameTime:e.receivedAt;}
+    var possible=events.filter(function(e){return e.event==='tracer'&&!e.isRicochet&&e.gunInstallationIndex===0&&e.shooterId===hit.attackerId&&e.effectsIndex===hit.effectsIndex&&at(e)<=at(hit)+ORDER&&at(hit)-at(e)<10;});
     // Damage callback lacks shotId. Accept only one endpoint close in BOTH space
     // and time; do not associate an arbitrary newest tracer during a burst.
     // The end of a tracer that can be this hit's: received within `window` s of it (0.1 s), within `gate` metres of a
@@ -242,11 +257,12 @@
     // left (review 24.09: 89 of 794 such picks doubtful, 12 tracers given to two hits): the far rule therefore needs a
     // stopTracer end and NO other end of this shooter's shells (same effects, no ricochet) within 0.3 s and 5 m.
     // Past 5 m the report found only mismatches.
-    function endOf(t,gate,window,stopOnly){var best=null,bd=Infinity;events.forEach(function(e){if(e.tracerId!==t.id||!e.position||Math.abs(e.receivedAt-hit.receivedAt)>window||stopOnly&&e.event!=='stop')return;
+    // On a replay-made battle every window here is on the replay clock (GAME_* above).
+    function endOf(t,gate,window,stopOnly){var best=null,bd=Infinity;events.forEach(function(e){if(e.tracerId!==t.id||!e.position||Math.abs(at(e)-at(hit))>window||stopOnly&&e.event!=='stop')return;
       var d=Math.min.apply(null,world.map(function(p){return distance(e.position,p);}));if(d<=gate&&d<bd){bd=d;best=e;}});return best;}
-    var matches=possible.filter(function(t){return !!endOf(t,NEAR_END,END_WINDOW);});
-    if(!matches.length){var far=possible.filter(function(t){return !!endOf(t,FAR_END,END_WINDOW,true);});
-      if(far.length===1&&!events.some(function(t){return t.event==='tracer'&&t!==far[0]&&!t.isRicochet&&t.shooterId===hit.attackerId&&t.effectsIndex===hit.effectsIndex&&t.receivedAt<=hit.receivedAt+BURST_WINDOW&&hit.receivedAt-t.receivedAt<10&&!!endOf(t,FAR_END,BURST_WINDOW);}))matches=far;}
+    var matches=possible.filter(function(t){return !!endOf(t,NEAR_END,END);});
+    if(!matches.length){var far=possible.filter(function(t){return !!endOf(t,FAR_END,END,true);});
+      if(far.length===1&&!events.some(function(t){return t.event==='tracer'&&t!==far[0]&&!t.isRicochet&&t.shooterId===hit.attackerId&&t.effectsIndex===hit.effectsIndex&&at(t)<=at(hit)+BURST&&at(hit)-at(t)<10&&!!endOf(t,FAR_END,BURST);}))matches=far;}
     // A salvo fires several own tracers from one command; the second shell has no command of its own.
     function commandOf(t){if(!t||!t.own)return null;var own=events.find(function(e){return e.event==='command'&&e.id===t.possibleCommandId;});if(own)return own;
       var before=events.filter(function(e){return e.event==='command'&&e.shooterId===t.shooterId&&e.receivedAt<=t.receivedAt&&t.receivedAt-e.receivedAt<=1.5;});return before.length?before[before.length-1]:null;}
@@ -255,7 +271,7 @@
     // Where the server stopped that shell (stopTracer): the world contact S, on the tracer's parabola to 6 mm (explosions
     // are not measured on it). `stopPoint`: the contact point it stopped at - on a screen-then-armour hit often the last,
     // not the first (review 24.09: 48 hits) - the one nearest to S; the offset I - S is measured there.
-    var stop=tracer?endOf(tracer,FAR_END,END_WINDOW,true):null,stopPoint=0;
+    var stop=tracer?endOf(tracer,FAR_END,END,true):null,stopPoint=0;
     if(stop)world.forEach(function(p,i){if(distance(stop.position,p)<distance(stop.position,world[stopPoint]))stopPoint=i;});
     // Each aim snapshot is judged against the receipt time of its own source:
     // a stale or incomplete command snapshot must not hide a usable aimAtTracer.

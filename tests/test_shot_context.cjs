@@ -131,4 +131,28 @@ assert.equal(g.special,false);
   assert.ok(st&&near(st.eye,[0,1,100]),JSON.stringify(st));
   assert.equal(S({...through,points:[through.points[0]]},null),null);
 }
-console.log(JSON.stringify({passed:true,cases:44}));
+// BACKLOG 87 (12.11): a shell's stop is linked to its hit on the replay clock in a replay-made battle. A stop one server
+// tick before its hit was received 0.092-0.112 s before it live: at the 0.1 s receipt window it linked or not by that
+// jitter. On the replay clock (gameTime: whole ticks, 0.099996-0.100006 s on the float32 clock) it links both ways; two
+// ticks apart it does not; a battle published from the live record alone keeps the receipt rule, battle or not.
+{
+  const replay={source:'replay'},live={};
+  const gHit={...hit,receivedAt:1000,gameTime:500};
+  const gEvents=(stopReceipt,stopGame)=>[
+    {event:'tracer',id:'t1',own:false,shooterId:7,effectsIndex:3,gunInstallationIndex:0,isRicochet:false,receivedAt:999.6,gameTime:499.6,origin:[0,0,-100],velocity:[0,0,900]},
+    {event:'stop',tracerId:'t1',position:[0,0,0],receivedAt:1000-stopReceipt,gameTime:500-stopGame}];
+  for(const receipt of [.092,.112]){
+    const ev=gEvents(receipt,.100006);
+    assert.equal(!!R(gHit,ev,replay).stop,true,'replay clock, receipt '+receipt);
+    assert.equal(!!R(gHit,ev).stop,receipt<=.1,'receipt rule without a battle, receipt '+receipt);
+    assert.equal(!!R(gHit,ev,live).stop,receipt<=.1,'an old battle keeps the receipt rule, receipt '+receipt);
+  }
+  assert.equal(!!R(gHit,gEvents(.092,.099996),replay).stop,true);
+  assert.equal(!!R(gHit,gEvents(.0,.0),replay).stop,true);          // the same tick
+  assert.equal(R(gHit,gEvents(.092,.2),replay).stop,null);          // two ticks apart: not this hit's
+  // A tracer of the hit's own tick counts as before it; one a tick after the hit does not.
+  const after=gEvents(0,0);after[0]={...after[0],gameTime:500.1};assert.equal(R(gHit,after,replay).tracer,null);
+  // A replay-made hit without a game time (none in the 33 battles) falls back to the receipt rule.
+  assert.equal(!!R({...gHit,gameTime:undefined},gEvents(.112,.1),replay).stop,false);
+}
+console.log(JSON.stringify({passed:true,cases:54}));
