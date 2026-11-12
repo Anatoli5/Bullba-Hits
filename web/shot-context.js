@@ -222,15 +222,23 @@
      constant to a few ms, not on whole ticks - measured), the same jitter. GAME_ORDER: a tracer of the hit's own tick counts as before
      it (the receipt order said so; the clock cannot). */
   var GAME_END_WINDOW=.15,GAME_BURST_WINDOW=.35,GAME_ORDER=.05;
+  /* A replay-made battle's own tracer also carries `replayAim` (BACKLOG 82, 12.11; mod replay_aim.py): its `shotUpdate`
+     is the server update the shell left by, read from the replay's stream - the same update as the pick below in 321 of
+     321 own shots of 11.11, and present where the recorder's snapshot is not. It is taken whenever present
+     (from: 'replay'); its staleness is judged by the same gap from the shell's (salvo's) origin. */
+  function replayShot(tracer){var a=tracer&&tracer.own&&!tracer.isRicochet&&tracer.replayAim;return a&&a.shotUpdate||null;}
   function serverShot(tracer,events){
-    var last=tracer&&tracer.own&&!tracer.isRicochet&&tracer.aimAtTracer&&tracer.aimAtTracer.lastServerGunUpdate;
     function valid(u){return !!(u&&Array.isArray(u.vector)&&Array.isArray(u.origin)&&u.dispersionAngle>0);}
-    if(!valid(last)||!Array.isArray(tracer.origin)||!Array.isArray(tracer.velocity))return null;
+    var last=tracer&&tracer.own&&!tracer.isRicochet&&tracer.aimAtTracer&&tracer.aimAtTracer.lastServerGunUpdate,replay=replayShot(tracer);
+    if(!valid(replay))replay=null;
+    if(!(valid(last)||replay)||!Array.isArray(tracer.origin)||!Array.isArray(tracer.velocity))return null;
     var salvo=Number.isFinite(tracer.gameTime)?(events||[]).filter(function(e){return e.event==='tracer'&&e.own&&!e.isRicochet&&
       e.gunInstallationIndex===tracer.gunInstallationIndex&&Array.isArray(e.origin)&&Number.isFinite(e.gameTime)&&Math.abs(e.gameTime-tracer.gameTime)<SAME_INSTANT;}):[];
     if(salvo.indexOf(tracer)<0)salvo=[tracer].concat(salvo);
     var origin=[0,1,2].map(function(i){return salvo.reduce(function(s,e){return s+e.origin[i];},0)/salvo.length;}),
-      many=salvo.length>1?salvo.length:0,gap=distance(last.origin,origin);
+      many=salvo.length>1?salvo.length:0;
+    if(replay){var rgap=distance(replay.origin,origin);return {update:replay,from:'replay',stale:rgap>STALE_GAP,gap:rgap,salvo:many,afterRecorded:false};}
+    var gap=distance(last.origin,origin);
     if(gap<=STALE_GAP)return {update:last,from:'last',stale:false,gap:gap,salvo:many};
     var ids=salvo.map(function(e){return e.id;}),
       after=(events||[]).find(function(e){return e.event==='gunAfterShot'&&ids.indexOf(e.tracerId)>=0;}),
@@ -280,6 +288,14 @@
     // The salvo's second shell leaves up to ~1.5 s after the command; its snapshot is the aim at the first shell.
     if(command&&command.aim&&tracer)sources.push({aim:command.aim,from:'salvo',stamp:tracer.receivedAt,window:1.5});
     var chosen=sources.find(function(s){return usable(s.aim,s.stamp,s.window);})||null,aim=chosen?chosen.aim:null;
+    // The reticles rebuilt from the replay (BACKLOG 82, rule of 12.11 from the 321 own shots of 11.11): only for a shot with
+    // no usable snapshot of the recorder's - the solid one (the cursor point) is approximate (0.09 radius off at the
+    // median, 1.6 at p90), the dashed one the server's marker, absent when the replay did not hold it (markerSource
+    // 'client reticle'). The same names as the snapshot's, so the viewer draws them as it draws a snapshot.
+    var replayAim=tracer&&tracer.own&&!tracer.isRicochet&&tracer.replayAim||null,rm=replayAim&&replayAim.clientMarker;
+    if(!aim&&rm&&rm.diameter>0&&rm.position&&rm.direction){
+      aim={clientMarker:rm,serverMarker:replayAim.serverMarker||null,gunOrigin:replayAim.gunOrigin||null,lastServerGunUpdate:replayAim.lastServerGunUpdate||null,desiredPoint:replayAim.desiredPoint||null,rebuilt:true};
+      chosen={from:'replay'};}
     var aimReason=aim?null:!possible.length?'no-tracer':!matches.length?'no-endpoint':!tracer?'ambiguous':!tracer.own?'foreign':!sources.length?'no-snapshot':'stale';
     var kindValues=Array.from(new Set(points.map(function(p){return p.shellKind||kinds[p.shellType];}).filter(Boolean)));
     // The shot's own calibre, when its points agree (a spall or blast point carries 0): pick() below falls back on it.
@@ -381,7 +397,7 @@
     var why=contradicted?'no shell of this shooter fits the shot’s ballistics'
       :hasModes&&index<0?'this vehicle switches its shell parameters; the record does not say which state was on':'';
     return {choices:choices,index:index,kind:kindValues.length===1?kindValues[0]:null,caliber:calibers.length===1?calibers[0]:null,tracer:tracer,stop:stop,command:command,aim:aim,aimSource:chosen?chosen.from:null,aimReason:aimReason,
-      serverShot:serverShot(tracer,events),
+      serverShot:serverShot(tracer,events),replayAim:replayAim,
       range:range,rangeSource:rangeSource,modes:hasModes,unresolvedWhy:why,
       gunState:gunState,gunStateFrom:gunFrom,gunNotes:gunNotes(gunState,gunFrom),chargeFactor:chargeFactor>1?chargeFactor:null,
       treeSpeed:byTree?treeDv:null,mark:markOf(hit),

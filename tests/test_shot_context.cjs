@@ -155,4 +155,55 @@ assert.equal(g.special,false);
   // A replay-made hit without a game time (none in the 33 battles) falls back to the receipt rule.
   assert.equal(!!R({...gHit,gameTime:undefined},gEvents(.112,.1),replay).stop,false);
 }
-console.log(JSON.stringify({passed:true,cases:54}));
+// BACKLOG 82 (12.11): the own shot's three circles and where each comes from - the disc from replayAim.shotUpdate whenever
+// present; the solid and the dashed rings from the recorder's snapshot while it is usable, from the block only without one
+// (aim.rebuilt; no dashed ring when the block has no server marker); a battle without the block as before.
+{
+  const U=(o,a)=>({origin:o,vector:[0,0,1],dispersionAngle:a,receivedAt:99.9,gameTime:1});
+  const block=(server)=>({clientMarker:{...marker(99.9),position:[0,0,-50],approximate:true},
+    serverMarker:server?{...marker(99.9),position:[0,0,-60]}:undefined,lastServerGunUpdate:U([0,0,-100],.004),gunOrigin:[0,0,-100],
+    shotUpdate:{...U([0,0,-100],.005),from:'origin'},markerSource:server?'server':'client reticle',
+    comparison:{snapshot:'tracer',clientMarker:{centreRadii:.09,centreMetres:.05,sizeRatio:.99,same:false},disc:{same:true}}});
+  // With the snapshot: the rings are the snapshot's, the disc the replay's; the block is handed on for the legend.
+  c=R(hit,events({},{aimAtTracer:{clientMarker:marker(99.9),lastServerGunUpdate:L([0,0,-100.01])},replayAim:block(true)}));
+  assert.equal(c.aimSource,'tracer');assert.ok(!c.aim.rebuilt);assert.deepEqual(c.aim.clientMarker.position,[0,0,-100]);
+  assert.equal(c.serverShot.from,'replay');assert.equal(c.serverShot.update.dispersionAngle,.005);assert.equal(c.serverShot.stale,false);
+  assert.equal(c.replayAim.comparison.clientMarker.centreRadii,.09);
+  // A stale snapshot is no snapshot: the rebuilt rings stand in.
+  c=R(hit,events({aim:{clientMarker:marker(90)}},{replayAim:block(true)}));assert.equal(c.aimSource,'replay');
+  // Without a snapshot: both rings from the block, marked rebuilt; the disc from the block too.
+  c=R(hit,events({},{replayAim:block(true)}));
+  assert.equal(c.aimSource,'replay');assert.equal(c.aim.rebuilt,true);assert.equal(c.aimReason,null);
+  assert.deepEqual(c.aim.clientMarker.position,[0,0,-50]);assert.deepEqual(c.aim.serverMarker.position,[0,0,-60]);
+  assert.deepEqual(c.aim.lastServerGunUpdate.origin,[0,0,-100]);assert.equal(c.serverShot.from,'replay');
+  // The block without the server marker (fields 3-10 were the client reticle): no dashed ring.
+  c=R(hit,events({},{replayAim:block(false)}));assert.equal(c.aim.serverMarker,null);assert.equal(c.aim.rebuilt,true);
+  // A block whose disc stands off the shell's origin is stale by the same gap rule.
+  const off=block(true);off.shotUpdate={...off.shotUpdate,origin:[0,0,-101.9],from:'nearest'};
+  c=R(hit,events({},{replayAim:off}));assert.equal(c.serverShot.stale,true);
+  // No block (every battle published before it): exactly as before.
+  c=R(hit,events({},{aimAtTracer:{clientMarker:marker(99.9),lastServerGunUpdate:L([0,0,-100.01])}}));
+  assert.equal(c.aimSource,'tracer');assert.equal(c.serverShot.from,'last');assert.equal(c.replayAim,null);
+  assert.equal(R(hit,events({},{})).aimReason,'no-snapshot');
+  // Another's tracer or a ricochet never reads a block.
+  const foreignBlock=events({},{replayAim:block(true)});foreignBlock[1]={...foreignBlock[1],own:false};
+  c=R(hit,foreignBlock);assert.equal(c.aim,null);assert.equal(c.serverShot,null);
+}
+// The circles' legend (web/app.js ringLegend, cut out as the offline tool cuts the verdict code): each circle names its
+// source, and the replay's comparison is printed only when the shot has both.
+{
+  const {takeFunction}=require(path.join(__dirname,'..','tools','verdicts_offline.cjs'));
+  const src=require('node:fs').readFileSync(path.join(__dirname,'..','web','app.js'),'utf8');
+  const make=new Function('shotContext','viewer',takeFunction(src,'ringLegend')+'\n'+takeFunction(src,'ringCheck')+'\nreturn ringLegend;');
+  const cmp={clientMarker:{centreRadii:.09,centreMetres:.05,sizeRatio:.99,same:false},serverMarker:{same:true},disc:{same:true}};
+  let words=make({replayAim:{comparison:cmp}},{discAim:{}})({source:'snapshot',server:true},{q:.4,from:'replay'});
+  assert.ok(/Solid: your reticle as you pressed fire\n/.test(words),words);
+  assert.ok(words.includes('Thick: the server’s update the shell left by, read from the replay'),words);
+  assert.ok(words.includes('The replay against the battle’s snapshot\n• Solid: centre 0.09 radius (0.05 m) off, size ×0.99'),words);
+  assert.ok(words.includes('• Dashed: the same')&&words.includes('• Thick: the same update in both'),words);
+  words=make({replayAim:{comparison:null}},{discAim:{}})({source:'replay',server:false},{q:.4,from:'replay'});
+  assert.ok(words.includes('rebuilt from the replay, approximate')&&words.includes('No dashed ring: the replay does not hold')&&!words.includes('against'),words);
+  words=make({replayAim:null},{discAim:{}})({source:'snapshot',server:true},{q:.4,from:'last'});
+  assert.ok(!words.includes('replay'),words);
+}
+console.log(JSON.stringify({passed:true,cases:72}));

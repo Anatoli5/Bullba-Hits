@@ -6665,18 +6665,41 @@
   // The legend of an own shot's recorded circles (user, 24.09): up to three, each named by how it differs. `ring` and
   // `disc` are the viewer's (setShotContext); aimTitle() composes the words, so they follow the Shot ring switch
   // (review 24.09): with the ring off, `disc` is null here and neither the thick ring nor the ⚠ is named.
+  // Since 12.11 (BACKLOG 82) each circle also says where it came from: the recorder's snapshot in the battle, or the replay
+  // (ring.source / disc.from, set by the viewer from ArmorShotContext.resolve); a replay-made battle's shot that has both
+  // gets the mod's comparison of the two (replayAim.comparison) as its own group.
   function ringLegend(ring,disc){
-    var out=[];
-    if(ring)out.push('• ● Solid: your reticle as you pressed fire','• ◌ Dashed: the server’s marker at that press');
+    var out=[],rebuilt=!!(ring&&ring.source==='replay');
+    if(ring){
+      out.push('• ● Solid: your reticle as you pressed fire'+(rebuilt?' - rebuilt from the replay, approximate (no snapshot of this shot)':''));
+      if(ring.server!==false)out.push('• ◌ Dashed: the server’s marker at that press'+(rebuilt?' - from the replay':''));
+      else if(rebuilt)out.push('• No dashed ring: the replay does not hold the server’s marker at this press');
+    }
     if(disc){
       out.push('• ◯ Thick dashes: where the server’s gun pointed as the shell left; the shell falls inside it');
       out.push('• This shell: '+disc.q.toFixed(2)+' of the thick circle’s radius from its centre');
+      if(disc.from==='replay')out.push('• Thick: the server’s update the shell left by, read from the replay');
       if(disc.from==='after')out.push('• Thick: the server’s next update; the last one before the tracer was a tick old');
       else if(disc.stale)out.push('• Thick: one tick uncertain (⚠ beside this tile)');
       if(ring)out.push('• Outside the thin, inside the thick: the aim was right, the delay moved the shot');
     }else if(ring&&!(viewer&&viewer.discAim))out.push('• No thick ring: the record does not hold the server’s aim at the shot');
     out.push('• All at the impact point; only the Cyan circle moves');
-    return out.join('\n');
+    var check=ringCheck(ring,disc);
+    return out.join('\n')+(check?'\n\n'+check:'');
+  }
+  // The replay against the battle's snapshot for this shot (the mod's replayAim.comparison: centre gap in the snapshot's
+  // radii and metres, the replay's size over the snapshot's), only when both exist - the drawn rings are the snapshot's.
+  function ringCheck(ring,disc){
+    var cmp=shotContext&&shotContext.replayAim&&shotContext.replayAim.comparison;
+    if(!cmp||!(ring&&ring.source==='snapshot'||disc))return '';
+    function figure(c){if(!c)return null;if(c.same)return 'the same';
+      var parts=[];if(Number.isFinite(c.centreRadii))parts.push('centre '+c.centreRadii.toFixed(2)+' radius'+(Number.isFinite(c.centreMetres)?' ('+c.centreMetres.toFixed(2)+' m)':'')+' off');
+      if(Number.isFinite(c.sizeRatio))parts.push('size ×'+c.sizeRatio.toFixed(2));return parts.length?parts.join(', '):null;}
+    var lines=[],solid=ring&&ring.source==='snapshot'?figure(cmp.clientMarker):null,dashed=ring&&ring.source==='snapshot'&&ring.server!==false?figure(cmp.serverMarker):null;
+    if(solid)lines.push('• Solid: '+solid+(cmp.clientMarker.same?'':' (the replay’s is approximate)'));
+    if(dashed)lines.push('• Dashed: '+dashed);
+    if(disc&&cmp.disc)lines.push('• Thick: '+(cmp.disc.same?'the same update in both':'a different update in the snapshot'));
+    return lines.length?'The replay against the battle’s snapshot\n'+lines.join('\n'):'';
   }
   // The ⚠ beside the circle tile (user, 24.09): the shot ring of this own shot is one server tick uncertain - the shell
   // left by an aim update the record does not hold (ArmorShotContext.serverShot, stale). Shown with the ring only:
@@ -6695,7 +6718,8 @@
           :'\n\n• Known: the vehicle moved '+d.gap.toFixed(2)+' m in that tick; the ring starts at the shell’s real origin')+
         '\n• Not known: how far the gun turned in that tick; the thick ring keeps the older aim as is'+
         '\n• How far off: 4 to 5 such shells in 10 land outside their ring (22 recorded shots): half of those within 2 radii, the rest up to 6'+
-        (d.afterRecorded?'\n\nThe updates recorded after this shot do not match its origin either, so it stays uncertain.'
+        (d.from==='replay'?'\n\nThe replay holds no update at this shell’s origin either, so it stays uncertain.'
+          :d.afterRecorded?'\n\nThe updates recorded after this shot do not match its origin either, so it stays uncertain.'
           :'\n\nBattles recorded by newer builds keep the next update, which usually makes the ring exact.');}
     if(show!==discNoteShown){discNoteShown=show;e.hidden=!show;}
   }

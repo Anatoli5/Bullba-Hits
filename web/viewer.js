@@ -1368,12 +1368,16 @@
     // dashed the server's. Both are the snapshot of the PRESS (what the player aimed with), kept beside the disc.
     // The solid ring's gun is the client's at the press (aim.gunOrigin, every record); the dashed one's is the server
     // update the server marker was made from (the same receipt), else that gun too.
+    // Rebuilt from the replay (context.aim.rebuilt, BACKLOG 82): the block was made for this press, so the receipt checks
+    // of a snapshot's parts do not apply; the dashed ring's axis is the block's own last server update.
     if(context.aim){
-      var gun=context.aim.gunOrigin,update=context.aim.lastServerGunUpdate;
+      var gun=context.aim.gunOrigin,update=context.aim.lastServerGunUpdate,rebuilt=!!context.aim.rebuilt;
       ring(context.aim.clientMarker,AIM_RING,false,gun);
-      var server=context.aim.serverMarker,client=context.aim.clientMarker;
-      if(server&&client&&Number.isFinite(server.receivedAt)&&Math.abs(server.receivedAt-client.receivedAt)<.5)
-        ring(server,AIM_RING,true,update&&Array.isArray(update.origin)&&Math.abs(update.receivedAt-server.receivedAt)<.02?update.origin:gun);
+      var server=context.aim.serverMarker,client=context.aim.clientMarker,dashed=false;
+      if(server&&client&&(rebuilt||Number.isFinite(server.receivedAt)&&Math.abs(server.receivedAt-client.receivedAt)<.5)){dashed=!!(server.position&&server.direction&&server.diameter>0);
+        ring(server,AIM_RING,true,update&&Array.isArray(update.origin)&&(rebuilt||Math.abs(update.receivedAt-server.receivedAt)<.02)?update.origin:gun);}
+      // Where the two rings came from, for the circles' legend (app.js ringLegend).
+      if(this.ringAim){this.ringAim.source=rebuilt?'replay':'snapshot';this.ringAim.server=dashed;}
     }
     // The disc (outputs/own-shot-centre-2026-09-24.md section 9.1): the shell's angular offset from the server's axis
     // n, dx = (v·e1)/(v·n), dy = (v·e2)/(v·n) with e1 = n × up, e2 = e1 × n (world frame, the offline tool's axes),
