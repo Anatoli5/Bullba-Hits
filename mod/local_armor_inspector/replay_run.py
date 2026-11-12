@@ -33,6 +33,7 @@ from __future__ import absolute_import
 import array
 import base64
 import copy
+import gc
 import json
 import logging
 import os
@@ -420,6 +421,30 @@ class Consumption(object):
         self.slices = 0
         self.times = {}
         self.outcome = None
+        # What the job cost in the game (slice_done, job): the longest slice, the part of the job it was spent on, whether
+        # a full collection of the garbage collector ran in it, and in how many slices one ran.
+        self.longest, self.longest_part, self.longest_full = 0.0, None, False
+        self.full = 0
+
+    def slice_done(self, seconds, before, counts):
+        """One slice of the job ended (Exporter.run_replay_job): `seconds` its work, `before` a copy of `times` and `counts`
+        gc.get_count() taken at its start. A full collection (generation 2) ran in it when the generation-2 count went down,
+        or stayed 0 while the generation-1 count went down (a generation-1 collection alone would have raised it): at least
+        one - two in one slice count once. No clock read here: the caller's two are the measurement."""
+        self.work += seconds
+        self.slices += 1
+        after = gc.get_count()
+        full = after[2] < counts[2] or (after[2] == 0 == counts[2] and after[1] < counts[1])
+        if full: self.full += 1
+        if seconds > self.longest:
+            grew = [(self.times.get(k, 0.0) - before.get(k, 0.0), k) for k in self.times]
+            self.longest, self.longest_part, self.longest_full = seconds, max(grew)[1] if grew else None, full
+
+    def job(self, now):
+        """The 'job' block of the battle's index entry and its log line (Exporter.run_replay_job): what the job cost."""
+        return {'slices':self.slices, 'work':round(self.work, 3), 'wall':round(now - self.began, 2),
+                'longest':round(self.longest, 3), 'longestPart':self.longest_part, 'longestFull':self.longest_full,
+                'fullCollections':self.full, 'gcEnabled':gc.isenabled(), 'gcThreshold':list(gc.get_threshold())}
 
     def lap(self, key, started):
         self.times[key] = self.times.get(key, 0.0) + (TIMER() - started)

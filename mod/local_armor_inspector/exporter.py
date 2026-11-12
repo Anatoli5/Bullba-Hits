@@ -7,6 +7,7 @@ the matching client resources. Models are retained across game updates.
 """
 from __future__ import absolute_import
 import copy
+import gc
 import glob
 import hashlib
 import io
@@ -4178,6 +4179,7 @@ class Exporter(object):
         if work is None or work.name != name:
             work = self.replay_work = Consumption(self, (payload or {}).get('message') or {'battle':name})
             work.gen = work.steps()
+        before, counts = dict(work.times), gc.get_count()
         began = TTX_TIMER()
         deadline = began + BATTLE_SLICE
         done = False
@@ -4198,13 +4200,25 @@ class Exporter(object):
                 self.replay_live_again(name)
             except Exception:
                 LOG.exception('Replay failure of %s not noted', name)
-        work.work += TTX_TIMER() - began
-        work.slices += 1
+        work.slice_done(TTX_TIMER() - began, before, counts)
         if not done: return True
         self.replay_work = None
         LOG.info('Replay of %s: %s in %.1f s (%.2f s of work in %d slices: %s)', name,
                  (work.outcome or ('failed',))[0], TTX_TIMER() - work.began, work.work, work.slices,
                  ', '.join('%s %.2f s' % kv for kv in sorted(work.times.items())))
+        # What it cost in the game (the stand's times are offline; a full collection there walks the whole client's heap):
+        # in the log and in the battle's index entry, which outlives the log.
+        job = work.job(TTX_TIMER())
+        LOG.info('Replay of %s, its cost in the game: %d slices, %.2f s of work, the longest slice %.3f s (%s%s); garbage '
+                 'collector %s (thresholds %s), a full collection (generation 2) in %d slice(s)', name, job['slices'],
+                 job['work'], job['longest'], job['longestPart'], ', a full collection in it' if job['longestFull'] else '',
+                 'enabled' if job['gcEnabled'] else 'disabled', '/'.join(str(n) for n in job['gcThreshold']),
+                 job['fullCollections'])
+        try:
+            self.replay_entry(name)['job'] = job
+            self.write_replay_state()
+        except Exception:
+            LOG.exception('Replay job figures of %s not noted', name)
         return False
 
     def replay_consumed(self, name, status, notes, message, info, kept_bytes):

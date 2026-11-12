@@ -71,6 +71,18 @@ def drain(e, work, slices=None):
     return longest
 
 
+def Lines():
+    """A logging handler that keeps the messages (the mod's line of what a replay job cost)."""
+    import logging
+
+    class Handler(logging.Handler):
+        def emit(self, record):
+            self.lines.append(record.getMessage())
+    handler = Handler(logging.INFO)
+    handler.lines = []
+    return handler
+
+
 def longest_text(slices):
     """'0.231 s (definitions)': the longest replay slice without a full garbage collection and the part of the job it was
     spent on; then the slices that had one, each with its time and part."""
@@ -166,12 +178,18 @@ def main():
         e.client = lambda: snap
         e.game = R.GAME
         message = stand.message(BIG, copy_path, complete=False, final=final, finalOwned=True)
+        seen = Lines()
+        log.addHandler(seen)
+        level = log.level
+        log.setLevel(logging.INFO)
         started = clock()
         e.replay_stream(message)
         work = []
         slices = []
         longest = drain(e, work, slices)
         first_wall = clock() - started
+        log.removeHandler(seen)
+        log.setLevel(level)
         name = stand.names[BIG]
         value = stand.published(BIG)
         check(value.get('source') == 'replay' and value['replay']['stream']['from'] == 'final replay file'
@@ -183,6 +201,15 @@ def main():
         last = e.replay_state()[name]
         check(longest < 0.3, '17:42: the longest slice of the job %s - BATTLE_SLICE = 0.1 s, then the step that crosses '
               'it; in brackets the part of the job that slice was spent on' % longest_text(slices), WALL.strip())
+        # What the mod itself says the job cost (its log line and the battle's index entry): consistent with the slices
+        # the test timed around run_job (the mod's own slice is inside that).
+        job = last.get('job') or {}
+        cost = [l for l in seen.lines if l.startswith('Replay of %s, its cost in the game: ' % name)]
+        check(len(cost) == 1 and job.get('slices') == len(slices) and 0 < job.get('longest', 0) <= job.get('work', 0)
+              and job['longest'] <= max(row[0] for row in slices) + 0.001 and job.get('longestPart') in work[0].times
+              and 0 <= job.get('fullCollections', -1) <= job['slices'],
+              '17:42: the mod logs and keeps what the job cost, consistent with the slices timed here', repr((cost, job)))
+        if cost: lines.append('the mod\'s line: ' + cost[0])
         lines.append('17:42 first battle of a session, the whole job: %.2f s (%s); kept stream %.2f MB (stream %.2f MB), '
                      'stored records %.2f MB, raw record %.2f MB, published file %.2f MB'
                      % (first_wall, ', '.join('%s %.2f s' % kv for kv in sorted(work[0].times.items())) if work else '?',

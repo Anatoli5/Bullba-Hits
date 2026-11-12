@@ -13,6 +13,7 @@ helpers run under the client's Python 2.7 too: tests/py27/replay_run.py imports 
 from __future__ import print_function
 import copy
 import json
+import logging
 import os
 import random
 import shutil
@@ -126,6 +127,17 @@ class Stand(object):
         shutil.rmtree(self.root, ignore_errors=True)
 
 
+class Lines(logging.Handler):
+    """A logging handler that keeps the formatted messages (the job's cost line)."""
+
+    def __init__(self):
+        logging.Handler.__init__(self, logging.INFO)
+        self.lines = []
+
+    def emit(self, record):
+        self.lines.append(record.getMessage())
+
+
 def rr_names():
     from local_armor_inspector.replay_records import Names
     return Names()
@@ -188,6 +200,27 @@ class SyntheticTests(unittest.TestCase):
         self.assertEqual(got['compact'], {7:'AAE='})
         self.assertEqual((statics, info), ({'AAE=':{'parts':[]}}, {'from':'x'}))
 
+    def test_the_job_counts_its_slices_and_full_collections(self):
+        """Consumption.slice_done / job (what the job cost in the game): the longest slice and its part, a full garbage
+        collection inside a slice counted, the totals consistent."""
+        import gc
+        work = rr.Consumption(None, {'battle':'1-a'})
+        work.times = {'decode':0.05}
+        work.slice_done(0.05, {}, gc.get_count())
+        junk = [[k] for k in range(100000)]           # counts above zero, so a collection shows as a drop
+        before, counts = dict(work.times), gc.get_count()
+        work.times['publish'] = 0.12
+        gc.collect()
+        work.slice_done(0.12, before, counts)
+        del junk
+        job = work.job(work.began + 1.0)
+        self.assertEqual((job['slices'], job['longestPart'], job['longestFull'], job['fullCollections']),
+                         (2, 'publish', True, 1))
+        self.assertAlmostEqual(job['work'], 0.17)
+        self.assertLessEqual(job['longest'], job['work'])
+        self.assertEqual(job['gcEnabled'], gc.isenabled())
+        self.assertEqual(job['gcThreshold'], list(gc.get_threshold()))
+
     def test_the_static_part_box_is_not_published(self):
         from local_armor_inspector.exporter import Exporter
         root = tempfile.mkdtemp()
@@ -242,10 +275,31 @@ class RunTimeTests(unittest.TestCase):
         for arena in sorted(KILL_CAM):
             e = stand.exporter(KILL_CAM[arena])
             path = self.copy_of(stand, arena)
-            consume(e, stand.message(arena, path))
+            seen = Lines()
+            log = logging.getLogger('local.armor_inspector')
+            log.addHandler(seen)
+            level = log.level
+            log.setLevel(logging.INFO)
+            try: consume(e, stand.message(arena, path))
+            finally:
+                log.removeHandler(seen)
+                log.setLevel(level)
             first = stand.published(arena)
             self.assert_window(first, arena)
             name = stand.names[arena]
+            # What the job cost: one log line and the same figures in the battle's index entry, consistent.
+            cost = [l for l in seen.lines if l.startswith('Replay of %s, its cost in the game: ' % name)]
+            self.assertEqual(len(cost), 1, seen.lines)
+            job = e.replay_state()[name]['job']
+            self.assertGreater(job['slices'], 0)
+            self.assertGreater(job['longest'], 0)
+            self.assertLessEqual(job['longest'], job['work'] + 0.001)
+            self.assertLessEqual(job['work'], job['wall'] + 0.01)
+            self.assertIn(job['longestPart'], ('read', 'final', 'decrypt', 'definitions', 'decode', 'publish', 'keep'))
+            self.assertLessEqual(job['fullCollections'], job['slices'])
+            self.assertIn('%d slices, %.2f s of work, the longest slice %.3f s (%s' % (job['slices'], job['work'],
+                          job['longest'], job['longestPart']), cost[0])
+            print(cost[0])
             self.assertFalse(os.path.exists(path))
             self.assertTrue(os.path.isfile(e.replay_stream_path(name)))
             self.assertTrue(os.path.isfile(e.replay_records_path(name)))
