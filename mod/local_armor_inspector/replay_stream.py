@@ -661,8 +661,16 @@ def iter_packets(stream, tail=None):
 
 
 class Decoder(object):
-    def __init__(self, defs):
+    def __init__(self, defs, skip=None, skip_properties=()):
+        """`skip`: {packet type: events it yields} not decoded, `skip_properties`: property names (packet 0x07) not
+        decoded - for a reader that needs none of them (replay_run.LEAN_TYPES); counted in `skipped` (the events they would
+        have yielded) and in `last_clock` (the clock of the last event, yielded or skipped)."""
         self.defs = defs
+        self.skip = dict(skip or {})
+        self.skip_properties = frozenset(skip_properties)
+        self.skip_ids = {}  # entity type name -> property ids not decoded
+        self.skipped = 0
+        self.last_clock = None
         self.entities = {}  # entity id -> entity type name
         self.packets = collections.Counter()
         self.members = collections.Counter()  # (entity, name) decoded exactly
@@ -698,13 +706,21 @@ class Decoder(object):
         self.objects.reg.base = rc.calibrate_base(stream, self.objects.reg)
         last = None
         tail = []
+        skip, skip_properties = self.skip, self.skip_properties
         for ptype, clock, p in iter_packets(stream, tail):
             if clock != last and self.objects.pending:
                 for ev in self.objects.flush():
+                    if 't' in ev: self.last_clock = ev['t']
                     yield ev
             last = clock
             name = PACKET_NAMES.get(ptype, 'type_0x%02x' % ptype)
             self.packets[name] += 1
+            if ptype in skip or (ptype == 0x07 and skip_properties and self._skipped_property(p)):
+                events = skip.get(ptype, 1)
+                if events:
+                    self.skipped += events
+                    self.last_clock = clock
+                continue
             try:
                 if ptype == 0x32:
                     evs = self.objects.create(p)
@@ -732,12 +748,27 @@ class Decoder(object):
                         self.values[ev['id']] = ev['props']
                     elif ev['ev'] == 'property' and 'name' in ev:
                         self.values.setdefault(ev['id'], {})[ev['name']] = ev['value']
+                    if 't' in ev: self.last_clock = ev['t']
                     yield ev
         self.partial_bytes = tail[0] if tail else 0
         if self.partial_bytes:
             self.packets['(partial last packet, dropped)'] += 1
         for ev in self.objects.flush():
+            if 't' in ev: self.last_clock = ev['t']
             yield ev
+
+    def _skipped_property(self, p):
+        """A property packet (0x07) of a property in skip_properties: its entity's type known (created before) and the
+        property's id one of that type's skipped names."""
+        eid, mid = struct.unpack_from('<II', p, 0)
+        entity = self.entities.get(eid)
+        if entity is None: return False
+        ids = self.skip_ids.get(entity)
+        if ids is None:
+            spec = self.defs.spec(entity)
+            ids = self.skip_ids[entity] = frozenset(i for i, member in enumerate(spec.client_props if spec else ())
+                                                    if member[0] in self.skip_properties)
+        return mid in ids
 
     def _member(self, kind, eid, mid, data):
         ent = self.entities.get(eid)

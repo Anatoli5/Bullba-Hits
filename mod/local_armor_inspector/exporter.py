@@ -238,6 +238,31 @@ def canonical(version):
     return version.lstrip(u'\ufeff').replace('\r\n', '\n')
 
 
+try:
+    _ATOMS = frozenset((int, long, float, bool, type(None), str, unicode))   # noqa: F821 (Python 2)
+    _ITEMS = dict.iteritems
+except NameError:
+    _ATOMS = frozenset((int, float, bool, type(None), str, bytes))
+    _ITEMS = dict.items
+
+
+def json_copy(value):
+    """copy.deepcopy of JSON-shaped data (dict, list, tuple, numbers, strings) without its memo and dispatch: a hit's
+    record and a vehicle's statics are copied 1.5-3.5x faster under the client's Python 2.7 (backlog 84: prepare_hit
+    0.235 -> 0.161 s on the 17:42 battle). Anything else (a set, an object) goes through copy.deepcopy. One difference: a
+    sub-object the value holds twice becomes two copies (deepcopy keeps one) - the records it copies hold none."""
+    kind = type(value)
+    if kind is dict:
+        out = {}
+        for key, item in _ITEMS(value):
+            out[key] = item if type(item) in _ATOMS else json_copy(item)
+        return out
+    if kind is list: return [item if type(item) in _ATOMS else json_copy(item) for item in value]
+    if kind in _ATOMS: return value
+    if kind is tuple: return tuple([item if type(item) in _ATOMS else json_copy(item) for item in value])
+    return copy.deepcopy(value)
+
+
 def job_key(kind, payload):
     """Identity of one queued job: a model is its resource, a vehicle its type.
 
@@ -5610,7 +5635,7 @@ class Exporter(object):
         return kept
 
     def prepare_hit(self, raw, index, battle, track=False):
-        hit = copy.deepcopy(raw)
+        hit = json_copy(raw)
         # The client's box of a static part the recorder writes on every point since 11.11 (Recorder.capture: the scene
         # rebuilt from the replay decodes the point on it, replay_scene.recover_boxes) is not published: a battle's file
         # stays what it was. A wheel's, a prefab's and an unknown part's point published its box before and still does.
@@ -5635,7 +5660,7 @@ class Exporter(object):
         # Its inputs: the vehicle XML, the nation's tables and the code that decode the descriptor, the common armour XML, the
         # material names and the added parts' .havok - recorded for the running client's battle too (review #5).
         if EXTRA_PARTS_WARNING in (hit.get('warnings') or ()):
-            trial = copy.deepcopy(hit)
+            trial = json_copy(hit)
             done = False
             if fix_extra_parts(trial):
                 known = set(p.get('id') for p in target.get('parts') or () if isinstance(p, dict))

@@ -234,11 +234,20 @@ class Definitions(object):
 _DONE = object()
 
 
+# What the run-time path does not decode (replay_stream.Decoder's skip): packets and Vehicle/Avatar properties neither
+# replay_records.Converter nor its Tracks read - per type, the events each would have yielded (the stream info counts
+# them all the same). 0.13 s of the 17:42 battle (11.11 profile). The aim packets 0x1a (client_gun_marker) and 0x39
+# (volatile, the server's gun marker) stay: the aim circles are to be built from them (backlog 82).
+LEAN_TYPES = {0x1f:1, 0x26:1, 0x36:0}   # net_stats, camera, tick_marker (no event)
+LEAN_PROPERTIES = ('engineMode', 'isStrafing', 'ownVehicleAuxPhysicsData', 'wheelsScroll')
+
+
 def decode(definitions, stream):
     """(decoder, events) of one stream with the session's registry. replay_stream.Decoder.decode builds a Registry of its own
     (a scan of every package, 3.09 s under the client's Python 2.7) on its first step; that one step runs with
-    replay_objects.Registry answering the session's instead, put back right after it (export thread only)."""
-    decoder = rd.Decoder(definitions.defs)
+    replay_objects.Registry answering the session's instead, put back right after it (export thread only). What nothing
+    reads is not decoded (LEAN_TYPES, LEAN_PROPERTIES)."""
+    decoder = rd.Decoder(definitions.defs, skip=LEAN_TYPES, skip_properties=LEAN_PROPERTIES)
     return decoder, _events(decoder, stream, definitions.registry)
 
 
@@ -260,13 +269,29 @@ def _events(decoder, stream, registry):
 _SCHEDULE = []
 
 
-def decrypt_blocks(data, chain):
-    """(plain bytes, chain) of whole 8-byte blocks: replay_stream.decrypt_replay_stream's own loop (Blowfish-ECB, each
-    decrypted block XOR the previous plain block) with its two differences for a stream decrypted in steps - the key
-    schedule computed once a session (the decoder's function computes it again on every call, ~0.05 s under the client's
-    Python 2.7: 32 chunks of a 2 MB file cost 1.7 s more, measured 11.11) and the chain carried from the step before."""
+def merged_table():
+    """S0[a] + S1[b] (mod 2^32) at a << 8 | b: Blowfish's F as one lookup fewer and one addition fewer per round - 1.33x
+    faster under the client's Python 2.7 (0.259 -> 0.195 s for 256 KB, measured 12.11; unrolling the rounds besides gained
+    nothing measurable). 65 536 entries, 2.56 MB there (the values above 2^31 are long objects on Windows), built in 6 ms:
+    a final file being decrypted holds it (FinalFile), nothing keeps it after."""
     if not _SCHEDULE: _SCHEDULE.append(rd._blowfish_schedule(rd.REPLAY_KEY))
-    P, (S0, S1, S2, S3) = _SCHEDULE[0]
+    S0, S1 = _SCHEDULE[0][1][0], _SCHEDULE[0][1][1]
+    table = [0] * 65536
+    for a in range(256):
+        x, base = S0[a], a << 8
+        for b in range(256): table[base | b] = (x + S1[b]) & 0xffffffff
+    return table
+
+
+def decrypt_blocks(data, chain, table=None):
+    """(plain bytes, chain) of whole 8-byte blocks: replay_stream.decrypt_replay_stream's own loop (Blowfish-ECB, each
+    decrypted block XOR the previous plain block) with its differences for a stream decrypted in steps - the key
+    schedule computed once a session (the decoder's function computes it again on every call, ~0.05 s under the client's
+    Python 2.7: 32 chunks of a 2 MB file cost 1.7 s more, measured 11.11), the chain carried from the step before and
+    S0 + S1 looked up at once (`table`, merged_table(): built here when not given)."""
+    if not _SCHEDULE: _SCHEDULE.append(rd._blowfish_schedule(rd.REPLAY_KEY))
+    P, (_, _, S2, S3) = _SCHEDULE[0]
+    T01 = table if table is not None else merged_table()
     rounds = P[17:1:-1]
     p0, p1 = P[0], P[1]
     n = len(data) // 8
@@ -278,7 +303,7 @@ def decrypt_blocks(data, chain):
         r = vals[2 * b + 1]
         for k in rounds:
             l ^= k
-            r ^= ((((S0[l >> 24] + S1[(l >> 16) & 255]) & 0xffffffff) ^ S2[(l >> 8) & 255]) + S3[l & 255]) & 0xffffffff
+            r ^= ((T01[l >> 16] ^ S2[(l >> 8) & 255]) + S3[l & 255]) & 0xffffffff
             l, r = r, l
         l, r = r, l
         pl ^= l ^ p0
@@ -308,15 +333,20 @@ class FinalFile(object):
         self.raw_size, self.packed_size = struct.unpack_from('<II', data, offset)
         self.cipher = data[offset + 8:]
         self.at, self.chain, self.plain = 0, (0, 0), []
+        self.table = None
 
     def step(self):
         """Decrypt the next chunk; True when all is decrypted."""
         if self.at < len(self.cipher):
+            if self.table is None: self.table = merged_table()
             chunk = self.cipher[self.at:self.at + CHUNK]
             self.at += CHUNK
-            out, self.chain = decrypt_blocks(chunk, self.chain)
+            out, self.chain = decrypt_blocks(chunk, self.chain, self.table)
             self.plain.append(out)
-        return self.at >= len(self.cipher)
+        if self.at >= len(self.cipher):
+            self.table = None
+            return True
+        return False
 
     def stream(self):
         stream = bytearray(zlib.decompress(b''.join(self.plain)[:self.packed_size]))
@@ -407,10 +437,15 @@ class StoredSource(object):
         if 'wheels' not in value and 'extrasError' not in value and hasattr(self.inner, 'compact_extras'):
             try: value.update(self.inner.compact_extras(compact))
             except Exception as exc: value['extrasError'] = str(exc) or type(exc).__name__
-        return copy.deepcopy(value)
+        return json_copy(value)
 
     def model(self, resource):
         return self.inner.model(resource)
+
+
+def json_copy(value):
+    from .exporter import json_copy as copier
+    return copier(value)
 
 
 # ---- small file helpers -----------------------------------------------------------------------------------------------
@@ -579,12 +614,11 @@ class Consumption(object):
             started = TIMER()
             converter = exporter.replay_converter(name, header, definitions)
             decoder, events = decode(definitions, stream)
-            records, count, last_clock = [], 0, None
+            records, count = [], 0
             try:
                 for event in events:
                     records.extend(converter.feed(event))
                     count += 1
-                    last_clock = event.get('t', last_clock)
                     if count % EVENTS_PER_STEP == 0:
                         self.lap('decode', started)
                         yield
@@ -602,7 +636,10 @@ class Consumption(object):
             # equal to a whole final file and it ends on a packet; anything else may lack the battle's last moments (the
             # copy is taken every 2 s).
             partial = getattr(decoder, 'partial_bytes', 0) or 0
-            info.update({'bytes':len(stream), 'events':count, 'lastClock':last_clock, 'partialBytes':partial})
+            # The events and the last clock as if every packet were decoded (the skipped ones counted by the decoder).
+            last_clock = decoder.last_clock
+            info.update({'bytes':len(stream), 'events':count + decoder.skipped, 'lastClock':last_clock,
+                         'partialBytes':partial})
             whole = final_used or ended is not None or (message.get('complete') is True and not partial)
             info['cut'] = not whole
             if not whole: notes.append(W_CUT % clock_text(last_clock))

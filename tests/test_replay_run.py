@@ -210,6 +210,35 @@ class SyntheticTests(unittest.TestCase):
         finally:
             shutil.rmtree(folder, ignore_errors=True)
 
+    def test_the_light_copy_is_deepcopys(self):
+        """exporter.json_copy (backlog 84) in place of copy.deepcopy on a hit's record and a vehicle's statics: an equal
+        value sharing no list or dict with the original; what is not JSON-shaped (a set) still goes through deepcopy."""
+        from local_armor_inspector.exporter import json_copy
+        rng = random.Random(5)
+        def value(depth):
+            kind = rng.randrange(7 if depth < 4 else 4)
+            if kind == 0: return rng.randrange(-5, 5)
+            if kind == 1: return rng.random()
+            if kind == 2: return rng.choice(['a', u'\u00e9', None, True, False])
+            if kind == 3: return 'x%d' % rng.randrange(9)
+            if kind == 4: return [value(depth + 1) for _ in range(rng.randrange(4))]
+            if kind == 5: return dict(('k%d' % k, value(depth + 1)) for k in range(rng.randrange(4)))
+            return tuple(value(depth + 1) for _ in range(rng.randrange(3)))
+        for _ in range(200):
+            original = {'points':[value(1) for _ in range(3)], 'target':value(1), 'tags':set([1, 2])}
+            got = json_copy(original)
+            self.assertEqual(got, copy.deepcopy(original))
+            seen = []
+            def containers(v):
+                if isinstance(v, (list, dict, set)): seen.append(id(v))
+                for item in (v.values() if isinstance(v, dict) else v if isinstance(v, (list, tuple, set)) else ()):
+                    containers(item)
+            containers(original)
+            mine = set(seen)
+            del seen[:]
+            containers(got)
+            self.assertFalse(mine & set(seen))
+
     def test_poses_survive_the_store(self):
         import array
         poses = {'type':'poses', 'format':1, 'playerVehicleId':7, 'serverTimeAtStart':123.5,
@@ -434,6 +463,36 @@ class RunTimeTests(unittest.TestCase):
         finally:
             rr.FinalFile = original
         self.assertEqual(values['end in the copy'], values['no end in the copy'])
+
+    def test_the_lean_decode_gives_the_same_records(self):
+        """Backlog 84: the run-time decode leaves out what nothing reads (replay_run.LEAN_TYPES, LEAN_PROPERTIES) - the
+        aim packets 0x1a and 0x39 still decoded - and the records, their poses, the event count and the last clock are
+        those of the full decoder (checked so on the 33 battles of 11.11 and the 8 local fixtures, 12.11)."""
+        from local_armor_inspector import replay_records as rrec
+        self.assertFalse({0x1a, 0x39} & set(rr.LEAN_TYPES))
+        defs = definitions()
+        def run(stream, lean):
+            decoder = rd.Decoder(defs.defs, skip=rr.LEAN_TYPES if lean else None,
+                                 skip_properties=rr.LEAN_PROPERTIES if lean else ())
+            converter = rrec.Converter(session='x', vehicle_names=defs.vehicle_names, poses=True)
+            out, count, last, kinds = [], 0, None, set()
+            for event in rr._events(decoder, stream, defs.registry):
+                out.extend(converter.feed(event))
+                count += 1
+                last = event.get('t', last)
+                kinds.add(event.get('ev'))
+            out.extend(converter.finish())
+            poses = out.pop()
+            shape = dict((k, sorted((vid, list(a), list(b)) for vid, (a, b) in poses[k].items())) for k in ('positions', 'guns'))
+            if lean: count, last = count + decoder.skipped, decoder.last_clock
+            return out, shape, count, last, kinds
+        for arena in sorted(KILL_CAM):
+            _, stream = final_stream(KILL_CAM[arena], t.LIVE)
+            for data in (stream, packet_cut(stream, 0.7)):
+                full, lean = run(data, False), run(data, True)
+                self.assertEqual(full[:4], lean[:4], arena)
+                self.assertIn('client_gun_marker', lean[4])
+                self.assertFalse({'net_stats', 'camera'} & lean[4])
 
     def test_a_cut_off_stream_is_used_as_far_as_it_goes(self):
         arena = '16434853064049700'
