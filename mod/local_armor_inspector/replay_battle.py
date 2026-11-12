@@ -67,6 +67,14 @@ ROUTINE_LIVE_ONLY = frozenset(('crit:collision', 'crit:damageInfo', 'crit:damage
 # The mark of a record published from the live record because the replay has no twin of it; a hit's source value.
 LIVE_ONLY = 'liveOnly'
 LIVE_SOURCE = 'live'
+# The live header's 'recording' of a battle whose recorder kept the two snapshots only (BACKLOG 87,
+# mod_local_armor_inspector.RECORDING_SNAPSHOTS): its other vehicles' shots, its shell ends and its crits have no live
+# twin, so the receipt time the page links and clocks them by (receivedAt) is made from the replay: the receipt of a
+# matched snapshot of the same tick, else the gameTime on the battle's wall clock (the median of live receivedAt - replay
+# gameTime over the matched hits and own shots). Measured 12.11 on the four battles with both sources, the live record cut
+# to the snapshots: the page's shot of a hit (tracer, stop, aim) the same for 175 of 176 hits (one loses its stop: a
+# receipt 0.1-0.3 s off); every receipt time but one within 0.05 s of the live one. A full battle's records are as before.
+SNAPSHOTS = 'snapshots'
 
 
 def number(value):
@@ -177,6 +185,25 @@ def build(records, live=None, battle_id=None):
                for r in group for m in [table.get(id(r))] if m is not None
                and number(r.get('gameTime')) is not None and number(m.get('gameTime')) is not None]
     offset = median(offsets)
+    wall, ticks = None, {}
+    if live.get('recording') == SNAPSHOTS:
+        known = [(number(r['gameTime']), number(m['receivedAt'])) for group, table in ((hits, hit_live), (shots, shot_live))
+                 for r in group for m in [table.get(id(r))] if m is not None
+                 and number(m.get('receivedAt')) is not None and number(r.get('gameTime')) is not None]
+        wall = median([at - when for when, at in known])
+        for when, at in known:
+            key = round(when, 4)
+            ticks[key] = min(at, ticks.get(key, at))
+    on_wall = [0]
+
+    def wall_time(record):
+        """A record without a live twin of a snapshots-only battle: its receivedAt - the earliest receipt of a matched
+        snapshot of the same replay tick (a tracer, its stop and its hit at close range share one; the page links them
+        by receipt order), else its gameTime on the battle's wall clock."""
+        when = number(record.get('gameTime'))
+        if wall is not None and when is not None and 'receivedAt' not in record:
+            record['receivedAt'] = ticks.get(round(when, 4), when + wall)
+            on_wall[0] += 1
 
     # ---- what the live record had and the replay has not: published from the live record (not the routine kinds) ----
     matched = set(id(m) for table in (hit_live, shot_live, crit_live) for m in table.values())
@@ -203,6 +230,7 @@ def build(records, live=None, battle_id=None):
             by_live[m.get('id')] = s
         else:
             s['id'] = NEW_ID['shot'] + str(r.get('id', '')).lstrip('s')
+            wall_time(s)
         ids[r.get('id')] = s['id']
         out_shots.append(s)
     for s in out_shots:
@@ -263,6 +291,7 @@ def build(records, live=None, battle_id=None):
             if 'receivedAt' in m: c['receivedAt'] = m['receivedAt']
         else:
             c['id'] = NEW_ID['crit'] + str(r.get('id', '')).lstrip('c')
+            wall_time(c)
         out_crits.append(c)
     out_crits = merge(out_crits, extra['crit'])
 
@@ -282,6 +311,10 @@ def build(records, live=None, battle_id=None):
               'livePublished':published_live, 'clockOffset':offset}
     for k, name in (('replayServerTimeAtStart', 'serverTimeAtStart'), ('replayClientVersion', 'clientVersion')):
         if header.get(k) is not None: report[name] = header[k]
+    if wall is not None or live.get('recording') == SNAPSHOTS:
+        report['liveRecording'] = SNAPSHOTS
+        report['wallClock'] = wall
+        report['receivedAtFromReplay'] = on_wall[0]
     if points_differ: report['pointsDiffer'] = points_differ
     if candidates_dropped: report['traceCandidatesDropped'] = candidates_dropped
     battle['replay'] = report

@@ -175,6 +175,64 @@ def battle_mode(arena):
     return mode
 
 
+# --- what the recorder writes in a battle whose replay is confirmed (BACKLOG 87, the user's decision 11.11.2026) -----------
+# The replay is the source of every event of a battle; in such a battle the recorder keeps the two snapshots the page shows
+# beside the scene rebuilt from the replay - the own shot (command, own tracers, gunAfterShot) and the shown hit - with the
+# battle header and the roster. It writes no crit record and no tracer, stop or explosion of another vehicle, and records
+# no end of its own shells (the replay has every one of them). Everywhere else it records everything, as before.
+#
+# THE ONE LIST of the battle modes whose replay is confirmed: bonusType -> the name the client gives it (both must agree).
+# Evidence, 11.11.2026: the 33 battles of 1.06 on 2.4.1.1 #992 all went through the replay path and matched - 15 random
+# (1 REGULAR), 13 tournament (14 TOURNAMENT_REGULAR), 5 training (2 TRAINING): the live record had no hit, health change,
+# tracer or shell stop that the replay lacked (docs/KNOWLEDGE.md section 18). A mode not listed here has not gone through
+# the replay path: recorded in full.
+REPLAY_CONFIRMED_MODES = {1:'REGULAR', 2:'TRAINING', 14:'TOURNAMENT_REGULAR'}
+# The client those 33 battles were played on: <version> of version.xml. Must equal tools/client_version.VERSION_XML
+# (tests/test_recorder_scope.py); another client is recorded in full until the replay path is checked on it.
+REPLAY_CONFIRMED_CLIENT = 'v.2.4.1.1 #992'
+# Value of the battle header's 'recording' for such a battle (replay_battle.SNAPSHOTS reads it); a full battle has no key.
+RECORDING_SNAPSHOTS = 'snapshots'
+
+
+def client_build(version_text):
+    """'v.2.4.1.1 #992' out of the text of version.xml, or None."""
+    import re
+    found = re.search(r'<version>\s*([^<]*?)\s*</version>', version_text or '')
+    return found.group(1) if found else None
+
+
+def recording_scope(mode, version_text, replay_recording):
+    """(snapshots only, why) of a battle: True only when its mode is in REPLAY_CONFIRMED_MODES (id and name), a replay
+    recording runs at its start and the client is REPLAY_CONFIRMED_CLIENT. `why` says what decided it - for a full
+    battle the first condition that failed. Pure: the recorder asks it once per battle (Recorder.snapshots_only)."""
+    mode = mode if isinstance(mode, dict) else {}
+    bonus, name = mode.get('bonusType'), mode.get('bonusTypeName')
+    if bonus not in REPLAY_CONFIRMED_MODES or REPLAY_CONFIRMED_MODES[bonus] != name:
+        return False, 'mode %s (bonusType %s) has not gone through the replay path' % (name, bonus)
+    client = client_build(version_text)
+    if client != REPLAY_CONFIRMED_CLIENT:
+        return False, 'client %s is not the one the replay path was checked on (%s)' % (client, REPLAY_CONFIRMED_CLIENT)
+    if replay_recording is not True:
+        return False, 'no replay recording at the battle start (%s)' % (replay_recording,)
+    return True, 'mode %s, replay recording, client %s' % (name, client)
+
+
+def replay_recording(recorder):
+    """True when the game records this battle's replay and the mod's replay source copies it; otherwise what was found
+    (None: the controller says nothing). Attribute reads only (replay_source.controller, BattleReplay.g_replayCtrl)."""
+    if getattr(recorder, 'replay', None) is None: return 'no replay source'
+    try:
+        from local_armor_inspector.replay_source import controller, playing
+        ctrl = controller()
+        if ctrl is None: return 'no replay controller'
+        if playing(ctrl): return 'a replay is being played'
+        recording = getattr(ctrl, 'isRecording', None)
+        return bool(recording) if isinstance(recording, (bool, int)) else recording
+    except Exception:
+        LOG.debug('Replay recording state unavailable', exc_info=True)
+        return 'replay recording state unavailable'
+
+
 def roster_state(info, descr, json_safe):
     """Per-battle state of one roster vehicle that its type cannot give (S3, 22.09).
 
@@ -852,6 +910,8 @@ class Recorder(object):
         self.roster_known = False
         self.roster_last = None
         self.roster_seen = {}
+        # (arena id, snapshots only, why) of the battle the recorder last decided for (snapshots_only, BACKLOG 87).
+        self.scope = None
         # The reader of the gun mechanics' live state is bound once here, beside the telemetry it lives in,
         # so the hit path does not run an import statement per hit (22.09).
         from local_armor_inspector.telemetry import ShotTelemetry, mechanic_state, designator_mark, recording
@@ -1074,6 +1134,26 @@ class Recorder(object):
             LOG.debug('Roster vehicle facts unavailable', exc_info=True)
             return False
 
+    def snapshots_only(self, player):
+        """Whether this battle records the two snapshots only (BACKLOG 87): decided once per battle, at the first record
+        path that asks - the roster at the arena's first list, normally - by recording_scope, and logged in one line.
+        Opens no file. False (everything recorded) for anything it cannot read. Game thread."""
+        arena = getattr(player, 'arena', None)
+        try: arena_id = str(arena.arenaUniqueID)
+        except Exception: return False
+        scope = self.scope
+        if scope is not None and scope[0] == arena_id: return scope[1]
+        try: mode = battle_mode(arena)
+        except Exception: mode = None
+        try: reduced, why = recording_scope(mode, self.version, replay_recording(self))
+        except Exception:
+            reduced, why = False, 'the rule could not be read'
+            LOG.exception('Recording scope unavailable; the battle is recorded in full')
+        self.scope = (arena_id, reduced, why)
+        if reduced: LOG.info('recorder: snapshots only - battle %s: %s', arena_id, why)
+        else: LOG.info('recorder: full, because %s - battle %s', why, arena_id)
+        return reduced
+
     def ensure_battle(self, player):
         arena = getattr(player, 'arena', None)
         if arena is None: return False
@@ -1088,13 +1168,16 @@ class Recorder(object):
             # 'source' says who produced the battle: this recorder writes 'live'. An offline parser
             # of a .wotreplay will write its own value one day, so no reader may branch on it and
             # none may require it - every battle recorded before this build has no such field.
-            self.writer.put(filename, {'schema':1, 'type':'battle', 'id':filename, 'source':'live',
+            header = {'schema':1, 'type':'battle', 'id':filename, 'source':'live',
                 'arenaId':battle_id, 'startedAt':time.time(), 'playerVehicleId':player.playerVehicleID,
                 'map':getattr(arena_type, 'name', None) or 'Unknown map',
                 'clientVersion':self.version, 'recorderVersion':VERSION, 'mode':mode,
                 # Seconds between two motion samples of this battle. The layout of a sample rides
                 # on every attached buffer; the period belongs to the battle, so it is written once.
-                'motionPeriod':self.motion_period})
+                'motionPeriod':self.motion_period}
+            # A battle that records the snapshots only says so (replay_battle reads it); a full one keeps today's header.
+            if self.snapshots_only(player): header['recording'] = RECORDING_SNAPSHOTS
+            self.writer.put(filename, header)
             self.battle = battle_id
             self.seq = 0
             self.file = filename

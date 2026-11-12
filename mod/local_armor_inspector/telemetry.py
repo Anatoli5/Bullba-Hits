@@ -350,6 +350,13 @@ def recording(recorder, player):
     return not observer_seat(player)
 
 
+def snapshots_only(recorder, player):
+    """Whether this battle records the two snapshots only (Recorder.snapshots_only, BACKLOG 87); False for a recorder
+    without the rule (the tests' stand-ins). Asked after `recording` let the event through."""
+    ask = getattr(recorder, 'snapshots_only', None)
+    return bool(ask(player)) if ask is not None else False
+
+
 def wrap(cls, name, make):
     """The one way the recorder wraps a client method (REC-10): cls.name becomes make(original).
 
@@ -480,6 +487,9 @@ class ShotTelemetry(object):
     def tracer(self, player, shooterID, shotID, isRicochet, effectsIndex, prefabEffIndex,
                shellTypeIdx, shellCaliber, refStartPoint, velocity, gravity, maxShotDist, gunIndex, gunInstallationIndex):
         if not self.active(player): return
+        # Another vehicle's tracer is no part of the own-shot snapshot: in a battle whose replay is confirmed it is the
+        # replay's (BACKLOG 87), and nothing of it is read here.
+        if shooterID != player.playerVehicleID and snapshots_only(self.recorder, player): return
         values = {'shooterId':int(shooterID), 'shotId':str(shotID), 'isRicochet':bool(isRicochet),
                   'effectsIndex':int(effectsIndex), 'shellTypeIdx':int(shellTypeIdx), 'caliber':number(shellCaliber),
                   'origin':vec(refStartPoint), 'velocity':vec(velocity), 'gravity':number(gravity),
@@ -555,6 +565,8 @@ class ShotTelemetry(object):
         if not self.active(player): return
         tracer = self.tracers.get(str(shotID))
         if tracer is None: return
+        # The end of a shell, the own ones too, is the replay's in a battle whose replay is confirmed (BACKLOG 87).
+        if snapshots_only(self.recorder, player): return
         values = {'shotId':str(shotID), 'tracerId':tracer['id'], 'shooterId':tracer['shooterId'],
                   'own':tracer['own'], 'position':vec(endPoint)}
         values['segmentDistance'] = math.sqrt(sum((values['position'][i]-tracer['origin'][i])**2 for i in range(3)))

@@ -13,7 +13,7 @@ import math
 import numbers
 import re
 import time
-from .telemetry import recording, wrap, unwrap, matrix_columns
+from .telemetry import recording, wrap, unwrap, matrix_columns, snapshots_only
 
 LOG = logging.getLogger('local.armor_inspector')
 # Extras the common map may not list (vehicle-specific ones: wheels, a second pair of tracks), typed by name.
@@ -102,7 +102,9 @@ class CritLog(object):
         if identity != self.arena:
             self.reset()
             self.arena = identity
-        return True
+        # A battle whose replay is confirmed takes every crit, health change, fire and ram from its replay (BACKLOG 87):
+        # no hook reads or writes anything past this point.
+        return not snapshots_only(self.recorder, player)
 
     def player(self):
         player = self.recorder.bw.player()
