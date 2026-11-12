@@ -1471,6 +1471,7 @@
   // gun accuracy × range, centred on the hit line. An estimate — it never enters the probability figures.
   Viewer.prototype.setAimEstimate=function(context){
     var T=THREE,self=this,hit=this.loadedData&&this.loadedData.hit,attacker=hit&&hit.attacker;this.estimateAim=null;
+    var rebuilt=this.setRebuiltEstimate(context);if(rebuilt)return rebuilt;
     if(!hit||!attacker||!(attacker.gunDispersion>0)||!this.point||!this.travel||!this.aimGroup)return null;
     var range=context&&context.range>0?context.range:hit.rangeAtImpact>0?hit.rangeAtImpact:null;if(!range)return null;
     var radius=attacker.gunDispersion*range,normal=this.travel.clone().normalize(),up=new T.Vector3(0,1,0);if(Math.abs(up.dot(normal))>.98)up.set(1,0,0);
@@ -1483,6 +1484,41 @@
     // starts. Geometry only - the estimate still never enters the figures of the recorded shot.
     this.estimateAim={radius:radius,range:range,dispersion:attacker.gunDispersion,gun:attacker.gun||null,source:context&&context.rangeSource||'impact',
       center:this.point.clone(),right:right,up:up,origin:this.point.clone().addScaledVector(normal,-range)};
+    this.showSavedAim(aimShown());return this.estimateAim;
+  };
+  // Another vehicle's circle at its shot, ESTIMATED from the replay (BACKLOG 82, 12.11; the mod's replay_aim_other.py on
+  // its tracer, `replayAimEstimate`): the same estimate ring - dashed magenta, never drawn as a recorded one - but centred
+  // where the rebuilt gun pointed and sized by the dispersion formula on the shooter's track, carried to the impact plane
+  // the way the own shot's thick ring is (the shell's offset from the axis, dx = v·e1 / v·n, dy = v·e2 / v·n, R =
+  // angle × depth). A dashed cross marks the estimated aim point. Kept as estimateAim, so the figure over it is the
+  // estimate's (app.js says so) and never the recorded shot's.
+  Viewer.prototype.setRebuiltEstimate=function(context){
+    var T=THREE,tracer=context&&context.tracer,block=tracer&&!tracer.own&&tracer.replayAimEstimate,circle=block&&block.circle,
+      target=this.loadedData&&this.loadedData.hit&&this.loadedData.hit.target;
+    if(!circle||!Array.isArray(circle.vector)||!(circle.dispersionAngle>0)||!Array.isArray(tracer.origin)||!Array.isArray(tracer.velocity))return null;
+    if(!this.point||!this.aimGroup||!target||!target.worldTransform)return null;
+    var inverse=new T.Matrix4().fromArray(target.worldTransform).invert();
+    function pos(p){var v=new T.Vector3().fromArray(p).applyMatrix4(inverse);v.z*=-1;return v;}
+    function dir(p){var v=new T.Vector3().fromArray(p).transformDirection(inverse);v.z*=-1;return v;}
+    var n=new T.Vector3().fromArray(circle.vector).normalize(),v=new T.Vector3().fromArray(tracer.velocity),
+      e1=new T.Vector3().crossVectors(n,new T.Vector3(0,1,0)),forward=v.dot(n);
+    if(!(e1.lengthSq()>1e-12)||!(forward>1e-6))return null;
+    e1.normalize();var e2=new T.Vector3().crossVectors(e1,n),dx=v.dot(e1)/forward,dy=v.dot(e2)/forward,
+      origin=pos(tracer.origin),normal=dir(n.toArray()),right=dir(e1.toArray()),up=dir(e2.toArray()),
+      depth=this.point.clone().sub(origin).dot(normal);
+    if(!(depth>1e-6))return null;
+    var center=this.point.clone().addScaledVector(right,-depth*dx).addScaledVector(up,-depth*dy),radius=circle.dispersionAngle*depth,points=[];
+    for(var i=0;i<=96;i++){var a=i/96*Math.PI*2;points.push(center.clone().addScaledVector(right,radius*Math.cos(a)).addScaledVector(up,radius*Math.sin(a)));}
+    var options={color:AIM_RING,depthTest:false,depthWrite:false,transparent:true,opacity:.75};
+    var line=new T.Line(new T.BufferGeometry().setFromPoints(points),new T.LineDashedMaterial(Object.assign({dashSize:radius*.12,gapSize:radius*.08},options)));
+    line.computeLineDistances();line.renderOrder=12;line.frustumCulled=false;this.aimGroup.add(line);
+    var size=Math.max(.025,Math.min(.12,radius*.12)),cross=[center.clone().addScaledVector(right,-size),center.clone().addScaledVector(right,size),center.clone().addScaledVector(up,-size),center.clone().addScaledVector(up,size)];
+    var mark=new T.LineSegments(new T.BufferGeometry().setFromPoints(cross),new T.LineDashedMaterial(Object.assign({dashSize:size*.3,gapSize:size*.25},options)));
+    mark.computeLineDistances();mark.renderOrder=12;mark.frustumCulled=false;this.aimGroup.add(mark);
+    // The cone's apex is the shell's origin as the flight has it (the own thick ring's rule).
+    var apex=this.shotPath&&this.shotPath.tracer===tracer?this.shotPath.origin.clone():origin;
+    this.estimateAim={rebuilt:true,block:block,radius:radius,range:depth,dispersion:circle.dispersionAngle,gun:this.loadedData.hit.attacker&&this.loadedData.hit.attacker.gun||null,
+      source:'replay',center:center,right:right,up:up,origin:apex,q:Math.hypot(dx,dy)/circle.dispersionAngle};
     this.showSavedAim(aimShown());return this.estimateAim;
   };
   // The rings depend only on the shot line (muzzle, impact point, dispersion) and live in the root frame,

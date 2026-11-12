@@ -1302,6 +1302,14 @@ settle(20).then(function () {
   ok('and says in the tooltip that the ring, and the figure with it, is the estimate',
      shotTile.title.indexOf('no recorded reticle') >= 0
      && shotTile.title.indexOf('Nominal full-aim circle') === 0);
+  // BACKLOG 82 (12.11): another vehicle's circle estimated from the replay - the figure over it, named as that estimate
+  view.estimateAim = {radius: 0.5, rebuilt: true};
+  view.onPin(false);
+  tick(0.2);
+  ok('a hit whose shooter\'s circle the replay estimates prints the figure of that ring, named as the replay\'s estimate',
+     shotTile.hidden === false && shotCircle.textContent === '75 %'
+     && shotTile.title.indexOf('Estimated aiming circle\nAn estimate rebuilt from the replay') === 0,
+     '(' + shotTile.title.split('\n')[0] + ')');
   view.estimateAim = null; view.savedAim = {};
   view.onPin(false);
   tick(0.2);

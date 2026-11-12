@@ -914,6 +914,36 @@ function checks(ok, web) {
     const plain = V.verdicts(B.fromTriangles([floor, wall]), [{pos: hit1, line: new T.Vector3(1, 0, 0), effect: 3, part: 1}], B.shell('ARMOR_PIERCING', 100, 100));
     ok('viewer-batch: Statistics log, a point with no ricochet before it: its own ray, full penetration', plain[0].result && plain[0].result.remaining === 100 && !plain[0].result.bounce, '(' + (plain[0].result && plain[0].result.remaining) + ')');
   });
+
+  // ---- BACKLOG 82 (12.11): another vehicle's circle estimated from the replay - the estimate ring, carried to the hit ----
+  // A shell 50 m along an axis +z (the game's world, left-handed: +x is the shooter's right), deviated 0.4 R to his right:
+  // the ring's radius is R x 50 m, its centre 0.4 R x 50 m to the LEFT of the hit (three's -x: the page flips z only),
+  // drawn dashed (the estimate's convention), kept as the estimate (never the recorded shot's circle), with the shell's
+  // place in it; a tracer of the own shot or one without the block gives the nominal ring as before.
+  section(function () {
+    const e = env(web), v = loaded(e), T = e.T;
+    v.loadedData.hit.target.worldTransform = I.slice();
+    v.loadedData.hit.attacker = {gunDispersion: 0.002, gun: 'test gun'};
+    v.setShotContext(null);
+    const R = 0.003, at = [v.point.x, v.point.y, -v.point.z], n = [0, 0, 1];
+    const origin = [at[0], at[1], at[2] - 50], vel = [0.4 * R * 900, 0, 900];
+    const tracer = {own: false, origin: origin, velocity: vel,
+      replayAimEstimate: {estimate: true, circle: {origin: origin, vector: n, dispersionAngle: R}, shell: {right: 0.4, up: 0}, basis: {}}};
+    const est = v.setAimEstimate({tracer: tracer, range: 50});
+    const lines = v.aimGroup.children.filter(function (o) { return o.material && o.material.isLineDashedMaterial; });
+    ok('viewer-batch: the replay\'s estimate of another vehicle\'s circle is the estimate ring, R x the depth, dashed',
+       !!est && est.rebuilt && near(est.radius, R * 50, 1e-9) && lines.length === 2 && v.estimateAim === est && !v.savedAim,
+       '(' + JSON.stringify(est && {r: est.radius, rebuilt: est.rebuilt}) + ', dashed ' + lines.length + ')');
+    ok('viewer-batch: its centre stands left of a shell that went right of the axis, by the shell\'s offset',
+       !!est && near(est.center.x - v.point.x, -0.4 * R * 50, 1e-6) && near(est.center.y, v.point.y, 1e-6) && near(est.q, 0.4, 1e-6),
+       '(' + (est && [est.center.x - v.point.x, est.q]) + ')');
+    v.setShotContext(null);
+    const own = v.setAimEstimate({tracer: Object.assign({}, tracer, {own: true}), range: 50});
+    v.setShotContext(null);
+    const bare = v.setAimEstimate({tracer: {own: false, origin: origin, velocity: vel}, range: 50});
+    ok('viewer-batch: an own tracer, or one without the block, keeps the nominal ring on the hit line',
+       !!own && !own.rebuilt && !!bare && !bare.rebuilt && near(bare.radius, 0.002 * 50, 1e-9) && near(bare.center.x, v.point.x, 1e-9));
+  });
 }
 
 module.exports = {env: env, vehicle: vehicle, loaded: loaded, measure: measure, checks: checks};

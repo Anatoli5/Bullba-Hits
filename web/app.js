@@ -3769,7 +3769,11 @@
     fired: 'Shot circle\nMagenta: this hit’s own circles; the figure is over the thick one, the circle the server fired from.',
     // No recorded reticle: the dashed magenta ring is the nominal full-aim estimate, and the figure is
     // an estimate with it. Said on the line itself, so the number is never read as a recorded one.
-    estimate: 'Nominal full-aim circle\nMagenta: this hit has no recorded reticle, so the circle and its figure are an estimate.'
+    estimate: 'Nominal full-aim circle\nMagenta: this hit has no recorded reticle, so the circle and its figure are an estimate.',
+    // Another vehicle's circle rebuilt from the replay (BACKLOG 82, 12.11): still an estimate, dashed like the nominal one;
+    // the figure over it is printed as an estimate too - it is no worse founded than the nominal ring's (both sit near the
+    // shell vertically; this one has the shooter's own size and its left/right aim), and the words say what it rests on.
+    rebuilt: 'Estimated aiming circle\nAn estimate rebuilt from the replay: where this vehicle’s gun pointed at the shot and how wide its circle was; the figure is an estimate with it.'
   };
   // One tile per ring, in the colour of the ring it belongs to (user, 20.09; a column of its own at the top
   // RIGHT of the scene since 22.09, each tile on the row of the panel it belongs to): the live cyan one
@@ -3798,7 +3802,7 @@
     if (tile.hidden !== !text) tile.hidden = !text;
     // The sampling sentence of the recorded ring (it used to hang on the toolbar's reticle box, removed on
     // 22.09) is composed by aimTitle() once per hit, not here per frame.
-    var extra = kind === 'saved' || kind === 'fired' || kind === 'estimate' ? aimExtra : '';
+    var extra = kind === 'saved' || kind === 'fired' || kind === 'estimate' || kind === 'rebuilt' ? aimExtra : '';
     var tip = text ? (CIRCLE_TITLES[kind] || CIRCLE_TITLES.live) + (figure.alpha ? SHARE : NO_ALPHA) + aimModel + extra : '';
     if (tile.title !== tip) tile.title = tip;
     if (!text) return;
@@ -6659,7 +6663,7 @@
       // A hit with no reticle of its own: the dashed nominal ring is the one on the model, so the figure is
       // printed for THAT ring and its tooltip says it is an estimate with it.
       else totalTimer=window.setTimeout(function(){var v=viewer.estimateAimProbability(ringShell);
-        aimRecorded=v?Object.assign(circleFigure(v,ringShell),{kind:'estimate'}):null;paintCircleLines();},100);
+        aimRecorded=v?Object.assign(circleFigure(v,ringShell),{kind:viewer.estimateAim&&viewer.estimateAim.rebuilt?'rebuilt':'estimate'}):null;paintCircleLines();},100);
     }
   }
   // The legend of an own shot's recorded circles (user, 24.09): up to three, each named by how it differs. `ring` and
@@ -6781,6 +6785,22 @@
   // aimLegend: the hit on screen has recorded circles, whose legend (ringLegend) aimTitle composes; aimStatus the
   // words of a hit without them (the nominal estimate, or why there is no circle).
   var aimStatus='',aimLegend=false,aimExtra='',aimModel='',shotPanelTitle=$('shot-panel').title;
+  // The points of another vehicle's circle estimated from the replay (BACKLOG 82, 12.11; viewer.setRebuiltEstimate, the
+  // mod's replay_aim_other.py): what is meaningful in it and what it rests on, from the block on the shooter's tracer.
+  // The figures are the measurement's (outputs/aim-circles-other-vehicles-2026-11-12.md, 201 own shots treated as another
+  // vehicle's): the shell's left/right place in the circle follows the truth (correlation 0.69), its up/down place hardly
+  // (0.26; 0.39 with several shots from one stop); the size 0.77-1.30 of the true one; the centre 0.31 R off at the median.
+  function rebuiltStatus(e){
+    var b=e.block||{},s=b.shell||{},basis=b.basis||{},band=(b.uncertainty||{}).sizeBand||[.77,1.3],right=Number(s.right)||0;
+    var side=Math.abs(right)<.05?'on the line of the shooter’s aim':Math.abs(right).toFixed(2)+' of the radius '+(right>0?'right':'left')+' of the shooter’s aim';
+    var stop=basis.moving?'on the move':basis.shotsInStop>1?'standing, '+basis.shotsInStop+' shots from this place':'standing, one shot from this place';
+    return ['• ◌ Dashed magenta, a dashed cross at the estimated aim: ⌀ '+(e.radius*2).toFixed(2)+' m at '+Math.round(e.range)+' m',
+      '• Left / right of the aim is meaningful: this shell went '+side,
+      '• Up / down is not: the height of the aim comes from the shells themselves'+(basis.shotsInStop>1?' (weakly helped by the other shots from this place)':''),
+      '• Size within about ±25 %: a typical crew and equipment assumed (the true circle was '+band[0]+'–'+band[1]+' of it in tests)',
+      '• Centre about a third of the radius off the true aim at the median',
+      '• Rests on: the gun’s track from the replay ('+(basis.case||'?')+', gun '+(basis.gun||'?')+', '+stop+'), this shell, the vehicle’s '+(basis.shotsOfVehicle||1)+' estimated shot(s) of the battle'].join('\n');
+  }
   function aimTitle(){
     var status=aimLegend&&viewer?ringLegend(viewer.ringAim,viewer.discOn?viewer.discAim:null):aimStatus;
     aimExtra=status?'\n\n'+status:'';
@@ -7731,11 +7751,13 @@
     var aimReady=viewer&&viewer.setShotContext(ownShot?shotContext:null),estimate=!aimReady&&viewer?viewer.setAimEstimate(shotContext):null;
     // Why there is no circle, in full: no resolved impact point to centre on, no gun dispersion in the record,
     // no range, or no own reticle linked to this hit (every incoming hit by design - the enemy's is not recorded).
-    var reason=aimReady?'saved reticle':estimate?'nominal estimate':!(viewer&&viewer.point&&viewer.travel)?'no resolved impact point':!(hit.attacker&&hit.attacker.gunDispersion>0)?'no gun dispersion in the record':!(shotContext.range>0||hit.rangeAtImpact>0)?'no range for this hit':!ownShot?'enemy reticle unavailable':(aimReasons[shotContext.aimReason]||'no linked snapshot').toLowerCase();
+    var reason=aimReady?'saved reticle':estimate?(estimate.rebuilt?'estimate rebuilt from the replay':'nominal estimate'):!(viewer&&viewer.point&&viewer.travel)?'no resolved impact point':!(hit.attacker&&hit.attacker.gunDispersion>0)?'no gun dispersion in the record':!(shotContext.range>0||hit.rangeAtImpact>0)?'no range for this hit':!ownShot?'enemy reticle unavailable':(aimReasons[shotContext.aimReason]||'no linked snapshot').toLowerCase();
     // What the circles mean and where this one came from is the tooltip of the Circle tile at the right edge
     // of the scene (the toolbar's own reticle box went with its figure on 22.09).
     // Tooltip markup (tooltips.js): one point per ring on the model.
-    var status=aimReady?'':estimate?'• ◌ Dashed magenta: '+(estimate.gun||'mounted gun')+', '+(estimate.dispersion*100).toFixed(2)+' m at 100 m × '+Math.round(estimate.range)+' m ('+(estimate.source==='tracer'?'tracer range':'approximate range at impact')+') = ⌀ '+(estimate.radius*2).toFixed(2)+' m\nWithout crew or equipment, centred on the hit line.':'No reticle for this hit: '+reason+'.';
+    var unmodelled=!aimReady&&shotContext&&shotContext.tracer&&!shotContext.tracer.own&&shotContext.tracer.replayAimEstimate&&shotContext.tracer.replayAimEstimate.reason;
+    var status=aimReady?'':estimate&&estimate.rebuilt?rebuiltStatus(estimate):estimate?'• ◌ Dashed magenta: '+(estimate.gun||'mounted gun')+', '+(estimate.dispersion*100).toFixed(2)+' m at 100 m × '+Math.round(estimate.range)+' m ('+(estimate.source==='tracer'?'tracer range':'approximate range at impact')+') = ⌀ '+(estimate.radius*2).toFixed(2)+' m\nWithout crew or equipment, centred on the hit line.':'No reticle for this hit: '+reason+'.';
+    if(unmodelled)status+='\n• No circle from the replay: '+unmodelled;
     // One line per hit in the page console; the game writes page console lines into game.log, so an in-game
     // report about missing rings can be read there instead of guessed at.
     if(window.console)console.info('Bullba Hits aim: hit '+hit.id+' '+(view||'other')+' saved='+!!aimReady+' estimate='+!!estimate+' reason='+reason);
