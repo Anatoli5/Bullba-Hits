@@ -2,7 +2,7 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.1.1 from 1.05 on, 2.4.1.0 from 1.02 on, 2.4.0.2 from 0.9.3 on, 2.4.0.1 #950 from 0.7.6, 2.4.0.0 #945 before.
 
-## Unreleased
+## 1.08 (2026-11-12)
 
 - **Opening the page during a replay's processing:** opening Bullba Hits from the mods list while a battle's replay was still being processed failed to move the hangar vehicle to the front of the queue (an error line in the game's log); it now goes first as intended.
 - **Less work right after a battle:** the replay's game definitions are now prepared in the hangar once per game session, before the first battle, instead of right after that battle while the hangar is loading.
