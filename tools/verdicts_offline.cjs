@@ -5,11 +5,13 @@
  * the lines reach game.log only while the viewer is open in the client; here the same lines are written to a
  * file that tools/verdicts_from_log.py reads unchanged.
  *
- *     node tools/verdicts_offline.cjs [--data <folder>] [--out work/statistics] [--battle <id>] [--version]
+ *     node tools/verdicts_offline.cjs [--data <folder>] [--out work/statistics] [--battle <id>] [--scene replay] [--version]
  *
  *     --data     the exporter's folder (default: the game's own); read only, never written
  *     --out      where the log is written (default: work/statistics)
  *     --battle   one battle id instead of every battle of the index
+ *     --scene    snapshot (default, as the page's background pass) or replay: cast every hit that has the scene rebuilt
+ *                from the replay in that scene (the comparison of the two scenes, 12.11)
  *     --version  print the page build and the records build the pass would stamp, then stop
  *
  * Nothing here re-implements the verdict: web/ballistics.js, web/viewer.js, web/shot-context.js, web/crits.js and
@@ -34,17 +36,19 @@ const DEFAULT_DATA = 'C:\\Games\\World_of_Tanks_NA\\mods\\configs\\local.armor_i
 
 // ---- arguments -----------------------------------------------------------------------------------------
 function options(argv) {
-  const out = {data: DEFAULT_DATA, out: path.join(ROOT, 'work', 'statistics'), battle: null, version: false};
+  const out = {data: DEFAULT_DATA, out: path.join(ROOT, 'work', 'statistics'), battle: null, version: false, scene: 'snapshot'};
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--data') out.data = argv[++i];
     else if (arg === '--out') out.out = argv[++i];
     else if (arg === '--battle') out.battle = argv[++i];
+    else if (arg === '--scene') out.scene = argv[++i];
     else if (arg === '--version') out.version = true;
     else if (arg === '--help' || arg === '-h') out.help = true;
     else throw new Error('Unknown argument: ' + arg);
   }
   if (!out.data) throw new Error('--data needs a folder');
+  if (out.scene !== 'snapshot' && out.scene !== 'replay') throw new Error('--scene is snapshot or replay');
   out.data = path.resolve(out.data);
   out.out = path.resolve(out.out);
   return out;
@@ -229,8 +233,8 @@ function main(argv) {
   }
   const probeData = {
     index: Data.index, battle: Data.battle, vehicles: Data.vehicles, vehicle: Data.vehicle, scene: Data.scene,
-    // The scene each hit is cast in (11.11): queueVerdicts asks, as in the page.
-    sceneHit: Data.sceneHit,
+    // The scene each hit is cast in (11.11): queueVerdicts asks, as in the page; --scene replay overrides its choice.
+    sceneHit: Data.sceneHit && function (hit, want, battle) { return Data.sceneHit(hit, opt.scene === 'replay' ? 'replay' : want, battle); },
     sceneFor: function (battle, hit) {
       close();
       job = {points: null, verdicts: null, error: null};
@@ -316,7 +320,7 @@ function main(argv) {
           tally.hits += (battle.hits || []).length;
           tally.queued += (battle.hits || []).filter(function (h) {
             // The scene the page casts a hit in (11.11): its snapshot, else the scene rebuilt from the replay.
-            if (Data.sceneHit) h = Data.sceneHit(h, 'snapshot', battle).hit;
+            if (Data.sceneHit) h = Data.sceneHit(h, opt.scene, battle).hit;
             return (h.points || []).some(function (p) { return p.status === 'resolved'; });
           }).length;
           api.queueVerdicts(battle);

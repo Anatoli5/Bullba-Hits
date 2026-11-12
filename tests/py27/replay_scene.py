@@ -13,7 +13,8 @@ models_run.py of the stand does) and the client's box (hitTester.bbox) is absent
 The check, on the largest battle (17:42, 129 replay hits): the statics of its targets equal the table; the battle's
 scenes are rebuilt under this Python with the models extracted from the client's packages by the exporter's own
 model_extract, and their numbers equal what CPython gets (the point within 1 cm, incidence, armour, counts); the cost of
-the work per battle under Python 2.7 is printed: the poses kept while converting, the rebuild of every scene.
+the work per battle under Python 2.7 is printed: the poses kept while converting, the rebuild of every scene. The numbers
+include the pose at the drawn moment (12.11: the delay, the interpolated turret yaw and gun pitch of every scene).
 Local fixtures, the client or the stand absent: SKIP (exit 77). Verdict through BULLBA_PY27_RESULT (see run27.py).
 """
 import json, os, shutil, sys, tempfile, time, traceback

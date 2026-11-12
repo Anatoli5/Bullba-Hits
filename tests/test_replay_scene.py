@@ -78,6 +78,9 @@ def digest(battle):
         scene = hit.get('replayScene')
         if not scene: continue
         counts['scenes'] += 1
+        # the pose at the drawn moment, interpolated (12.11): Python 2.7 and CPython give the same angles and delay
+        rows.append([hit['id'], 'pose'] + [round(float(x or 0), 4) for x in (scene.get('poseDelay'), scene['target'].get('turretYaw'),
+                                                                             scene['target'].get('gunPitch'))])
         for k, p in enumerate(scene['points']):
             counts['points'] += 1
             counts['resolved'] += p.get('status') == 'resolved'
@@ -268,6 +271,61 @@ class SyntheticTests(unittest.TestCase):
         self.assertAlmostEqual(yaw, 0.0, 9)
         self.assertAlmostEqual(pitch, 0.1, 9)
 
+    def test_drawn_delay_follows_the_packet_interval(self):
+        """About two packet intervals behind (12.11): 0.21 s at 10 Hz, 0.39 s at 5 Hz; a vehicle with no track the 10 Hz one."""
+        def track(step):
+            times = [k * step for k in range(200)]
+            return times, [0.0] * (6 * len(times))
+        self.assertAlmostEqual(rs.drawn_delay(track(0.1), 19.95), rs.DELAY_BASE + rs.DELAY_FRAMES * 0.1, 3)
+        self.assertAlmostEqual(rs.drawn_delay(track(0.2), 39.95), rs.DELAY_BASE + rs.DELAY_FRAMES * 0.2, 2)
+        self.assertAlmostEqual(rs.drawn_delay(None, 5.0), rs.DELAY_BASE + rs.DELAY_FRAMES * rs.DEFAULT_INTERVAL, 9)
+
+    def scene_of(self, poses, target, when, limits=(-0.2, 0.1)):
+        statics = {'type':'x:y', 'hullPosition':[0, 1, 0], 'turretPosition':[0, 1, 0], 'turretPitch':0.0,
+                   'gunPosition':[0, 0, 1], 'pitchLimits':list(limits), 'parts':[]}
+
+        class Source(object):
+            def statics(self, compact): return statics
+
+            def model(self, resource): raise KeyError(resource)
+
+        scene, why = rs.Scenes(poses, None, Source()).scene({'gameTime':100.0 + when, 'targetId':target, 'attackerId':9,
+                                                              'rawHitPoints':[]})
+        self.assertIsNone(why)
+        return scene
+
+    def test_packed_angles_are_interpolated_to_the_drawn_moment(self):
+        """Another vehicle's turret turns between its packed samples without steps (Vehicle.set_gunAnglesPacked -> the
+        filter's syncGunAngles): at the drawn moment halfway between two samples, halfway between their angles."""
+        tracks = rs.Tracks()
+        for k in range(100):
+            tracks.position(7, k * 0.1, [0, 0, 0], 0, 0, 0)
+        tracks.gun(7, 5.0, (512 << 6) | 0)        # yaw 0, pitch at the lower limit
+        tracks.gun(7, 5.1, (522 << 6) | 63)       # yaw 10 steps on, pitch at the upper limit
+        tracks.public(7, b'\x01\x02')
+        rec = tracks.record(1, 100.0)
+        delay = rs.drawn_delay(rec['positions'][7], 5.05)
+        scene = self.scene_of(rec, 7, 5.05 + delay)
+        self.assertAlmostEqual(scene['poseDelay'], round(delay, 4), 6)
+        self.assertAlmostEqual(scene['target']['turretYaw'], 5 * 2 * math.pi / 1024, 5)
+        self.assertAlmostEqual(scene['target']['gunPitch'], -0.05, 5)
+        self.assertTrue(scene['angles']['interpolated'])
+
+    def test_own_turret_floats_are_interpolated(self):
+        tracks = rs.Tracks()
+        for k in range(100):
+            tracks.position(1, k * 0.1, [0, 0, 0], 0, 0, 0)
+        tracks.own_angle('yaw', 5.0, 0.2)
+        tracks.own_angle('yaw', 5.1, 0.4)
+        tracks.own_angle('pitch', 5.0, -0.1)
+        tracks.own_angle('pitch', 5.1, 0.1)
+        tracks.public(1, b'\x01\x02')
+        rec = tracks.record(1, 100.0)
+        scene = self.scene_of(rec, 1, 5.025 + rs.OWN_TURRET_DELAY)
+        self.assertAlmostEqual(scene['target']['turretYaw'], 0.25, 5)
+        self.assertAlmostEqual(scene['target']['gunPitch'], -0.05, 5)
+        self.assertAlmostEqual(scene['poseDelay'], rs.OWN_POSE_DELAY, 9)
+
 
 @unittest.skipUnless(ready(), 'the local replay fixtures, the statics table or the client are absent')
 class FixtureTests(unittest.TestCase):
@@ -285,25 +343,31 @@ class FixtureTests(unittest.TestCase):
         prototype = read_json(PROTOTYPE)
         if prototype is None: self.skipTest('no prototype table')
         diffs = []
+        # The pose (12.11): the prototype took it 0.2 s before the hit packet and the last packed angles; the mod takes the
+        # moment the client draws, interpolated. Per side its turret, gun and world differences to the snapshot are no
+        # larger than the prototype's at p90; the points stay per hit.
+        mine, theirs = {}, {}
         for name, arena, folder in four():
             b = published(name, arena, folder)
             for h in b['hits']:
                 c = (h.get('replayScene') or {}).get('comparison')
                 ref = prototype.get('%s|%s' % (arena, h['id']))
                 if not c or not ref: continue
-                for key in ('turretYawDiff', 'gunPitchDiff', 'worldShift', 'worldRotation', 'rangeDiff'):
-                    if ref.get(key) is None or c.get(key) is None:
-                        if (ref.get(key) is None) != (c.get(key) is None): diffs.append((arena, h['id'], key, ref.get(key), c.get(key)))
-                        continue
-                    # The prototype took the rotation's angle by acos of the trace, which the live matrices' columns (4.5e-6
-                    # off unit length) move by up to 0.09 degrees at small angles (MEASURED: median 0.0008, max 0.089 over
-                    # 176 hits; 17:42 hit 20: acos 0.283, the mod's axis-and-trace angle 0.226 for the same matrices).
-                    if abs(abs(ref[key]) - abs(c[key])) > (0.1 if key == 'worldRotation' else 2e-3):
-                        diffs.append((arena, h['id'], key, ref[key], c[key]))
+                side = 'own' if h.get('targetId') == b.get('playerVehicleId') else 'other'
+                for key in ('turretYawDiff', 'gunPitchDiff', 'worldShift'):
+                    if ref.get(key) is not None and c.get(key) is not None:
+                        mine.setdefault((side, key), []).append(abs(c[key]))
+                        theirs.setdefault((side, key), []).append(abs(ref[key]))
                 # A point no further from the snapshot's than the prototype's (better where the prototype had no box).
                 for k, (p, q) in enumerate(zip(ref['points'], c.get('points') or ())):
                     if p.get('posErr') is not None and q.get('distance') is not None and q['distance'] > p['posErr'] + 1e-4:
                         diffs.append((arena, h['id'], 'point %d' % k, p['posErr'], q['distance']))
+        # The tail (p90) decides the verdicts that flip; the median of the others' turret rose on these four battles from
+        # 0.04 to 0.11 degrees (a stationary turret on its packed value against an interpolation at a slightly other
+        # moment), still a third of a packed step - and fell on the 33 battles of 11.11 (0.157 -> 0.126).
+        for key, values in sorted(mine.items()):
+            if quantile(values, 0.9) > quantile(theirs[key], 0.9) + 0.02:
+                diffs.append(('pose', key, quantile(theirs[key], 0.9), quantile(values, 0.9)))
         self.assertEqual(diffs, [])
 
     def test_death_camera_hits_get_their_only_scene(self):

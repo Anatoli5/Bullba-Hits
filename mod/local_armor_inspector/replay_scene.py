@@ -17,13 +17,16 @@ only one. The method is the one measured on 11.11 (outputs/replay-scene-recomput
   ('client', statics 'bounds'), a box the recorder wrote for the part ('record', partBounds), the box recovered exactly
   from the live record's decoded start/end of the same model in this battle (decodeSegment is linear in the box:
   'recovered', residual <= BOX_RESIDUAL), else the vertex box - then the part is marked approximate.
-- The pose. Position and hull yaw/pitch/roll at the hit packet's clock minus POSE_DELAY (0.2 s: the client draws the
-  others that far behind), linear between the 10 Hz packets, world = T(pos) Ry(yaw) Rx(pitch) Rz(roll). The hull sits at
-  rest on the chassis: the replay has no suspension tilt. Turret yaw and gun pitch: another vehicle's last
-  gunAnglesPacked TURRET_DELAY before the hit (yaw 2pi k/1024 - pi in steps of 0.35 degrees, pitch on 63 steps of the
-  gun's absolute limits); the own vehicle's last turret_yaw/gun_pitch floats at the hit. Parts stacked as the client
-  does: hull T(hullPosition), turret hull T(turretPosition) Rx(turretPitch) Ry(yaw), gun turret T(gunPosition) Rx(pitch).
-- The range: the two vehicles' packet positions at the pose time (none when the shooter is not in view, as live).
+- The pose, at the moment the client draws (12.11): another vehicle drawn_delay() behind the hit packet (about two of
+  its packet intervals, as the client's vehicle filter plays it back), the own one OWN_POSE_DELAY. Position and hull
+  yaw/pitch/roll linear between the packets, world = T(pos) Ry(yaw) Rx(pitch) Rz(roll); turret yaw and gun pitch linear
+  between the gunAnglesPacked samples around the same moment (yaw 2pi k/1024 - pi in steps of 0.35 degrees, pitch on 63
+  steps of the gun's absolute limits), as the filter's syncGunAngles turns them without steps; the own vehicle's
+  turret_yaw/gun_pitch floats OWN_TURRET_DELAY back, interpolated. The hull sits at rest on the chassis: the replay has
+  no suspension tilt. Parts stacked as the client does: hull T(hullPosition), turret hull T(turretPosition)
+  Rx(turretPitch) Ry(yaw), gun turret T(gunPosition) Rx(pitch).
+- The range: the two vehicles' packet positions at the target's drawn moment (none when the shooter is not in view, as
+  live; each at its own drawn moment was measured no closer to the snapshot's range).
 
 The block is the hit's SECOND_SCENE ('replayScene'): the snapshot's field names (target: type, compactDescriptor,
 worldTransform, parts with transform, resource, modelKey, armor; points with start, end, position, direction, normal,
@@ -40,12 +43,24 @@ import base64
 import bisect
 import math
 
-FORMAT = 1
-# The pose of a hit (MEASURED 11.11 on 176 hits, scan 0/0.1/0.2/0.25/0.3 s): the others' position, hull angles and
-# packed turret angles 0.2 s before the hit packet match the drawn pose best; the own turret floats at the hit itself.
-POSE_DELAY = 0.2
-TURRET_DELAY = 0.2
-OWN_TURRET_DELAY = 0.0
+FORMAT = 2
+# The pose of a hit: the moment the client DRAWS, not the hit packet's (12.11, measured on the 2 284 hits of the 33 battles
+# of 11.11, docs/KNOWLEDGE.md 18). The client's vehicle filter (WGVehicleFilter; the turret and gun through its
+# syncGunAngles, Vehicle.set_gunAnglesPacked) plays every other vehicle back by a latency that follows that vehicle's
+# packet interval - about two intervals, as a BigWorld avatar filter keeps two inputs ahead: 0.2 s at the usual 0.1 s,
+# 0.4 s at 0.2 s (a far vehicle is updated less often) - and draws position, hull angles, turret yaw and gun pitch
+# interpolated linearly between the samples around that moment. Fitted: DELAY_BASE + DELAY_FRAMES x the vehicle's mean
+# packet interval (EMA over DELAY_TAU seconds of its 0x0a packets). The own vehicle: its packets 0.22 s back, its turret
+# floats (0x1c/0x1d) 0.09 s back, both interpolated.
+DELAY_BASE = 0.03
+DELAY_FRAMES = 1.8
+DELAY_TAU = 2.0
+DELAY_WINDOW = 60
+DEFAULT_INTERVAL = 0.1
+OWN_POSE_DELAY = 0.22
+OWN_TURRET_DELAY = 0.09
+# Two angle samples further apart than this are not interpolated (the earlier one holds).
+ANGLE_GAP = 0.5
 # Two packets further apart than this are not interpolated; a pose further than this from any packet is not taken.
 PACKET_GAP = 0.5
 # A shot's stop (Avatar.stopTracer) belongs to a hit of the same shooter within this many seconds.
@@ -57,7 +72,8 @@ NUDGES = ((1, -1), (1, 1), (0, -1), (0, 1), (2, -1), (2, 1))
 YAW_STEP = 360.0 / 1024.0
 # The scene's own words for what the replay cannot give (the block says it rather than hiding it).
 LIMIT_HULL = 'hull at rest on the chassis: the replay has no suspension tilt'
-LIMIT_PACKED = 'turret yaw and gun pitch from the packed angles: steps of %.2f and %.2f degrees, %.1f s before the hit'
+LIMIT_PACKED = ('turret yaw and gun pitch from the packed angles (steps of %.2f and %.2f degrees), interpolated to the '
+                'drawn moment %.2f s before the hit')
 LIMIT_BOX = 'part %s: the client box is unknown, the box of the model vertices is taken - its points are approximate'
 STATIC_PARTS = 4
 
@@ -221,6 +237,33 @@ def last_at(track, t):
     times, values = track
     i = bisect.bisect_right(times, t + 1e-6)
     return (float(times[i - 1]), values[i - 1]) if i else None
+
+
+def drawn_delay(track, t):
+    """How far behind its packets the client draws a vehicle at t: DELAY_BASE + DELAY_FRAMES x its mean packet interval
+    (an EMA of the intervals of its last DELAY_WINDOW position packets before t, time constant DELAY_TAU)."""
+    mean = DEFAULT_INTERVAL
+    if track:
+        times = track[0]
+        i = bisect.bisect_right(times, t)
+        for j in range(max(1, i - DELAY_WINDOW), i):
+            gap = min(float(times[j]) - float(times[j - 1]), 1.0)
+            if gap > 0: mean += (gap - mean) * (1.0 - math.exp(-gap / DELAY_TAU))
+    return DELAY_BASE + DELAY_FRAMES * mean
+
+
+def sample_at(times, values, t, angle=False):
+    """(value, time of the earlier sample) linear between the two samples around t (an angle the short way); the earlier
+    sample alone when they are ANGLE_GAP apart or t is after the last; None before the first."""
+    i = bisect.bisect_right(times, t + 1e-6)
+    if not i: return None
+    a, ta = float(values[i - 1]), float(times[i - 1])
+    if i == len(times): return a, ta
+    tb = float(times[i])
+    if tb - ta > ANGLE_GAP or not tb > ta: return a, ta
+    d = float(values[i]) - a
+    if angle: d = wrap(d)
+    return a + d * min(1.0, max(0.0, (t - ta) / (tb - ta))), ta
 
 
 def world_of(row):
@@ -456,31 +499,43 @@ class Scenes(object):
         if not compact: return None, 'no compact descriptor of the target in the replay'
         statics, error = self.static(compact)
         if statics is None: return None, error
-        out = {'format':FORMAT, 'source':'replay', 'poseDelay':POSE_DELAY, 'limits':[LIMIT_HULL], 'problems':[]}
-        t_pose = t_hit - POSE_DELAY
+        track = self.poses['positions'].get(tid)
+        delay = OWN_POSE_DELAY if tid == self.player else drawn_delay(track, t_hit)
+        out = {'format':FORMAT, 'source':'replay', 'poseDelay':round(delay, 4), 'limits':[LIMIT_HULL], 'problems':[]}
+        t_pose = t_hit - delay
         out['poseTime'] = round(float(self.start) + t_pose, 4)
-        row, gap = pose_at(self.poses['positions'].get(tid), t_pose)
+        row, gap = pose_at(track, t_pose)
         world = None
         if row is None: out['problems'].append('no position of the target in the replay')
         elif gap > PACKET_GAP: out['problems'].append('no position of the target within %.1f s of the hit (%.1f s)' % (PACKET_GAP, gap))
         else: world = world_of(row)
-        # turret yaw and gun pitch to the hull (client sign: pitch + down)
+        # turret yaw and gun pitch to the hull (client sign: pitch + down), interpolated to the drawn moment
         yaw = pitch = None
         if tid == self.player:
-            y = last_at(self.poses['ownYaw'], t_hit - OWN_TURRET_DELAY)
-            p = last_at(self.poses['ownPitch'], t_hit - OWN_TURRET_DELAY)
+            t_angles = t_hit - OWN_TURRET_DELAY
+            y = sample_at(self.poses['ownYaw'][0], self.poses['ownYaw'][1], t_angles, True) if self.poses['ownYaw'][0] else None
+            p = sample_at(self.poses['ownPitch'][0], self.poses['ownPitch'][1], t_angles) if self.poses['ownPitch'][0] else None
             if y is not None and p is not None:
-                yaw, pitch = float(y[1]), float(p[1])
-                out['angles'] = {'from':'own turret_yaw / gun_pitch', 'time':round(float(self.start) + max(y[0], p[0]), 4)}
+                yaw, pitch = y[0], p[0]
+                out['angles'] = {'from':'own turret_yaw / gun_pitch', 'time':round(float(self.start) + t_angles, 4),
+                                 'interpolated':True}
         limits = statics.get('pitchLimits')
-        if yaw is None:
-            g = last_at(self.poses['guns'].get(tid), t_hit - TURRET_DELAY)
-            if g is not None and limits:
-                yaw, pitch = packed_angles(int(g[1]), limits)
+        guns = self.poses['guns'].get(tid)
+        if yaw is None and guns and len(guns[0]) and limits:
+            # only the two samples around the moment are decoded (a battle has thousands)
+            i = bisect.bisect_right(guns[0], t_pose + 1e-6)
+            lo = max(0, i - 1)
+            decoded = [packed_angles(int(code), limits) for code in guns[1][lo:i + 1]]
+            near = guns[0][lo:i + 1]
+            y = sample_at(near, [a[0] for a in decoded], t_pose, True) if i else None
+            p = sample_at(near, [a[1] for a in decoded], t_pose) if i else None
+            if y is not None:
+                yaw, pitch = y[0], p[0]
                 pitch_step = math.degrees(limits[1] - limits[0]) / 63.0
-                out['angles'] = {'from':'gunAnglesPacked', 'time':round(float(self.start) + g[0], 4),
+                out['angles'] = {'from':'gunAnglesPacked', 'time':round(float(self.start) + t_pose, 4), 'interpolated':True,
+                                 'sampleTime':round(float(self.start) + y[1], 4),
                                  'yawStep':round(YAW_STEP, 4), 'pitchStep':round(pitch_step, 4)}
-                out['limits'].append(LIMIT_PACKED % (YAW_STEP, pitch_step, TURRET_DELAY))
+                out['limits'].append(LIMIT_PACKED % (YAW_STEP, pitch_step, delay))
         if yaw is None:
             out['problems'].append('no turret and gun angles of the target in the replay: turret and gun at 0')
             yaw = pitch = 0.0
@@ -521,7 +576,8 @@ class Scenes(object):
         for pid in sorted(set(p.get('part') for p in out['points'] if p.get('approximate'))):
             out['limits'].append(LIMIT_BOX % parts[pid][0]['name'])
         # range and the shooter's place at the pose time, as live (none when the shooter is not in view)
-        a_row, a_gap = pose_at(self.poses['positions'].get(aid), t_pose)
+        a_track = self.poses['positions'].get(aid)
+        a_row, a_gap = pose_at(a_track, t_pose)
         if world is not None and a_row is not None and a_gap <= PACKET_GAP:
             out['attackerPositionAtImpact'] = rounded(a_row[:3])
             out['rangeAtImpact'] = round(length(sub(row[:3], a_row[:3])), 4)
