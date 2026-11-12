@@ -162,6 +162,10 @@ class StreamCopy(object):
         self.foreign = None      # why the source stopped being this battle's ('shorter', 'other recording', 'arena')
         self.last_pull = None    # time of the last look that found new bytes
         self.fight_end = None    # (offset, clock) of the copy's packet that ends the fight (arena period AFTERBATTLE)
+        # Why the copying itself failed (an error while reading the source or writing the copy, or the source giving
+        # fewer bytes than its size while it did not shrink), or None. Nothing more is appended after it: a failed write
+        # may leave bytes in the copy the count does not know. Handed over as 'copyFailure' (replay_run.distrust).
+        self.failure = None
 
     def resume(self):
         """Take an existing copy (the next start after a crash): its size, head and packet boundary."""
@@ -201,7 +205,7 @@ class StreamCopy(object):
     def pull(self):
         """Append what the source has beyond the copy. Returns the bytes appended, None when the source is gone or is
         no longer this battle's recording (then nothing more is ever taken from it)."""
-        if self.foreign or not self.source: return None
+        if self.foreign or self.failure or not self.source: return None
         try: size = os.path.getsize(self.source)
         except OSError: return None
         if size < self.copied:
@@ -211,25 +215,39 @@ class StreamCopy(object):
             return None
         if size == self.copied: return 0
         appended = 0
-        with open(self.source, 'rb') as src:
-            if self.copied:
-                same = src.read(min(HEAD, self.copied))
-                if bytearray(same) != self.head[:len(same)]:
-                    self.foreign = 'other recording'
-                    LOG.info('Replay source: %s now starts with another stream than the copy of %s: not taken',
-                             self.source, self.name)
-                    return None
-            src.seek(self.copied)
-            with open(self.path, 'ab') as dst:
-                while self.copied < size:
-                    chunk = src.read(min(CHUNK, size - self.copied))
-                    if not chunk: break
-                    dst.write(chunk)
-                    self.take(bytearray(chunk))
-                    appended += len(chunk)
-                    if self.foreign: break
+        try:
+            with open(self.source, 'rb') as src:
+                if self.copied:
+                    same = src.read(min(HEAD, self.copied))
+                    if bytearray(same) != self.head[:len(same)]:
+                        self.foreign = 'other recording'
+                        LOG.info('Replay source: %s now starts with another stream than the copy of %s: not taken',
+                                 self.source, self.name)
+                        return None
+                src.seek(self.copied)
+                with open(self.path, 'ab') as dst:
+                    while self.copied < size:
+                        chunk = src.read(min(CHUNK, size - self.copied))
+                        if not chunk: break
+                        dst.write(chunk)
+                        self.take(bytearray(chunk))
+                        appended += len(chunk)
+                        if self.foreign: break
+            if self.copied < size and not self.foreign:
+                # The source gave fewer bytes than it had: the game truncating it at its stop is the normal end (the next
+                # look finds it shorter); a source that still holds them is a failed read.
+                try: now = os.path.getsize(self.source)
+                except OSError: now = None
+                if now is not None and now >= size:
+                    self.failed('a short read: %d of %d bytes of the source' % (self.copied, size))
+        except Exception as error:
+            self.failed('%s at byte %d: %s' % (type(error).__name__, self.copied, error))
         if appended: self.last_pull = time.time()
         return appended
+
+    def failed(self, why):
+        self.failure = why
+        LOG.warning('Replay source: copying %s failed (%s); the copy stops at %d bytes', self.name, why, self.copied)
 
     def state(self):
         return {'schema': SCHEMA, 'battle': self.name, 'arenaId': self.arena, 'source': self.source,
@@ -545,7 +563,7 @@ class ReplaySource(object):
     def handover(self, copy, ending, final_path, header):
         stream_bytes = header[0] if header else None
         complete = bool(copy.arena_ok and not copy.carry and stream_bytes is not None and stream_bytes == copy.copied
-                        and header[2])
+                        and header[2] and not copy.failure)
         give_final = final_path if (header is not None and not complete and stream_bytes >= copy.copied) else None
         temp = 'missing'
         if copy.source and os.path.isfile(copy.source):
@@ -562,7 +580,7 @@ class ReplaySource(object):
                    'final': os.path.abspath(give_final) if give_final else None,
                    'finalStreamBytes': stream_bytes if give_final else None,
                    'finalOwned': bool(give_final and copy.owned), 'recordingOwned': copy.owned, 'temp': temp,
-                   'fightEnd': list(copy.fight_end) if copy.fight_end else None}
+                   'fightEnd': list(copy.fight_end) if copy.fight_end else None, 'copyFailure': copy.failure}
         try: self.put_export('replay', message)
         except Exception: LOG.warning('Replay source: hand-over of %s failed', copy.name, exc_info=True)
         self.handed.append(copy.name)
@@ -570,8 +588,8 @@ class ReplaySource(object):
         state['handed'] = True
         write_json(self.state_path(), state)
         LOG.info('Replay source: handed over %s: %d bytes, %d packets (+%d partial), complete %s, end of the fight %s, '
-                 'final %s, temp %s', copy.name, copy.copied, copy.packets, len(copy.carry), complete,
-                 'in the copy' if copy.fight_end else 'not in the copy', message['final'], temp)
+                 'final %s, temp %s, copy failure %s', copy.name, copy.copied, copy.packets, len(copy.carry), complete,
+                 'in the copy' if copy.fight_end else 'not in the copy', message['final'], temp, copy.failure)
         self.copy, self.ending = None, None
 
     def drop_own_final(self, final=False, now=None):

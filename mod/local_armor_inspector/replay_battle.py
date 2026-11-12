@@ -21,7 +21,8 @@ read_battle gives), so the published file is the one the page reads today:
     shot  the own shot's snapshot (aimAtTracer, motion, the command link) and the shooter's state at the tracer
           (siegeState, gunState: the page's scene of a hit reads them; a tracer without a live twin has the replay's
           own, replay_records.Converter.shooter_state, since 12.11.2026), and the live 'command' and 'gunAfterShot'
-          records, placed where they were among the shot records;
+          records, placed where they were among the shot records; an own tracer keeps the replay's own aim block
+          (replay_aim.KEY, BACKLOG 82), which replay_aim.attach gives receipt times and the comparison with the snapshot;
     crit  nothing but id and receivedAt: its names come from the run-time Names of the conversion, as everywhere.
 - A replay hit without a live one (the death camera: the recorder sees no vehicle event for ~15 s) is published as it
   is: no scene, 'replayAbsent' says what is missing, its points carry status 'replay-raw'. Nothing is guessed.
@@ -44,6 +45,8 @@ Pure: no file, no game module; the client's Python 2.7 and CPython 3. The export
 from __future__ import absolute_import
 import copy
 import json
+
+from . import replay_aim
 
 SOURCE = 'replay'
 # Version of this assembly, in the battle's 'replay' block.
@@ -262,6 +265,9 @@ def build(records, live=None, battle_id=None):
         if s['id'] in by_live: published_shots.extend(extras_after.get(s['id'], ()))
     published_shots = merge(published_shots, extra['shot'])
     shot_ids = set(s.get('id') for s in published_shots)
+    # The own shots' aim blocks rebuilt from the replay (BACKLOG 82): receipt times, and the comparison with the snapshot
+    # the page draws where the live record has one.
+    aim_blocks, aim_compared = replay_aim.attach(published_shots)
 
     # ---- hits: the replay's, the scene of the live ones -------------------------------------------------------------
     out_hits, sceneless, points_differ, candidates_dropped = [], 0, 0, 0
@@ -321,7 +327,7 @@ def build(records, live=None, battle_id=None):
               'shots':len(out_shots), 'shotsMatched':len(shot_live),
               'liveShotRecordsAttached':len(published_shots) - len(out_shots) - len(extra['shot']),
               'crits':len(out_crits) - len(extra['crit']), 'critsMatched':len(crit_live), 'liveOnly':live_only,
-              'livePublished':published_live, 'clockOffset':offset}
+              'livePublished':published_live, 'clockOffset':offset, 'aimBlocks':aim_blocks, 'aimCompared':aim_compared}
     for k, name in (('replayServerTimeAtStart', 'serverTimeAtStart'), ('replayClientVersion', 'clientVersion')):
         if header.get(k) is not None: report[name] = header[k]
     if wall is not None or live.get('recording') == SNAPSHOTS:

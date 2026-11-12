@@ -131,9 +131,12 @@ def distrust(message, stream, shape):
       began over, a copy found at start);  the temp file became another recording while it was copied ('foreign (other
       recording)' / '(arena)'; '(shorter)' is the normal end: the game empties temp at the stop);  the copy on disk shorter
       than the source copied;  its packets not the ones the source counted;  its packets breaking more than BROKEN_TAIL
-      bytes before its end. Not visible here: an error of the copying thread (it logs and keeps the copy as far as it got,
-      which the message's sizes then describe). A copy that holds the end of the fight is the battle whatever the end."""
+      bytes before its end;  the copying itself failed ('copyFailure' of the message, 12.11: an error while reading the
+      source or writing the copy, or a short read - the copy stops there and may hold bytes its count does not know; this
+      one comes before the end of the fight, as nothing after the failure was copied). A copy that holds the end of the
+      fight is the battle whatever the end otherwise."""
     if stream is None or not len(stream): return 'no stream copy'
+    if message.get('copyFailure'): return 'the copying of the stream failed (%s)' % message['copyFailure']
     packets, partial, ended = shape
     if ended is not None: return None
     end = message.get('end')
@@ -286,9 +289,10 @@ _DONE = object()
 
 # What the run-time path does not decode (replay_stream.Decoder's skip): packets and Vehicle/Avatar properties neither
 # replay_records.Converter nor its Tracks read - per type, the events each would have yielded (the stream info counts
-# them all the same). 0.13 s of the 17:42 battle (11.11 profile). The aim packets 0x1a (client_gun_marker) and 0x39
-# (volatile, the server's gun marker) stay: the aim circles are to be built from them (backlog 82).
-LEAN_TYPES = {0x1f:1, 0x26:1, 0x36:0}   # net_stats, camera, tick_marker (no event)
+# them all the same). 0.13 s of the 17:42 battle (11.11 profile). The aim packets 0x1a (client_gun_marker), 0x39
+# (volatile, the server's gun marker) and 0x1f (net_stats: the ping that dates the press) stay: the own aim circles are
+# built from them (backlog 82, replay_aim).
+LEAN_TYPES = {0x26:1, 0x36:0}   # camera, tick_marker (no event)
 LEAN_PROPERTIES = ('engineMode', 'isStrafing', 'ownVehicleAuxPhysicsData', 'wheelsScroll')
 
 

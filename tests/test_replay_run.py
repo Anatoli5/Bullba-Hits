@@ -210,6 +210,58 @@ class SyntheticTests(unittest.TestCase):
         finally:
             shutil.rmtree(folder, ignore_errors=True)
 
+    def test_a_failed_copy_is_handed_over_and_distrusted(self):
+        """The copying itself failing (12.11): an error while writing the copy, or a short read of a source that did not
+        shrink, is noted on the copy, nothing more is taken, the hand-over message says it ('copyFailure', not complete),
+        and replay_run.distrust reads the final file for it - even for a copy holding the end of the fight. A source the
+        game truncated is the normal end, no failure."""
+        from local_armor_inspector import replay_source as rs
+        def packet(ptype, clock, payload): return struct.pack('<IIf', len(payload), ptype, clock) + payload
+        data = (packet(0x18, 0.0, b'abcd') + packet(0x0a, 1.0, b'x' * 49) + packet(0x16, 2.0, struct.pack('<I', 4))
+                + packet(0x0a, 3.0, b'y' * 49))
+        root = tempfile.mkdtemp()
+        folder = os.path.join(root, 'battles')     # the source's state file goes beside it, into root
+        os.makedirs(folder)
+        try:
+            source = os.path.join(folder, 'temp.wotreplay')
+            with open(source, 'wb') as f: f.write(data)
+            # a write that fails: the copy's path is a folder
+            broken = rs.StreamCopy(folder, 'broken', '1', source, 0.0)
+            os.makedirs(broken.path)
+            self.assertEqual(broken.pull(), 0)
+            self.assertTrue(broken.failure and str(broken.failure).startswith(('IOError', 'PermissionError', 'IsADirectoryError', 'OSError')), broken.failure)
+            self.assertIsNone(broken.pull())
+            # a short read: the source says it holds more than it gives, and still does after
+            short = rs.StreamCopy(folder, 'short', '1', source, 0.0)
+            real = os.path.getsize
+            original = rs.os.path.getsize
+            rs.os.path.getsize = lambda path: real(path) + 100 if path == source else real(path)
+            try: self.assertEqual(short.pull(), len(data))
+            finally: rs.os.path.getsize = original
+            self.assertEqual(short.failure, 'a short read: %d of %d bytes of the source' % (len(data), len(data) + 100))
+            self.assertEqual(short.fight_end[1], 2.0)
+            # the game truncating the source at its stop: no failure
+            fine = rs.StreamCopy(folder, 'fine', '1', source, 0.0)
+            sizes = [len(data) + 100, 0]
+            rs.os.path.getsize = lambda path: sizes.pop(0) if path == source and sizes else real(path)
+            try: fine.pull()
+            finally: rs.os.path.getsize = original
+            self.assertIsNone(fine.failure)
+            # the hand-over and distrust
+            sent = []
+            source_obj = rs.ReplaySource(folder, 'sess', lambda kind, message: sent.append(message), replay_dir=folder,
+                                         threaded=False)
+            source_obj.handover(short, {'at':0.0, 'reason':'battle'}, None, None)
+            message = sent[-1]
+            self.assertEqual((message['copyFailure'], message['complete']), (short.failure, False))
+            with open(short.path, 'rb') as f: copy = bytearray(f.read())
+            shape = rr.copy_shape(copy)
+            self.assertIsNotNone(shape[2])          # the copy holds the end of the fight
+            self.assertEqual(rr.distrust(message, copy, shape), 'the copying of the stream failed (%s)' % short.failure)
+            self.assertIsNone(rr.distrust(dict(message, copyFailure=None), copy, shape))
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
     def test_the_light_copy_is_deepcopys(self):
         """exporter.json_copy (backlog 84) in place of copy.deepcopy on a hit's record and a vehicle's statics: an equal
         value sharing no list or dict with the original; what is not JSON-shaped (a set) still goes through deepcopy."""
@@ -496,10 +548,10 @@ class RunTimeTests(unittest.TestCase):
 
     def test_the_lean_decode_gives_the_same_records(self):
         """Backlog 84: the run-time decode leaves out what nothing reads (replay_run.LEAN_TYPES, LEAN_PROPERTIES) - the
-        aim packets 0x1a and 0x39 still decoded - and the records, their poses, the event count and the last clock are
+        aim packets 0x1a, 0x39 and the ping 0x1f still decoded (backlog 82) - and the records, their poses, the event count and the last clock are
         those of the full decoder (checked so on the 33 battles of 11.11 and the 8 local fixtures, 12.11)."""
         from local_armor_inspector import replay_records as rrec
-        self.assertFalse({0x1a, 0x39} & set(rr.LEAN_TYPES))
+        self.assertFalse({0x1a, 0x39, 0x1f} & set(rr.LEAN_TYPES))
         defs = definitions()
         def run(stream, lean):
             decoder = rd.Decoder(defs.defs, skip=rr.LEAN_TYPES if lean else None,
@@ -521,8 +573,8 @@ class RunTimeTests(unittest.TestCase):
             for data in (stream, packet_cut(stream, 0.7)):
                 full, lean = run(data, False), run(data, True)
                 self.assertEqual(full[:4], lean[:4], arena)
-                self.assertIn('client_gun_marker', lean[4])
-                self.assertFalse({'net_stats', 'camera'} & lean[4])
+                self.assertTrue({'client_gun_marker', 'net_stats'} <= lean[4])
+                self.assertFalse({'camera'} & lean[4])
 
     def test_a_cut_off_stream_is_used_as_far_as_it_goes(self):
         """A copy that cannot be trusted as the battle (backlog 84: here no orderly end) and no final file: used as far as it

@@ -165,7 +165,9 @@ def battle_pair(name, arena, folder):
 
 # ---- comparison -----------------------------------------------------------------------------------------------------
 HIT_TIME = ('gameTime',)
-SHOT_IGNORED = ('gameTime', 'source')
+# 'replayAim': the own tracer's aim block rebuilt from the replay (BACKLOG 82) - the replay's own addition, checked by
+# tests/test_replay_aim.py.
+SHOT_IGNORED = ('gameTime', 'source', 'replayAim')
 
 
 def diff_fields(a, b, ignored=()):

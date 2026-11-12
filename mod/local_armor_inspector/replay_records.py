@@ -36,6 +36,7 @@ import time
 from .crit_log import CRIT_EVENTS, RAM_REASON, CONTACT_PACE, CONTACT_WINDOW, num, vec
 from .telemetry import GUN_MECHANIC_STATE, state_value
 from . import replay_stream
+from . import replay_aim
 
 SOURCE = 'replay'
 # Version of this conversion, written in the header: a later, better conversion of the same replay is told apart.
@@ -278,6 +279,10 @@ class Converter(object):
         self.contact = None      # last own contact {'at', 'point', 'energy'}
         self.rams = {}           # pair -> last ram tick time
         self.written = {}        # pair -> last contact written
+        # The own aim circles at each own shot (BACKLOG 82, replay_aim): the 0x1a / 0x39 / 0x1f series, and the own tracers
+        # (clock, record) whose block finish() builds once the stream is read.
+        self.aim = replay_aim.Track()
+        self.own_shots = []
 
     # ---- output ---------------------------------------------------------------------------------------------
     def count(self, key, field='records'):
@@ -427,9 +432,22 @@ class Converter(object):
             held, self.held = self.held, []
             self.write_header()
             for e in held: self.handle(e)
+        self.aim_blocks()
         if self.tracks is not None:
             self.out.append(self.tracks.record(self.player, self.server_start, self.info))
         return self.drain()
+
+    def aim_blocks(self):
+        """Each own tracer (no ricochet, the main gun) gets its aim block rebuilt from the replay (replay_aim.KEY) - on
+        the record already handed out (the caller keeps the records until the battle is assembled): the block needs the
+        server updates after the tracer and the ping before it, so it is made once the stream is read."""
+        shots = self.own_shots
+        for t, record in shots:
+            salvo = [r for tt, r in shots if abs(tt - t) < replay_aim.SAME_INSTANT and isinstance(r.get('origin'), list)]
+            origin = [sum(r['origin'][i] for r in salvo) / len(salvo) for i in range(3)] if salvo else record.get('origin')
+            try: record[replay_aim.KEY] = self.aim.block(t, origin, self.server_start, len(salvo))
+            except (IndexError, KeyError, TypeError, ValueError, ZeroDivisionError): self.count('aim block', 'skipped')
+        self.own_shots = []
 
     def track(self, kind, ev, t):
         """The pose inputs of replay_scene (poses=True): what extract_replay.py of the 11.11 measurement took."""
@@ -451,6 +469,10 @@ class Converter(object):
 
     def handle(self, ev):
         kind, t = ev.get('ev'), ev.get('t') or 0.0
+        if kind in replay_aim.Track.KINDS:
+            try: self.aim.feed(ev)
+            except (KeyError, TypeError, ValueError): self.count('aim ' + kind, 'skipped')
+            return
         name = ev.get('name')
         if self.tracks is not None and kind in ('position', 'turret_yaw', 'gun_pitch', 'entity_create', 'property'):
             try: self.track(kind, ev, t)
@@ -602,7 +624,9 @@ class Converter(object):
                   'gunInstallationIndex':int(a['gunInstallationIndex']), 'source':'replay Avatar.showTracer',
                   'own':shooter == self.player}
         self.shooter_state(shooter, values)
-        self.tracers[str(a['shotID'])] = self.event('shot', 'tracer', t, values)
+        record = self.tracers[str(a['shotID'])] = self.event('shot', 'tracer', t, values)
+        if values['own'] and not values['isRicochet'] and values['gunInstallationIndex'] == 0:
+            self.own_shots.append((float(t), record))
 
     def shooter_state(self, shooter, values):
         """The live tracer's 'siegeState' and 'gunState' of the shooter (telemetry.ShotTelemetry.tracer, mechanic_state),

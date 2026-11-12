@@ -534,9 +534,16 @@ def small_packet(ptype, t, p):
     if ptype == 0x17:
         return {'ev': 'arena_period_end', 'endTime': f('<f')[0]}
     if ptype == 0x1a:
+        # The replay controller's gun-marker state, one per tick (outputs/aim-circles-from-replay-2026-11-11.md section
+        # 1; names from BattleReplay setGunMarkerParams / gunRotatorTargetPoint). Fields 3-10 are the marker last given
+        # to setGunMarkerParams: the SERVER marker while the server reticle is shown (VehicleGunRotator.setShotPosition,
+        # every server tick), the client marker of the last frame when it is hidden (__updateGunMarker; read from the
+        # code, no battle of that kind measured). The event keeps its old name; the names of floats 3-12 before 12.11
+        # ('size', 'gunPosition', 'direction', 'arcadeSize', 'spg' of 3 floats) were wrong.
         v = f('<15f')
-        return {'ev': 'client_gun_marker', 'point': list(v[0:3]), 'size': list(v[3:5]), 'gunPosition': list(v[5:8]),
-                'direction': list(v[8:11]), 'arcadeSize': v[11], 'spg': list(v[12:15])}
+        return {'ev': 'client_gun_marker', 'point': list(v[0:3]), 'markerDiameter': v[3], 'dualAccDiameter': v[4],
+                'markerPosition': list(v[5:8]), 'markerDirection': list(v[8:11]), 'arcadeDiameter': v[11],
+                'dualAccSize': v[12], 'spg': list(v[13:15])}
     if ptype in (0x1c, 0x1d):
         # the own turret yaw (to the hull) and gun pitch (+ = down), radians, per tick: their ranges equal the
         # vehicle's limits (AMX 50 Foch B yaw +-10.00 deg, depression 6.000; E 100 depression 7.000)
