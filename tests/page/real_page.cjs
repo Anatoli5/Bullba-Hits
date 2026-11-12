@@ -652,6 +652,81 @@ async function twoScenes(browser) {
   }
 }
 
+// ---- THE TOP BAND OF THE SCENE (user 11.11, BACKLOG 78-80) ------------------------------------------------------------------
+// The target's characteristics panel (the same widget as the shooter's) in the top-right corner, the circle figures inside
+// the Hit line and Under the cursor panels, and the Collision model row with the HP bar in the top band - at the page
+// sizes 754 x 1085 (the user's window), 1024 x 768, 1280 x 800 and 1920 x 1080, with ⌖ off and on: no two of the scene's
+// tiles overlap, nothing of the top band leaves the scene, the model row stays in the upper part of the scene (not over the
+// model's middle), the target's panel stands whole or folded into its ▤, and it follows a change of target (⇅).
+async function topBand(browser, folder) {
+  const page = await browser.open(url.pathToFileURL(path.join(folder, 'Viewer.html')).href, INIT);
+  const ev = (js) => page.evaluate(js);
+  const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+  const STATE = `(() => { const $ = (id) => document.getElementById(id), laid = (e) => !!e && e.getClientRects().length > 0 && e.getBoundingClientRect().width > 0;
+    const rect = (e) => { const r = e.getBoundingClientRect(); return [r.left, r.top, r.right, r.bottom].map(Math.round); };
+    const vp = $('viewport').getBoundingClientRect();
+    const tiles = {hitLine: $('shot-panel'), cursor: $('armor-probe'), modelRow: $('model-row'), target: $('ttx-panel-target'), shooterPanel: $('ttx-panel'),
+      mods: $('target-mods-slot'), shooterRow: document.querySelector('.shooter-row'), pose: $('pose-info')};
+    const out = {rects: {}, overlaps: [], outside: [], w: innerWidth, h: innerHeight};
+    Object.keys(tiles).forEach((k) => { if (laid(tiles[k])) out.rects[k] = rect(tiles[k]); });
+    const keys = Object.keys(out.rects);
+    keys.forEach((a, i) => keys.slice(i + 1).forEach((b) => { const p = out.rects[a], q = out.rects[b];
+      if (p[0] < q[2] - 1 && q[0] < p[2] - 1 && p[1] < q[3] - 1 && q[1] < p[3] - 1) out.overlaps.push(a + '/' + b); }));
+    ['hitLine', 'cursor', 'modelRow', 'target', 'mods'].forEach((k) => { const r = out.rects[k]; if (r && (r[0] < vp.left - 1 || r[2] > vp.right + 1 || r[1] < vp.top - 1)) out.outside.push(k); });
+    const inPanel = (c, p) => { if (!laid($(c))) return null; const a = $(c).getBoundingClientRect(), b = $(p).getBoundingClientRect(); return a.left >= b.left - 0.5 && a.right <= b.right + 0.5 && a.top >= b.top - 0.5 && a.bottom <= b.bottom + 0.5 && $(c).parentNode === $(p); };
+    const chance = $('shot-chance').getBoundingClientRect(), circle = laid($('shot-circle')) ? $('shot-circle').getBoundingClientRect() : null;
+    out.circle = {shot: inPanel('shot-circle-tile', 'shot-panel'), probe: inPanel('probe-circle-tile', 'armor-probe'),
+      level: circle ? Math.abs((circle.top + circle.bottom) / 2 - (chance.top + chance.bottom) / 2) < 6 : null,
+      size: circle ? getComputedStyle($('shot-circle')).fontSize === getComputedStyle($('shot-chance')).fontSize : null,
+      tip: laid($('shot-circle-tile')) ? ($('shot-circle-tile').getAttribute('data-tip') || $('shot-circle-tile').title || '') : ''};
+    const row = out.rects.modelRow;
+    out.rowTop = row ? (row[3] - vp.top) / vp.height : null;
+    out.hpByTile = laid($('target-hp')) && laid($('model-tile')) ? Math.abs($('target-hp').getBoundingClientRect().top - $('model-tile').getBoundingClientRect().bottom) < 120 : null;
+    out.targetShown = laid($('ttx-panel-target')); out.targetFolded = !$('ttx-fold-target').hidden;
+    const hp = $('ttx-hp-target') && $('ttx-hp-target').querySelector('.ttx-val');
+    out.targetHp = hp ? hp.textContent : null;
+    out.modelName = $('model-tile').title;
+    out.build = !!$('ttx-build-toggle-target');
+    return out; })()`;
+  try {
+    await ev(DRIVER);
+    await ev(`(async () => { for (let i = 0; i < 100 && !(document.querySelector('#hits [data-hit]') && window.__bullbaViewers.length); i++) await new Promise((r) => setTimeout(r, 100)); await __bt.settle(); })()`);
+    await ev("__bt.act.side('battles')"); await ev('__bt.settle()');
+    await ev('__bt.act.hit(0)'); await ev('__bt.settle()'); await pause(600);
+    for (const [w, h] of [[754, 1085], [1024, 768], [1280, 800], [1920, 1080]]) {
+      for (const fun of [false, true]) {
+        await ev('__bt.act.fun(' + fun + ')'); await ev('__bt.settle()');
+        await page.send('Emulation.setDeviceMetricsOverride', {width: w, height: h, deviceScaleFactor: 1, mobile: false});
+        await pause(700);
+        const s = await ev(STATE), tag = 'top band ' + w + 'x' + h + (fun ? ', ⌖ on' : ', ⌖ off') + ': ';
+        ok(tag + 'no two tiles of the scene overlap, and nothing of the top band leaves the scene', s.overlaps.length === 0 && s.outside.length === 0,
+           JSON.stringify({overlaps: s.overlaps, outside: s.outside, rects: s.rects}));
+        ok(tag + 'the circle figures stand inside their panels - the hit line\'s on its chance\'s row, in the chance\'s size, its tooltip kept',
+           s.circle.shot === true && s.circle.probe !== false && s.circle.level === true && s.circle.size === true && /circle/i.test(s.circle.tip), JSON.stringify(s.circle).slice(0, 300));
+        ok(tag + 'the Collision model row (with the HP bar by the tile) stays in the upper part of the scene, off the model\'s middle',
+           s.rowTop !== null && s.rowTop < 0.4 && s.hpByTile !== false, JSON.stringify({rowTop: s.rowTop, hp: s.hpByTile, row: s.rects.modelRow}));
+        ok(tag + 'the target\'s characteristics panel stands at the top right - whole, or folded into its ▤ - with the target\'s figures and no ⚙',
+           s.targetShown && !!s.rects.target && s.rects.target[2] >= s.w - 30 && s.rects.target[1] < s.rects.hitLine[1] + 10 && !s.build
+           && (s.targetFolded || /\d/.test(s.targetHp || '')), JSON.stringify({shown: s.targetShown, folded: s.targetFolded, hp: s.targetHp, rect: s.rects.target}));
+        if (w === 1920) ok(tag + 'at 1920 x 1080 both panels stand whole', !s.targetFolded, JSON.stringify(s.rects));
+        if (w === 754) ok(tag + 'at 754 the target\'s panel is folded into its ▤', s.targetFolded === true);
+      }
+    }
+    await ev('__bt.act.fun(false)'); await ev('__bt.settle()');
+    // ⇅: the target becomes the other vehicle - its panel follows through the same door, with that vehicle's figures.
+    const before = await ev(STATE);
+    await ev('__bt.act.swap()'); await ev('__bt.settle()'); await pause(600);
+    const after = await ev(STATE);
+    ok('top band: ⇅ - the target\'s panel follows the new target (another vehicle on the Collision model tile, other figures)',
+       after.targetShown && after.modelName !== before.modelName && after.targetHp !== before.targetHp && /\d/.test(after.targetHp || ''),
+       JSON.stringify({before: [before.modelName.split('\n')[2], before.targetHp], after: [after.modelName.split('\n')[2], after.targetHp]}));
+    await page.send('Emulation.clearDeviceMetricsOverride');
+    ok('top band: no uncaught exception in the page', page.errors.length === 0, page.errors.slice(0, 3).join(' | '));
+  } finally {
+    await browser.send('Target.closeTarget', {targetId: page.targetId});
+  }
+}
+
 // ---- THE TWO SCENES ON THE USER'S OWN BATTLES (local fixture, not in git) -------------------------------------------------
 // tests/fixtures-local/page-two-scenes-2026-11-11/data: two battles published from their replays with the mod's own
 // Exporter.publish_replay on the local replay fixtures (as tests/test_replay_scene.py publishes them): 02.11 19:13 - every
@@ -714,6 +789,8 @@ async function main() {
     // --sides: only the swap's two sides and the shooter row (a quick run while that rule is worked on).
     // --scenes: only the two scenes of a hit (the scene chips).
     if (process.argv.includes('--scenes')) { await twoScenes(browser); await twoScenesLocal(browser); console.log('real page, the two scenes only (' + browser.product + '): ' + checks + ' checks, ' + failures + ' failed'); return failures ? 1 : 0; }
+    // --top: only the top band of the scene (the target's panel, the circle figures, the model row) at the four sizes.
+    if (process.argv.includes('--top')) { await topBand(browser, folder); console.log('real page, the top band only (' + browser.product + '): ' + checks + ' checks, ' + failures + ' failed'); return failures ? 1 : 0; }
     if (process.argv.includes('--sides')) { await swapSides(browser, folder); console.log('real page, the swap sides only (' + browser.product + '): ' + checks + ' checks, ' + failures + ' failed'); return failures ? 1 : 0; }
     await inheritMatrix(browser, folder);
     if (MATRIX_ONLY) { console.log('real page, the inheritance matrix only (' + browser.product + '): ' + checks + ' checks, ' + failures + ' failed'); return failures ? 1 : 0; }
@@ -722,6 +799,7 @@ async function main() {
     await closeRange(browser, folder);
     await twoScenes(browser);
     await twoScenesLocal(browser);
+    await topBand(browser, folder);
     page = await browser.open(url.pathToFileURL(path.join(folder, 'Viewer.html')).href, INIT);
     const ev = (js) => page.evaluate(js);
     await ev(DRIVER);

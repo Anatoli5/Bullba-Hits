@@ -7472,7 +7472,7 @@
   // Each painter on its own (audit APP2 §3.7): one that throws is told in the console and in the host's breadcrumb,
   // and the others still paint - a half-painted scene is exactly the unevenness this finisher is for.
   var SCENE_PAINTERS=[['target switches',function(){modsVisible();}],['hit line',function(){shotStats();}],
-    ['emulation',function(){updateAim();}],['target HP',function(){funModel();}],['characteristics',function(){ttxPaint();}],
+    ['emulation',function(){updateAim();}],['target HP',function(){funModel();}],['characteristics',function(){ttxPaint();ttxTargetSync();}],
     ['roster',function(){renderFocus();}],['pose tile',function(){paintPose();}],['scene chips',function(){paintSceneChips();}],
     ['vehicle list',function(){if(sidebarMode==='vehicles'){adoptHitVehicles();renderVehicleHeading();renderVehicles();}}],['help dots',function(){if(window.BullbaTips&&window.BullbaTips.refresh)window.BullbaTips.refresh();}]];
   function sceneShown(){
@@ -8633,6 +8633,27 @@
   var TTX = window.BullbaTtx || null;
   var ttxCache = {}, ttxOrder = [], ttxPending = {}, ttxAsked = {}, ttxTried = {}, ttxData = null, ttxType = '';
   var ttxShell = '', ttxMemo = {}, ttxMemoKey = '', ttxFolded = false, ttxRows = {};
+  // TWO INSTANCES OF THE ONE PANEL (user 11.11: "the same panel for the target too"): the shooter's in the bottom-right
+  // corner and the target's - the vehicle of the Collision model - in the top-right one (ttxCloneTarget makes its markup
+  // from the shooter's, every id with -target). Every function of the panel paints the instance in `ttxSide`: its
+  // elements through T(id), its state in the variables above (the file, the type, the rows, the reload line, fold, the
+  // memo), which ttxWith swaps in for the time of one synchronous call and back. The shooter's is the resting state, so
+  // every caller from before 11.11 paints the shooter's panel as it did. The target's differs where a target has no
+  // shooter's input (ttxEmuIndex, ttxBuildOn, ttxValues, ttxShellOf, ttxPaintPair): its pair is the one it had in the
+  // battle (ttxTargetPair), its figures the stock (no Config: his equipment and crew are not recorded), its shell the
+  // gun's first, its ◐ the panel's own. Its one door is ttxTargetSync - a scene shown, its file read, a mode switched.
+  var TTX_SHOOTER = {suffix: ''}, TTX_TARGET = {suffix: '-target', data: null, type: '', rows: {}, line: null, folded: false,
+    modeOnly: false, memo: {}, memoKey: '', vehicle: null, index: -1, how: ''};
+  var ttxSide = TTX_SHOOTER;
+  function T(id) { return $(id + ttxSide.suffix); }
+  function ttxSave(o) { o.data = ttxData; o.type = ttxType; o.rows = ttxRows; o.line = ttxLine; o.folded = ttxFolded; o.modeOnly = ttxModeOnly; o.memo = ttxMemo; o.memoKey = ttxMemoKey; }
+  function ttxLoad(o) { ttxData = o.data; ttxType = o.type; ttxRows = o.rows; ttxLine = o.line; ttxFolded = o.folded; ttxModeOnly = o.modeOnly; ttxMemo = o.memo; ttxMemoKey = o.memoKey; }
+  function ttxWith(side, fn) {
+    if (side === ttxSide) return fn();
+    var was = ttxSide;
+    ttxSave(was); ttxLoad(side); ttxSide = side;
+    try { return fn(); } finally { ttxSave(side); ttxLoad(was); ttxSide = was; }
+  }
   var TTX_RETRY_MS = 2000, TTX_WAIT_MS = 30000, TTX_AGAIN_MS = 60000;
   // The panel's own glyphs: small line drawings in the text colour, one per parameter of the garage. The client's
   // own vehParams icons (gui/maps/icons/vehParams, KNOWLEDGE section 17) do not ship with the page; drawn ones
@@ -8829,8 +8850,9 @@
     ttxTried[id] = now;
     if (host.game && !ttxAsked[id]) { ttxAsked[id] = true; sendCommand('exportTtx', {vehicleType: String(type)}); }
     var deadline = host.game ? now + TTX_WAIT_MS : 0;
+    // The reader is asked inside the chain: one gone between two tries (a page torn down) is a failed try, not a throw.
     function attempt() {
-      return ArmorInspectorData.ttx(id).then(function (t) {
+      return Promise.resolve().then(function () { return ArmorInspectorData.ttx(id); }).then(function (t) {
         if (!ttxUsable(t, id)) throw new Error('No characteristics of ' + id);
         return t;
       }).catch(function () {
@@ -8857,6 +8879,7 @@
           if (!ttxUsable(t, id) || ttxOld(t)) throw new Error('Not rebuilt yet');
           if (ttxCache[id] === old) ttxCache[id] = t;
           if (ttxData === old) { ttxData = t; emuChanged(); }
+          if (TTX_TARGET.data === old) ttxWith(TTX_TARGET, function () { ttxData = t; ttxTargetPick(); ttxPaint(); });
         }).catch(function () { if (Date.now() < deadline) again(); });
       }, TTX_RETRY_MS);
     }
@@ -8885,13 +8908,47 @@
   // --- Which pair -------------------------------------------------------------------------------------------
   // The emulator's pair (24.09, one owner - emuIndexes): the one the user picked for this type, else the gun that fired
   // in the record, or the browsed vehicle's exported one (spec 3.1). The recorded one (ttxRecIndex) wears the ●.
-  function ttxEmuIndex() { return emuIndexes().i; }
-  function ttxRecIndex() { return emuIndexes().rec; }
+  function ttxEmuIndex() { return ttxSide === TTX_TARGET ? TTX_TARGET.index : emuIndexes().i; }
+  function ttxRecIndex() { return ttxSide === TTX_TARGET ? TTX_TARGET.index : emuIndexes().rec; }
+  // THE TARGET'S PAIR (11.11): the gun and turret it had in the battle, from what the record says - {i, how}. A browsed
+  // vehicle's export names them (TTX.match, 'record'); a file of one pair has no choice ('one'); a recorded target's block
+  // has no gun names but its gun's own figures (the aim block: dispersion, aiming, reload, turret traverse), and the pair
+  // whose block is nearest to them is the one ('aim'; the battle's modifiers may shift a figure a little, so nearest, not
+  // equal). With none of these the top pair stands, and its chip says the record does not tell ('top').
+  function ttxTargetPair(t, v) {
+    var cfg = t.configs, keys = ['dispersion', 'aimingTime', 'reloadTime', 'turretRotationSpeed'];
+    if (cfg.length === 1) return {i: 0, how: 'one'};
+    if (v && v.gunName) return {i: TTX.match(t, v), how: 'record'};
+    var a = v && v.aim, best = -1, score = Infinity;
+    if (a && a.dispersion > 0) cfg.forEach(function (p, i) {
+      var pa = p.aim || {}, sum = 0, n = 0;
+      keys.forEach(function (k) { var x = Number(a[k]), y = Number(pa[k]); if (x > 0 && y > 0) { sum += Math.abs(Math.log(x / y)); n++; } });
+      if (n && (sum < score - 1e-9 || (Math.abs(sum - score) <= 1e-9 && p.top))) { score = sum; best = i; }
+    });
+    return best >= 0 ? {i: best, how: 'aim'} : {i: TTX.match(t, {}), how: 'top'};
+  }
+  function ttxTargetPick() {
+    var S = TTX_TARGET, p = TTX && ttxData && ttxData.configs && ttxData.configs.length ? ttxTargetPair(ttxData, S.vehicle) : {i: -1, how: ''};
+    S.index = p.i; S.how = p.how;
+  }
+  // THE TARGET'S ONE DOOR (a SCENE_PAINTERS entry, with the shooter's panel): the vehicle of the Collision model on screen,
+  // its file from the cache or read (the HP bar reads the same file, hpAsk), its pair, the paint. No model: the panel goes.
+  function ttxTargetSync() {
+    var S = TTX_TARGET, v = activeHit && modelOnScreen() ? activeHit.target || null : null, type = v && v.type ? String(v.type) : '';
+    S.vehicle = v;
+    ttxWith(S, function () { ttxType = type; ttxData = type && TTX ? ttxCache[typeId(type)] || null : null; ttxTargetPick(); ttxPaint(); });
+    if (type && TTX && !S.data) readTtx(type).then(function (t) {
+      if (!t || S.vehicle !== v) return;
+      ttxWith(S, function () { ttxData = t; ttxTargetPick(); ttxPaint(); });
+    });
+  }
+  function ttxPaintTarget() { ttxWith(TTX_TARGET, function () { ttxTargetPick(); ttxPaint(); }); }
   // The pair on the panel IS the emulator's (24.09): the panel explains the gun that fires. `emu` when the caller has it.
   function ttxPairIndex(emu) { return emu !== undefined ? emu : ttxEmuIndex(); }
-  function ttxBuildOn() { var e = $('ttx-build'); return !!(e && e.checked); }
+  function ttxBuildOn() { var e = $('ttx-build'); return ttxSide !== TTX_TARGET && !!(e && e.checked); }
   // The page's own shell when it is one of this gun's, else the gun's first - the garage's active shell.
   function ttxShellOf(shells) {
+    if (ttxSide === TTX_TARGET) return shells[0] || null;   // the target's gun: the garage's active shell
     var choice = $('shell-choice').value, c = choice && choice.indexOf('saved:') === 0 ? candidates[Number(choice.slice(6))] : null;
     if (c) for (var i = 0; i < shells.length; i++) {
       if (shells[i].kind === c.kind && shells[i].name === c.name && Math.abs((Number(shells[i].caliber) || 0) - (Number(c.caliber) || 0)) < 0.5) return shells[i];
@@ -8911,13 +8968,19 @@
     if (ttxMemo[slot]) return ttxMemo[slot];
     var t = ttxData, pair = t.configs[index];
     if (mode) { var mi = ttxModeInput(t, index); t = mi.t; pair = mi.pair; }
-    var live = build && index === ttxEmuIndex() && (mode ? 1 : 0) === aimModeNow() ? a : null;
-    var fx = shooterEffects(!build), shells = ttxShellsOf(t, pair);
+    var target = ttxSide === TTX_TARGET, live = !target && build && index === ttxEmuIndex() && (mode ? 1 : 0) === aimModeNow() ? a : null;
+    var fx = target ? ttxStockFx(pair) : shooterEffects(!build), shells = ttxShellsOf(t, pair);
     var v = TTX.values({ttx: t, pair: pair, aim: live || pair.aim || null, shells: shells, shell: ttxShellOf(shells),
                         fx: fx.e, crew: fx.crew, paint: build && !!shooterConfig.paint});
     v.source = live ? 'live' : 'file';
     ttxMemo[slot] = v;
     return v;
+  }
+  // The target's stock (11.11): nothing fitted and its OWN crew at 100 % - the commander's tenth on the roles he does not
+  // hold himself, by its pair's crew roles (the shooter's stock reads the shooter's crew, shooterEffects).
+  function ttxStockFx(pair) {
+    var e = aimEffects(aimValues(null));
+    return {e: e, crew: crewFactors(aimCrewOf(pair && pair.aim), [], aimAdd(e, 'crewLevel'), [])};
   }
   // --- The second mode on the panel (23.09, outputs/second-modes-2026-09-23.md 5.3) --------------------------------
   // The mode of the block the emulator fires with now: the recorded block is the recorded mode's, the other one the
@@ -8941,7 +9004,7 @@
   // Which mode the panel shows: with a mode button (both views since 27.09) the button's own - ONE state, the panel
   // explains the circle on the scene - else, with no shooter's state to follow, the user's choice kept per type beside
   // the pair (aimStore.modes).
-  function ttxModeFollows() { var m = xiNow(); return m && m.spec.kind === 'siege' && m.spec.mode !== 'auto' ? m : null; }
+  function ttxModeFollows() { if (ttxSide === TTX_TARGET) return null; var m = xiNow(); return m && m.spec.kind === 'siege' && m.spec.mode !== 'auto' ? m : null; }
   function ttxModeOn() {
     var m = ttxModeFollows();
     if (m) return m.st >= 1 ? 1 : 0;
@@ -8981,6 +9044,17 @@
     if (ttxModeOn()) delete aimStore.modes[ttxType]; else aimStore.modes[ttxType] = 1;
     persistSettings();
     ttxPaint();
+    if (TTX_TARGET.type === ttxType) ttxPaintTarget();   // the choice is kept per type: a target of the same type follows
+  }
+  // The target's ◐ (11.11): the panel's own mode of its type, the same store; the shooter's panel of that type follows.
+  function ttxTargetModeToggle() {
+    ttxWith(TTX_TARGET, function () {
+      if (!ttxData || !ttxType) return;
+      if (ttxModeOn()) delete aimStore.modes[ttxType]; else aimStore.modes[ttxType] = 1;
+      persistSettings();
+      ttxPaint();
+    });
+    if (ttxType && ttxType === TTX_TARGET.type) ttxPaint();
   }
   // --- Painting ---------------------------------------------------------------------------------------------
   // ONE widget for a row, in both views: a glyph and a figure (spec 3.4.9).
@@ -9165,25 +9239,34 @@
   function mulOf(input) { var e = shooterEffects(false).e; return aimMul({mul: e.dev}, input); }
   function ttxPaint() {
     if (sceneBuild) return;   // a scene half built: its finisher (sceneShown) paints the panel once
-    var panel = $('ttx-panel');
+    var panel = T('ttx-panel'), target = ttxSide === TTX_TARGET;
     if (!panel) return;
     var show = ttxPanelShow();
     if (!show) {
-      ttxPaintTurrets(-1, -1);   // the Turret row of Config goes with the panel
-      ['ttx-pairs', 'ttx-more', 'ttx-fold'].forEach(function (id) { var d = $(id); if (d) d.open = false; });
-      paintXi();   // the mode button may stand alone (ttxPanelShow)
+      if (!target) ttxPaintTurrets(-1, -1);   // the Turret row of Config goes with the panel
+      ['ttx-pairs', 'ttx-more', 'ttx-fold'].forEach(function (id) { var d = T(id); if (d) d.open = false; });
+      if (!target) paintXi();   // the mode button may stand alone (ttxPanelShow)
       return;
     }
     // The emulator's pair and the pair on the panel, counted once a paint and handed to all that follows.
-    var index = ttxEmuIndex(), rec = ttxRecIndex(), ctx = ttxContext(index), toggle = $('ttx-build-toggle');
+    var index = ttxEmuIndex(), rec = ttxRecIndex(), ctx = ttxContext(index), toggle = T('ttx-build-toggle');
     if (toggle && toggle.getAttribute('aria-pressed') !== String(ctx.build)) toggle.setAttribute('aria-pressed', String(ctx.build));
     if (toggle) ttxSetTitle(toggle, ttxBuildTitle(ctx));
-    ttxPaintTurrets(index, rec);   // the Turret row of Config follows the same pair
-    paintXi();   // the one mode button (27.09): its state and the panel's figures (ctx.mode) are one
+    if (!target) {
+      ttxPaintTurrets(index, rec);   // the Turret row of Config follows the same pair
+      paintXi();   // the one mode button (27.09): its state and the panel's figures (ctx.mode) are one
+    } else ttxPaintTargetMode(ctx.pair);
     ttxPaintPair(index, rec);
     if (ttxLine) ttxPaintLine(ttxLine, ctx);
     Object.keys(ttxRows).forEach(function (slot) { ttxPaintRow(ttxRows[slot], ttxRowKey(slot, ctx.cur), ctx); });
-    if ($('ttx-more').open) ttxPaintFull(ctx);
+    if (T('ttx-more').open) ttxPaintFull(ctx);
+  }
+  // The target's mode button: only the panel's own ◐, for a pair with a second mode (the target has no mechanic to follow).
+  function ttxPaintTargetMode(pair) {
+    var b = T('ttx-mode'), own = !!(pair && ttxHasMode(pair));
+    if (!b) return;
+    if (b.hidden !== !own) { b.hidden = !own; scheduleLayout(LAYOUT_TTX); }
+    if (own) ttxPaintOwnMode(b, pair);
   }
   // A pair's shells: its own list where its turret overrides the gun's (the mod writes configs[k].shells then,
   // spec section 8 point 4), else the gun's.
@@ -9210,8 +9293,14 @@
   // stylesheet hides the figures, ⚙ and ▴; the panel does not fold then). True when the whole panel is up.
   var ttxModeOnly = false;
   function ttxPanelShow() {
-    var panel = $('ttx-panel');
+    var panel = T('ttx-panel');
     if (!panel) return false;
+    // The target's: its file, its pair and a model on screen.
+    if (ttxSide === TTX_TARGET) {
+      var on = !!(TTX && ttxData && ttxData.configs && ttxData.configs.length && TTX_TARGET.index >= 0 && modelOnScreen());
+      if (panel.hidden !== !on) { panel.hidden = !on; scheduleLayout(LAYOUT_TTX); }
+      return on;
+    }
     var seat = !$('shooter-tile').hidden, full = !!(TTX && ttxData && ttxData.configs && ttxData.configs.length && seat);
     var only = !full && seat && !!xiNow();
     if (panel.hidden !== !(full || only)) { panel.hidden = !(full || only); scheduleLayout(LAYOUT_TTX); }
@@ -9221,7 +9310,7 @@
   // Where the button stands: at the left end of the panel's tools, or - the panel folded into ▤ - on the panel itself
   // beside ▤, never hidden in the popover (27.09). The node moves; its listeners go with it.
   function ttxModePlace() {
-    var b = $('ttx-mode'), panel = $('ttx-panel'), tools = $('ttx-tools'), fold = $('ttx-fold');
+    var b = T('ttx-mode'), panel = T('ttx-panel'), tools = T('ttx-tools'), fold = T('ttx-fold');
     if (!b || !panel || !tools) return;
     if (ttxFolded) { if (b.parentNode !== panel) panel.insertBefore(b, fold && fold.parentNode === panel ? fold.nextSibling : panel.firstChild); }
     else if (b.parentNode !== tools) tools.insertBefore(b, tools.firstChild);
@@ -9254,11 +9343,12 @@
     ttxPaintPair(ttxEmuIndex(), ttxRecIndex());
   }
   function ttxPaintPair(index, rec) {
-    var tile = $('ttx-pair'), box = $('ttx-pairs'), pair = ttxData.configs[index];
+    var tile = T('ttx-pair'), box = T('ttx-pairs'), pair = ttxData.configs[index], target = ttxSide === TTX_TARGET;
     if (!tile || !pair) return;
     var guns = ttxTurretPairs(pair.turret).length, turrets = ttxTurretMemo().count, config = ttxConfigShown();
-    var listTurrets = turrets > 1 && !config, many = guns > 1 || listTurrets, other = index !== rec, turret = (ttxData.turrets || [])[pair.turret] || {};
-    var key = [index, many, other, turrets, config, ttxData.id].join('|');
+    // The target's chip lists nothing: its gun is the one it had in the battle, not the page's to pick.
+    var listTurrets = !target && turrets > 1 && !config, many = !target && (guns > 1 || listTurrets), other = !target && index !== rec, turret = (ttxData.turrets || [])[pair.turret] || {};
+    var key = [index, many, other, turrets, config, ttxData.id, target ? TTX_TARGET.how : ''].join('|');
     if (tile.ttxKey === key) return;
     tile.ttxKey = key;
     // The ◐ the shell chips of a second mode wear, for what the panel does not show by its mode switch: the automatic
@@ -9279,6 +9369,13 @@
     if (notes.length) tile.appendChild(node('span', '◐', 'ttx-mode'));
     box.setAttribute('data-many', String(many));
     if (other) box.setAttribute('data-other', 'true'); else box.removeAttribute('data-other');
+    if (target) {
+      tile.title = tipJoin(['Gun: ' + (pair.gunUserString || pair.gun), TTX_TARGET_PAIR[TTX_TARGET.how] || TTX_TARGET_PAIR.top,
+        cal !== '—' ? '• Calibre: ' + cal + ' mm' : null, '• Tier: ' + (tierRomans[pair.gunLevel] || '?'), '• Turret: ' + (turret.userString || turret.name || ''), '',
+        '• Figures: the stock, as the garage shows the bare vehicle - its equipment, crew and field modification in the battle are not recorded',
+        '', notes.length ? 'This vehicle (◐):' : null].concat(notes));
+      return;
+    }
     tile.title = tipJoin(['Gun: ' + (pair.gunUserString || pair.gun),
       'The shooter’s gun: this panel, the ⌖ circle, the reload and the shells follow it.',
       cal !== '—' ? '• Calibre: ' + cal + ' mm' : null, '• Tier: ' + (tierRomans[pair.gunLevel] || '?'), '• Turret: ' + (turret.userString || turret.name || ''), '',
@@ -9291,11 +9388,16 @@
       other ? '• The record’s: the recorded ring and the hit’s own shell and result' : null,
       '', notes.length ? 'This vehicle (◐):' : null].concat(notes));
   }
+  // How the target's pair was told (ttxTargetPair): the chip's second line.
+  var TTX_TARGET_PAIR = {record: 'The target’s gun and turret, as its export names them.',
+    one: 'The target’s gun: the vehicle has no other gun or turret.',
+    aim: 'The target’s gun in this battle, told by its recorded gun figures - dispersion, aiming, reload, turret traverse.',
+    top: 'The record does not tell the target’s gun: the top gun and turret are shown.'};
   // The quick list: the guns of the turret on the panel, the one shown pressed, the emulator's marked with a dot and
   // the top pair with ▲; while Config is not on screen, the turret tiles of its Turret row above them. Built when it
   // opens, never before.
   function ttxPaintPairs() {
-    var list = $('ttx-pair-list');
+    var list = T('ttx-pair-list');
     if (!list || !ttxData) return;
     list.replaceChildren();
     var build = ttxBuildOn(), here = ttxEmuIndex(), rec = ttxRecIndex(), pair = ttxData.configs[here];
@@ -9416,7 +9518,7 @@
   // The expanded view (spec 3.4.7, v2): the garage's five groups in its order, the same rows and the same reload line
   // as the compact view. Rebuilt while it is open, on the same events as the compact rows; a closed one is not touched.
   function ttxPaintFull(ctx) {
-    var box = $('ttx-full'), cur = ctx.cur;
+    var box = T('ttx-full'), cur = ctx.cur;
     if (!box) return;
     box.replaceChildren();
     function rows(sec, keys) {
@@ -9525,8 +9627,37 @@
   // view (TTX_COMPACT): the hit points in the head, then Firepower, Mobility and Concealment - every figure a row of the
   // one widget, on the view's one grid.
   var ttxLine = null;
+  // The target's panel is made from the shooter's markup (same function - same widget): every id gets -target and the
+  // help dot names the copies. Left out of it: ⚙ (the build is Config's, the shooter's; a target's equipment and crew are
+  // not recorded). Its words say it is the target's.
+  function ttxCloneTarget() {
+    var src = $('ttx-panel');
+    if (!src || $('ttx-panel-target')) return;
+    var c = src.cloneNode(true);
+    [c].concat([].slice.call(c.querySelectorAll('[id]'))).forEach(function (e) { e.id = e.id + '-target'; });
+    var build = c.querySelector('#ttx-build-toggle-target');
+    if (build) build.remove();
+    [].slice.call(c.querySelectorAll('[data-help-for]')).forEach(function (d) {
+      d.setAttribute('data-help-for', d.getAttribute('data-help-for').split(' ').filter(function (id) { return id !== 'ttx-build-toggle'; }).map(function (id) { return id + '-target'; }).join(' '));
+    });
+    c.classList.add('ttx-target');
+    c.setAttribute('role', 'group');
+    c.setAttribute('aria-label', 'Target’s characteristics');
+    var fold = c.querySelector('.ttx-fold>summary');
+    if (fold) { fold.title = 'Target’s characteristics\nThe Collision model vehicle’s, as the garage counts them for the bare vehicle, folded into this button while the scene is small.'; fold.setAttribute('aria-label', 'Target’s characteristics'); }
+    var mode = c.querySelector('#ttx-mode-target');
+    if (mode) mode.title = 'Mode\nThe target’s second mode: which mode’s figures this panel shows.';
+    var more = c.querySelector('#ttx-more-button-target');
+    if (more) more.title = 'All characteristics\nThe target’s, in the garage’s own groups: firepower with its gun’s shells, survivability, mobility, concealment and spotting.';
+    src.parentNode.insertBefore(c, src.nextSibling);
+  }
   function buildTtxPanel() {
-    var compact = $('ttx-compact');
+    ttxCloneTarget();
+    ttxWith(TTX_SHOOTER, ttxBuildSide);
+    ttxWith(TTX_TARGET, ttxBuildSide);
+  }
+  function ttxBuildSide() {
+    var side = ttxSide, compact = T('ttx-compact');
     if (!compact) return;
     compact.replaceChildren();
     ttxRows = {};
@@ -9546,20 +9677,26 @@
       if (s.line) { ttxLine = ttxReloadLine(); ttxLine.ttxShaped = true; sec.appendChild(ttxLine); }
       s.lines.forEach(function (keys) { rows(sec, keys); });
     });
-    var hp = $('ttx-hp');
+    var hp = T('ttx-hp');
     if (hp) { ttxRows.maxHealth = ttxRow('maxHealth'); hp.replaceChildren(ttxRows.maxHealth); }
-    $('ttx-build').onchange = function () { ttxPaint(); };
-    $('ttx-build-toggle').onclick = function () { var box = $('ttx-build'); box.checked = !box.checked; ttxPaint(); persistSettings(); };
-    $('ttx-mode').onclick = ttxModeToggle;
+    if (side === TTX_SHOOTER) {
+      $('ttx-build').onchange = function () { ttxPaint(); };
+      $('ttx-build-toggle').onclick = function () { var box = $('ttx-build'); box.checked = !box.checked; ttxPaint(); persistSettings(); };
+    }
+    T('ttx-mode').onclick = side === TTX_TARGET ? ttxTargetModeToggle : ttxModeToggle;
     // The list and the expanded view are built by the click that opens them, which runs before <details> opens.
-    $('ttx-pair').onclick = function (e) {
-      // ▾ (data-many, ttxPaintPair): more guns on this turret, or the turrets while Config is away.
-      if (!ttxData || $('ttx-pairs').getAttribute('data-many') !== 'true') { if (e && e.preventDefault) e.preventDefault(); return; }
-      if (!$('ttx-pairs').open) ttxPaintPairs();
+    T('ttx-pair').onclick = function (e) {
+      ttxWith(side, function () {
+        // ▾ (data-many, ttxPaintPair): more guns on this turret, or the turrets while Config is away.
+        if (!ttxData || T('ttx-pairs').getAttribute('data-many') !== 'true') { if (e && e.preventDefault) e.preventDefault(); return; }
+        if (!T('ttx-pairs').open) ttxPaintPairs();
+      });
     };
-    $('ttx-more-button').onclick = function () {
-      if ($('ttx-more').open || !ttxData) return;
-      ttxPaintFull(ttxContext(ttxPairIndex()));
+    T('ttx-more-button').onclick = function () {
+      ttxWith(side, function () {
+        if (T('ttx-more').open || !ttxData) return;
+        ttxPaintFull(ttxContext(ttxPairIndex()));
+      });
     };
   }
   // Another shell on the page may change the DPM and the lit row of the shell table: painted only when the shell
@@ -9574,11 +9711,11 @@
   // Folded into one button when the scene is small (spec 3.4.2): the same <details> + .toolbar-popover as the
   // modifier groups, the controls moved into it and back, every listener kept.
   function ttxFold(on) {
-    var fold = $('ttx-fold'), inner = $('ttx-inner'), panel = $('ttx-panel');
+    var fold = T('ttx-fold'), inner = T('ttx-inner'), panel = T('ttx-panel');
     if (!fold || !inner || on === ttxFolded) return;
     ttxFolded = on;
     fold.hidden = !on;
-    if (on) $('ttx-fold-pop').appendChild(inner);
+    if (on) T('ttx-fold-pop').appendChild(inner);
     else { fold.open = false; panel.appendChild(inner); }
     ttxModePlace();   // the mode button stays beside ▤, not in the popover
   }
@@ -9934,14 +10071,14 @@
   // same frame as the two rows above, never per frame.
   // The shooter's group does the same in the bottom band, beside the Shooter tile, so each group sits with
   // the vehicle it describes.
-  // The hit-line panel's circle tile stands at the right end of the SAME top band as a mod slot (22.09), so
-  // the room a group has up there ends where that tile begins. Measured in the layout pass, not per frame;
-  // the tile below it is on the next row and never in the way.
+  // The target's characteristics panel stands at the right end of the SAME top band as a mod slot (11.11; until then
+  // the hit line's circle tile did), so the room a group has up there ends where that panel begins. Measured in the
+  // layout pass, not per frame.
+  function ttxTargetRect(){var e=$('ttx-panel-target');if(!e||e.hidden)return null;var r=e.getBoundingClientRect();return r.width>0?r:null;}
   function circleBand(){
-    var e=$('shot-circle-tile');
-    if(!e||e.hidden)return 0;
-    var w=e.getBoundingClientRect().width;
-    return w>0?w+12:0;
+    var r=ttxTargetRect(),box=$('viewport');
+    if(!r||!box)return 0;
+    return Math.max(0,box.getBoundingClientRect().right-r.left)+12-14;
   }
   function placeMods(group,slot,tile){
     var box=$('viewport');
@@ -9963,42 +10100,56 @@
     }
   }
   // THE MODEL ROW (23.09): the tile's head (the tile, ⌖, the help dot) and the strip - the emulated gun's load whenever
-  // the aim emulation runs, and under ⌖ ◔, the target's health and ↺ (paintStrip). The strip stays on the tile's line
-  // while the whole row fits the band the scene leaves it - centred, between the info panels on the left and the circle
-  // tile on the right. When it does not (a narrow scene, a phone) the row is stacked: data-stack turns it into a column
-  // (style.css), the strip on its own line under the tile. The one-line width is read as natural() reads the heading's,
-  // nothing painted in between. Run by the layout pass alone - the strip's width changed, a resize - never per frame.
-  // STACKED AND STILL IN THE WAY (final review, 23.09): on a scene so narrow that even the stacked row's widest line -
-  // the strip's, or the head's - crosses a tile of the scene's top grid (the info panels, the circle tiles), the row
-  // goes down under that tile instead of lying beneath it (the grid is a layer above the row, and its panels take the
-  // clicks). The tiles are taken top to bottom, so a row moved under one is checked against the next one down.
-  // The grid's tiles: its two info panels (the left column the one-line width is measured from) and the two circle tiles.
-  var TOP_TILES=['shot-panel','armor-probe','shot-circle-tile','probe-circle-tile'];
+  // the aim emulation runs, the target's health bar, and under ⌖ ◔ and ↺ (paintStrip). It stands in the TOP BAND of the
+  // scene, between the info panels on the left and the target's characteristics panel on the right (11.11), in the first
+  // of these forms that fits (user 11.11: at the page widths 754 and 1024 the old rule sent it down under the panels,
+  // over the middle of the model; the bar belongs by the Collision model tile):
+  //   1. one line - the strip beside the head - centred on the scene; then the strip under the head (data-stack);
+  //   2. the same, centred in the band when the scene's middle leaves too little on one side;
+  //   3. under the target's panel folded into ▤, at the scene's right edge, where the band is then the whole width
+  //      right of the info panels;
+  //   4. the tile without its caption (data-compact; its tooltip still names it), then ⌖ and "?" wrapped under the tile
+  //      and the strip wrapping in the room left (data-narrow) - each in 1 to 3 again.
+  // Nothing fits (a scene narrower than any page width the user has): the narrowest form under the info panels, in
+  // their column, off the scene's middle. Returns where it went: 'top', 'under' (3), 'low' (the last). The one-line
+  // widths are read with max-width lifted, nothing painted in between. Run by the layout pass alone.
+  var TOP_TILES=['shot-panel','armor-probe'];
+  var ROW_FORMS=[[0,0,0],[1,0,0],[1,1,0],[1,1,1]];
+  function rowForm(row,f){
+    [['data-stack',f[0]],['data-compact',f[1]],['data-narrow',f[2]]].forEach(function(a){var on=row.getAttribute(a[0])!==null;if(on!==!!a[1]){if(a[1])row.setAttribute(a[0],'');else row.removeAttribute(a[0]);}});
+  }
+  function rowWidth(row,narrow){
+    if(narrow){var tile=$('model-tile');return Math.max(natural(tile),natural($('fun-mode-toggle'))+36);}
+    var s=row.style,m=s.maxWidth,w=s.width;s.maxWidth='none';s.width='max-content';var out=row.offsetWidth;s.maxWidth=m;s.width=w;return out;
+  }
   function layoutModelRow(){
-    var row=$('model-row'),strip=$('fun-strip'),box=$('viewport');
-    if(!row||!box||!box.clientWidth)return;
-    var stacked=row.getAttribute('data-stack')!==null,stack=false,top='';
-    if(strip&&!strip.hidden){
-      if(stacked){row.removeAttribute('data-stack');stacked=false;}
-      if(row.style.top)row.style.top='';
-      var w=box.clientWidth,mid=w/2,b0=box.getBoundingClientRect(),left=14,right=w-14-circleBand(),tiles=[];
-      TOP_TILES.forEach(function(id,i){var p=$(id),r=p&&!p.hidden?p.getBoundingClientRect():null;if(r&&r.width>0){tiles.push(r);if(i<2)left=Math.max(left,r.right-b0.left+8);}});
-      stack=natural(row)>2*Math.min(mid-left,right-mid);
-      if(stack){
-        row.setAttribute('data-stack','');stacked=true;
-        var half=Math.min(Math.max(natural(strip),natural(row.firstElementChild)),w-24)/2,y=row.offsetTop,h=row.offsetHeight;
-        tiles.sort(function(a,b){return a.top-b.top;}).forEach(function(r){
-          var l=r.left-b0.left,rt=r.right-b0.left,t=r.top-b0.top,b=r.bottom-b0.top;
-          if(rt>mid-half&&l<mid+half&&t<y+h&&b>y)y=b+8;
-        });
-        if(y!==row.offsetTop)top=y+'px';
-      }
-    }else if(row.style.top)row.style.top='';
-    if(stack!==stacked){if(stack)row.setAttribute('data-stack','');else row.removeAttribute('data-stack');}
-    if(top&&row.style.top!==top)row.style.top=top;
+    var row=$('model-row'),box=$('viewport');
+    if(!row||!box||!box.clientWidth)return 'top';
+    var s=row.style;s.left='';s.transform='';s.top='';s.width='';s.maxWidth='';
+    if($('model-tile').hidden){rowForm(row,ROW_FORMS[0]);return 'top';}
+    var w=box.clientWidth,b0=box.getBoundingClientRect(),L=14,low=12,tp=ttxTargetRect();
+    TOP_TILES.forEach(function(id){var p=$(id),r=p&&!p.hidden?p.getBoundingClientRect():null;if(r&&r.width>0){L=Math.max(L,r.right-b0.left+8);low=Math.max(low,r.bottom-b0.top+8);}});
+    var R=tp?tp.left-b0.left-8:w-14,under=tp&&tp.height<60?tp.bottom-b0.top+8:null;
+    // The strip on its own line is all a stack changes: with no strip the stacked form is the same as the line.
+    var strip=$('fun-strip'),forms=strip&&!strip.hidden?ROW_FORMS:ROW_FORMS.filter(function(f){return !f[0]||f[1];});
+    var place=null;
+    for(var i=0;i<forms.length&&!place;i++){
+      var f=forms[i];rowForm(row,f);
+      var rw=rowWidth(row,f[2]),cx=(w-rw)/2;
+      if(!f[2]&&cx>=L&&cx+rw<=R)place={left:null,top:null,how:'top'};
+      else if(rw<=R-L)place={left:L+(R-L-rw)/2,top:null,how:'top',width:f[2]?R-L:0};
+      else if(under!==null&&rw<=w-14-L)place={left:f[2]?L:w-14-rw,top:under,how:'under',width:f[2]?w-14-L:0};
+    }
+    if(!place)place={left:14,top:low,how:'low',width:f[2]?Math.max(rw,L-22):0};
+    if(place.left!==null){s.left=place.left+'px';s.transform='none';}
+    if(place.top!==null)s.top=place.top+'px';
+    if(place.width){s.width=place.width+'px';s.maxWidth=place.width+'px';}
+    return place.how;
   }
   function layoutMods(){
-    layoutModelRow();   // first: whether the strip stands beside the tile or under it decides the row's edge
+    // First: where the row stands decides the band's edge. A row that found no place in the top band beside the target's
+    // whole panel folds that panel into its ▤ and is placed again (the folding pattern of the modifier groups).
+    if(layoutModelRow()==='low'&&ttxTargetRect()&&!TTX_TARGET.folded){ttxWith(TTX_TARGET,function(){ttxFold(true);});layoutModelRow();}
     // Measured against the model tile's whole ROW since 22.09: the health bar and its ↺ stand in it, so
     // the room left for the group starts to the right of them, not of the tile.
     placeMods(targetMods,$('target-mods-slot'),modelOnScreen()?$('model-row')||$('model-tile'):null);
@@ -10045,6 +10196,23 @@
     var raised=layoutCorner(panel);
     if(raised&&box&&(box.clientHeight<420||box.clientWidth<720)){ttxFold(true);layoutCorner(panel);}
   }
+  // The target's panel (11.11), top-right: whole where it stands clear of the shooter's panel, the shooter row and the pose
+  // tile below it, on a scene of at least 720 x 420 (the shooter's own threshold); else folded into ▤ - the same mechanism.
+  // layoutMods may fold it too, when the model row finds no room beside it.
+  function layoutTtxTarget(){
+    ttxWith(TTX_TARGET,function(){
+      var panel=T('ttx-panel'),box=$('viewport');if(!panel||panel.hidden||!box||!box.clientWidth)return;
+      // A pass while its ▤ is open (the pose tile's words, a mode button coming) measures the whole panel and folds it
+      // again; the popover the user opened stays open.
+      var open=ttxFolded&&T('ttx-fold').open;
+      ttxFold(false);
+      var fold=box.clientHeight<420||box.clientWidth<720,p=panel.getBoundingClientRect();
+      [$('ttx-panel'),document.querySelector('.shooter-row'),$('pose-info')].forEach(function(o){
+        if(fold||!o||o.hidden)return;var q=o.getBoundingClientRect();
+        if(q.width>0&&q.height>0&&p.bottom+8>q.top&&p.top<q.bottom&&p.right+8>q.left&&p.left<q.right+8)fold=true;});
+      if(fold){ttxFold(true);if(open)T('ttx-fold').open=true;}
+    });
+  }
   // `parts` is a mask of the LAYOUT_ constants; the masks asked for before the frame are added up, and the frame
   // lays out exactly those. Every pass writes styles and reads widths in turn, so each one forces the browser to
   // lay the page out: a pose tile that changed its text must not also take the toolbar out of its popover (and
@@ -10059,11 +10227,14 @@
   }
   var layoutTask; // no initialiser, as tbParts
   function layoutFrame(){var p=tbParts;tbParts=0;
-      if(p&LAYOUT_HEADING)layoutHeading();if(p&LAYOUT_TOOLBAR)layoutToolbar();if(p&LAYOUT_MODS)layoutMods();
+      if(p&LAYOUT_HEADING)layoutHeading();if(p&LAYOUT_TOOLBAR)layoutToolbar();
       if(p&(LAYOUT_POSE|LAYOUT_TTX))layoutShooterRow();   // first: both corners are measured against the row
       if(p&LAYOUT_POSE)layoutPose();
       // The shooter row decides both corners, so what moves the pose tile lays the panel out again too.
-      if(p&(LAYOUT_POSE|LAYOUT_TTX))layoutTtx();}
+      if(p&(LAYOUT_POSE|LAYOUT_TTX))layoutTtx();
+      // The top band last (11.11): the target's panel is measured against the shooter's below it, the model row and the
+      // target's modifier group against the target's panel.
+      if(p&(LAYOUT_MODS|LAYOUT_POSE|LAYOUT_TTX)){layoutTtxTarget();layoutMods();}}
   window.addEventListener('resize',function(){scheduleLayout();}); // not the handler itself: the Event would be read as a mask
   // Closing on a click outside is written out here: the settings menu has no such handler to reuse. Every
   // popover of the page is a .toolbar-more <details>, the toolbar's own and the modifier groups' alike, and
@@ -10076,7 +10247,7 @@
   document.addEventListener('click',function(e){document.querySelectorAll('.toolbar-more[open]').forEach(function(d){if(!clickedIn(e,d))d.open=false;});
     var pick=document.querySelector('.heading-pick');
     if(pick&&!$('battle-list').hidden&&!clickedIn(e,pick))openBattleList(false);});
-  layoutHeading();layoutToolbar();layoutMods();layoutShooterRow();layoutPose();layoutTtx();
+  layoutHeading();layoutToolbar();layoutShooterRow();layoutPose();layoutTtx();layoutTtxTarget();layoutMods();
   if(host.interrupted){$('host-note').hidden=false;$('host-note').textContent='The previous session was interrupted during “'+host.interrupted.action+'» ('+(host.interrupted.host==='game'?'in the game':'in the browser')+', '+new Date(host.interrupted.at).toLocaleString('en-GB')+'). Mention this when reporting.';}
   (function(){var pv=$('app-version').getAttribute('data-version');if(pv!=='dev')$('app-version').textContent=pv;}());
   host.done();

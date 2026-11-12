@@ -52,7 +52,7 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 .hover-panel{pointer-events:none;background:rgba(23,35,48,.15);text-shadow:0 1px 2px rgba(0,0,0,.7)}/* The hover panel is a column (user, 13.09): the title, the chance, then the details under them. The pen chip
    (penetration at the range) is a row of its own right under the chance, above the effective armour line - the
    two read alike and belong together (user, 20.09). */
-#armor-probe{grid-template-columns:auto auto;grid-template-rows:auto auto auto auto auto;column-gap:10px}#armor-probe .info-title{grid-row:1;grid-column:1/3}#armor-probe #probe-pen{grid-row:3;grid-column:1/3}#armor-probe .info-chance{grid-row:2;grid-column:1/3;align-self:center}#armor-probe #probe-details{grid-row:4;grid-column:1/3}#armor-probe .info-extra{grid-row:5;grid-column:1/3}
+#armor-probe{grid-template-columns:auto 1fr;grid-template-rows:auto auto auto auto auto;column-gap:10px}#armor-probe .info-title{grid-row:1;grid-column:1/3}#armor-probe #probe-pen{grid-row:3;grid-column:1/3}#armor-probe .info-chance{grid-row:2;grid-column:1;align-self:center}#armor-probe #probe-details{grid-row:4;grid-column:1/3}#armor-probe .info-extra{grid-row:5;grid-column:1/3}
 
 
 /* Vehicle tile: tier | name | class+role, with the nation flag faded into the right side.
@@ -114,6 +114,11 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
    the tile - and where even that line crosses a tile of the grid the row goes down under it (app.js layoutModelRow). */
 .model-row{position:absolute;left:50%;top:12px;transform:translateX(-50%);z-index:5;display:flex;flex-wrap:nowrap;align-items:center;gap:8px;width:max-content;max-width:calc(100% - 24px)}
 .model-row[data-stack]{flex-direction:column;gap:6px}
+/* Narrower forms (11.11, app.js layoutModelRow): data-compact leaves the tile's caption out (its tooltip still names
+   it); data-narrow lets ⌖ and its "?" wrap under the tile and the strip wrap inside the width the row is given. */
+.model-row[data-compact] #model-caption{display:none}
+.model-row[data-narrow]{width:auto}
+.model-row[data-narrow] .model-head{flex-wrap:wrap;justify-content:center;row-gap:6px}
 .model-head{display:flex;flex-wrap:nowrap;align-items:center;gap:8px;min-width:0;max-width:100%}
 .model-head>#model-tile{position:static;transform:none;max-width:100%}
 /* ⌖, the crosshair the emulation is switched by (user, 23.09: the ✸ said nothing): drawn in currentColor, so it is
@@ -501,16 +506,15 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 .shell-fields .fields-row label{display:flex;flex-direction:row;align-items:center;gap:6px;font-size:13px;color:var(--muted);white-space:nowrap}
 .shell-fields input{width:84px;min-height:30px;padding:4px 7px;font-size:13px;font-variant-numeric:tabular-nums}
 
-/* One grid across the top of the scene, in three columns: the two panels in a left column of constant width,
-   so the band they cover does not move with the window (web/viewer.js FIT_TOP_BAND reserves it), empty room in
-   the middle, and the aiming-circle tiles in a column of their own at the RIGHT edge (user, 22.09). The tiles
-   of a row are placed by row, not stacked, so each circle tile stays level with the top of the panel it
-   belongs to however tall that panel's chips make it. The hover panel stays click-through: it reads what is
-   under the cursor and must not swallow the move. */
-.viewport-tiles{position:absolute;left:14px;right:14px;top:12px;z-index:6;display:grid;grid-template-columns:minmax(0,320px) 1fr auto;align-items:start;gap:8px;pointer-events:none}
+/* One grid across the top of the scene: the two panels in a left column of constant width, so the band they cover
+   does not move with the window (web/viewer.js FIT_TOP_BAND reserves it), and empty room beside them. The aiming
+   circle's figures stand inside the panels since 11.11 (each beside the chance it goes with); the top-right corner is
+   the target's characteristics panel's. The hover panel stays click-through: it reads what is under the cursor and
+   must not swallow the move. */
+.viewport-tiles{position:absolute;left:14px;right:14px;top:12px;z-index:6;display:grid;grid-template-columns:minmax(0,320px) 1fr;align-items:start;gap:8px;pointer-events:none}
 .viewport-tiles>.info-panel{grid-column:1;width:100%;white-space:normal}
-.viewport-tiles>#shot-panel,.viewport-tiles>#shot-circle-tile{grid-row:1}
-.viewport-tiles>#armor-probe,.viewport-tiles>#probe-circle-tile{grid-row:2}
+.viewport-tiles>#shot-panel{grid-row:1}
+.viewport-tiles>#armor-probe{grid-row:2}
 .viewport-tiles .chips{overflow:visible;text-overflow:clip}
 /* Inside the scene the tiles no longer set the height of anything above the canvas, so an empty chip row costs
    nothing instead of holding its old placeholder height: the pair stays as short as the reserved band. */
@@ -518,7 +522,7 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 .viewport-tiles #shot-pen,.viewport-tiles .info-extra{min-height:0}
 .viewport-tiles .info-chance{font-size:20px}
 #shot-panel{pointer-events:auto}
-#shot-panel{grid-template-columns:auto auto;grid-template-rows:auto auto auto auto auto;column-gap:10px}
+#shot-panel{grid-template-columns:auto 1fr;grid-template-rows:auto auto auto auto auto;column-gap:10px}
 #shot-panel .info-title{grid-row:1;grid-column:1}
 /* The game's oddities of this hit (shot-line-true, 24.09): small marks on the title row of the hit-line panel, where the hit's
    own words are - the pose the game drew against the server's, and a shooter below the target's tracks. Graphics and a
@@ -531,17 +535,17 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 .hit-mark.height{color:#d8b56a}.hit-mark.height svg{stroke:#d8b56a}.hit-mark.height svg .level{stroke-dasharray:2.6 1.8}
 .hit-mark b{font-weight:600}
 #shot-panel #shot-pen{grid-row:3;grid-column:1/3}
-#shot-panel .info-chance{grid-row:2;grid-column:1/3;align-self:center}
+#shot-panel .info-chance{grid-row:2;grid-column:1;align-self:center}
 #shot-panel #shot-details{grid-row:4;grid-column:1/3}
 #shot-panel .info-extra{grid-row:5;grid-column:1/3}
-/* The figure of the aiming circle: a tile of its own at the right end of its panel's row (user, 22.09 - the
-   figure is worth as much as the point figure and was too small for it). The tile mirrors the panel opposite
-   it: the same padding, the same quiet backdrop, the same shadow, read from the right edge inwards. It carries
-   no word but the heading "Circle", and the COLOUR of that heading says which ring the figure belongs to -
-   cyan for the live ring under the cursor, magenta for whichever standing ring the hit-line panel refers to
-   (the recorded reticle of the hit, its nominal estimate, or the ring an emulated shot left behind). The
-   sentence that used to hang on the little line is the tile's own tooltip, so the tile takes the pointer. */
-.aim-circle-tile{grid-column:3;justify-self:end;display:grid;justify-items:end;row-gap:2px;padding:6px 12px 8px;border-radius:6px;background:rgba(23,35,48,.15);white-space:nowrap;text-shadow:0 1px 2px rgba(0,0,0,.7);color:var(--aim-live);pointer-events:auto;cursor:help}
+/* The figure of the aiming circle (user, 22.09 - the figure is worth as much as the point figure): since 11.11 inside
+   the panel it goes with, on the row of that panel's chance, at its right end - the hit line's figure in the Hit line
+   panel, the live one in Under the cursor (user 11.11: the top-right corner became the target's characteristics) - in
+   the same size as the chance beside it. It carries no word but the heading "Circle", and the COLOUR of that heading
+   says which ring the figure belongs to - cyan for the live ring under the cursor, magenta for whichever standing ring
+   the hit-line panel refers to (the recorded reticle of the hit, its nominal estimate, or the ring an emulated shot
+   left behind). Its sentence is its own tooltip, so the figure takes the pointer even in the click-through panel. */
+.aim-circle-tile{grid-row:2;grid-column:2;justify-self:end;align-self:center;display:flex;align-items:baseline;gap:6px;white-space:nowrap;color:var(--aim-live);pointer-events:auto;cursor:help}
 .aim-circle-tile.shot{color:var(--aim-shot)}
 .aim-circle-tile[hidden]{display:none}
 /* One "?" for the circle tiles (user, 24.09): at the right end of the heading row, above the tiles (25.09: under them
@@ -549,11 +553,11 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
    row keeps room for it, so the shell fields never run under it. */
 .scene-heading.scene-heading{position:relative;padding-right:40px}
 .scene-heading>.circle-help{position:absolute;right:12px;top:50%;transform:translateY(-50%)}
-/* The ⚠ of a shot ring one server tick uncertain (24.09): at the right end of the empty middle column, so it stands
-   just left of the circle tile of its row, and at the scene's right edge when that tile is away. Left click: its words. */
-.disc-stale{grid-column:2;grid-row:1;justify-self:end;margin-top:6px;width:20px;height:20px;pointer-events:auto;cursor:help;filter:drop-shadow(0 1px 1px rgba(0,0,0,.6))}
+/* The ⚠ of a shot ring one server tick uncertain (24.09): just before the hit line's circle figure it belongs to (inside
+   it since 11.11). Left click: its words. */
+.disc-stale{align-self:center;width:18px;height:18px;pointer-events:auto;cursor:help;filter:drop-shadow(0 1px 1px rgba(0,0,0,.6))}
 .disc-stale[hidden]{display:none}
-.disc-stale svg{display:block;width:20px;height:20px}
+.disc-stale svg{display:block;width:18px;height:18px}
 .disc-stale path{fill:var(--warn);stroke:#2a1a05;stroke-width:.8;stroke-linejoin:round}
 .disc-stale path.mark{fill:none;stroke:#2a1a05;stroke-width:2;stroke-linecap:round}
 /* The TEMPORARY Shot ring lab of Settings (24.09): a folded block of its own, dashed so it reads as a trial. The colour
@@ -754,6 +758,10 @@ header>.settings-menu>.settings-content{top:calc(100% + 8px);right:0;max-height:
    tooltip. A figure of the build better than the stock is mint, a worse one red, as the garage's arrows are. */
 .ttx-panel{position:absolute;right:14px;bottom:12px;z-index:5;display:flex;align-items:flex-end;padding:4px 8px;border-radius:5px;background:rgba(23,35,48,.55);color:#e5edf5;font-size:13px;line-height:1.1;font-variant-numeric:tabular-nums;text-shadow:0 1px 2px rgba(0,0,0,.7)}
 .ttx-panel[hidden],.ttx-fold[hidden]{display:none}
+/* THE TARGET'S PANEL (11.11, user): a second instance of the same widget (app.js ttxCloneTarget) for the vehicle of the
+   Collision model, at the TOP-right corner; its popovers open downward. */
+.ttx-panel.ttx-target{top:12px;bottom:auto;align-items:flex-start}
+.ttx-panel.ttx-target .toolbar-popover{top:calc(100% + 6px);bottom:auto}
 /* The panel's controls on their own row above the figures (user 24.09): the second mode's switch at its left end, only
    for a vehicle with a mode; ⚙, ▴ and "?" at its right. */
 .ttx-inner{display:flex;align-items:center;gap:7px}
@@ -822,6 +830,13 @@ header>.settings-menu>.settings-content{top:calc(100% + 8px);right:0;max-height:
 .ttx-panel #ttx-mode[data-passive="1"]:hover{background:var(--mode-soft)}
 .ttx-panel #ttx-mode[data-passive="1"][aria-pressed=true]:hover{background:var(--mode-fill)}
 .ttx-panel #ttx-mode[aria-disabled=true]:not([data-passive="1"]){border-color:var(--mode-dim);border-style:dotted;color:var(--mode-dim);background:none;cursor:default}
+/* The target's ◐ (11.11): the same look at rest, lit and hovered; it has no mechanic, so none of the states below. */
+.ttx-panel #ttx-mode-target{display:flex;align-items:center;min-height:0;padding:3px 7px;font-size:13px;line-height:1;border:1px solid var(--mode);border-radius:6px;background:var(--mode-soft);color:var(--mode);white-space:nowrap}
+.ttx-panel #ttx-mode-target:hover{background:var(--mode-hover)}
+.ttx-panel #ttx-mode-target[aria-pressed=true]{border-color:var(--mode);color:#fff;background:var(--mode-fill)}
+.ttx-panel #ttx-mode-target[hidden]{display:none}
+.ttx-tools>#ttx-mode-target{margin-right:auto}
+.ttx-panel.ttx-target>#ttx-mode-target{align-self:flex-start;margin-left:6px}
 .ttx-panel .toolbar-more>summary::after,.ttx-pairs[data-many=false]>summary::after{content:none}
 .ttx-pairs[data-many=true]>summary::after{content:'\25be';color:var(--muted)}
 .ttx-pairs[data-many=false]>summary{cursor:default}

@@ -523,6 +523,9 @@ function loadCounted(file) {
   const src = fs.readFileSync(file, 'utf8').replace(/\n  function (\w+)\(([^)]*)\) ?\{(\s*if ?\(sceneBuild\) ?return;)?/g, function (m, name) {
     if (PAINTERS.indexOf(name) < 0) return m;
     painterHeads[name] = (painterHeads[name] || 0) + 1;
+    // The characteristics panel paints two instances through the one painter since 11.11 (the target's, ttxSide): the
+    // target's paint is counted under a name of its own, so 'ttxPaint' stays the shooter's - once a scene.
+    if (name === 'ttxPaint') return m + 'window.__paint(ttxSide === TTX_TARGET ? \'ttxPaintTarget\' : \'ttxPaint\');';
     return m + 'window.__paint(\'' + name + '\');';
   });
   const mod = new Module(file, module);
@@ -622,10 +625,15 @@ ok('the impact-mark slider is in the settings menu, 10-100 %, default 90',
    && pageSrc.indexOf('Impact mark opacity') > 0);
 // S5 (22.09): the Circle figures are tiles of their own, and the word "Circle" is the tile's HEADING - the
 // value element under it holds nothing but the figure. Read off the markup: nothing here parses index.html.
-ok('each Circle figure is a tile with a "Circle" heading, and the old panel lines are gone',
-   /<div class="aim-circle-tile shot" id="shot-circle-tile" hidden><span class="info-title" id="shot-circle-head">Circle<\/span><b class="info-chance" id="shot-circle"><\/b><\/div>/.test(pageSrc)
-   && /<div class="aim-circle-tile live" id="probe-circle-tile" hidden><span class="info-title" id="probe-circle-head">Circle<\/span><b class="info-chance" id="probe-circle"><\/b><\/div>/.test(pageSrc)
+// 11.11 (user): the figures moved from the top-right corner into the panels they go with - each right after its panel's
+// chance (the hit line's with the ⚠ of its ring), placed on the chance's row by the stylesheet, in the chance's size.
+ok('each Circle figure is a tile with a "Circle" heading inside its own panel, right after that panel\'s chance; the old panel lines are gone',
+   /<b class="info-chance" id="shot-chance">—<\/b><span class="aim-circle-tile shot" id="shot-circle-tile" hidden><span id="shot-disc-stale"[^]*?<\/svg><\/span><span class="info-title" id="shot-circle-head">Circle<\/span><b class="info-chance" id="shot-circle"><\/b><\/span>/.test(pageSrc)
+   && /<b class="info-chance" id="probe-chance">—<\/b><span class="aim-circle-tile live" id="probe-circle-tile" hidden><span class="info-title" id="probe-circle-head">Circle<\/span><b class="info-chance" id="probe-circle"><\/b><\/span>/.test(pageSrc)
    && pageSrc.indexOf('class="aim-circle ') < 0);
+ok('the circle figures stand on their panel\'s chance row at its right end (the stylesheet), the corner column is gone',
+   /\.aim-circle-tile\{grid-row:2;grid-column:2;justify-self:end;/.test(fs.readFileSync(path + 'style.css', 'utf8'))
+   && /\.viewport-tiles\{[^}]*grid-template-columns:minmax\(0,320px\) 1fr;/.test(fs.readFileSync(path + 'style.css', 'utf8')));
 const impact = document.getElementById('impact-opacity');
 impact.type = 'range'; impact.min = '10'; impact.max = '100'; impact.step = '1';   // the page's own control is a range
 impact.value = '90';
@@ -6098,7 +6106,7 @@ settle(20).then(function () {
   ok('xi: ONE mode button, at the left end of the characteristics panel’s tools - the page’s lit switch, hidden until needed; none in the strip or the gun panel',
      /^<div class="ttx-tools" id="ttx-tools"><button type="button" id="ttx-mode" class="swap-roles" aria-pressed="false" title="Mode&#10;[^"]+" aria-label="Mode" hidden>◐<\/button>/.test(toolsSrc)
      && pageSrc.split('id="ttx-mode"').length === 2 && pageSrc.indexOf('aim-gun-mech') < 0 && appSrc.indexOf('aim-gun-mech') < 0 && styleSrc.indexOf('aim-gun-mech') < 0
-     && /\$\('ttx-mode'\)\.onclick = ttxModeToggle;/.test(appSrc) && /function ttxModeToggle\(e\) \{\n    if \(xiNow\(\)\) \{ xiPress\(e\);/.test(appSrc)
+     && /T\('ttx-mode'\)\.onclick = side === TTX_TARGET \? ttxTargetModeToggle : ttxModeToggle;/.test(appSrc) && /function ttxModeToggle\(e\) \{\n    if \(xiNow\(\)\) \{ xiPress\(e\);/.test(appSrc)
      && /\$\('ttx-mode'\)\.onpointerdown=xiDown;/.test(appSrc));
   // Its accent (user, 27.09): a colour of its own on :root, the idle outline, a fuller fill lit, dimmed for 'skip' - and none
   // of the page's other meanings (mint / red better-worse, gold manual motion and lit switches, the cyan / magenta circles).
@@ -6739,7 +6747,8 @@ settle(20).then(function () {
   };
   const FIXTURES = {'ussr-R45_IS-7': IS7, 'germany-ClipX': CLIPX};
   let ttxReads = 0;
-  const ttxLoader = function (id) { ttxReads++; return FIXTURES[id] ? Promise.resolve(FIXTURES[id]) : Promise.reject(new Error('Not found data/ttx/' + id + '.js')); };
+  const ttxIds = [];   // 11.11: the target's panel reads its vehicle's file too - each type once
+  const ttxLoader = function (id) { ttxReads++; ttxIds.push(id); return FIXTURES[id] ? Promise.resolve(FIXTURES[id]) : Promise.reject(new Error('Not found data/ttx/' + id + '.js')); };
   const tb = document.getElementById('battles');
   tb.value = 't1'; tb.onchange.call(tb);
   const panel = document.getElementById('ttx-panel'), buildBox = document.getElementById('ttx-build');
@@ -6774,8 +6783,8 @@ settle(20).then(function () {
     document.getElementById('hits').children[2].onclick();
     return settle(20);
   }).then(function () {
-    ok('ttx: a vehicle with no characteristics file - the panel is hidden and the rest of the scene is as it was',
-       panel.hidden === true && ttxReads === 1 && document.getElementById('shooter-tile').hidden === false
+    ok('ttx: a vehicle with no characteristics file - the panel is hidden and the rest of the scene is as it was (each type\'s file asked once: the shooter\'s and the target\'s)',
+       panel.hidden === true && ttxReads >= 1 && ttxIds.length === ttxIds.filter(function (x, i) { return ttxIds.indexOf(x) === i; }).length && document.getElementById('shooter-tile').hidden === false
        && document.getElementById('aim-gun').hidden === false);
     document.getElementById('hits').children[0].onclick();
     return settle(20);
@@ -9141,6 +9150,8 @@ settle(20).then(function () {
 }).then(function () {
   return twoScenes();
 }).then(function () {
+  return targetTtx();
+}).then(function () {
 
 
   if (thrown.length) console.log('\nEXCEPTIONS: ' + thrown.map(function (e) { return e && e.stack; }).join('\n'));
@@ -10099,6 +10110,74 @@ function clickExportOutdated() {
 // other scene and moving nothing else, the scene's one owner held statically. Which scene a hit has and how it is turned
 // into the one shown are local-data.js's real rules (REAL_DATA); the stub scene reader below only stands in for the
 // model files. The remembered setting and the drawn scene: tests/page/real_page.cjs twoScenes.
+// ---- THE TARGET'S CHARACTERISTICS PANEL (user 11.11, BACKLOG 80) ---------------------------------------------------------
+// The same widget as the shooter's, a second instance (ids -target) fed with the vehicle of the Collision model: its file,
+// the pair it had in the battle (told by its recorded gun figures when the record names no gun), its stock figures. A
+// hit with another target repaints it through the same door; a target with no file has no panel. Here on the stub DOM
+// (its elements are the stub's stand-ins for the clone); the place on the page: tests/page/real_page.cjs targetPanel.
+function targetTtx() {
+  if (RELOAD) return Promise.resolve();
+  const $ = function (id) { return document.getElementById(id); };
+  const D = global.ArmorInspectorData;
+  const keep = {index: D.index, battle: D.battle, scene: D.scene, ttx: D.ttx};
+  const D2 = Math.PI / 180;
+  const aimA = Object.assign({}, AIM_BLOCK, {afterShotFactor: 0, dispersion: 0.0036, aimingTime: 2.3, reloadTime: 9, clip: [1, 0], crewRoles: [['commander'], ['gunner'], ['driver'], ['loader']]});
+  const aimB = Object.assign({}, AIM_BLOCK, {afterShotFactor: 0, dispersion: 0.0042, aimingTime: 2.9, reloadTime: 12, clip: [1, 0], crewRoles: [['commander'], ['gunner'], ['driver'], ['loader']]});
+  const file = function (id, type, hp, pairs) {
+    return {schema: 1, id: id, type: type, vehicle: {invisibility: [0.1, 0.2], camouflageBonus: 0.03, projectileSpeedFactor: 0.8, modes: {}},
+      modules: {chassis: {terrainResistance: [1, 1.2, 2]}, engine: {power: 600 * 735.5}},
+      turrets: [{name: 'T1', userString: 'Turret 1', level: 9, circularVisionRadius: 390, invisibilityFactor: 1}],
+      shells: {g105: [{kind: 'ARMOR_PIERCING', name: 'AP', caliber: 105, alpha: 390, penetration100: 250, speed: 900}],
+               g122: [{kind: 'ARMOR_PIERCING', name: 'AP', caliber: 122, alpha: 440, penetration100: 260, speed: 800}]},
+      configs: pairs.map(function (p) { return Object.assign({turret: 0, gunLevel: 9, maxHealth: hp, weight: 40000, pitch: {absolute: [-8 * D2, 20 * D2]}, invisibilityFactorAtShot: 0.2}, p); })};
+  };
+  // Alpha: two guns - the record's figures are the 122 mm's (not the top pair); Bravo: one gun; Shooter: his own file.
+  const FILES = {'germany-TgtAlpha': file('germany-TgtAlpha', 'germany:TgtAlpha', 1700, [{gun: 'g105', gunUserString: '105 mm', top: true, aim: aimA}, {gun: 'g122', gunUserString: '122 mm', top: false, aim: aimB}]),
+                 'germany-TgtBravo': file('germany-TgtBravo', 'germany:TgtBravo', 2100, [{gun: 'g105', gunUserString: '105 mm', top: true, aim: aimA}]),
+                 'germany-ShootX': file('germany-ShootX', 'germany:ShootX', 1300, [{gun: 'g105', gunUserString: '105 mm', top: true, aim: aimA}])};
+  const PARTS = function () { return [{id: 1, name: 'hull', modelKey: 'k1'}]; };
+  const HIT = function (id, type, aim) {
+    return {id: id, attackerId: 40, targetId: 7, direction: 'outgoing', damage: 0, receivedAt: 100, warnings: [], points: [],
+      attacker: {name: 'ShootX', type: 'germany:ShootX', parts: PARTS(), gunDispersion: 0.0036, aim: aimA},
+      target: {name: type.split(':')[1], type: type, parts: PARTS(), aim: aim}};
+  };
+  const B = {id: 'tt', map: 'Test', playerVehicleId: 40, warnings: [], shotEvents: [],
+    hits: [HIT('a1', 'germany:TgtAlpha', Object.assign({}, aimB, {dispersion: 0.00425})), HIT('b1', 'germany:TgtBravo', aimA), HIT('n1', 'germany:TgtNoFile', aimA)]};
+  D.index = function () { return Promise.resolve({application: 'local.armor_inspector', version: 'test', battles: [{id: 'tt', startedAt: 3, map: 'Test', hits: 3}]}); };
+  D.battle = function (id) { return id === 'tt' ? Promise.resolve(JSON.parse(JSON.stringify(B))) : Promise.reject(new Error('no battle')); };
+  D.scene = function (b, id) { return Promise.resolve({hit: b.hits.filter(function (x) { return x.id === id; })[0], models: {}, warnings: []}); };
+  D.ttx = function (id) { return FILES[id] ? Promise.resolve(FILES[id]) : Promise.reject(new Error('Not found data/ttx/' + id + '.js')); };
+  const open = function () { const p = $('battles'); p.value = 'tt'; p.onchange.call(p); return settle(30); };
+  const pick = function (id) { $('hits').children.filter(function (r) { return r.getAttribute('data-hit') === id; })[0].onclick(); return settle(30); };
+  const hpOf = function (suffix) { const r = $('ttx-hp' + suffix).children[0]; return r && r.ttx ? r.ttx.value.textContent : null; };
+  const chip = function () { return $('ttx-pair-target'); };
+  const restore = function () { D.index = keep.index; D.battle = keep.battle; D.scene = keep.scene; D.ttx = keep.ttx; };
+  sidebarModes[0].onclick();
+  return settle(20).then(open).then(function () { return pick('a1'); }).then(function () {
+    const tip = chip().title || '';
+    ok('target panel: a hit with the target\'s file - the second instance stands with the TARGET\'s figures (its HP 1700, not the shooter\'s 1300), the shooter\'s panel keeps his',
+       $('ttx-panel-target').hidden === false && hpOf('-target') === '1700' && hpOf('') === '1300' && $('ttx-panel').hidden === false,
+       JSON.stringify({target: hpOf('-target'), shooter: hpOf(''), hidden: $('ttx-panel-target').hidden}));
+    ok('target panel: ... its gun is the one the record\'s gun figures tell (122 mm, not the top pair), its chip says so, lists nothing (no ▾) and names the figures the stock',
+       /^Gun: 122 mm\nThe target’s gun in this battle, told by its recorded gun figures/.test(tip) && /• Figures: the stock/.test(tip)
+       && $('ttx-pairs-target').getAttribute('data-many') === 'false' && /122/.test(JSON.stringify(chip().children.map(function (c) { return c.textContent; }))),
+       tip.split('\n').slice(0, 2).join(' | '));
+    return pick('b1');
+  }).then(function () {
+    ok('target panel: another target - the same door repaints it with that vehicle (HP 2100, its one gun said so)',
+       $('ttx-panel-target').hidden === false && hpOf('-target') === '2100' && /^Gun: 105 mm\nThe target’s gun: the vehicle has no other gun or turret\./.test(chip().title || ''),
+       hpOf('-target') + ' ' + (chip().title || '').split('\n')[1]);
+    return pick('n1');
+  }).then(function () {
+    ok('target panel: a target with no characteristics file - no target panel; the shooter\'s stays', $('ttx-panel-target').hidden === true && $('ttx-panel').hidden === false);
+    ok('target panel: (held statically) one widget - the target\'s is made from the shooter\'s markup with -target ids, without ⚙; its one door is a scene painter beside the shooter\'s; top-right in the stylesheet, popovers downward',
+       /function ttxCloneTarget\(\) \{\n    var src = \$\('ttx-panel'\);/.test(appSrc) && /e\.id = e\.id \+ '-target'/.test(appSrc) && /#ttx-build-toggle-target/.test(appSrc)
+       && /\['characteristics',function\(\)\{ttxPaint\(\);ttxTargetSync\(\);\}\]/.test(appSrc)
+       && /\.ttx-panel\.ttx-target\{top:12px;bottom:auto;/.test(fs.readFileSync(path + 'style.css', 'utf8'))
+       && /\.ttx-panel\.ttx-target \.toolbar-popover\{top:calc\(100% \+ 6px\);bottom:auto\}/.test(fs.readFileSync(path + 'style.css', 'utf8')));
+    restore();
+  }, function (e) { restore(); throw e; });
+}
 function twoScenes() {
   if (RELOAD) return Promise.resolve();
   const $ = function (id) { return document.getElementById(id); };
