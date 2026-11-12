@@ -4,6 +4,7 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 
 ## Unreleased
 
+- **The hull's angle to you:** the pose tile under the scene now also says how the hull is turned to your line of sight - 0° with its front facing you, up to ±180°, with the turret line's sign (+ when you stand to the right of its nose) - and follows the camera as you orbit. It is the figure to copy into Bullba Angles; a click on the line explains it.
 - **Less recording in battle:** in random, tournament and training battles that the game records as a replay, the recorder now keeps only the two in-game snapshots the page shows - your own shots and the hits as the game drew them; every other event of the battle (other vehicles' shots, shell ends, damage, fires, rams) comes from the replay after the battle, as it already did. Other modes, and battles without a replay recording, are recorded in full as before.
 - **Characteristics of the target too:** the vehicle on the Collision model tile now has its own characteristics panel in the top-right corner of the scene - the same panel as the shooter's, which stays in the bottom-right corner. It shows the target's gun in that battle and its stock figures (the target's equipment and crew are not recorded); a narrow or low scene folds it into its ▤ button.
 - **Circle figures by their chances:** the aiming circle's percentages moved from the top-right corner into the Hit line and Under the cursor panels, beside the penetration chance each belongs to.

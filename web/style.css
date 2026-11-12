@@ -641,6 +641,8 @@ input.lab-track::-moz-range-thumb{width:10px;height:18px;border-radius:3px;backg
 .pose-tile[hidden]{display:none}
 .pose-tile>span{display:block}
 .pose-tile>span[hidden],.pose-tile>span:empty{display:none}
+/* The hull's line (BACKLOG 88) carries words of its own: a click on it shows them (the tile lets every other press through). */
+#pose-hull{pointer-events:auto;font-variant-numeric:tabular-nums}
 /* The speed readout at the left end of the shooter row (user, 20.09): what the shooter is doing right
    now, the turn arc and the key glyph, side by side. The margin keeps it clear of the swap button, which
    belongs to the two vehicle tiles and not to this tile. Same translucent panel as the other overlays. */

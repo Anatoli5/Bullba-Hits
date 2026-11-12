@@ -654,6 +654,59 @@ async function twoScenes(browser) {
   }
 }
 
+// ---- THE HULL TO THE CAMERA (user 12.11, BACKLOG 88) ---------------------------------------------------------------------
+// The pose tile's hull line: how the hull of the model on screen is turned to the line of sight, -180..+180, 0 = its front
+// faces the camera, the turret line's sign (the turret turned to the same figure points the gun at the camera), horizontal
+// only. The hull is turned 30° in the record (every part with it) and moved off the origin, the orbit centre put on its
+// origin; the camera then stands in front of it, on its right, on its left, behind it - and high above in front: the line
+// reads 0, +90, -90, 180 and 0 again, each straight after the camera moved (onCamera, nothing else). On the right the turret
+// turned to the line's figure points at the camera. A browsed vehicle has the line too.
+async function hullLine(browser, folder) {
+  const page = await browser.open(url.pathToFileURL(path.join(folder, 'Viewer.html')).href, INIT);
+  const ev = (js) => page.evaluate(js);
+  const LV = 'window.__bullbaViewers[window.__bullbaViewers.length - 1]';
+  try {
+    await ev(DRIVER);
+    await ev(`(async () => { for (let i = 0; i < 100 && !(document.querySelector('#hits [data-hit]') && window.__bullbaViewers.length); i++) await new Promise((r) => setTimeout(r, 100)); await __bt.settle(); })()`);
+    await ev("__bt.act.side('battles')"); await ev('__bt.settle()');
+    await ev('__bt.act.hit(0)'); await ev('__bt.settle()');
+    // The record turned: every part's transform R x T, R a yaw of 30° about the record's up axis, T 1 m right and 2 m ahead.
+    await ev(`(() => { const v = ${LV}, a = 30 * Math.PI / 180, R = new THREE.Matrix4().makeRotationY(a).setPosition(1, 0, 2);
+      v.loadedData.hit.aim = [0, 0];
+      v.loadedData.hit.target.parts.forEach((p) => { if (p.transform) p.transform = R.clone().multiply(new THREE.Matrix4().fromArray(p.transform)).toArray(); });
+      v.cancelOrbit(); v.pan.x = 0; v.pan.y = 0; v.target.set(1, 0, -2); v.distance = 25; return true; })()`);
+    // The camera put at a heading (the record's direction from the hull, turned into the scene's: z mirrored) and a pitch.
+    const look = (dx, dz, pitch) => ev(`(async () => { const v = ${LV}, s = {x: ${dx}, z: -(${dz})};
+      v.yaw = v.targetYaw = Math.atan2(s.x, s.z); v.pitch = v.targetPitch = ${pitch}; v.render();
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const e = document.getElementById('pose-hull'); return {text: e.textContent, laid: e.getClientRects().length > 0, tip: e.getAttribute('data-tip') || e.title || '', events: getComputedStyle(e).pointerEvents}; })()`);
+    const a = 30 * Math.PI / 180, F = [Math.sin(a), Math.cos(a)], Rt = [Math.cos(a), -Math.sin(a)];
+    const front = await look(F[0], F[1], 0.1);
+    ok('hull line: the camera in front of the hull - "Hull 0° to the camera", laid out, with its own words (0 / ±90 / ±180, the turret line\'s sign, horizontal only) shown by a click',
+       front.text === 'Hull 0° to the camera' && front.laid && front.events === 'auto' && /^Hull to the camera\n/.test(front.tip) && /turret line/.test(front.tip) && /Horizontal only/.test(front.tip), JSON.stringify(front));
+    const right = await look(Rt[0], Rt[1], 0.1), left = await look(-Rt[0], -Rt[1], 0.1), back = await look(-F[0], -F[1], 0.1), high = await look(F[0], F[1], 1.2);
+    ok('hull line: the camera on the hull\'s right reads +90, on its left -90, behind it 180, high above its front 0 - each straight after the camera moved',
+       right.text === 'Hull +90° to the camera' && left.text === 'Hull -90° to the camera' && back.text === 'Hull 180° to the camera' && high.text === 'Hull 0° to the camera',
+       [right.text, left.text, back.text, high.text].join(' | '));
+    // The sign is the turret line's: on the right, the turret turned to +90 points at the camera.
+    await look(Rt[0], Rt[1], 0.1);
+    const aim = await ev(`(async () => { const v = ${LV}; const st = v.turretTo(90); if (v.onTurret) v.onTurret(st); v.render();
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const e = v.markFrames(v.poseExtra())[2].elements, fwd = [-e[8], -e[10]], to = [v.camera.position.x - e[12], v.camera.position.z - e[14]];
+      const D = 180 / Math.PI, off = Math.atan2(fwd[0], fwd[1]) * D - Math.atan2(to[0], to[1]) * D;
+      return {turret: document.getElementById('pose-turret').textContent, hull: document.getElementById('pose-hull').textContent, off: ((off + 540) % 360) - 180}; })()`);
+    ok('hull line: the same sign as the turret line - with the camera on the right the turret line at +90 points the turret at the camera',
+       /^Turret \+90°/.test(aim.turret) && aim.hull === 'Hull +90° to the camera' && Math.abs(aim.off) < 1, JSON.stringify(aim));
+    await ev("__bt.act.side('vehicles')"); await ev('__bt.settle()');
+    await ev("__bt.act.list('pm_quebec')"); await ev('__bt.settle(15000)');
+    const browsed = await ev(`(() => { const e = document.getElementById('pose-hull'); return {text: e.textContent, laid: e.getClientRects().length > 0}; })()`);
+    ok('hull line: a browsed vehicle has the line too', /^Hull [+-]?\d+° to the camera$/.test(browsed.text) && browsed.laid, JSON.stringify(browsed));
+    ok('hull line: no uncaught exception in the page', page.errors.length === 0, page.errors.slice(0, 3).join(' | '));
+  } finally {
+    await browser.send('Target.closeTarget', {targetId: page.targetId});
+  }
+}
+
 // ---- THE TOP BAND OF THE SCENE (user 11.11, BACKLOG 78-80) ------------------------------------------------------------------
 // The target's characteristics panel (the same widget as the shooter's) in the top-right corner, the circle figures inside
 // the Hit line and Under the cursor panels, and the Collision model row with the HP bar in the top band - at the page
@@ -793,6 +846,8 @@ async function main() {
     if (process.argv.includes('--scenes')) { await twoScenes(browser); await twoScenesLocal(browser); console.log('real page, the two scenes only (' + browser.product + '): ' + checks + ' checks, ' + failures + ' failed'); return failures ? 1 : 0; }
     // --top: only the top band of the scene (the target's panel, the circle figures, the model row) at the four sizes.
     if (process.argv.includes('--top')) { await topBand(browser, folder); console.log('real page, the top band only (' + browser.product + '): ' + checks + ' checks, ' + failures + ' failed'); return failures ? 1 : 0; }
+    // --hull: only the hull's line on the pose tile.
+    if (process.argv.includes('--hull')) { await hullLine(browser, folder); console.log('real page, the hull line only (' + browser.product + '): ' + checks + ' checks, ' + failures + ' failed'); return failures ? 1 : 0; }
     if (process.argv.includes('--sides')) { await swapSides(browser, folder); console.log('real page, the swap sides only (' + browser.product + '): ' + checks + ' checks, ' + failures + ' failed'); return failures ? 1 : 0; }
     await inheritMatrix(browser, folder);
     if (MATRIX_ONLY) { console.log('real page, the inheritance matrix only (' + browser.product + '): ' + checks + ' checks, ' + failures + ' failed'); return failures ? 1 : 0; }
@@ -802,7 +857,8 @@ async function main() {
     await twoScenes(browser);
     await twoScenesLocal(browser);
     await topBand(browser, folder);
-    page = await browser.open(url.pathToFileURL(path.join(folder, 'Viewer.html')).href, INIT);
+    await hullLine(browser, folder);
+    page =await browser.open(url.pathToFileURL(path.join(folder, 'Viewer.html')).href, INIT);
     const ev = (js) => page.evaluate(js);
     await ev(DRIVER);
     // Ready: the battle list read from the synthetic index, and the viewer made.

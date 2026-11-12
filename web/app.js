@@ -8364,7 +8364,7 @@
   if(viewer)viewer.onBackend=function(text){backendText=text;frameBadge();var unavailable=/^Estimate unavailable:/.test(text);$('backend-badge').hidden=!unavailable;$('backend-badge').textContent=unavailable?text:'';};
   var shellTimer=0; // the end of a wheel glide (onCamera below)
   // The Distance slider and field show and set the SHOT RANGE (state.range, viewer.setShotRange): the camera to the hit point.
-  if(viewer)viewer.onCamera=function(state){var range=Number.isFinite(state.range)?state.range:state.distance,changed=lastDistance!==range;lastDistance=range;if(document.activeElement!==$('camera-distance-field'))$('camera-distance-field').value=Math.round(range);if(document.activeElement!==$('camera-zoom-field'))$('camera-zoom-field').value=state.zoom.toFixed(2);$('camera-distance').value=Math.round(distanceSlider(range));$('camera-zoom').value=Math.round(Math.max(0,Math.min(1000,Math.log(state.zoom/.1)/Math.log(1000)*1000)));var hr=viewer.heightRange(),hy=viewer.target.y;$('pivot-height').max=Math.max(1,Math.round((hr[1]-hr[0])*100));$('pivot-height').value=Math.round((hy-hr[0])*100);$('pivot-height-field').min=hr[0].toFixed(2);$('pivot-height-field').max=hr[1].toFixed(2);if(document.activeElement!==$('pivot-height-field'))$('pivot-height-field').value=hy.toFixed(2);var key=[state.distance,state.yaw,state.pitch,viewer.turretAngle,viewer.gunAngle].join(',');if(analysisKey!==null&&analysisKey!==key)staleEstimate();
+  if(viewer)viewer.onCamera=function(state){paintHull();var range=Number.isFinite(state.range)?state.range:state.distance,changed=lastDistance!==range;lastDistance=range;if(document.activeElement!==$('camera-distance-field'))$('camera-distance-field').value=Math.round(range);if(document.activeElement!==$('camera-zoom-field'))$('camera-zoom-field').value=state.zoom.toFixed(2);$('camera-distance').value=Math.round(distanceSlider(range));$('camera-zoom').value=Math.round(Math.max(0,Math.min(1000,Math.log(state.zoom/.1)/Math.log(1000)*1000)));var hr=viewer.heightRange(),hy=viewer.target.y;$('pivot-height').max=Math.max(1,Math.round((hr[1]-hr[0])*100));$('pivot-height').value=Math.round((hy-hr[0])*100);$('pivot-height-field').min=hr[0].toFixed(2);$('pivot-height-field').max=hr[1].toFixed(2);if(document.activeElement!==$('pivot-height-field'))$('pivot-height-field').value=hy.toFixed(2);var key=[state.distance,state.yaw,state.pitch,viewer.turretAngle,viewer.gunAngle].join(',');if(analysisKey!==null&&analysisKey!==key)staleEstimate();
     // A wheel glide changes the distance on every frame of its way (about sixteen a click). The shell - its
     // penetration at the new distance - and everything built on it are redone once, at the end: the last step
     // clears targetDistance before it renders, so the end runs at once, and a glide cut short (a hidden page)
@@ -8467,8 +8467,40 @@
     var note=off&&viewer.point?'The recorded shot’s own marks are hidden until the recorded pose returns':'';
     if($('pose-note').textContent!==note)$('pose-note').textContent=note;
     if($('pose-note').hidden!==!note)$('pose-note').hidden=!note;
+    paintHull();
     var shown=turret+'|'+gun+'|'+note;if(shown!==poseShown){poseShown=shown;scheduleLayout(LAYOUT_POSE);}
     return off;
+  }
+  // THE HULL TO THE CAMERA (BACKLOG 88, user 12.11): how the hull of the model on screen is turned to the line of sight -
+  // the figure he copies into Bullba Angles (until now he turned the gun at himself and read the turret line). 0 = the
+  // hull's front faces the camera, -180..+180, the turret line's sign: + = the camera stands to the right of the nose, and
+  // the turret turned to the same figure points the gun at the camera. Horizontal only: the direction to the eye is taken
+  // about the hull's own vertical axis (the turret's), so how high the camera stands does not count. The record's frame
+  // (part transforms; x right, y up, z forward) is the scene's with z mirrored (viewer.js markFrames), so the eye's z is
+  // turned back. Painted by paintPose (every scene) and by every camera report (orbit, pan, zoom) - nothing else moves it.
+  // Returns what the layout depends on (the line's length, its presence): the words change on every degree of an orbit,
+  // and the tile is measured again only when they get longer or shorter.
+  function hullToCamera(){
+    var data=viewer&&viewer.loadedData,parts=data&&data.hit&&data.hit.target&&data.hit.target.parts||[],m=null;
+    for(var i=0;i<parts.length;i++)if(parts[i]&&parts[i].id===1&&Array.isArray(parts[i].transform)&&parts[i].transform.length===16){m=parts[i].transform;break;}
+    if(!m||!viewer.camera)return null;
+    var c=viewer.camera.position,v=[c.x-m[12],c.y-m[13],-c.z-m[14]],u=[m[4],m[5],m[6]],f=[m[8],m[9],m[10]];
+    var cross=[f[1]*v[2]-f[2]*v[1],f[2]*v[0]-f[0]*v[2],f[0]*v[1]-f[1]*v[0]];
+    var side=u[0]*cross[0]+u[1]*cross[1]+u[2]*cross[2],ahead=f[0]*v[0]+f[1]*v[1]+f[2]*v[2];
+    if(!(Math.abs(side)+Math.abs(ahead)>1e-9))return null;
+    return Math.atan2(side,ahead)*180/Math.PI;
+  }
+  var HULL_TIP='Hull to the camera\nHow the hull is turned to your line of sight - the figure to copy into Bullba Angles.\n'+
+    '• 0°: its front faces you; ±90°: you see a side; ±180°: its rear\n• Sign: as the turret line’s - + you stand to the right of its nose; the turret turned to the same figure points the gun at you\n'+
+    '• Horizontal only: how high you look from does not count\n• Follows the camera as you orbit';
+  var hullLength=-1;
+  function paintHull(){
+    var e=$('pose-hull');if(!e)return;
+    var a=hullToCamera(),r=a===null?0:Math.round(a);if(Math.abs(r)===180)r=180;
+    var text=a===null?'':'Hull '+(r>0&&r<180?'+':'')+r+'° to the camera';
+    if(e.textContent!==text)e.textContent=text;
+    if(text&&e.title!==HULL_TIP)e.title=HULL_TIP;
+    if(text.length!==hullLength){hullLength=text.length;scheduleLayout(LAYOUT_POSE);}
   }
   function poseChanged(){
     var off=paintPose();
