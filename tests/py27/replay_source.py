@@ -322,6 +322,12 @@ def run(temp):
           and msg.get('finalOwned') is False and msg.get('recordingOwned') is False, msg)
     check('last', 'message: packets counted to the last whole one, the partial tail named',
           (msg.get('packets'), msg.get('partialBytes')) == walk(copy or bytearray()), (msg.get('packets'), msg.get('partialBytes')))
+    # Backlog 84: where the copy holds the packet that ends the fight (arena period 4) - the export thread then needs no
+    # final file. The same packet replay_run.fight_end finds by its own walk of the copy.
+    from local_armor_inspector.replay_run import fight_end
+    seen = fight_end(copy or bytearray())
+    check('last', 'message: the end of the fight in the copy as replay_run.fight_end finds it (%s)' % (seen,),
+          msg.get('fightEnd') == (list(seen) if seen else None), msg.get('fightEnd'))
     check('last', 'the player\'s setting untouched', ctrl.calls['enableAutoRecordingBattles'] == 0
           and ctrl._BattleReplay__isAutoRecordingEnabled == 1)
     game.login()

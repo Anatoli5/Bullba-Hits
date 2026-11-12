@@ -182,6 +182,34 @@ class SyntheticTests(unittest.TestCase):
             at += rr.CHUNK
         self.assertEqual(b''.join(parts), whole)
 
+    def test_the_end_of_the_fight_in_a_stream(self):
+        """fight_end (backlog 84): the first packet 0x16 whose period is AFTERBATTLE (4) - by a walk of the packet headers,
+        or checked where the replay source saw it; a period-3 packet, a packet cut short or a wrong offset is not it. The
+        replay source's StreamCopy notes the same packet while it copies, whatever chunks the bytes come in."""
+        from local_armor_inspector import replay_source as rs
+        def packet(ptype, clock, payload): return struct.pack('<IIf', len(payload), ptype, clock) + payload
+        head = (packet(0x18, 0.0, struct.pack('<I', 5) + b'abcde') + packet(0x16, 30.5, struct.pack('<I', 3))
+                + packet(0x0a, 31.0, b'x' * 49))
+        end = packet(0x16, 300.25, struct.pack('<I', 4))
+        stream = head + end + packet(0x0a, 301.0, b'y' * 49) + packet(0x16, 302.0, struct.pack('<I', 4))
+        self.assertEqual(rr.fight_end(stream), (len(head), 300.25))
+        self.assertEqual(rr.fight_end(bytearray(stream), len(head)), (len(head), 300.25))
+        self.assertIsNone(rr.fight_end(stream, len(head) - 12))
+        self.assertIsNone(rr.fight_end(stream, len(stream)))
+        self.assertIsNone(rr.fight_end(head))
+        self.assertIsNone(rr.fight_end(head + end[:14]))
+        folder = tempfile.mkdtemp()
+        try:
+            for step in (1, 7, 16, len(stream)):
+                copied = rs.StreamCopy(folder, 'n', '1', None, 0.0)
+                for at in range(0, len(stream), step): copied.take(bytearray(stream[at:at + step]))
+                self.assertEqual(copied.fight_end, (len(head), 300.25), step)
+            copied = rs.StreamCopy(folder, 'n', '1', None, 0.0)
+            copied.take(bytearray(head + end[:14]))
+            self.assertIsNone(copied.fight_end)
+        finally:
+            shutil.rmtree(folder, ignore_errors=True)
+
     def test_poses_survive_the_store(self):
         import array
         poses = {'type':'poses', 'format':1, 'playerVehicleId':7, 'serverTimeAtStart':123.5,
@@ -364,6 +392,49 @@ class RunTimeTests(unittest.TestCase):
         with open(e.replay_stream_path(stand.names[arena]), 'rb') as stream: kept = zlib.decompress(stream.read())
         self.assertEqual(kept, bytes(final_stream(KILL_CAM[arena], t.LIVE)[1]))
 
+    def test_a_copy_that_reaches_the_end_of_the_fight_needs_no_final_file(self):
+        """Backlog 84: the copy holds the packet that ends the fight (arena period 4, rr.fight_end) and the mod's own final
+        file the rest: the final file is not read (no decryption), the battle is whole and the final file deleted - and the
+        published battle is the one the decrypted final file gives but for the stream's own figures in its replay block.
+        A message whose replay source saw no end in the copy ('fightEnd': None) takes the final file as before."""
+        arena = '16434853064049700'
+        _, stream = final_stream(KILL_CAM[arena], t.LIVE)
+        end = rr.fight_end(stream)
+        self.assertIsNotNone(end)
+        opened = []
+        original = rr.FinalFile
+        def counted(path, stream=True):
+            if stream: opened.append(path)      # decrypted (the header alone is read without decryption)
+            return original(path, stream)
+        values = {}
+        rr.FinalFile = counted
+        try:
+            for case, share, seen in (('end in the copy', (end[0] + 2000.0) / len(stream), [end[0], end[1]]),
+                                      ('no end in the copy', 0.6, None),
+                                      ('the source saw none', (end[0] + 2000.0) / len(stream), None)):
+                del opened[:]
+                stand = self.stand(arena)
+                e = stand.exporter(KILL_CAM[arena])
+                path = stand.stream_file(arena, packet_cut(stream, share))
+                final = os.path.join(stand.root, 'bullba_hits_battle.wotreplay')
+                shutil.copyfile(os.path.join(t.LIVE, KILL_CAM[arena]), final)
+                consume(e, stand.message(arena, path, complete=False, final=final, finalOwned=True, fightEnd=seen))
+                value = strip_rev(stand.published(arena))
+                self.assert_window(value, arena)
+                info = value['replay']['stream']
+                self.assertFalse(info['cut'], case)
+                self.assertFalse(any(w.startswith('Replay cut off:') for w in value['warnings']), case)
+                self.assertFalse(os.path.exists(final), case)
+                if case == 'end in the copy':
+                    self.assertEqual((opened, info['from'], info['fightEnd']), ([], 'stream copy', round(end[1], 3)))
+                else:
+                    self.assertEqual((len(opened), info['from']), (1, 'final replay file'), case)
+                value['replay'].pop('stream')
+                values[case] = value
+        finally:
+            rr.FinalFile = original
+        self.assertEqual(values['end in the copy'], values['no end in the copy'])
+
     def test_a_cut_off_stream_is_used_as_far_as_it_goes(self):
         arena = '16434853064049700'
         stand = self.stand(arena)
@@ -477,9 +548,19 @@ class RunTimeTests(unittest.TestCase):
         run_jobs(e2)
         value = stand2.published(arena)
         self.assertEqual(value['source'], 'replay')
-        # No final file and no message: whether the copy is whole is not known - it says it may be cut off.
-        self.assertTrue(any(w.startswith('Replay cut off:') for w in value['warnings']))
+        # No final file and no message: the copy is walked for the end of the fight (backlog 84) - it holds it, so it is
+        # whole.
+        self.assertFalse(value['replay']['stream']['cut'])
+        self.assertFalse(any(w.startswith('Replay cut off:') for w in value['warnings']))
         self.assertEqual(stand2.exporter(None).replay_setup(), 0)
+        # (c) the same with a copy that stops before the end of the fight: whether it is whole is not known - it says it
+        # may be cut off.
+        stand3 = self.stand(arena)
+        self.copy_of(stand3, arena, 0.5)
+        e3 = stand3.exporter(KILL_CAM[arena])
+        self.assertEqual(e3.replay_setup(), 1)
+        run_jobs(e3)
+        self.assertTrue(any(w.startswith('Replay cut off:') for w in stand3.published(arena)['warnings']))
 
 
 if __name__ == '__main__':

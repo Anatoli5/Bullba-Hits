@@ -7,9 +7,10 @@ export thread ONE message per battle (Writer.put_export('replay', ...), fields i
 Exporter.replay_stream queues it as a 'replay' job, and the job runs Consumption.steps() in slices under the queue's gates
 (nothing in a battle, nothing while the page is dragged, the game's share of the time between two slices):
 
-  1. the stream: the mod's copy (battles/<id>.wotstream, raw); when the message names a final file that holds more, that file
-     decrypted (pure-Python Blowfish, 1.8 s for the 2 MB file of 02.11 17:42 under the client's Python 2.7; CHUNK bytes a
-     step) and taken only when its stream carries this battle's arena id and starts with the copy;
+  1. the stream: the mod's copy (battles/<id>.wotstream, raw) - whole when it reaches the end of the fight (fight_end: 22 of
+     the 33 battles of 11.11); else, when the message names a final file that holds more, that file decrypted (pure-Python
+     Blowfish, 1.8 s for the 2 MB file of 02.11 17:42 under the client's Python 2.7; CHUNK bytes a step) and taken only
+     when its stream carries this battle's arena id and starts with the copy;
   2. the decoder's events fed to replay_records.Converter (poses=True, the run-time names) as they are yielded - a list of
      events taken first loses records (an event's value may be the decoder's own object a later packet changes, 11.11);
   3. Exporter.publish_replay_steps; the converted records with their poses, the statics the scenes used and the scenes are
@@ -69,6 +70,34 @@ W_NO_START = 'Replay not used: its stream does not hold the start of this battle
 W_CUT = ('Replay cut off: its stream ends %s into the recording and no complete replay file confirmed that it is whole, '
          'so whatever happened after that moment may be missing')
 W_RESTORE = 'Replay records of this battle unreadable (%s), ' + LIVE_ONLY
+
+
+# ---- the end of the fight in the copy ------------------------------------------------------------------------------------
+def fight_end(stream, at=None):
+    """(offset, clock) of the stream's first packet 0x16 (the arena period the client switched to) whose period is
+    AFTERBATTLE (4): the fight is over - or None. `at`: where the replay source saw it (its message's 'fightEnd'), checked
+    there instead of walking the packet headers (~0.05 s for a 6 MB stream under the client's Python 2.7).
+    Why nothing the page shows comes after it (measured on the 33 battles of 11.11, docs/KNOWLEDGE.md section 18): the
+    server ends the round with Avatar.onRoundFinished, updateArena PERIOD 4 and this packet at one clock; after it the
+    streams carried positions, chat, the avatar ids, components, battle results and the end packet - no hit, health
+    change, crit, tracer or explosion -, and the records converted from the copy alone were those of the whole stream in
+    all 33 battles (22 copies held this packet; the other 11 were left before the end and have none at all)."""
+    from .replay_source import ARENA_PERIOD, AFTERBATTLE
+    unpack, n = struct.unpack_from, len(stream)
+    if at is not None:
+        off = int(at)
+        if (0 <= off and off + 16 <= n and unpack('<II', stream, off) == (4, ARENA_PERIOD)
+                and unpack('<I', stream, off + 12)[0] == AFTERBATTLE):
+            return off, unpack('<f', stream, off + 8)[0]
+        return None
+    off = 0
+    while off + 12 <= n:
+        size, ptype = unpack('<II', stream, off)
+        if off + 12 + size > n: break
+        if ptype == ARENA_PERIOD and size >= 4 and unpack('<I', stream, off + 12)[0] == AFTERBATTLE:
+            return off, unpack('<f', stream, off + 8)[0]
+        off += 12 + size
+    return None
 
 
 # ---- the entity definitions, once a session ------------------------------------------------------------------------
@@ -263,8 +292,9 @@ class FinalFile(object):
     """A final .wotreplay read in steps: its JSON blocks at once, the stream decrypted CHUNK bytes a step (decrypt_blocks,
     the chain carried from one step to the next), then unpacked (zlib, in C)."""
 
-    def __init__(self, path):
-        with open(path, 'rb') as stream: data = stream.read()
+    def __init__(self, path, stream=True):
+        """`stream=False`: the JSON blocks only."""
+        with open(path, 'rb') as handle: data = handle.read()
         magic, count = struct.unpack_from('<II', data, 0)
         if magic != rd.REPLAY_MAGIC: raise ValueError('not a .wotreplay')
         offset, self.blocks = 8, []
@@ -273,6 +303,7 @@ class FinalFile(object):
             offset += 4
             self.blocks.append(json.loads(data[offset:offset + size].decode('utf-8')))
             offset += size
+        if not stream: return
         if offset + 8 > len(data): raise ValueError('no stream in the replay file')
         self.raw_size, self.packed_size = struct.unpack_from('<II', data, offset)
         self.cipher = data[offset + 8:]
@@ -473,13 +504,39 @@ class Consumption(object):
             # Consumed once already, the raw copy gone (a crash after its compressed copy was written): the kept stream.
             with open(kept, 'rb') as handle: stream = bytearray(zlib.decompress(handle.read()))
             source = 'kept stream'
+        # The copy that reaches the end of the fight is the whole battle: the final file's tail (the last 1.5-2 s before
+        # the avatar left, never in the temp file the copy is taken from) holds nothing the page shows (fight_end), so it
+        # is not decrypted (1.9 s of the 17:42 battle). A copy without the end (the player left before it, or the copy was
+        # cut) takes the final file as before. The replay source saw the end while copying ('fightEnd'); a message without
+        # that field (found at start, an older message) has the copy walked here.
+        ended = None
+        if stream is not None and source == 'stream copy':
+            if 'fightEnd' not in message: ended = fight_end(stream)
+            elif message.get('fightEnd'): ended = fight_end(stream, message['fightEnd'][0])
         self.lap('read', started)
         yield
         # The final file holds the tail only it has (the last seconds before the recording stopped): taken when its stream
         # is this battle's (its arena id) and starts with the copy.
         final = message.get('final')
         final_stream = None
-        if final and os.path.isfile(final):
+        if ended is not None:
+            # Its plain JSON header only (the client version, map and mode names, the start time - no decryption): taken
+            # unless its battle-results block names another arena (a file written only at the stop has none yet).
+            if final and os.path.isfile(final):
+                started = TIMER()
+                try:
+                    blocks = FinalFile(final, stream=False).blocks
+                    results = blocks[1] if len(blocks) > 1 else None
+                    other = (results[0].get('arenaUniqueID') if isinstance(results, list) and results
+                             and isinstance(results[0], dict) else None)
+                    if other is not None and str(other) != self.arena: raise ValueError('its results are arena %s' % other)
+                    header = blocks[0] if blocks else None
+                except Exception as error:
+                    LOG.warning('Replay: the header of the final file %s of %s not used (%s)', final, name, error)
+                self.lap('final', started)
+            if final: LOG.info('Replay: the copy of %s reaches the end of the fight (%.1f s into the recording); its final '
+                               'file is not decrypted', name, ended[1])
+        elif final and os.path.isfile(final):
             started = TIMER()
             try:
                 reader = FinalFile(final)
@@ -507,6 +564,7 @@ class Consumption(object):
         elif final:
             LOG.info('Replay: final file %s of %s is gone; the stream copy is used', final, name)
         info = {'from':source}
+        if ended is not None: info['fightEnd'] = round(ended[1], 3)
         try:
             if stream is None or not len(stream): raise Unusable(W_NO_STREAM)
             # The definitions, once a session, built in steps (the first replay of a session: 0.21-0.31 s at once).
@@ -540,11 +598,12 @@ class Consumption(object):
             except Exception as error:
                 raise Unusable(W_UNREADABLE % ('%s: %s' % (type(error).__name__, error)))
             self.lap('decode', started)
-            # Whole when the final file gave it, or the replay source saw the copy equal to a whole final file and it
-            # ends on a packet; anything else may lack the battle's last moments (the copy is taken every 2 s).
+            # Whole when the final file gave it, or the copy reaches the end of the fight, or the replay source saw the copy
+            # equal to a whole final file and it ends on a packet; anything else may lack the battle's last moments (the
+            # copy is taken every 2 s).
             partial = getattr(decoder, 'partial_bytes', 0) or 0
             info.update({'bytes':len(stream), 'events':count, 'lastClock':last_clock, 'partialBytes':partial})
-            whole = final_used or (message.get('complete') is True and not partial)
+            whole = final_used or ended is not None or (message.get('complete') is True and not partial)
             info['cut'] = not whole
             if not whole: notes.append(W_CUT % clock_text(last_clock))
             got = records[0].get('arenaId') if records and records[0].get('type') == 'battle' else None
@@ -587,7 +646,9 @@ class Consumption(object):
                 LOG.exception('Replay: the stream of %s was not kept compressed; its raw copy stays', name)
         elif source == 'kept stream':
             kept_bytes = os.path.getsize(kept)
-        if final and message.get('finalOwned') and final_used and os.path.isfile(final):
+        # (also when it was not read: the copy reached the end of the fight - the replay source removes it the same way
+        # when the copy is complete)
+        if final and message.get('finalOwned') and (final_used or ended is not None) and os.path.isfile(final):
             try: os.remove(final)
             except OSError: LOG.warning('Replay: the mod\'s own final file %s could not be deleted', final)
         self.lap('keep', started)

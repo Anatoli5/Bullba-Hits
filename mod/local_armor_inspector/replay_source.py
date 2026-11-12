@@ -64,6 +64,8 @@ HEAD = 4096           # first bytes compared to tell this battle's recording fro
 ARENA_SCAN = 1 << 16  # the 0x00 packet is looked for within the first bytes of the stream (it starts at byte 129)
 CHUNK = 1 << 20
 PACKET = struct.Struct('<IIf')
+ARENA_PERIOD = 0x16   # packet: u32 the arena period the client switched to (replay_objects.small_packet)
+AFTERBATTLE = 4       # constants.ARENA_PERIOD.AFTERBATTLE: the fight is over (replay_run.fight_end says why it is the end)
 
 
 def controller():
@@ -159,6 +161,7 @@ class StreamCopy(object):
         self.arena_ok = None
         self.foreign = None      # why the source stopped being this battle's ('shorter', 'other recording', 'arena')
         self.last_pull = None    # time of the last look that found new bytes
+        self.fight_end = None    # (offset, clock) of the copy's packet that ends the fight (arena period AFTERBATTLE)
 
     def resume(self):
         """Take an existing copy (the next start after a crash): its size, head and packet boundary."""
@@ -177,8 +180,12 @@ class StreamCopy(object):
         buf = self.carry + chunk
         off, n = 0, len(buf)
         while off + 12 <= n:
-            size, _, clock = PACKET.unpack_from(buf, off)
+            size, ptype, clock = PACKET.unpack_from(buf, off)
             if off + 12 + size > n: break
+            if (ptype == ARENA_PERIOD and size >= 4 and self.fight_end is None
+                    and struct.unpack_from('<I', buf, off + 12)[0] == AFTERBATTLE):
+                self.fight_end = (self.boundary + off, clock)
+                LOG.info('Replay source: the copy of %s reaches the end of the fight (%.1f s into the recording)', self.name, clock)
             off += 12 + size
             self.packets += 1
             self.last_clock = clock
@@ -554,15 +561,17 @@ class ReplaySource(object):
                    'arenaChecked': copy.arena_ok, 'complete': complete, 'end': ending['reason'],
                    'final': os.path.abspath(give_final) if give_final else None,
                    'finalStreamBytes': stream_bytes if give_final else None,
-                   'finalOwned': bool(give_final and copy.owned), 'recordingOwned': copy.owned, 'temp': temp}
+                   'finalOwned': bool(give_final and copy.owned), 'recordingOwned': copy.owned, 'temp': temp,
+                   'fightEnd': list(copy.fight_end) if copy.fight_end else None}
         try: self.put_export('replay', message)
         except Exception: LOG.warning('Replay source: hand-over of %s failed', copy.name, exc_info=True)
         self.handed.append(copy.name)
         state = copy.state()
         state['handed'] = True
         write_json(self.state_path(), state)
-        LOG.info('Replay source: handed over %s: %d bytes, %d packets (+%d partial), complete %s, final %s, temp %s',
-                 copy.name, copy.copied, copy.packets, len(copy.carry), complete, message['final'], temp)
+        LOG.info('Replay source: handed over %s: %d bytes, %d packets (+%d partial), complete %s, end of the fight %s, '
+                 'final %s, temp %s', copy.name, copy.copied, copy.packets, len(copy.carry), complete,
+                 'in the copy' if copy.fight_end else 'not in the copy', message['final'], temp)
         self.copy, self.ending = None, None
 
     def drop_own_final(self, final=False, now=None):
