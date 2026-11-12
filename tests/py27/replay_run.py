@@ -338,6 +338,38 @@ def main():
         check(R.strip_rev(stand.published(BIG)) == R.strip_rev(value),
               '17:42 after a format change: the page\'s request rebuilds it the replay way (%.2f s)' % page)
 
+        # ---- 17:42 again, the copy reaching the end of the fight (backlog 84): no decryption, the same battle ----------
+        stand_end = R.Stand([BIG])
+        try:
+            near_end = R.packet_cut(stream, 1.0 - 20000.0 / len(stream))
+            end = rr.fight_end(near_end)
+            path_end = stand_end.stream_file(BIG, near_end)
+            final_end = os.path.join(stand_end.root, 'bullba_hits_battle.wotreplay')
+            shutil.copyfile(os.path.join(t.REPLAYS, big_file), final_end)
+            e_end = Exporter(stand_end.root, stand_end.root, R.T.VERSION, os.path.join(stand_end.root, 'unused.wotmod'))
+            e_end.replay_defs_value = defs
+            e_end.scene_source = lambda version: S.make_source(table)
+            calm = calibrate()
+            started = clock()
+            e_end.replay_stream(stand_end.message(BIG, path_end, complete=False, final=final_end, finalOwned=True,
+                                                  fightEnd=list(end) if end else None))
+            work = []
+            drain(e_end, work, [])
+            took_end = clock() - started
+            after_end = calibrate()
+            got = R.strip_rev(stand_end.published(BIG))
+            info = got['replay'].pop('stream')
+            expected = R.strip_rev(value)
+            expected['replay'].pop('stream')
+            times = work[0].times if work else {}
+            check(end is not None and info.get('from') == 'stream copy' and not info.get('cut') and 'decrypt' not in times
+                  and not os.path.exists(final_end) and got == expected,
+                  '17:42, the copy reaching the end of the fight: the final file not decrypted, the battle the same as from '
+                  'the decrypted final file (%.2f s = %.1f calibrations; %s)' % (
+                      took_end, took_end / max(calm, after_end), ', '.join('%s %.2f s' % kv for kv in sorted(times.items()))))
+        finally:
+            stand_end.close()
+
         # ---- 20.10: the next battle of the session ------------------------------------------------------------------
         _, stream2 = rd.read_replay(os.path.join(t.LIVE, next_file))
         path2 = stand.stream_file(NEXT, bytes(stream2))
