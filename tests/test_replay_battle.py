@@ -276,6 +276,24 @@ def synthetic_pair():
     return replay, live
 
 
+def gap_pair():
+    """(replay, live): the synthetic battle whose replay lacks the second hit and the 480 -> 400 health tick, and a live
+    battle that saw every hit and crit of the full replay 0.1 s earlier on its clock (plus a ram contact, a routine kind)."""
+    full, live = synthetic_pair()
+    hits = [r for r in full if r['type'] == 'hit']
+    late = dict(hits[1], id='2', receivedAt=5005.0, gameTime=hits[1]['gameTime'] - 0.1, warnings=[],
+                target={'parts':[]}, attacker={'parts':[]}, aim=[0.3, 0.4], traceCandidates=['s1', 's9'],
+                points=[dict(p, status='resolved', position=[1.0, 2.0, 3.0]) for p in hits[1]['points']])
+    for k in ('replayAbsent', 'source'): late.pop(k)
+    crits = [dict(r, id='c%d' % (i + 1), receivedAt=5000.0 + i, gameTime=r['gameTime'] - 0.1)
+             for i, r in enumerate(r for r in full if r['type'] == 'crit' and r['event'] != 'collision')]
+    crits.append({'schema':1, 'type':'crit', 'event':'collision', 'id':'c99', 'gameTime':1001.0, 'pair':[30, 40]})
+    live = dict(live, hits=live['hits'] + [late], critEvents=crits)
+    replay = [r for r in full if not (r['type'] == 'hit' and r['id'] == '2')
+              and not (r['type'] == 'crit' and r['event'] == 'health' and r.get('newHealth') == 400)]
+    return replay, live
+
+
 class SyntheticTests(unittest.TestCase):
     def setUp(self):
         self.replay, self.live = synthetic_pair()
@@ -321,12 +339,45 @@ class SyntheticTests(unittest.TestCase):
         self.assertEqual(report['hitsWithScene'], 0)
         self.assertTrue(any('No live record' in w for w in battle['warnings']))
 
-    def test_a_live_record_the_replay_lacks_is_counted_not_shown(self):
-        live = dict(self.live, hits=self.live['hits'] + [dict(self.live['hits'][0], id='2', damage=999)])
-        battle, report = rb.build(self.replay, live)
-        self.assertEqual(report['liveOnly'], {'hit':1})
-        self.assertFalse(any(h['id'] == '2' for h in battle['hits']))
-        self.assertTrue(any('not in the replay' in w for w in battle['warnings']))
+    def test_records_the_replay_lacks_are_published_from_the_live_record_once(self):
+        """A special mode's replay the decoder read with gaps (the user, 11.11: nothing the recorder saw is lost): the
+        live hit and health record it lacks are published, marked, counted, and the damage log holds each once."""
+        from local_armor_inspector.damage_log import damage_log
+        replay, live = gap_pair()
+        full, _ = rb.build(self.replay, live)
+        battle, report = rb.build(replay, live)
+        self.assertEqual(report['liveOnly'], {'hit':1, 'crit:health':1, 'crit:collision':1})
+        self.assertEqual(report['livePublished'], {'hit':1, 'crit:health':1})
+        late = [h for h in battle['hits'] if h['id'] == '2']
+        self.assertEqual(len(late), 1)
+        h = late[0]
+        self.assertEqual((h['source'], h[rb.LIVE_ONLY], h['damage'], h['aim']), ('live', True, 77, [0.3, 0.4]))
+        self.assertAlmostEqual(h['gameTime'], 1007.5)   # the live 1007.4 on the replay clock (offset 0.1)
+        self.assertAlmostEqual(h['liveGameTime'], 1007.4)
+        self.assertNotIn('replayAbsent', h)
+        health = [c for c in battle['critEvents'] if c.get('event') == 'health' and c.get('newHealth') == 400]
+        self.assertEqual(len(health), 1)
+        self.assertTrue(health[0][rb.LIVE_ONLY])
+        self.assertAlmostEqual(health[0]['gameTime'], 1005.2)
+        at = battle['critEvents'].index(health[0])   # in time order: after the replay's other tick of 1005.2
+        before, after = battle['critEvents'][at - 1], battle['critEvents'][at + 1]
+        self.assertEqual((before['event'], before['vehicleId'], before['gameTime'], after['gameTime']), ('health', 10, 1005.2, 1006.0))
+        self.assertFalse(any(c.get('id') == 'c99' for c in battle['critEvents']))   # a routine kind: counted only
+        self.assertTrue(any('not in the replay; they are shown as the recorder had them (crit:health 1, hit 1)' in w
+                            for w in battle['warnings']))
+        self.assertEqual((report['hits'], report['hitsWithScene'], report['hitsWithoutScene']), (2, 2, 0))
+        # The damage log: the same sums as the battle whose replay had both records.
+        events, check, _ = damage_log(battle['hits'], battle['critEvents'], battle['roster'])
+        events_full, check_full, _ = damage_log(full['hits'], full['critEvents'], full['roster'])
+        self.assertEqual(len(events), len(events_full))
+        figures = lambda c: dict((k, c.get(k)) for k in ('vehicles', 'missing', 'surplus', 'mismatched', 'destroyed'))
+        self.assertEqual(figures(check), figures(check_full))
+        self.assertEqual(sum(x['damage'] for x in battle['hits']), sum(x['damage'] for x in full['hits']))
+
+    def test_a_battle_whose_replay_has_everything_publishes_nothing_from_the_live_record(self):
+        self.assertEqual((self.report['liveOnly'], self.report['livePublished']), ({}, {}))
+        self.assertFalse(any(rb.LIVE_ONLY in r for k in ('hits', 'shotEvents', 'critEvents') for r in self.battle[k]))
+        self.assertFalse(any('not in the replay' in w for w in self.battle['warnings']))
 
 
 class ExporterTests(unittest.TestCase):

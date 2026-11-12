@@ -75,6 +75,17 @@ def main():
     import test_replay_battle as T
     from local_armor_inspector import replay_records as rr, replay_battle as rb
     from local_armor_inspector.exporter import read_battle
+    from local_armor_inspector.damage_log import damage_log
+    # A replay with gaps (a special mode's decoder misses): the live hit and health tick it lacks are published once.
+    replay, live = T.gap_pair()
+    battle, report = rb.build(replay, live)
+    full = rb.build(T.synthetic_pair()[0], live)[0]
+    figures = lambda b: plain(damage_log(b['hits'], b['critEvents'], b['roster'])[1])
+    late = [h for h in battle['hits'] if h['id'] == '2']
+    check(report['livePublished'] == {'hit':1, 'crit:health':1} and len(late) == 1 and late[0]['source'] == 'live'
+          and len([c for c in battle['critEvents'] if c.get(rb.LIVE_ONLY)]) == 1 and figures(battle) == figures(full),
+          'replay_battle.build - records the replay lacks are published from the live record, the damage check as with them',
+          repr(report))
     started = time.clock()
     table = {}
     for name, arena, folder in T.FOUR + T.KILL_CAM:

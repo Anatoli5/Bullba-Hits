@@ -24,7 +24,13 @@ read_battle gives), so the published file is the one the page reads today:
     crit  nothing but id and receivedAt: its names come from the run-time Names of the conversion, as everywhere.
 - A replay hit without a live one (the death camera: the recorder sees no vehicle event for ~15 s) is published as it
   is: no scene, 'replayAbsent' says what is missing, its points carry status 'replay-raw'. Nothing is guessed.
-- A live record without a replay one is not published (one source per battle); the battle's warnings count them.
+- A live record without a replay one (the user, 11.11: nothing the recorder saw is lost because the replay lacks it - a
+  special mode's events the decoder may miss) is published from the live record, marked LIVE_ONLY (a hit also gets
+  source 'live'), its gameTime moved onto the replay clock by the battle's measured clockOffset (the live figure kept
+  in 'liveGameTime'), counted per kind in the report's 'livePublished' and said in the warnings. It has no twin of the
+  same key in the replay, so it enters the damage log once. Not the ROUTINE_LIVE_ONLY kinds: the replay never carries
+  those, they are counted only (measured on the 33 battles of 11.11: 0 live-only hits, health or other crits; 5
+  explosions in 4 battles - shells ending at the muzzle tick, whose shot has a replay tracer and no replay end).
 - Two scenes per hit (the user, 11.11): the in-game snapshot stays the hit's main scene, its fields where they are today
   (target, attacker, points, aim, ...). A scene rebuilt from the replay is added later beside it, under the one key
   SECOND_SCENE of the hit ('replayScene': a block of its own with the same field names), so the page can compare and
@@ -58,6 +64,9 @@ SECOND_SCENE = 'replayScene'
 # Live records the replay never carries (measured 10-11.11 on six battles: outputs/replay-records-parity-2026-11-10.md).
 ROUTINE_LIVE_ONLY = frozenset(('crit:collision', 'crit:damageInfo', 'crit:damageInfoReplay', 'crit:damagedDevicesVisible',
                                'crit:publicState'))
+# The mark of a record published from the live record because the replay has no twin of it; a hit's source value.
+LIVE_ONLY = 'liveOnly'
+LIVE_SOURCE = 'live'
 
 
 def number(value):
@@ -112,6 +121,38 @@ def median(values):
     return round(values[len(values) // 2], 3) if values else None
 
 
+def kind_name(kind, r):
+    return kind if kind == 'hit' else kind + ':' + str(r.get('event'))
+
+
+def from_live(r, offset):
+    """A copy of a live record with no replay twin, marked, its gameTime on the replay clock (offset = replay - live)."""
+    out = copy.deepcopy(r)
+    out[LIVE_ONLY] = True
+    when = number(r.get('gameTime'))
+    if offset is not None and when is not None:
+        out['liveGameTime'] = r['gameTime']
+        out['gameTime'] = when + offset
+    return out
+
+
+def merge(rows, extra):
+    """`rows` with each of `extra` put before the first row of a later gameTime (after rows of the same time; a row
+    without a time never stops it); a record without a time goes last."""
+    rows = list(rows)
+    for e in extra:
+        when = number(e.get('gameTime'))
+        at = len(rows)
+        if when is not None:
+            for i, r in enumerate(rows):
+                t = number(r.get('gameTime'))
+                if t is not None and t > when:
+                    at = i
+                    break
+        rows.insert(at, e)
+    return rows
+
+
 def build(records, live=None, battle_id=None):
     """(battle, report) of one battle: `records` the replay's (Converter output, header first), `live` the live battle as
     read_battle returns it or None, `battle_id` the id to publish under when there is no live battle. The battle is
@@ -135,6 +176,19 @@ def build(records, live=None, battle_id=None):
     offsets = [number(r['gameTime']) - number(m['gameTime']) for group, table in ((hits, hit_live), (shots, shot_live))
                for r in group for m in [table.get(id(r))] if m is not None
                and number(r.get('gameTime')) is not None and number(m.get('gameTime')) is not None]
+    offset = median(offsets)
+
+    # ---- what the live record had and the replay has not: published from the live record (not the routine kinds) ----
+    matched = set(id(m) for table in (hit_live, shot_live, crit_live) for m in table.values())
+    live_only, published_live, extra = {}, {}, {'hit':[], 'shot':[], 'crit':[]}
+    for kind, rows in (('hit', l_hits), ('shot', l_kept_shots), ('crit', l_crits)):
+        for r in rows:
+            if id(r) in matched: continue
+            name = kind_name(kind, r)
+            live_only[name] = live_only.get(name, 0) + 1
+            if name in ROUTINE_LIVE_ONLY: continue
+            published_live[name] = published_live.get(name, 0) + 1
+            extra[kind].append(from_live(r, offset))
 
     # ---- shots: the replay's, ids and the snapshot of the live ones ----------------------------------------------
     out_shots, ids, by_live = [], {}, {}
@@ -165,6 +219,7 @@ def build(records, live=None, battle_id=None):
     for s in out_shots:
         published_shots.append(s)
         if s['id'] in by_live: published_shots.extend(extras_after.get(s['id'], ()))
+    published_shots = merge(published_shots, extra['shot'])
     shot_ids = set(s.get('id') for s in published_shots)
 
     # ---- hits: the replay's, the scene of the live ones -------------------------------------------------------------
@@ -190,6 +245,13 @@ def build(records, live=None, battle_id=None):
             candidates_dropped += len(h['traceCandidates']) - len(kept)
             h['traceCandidates'] = kept
         out_hits.append(h)
+    for h in extra['hit']:
+        h['source'] = LIVE_SOURCE
+        if isinstance(h.get('traceCandidates'), list):
+            kept = [c for c in h['traceCandidates'] if c in shot_ids]
+            candidates_dropped += len(h['traceCandidates']) - len(kept)
+            h['traceCandidates'] = kept
+    out_hits = merge(out_hits, extra['hit'])
 
     # ---- crits: the replay's, with the live ids ---------------------------------------------------------------------
     out_crits = []
@@ -202,15 +264,7 @@ def build(records, live=None, battle_id=None):
         else:
             c['id'] = NEW_ID['crit'] + str(r.get('id', '')).lstrip('c')
         out_crits.append(c)
-
-    # ---- what the live record had and the replay has not --------------------------------------------------------------
-    matched = set(id(m) for table in (hit_live, shot_live, crit_live) for m in table.values())
-    live_only = {}
-    for kind, rows in (('hit', l_hits), ('shot', l_kept_shots), ('crit', l_crits)):
-        for r in rows:
-            if id(r) not in matched:
-                name = kind if kind == 'hit' else kind + ':' + str(r.get('event'))
-                live_only[name] = live_only.get(name, 0) + 1
+    out_crits = merge(out_crits, extra['crit'])
 
     # ---- the battle ----------------------------------------------------------------------------------------------------
     base = live if live else header
@@ -222,9 +276,10 @@ def build(records, live=None, battle_id=None):
     battle['source'] = SOURCE
     report = {'format':FORMAT, 'recordsFormat':header.get('replayRecordsFormat'), 'liveRecord':bool(live),
               'hits':len(out_hits), 'hitsWithScene':len(out_hits) - sceneless, 'hitsWithoutScene':sceneless,
-              'shots':len(out_shots), 'shotsMatched':len(shot_live), 'liveShotRecordsAttached':len(published_shots) - len(out_shots),
-              'crits':len(out_crits), 'critsMatched':len(crit_live), 'liveOnly':live_only,
-              'clockOffset':median(offsets)}
+              'shots':len(out_shots), 'shotsMatched':len(shot_live),
+              'liveShotRecordsAttached':len(published_shots) - len(out_shots) - len(extra['shot']),
+              'crits':len(out_crits) - len(extra['crit']), 'critsMatched':len(crit_live), 'liveOnly':live_only,
+              'livePublished':published_live, 'clockOffset':offset}
     for k, name in (('replayServerTimeAtStart', 'serverTimeAtStart'), ('replayClientVersion', 'clientVersion')):
         if header.get(k) is not None: report[name] = header[k]
     if points_differ: report['pointsDiffer'] = points_differ
@@ -239,11 +294,10 @@ def build(records, live=None, battle_id=None):
                         'them (part poses, armour and aim as the client had them were not recorded)' % sceneless)
     # The live records that never have a twin in the replay (contacts of rams between other vehicles, the client's own
     # damage-info echoes) are counted in the report ('liveOnly') and not said to the player: it is so in nearly every
-    # battle. Any other live record without a twin (a hit, a shot) is said: something of the battle is not shown.
-    odd = dict((k, v) for k, v in live_only.items() if k not in ROUTINE_LIVE_ONLY)
-    if odd:
-        warnings.append('%d record(s) of the live record are not in the replay and are not shown (%s)'
-                        % (sum(odd.values()), ', '.join('%s %d' % kv for kv in sorted(odd.items()))))
+    # battle. Any other live record without a twin (a hit, a shot) is published from the live record, and said.
+    if published_live:
+        warnings.append('%d record(s) of the live record are not in the replay; they are shown as the recorder had them (%s)'
+                        % (sum(published_live.values()), ', '.join('%s %d' % kv for kv in sorted(published_live.items()))))
     roster = rosters[-1] if rosters else None
     battle.update({'hits':out_hits, 'shotEvents':published_shots, 'critEvents':out_crits, 'warnings':warnings})
     if roster is not None:
