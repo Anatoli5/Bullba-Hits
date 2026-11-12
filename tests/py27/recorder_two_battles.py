@@ -12,7 +12,11 @@ mods/configs/local.armor_inspector/battles), so the script chdirs into a temp 'g
 version.xml there, so the Recorder starts without the HTML exporter (its thread is not covered here).
 
 Checks, by group:
-  hooks      init() wraps each expected class attribute once; a second init() changes nothing; fini() puts
+  entry      the mods list button opens the page on the previewed vehicle while a preview is open (and asks for its
+             export), else on the hangar vehicle, else on the battles (BACKLOG 93)
+  hooks      the Bullba Hits entry in the carousel and the Vehicle Comparison menus; the comparison one opens the
+             column's configuration (BACKLOG 95)
+             init() wraps each expected class attribute once; a second init() changes nothing; fini() puts
              every original back (by the class dict - Python 2 hands out a new unbound method per read)
   battle A/B roster, hits in/out/other, tracers, a crit, the motion sampler; per-battle state replaced when
              B starts; arena events unsubscribed on leaving
@@ -168,7 +172,25 @@ class VehicleContextMenuHandler(object):
     def _makeItem(option, label): return {'id': option, 'label': label}
 
 
-HOOK_CLASSES = (Vehicle, PlayerAvatar, AvatarInputHandler, OwnVehicleBase, Fire, VehicleContextMenuHandler)
+class CompareBase(object):
+    """cmp_cm_handlers.CommonContextMenuHandler of 2.4.1.1: _generateOptions is defined here, on the base."""
+    def _generateOptions(self, ctx=None):
+        CALLS['VehicleCompareContextMenuHandler._generateOptions'] += 1
+        return [{'id': 'copyComparedVehicle'}]
+    onOptionSelect = original('VehicleCompareContextMenuHandler.onOptionSelect')
+    def getVehCD(self): return self.vehCD
+    @staticmethod
+    def _makeItem(option, label): return {'id': option, 'label': label}
+
+
+class VehicleCompareContextMenuHandler(CompareBase):
+    """The Vehicle Comparison screen's menu (CONTEXT_MENU_HANDLER_TYPE.VEH_COMPARE): the column's basket index is
+    _initFlashValues' int(ctx.index), the basket the class attribute comparisonBasket (IVehicleComparisonBasket)."""
+    comparisonBasket = None
+
+
+HOOK_CLASSES = (Vehicle, PlayerAvatar, AvatarInputHandler, OwnVehicleBase, Fire, VehicleContextMenuHandler,
+                VehicleCompareContextMenuHandler)
 EXPECTED_HOOKS = set([
     # init(): the hit
     ('Vehicle', 'showDamageFromShot'),
@@ -188,6 +210,7 @@ EXPECTED_HOOKS = set([
     ('Vehicle', 'showAmmoBayEffect'), ('Vehicle', 'showDamageFromExplosion'),
     # install_context_menu
     ('VehicleContextMenuHandler', '_generateOptions'), ('VehicleContextMenuHandler', 'onOptionSelect'),
+    ('VehicleCompareContextMenuHandler', '_generateOptions'), ('VehicleCompareContextMenuHandler', 'onOptionSelect'),
 ])
 
 
@@ -259,7 +282,8 @@ def install_stubs():
                                 'ARMOR_PIERCING_HE': 3, 'ARMOR_PIERCING_CR': 4},
            ROLE_TYPE_TO_LABEL={0: 'NotDefined'}, BATTLE_MODE_VEHICLE_TAGS=frozenset())
     module('BattleFeedbackCommon', BATTLE_EVENT_TYPE=NS(CRIT=6, RECEIVED_CRIT=9))
-    module('CurrentVehicle', g_currentVehicle=NS(onChanged=Event(), isPresent=lambda: False, item=None))
+    module('CurrentVehicle', g_currentVehicle=NS(onChanged=Event(), isPresent=lambda: False, item=None),
+           g_currentPreviewVehicle=NS(onChanged=Event(), isPresent=lambda: False, item=None))
     module('PlayerEvents', g_playerEvents=NS(onAvatarBecomePlayer=Event(), onAvatarBecomeNonPlayer=Event()))
     module('items', __path__=[])
     sys.modules['items'].vehicles = module('items.vehicles',
@@ -271,6 +295,10 @@ def install_stubs():
     for i in range(1, len(path)):
         module('.'.join(path[:i]), __path__=[])
     module('.'.join(path), VehicleContextMenuHandler=VehicleContextMenuHandler)
+    path = 'gui.Scaleform.daapi.view.lobby.vehicle_compare.cmp_cm_handlers'.split('.')
+    for i in range(1, len(path)):
+        if '.'.join(path[:i]) not in sys.modules: module('.'.join(path[:i]), __path__=[])
+    module('.'.join(path), VehicleCompareContextMenuHandler=VehicleCompareContextMenuHandler)
     module('gui.modsListApi', g_modsListApi=NS(addModification=lambda **kw: MODS_LIST.append(kw)))
 
 
@@ -418,6 +446,14 @@ class Capture(logging.Handler):
     def emit(self, record): self.records.append(record)
 
 
+def inherited(key):
+    """The client function a class hands out for a method it inherits (the comparison menu's _generateOptions)."""
+    cls = [c for c in HOOK_CLASSES if c.__name__ == key[0]][0]
+    for base in cls.__mro__[1:]:
+        if key[1] in vars(base): return vars(base)[key[1]]
+    return None
+
+
 def hooked_attrs():
     return dict(((cls.__name__, name), value) for cls in HOOK_CLASSES for name, value in vars(cls).items()
                 if isinstance(value, (types.FunctionType, types.MethodType, staticmethod)))
@@ -503,6 +539,19 @@ def run(temp):
     want = 'host=game&vehicle=' + sys.modules['local_armor_inspector.exporter'].vehicle_id('usa:A1_Entry')         if 'local_armor_inspector.exporter' in sys.modules else None
     got = mod.hangar_fragment()
     check('entry', 'a vehicle in the hangar: the button opens the Vehicles mode on it', got == want or (want is None and got.startswith('host=game&vehicle=')), got)
+    # The vehicle preview (BACKLOG 93, user 12.11): tank A in the hangar, the preview of a tank he does not own, B -
+    # the button opens the page on B; the preview closed - on A again.
+    preview = sys.modules['CurrentVehicle'].g_currentPreviewVehicle
+    vid = sys.modules['local_armor_inspector.exporter'].vehicle_id
+    preview.isPresent = lambda: True
+    preview.item = NS(descriptor=NS(type=NS(name='germany:G2_Previewed')), isInInventory=False)
+    got = mod.hangar_fragment()
+    check('entry', 'a previewed tank not owned: the button opens the page on it, not on the hangar tank',
+          got == 'host=game&vehicle=' + vid('germany:G2_Previewed'), got)
+    preview.isPresent, preview.item = (lambda: False), None
+    got = mod.hangar_fragment()
+    check('entry', 'the preview closed: the button opens the page on the hangar tank again',
+          got == 'host=game&vehicle=' + vid('usa:A1_Entry'), got)
     hangar.isPresent, hangar.item = (lambda: False), None
     before = hooked_attrs()
     mod.init()
@@ -513,11 +562,12 @@ def run(temp):
         return mod
     mod.init()
     second = hooked_attrs()
-    changed = set(key for key in before if first.get(key) is not before[key])
+    # A method the class inherits is wrapped onto the subclass: a key new in `first` counts as changed.
+    changed = set(key for key in set(before) | set(first) if first.get(key) is not before.get(key))
     missing, extra = EXPECTED_HOOKS - changed, changed - EXPECTED_HOOKS
     check('hooks', 'init() wraps the %d expected client methods' % len(EXPECTED_HOOKS), not missing and not extra,
           'not wrapped: %s; unexpected: %s' % (sorted(missing), sorted(extra)))
-    double = [key for key in changed if before[key] not in closure_values(first[key])]
+    double = [key for key in changed if before.get(key, inherited(key)) not in closure_values(first[key])]
     check('hooks', 'each wrapper holds the client original directly (wrapped once)', not double, sorted(double))
     check('hooks', 'a second init() changes no class attribute', all(second[k] is first[k] for k in first),
           sorted(k for k in first if second[k] is not first[k]))
@@ -533,6 +583,59 @@ def run(temp):
     check('hooks', 'context menu: original options plus one entry',
           [o.get('id') for o in options] == ['sell', mod.CONTEXT_MENU_OPTION]
           and CALLS['VehicleContextMenuHandler._generateOptions'] == 1, options)
+
+    # The button over a preview (BACKLOG 93): the previewed tank is asked for (its file may not exist yet) and the
+    # page opens on it. picker_descriptor needs the client's items cache - the stand gives the type's descriptor.
+    presentation = __import__('local_armor_inspector.presentation', fromlist=['open_in_game'])
+    opened, requested = [], []
+    keep_open, keep_picker, keep_request = presentation.open_in_game, mod.picker_descriptor, recorder.request_vehicle
+    presentation.open_in_game = lambda path, fragment='': opened.append(fragment)
+    mod.picker_descriptor = lambda type_name: descriptor(type_name)
+    recorder.request_vehicle = lambda descr, source: requested.append((descr.type.name, source))
+    try:
+        hangar.isPresent, hangar.item = (lambda: True), NS(descriptor=NS(type=NS(name='usa:A1_Entry')))
+        preview.isPresent = lambda: True
+        preview.item = NS(descriptor=NS(type=NS(name='germany:G2_Previewed')), isInInventory=False)
+        mod.open_viewer()
+        check('entry', 'the button over a preview: the previewed tank exported and the page opened on it',
+              requested == [('germany:G2_Previewed', 'preview')]
+              and opened == ['host=game&vehicle=' + vid('germany:G2_Previewed')], (requested, opened))
+        preview.isPresent, preview.item = (lambda: False), None
+        del opened[:], requested[:]
+        mod.open_viewer()
+        check('entry', 'the button without a preview: no new export asked (the hangar hook did), the page on the hangar tank',
+              requested == [] and opened == ['host=game&vehicle=' + vid('usa:A1_Entry')], (requested, opened))
+        hangar.isPresent, hangar.item = (lambda: False), None
+
+        # The Vehicle Comparison screen's menu (BACKLOG 95): one entry; it opens the page on the column's tank with the
+        # modules set in the comparison (the basket's compact descriptor of that column).
+        menu = VehicleCompareContextMenuHandler.__new__(VehicleCompareContextMenuHandler)
+        options = menu._generateOptions(None)
+        check('hooks', 'comparison menu: original options plus one entry',
+              [o.get('id') for o in options] == ['copyComparedVehicle', mod.CONTEXT_MENU_OPTION]
+              and CALLS['VehicleCompareContextMenuHandler._generateOptions'] == 1, options)
+        built = []
+        def vehicle_descr(compactDescr=None):
+            built.append(compactDescr)
+            return descriptor('ussr:R1_Compared')
+        sys.modules['items.vehicles'].VehicleDescr = vehicle_descr
+        columns = [NS(getVehicleStrCD=lambda: 'other'), NS(getVehicleStrCD=lambda: 'configured')]
+        VehicleCompareContextMenuHandler.comparisonBasket = NS(getVehicleAt=lambda index: columns[index])
+        menu.vehCD, menu._VehicleCompareContextMenuHandler__itemIndexInBasket = 1234, 1
+        del opened[:], requested[:]
+        before_select = CALLS['VehicleCompareContextMenuHandler.onOptionSelect']
+        menu.onOptionSelect(mod.CONTEXT_MENU_OPTION)
+        check('hooks', "comparison menu entry: the column's configuration exported and the page opened on it",
+              built == ['configured'] and requested == [('ussr:R1_Compared', 'compare')]
+              and opened == ['host=game&vehicle=' + vid('ussr:R1_Compared')]
+              and CALLS['VehicleCompareContextMenuHandler.onOptionSelect'] == before_select, (built, requested, opened))
+        menu.onOptionSelect('copyComparedVehicle')
+        check('hooks', "comparison menu: the game's own entries still reach the game",
+              CALLS['VehicleCompareContextMenuHandler.onOptionSelect'] == before_select + 1)
+    finally:
+        presentation.open_in_game, mod.picker_descriptor, recorder.request_vehicle = keep_open, keep_picker, keep_request
+        sys.modules['items.vehicles'].__dict__.pop('VehicleDescr', None)
+        VehicleCompareContextMenuHandler.comparisonBasket = None
 
     # ---- battle A ---------------------------------------------------------------------------------------
     a = Battle(9876543210123456789, 1)
@@ -613,10 +716,11 @@ def run(temp):
     writer = recorder.writer
     mod.fini()
     after = hooked_attrs()
-    kept = sorted(key for key in before if getattr(after.get(key), 'im_func', after.get(key)) is not before[key])
+    kept = sorted(key for key in set(before) | set(after)
+                  if getattr(after.get(key), 'im_func', after.get(key)) is not before.get(key))
     check('shutdown', 'fini() puts every client original back (REC-10)', not kept,
           '%d still wrapped: %s' % (len(kept), ', '.join('%s.%s' % k for k in kept)))
-    rebound = sorted(key for key in before if after.get(key) is not before[key] and key not in kept)
+    rebound = sorted(key for key in before if after.get(key) is not before.get(key) and key not in kept)
     if rebound:
         note('fini() put back %s as an unbound method object, not the class own function (works, identity differs)'
              % ', '.join('%s.%s' % k for k in rebound))

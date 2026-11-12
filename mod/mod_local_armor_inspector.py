@@ -1769,29 +1769,47 @@ class Recorder(object):
 
 
 def open_viewer():
-    """The mods list button: the Vehicles mode on the vehicle selected in the hangar (user, 25.09), whose model the
-    hangar hook has already asked for (on_hangar_vehicle); the Hits mode is one click away on the page. No vehicle
-    in the hangar - the page as before, on the battles. The page opens waiting for that vehicle: if its export is still
-    queued, it goes first (page_waits)."""
+    """The mods list button: the Vehicles mode on the vehicle the lobby shows (user, 25.09) - the previewed one while a
+    vehicle preview is open (BACKLOG 93, 12.11), else the one selected in the hangar; the Hits mode is one click away
+    on the page. No vehicle - the page as before, on the battles. The hangar vehicle's model the hangar hook has already
+    asked for (on_hangar_vehicle); a previewed one is asked for here (owned - its hangar configuration, else the top one,
+    picker_descriptor). The page opens waiting for that vehicle: if its export is still queued, it goes first (page_waits)."""
     try:
         from local_armor_inspector.presentation import open_in_game
-        type_name = hangar_type()
+        type_name, source = shown_vehicle()
+        if source == 'preview' and _recorder is not None:
+            try: _recorder.request_vehicle(picker_descriptor(type_name), 'preview')
+            except Exception: LOG.exception('Previewed vehicle %s could not be asked for; the page asks itself', type_name)
         page_waits(type_name)
         open_in_game(VIEWER_PATH, hangar_fragment(type_name))
     except Exception:
         LOG.exception('Could not open local HTML viewer')
 
 
-def hangar_type():
-    """The client type name of the vehicle selected in the hangar, or None."""
+def shown_vehicle():
+    """(type name, 'preview' | 'hangar') of the vehicle the lobby shows, or (None, None).
+
+    CurrentVehicle.g_currentPreviewVehicle (a _CurrentPreviewVehicle: isPresent() = item is not None) holds the vehicle
+    of the vehicle preview / Vehicle Hub, which clears it on exit (VehicleHubState._onExited -> selectNoVehicle(),
+    2.4.1.1 bytecode); g_currentVehicle stays the hangar's during a preview. Read by getattr, so a client without the
+    preview owner falls back to the hangar. One log line names the source."""
     try:
-        from CurrentVehicle import g_currentVehicle
-        item = g_currentVehicle.item if g_currentVehicle.isPresent() else None
-        if item is not None and item.descriptor is not None:
-            return str(item.descriptor.type.name)
+        import CurrentVehicle
+        for owner, source in ((getattr(CurrentVehicle, 'g_currentPreviewVehicle', None), 'preview'),
+                              (CurrentVehicle.g_currentVehicle, 'hangar')):
+            item = owner.item if owner is not None and owner.isPresent() else None
+            if item is not None and item.descriptor is not None:
+                type_name = str(item.descriptor.type.name)
+                LOG.info('Bullba Hits opens on %s, the %s vehicle', type_name, source)
+                return type_name, source
     except Exception:
         LOG.exception('Hangar vehicle unavailable; the viewer opens on the battles')
-    return None
+    return None, None
+
+
+def hangar_type():
+    """The client type name of the vehicle the lobby shows (the previewed one first, shown_vehicle), or None."""
+    return shown_vehicle()[0]
 
 
 def hangar_fragment(type_name=None):
@@ -1913,29 +1931,83 @@ def show_vehicle(handler):
     open_in_game(VIEWER_PATH, 'host=game&vehicle=' + vehicle_id(descr.type.name))
 
 
-def install_context_menu():
-    """Append one entry to the hangar vehicle context menu.
+def show_compared_vehicle(handler):
+    """The Vehicle Comparison screen's entry (BACKLOG 95): export the column's vehicle as configured there and open the
+    viewer on it.
 
-    hangar/__init__.py getContextMenuHandlers() registers
-    CONTEXT_MENU_HANDLER_TYPE.VEHICLE ('vehicle') -> VehicleContextMenuHandler, and
-    ContextMenuManager.requestOptions builds that class and sends
-    handler.getOptions(ctx) -> _generateOptions(ctx) to Flash, then routes the
-    click back through handler.onOptionSelect(optionId). Wrapping those two class
-    methods is therefore all an option needs; AbstractContextMenuHandler._makeItem
-    builds the option dict (id, label, iconType, initData, submenu, linkage).
+    The handler is cmp_cm_handlers.VehicleCompareContextMenuHandler (2.4.1.1): _initFlashValues stores the column's
+    basket index (int(ctx.index)) as the private __itemIndexInBasket, the class attribute comparisonBasket is the
+    IVehicleComparisonBasket; getVehicleAt(index).getVehicleStrCD() is the compact descriptor of the vehicle with the
+    modules chosen in the comparison (applyNewParameters: descriptor.makeCompactDescr()). Equipment, crew and shells
+    are not in it and change nothing on the page's model. Unreadable - the vehicle by getVehCD() as the page's list
+    would give it (picker_descriptor)."""
+    from local_armor_inspector.exporter import vehicle_id
+    from local_armor_inspector.presentation import open_in_game
+    descr = None
+    try:
+        from items import vehicles as client_vehicles
+        index = handler._VehicleCompareContextMenuHandler__itemIndexInBasket
+        descr = client_vehicles.VehicleDescr(
+            compactDescr=handler.comparisonBasket.getVehicleAt(index).getVehicleStrCD())
+    except Exception:
+        LOG.exception('Comparison configuration unreadable; the vehicle opens as the page list gives it')
+    if descr is None:
+        from helpers import dependency
+        from skeletons.gui.shared import IItemsCache
+        vehicle = dependency.instance(IItemsCache).items.getItemByCD(handler.getVehCD())
+        descr = picker_descriptor(str(vehicle.descriptor.type.name))
+    type_name = str(descr.type.name)
+    LOG.info('Bullba Hits opens on %s from the vehicle comparison', type_name)
+    if _recorder is not None:
+        _recorder.request_vehicle(descr, 'compare')
+        page_waits(type_name)
+    open_in_game(VIEWER_PATH, 'host=game&vehicle=' + vehicle_id(type_name))
+
+
+# The vehicle context menus that carry the Bullba Hits entry: (module, class, what the entry does). The comparison
+# menu's class is CONTEXT_MENU_HANDLER_TYPE.VEH_COMPARE, the one handler vehicle_compare/__init__.getContextMenuHandlers
+# registers (2.4.1.1); its _generateOptions is inherited from CommonContextMenuHandler and wrapped on the subclass.
+CONTEXT_MENUS = (
+    ('gui.Scaleform.daapi.view.lobby.hangar.hangar_cm_handlers', 'VehicleContextMenuHandler', 'show_vehicle'),
+    ('gui.Scaleform.daapi.view.lobby.vehicle_compare.cmp_cm_handlers', 'VehicleCompareContextMenuHandler',
+     'show_compared_vehicle'),
+)
+
+
+def install_context_menu():
+    """The Bullba Hits entry in each menu of CONTEXT_MENUS; a menu whose class is missing is skipped with a log line,
+    the others still get theirs. Returns the hooks for remove_context_menu."""
+    installed = []
+    for module_name, class_name, action in CONTEXT_MENUS:
+        try:
+            cls = getattr(__import__(module_name, fromlist=[class_name]), class_name)
+            installed.extend(install_menu_entry(cls, globals()[action]) or ())
+        except Exception:
+            LOG.exception('%s context menu unavailable; the other entries stay', class_name)
+    return installed
+
+
+def install_menu_entry(menu_class, action):
+    """Append the Bullba Hits entry to one vehicle context menu class; its click runs action(handler).
+
+    A package's getContextMenuHandlers() registers a handler type -> class (hangar: CONTEXT_MENU_HANDLER_TYPE.VEHICLE
+    -> VehicleContextMenuHandler; the comparison: VEH_COMPARE -> VehicleCompareContextMenuHandler), and
+    ContextMenuManager.requestOptions builds that class and sends handler.getOptions(ctx) -> _generateOptions(ctx) to
+    Flash, then routes the click back through handler.onOptionSelect(optionId). Wrapping those two class methods is
+    therefore all an option needs; AbstractContextMenuHandler._makeItem builds the option dict (id, label, iconType,
+    initData, submenu, linkage).
 
     Idempotent: a reloaded module finds its own marker and leaves the class alone.
     """
-    from gui.Scaleform.daapi.view.lobby.hangar.hangar_cm_handlers import VehicleContextMenuHandler
     from local_armor_inspector.telemetry import wrap
-    if getattr(VehicleContextMenuHandler._generateOptions, 'bullba_hits', False): return None
+    if getattr(menu_class._generateOptions, 'bullba_hits', False): return None
 
     def make_generate(generate):
         def bullba_generate_options(handler, ctx=None):
             options = generate(handler, ctx)
             try:
                 options = list(options or [])
-                options.append(VehicleContextMenuHandler._makeItem(CONTEXT_MENU_OPTION, CONTEXT_MENU_LABEL))
+                options.append(menu_class._makeItem(CONTEXT_MENU_OPTION, CONTEXT_MENU_LABEL))
             except Exception:
                 LOG.exception('Bullba Hits context menu entry unavailable; the menu is unchanged')
             return options
@@ -1947,7 +2019,7 @@ def install_context_menu():
             if optionId != CONTEXT_MENU_OPTION:
                 return select(handler, optionId)
             try:
-                show_vehicle(handler)
+                action(handler)
             except Exception:
                 LOG.exception('Bullba Hits could not open the selected vehicle')
             return None
@@ -1955,9 +2027,10 @@ def install_context_menu():
         return bullba_option_select
 
     # The recorder's one wrapper (telemetry.wrap, REC-10): remove_context_menu puts back the class's own entries -
-    # onOptionSelect is inherited, so it is removed from the subclass rather than copied onto it.
-    hooks = [wrap(VehicleContextMenuHandler, '_generateOptions', make_generate),
-             wrap(VehicleContextMenuHandler, 'onOptionSelect', make_select)]
+    # an inherited method (onOptionSelect; the comparison's _generateOptions) is removed from the subclass rather
+    # than copied onto it.
+    hooks = [wrap(menu_class, '_generateOptions', make_generate),
+             wrap(menu_class, 'onOptionSelect', make_select)]
     return [hook for hook in hooks if hook is not None]
 
 

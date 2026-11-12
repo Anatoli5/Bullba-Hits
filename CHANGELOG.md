@@ -8,6 +8,8 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 - **Armour line easier to read:** the plate and its angle are now joined by the angle sign - "eff 310 mm ← 190 mm ∠ 54°" instead of a dash; the same in the ricochet line.
 - **Penetration beside the armour:** the shell's penetration now stands on the armour line, right before the effective armour it is compared with, so the Hit line and Under the cursor panels are one line shorter; the range it is taken at moved into the penetration chip's tooltip.
 - **HP bar with ⌖ only again:** the health bar over the scene shows only while the shooting emulation (⌖) is on, as before 1.07; the battle's HP stays in the target's characteristics panel.
+- **Opening from a vehicle preview:** while you are looking at a vehicle in the preview (including one you do not own), the Bullba Hits button in the mods list now opens the page on that vehicle instead of the one selected in your hangar - your own configuration if you own it, the top one otherwise. With no preview open it opens on the hangar vehicle as before.
+- **Bullba Hits in the Vehicle Comparison menu:** right-clicking a vehicle in the Vehicle Comparison screen now offers "Bullba Hits", like the hangar carousel; it opens the page on that vehicle with the modules (turret, gun, chassis) chosen for it in the comparison.
 
 ## 1.08 (2026-11-12)
 
