@@ -7,7 +7,8 @@ never ends) is killed by the watchdog here instead of hanging the caller.
 
     BULLBA_PY27_DLL      python27.dll of the client   (default C:/Games/World_of_Tanks_NA/win64/python27.dll)
     BULLBA_PY27_HOME     folder with stdlib.zip       (default <repo>/work/game-python27)
-    BULLBA_PY27_TIMEOUT  watchdog seconds             (default 60)
+    BULLBA_PY27_TIMEOUT  watchdog seconds             (default 180: a guard against a hang, not a speed limit -
+                         the slowest test took 58 s on a slow core of this CPU, 11.11.2026)
 
 Exit code: the inner script's verdict (0 pass, 1 fail); 77 when the dll or the stdlib is missing (SKIP).
 
@@ -60,7 +61,7 @@ def main():
     handle, result = tempfile.mkstemp(prefix='bullba-py27-', suffix='.txt')
     os.close(handle)
     env = dict(os.environ, BULLBA_PY27_RESULT=result, BULLBA_REPO=str(REPO).replace('\\', '/'))
-    timeout = float(os.environ.get('BULLBA_PY27_TIMEOUT', '60'))
+    timeout = float(os.environ.get('BULLBA_PY27_TIMEOUT', '180'))
     try:
         try:
             proc = subprocess.run([sys.executable, os.path.abspath(__file__), '--child', inner] + sys.argv[2:],

@@ -296,7 +296,7 @@ def check_browser(result):
 def check_py27(result):
     scripts = [p for p in sorted(glob.glob('tests/py27/*.py', root_dir=ROOT)) if os.path.basename(p) != 'run27.py']
     for script in scripts:
-        code, out, _ = run([sys.executable, 'tests/py27/run27.py', script.replace(os.sep, '/')], timeout=120)
+        code, out, _ = run([sys.executable, 'tests/py27/run27.py', script.replace(os.sep, '/')], timeout=240)   # above run27's own 180 s watchdog
         name = os.path.basename(script)
         if code == SKIP_EXIT:
             result.skip(name + ': ' + tail(out, 1))
