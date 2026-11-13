@@ -2,7 +2,7 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.1.1 from 1.05 on, 2.4.1.0 from 1.02 on, 2.4.0.2 from 0.9.3 on, 2.4.0.1 #950 from 0.7.6, 2.4.0.0 #945 before.
 
-## Unreleased
+## 1.10 (2026-11-13)
 
 - **Window size buttons resize the whole window:** − and + in the page's header now resize the game window itself - its frame together with the page - and centre it on the screen, as if it had opened at that size. Before, only the page's area changed: it shrank inside the old window or spilled over its edges. The largest step now fits the screen entirely, frame included.
 - **Lighter return to the hangar:** after a battle, the work on its replay now waits until the hangar has finished loading, and pauses while the Bullba Hits page is loading, instead of competing with them. The battle's replay-based version may therefore appear a few seconds later than before; if the hangar does not report that it has loaded, the work starts after a minute at the latest.
