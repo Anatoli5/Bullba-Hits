@@ -382,10 +382,12 @@ class Shooter(object):
         back = int(math.ceil(max(SETTLE * aiming, SETTLE_MIN) / GRID))
         need = []
         for c in wanted:
-            # the last tick strictly before the clock (numpy searchsorted - 1, as the measurement read it)
-            k = int(math.floor((c - t0) / GRID))
-            while k + 1 < n and ticks(k + 1) < c: k += 1
-            while k >= 0 and not ticks(k) < c: k -= 1
+            # the last tick before the tick the shot blooms (D-119, 13.11): strictly before clock - BLOOM_EPS. Read before the
+            # clock alone, a tick in [clock - BLOOM_EPS, clock) was both bloomed and read - the shot's own bloom shown, 3-5x
+            # (the grid starts at the first packet, in the server's 0.1 s phase with the tracers: 650 of 3 627 tracers).
+            k = int(math.floor((c - BLOOM_EPS - t0) / GRID))
+            while k + 1 < n and ticks(k + 1) < c - BLOOM_EPS: k += 1
+            while k >= 0 and not ticks(k) < c - BLOOM_EPS: k -= 1
             need.append((max(0, min(k, n - 1)), c))
         need.sort()
         state, at = None, -1

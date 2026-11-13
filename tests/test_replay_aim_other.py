@@ -153,6 +153,19 @@ class Block(unittest.TestCase):
         self.assertTrue(b['limits'] and b['absent'])
         self.assertGreater(b['uncertainty']['centreUp'], b['uncertainty']['centreRight'])
 
+    def test_a_tick_at_the_tracer_is_not_read_bloomed(self):
+        """D-119 (13.11): a grid tick within BLOOM_EPS before the tracer clock is the tick the shot blooms; the circle is
+        read before it, not on it. The grid starts at the vehicle's first packet and the server's clocks share one 0.1 s
+        phase, so in the battles this happened to 650 of 3 627 tracers (the circle shown 3-5x too wide). Standing and aimed:
+        the circle is the aimed one whatever the tracer's phase against the grid."""
+        positions, guns = track()
+        shooter = ro.Shooter(positions, guns, dict(GUN))
+        R = 0.92 * GUN['dispersion']
+        for c in (20.0 + 5e-5, 20.0, 20.05, 20.0 - 5e-5):
+            out = {}
+            for _ in shooter.size_steps([10.0, c], [c], out): pass
+            self.assertAlmostEqual(out[c], R, places=9, msg='tracer at %r' % c)
+
     def test_a_steady_turn_and_the_size_on_the_move(self):
         """Driving at 5 m/s with the turret turning one code a tick: the case is a steady turn, the circle is the formula's
         on the move (wider than aimed), and the windowed size model equals the one over the whole track."""
