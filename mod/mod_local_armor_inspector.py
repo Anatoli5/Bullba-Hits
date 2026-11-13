@@ -26,6 +26,18 @@ BUSY_SECONDS = 2.0
 # How long one 'open' message from the page counts it open (24.09, the fast TTX sweep). The page sends one with every
 # poll of its data, every 2-5 s; a page closed or navigated away stops sending and the sweep goes slow again.
 PAGE_OPEN_SECONDS = 12.0
+# The replay job waits for the game's own loads (BACKLOG 84; outputs/replay-job-cost-1.08-2026-11-12.md: its slices during
+# the return to the hangar were 2-7.5 s of waiting for 0.1-0.3 s of work). The hangar: from leaving a battle or the space
+# starting to load (IHangarSpace.onSpaceCreating) until the space is created (onSpaceCreate, fired by HangarSpace.__spaceDone
+# once BigWorld.spaceLoadStatus() reaches 1 and the virtual texture is drawn - 2.4.1.1 bytecode, 12.11) and HANGAR_SETTLE
+# more for the hangar's vehicle; without that signal HANGAR_FALLBACK after it began, so a battle is never left waiting for
+# good. The page: from the window's open until the browser's onLoadEnd and PAGE_LOAD_SETTLE more, at most
+# PAGE_LOAD_FALLBACK (the open's own check, TRACE_VIEW_WAIT, is 20 s too). The settle and fallback values are guesses; the
+# replay job's cost line says when its first slice came against the hangar's signal.
+HANGAR_SETTLE = 3.0
+HANGAR_FALLBACK = 60.0
+PAGE_LOAD_SETTLE = 2.0
+PAGE_LOAD_FALLBACK = 20.0
 _recorder = None
 # The record of the hit hook (telemetry.wrap): the class, the name, its own dictionary entry and the wrapper.
 _hit_hook = None
@@ -784,6 +796,7 @@ class VehicleEvents(object):
         self.events = None
         self.arena = None
         self.shown = None       # the type name of the hangar's vehicle last seen (follow_hangar)
+        self.space = None       # the client's IHangarSpace while its loading events are followed
         self.attempts = 0
         # Roster descriptors seen during the battle, exported only after it: the
         # export thread shares the interpreter lock with the game, and thirty
@@ -803,6 +816,17 @@ class VehicleEvents(object):
             g_playerEvents.onAvatarBecomeNonPlayer += self.on_avatar_become_non_player
             self.events = g_playerEvents
         except Exception: LOG.exception('Battle vehicle export unavailable; hit recording continues')
+        # The hangar's loading (the replay job waits for it): the client's IHangarSpace events. Without them the replay
+        # job does not wait for the hangar (as before 12.11).
+        try:
+            from helpers import dependency
+            from skeletons.gui.shared.utils import IHangarSpace
+            space = dependency.instance(IHangarSpace)
+            space.onSpaceCreating += self.on_hangar_loading
+            space.onSpaceCreate += self.on_hangar_loaded
+            self.space = space
+            self.recorder.hangar_signal = True
+        except Exception: LOG.warning('Hangar loading events unavailable; the replay job does not wait for the hangar', exc_info=True)
 
     def close(self):
         self.detach_arena()
@@ -810,6 +834,13 @@ class VehicleEvents(object):
         try:
             if self.hangar is not None: self.hangar.onChanged -= self.on_hangar_vehicle
         except Exception: LOG.exception('Hangar hook cleanup failed')
+        try:
+            if self.space is not None:
+                self.space.onSpaceCreating -= self.on_hangar_loading
+                self.space.onSpaceCreate -= self.on_hangar_loaded
+        except Exception: LOG.exception('Hangar space hook cleanup failed')
+        self.space = None
+        self.recorder.hangar_signal = False
         try:
             if self.events is not None:
                 self.events.onAvatarBecomePlayer -= self.on_avatar_become_player
@@ -832,6 +863,15 @@ class VehicleEvents(object):
             previous, self.shown = self.shown, type_name
             if previous is not None and previous != type_name: follow_hangar(type_name)
         except Exception: LOG.exception('Hangar vehicle export request failed')
+
+    def on_hangar_loading(self, *args):
+        # A handler of the client's Event must not raise (the client's handlers behind it would not run).
+        try: self.recorder.note_hangar_loading()
+        except Exception: LOG.exception('Hangar loading could not be noted')
+
+    def on_hangar_loaded(self, *args):
+        try: self.recorder.note_hangar_loaded()
+        except Exception: LOG.exception('Hangar loaded could not be noted')
 
     def on_avatar_become_player(self, *args):
         # The export thread extracts nothing while this is set: a collision model
@@ -893,6 +933,8 @@ class VehicleEvents(object):
             self.recorder.in_battle = False
             # When the player left the battle (wall clock): the replay job's moments are timed after it (Exporter.replay_moments).
             self.recorder.battle_left_at = time.time()
+            # The hangar loads from here: the replay job of this battle waits for it (note_hangar_loaded).
+            self.recorder.note_hangar_loading()
         except Exception: LOG.exception('Battle state could not be noted')
         # The vehicles' static halves hold the battle's descriptors: not kept in the hangar (BACKLOG 27).
         self.recorder.statics = {}
@@ -982,6 +1024,13 @@ class Recorder(object):
         # says the user is working in it. Written here, on the game thread, only.
         self.in_battle = False
         self.battle_left_at = None
+        # The game's own loads the replay job waits for (Exporter.replay_wait; written here, on the game thread, only):
+        # until then the hangar is loading, its space created at hangar_loaded_at (wall clock), the page loading until then;
+        # hangar_signal - the client's hangar space events are followed (without them nothing waits for the hangar).
+        self.hangar_wait_until = 0.0
+        self.hangar_loaded_at = None
+        self.hangar_signal = False
+        self.page_loading_until = 0.0
         self.busy_until = 0.0
         # The page is open in the game until then (note_page_open): the TTX sweep may run meanwhile. While its slices run
         # (frames_wanted, written by the export thread) a callback on every frame sets frame_event, which the export
@@ -1062,6 +1111,27 @@ class Recorder(object):
         under it. It expires by itself - a page that stops asking is not busy.
         """
         self.busy_until = time.time()+float(seconds)
+
+    def note_hangar_loading(self):
+        """The hangar starts loading (a battle left, the space being created): the replay job waits until it is loaded,
+        HANGAR_FALLBACK at most. Nothing waits when the client's hangar events are not followed. Game thread."""
+        if self.hangar_signal: self.hangar_wait_until = time.time() + HANGAR_FALLBACK
+
+    def note_hangar_loaded(self):
+        """The hangar's space is created (IHangarSpace.onSpaceCreate): the replay job may start HANGAR_SETTLE later. One
+        log line, timed against the battle the player left. Game thread."""
+        now = time.time()
+        self.hangar_loaded_at = now
+        self.hangar_wait_until = now + HANGAR_SETTLE
+        left = self.battle_left_at
+        LOG.info('Hangar loaded%s', ' %.1f s after the battle was left' % (now - left) if left is not None else '')
+
+    def note_page_loading(self, state):
+        """The page's window (presentation.open_in_game, WindowTrace): True - it starts loading, the replay job waits
+        PAGE_LOAD_FALLBACK at most; False - loaded, PAGE_LOAD_SETTLE more; None - the window is gone. Game thread."""
+        now = time.time()
+        self.page_loading_until = (now + PAGE_LOAD_FALLBACK if state is True else now + PAGE_LOAD_SETTLE if state is False
+                                   else 0.0)
 
     def note_page_open(self, seconds=PAGE_OPEN_SECONDS):
         """The page is open in the game right now: one float, read by the export thread's TTX sweep. Game thread."""
@@ -2127,6 +2197,7 @@ def init():
             presentation.set_open_request(page_open)
             presentation.set_sweep_request(page_sweep)
             presentation.set_battle_request(page_battle)
+            presentation.set_load_listener(_recorder.note_page_loading)
         except Exception: LOG.exception('Page export command unavailable; hit recording continues')
         try:
             from gui.modsListApi import g_modsListApi
@@ -2154,6 +2225,7 @@ def fini():
         presentation.set_open_request(None)
         presentation.set_sweep_request(None)
         presentation.set_battle_request(None)
+        presentation.set_load_listener(None)
         # The open window's trace (blue window, 03.10): its listeners and wrappers leave the client's objects.
         presentation.close_window_trace()
     except Exception: LOG.exception('Page export command cleanup failed')

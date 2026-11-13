@@ -2,6 +2,10 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.1.1 from 1.05 on, 2.4.1.0 from 1.02 on, 2.4.0.2 from 0.9.3 on, 2.4.0.1 #950 from 0.7.6, 2.4.0.0 #945 before.
 
+## Unreleased
+
+- **Lighter return to the hangar:** after a battle, the work on its replay now waits until the hangar has finished loading, and pauses while the Bullba Hits page is loading, instead of competing with them. The battle's replay-based version may therefore appear a few seconds later than before; if the hangar does not report that it has loaded, the work starts after a minute at the latest.
+
 ## 1.09 (2026-11-12)
 
 - **Turning a recorded hit's turret or gun:** the scene now simply stays as you turned it - the hit's row in the list is no longer highlighted, and its shot line becomes a pinned line like one you click on the armour, judged by the page against the vehicle as it now stands ("Pinned point" in the Hit line panel). The note under the pose tile ("The recorded shot's own marks are hidden ...") is gone. Click the hit's row to get the recorded shot back.

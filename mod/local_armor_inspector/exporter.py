@@ -3729,6 +3729,10 @@ class Exporter(object):
         # progress both continue (replay_defs_steps); CFG/replay/index.json - {battle id: what became of its replay
         # stream} - read when first needed.
         self.replay_work = None
+        # The last replay slice's speed against the job's fastest (its probe; run_job scales the rest by it) and the hold
+        # of the queued replay while the game loads (replay_held: [battle, reason, since], logged once each way).
+        self.replay_speed = 1.0
+        self.replay_hold = None
         self.replay_defs_value = None
         self.replay_defs_building = None
         self.replay_index = None
@@ -4363,8 +4367,11 @@ class Exporter(object):
             work = self.replay_work = Consumption(self, (payload or {}).get('message') or {'battle':name})
             work.gen = work.steps()
         if work.first_at is None: work.first_at = time.time()
-        # How fast this thread runs right now (replay_run.probe, ~0.6 ms): outside the slice's own clock.
+        # How fast this thread runs right now (replay_run.probe, ~0.6 ms): outside the slice's own clock. Against the
+        # job's fastest so far it scales the rest after the slice (run_job: replay_speed).
         probed = probe()
+        fastest = min([probed] + [p for _, p in work.probes])
+        self.replay_speed = min(1.0, fastest / probed) if probed > 0 else 1.0
         before, counts = dict(work.times), gc.get_count()
         began = TTX_TIMER()
         deadline = began + BATTLE_SLICE
@@ -4375,7 +4382,7 @@ class Exporter(object):
                 except StopIteration:
                     done = True
                     break
-                if TTX_TIMER() >= deadline or self.battle_stop(): break
+                if TTX_TIMER() >= deadline or self.battle_stop() or self.replay_wait(): break
         except Exception as error:
             from .replay_run import W_UNREADABLE
             done = True
@@ -4423,18 +4430,57 @@ class Exporter(object):
         left = getattr(recorder, 'battle_left_at', None) if recorder is not None else None
         source = getattr(recorder, 'replay', None) if recorder is not None else None
         line = getattr(source, 'hangar_at', None) if source is not None else None
-        moments = {'afterHangarLine':None}
-        try:
-            if work.first_at is not None and left is not None and line is not None and float(line) >= float(left):
-                moments['afterHangarLine'] = round(work.first_at - float(line), 2)
-        except (TypeError, ValueError):
-            pass
+        loaded = getattr(recorder, 'hangar_loaded_at', None) if recorder is not None else None
+        moments = {'afterHangarLine':None, 'afterHangarLoaded':None,
+                   'hangarSignal':bool(getattr(recorder, 'hangar_signal', False)) if recorder is not None else None}
+        for key, moment in (('afterHangarLine', line), ('afterHangarLoaded', loaded)):
+            try:
+                if work.first_at is not None and left is not None and moment is not None and float(moment) >= float(left):
+                    moments[key] = round(work.first_at - float(moment), 2)
+            except (TypeError, ValueError):
+                pass
         return moments
 
     @staticmethod
     def replay_moments_text(job):
-        after = job.get('afterHangarLine')
-        return ('%+.1f s after the hangar line' % after) if after is not None else 'not timed against the hangar line'
+        after, loaded = job.get('afterHangarLine'), job.get('afterHangarLoaded')
+        text = ('%+.1f s after the hangar line' % after) if after is not None else 'not timed against the hangar line'
+        if loaded is not None: text += ', %+.1f s after the hangar was loaded' % loaded
+        elif job.get('hangarSignal') and after is not None: text += ', the hangar\'s loaded signal did not come after the battle'
+        return text
+
+    def replay_wait(self):
+        """What the replay job waits for now, or None: the hangar loading (from leaving a battle or its space starting to
+        load until it is created, plus a settle; a fallback ends it) or the page loading (its window opened until its
+        load end, plus a settle; a fallback ends it). Both are the Recorder's floats, written by the game thread
+        (mod_local_armor_inspector: note_hangar_loading/loaded, note_page_loading). Why (12.11, 1.08): the job's slices
+        during the return to the hangar were 2.0-7.5 s of wall for at most ~0.3 s of work - its clock ran while the game
+        held the interpreter - and each slice's rest after it was as long again."""
+        recorder = self.recorder
+        if recorder is None: return None
+        try:
+            now = time.time()
+            if now < float(getattr(recorder, 'hangar_wait_until', 0) or 0): return 'the hangar loading'
+            if now < float(getattr(recorder, 'page_loading_until', 0) or 0): return 'the page loading'
+        except Exception:
+            return None
+        return None
+
+    def replay_held(self, payload):
+        """run_job's gate of a queued replay job: True while replay_wait names something. One log line when a hold begins
+        and one when the job goes on, with how long it waited."""
+        reason = self.replay_wait()
+        name = str((payload or {}).get('battle') or '')
+        hold = self.replay_hold
+        if reason is not None:
+            if hold is None or hold[0] != name or hold[1] != reason:
+                LOG.info('Replay of %s waits for %s', name, reason)
+                self.replay_hold = [name, reason, hold[2] if hold is not None and hold[0] == name else time.time()]
+            return True
+        if hold is not None:
+            self.replay_hold = None
+            LOG.info('Replay of %s goes on after waiting %.1f s (last for %s)', hold[0], time.time() - hold[2], hold[1])
+        return False
 
     def replay_consumed(self, name, status, notes, message, info, kept_bytes):
         """The battle's replay is consumed: its index entry says how (used, cut, failed), with its warnings."""
@@ -6391,6 +6437,8 @@ class Exporter(object):
         if self.jobs[index][0] >= JOB_BULK and any(self.sweep_ready(kind) for kind in USER_SWEEPS): return self.run_sweeps()
         page = self.jobs[index][0] == JOB_PAGE
         if not self.jobs_allowed(page): return False
+        # A battle's replay waits while the game loads the hangar or the page (replay_wait); the queue waits with it.
+        if self.jobs[index][2] == 'replay' and self.replay_held(self.jobs[index][3]): return False
         # What the page is waiting for runs at once; everything else keeps PACE
         # seconds between two extractions, which halves the load on the hangar.
         if not page and time.time()-self.last_job < self.job_rest: return False
@@ -6427,6 +6475,10 @@ class Exporter(object):
         # loop's own wait for a message (50 ms) comes between two jobs anyway.
         spent = max(0.0, TTX_TIMER() - started)
         rest = spent * (1.0 - SWEEP_SHARE) / SWEEP_SHARE
+        # A replay slice that mostly waited for the interpreter (its probe slower than the job's fastest): the game had
+        # that time already, so the rest is its estimated own work's share - never under one slice's (replay_speed).
+        if job[2] == 'replay' and self.replay_speed < 1.0:
+            rest = max(min(rest, BATTLE_SLICE), rest * self.replay_speed)
         # A slice of a saved battle of setup's backlog (27.09) is no extraction either: the game's share after it, all of it
         # (review of 4b1c8c8 #4: a 1 s cap left the work 85-95 % of the time when a battle took seconds in one go).
         self.job_rest = rest if job[2] in ('battle', 'replay', 'definitions') else min(SWEEP_REST_MAX, rest) if job[2] == 'ttx' else PACE

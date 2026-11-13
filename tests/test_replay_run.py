@@ -429,6 +429,170 @@ class SyntheticTests(unittest.TestCase):
 
 # ---- the fixtures ---------------------------------------------------------------------------------------------------------------
 @unittest.skipUnless(fixtures_ready(), 'the kill-cam fixtures, the names or statics tables or the client are absent')
+class Paced(rr.Consumption):
+    """A replay job of `n` steps of ~10 ms each (decode), no stream: the pacing tests run the real run_job/run_replay_job
+    around it. `starts` counts how often its steps began - a job started anew would show 2."""
+    n = 30
+    step = 0.01
+    starts = []
+
+    def steps(self):
+        Paced.starts.append(self.name)
+        for _ in range(self.n):
+            started = rr.TIMER()
+            while rr.TIMER() - started < Paced.step: pass
+            self.lap('decode', started)
+            yield
+        self.outcome = ('used', [], None)
+
+
+class GameRecorder(object):
+    """The Recorder's floats the export thread reads (mod_local_armor_inspector.Recorder), written here as the game thread
+    would: in_battle, battle_left_at, hangar_wait_until / hangar_loaded_at / hangar_signal, page_loading_until."""
+    def __init__(self):
+        self.in_battle, self.battle_left_at, self.busy_until = False, None, 0.0
+        self.hangar_wait_until, self.hangar_loaded_at, self.hangar_signal, self.page_loading_until = 0.0, None, True, 0.0
+        self.replay = None
+
+    def leave_battle(self, fallback):
+        self.in_battle, self.battle_left_at = False, time.time()
+        self.hangar_wait_until = time.time() + fallback
+
+    def hangar_loaded(self, settle=0.0):
+        self.hangar_loaded_at = time.time()
+        self.hangar_wait_until = time.time() + settle
+
+
+class PacingTests(unittest.TestCase):
+    """BACKLOG 84, step 2: the replay job starts after the hangar is loaded (IHangarSpace.onSpaceCreate), or by the
+    fallback when that signal never comes; it runs no slice while the page loads; a battle begun meanwhile loses nothing.
+    The 12.11 case: the job's slices overlapped the return to the hangar (2.0-7.5 s each, mostly waiting)."""
+
+    def setUp(self):
+        from local_armor_inspector import exporter as ex
+        self.ex = ex
+        self.root = tempfile.mkdtemp()
+        os.makedirs(os.path.join(self.root, 'battles'))
+        self.keep = rr.Consumption
+        rr.Consumption = Paced
+        Paced.starts = []
+        self.e = ex.Exporter(self.root, self.root, 'v\n', os.path.join(self.root, 'none.wotmod'))
+        self.game = self.e.recorder = GameRecorder()
+
+    def tearDown(self):
+        rr.Consumption = self.keep
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def turn(self):
+        """One turn of the export loop: the rest after the last job counted as passed."""
+        self.e.last_job = 0.0
+        return self.e.run_job()
+
+    def queue(self, arena):
+        name = '%s-3f3e98ea825e' % arena
+        self.assertTrue(self.e.replay_stream({'battle':name, 'arenaId':str(arena), 'end':'battle'}))
+        return name
+
+    def finished(self, name):
+        return 'job' in (self.e.replay_state().get(name) or {})
+
+    def test_it_starts_after_the_hangar_is_loaded(self):
+        self.game.leave_battle(fallback=60.0)
+        name = self.queue(2307565181224747078)
+        for _ in range(5): self.assertFalse(self.turn())
+        self.assertEqual(Paced.starts, [])
+        self.game.hangar_loaded()
+        while self.turn() and not self.finished(name): pass
+        self.assertEqual(Paced.starts, [name])
+        job = self.e.replay_state()[name]['job']
+        self.assertIsNotNone(job['afterHangarLoaded'])
+        self.assertTrue(0 <= job['afterHangarLoaded'] < 5, job)
+
+    def test_it_starts_by_the_fallback_when_the_signal_never_comes(self):
+        self.game.leave_battle(fallback=0.3)
+        name = self.queue(2307565181224747078)
+        self.assertFalse(self.turn())
+        self.assertEqual(Paced.starts, [])
+        time.sleep(0.35)
+        while self.turn() and not self.finished(name): pass
+        self.assertTrue(self.finished(name))
+        job = self.e.replay_state()[name]['job']
+        self.assertIsNone(job['afterHangarLoaded'])
+        self.assertIn('the hangar\'s loaded signal did not come', self.e.replay_moments_text(dict(job, afterHangarLine=0.5)))
+
+    def test_it_runs_no_slice_while_the_page_loads(self):
+        name = self.queue(2307565181224747078)
+        self.assertTrue(self.turn())
+        work = self.e.replay_work
+        slices = work.slices
+        self.game.page_loading_until = time.time() + 60.0     # the window opened
+        for _ in range(5): self.assertFalse(self.turn())
+        self.assertEqual(work.slices, slices)
+        self.game.page_loading_until = time.time() - 0.01     # its load end and the settle passed
+        while self.turn() and not self.finished(name): pass
+        self.assertTrue(self.finished(name))
+        self.assertEqual(Paced.starts, [name])                # one job, not started anew
+
+    def test_a_slice_ends_when_the_page_starts_loading(self):
+        """A slice in progress stops at its next step when the page opens (the gate inside the slice, as for a battle)."""
+        name = self.queue(2307565181224747078)
+        game = self.game
+        steps = Paced.steps
+
+        def opening(self_):
+            gen = steps(self_)
+            yield next(gen)
+            game.page_loading_until = time.time() + 60.0
+            for step in gen: yield step
+        Paced.steps = opening
+        try:
+            self.assertTrue(self.turn())
+            self.assertEqual(self.e.replay_work.slices, 1)
+            self.assertLessEqual(self.e.replay_work.times['decode'], 0.05)   # two steps of ~10 ms, not BATTLE_SLICE's ten
+        finally:
+            Paced.steps = steps
+
+    def test_nothing_is_lost_when_the_next_battle_begins(self):
+        """The job half done, the player goes into the next battle: no slice in it; that battle's replay is queued behind;
+        back in the hangar (loaded), the first job goes on from where it was, then the second runs."""
+        first = self.queue(2307565181224747078)
+        for _ in range(3): self.assertTrue(self.turn())
+        work = self.e.replay_work
+        done = work.slices
+        self.game.in_battle = True
+        second = self.queue(2307565812584953553)
+        for _ in range(5): self.assertFalse(self.turn())
+        self.assertEqual(work.slices, done)
+        self.game.leave_battle(fallback=60.0)
+        self.assertFalse(self.turn())
+        self.game.hangar_loaded()
+        while not (self.finished(first) and self.finished(second)):
+            self.assertTrue(self.turn())
+        self.assertEqual(Paced.starts, [first, second])
+        self.assertGreater(self.e.replay_state()[first]['job']['slices'], done)
+
+    def test_the_rest_after_a_waiting_slice_is_its_work_share(self):
+        """A slice whose probe ran at a quarter of the job's best speed: the rest after it is a quarter of its wall, never
+        under one slice's (BATTLE_SLICE); a slice at full speed rests as long as it took (SWEEP_SHARE)."""
+        self.queue(2307565181224747078)
+        self.assertTrue(self.turn())
+        full = self.e.job_rest
+        self.assertGreater(full, 0.05)
+        self.e.replay_work.probes.append((0.1, 1e-6))          # a faster probe than any real one: this slice runs slow
+        self.assertTrue(self.turn())
+        self.assertLess(self.e.replay_speed, 0.01)
+        # The slice took ~0.1 s: its rest is one slice's at least, not its wall scaled to ~0.
+        self.assertTrue(0.05 < self.e.job_rest <= self.ex.BATTLE_SLICE + 1e-9, self.e.job_rest)
+        # A slice of 0.4 s (one long step) that ran slow: one slice's rest (0.1 s), not 0.4 s.
+        Paced.step = 0.4
+        try:
+            self.e.replay_work.probes.append((0.1, 1e-6))
+            self.assertTrue(self.turn())
+        finally:
+            Paced.step = 0.01
+        self.assertAlmostEqual(self.e.job_rest, self.ex.BATTLE_SLICE, delta=1e-6)
+
+
 class RunTimeTests(unittest.TestCase):
     def setUp(self):
         self.stands = []

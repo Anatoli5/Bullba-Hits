@@ -264,6 +264,19 @@ class ReplayCtrl(object):
 MODS_LIST = []
 
 
+class IHangarSpace(object):
+    pass
+
+
+# The client's hangar space service (gui/shared/utils/HangarSpace.pyc, 2.4.1.1): its two loading events.
+HANGAR_SPACE = NS(onSpaceCreating=Event(), onSpaceCreate=Event())
+
+
+def instance(interface):
+    if interface is IHangarSpace: return HANGAR_SPACE
+    raise KeyError(interface)
+
+
 def install_stubs():
     module('BigWorld', player=lambda: WORLD.player, entity=lambda i: WORLD.entities.get(i),
            serverTime=lambda: WORLD.time, callback=WORLD.callback, cancelCallback=WORLD.cancel,
@@ -285,6 +298,11 @@ def install_stubs():
     module('CurrentVehicle', g_currentVehicle=NS(onChanged=Event(), isPresent=lambda: False, item=None),
            g_currentPreviewVehicle=NS(onChanged=Event(), isPresent=lambda: False, item=None))
     module('PlayerEvents', g_playerEvents=NS(onAvatarBecomePlayer=Event(), onAvatarBecomeNonPlayer=Event()))
+    module('helpers', dependency=module('helpers.dependency', instance=instance))
+    module('skeletons', __path__=[])
+    module('skeletons.gui', __path__=[])
+    module('skeletons.gui.shared', __path__=[])
+    module('skeletons.gui.shared.utils', IHangarSpace=IHangarSpace)
     module('items', __path__=[])
     sys.modules['items'].vehicles = module('items.vehicles',
         VEHICLE_DEVICE_TYPE_NAMES=('engine', 'ammoBay', 'fuelTank', 'radio', 'track', 'gun', 'turretRotator',
@@ -577,6 +595,9 @@ def run(temp):
           (len(events.onAvatarBecomePlayer.handlers), len(events.onAvatarBecomeNonPlayer.handlers)))
     check('hooks', 'one subscription to the hangar vehicle', len(hangar.onChanged.handlers) == 1,
           len(hangar.onChanged.handlers))
+    check('hooks', 'one subscription to the hangar space loading events, followed (hangar_signal)',
+          len(HANGAR_SPACE.onSpaceCreating.handlers) == 1 and len(HANGAR_SPACE.onSpaceCreate.handlers) == 1
+          and recorder.hangar_signal, (len(HANGAR_SPACE.onSpaceCreating.handlers), len(HANGAR_SPACE.onSpaceCreate.handlers)))
     check('hooks', 'one ModsList entry', len(MODS_LIST) == 1, len(MODS_LIST))
     menu = VehicleContextMenuHandler.__new__(VehicleContextMenuHandler)
     options = menu._generateOptions(None)
@@ -669,6 +690,35 @@ def run(temp):
           and not recorder.motion.buffers, (recorder.in_battle, recorder.motion.running, len(WORLD.callbacks)))
     check('battle A', 'leaving: no vehicle\'s static half (its descriptor) kept in the hangar', not recorder.statics,
           len(recorder.statics))
+    # The replay job waits for the hangar (BACKLOG 84): leaving holds it HANGAR_FALLBACK at most; the space created lets
+    # it go HANGAR_SETTLE later; the page window holds it while it loads.
+    now = time.time()
+    check('hangar', 'leaving the battle: the replay job waits for the hangar (fallback %.0f s)' % mod.HANGAR_FALLBACK,
+          now + mod.HANGAR_FALLBACK - 2 <= recorder.hangar_wait_until <= now + mod.HANGAR_FALLBACK + 1
+          and recorder.battle_left_at is not None, recorder.hangar_wait_until - now)
+    exporter = getattr(recorder.writer, 'exporter', None)
+    if exporter is not None:
+        check('hangar', 'the exporter says it waits for the hangar', exporter.replay_wait() == 'the hangar loading',
+              exporter.replay_wait())
+    HANGAR_SPACE.onSpaceCreate()
+    now = time.time()
+    check('hangar', 'the space created: the wait ends HANGAR_SETTLE later, the moment kept',
+          recorder.hangar_wait_until <= now + mod.HANGAR_SETTLE + 0.5 and abs(recorder.hangar_loaded_at - now) < 1,
+          recorder.hangar_wait_until - now)
+    HANGAR_SPACE.onSpaceCreating()
+    check('hangar', 'the space loading again (a hangar switch): the wait begins again',
+          recorder.hangar_wait_until > time.time() + mod.HANGAR_FALLBACK - 2)
+    HANGAR_SPACE.onSpaceCreate()
+    pres = sys.modules['local_armor_inspector.presentation']
+    pres.page_loading(True)
+    check('hangar', 'the page window opening: the replay job waits (fallback %.0f s)' % mod.PAGE_LOAD_FALLBACK,
+          recorder.page_loading_until > time.time() + mod.PAGE_LOAD_FALLBACK - 2)
+    pres.page_loading(False)
+    check('hangar', 'its load end: PAGE_LOAD_SETTLE more',
+          0 < recorder.page_loading_until <= time.time() + mod.PAGE_LOAD_SETTLE + 0.5)
+    pres.page_loading(None)
+    check('hangar', 'its window gone: nothing waits for it', recorder.page_loading_until == 0.0)
+    recorder.hangar_wait_until = 0.0
     left = []
     if recorder.telemetry.tracers: left.append('telemetry.tracers=%d' % len(recorder.telemetry.tracers))
     if recorder.telemetry.commands: left.append('telemetry.commands=%d' % len(recorder.telemetry.commands))
@@ -715,6 +765,9 @@ def run(temp):
     # ---- fini -------------------------------------------------------------------------------------------
     writer = recorder.writer
     mod.fini()
+    check('fini', 'the hangar space events let go, the page loading listener cleared',
+          not HANGAR_SPACE.onSpaceCreating.handlers and not HANGAR_SPACE.onSpaceCreate.handlers
+          and sys.modules['local_armor_inspector.presentation']._load_listener is None)
     after = hooked_attrs()
     kept = sorted(key for key in set(before) | set(after)
                   if getattr(after.get(key), 'im_func', after.get(key)) is not before.get(key))

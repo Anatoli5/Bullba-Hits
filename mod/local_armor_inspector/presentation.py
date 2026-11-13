@@ -20,6 +20,9 @@ _ttx_request = None
 _open_request = None
 _sweep_request = None
 _battle_request = None
+# The page's loading (the replay job waits for it): called with True when the window opens, False on its onLoadEnd, None
+# when it is gone (Recorder.note_page_loading).
+_load_listener = None
 _warned = set()
 # The page's window size step (BACKLOG 94): the page's Settings own it ('windowSize'); this is the session's copy of the
 # last step the page told, so the next open of the window takes that size at once. None until a page said one.
@@ -129,6 +132,20 @@ def set_ttx_request(handler):
     """The page asks for the characteristics file of one vehicle type (data/ttx/<id>.js)."""
     global _ttx_request
     _ttx_request = handler
+
+
+def set_load_listener(handler):
+    """Told when the page starts loading (True), has loaded (False) or its window is gone (None): the replay job waits."""
+    global _load_listener
+    _load_listener = handler
+
+
+def page_loading(state):
+    """The page's loading state to its listener; never raises into the client's event."""
+    listener = _load_listener
+    if listener is None: return
+    try: listener(state)
+    except Exception: LOG.debug('Bullba Hits page loading state not noted', exc_info=True)
 
 
 def set_open_request(handler):
@@ -709,6 +726,7 @@ class WindowTrace(object):
         self.say('load start')
 
     def on_load_end(self, url=None, loaded=True, status=None, *args):
+        page_loading(False)
         asked = self.ask_redraw()
         self.say('load end %s%s', 'ok' if loaded else 'FAILED (code %s)' % (status,), '; redraw asked' if asked else '')
         self.redraw_soon()
@@ -732,6 +750,7 @@ class WindowTrace(object):
     def on_deleted(self, browser_id=None, *args):
         if browser_id != self.browser_id: return
         self.say('destroyed%s; redraws %d', '' if self.was_ready else ' before ready', self.total)
+        page_loading(None)
         self.close()
 
     def renavigated(self, at):
@@ -852,6 +871,7 @@ def open_in_game(path, fragment='host=game'):
         opened = time.time()
         ticket = object()      # this open, for the trace it makes and for its 20 s check
         LOG.info('Opening Bullba Hits in-game window: %s', url)
+        page_loading(True)
         def loaded(browser_id):
             global _browser_id
             _browser_id = browser_id
