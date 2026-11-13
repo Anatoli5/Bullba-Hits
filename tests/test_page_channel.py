@@ -132,14 +132,19 @@ class WebCommandTests(unittest.TestCase):
     def test_window_size_steps_on_the_users_screen(self):
         # BACKLOG 94 (12.11): his screen 2474 x 1354 at interface scale 1 (game.log 12.11). Step 1 is the size the window
         # always had (the log's 2276 x 1191); steps 2-3 leave the carousel's 122 / 234 strip free under a centred window.
-        sizes = presentation.window_sizes(2474.0, 1354.0)
-        self.assertEqual(sizes, [(2458, 1306), (2276, 1191), (2276, 1046), (2276, 822), (1979, 704), (1682, 622), (1434, 541)])
-        frame_h = presentation.FRAME_GUESS[0]
+        # The frame around the page is 79 high and 25 wide (lobby.swf / browserWindow.swf 2.4.1.1, 13.11): the whole window
+        # at step 0 is the whole screen, frame included (on 1.09 the frame was guessed 48 x 16 and step 0 stuck out).
+        sizes = presentation.window_sizes(2474.0, 1354.0, presentation.WINDOW_FRAME)
+        self.assertEqual(presentation.WINDOW_FRAME, (79, 25))
+        self.assertEqual(sizes, [(2449, 1275), (2276, 1191), (2276, 1015), (2276, 791), (1979, 704), (1682, 622), (1434, 541)])
+        frame_h, frame_w = presentation.WINDOW_FRAME
+        self.assertEqual((sizes[0][0] + frame_w, sizes[0][1] + frame_h), (2474, 1354))
         for step, strip in ((2, 122), (3, 234)):
             self.assertLessEqual(sizes[step][1] + frame_h + 2 * strip, 1354)
-        # A small screen: no step under the readable minimum, none over the screen, none larger than the one before.
-        small = presentation.window_sizes(1280.0, 720.0)
-        self.assertTrue(all(w >= 960 and h >= 540 and w <= 1280 and h <= 720 for w, h in small))
+        # A small screen: no step under the readable minimum, no window (frame included) over the screen, none larger than
+        # the one before.
+        small = presentation.window_sizes(1280.0, 720.0, presentation.WINDOW_FRAME)
+        self.assertTrue(all(w >= 960 and h >= 540 and w + frame_w <= 1280 and h + frame_h <= 720 for w, h in small))
         self.assertTrue(all(a[0] >= b[0] and a[1] >= b[1] for a, b in zip(small, small[1:])))
 
     def test_window_size_and_follow_commands_reach_presentation_only(self):

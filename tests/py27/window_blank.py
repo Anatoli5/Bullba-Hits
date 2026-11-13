@@ -35,6 +35,11 @@ Checked:
   6. (BACKLOG 94, 12.11) the window's size by steps: the table of steps, the page's 'windowSize' sizing the open window
      through its own BrowserWindow view (as_setSizeS, on the next tick), the next open at that step, a bad step ignored;
      'follow' - the page says whether it browses vehicles, and a closed or new window follows nothing.
+     (13.11, the user's defect on 1.09: "-" shrank only the page inside the old frame, "+" grew it over the frame's edges,
+     the whole-screen step stuck out of the screen.) Against a model of the window's Flash (the BrowserWindow fake): after
+     each step the frame has the page's size plus its 25 x 79 and sits centred inside the screen, in both orders in which
+     Flash may draw the two invalidations. The stand cannot see the real drawing order, the real art's sizes, or the
+     picture: those are the game's to show. The first 7 checks of this part were red on the 1.09 code (c11582c).
 
 The first 16 of these checks were the red test of 03.10 (8 red on 3de626e: nothing listened, nothing written).
 
@@ -234,6 +239,16 @@ class Browser(object):
         self.__size = None
         self.flash = []
         self.bitmap = None
+        self.holder = None      # the BrowserWindow that holds this component (the stand's link for the Flash event below)
+        self.hidden = 0
+
+    def as_hideServiceViewS(self):
+        """meta/BrowserMeta.pyc -> Flash Browser.as_hideServiceView: hides the 'data unavailable' view (already hidden on a
+        working page) and dispatches SERVICE_VIEW_HIDDEN, which BrowserWindow.onBrowserServiceViewHiddenHandler answers with
+        window.invalidate(Window.INVALID_SRC_VIEW) (lobby.swf 2.4.1.1). The client itself calls it on every navigation
+        (Browser.__onNavigate)."""
+        self.hidden += 1
+        if self.holder is not None: self.holder.invalidate('frame')
 
     def init(self, browserID, webHandlersMap=None, alias=''):
         if self.__browserID == browserID: return
@@ -270,15 +285,64 @@ class Browser(object):
 
 class BrowserWindow(object):
     """lobby/BrowserWindow.pyc (2.4.1.1): keeps its ctx's browser id (__browserID); _onRegisterFlashComponent(viewPy, alias)
-    calls the Browser view's init with it; meta/BrowserWindowMeta.pyc as_setSizeS(width, height) - the one size call."""
-    def __init__(self, browser_id):
+    calls the Browser view's init with it; meta/BrowserWindowMeta.pyc as_setSizeS(width, height) - the one size call;
+    meta/WindowViewMeta.pyc as_getGeometryS() -> [x, y, width, height] of the frame (the client reads it the same way,
+    managers/windows_stored_data.pyc).
+
+    The Flash side of the window as lobby.swf 2.4.1.1 has it (net.wg.gui.lobby.window:BrowserWindow, its frame
+    net.wg.gui.components.windows:Window, browserWindow.swf art), the part the user's defect of 13.11 is about:
+      * as_setSize -> updateSize sizes the CONTENT only - the page, plus the close button's row (ButtonBlack 22 + 5) and
+        the action button above it (y -23) - and raises POSITION_INVALID; updatePosition then centres the frame by the
+        frame's size AS IT IS;
+      * the frame takes the content's size plus its padding (left 12 + right 13, top 35 + bottom -6) only when it is
+        invalidated with INVALID_SRC_VIEW: at the open (setWindowContent) and on SERVICE_VIEW_HIDDEN of its Browser
+        component (above);
+      * invalidations are drawn on the next render, in the order they were raised (`render`; `order` 'late-frame' draws
+        the frame last, the other order, which the mod must survive too)."""
+    CONTENT = (0, 27 + 23)
+    PADDING = (12 + 13, 35 - 6)
+    APP = (2560, 1440)
+
+    def __init__(self, browser_id, size=(2355, 1267)):
         self.__browserID = browser_id
         self.sizes = []
+        self.pending = []
+        self.order = 'raised'
+        self.content = (size[0] + self.CONTENT[0], size[1] + self.CONTENT[1])
+        self.frame = [0, 0, 0, 0]
+        self.invalidate('frame')                       # the open: setWindowContent, then the client's own as_setSize
+        self.invalidate('position')
+        self.render()
 
     def _onRegisterFlashComponent(self, viewPy, alias):
-        if alias == 'browser': return viewPy.init(self.__browserID)
+        if alias == 'browser':
+            viewPy.holder = self
+            return viewPy.init(self.__browserID)
 
-    def as_setSizeS(self, width, height): self.sizes.append((width, height))
+    def as_setSizeS(self, width, height):
+        self.sizes.append((width, height))
+        self.content = (width + self.CONTENT[0], height + self.CONTENT[1])
+        self.invalidate('position')
+
+    def as_getGeometryS(self): return list(self.frame)
+
+    def invalidate(self, kind):
+        if kind not in self.pending: self.pending.append(kind)
+
+    def render(self):
+        pending, self.pending = self.pending, []
+        if self.order == 'late-frame': pending.sort(key=lambda kind: kind == 'frame')
+        for kind in pending:
+            if kind == 'frame':
+                self.frame[2:] = [self.content[0] + self.PADDING[0], self.content[1] + self.PADDING[1]]
+            else:
+                self.frame[:2] = [(self.APP[0] - self.frame[2]) >> 1, (self.APP[1] - self.frame[3]) >> 1]
+
+    def page(self):
+        """Where the page's picture is on the screen: the frame's content area (x + left, y + top) at the page's size."""
+        x, y = self.frame[0] + 12, self.frame[1] + 35
+        width, height = self.content[0] - self.CONTENT[0], self.content[1] - self.CONTENT[1]
+        return x, y, width, height
 
 
 class Command(object):
@@ -491,31 +555,75 @@ try:
               'the re-navigation is a step and its page load asks for a redraw again', steps()[-2:])
 
         # ---- the window's size by steps (BACKLOG 94): the page's +/- -> 'windowSize' -> the open window sized ----
+        # The frame around the page, as lobby.swf and browserWindow.swf 2.4.1.1 have it: 25 wide, 79 high (the model above).
         sizes = presentation.window_sizes(2560.0, 1440.0)
-        check(len(sizes) == presentation.WINDOW_STEPS and sizes[1] == (2355, 1267) and sizes[0] == (2544, 1392)
-              and sizes[2] == (2355, 1440 - 2 * 122 - 48 - 16) and sizes[3] == (2355, 1440 - 2 * 234 - 48 - 16)
+        check(presentation.WINDOW_FRAME == (79, 25) and len(sizes) == presentation.WINDOW_STEPS and sizes[1] == (2355, 1267)
+              and sizes[0] == (2560 - 25, 1440 - 79)
+              and sizes[2] == (2355, 1440 - 2 * 122 - 79 - 16) and sizes[3] == (2355, 1440 - 2 * 234 - 79 - 16)
               and all(sizes[i][0] >= sizes[i + 1][0] and sizes[i][1] >= sizes[i + 1][1] for i in range(len(sizes) - 1))
               and min(w for w, h in sizes) >= 960 and min(h for w, h in sizes) >= 540,
               'the steps on a 2560x1440 screen: the whole screen, the usual 92 % x 88 %, the carousel strips free when centred, then smaller; none larger than the one before',
               sizes)
         handle = presentation._handle_web_command
+
+        # ---- the user's case (13.11, 1.09 on 2560x1440): "-" then "+" twice, to the whole screen. Each time the whole
+        # window - its frame and the page in it - must take the new size and sit centred, as if it had opened at that size;
+        # on 1.09 only the page's area changed and the frame stayed at its old size and place. ----
+        def placed(step, what):
+            fire(lambda d: d == 0)                     # the mod's call to the window, on the next tick
+            frame.render()                             # Flash draws what that call invalidated
+            fire(lambda d: d == presentation.WINDOW_SETTLE)
+            frame.render()
+            x, y, w, h = frame.frame
+            page = frame.page()
+            fits = 0 <= x and 0 <= y and x + w <= 2560 and y + h <= 1440
+            check(page[2:] == sizes[step] and (w, h) == (sizes[step][0] + 25, sizes[step][1] + 79)
+                  and abs(x - (2560 - w) / 2) <= 1 and abs(y - (1440 - h) / 2) <= 1 and fits,
+                  what, {'frame': frame.frame, 'page': page, 'step size': sizes[step]})
+        open_frame = list(frame.frame)
+        handle(Command(action='windowSize', step=2), None)
+        placed(2, '"-": the frame takes the smaller size with the page and the window is centred again')
+        handle(Command(action='windowSize', step=1), None)
+        placed(1, '"+": the frame grows with the page and the window is centred again')
+        check(frame.frame == open_frame, 'back at the usual step, the window is where and as large as it opened', (frame.frame, open_frame))
+        handle(Command(action='windowSize', step=0), None)
+        placed(0, '"+" to the whole screen: the whole window, frame included, fits the screen')
+        frame.order = 'late-frame'                     # the other order of drawing: the centring before the frame's new size
+        handle(Command(action='windowSize', step=2), None)
+        placed(2, 'when Flash centres before the frame takes its size, the mod centres it again')
+        frame.order = 'raised'
+        view.holder = None                             # a client whose frame does not answer: it keeps its size
+        handle(Command(action='windowSize', step=1), None)
+        fire(lambda d: d == 0); frame.render(); fire(lambda d: d == presentation.WINDOW_SETTLE); frame.render()
+        check(steps()[-1].endswith('the frame did NOT take the size') and presentation.window_frame() == (79, 25),
+              'a frame that did not take the size is written so, and is not taken for the frame\'s size', (steps()[-1:], presentation.window_frame()))
+        view.holder = frame
+        handle(Command(action='windowSize', step=2), None)
+        placed(2, 'the next step lays the whole window out again')
+        check(view.hidden >= 4 and steps()[-1].startswith('frame '), 'the window\'s frame is asked to take the size (the call the client makes on every navigation) and its place is written',
+              (view.hidden, steps()[-2:]))
+        check(presentation.window_frame() == (79, 25), 'the frame the window really has is read back and kept for the next steps',
+              presentation.window_frame())
+
         asked = web.invalidated
+        before = list(frame.sizes)
         handle(Command(action='windowSize', step=3), None)
-        check(frame.sizes == [] and steps()[-1] == 'size step 4 of 7 asked: %dx%d' % sizes[3],
+        check(frame.sizes == before and steps()[-1] == 'size step 4 of 7 asked: %dx%d' % sizes[3],
               'a new step is a step of the window, and the size goes to the window only on the next tick', (frame.sizes, steps()[-1:]))
-        fire(lambda d: d == 0)
-        check(frame.sizes == [sizes[3]], 'the open window is given the size of that step (as_setSizeS)', frame.sizes)
+        placed(3, 'the carousel step: the whole window takes it, centred')
+        check(frame.sizes[len(before):] == [sizes[3]], 'the open window is given the size of that step (as_setSizeS)', frame.sizes)
         web.report('onResized', sizes[3][0], sizes[3][1])
         web.report('onTextureStateChanged', True)
         fire(lambda d: d == 0)
         check(web.invalidated == asked + 1 and steps()[-1] == 'texture ok; redraw asked',
               'the window drawn at its new size gets its redraw requests again', (web.invalidated - asked, steps()[-2:]))
         handle(Command(action='windowSize', step=3), None)
-        check(not [t for t in timers if t[0] == 0] and frame.sizes == [sizes[3]], 'the step it already has is not asked again')
+        check(not [t for t in timers if t[0] == 0] and frame.sizes[-1] == sizes[3] and len(frame.sizes) == len(before) + 1,
+              'the step it already has is not asked again')
         count = len(lines())
         for bad in (7, -1, True, '2', None):
             handle(Command(action='windowSize', step=bad), None)
-        check(not [t for t in timers if t[0] == 0] and frame.sizes == [sizes[3]] and len(lines(logging.WARNING)) == 3,
+        check(not [t for t in timers if t[0] == 0] and len(frame.sizes) == len(before) + 1 and len(lines(logging.WARNING)) == 3,
               'a step that is no step changes nothing and is said once', lines(logging.WARNING)[2:])
         del logs.records[count:]
 

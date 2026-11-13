@@ -336,10 +336,20 @@ WINDOW_STEP_DEFAULT = 1
 # The carousel's strip from the bottom edge: 122 for one row or a small double row, 234 for two big rows (TankCarousel,
 # client 2.4.1.1 bytecode; outputs/browser-window-abilities-2026-11-12.md section 6). Checked.
 CAROUSEL_STRIPS = (122, 234)
-# NOT READ - AN ESTIMATE: the window's frame around the page (the title bar with the close button, the paddings), height
-# and width. It is Flash art; Python is given only the page's size and the mod has no way to read it. If the real frame
-# is taller, a "carousel free" step overlaps the strip by half the difference; the game will show it.
-FRAME_GUESS = (48, 16)
+# The window's frame around the page, height and width, READ from the client 2.4.1.1 (lobby.swf bytecode and
+# browserWindow.swf art; outputs/browser-window-abilities-2026-11-12.md section 4), not measured in the game: the frame is the content plus
+# Window.contentPadding (top 35, bottom -6 set by BrowserWindow.onPopulate, left 12, right 13), and the content is the page
+# plus the close button's row (ButtonBlack, 22 high, + 5) and the hidden action button above it (y -23). The frame the
+# window really has is read back after every size change (WindowTrace.settle_size, as_getGeometryS) and used instead.
+WINDOW_FRAME = (79, 25)
+# What a frame read back may be, (height, width) from - to: at least the frame's padding (29 x 25, read), at most 40 over
+# WINDOW_FRAME. Anything else is a frame that did not take the new size (it keeps the old one around a smaller page, or is
+# smaller than a larger page): it is written as such and the numbers in use stay.
+WINDOW_FRAME_LIMITS = ((29, 119), (25, 65))
+# The frame read back from the open window this session (height, width), None until one was read.
+_frame_seen = None
+# Seconds after a size change before the window's place is read back: Flash draws the change on its next frames.
+WINDOW_SETTLE = 0.3
 # NOT READ - AN ESTIMATE: the carousel's art above its background and its hover mask (12 in the client's code), kept free too.
 CAROUSEL_MARGIN = 16
 # The smallest page kept readable (a choice): the page's layout is checked down to 1024 wide (tests/page/real_page.cjs
@@ -376,10 +386,17 @@ def stage_size():
     return float(width) / scale, float(height) / scale, scale
 
 
-def window_sizes(width, height):
+def window_frame():
+    """The window's frame around the page (height, width) in Flash units: the one read back from the open window this
+    session, else the one read from the client's Flash (WINDOW_FRAME)."""
+    return _frame_seen or WINDOW_FRAME
+
+
+def window_sizes(width, height, frame=None):
     """The page's size at each step, from the largest, for a screen of width x height Flash units: WINDOW_STEPS pairs,
-    none larger than the one before it, none smaller than WINDOW_MIN (unless the screen itself is) nor over the screen."""
-    frame_h, frame_w = FRAME_GUESS
+    none larger than the one before it, none smaller than WINDOW_MIN (unless the screen itself is); the window with its
+    frame never over the screen."""
+    frame_h, frame_w = frame or window_frame()
     usual = (int(width * .92), int(height * .88))
     rows = [(int(width - frame_w), int(height - frame_h)), usual]
     for strip in CAROUSEL_STRIPS:
@@ -486,6 +503,7 @@ class WindowTrace(object):
 
     def __init__(self, controller, browser_id, web, at, ticket=None, step=WINDOW_STEP_DEFAULT):
         self.step = step        # the size step this window has now (BACKLOG 94)
+        self.sizing = 0         # the generation of size changes: a newer one retires the older one's read-back
         self.window = None      # the client's BrowserWindow view of this window: the one that can change its size
         self.window_hook = None # telemetry.wrap record of BrowserWindow._onRegisterFlashComponent, while it stands
         self.controller = controller
@@ -589,10 +607,24 @@ class WindowTrace(object):
         self.window = window
 
     def resize(self, step):
-        """The open window to the size of this step (the page asked, set_window_step). On the next tick, never from inside the
-        page's command; the client re-centres the window and the page is drawn again at its new size (as_setSize ->
-        Browser.updateSize -> the engine's resize -> as_resize -> the bitmap again, the path of every open), so the redraw
-        requests start again as for a new page. False when this window's view was not found: the size waits for the next open."""
+        """The open window to the size of this step (the page asked, set_window_step), frame and page together, centred -
+        as if it had opened at that size. On the next tick, never from inside the page's command.
+
+        The client's Flash (lobby.swf 2.4.1.1) splits this in two, and 1.09 did only the first half (user 13.11: a smaller
+        page inside the old frame, a larger one over its edges):
+          * as_setSize -> BrowserWindow.updateSize sizes the page (Browser -> the engine's resize -> as_resize -> the bitmap
+            again, the path of every open) and the window's content, and invalidates the position: updatePosition centres
+            the frame by the frame's size as it is then;
+          * the frame (Window) takes the content's size only when it is invalidated with INVALID_SRC_VIEW - at the open,
+            and when the window's Browser component hides its service view: as_hideServiceView -> SERVICE_VIEW_HIDDEN ->
+            BrowserWindow.onBrowserServiceViewHiddenHandler. The client itself calls as_hideServiceViewS on every
+            navigation (Browser.__onNavigate), so it is the frame's own, tried path.
+        So the frame is invalidated first and the size given after it: CLIK draws invalidations in the order they were
+        raised (inferred, not read), the frame then takes its size before the window is centred. settle_size reads the
+        window's place back WINDOW_SETTLE seconds later, writes it, keeps the frame it measured and centres the window once
+        more if it is not (the size given again, the one call that centres it).
+        The redraw requests start again as for a new page. False when this window's view was not found: the size waits
+        for the next open."""
         if self.closed: return False
         window = self.window
         if window is None:
@@ -600,11 +632,18 @@ class WindowTrace(object):
             return False
         width, height = window_size(step)
         self.step = step
+        self.sizing += 1
+        sizing = self.sizing
         if 'invalidateView' in self.original: self.redraws = 0
         self.say('size step %d of %d asked: %dx%d', step + 1, WINDOW_STEPS, width, height)
         def apply():
             if self.closed or self.window is not window: return
+            view = self.view
+            if view is not None: view.as_hideServiceViewS()
+            else: _warn_once('window-frame', 'Bullba Hits window: its page part was not found; the frame may keep its old size')
             window.as_setSizeS(width, height)
+            import BigWorld
+            BigWorld.callback(WINDOW_SETTLE, self.guarded('resize', lambda: self.settle_size(window, sizing, width, height)))
         try:
             import BigWorld
             BigWorld.callback(0, self.guarded('resize', apply))
@@ -612,6 +651,30 @@ class WindowTrace(object):
         except Exception:
             _warn_once('window-resize-later', 'Bullba Hits window: no timer; the new size applies at the next open')
             return False
+
+    def settle_size(self, window, sizing, width, height):
+        """WINDOW_SETTLE s after a size change: the window's frame as Flash has it (as_getGeometryS -> [x, y, width,
+        height], the call the client's stored window positions use), one line; the frame it adds to the page is kept for the
+        next steps (window_frame); a window off the centre is centred once more. A newer size change retires this one."""
+        global _frame_seen
+        if self.closed or self.window is not window or sizing != self.sizing: return
+        geometry = window.as_getGeometryS()
+        if not geometry or len(geometry) < 4:
+            self.say('frame not read')
+            return
+        x, y, frame_w, frame_h = [int(round(float(v))) for v in geometry[:4]]
+        extra = (frame_h - height, frame_w - width)
+        stage_w, stage_h, scale = stage_size()
+        off = abs(x - (stage_w - frame_w) / 2.0) > 2 or abs(y - (stage_h - frame_h) / 2.0) > 2
+        (low_h, top_h), (low_w, top_w) = WINDOW_FRAME_LIMITS
+        followed = low_h <= extra[0] <= top_h and low_w <= extra[1] <= top_w
+        if followed:
+            if _frame_seen != extra: LOG.info('Bullba Hits window frame: %d high, %d wide around the page (read %d x %d)',
+                                              extra[0], extra[1], WINDOW_FRAME[0], WINDOW_FRAME[1])
+            _frame_seen = extra
+        self.say('frame %dx%d at %d,%d on %dx%d; page %dx%d%s%s', frame_w, frame_h, x, y, int(stage_w), int(stage_h), width,
+                 height, '' if followed else '; the frame did NOT take the size', '; centred again' if off else '')
+        if off: window.as_setSizeS(width, height)
 
     def patch(self, target, name, note, keep=False):
         """An instance attribute over target.name: `note` sees the arguments, the client's method does the work."""
