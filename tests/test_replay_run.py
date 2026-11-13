@@ -329,6 +329,61 @@ class SyntheticTests(unittest.TestCase):
         self.assertLessEqual(job['longest'], job['work'])
         self.assertEqual(job['gcEnabled'], gc.isenabled())
         self.assertEqual(job['gcThreshold'], list(gc.get_threshold()))
+        # No probe given (an old caller): no probe figures, nothing estimated.
+        self.assertEqual((job['probeMs'], job['contendedSlices'], job['ownWorkEstimate']), (None, 0, None))
+
+    def test_the_probe_figures_separate_waiting_from_work(self):
+        """BACKLOG 84, the in-game measurement: the probe's min / median / max, the contended slices (probe above 3x the
+        fastest) and their wall, and the own-work ESTIMATE = each slice's wall scaled by fastest / its probe. Numbers of the
+        12.11 case's shape: decode slices of 2-7 s that were waiting, publish slices of 0.1 s that were work."""
+        pairs = [(0.10, 0.0006), (0.11, 0.0006), (0.10, 0.0007), (3.0, 0.006), (7.5, 0.0030)]
+        figures = rr.probe_figures(pairs)
+        self.assertEqual(figures['probeMs'], [0.6, 0.7, 6.0])
+        self.assertEqual((figures['contendedSlices'], figures['contendedWall']), (2, 10.5))
+        # 0.1 + 0.11 + 0.1 * 6/7 + 3.0 * 0.1 + 7.5 * 0.2
+        self.assertAlmostEqual(figures['ownWorkEstimate'], 0.1 + 0.11 + 0.1 * 6 / 7.0 + 0.3 + 1.5, places=3)
+        self.assertEqual(rr.probe_figures([])['probeMs'], None)
+        # An even count: the median is the mean of the middle two.
+        self.assertEqual(rr.probe_figures([(0.1, 0.001), (0.1, 0.002)])['probeMs'], [1.0, 1.5, 2.0])
+
+    def test_the_probe_is_short_and_counted_per_slice(self):
+        """replay_run.probe: a fixed body, well under a millisecond's order on this machine's Python 3 (the game's 2.7 takes
+        ~0.6 ms: tests/py27); Consumption keeps one (wall, probe) pair a slice."""
+        import gc
+        seconds = rr.probe()
+        self.assertTrue(0 < seconds < 0.05, seconds)
+        work = rr.Consumption(None, {'battle':'1-a'})
+        work.slice_done(0.05, {}, gc.get_count(), seconds)
+        work.slice_done(0.07, {}, gc.get_count(), seconds * 4)
+        job = work.job(work.began + 1.0)
+        self.assertEqual(job['contendedSlices'], 1)
+        self.assertAlmostEqual(job['ownWorkEstimate'], 0.05 + 0.07 / 4, delta=0.001)
+
+    def test_the_first_slice_is_timed_against_the_hangar_line(self):
+        """The cost line's moment (BACKLOG 84): the first slice after the replay source's hangar line of the return from
+        the battle; unknown when that line is older than the battle's end (the job began before it came)."""
+        from local_armor_inspector.exporter import Exporter
+
+        class Source(object):
+            hangar_at = 1000.0
+
+        class Recorder(object):
+            battle_left_at = 990.0
+            replay = Source()
+        root = tempfile.mkdtemp()
+        try:
+            e = Exporter(root, root, 'v\n', os.path.join(root, 'none.wotmod'))
+            e.recorder = Recorder()
+            work = rr.Consumption(None, {'battle':'1-a'})
+            work.first_at = 1004.5
+            self.assertEqual(e.replay_moments(work)['afterHangarLine'], 4.5)
+            work.first_at = 998.0
+            self.assertEqual(e.replay_moments(work)['afterHangarLine'], -2.0)
+            Recorder.battle_left_at = 1001.0          # the line is the previous return's
+            self.assertIsNone(e.replay_moments(work)['afterHangarLine'])
+            self.assertEqual(Exporter.replay_moments_text({'afterHangarLine':4.5}), '+4.5 s after the hangar line')
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
 
     def test_the_page_prioritises_while_a_replay_job_is_queued(self):
         """The user's case of 12.11 13:12:26 ('HTML export command failed'): the first battle on 1.07 had its replay job
@@ -431,6 +486,14 @@ class RunTimeTests(unittest.TestCase):
             self.assertLessEqual(job['fullCollections'], job['slices'])
             self.assertIn('%d slices, %.2f s of work, the longest slice %.3f s (%s' % (job['slices'], job['work'],
                           job['longest'], job['longestPart']), cost[0])
+            # The probe of every slice (BACKLOG 84): min <= median <= max, the estimate never above the slices' wall.
+            low, middle, high = job['probeMs']
+            self.assertTrue(0 < low <= middle <= high, job['probeMs'])
+            self.assertLessEqual(job['contendedSlices'], job['slices'])
+            self.assertLessEqual(job['ownWorkEstimate'], job['work'] + 0.001)
+            self.assertIn('own work ESTIMATED %.2f s' % job['ownWorkEstimate'], cost[0])
+            self.assertIsNone(job['afterHangarLine'])     # no recorder here: not timed
+            self.assertIn('not timed against the hangar line', cost[0])
             print(cost[0])
             self.assertFalse(os.path.exists(path))
             self.assertTrue(os.path.isfile(e.replay_stream_path(name)))

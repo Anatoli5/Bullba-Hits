@@ -889,7 +889,10 @@ class VehicleEvents(object):
         # the battle's file is still the current one here. The existing exit path, no hook of its own.
         try: self.recorder.telemetry.flush_after_shot()
         except Exception: LOG.exception('Pending shot updates could not be written')
-        try: self.recorder.in_battle = False
+        try:
+            self.recorder.in_battle = False
+            # When the player left the battle (wall clock): the replay job's moments are timed after it (Exporter.replay_moments).
+            self.recorder.battle_left_at = time.time()
         except Exception: LOG.exception('Battle state could not be noted')
         # The vehicles' static halves hold the battle's descriptors: not kept in the hangar (BACKLOG 27).
         self.recorder.statics = {}
@@ -978,6 +981,7 @@ class Recorder(object):
         # no collision model is extracted during a battle, and none while the page
         # says the user is working in it. Written here, on the game thread, only.
         self.in_battle = False
+        self.battle_left_at = None
         self.busy_until = 0.0
         # The page is open in the game until then (note_page_open): the TTX sweep may run meanwhile. While its slices run
         # (frames_wanted, written by the export thread) a callback on every frame sets frame_event, which the export

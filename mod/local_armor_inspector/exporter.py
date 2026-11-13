@@ -4354,7 +4354,7 @@ class Exporter(object):
     def run_replay_job(self, payload):
         """One slice of a battle's replay (replay_run.Consumption.steps) for BATTLE_SLICE seconds, ended early by a battle,
         a drag, a command of the page or the mod closing. True when another slice is needed (run_job puts the job back)."""
-        from .replay_run import Consumption
+        from .replay_run import Consumption, probe
         name = str((payload or {}).get('battle') or '')
         # The mod is closing: nothing more; the index keeps the battle pending for the next start (replay_setup).
         if self.ttx_stopped: return True
@@ -4362,6 +4362,9 @@ class Exporter(object):
         if work is None or work.name != name:
             work = self.replay_work = Consumption(self, (payload or {}).get('message') or {'battle':name})
             work.gen = work.steps()
+        if work.first_at is None: work.first_at = time.time()
+        # How fast this thread runs right now (replay_run.probe, ~0.6 ms): outside the slice's own clock.
+        probed = probe()
         before, counts = dict(work.times), gc.get_count()
         began = TTX_TIMER()
         deadline = began + BATTLE_SLICE
@@ -4383,26 +4386,55 @@ class Exporter(object):
                 self.replay_live_again(name)
             except Exception:
                 LOG.exception('Replay failure of %s not noted', name)
-        work.slice_done(TTX_TIMER() - began, before, counts)
+        work.slice_done(TTX_TIMER() - began, before, counts, probed)
         if not done: return True
         self.replay_work = None
         LOG.info('Replay of %s: %s in %.1f s (%.2f s of work in %d slices: %s)', name,
                  (work.outcome or ('failed',))[0], TTX_TIMER() - work.began, work.work, work.slices,
                  ', '.join('%s %.2f s' % kv for kv in sorted(work.times.items())))
         # What it cost in the game (the stand's times are offline; a full collection there walks the whole client's heap):
-        # in the log and in the battle's index entry, which outlives the log.
+        # in the log and in the battle's index entry, which outlives the log. "work" is the slices' wall clock; the probe
+        # says how much of it the thread ran at its best speed - an estimate, not a measured CPU time (replay_run.probe).
         job = work.job(TTX_TIMER())
+        job.update(self.replay_moments(work))
         LOG.info('Replay of %s, its cost in the game: %d slices, %.2f s of work, the longest slice %.3f s (%s%s); garbage '
-                 'collector %s (thresholds %s), a full collection (generation 2) in %d slice(s)', name, job['slices'],
+                 'collector %s (thresholds %s), a full collection (generation 2) in %d slice(s); probe %s ms (min/median/max), '
+                 '%d contended slice(s) of %.2f s, own work ESTIMATED %s s (wall scaled by the probe, not a CPU clock); '
+                 'first slice %s', name, job['slices'],
                  job['work'], job['longest'], job['longestPart'], ', a full collection in it' if job['longestFull'] else '',
                  'enabled' if job['gcEnabled'] else 'disabled', '/'.join(str(n) for n in job['gcThreshold']),
-                 job['fullCollections'])
+                 job['fullCollections'], '/'.join('%.2f' % v for v in job['probeMs']) if job['probeMs'] else 'none',
+                 job['contendedSlices'], job['contendedWall'],
+                 '%.2f' % job['ownWorkEstimate'] if job['ownWorkEstimate'] is not None else 'unknown',
+                 self.replay_moments_text(job))
         try:
             self.replay_entry(name)['job'] = job
             self.write_replay_state()
         except Exception:
             LOG.exception('Replay job figures of %s not noted', name)
         return False
+
+    def replay_moments(self, work):
+        """The job's first slice against the game's moments after the battle it follows (wall clock, seconds; None when
+        unknown - no recorder, a job of an earlier session, or the moment not after the player left that battle):
+        'afterHangarLine' - after the replay source's hangar line («Replay source: hangar: the game records», HANGAR_CHECK
+        after the account became the player again); negative when the job began before it."""
+        recorder = self.recorder
+        left = getattr(recorder, 'battle_left_at', None) if recorder is not None else None
+        source = getattr(recorder, 'replay', None) if recorder is not None else None
+        line = getattr(source, 'hangar_at', None) if source is not None else None
+        moments = {'afterHangarLine':None}
+        try:
+            if work.first_at is not None and left is not None and line is not None and float(line) >= float(left):
+                moments['afterHangarLine'] = round(work.first_at - float(line), 2)
+        except (TypeError, ValueError):
+            pass
+        return moments
+
+    @staticmethod
+    def replay_moments_text(job):
+        after = job.get('afterHangarLine')
+        return ('%+.1f s after the hangar line' % after) if after is not None else 'not timed against the hangar line'
 
     def replay_consumed(self, name, status, notes, message, info, kept_bytes):
         """The battle's replay is consumed: its index entry says how (used, cut, failed), with its warnings."""

@@ -534,6 +534,56 @@ class Unusable(Exception):
     """The replay cannot be used; the message is the battle's warning."""
 
 
+# What a slice's wall time is made of (BACKLOG 84, outputs/replay-job-cost-1.08-2026-11-12.md section 7): the game's Python 2.7
+# has no clock of one thread's CPU, so the slice's clock runs on while the thread waits for the interpreter lock or a core
+# (on 12.11 the longest decode slice was 2.0-7.5 s in the game against at most 0.29 s on the stand). A fixed pure-Python
+# body timed at the start of every slice: its time against the job's fastest one is how slow the thread ran then.
+PROBE_ROUNDS = 1000          # ~0.6 ms on this machine's fastest core (calibrate(200000) = 0.123 s on the stand, 12.11)
+CONTENDED = 3.0              # a slice whose probe took more than this many times the job's fastest probe is contended
+
+
+def probe(rounds=PROBE_ROUNDS):
+    """Seconds of a fixed pure-Python body (struct reads, integer arithmetic, dict and list work - what the job does; the
+    body of tests/py27/replay_run.py calibrate()), with the garbage collector held off while it runs so that a collection
+    does not show as waiting."""
+    enabled = gc.isenabled()
+    if enabled: gc.disable()
+    try:
+        started = TIMER()
+        data = PROBE_DATA
+        table, out, acc = {}, [], 0
+        for k in range(rounds):
+            a, b = struct.unpack_from('<II', data, (k & 31) * 8)
+            acc = (acc ^ (a * 2654435761 + b + k)) & 0xffffffff
+            key = acc & 1023
+            table[key] = table.get(key, 0) + 1
+            if k & 7 == 0: out.append((key, acc >> 16))
+            if len(out) > 4096: del out[:]
+        return TIMER() - started
+    finally:
+        if enabled: gc.enable()
+
+
+PROBE_DATA = struct.pack('<64I', *range(64))
+
+
+def probe_figures(pairs):
+    """The job's probe figures from its (slice wall, probe) pairs: the probe's min / median / max in ms; the slices whose
+    probe took more than CONTENDED times the minimum and their summed wall; and an ESTIMATE of the job's own work -
+    every slice's wall scaled by the fastest probe over its own (a slice that ran at a third of its best speed counts a
+    third). The estimate assumes the slice ran as fast as its probe did at its start: it is not a measured CPU time."""
+    probes = sorted(p for _, p in pairs if p > 0)
+    if not probes:
+        return {'probeMs':None, 'contendedSlices':0, 'contendedWall':0.0, 'ownWorkEstimate':None}
+    low = probes[0]
+    middle = probes[len(probes) // 2] if len(probes) % 2 else (probes[len(probes) // 2 - 1] + probes[len(probes) // 2]) / 2.0
+    contended = [(wall, p) for wall, p in pairs if p > CONTENDED * low]
+    estimate = sum(wall * min(1.0, low / p) for wall, p in pairs if p > 0)
+    return {'probeMs':[round(low * 1000.0, 3), round(middle * 1000.0, 3), round(probes[-1] * 1000.0, 3)],
+            'contendedSlices':len(contended), 'contendedWall':round(sum(wall for wall, _ in contended), 3),
+            'ownWorkEstimate':round(estimate, 3)}
+
+
 class Consumption(object):
     """One 'replay' job's work: steps() yields between units of work; Exporter.run_replay_job runs it in slices."""
 
@@ -551,14 +601,20 @@ class Consumption(object):
         # a full collection of the garbage collector ran in it, and in how many slices one ran.
         self.longest, self.longest_part, self.longest_full = 0.0, None, False
         self.full = 0
+        # (slice wall, probe seconds) of every slice (probe_figures); the wall clock (time.time) of the first slice, against
+        # the game's moments (Exporter.replay_moments).
+        self.probes = []
+        self.first_at = None
 
-    def slice_done(self, seconds, before, counts):
+    def slice_done(self, seconds, before, counts, probed=None):
         """One slice of the job ended (Exporter.run_replay_job): `seconds` its work, `before` a copy of `times` and `counts`
-        gc.get_count() taken at its start. A full collection (generation 2) ran in it when the generation-2 count went down,
-        or stayed 0 while the generation-1 count went down (a generation-1 collection alone would have raised it): at least
-        one - two in one slice count once. No clock read here: the caller's two are the measurement."""
+        gc.get_count() taken at its start, `probed` the probe's seconds at its start (probe). A full collection (generation
+        2) ran in it when the generation-2 count went down, or stayed 0 while the generation-1 count went down (a
+        generation-1 collection alone would have raised it): at least one - two in one slice count once. No clock read
+        here: the caller's are the measurement."""
         self.work += seconds
         self.slices += 1
+        if probed is not None: self.probes.append((seconds, probed))
         after = gc.get_count()
         full = after[2] < counts[2] or (after[2] == 0 == counts[2] and after[1] < counts[1])
         if full: self.full += 1
@@ -568,9 +624,11 @@ class Consumption(object):
 
     def job(self, now):
         """The 'job' block of the battle's index entry and its log line (Exporter.run_replay_job): what the job cost."""
-        return {'slices':self.slices, 'work':round(self.work, 3), 'wall':round(now - self.began, 2),
-                'longest':round(self.longest, 3), 'longestPart':self.longest_part, 'longestFull':self.longest_full,
-                'fullCollections':self.full, 'gcEnabled':gc.isenabled(), 'gcThreshold':list(gc.get_threshold())}
+        job = {'slices':self.slices, 'work':round(self.work, 3), 'wall':round(now - self.began, 2),
+               'longest':round(self.longest, 3), 'longestPart':self.longest_part, 'longestFull':self.longest_full,
+               'fullCollections':self.full, 'gcEnabled':gc.isenabled(), 'gcThreshold':list(gc.get_threshold())}
+        job.update(probe_figures(self.probes))
+        return job
 
     def lap(self, key, started):
         self.times[key] = self.times.get(key, 0.0) + (TIMER() - started)

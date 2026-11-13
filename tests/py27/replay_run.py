@@ -291,6 +291,13 @@ def main():
               and job['longest'] <= max(row[0] for row in slices) + 0.001 and job.get('longestPart') in work[0].times
               and 0 <= job.get('fullCollections', -1) <= job['slices'],
               '17:42: the mod logs and keeps what the job cost, consistent with the slices timed here', repr((cost, job)))
+        # The probe of every slice (BACKLOG 84) under the game's Python 2.7: ~0.6 ms on the fastest core; the own-work
+        # estimate never above the slices' wall.
+        probe_ms = job.get('probeMs') or [0, 0, 0]
+        check(0 < probe_ms[0] <= probe_ms[1] <= probe_ms[2] and job.get('ownWorkEstimate') is not None
+              and job['ownWorkEstimate'] <= job['work'] + 0.001 and 0 <= job.get('contendedSlices', -1) <= job['slices'],
+              '17:42: the probe min/median/max %s ms, %s contended slice(s) of %s s, own work estimated %s s of %s s'
+              % (probe_ms, job.get('contendedSlices'), job.get('contendedWall'), job.get('ownWorkEstimate'), job.get('work')))
         if cost: lines.append('the mod\'s line: ' + cost[0])
         lines.append('17:42 first battle of a session, the whole job: %.2f s (%s); kept stream %.2f MB (stream %.2f MB), '
                      'stored records %.2f MB, raw record %.2f MB, published file %.2f MB'

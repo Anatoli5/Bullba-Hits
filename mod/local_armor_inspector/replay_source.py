@@ -266,6 +266,7 @@ class ReplaySource(object):
         # Game thread: a recording the mod started and its battle flag; None when the game records on its own.
         self.owned = None
         self.callback = None
+        self.hangar_at = None            # wall clock of the last hangar line (hangar_check), read by the replay job's cost line
         # Replay thread: the battle being copied and its end.
         self.copy = None
         self.ending = None               # {'at': time of the end signal, 'deadline': ..., 'reason': ...}
@@ -332,6 +333,8 @@ class ReplaySource(object):
 
     def hangar_check(self):
         self.callback = None
+        # Its time (wall clock) for the replay job's cost line: the first slice is timed against it (Exporter.replay_moments).
+        self.hangar_at = time.time()
         self.ensure_recording('hangar')
 
     def on_account_become_non_player(self, *args):
