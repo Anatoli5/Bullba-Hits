@@ -399,6 +399,15 @@ class Defs(object):
         return spec
 
     def _collect(self, root, props, methods, volatile, seen):
+        # <Parent> first (12.11, BACKLOG 96): RespawnFrameworkVehicleComponent, FortRushScoreComponent, CapturePointComponent
+        # in Fort Rush, NextClipsReloader in the main client inherit their parent's members this way.
+        parent = (root.findtext('Parent') or '').strip()
+        if parent and ('parent:' + parent) not in seen:
+            seen.add('parent:' + parent)
+            path = self.client.find('entity_defs/%s.def' % parent) or self.client.find('component_defs/%s.def' % parent)
+            if path is None:
+                raise ValueError('parent %s not found' % parent)
+            self._collect(self.client.xml(path), props, methods, volatile, seen)
         impl = root.find('Implements')
         if impl is not None:
             for it in impl:

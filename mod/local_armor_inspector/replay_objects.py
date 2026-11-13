@@ -8,8 +8,10 @@ Model (each rule below was found on the replays and checked against them; the re
   ([u32 entity id][u8 has-state]; with state: [u16be id again][child ids: a byte = delta from the previous id,
   or 0x80|hi, lo = an absolute id; 00][the children as kind-2 bodies in that order]). Kind 2 = a component
   ([u8 type][u16be name length][name][state]).
-- Component type numbers: scripts/components.xml <DynamicComponents> in file order, skipping the entries
-  that have no client class (scripts/client/<Name>.pyc) and the second occurrence of a repeated name, from a
+- Component type numbers: scripts/components.xml <DynamicComponents> in file order, then the <Components>
+  <DynamicComponents> of every extension's <feature>/extension.xml in package name order (Fort Rush,
+  event_platform and the other mode packages: their scripts/components.xml is empty; 12.11, BACKLOG 96), skipping the
+  entries that have no client class (scripts/client/<Name>.pyc) and the second occurrence of a repeated name, from a
   base that is 53 in 2.4.1.1. The base is
   re-derived per replay from the player's OwnVehicle (dynamic component 0, the only one with 34 members).
 - State: [ids][0x82][mask][values] (outputs/replay-state-header-2026-11-10.md, 676 of 676 states):
@@ -110,7 +112,7 @@ class Registry(object):
         self.client, self.defs = client, defs
         self.dynamic = []      # names, file order, entries without a client class removed
         pk = os.path.join(client.root, 'res', 'packages')
-        names, classes = [], set()
+        names, classes, extensions = [], set(), []
         for name in sorted(os.listdir(pk)):
             if not name.endswith('.pkg'):
                 continue
@@ -125,7 +127,9 @@ class Registry(object):
                     for sec in packed_xml_decode(z.read(item)):
                         if sec.tag == 'DynamicComponents':
                             names = [ch.tag for ch in sec]
-        self.dynamic = numbered_components(names, classes)
+                if is_extension(item):
+                    extensions.append((name, extension_components(z.read(item))))
+        self.dynamic = numbered_components(names + [n for _, more in extensions for n in more], classes)
         self.base = self.BASE_2_4_1_1
         self._specs = {}
 
@@ -160,6 +164,22 @@ class Registry(object):
             spec = ComponentSpec(name, props, methods, detail, [n for n in props if n not in own])
         self._specs[name] = spec
         return spec
+
+
+def is_extension(item):
+    """An extension's own list: <feature>/extension.xml at the top of its package."""
+    return item.endswith('/extension.xml') and item.count('/') == 1
+
+
+def extension_components(raw):
+    """The dynamic components an extension adds (<Components><DynamicComponents> of its extension.xml), in file order.
+    Measured 12.11 on the user's Fort Rush battles (BACKLOG 96): the stream's types 203-219 are these lists after the
+    main one - five of them named by the stream's own labels (IndividualRespawnTimerComponent of event_platform at 203,
+    CapturePointComponent 209, CapturePointInvaderComponent 212, VehicleExpirableComponent 214,
+    FortRushDamageResistanceComponent 215); without them every Fort Rush stream had 800-1 600 unread messages."""
+    components = packed_xml_decode(raw).find('Components')
+    section = components.find('DynamicComponents') if components is not None else None
+    return [child.tag for child in section] if section is not None else []
 
 
 def numbered_components(names, classes):
@@ -269,9 +289,16 @@ class ObjectTable(object):
         pos += 2
         ids, cur = [], oid
         while b[pos] != 0:
-            if b[pos] & 0x80:
+            if b[pos] == 0x80:
                 cur = (b[pos + 1] << 8) | b[pos + 2]
                 pos += 3
+            elif b[pos] & 0x80:
+                # 0x80|n = the next n - 2 consecutive ids, as in a component's state (12.11: the Fort Rush NetworkEntity
+                # with three respawn components, 14 frames a stream failed on it, read as an absolute id)
+                ids.extend(range(cur + 1, cur + 1 + (b[pos] & 0x7f) - 2))
+                cur = ids[-1] if ids else cur
+                pos += 1
+                continue
             else:
                 cur += b[pos]
                 pos += 1
@@ -434,7 +461,8 @@ class ObjectTable(object):
     def _property(self, inst, m, b, pos, t, dry=False):
         pname, ty = inst.props[m]
         ev = {'t': t, 'ev': 'component_property', 'owner': inst.owner, 'component': inst.name, 'name': pname}
-        if ty.kind == 'num':
+        # Raw value, no mode byte: the numbers, and STRING / PYTHON (12.11: FortRushScoreComponent.teamScore, a pickle)
+        if ty.kind in ('num', 'str', 'blob'):
             ev['value'], pos = ty.read(b, pos)
             if not dry:
                 inst.values[pname] = ev['value']
@@ -460,6 +488,11 @@ class _Copy(object):
     def __init__(self, inst):
         import copy
         self.props, self.values = inst.props, copy.deepcopy(inst.values)
+
+
+def _default_dict(ty):
+    """A FIXED_DICT's value the state left out: every field at its default (nested dicts too)."""
+    return dict((n, _default_dict(t) if t.kind == 'dict' else default_value(t)) for n, t in ty.children)
 
 
 def nested_update(inst, m, mode, raw):
@@ -512,7 +545,12 @@ def nested_update(inst, m, mode, raw):
             if descend:
                 path.append(fname)
                 if value is None:
-                    raise ValueError('field of None %s' % '.'.join(map(str, path)))
+                    # A dict the state left out (12.11, Fort Rush vehicleScore): its default, then the field.
+                    value = _default_dict(ty)
+                    if holder is None: inst.values[pname] = value
+                    else: holder[key] = value
+                holder, key = value, fname
+                if value.get(fname) is None and fty.kind == 'array': value[fname] = []
                 value, ty = value[fname], fty
                 continue
             v, pos = fty.read(raw, br.aligned())

@@ -274,5 +274,47 @@ class ReplayFixtureTests(unittest.TestCase):
                              [0, 0, 0, 0, 0, 0, 0], name)
 
 
+FORT_RUSH = ROOT / 'tests' / 'fixtures-local' / 'replays' / '2026-11-12-1838-fort-rush-2307567835514555300.stream.z'
+
+
+@unittest.skipUnless(CLIENT.is_dir(), 'the installed client (entity_defs) is absent')
+class FortRushTests(unittest.TestCase):
+    """BACKLOG 96, the user's Fort Rush battle of 12.11 18:38 (its kept stream, as the replay job keeps it): 1 314 component
+    messages and frames did not decode (types 203-219 unknown: the extension lists of <feature>/extension.xml were not
+    numbered; <Parent> in .def, raw STRING/PYTHON properties, a left-out FIXED_DICT, a run of child ids in an entity's
+    state were not read), each one resynchronised with deep copies - decode 4-5x a REGULAR battle's."""
+
+    @unittest.skipUnless(FORT_RUSH.is_file(), 'local fixture absent: %s' % FORT_RUSH.name)
+    def test_the_fort_rush_stream_decodes_whole(self):
+        import zlib
+        stream = bytearray(zlib.decompress(FORT_RUSH.read_bytes()))
+        decoder = rd.Decoder(client_defs())
+        kinds = collections.Counter(ev['ev'] for ev in decoder.decode(stream))
+        self.assertEqual((sum(decoder.objects.failures.values()), kinds['component_undecoded']), (0, 0),
+                         dict(decoder.objects.failures))
+        names = set(inst.name for inst in decoder.objects.instances.values())
+        for name in ('CapturePointComponent', 'FortRushScoreComponent'):
+            self.assertIn(name, set(decoder.objects.reg.dynamic))
+        self.assertTrue(names, 'no component instance left at the end')
+
+    def test_the_snapshot_list_equals_the_package_scan(self):
+        """The run-time owner of the component list (replay_run.snapshot_components, from the client snapshot) numbers the
+        extensions' components the way the package scan (replay_objects.Registry) does."""
+        import zipfile
+        from local_armor_inspector import replay_run
+        from local_armor_inspector.client_snapshot import SCOPE
+        defs = client_defs()
+        packages = []
+        for path in sorted(CLIENT.glob('*.pkg')):
+            # The members as the snapshot keeps them (its SCOPE: scripts, models, a few XML) - no extension.xml among them.
+            try: members = dict((n, None) for n in zipfile.ZipFile(str(path)).namelist() if SCOPE.search(n))
+            except zipfile.BadZipFile: continue
+            packages.append((path.name, str(path), members))
+        scan = rc.Registry(defs.client, defs).dynamic
+        self.assertEqual(replay_run.snapshot_components(packages), scan)
+        self.assertIn('CapturePointComponent', scan)
+        self.assertGreater(len(scan), 109)          # the main list alone had 109 names with a client class (2.4.1.1)
+
+
 if __name__ == '__main__':
     unittest.main()

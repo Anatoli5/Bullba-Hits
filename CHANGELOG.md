@@ -5,6 +5,7 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 ## Unreleased
 
 - **Lighter return to the hangar:** after a battle, the work on its replay now waits until the hangar has finished loading, and pauses while the Bullba Hits page is loading, instead of competing with them. The battle's replay-based version may therefore appear a few seconds later than before; if the hangar does not report that it has loaded, the work starts after a minute at the latest.
+- **Fort Rush battles read in full:** the replay of a Fort Rush battle is now read completely (parts of it were skipped before), and its processing after the battle takes about half the time. The same applies to other special modes whose replays had these gaps; random battles are read exactly as before.
 
 ## 1.09 (2026-11-12)
 

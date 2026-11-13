@@ -215,17 +215,34 @@ def snapshot_packages(snapshot):
 
 
 def snapshot_components(packages):
-    """Registry's component list from the snapshot: the client .pyc names, and scripts/components.xml of the last package
-    that has it (Registry reads every package in name order, the last one wins)."""
-    classes, holder = set(), None
+    """Registry's component list from the snapshot: the client .pyc names, scripts/components.xml of the last package
+    that has it (Registry reads every package in name order, the last one wins), then every extension's own list
+    (<feature>/extension.xml, package name order - Registry's rule, BACKLOG 96). The snapshot lists only the packages'
+    scripts (client_snapshot.SCOPE), not extension.xml: a package with a feature's scripts (<feature>/scripts/...) is
+    opened for its <feature>/extension.xml - the mode packages only (fort_rush, event_platform, comp7 ...)."""
+    classes, holder, extensions = set(), None, []
     for name, path, members in packages:
+        features = set()
         for item in members:
             if item.endswith('.pyc') and '/client' in item: classes.add(item.rsplit('/', 1)[-1][:-4])
+            parts = item.split('/', 2)
+            if len(parts) == 3 and parts[1] == 'scripts': features.add(parts[0])
+            elif rc.is_extension(item): features.add(parts[0])
+        for feature in sorted(features): extensions.append((name, path, feature + '/extension.xml'))
         if 'scripts/components.xml' in members: holder = path
     if holder is None: raise ValueError('scripts/components.xml is in no package')
     names = []
     for section in rc.packed_xml_decode(zipfile.ZipFile(holder).read('scripts/components.xml')):
         if section.tag == 'DynamicComponents': names = [child.tag for child in section]
+    archives = {}
+    for name, path, item in extensions:
+        try:
+            if path not in archives: archives[path] = zipfile.ZipFile(path)
+            raw = archives[path].read(item)
+        except KeyError:
+            continue
+        names += rc.extension_components(raw)
+    for archive in archives.values(): archive.close()
     return rc.numbered_components(names, classes)
 
 
