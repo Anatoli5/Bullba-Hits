@@ -131,6 +131,7 @@ class Tracks(object):
         self.gun_times, self.gun_codes = {}, {}
         self.own = {'yaw':(array.array('f'), array.array('f')), 'pitch':(array.array('f'), array.array('f'))}
         self.compact = {}
+        self.lives = {}
 
     def position(self, vid, t, pos, yaw, pitch, roll):
         if vid not in self.times:
@@ -150,8 +151,22 @@ class Tracks(object):
         times.append(t)
         values.append(value)
 
-    def public(self, vid, compact):
-        if compact: self.compact[vid] = compact_text(compact)
+    def public(self, vid, compact, t=None, vehicle=None, listed=False):
+        """A vehicle's descriptor at replay clock t: the entity's publicInfo (listed=False) or the arena list's vehiclesInfo
+        row (listed=True); `vehicle` its (nation, type id) when known. A respawn mode (Fort Rush, like Frontline) brings a
+        player back in ANOTHER vehicle under the same vehicle id (BACKLOG 97, measured 13.11: 11 ids of one battle), so
+        each id keeps its lives, (t, descriptor) at each change of vehicle. The arena list changes at the respawn (the
+        vehicle is in the battle from then on); the entity comes only when it enters the area of interest, maybe a minute
+        later (measured: 1820451 listed as the Centurion at 290.7 s, firing at 319 s, created at 350.9 s) - so a life starts
+        at the first of the two, and the entity's descriptor, when it comes, replaces the list's for that life (the
+        publicInfo one wins, as measured)."""
+        text = compact_text(compact) if compact else None
+        if not text: return
+        if not listed: self.compact[vid] = text
+        lives = self.lives.setdefault(vid, [])
+        same = lives and (lives[-1][2] == vehicle if vehicle is not None and lives[-1][2] is not None else lives[-1][1] == text)
+        if not same: lives.append([float(t or 0.0), text, vehicle])
+        elif not listed: lives[-1][1] = text
 
     def record(self, player, server_start, info=None):
         """The one 'poses' record of a battle (in memory only: its arrays are not JSON). `info` the vehiclesInfo list:
@@ -166,7 +181,26 @@ class Tracks(object):
         return {'type':'poses', 'format':FORMAT, 'playerVehicleId':player, 'serverTimeAtStart':server_start,
                 'positions':dict((k, (self.times[k], self.values[k])) for k in self.times),
                 'guns':dict((k, (self.gun_times[k], self.gun_codes[k])) for k in self.gun_times),
-                'ownYaw':self.own['yaw'], 'ownPitch':self.own['pitch'], 'compact':compact}
+                'ownYaw':self.own['yaw'], 'ownPitch':self.own['pitch'], 'compact':compact,
+                'lives':dict((k, [(when, text) for when, text, _ in v]) for k, v in self.lives.items())}
+
+
+def lives_of(poses, vid):
+    """[(replay clock, descriptor text)] of a vehicle id: its lives (Tracks.public), else its one descriptor (a store written
+    before 13.11, or a vehicle never created: from vehiclesInfo)."""
+    lives = (poses.get('lives') or {}).get(vid)
+    if lives: return lives
+    compact = (poses.get('compact') or {}).get(vid)
+    return [(0.0, compact)] if compact else []
+
+
+def compact_at(poses, vid, t):
+    """The descriptor of the vehicle the id was at replay clock t: the life begun last at or before t (a moment before
+    the first one: the first life)."""
+    lives = lives_of(poses, vid)
+    if not lives: return None
+    i = bisect.bisect_right([float(when) for when, _ in lives], float(t) + 1e-6)
+    return lives[max(i - 1, 0)][1]
 
 
 def compact_text(value):
@@ -536,7 +570,8 @@ class Scenes(object):
         if when is None: return None, 'hit without gameTime'
         t_hit = float(when) - float(self.start)
         tid, aid = hit.get('targetId'), hit.get('attackerId')
-        compact = self.poses['compact'].get(tid)
+        # The vehicle the target id was AT THE HIT (BACKLOG 97): a respawn mode changes it under the same id.
+        compact = compact_at(self.poses, tid, t_hit)
         if not compact: return None, 'no compact descriptor of the target in the replay'
         statics, error = self.static(compact)
         if statics is None: return None, error

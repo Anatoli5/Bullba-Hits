@@ -40,7 +40,7 @@ from __future__ import absolute_import, division
 import math
 from bisect import bisect_right
 
-from .replay_scene import RX, RY, mm, world_of
+from .replay_scene import RX, RY, lives_of, mm, world_of
 
 KEY = 'replayAimEstimate'
 FORMAT = 1
@@ -664,28 +664,36 @@ def attaching(records, inputs, report):
         tracers = [(clock_of(r, start), r) for r in by[vid]]
         report['tracers'] += len(tracers)
         out = {}
-        main = [(c, r) for c, r in tracers if not r.get('gunInstallationIndex')]
         for c, r in tracers:
             if r.get('gunInstallationIndex'): out[id(r)] = absent_block('secondary')
-        compact = (poses.get('compact') or {}).get(vid)
-        positions, guns = (poses.get('positions') or {}).get(vid), (poses.get('guns') or {}).get(vid)
-        gun = None
-        if compact is not None and main and positions and guns:
-            if compact not in known:
-                try: known[compact] = inputs(compact)
-                except Exception as exc: known[compact] = exc
-            gun = known[compact]
-        if main and not (positions and guns):
-            for c, r in main: out[id(r)] = absent_block('track')
-        elif main and (gun is None or isinstance(gun, Exception)):
-            detail = 'no compact descriptor' if gun is None else (str(gun) or type(gun).__name__)
-            for c, r in main: out[id(r)] = absent_block('gun', detail)
-        elif main:
-            try:
-                for _ in vehicle_steps(positions, guns, gun, main, out):
-                    yield
-            except (ArithmeticError, IndexError, KeyError, TypeError, ValueError) as exc:
-                for c, r in main: out[id(r)] = absent_block('gun', 'estimate failed: %s' % (str(exc) or type(exc).__name__))
+        # A respawn mode brings the id back in ANOTHER vehicle (BACKLOG 97): each life of the id - its descriptor and the
+        # stretch of its track from its creation to the next one - is a vehicle of its own: its gun, its size model.
+        lives = lives_of(poses, vid) or [(0.0, None)]
+        whens = [float(w) for w, _ in lives]
+        for k, (born, compact) in enumerate(lives):
+            end = whens[k + 1] if k + 1 < len(whens) else None
+            main = [(c, r) for c, r in tracers if not r.get('gunInstallationIndex')
+                    and (k == 0 or c >= whens[k] - 1e-6) and (end is None or c < end - 1e-6)]
+            if not main: continue
+            positions, guns = (poses.get('positions') or {}).get(vid), (poses.get('guns') or {}).get(vid)
+            if len(lives) > 1: positions, guns = life_tracks(positions, guns, whens[k] if k else None, end)
+            gun = None
+            if compact is not None and positions and guns:
+                if compact not in known:
+                    try: known[compact] = inputs(compact)
+                    except Exception as exc: known[compact] = exc
+                gun = known[compact]
+            if not (positions and guns):
+                for c, r in main: out[id(r)] = absent_block('track')
+            elif gun is None or isinstance(gun, Exception):
+                detail = 'no compact descriptor' if gun is None else (str(gun) or type(gun).__name__)
+                for c, r in main: out[id(r)] = absent_block('gun', detail)
+            else:
+                try:
+                    for _ in vehicle_steps(positions, guns, gun, main, out):
+                        yield
+                except (ArithmeticError, IndexError, KeyError, TypeError, ValueError) as exc:
+                    for c, r in main: out[id(r)] = absent_block('gun', 'estimate failed: %s' % (str(exc) or type(exc).__name__))
         for c, r in tracers:
             block = out.get(id(r))
             if block is None: continue
@@ -693,6 +701,17 @@ def attaching(records, inputs, report):
             if 'circle' in block: report['circles'] += 1
             else: report['absent'][block['reasonKey']] = report['absent'].get(block['reasonKey'], 0) + 1
         yield
+
+
+def life_tracks(positions, guns, start, end):
+    """(positions, guns) of one life of a vehicle id: the samples with start <= time < end (None: open)."""
+    def cut(track, width):
+        if not track: return track
+        times, values = track
+        lo = 0 if start is None else bisect_right(times, start - 1e-6)
+        hi = len(times) if end is None else bisect_right(times, end - 1e-6)
+        return times[lo:hi], values[lo * width:hi * width]
+    return cut(positions, 6), cut(guns, 1)
 
 
 def attach(records, inputs):

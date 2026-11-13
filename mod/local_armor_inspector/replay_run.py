@@ -71,6 +71,8 @@ W_NO_START = 'Replay not used: its stream does not hold the start of this battle
 W_CUT = ('Replay cut off: its stream ends %s into the recording and no complete replay file confirmed that it is whole, '
          'so whatever happened after that moment may be missing')
 W_RESTORE = 'Replay records of this battle unreadable (%s), ' + LIVE_ONLY
+W_LIVES = ('stored before the vehicles a vehicle id changes to in a respawn mode were kept apart; decoded again from its kept '
+           'stream')
 
 
 # ---- the end of the fight in the copy ------------------------------------------------------------------------------------
@@ -449,7 +451,8 @@ def poses_json(poses):
             'guns':[[vid, array_text(t), [int(c) for c in codes]] for vid, (t, codes) in sorted(poses['guns'].items())],
             'ownYaw':[array_text(poses['ownYaw'][0]), array_text(poses['ownYaw'][1])],
             'ownPitch':[array_text(poses['ownPitch'][0]), array_text(poses['ownPitch'][1])],
-            'compact':[[vid, text] for vid, text in sorted(poses['compact'].items())]}
+            'compact':[[vid, text] for vid, text in sorted(poses['compact'].items())],
+            'lives':[[vid, [[when, text] for when, text in lives]] for vid, lives in sorted((poses.get('lives') or {}).items())]}
 
 
 def json_poses(value):
@@ -460,7 +463,23 @@ def json_poses(value):
             'guns':dict((vid, (text_array('f', t), array.array('l', codes))) for vid, t, codes in value['guns']),
             'ownYaw':(text_array('f', value['ownYaw'][0]), text_array('f', value['ownYaw'][1])),
             'ownPitch':(text_array('f', value['ownPitch'][0]), text_array('f', value['ownPitch'][1])),
-            'compact':dict((vid, text) for vid, text in value['compact'])}
+            'compact':dict((vid, text) for vid, text in value['compact']),
+            # BACKLOG 97 (13.11): each vehicle id's lives; a store written before keeps the one descriptor ('compact').
+            'lives':dict((vid, [(float(when), text) for when, text in lives]) for vid, lives in value.get('lives') or ())}
+
+
+def needs_lives(records, poses):
+    """True for a store written before the lives were kept (BACKLOG 97) of a battle whose roster changes a vehicle id's
+    vehicle (a respawn mode): its scenes and estimates took one descriptor per id, so it is decoded again from its kept
+    stream rather than restored."""
+    if poses is None or 'lives' in poses: return False
+    seen = {}
+    for r in records:
+        if r.get('type') != 'roster': continue
+        for row in r.get('vehicles') or ():
+            if not isinstance(row, dict) or not row.get('type'): continue
+            if seen.setdefault(row.get('id'), row['type']) != row['type']: return True
+    return False
 
 
 def pack_store(name, records, statics, stream_info, scenes=None):
@@ -478,6 +497,7 @@ def unpack_store(data):
     value = json.loads(zlib.decompress(data).decode('ascii'))
     if value.get('format') != STORE_FORMAT: raise ValueError('stored records of format %r' % value.get('format'))
     records = list(value['records'])
+    if needs_lives(records, value.get('poses')): raise ValueError(W_LIVES)
     poses = json_poses(value.get('poses'))
     if poses is not None: records.append(poses)
     return records, value.get('statics') or {}, value.get('stream') or {}, value.get('scenes')

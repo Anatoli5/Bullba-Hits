@@ -461,11 +461,25 @@ class Converter(object):
             if kind == 'entity_create':
                 props = ev.get('props') or {}
                 if 'gunAnglesPacked' in props: tracks.gun(ev['id'], t, props['gunAnglesPacked'])
-                if isinstance(props.get('publicInfo'), dict): tracks.public(ev['id'], props['publicInfo'].get('compDescr'))
+                if isinstance(props.get('publicInfo'), dict): self.track_public(ev['id'], props['publicInfo'].get('compDescr'), t)
             elif kind == 'property':
                 if ev.get('name') == 'gunAnglesPacked': tracks.gun(ev['id'], t, ev.get('value'))
                 elif ev.get('name') == 'publicInfo' and isinstance(ev.get('value'), dict):
-                    tracks.public(ev['id'], ev['value'].get('compDescr'))
+                    self.track_public(ev['id'], ev['value'].get('compDescr'), t)
+
+    def track_public(self, vid, compact, t, listed=False):
+        """A vehicle's descriptor at t for the poses' lives (replay_scene.Tracks.public): an entity's publicInfo, or with
+        listed=True a row of the arena list (vehiclesInfo)."""
+        if self.tracks is None or not compact: return
+        try: vehicle = tuple(replay_stream.parse_vehicle_compact_descr(compact)[:2])
+        except Exception: vehicle = None
+        self.tracks.public(vid, compact, t, vehicle, listed)
+
+    def track_listed(self, t):
+        if self.tracks is None: return
+        for info in self.info or ():
+            if isinstance(info, dict) and integer(info.get('vehicleID')) is not None and info.get('compDescr'):
+                self.track_public(int(info['vehicleID']), info['compDescr'], t, True)
 
     def handle(self, ev):
         kind, t = ev.get('ev'), ev.get('t') or 0.0
@@ -699,6 +713,7 @@ class Converter(object):
             if state.get('fireInfo'): self.fire_info(owner, state['fireInfo'], t)
         elif name == 'AvatarVehiclesInfo':
             self.info = copy.deepcopy(state.get('vehiclesInfo'))
+            self.track_listed(t)
             self.roster()
         elif name == 'OwnVehicle':
             full = copy.deepcopy(state.get('vehicleDamageInfoList') or [])
@@ -717,7 +732,9 @@ class Converter(object):
         if comp == 'AvatarVehiclesInfo' and name == 'vehiclesInfo':
             self.info = apply_update(self.info, ev)
             path = ev.get('path') or []
-            if len(path) < 3 or path[-1] in ROSTER_FIELDS or 'slice' in ev: self.roster()
+            if len(path) < 3 or path[-1] in ROSTER_FIELDS or 'slice' in ev:
+                self.track_listed(t)
+                self.roster()
         elif comp == 'OwnVehicle' and name == 'vehicleDamageInfoList':
             self.damage_info(owner, ev, t)
         elif comp == 'OwnVehicle' and name == 'isOtherVehicleDamagedDevicesVisible':
