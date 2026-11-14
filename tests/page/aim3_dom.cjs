@@ -3834,7 +3834,7 @@ settle(20).then(function () {
   const fun = new Function('$', 'window', 'chanceRgb',
     // BACKLOG 38 (23.09): the Borkenkäfer's mark lives in the tier-XI block beside this one; cut out alone, none.
     // Strip (23.09): the strip beside ⌖ comes and goes with paintFun, which then asks the layout pass for the top band.
-    'var viewer=null,current=null,activeHit=null,xiMarkState=null,LAYOUT_MODS=4,funLayouts=0,ttxHp=0,ttxAsked=[],sceneBuild=false;function ttxHealth(){return ttxHp;}function xiMarkNow(){return null;}' +
+    'var viewer=null,current=null,activeHit=null,xiMarkState=null,LAYOUT_MODS=4,funLayouts=0,ttxHp=0,ttxAsked=[],sceneBuild=false;function ttxHealth(){return ttxHp;}function ttxOwnHp(){return 0;}function xiMarkNow(){return null;}' +
     'function readTtx(type){ttxAsked.push(type);return Promise.resolve(null);}' + tipJoinSrc + lifeSrc.join('') +
     // 11.11: the bar's tooltip sums the damage the battle logged against the vehicle; the log's rows come from eventsOf.
     'function eventsOf(b){return b&&Array.isArray(b.damageEvents)?b.damageEvents:[];}' +
@@ -9267,11 +9267,19 @@ function pathMatrix() {
       parts: [], shells: SHELLS.slice(0, 2), warnings: [], gun: '105 mm single', gunDispersion: 0.00383, aim: AIM_BLOCK, maxHealth: hp};
   };
   const EXPORTS = {pm_papa: EXPORT('pm_papa', 'germany:Papa', 'Papa', 2200), pm_quebec: EXPORT('pm_quebec', 'germany:Quebec', 'Quebec', 1600)};
+  // BACKLOG 100 (the user 14.11 on 1.10): a tier-XI vehicle browsed under ⌖ - Improved Hardening put into Config and taken
+  // out, and its HP stood still. The BZ-79 of his game: 2 900 HP in its characteristics file, the eligibility tags of its
+  // file (extraHealthReserve_class1_user among them), its skill tree counted in the file.
+  TTXS['china-Ch67_BZ_79'] = TTXOF('china:Ch67_BZ_79', 2900);
+  TTXS['china-Ch67_BZ_79'].vehicle.skillTree = {tree: '10200', modifications: 23};
+  EXPORTS.pm_bz79 = Object.assign(EXPORT('pm_bz79', 'china:Ch67_BZ_79', 'BZ-79', 2900), {level: 11, nation: 'china',
+    tags: ['china', 'heavyTank', 'tankRammer_class1_user', 'aimingStabilizer_class1_user', 'improvedVentilation_class1_user', 'extraHealthReserve_class1_user']});
   const CATALOGUE = [VEHICLE,
     {id: 'pm_papa', type: 'germany:Papa', name: 'Papa', level: 10, 'class': 'heavyTank', nation: 'germany', exported: true, exportedAt: 1},
     {id: 'pm_quebec', type: 'germany:Quebec', name: 'Quebec', level: 10, 'class': 'heavyTank', nation: 'germany', exported: true, exportedAt: 1},
     // 24.09: a catalogue row without a model - in the browser it opens with its characteristics file alone.
-    {id: 'germany-Uniform', type: 'germany:Uniform', name: 'Uniform', level: 10, 'class': 'heavyTank', nation: 'germany', exported: false, exportedAt: null}];
+    {id: 'germany-Uniform', type: 'germany:Uniform', name: 'Uniform', level: 10, 'class': 'heavyTank', nation: 'germany', exported: false, exportedAt: null},
+    {id: 'pm_bz79', type: 'china:Ch67_BZ_79', name: 'BZ-79', level: 11, 'class': 'heavyTank', nation: 'china', exported: true, exportedAt: 1}];
   const D = global.ArmorInspectorData;
   const keep = {battle: D.battle, scene: D.scene, ttx: D.ttx, vehicles: D.vehicles, vehicle: D.vehicle, sceneFor: D.sceneFor, index: D.index};
   // web/local-data.js's rule for a vehicle without its model (tested on the real reader below, 'noModel'): no geometry,
@@ -9360,6 +9368,7 @@ function pathMatrix() {
   };
   const dotFor = function (id) { return staticDots.filter(function (d) { return d.getAttribute('data-help-for').split(/\s+/).indexOf(id) >= 0; })[0]; };
   const ROSTER_HP = 'this battle’s roster', FILE_HP = 'the vehicle’s characteristics, stock', OWN_HP = 'the vehicle’s own export';
+  const BUILD_HP = 'this build';   // BACKLOG 100: the vehicle on screen is the shooter himself - his Config counts
   // switched (03.10): the step is a switch of the side panel, which is the picker only - the scene stands as it stood
   // (the same invariants) and NOTHING of it is painted or loaded: no finisher, no tile laid again, no scene painter, no
   // scene read; only the help dots are refreshed once (the two panes show and hide their boxes).
@@ -9505,8 +9514,9 @@ function pathMatrix() {
       filterKeepsScope(fun);
       return step(function () { listRow('pm_quebec').onclick(); });
     }).then(function () {
-      // Audit PD-01 г: a browsed vehicle takes its export's figure, never the roster row of the battle beside it.
-      expectScene('a vehicle browsed', fun, {model: true, shooter: true, hp: '1 600 / 1 600', source: OWN_HP}, delta(was));
+      // Audit PD-01 г: a browsed vehicle takes its own figure, never the roster row of the battle beside it. Under itself
+      // (BACKLOG 100) that figure is this build's: its file's 1 400 with the Config in force - the default build's hardening.
+      expectScene('a vehicle browsed', fun, {model: true, shooter: true, hp: '1 540 / 1 540', source: BUILD_HP}, delta(was));
       $('shooter-tile').onclick();   // the shooter's role in the list: no scene of its own
       return settle(10).then(function () { return step(function () { listRow('pm_papa').onclick(); }); });
     }).then(function () {
@@ -9633,8 +9643,39 @@ function pathMatrix() {
        ttxAsked.indexOf('germany-Tango') >= 0 && $('target-hp').hidden === false && $('target-hp-text').textContent === fig('1 234 / 1 234')
        && $('target-hp').title.indexOf('\n• Source: ' + FILE_HP) > 0,
        '(' + ttxAsked.join(', ') + ' · hidden ' + $('target-hp').hidden + ' · "' + $('target-hp-text').textContent + '")');
+    // BACKLOG 100, THE USER'S CASE: the BZ-79 browsed, ⌖ on - the vehicle on screen is the shooter himself, and its HP
+    // follows his Config at once: the default build's hardening (×1.1, up to whole tens: 3 190), out (2 900), in again.
+    // The model's role, its row; the shooter's role, the same row: the vehicle fires its own gun (as xiBrowsed does).
+    sidebarModes[1].onclick();
+    return settle(20).then(function () {
+      scopeTo('all');
+      $('model-tile').onclick();
+      return settle(10).then(function () { listRow('pm_bz79').onclick(); return settle(40); });
+    }).then(function () {
+      $('shooter-tile').onclick();
+      return settle(10).then(function () { listRow('pm_bz79').onclick(); return settle(40); });
+    });
+  }).then(function () {
+    setFun(true);
+    openConfigMenu();
+    choosePreset('Rammer, hardening, turbo');
+    const bar = function () { return $('target-hp-text').textContent; };
+    const withIt = bar(), source = $('target-hp').title;
+    click(slots.children[1]);
+    click(pick('Improved Hardening Class 1'));
+    const without = bar(), emptied = slots.children[1].getAttribute('data-tier');
+    click(slots.children[1]);
+    click(pick('Improved Hardening Class 1'));
+    const again = bar();
+    ok('BACKLOG 100: a tier-XI vehicle browsed under ⌖ - Improved Hardening in Config moves its HP at once: in 3 190, out 2 900, in again 3 190',
+       withIt === fig('3 190 / 3 190') && emptied === 'none' && without === fig('2 900 / 2 900') && again === fig('3 190 / 3 190')
+       && source.indexOf('\n• Source: this build') > 0,
+       '(' + withIt + ' -> ' + emptied + ' ' + without + ' -> ' + again + ' · ' + source.split('\n').filter(function (l) { return /Source/.test(l); }).join('') + ')');
+    scopeTo('battle');
     setFun(false);
-    return pickerOnly();
+    // Back to the model's role in the Hits panel, where the matrix left the page for the checks after.
+    $('model-tile').onclick();
+    return settle(10).then(function () { sidebarModes[0].onclick(); return settle(20); }).then(pickerOnly);
   }).then(function () {
     Object.keys(keep).forEach(function (k) { D[k] = keep[k]; });
   });
@@ -10724,9 +10765,11 @@ function xiBrowsed() {
     const timed = realBox.checked;
     if (!timed) click($('real-reload-toggle'));
     run(1);
-    ok(tag + '⌖ - the health bar holds ' + BAR + ' HP, the figure of the vehicle’s own export',
-       $('target-hp').hidden === false && $('target-hp-text').textContent.replace(/\s/g, '') === BAR + '/' + BAR
-       && $('target-hp').title.indexOf('\n• Source: the vehicle’s own export') > 0, '(hidden ' + $('target-hp').hidden + ', "' + $('target-hp-text').textContent + '")');
+    // BACKLOG 100 (14.11): the vehicle under itself takes this build's HP - its file's figure with the Config in force (no
+    // hardening in it here), no longer the export's, which carried the equipment he had then (BAR).
+    ok(tag + '⌖ - the health bar holds ' + F.maxHealth + ' HP, this build’s: the file’s figure with the Config in force (the export’s ' + BAR + ' carried the equipment he had then)',
+       $('target-hp').hidden === false && $('target-hp-text').textContent.replace(/\s/g, '') === F.maxHealth + '/' + F.maxHealth
+       && $('target-hp').title.indexOf('\n• Source: this build') > 0, '(hidden ' + $('target-hp').hidden + ', "' + $('target-hp-text').textContent + '")');
     // The Pz.Kpfw. Neu's second mode is its shells' other state (shellParamsSwitcher). A browsed vehicle has no second
     // set of shells - neither its export nor its file carries one (only a battle's record does, attacker.modeShells) -
     // so the page shows no mode button for it; were there one, its switch must be the tree's 0.5 s, not the bare 1 s.

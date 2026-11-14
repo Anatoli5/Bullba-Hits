@@ -156,7 +156,7 @@ const LOOK = `(() => {
     details: [].slice.call(document.querySelectorAll('#details > div')).map((d) => d.textContent).join(' | ')};
 })()`;
 
-const HP = {ROSTER: 'this battle’s roster', FILE: 'the vehicle’s characteristics, stock', OWN: 'the vehicle’s own export'};
+const HP = {ROSTER: 'this battle’s roster', FILE: 'the vehicle’s characteristics, stock', OWN: 'the vehicle’s own export', BUILD: 'this build'};
 
 // ---- THE SIDE PANEL'S MODE IS THE PICKER ONLY (03.10, the user after 0.9.4) ---------------------------------------------------
 // The user: "from Hits to Vehicles the state is not kept - the tank may be the same, but it comes back in the default
@@ -1093,7 +1093,8 @@ async function main() {
       expectScene('the side panel back to Hits', fun, {model: true, shooter: true, hp: '2 750 / 2 750', source: HP.ROSTER}, await step("side('battles')"));
       expectScene('another shooter from the roster', fun, {model: true, shooter: true, hp: '2 750 / 2 750', source: HP.ROSTER}, await step('roster(32)'));
       expectScene('the side panel to Vehicles again', fun, {model: true, shooter: true, hp: '2 750 / 2 750', source: HP.ROSTER}, await step('modelTile()'));
-      expectScene('a vehicle browsed', fun, {model: true, shooter: true, hp: '1 600 / 1 600', source: HP.OWN}, await step("list('pm_quebec')"));
+      // BACKLOG 100: the vehicle under itself takes this build's HP - its file's 1 400 with the Config in force (no hardening).
+      expectScene('a vehicle browsed', fun, {model: true, shooter: true, hp: '1 400 / 1 400', source: HP.BUILD}, await step("list('pm_quebec')"));
       await step('shooterTile()');   // the shooter's role in the list: no scene of its own
       expectScene('another shooter from the Vehicles list', fun, {model: true, shooter: true, hp: '1 600 / 1 600', source: HP.OWN}, await step("list('pm_papa')"));
       expectScene('⇅ of two browsed vehicles', fun, {model: true, shooter: true, hp: '2 200 / 2 200', source: HP.OWN}, await step('swap()'));

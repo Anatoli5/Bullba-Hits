@@ -2035,6 +2035,7 @@
     aimNow = null; aimEstReset();
     updateAim(); startAimLoop(); scheduleLayout();
     ttxPaint();   // the characteristics panel shows the new build (an event, never a frame)
+    hpFollow();   // and the HP bar, when the vehicle on screen is the shooter himself (BACKLOG 100)
   }
   // A hand edit - any tile, chip or slot: it lands in Custom, which becomes the entry in force for this
   // shooter and is kept at once. The preset it started from is left as it was.
@@ -3274,6 +3275,7 @@
   // The gun changed with the scene standing - a gun or a turret picked, the shooter's file come: the run starts over,
   // the words of the reload and the shells follow the new gun, and the one finisher paints everything that depends on it.
   function emuChanged() {
+    hpFollow();   // the shooter's file or pair came: the HP of a vehicle that is the shooter himself follows (BACKLOG 100)
     if (!activeHit || !emuSync()) { ttxPaint(); return; }
     sceneBuild = true;
     try { paintAimMechanics(); emuShells(); }
@@ -4979,6 +4981,10 @@
       return {hp: Number(row.maxHealth), from: by === 'vehicle' ? 'server' : by === 'descriptor' ? 'descriptor' : by === 'vehiclesInfo' ? 'replay' : 'roster'};
     }
     if (row && same && Number(row.defaultMaxHealth) > 0) return {hp: Number(row.defaultMaxHealth), from: 'default'};
+    // The vehicle on screen IS the shooter (a browsed vehicle under itself, BACKLOG 100): its HP is this build's - the
+    // shooter's Config on its characteristics file, the ⚙ view's own figure - so equipment put in or taken out shows.
+    hp = ttxOwnHp(hit);
+    if (hp > 0) return {hp: hp, from: 'build'};
     if (t && Number(t.maxHealth) > 0) return {hp: Number(t.maxHealth), from: 'export'};
     hp = t ? ttxHealth(t) : 0;
     return hp > 0 ? {hp: hp, from: 'ttx'} : {hp: 0, from: ''};
@@ -5023,10 +5029,21 @@
     descriptor: '• Source: this battle’s roster, before the vehicle was seen - without equipment that adds health',
     'default': '• Source: the roster’s stock figure - this battle’s own is not in the record',
     export: '• Source: the vehicle’s own export - its figure then, not this battle’s',
-    ttx: '• Source: the vehicle’s characteristics, stock - this battle’s own figure is not in the record'};
+    ttx: '• Source: the vehicle’s characteristics, stock - this battle’s own figure is not in the record',
+    build: '• Source: this build - the vehicle’s characteristics with the equipment in Config, as the garage counts it'};
   // A figure that is not the one the vehicle had in this battle (11.11, docs/RULES.md B7: a nominal is never shown as
   // the recorded one): the bar wears a dashed frame and its tooltip says so.
-  var HP_NOMINAL = {descriptor: 1, 'default': 1, export: 1, ttx: 1};
+  var HP_NOMINAL = {descriptor: 1, 'default': 1, export: 1, ttx: 1, build: 1};
+  // The figure of the vehicle on screen moved under it (BACKLOG 100: Config changed, the shooter's file or pair came,
+  // while the bar stands for the same vehicle): the new maximum, and the damage the emulation dealt stays dealt.
+  // `quiet`: the caller paints the layer itself (funModel).
+  function hpFollow(quiet) {
+    if (!activeHit || !(hpMax > 0) || hpKey !== targetKey(activeHit)) return;
+    var h = targetHp(activeHit);
+    if (!(h.hp > 0) || (h.hp === hpMax && h.from === hpFrom)) return;
+    hpLeft = hpLeft > 0 ? Math.max(0, h.hp - (hpMax - hpLeft)) : 0; hpMax = h.hp; hpFrom = h.from;
+    if (!quiet) paintFun();
+  }
   // The damage this battle logged against the vehicle on screen (11.11, user: the damage of all its hits adds up to its
   // HP if nothing was lost): every recorded hit on it and every other damage row (ram, fire, ...) of the log, as the
   // list shows them (eventsOf). Null when the vehicle is no seat of the open battle.
@@ -5225,6 +5242,7 @@
   // figure was not known yet gets it now if the page has come to know it since.
   function funModel() {
     if (targetKey(activeHit) !== hpKey) { funReset(); return; }
+    hpFollow(true);   // the same vehicle under another shooter: its build figure goes, or comes (BACKLOG 100)
     if (!funLaid) { funLaid = true; funMarks.forEach(function (m) { if (viewer && viewer.addHitMark) viewer.addHitMark(m); }); }
     if (!(hpMax > 0)) hpFill();
     paintFun();
@@ -9040,6 +9058,22 @@
   function ttxHealth(vehicle) {
     var t = vehicle && vehicle.type ? ttxCache[typeId(vehicle.type)] : null, i = t && TTX ? TTX.match(t, vehicle) : -1;
     return i >= 0 && t.configs[i].maxHealth > 0 ? Number(t.configs[i].maxHealth) : 0;
+  }
+  // The hit points of THIS BUILD for the vehicle on screen when it is the shooter himself - a browsed vehicle under itself
+  // (BACKLOG 100, user 14.11: Improved Hardening put in and taken out, the HP bar of his tier-XI vehicle stood still: the
+  // bar read the stock export and never Config). The same values() the shooter's ⚙ view counts, on his pair (a pair picked
+  // for the type, else the exported one) and his Config. 0 for any other vehicle, a battle's seat (the roster's figure
+  // comes first in targetHp) and before the file is read.
+  function ttxOwnHp(hit) {
+    var t = hit && hit.target, a = hit && hit.attacker;
+    if (!hit || !hit.vehicle || !t || !a || t.id === undefined || t.id !== a.id || !t.type || !TTX) return 0;
+    var type = String(t.type), file = ttxCache[typeId(type)];
+    if (!file) return 0;
+    var key = aimStore.pairs[type] || '', rec = TTX.match(file, t), i = key && rec >= 0 ? TTX.pairIndex(file, key) : -1;
+    if (i < 0) i = rec;
+    if (i < 0) return 0;
+    var fx = shooterEffects(false), v = TTX.values({ttx: file, pair: file.configs[i], fx: fx.e, crew: fx.crew});
+    return v.maxHealth > 0 ? Number(v.maxHealth) : 0;
   }
   // A new shooter (syncShooterMods): his file is taken from the cache or read, and the panel painted.
   function ttxSync(hit) {
