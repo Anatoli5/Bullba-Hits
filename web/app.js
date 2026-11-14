@@ -1650,12 +1650,17 @@
     out.field = aimFieldList(base.field, true);
     var taken = {};
     AIM_SLOTS.forEach(function (i) {
-      var id = aimResolve(base.slots && base.slots[i] ? String(base.slots[i]) : '');
-      var dev = DEVICE_BY_ID[id];
-      if (!dev) return;
-      for (var b = 0; b < dev.blocks.length; b++) if (taken[dev.blocks[b]]) return;
-      dev.blocks.forEach(function (tag) { taken[tag] = true; });
-      out.slots[i] = id;
+      // A built-in build names what stands in for a piece this vehicle cannot take (`instead`, BACKLOG 101): the first of
+      // them it can take fills the slot, so the slot is not left empty. A user's own build carries none.
+      var own = base.slots && base.slots[i] ? String(base.slots[i]) : '';
+      var tries = [own].concat(own && base.instead && Array.isArray(base.instead[own]) ? base.instead[own] : []);
+      for (var k = 0; k < tries.length; k++) {
+        var id = aimResolve(tries[k]), dev = DEVICE_BY_ID[id];
+        if (!dev || dev.blocks.some(function (tag) { return taken[tag]; })) continue;
+        dev.blocks.forEach(function (tag) { taken[tag] = true; });
+        out.slots[i] = id;
+        return;
+      }
     });
     if (DIRECTIVE_BY_ID[String(base.directive || '')]) out.directive = String(base.directive);
     out.consumables = aimConsList(base, true);
@@ -1708,12 +1713,20 @@
     {name: 'Stock — no equipment', values: {}},
     // The most common build (user, 27.09): rammer, hardening, turbocharger - the default of a shooter who has no entry
     // of his own (AIM_DEFAULT), in each of the three grades.
+    // A vehicle the game gives no rammer (BACKLOG 101, user 14.11: the magazine and autoloader guns mostly - the client's
+    // eligibility tags say which, aimFits) takes ventilation in its place, else a stabiliser, else a laying drive, in the
+    // same grade: ventilation is offered to most of them (363 of the 470 vehicles without a rammer in his files of 14.11,
+    // the stabiliser to 158, nearly all of them the same ones) and helps every figure the crew moves, the magazine's
+    // reload included; the laying drive is offered by tier alone, to every vehicle from tier II.
     {name: 'Rammer, hardening, turbo',
-     values: {slots: ['tankRammer_tier1', 'extraHealthReserve_tier1', 'turbocharger_tier1']}},
+     values: {slots: ['tankRammer_tier1', 'extraHealthReserve_tier1', 'turbocharger_tier1'],
+              instead: {tankRammer_tier1: ['improvedVentilation_tier1', 'aimingStabilizer_tier1', 'enhancedAimDrives_tier1']}}},
     {name: 'Improved — rammer, hardening, turbo',
-     values: {slots: ['deluxRammer', 'deluxeExtraHealthReserve', 'deluxeTurbocharger']}},
+     values: {slots: ['deluxRammer', 'deluxeExtraHealthReserve', 'deluxeTurbocharger'],
+              instead: {deluxRammer: ['deluxImprovedVentilation', 'deluxAimingStabilizer', 'deluxEnhancedAimDrives']}}},
     {name: 'Bounty — rammer, hardening, turbo',
-     values: {slots: ['trophyUpgradedTankRammer', 'trophyUpgradedExtraHealthReserve', 'trophyUpgradedTurbocharger']}},
+     values: {slots: ['trophyUpgradedTankRammer', 'trophyUpgradedExtraHealthReserve', 'trophyUpgradedTurbocharger'],
+              instead: {trophyUpgradedTankRammer: ['trophyUpgradedImprovedVentilation', 'trophyUpgradedAimingStabilizer', 'trophyUpgradedAimDrives']}}},
     {name: 'Rammer, stabiliser, vents',
      values: {slots: ['tankRammer_tier1', 'aimingStabilizer_tier1', 'improvedVentilation_tier1'],
               skills: {brotherhood: true, gunner_smoothTurret: true, driver_smoothDriving: true}}},

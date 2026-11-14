@@ -7609,6 +7609,9 @@ settle(20).then(function () {
       const pairB = t.configs.filter(function (c) { return c.gun === r.gun && c.turret === ti; })[0];
       let switched = null;
       chain = chain.then(function () { document.getElementById('hits').children[ai].onclick(); return settle(20); }).then(function () {
+        // The stock preset, as the client's strings are the stock's: the default build is no longer stock on a vehicle
+        // without a rammer (BACKLOG 101: ventilation stands in its place there).
+        stockBuild();
         const before = gunReloadSw.textContent + '|' + magStates();
         pickPair(byId[t.id] || t, pairB);
         tick(0.05);
@@ -9274,12 +9277,21 @@ function pathMatrix() {
   TTXS['china-Ch67_BZ_79'].vehicle.skillTree = {tree: '10200', modifications: 23};
   EXPORTS.pm_bz79 = Object.assign(EXPORT('pm_bz79', 'china:Ch67_BZ_79', 'BZ-79', 2900), {level: 11, nation: 'china',
     tags: ['china', 'heavyTank', 'tankRammer_class1_user', 'aimingStabilizer_class1_user', 'improvedVentilation_class1_user', 'extraHealthReserve_class1_user']});
+  // BACKLOG 101 (the user 14.11): the default build's rammer cannot go on most magazine and autoloader vehicles, and its
+  // slot stood empty. Two of his game's vehicles with their own eligibility tags: the Bat.-Châtillon 25 t (autoloader;
+  // ventilation and a stabiliser offered, no rammer) and the Waffenträger auf E 100 (magazine; neither of them either).
+  EXPORTS.pm_batchat = Object.assign(EXPORT('pm_batchat', 'france:F18_Bat_Chatillon25t', 'Bat.-Châtillon 25 t', 1800), {nation: 'france', 'class': 'mediumTank',
+    tags: ['HD', 'aimingStabilizer_class1_user', 'antifragmentationLining_medium_user', 'earn_crystals', 'extraHealthReserve_class2_user', 'improvedVentilation_class2_user', 'mediumTank', 'mediumTank2', 'role_MT_support']});
+  EXPORTS.pm_waffe = Object.assign(EXPORT('pm_waffe', 'germany:G98_Waffentrager_E100', 'Waffenträger auf E 100', 1650), {'class': 'AT-SPG',
+    tags: ['AT-SPG', 'AT-SPG2', 'HD', 'antifragmentationLining_superheavy_user', 'earn_crystals', 'extraHealthReserve_class1_user', 'heavyAT-SPG', 'private', 'role_ATSPG_support', 'secret', 'unrecoverable']});
   const CATALOGUE = [VEHICLE,
     {id: 'pm_papa', type: 'germany:Papa', name: 'Papa', level: 10, 'class': 'heavyTank', nation: 'germany', exported: true, exportedAt: 1},
     {id: 'pm_quebec', type: 'germany:Quebec', name: 'Quebec', level: 10, 'class': 'heavyTank', nation: 'germany', exported: true, exportedAt: 1},
     // 24.09: a catalogue row without a model - in the browser it opens with its characteristics file alone.
     {id: 'germany-Uniform', type: 'germany:Uniform', name: 'Uniform', level: 10, 'class': 'heavyTank', nation: 'germany', exported: false, exportedAt: null},
-    {id: 'pm_bz79', type: 'china:Ch67_BZ_79', name: 'BZ-79', level: 11, 'class': 'heavyTank', nation: 'china', exported: true, exportedAt: 1}];
+    {id: 'pm_bz79', type: 'china:Ch67_BZ_79', name: 'BZ-79', level: 11, 'class': 'heavyTank', nation: 'china', exported: true, exportedAt: 1},
+    {id: 'pm_batchat', type: 'france:F18_Bat_Chatillon25t', name: 'Bat.-Châtillon 25 t', level: 10, 'class': 'mediumTank', nation: 'france', exported: true, exportedAt: 1},
+    {id: 'pm_waffe', type: 'germany:G98_Waffentrager_E100', name: 'Waffenträger auf E 100', level: 10, 'class': 'AT-SPG', nation: 'germany', exported: true, exportedAt: 1}];
   const D = global.ArmorInspectorData;
   const keep = {battle: D.battle, scene: D.scene, ttx: D.ttx, vehicles: D.vehicles, vehicle: D.vehicle, sceneFor: D.sceneFor, index: D.index};
   // web/local-data.js's rule for a vehicle without its model (tested on the real reader below, 'noModel'): no geometry,
@@ -9671,6 +9683,27 @@ function pathMatrix() {
        withIt === fig('3 190 / 3 190') && emptied === 'none' && without === fig('2 900 / 2 900') && again === fig('3 190 / 3 190')
        && source.indexOf('\n• Source: this build') > 0,
        '(' + withIt + ' -> ' + emptied + ' ' + without + ' -> ' + again + ' · ' + source.split('\n').filter(function (l) { return /Source/.test(l); }).join('') + ')');
+    // BACKLOG 101: a vehicle the game gives no rammer starts on the default build with ventilation in the rammer's slot,
+    // and one offered neither ventilation nor a stabiliser with a laying drive - no slot of the default build stands empty.
+    const fitted = function () { const m = /\n• Equipment: ([^\n]*)/.exec(cfgSummary.title); return m ? m[1] : ''; };
+    const browse = function (id) {
+      $('model-tile').onclick();
+      return settle(10).then(function () { listRow(id).onclick(); return settle(40); }).then(function () {
+        $('shooter-tile').onclick();
+        return settle(10).then(function () { listRow(id).onclick(); return settle(40); });
+      });
+    };
+    const bzBuild = fitted();
+    return browse('pm_batchat').then(function () {
+      const batchat = fitted();
+      return browse('pm_waffe').then(function () { return [batchat, fitted()]; });
+    }).then(function (got) {
+      ok('BACKLOG 101: the default build on a vehicle without a rammer - ventilation in its place (Bat.-Châtillon 25 t), else a laying drive (Waffenträger auf E 100); a vehicle with one keeps it (BZ-79)',
+         got[0] === 'Improved Ventilation Class 2, Improved Hardening Class 2, Turbocharger Class 1'
+         && got[1] === 'Enhanced Gun Laying Drive Class 1, Improved Hardening Class 1, Turbocharger Class 1'
+         && /^Gun Rammer Class 1, /.test(bzBuild), '(' + got.join(' | ') + ' | BZ-79: ' + bzBuild + ')');
+    });
+  }).then(function () {
     scopeTo('battle');
     setFun(false);
     // Back to the model's role in the Hits panel, where the matrix left the page for the checks after.
