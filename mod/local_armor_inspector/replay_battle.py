@@ -58,7 +58,7 @@ COLLISION_WINDOW = 2.0
 SHOT_WINDOW = 5.0
 SHOT_KINDS = ('tracer', 'stop', 'explosion')
 # Keys of read_battle's result that are not the header.
-BODY = ('hits', 'shotEvents', 'critEvents', 'warnings', 'roster', 'playerTeam')
+BODY = ('hits', 'shotEvents', 'critEvents', 'warnings', 'roster', 'playerTeam', 'rosters')
 # A matched hit's own fields that the replay hit carries only because it had no scene.
 HIT_REPLAY_ONLY = ('replayAbsent', 'source', 'warnings')
 POINT_RAW = ('part', 'effect', 'hitType', 'shellType', 'caliber')
@@ -357,6 +357,6 @@ def build(records, live=None, battle_id=None):
     roster = rosters[-1] if rosters else None
     battle.update({'hits':out_hits, 'shotEvents':published_shots, 'critEvents':out_crits, 'warnings':warnings})
     if roster is not None:
-        battle.update({'roster':copy.deepcopy(roster.get('vehicles') or []), 'playerTeam':roster.get('playerTeam')})
+        battle.update({'roster':copy.deepcopy(roster.get('vehicles') or []), 'playerTeam':roster.get('playerTeam'), 'rosters':rosters})
         if roster.get('playerVehicleId'): battle['playerVehicleId'] = roster['playerVehicleId']
     return battle, report

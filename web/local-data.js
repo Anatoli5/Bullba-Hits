@@ -328,15 +328,40 @@
     var t=object(hit&&hit.target),r=object(hit&&hit[SECOND_SCENE]);
     return {snapshot:!!t,replay:!!(r&&object(r.target)&&Array.isArray(r.target.parts)&&r.target.parts.length)};
   }
+  // A vehicle id's vehicle at a moment (BACKLOG 99, 13.11): in a respawn mode a player comes back in another vehicle
+  // under the same id, and the mod's roster row of such an id carries its earlier vehicles ('earlier', oldest first, each
+  // with 'until' - the gameTime the next one began; mod roster.py owns it). rosterLife(battle, id, t): {row, index, from,
+  // until} of the life in force at gameTime t - the row of that vehicle with the id; the last life without a time. Null
+  // when the roster has no row for the id. Every other battle has one life per id, the row itself.
+  function rosterLife(battle,id,t){
+    if(id===undefined||id===null)return null;
+    var row=((battle&&battle.roster)||[]).find(function(r){return r&&r.id===id;});
+    if(!row)return null;
+    var lives=Array.isArray(row.earlier)?row.earlier.filter(function(e){return object(e)&&Number.isFinite(e.until);}):[],i,from=-Infinity,out;
+    if(!lives.length)return {row:row,index:0,from:-Infinity,until:Infinity};
+    for(i=0;i<lives.length;i++){
+      if(Number.isFinite(t)&&t<lives[i].until){
+        out=Object.assign({},lives[i],{id:row.id});delete out.until;
+        return {row:out,index:i,from:from,until:lives[i].until};
+      }
+      from=lives[i].until;
+    }
+    out=Object.assign({},row);delete out.earlier;
+    return {row:out,index:lives.length,from:from,until:Infinity};
+  }
+  function rosterAt(battle,id,t){var life=rosterLife(battle,id,t);return life?life.row:null;}
+  // The same vehicle as the hit's target: another hit on the same id in the same life (a respawn mode's id drives others).
   function borrowedTarget(hit,battle){
-    var hits=(battle&&battle.hits)||[],i,h;
-    for(i=0;i<hits.length;i++){h=hits[i];if(h&&h!==hit&&h.targetId===hit.targetId&&object(h.target))return h.target;}
-    var row=((battle&&battle.roster)||[]).find(function(r){return r&&r.id===hit.targetId;});
+    var hits=(battle&&battle.hits)||[],i,h,life=rosterLife(battle,hit.targetId,hit.gameTime),same=function(x){
+      var other=life&&rosterLife(battle,x.targetId,x.gameTime);return !life||!other||other.index===life.index;};
+    for(i=0;i<hits.length;i++){h=hits[i];if(h&&h!==hit&&h.targetId===hit.targetId&&object(h.target)&&same(h))return h.target;}
+    var row=life&&life.row;
     return row?{name:row.name,type:row.type}:{};
   }
   function borrowedShooter(hit,battle){
-    var hits=(battle&&battle.hits)||[],i,h;
-    for(i=0;i<hits.length;i++){h=hits[i];if(h&&h!==hit&&h.attackerId===hit.attackerId&&object(h.attacker)&&h.attacker.name)return h;}
+    var hits=(battle&&battle.hits)||[],i,h,life=rosterLife(battle,hit.attackerId,hit.gameTime),same=function(x){
+      var other=life&&rosterLife(battle,x.attackerId,x.gameTime);return !life||!other||other.index===life.index;};
+    for(i=0;i<hits.length;i++){h=hits[i];if(h&&h!==hit&&h.attackerId===hit.attackerId&&object(h.attacker)&&h.attacker.name&&same(h))return h;}
     return null;
   }
   function replayHit(hit,battle){
@@ -388,5 +413,5 @@
   // expandBattle is published so the offline tools that read a battle file straight from disk
   // (tools/check_shot_selection.cjs, tests/test_ballistics.cjs) use this one
   // reader instead of a second copy of the rules.
-  window.ArmorInspectorData={receive:receive,index:function(){return read('index');},battle:readBattle,vehicles:function(){return read('vehicles');},vehicle:function(id,once){return read('vehicle:'+id,once?RETRIES:0);},ttx:function(id){return read('ttx:'+id);},ttxSweep:function(){return read('ttxSweep');},modelsSweep:function(){return read('modelsSweep');},scene:scene,sceneFor:sceneFor,sceneHit:sceneHit,scenesOf:scenesOf,NO_SCENE:NO_SCENE,wheelModel:wheelModel,prefabPose:prefabPose,settlePrefabs:settlePrefabs,PREFAB_FIT_MAX:PREFAB_FIT_MAX,expandBattle:expandBattle,sharedTables:sharedTables};
+  window.ArmorInspectorData={receive:receive,index:function(){return read('index');},battle:readBattle,vehicles:function(){return read('vehicles');},vehicle:function(id,once){return read('vehicle:'+id,once?RETRIES:0);},ttx:function(id){return read('ttx:'+id);},ttxSweep:function(){return read('ttxSweep');},modelsSweep:function(){return read('modelsSweep');},scene:scene,sceneFor:sceneFor,sceneHit:sceneHit,scenesOf:scenesOf,NO_SCENE:NO_SCENE,wheelModel:wheelModel,prefabPose:prefabPose,settlePrefabs:settlePrefabs,PREFAB_FIT_MAX:PREFAB_FIT_MAX,expandBattle:expandBattle,sharedTables:sharedTables,rosterAt:rosterAt,rosterLife:rosterLife};
 }());

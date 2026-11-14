@@ -1196,7 +1196,8 @@ class Recorder(object):
 
         Contract for readers (unchanged since 0.7.9, spelled out 24.09): every roster record is the WHOLE roster
         as known at that moment and supersedes the ones before it; a reader keeps the last one of the battle
-        (exporter read_battle / apply_record). Rows only gain or correct fields over a battle - the vehicle chosen
+        (exporter read_battle / apply_record) as the battle's roster, and all of them in order as the history of an id
+        that changes its vehicle in a respawn mode (roster.lives, BACKLOG 99, 13.11). Rows only gain or correct fields over a battle - the vehicle chosen
         in an Onslaught battle's first seconds, an enemy type the arena learns later, the server's own maximum
         health of a vehicle once it has been in view - so the last record is the most complete one.
 
@@ -1216,8 +1217,13 @@ class Recorder(object):
         if (player_team, vehicles) == self.roster_last:
             self.roster_known = True
             return
-        if self.writer.put(self.file, {'schema':1, 'type':'roster', 'receivedAt':time.time(),
-                'playerVehicleId':player_id, 'playerTeam':player_team, 'vehicles':vehicles}):
+        record = {'schema':1, 'type':'roster', 'receivedAt':time.time(),
+                  'playerVehicleId':player_id, 'playerTeam':player_team, 'vehicles':vehicles}
+        # The battle's clock too, as on every hit and crit record: a vehicle id's vehicles over the battle are placed by
+        # it (roster.lives, BACKLOG 99, 13.11).
+        try: record['gameTime'] = float(self.bw.serverTime())
+        except Exception: pass
+        if self.writer.put(self.file, record):
             self.roster_last = (player_team, vehicles)
         self.roster_known = True
 

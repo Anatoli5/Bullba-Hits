@@ -31,6 +31,7 @@ sys.path.insert(0, HERE)
 from local_armor_inspector import replay_scene as rs  # noqa: E402
 from local_armor_inspector import replay_aim_other as rao  # noqa: E402
 from local_armor_inspector import replay_run  # noqa: E402
+from local_armor_inspector import roster as ro  # noqa: E402
 
 FIXTURE = os.path.join(ROOT, 'tests', 'fixtures-local', 'vehicle-swap-2026-11-13')
 NAME = '1700001389969250-7a94b9f27f21'
@@ -169,6 +170,116 @@ class UserCase(unittest.TestCase):
         self.assertEqual(len(wrong), 0, '%d of %d wrong, first %r' % (len(wrong), checked, wrong[:3]))
 
 
+class RosterHistoryCase(unittest.TestCase):
+    """BACKLOG 99, the same battle: the published roster names every hit's vehicles as they were at its moment, and the
+    damage log's HP check takes the maximum of the vehicle the id drove then. Before (one last roster per battle): 94 of
+    216 targets and 77 of 197 shooters were named after another vehicle than the snapshot; 18 of 101 HP intervals did
+    not add up, 4 after."""
+
+    @unittest.skipUnless(os.path.isfile(STREAM), 'local fixture absent: %s' % FIXTURE)
+    def setUp(self):
+        if not fixture_ready(): self.skipTest('the installed client is needed to decode the stream')
+        import logging
+        from local_armor_inspector import replay_battle as rb, exporter as ex
+        self.records, self.names = replay()
+        logging.disable(logging.WARNING)   # the fixture has no shared definitions folder: said once per read
+        try: self.battle = rb.build(self.records, ex.read_battle(LIVE), NAME)[0]
+        finally: logging.disable(logging.NOTSET)
+        self.roster = ro.lives(self.battle['rosters'], self.battle['hits'], self.battle['critEvents'])
+
+    def test_every_hit_names_the_vehicles_of_its_moment(self):
+        rows = dict((r['id'], r) for r in self.roster or ())
+        checked, wrong = 0, []
+        for h in live():
+            if h.get('type') != 'hit': continue
+            for side, key in (('target', 'targetId'), ('attacker', 'attackerId')):
+                ref = (h.get(side) or {}).get('vehicleRef')
+                truth = type_of(ref.rsplit(':', 1)[0], self.names) if ref else None
+                if truth is None: continue
+                checked += 1
+                got = (ro.row_at(rows.get(h[key]), h['gameTime']) or {}).get('type')
+                if got != truth: wrong.append((h['id'], side, truth, got))
+        self.assertGreater(checked, 400)
+        self.assertEqual(len(wrong), 0, '%d of %d wrong, first %r' % (len(wrong), checked, wrong[:3]))
+        self.assertEqual(sum(1 for r in self.roster if r.get('earlier')), 10)
+
+    def test_the_hp_check_takes_each_life_maximum(self):
+        from local_armor_inspector.damage_log import check
+        before = check(self.battle['hits'], self.battle['critEvents'], self.battle['roster'])
+        after = check(self.battle['hits'], self.battle['critEvents'], self.roster)
+        self.assertEqual((before['intervals'], before['mismatched']), (101, 18))
+        self.assertEqual((after['intervals'], after['mismatched']), (101, 4))
+
+
+def roster_record(when, types, received=None, health=None):
+    record = {'type':'roster', 'vehicles':[{'id':vid, 'type':t, 'name':t, 'maxHealth':(health or {}).get(t, 1000)}
+                                           for vid, t in sorted(types.items())]}
+    if when is not None: record['gameTime'] = when
+    if received is not None: record['receivedAt'] = received
+    return record
+
+
+def hit(when, target, attacker=9, damage=100, received=None):
+    out = {'type':'hit', 'gameTime':when, 'targetId':target, 'attackerId':attacker, 'damage':damage}
+    if received is not None: out['receivedAt'] = received
+    return out
+
+
+class RosterLives(unittest.TestCase):
+    def test_an_id_that_changes_its_vehicle_keeps_the_earlier_one(self):
+        rosters = [roster_record(10.0, {1:'a', 9:'x'}), roster_record(50.0, {1:'b', 9:'x'})]
+        rows = dict((r['id'], r) for r in ro.lives(rosters, [hit(20.0, 1), hit(60.0, 1)]))
+        self.assertEqual(rows[1]['type'], 'b')
+        self.assertEqual([(e['type'], e['until']) for e in rows[1]['earlier']], [('a', 50.0)])
+        self.assertNotIn('earlier', rows[9])
+        self.assertEqual(ro.row_at(rows[1], 20.0)['type'], 'a')
+        self.assertEqual(ro.row_at(rows[1], 20.0)['id'], 1)
+        self.assertEqual(ro.row_at(rows[1], 60.0)['type'], 'b')
+        self.assertNotIn('earlier', ro.row_at(rows[1], 60.0))
+        self.assertEqual(ro.row_at(rows[1], None)['type'], 'b')
+
+    def test_no_change_no_history_and_the_roster_is_kept(self):
+        rosters = [roster_record(10.0, {1:'a'}), roster_record(50.0, {1:'a'})]
+        self.assertIsNone(ro.lives(rosters, [hit(20.0, 1)]))
+        # A row that learns its type is no new life (an Onslaught enemy, a vehicle the arena tells later).
+        self.assertIsNone(ro.lives([roster_record(10.0, {1:None}), roster_record(50.0, {1:'a'})], [hit(20.0, 1)]))
+
+    def test_a_life_without_an_event_is_not_kept(self):
+        # An Onslaught vehicle chosen in the first seconds: no hit in that life, the file stays as it was.
+        rosters = [roster_record(1.0, {1:'a'}), roster_record(3.0, {1:'b'})]
+        self.assertIsNone(ro.lives(rosters, [hit(20.0, 1)]))
+
+    def test_an_old_live_record_is_placed_by_its_wall_clock(self):
+        # Roster records before 13.11 carry receivedAt only; every hit carries both clocks.
+        rosters = [roster_record(None, {1:'a'}, received=1010.0), roster_record(None, {1:'b'}, received=1050.0)]
+        rows = ro.lives(rosters, [hit(20.0, 1, received=1020.0), hit(60.0, 1, received=1060.0)])
+        self.assertEqual(rows[0]['earlier'][0]['until'], 50.0)
+        # Neither clock: no history rather than a guess.
+        self.assertIsNone(ro.lives([roster_record(None, {1:'a'}), roster_record(None, {1:'b'})], [hit(20.0, 1)]))
+
+    def test_the_hp_check_takes_the_maximum_of_each_life(self):
+        from local_armor_inspector.damage_log import check
+        health = {'a':1000, 'b':2000}
+        rosters = [roster_record(10.0, {1:'a'}, health=health), roster_record(50.0, {1:'b'}, health=health)]
+        hits = [hit(20.0, 1, damage=1000), hit(60.0, 1, damage=500)]
+        events = [{'event':'health', 'gameTime':20.0, 'vehicleId':1, 'attackerId':9, 'attackReasonId':0,
+                   'oldHealth':1000, 'newHealth':0},
+                  {'event':'health', 'gameTime':70.0, 'vehicleId':1, 'attackerId':9, 'attackReason':'fire',
+                   'oldHealth':1500, 'newHealth':1400}]
+        lived = ro.lives(rosters, hits, events)
+        self.assertEqual(check(hits, events, lived)['mismatched'], 0)
+        # One maximum per id (the last vehicle's), as before 13.11: the second life does not add up.
+        self.assertEqual(check(hits, events, rosters[-1]['vehicles'])['mismatched'], 1)
+
+    def test_a_store_whose_rosters_have_no_time_is_decoded_again(self):
+        poses = {'lives':{}}
+        swap = [{'type':'roster', 'vehicles':[{'id':1, 'type':'a'}]}, {'type':'roster', 'vehicles':[{'id':1, 'type':'b'}]}]
+        self.assertTrue(replay_run.needs_lives(swap, poses))
+        self.assertFalse(replay_run.needs_lives([dict(r, gameTime=1.0) for r in swap], poses))
+        same = [{'type':'roster', 'vehicles':[{'id':1, 'type':'a'}]}]
+        self.assertFalse(replay_run.needs_lives(same, poses))
+
+
 def poses_of(compacts, positions=None):
     """A poses record with each (vehicle id, [(t, descriptor text)]) life list, as Tracks makes it."""
     tracks = rs.Tracks()
@@ -222,7 +333,9 @@ class Synthetic(unittest.TestCase):
         same = [roster('x:a'), roster('x:a')]
         self.assertTrue(replay_run.needs_lives(swap, poses))
         self.assertFalse(replay_run.needs_lives(same, poses))
-        self.assertFalse(replay_run.needs_lives(swap, replay_run.poses_json(poses_of({7:[(1.0, A)]}))))
+        # With its lives and timed roster records (BACKLOG 99) it restores.
+        self.assertFalse(replay_run.needs_lives([dict(r, gameTime=1.0) for r in swap],
+                                                replay_run.poses_json(poses_of({7:[(1.0, A)]}))))
         value = json.loads(zlib.decompress(replay_run.pack_store('n', swap + [replay_run.json_poses(poses)], {}, {})).decode('ascii'))
         value['poses'].pop('lives')
         data = zlib.compress(json.dumps(value).encode('ascii'))

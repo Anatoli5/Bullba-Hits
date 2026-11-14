@@ -264,6 +264,7 @@ class Converter(object):
         self.info = None         # AvatarVehiclesInfo.vehiclesInfo (own copy)
         self.public = {}         # vehicle id -> publicInfo of the entity (older replays, Onslaught)
         self.roster_last = None
+        self.at = None           # replay clock of the event being handled: a roster record's gameTime (BACKLOG 99)
         self.modifiers = {}      # vehicle id -> publicStateModifiers
         self.fires = {}          # Fire component id -> vehicle id
         self.burning = {}        # vehicle id -> last fire state written
@@ -392,8 +393,12 @@ class Converter(object):
         team = next((r.get('team') for r in rows if r['id'] == self.player), None)
         if (team, rows) == self.roster_last: return
         self.roster_last = (team, rows)
-        self.put({'schema':1, 'type':'roster', 'playerVehicleId':self.player, 'playerTeam':team,
-                  'vehicles':copy.deepcopy(rows)})
+        record = {'schema':1, 'type':'roster', 'playerVehicleId':self.player, 'playerTeam':team,
+                  'vehicles':copy.deepcopy(rows)}
+        # When the list changed, on the battle's clock: a vehicle id's vehicles over the battle (roster.lives, BACKLOG 99).
+        when = None if self.at is None else self.game_time(self.at)
+        if when is not None: record['gameTime'] = when
+        self.put(record)
 
     # ---- the events -------------------------------------------------------------------------------------------
     def feed(self, ev):
@@ -483,6 +488,7 @@ class Converter(object):
 
     def handle(self, ev):
         kind, t = ev.get('ev'), ev.get('t') or 0.0
+        self.at = t
         if kind in replay_aim.Track.KINDS:
             try: self.aim.feed(ev)
             except (KeyError, TypeError, ValueError): self.count('aim ' + kind, 'skipped')

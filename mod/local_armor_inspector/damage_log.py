@@ -11,6 +11,7 @@ Design and figures: docs/KNOWLEDGE.md section 10, docs/CONTEXT.md 25.09 (local a
 """
 from __future__ import absolute_import
 import numbers
+from .roster import row_at
 
 # ATTACK_REASONS of NA 2.4.0.1, only for a record whose reason name is missing (crit_log writes the name).
 REASON_NAMES = {1:'fire', 2:'ramming', 3:'world_collision', 13:'artillery_eq', 16:'none', 36:'ultimate',
@@ -29,6 +30,7 @@ HOLD_MARGIN = 0.5
 # A reason-0 health record (the recorder writes one only when a shot destroys the vehicle) and its hit share a tick.
 SAME_TICK = 0.05
 CHECK_ROWS = 60
+REBORN = object()
 
 
 def number(value):
@@ -253,10 +255,13 @@ def check(hits, events, roster=None):
     lose. Logged hits worth more than the HP left, followed by a later anchor, are a death and a new life (respawn
     modes, which restore the HP without a health record): that stretch is counted as such and not compared.
     """
-    maximum = {}
-    for row in roster or ():
-        if isinstance(row, dict) and integer(row.get('maxHealth')) and row.get('id') is not None:
-            maximum[row['id']] = integer(row['maxHealth'])
+    rows = dict((row['id'], row) for row in roster or () if isinstance(row, dict) and row.get('id') is not None)
+
+    def maximum_at(vehicle, when):
+        # The maximum of the vehicle the id drove at that moment: a respawn mode brings it back in another one (BACKLOG
+        # 99: roster.lives' 'earlier'); until 13.11 every life took the last vehicle's.
+        row = row_at(rows.get(vehicle), when)
+        return integer(row.get('maxHealth')) or None if isinstance(row, dict) else None
     timeline = {}
     for hit in hits or ():
         when, damage = number(hit.get('gameTime')), integer(hit.get('damage'))
@@ -281,9 +286,10 @@ def check(hits, events, roster=None):
 
     for vehicle, items in timeline.items():
         items.sort(key=lambda r: (r[0], r[1]))
-        full = maximum.get(vehicle)
-        hp, pending, since, counted = full, 0, None, False
+        # REBORN: the vehicle was destroyed; the HP it comes back with is its next life's maximum, read at its next item.
+        hp, pending, since, counted = REBORN, 0, None, False
         for when, _, reason, value in items:
+            if hp is REBORN: hp = maximum_at(vehicle, when)
             if reason == 'hit':
                 pending += value
                 continue
@@ -299,7 +305,8 @@ def check(hits, events, roster=None):
                     if reason == SHOT: result['destroyed'] += 1
                 counted = True
             hp, pending, since = max(new, 0), 0, when
-            if new <= 0: hp = full   # a respawn mode brings the vehicle back at full HP; otherwise nothing follows
+            if new <= 0: hp = REBORN   # a respawn mode brings the vehicle back at full HP; otherwise nothing follows
+        if hp is REBORN: hp = None
         if hp is not None and pending and pending >= hp:
             # The logged hits after the last anchor reach the HP it had: it was destroyed, and they must equal it.
             compare(vehicle, since, None, hp, pending, 'destroyed')

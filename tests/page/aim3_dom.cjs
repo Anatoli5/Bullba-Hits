@@ -399,6 +399,8 @@ const REAL_DATA = (function () {
   return box.window.ArmorInspectorData || {};
 }());
 if (REAL_DATA.sceneHit) ['scenesOf', 'sceneHit', 'NO_SCENE'].forEach(function (k) { global.ArmorInspectorData[k] = REAL_DATA[k]; });
+// A vehicle id's vehicle at a moment (BACKLOG 99): the page names hits and the target's health by it.
+if (REAL_DATA.rosterAt) ['rosterAt', 'rosterLife'].forEach(function (k) { global.ArmorInspectorData[k] = REAL_DATA[k]; });
 global.BullbaHost = {game: false, interrupted: null, guard: function (a, fn) { return fn; }, done: function () {},
   canSend: function () { return false; }, send: function () { return Promise.reject(new Error('no channel')); },
   mark: function () {}, params: function () { return {vehicle: VEHICLE.id}; }};
@@ -3822,11 +3824,18 @@ settle(20).then(function () {
   // The bar's tooltip is joined by the page's own tipJoin, cut out of app.js as it stands.
   const tipJoinSrc = (/\n  function tipJoin\(lines\) \{[\s\S]*?\n  \}\n/.exec(appSrc) || [''])[0];
   ok('fun: (the page’s own tipJoin is cut out for the block)', tipJoinSrc.length > 0);
+  // BACKLOG 99 (13.11): the target's row, key and logged damage are the vehicle id's life at the hit's time - the page's
+  // own one-line helpers, cut out of app.js as they stand (their owner is ArmorInspectorData.rosterLife).
+  const lifeSrc = ['lifeOf', 'inLife', 'eventTime', 'hitTime'].map(function (name) {
+    const at = appSrc.indexOf('\n  function ' + name + '(');
+    return at < 0 ? '' : appSrc.slice(at, appSrc.indexOf('\n', at + 1) + 1);
+  });
+  ok('fun: (the page’s own life helpers are cut out for the block)', lifeSrc.every(function (src) { return src.length > 0; }));
   const fun = new Function('$', 'window', 'chanceRgb',
     // BACKLOG 38 (23.09): the Borkenkäfer's mark lives in the tier-XI block beside this one; cut out alone, none.
     // Strip (23.09): the strip beside ⌖ comes and goes with paintFun, which then asks the layout pass for the top band.
     'var viewer=null,current=null,activeHit=null,xiMarkState=null,LAYOUT_MODS=4,funLayouts=0,ttxHp=0,ttxAsked=[],sceneBuild=false;function ttxHealth(){return ttxHp;}function xiMarkNow(){return null;}' +
-    'function readTtx(type){ttxAsked.push(type);return Promise.resolve(null);}' + tipJoinSrc +
+    'function readTtx(type){ttxAsked.push(type);return Promise.resolve(null);}' + tipJoinSrc + lifeSrc.join('') +
     // 11.11: the bar's tooltip sums the damage the battle logged against the vehicle; the log's rows come from eventsOf.
     'function eventsOf(b){return b&&Array.isArray(b.damageEvents)?b.damageEvents:[];}' +
     // ↺ starts the shooter's gun over too (28.09): the gun's owners live outside the block; stubs count the calls.

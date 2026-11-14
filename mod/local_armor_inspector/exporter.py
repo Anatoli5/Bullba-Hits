@@ -33,6 +33,7 @@ from .records import (RecordDecoder, STATIC_RECORD, DEFINITIONS_FOLDER, Definiti
 from .telemetry import mechanics_params
 from .crit_tie import attach_crits, moves_tie
 from .damage_log import damage_log
+from .roster import lives as roster_lives
 from .client_snapshot import ClientSnapshot, version_label
 from .client_code import CODE_MODULES, SHARED_DATA, TEXT_DOMAINS
 from . import client_code as _client_code
@@ -181,7 +182,11 @@ PUBLISHED_PAUSE = 30.0
 # 3 (12.11.2026, BACKLOG 27): the battle file keeps only the references; its definitions are in the shared store
 # CFG/definitions (records.pack_battle, `sharedDefinitions`). The same values once expanded; a saved battle takes the new
 # form when the page opens it (it is 'stale' until then) or when it is published for another reason - never in bulk.
-DERIVED_FORMAT = 3
+# 4 (13.11.2026, BACKLOG 99): a roster row of a vehicle id that drove another vehicle earlier in the battle (respawn modes:
+# Fort Rush, Frontline) carries those vehicles ('earlier', each with 'until', roster.lives); the damage check takes the
+# maximum HP of the vehicle of each life. A battle without such an id is written byte for byte as in format 3. It also
+# re-makes the respawn battles published by 1.09 on one descriptor per id (BACKLOG 97): their stores are decoded again.
+DERIVED_FORMAT = 4
 # One slice of a saved battle's background publication (run_battle_job): lines of its raw file, then hits prepared, then the
 # file written (~60 ms for the largest, 53 MB raw / 405 hits - the one part that does not split). Between two lines or hits
 # the slice ends early for a battle, a drag, a command of the page or the mod closing; after it the game gets its share
@@ -531,6 +536,7 @@ class BattleReader(object):
         # The shared definitions the file refers to (BACKLOG 27): CFG/definitions beside its battles folder.
         self.decoder = decoder or RecordDecoder(raw_store(path))
         self.header, self.hits, self.warnings, self.shot_events, self.crit_events, self.roster = None, [], [], [], [], None
+        self.rosters = []   # every roster record in file order: the history of an id's vehicles (roster.lives)
         self.offset, self.number, self.size, self.done = 0, 0, None, False
 
     def step(self, stop=None):
@@ -552,7 +558,9 @@ class BattleReader(object):
                     elif row.get('type') == 'hit': self.hits.append(row)
                     elif row.get('type') == 'shot': self.shot_events.append(row)
                     elif row.get('type') == 'crit': self.crit_events.append(row)
-                    elif row.get('type') == 'roster': self.roster = row
+                    elif row.get('type') == 'roster':
+                        self.roster = row
+                        self.rosters.append(row)
                     # Definitions of the hits' static references (BACKLOG 27): the decoder has taken them.
                     elif row.get('type') == STATIC_RECORD: pass
                     else: raise ValueError('Unexpected record')
@@ -590,7 +598,7 @@ class BattleReader(object):
                        'critEvents':self.crit_events, 'warnings':warnings})
         roster = self.roster
         if roster is not None:
-            result.update({'roster':roster.get('vehicles') or [], 'playerTeam':roster.get('playerTeam')})
+            result.update({'roster':roster.get('vehicles') or [], 'playerTeam':roster.get('playerTeam'), 'rosters':self.rosters})
             # The header may hold 0 when the battle record was opened before the client knew its vehicle.
             if roster.get('playerVehicleId'): result['playerVehicleId'] = roster['playerVehicleId']
         # A reference found neither in the file nor in the shared store: named on the battle, which is listed as damaged.
@@ -5964,6 +5972,13 @@ class Exporter(object):
             self.reset_prepared()
             self.prepared_identity = identity
         result = dict(battle)
+        # The roster records in order are the history of an id that changes its vehicle (respawn modes, BACKLOG 99): the
+        # last roster's row of such an id carries its earlier vehicles (roster.lives); the records themselves are not published.
+        rosters = result.pop('rosters', None)
+        try:
+            lived = roster_lives(rosters, battle.get('hits'), battle.get('critEvents'))
+            if lived is not None: result['roster'] = lived
+        except Exception: LOG.exception('Roster history failed; the battle keeps its last roster')
         # What the fill-ins read (fill_allowed): this publish's own, unless the slices before it prepared the hits.
         if not active and prepared is None:
             for state in (self.fill_reads, self.kept_files, self.kept_now): state.pop(battle['id'], None)
@@ -5994,7 +6009,7 @@ class Exporter(object):
             # A forced publish (a battle switch, the game closing) is the battle's last: it counts as finished, so an
             # episode still ticking goes out as it stands instead of asking for yet another publish (review 25.09 #2).
             now = None if getattr(self, 'publishing_final', False) else time.time()
-            events, check, held = damage_log(result['hits'], battle.get('critEvents') or [], battle.get('roster'), now)
+            events, check, held = damage_log(result['hits'], battle.get('critEvents') or [], result.get('roster'), now)
             if events: result['damageEvents'] = events
             if check: result['damageCheck'] = check
             if active: self.damage_held = bool(held)
@@ -6116,6 +6131,7 @@ class Exporter(object):
             self.set_current(name, battle)
         elif self.current is not None and self.current['id'] == name and record['type'] == 'roster':
             self.current.update({'roster':record.get('vehicles') or [], 'playerTeam':record.get('playerTeam')})
+            self.current.setdefault('rosters', []).append(record)
             if record.get('playerVehicleId'): self.current['playerVehicleId'] = record['playerVehicleId']
         elif self.current is not None and self.current['id'] == name:
             field = {'shot':'shotEvents', 'crit':'critEvents'}.get(record['type'], 'hits')

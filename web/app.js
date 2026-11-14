@@ -4951,7 +4951,8 @@
       var base = (current.hits || []).find(function (h) { return h.id === hit.base; });
       if (base) id = base.attackerId;
     }
-    var row = id === undefined || id === null ? null : rows.find(function (r) { return r.id === id; });
+    // The vehicle the id drove at the hit (BACKLOG 99: a respawn mode brings a player back in another one).
+    var row = id === undefined || id === null ? null : ArmorInspectorData.rosterAt(current, id, hitTime(hit));
     if (row) return row;
     // A browsed vehicle is no seat of the battle open beside it (audit PD-01 г, 24.09): it took the Onslaught figure
     // of a same-type row of whatever battle was loaded. The model of a seat with no hits names its row by id
@@ -4987,8 +4988,10 @@
   // the battle plus the roster row, or the vehicle's own type and name when the record has no row for it.
   function targetKey(hit) {
     var row = targetRow(hit), t = (hit && hit.target) || {};
+    // Another life of the same id (a respawn mode) is another vehicle, with its own full health.
+    var life = row ? lifeOf(row.id, hitTime(hit)) : null;
     return (current ? String(current.id) : '-') + '|' +
-      (row ? 'r' + row.id : 't' + String(t.type || '') + '/' + String(t.name || ''));
+      (row ? 'r' + row.id + (life && life.index ? '@' + life.index : '') : 't' + String(t.type || '') + '/' + String(t.name || ''));
   }
   var hpMax = 0, hpLeft = 0, hpRoll = '', hpTitleKey = '', hpKey = '', hpPressed = '', hpFrom = '', hpText = '';
   // Whether the kept Hitmarks are on the viewer's scene: display() clears it with viewer.load(), funModel lays them.
@@ -5030,9 +5033,10 @@
   function hpLogged() {
     var row = targetRow(activeHit);
     if (!current || !row) return null;
-    var id = row.id, hits = 0, other = 0;
-    (current.hits || []).forEach(function (h) { if (h && h.targetId === id && !h.synthetic && Number(h.damage) > 0) hits += Number(h.damage); });
-    eventsOf(current).forEach(function (e) { if (e && e.targetId === id && Number(e.damage) > 0) other += Number(e.damage); });
+    // Of the vehicle on screen only: in a respawn mode the same id's other lives are other vehicles (BACKLOG 99).
+    var id = row.id, hits = 0, other = 0, life = lifeOf(id, hitTime(activeHit));
+    (current.hits || []).forEach(function (h) { if (h && h.targetId === id && !h.synthetic && Number(h.damage) > 0 && inLife(life, h.gameTime)) hits += Number(h.damage); });
+    eventsOf(current).forEach(function (e) { if (e && e.targetId === id && Number(e.damage) > 0 && inLife(life, eventTime(e))) other += Number(e.damage); });
     return {hits: hits, other: other, sum: hits + other};
   }
   function hpLoggedLines(log) {
@@ -7201,6 +7205,12 @@
     if(own!=null)allies.unshift(rosterRow(own)||{id:own,name:(ownVehicle()||{}).name||'My vehicle',player:''});
     return {allies:allies,enemies:enemies};
   }
+  // A seat whose player came back in another vehicle (respawn modes, BACKLOG 99): the row is his last vehicle, the tooltip
+  // names the ones before it.
+  function earlierWords(row){
+    var names=(Array.isArray(row&&row.earlier)?row.earlier:[]).map(function(e){return e&&e.name;}).filter(Boolean);
+    return names.length?'\n• Earlier in this battle: '+names.join(', '):'';
+  }
   function pickerRow(row,side,star,focus,shooter){
     var b=node('button',undefined,'picker-row');b.type='button';
     b.setAttribute('data-id',String(row.id));b.setAttribute('data-side',side);
@@ -7208,7 +7218,7 @@
     if(shooter)b.setAttribute('data-role','shooter');
     b.appendChild(node('span',row.name||'Unknown vehicle','picker-vehicle'));
     b.appendChild(node('span',row.player||'','picker-player'));
-    b.title=(row.name||'Unknown vehicle')+'\n'+[row.player,side==='ally'?'Ally':'Enemy',shooter?'in the shooter role':''].filter(Boolean).join(' · ');
+    b.title=(row.name||'Unknown vehicle')+'\n'+[row.player,side==='ally'?'Ally':'Enemy',shooter?'in the shooter role':''].filter(Boolean).join(' · ')+earlierWords(row);
     // The roster serves whichever scene tile is the active role: the model tile reads the battle from this
     // vehicle, the shooter tile puts his gun against the model already on screen.
     b.onclick=function(){if(activeRole==='shooter')pickShooter(row);else chooseFocus(row.id);};
@@ -7319,10 +7329,10 @@
   // Who is in the shooter role, as the roster knows him: the attacker of the recorded hit on screen, or the
   // vehicle a roster row was picked for. A swapped view and a browsed vehicle carry no id and mark nobody.
   function shooterId(){var h=activeHit;return h&&h.attackerId!=null?h.attackerId:null;}
-  function recordedShooter(id){
-    var hits=(current&&current.hits)||[],i,h;
+  function recordedShooter(id,t){
+    var hits=(current&&current.hits)||[],i,h,life=lifeOf(id,t);
     for(i=0;i<hits.length;i++){h=hits[i];
-      if(h.attackerId===id&&h.attacker&&h.attacker.name)return {vehicle:h.attacker,shells:(h.availableShells||h.shellCandidates||[]).slice()};}
+      if(h.attackerId===id&&h.attacker&&h.attacker.name&&inLife(life,h.gameTime))return {vehicle:h.attacker,shells:(h.availableShells||h.shellCandidates||[]).slice()};}
     return null;
   }
   function catalogueShooter(type){
@@ -7352,7 +7362,7 @@
     if(!model||!(model.parts||[]).length)return void message('No collision model on screen to shoot at: pick a hit or a vehicle first.');
     // The model keeps its pose (inherit sweep, 26.09): the record's aim goes on with a shooter picked after another one too,
     // and the viewer keeps the turn on top of it, the pin and the ⌖ aim on the model (sceneFrom 'same').
-    var known=recordedShooter(row.id),base=hit.synthetic?hit.base||null:hit.id,aim=hit.aim||null;scenePick();
+    var known=recordedShooter(row.id,Infinity),base=hit.synthetic?hit.base||null:hit.id,aim=hit.aim||null;scenePick();
     var sceneInputs=sceneFrom('same'),token=++generation;
     (known?Promise.resolve(known):catalogueShooter(row.type?String(row.type):'')).then(function(found){
       if(token!==generation)return null;
@@ -7439,8 +7449,8 @@
   // this battle, else of his own export, else of his characteristics file - the order a roster shooter is found in
   // (pickShooter). None of the three: no shells and no emulation for him, as before.
   var SHOOTER_GUN=['aim','gun','gunName','gunDispersion','turretName'];
-  function shooterGun(id,type){
-    var known=id!=null?recordedShooter(id):null;
+  function shooterGun(id,type,t){
+    var known=id!=null?recordedShooter(id,t):null;
     if(known&&known.shells.length)return Promise.resolve(known);
     return catalogueShooter(type).then(function(found){if(!found.shells.length)throw new Error(NO_GUN_DATA);return found;})
       .catch(function(){var row=catalogueByType(type);if(!row)return null;return ttxRecord(row).then(function(r){return {vehicle:r,shells:r.shells||[]};});})
@@ -7653,8 +7663,8 @@
     scenePick();
     var sceneInputs=sideFrom(side||hit.id,'shooter',null),token=++generation;
     message('Preparing the model…');if(viewer)viewer.clear();
-    vehicleModel(now).then(function(source){
-      return shooterGun(was,String(hit.target.type||'')).then(function(his){
+    vehicleModel(now,hitTime(hit)).then(function(source){
+      return shooterGun(was,String(hit.target.type||''),hitTime(hit)).then(function(his){
         var shooter=shallow(hit.target);
         if(his&&his.vehicle)SHOOTER_GUN.forEach(function(k){if((shooter[k]===undefined||shooter[k]===null)&&his.vehicle[k]!==undefined)shooter[k]=his.vehicle[k];});
         var synthetic=shooterHit(source.block,shooter,his?his.shells:[],was,null,source.aim);
@@ -7920,14 +7930,23 @@
   }
   // The other party of an event, as a tile knows a vehicle: his roster row with what the catalogue or this battle's
   // hits know of his type, else the block of a hit he took part in. Null for none (a fall, the vehicle's own overload).
-  function vehicleInfo(id){
+  // t: the battle time (gameTime) of the moment - a respawn mode's player comes back in another vehicle under the same id
+  // (BACKLOG 99): the vehicle he drove then, and only the hits of that life. Without t: the roster's row, any hit.
+  function vehicleInfo(id,t){
     if(id===undefined||id===null||id===0)return null;
-    var row=rosterRow(id);if(row&&row.type)return rosterVehicle(row);
+    var life=lifeOf(id,t),row=life?life.row:rosterRow(id);if(row&&row.type)return rosterVehicle(row);
     var hits=(current&&current.hits)||[],i;
-    for(i=0;i<hits.length;i++){if(hits[i].targetId===id&&hits[i].target)return hits[i].target;if(hits[i].attackerId===id&&hits[i].attacker)return hits[i].attacker;}
+    for(i=0;i<hits.length;i++){if(hits[i].targetId===id&&hits[i].target&&inLife(life,hits[i].gameTime))return hits[i].target;if(hits[i].attackerId===id&&hits[i].attacker&&inLife(life,hits[i].gameTime))return hits[i].attacker;}
     return row?{name:row.name||'Unknown vehicle'}:null;
   }
-  function vehicleName(id){var v=vehicleInfo(id);return v&&v.name?v.name:'an unknown vehicle';}
+  function vehicleName(id,t){var v=vehicleInfo(id,t);return v&&v.name?v.name:'an unknown vehicle';}
+  // The life of a vehicle id in force at battle time t (null without t or a roster row), and whether time u falls in it.
+  function lifeOf(id,t){return current&&t!==undefined&&t!==null?ArmorInspectorData.rosterLife(current,id,t):null;}
+  function inLife(life,u){return !life||(life.from===-Infinity&&life.until===Infinity)||(Number.isFinite(u)&&u>=life.from&&u<life.until);}
+  // A damage event's moment for the vehicles in it: its first tick (an episode never spans two lives).
+  function eventTime(e){return e&&Number.isFinite(e.start)?e.start:e&&e.gameTime;}
+  // The battle time a hit on screen stands at: a recorded hit's own, a damage event's.
+  function hitTime(h){return h&&h.damageEvent?eventTime(h.damageEvent):h&&h.gameTime;}
   function selfDamage(e){return e.attackerId==null||e.attackerId===0||e.attackerId===e.targetId;}
   // Server time to the page's clock: the offset of any hit that carries both (the recorder writes both on every record).
   function gameClock(t){
@@ -7938,7 +7957,7 @@
   function eventSeconds(e){var s=Number(e.end)-Number(e.start);return Number.isFinite(s)&&s>0?(s<10?s.toFixed(1):String(Math.round(s)))+' s':'';}
   function causeHit(e){var id=e.cause&&e.cause.hitId;return id==null?null:((current&&current.hits)||[]).find(function(h){return h.id===id;})||null;}
   function eventLines(e){
-    var r=eventReason(e),target=vehicleName(e.targetId),by=selfDamage(e)?null:vehicleName(e.attackerId),lines=[r.name],dealt=e.damage+' HP'+(e.killed?', destroyed':'');
+    var r=eventReason(e),at=eventTime(e),target=vehicleName(e.targetId,at),by=selfDamage(e)?null:vehicleName(e.attackerId,at),lines=[r.name],dealt=e.damage+' HP'+(e.killed?', destroyed':'');
     if(e.kind==='ram'){
       // A ram whose record names no second vehicle (1 of 202 ticks names the vehicle itself): said so, no second line.
       if(by){lines.push(target+' and '+by+' collided.','• Damage: '+dealt+' to '+target);if(e.returned>0)lines.push('• '+by+' lost: '+e.returned+' HP');}
@@ -7947,7 +7966,7 @@
     }else if(e.kind==='fire'){
       var shot=causeHit(e),out={destroyed:'the vehicle destroyed',extinguished:'put out'}[e.out]||'not seen';
       lines.push(target+' burned'+(eventSeconds(e)?' for '+eventSeconds(e):'')+'.','• Damage: '+dealt+(e.ticks>1?' in '+e.ticks+' ticks':''),
-        '• Set by: '+(shot?vehicleName(shot.attackerId)+'’s hit at '+clock(shot.receivedAt):by||'not recorded'),'• End: '+out);
+        '• Set by: '+(shot?vehicleName(shot.attackerId,shot.gameTime)+'’s hit at '+clock(shot.receivedAt):by||'not recorded'),'• End: '+out);
     }else{
       lines.push(by?target+' took '+e.damage+' HP from '+by+'.':target+' lost '+e.damage+' HP on its own.','• Damage: '+dealt+(e.ticks>1?' in '+e.ticks+' ticks'+(eventSeconds(e)?', '+eventSeconds(e):''):''));
     }
@@ -7955,7 +7974,7 @@
     return lines;
   }
   function eventRow(e,view){
-    var b=node('button',undefined,'hit event'),other=view==='incoming'?(selfDamage(e)?null:e.attackerId):e.targetId,info=vehicleInfo(other);
+    var b=node('button',undefined,'hit event'),other=view==='incoming'?(selfDamage(e)?null:e.attackerId):e.targetId,info=vehicleInfo(other,eventTime(e));
     b.setAttribute('aria-pressed',String(selected===e.id));b.setAttribute('data-event',e.id);b.setAttribute('data-kind',e.kind);
     b.setAttribute('data-direction',view);b.setAttribute('data-result',e.damage>0?'damage':'none');if(e.killed)b.setAttribute('data-killed','true');
     var lines=eventLines(e),src=ArmorCrits.eventIcon(e.reason,view),mark;
@@ -7983,11 +8002,11 @@
   }
   // The damaged vehicle's collision model: the block of a hit it took (the pose of that hit), else of a hit it fired
   // (rest pose), else its own export from the catalogue. {block, aim} or a rejection with the reason.
-  function vehicleModel(id){
-    var hits=(current&&current.hits)||[],i,h;
-    for(i=0;i<hits.length;i++){h=hits[i];if(h.targetId===id&&h.target&&(h.target.parts||[]).some(function(p){return p.modelKey;}))return Promise.resolve({block:h.target,aim:Array.isArray(h.aim)?h.aim:[0,0]});}
-    for(i=0;i<hits.length;i++){h=hits[i];if(h.attackerId===id&&swapParts(h).key)return Promise.resolve({block:h.attacker,aim:[0,0]});}
-    var row=rosterRow(id),type=String((row&&row.type)||((vehicleInfo(id)||{}).type)||'');
+  function vehicleModel(id,t){
+    var hits=(current&&current.hits)||[],i,h,life=lifeOf(id,t);
+    for(i=0;i<hits.length;i++){h=hits[i];if(h.targetId===id&&h.target&&inLife(life,h.gameTime)&&(h.target.parts||[]).some(function(p){return p.modelKey;}))return Promise.resolve({block:h.target,aim:Array.isArray(h.aim)?h.aim:[0,0]});}
+    for(i=0;i<hits.length;i++){h=hits[i];if(h.attackerId===id&&inLife(life,h.gameTime)&&swapParts(h).key)return Promise.resolve({block:h.attacker,aim:[0,0]});}
+    var row=life?life.row:rosterRow(id),type=String((row&&row.type)||((vehicleInfo(id,t)||{}).type)||'');
     if(!type)return Promise.reject(new Error('No model of this vehicle in the record.'));
     return (catalogue?Promise.resolve():loadCatalogue()).then(function(){
       var entry=catalogueByType(type);if(!entry)throw new Error('This vehicle’s collision model is not exported yet.');
@@ -7995,10 +8014,10 @@
     }).then(function(record){return {block:record,aim:[0,0]};});
   }
   // The other party in the shooter role, as a recorded hit or the roster knows him: his gun against the model on screen.
-  function eventShooter(id){
+  function eventShooter(id,t){
     if(id===undefined||id===null||id===0)return null;
-    var known=recordedShooter(id);if(known){var v=shallow(known.vehicle);delete v.parts;return {vehicle:v,shells:known.shells};}
-    var info=vehicleInfo(id);return info?{vehicle:shallow(info),shells:[]}:null;
+    var known=recordedShooter(id,t);if(known){var v=shallow(known.vehicle);delete v.parts;return {vehicle:v,shells:known.shells};}
+    var info=vehicleInfo(id,t);return info?{vehicle:shallow(info),shells:[]}:null;
   }
   // The scene of an event: a synthetic hit the loader and the viewer already understand, no points and no shells of
   // its own. A ram with a recorded contact stands the damaged vehicle in its pose AT the contact (the parts' transforms
@@ -8010,7 +8029,7 @@
     target.parts=(target.parts||[]).map(function(p){var q=shallow(p);if(poses[p.id])q.transform=poses[p.id];return q;});
     var poseOwn=Object.keys(poses).length>0;   // the contact recorded the parts' places: the pose is the record's own
     if(poseOwn&&side&&Array.isArray(side.aim))aim=side.aim.slice(0,2);
-    var other=selfDamage(e)?null:eventShooter(e.attackerId);
+    var other=selfDamage(e)?null:eventShooter(e.attackerId,eventTime(e));
     return {id:'event:'+e.id,synthetic:true,damageEvent:e,poseOwn:poseOwn,direction:eventDirection(e)||'incoming',aim:aim,target:target,
       attacker:other?other.vehicle:null,attackerId:e.attackerId,targetId:e.targetId,points:[],rawHitPoints:[],warnings:[],
       shellCandidates:[],availableShells:other?other.shells.slice():[],shellStatus:'damage event',receivedAt:e.receivedAt,rangeAtImpact:null};
@@ -8037,7 +8056,7 @@
     if(!given)sidePose=null;
     if(!kept)poseDetached=false;
     selected=id;markHits();var token=++generation;message('Preparing the model…');if(viewer&&!kept)viewer.clear();
-    return vehicleModel(e.targetId).then(function(source){return ArmorInspectorData.sceneFor({warnings:[]},eventHit(e,source));})
+    return vehicleModel(e.targetId,eventTime(e)).then(function(source){return ArmorInspectorData.sceneFor({warnings:[]},eventHit(e,source));})
       .then(function(data){if(token!==generation)return;display(data,false,given||sceneFrom('record',{pose:!!data.hit.poseOwn}));return {battleId:current.id,eventId:id};})
       .catch(function(err){if(token===generation){sceneCleared();message(err.message);warnings([err.message]);}throw err;});
   }
@@ -8045,15 +8064,16 @@
   function eventDetails(e){
     var view=eventDirection(e),r=eventReason(e);
     detail('Direction',view==='incoming'?'Incoming':view==='outgoing'?'Outgoing':'Not this vehicle',clock(e.receivedAt));
-    detail(r.name,'Damage '+e.damage+' HP'+(e.killed?', destroyed':''),vehicleName(e.targetId)+(selfDamage(e)?'':' · by '+vehicleName(e.attackerId)));
+    var at=eventTime(e);
+    detail(r.name,'Damage '+e.damage+' HP'+(e.killed?', destroyed':''),vehicleName(e.targetId,at)+(selfDamage(e)?'':' · by '+vehicleName(e.attackerId,at)));
     if(e.kind==='ram'){
       var part=viewer&&viewer.look&&viewer.look.part!=null?partLabel(viewer.look.part,viewer.loadedData&&viewer.loadedData.hit.target.parts):null;
       detail('Contact',e.contact?(part||'Recorded'):'Not recorded',e.contact?'Client physics'+(Number.isFinite(e.contact.closingSpeed)?', closing at '+Math.round(e.contact.closingSpeed*3.6)+' km/h':''):'Battles before the contact log');
-      if(!selfDamage(e)&&e.returned>0)detail('Other side lost',e.returned+' HP',vehicleName(e.attackerId));
+      if(!selfDamage(e)&&e.returned>0)detail('Other side lost',e.returned+' HP',vehicleName(e.attackerId,at));
     }else if(e.kind==='fire'){
       var shot=causeHit(e);
       detail('Burned',eventSeconds(e)||'—',e.ticks+' ticks · '+({destroyed:'the vehicle destroyed',extinguished:'put out'}[e.out]||'end not seen'));
-      detail('Set by',shot?vehicleName(shot.attackerId):selfDamage(e)?'—':vehicleName(e.attackerId),shot?'Hit at '+clock(shot.receivedAt):'Causing shot not recorded');
+      detail('Set by',shot?vehicleName(shot.attackerId,shot.gameTime):selfDamage(e)?'—':vehicleName(e.attackerId,at),shot?'Hit at '+clock(shot.receivedAt):'Causing shot not recorded');
     }else if(e.ticks>1)detail('Ticks',String(e.ticks),eventSeconds(e));
   }
   function renderHits(){
@@ -8075,7 +8095,7 @@
       // result() speaks for a details row labelled Result: after the key its own leading "Result" goes.
       var critWords=ArmorCrits.describe(h,true),said=result(h).replace(/^Result (\d)/,'Effect $1').replace(/^Result not/,'Not');
       // A hit of the death camera (11.11) has no recorded blocks of its vehicles: the roster names them.
-      var other=view==='incoming'?h.attacker||vehicleInfo(h.attackerId):h.target||vehicleInfo(h.targetId),only=replayOnlyWords(h);
+      var other=view==='incoming'?h.attacker||vehicleInfo(h.attackerId,h.gameTime):h.target||vehicleInfo(h.targetId,h.gameTime),only=replayOnlyWords(h);
       b.title=(view==='incoming'?'Incoming from '+((other||{}).name||'?'):'Outgoing at '+((other||{}).name||'?'))+'\n• Result: '+said+(critWords?'\n• Critical damage: '+critWords:'')+(only?'\n• Scene: '+only.row:'');
       b.appendChild(vehicleTile(other,true));
       // Critical damage (22.09): the client's own icons of the damaged modules and injured crew, up to four, every

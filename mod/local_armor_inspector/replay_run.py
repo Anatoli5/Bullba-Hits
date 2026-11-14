@@ -71,8 +71,8 @@ W_NO_START = 'Replay not used: its stream does not hold the start of this battle
 W_CUT = ('Replay cut off: its stream ends %s into the recording and no complete replay file confirmed that it is whole, '
          'so whatever happened after that moment may be missing')
 W_RESTORE = 'Replay records of this battle unreadable (%s), ' + LIVE_ONLY
-W_LIVES = ('stored before the vehicles a vehicle id changes to in a respawn mode were kept apart; decoded again from its kept '
-           'stream')
+W_LIVES = ('stored before the vehicles a vehicle id changes to in a respawn mode were kept apart with their times; decoded '
+           'again from its kept stream')
 
 
 # ---- the end of the fight in the copy ------------------------------------------------------------------------------------
@@ -469,13 +469,15 @@ def json_poses(value):
 
 
 def needs_lives(records, poses):
-    """True for a store written before the lives were kept (BACKLOG 97) of a battle whose roster changes a vehicle id's
-    vehicle (a respawn mode): its scenes and estimates took one descriptor per id, so it is decoded again from its kept
-    stream rather than restored."""
-    if poses is None or 'lives' in poses: return False
+    """True for a store of a battle whose roster changes a vehicle id's vehicle (a respawn mode) written before the lives
+    were kept (BACKLOG 97: its scenes and estimates took one descriptor per id) or before its roster records carried their
+    time (BACKLOG 99: the published roster places an id's vehicles by it): it is decoded again from its kept stream rather
+    than restored."""
+    if poses is None: return False
+    rosters = [r for r in records if r.get('type') == 'roster']
+    if 'lives' in poses and all(r.get('gameTime') is not None for r in rosters): return False
     seen = {}
-    for r in records:
-        if r.get('type') != 'roster': continue
+    for r in rosters:
         for row in r.get('vehicles') or ():
             if not isinstance(row, dict) or not row.get('type'): continue
             if seen.setdefault(row.get('id'), row['type']) != row['type']: return True

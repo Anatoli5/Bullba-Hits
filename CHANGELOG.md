@@ -2,6 +2,10 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.1.1 from 1.05 on, 2.4.1.0 from 1.02 on, 2.4.0.2 from 0.9.3 on, 2.4.0.1 #950 from 0.7.6, 2.4.0.0 #945 before.
 
+## Unreleased
+
+- **Respawn modes: each hit names the vehicle of its moment:** in modes where a player comes back in another vehicle (Fort Rush, like Frontline), the battle now remembers every vehicle each player drove and when. Damage rows (rams, fire and the like), hits shown without their own vehicle record, and the target's health figure now take the vehicle he had at that moment instead of the last one he drove; the damage log's check of lost HP uses that vehicle's maximum HP, so far fewer of these battles are marked as incomplete. In the vehicle picker a player keeps one row, with his last vehicle, and its tooltip names the vehicles he drove before. Every saved battle is prepared again when you open it - respawn battles also get their replay read again (some seconds each); other battles come out exactly as before.
+
 ## 1.10 (2026-11-13)
 
 - **Window size buttons resize the whole window:** − and + in the page's header now resize the game window itself - its frame together with the page - and centre it on the screen, as if it had opened at that size. Before, only the page's area changed: it shrank inside the old window or spilled over its edges. The largest step now fits the screen entirely, frame included.

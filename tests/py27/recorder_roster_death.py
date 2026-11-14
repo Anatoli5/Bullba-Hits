@@ -114,6 +114,8 @@ def onslaught(recorder, events):
     check(group, 'a vehicle in view gets the server figure (maxHealthFrom vehicle)',
           row_of(first, o.ally).get('maxHealth') == 2500 and row_of(first, o.ally).get('maxHealthFrom') == 'vehicle'
           and row_of(first, o.me).get('maxHealthFrom') == 'vehicle', row_of(first, o.ally))
+    check(group, 'a roster record carries the battle clock (gameTime: an id\'s vehicles over the battle, BACKLOG 99)',
+          isinstance(first.get('gameTime'), float) and first['gameTime'] > 0, first.get('gameTime'))
     count = len(records(recorder, 'roster'))
     o.arena.onVehicleUpdated(o.me)              # a death flag, a frag count: nothing of the roster changes
     o.arena.onVehicleAdded(o.me)
