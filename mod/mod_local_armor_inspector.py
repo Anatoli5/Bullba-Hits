@@ -762,11 +762,39 @@ class Writer(object):
             if self.export_thread.is_alive(): LOG.warning('HTML exporter still draining at shutdown')
 
 
-def vehicle_request(descr, source):
-    """The tiny request a game-thread hook hands to the export thread."""
+def hangar_fitted(vehicle):
+    """The directive and the consumables mounted on the garage's vehicle (BACKLOG 102): the page's Current of the player's
+    own vehicle counts them. The descriptor packs the equipment but neither of these. The gui Vehicle (2.4.1.1 bytecode,
+    14.11): `consumables` and `battleBoosters` are equipment collectors whose `installed` is the mounted set - it iterates
+    its slots, a gui item or an empty one; an item's `name` is the client's entry name, and `isStimulator` (a ration of any
+    nation: the page's one 'food') is VehicleArtefact's. None when nothing could be read; never raises."""
+    def items(collector):
+        installed = getattr(collector, 'installed', None)
+        if callable(installed): installed = installed()
+        out = []
+        for item in list(installed or []):
+            name = getattr(item, 'name', None) if item is not None else None
+            if not name or not isinstance(name, (str, type(u''))): continue
+            stim = getattr(item, 'isStimulator', False)
+            if callable(stim): stim = stim()
+            out.append('food' if stim else str(name))
+        return out
+    fitted = {}
+    try: fitted['consumables'] = items(vehicle.consumables)[:3]
+    except Exception: pass
+    try:
+        boosters = items(vehicle.battleBoosters)
+        fitted['directive'] = boosters[0] if boosters else ''
+    except Exception: pass
+    return fitted or None
+
+
+def vehicle_request(descr, source, fitted=None):
+    """The tiny request a game-thread hook hands to the export thread. `fitted`: the garage's directive and consumables."""
     request = {'schema':1, 'type':'vehicle', 'source':source,
                'vehicleType':str(descr.type.name), 'requestedAt':time.time(),
                'compactDescriptor':base64.b64encode(descr.makeCompactDescr()).decode('ascii')}
+    if fitted: request['fitted'] = fitted
     try: request['name'] = descr.type.shortUserString
     except Exception: pass
     try: request['identity'] = vehicle_identity(descr)
@@ -858,7 +886,7 @@ class VehicleEvents(object):
             if self.hangar is None or not self.hangar.isPresent(): return
             vehicle = self.hangar.item
             if vehicle is None: return
-            self.recorder.request_vehicle(vehicle.descriptor, 'hangar')
+            self.recorder.request_vehicle(vehicle.descriptor, 'hangar', hangar_fitted(vehicle))
             type_name = str(vehicle.descriptor.type.name)
             previous, self.shown = self.shown, type_name
             if previous is not None and previous != type_name: follow_hangar(type_name)
@@ -1083,7 +1111,7 @@ class Recorder(object):
         from local_armor_inspector.crit_log import CritLog
         self.crits = CritLog(self)
 
-    def request_vehicle(self, descr, source):
+    def request_vehicle(self, descr, source, fitted=None):
         """Queue one vehicle export, skipping the request we just queued.
 
         The hangar fires its change event often and a roster repeats itself, so the
@@ -1095,8 +1123,8 @@ class Recorder(object):
         """
         try:
             if descr is None: return
-            request = vehicle_request(descr, source)
-            key = (request['vehicleType'], request['compactDescriptor'])
+            request = vehicle_request(descr, source, fitted)
+            key = (request['vehicleType'], request['compactDescriptor'], repr(sorted((fitted or {}).items())))
             if key == self.last_vehicle and source != 'picker': return
             self.last_vehicle = key
             self.writer.put_vehicle(request)

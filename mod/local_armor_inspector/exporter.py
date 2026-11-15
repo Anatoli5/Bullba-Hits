@@ -186,7 +186,10 @@ PUBLISHED_PAUSE = 30.0
 # Fort Rush, Frontline) carries those vehicles ('earlier', each with 'until', roster.lives); the damage check takes the
 # maximum HP of the vehicle of each life. A battle without such an id is written byte for byte as in format 3. It also
 # re-makes the respawn battles published by 1.09 on one descriptor per id (BACKLOG 97): their stores are decoded again.
-DERIVED_FORMAT = 4
+# 5 (14.11.2026, BACKLOG 102): `ownBuilds` - the equipment of the player's own vehicles in the battle, read off their own
+# compact descriptors (own_builds); the page's Config entry Current takes it. A battle where none is read is written byte for
+# byte as in format 4.
+DERIVED_FORMAT = 5
 # One slice of a saved battle's background publication (run_battle_job): lines of its raw file, then hits prepared, then the
 # file written (~60 ms for the largest, 53 MB raw / 405 hits - the one part that does not split). Between two lines or hits
 # the slice ends early for a battle, a drag, a command of the page or the mod closing; after it the game gets its share
@@ -2292,6 +2295,67 @@ def fix_fitment(vehicle):
 
 _descr_cache = threading.local()
 DESCR_CACHE_LIMIT = 128
+
+
+def descr_devices(descr):
+    """The optional devices a descriptor holds, slot by slot: the client's entry names (the page's catalogue ids, e.g.
+    'trophyUpgradedExtraHealthReserve'), '' for an empty slot; always three. VehicleDescr.optionalDevices is a list per slot
+    of the client's OptionalDevice (its `name`) or None (2.4.1.1, read on the offline stand 14.11: the player's own battle and
+    hangar descriptors carry them, every other player's comes stripped by the server - all three None)."""
+    out = []
+    for device in list(getattr(descr, 'optionalDevices', None) or [])[:3]:
+        out.append(str(getattr(device, 'name', '') or '') if device is not None else '')
+    return out + [''] * (3 - len(out))
+
+
+def vehicle_build(descr, source, fitted=None):
+    """What a vehicle file says of the build it was exported with (BACKLOG 102), or None. From the garage ('hangar': the
+    player's own vehicle, so an empty slot is really empty): the equipment by slot and, when the hook read them (`fitted`,
+    hangar_fitted), the directive and the consumables. From anywhere else only a descriptor that packs equipment says
+    anything - the player's own (the server strips every other player's), with no consumables or directive."""
+    devices = descr_devices(descr)
+    if source == 'hangar':
+        build = {'from':'hangar', 'devices':devices}
+        if isinstance(fitted, dict):
+            if isinstance(fitted.get('consumables'), list):
+                build['consumables'] = [str(name) for name in fitted['consumables'] if name][:3]
+            if fitted.get('directive') is not None: build['directive'] = str(fitted.get('directive') or '')
+        return build
+    if any(devices): return {'from':str(source or 'battle'), 'devices':devices}
+    return None
+
+
+def own_builds(hits, rosters, player_id):
+    """The equipment of the player's own vehicles in a battle (BACKLOG 102): {vehicle type: {'devices': [three entry names]}}.
+
+    Read off the vehicle's own compact descriptor where it shoots - a hit's attacker block of the player's vehicle id (the
+    arena's descriptor of his own vehicle, which the server sends whole; his vehicle as a TARGET is recorded stripped, 14.11:
+    flags 0 in every incoming hit of seven battles) - else a roster row's compDescr (a battle made from its replay). One
+    descriptor per type (a respawn mode drives several), the first that packs equipment; a descriptor that packs none says
+    nothing (it may be a stripped one), and one that names another type than its record (ids moved between clients) is
+    skipped. Consumables, directive and crew are not in it. Never raises for one vehicle."""
+    if player_id is None: return {}
+    found = []
+    for hit in hits or []:
+        vehicle = hit.get('attacker') if isinstance(hit, dict) and hit.get('attackerId') == player_id else None
+        if isinstance(vehicle, dict) and vehicle.get('type') and vehicle.get('compactDescriptor'):
+            found.append((str(vehicle['type']), vehicle['compactDescriptor']))
+    for record in rosters or []:
+        for row in (record or {}).get('vehicles') or []:
+            if isinstance(row, dict) and row.get('id') == player_id and row.get('type') and isinstance(row.get('compDescr'), basestring_type):
+                found.append((str(row['type']), row['compDescr']))
+    out, tried = {}, set()
+    for type_name, compact in found:
+        if type_name in out or (type_name, compact) in tried: continue
+        tried.add((type_name, compact))
+        try:
+            descr = vehicle_descr(compact)
+            if str(descr.type.name) != type_name: continue
+            devices = descr_devices(descr)
+        except Exception:
+            continue
+        if any(devices): out[type_name] = {'devices':devices}
+    return out
 
 
 def vehicle_descr(compact_descriptor):
@@ -5995,6 +6059,11 @@ class Exporter(object):
                 else:
                     hit = self.prepare_hit(raw, index, battle)
                 result['hits'].append(hit)
+        # The equipment of the player's own vehicles (BACKLOG 102): the page's Current for his vehicle takes it.
+        try:
+            builds = own_builds(result['hits'], rosters, battle.get('playerVehicleId'))
+            if builds: result['ownBuilds'] = builds
+        except Exception: LOG.exception('Own builds failed; the battle is published without them')
         # The client's crit records tied to the hits (22.09). Every publish ties them afresh, so a record that
         # arrives after its hit, or a better rule, moves a tie instead of adding one; the raw records stay in the
         # JSONL and the page reads only the ties.
@@ -6781,7 +6850,7 @@ class Exporter(object):
         summary['descriptorHash'] = descriptor_hash(record.get('type'), record.get('compactDescriptor'))
         summary['format'] = record.get('format', 1)
         # A tier-XI vehicle's skill tree (09.10): what vehicle_tree_current reads, for a file whose key is not kept (proven).
-        for key in ('eliteByProgression', 'skillTree'):
+        for key in ('eliteByProgression', 'skillTree', 'build'):
             if record.get(key): summary[key] = record[key]
         # What its key is made of besides its type (vehicle_key): the descriptor and each part's model and prefab.
         summary['compactDescriptor'] = record.get('compactDescriptor')
@@ -6800,6 +6869,8 @@ class Exporter(object):
         row = {'schema':1, 'type':'vehicle', 'vehicleType':str(request.get('vehicleType') or ''),
                'compactDescriptor':request.get('compactDescriptor'), 'source':request.get('source'),
                'requestedAt':float(request.get('requestedAt') or time.time())}
+        # The garage's directive and consumables (BACKLOG 102): not in the descriptor, so the raw line keeps them.
+        if isinstance(request.get('fitted'), dict): row['fitted'] = request['fitted']
         folder = os.path.join(self.folder, 'vehicles')
         if not os.path.isdir(folder): os.makedirs(folder)
         line = (json.dumps(row, ensure_ascii=True, allow_nan=False, separators=(',', ':'))+'\n').encode('utf-8')
@@ -6889,7 +6960,15 @@ class Exporter(object):
         digest = descriptor_hash(type_name, compact)
         path = os.path.join(self.folder, 'data', 'vehicles', identifier+'.js')
         known = self.vehicles.get(identifier)
-        if not verify and known and known.get('descriptorHash') == digest and os.path.isfile(path) and self.vehicle_current(known):
+        # From the garage the build counts too (BACKLOG 102): the consumables and the directive change without the descriptor,
+        # a file of the same descriptor from a battle holds no consumables, and a garage file of before 14.11 has no build -
+        # the garage's next request of it (every start asks for the vehicle selected there) exports it again. No backfill at
+        # setup: that would build a descriptor per file there (tests/py27/wheels.py holds setup to none).
+        same_build = True
+        if request.get('source') == 'hangar':
+            try: same_build = known is not None and known.get('build') == vehicle_build(descr if descr is not None else vehicle_descr(compact), 'hangar', request.get('fitted'))
+            except Exception: same_build = True
+        if not verify and known and known.get('descriptorHash') == digest and same_build and os.path.isfile(path) and self.vehicle_current(known):
             return False
         if not replay and not sweep: self.append_vehicle_request(request)
         if descr is None: descr = vehicle_descr(compact)
@@ -6922,6 +7001,12 @@ class Exporter(object):
         if VEHICLE_FORMAT != 1: record['format'] = VEHICLE_FORMAT
         record.update({'id':identifier, 'type':type_name, 'source':request.get('source'),
                        'exportedAt':time.time(), 'clientVersion':self.version, 'compactDescriptor':compact})
+        # The build it was exported with (BACKLOG 102): the page's Current of the player's own vehicle.
+        try:
+            build = vehicle_build(descr, request.get('source'), request.get('fitted'))
+            if build: record['build'] = build
+        except Exception:
+            record['warnings'].append('Build unavailable')
         try:
             record['gun'] = getattr(descr.gun, 'shortUserString', descr.gun.name)
             record['gunDispersion'] = float(descr.gun.shotDispersionAngle)

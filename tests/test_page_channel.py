@@ -168,7 +168,7 @@ class WebCommandTests(unittest.TestCase):
         # BACKLOG 94: g_currentVehicle.onChanged fires for the same vehicle too (modules, crew, a return from a preview);
         # only another TYPE is a choice in the carousel, and only a page browsing vehicles is pointed at it.
         opened, waited, requested = [], [], []
-        recorder = types.SimpleNamespace(request_vehicle=lambda descr, source: requested.append((descr.type.name, source)),
+        recorder = types.SimpleNamespace(request_vehicle=lambda descr, source, fitted=None: requested.append((descr.type.name, source)),
                                          prioritise=lambda types_: waited.append(list(types_)))
         def vehicle(name):
             return types.SimpleNamespace(descriptor=types.SimpleNamespace(type=types.SimpleNamespace(name=name)))
@@ -266,7 +266,7 @@ class PickerDescriptorTests(unittest.TestCase):
 
     def test_export_picked_vehicle_makes_exactly_one_request_with_the_picker_source(self):
         requests = []
-        recorder = types.SimpleNamespace(request_vehicle=lambda descr, source: requests.append((descr, source)))
+        recorder = types.SimpleNamespace(request_vehicle=lambda descr, source, fitted=None: requests.append((descr, source)))
         with patch.object(modmain, '_recorder', recorder):
             modmain.export_picked_vehicle('germany:G42_Maus')
         self.assertEqual(requests, [(self.top, 'picker')])
