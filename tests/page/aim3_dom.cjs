@@ -133,7 +133,11 @@ const storage = {};
 // whole-crew flag skills.brotherhood, which must come back as every member having it; "Old partial" holds
 // the new per-member map with a member this five-man crew does not have (loader2), which must be kept for
 // a crew that has him, and a key that is nobody's name (bogus), which must go.
-storage['bullba-settings'] = JSON.stringify({v: 1, values: {'mode-switch-time': true}, aim: {v: 3, chosen: {}, presets: {
+// BACKLOG 102 (14.11): it also holds the characteristics panel's switch of before (ttx-build, gone), a vehicle whose entry
+// was the stock build under its old name, and a preset of the user's named Current - the name of a base entry now.
+storage['bullba-settings'] = JSON.stringify({v: 1, values: {'mode-switch-time': true, 'ttx-build': true}, aim: {v: 3,
+  chosen: {'germany:OldStock': 'Stock — no equipment', 'germany:OldCurrent': 'Current'}, presets: {
+  'Current': {slots: ['tankRammer_tier1', '', ''], directive: '', skills: {}},
   'Old whole crew': {slots: ['', '', ''], directive: '', food: false, fuel: '', skills: {brotherhood: true, gunner_smoothTurret: true}},
   'Old partial': {slots: ['', '', ''], directive: '', food: true, fuel: 'excellentFuel', skills: {}, bia: {gunner: true, loader2: true, bogus: true}}}}});
 // S4 (22.09): the reload check. The run below starts this same harness again in a child process with the store
@@ -1040,7 +1044,16 @@ function click(el) { el.onclick.call(el, {stopPropagation: function () {}}); }
 function openConfigMenu() { cfgSummary.fire('click', {}); }
 // default build (27.09): a shooter with no entry of his own starts on rammer, hardening and turbo; a check about something
 // else - a reload, a mode, a top speed - puts its shooter on the stock build first, through the store's chosen entry.
-function stockBuild() { openConfigMenu(); choosePreset('Stock — no equipment'); }
+function stockBuild() { openConfigMenu(); choosePreset('Stock'); }
+// BACKLOG 102 (14.11): the characteristics panel has no switch "stock / this build" any more - its figures are the Config
+// build, and a Config with nothing in it shows the stock. The stock, with the Config menu closed again; and a Config that
+// holds only a Small Repair Kit, which moves no figure: the build's view (the emulator's own block) on the stock's figures.
+function stockQuiet() { stockBuild(); config.open = false; config.fire('toggle'); }
+function fitKit() {
+  if (consSlots().some(function (t) { return /\. Small Repair Kit$/.test(tileName(t)); })) return;
+  click(consSlots().filter(function (t) { return /\. Empty$/.test(tileName(t)); })[0]);
+  click(pick('Small Repair Kit'));
+}
 // The three pointer events the real viewer sends, in the order and with the bookkeeping viewer.js does:
 // a press that the page claims sets aimHold (so the emulation is not paused for it), a move past the drag
 // threshold takes the press away again, and the release is handed back only to a press still held.
@@ -1713,8 +1726,10 @@ settle(20).then(function () {
   // S4 (22.09): the preset control is one button that names the entry in force; its list is a sub-panel.
   // default build (27.09, user): a shooter with no entry of his own starts on the most common build - rammer, hardening and
   // turbocharger, the Standard grade banded to the vehicle - no longer on the stock one.
-  ok('the preset control names the entry in force, and a new shooter starts on the default build - rammer, hardening, turbo',
-     presetName() === 'Rammer, hardening, turbo' && presetOpen() === false && layer.hidden === true,
+  // BACKLOG 102 (14.11): a new shooter starts on Current - his real build where the page knows it; this one has none
+  // known, so Current is the default build.
+  ok('the preset control names the entry in force, and a new shooter starts on Current - here the default build - rammer, hardening, turbo',
+     presetName() === 'Current' && presetOpen() === false && layer.hidden === true,
      '(' + presetName() + ')');
   ok('default build: its three slots are filled - the rammer, the hardening and the turbocharger, the Standard grade',
      slots.children.map(function (t) { return t.getAttribute('data-tier'); }).join(',') === 'standard,standard,standard'
@@ -1724,25 +1739,31 @@ settle(20).then(function () {
   // S4: Custom - the user's own working build - is the first entry of the list, before the built-in builds.
   // default build (27.09): its three grades follow the stock build, before the older built-in builds.
   openPresets();
-  ok('its list is Custom, the seven built-in builds (the default build\'s three grades after the stock one) and the two stored ones, in that order',
-     rowNames() === ['Custom', 'Stock — no equipment', 'Rammer, hardening, turbo', 'Improved — rammer, hardening, turbo',
+  // BACKLOG 102 (14.11): the two base entries head it - Stock and Current - then Custom and the user's own, then the
+  // other built-in builds.
+  ok('its list is Stock and Current, Custom and the two stored ones, then the six other built-in builds (the default build\'s three grades first), in that order',
+     rowNames() === ['Stock', 'Current', 'Custom', 'My Current 1', 'Old partial', 'Old whole crew', 'Rammer, hardening, turbo', 'Improved — rammer, hardening, turbo',
                      'Bounty — rammer, hardening, turbo', 'Rammer, stabiliser, vents',
-                     'Improved Aiming, laying drive, stabiliser', 'Bounty — rammer, stabiliser, vents',
-                     'Old partial', 'Old whole crew'].join(','),
+                     'Improved Aiming, laying drive, stabiliser', 'Bounty — rammer, stabiliser, vents'].join(','),
      '(' + rowNames() + ')');
   ok('S4: the row of the entry in force is the marked one, and its name says so to a screen reader',
      presetRows().filter(function (r) { return r.getAttribute('data-selected') === 'true'; })
-       .map(rowName).join(',') === 'Rammer, hardening, turbo'
-     && presetRow('Rammer, hardening, turbo').children[0].getAttribute('aria-current') === 'true'
+       .map(rowName).join(',') === 'Current'
+     && presetRow('Current').children[0].getAttribute('aria-current') === 'true'
      && presetRow('Custom').children[0].getAttribute('aria-current') === null);
   click(document.getElementById('aim-cfg-scrim'));
   ok('S4: a click on the scrim closes the list', layer.hidden === true && presetOpen() === false);
   // default build (27.09): the checks below are about the slots, the pickers and Custom, built up from an empty vehicle -
   // the stock build is put in force through the store's chosen entry, as the user would pick it.
-  choosePreset('Stock — no equipment');
+  choosePreset('Stock');
   ok('default build: the stock build is still one click away, and it is what the entry in force now names',
-     presetName() === 'Stock — no equipment' && (storedAim().chosen || {})['germany:Test'] === 'Stock — no equipment',
+     presetName() === 'Stock' && (storedAim().chosen || {})['germany:Test'] === 'Stock',
      '(' + JSON.stringify(storedAim().chosen) + ')');
+  const migrated = JSON.parse(savedSettings());
+  ok('BACKLOG 102: an older store - the switch\'s value dropped, the old stock build\'s name is Stock, and the user\'s own preset named Current keeps its build under a free name, the vehicle that had it chosen following it',
+     !Object.prototype.hasOwnProperty.call(migrated.values, 'ttx-build') && migrated.aim.chosen['germany:OldStock'] === 'Stock'
+     && migrated.aim.chosen['germany:OldCurrent'] === 'My Current 1' && !!migrated.aim.presets['My Current 1'] && !migrated.aim.presets.Current
+     && migrated.aim.presets['My Current 1'].slots[0] === 'tankRammer_tier1', JSON.stringify(migrated.aim.chosen) + ' ' + Object.keys(migrated.aim.presets).join(','));
   // Stage 11: 18 skills and perks plus one Brothers in Arms tile per member of the five-man crew.
   // TTX (23.09): four skills that do not shoot (Recon, Situational Awareness, Off-Road Driving, Engineer), one
   // Concealment tile per member beside his Brothers in Arms, and the paint beside the consumables.
@@ -2063,9 +2084,9 @@ settle(20).then(function () {
   const customRow = presetRow('Custom');
   ok('S4: Custom carries the save icon alone - it cannot be renamed or deleted - and a built-in row carries none',
      !!rowAct(customRow, 'save') && !rowAct(customRow, 'rename') && !rowAct(customRow, 'delete')
-     && presetRow('Stock — no equipment').children.length === 1
+     && presetRow('Stock').children.length === 1
      && rowAct(customRow, 'save').title === 'Save as a preset',
-     '(' + customRow.children.length + ' / ' + presetRow('Stock — no equipment').children.length + ')');
+     '(' + customRow.children.length + ' / ' + presetRow('Stock').children.length + ')');
   ok('S4: a user preset carries the pencil and the bin, with their words in the tooltip only',
      !!rowAct(presetRow('Old partial'), 'rename') && !!rowAct(presetRow('Old partial'), 'delete')
      && rowAct(presetRow('Old partial'), 'delete').title === 'Delete'
@@ -2192,7 +2213,7 @@ settle(20).then(function () {
      + slots.children.map(function (t) { return t.getAttribute('data-tier'); }).join(',') + ')');
   // The client's own figures (report section 5, the table run on its bytecode), with nothing else fitted:
   // f = 1.043 with no member, 1.04773 with one, 1.06665 with all five.
-  choosePreset('Stock — no equipment');
+  choosePreset('Stock');
   const stock = view.liveRadius100;
   ok('the stock build is the plain trained crew, f = 1.043', Math.abs(stock - 0.383 / 1.043) < 1e-12, '(' + stock + ')');
   click(crewChip('Brothers in Arms, Commander'));
@@ -2205,7 +2226,7 @@ settle(20).then(function () {
   // ---- stage 11: a crew from the record --------------------------------------------------------
   // Nothing writes one yet; the page takes aim.crewRoles when it is there (the field the research
   // proposes for aim_block) and the maths runs on it. F100 Panhard EBR 90: the commander is the loader.
-  function stockAgain() { choosePreset('Stock — no equipment'); }
+  function stockAgain() { choosePreset('Stock'); }
   AIM_BLOCK.crewRoles = [['commander', 'loader'], ['gunner'], ['driver'], ['radioman']];
   stockAgain();
   ok('EBR crew: the gunner is a non-commander, so the circle is the usual f = 1.043',
@@ -2392,11 +2413,11 @@ settle(20).then(function () {
      && layer.hidden === false && scrim.hidden === false && parseFloat(layer.style.top) > 0,
      '(top ' + layer.style.top + ')');
   ok('S4: the panel has no heading of its own: a close control and the rows, nothing that names the owner',
-     // default build (27.09): its three grades after the stock build
-     panelWords() === '×Custom' + ['Stock — no equipment', 'Rammer, hardening, turbo', 'Improved — rammer, hardening, turbo',
+     // BACKLOG 102: Stock and Current, Custom and the user's own, then the other built-in builds
+     panelWords() === '×' + ['Stock', 'Current', 'Custom', 'My Current 1', 'My heavy', 'Old partial', 'Old whole crew', 'Three of five',
+                                   'Rammer, hardening, turbo', 'Improved — rammer, hardening, turbo',
                                    'Bounty — rammer, hardening, turbo', 'Rammer, stabiliser, vents',
-                                   'Improved Aiming, laying drive, stabiliser', 'Bounty — rammer, stabiliser, vents',
-                                   'My heavy', 'Old partial', 'Old whole crew', 'Three of five'].join(''),
+                                   'Improved Aiming, laying drive, stabiliser', 'Bounty — rammer, stabiliser, vents'].join(''),
      '(' + panelWords() + ')');
   // CHOOSING A PRESET KEEPS THE MENU OPEN (user, 22.09). The click is delivered the way a browser delivers it:
   // the row's own handler first - which repaints the menu and takes that row out of the page - and then the
@@ -2416,15 +2437,16 @@ settle(20).then(function () {
   ok('S4: a click from outside the menu closes it as before', config.open === false);
   config.fire('toggle');
   config.open = true; config.fire('toggle'); openConfigMenu();
-  // Arrow Up / Down step through the entries without opening the list: the quick comparison.
+  // Arrow Up / Down step through the entries without opening the list: the quick comparison. (BACKLOG 102: the Bounty
+  // build in force is the list's last entry now, so the step goes up first.)
   const beforeArrow = presetName();
-  preset.onkeydown.call(preset, keyEvent('ArrowDown'));
+  preset.onkeydown.call(preset, keyEvent('ArrowUp'));
   const stepped = presetName();
-  ok('S4: Arrow Down on the preset control puts the next entry in force, the list still closed',
+  ok('S4: Arrow Up on the preset control puts the entry before in force, the list still closed',
      stepped !== beforeArrow && layer.hidden === true && config.open === true,
      '(' + beforeArrow + ' -> ' + stepped + ')');
-  preset.onkeydown.call(preset, keyEvent('ArrowUp'));
-  ok('S4: and Arrow Up steps back', presetName() === beforeArrow, '(' + presetName() + ')');
+  preset.onkeydown.call(preset, keyEvent('ArrowDown'));
+  ok('S4: and Arrow Down steps back', presetName() === beforeArrow, '(' + presetName() + ')');
   // S4: EVERY sub-panel is placed by the same rule - straight under the element it belongs to. Nothing in this
   // harness lays anything out, so the three owners are given rectangles of their own here.
   function measured(el, top, bottom) {
@@ -2531,12 +2553,12 @@ settle(20).then(function () {
   choosePreset('Three of five');
   openPresets();
   click(rowAct(presetRow('Three of five'), 'delete'));
-  ok('S4: the bin deletes the preset, the list stays open and the build goes back to the default one - rammer, hardening, turbo',
+  ok('S4: the bin deletes the preset, the list stays open and the build goes back to the default one - Current, here rammer, hardening, turbo',
      !presetRow('Three of five') && !JSON.parse(savedSettings()).aim.presets['Three of five']
-     && layer.hidden === false && presetName() === 'Rammer, hardening, turbo'
+     && layer.hidden === false && presetName() === 'Current'
      && slots.children.map(function (t) { return t.getAttribute('data-tier'); }).join(',') === 'standard,standard,standard',
      '(' + rowNames() + ' / ' + presetName() + ')');
-  ok('S4: and no built-in row has a bin to press at all', !rowAct(presetRow('Stock — no equipment'), 'delete'));
+  ok('S4: and no built-in row has a bin to press at all', !rowAct(presetRow('Stock'), 'delete'));
   click(layer.children[0]);
   ok('S4: the panel’s × closes it', layer.hidden === true && config.open === true);
   // ---- manual-motion (27.09): the drive tile's popover sets the motion by hand ----------------------------------------------
@@ -2546,7 +2568,7 @@ settle(20).then(function () {
   // the keys), the model stands. Any of W A S D ends it and the shares stay. A shot fired takes it; recorded hits do not.
   config.open = false; config.fire('toggle');
   view.gap = 0; view.dragging = false; view.aimHold = false;
-  choosePreset('Stock — no equipment');
+  choosePreset('Stock');
   run(30);
   const manualBody = document.getElementById('aim-manual-body');
   ok('manual: the drive tile is its popover’s own button - closed and not built until clicked, no gold frame',
@@ -2588,7 +2610,7 @@ settle(20).then(function () {
   ok('manual: a stabiliser at the same speed - the steady circle smaller, at once, the slider where it was',
      stabAtOnce < stockMoving * 0.9 && Math.abs(view.liveRadius100 - stabAtOnce) < 1e-9 && mSpeed.value === '100' && speed.textContent === '50 km/h',
      '(' + stockMoving.toFixed(4) + ' -> ' + stabAtOnce.toFixed(4) + ')');
-  choosePreset('Stock — no equipment');
+  choosePreset('Stock');
   mSpeed.value = '50'; mSpeed.oninput.call(mSpeed);
   mHull.value = '50'; mHull.oninput.call(mHull);
   tick(1 / 60);
@@ -2618,7 +2640,7 @@ settle(20).then(function () {
   ok('manual: Clutch Braking raises the top traverse - the share stays 50 %, the figure follows it (x 1.05)',
      mHull.value === '50' && Math.abs(hullAfter / hullBefore - 1.05) < 0.01, '(' + hullBefore + ' -> ' + hullAfter + ' °/s)');
   click(crewChip('Clutch Braking'));
-  choosePreset('Stock — no equipment');
+  choosePreset('Stock');
   run(6);
   // Any of W A S D ends it (user, 27.09): the switch goes off, the shares stay, the keys drive from that press on.
   document.fire('keydown', {code: 'KeyW', key: 'w', target: document.body, preventDefault: function () {}});
@@ -6774,8 +6796,7 @@ settle(20).then(function () {
   const ttxLoader = function (id) { ttxReads++; ttxIds.push(id); return FIXTURES[id] ? Promise.resolve(FIXTURES[id]) : Promise.reject(new Error('Not found data/ttx/' + id + '.js')); };
   const tb = document.getElementById('battles');
   tb.value = 't1'; tb.onchange.call(tb);
-  const panel = document.getElementById('ttx-panel'), buildBox = document.getElementById('ttx-build');
-  const buildToggle = document.getElementById('ttx-build-toggle'), pairsBox = document.getElementById('ttx-pairs');
+  const panel = document.getElementById('ttx-panel'), pairsBox = document.getElementById('ttx-pairs');
   const pairTile = document.getElementById('ttx-pair'), more = document.getElementById('ttx-more'), full = document.getElementById('ttx-full');
   const compact = document.getElementById('ttx-compact');
   const hpSlot = document.getElementById('ttx-hp');
@@ -6845,11 +6866,11 @@ settle(20).then(function () {
        rowOf('invisibilityStillFactor').title);
     ok('ttx v2: a single-shot gun\'s reload line is one figure in its middle - Gun Loading, 13.14',
        lineText(compact) === 'c:reloadTimeSecs=13.14' && glyphOf('reload') === 'reload', lineText(compact));
-    ok('ttx: the stock by default - ⚙ is off, no colours, and the tooltip names the stock and where the figure comes from',
-       buildBox.checked === false && buildToggle.getAttribute('aria-pressed') === 'false' && rowOf('reload').getAttribute('data-cmp') === null
+    ok('ttx: Stock in Config - the stock, no colours, the row\'s tooltip names the stock and the figures\' box says what the stock is (BACKLOG 102: no switch)',
+       pageSrc.indexOf('ttx-build') < 0 && rowOf('reload').getAttribute('data-cmp') === null
        && /^Gun loading, s\n• Stock: 13\.14\n/.test(rowOf('reload').title) && !/as the garage shows a bare vehicle|characteristics file/.test(rowOf('reload').title)
-       && /^Stock or this build\n• Off: the stock, as the garage shows a bare vehicle - [^\n]*no equipment, directive, consumables, paint or field modification\n• On: /.test(buildToggle.title)
-       && !/not modelled/.test(rowOf('reload').title));
+       && /^Characteristics: the stock\nNothing is fitted in Config: the vehicle as the garage shows it bare - [^\n]*no equipment, directive, consumables, paint or field modification\.\n• A build: /.test(compact.title)
+       && !/not modelled/.test(rowOf('reload').title), compact.title.slice(0, 200));
     ok('ttx v2: the HP in the head carry the Hit points tooltip, stock 2400',
        /^Hit points, HP\n• Stock: 2400$/.test(rowOf('maxHealth').title), rowOf('maxHealth').title.slice(0, 60));
     ok('ttx: one pair - the tile is plainly the gun: its glyph, the calibre and the gun\'s tier, with no ▾ and nothing to open',
@@ -6934,12 +6955,12 @@ settle(20).then(function () {
        && /\.ttx-reload\[data-shape=mag\]>\.ttx-reload-side\[data-side=right\],[^{]*\[data-shape=mag\]>\.ttx-reload-side\[data-side=left\],\s*\.ttx-body \.ttx-reload\[data-shape=one\]>\.ttx-reload-side\[data-side=center\]\{grid-column:2\}/.test(cssT)
        && /\.ttx-reload\[data-shape=mag\]>\.ttx-reload-side\[data-side=center\],\.ttx-body \.ttx-reload\[data-shape=one\]>\.ttx-reload-side\[data-side=right\]\{grid-column:1\}/.test(cssT)
        && lineIn(compact).getAttribute('data-shape') === 'one' && lineIn(compact).children.map(function (x) { return x.getAttribute('data-side'); }).join() === 'center,right,left');
-    // ⚙: this build against the stock.
-    click(buildToggle);
-    ok('ttx: ⚙ turns on this build - lit, kept in the hidden settings control, and every equal figure stays uncoloured',
-       buildBox.checked === true && buildToggle.getAttribute('aria-pressed') === 'true' && rowOf('reload').getAttribute('data-cmp') === null
-       && /\n• This build: 13\.14/.test(rowOf('reload').title) && /\n• From the gun on the scene: the fire figures/.test(buildToggle.title));
+    // This build against the stock: anything in Config - here a repair kit, which moves no figure.
     openConfigMenu();
+    fitKit();
+    ok('ttx: something in Config - this build, every equal figure uncoloured, the stock and the build in the tooltip',
+       rowOf('reload').getAttribute('data-cmp') === null
+       && /\n• This build: 13\.14/.test(rowOf('reload').title) && /^Characteristics of this build\n/.test(compact.title) && /\n• From the gun on the scene: the fire figures/.test(compact.title));
     choosePreset('Rammer, stabiliser, vents');
     const r = Number(val('reload')), m = Number(val('stabMovement'));
     ok('ttx: a build with a rammer and vents - a shorter reload in mint, the stock and the build both in its tooltip',
@@ -6961,9 +6982,8 @@ settle(20).then(function () {
     TX.values = realValues; ArmorBallistics.aimStep = realStep;
     ok('ttx: the frame loop never calls the panel - 0 calls over 300+ steps of the emulation',
        calls === 0 && steps >= 300, '(' + calls + ' calls, ' + steps + ' steps)');
-    choosePreset('Stock — no equipment');
-    click(buildToggle);
-    ok('ttx: ⚙ off again - the stock, no colours', buildBox.checked === false && rowOf('reload').getAttribute('data-cmp') === null && val('reload') === '13.14');
+    choosePreset('Stock');
+    ok('ttx: Stock again - the stock, no colours', rowOf('reload').getAttribute('data-cmp') === null && val('reload') === '13.14' && /^Characteristics: the stock\n/.test(compact.title));
     // The layout pass: the stub's rectangles all overlap, so the panel steps up above the shooter row, as the pose tile does.
     scheduleLayoutNow();
     ok('ttx: the panel rises above the shooter row it would collide with - the pose tile’s own rule, one function for both corners',
@@ -6998,7 +7018,6 @@ settle(20).then(function () {
     const stockClip = val('reload');
     openConfigMenu();
     click(crewChip('Mag Mastery'));
-    click(buildToggle);
     const mm = val('reload');
     click(document.getElementById('ttx-more-button')); more.open = true;
     const clipRow = lineText(full), clipParts = ttxLineOf(lineIn(compact));
@@ -7011,7 +7030,6 @@ settle(20).then(function () {
        '(' + document.getElementById('aim-gun-reload').textContent + ')');
     more.open = false;
     click(crewChip('Mag Mastery'));
-    click(buildToggle);
     // The picker: built by the click that opens it.
     pairTile.onclick({preventDefault: function () {}});
     const list = document.getElementById('ttx-pair-list');
@@ -7051,11 +7069,11 @@ settle(20).then(function () {
        pickedShell + ' ' + document.getElementById('caliber').value + ' ' + gunShellsBox.children.length);
     ok('gun switch: a picked gun\'s shell writes no Statistics log line - the log keeps one line per point and shell type, and it is the record\'s',
        /if\(!\(c&&c\.emuGun\)\)\{?logVerdicts\(shell\);/.test(appSrc));
-    // The panel's build figures are read off the emulator's own block (ttxValues live): with ⚙ on they are the picked gun's.
-    click(buildToggle);
-    ok('gun switch: ⚙ on - the build\'s reload is the picked gun\'s, read off the emulator\'s block (not the clip gun\'s)',
-       lineText(compact) === 'c:reloadTimeSecs=' + TX.nice(7 / (0.57 + 0.43 * 1.1)), lineText(compact));
-    click(buildToggle);
+    // The panel's build figures are read off the emulator's own block (ttxValues live): in the build they are the picked gun's.
+    openConfigMenu(); fitKit();
+    ok('gun switch: a build - its reload is the picked gun\'s, read off the emulator\'s block (not the clip gun\'s)',
+       lineText(compact) === 'c:reloadTimeSecs=' + TX.nice(7 / (0.57 + 0.43 * 1.1)) && /^Characteristics of this build\n/.test(compact.title), lineText(compact));
+    choosePreset('Stock'); config.open = false; config.fire('toggle');
     pairTile.onclick({preventDefault: function () {}});
     click(list.children.filter(function (c) { return c.className === 'aim-pick-row'; })[0].children[1]);
     ok('ttx: and back to the fired gun', keyOf('reload') === 'clipFireRate' && pairsBox.getAttribute('data-other') === null);
@@ -7073,8 +7091,8 @@ settle(20).then(function () {
        && document.getElementById('target-hp').title.indexOf('\n• Left: 1 850 / 1 850 HP\n• Source: the vehicle’s own export') > 0,
        '(' + document.getElementById('target-hp-text').textContent + ' · ' + document.getElementById('target-hp').title.slice(0, 160) + ')');
     click(document.getElementById('fun-mode-toggle'));
-    ok('ttx: the markup - the panel in the scene, ⚙ kept in the settings menu, the page’s own controls untouched',
-       /<div id="ttx-panel" class="ttx-panel" hidden>/.test(pageSrc) && /<input type="checkbox" id="ttx-build" hidden aria-hidden="true" tabindex="-1">/.test(pageSrc)
+    ok('ttx: the markup - the panel in the scene, no switch "stock / this build" anywhere (BACKLOG 102), the page’s own controls untouched',
+       /<div id="ttx-panel" class="ttx-panel" hidden>/.test(pageSrc) && pageSrc.indexOf('id="ttx-build') < 0
        && pageSrc.indexOf('id="ttx-panel"') > pageSrc.indexOf('id="pose-info"') && pageSrc.indexOf('id="ttx-panel"') < pageSrc.indexOf('<div class="scene-toolbar">'));
   }).then(function () {
     // ---- TTX acceptance (23.09, spec section 4): the characteristics files the mod writes (the offline stand,
@@ -7153,24 +7171,22 @@ settle(20).then(function () {
     let chain = Promise.resolve();
     stock.forEach(function (r, i) {
       chain = chain.then(function () { document.getElementById('hits').children[i].onclick(); return settle(20); }).then(function () {
-        if (buildBox.checked) click(buildToggle);
+        stockQuiet();
         read(r, 'stock');
-        click(buildToggle);
         openConfigMenu();
         choosePreset('Rammer, stabiliser, vents');
         everybody('Brothers in Arms, ');
         fitFood();
         fitted[r.vehicle + '|' + r.gun + '|fire'] = slotNames();
         read(r, 'fire');
-        choosePreset('Stock — no equipment');
+        choosePreset('Stock');
         ['Coated Optics Class 1', 'Camouflage Net Class 2', 'Additional Grousers Class 1'].forEach(fit);
         everybody('Concealment, ');
         const paint = consumables.children[0].children.filter(function (t) { return tileName(t) === 'Camouflage'; })[0];
         if (paint && paint.getAttribute('aria-pressed') !== 'true') click(paint);
         fitted[r.vehicle + '|' + r.gun + '|nonfire'] = slotNames();
         read(r, 'nonfire');
-        choosePreset('Stock — no equipment');
-        click(buildToggle);
+        choosePreset('Stock');
       });
     });
     // GUN SWITCH (24.09, gun-switch-owner): every pair B of a vehicle with more than one - the Vz. 55's magazine and
@@ -7202,9 +7218,7 @@ settle(20).then(function () {
       idx.forEach(function (bi, k) {
         const ai = idx[k === 0 ? 1 : 0], r = stock[bi], t = files[veh];
         chain = chain.then(function () { document.getElementById('hits').children[ai].onclick(); return settle(20); }).then(function () {
-          if (buildBox.checked) click(buildToggle);
           swPick(t, r);
-          click(buildToggle);
           openConfigMenu();
           choosePreset('Rammer, stabiliser, vents');
           everybody('Brothers in Arms, ');
@@ -7215,8 +7229,7 @@ settle(20).then(function () {
           const diff = ['compact', 'line', 'full', 'fullLine', 'shells'].filter(function (f) { return JSON.stringify(got[f]) !== JSON.stringify(own[f]); });
           if (diff.length) swDiff.push(veh.split(':')[1] + ' ' + stock[ai].gun + ' -> ' + r.gun + ' @ ' + r.turret + ': ' + diff.map(function (f) { return f + ' ' + JSON.stringify(got[f]).slice(0, 160) + ' / ' + JSON.stringify(own[f]).slice(0, 160); }).join('; '));
           swDiff.count = (swDiff.count || 0) + 1;
-          choosePreset('Stock — no equipment');
-          click(buildToggle);
+          choosePreset('Stock');
           swPick(t, stock[ai], true);   // the recorded gun picked back: the choice goes back to the record
         });
       });
@@ -7299,7 +7312,7 @@ settle(20).then(function () {
   }).then(function () {
     const after = armour();
     ok('ttx: Survivability - a file of before 23.09 is shown at once in the game (dashes, and why), with no turret line on a fake turret',
-       !!before.maxHealth && before.maxHealth.text === '2200' && before.hullArmor && before.hullArmor.text === '—' && before.turretArmor === undefined
+       !!before.maxHealth && before.maxHealth.text === '2420' && /\n• Stock: 2200\n/.test(before.maxHealth.title) && before.hullArmor && before.hullArmor.text === '—' && before.turretArmor === undefined
        && before.chassisRepairTime && before.chassisRepairTime.text === '—' && /written before the armour/.test(before.hullArmor.title),
        JSON.stringify(before).slice(0, 200));
     ok('ttx: Survivability - in the game the page reads it again and takes the mod\'s new file: hull 200/120/150 and 12.03 s, as the client prints them, still no turret line',
@@ -7507,14 +7520,13 @@ settle(20).then(function () {
   const tb = document.getElementById('battles');
   tb.value = 't-reload'; tb.onchange.call(tb);
   const compact = document.getElementById('ttx-compact'), full = document.getElementById('ttx-full'), more = document.getElementById('ttx-more');
-  const buildBox = document.getElementById('ttx-build');
   const hpRow = function () { return document.getElementById('ttx-hp').children[0] || null; };
   const lineIn = function (el) { return ttxFind(el, function (c) { return c.className === 'ttx-reload'; })[0] || null; };
   const page = {};
   let chain = settle(20);
   hits.forEach(function (h, i) {
     chain = chain.then(function () { document.getElementById('hits').children[i].onclick(); return settle(20); }).then(function () {
-      if (buildBox.checked) click(document.getElementById('ttx-build-toggle'));
+      stockQuiet();
       const r = ref[i], out = {compact: {maxHealth: hpRow() ? hpRow().ttx.value.textContent : null}};
       out.line = ttxLineOf(lineIn(compact));
       // The compact line's shape and its sides' order (24.09, two columns): a magazine's - the interval, the reload, the rounds.
@@ -7533,15 +7545,15 @@ settle(20).then(function () {
         };
         sectorOrder = {turret: order(true), none: order(false), old: order(undefined)};
       }
-      // D-112 (09.10): what ⚙ and the repair row say on a tier-XI vehicle (the Black Rock: its file carries its skill tree)
+      // D-112 (09.10): what the figures' box (⚙'s words until 14.11) and the repair row say on a tier-XI vehicle (the Black Rock: its file carries its skill tree)
       // and on any other one (the IS-7), in the stock and in the build.
       if (r.vehicle === BR || r.vehicle === 'ussr:R45_IS-7') {
-        const toggleT = document.getElementById('ttx-build-toggle'), stockTitle = toggleT.title;
+        const stockTitle = compact.title;
         more.open = false; document.getElementById('ttx-more-button').onclick({}); more.open = true;
         const repairRow = ttxRowsIn(full).filter(function (x) { return x.getAttribute('data-key') === 'chassisRepairTime'; })[0];
         const repair = repairRow ? {text: repairRow.ttx.value.textContent, title: repairRow.title} : null;
         more.open = false;
-        click(toggleT); const buildTitle = toggleT.title; click(toggleT);
+        openConfigMenu(); fitKit(); const buildTitle = compact.title; stockQuiet();
         treeWords[r.vehicle] = {stock: stockTitle, build: buildTitle, repair: repair, tree: byId[files[r.vehicle].id].vehicle.skillTree || null,
                                 speed: byId[files[r.vehicle].id].modules.chassis.repairSpeed};
       }
@@ -7554,7 +7566,7 @@ settle(20).then(function () {
     const br = treeWords[BR], is7 = treeWords['ussr:R45_IS-7'];
     if (!br || !br.tree) { console.log('SKIP skill tree words: the Black Rock of the reload fixture carries no skill tree (rebuild it: tests/fixtures-local/ttx-offline/README.txt)'); return; }
     const line = /\n• Tier XI: the vehicle’s skill tree is always counted as fully researched - all (\d+) modifications, in the stock and in the build/;
-    ok('skill tree: ⚙ says a tier-XI vehicle’s skill tree is always counted in full, with the number of its modifications - in the stock and in the build',
+    ok('skill tree: the figures\' box says a tier-XI vehicle’s skill tree is always counted in full, with the number of its modifications - in the stock and in the build',
        line.test(br.stock) && line.test(br.build) && Number(line.exec(br.stock)[1]) === br.tree.modifications && br.tree.modifications > 0
        && !/names no field modification tree/.test(br.build), br.stock.slice(0, 400));
     ok('skill tree: and says nothing of it on a vehicle without one', !!is7 && !/Tier XI/.test(is7.stock) && !/Tier XI/.test(is7.build));
@@ -7572,15 +7584,13 @@ settle(20).then(function () {
   const SW = {rows: [], same: [], shells: [], resets: []};
   const byVehicle = {};
   ref.forEach(function (r, i) { (byVehicle[r.vehicle] = byVehicle[r.vehicle] || []).push(i); });
-  const pairTileSw = document.getElementById('ttx-pair'), listSw = document.getElementById('ttx-pair-list'), buildToggleSw = document.getElementById('ttx-build-toggle');
+  const pairTileSw = document.getElementById('ttx-pair'), listSw = document.getElementById('ttx-pair-list');
   const mech = document.getElementById('ttx-mode'), heat = document.getElementById('aim-gun-heat'), gunReloadSw = document.getElementById('aim-gun-reload');
   const snap = function () {
     tick(0.05);
-    if (!buildBox.checked) click(buildToggleSw);
     const line = ttxLineOf(lineIn(compact)).map(function (p) { return p.side[0] + ':' + p.key + '=' + p.text; }).join(' ');
     const rows = ttxRowsIn(compact).map(function (x) { return x.getAttribute('data-key') + '=' + x.ttx.value.textContent; }).join(' ');
     const lineParts = ttxLineOf(lineIn(compact));
-    click(buildToggleSw);
     return {reload: gunReloadSw.textContent, mag: magStates(), ring: viewerInstance.liveRadius100 ? viewerInstance.liveRadius100.toFixed(6) : null,
             mech: mech.hidden ? '' : mech.textContent + '|' + mech.getAttribute('aria-label') + '|' + mech.title,
             heat: heat.hidden ? '' : heat.title, words: gunReloadSw.parentNode.title, line: line, rows: rows, parts: lineParts};
@@ -7737,10 +7747,11 @@ settle(20).then(function () {
       // Review 23.09: one paint counts the emulator's pair once (ttxPaint hands it down); a warm repaint asks TTX.match once.
       const keepMatch = TX.match;
       let matches = 0;
-      click(document.getElementById('ttx-build-toggle'));
+      openConfigMenu();
       TX.match = function () { matches++; return keepMatch.apply(this, arguments); };
-      click(document.getElementById('ttx-build-toggle'));
+      click(crewChip('Snap Shot'));   // a Config change: one paint of the panel (BACKLOG 102: the switch it was is gone)
       TX.match = keepMatch;
+      click(crewChip('Snap Shot')); config.open = false; config.fire('toggle');
       // 24.09: the pairs are the owner's (emuIndexes), counted once per file, shooter and pick - a warm repaint asks none.
       ok('ttx v2: a repaint of the panel counts the emulator\'s pair at most once - the chip, the Turret row and the rows take it from the owner', matches <= 1, '(' + matches + ' TTX.match calls)');
       // Review 23.09: Config away (the aim emulation off; also a record without its block, the parts view) - the turret
@@ -7769,12 +7780,13 @@ settle(20).then(function () {
       const tm = /<div class="ttx-tools" id="ttx-tools">(.*?)<\/div><div class="ttx-head">(.*)$/.exec(inner), tools = tm ? tm[1] : '', head = tm ? tm[2] : '';
       const dot = /<button type="button" class="help-dot" data-help-for="([^"]+)" aria-label="Help">\?<\/button>/.exec(tools);
       const ids = dot ? dot[1].split(' ') : [], at = ids.map(function (id) { return inner.indexOf('id="' + id + '"'); });
-      ok('ttx v2: the controls row has one help dot naming the panel\'s clickable elements in their order - the mode switch, ⚙, ▴, the gun chip',
-         !!dot && ids.join(' ') === 'ttx-mode ttx-build-toggle ttx-more-button ttx-pair' && at.every(function (x, k) { return x >= 0 && (k === 0 || x > at[k - 1]); }),
+      ok('ttx v2: the controls row has one help dot naming the panel\'s elements in their order - the mode switch, ▴, the gun chip, then the figures\' box (its words: what the build holds, BACKLOG 102)',
+         !!dot && ids.join(' ') === 'ttx-mode ttx-more-button ttx-pair ttx-compact' && at.slice(0, 3).every(function (x, k) { return x >= 0 && (k === 0 || x > at[k - 1]); })
+         && pageSrc.indexOf('id="ttx-compact"') > pageSrc.indexOf('id="ttx-pair"'),
          inner.slice(0, 80));
-      ok('ttx 24.09: the panel\'s controls on a row of their own above the head - the mode switch at its left end, then ⚙, ▴ and "?"; the head is the HP and the gun chip',
+      ok('ttx 24.09: the panel\'s controls on a row of their own above the head - the mode switch at its left end, then ▴ and "?"; the head is the HP and the gun chip',
          inner.indexOf('<div class="ttx-main"><div class="ttx-tools" id="ttx-tools"><button type="button" id="ttx-mode" class="swap-roles"') === 0
-         && /^<button type="button" id="ttx-mode"[^>]*>◐<\/button><button type="button" id="ttx-build-toggle"/.test(tools) && tools.indexOf('id="ttx-more"') > 0 && tools.indexOf('id="ttx-pair"') < 0
+         && /^<button type="button" id="ttx-mode"[^>]*>◐<\/button><details id="ttx-more"/.test(tools) && tools.indexOf('id="ttx-more"') > 0 && tools.indexOf('id="ttx-pair"') < 0
          && /\.ttx-tools>#ttx-mode\{margin-right:auto\}/.test(fs.readFileSync(path + 'style.css', 'utf8'))
          && /^<span id="ttx-hp" class="ttx-hp"><\/span><details id="ttx-pairs"[^]*<\/details><\/div>$/.test(head), inner.slice(0, 120));
       // Review 23.09: every "?" of the page is the one help dot - no ⓘ left: the Statistics log's is a .help-dot on its
@@ -8486,15 +8498,14 @@ settle(20).then(function () {
       return out;
     };
     const openFull = function () { more.open = false; document.getElementById('ttx-more-button').onclick({}); more.open = true; return fullRows(); };
-    const buildBox = document.getElementById('ttx-build');
-    if (buildBox.checked) click(document.getElementById('ttx-build-toggle'));
+    stockQuiet();
     let f = openFull();
     ok('ttx modes: the Strv 103B\'s vertical and horizon as the garage prints them - -11/11 (the hull\'s tilt) and 0/0 (the hull aims), the gun\'s own 1/1 and 3/3° in the tooltips; the switch 2/1.3 s',
        f.pitchLimits && f.pitchLimits.text === '-11/11' && /\n• Gun alone: 1\/1°\n/.test(f.pitchLimits.title) && f.gunYawLimits && f.gunYawLimits.text === '0/0'
        && /\n• Gun’s own sector: 3\/3°; past it the hull turns$/.test(f.gunYawLimits.title) && f.switchTime && f.switchTime.text === '2/1.3',
        JSON.stringify({p: f.pitchLimits && f.pitchLimits.text, y: f.gunYawLimits && f.gunYawLimits.text, s: f.switchTime && f.switchTime.text}));
     more.open = false;
-    ok('ttx modes: the one mode button beside ⚙ - under ✸ the emulator\'s mode, and its words name the panel (off: travel)', ttxMode.hidden === false && ttxMode.getAttribute('aria-pressed') === 'false'
+    ok('ttx modes: the one mode button of the panel - under ✸ the emulator\'s mode, and its words name the panel (off: travel)', ttxMode.hidden === false && ttxMode.getAttribute('aria-pressed') === 'false'
        && /\n• This panel: the figures of the mode in force - mint where better than in travel, red where worse/.test(ttxMode.title));
     click(ttxMode); run(2.1);
     ok('ttx modes: pressed under ✸ - the emulator switches (its button lit) and the panel follows it', lit() && ttxMode.getAttribute('aria-pressed') === 'true');
@@ -8679,6 +8690,7 @@ settle(20).then(function () {
       if (!IDS[r.vehicle]) return;
       chain = chain.then(function () { return openM(IDS[r.vehicle]); }).then(function () {
         if (ttxMode.getAttribute('aria-pressed') === 'true') click(ttxMode);
+        stockQuiet();   // the garage's strings are the stock's (BACKLOG 102: the panel shows the Config build)
         const first = rows(), V = r.values, txt = function (k) { return V[k] && V[k].text !== undefined ? V[k].text : null; };
         let second = null;
         if (!ttxMode.hidden) { click(ttxMode); second = rows(); click(ttxMode); }
@@ -8761,7 +8773,7 @@ settle(20).then(function () {
   ok('strip: the top help dot lists ⌖ first and everything of the strip one can press or read, not the tile (user 23.09: the group opened on the collision model); the shooter row no longer the mode button',
      JSON.stringify(dots['fun-mode-toggle']) === JSON.stringify(['fun-mode-toggle', 'real-reload-toggle', 'aim-gun-load', 'aim-gun-mag', 'aim-gun-heat', 'target-hp', 'target-hp-reset'])
      // the one mode button (27.09) is the panel's: its "?" lists it first, as it stands first in the panel's tools
-     && JSON.stringify(dots['ttx-mode']) === JSON.stringify(['ttx-mode', 'ttx-build-toggle', 'ttx-more-button', 'ttx-pair'])
+     && JSON.stringify(dots['ttx-mode']) === JSON.stringify(['ttx-mode', 'ttx-more-button', 'ttx-pair', 'ttx-compact'])
      // manual-motion (27.09): the drive tile opens a popover now, so the row's dot lists it first, as it stands first in the row
      && JSON.stringify(dots['aim-drive-summary']) === JSON.stringify(['aim-drive-summary', 'swap-roles', 'shooter-tile', 'aim-gun-shells', 'aim-config']),
      '(' + JSON.stringify(dots['fun-mode-toggle']) + ' / ' + JSON.stringify(dots['aim-drive-summary']) + ')');
@@ -9099,20 +9111,17 @@ settle(20).then(function () {
     // The characteristics panel in the build (⚙) reads the SAME pass: the dispersion is the ring's figure, and the three
     // x0.99 on the turret term (levels 2, 4, 5) print 97, not 97.03.
     fmClick(2, 'b'); fmClick(4, 'b'); fmClick(5, 'b');
-    const buildBox = document.getElementById('ttx-build'), panel = document.getElementById('ttx-panel'), compact = document.getElementById('ttx-compact');
+    const panel = document.getElementById('ttx-panel'), compact = document.getElementById('ttx-compact');
     const row = function (k) { return ttxRowsIn(compact).filter(function (r) { return r.getAttribute('data-key') === k; })[0] || null; };
     const val = function (k) { const r = row(k); return r ? r.ttx.value.textContent : null; };
-    if (buildBox.checked) click(document.getElementById('ttx-build-toggle'));
-    const stockDisp = val('shotDispersionAngle'), stockTurret = val('stabTurret'), stockTitle = document.getElementById('ttx-build-toggle').title;
-    click(document.getElementById('ttx-build-toggle'));
-    const ring = view.liveRadius100;
-    ok('fieldmods: ⚙ stock - no field modification: the bare vehicle’s 9.56 and 100, and the tooltip says the stock has none',
-       panel.hidden === false && stockDisp === '9.56' && stockTurret === '100' && /• Off: the stock[^\n]*or field modification\n/.test(stockTitle) && !/This build/.test(stockTitle), stockDisp + ' / ' + stockTurret);
-    ok('fieldmods: ⚙ build - the panel’s dispersion is the ring’s own figure (one pass of multipliers), and three x0.99 on the turret term print 97',
-       buildBox.checked === true && val('shotDispersionAngle') === TX.nice(TX.dr(ring, 4)) && val('stabTurret') === '97'
-       && /\nThe field modification set in Config is counted by the client’s law; any the record carries is left out\.$/.test(document.getElementById('ttx-build-toggle').title),
+    const ring = view.liveRadius100, stockOf = function (k) { const m = /\n• Stock: ([^\n]*)\n/.exec(row(k) ? row(k).title : ''); return m ? m[1] : null; };
+    ok('fieldmods: the stock in each row’s tooltip - no field modification: the bare vehicle’s 9.56 and 100, and the figures’ box says the stock has none',
+       panel.hidden === false && stockOf('shotDispersionAngle') === '9.56' && stockOf('stabTurret') === '100'
+       && /\n• Stock: [^\n]*or field modification - each row’s tooltip names it\n/.test(compact.title), stockOf('shotDispersionAngle') + ' / ' + stockOf('stabTurret'));
+    ok('fieldmods: the build - the panel’s dispersion is the ring’s own figure (one pass of multipliers), and three x0.99 on the turret term print 97',
+       val('shotDispersionAngle') === TX.nice(TX.dr(ring, 4)) && val('stabTurret') === '97'
+       && /\nThe field modification set in Config is counted by the client’s law; any the record carries is left out\.$/.test(compact.title),
        val('shotDispersionAngle') + ' / ' + TX.nice(TX.dr(ring, 4)) + ' / ' + val('stabTurret'));
-    click(document.getElementById('ttx-build-toggle'));
     // The recorded ring is the record's: switching field modifications never touches it or the recorded block.
     const aimBefore = JSON.stringify(FHITS[0].attacker.aim);
     let recordedCalls = 0;
@@ -9143,7 +9152,7 @@ settle(20).then(function () {
     // A LIVE block of an enemy (aimFrom arena, x1.03 on the circle over its compact rebuild: his pair). The configurator
     // keeps it while the block is all off, and leaves it out the moment anything is on - never both.
     const view = viewerInstance, bare = Math.atan(0.1) * 100 / 1.043;
-    choosePreset('Stock — no equipment'); run(20);
+    choosePreset('Stock'); run(20);
     ok('fieldmods: an enemy’s live block with the block all off - his own x1.03 is kept, and the Config tooltip says until when',
        near(view.liveRadius100 / bare, 1.03) && /Kept from the record: ×1\.03 on the circle \(field modifications\) - until anything in the Field modification block is on/.test(cfgSummary.title),
        '(' + (view.liveRadius100 / bare) + ')');
@@ -9176,6 +9185,8 @@ settle(20).then(function () {
   return twoScenes();
 }).then(function () {
   return targetTtx();
+}).then(function () {
+  return currentBuilds();
 }).then(function () {
 
 
@@ -9284,7 +9295,13 @@ function pathMatrix() {
     tags: ['HD', 'aimingStabilizer_class1_user', 'antifragmentationLining_medium_user', 'earn_crystals', 'extraHealthReserve_class2_user', 'improvedVentilation_class2_user', 'mediumTank', 'mediumTank2', 'role_MT_support']});
   EXPORTS.pm_waffe = Object.assign(EXPORT('pm_waffe', 'germany:G98_Waffentrager_E100', 'Waffenträger auf E 100', 1650), {'class': 'AT-SPG',
     tags: ['AT-SPG', 'AT-SPG2', 'HD', 'antifragmentationLining_superheavy_user', 'earn_crystals', 'extraHealthReserve_class1_user', 'heavyAT-SPG', 'private', 'role_ATSPG_support', 'secret', 'unrecoverable']});
+  // BACKLOG 102 (the user 14.11): his own vehicle opened from the garage opens with its garage build - the vehicle file the
+  // mod wrote from the garage names it (`build`: the equipment by slot, the directive and the consumables, exporter.vehicle_build).
+  EXPORTS.pm_own = Object.assign(EXPORT('pm_own', 'germany:OwnHangar', 'Own Hangar', 2000), {source: 'hangar',
+    tags: ['germany', 'heavyTank', 'tankRammer_class1_user', 'aimingStabilizer_class1_user', 'improvedVentilation_class1_user', 'extraHealthReserve_class1_user'],
+    build: {from: 'hangar', devices: ['aimingStabilizer_tier1', '', 'improvedVentilation_tier1'], consumables: ['food'], directive: ''}});
   const CATALOGUE = [VEHICLE,
+    {id: 'pm_own', type: 'germany:OwnHangar', name: 'Own Hangar', level: 10, 'class': 'heavyTank', nation: 'germany', exported: true, exportedAt: 1},
     {id: 'pm_papa', type: 'germany:Papa', name: 'Papa', level: 10, 'class': 'heavyTank', nation: 'germany', exported: true, exportedAt: 1},
     {id: 'pm_quebec', type: 'germany:Quebec', name: 'Quebec', level: 10, 'class': 'heavyTank', nation: 'germany', exported: true, exportedAt: 1},
     // 24.09: a catalogue row without a model - in the browser it opens with its characteristics file alone.
@@ -9697,6 +9714,26 @@ function pathMatrix() {
     return browse('pm_batchat').then(function () {
       const batchat = fitted();
       return browse('pm_waffe').then(function () { return [batchat, fitted()]; });
+    }).then(function (got) {
+      openConfigMenu(); const defaultWords = preset.title; config.open = false; config.fire('toggle');
+      return browse('pm_own').then(function () {
+        openConfigMenu();
+        const cons = /\n• Consumables: ([^\n]*)/.exec(cfgSummary.title);
+        ok('BACKLOG 102: a vehicle from the list with no build of its own - Current is the default build and says so',
+           /^Current\nNo build of this vehicle is known here/.test(defaultWords), defaultWords.slice(0, 160));
+        ok('BACKLOG 102: his own vehicle from the garage opens on Current - the garage\'s build: its equipment by slot, its rations, and the words say where it comes from',
+           presetName() === 'Current' && fitted() === 'Vertical Stabilizer Class 1, Improved Ventilation Class 1' && !!cons && cons[1] === 'Combat rations'
+           && slots.children[1].getAttribute('data-tier') === 'none'
+           && /^Current\nYour vehicle’s build in the garage, as the mod read it/.test(preset.title) && /\n• Crew: trained to 100 %, no skills - the crew is not read/.test(preset.title),
+           '(' + presetName() + ' | ' + fitted() + ' | ' + (cons && cons[1]) + ' | ' + preset.title.slice(0, 200) + ')');
+        choosePreset('Stock');
+        const stockEquip = fitted();
+        choosePreset('Current');
+        ok('BACKLOG 102: Stock is one click away - nothing fitted - and Current back gives the garage\'s build again',
+           stockEquip === '' && fitted() === 'Vertical Stabilizer Class 1, Improved Ventilation Class 1', '(' + stockEquip + ' | ' + fitted() + ')');
+        config.open = false; config.fire('toggle');
+        return got;
+      });
     }).then(function (got) {
       ok('BACKLOG 101: the default build on a vehicle without a rammer - ventilation in its place (Bat.-Châtillon 25 t), else a laying drive (Waffenträger auf E 100); a vehicle with one keeps it (BZ-79)',
          got[0] === 'Improved Ventilation Class 2, Improved Hardening Class 2, Turbocharger Class 1'
@@ -10253,7 +10290,7 @@ function targetTtx() {
   return settle(20).then(open).then(function () { return pick('a1'); }).then(function () {
     const tip = chip().title || '';
     ok('target panel: a hit with the target\'s file - the second instance stands with the TARGET\'s figures (its HP 1700, not the shooter\'s 1300), the shooter\'s panel keeps his',
-       $('ttx-panel-target').hidden === false && hpOf('-target') === '1850' && hpOf('') === '1300' && $('ttx-panel').hidden === false,
+       $('ttx-panel-target').hidden === false && hpOf('-target') === '1850' && hpOf('') === '1430' && $('ttx-panel').hidden === false,   // the shooter's: his build, Current's common build (its hardening x1.1, BACKLOG 102)
        JSON.stringify({target: hpOf('-target'), shooter: hpOf(''), hidden: $('ttx-panel-target').hidden}));
     // Row 80 (user 12.11: the panel said the stock 2500 beside the bar's 2780 of the battle).
     const hpRow = $('ttx-hp-target').children[0], hpTip = hpRow ? hpRow.title || '' : '';
@@ -10272,11 +10309,84 @@ function targetTtx() {
     return pick('n1');
   }).then(function () {
     ok('target panel: a target with no characteristics file - no target panel; the shooter\'s stays', $('ttx-panel-target').hidden === true && $('ttx-panel').hidden === false);
-    ok('target panel: (held statically) one widget - the target\'s is made from the shooter\'s markup with -target ids, without ⚙; its one door is a scene painter beside the shooter\'s; top-right in the stylesheet, popovers downward',
-       /function ttxCloneTarget\(\) \{\n    var src = \$\('ttx-panel'\);/.test(appSrc) && /e\.id = e\.id \+ '-target'/.test(appSrc) && /#ttx-build-toggle-target/.test(appSrc)
+    ok('target panel: (held statically) one widget - the target\'s is made from the shooter\'s markup with -target ids (no switch: there is none, BACKLOG 102); its one door is a scene painter beside the shooter\'s; top-right in the stylesheet, popovers downward',
+       /function ttxCloneTarget\(\) \{\n    var src = \$\('ttx-panel'\);/.test(appSrc) && /e\.id = e\.id \+ '-target'/.test(appSrc) && !/#ttx-build-toggle/.test(appSrc)
        && /\['characteristics',function\(\)\{ttxPaint\(\);ttxTargetSync\(\);\}\]/.test(appSrc)
        && /\.ttx-panel\.ttx-target\{top:12px;bottom:auto;/.test(fs.readFileSync(path + 'style.css', 'utf8'))
        && /\.ttx-panel\.ttx-target \.toolbar-popover\{top:calc\(100% \+ 6px\);bottom:auto\}/.test(fs.readFileSync(path + 'style.css', 'utf8')));
+    restore();
+  }, function (e) { restore(); throw e; });
+}
+// BACKLOG 102 (the user 14.11): Config's Current in a battle. His own vehicle - the equipment it had in that battle, which
+// the mod reads off its own descriptor (the battle file's ownBuilds, exporter.own_builds); another player's - unknown, so
+// the common build stands in, said to be an estimate, and where the battle's own maximum HP (the server's figure) is more
+// than his vehicle and field modifications give, the hit points device is inferred from the difference and said so.
+function currentBuilds() {
+  if (RELOAD) return Promise.resolve();
+  const $ = function (id) { return document.getElementById(id); };
+  const D = global.ArmorInspectorData;
+  const keep = {index: D.index, battle: D.battle, scene: D.scene, ttx: D.ttx};
+  const aim = Object.assign({}, AIM_BLOCK, {afterShotFactor: 0, dispersion: 0.0036, aimingTime: 2.3, reloadTime: 9, clip: [1, 0]});
+  const PARTS = function () { return [{id: 1, name: 'hull', modelKey: 'k1'}]; };
+  const HIT = function (id, shooter, type) {
+    return {id: id, attackerId: shooter, targetId: shooter === 40 ? 7 : 40, direction: shooter === 40 ? 'outgoing' : 'incoming', damage: 0, receivedAt: 100, gameTime: 50, warnings: [], points: [],
+      attacker: {name: type.split(':')[1], type: type, parts: PARTS(), gunDispersion: 0.0036, aim: aim},
+      target: shooter === 40 ? {name: 'Target', type: 'germany:CbTarget', parts: PARTS(), aim: aim} : {name: 'CbOwn', type: 'germany:CbOwn', parts: PARTS(), aim: aim}};
+  };
+  const B = {id: 'cb', map: 'Test', playerVehicleId: 40, warnings: [], shotEvents: [],
+    ownBuilds: {'germany:CbOwn': {devices: ['tankRammer_tier1', 'aimingStabilizer_tier1', '']}},
+    roster: [{id: 40, type: 'germany:CbOwn', maxHealth: 2000, maxHealthFrom: 'descriptor', defaultMaxHealth: 2000, healthFactor: 1},
+             // seen by the server: 2 420 of a stock 2 200 - Improved Hardening (x1.1)
+             {id: 51, type: 'germany:CbHard', maxHealth: 2420, maxHealthFrom: 'vehicle', defaultMaxHealth: 2200, healthFactor: 1},
+             // seen: 2 266 = the stock 2 200 x his field modifications' 1.03 - no hit points device
+             {id: 52, type: 'germany:CbBare', maxHealth: 2266, maxHealthFrom: 'vehicle', defaultMaxHealth: 2200, healthFactor: 1.03},
+             // never seen: the descriptor's figure (his equipment stripped) - nothing to read
+             {id: 53, type: 'germany:CbUnseen', maxHealth: 2200, maxHealthFrom: 'descriptor', defaultMaxHealth: 2200, healthFactor: 1},
+             {id: 7, type: 'germany:CbTarget', maxHealth: 1500, maxHealthFrom: 'vehicle', defaultMaxHealth: 1500}],
+    hits: [HIT('own', 40, 'germany:CbOwn'), HIT('hard', 51, 'germany:CbHard'), HIT('bare', 52, 'germany:CbBare'), HIT('unseen', 53, 'germany:CbUnseen'),
+           HIT('older', 40, 'germany:CbOwnOld')]};
+  D.index = function () { return Promise.resolve({application: 'local.armor_inspector', version: 'test', battles: [{id: 'cb', startedAt: 3, map: 'Test', hits: 5}]}); };
+  D.battle = function (id) { return id === 'cb' ? Promise.resolve(JSON.parse(JSON.stringify(B))) : Promise.reject(new Error('no battle')); };
+  D.scene = function (b, id) { return Promise.resolve({hit: b.hits.filter(function (x) { return x.id === id; })[0], models: {}, warnings: []}); };
+  D.ttx = function (id) { return Promise.reject(new Error('Not found data/ttx/' + id + '.js')); };
+  const open = function () { const p = $('battles'); p.value = 'cb'; p.onchange.call(p); return settle(30); };
+  const hitRow = function (id) { $('hits').children.filter(function (r) { return r.getAttribute('data-hit') === id; })[0].onclick(); return settle(30); };
+  const fitted = function () { const m = /\n• Equipment: ([^\n]*)/.exec(cfgSummary.title); return m ? m[1] : ''; };
+  const restore = function () { D.index = keep.index; D.battle = keep.battle; D.scene = keep.scene; D.ttx = keep.ttx; };
+  const seen = {};
+  const read = function () { openConfigMenu(); const out = {name: presetName(), fit: fitted(), title: preset.title}; config.open = false; config.fire('toggle'); return out; };
+  sidebarModes[0].onclick();
+  return settle(20).then(open).then(function () { return hitRow('own'); }).then(function () {
+    seen.own = read();
+    return hitRow('hard');
+  }).then(function () {
+    seen.hard = read();
+    return hitRow('bare');
+  }).then(function () {
+    seen.bare = read();
+    return hitRow('unseen');
+  }).then(function () {
+    seen.unseen = read();
+    return hitRow('older');
+  }).then(function () {
+    seen.older = read();
+    ok('BACKLOG 102: his own vehicle in a battle opens on Current - the equipment it had in that battle, from the battle\'s record, the rest said not to be recorded',
+       seen.own.name === 'Current' && seen.own.fit === 'Gun Rammer Class 1, Vertical Stabilizer Class 1'
+       && /^Current\nThe equipment your vehicle had in this battle, from the battle’s record\./.test(seen.own.title)
+       && /\n• Directive and consumables: not recorded - none counted/.test(seen.own.title), JSON.stringify(seen.own));
+    ok('BACKLOG 102: his own vehicle in a battle file that does not name it - the default build, and the words say the file does not name it',
+       seen.older.name === 'Current' && seen.older.fit === 'Gun Rammer Class 1, Improved Hardening Class 1, Turbocharger Class 1'
+       && /^Current\nThis battle’s file does not name your vehicle’s equipment/.test(seen.older.title), JSON.stringify(seen.older));
+    ok('BACKLOG 102: another player\'s vehicle seen with more HP than his stock - Current is an estimate, the hardening inferred from the HP and said not to be recorded',
+       seen.hard.name === 'Current' && seen.hard.fit === 'Gun Rammer Class 1, Improved Hardening Class 1, Turbocharger Class 1'
+       && /^Current - an estimate\nAn estimate: another player’s equipment is not recorded/.test(seen.hard.title)
+       && /\n• Hit points: 2420 HP in the battle, 2200 without equipment - inferred from the HP: Improved Hardening Class 1, not recorded/.test(seen.hard.title), JSON.stringify(seen.hard));
+    ok('BACKLOG 102: one seen with no more HP than his vehicle and field modifications give - no hardening inferred, that slot left empty and said so',
+       seen.bare.name === 'Current' && seen.bare.fit === 'Gun Rammer Class 1, Turbocharger Class 1'
+       && /\n• Hit points: 2266 HP in the battle, 2266 without equipment - no hit points device, inferred from the HP; that slot is left empty/.test(seen.bare.title), JSON.stringify(seen.bare));
+    ok('BACKLOG 102: one never seen (the descriptor\'s figure only) - the common build kept as an estimate, and the words say the HP could not be read',
+       seen.unseen.name === 'Current' && seen.unseen.fit === 'Gun Rammer Class 1, Improved Hardening Class 1, Turbocharger Class 1'
+       && /^Current - an estimate\n/.test(seen.unseen.title) && /\n• Hit points: the battle has no figure of the server’s for this vehicle/.test(seen.unseen.title), JSON.stringify(seen.unseen));
     restore();
   }, function (e) { restore(); throw e; });
 }
@@ -10673,7 +10783,7 @@ function xiBrowsed() {
   const key = function (code, down) { document.fire(down ? 'keydown' : 'keyup', {code: code, key: code.slice(3).toLowerCase(), target: document.body, preventDefault: function () {}}); };
   const funBox = $('fun-mode'), realBox = $('real-reload'), mech = $('ttx-mode');
   const setFun = function (on) { if (funBox.checked !== on) click($('fun-mode-toggle')); };
-  const compact = $('ttx-compact'), full = $('ttx-full'), more = $('ttx-more'), buildBox = $('ttx-build'), toggle = $('ttx-build-toggle');
+  const compact = $('ttx-compact'), full = $('ttx-full'), more = $('ttx-more');
   // The panel as it stands: the expanded view's rows, the compact one's, the HP of the head, the shells' table.
   const panelNow = function () {
     const out = {rows: {}, compact: {}, hp: $('ttx-hp').children[0] ? $('ttx-hp').children[0].ttx.value.textContent : null, shells: []};
@@ -10707,14 +10817,14 @@ function xiBrowsed() {
        listRow(NAME).getAttribute('data-exported') !== 'false' && hit.id === 'vehicle:' + NAME + '/' + NAME
        && $('model-tile').title.indexOf(E.name) >= 0 && $('shooter-tile').title.indexOf(E.name) >= 0 && $('ttx-panel').hidden === false,
        '(scene ' + hit.id + ', panel hidden ' + $('ttx-panel').hidden + ')');
-    // Nothing fitted: the build of ⚙ is then the stock, figure for figure.
+    // Nothing that moves a figure fitted (a repair kit only): the build - the emulator's own block - is then the stock,
+    // figure for figure (BACKLOG 102: Config empty shows the stock itself, there is no switch).
     stockBuild(); config.open = false; config.fire('toggle');
     run(20);
-    if (buildBox.checked) click(toggle);
-    const stock = panelNow(), stockWords = toggle.title;
-    click(toggle);
-    const build = panelNow(), buildWords = toggle.title;
-    click(toggle);
+    const stock = panelNow(), stockWords = compact.title;
+    openConfigMenu(); fitKit(); config.open = false; config.fire('toggle'); run(20);
+    const build = panelNow(), buildWords = compact.title;
+    stockBuild(); config.open = false; config.fire('toggle'); run(20);
     // ---- the panel, the stock column: the characteristics file ----
     ok(tag + 'the panel, stock - top speed ' + KMH + ' km/h forward / reverse, in the compact view and in the expanded one',
        stock.compact.speedLimits === KMH && stock.rows.speedLimits === KMH, '(' + stock.compact.speedLimits + ' / ' + stock.rows.speedLimits + ')');
@@ -10748,14 +10858,13 @@ function xiBrowsed() {
     // give, as on any other vehicle; then back to nothing fitted for the checks below.
     openConfigMenu(); choosePreset('Rammer, hardening, turbo'); config.open = false; config.fire('toggle');
     run(20);
-    if (!buildBox.checked) click(toggle);
-    const fitted = panelNow(), fittedWords = toggle.title;
+    const fitted = panelNow(), fittedWords = compact.title;
     const kmh = function (t) { return String(t).split('/').map(Number); };
     ok(tag + 'the panel, ⚙ with the default build (rammer, hardening, turbocharger) - the turbocharger raises the top speed over the stock ' + KMH + ' and the engine power, the hardening the HP over ' + F.maxHealth,
        kmh(fitted.rows.speedLimits)[0] >= F.speedForwardKmh + 4 && kmh(fitted.rows.speedLimits)[1] >= F.speedBackwardKmh + 2 && Number(fitted.rows.maxHealth) > F.maxHealth
        && Number(fitted.rows.enginePower) > Number(POWER),
        '(speed ' + fitted.rows.speedLimits + ', HP ' + fitted.rows.maxHealth + ', power ' + fitted.rows.enginePower + '; ' + fittedWords.split('\n').slice(0, 5).join(' | ').slice(0, 300) + ')');
-    click(toggle); stockBuild(); config.open = false; config.fire('toggle'); run(20);
+    stockBuild(); config.open = false; config.fire('toggle'); run(20);
     // ---- the shells: the heading's chips, the gun panel's icons, the fields, what the viewer is given ----
     const chips = $('shell-quick').children, WORDS = ['APCR ' + PEN[0], 'HEAT ' + PEN[1], 'HE ' + PEN[2]];
     ok(tag + 'the heading’s shell chips - ' + WORDS.join(', '), chips.map(function (b) { return b.textContent; }).join(', ') === WORDS.join(', '),

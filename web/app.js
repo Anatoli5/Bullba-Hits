@@ -1709,10 +1709,18 @@
   // assemble a common build slot by slot every time. They name real items of the client; the Class
   // band is picked for the vehicle on screen by aimResolve. brotherhood: true is Brothers in Arms on
   // every member of the crew (aimValues).
+  // THE TWO BASE ENTRIES (BACKLOG 102, user 14.11): Stock - the bare vehicle, the same for every vehicle, so two vehicles
+  // are compared on equal terms (it replaced the characteristics panel's switch "stock / this build") - and Current, the
+  // vehicle's real build where the page knows it (aimCurrentFor: the garage's, the battle's) and the most common one
+  // otherwise, said so. Both head the list; the other built-in builds follow the user's own entries.
+  var AIM_STOCK = 'Stock', AIM_CURRENT = 'Current';
+  // Names a store may hold from an earlier page (BACKLOG 102: the stock build was "Stock — no equipment" until 14.11).
+  var AIM_RENAMED = {'Stock — no equipment': AIM_STOCK};
   var AIM_BUILT_IN = [
-    {name: 'Stock — no equipment', values: {}},
-    // The most common build (user, 27.09): rammer, hardening, turbocharger - the default of a shooter who has no entry
-    // of his own (AIM_DEFAULT), in each of the three grades.
+    {name: AIM_STOCK, values: {}, base: true},
+    {name: AIM_CURRENT, values: null, base: true},
+    // The most common build (user, 27.09): rammer, hardening, turbocharger - what Current stands on where the vehicle's
+    // own build is not known (AIM_TYPICAL), in each of the three grades.
     // A vehicle the game gives no rammer (BACKLOG 101, user 14.11: the magazine and autoloader guns mostly - the client's
     // eligibility tags say which, aimFits) takes ventilation in its place, else a stabiliser, else a laying drive, in the
     // same grade: ventilation is offered to most of them (363 of the 470 vehicles without a rammer in his files of 14.11,
@@ -1738,22 +1746,141 @@
      values: {slots: ['trophyUpgradedTankRammer', 'trophyUpgradedAimingStabilizer', 'trophyUpgradedImprovedVentilation'],
               consumables: ['food'],
               skills: {brotherhood: true, gunner_smoothTurret: true, driver_smoothDriving: true}}}];
-  var AIM_DEFAULT = AIM_BUILT_IN[1].name;   // a shooter with no entry of his own (27.09: was the stock build)
-  shooterPreset = AIM_BUILT_IN[0].name;   // the stock build, until a shooter is on screen
+  var AIM_TYPICAL = AIM_BUILT_IN[2];
+  // A shooter with no entry of his own (27.09: the common build; BACKLOG 102, 14.11: Current - his real build where it is
+  // known, and that same common build where it is not).
+  var AIM_DEFAULT = AIM_CURRENT;
+  shooterPreset = AIM_STOCK;   // the stock build, until a shooter is on screen
   function aimBuiltIn(name) {
     for (var i = 0; i < AIM_BUILT_IN.length; i++) if (AIM_BUILT_IN[i].name === name) return AIM_BUILT_IN[i];
     return null;
   }
   function aimPreset(name) {
     if (name === AIM_CUSTOM) return aimValues(aimStore.custom[shooterType]);
+    if (name === AIM_CURRENT) return aimValues(aimCurrent.values || aimTypicalValues());
     var built = aimBuiltIn(name);
     if (built) return aimValues(built.values);
     return aimStore.presets[name] ? aimValues(aimStore.presets[name]) : null;
   }
   function aimUserNames() { return Object.keys(aimStore.presets).sort(); }
-  // Every entry of the preset list, in its order: Custom, the built-in builds, the user's own.
+  // Every entry of the preset list, in its order (BACKLOG 102): the two base entries, Custom and the user's own presets,
+  // then the other built-in builds.
   function aimEntryNames() {
-    return [AIM_CUSTOM].concat(AIM_BUILT_IN.map(function (p) { return p.name; }), aimUserNames());
+    var base = AIM_BUILT_IN.filter(function (p) { return p.base; }), rest = AIM_BUILT_IN.filter(function (p) { return !p.base; });
+    function names(list) { return list.map(function (p) { return p.name; }); }
+    return names(base).concat([AIM_CUSTOM], aimUserNames(), names(rest));
+  }
+  // --- Current: the vehicle's real build (BACKLOG 102, user 14.11) -----------------------------------------------
+  // What Current holds for the shooter on screen, and what it rests on - `how`:
+  //   'hangar'   the player's own vehicle from the Vehicles list, its file written from the garage: the equipment mounted
+  //              there, and the directive and consumables when the mod read them (vehicle file `build`, the mod's
+  //              vehicle_build); the crew is not read - trained to 100 %, no skills;
+  //   'battle'   the player's own vehicle in a battle: the equipment it had in that battle, read by the mod off the
+  //              vehicle's own compact descriptor (battle file `ownBuilds`, the mod's own_builds) - or a vehicle file
+  //              written from such a battle (`build.from` 'battle'); no consumables, directive or crew: not recorded;
+  //   'estimate' another player's vehicle in a battle: his equipment is not recorded (the server strips it from every
+  //              other player's descriptor), so the most common build stands in for it, said to be an estimate; where
+  //              the battle's own maximum HP (the server's figure, not the descriptor's) is more than his vehicle and
+  //              field modifications give, the hit points device is inferred from the difference (aimHpDevice);
+  //   'default'  nothing known (a vehicle from the list that is not the player's, a battle file without it): the most
+  //              common build, said so.
+  // Never an assumed item presented as recorded: the words of each kind say what is the record's and what is not.
+  var aimCurrent = {values: null, how: 'default', words: []};
+  var AIM_HP_SOURCES = {vehicle: 1, vehiclesInfo: 1};   // the server's maximum HP of the vehicle (targetHp: 'server', 'replay')
+  function aimTypicalValues() {
+    var v = AIM_TYPICAL.values, out = {slots: v.slots.slice(), instead: v.instead};
+    return out;
+  }
+  // A build named by the mod ({devices: [three client entry names, '' empty], consumables: [...], directive: ''}) as the
+  // values of a preset; null when it names nothing the catalogue knows of and is not an empty garage build.
+  function aimBuildValues(build) {
+    if (!build || typeof build !== 'object' || !Array.isArray(build.devices)) return null;
+    var out = {slots: ['', '', ''], directive: '', consumables: ['', '', '']};
+    AIM_SLOTS.forEach(function (i) { var id = String(build.devices[i] || ''); if (DEVICE_BY_ID[id]) out.slots[i] = id; });
+    if (DIRECTIVE_BY_ID[String(build.directive || '')]) out.directive = String(build.directive);
+    if (Array.isArray(build.consumables)) {
+      var k = 0;
+      build.consumables.forEach(function (id) { id = String(id || ''); if (k < 3 && CONSUMABLE_BY_ID[id]) out.consumables[k++] = id; });
+    }
+    return out;
+  }
+  function aimDeviceNames(values) {
+    return AIM_SLOTS.map(function (i) { var d = DEVICE_BY_ID[values.slots[i]]; return d ? d.name : ''; }).filter(Boolean);
+  }
+  // The hit points device of another player's vehicle, read off the battle's own maximum HP (BACKLOG 102): the roster row
+  // of the vehicle at that moment names the server's maximum (maxHealthFrom 'vehicle' - the vehicle seen - or the replay's
+  // 'vehiclesInfo'), the vehicle's stock figure (defaultMaxHealth) and the factor its descriptor gives (healthFactor: the
+  // field modifications; the server strips the equipment from another player's descriptor). The device is the one whose
+  // factor turns the stock times that factor into the battle's figure, rounded up to tens as the client does; null when
+  // the row has no server figure (nothing can be read), {none: true} when the figure needs no device, {device, others}
+  // when it fits one or more devices this vehicle may mount (the first in AIM_HP_ORDER is taken, the others named),
+  // {unknown: true} when it fits none.
+  var AIM_HP_ORDER = ['standard', 'bounty', 'improved', 'experimental'];
+  function aimHpDevice(row) {
+    if (!row || !AIM_HP_SOURCES[row.maxHealthFrom]) return null;
+    var max = Number(row.maxHealth), base = Number(row.defaultMaxHealth), hf = Number(row.healthFactor) > 0 ? Number(row.healthFactor) : 1;
+    if (!(max > 0 && base > 0)) return null;
+    function hp(f) { var x = base * hf * f; return f === 1 ? Math.round(x) : Math.ceil(x / 10 - 1e-9) * 10; }
+    var fits = AIM_DEVICES.filter(function (d) {
+      var e = d.eff && d.eff.healthFactor;
+      return e && e[0] === 'mul' && aimFits(d) && hp(Number(e[e.length - 1])) === max;
+    });
+    // One device a family and grade: its Class bands are one device for three tier bands (aimResolve picks the band).
+    var kinds = {};
+    fits = fits.filter(function (d) { var k = d.family + '|' + d.tier; if (kinds[k]) return false; kinds[k] = true; return true; });
+    fits.sort(function (a, b) { return AIM_HP_ORDER.indexOf(a.tier) - AIM_HP_ORDER.indexOf(b.tier); });
+    var out = {max: max, base: base, hf: hf};
+    if (fits.length) { out.device = fits[0]; out.others = fits.slice(1); return out; }
+    if (hp(1) === max || Math.abs(max - base * hf) < 1.5) { out.none = true; return out; }
+    out.unknown = true;
+    return out;
+  }
+  function aimHpWords(inf) {
+    if (!inf) return '• Hit points: the battle has no figure of the server’s for this vehicle (it was not seen) - the hardening of the common build is assumed';
+    var nums = inf.max + ' HP in the battle, ' + Math.round(inf.base * inf.hf) + ' without equipment';
+    if (inf.device) return '• Hit points: ' + nums + ' - inferred from the HP: ' + inf.device.name
+      + (inf.others.length ? ' (or ' + inf.others.map(function (d) { return d.name; }).join(', ') + ': the same HP)' : '') + ', not recorded';
+    if (inf.none) return '• Hit points: ' + nums + ' - no hit points device, inferred from the HP; that slot is left empty (its device is unknown)';
+    return '• Hit points: ' + nums + ' - no device gives this figure; the common build’s hardening is kept';
+  }
+  // Current for the shooter of `hit` (syncShooterMods, after the fitment: aimHpDevice asks what he may mount).
+  function aimCurrentFor(hit) {
+    var a = hit && hit.attacker, type = a && a.type ? String(a.type) : '', values, row, inf;
+    var typical = '• Equipment: the most common build - rammer, hardening, turbocharger (where no rammer fits: ventilation, else a stabiliser, else a laying drive)';
+    var nocrew = '• Crew: trained to 100 %, no skills - the crew is not read';
+    // The Vehicles list: the vehicle's own file names its build only for the player's own vehicle (the garage's, or one of
+    // his battles' - the server strips another player's equipment).
+    if (hit && hit.vehicle && a && a.build && (values = aimBuildValues(a.build))) {
+      var garage = a.build.from === 'hangar', names = aimDeviceNames(values);
+      return {values: values, how: garage ? 'hangar' : 'battle', words: [
+        garage ? 'Your vehicle’s build in the garage, as the mod read it when the vehicle was selected there.'
+               : 'The equipment your vehicle had in a battle, as the mod read it then.',
+        '• Equipment: ' + (names.length ? names.join(', ') : 'none'),
+        garage ? '• Directive and consumables: ' + (a.build.consumables ? 'as mounted' : 'not read by this file’s mod - none counted') : '• Directive and consumables: not recorded - none counted',
+        nocrew]};
+    }
+    if (hit && !hit.vehicle && current && hit.attackerId !== undefined && hit.attackerId !== null) {
+      if (hit.attackerId === current.playerVehicleId) {
+        var own = current.ownBuilds && type ? current.ownBuilds[type] : null;
+        if ((values = aimBuildValues(own))) {
+          var have = aimDeviceNames(values);
+          return {values: values, how: 'battle', words: ['The equipment your vehicle had in this battle, from the battle’s record.',
+            '• Equipment: ' + (have.length ? have.join(', ') : 'none'),
+            '• Directive and consumables: not recorded - none counted', nocrew]};
+        }
+        return {values: aimTypicalValues(), how: 'default', words: ['This battle’s file does not name your vehicle’s equipment (none of its hits carries it, or the file is older): the most common build stands in for it.', typical]};
+      }
+      row = ArmorInspectorData.rosterAt ? ArmorInspectorData.rosterAt(current, hit.attackerId, hitTime(hit)) : null;
+      if (row && row.type && type && String(row.type) !== type) row = null;
+      values = aimTypicalValues();
+      inf = aimHpDevice(row);
+      if (inf && inf.device) values.slots[1] = inf.device.id;
+      else if (inf && inf.none) values.slots[1] = '';
+      return {values: values, how: 'estimate', words: ['An estimate: another player’s equipment is not recorded (the server does not send it), so the most common build stands in for it.',
+        typical, aimHpWords(inf), nocrew]};
+    }
+    return {values: aimTypicalValues(), how: 'default', words: [
+      'No build of this vehicle is known here - it is not your vehicle from the garage or from a battle: the most common build stands in for it.', typical]};
   }
   // "custom" in any case: a preset of that name would read as the entry itself.
   function aimReserved(name) { return String(name).toLowerCase() === AIM_CUSTOM.toLowerCase(); }
@@ -1784,15 +1911,25 @@
     var legacy = !Object.prototype.hasOwnProperty.call(box, 'custom');
     var presets = {}, chosen = {}, moved = {}, count = 0;
     function taken(name) { return !!presets[name] || Object.prototype.hasOwnProperty.call(box.presets, name); }
+    // A preset of the user's that bears the name of a base entry added since (BACKLOG 102: Stock, Current) was his own and
+    // keeps its build under a free name, the vehicles that had it chosen following it - as one named Custom did.
+    var baseNames = {}, renamed = {};
+    AIM_BUILT_IN.forEach(function (p) { if (p.base) baseNames[p.name] = true; });
     if (box.presets && typeof box.presets === 'object') Object.keys(box.presets).forEach(function (key) {
       var name = aimName(key), row = box.presets[key];
-      if (!name || aimBuiltIn(name) || !row || typeof row !== 'object' || count >= AIM_PRESET_LIMIT) return;
-      if (aimReserved(name)) { var free = aimFreeName('My ' + name, taken); moved[name] = free; name = free; }
+      if (!name || (aimBuiltIn(name) && !baseNames[name]) || !row || typeof row !== 'object' || count >= AIM_PRESET_LIMIT) return;
+      if (aimReserved(name) || baseNames[name]) {
+        var free = aimFreeName('My ' + name, taken);
+        if (baseNames[name]) renamed[name] = free; else moved[name] = free;
+        name = free;
+      }
       presets[name] = aimStoredPreset(row); count++;
     });
     if (box.chosen && typeof box.chosen === 'object') Object.keys(box.chosen).forEach(function (type) {
       var name = aimName(box.chosen[type]);
       if (legacy && moved[name]) name = moved[name];
+      if (renamed[name]) name = renamed[name];
+      else if (AIM_RENAMED[name]) name = AIM_RENAMED[name];
       if (name && (name === AIM_CUSTOM || aimBuiltIn(name) || presets[name])) chosen[String(type).slice(0, 64)] = name;
     });
     aimStore.presets = presets; aimStore.chosen = chosen;
@@ -1957,7 +2094,7 @@
     // THE FIELD MODIFICATION FIRST (23.09), one aggregate per input by the client's own law (aimFieldEffects) and
     // then the devices multiplying it, in the order vehicles __updateAttributes runs them (2685, 2688). It lives in
     // miscAttrs as the devices do, so it goes where they go - `mul` for the emulator, `dev` for the characteristics
-    // panel - and both read this one pass: the ring and ⚙ never count it twice or differently.
+    // panel - and both read this one pass: the ring and the panel never count it twice or differently.
     if (aimFieldOn(cfg)) {
       var fieldFx = aimFieldEffects(cfg);
       Object.keys(fieldFx).forEach(function (input) { apply(input, fieldFx[input], false); });
@@ -2071,7 +2208,7 @@
   }
   // The collapsed button says "Config" and nothing else (user, 20.09): no preset name, no "custom" or
   // "stock" - what is fitted is in the tiles one click away, and in the button's own tooltip.
-  // What is fitted, one item a section of the menu ('• Equipment: …'), for the Config button's and ⚙'s tooltips;
+  // What is fitted, one item a section of the menu ('• Equipment: …'), for the Config button's and the characteristics' tooltips;
   // [] when nothing is.
   function aimSummaryLines() {
     // What is IN FORCE: a kind the vehicle's lock forbids (S3) is not listed, although the configuration
@@ -2118,6 +2255,7 @@
     // vehicle type's (its tags and tier), not the gun's: another gun changes nothing in it.
     shooterFit = aimFitment(a);
     shooterPolicy = aimPolicyFor(hit);
+    aimCurrent = aimCurrentFor(hit);   // Current is this shooter's (BACKLOG 102): his real build, or what stands in for it
     var name = type && aimStore.chosen[type] ? aimStore.chosen[type] : '';
     var values = name ? aimPreset(name) : null;
     if (!values) { name = AIM_DEFAULT; values = aimPreset(name); }
@@ -2884,6 +3022,7 @@
       var row = node('div', undefined, 'aim-preset-row');
       row.setAttribute('data-selected', String(name === shooterPreset));
       row.setAttribute('data-kind', kind);
+      if (name === AIM_CURRENT) row.setAttribute('data-current', aimCurrent.how);   // Current's source (aimCurrentFor)
       // The pencil and the bin read the name out of `ref` when they are PRESSED, not when they are made. The
       // mousedown of either takes the focus off an open name field, which commits the rename there and then:
       // a closure holding the old name would look up a preset that no longer answers to it and do nothing.
@@ -2904,6 +3043,11 @@
     return list;
   }
   function aimEntryTitle(name) {
+    if (name === AIM_STOCK) return tipJoin([name, 'The vehicle as the garage shows it bare, the same for every vehicle - to compare vehicles on equal terms.',
+      '• Top modules, a crew at 100 % with no skills (+10 % commander’s bonus on every role he does not hold himself)',
+      '• No equipment, directive, consumables, paint or field modification', '• Tier XI: the skill tree stays counted in full',
+      '', 'A change made to it lands in Custom.']);
+    if (name === AIM_CURRENT) return tipJoin([aimCurrent.how === 'estimate' ? 'Current - an estimate' : name].concat(aimCurrent.words, ['', 'A change made to it lands in Custom.']));
     return tipJoin([name, name === AIM_CUSTOM ? 'Your own build: every change made in this menu lands here and is kept; the presets stay as they are.'
       : aimBuiltIn(name) ? 'A built-in build: a change made to it lands in Custom.'
       : 'Your preset: a change made to it lands in Custom.']);
@@ -4995,7 +5139,7 @@
     }
     if (row && same && Number(row.defaultMaxHealth) > 0) return {hp: Number(row.defaultMaxHealth), from: 'default'};
     // The vehicle on screen IS the shooter (a browsed vehicle under itself, BACKLOG 100): its HP is this build's - the
-    // shooter's Config on its characteristics file, the ⚙ view's own figure - so equipment put in or taken out shows.
+    // shooter's Config on its characteristics file, the characteristics panel's own figure - so equipment put in or taken out shows.
     hp = ttxOwnHp(hit);
     if (hp > 0) return {hp: hp, from: 'build'};
     if (t && Number(t.maxHealth) > 0) return {hp: Number(t.maxHealth), from: 'export'};
@@ -6350,7 +6494,7 @@
     var tile = $('aim-drive'); if (!tile) return;
     var a = aimBlockData(), mode = $('armor-mode').value, modelled = mode !== 'parts' && modelOnScreen();
     var live = !!(a && modelled && viewer && aimOn);
-    // A browsed vehicle without a model (24.09): no emulation, but Config stays - its build is the ⚙ of the panel.
+    // A browsed vehicle without a model (24.09): no emulation, but Config stays - its build is the characteristics panel's.
     var bare = !!(a && aimOn && !live && activeHit && activeHit.target && activeHit.target.noModel);
     // What the layout pass measures here is which of the four is on screen; it runs again only when that
     // changes (updateAim runs on every shell, distance or pose step, and each pass forces a page layout).
@@ -8801,14 +8945,15 @@
   // What the garage would show for the vehicle on the Shooter tile - the one Config sets up and the gun panel
   // belongs to (outputs/ttx-panel-spec-2026-09-22.md section 3.4; the arithmetic is web/ttx.js, the formulas
   // outputs/ttx-formulas-2026-09-22.md, the facts docs/KNOWLEDGE.md section 17). Bottom-right corner of the scene,
-  // icons and numbers only: every word is in a tooltip. ⚙ switches between the STOCK - top modules, a crew at
-  // 100 % with no skills, nothing fitted, as the garage shows a bare vehicle - and THIS BUILD, the Config layers
-  // on top, a figure better than the stock in mint and a worse one in red. The pair tile picks the turret and gun
+  // icons and numbers only: every word is in a tooltip. The figures are THIS BUILD - the Config in force on top of the
+  // STOCK (top modules, a crew at 100 % with no skills, nothing fitted, as the garage shows a bare vehicle), a figure
+  // better than the stock in mint and a worse one in red; each row's tooltip names both. Until 14.11 a switch showed
+  // the stock instead (BACKLOG 102: gone - the stock is Config's Stock preset). The pair tile picks the turret and gun
   // where the vehicle has more than one; ▴ opens everything else.
-  // NOTHING HERE RUNS ON A FRAME: the panel is painted on an event - another shooter, a Config change, ⚙, a pair,
+  // NOTHING HERE RUNS ON A FRAME: the panel is painted on an event - another shooter, a Config change, a pair,
   // another shell, its file arriving, the expanded view opened - and writes only the text that changed.
   // The field modification (user, 23.09) is Config's: its block sets it, aimEffects counts it with the equipment by
-  // the client's law, and the build's figures carry it; the stock has none (⚙'s tooltip says which, ttxBuildTitle).
+  // the client's law, and the build's figures carry it; the stock has none (the figures' box's tooltip says which, ttxBuildTitle).
   // Without the vehicle's characteristics file (data/ttx/<id>.js, written by the mod) the panel is not shown.
   var TTX = window.BullbaTtx || null;
   var ttxCache = {}, ttxOrder = [], ttxPending = {}, ttxAsked = {}, ttxTried = {}, ttxData = null, ttxType = '';
@@ -8978,13 +9123,17 @@
                       lines: [['shotDispersionAngle', 'aimingTime'], ['stabMovement', 'stabTurret'], ['stabRotation']]},
                      {group: 'relativeMobility', lines: [['speedLimits', 'turretRotationSpeed'], ['enginePowerPerTon', 'hull']]},
                      {group: 'relativeCamouflage', lines: [['circularVisionRadius', 'invisibilityStillFactor'], [null, 'invisibilityMovingFactor']]}];
-  // ⚙'S TOOLTIP holds the words every row shares, once (23.09; they used to close every row's tooltip): what the stock
-  // and the build are, what the build holds now, where its figures come from, and its field modification - the build
+  // THE FIGURES' BOX'S TOOLTIP (the switch's until 14.11, BACKLOG 102) holds the words every row shares, once (23.09; they
+  // used to close every row's tooltip): what the stock and the build are, what the build holds now, where its figures come from, and its field modification - the build
   // counts Config's by the client's law, in the same pass as the equipment (aimEffects), and then leaves the record's
   // own out of the emulator's block; the stock has none. Written by ttxPaint, once a paint.
-  var TTX_BUILD_HEAD = ['Stock or this build',
-    '• Off: the stock, as the garage shows a bare vehicle - top modules, a crew at 100 % with no skills (+10 % commander’s bonus on every role he does not hold himself), no equipment, directive, consumables, paint or field modification',
-    '• On: this shooter’s build from Config on top; a figure better than the stock is mint, a worse one red'];
+  var TTX_BUILD_HEAD = ['Characteristics of this build',
+    'The shooter’s build from Config, as the garage counts it; a figure better than the stock is mint, a worse one red.',
+    '• Stock: top modules, a crew at 100 % with no skills (+10 % commander’s bonus on every role he does not hold himself), no equipment, directive, consumables, paint or field modification - each row’s tooltip names it',
+    '• The stock itself: Stock in Config’s presets'];
+  var TTX_STOCK_HEAD = ['Characteristics: the stock',
+    'Nothing is fitted in Config: the vehicle as the garage shows it bare - top modules, a crew at 100 % with no skills (+10 % commander’s bonus on every role he does not hold himself), no equipment, directive, consumables, paint or field modification.',
+    '• A build: Current or another preset in Config'];
   // A TIER-XI VEHICLE'S SKILL TREE IS IN ITS FILE, WHOLE (09.10; the user's decision of 26.09: the tree has no sides to
   // choose, so it is always taken as researched to the end). The mod installs every modification of the tree before it
   // reads anything (exporter.ttx_block, the client's own installModifications) and says so in vehicle.skillTree; the
@@ -8994,7 +9143,7 @@
     return n > 0 ? '• Tier XI: the vehicle’s skill tree is always counted as fully researched - all ' + n + ' modifications, in the stock and in the build' : null;
   }
   function ttxBuildTitle(ctx) {
-    if (!ctx.build) return tipJoin(TTX_BUILD_HEAD.concat([ttxTreeLine()]));
+    if (!ctx.build) return tipJoin(TTX_STOCK_HEAD.concat([ttxTreeLine()]));
     var fitted = aimSummaryLines(), live = ctx.cur.source === 'live', offered = aimFieldOffer().levels.length > 0;
     var sit = AIM_SKILLS.some(function (s) { return s.situational && shooterConfig.skills[s.id]; });
     return tipJoin(TTX_BUILD_HEAD.concat([ttxTreeLine(), '', 'This build: top modules, a crew at 100 % with the commander’s bonus'
@@ -9074,7 +9223,7 @@
   }
   // The hit points of THIS BUILD for the vehicle on screen when it is the shooter himself - a browsed vehicle under itself
   // (BACKLOG 100, user 14.11: Improved Hardening put in and taken out, the HP bar of his tier-XI vehicle stood still: the
-  // bar read the stock export and never Config). The same values() the shooter's ⚙ view counts, on his pair (a pair picked
+  // bar read the stock export and never Config). The same values() the shooter's characteristics panel counts, on his pair (a pair picked
   // for the type, else the exported one) and his Config. 0 for any other vehicle, a battle's seat (the roster's figure
   // comes first in targetHp) and before the file is read.
   function ttxOwnHp(hit) {
@@ -9141,7 +9290,15 @@
   function ttxPaintTarget() { ttxWith(TTX_TARGET, function () { ttxTargetPick(); ttxPaint(); }); }
   // The pair on the panel IS the emulator's (24.09): the panel explains the gun that fires. `emu` when the caller has it.
   function ttxPairIndex(emu) { return emu !== undefined ? emu : ttxEmuIndex(); }
-  function ttxBuildOn() { var e = $('ttx-build'); return ttxSide !== TTX_TARGET && !!(e && e.checked); }
+  // The shooter's figures are always his build - the Config in force (BACKLOG 102, user 14.11: the switch between the
+  // stock and the build is gone; the stock is one entry of Config's presets, Stock). A Config with nothing in it IS the
+  // stock, and the panel then says so instead of printing every figure twice. The target's are the stock.
+  function ttxBuildOn() { return ttxSide !== TTX_TARGET && !aimEmpty(shooterConfig); }
+  function aimEmpty(c) {
+    return !c || (!c.slots.some(Boolean) && !c.directive && !c.consumables.some(Boolean) && !Object.keys(c.skills).some(function (k) { return c.skills[k]; })
+      && !Object.keys(c.bia || {}).some(function (k) { return c.bia[k]; }) && !Object.keys(c.camo || {}).some(function (k) { return c.camo[k]; })
+      && !c.paint && !(c.field && c.field.length));
+  }
   // The page's own shell when it is one of this gun's, else the gun's first - the garage's active shell.
   function ttxShellOf(shells) {
     if (ttxSide === TTX_TARGET) return shells[0] || null;   // the target's gun: the garage's active shell
@@ -9294,7 +9451,7 @@
   function ttxCap(s) { s = String(s || ''); return s.charAt(0).toUpperCase() + s.slice(1); }
   // One row's tooltip: the name and unit, what the figure is, the stock and the build - in the second mode also the
   // first mode's figure of the same view - then what this row alone needs said (ttxExtra). The words every row shares
-  // are ⚙'s tooltip (ttxBuildTitle), not repeated here.
+  // are the figures' box's tooltip (ttxBuildTitle), not repeated here.
   function ttxTitle(key, sText, bText, fText, ctx) {
     var spec = TTX_ROWS[key] || [key, key, ''], m = ctx.modeKey || '';
     return tipJoin([spec[1] + (spec[2] ? ', ' + spec[2] : ''), spec[3], ttxAbout(key, ctx.cur) || null,
@@ -9460,9 +9617,10 @@
       return;
     }
     // The emulator's pair and the pair on the panel, counted once a paint and handed to all that follows.
-    var index = ttxEmuIndex(), rec = ttxRecIndex(), ctx = ttxContext(index), toggle = T('ttx-build-toggle');
-    if (toggle && toggle.getAttribute('aria-pressed') !== String(ctx.build)) toggle.setAttribute('aria-pressed', String(ctx.build));
-    if (toggle) ttxSetTitle(toggle, ttxBuildTitle(ctx));
+    var index = ttxEmuIndex(), rec = ttxRecIndex(), ctx = ttxContext(index), body = T('ttx-compact');
+    // The words every row shares (what the build holds, where its figures come from): the figures' own box, listed by the
+    // panel's help dot - the shooter's only (BACKLOG 102: they were the switch's, which is gone).
+    if (body && !target) ttxSetTitle(body, ttxBuildTitle(ctx));
     if (!target) {
       ttxPaintTurrets(index, rec);   // the Turret row of Config follows the same pair
       paintXi();   // the one mode button (27.09): its state and the panel's figures (ctx.mode) are one
@@ -9501,7 +9659,7 @@
   }
   // THE PANEL STANDS for the shooter's characteristics file - or, with none, for the mode button alone (27.09): a shooter
   // whose mechanic the record gives still gets his one button, with the panel's "?" beside it (data-mode-only: the
-  // stylesheet hides the figures, ⚙ and ▴; the panel does not fold then). True when the whole panel is up.
+  // stylesheet hides the figures and ▴; the panel does not fold then). True when the whole panel is up.
   var ttxModeOnly = false;
   function ttxPanelShow() {
     var panel = T('ttx-panel');
@@ -9834,22 +9992,20 @@
     });
     sec.appendChild(box);
   }
-  // The panel's controls, wired once (index.html holds the markup; the settings menu keeps ⚙'s state). The compact
+  // The panel's controls, wired once (index.html holds the markup). The compact
   // view (TTX_COMPACT): the hit points in the head, then Firepower, Mobility and Concealment - every figure a row of the
   // one widget, on the view's one grid.
   var ttxLine = null;
   // The target's panel is made from the shooter's markup (same function - same widget): every id gets -target and the
-  // help dot names the copies. Left out of it: ⚙ (the build is Config's, the shooter's; a target's equipment and crew are
-  // not recorded). Its words say it is the target's.
+  // help dot names the copies. Left out of the dot: the figures' box, whose words are the shooter's build (Config is the
+  // shooter's; a target's equipment and crew are not recorded). Its words say it is the target's.
   function ttxCloneTarget() {
     var src = $('ttx-panel');
     if (!src || $('ttx-panel-target')) return;
     var c = src.cloneNode(true);
     [c].concat([].slice.call(c.querySelectorAll('[id]'))).forEach(function (e) { e.id = e.id + '-target'; });
-    var build = c.querySelector('#ttx-build-toggle-target');
-    if (build) build.remove();
     [].slice.call(c.querySelectorAll('[data-help-for]')).forEach(function (d) {
-      d.setAttribute('data-help-for', d.getAttribute('data-help-for').split(' ').filter(function (id) { return id !== 'ttx-build-toggle'; }).map(function (id) { return id + '-target'; }).join(' '));
+      d.setAttribute('data-help-for', d.getAttribute('data-help-for').split(' ').filter(function (id) { return id !== 'ttx-compact'; }).map(function (id) { return id + '-target'; }).join(' '));
     });
     c.classList.add('ttx-target');
     c.setAttribute('role', 'group');
@@ -9890,10 +10046,6 @@
     });
     var hp = T('ttx-hp');
     if (hp) { ttxRows.maxHealth = ttxRow('maxHealth'); hp.replaceChildren(ttxRows.maxHealth); }
-    if (side === TTX_SHOOTER) {
-      $('ttx-build').onchange = function () { ttxPaint(); };
-      $('ttx-build-toggle').onclick = function () { var box = $('ttx-build'); box.checked = !box.checked; ttxPaint(); persistSettings(); };
-    }
     T('ttx-mode').onclick = side === TTX_TARGET ? ttxTargetModeToggle : ttxModeToggle;
     // The list and the expanded view are built by the click that opens them, which runs before <details> opens.
     T('ttx-pair').onclick = function (e) {
@@ -10057,6 +10209,9 @@
         // dropped here rather than left to ride along in the box for ever. No version gate - the keys
         // cannot come back, and a store written by any build may still hold them.
         delete box.values['target-hp-on'];delete box.values['hit-marks-on'];
+        // The characteristics panel's switch "stock / this build" (BACKLOG 102, user 14.11) is gone: the figures are always
+        // the Config build, the stock is Config's Stock preset. Its stored state belongs to nothing.
+        delete box.values['ttx-build'];
         // Settings -> Mode switch time (26.09) is gone (user, 27.09): the switch time follows ⌖ and ◔ now (xiTimed).
         delete box.values['mode-switch-time'];
         // The sound's Magazine sweep and its strike length (previews of 09-10.10) are gone (user, 10.10): the same.

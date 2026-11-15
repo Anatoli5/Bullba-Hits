@@ -825,7 +825,7 @@ header>.settings-menu>.settings-content{top:calc(100% + 8px);right:0;max-height:
 .ttx-panel #ttx-mode[aria-pressed=true]{border-color:var(--mode);color:#fff;background:var(--mode-fill)}
 .ttx-panel #ttx-mode[hidden]{display:none}
 .ttx-panel>#ttx-mode{align-self:flex-end;margin-left:6px}
-.ttx-panel[data-mode-only="1"] .ttx-head,.ttx-panel[data-mode-only="1"] .ttx-body,.ttx-panel[data-mode-only="1"] #ttx-build-toggle,.ttx-panel[data-mode-only="1"] .ttx-more{display:none}
+.ttx-panel[data-mode-only="1"] .ttx-head,.ttx-panel[data-mode-only="1"] .ttx-body,.ttx-panel[data-mode-only="1"] .ttx-more{display:none}
 #ttx-mode[data-busy="1"]{border-style:dashed}
 #ttx-mode[data-glow="1"]{box-shadow:0 0 0 2px var(--mode-ring)}
 #ttx-mode[data-passive="1"]{cursor:default}
