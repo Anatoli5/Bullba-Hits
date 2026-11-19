@@ -598,7 +598,13 @@ def run(temp):
     check('hooks', 'one subscription to the hangar space loading events, followed (hangar_signal)',
           len(HANGAR_SPACE.onSpaceCreating.handlers) == 1 and len(HANGAR_SPACE.onSpaceCreate.handlers) == 1
           and recorder.hangar_signal, (len(HANGAR_SPACE.onSpaceCreating.handlers), len(HANGAR_SPACE.onSpaceCreate.handlers)))
-    check('hooks', 'one ModsList entry', len(MODS_LIST) == 1, len(MODS_LIST))
+    # Two entries of one mod (19.11): Bullba Hits and the replay viewer, each its id, name, icon and callback.
+    check('hooks', 'two ModsList entries with different ids', len(MODS_LIST) == 2
+          and [m.get('id') for m in MODS_LIST] == [mod.MOD_ID, mod.REPLAYS_MOD_ID] and mod.MOD_ID != mod.REPLAYS_MOD_ID
+          and [m.get('name') for m in MODS_LIST] == ['Bullba Hits', 'Bullba Replays']
+          and len(set(m.get('icon') for m in MODS_LIST)) == 2
+          and [m.get('callback') for m in MODS_LIST] == [mod.open_viewer, mod.open_replays],
+          [(m.get('id'), m.get('name'), m.get('icon')) for m in MODS_LIST])
     menu = VehicleContextMenuHandler.__new__(VehicleContextMenuHandler)
     options = menu._generateOptions(None)
     check('hooks', 'context menu: original options plus one entry',
@@ -627,6 +633,24 @@ def run(temp):
         check('entry', 'the button without a preview: no new export asked (the hangar hook did), the page on the hangar tank',
               requested == [] and opened == ['host=game&vehicle=' + vid('usa:A1_Entry')], (requested, opened))
         hangar.isPresent, hangar.item = (lambda: False), None
+
+        # The replay viewer's button (19.11): playback.html in the viewer's own window, no battle (the list); the 3D control
+        # of a Hits row ('openReplays') the same window on that battle; the viewer's back control ('openHits') Hits' window.
+        windows = []
+        presentation.open_in_game = lambda path, fragment='', window='hits': windows.append((os.path.basename(path), fragment, window))
+        keep_window_open = presentation.window_open
+        presentation.window_open = lambda window='hits': False
+        try:
+            MODS_LIST[1]['callback']()
+            mod.page_window(presentation.REPLAYS, '2315856430906286521-d36eff9b31bb')
+            mod.page_window(presentation.HITS, None)
+        finally:
+            presentation.window_open = keep_window_open
+        check('entry', "the viewer's button opens playback.html in its own window; 3D on a row the same on the battle; back opens Hits",
+              windows[:2] == [('playback.html', 'host=game', presentation.REPLAYS),
+                              ('playback.html', 'host=game&battle=2315856430906286521-d36eff9b31bb', presentation.REPLAYS)]
+              and len(windows) == 3 and windows[2][0] == 'Viewer.html' and windows[2][2] == 'hits', windows)
+        presentation.open_in_game = lambda path, fragment='': opened.append(fragment)
 
         # The Vehicle Comparison screen's menu (BACKLOG 95): one entry; it opens the page on the column's tank with the
         # modules set in the comparison (the basket's compact descriptor of that column).

@@ -15,6 +15,21 @@ LOG = logging.getLogger('local.armor_inspector')
 _limits = {}
 _browser_id = None
 WEB_COMMAND = 'bullba_hits'
+# Two windows of one mod (19.11, the user's 'one mod, two entries'): Bullba Hits' own (Viewer.html; its browser id and
+# trace are the module's _browser_id / _trace, as before) and the 3D replay viewer's (playback.html, 'Bullba Replays' -
+# working name; _viewer). Each has its own browser id and trace, so opening one never re-navigates or closes the other.
+HITS = 'hits'
+REPLAYS = 'replays'
+WINDOW_TITLES = {HITS: 'Bullba Hits', REPLAYS: 'Bullba Replays'}
+_viewer = {'browser_id': None, 'trace': None}
+# Every action of the page channel (both pages send through WEB_COMMAND): one name, one meaning. tests/test_page_channel.py
+# checks that every action a page sends is here once and that _handle_web_command answers each.
+ACTIONS = ('busy', 'sweepStart', 'sweepStop', 'open', 'windowSize', 'follow', 'prepareBattle', 'playback', 'mapRaw',
+           'playbackReport', 'replayKeep', 'replayLimit', 'prioritise', 'exportTtx', 'exportVehicle',
+           'openReplays', 'openHits', 'replayFiles', 'playbackVehicles')
+_window_request = None
+_files_request = None
+_vehicles_request = None
 _export_request = None
 _busy_request = None
 _prioritise_request = None
@@ -197,6 +212,30 @@ def _pump_notes():
             pass
 
 
+def set_window_request(handler):
+    """The pages' 'openReplays' (Hits' 3D control: the replay viewer's window on a battle, `battleId`) and 'openHits' (the
+    viewer's back control: Hits' window): handler(window, battle id or None), on the game thread."""
+    global _window_request
+    _window_request = handler
+
+
+def set_files_request(handler):
+    """The viewer's 'replayFiles': the list of replay files (data/replay-files.js) read again; handler()."""
+    global _files_request
+    _files_request = handler
+
+
+def set_vehicles_request(handler):
+    """The viewer's 'playbackVehicles' (19.11): the vehicle types of a battle that have no vehicle file, with the compact
+    descriptor the page decoded from the replay; handler(battle id, [(type, compact descriptor or None)])."""
+    global _vehicles_request
+    _vehicles_request = handler
+
+
+VEHICLE_TYPE = re.compile(r'^[a-z]+:[-A-Za-z0-9_.]{1,80}\Z')
+DESCRIPTOR = re.compile(r'^[A-Za-z0-9+/=]{4,400}\Z')
+
+
 def set_replays_request(handler):
     """The page's word on the mod's replay folder (BACKLOG 107): 'replayKeep' (a battle's replay kept forever or put back
     under the limit) and 'replayLimit' (how many replays are kept); the handler gets one dict."""
@@ -344,6 +383,40 @@ def _handle_web_command(command, ctx):
                 return
             _player_request('playbackReport', dict((str(k), v) for k, v in list(report.items())[:40]))
             return
+        if action in ('openReplays', 'openHits'):
+            battle_id = getattr(command, 'battleId', None) if action == 'openReplays' else None
+            if battle_id is not None and not BATTLE_ID.match(str(battle_id)):
+                _warn_once('open-window-id', 'Bullba Hits page command: no battle id in %r', battle_id)
+                return
+            if _window_request is None:
+                _warn_once('open-window', 'Bullba Hits page command: the recorder is not running')
+                return
+            _window_request(REPLAYS if action == 'openReplays' else HITS, str(battle_id) if battle_id else None)
+            return
+        if action == 'replayFiles':
+            if _files_request is None:
+                _warn_once('replay-files', 'Bullba Hits page command: the recorder is not running')
+                return
+            _player_view(ctx)
+            _files_request()
+            return
+        if action == 'playbackVehicles':
+            battle_id, rows = getattr(command, 'battleId', None), getattr(command, 'vehicles', None)
+            if not battle_id or not BATTLE_ID.match(str(battle_id)) or not isinstance(rows, (list, tuple)):
+                _warn_once('pb-vehicles', 'Bullba Hits page command: no battle or vehicles in %r', battle_id)
+                return
+            wanted = []
+            for row in list(rows)[:60]:
+                if not isinstance(row, dict): continue
+                kind, descr = row.get('type'), row.get('descr')
+                if kind and VEHICLE_TYPE.match(str(kind)) and (descr is None or DESCRIPTOR.match(str(descr))):
+                    wanted.append((str(kind), str(descr) if descr else None))
+            if _vehicles_request is None:
+                _warn_once('pb-vehicles-off', 'Bullba Hits page command: the recorder is not running')
+                return
+            _player_view(ctx)
+            _vehicles_request(str(battle_id), wanted)
+            return
         if action in ('replayKeep', 'replayLimit'):
             if _replays_request is None:
                 _warn_once('replays', 'Bullba Hits page command: the recorder is not running')
@@ -460,6 +533,8 @@ def web_handlers():
             resv = Field(type=basestring)
             whole = Field(type=bool)
             report = Field(type=dict)
+            # 'playbackVehicles' (19.11): [{type, descr}] - the battle's types with no vehicle file and their descriptors.
+            vehicles = Field(type=list)
         return [createCommandHandler(WEB_COMMAND, BullbaHitsSchema, _handle_web_command, None)]
     except Exception:
         LOG.exception('Bullba Hits page command could not be registered')
@@ -561,13 +636,23 @@ def window_size(step):
     return window_sizes(width, height)[max(0, min(WINDOW_STEPS - 1, int(step)))]
 
 
-def window_open():
-    """True while the mod's window is open: the controller still knows its browser."""
-    if _browser_id is None: return False
+def window_id(window=HITS):
+    """The browser id of one of the mod's windows (None before its first open)."""
+    return _browser_id if window == HITS else _viewer['browser_id']
+
+
+def window_trace(window=HITS):
+    return _trace if window == HITS else _viewer['trace']
+
+
+def window_open(window=HITS):
+    """True while that window of the mod is open: the controller still knows its browser."""
+    browser_id = window_id(window)
+    if browser_id is None: return False
     try:
         from helpers import dependency
         from skeletons.gui.game_control import IBrowserController
-        return dependency.instance(IBrowserController).getBrowser(_browser_id) is not None
+        return dependency.instance(IBrowserController).getBrowser(browser_id) is not None
     except Exception:
         return False
 
@@ -640,6 +725,7 @@ class WindowTrace(object):
     while it is called is safe: the client calls a copy, `for delegate in self[:]`.) The client clears a destroyed
     browser's events itself; close() takes the mod's off anyway.
     """
+    name = 'Bullba Hits'    # the window's title in its lines (follow_window sets the replay viewer's)
     EVENTS = ('onReady', 'onLoadStart', 'onLoadEnd', 'onResized', 'onTextureStateChanged')
     VIEW_CALLS = ('as_loadBitmapS', 'as_resizeS', 'as_loadingStartS', 'as_loadingStopS')
 
@@ -666,7 +752,7 @@ class WindowTrace(object):
         self.deleted = None     # the listener of the controller's onBrowserDeleted
 
     def say(self, text, *args):
-        LOG.info('Bullba Hits window +%d ms: ' + text, int(round((time.time() - self.at) * 1000)), *args)
+        LOG.info(self.name + ' window +%d ms: ' + text, int(round((time.time() - self.at) * 1000)), *args)
 
     def guarded(self, name, step):
         """`step` as a handler that cannot raise into the client; a failure is said once per kind."""
@@ -991,20 +1077,29 @@ class WindowTrace(object):
         self.view = self.web = self.window = None
 
 
-def follow_window(controller, browser_id, at, ticket=None, step=WINDOW_STEP_DEFAULT):
-    """The window's trace for this open: a new browser gets a new one, an open window keeps its own."""
+def _set_trace(window, trace):
     global _trace
+    if window == HITS: _trace = trace
+    else: _viewer['trace'] = trace
+
+
+def follow_window(controller, browser_id, at, ticket=None, step=WINDOW_STEP_DEFAULT, window=HITS):
+    """The window's trace for this open: a new browser gets a new one, an open window keeps its own. Each of the mod's
+    windows has its own trace (window: HITS or REPLAYS)."""
     try:
         web = controller.getBrowser(browser_id)
-        if _trace is not None and not _trace.closed and web is not None and _trace.web is web:
-            _trace.renavigated(at)
+        trace = window_trace(window)
+        if trace is not None and not trace.closed and web is not None and trace.web is web:
+            trace.renavigated(at)
             return
-        close_window_trace()
+        close_window_trace(window)
         if web is None:
             _warn_once('trace-browser', 'Bullba Hits window: the browser is not known to the controller; its steps are not followed')
             return
-        _trace = WindowTrace(controller, browser_id, web, at, ticket, step)
-        _trace.follow()
+        trace = WindowTrace(controller, browser_id, web, at, ticket, step)
+        trace.name = WINDOW_TITLES.get(window, 'Bullba Hits')
+        _set_trace(window, trace)
+        trace.follow()
     except Exception:
         _warn_once('trace', 'Bullba Hits window: its steps could not be followed')
         LOG.debug('Bullba Hits window trace', exc_info=True)
@@ -1013,26 +1108,30 @@ def follow_window(controller, browser_id, at, ticket=None, step=WINDOW_STEP_DEFA
 def settle_window(ticket):
     """The 20 s check of the open that holds `ticket`: the trace that open made stops waiting for a view
     (WindowTrace.settle). A later window's trace is another open's and is left alone."""
-    trace = _trace
-    try:
-        if trace is not None and ticket is not None and trace.ticket is ticket: trace.settle()
-    except Exception:
-        LOG.debug('Bullba Hits window trace settle', exc_info=True)
+    for trace in (_trace, _viewer['trace']):
+        try:
+            if trace is not None and ticket is not None and trace.ticket is ticket: trace.settle()
+        except Exception:
+            LOG.debug('Bullba Hits window trace settle', exc_info=True)
 
 
-def close_window_trace():
-    """The mod leaves (fini) or the trace's browser is gone: nothing of it stays on the client's objects."""
-    global _trace
-    trace, _trace = _trace, None
-    if trace is None: return
-    try:
-        trace.close()
-    except Exception:
-        LOG.debug('Bullba Hits window trace close', exc_info=True)
+def close_window_trace(window=None):
+    """The mod leaves (fini: window None, both) or a trace's browser is gone: nothing of it stays on the client's objects."""
+    for name in ((HITS, REPLAYS) if window is None else (window,)):
+        trace = window_trace(name)
+        _set_trace(name, None)
+        if trace is None: continue
+        try:
+            trace.close()
+        except Exception:
+            LOG.debug('Bullba Hits window trace close', exc_info=True)
 
 
-def open_in_game(path, fragment='host=game'):
+def open_in_game(path, fragment='host=game', window=HITS):
     """Open the local viewer in the game's own browser window.
+
+    `window`: HITS (Viewer.html, the window Bullba Hits always had) or REPLAYS (playback.html, the 3D replay viewer's own
+    window, 19.11): each keeps its own browser id and trace, so one is never re-navigated or closed by the other's open.
 
     The fragment is the page's only input: 'host=game' alone for the ModsList
     button, 'host=game&vehicle=<id>' for one vehicle of the browser. It is never
@@ -1072,38 +1171,40 @@ def open_in_game(path, fragment='host=game'):
         size = window_sizes(stage_w, stage_h)[step]
         LOG.info('Bullba Hits window size step %d of %d: %dx%d (screen %dx%d at interface scale %s)', step + 1, WINDOW_STEPS,
                  size[0], size[1], int(stage_w), int(stage_h), scale)
-        global _browser_id, _page_follows
+        global _page_follows
+        title = WINDOW_TITLES.get(window, 'Bullba Hits')
         opened = time.time()
         ticket = object()      # this open, for the trace it makes and for its 20 s check
-        LOG.info('Opening Bullba Hits in-game window: %s', url)
+        LOG.info('Opening %s in-game window: %s', title, url)
         page_loading(True)
         def loaded(browser_id):
             global _browser_id
-            _browser_id = browser_id
+            if window == HITS: _browser_id = browser_id
+            else: _viewer['browser_id'] = browser_id
             # The window's steps from here on, one line each (WindowTrace); it cannot break the open.
-            follow_window(browser, browser_id, opened, ticket, step)
+            follow_window(browser, browser_id, opened, ticket, step, window)
         # An open window is re-navigated by the controller (BrowserController.load: 'Re-navigating an
         # existing browser', browser.navigate(url)) and never calls showBrowserCallback again, so the
         # 20 s check below would cry wolf every time the hangar menu points the open window at a
         # vehicle (0.6.35). getBrowser(browserID) is the controller's own dict lookup.
         existing = None
         try:
-            if _browser_id is not None: existing = browser.getBrowser(_browser_id)
+            if window_id(window) is not None: existing = browser.getBrowser(window_id(window))
         except Exception:
             existing = None
         shown = [existing is not None]
-        if existing is not None: LOG.info('Bullba Hits window already open; re-navigating')
-        else: _page_follows = False     # a new page follows the hangar only once it says it browses vehicles
+        if existing is not None: LOG.info('%s window already open; re-navigating', title)
+        elif window == HITS: _page_follows = False     # a new page follows the hangar only once it says it browses vehicles
         def on_shown(*args):
             shown[0] = True
-            LOG.info('Bullba Hits in-game window shown (+%d ms)', int(round((time.time() - opened) * 1000)))
+            LOG.info('%s in-game window shown (+%d ms)', title, int(round((time.time() - opened) * 1000)))
         def check_opened():
             settle_window(ticket)
             if not shown[0]:
-                LOG.warning('Bullba Hits window did not report opening')
-                SystemMessages.pushMessage(u'Bullba Hits: the in-game window did not load. See game.log.', type=SystemMessages.SM_TYPE.Error)
+                LOG.warning('%s window did not report opening', title)
+                SystemMessages.pushMessage(u'%s: the in-game window did not load. See game.log.' % title, type=SystemMessages.SM_TYPE.Error)
         # adisp_async returns a callable, not an already running operation.
-        operation = browser.load(url=url, title='Bullba Hits', browserID=_browser_id,
+        operation = browser.load(url=url, title=title, browserID=window_id(window),
                      showActionBtn=False, showCloseBtn=True, showWaiting=True,
                      showCreateWaiting=False, useBrowserWindow=True, isModal=False,
                      browserSize=size,

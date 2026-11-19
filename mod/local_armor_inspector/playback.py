@@ -16,6 +16,10 @@ request_playback), and the export thread's 'playback' job (Job.steps, in slices)
      and roster (nicknames), the client's version (the page keeps the maps it built under it), the client's part boxes
      of this battle (its stored records' statics: the hit points are decoded on them), the source's kind, size and CRC
      (the page's IndexedDB key) and the definitions file's name.
+A replay FILE (19.11: the replay viewer's list, replay_files; id 'f-...') is played the same way with no record of
+Bullba Hits: its map, mode, own vehicle and roster from the file's plain header (the cached scan), its source the file
+itself, its part boxes from the client's own box table (client_boxes, CFG/data/playback/boxes.js) - a battle with stored
+records keeps its own boxes, and takes the table's only for the models those lack.
 The map's raw files are not this job's (19.11): the page asks for them ('mapRaw') only when its IndexedDB lacks the map,
 and MapJob copies them (map_raw.copy_steps).
 The page (web/playback/battle-page.js, battle.js) decrypts or inflates the source, decodes it and builds the battle - the
@@ -58,6 +62,38 @@ W_REMOVED = ('The replay of this battle was removed: the replay limit keeps the 
 W_GONE = 'The replay of this battle is no longer in the game\'s replays folder under the name Bullba Hits gave it'
 W_MAP = 'The map of this battle could not be copied from the game files (%s)'
 W_FAILED = 'The replay of this battle could not be prepared (%s)'
+W_NO_FILE = 'This replay file is no longer in the game\'s replays folder (it was moved, renamed or removed)'
+BOXES_FILE = 'boxes'            # CFG/data/playback/boxes.js (client_boxes.Table)
+VEHICLES_FOLDER = 'vehicles'    # CFG/data/playback/vehicles/<id>.js: a vehicle from the client's XML (vehicle_xml)
+
+
+def is_file(name):
+    """A replay file's id (replay_files.file_id), not a battle of Bullba Hits."""
+    from .replay_files import PREFIX
+    return str(name).startswith(PREFIX)
+
+
+def boxes_path(folder):
+    return data_path(folder, BOXES_FILE)
+
+
+def vehicle_files(folder):
+    """{'hits': [ids of data/vehicles/*.js], 'viewer': [ids of data/playback/vehicles/*.js]}: the page reads a vehicle
+    from the file that is there instead of trying paths (a missing file is an error in the page's console)."""
+    out = {}
+    for key, sub in (('hits', ('data', 'vehicles')), ('viewer', ('data', DATA_FOLDER, VEHICLES_FOLDER))):
+        try: names = os.listdir(os.path.join(folder, *sub))
+        except OSError: names = []
+        out[key] = sorted(n[:-3] for n in names if n.endswith('.js') and not n.endswith(SOURCE_EXT))
+    return out
+
+
+def client_box_table(folder, client):
+    """{resource: box} of the client's own box table (client_boxes) when it is of this client, else {}."""
+    from .client_boxes import read_file
+    value = read_file(boxes_path(folder)) or {}
+    if client and value.get('client') not in (None, client): return {}
+    return dict(value.get('boxes') or {})
 
 
 def data_path(folder, name):
@@ -271,6 +307,13 @@ class Job(object):
         if battle is None: raise Unplayable(W_NO_RECORD)
         return battle, roster or {}
 
+    def file_item(self):
+        """(absolute path, cached item {entry, roster}) of a replay file of the viewer's list (Exporter.replay_file)."""
+        maker = getattr(self.defs, 'replay_file', None)
+        found = maker(self.name) if maker is not None else None
+        if found is None or not os.path.isfile(found[0]): raise Unplayable(W_NO_FILE)
+        return found
+
     def library(self):
         """The replay limit (the exporter's, replay_library.Library), None without one (a bare test stand)."""
         maker = getattr(self.defs, 'replay_library', None)
@@ -342,11 +385,19 @@ class Job(object):
 
     def make(self):
         started = TIMER()
-        record, roster = self.head()
+        if is_file(self.name):
+            path, item = self.file_item()
+            entry = item.get('entry') or {}
+            record = {'mode': {'geometryName': entry.get('map'), 'gameplayName': entry.get('gameplay')},
+                      'map': entry.get('mapTitle'), 'startedAt': None, 'playerVehicleId': entry.get('playerVehicleId')}
+            roster = {'vehicles': item.get('roster') or []}
+            kind = 'wotreplay'
+        else:
+            record, roster = self.head()
         mode = record.get('mode') or {}
         arena, gameplay = mode.get('geometryName'), mode.get('gameplayName')
         if not arena or not gameplay: raise Unplayable(W_NO_MAP)
-        kind, path = self.source()
+        if not is_file(self.name): kind, path = self.source()
         self.lap('read', started)
         yield
         started = TIMER()
@@ -360,6 +411,10 @@ class Job(object):
         yield
         started = TIMER()
         boxes = part_boxes(self.folder, self.name)
+        # the client's own box table for the models this battle's records lack (all of them for a replay file)
+        table = client_box_table(self.folder, getattr(self.defs, 'version', None))
+        for resource, box in table.items():
+            if resource not in boxes: boxes[resource] = box
         self.lap('boxes', started)
         yield
         got = {}
@@ -375,7 +430,7 @@ class Job(object):
         # format, id and defs first: current() reads them from the file's first bytes
         value = collections.OrderedDict([
             ('format', FORMAT), ('id', self.name), ('defs', got['name']), ('source', source), ('record', meta),
-            ('roster', vehicles), ('boxes', boxes),
+            ('roster', vehicles), ('boxes', boxes), ('vehicleFiles', vehicle_files(self.folder)),
             ('made', {'seconds': dict((k, round(v, 3)) for k, v in self.times.items())})])
         self.write(data_path(self.folder, self.name), KEY + self.name, value)
         self.lap('write', started)

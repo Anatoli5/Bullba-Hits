@@ -300,6 +300,12 @@ def job_key(kind, payload):
     # 'mapraw' (the raw files of one map for the player's builder, Exporter.request_map_raw): one job per arena.
     if kind == 'mapraw':
         return ('mapraw', str((payload or {}).get('arena') or ''))
+    # 'pbvehicles' (the replay viewer's vehicles with no file, request_playback_vehicles): one job per battle;
+    # 'replayfiles' (the list of replay files, request_replay_files): one job.
+    if kind == 'pbvehicles':
+        return ('pbvehicles', str((payload or {}).get('battleId') or ''))
+    if kind == 'replayfiles':
+        return ('replayfiles', '')
     # 'vehicle', 'ttx' (the characteristics file of a type) and 'extras' (Exporter.type_extras) are one job per type each.
     return (kind, str((payload or {}).get('vehicleType') or ''))
 
@@ -4679,15 +4685,159 @@ class Exporter(object):
         """The page's 'playback' (BACKLOG 104): the user opened a battle in the 3D replay player and its file
         (data/playback/<id>.js) is missing or of another format. Made at the page's turn (JOB_PAGE), in slices
         (run_playback_job), never in a battle; nothing when the file and its map's raw set are there. True when queued."""
-        from .playback import current, battle_arena
+        from .playback import current, battle_arena, is_file
         name = str(battle_id or '')
         if not IDENTIFIER.match(name): return False
-        if current(self.folder, name, battle_arena(self.folder, name)):
+        arena = battle_arena(self.folder, name)
+        if arena is None and is_file(name):
+            found = self.replay_file(name)
+            arena = ((found[1] or {}).get('entry') or {}).get('map') if found else None
+        if current(self.folder, name, arena):
             self.notify_page({'kind': 'playback', 'id': name, 'state': 'ready'})
             return False
         self.queue_job(JOB_PAGE, 'playback', {'battleId': name})
         LOG.info('Playback of %s asked for by the page: prepared now', name)
         return True
+
+    # ---- the replay viewer's own inputs (19.11, 'one mod, two entries') ----------------------------------------------
+    def replay_file(self, file_id):
+        """(absolute path, cached item {entry, roster}) of a replay file of the viewer's list (replay_files.find), None."""
+        from .replay_files import find
+        found = find(self.folder, str(file_id))
+        if found is None: return None
+        return os.path.join(self.replays_folder, *found[0].split('/')), found[1]
+
+    def request_replay_files(self):
+        """The viewer's 'replayFiles': the replay files' headers read again (replay_files.Scan), at the page's turn, in
+        slices; data/replay-files.js written, the page told {kind 'files', state 'ready'}. True when queued."""
+        self.queue_job(JOB_PAGE, 'replayfiles', {})
+        return True
+
+    def run_replay_files_job(self, payload):
+        """One slice of the scan; True while more is to read."""
+        from .replay_files import Scan, DATA_KEY, DATA_FILE
+        work = getattr(self, 'files_work', None)
+        if work is None:
+            work = self.files_work = Scan(self.folder, self.replays_folder, self.replay_library(), self.version)
+            work.gen = work.steps()
+            work.began = TTX_TIMER()
+            work.slices = 0
+        deadline = TTX_TIMER() + BATTLE_SLICE
+        done = False
+        try:
+            while True:
+                try: next(work.gen)
+                except StopIteration:
+                    done = True
+                    break
+                if TTX_TIMER() >= deadline or self.battle_stop(): break
+        except Exception:
+            done = True
+            LOG.exception('Replay files: the scan failed')
+        work.slices += 1
+        if not done: return True
+        self.files_work = None
+        if work.value is not None:
+            path = os.path.join(self.folder, 'data', DATA_FILE + '.js')
+            write_data_changed(path, DATA_KEY, work.value)
+            LOG.info('Replay files: %d listed (%d headers read, %d from the cache, %d skipped) in %.2f s, %d slices',
+                     len(work.value['files']), work.read, work.cached, len(work.broken), TTX_TIMER() - work.began, work.slices)
+        self.notify_page({'kind': 'files', 'state': 'ready'})
+        return False
+
+    def request_playback_vehicles(self, payload):
+        """The viewer's 'playbackVehicles': {battleId, vehicles [[type, compact descriptor or None]...]} - the battle's types
+        with no vehicle file. Each with a descriptor goes the exporter's own way first (a 'vehicle' job at the page's turn:
+        export_vehicle builds the client's descriptor from it); then one 'pbvehicles' job (queued after them) makes the
+        types still without a file from the client's XML (vehicle_xml) and tells the page {kind 'vehicles', id, state}."""
+        payload = payload or {}
+        name = str(payload.get('battleId') or '')
+        if not IDENTIFIER.match(name): return False
+        wanted = []
+        for row in list(payload.get('vehicles') or ())[:60]:
+            try: kind, descr = str(row[0]), (str(row[1]) if row[1] else None)
+            except (TypeError, IndexError): continue
+            if ':' not in kind: continue
+            wanted.append((kind, descr))
+            if descr and not os.path.isfile(os.path.join(self.folder, 'data', 'vehicles', vehicle_id(kind) + '.js')):
+                self.queue_job(JOB_PAGE, 'vehicle', {'schema': 1, 'type': 'vehicle', 'source': 'playback',
+                                                     'vehicleType': kind, 'requestedAt': time.time(),
+                                                     'compactDescriptor': descr})
+        # A battle's request while its earlier one waits: one job, this list.
+        job = self.queue_job(JOB_PAGE, 'pbvehicles', {'battleId': name, 'vehicles': wanted})
+        job[3] = {'battleId': name, 'vehicles': wanted}
+        LOG.info('Playback of %s: %d vehicle types without a file asked for by the page', name, len(wanted))
+        return True
+
+    def run_playback_vehicles_job(self, payload):
+        """The types of a 'playbackVehicles' still without a vehicle file after the exporter's own route: their parts from
+        the client's XML and the compact descriptor (vehicle_xml), their models Hits' own (model_extract), into
+        data/playback/vehicles/<id>.js. One go (a few types; each type's XML read once). The page is told."""
+        from . import vehicle_xml, map_raw
+        from .playback import VEHICLES_FOLDER, DATA_FOLDER, raw_root
+        payload = payload or {}
+        name = str(payload.get('battleId') or '')
+        made, failed, own = [], [], 0
+        pk = None
+        try:
+            for kind, descr in payload.get('vehicles') or ():
+                if os.path.isfile(os.path.join(self.folder, 'data', 'vehicles', vehicle_id(kind) + '.js')):
+                    own += 1
+                    continue
+                path = os.path.join(self.folder, 'data', DATA_FOLDER, VEHICLES_FOLDER, vehicle_id(kind) + '.js')
+                if os.path.isfile(path) or not descr: continue
+                try:
+                    if pk is None:
+                        pk = map_raw.Packages(self.game, os.path.join(raw_root(self.folder), 'index'), build=False)
+                        for _ in pk.scan_steps(): pass
+                    value = self.playback_vehicle_xml(pk, vehicle_xml, kind, descr)
+                    if not os.path.isdir(os.path.dirname(path)): os.makedirs(os.path.dirname(path))
+                    write_data(path, 'vehicle:' + vehicle_id(kind), value)
+                    made.append(kind)
+                except Exception as error:
+                    failed.append('%s (%s: %s)' % (kind, type(error).__name__, error))
+        finally:
+            if pk is not None:
+                try: pk.close()
+                except Exception: pass
+        LOG.info('Playback of %s vehicles: %d by the exporter descriptor route, %d from the client XML%s%s', name, own,
+                 len(made), (' (' + ', '.join(made) + ')') if made else '', ('; not made: ' + '; '.join(failed)) if failed else '')
+        from .playback import vehicle_files
+        self.notify_page({'kind': 'vehicles', 'id': name, 'state': 'ready', 'files': vehicle_files(self.folder)})
+
+    def playback_vehicle_xml(self, pk, vehicle_xml, kind, descr):
+        """One vehicle file for the viewer from the client's XML (the shape web/playback/playback.js vehicleModel reads:
+        parts with transform and modelKey or wheel, gunPitchLimits.samples, name, class, compactDescriptor)."""
+        doc = vehicle_xml.vehicle_doc(pk, kind, self.version)
+        built = vehicle_xml.parts(doc, descr)
+        parts = []
+        for part in built['parts']:
+            if part.get('wheel'):
+                parts.append({'id': part['id'], 'name': part['name'], 'wheel': part['wheel'], 'transform': part['transform']})
+                continue
+            if part.get('error') and not part.get('resource'): raise ValueError(part['error'])
+            key, error = self.model_extract(part['resource'], self.version)
+            if error is not None: raise ValueError('model %s: %s' % (part['resource'], error))
+            parts.append({'id': part['id'], 'name': part['name'], 'resource': part['resource'],
+                          'transform': part['transform'], 'modelKey': key})
+        pitch = built.get('gunPitch') or [-0.2, 0.1]
+        return OrderedDict([('type', kind), ('name', kind.split(':', 1)[1]), ('class', doc.get('class')),
+                            ('compactDescriptor', descr), ('source', 'client XML (vehicle_xml)'), ('client', self.version),
+                            ('parts', parts), ('gunPitchLimits', {'samples': [[0.0, pitch[0], pitch[1]]]})])
+
+    def store_part_boxes(self, payload):
+        """The game thread's harvest of the client's own part boxes (client_boxes.Harvest, after the hangar loads): merged
+        into CFG/data/playback/boxes.js of this client (client_boxes.Table)."""
+        from .client_boxes import Table
+        from .playback import boxes_path
+        boxes = (payload or {}).get('boxes') or {}
+        table = Table(boxes_path(self.folder), self.version)
+        table.load()
+        added, changed = table.merge(boxes)
+        if added or changed: table.save()
+        LOG.info('Part boxes of the client: %d read from %s types, %d new, %d changed, %d in the table', len(boxes),
+                 (payload or {}).get('types'), added, changed, len(table.boxes))
+        return added, changed
 
     def run_playback_job(self, payload):
         """One slice (BATTLE_SLICE) of a battle's playback file (playback.Job.steps), ended early by a battle, a command of
@@ -6773,6 +6923,9 @@ class Exporter(object):
                 finally: self.preparing_page = False
             # The session's entity definitions, built in the hangar before the first battle's replay needs them.
             elif job[2] == 'definitions': more = self.run_defs_job()
+            # The replay viewer's list of replay files and its vehicles without a file (19.11).
+            elif job[2] == 'replayfiles': more = self.run_replay_files_job(job[3])
+            elif job[2] == 'pbvehicles': self.run_playback_vehicles_job(job[3])
             else: self.run_vehicle_job(job[3], page)
         except Exception as error:
             LOG.exception('Deferred %s job failed (%s: %s); the rest of the queue continues', job[2], type(error).__name__, error)

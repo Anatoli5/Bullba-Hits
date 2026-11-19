@@ -7376,8 +7376,14 @@
   $('replay-limit').onchange=sendReplayLimit;
   $('replay-limit-on').onchange=sendReplayLimit;
   // The 3D replay player of a battle (BACKLOG 104): its own page beside this one, with the host kept in its fragment.
+  // In the game the 3D replay viewer has a window of its own (19.11, 'one mod, two entries'): the mod opens it on this
+  // battle ('openReplays') and this window stays as it is; outside the game (no mod) the viewer opens here.
   function openPlayback(id){
     openBattleList(false);
+    if(host.game&&host.canSend()){
+      sendCommand('openReplays',{battleId:id});
+      return;
+    }
     window.location.href='web/playback.html#'+(host.game?'host=game&':'')+'battle='+encodeURIComponent(id);
   }
   // The tile's title text and the selected row, from whatever #battles currently holds. In the Vehicles mode

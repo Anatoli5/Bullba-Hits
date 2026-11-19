@@ -97,8 +97,8 @@
     prohorovka: { D: 0.0004, H: 1, F: 0.004, S: 100, k: 1.0 },
     lakeville: { D: 0.0012, H: 50, F: 0.005, S: 25, k: 0.5 } };
   var SKY_FN = '';
-  var SKY_COL = { zen: [0.62, 0.75, 0.90], band: [0.56, 0.58, 0.60], below: [0.33, 0.34, 0.35] };  // display (sRGB) values
-  var hazeOn = false, skyOn = true, skyMesh = null, skyU = { uHor: { value: new T.Vector3() }, uZen: { value: new T.Vector3() }, uLow: { value: new T.Vector3() }, uSunD: { value: new T.Vector3(0, 1, 0) } };
+  var SKY_COL = { zen: [0.62, 0.75, 0.90], band: [0.56, 0.58, 0.60], below: [0.33, 0.34, 0.35], black: [0.012, 0.014, 0.016] };  // display (sRGB) values
+  var hazeOn = false, skyOn = true, greyOn = false, skyMesh = null, skyU = { uGrey: { value: 0 }, uHor: { value: new T.Vector3() }, uZen: { value: new T.Vector3() }, uLow: { value: new T.Vector3() }, uSunD: { value: new T.Vector3(0, 1, 0) } };
   function setupHaze() {
     var E = HAZE_ENV[MAP] || mapData.haze || HAZE_ENV.prohorovka, ar = mapData.arena, bx = mapData.box || ar, margin = Math.max(5, Math.min(bx[2] - ar[2], ar[0] - bx[0], bx[3] - ar[3], ar[1] - bx[1]));
     var num = function (x) { var s = String(+x); return s.indexOf('.') < 0 && s.indexOf('e') < 0 ? s + '.0' : s; };
@@ -107,9 +107,9 @@
     C.fog_vertex = C.fog_vertex.replace('vFogDepth = - mvPosition.z;', 'vFogDepth = - mvPosition.z;\n\tvHazeW = transpose( mat3( viewMatrix ) ) * mvPosition.xyz;');
     var v3 = function (c) { return 'vec3( ' + c.map(num).join(', ') + ' )'; };
     // the background colour by view direction: the haze and the rim fade toward exactly what lies behind them
-    SKY_FN = ['vec3 skyCol5d( vec3 d ) { float e = d.y;',
+    SKY_FN = ['vec3 skyCol5d( vec3 d, float g ) { float e = d.y;',  // g: 1 = the grey below the horizon, 0 = black (round 12)
       // above: the grey band (to ~2 deg) lightening into the sky by ~27 deg; below: the band darkening by ~6 deg down
-      ' return e >= 0.0 ? mix( ' + v3(SKY_COL.band) + ', ' + v3(SKY_COL.zen) + ', pow( smoothstep( 0.03, 0.45, e ), 0.8 ) ) : mix( ' + v3(SKY_COL.band) + ', ' + v3(SKY_COL.below) + ', smoothstep( 0.0, 0.10, - e ) ); }'].join('\n');
+      ' return e >= 0.0 ? mix( ' + v3(SKY_COL.band) + ', ' + v3(SKY_COL.zen) + ', pow( smoothstep( 0.03, 0.45, e ), 0.8 ) ) : mix( ' + v3(SKY_COL.band) + ', mix( ' + v3(SKY_COL.black) + ', ' + v3(SKY_COL.below) + ', g ), smoothstep( 0.0, 0.10, - e ) ); }'].join('\n');
     C.fog_pars_fragment += ['', '#ifdef USE_FOG', 'varying vec3 vHazeW;', SKY_FN,
       'float hazeFactor( float k ) {',
       ' vec3 w = vHazeW; float L = length( w ); vec3 P = cameraPosition + w;',
@@ -123,7 +123,7 @@
     C.fog_fragment = C.fog_fragment.replace('float fogFactor = smoothstep( fogNear, fogFar, vFogDepth );',
       'float fogFactor = fogNear >= 0.0 ? smoothstep( fogNear, fogFar, vFogDepth ) : hazeFactor( - fogNear );');
     C.fog_fragment = C.fog_fragment.replace('gl_FragColor.rgb = mix( gl_FragColor.rgb, fogColor, fogFactor );',
-      'gl_FragColor.rgb = mix( gl_FragColor.rgb, fogNear >= 0.0 ? fogColor : skyCol5d( normalize( vHazeW ) ), fogFactor );');
+      'gl_FragColor.rgb = mix( gl_FragColor.rgb, fogNear >= 0.0 ? fogColor : skyCol5d( normalize( vHazeW ), fogFar ), fogFactor );');
     if (C.fog_fragment.indexOf('hazeFactor') < 0 || C.fog_fragment.indexOf('skyCol5d') < 0 || C.fog_vertex.indexOf('vHazeW') < 0) console.warn('haze: three.js fog chunks not patched');
     // the sky: a sphere round the camera, drawn first, written in display (sRGB) values like three.js's fog colour, so
     // the band at the horizon is exactly the colour the outer rim fades into
@@ -132,13 +132,13 @@
     sm.onBeforeCompile = function (sh) {
       Object.assign(sh.uniforms, skyU);
       sh.vertexShader = 'varying vec3 vSkyD;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n vSkyD = position;');
-      sh.fragmentShader = 'varying vec3 vSkyD;\nuniform vec3 uHor, uZen, uLow, uSunD;\n' + SKY_FN + '\n' + sh.fragmentShader.replace('#include <colorspace_fragment>', [
+      sh.fragmentShader = 'varying vec3 vSkyD;\nuniform vec3 uHor, uZen, uLow, uSunD;\nuniform float uGrey;\n' + SKY_FN + '\n' + sh.fragmentShader.replace('#include <colorspace_fragment>', [
         '#include <colorspace_fragment>',
-        ' vec3 sd = normalize( vSkyD ); float e = sd.y; vec3 sc = skyCol5d( sd );',
+        ' vec3 sd = normalize( vSkyD ); float e = sd.y; vec3 sc = skyCol5d( sd, uGrey );',
         ' sc += vec3( 1.0, 0.95, 0.85 ) * 0.06 * pow( max( dot( sd, uSunD ), 0.0 ), 8.0 ) * step( 0.0, e );',
         ' gl_FragColor = vec4( sc, 1.0 );'].join('\n'));
     };
-    sm.customProgramCacheKey = function () { return 'sky5d'; };
+    sm.customProgramCacheKey = function () { return 'sky12'; };
     skyMesh = new T.Mesh(new T.SphereGeometry(3000, 32, 16), sm);
     skyMesh.frustumCulled = false; skyMesh.renderOrder = -1000; skyMesh.matrixAutoUpdate = true;
     skyMesh.onBeforeRender = function (r, s, c) { skyMesh.position.copy(c.position); skyMesh.updateMatrixWorld(); };
@@ -148,12 +148,14 @@
   // fade alone); fogNear >= 0 = round 5's linear fog
   function applySky() {
     if (skyMesh) skyMesh.visible = skyOn;
-    scene.background = skyOn ? null : new T.Color(SKY);
-    if (skyOn || hazeOn) { var c = SKY_COL.band; scene.fog.color.setRGB(c[0], c[1], c[2], T.SRGBColorSpace); scene.fog.near = hazeOn ? -(HAZE_ENV[MAP] || mapData.haze || HAZE_ENV.prohorovka).k : -1e-6; scene.fog.far = 1; }
-    else { scene.fog.color.setHex(SKY); scene.fog.near = 700; scene.fog.far = 2600; }
+    scene.background = skyOn ? null : new T.Color().setRGB(SKY_COL.black[0], SKY_COL.black[1], SKY_COL.black[2], T.SRGBColorSpace);  // round 12: no sky = black, the pale fill is gone
+    skyU.uGrey.value = greyOn ? 1 : 0;
+    if (skyOn || hazeOn) { var c = SKY_COL.band; scene.fog.color.setRGB(c[0], c[1], c[2], T.SRGBColorSpace); scene.fog.near = hazeOn ? -(HAZE_ENV[MAP] || mapData.haze || HAZE_ENV.prohorovka).k : -1e-6; scene.fog.far = greyOn ? 1 : 0; }  // fogFar is free in this mode: it carries the grey/black choice to skyCol5d
+    else { scene.fog.color.setRGB(SKY_COL.black[0], SKY_COL.black[1], SKY_COL.black[2], T.SRGBColorSpace); scene.fog.near = 700; scene.fog.far = 2600; }
   }
   function setHaze(on) { hazeOn = !!on; $('sw-haze').checked = hazeOn; applySky(); }
   function setSky(on) { skyOn = !!on; $('sw-sky').checked = skyOn; applySky(); }
+  function setGrey(on) { greyOn = !!on; $('sw-grey').checked = greyOn; applySky(); }
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
   sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.4;
@@ -2244,6 +2246,7 @@
   $('rng-halo').oninput = $('rng-halo-all').oninput = $('rng-halo-reach').oninput = $('rng-halo-shade').oninput = $('rng-halo-grad').oninput = function () { setHalo($('sw-halo').checked); };
   $('sw-haze').onchange = function () { setHaze(this.checked); };
   $('sw-sky').onchange = function () { setSky(this.checked); };
+  $('sw-grey').onchange = function () { setGrey(this.checked); };
   $('sw-light').onchange = function () { setLight(this.checked); };
   $('rng-light').oninput = function () { setLight($('sw-light').checked); };
   $('sw-cost').onchange = function () { costOn = this.checked; $('cost').style.display = costOn ? 'block' : 'none'; gpuHist.length = 0; };
@@ -2692,13 +2695,19 @@
       pitch: [pmin, pmax], wheels: wheels.length, gunLength: gl0, turretGun: turretGun(veh.compactDescriptor),
       hull: geo(['chassis', 'hull'].concat(wheels), [0, 0, 0]), turret: geo(['turret'], tt.slice(12, 15)), gun: gun };
   }
-  function loadVehicles(b, raw) {
+  // files (the battle file's vehicleFiles, 19.11): {hits: [ids of data/vehicles], viewer: [ids of data/playback/vehicles -
+  // the mod's vehicles from the client's XML]}; a type in neither is not read (a missing file is a console error) but
+  // marked `missing`, for the mod to make (vehiclesFor). Without it (an older battle file) data/vehicles is tried.
+  function loadVehicles(b, raw, files) {
     // raw (optional): each type's files as read, {veh, models} - the battle worker places the hit points with them
     var out = {}, types = {};
+    var hits = files && files.hits ? new Set(files.hits) : null, viewer = new Set((files && files.viewer) || []);
     b.vehicles.forEach(function (v) { types[v.type] = true; });
     return Promise.all(Object.keys(types).map(function (typ) {
       var id = typ.replace(':', '-');
-      return loadData('data/vehicles/' + id + '.js', 'vehicle:' + id).then(function (veh) {
+      var src = !hits || hits.has(id) ? 'data/vehicles/' : viewer.has(id) ? 'data/playback/vehicles/' : null;
+      if (!src) { out[typ] = { model: false, missing: true, reason: 'no vehicle file' }; return null; }
+      return loadData(src + id + '.js', 'vehicle:' + id).then(function (veh) {
         var keys = {}; veh.parts.forEach(function (p) { if (p.modelKey) keys[p.modelKey] = true; });
         return Promise.all(Object.keys(keys).map(function (k) { return loadData('data/models/' + k + '.js', 'model:' + k); })).then(function (docs) {
           var byKey = {}; Object.keys(keys).forEach(function (k, i) { byKey[k] = docs[i]; });
@@ -2707,6 +2716,26 @@
         });
       }).catch(function (e) { out[typ] = { model: false, reason: String(e && e.message || e) }; });
     })).then(function () { return out; });
+  }
+  // The battle's vehicles with no file (a replay of another player, 19.11): the mod makes them ('playbackVehicles', with
+  // the compact descriptor the battle's stream carries - the exporter's own route, else the client's XML) and says so
+  // with the files there now; meanwhile the message line says it. Outside the game, or no word in VEHICLES_MS: boxes.
+  var VEHICLES_MS = 120000;
+  function vehiclesFor(b, raw) {
+    var files = FILE && FILE.vehicleFiles;
+    return loadVehicles(b, raw, files).then(function (m) {
+      var missing = Object.keys(m).filter(function (t) { return m[t].missing; });
+      if (!missing.length || !host.canSend()) return m;
+      $('msg').textContent = 'Preparing the models of ' + missing.length + ' vehicle' + (missing.length > 1 ? 's' : '') + '...';
+      var rows = missing.map(function (t) {
+        var v = b.vehicles.filter(function (x) { return x.type === t && x.compDescr; })[0];
+        return { type: t, descr: v ? v.compDescr : null };
+      });
+      var w = waitFor(function (n) { return n.kind === 'vehicles' && n.id === BID ? { value: n.files || files } : null; },
+        function () { return Promise.reject(new Error('waiting')); }, VEHICLES_MS);
+      host.send('bullba_hits', { action: 'playbackVehicles', battleId: BID, vehicles: rows }).catch(function (e) { console.warn('Bullba Hits playbackVehicles failed: ' + e.message); });
+      return w.then(function (f) { return loadVehicles(b, raw, f); }, function () { return m; });
+    });
   }
 
   // ------------------------------------------------------------------ the battle file: data/playback/<id>.js
@@ -2731,7 +2760,7 @@
   // tried every FALLBACK_MS meanwhile
   var listeners = [];
   window.BullbaPlayback = { notify: function (note) { listeners.slice().forEach(function (f) { try { f(note || {}); } catch (e) { console.warn(e); } }); } };
-  function waitFor(test, look) {
+  function waitFor(test, look, maxMs) {
     var began = performance.now();
     return new Promise(function (ok, fail) {
       var timer = null, done = false;
@@ -2740,7 +2769,7 @@
       function again() {
         timer = setTimeout(function () {
           if (done) return;
-          if (performance.now() - began > WAIT_MS) return finish(fail, new Error('The game did not prepare this battle in time.'));
+          if (performance.now() - began > (maxMs || WAIT_MS)) return finish(fail, new Error('The game did not prepare this battle in time.'));
           look().then(function (v) { finish(ok, v); }, again);
         }, FALLBACK_MS);
       }
@@ -2813,24 +2842,89 @@
     var d = new Date(seconds * 1000), pad = function (n) { return (n < 10 ? '0' : '') + n; };
     return pad(d.getDate()) + '.' + pad(d.getMonth() + 1) + ' · ' + d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
   }
+  // 19.11: the list is the replay FILES first (data/replay-files.js, the mod's replay_files: the game's replays folder and
+  // the replay limit's keep folder, any player's, newest first; a file tied to a Hits battle opens under that battle's id),
+  // then the Hits battles that have no file listed. Choosing either opens it the same way.
+  var INDEX = null, FILES = null;
+  function vehicleShort(type) {
+    var n = String(type || '').split(':').pop();
+    return n.replace(/^[A-Za-z]{1,4}\d+[a-zA-Z]?_/, '').replace(/_/g, ' ');
+  }
+  function fileWhen(f) {
+    var m = /^(\d{4})-(\d\d)-(\d\d) (\d\d):(\d\d)/.exec(f.when || '');
+    return m ? m[3] + '.' + m[2] + ' · ' + m[4] + ':' + m[5] : '';
+  }
+  function fileText(f, client) {
+    return [fileWhen(f), f.mapTitle || f.map, vehicleShort(f.vehicle), f.player].filter(Boolean).join(' · ') +
+      (f.kept ? ' ★' : '') + (client && f.client && f.client !== client ? ' (older client)' : '');
+  }
+  function fileRows() { return FILES && Array.isArray(FILES.files) ? FILES.files.filter(function (f) { return f && f.id; }) : []; }
   function battleSelect(index) {
-    var sel = $('sel-battle'), list = (index && Array.isArray(index.battles) ? index.battles : []).filter(function (b) { return b && b.id; });
-    BATTLES = list.slice().sort(function (a, b) { return (+b.startedAt || 0) - (+a.startedAt || 0); });
-    if (BID && !BATTLES.some(function (b) { return b.id === BID; })) BATTLES.unshift({ id: BID });
+    if (index !== undefined) INDEX = index;
+    var sel = $('sel-battle'), list = (INDEX && Array.isArray(INDEX.battles) ? INDEX.battles : []).filter(function (b) { return b && b.id; });
+    var files = fileRows(), tied = {};
+    files.forEach(function (f) { if (f.battle) tied[f.battle] = true; });
+    BATTLES = list.filter(function (b) { return !tied[b.id]; }).sort(function (a, b) { return (+b.startedAt || 0) - (+a.startedAt || 0); });
+    var known = files.some(function (f) { return (f.battle || f.id) === BID; }) || BATTLES.some(function (b) { return b.id === BID; });
     sel.replaceChildren();
+    function add(parent, value, text) {
+      var o = document.createElement('option'); o.value = value; o.textContent = text; o.selected = value === BID; parent.appendChild(o);
+    }
+    if (!BID) add(sel, '', 'Choose a replay');
+    else if (!known) add(sel, BID, 'This battle');
+    if (files.length) {
+      var g = document.createElement('optgroup'); g.label = 'Replay files';
+      files.forEach(function (f) { add(g, f.battle || f.id, fileText(f, FILES.client)); });
+      sel.appendChild(g);
+    }
+    var parent = sel;
+    if (files.length && BATTLES.length) { parent = document.createElement('optgroup'); parent.label = 'Bullba Hits battles'; sel.appendChild(parent); }
     BATTLES.forEach(function (b) {
-      var o = document.createElement('option'); o.value = b.id;
-      o.textContent = b.map ? [battleWhen(+b.startedAt), b.map, b.vehicle && b.vehicle.name].filter(Boolean).join(' · ') : 'This battle';
-      o.selected = b.id === BID; sel.appendChild(o);
+      add(parent, b.id, b.map ? [battleWhen(+b.startedAt), b.map, b.vehicle && b.vehicle.name].filter(Boolean).join(' · ') : 'This battle');
     });
     sel.value = BID;
+    fileList();
   }
-  $('sel-battle').onchange = function () {
-    var id = this.value;
+  // Opened with no battle (the viewer's own button): the list of replays fills the screen and waits for a choice.
+  function fileList() {
+    var box = document.getElementById('files');
+    if (!box || BID) return;
+    var rows = fileRows();
+    box.hidden = false;
+    var body = document.getElementById('files-rows');
+    body.replaceChildren();
+    rows.forEach(function (f) {
+      var b = document.createElement('button'); b.type = 'button'; b.className = 'frow' + (f.kept ? ' kept' : '');
+      b.setAttribute('data-id', f.battle || f.id); b.textContent = fileText(f, FILES.client);
+      b.title = (f.file || '') + (f.battle ? '\nRecorded by Bullba Hits too: opens with its record.' : '');
+      b.onclick = function () { choose(f.battle || f.id); };
+      body.appendChild(b);
+    });
+    BATTLES.forEach(function (bt) {
+      var b = document.createElement('button'); b.type = 'button'; b.className = 'frow hits'; b.setAttribute('data-id', bt.id);
+      b.textContent = [battleWhen(+bt.startedAt), bt.map, bt.vehicle && bt.vehicle.name].filter(Boolean).join(' · ') + ' (Bullba Hits)';
+      b.onclick = function () { choose(bt.id); };
+      body.appendChild(b);
+    });
+    $('msg').style.display = 'none';
+    document.getElementById('files-note').textContent = rows.length || BATTLES.length ? 'Choose a replay: newest first; ★ kept forever by the replay limit.'
+      : (FILES ? 'No replays in the game\'s replays folder yet.' : 'Reading the replays folder...');
+  }
+  function choose(id) {
     if (!/^[-a-zA-Z0-9_]{1,100}$/.test(id) || id === BID) return;
     location.hash = (host.game ? 'host=game&' : '') + 'battle=' + encodeURIComponent(id);
     location.reload();
-  };
+  }
+  // the replay files: in the game the mod reads their headers again first ('replayFiles', a cached scan) and says when
+  // data/replay-files.js is written; outside it the file is read as it is (a missing one is left unread)
+  var FILES_MS = 60000;
+  function loadFiles() {
+    if (!host.canSend()) return loadData('data/replay-files.js', 'replayFiles').catch(function () { return null; });
+    var w = waitFor(function (n) { return n.kind === 'files' ? { value: null } : null; }, function () { return Promise.reject(new Error('waiting')); }, FILES_MS);
+    host.send('bullba_hits', { action: 'replayFiles' }).catch(function (e) { console.warn('Bullba Hits replayFiles failed: ' + e.message); });
+    return w.then(function () { return loadData('data/replay-files.js', 'replayFiles'); }).catch(function () { return null; });
+  }
+  $('sel-battle').onchange = function () { choose(this.value); };
 
   // ------------------------------------------------------------------ remembered settings
   // Every control of the settings panel, the destruction panel's outline switch and the speed: one localStorage object
@@ -2842,13 +2936,20 @@
   // ------------------------------------------------------------------ start
   var mapData, battleInfo = null;
   var loadStart = performance.now();
-  $('back').onclick = function () { location.href = BASE + 'Viewer.html' + (host.game ? '#host=game' : ''); };
+  // in the game Hits has a window of its own (19.11): the mod opens it if it is not open, this window stays
+  $('back').onclick = function () {
+    if (host.game && host.canSend()) { host.send('bullba_hits', { action: 'openHits' }).catch(function (e) { console.warn('Bullba Hits openHits failed: ' + e.message); }); return; }
+    location.href = BASE + 'Viewer.html' + (host.game ? '#host=game' : '');
+  };
   Promise.resolve().then(function () {
     BID = params.battle || '';
-    if (!/^[-a-zA-Z0-9_]{1,100}$/.test(BID)) throw new Error('No battle named.');
     // the selector is filled beside the load, whatever becomes of it: another battle can be chosen from an error too
     battleSelect(null);
     loadData('data/index.js', 'index').then(battleSelect, function () {});
+    loadFiles().then(function (f) { FILES = f; battleSelect(); });
+    if (!BID) { window.__list = true; fileList(); return new Promise(function () {}); }
+    if (!/^[-a-zA-Z0-9_]{1,100}$/.test(BID)) throw new Error('No battle named.');
+    document.getElementById('files').hidden = true;
     MAP = BID;
     return battleFile(BID);
   }).then(function (info) {
@@ -2861,7 +2962,7 @@
     store['battle:' + BID] = b;
     $('msg').textContent = 'Building the map...';
     var raw = r.effects ? {} : null;
-    return Promise.all([jsMap(b), loadVehicles(b, raw).then(function (m) { store['vehicles:' + BID] = m; return raw && r.effects(raw); })]);
+    return Promise.all([jsMap(b), vehiclesFor(b, raw).then(function (m) { store['vehicles:' + BID] = m; return raw && r.effects(raw); })]);
   }).then(function () {
     var tLoaded = performance.now();
     mapData = store['map:' + MAP]; battle = store['battle:' + BID];

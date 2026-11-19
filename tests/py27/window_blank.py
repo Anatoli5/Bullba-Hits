@@ -40,6 +40,9 @@ Checked:
      each step the frame has the page's size plus its 25 x 79 and sits centred inside the screen, in both orders in which
      Flash may draw the two invalidations. The stand cannot see the real drawing order, the real art's sizes, or the
      picture: those are the game's to show. The first 7 checks of this part were red on the 1.09 code (c11582c).
+  7. (19.11, 'one mod, two entries') the replay viewer's own window (presentation.REPLAYS, playback.html): its own
+     browser id and trace; opening it, re-navigating it to a battle and closing it leave Hits' window as it was (not
+     re-navigated, its trace, its 'follow'), and opening Hits leaves the viewer as it was.
 
 The first 16 of these checks were the red test of 03.10 (8 red on 3de626e: nothing listened, nothing written).
 
@@ -194,7 +197,8 @@ class FakeController(object):
     def load(self, url=None, title=None, showActionBtn=True, showWaiting=True, browserID=None, isAsync=False,
              browserSize=None, isDefault=True, callback=None, showCloseBtn=False, useBrowserWindow=True, isModal=False,
              showCreateWaiting=False, handlers=None, showBrowserCallback=None, isSolidBorder=False):
-        self.calls.append(dict(url=url, browserID=browserID, isAsync=isAsync, browserSize=browserSize, showWaiting=showWaiting))
+        self.calls.append(dict(url=url, browserID=browserID, isAsync=isAsync, browserSize=browserSize, showWaiting=showWaiting,
+                               title=title))
         controller = self
 
         def operation(done):
@@ -727,6 +731,48 @@ try:
               'the view class has its own init back after 20 s at most, and the line says why', steps()[-1:])
         presentation.close_window_trace()
         nothing_left(quiet, None, 'that window leaves nothing either')
+
+        # ---- 7. the replay viewer's window beside Hits' (19.11) ----
+        presentation._warned.clear()
+        presentation.open_in_game(viewer, 'host=game&vehicle=china-Ch67_BZ_79')
+        hits = controller.getBrowser(presentation._browser_id)
+        controller.ready(hits.id)
+        presentation.set_page_follows(True)
+        hits_trace, hits_nav, hits_id = presentation._trace, list(hits.navigated), presentation._browser_id
+        player = os.path.join(temp, 'playback.html')
+        with open(player, 'wb') as stream: stream.write('<!doctype html>')
+        presentation.open_in_game(player, 'host=game', window=presentation.REPLAYS)
+        rid = presentation.window_id(presentation.REPLAYS)
+        rweb = controller.getBrowser(rid)
+        last = controller.calls[-1]
+        check(rid is not None and rid != hits_id and rweb is not None and rweb is not hits,
+              'the viewer\'s window has a browser id of its own', (rid, hits_id))
+        check(last['url'].endswith('playback.html#host=game') and last.get('title') == 'Bullba Replays' and last.get('browserID') is None,
+              'it opens playback.html under its own title as a new browser', last)
+        if rweb is not None: controller.ready(rid)
+        rtrace = presentation.window_trace(presentation.REPLAYS)
+        check(rtrace is not None and rtrace is not hits_trace and rtrace.web is rweb and logged('Bullba Replays window +') >= 1,
+              'its own trace, written under its own name')
+        check(hits.navigated == hits_nav and presentation._trace is hits_trace and not hits_trace.closed
+              and presentation.page_follows() and presentation._browser_id == hits_id,
+              'Hits\' window is left as it was: not re-navigated, its trace and its follow kept', hits.navigated)
+        presentation.open_in_game(player, 'host=game&battle=f-0123456789abcdef', window=presentation.REPLAYS)
+        check(rweb is not None and rweb.navigated and rweb.navigated[-1].endswith('battle=f-0123456789abcdef') and hits.navigated == hits_nav,
+              'the viewer opened on a battle re-navigates the viewer alone', rweb and rweb.navigated)
+        rnav = list(rweb.navigated) if rweb is not None else []
+        presentation.open_in_game(viewer, 'host=game')
+        check(rweb is not None and rweb.navigated == rnav and hits.navigated[-1:] and hits.navigated[-1].endswith('Viewer.html#host=game')
+              and presentation.window_trace(presentation.REPLAYS) is rtrace,
+              'opening Hits re-navigates Hits alone, the viewer keeps its page and trace')
+        if rweb is not None: controller.delBrowser(rid)
+        check(not presentation.window_open(presentation.REPLAYS) and presentation.window_open() and not hits_trace.closed
+              and presentation.page_follows(), 'closing the viewer leaves Hits\' window open, followed, following')
+        presentation.close_window_trace()
+        check(presentation.window_trace(presentation.REPLAYS) is None and presentation._trace is None,
+              'the mod leaving takes both traces off')
+        controller.delBrowser(hits.id)
+        presentation.set_page_follows(False)
+        nothing_left(None, None, 'and nothing is left of the two windows')
 
         # ---- a client without these events and calls: the window still opens, each gap is said once ----
         del logs.records[:]

@@ -251,6 +251,53 @@ class WebCommandTests(unittest.TestCase):
             self.assertEqual((exports[-1], kinds), ('sweepStart', ['ttx', 'ttx', 'models']))
 
 
+class TwoPagesOneChannelTests(unittest.TestCase):
+    """Both pages - Viewer.html and the replay viewer's playback.html (19.11, 'one mod, two entries') - send through the one
+    command 'bullba_hits': every action a page sends has one name in presentation.ACTIONS, and the handler answers each."""
+
+    def sent_actions(self):
+        import glob, os, re
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        found = {}
+        for path in glob.glob(os.path.join(root, 'web', '*.js')) + glob.glob(os.path.join(root, 'web', 'playback', '*.js')):
+            text = open(path, encoding='utf-8').read()
+            for name in re.findall(r"sendCommand\('([A-Za-z]+)'", text) + re.findall(r"action:\s*'([A-Za-z]+)'", text):
+                found.setdefault(name, set()).add(os.path.basename(path))
+        return found
+
+    def test_every_action_a_page_sends_is_one_known_name(self):
+        self.assertEqual(len(presentation.ACTIONS), len(set(presentation.ACTIONS)))
+        sent = self.sent_actions()
+        self.assertTrue({'openReplays', 'replayFiles', 'playbackVehicles', 'openHits', 'playback', 'exportVehicle'} <= set(sent), sent)
+        self.assertEqual(sorted(set(sent) - set(presentation.ACTIONS)), [])
+
+    def test_the_handler_answers_every_known_action(self):
+        import inspect
+        source = inspect.getsource(presentation._handle_web_command)
+        for name in presentation.ACTIONS: self.assertIn("'%s'" % name, source)
+
+    def test_the_viewer_commands_reach_their_own_requests(self):
+        windows, files, vehicles = [], [], []
+        presentation.set_window_request(lambda window, battle: windows.append((window, battle)))
+        presentation.set_files_request(lambda: files.append(True))
+        presentation.set_vehicles_request(lambda battle, rows: vehicles.append((battle, rows)))
+        self.addCleanup(presentation.set_window_request, None)
+        self.addCleanup(presentation.set_files_request, None)
+        self.addCleanup(presentation.set_vehicles_request, None)
+        handler = presentation.web_handlers()[0].handler
+        with patch.object(presentation, '_player_view', lambda ctx: None):
+            handler(Command(action='openReplays', battleId='f-0123456789abcdef'), {})
+            handler(Command(action='openReplays', battleId='bad id!'), {})
+            handler(Command(action='openHits'), {})
+            handler(Command(action='replayFiles'), {})
+            handler(Command(action='playbackVehicles', battleId='f-0123456789abcdef',
+                            vehicles=[{'type': 'usa:A83_T110E4', 'descr': 'AQIDBA=='}, {'type': 'bad'}, 'x']), {})
+        self.assertEqual(windows, [(presentation.REPLAYS, 'f-0123456789abcdef'), (presentation.HITS, None)])
+        self.assertEqual(files, [True])
+        self.assertEqual(vehicles, [('f-0123456789abcdef', [('usa:A83_T110E4', 'AQIDBA==')])])
+        self.assertEqual(self.calls if hasattr(self, 'calls') else [], [])
+
+
 class PickerDescriptorTests(unittest.TestCase):
     """The configuration chosen for a vehicle picked in the page's list."""
 

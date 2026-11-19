@@ -115,7 +115,7 @@ def check_lists(result):
         else: result.fail('index.html loads %s, ASSETS does not ship it' % ref)
     # Every file of web/ ships, except the page itself (Viewer.html), the mods-list icon (build.py packs it apart)
     # and the icons (compared with their own lists below).
-    apart = {'web/index.html', 'web/menu-icon.png'}
+    apart = {'web/index.html', 'web/menu-icon.png', 'web/replays-icon.png'}
     for folder, _, files in os.walk(os.path.join(ROOT, 'web')):
         for name in files:
             rel = os.path.relpath(os.path.join(folder, name), ROOT).replace(os.sep, '/')
@@ -298,6 +298,13 @@ def check_browser(result):
     code, out, _ = run([exe, 'tests/page/playback_page.cjs'], timeout=600, env={'BULLBA_PYTHON': sys.executable})
     passed = result.passed
     harness_lines(result, 'playback_page', code, out)
+    total = re.search(r'(\d+) checks, (\d+) failed', out)
+    if total: result.passed = passed + int(total.group(1)) - int(total.group(2))
+    # The replay viewer's own entry (19.11): opened with no battle it lists the replay files; another player's replay with
+    # no record opens, its vehicle without a Hits file made by the client's XML route.
+    code, out, _ = run([exe, 'tests/page/playback_files.cjs'], timeout=600, env={'BULLBA_PYTHON': sys.executable})
+    passed = result.passed
+    harness_lines(result, 'playback_files', code, out)
     total = re.search(r'(\d+) checks, (\d+) failed', out)
     if total: result.passed = passed + int(total.group(1)) - int(total.group(2))
 

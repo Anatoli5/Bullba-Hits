@@ -95,7 +95,8 @@
     var plain = D.decryptStream(bytes.subarray(off + 8), schedule);
     return inflate(plain.subarray(0, packed)).then(function (stream) {
       if (stream.length !== rawSize) throw new Error(words(W_DECODE, 'stream size ' + stream.length + ', the header says ' + rawSize));
-      if (arenaInStream(stream, name.split('-', 1)[0]) !== true) throw new Error(words(W_DECODE, 'the kept replay file is of another battle'));
+      // a replay FILE of the viewer's list (id 'f-...', 19.11) is no battle of Bullba Hits: no arena id to hold it to
+      if (!/^f-/.test(name) && arenaInStream(stream, name.split('-', 1)[0]) !== true) throw new Error(words(W_DECODE, 'the kept replay file is of another battle'));
       return stream;
     });
   }

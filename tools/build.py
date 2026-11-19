@@ -58,6 +58,8 @@ def build(skip_check=False):
     if proc.returncode: raise SystemExit('Compile failed:\n'+proc.stdout+proc.stderr)
     files={'meta.xml':('<root><id>local.armor_inspector</id><version>'+VERSION+'</version><name>Bullba Hits</name><description>Hit recorder with serverless HTML viewer</description></root>').encode('utf-8')}
     files['res/gui/maps/bullba_hits/modsListApi.png']=(ROOT/'web/menu-icon.png').read_bytes()
+    # The replay viewer's own mods-list button (19.11): mod_local_armor_inspector.REPLAYS_MOD_ID.
+    files['res/gui/maps/bullba_hits/replaysListApi.png']=(ROOT/'web/replays-icon.png').read_bytes()
     # The tracked sources only (audit QA-18): a local .py left in mod/ would otherwise ship. The tree is clean, so
     # the list is the commit's.
     for source in sorted(ROOT/p for p in git('ls-files','--','mod/*.py').split() if p):

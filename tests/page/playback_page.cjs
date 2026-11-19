@@ -80,7 +80,9 @@ async function openBattle(page, id) {
   const host = state ? await page.evaluate('window.__host') : null;
   return {state: state, wall: (Date.now() - began) / 1000, host: host};
 }
-const actions = (host) => (host || []).map((c) => c.action).sort().join(',');
+// (19.11) every opening also asks for the list of replay files ('replayFiles', tests/page/playback_files.cjs): not a word
+// about this battle or its map, so it is left out here
+const actions = (host) => (host || []).map((c) => c.action).filter((a) => a !== 'replayFiles').sort().join(',');
 const reported = (host) => (host || []).filter((c) => c.action === 'playbackReport').map((c) => c.report);
 
 (async function main() {

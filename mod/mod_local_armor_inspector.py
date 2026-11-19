@@ -15,6 +15,11 @@ except ImportError:
 
 VERSION = '1.11'
 VIEWER_PATH = os.path.join('mods', 'configs', 'local.armor_inspector', 'Viewer.html')
+# The 3D replay viewer's own entry (19.11, the user's 'one mod, two entries'): its page, its mods-list button and icon.
+PLAYBACK_PATH = os.path.join('mods', 'configs', 'local.armor_inspector', 'web', 'playback.html')
+MOD_ID = 'local.armor_inspector'
+REPLAYS_MOD_ID = 'local.armor_inspector.replays'
+REPLAYS_NAME = 'Bullba Replays'
 LOG = logging.getLogger('local.armor_inspector')
 PARTS = ('chassis', 'hull', 'turret', 'gun')
 CONTEXT_MENU_OPTION = 'bullbaHits'
@@ -701,6 +706,9 @@ class Writer(object):
             elif name == 'mapraw': self.exporter.request_map_raw(payload)
             elif name == 'playbackReport': self.exporter.playback_report(payload)
             elif name == 'replays': self.exporter.replay_library_command(payload)
+            elif name == 'replayFiles': self.exporter.request_replay_files()
+            elif name == 'playbackVehicles': self.exporter.request_playback_vehicles(payload)
+            elif name == 'boxes': self.exporter.store_part_boxes(payload)
             elif name == 'sweepStart': self.exporter.confirm_sweep(payload or 'ttx')
             elif name == 'sweepStop': self.exporter.stop_sweep(payload or 'ttx')
             # The replay stream of one battle (replay_source.ReplaySource.handover): its consumer is the
@@ -1160,6 +1168,7 @@ class Recorder(object):
         self.hangar_wait_until = now + HANGAR_SETTLE
         left = self.battle_left_at
         LOG.info('Hangar loaded%s', ' %.1f s after the battle was left' % (now - left) if left is not None else '')
+        harvest_boxes(self)
 
     def note_page_loading(self, state):
         """The page's window (presentation.open_in_game, WindowTrace): True - it starts loading, the replay job waits
@@ -1919,6 +1928,80 @@ def open_viewer():
         LOG.exception('Could not open local HTML viewer')
 
 
+# The client's own part boxes for the replay viewer (client_boxes, 19.11): read on the game thread outside battle, in
+# steps of client_boxes.BUDGET seconds, HARVEST_AFTER s after the hangar is loaded; the boxes go to the export thread.
+HARVEST_AFTER = 5.0
+HARVEST_PAUSE = 0.05
+_harvest = {'job': None}
+
+
+def harvest_boxes(recorder):
+    """One harvest pass of the client's cached vehicle types (client_boxes.Harvest); a pass already running goes on."""
+    if _harvest['job'] is not None: return
+    try:
+        import BigWorld
+        from local_armor_inspector import client_boxes
+    except Exception:
+        return
+    job = _harvest['job'] = client_boxes.Harvest()
+
+    def step():
+        if _recorder is not recorder or _harvest['job'] is not job: return
+        try:
+            if client_boxes.in_battle():
+                _harvest['job'] = None
+                return
+            boxes = job.step()
+        except Exception:
+            _harvest['job'] = None
+            LOG.exception('Part boxes of the client not read')
+            return
+        if boxes is None:
+            BigWorld.callback(HARVEST_PAUSE, step)
+            return
+        _harvest['job'] = None
+        recorder.writer.put_export('boxes', {'boxes': boxes, 'types': job.types, 'errors': len(job.errors)})
+    BigWorld.callback(HARVEST_AFTER, step)
+
+
+def open_replays(battle_id=None):
+    """The replay viewer's mods-list button (no battle: the viewer shows the list of replay files) or Hits' 3D control on a
+    battle row ('openReplays', a battle id): the viewer in its own window (presentation.REPLAYS); Hits' window, open or not,
+    is left as it is. A click of the button while the viewer is open leaves the replay on screen."""
+    try:
+        from local_armor_inspector import presentation
+        if battle_id is None and presentation.window_open(presentation.REPLAYS):
+            LOG.info('%s window already open; left as it is', REPLAYS_NAME)
+            return
+        fragment = 'host=game' + ('&battle=' + str(battle_id) if battle_id else '')
+        presentation.open_in_game(PLAYBACK_PATH, fragment, window=presentation.REPLAYS)
+    except Exception:
+        LOG.exception('Could not open the replay viewer')
+
+
+def page_window(window, battle_id=None):
+    """The pages' 'openReplays' / 'openHits' (game thread): the viewer's window on a battle, or Hits' window when it is not
+    open (an open one is never re-navigated from the viewer)."""
+    from local_armor_inspector import presentation
+    if window == presentation.REPLAYS: return open_replays(battle_id)
+    if presentation.window_open(presentation.HITS):
+        LOG.info('Bullba Hits window already open; left as it is')
+        return
+    open_viewer()
+
+
+def page_files():
+    """The viewer's 'replayFiles': the replay files' headers read again (the export thread, in slices). Game thread."""
+    if _recorder is None: return
+    _recorder.writer.put_export('replayFiles', {})
+
+
+def page_playback_vehicles(battle_id, wanted):
+    """The viewer's 'playbackVehicles': the battle's vehicle types with no vehicle file. Game thread: the request only."""
+    if _recorder is None or not wanted: return
+    _recorder.writer.put_export('playbackVehicles', {'battleId': battle_id, 'vehicles': [list(w) for w in wanted]})
+
+
 def shown_vehicle():
     """(type name, 'preview' | 'hangar') of the vehicle the lobby shows, or (None, None).
 
@@ -2274,14 +2357,21 @@ def init():
             presentation.set_playback_request(page_playback)
             presentation.set_player_request(page_player)
             presentation.set_replays_request(page_replays)
+            presentation.set_window_request(page_window)
+            presentation.set_files_request(page_files)
+            presentation.set_vehicles_request(page_playback_vehicles)
             presentation.set_load_listener(_recorder.note_page_loading)
         except Exception: LOG.exception('Page export command unavailable; hit recording continues')
         try:
             from gui.modsListApi import g_modsListApi
             _mods_api = g_modsListApi
-            _mods_api.addModification(id='local.armor_inspector', name='Bullba Hits',
+            _mods_api.addModification(id=MOD_ID, name='Bullba Hits',
                 description='Saved hits in an in-game window. Local files, no server.', enabled=True,
                 icon='gui/maps/bullba_hits/modsListApi.png', login=False, lobby=True, callback=open_viewer)
+            # The replay viewer's own button (19.11): the same mod, its own window (open_replays).
+            _mods_api.addModification(id=REPLAYS_MOD_ID, name=REPLAYS_NAME,
+                description='3D replays of your battles and any replay file. Local files, no server.', enabled=True,
+                icon='gui/maps/bullba_hits/replaysListApi.png', login=False, lobby=True, callback=open_replays)
         except Exception:
             # The panel ships with the installer; without it the hangar vehicle context menu still opens the viewer.
             LOG.exception('ModsList panel unavailable; the vehicle context menu opens ' + VIEWER_PATH)
@@ -2305,6 +2395,9 @@ def fini():
         presentation.set_playback_request(None)
         presentation.set_player_request(None)
         presentation.set_replays_request(None)
+        presentation.set_window_request(None)
+        presentation.set_files_request(None)
+        presentation.set_vehicles_request(None)
         presentation.set_load_listener(None)
         # The open window's trace (blue window, 03.10): its listeners and wrappers leave the client's objects.
         presentation.close_window_trace()
