@@ -51,13 +51,9 @@
   .veh.dead .nm, .veh.dead .pl { text-decoration:line-through; color:var(--dim); }
   .veh.follow { outline:1px solid var(--accent); }
   .dim { color:var(--dim); }
-  /* the list of replays, when the viewer is opened with no battle (its own button in the game, 19.11) */
-  #files { left:50%; top:52px; transform:translateX(-50%); width:min(640px, calc(100% - 32px)); max-height:calc(100% - 120px); display:flex; flex-direction:column; gap:6px; }
-  #files[hidden] { display:none; }
-  #files-rows { overflow:auto; display:flex; flex-direction:column; gap:2px; }
-  .frow { text-align:left; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; background:#1d2227; }
-  .frow.kept { border-color:#6a5a2a; }
-  .frow.hits { color:var(--dim); }
+  /* round 14: the input log (a temporary diagnostic, Settings > input log): the last events, bottom left */
+  #inputlog { left:8px; bottom:56px; width:420px; max-width:calc(100% - 340px); font:11px/1.3 Consolas,monospace; white-space:pre; overflow:hidden; pointer-events:none; z-index:5; }
+  #inputlog[hidden] { display:none; }
   #msg { position:absolute; left:50%; top:45%; transform:translate(-50%,-50%); font-size:15px; }
   #help { color:var(--dim); }
   #destr { right:8px; bottom:56px; width:300px; }
@@ -76,26 +72,25 @@
   .settings-actions button { font-size:13px; min-height:34px; padding:7px 11px; }
   /* the game's browser: host.js draws a select's list as a DOM list (style.css .choice-list, in this page's colours) */
   .choice-list { position:fixed; z-index:1000; display:flex; flex-direction:column; max-height:50vh; overflow:auto; background:#1b2025; border:1px solid var(--line); border-radius:6px; box-shadow:0 10px 30px #000a; padding:4px; }
-  .choice-item { text-align:left; font:inherit; color:var(--text); background:transparent; border:0; border-radius:4px; padding:6px 10px; cursor:pointer; white-space:nowrap; }
+  .choice-item { flex:none; text-align:left; font:inherit; color:var(--text); background:transparent; border:0; border-radius:4px; padding:6px 10px; cursor:pointer; white-space:nowrap; }
   .choice-item:hover, .choice-item:focus-visible { background:#262c33; outline:none; }
   .choice-item[aria-selected=true] { color:var(--accent); }
   select[aria-expanded=true] { border-color:var(--accent); }
 </style>
+<!-- Bullba Hits' vehicle tile and hit row (web/rows.css) and the shots panel around them (BACKLOG 109, 19.11) -->
+<link rel="stylesheet" href="rows.css"><link rel="stylesheet" href="playback/shots-panel.css">
 </head>
 <body>
 <div id="view"></div>
 <div id="msg">Loading...</div>
-<div id="files" class="panel">
-  <b>Replays</b>
-  <div id="files-note" class="dim">Reading the replays folder...</div>
-  <div id="files-rows"></div>
-</div>
+<div id="inputlog" class="panel" hidden></div>
 <div id="meter" class="panel">
   <div id="topline">
     <button id="back" title="Bullba Hits&#10;Opens the recorded hits; in the game in a window of their own, this one stays.">&#9664; Hits</button>
     <span id="title">Bullba Replays</span>
     <label title="Battle&#10;Opens another battle in the 3D replay: date and start time, map, vehicle, player.&#10;- the replay files of the game's replays folder, any player's, newest first; ★ kept forever&#10;- then the battles of Bullba Hits that have no replay file&#10;- the first time, the game prepares the battle and its map: a few seconds">battle <select id="sel-battle" style="max-width:300px"></select></label>
-    <button id="settings-btn" title="Settings&#10;Opens or closes the settings: layers, shadows, grain, light, halo, sky, haze, crowns.">Settings &#9662;</button>
+    <label title="Sky&#10;Draws the sky: light overhead, a dull grey haze at the horizon, grey below it.&#10;- the scenery beyond the playable border fades into that haze instead of ending in a cut&#10;- off (default): black all round - the map hangs in the dark and fades into black"><input type="checkbox" id="sw-sky"> sky</label>
+    <button id="settings-btn" title="Settings&#10;Opens or closes the settings: layers, shadows, grain, light, vehicle colour, halo, haze, crowns.">Settings &#9662;</button>
   </div>
   <div id="settings" hidden>
   <div><b id="mapname">-</b> <span class="dim" id="gpu"></span></div>
@@ -123,16 +118,17 @@
     <label title="Relief&#10;How strongly slopes facing the sun and hollows show on the ground.&#10;- sun only: the sun's light alone&#10;- game-like: plus a light hollow / ridge shade (as before)&#10;- strong: slopes toward the sun brighter, slopes away and hollows darker">relief <select id="sel-relief"><option value="off">sun only</option><option value="game" selected>game-like</option><option value="strong">strong</option></select></label>
     <label title="Light&#10;Darkens hollows and the ground around plants and objects, lightens ridges, and strengthens slopes toward the sun, so the relief reads as on the minimap.&#10;- baked ahead from the map's own heights and placements: one texture read, no other cost while drawing&#10;- the first slider sets the colour's strength (0 to 2); shade and gradient have their own sliders&#10;- while it is on, the relief switch is off (no double shade); off: the relief switch as before"><input type="checkbox" id="sw-light" checked> light</label>
     <input type="range" id="rng-light" min="0" max="2" step="0.01" value="0.25" style="width:70px;vertical-align:middle" title="Light strength&#10;How strong the baked light is (0 to 2)."> <span id="light-v" class="dim">0.50</span>
-    <label title="Team tint&#10;Mixes each vehicle's colour toward its team's colour; its halo on the ground takes the same colour.&#10;- 0 (default): the neutral grey-blue of Bullba Hits, the team told by the marker over the vehicle and its row in the lists, as in the game&#10;- 1: the whole vehicle in its team's colour">team tint <input type="range" id="rng-tint" min="0" max="1" step="0.01" value="0" style="width:60px;vertical-align:middle"></label> <span id="tint-v" class="dim">0.00</span>
+    <span id="vehicle-look" style="display:inline-block;max-width:100%;box-sizing:border-box;border:1px solid rgba(255,255,255,.18);border-radius:4px;padding:1px 5px"><label title="Vehicle colour&#10;The paint all vehicles are drawn in; the parts keep their own shades and seams.&#10;- steel grey (default): neutral, mid-dark&#10;- khaki: the brownish green of the game's standard paint&#10;- dark green: a deep field green&#10;- panzer grey: a dark blue-grey&#10;- by nation: each vehicle in its nation's own base paint, as the game keeps it&#10;- the team is told by the marker over the vehicle and its row in the lists; team tint mixes in its colour">vehicle <select id="sel-vcolor"><option value="steel" selected>steel grey</option><option value="khaki">khaki</option><option value="green">dark green</option><option value="panzer">panzer grey</option><option value="nation">by nation</option></select></label>
+    <label title="Vehicle brightness&#10;How light the vehicle colour is drawn (0.5 to 1.5).&#10;- 1 (default): the colour as chosen&#10;- the map's sun and shadows light it as before">brightness <input type="range" id="rng-vbright" min="0.5" max="1.5" step="0.05" value="1" style="width:60px;vertical-align:middle"></label> <span id="vbright-v" class="dim">1.00</span>
+    <label title="Team tint&#10;Mixes each vehicle's colour toward its team's colour; its halo on the ground takes the same colour.&#10;- 0 (default): the vehicle colour alone, the team told by the marker over the vehicle and its row in the lists, as in the game&#10;- 1: the whole vehicle in its team's colour">team tint <input type="range" id="rng-tint" min="0" max="1" step="0.01" value="0" style="width:60px;vertical-align:middle"></label> <span id="tint-v" class="dim">0.00</span></span>
     <span style="display:inline-block;max-width:100%;box-sizing:border-box;border:1px solid rgba(255,255,255,.18);border-radius:4px;padding:1px 5px"><label title="Halo&#10;Shades the ground at each vehicle's base and tints it with the vehicle's colour, as sky and sunlight around a real vehicle do.&#10;- an oval along the hull: darker right at the hull, fading within about 1.5 m&#10;- the colour glow reaches about 3.5 m, strong on the side facing the sun, faint on the far side; a destroyed vehicle only shades&#10;- the first slider sets the colour's strength (0 to 2); shade and gradient have their own sliders"><input type="checkbox" id="sw-halo" checked> halo</label>
     <input type="range" id="rng-halo-all" min="0" max="2" step="0.01" value="1" style="width:70px;vertical-align:middle" title="Halo strength&#10;The overall strength of the whole halo: scales its colour, shade and gradient together (0 to 2).&#10;- balance it against the light slider; the sliders to the right set the mix inside the halo"> <span id="halo-all-v" class="dim">1.00</span> <label title="Halo colour&#10;How strong the vehicle's colour on the ground is (0 to 2).">colour <input type="range" id="rng-halo" min="0" max="2" step="0.01" value="1" style="width:60px;vertical-align:middle"></label> <span id="halo-v" class="dim">1.00</span> <label title="Halo shade&#10;How dark the ground gets right at the hull.&#10;- 0: no shade, 1: as before">shade <input type="range" id="rng-halo-shade" min="0" max="2" step="0.05" value="1" style="width:60px;vertical-align:middle"></label> <span id="halo-shade-v" class="dim">1.00</span> <label title="Halo shade reach&#10;How far from the hull the shade spreads, in metres.&#10;- small: a tight shade hugging the hull and tracks&#10;- large: a wide soft patch">reach <input type="range" id="rng-halo-reach" min="0.1" max="2.5" step="0.05" value="1" style="width:60px;vertical-align:middle"></label> <span id="halo-reach-v" class="dim">1.00</span> <label title="Halo gradient&#10;How much the halo differs in brightness between the sunlit and the far side.&#10;- 0: the same brightness all round&#10;- higher: lighter toward the sun, darker on the far side">gradient <input type="range" id="rng-halo-grad" min="0" max="2" step="0.05" value="1" style="width:60px;vertical-align:middle"></label> <span id="halo-grad-v" class="dim">1.00</span></span>
-    <label title="Sky&#10;Draws the sky light overhead, darkening toward the horizon into a dull grey haze, and dim grey below the horizon.&#10;- the scenery beyond the playable border fades into that haze instead of ending in a cut; the playable ground stays clear&#10;- off: the flat sky colour"><input type="checkbox" id="sw-sky" checked> sky</label>
-    <label title="Grey below the horizon&#10;Paints the space under and around the map dim grey, as before, instead of black.&#10;- off (default): black - the map hangs in the dark, the horizon haze fades into it&#10;- needs the sky on"><input type="checkbox" id="sw-grey"> grey</label>
-    <label title="Haze&#10;Lets far ground and objects fade into the horizon haze, with the map's own fog values.&#10;- light at playing distances and from above, thicker over a kilometre&#10;- off: the map stays clear"><input type="checkbox" id="sw-haze" checked> haze</label>
+    <label title="Haze&#10;Lets far ground and objects fade into the horizon haze, with the map's own fog values.&#10;- light at playing distances and from above, thicker over a kilometre&#10;- with the sky off they fade into black&#10;- off: the map stays clear"><input type="checkbox" id="sw-haze" checked> haze</label>
     <label title="Outside the border&#10;Scenery beyond the playable box (vehicles cannot go there).">outside <select id="sel-outside"><option value="1">dimmed</option><option value="0">as is</option><option value="2">hidden</option></select></label>
     <label title="Crowns&#10;- game LOD, flat far: the plant's lowest 3D level of detail from its .srt within 160 m, beyond it a flat picture of the same plant&#10;- game LOD everywhere: 3D at any distance (heavier)&#10;- simple: a low hull of the same geometry (cheaper)">crowns <select id="sel-crowns"><option value="lod">game LOD, flat far</option><option value="lodall">game LOD everywhere</option><option value="hull">simple</option></select></label>
   </div>
-  <div id="help">drag: orbit; wheel: zoom; WASD or arrows: move; space: play</div>
+  <div id="help">drag: orbit; right, middle or Shift + drag: pan; wheel: zoom; WASD or arrows: move; R/F: up/down; space: play
+    <label style="margin-left:8px" title="Input log&#10;Shows the last keys, clicks and wheel turns the page receives, and writes them to the mod's log.&#10;- a temporary check of what the game's browser delivers; not remembered, off on every opening"><input type="checkbox" id="sw-inputlog"> input log</label></div>
   <div class="settings-actions"><button type="button" id="reset-settings" title="All settings here back to default">Reset to defaults</button></div>
   </div>
 </div>
@@ -161,6 +157,8 @@
 <script src="playback/battle-page.js"></script>
 <script src="ballistics.js"></script>
 <script src="screen-armor.js"></script>
+<script src="hit-rows.js"></script>
+<script src="playback/shots-panel.js"></script>
 <script src="playback/playback.js"></script>
 </body>
 </html>

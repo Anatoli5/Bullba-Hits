@@ -10,7 +10,8 @@
    effects(collector, battle, defs, info, docs) -> adds hits, marks, muzzles to the battle. */
 (function () {
   'use strict';
-  var FORMAT = 1;                 // of the battle object kept in IndexedDB (battle-page.js): a change builds it again
+  var FORMAT = 2;                 // of the battle object kept in IndexedDB (battle-page.js): a change builds it again
+                                  // (2, 19.11: hitEvents and the tracers' shell fields, for the shots panel - BACKLOG 109)
   var DELAY_OWN = 0.20, DELAY_OTHER = 0.15;
   var DESTRUCTION_KINDS = ['destroyedFragiles', 'destroyedModules', 'fallenTrees', 'fallenColumns'];
   var PIERCED_EFFECTS = [0, 4, 5, 6];
@@ -104,7 +105,7 @@
   // ---- what the player draws, from the decoder's events (playback.py Collector) ----------------------------------------
   function Collector() {
     this.created = new Set(); this.pos = new Map(); this.gun = new Map(); this.hp = new Map(); this.sight = new Map();
-    this.comp = new Map(); this.tracers = new Map(); this.ends = new Map(); this.periods = []; this.own = null; this.tmax = 0;
+    this.comp = new Map(); this.tracers = new Map(); this.ends = new Map(); this.periods = []; this.own = null; this.tmax = 0; this.serverStart = null;
     this.area = new Map(); this.destroyed = []; this.hits = []; this.shooting = []; this.stickers = [];
   }
   function list(m, k) { var v = m.get(k); if (!v) m.set(k, v = []); return v; }
@@ -146,17 +147,22 @@
       this.stickerValue(t, ev, 'nested_property');
     } else if (k === 'method' && ev.name === 'showTracer') {
       a = ev.args;
-      this.tracers.set(a.shotID, [t, a.shooterID, a.refStartPoint.slice(), a.velocity.slice(), a.gravity, a.isRicochet || 0]);
+      this.tracers.set(a.shotID, [t, a.shooterID, a.refStartPoint.slice(), a.velocity.slice(), a.gravity, a.isRicochet || 0,
+        a.shellTypeIdx === undefined ? -1 : a.shellTypeIdx, +(a.shellCaliber || 0)]);
     } else if (k === 'method' && (ev.name === 'explodeProjectile' || ev.name === 'stopTracer')) {
       a = ev.args;
       if (!this.ends.has(a.shotID)) this.ends.set(a.shotID, [t, a.endPoint.slice()]);
     } else if (k === 'method' && ent === 'Vehicle' && ev.name === 'showDamageFromShot') {
       a = ev.args;
-      var points = (a.hitPoints || []).map(function (q) { return [BigInt(q.segment), +(q.caliber || 0), Math.trunc(num(q.networkID || 0))]; });
+      var points = (a.hitPoints || []).map(function (q) { return [BigInt(q.segment), +(q.caliber || 0), Math.trunc(num(q.networkID || 0)), q.shellType === undefined ? -1 : q.shellType]; });
       this.hits.push([t, ev.id, a.attackerID === undefined ? null : a.attackerID, points, a.damage]);
     } else if (k === 'method' && ent === 'Vehicle' && ev.name === 'showShooting') {
       a = ev.args;
       this.shooting.push([t, ev.id, a.burstCount, a.shellType]);
+    } else if (k === 'server_time_at_start') {
+      // packet 0x15: the server's clock at the recording start - a Hits battle made from this replay stamps each event
+      // gameTime = this + the packet clock (replay_records.game_time): how a row of the shots panel finds its Hits hit
+      if (this.serverStart === null) this.serverStart = ev.serverTime;
     } else if (k === 'arena_period') {
       this.periods.push([r3n(t), ev.period]);
     } else if (k === 'own_vehicle') {
@@ -235,13 +241,20 @@
     c.tracers.forEach(function (tr, sid) {
       var e = c.ends.get(sid);
       if (e === undefined) return;
-      shots.push([r3n(tr[0]), tr[1], tr[5]].concat(r3(tr[2]), r3(tr[3]), [Math.round(tr[4] * 1e4) / 1e4, r3n(e[0])], r3(e[1])));
+      shots.push([r3n(tr[0]), tr[1], tr[5]].concat(r3(tr[2]), r3(tr[3]), [Math.round(tr[4] * 1e4) / 1e4, r3n(e[0])], r3(e[1]), [tr[6], tr[7]]));
     });
     shots.sort(cmpArr);
+    // every showDamageFromShot as the server sent it (19.11, the shots panel): the placed points of 'hits' (effects) leave
+    // out a hit whose point the page cannot place; this list keeps each hit - its time, target, attacker (-1: none named),
+    // damage and the effect, calibre and shell kind index (shellType of the point's params, -1 unknown) of every point
+    var hitEvents = c.hits.slice().sort(function (a, b) { return a[0] - b[0]; }).map(function (h) {
+      return [r3n(h[0]), h[1], h[2] === null ? -1 : h[2], Math.trunc(num(h[4] || 0)), h[3].map(function (p) { return [Number(p[0] & 255n), Math.round(p[1] * 10) / 10, p[3]]; })];
+    });
     var meta = { map: rec.map, gameplay: rec.gameplay, mapTitle: rec.mapTitle, dateTime: dateTime(rec.startedAt),
-      periods: c.periods, end: tmax, own: own, delayOwn: DELAY_OWN, delayOther: DELAY_OTHER, id: info.id };
+      periods: c.periods, end: tmax, own: own, serverStart: c.serverStart, delayOwn: DELAY_OWN, delayOther: DELAY_OTHER, id: info.id };
     return { collector: c, battle: { format: FORMAT, id: info.id, meta: meta, vehicles: vlist, shots: shots,
-      shotFields: ['t', 'shooter', 'ricochet', 'sx', 'sy', 'sz', 'vx', 'vy', 'vz', 'gravity', 'tEnd', 'ex', 'ey', 'ez'],
+      shotFields: ['t', 'shooter', 'ricochet', 'sx', 'sy', 'sz', 'vx', 'vy', 'vz', 'gravity', 'tEnd', 'ex', 'ey', 'ez', 'shellTypeIdx', 'caliber'],
+      hitEvents: hitEvents, hitEventFields: ['t', 'target', 'attacker', 'damage', 'points'], hitPointFields: ['effect', 'caliber', 'shellType'],
       destroyed: c.destroyed, destroyedFields: ['t', 'initial', 'chunk', 'kind', 'tuple'] } };
   }
 

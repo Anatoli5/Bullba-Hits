@@ -307,6 +307,12 @@ def check_browser(result):
     harness_lines(result, 'playback_files', code, out)
     total = re.search(r'(\d+) checks, (\d+) failed', out)
     if total: result.passed = passed + int(total.group(1)) - int(total.group(2))
+    # The viewer's shots panel (19.11, BACKLOG 109): a vehicle's rows against its shots and hits in the replay.
+    code, out, _ = run([exe, 'tests/page/shots_panel.cjs'], timeout=600, env={'BULLBA_PYTHON': sys.executable})
+    passed = result.passed
+    harness_lines(result, 'shots_panel', code, out)
+    total = re.search(r'(\d+) checks, (\d+) failed', out)
+    if total: result.passed = passed + int(total.group(1)) - int(total.group(2))
 
 
 def check_py27(result):

@@ -112,12 +112,15 @@
       } catch (err) { self.postMessage({ error: String(err && err.stack || err), heldMissing: !!(err && err.heldMissing) }); }
     };
   }
+  // the raw set's format the builder reads (map_raw.MANIFEST_VERSION): an older set on disk is the one the mod is copying
+  // again - read meanwhile (the page's look while it waits), it would be built from the old files
+  var RAW_VERSION = 3;
   var manifests = {};
   window.MapRaw = { manifest: function (m) { manifests[m.arena] = m; }, put: function () {} };
   function manifest(arena, rawRoot) {
     delete manifests[arena];
     return script(new URL(rawRoot, base).href + arena + '/manifest.js?read=' + Date.now()).then(function () {
-      if (!manifests[arena]) throw new Error('the map files of ' + arena + ' are not readable');
+      if (!manifests[arena] || manifests[arena].version !== RAW_VERSION) throw new Error('the map files of ' + arena + ' are not readable');
       return manifests[arena];
     });
   }

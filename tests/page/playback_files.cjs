@@ -12,8 +12,9 @@
  *    stand-in for the game's jsHostQuery answers as the mod does, through window.BullbaPlayback.notify: 'replayFiles' (the
  *    list written), 'mapRaw' (the raw set ready), 'playback' (made), 'playbackVehicles' (the files now there - the stage's
  *    listing, as Exporter.run_playback_vehicles_job says them).
- * Checks: with no battle the page shows the list of replays (the two files once each, the kept one marked, then the Hits
- * battle without a file) and asked the mod for the list; choosing the other player's replay opens it: ready, built in the
+ * Checks: with no battle the top selector lists the replays (the two files once each, the kept one marked, then the Hits
+ * battle without a file; 19.11 round 14: no separate panel, each entry date, map, vehicle, player, the list's client as
+ * the game writes it - the whole version.xml - not read as an older client) and the mod was asked for the list; choosing the other player's replay opens it: ready, built in the
  * page from its .wotreplay, every vehicle drawn with its model (the one without a Hits file from the XML route after the
  * page asked for it once), the shots and hit points through, the own vehicle the recording player's; no page error and no
  * console error. The figure printed: the time from the choice to ready.
@@ -75,8 +76,14 @@ const HOST = (files) => `(function () {
     check('the mod listed the replay files and made the other player\'s battle file', run.status === 0, String(run.stdout || '') + String(run.stderr || '').slice(-600));
     if (run.status !== 0) return;
     const modSeconds = (Date.now() - t0) / 1000;
-    const listing = JSON.parse((t => t.slice(t.indexOf('(') + 1, t.lastIndexOf(')')))(fs.readFileSync(path.join(stage, 'data', 'replay-files.js'), 'utf8')))[1];
+    const listPath = path.join(stage, 'data', 'replay-files.js');
+    const listing = JSON.parse((t => t.slice(t.indexOf('(') + 1, t.lastIndexOf(')')))(fs.readFileSync(listPath, 'utf8')))[1];
     const other = listing.files.filter((f) => f.player === 'SomeoneElse')[0];
+    // the user's game (19.11) writes the list's client as the whole text of version.xml and each file's as its header
+    // gives it ('World of Tanks v.2.4.1.1 #992'): the same client in two spellings - the stage takes that shape
+    listing.client = '<version.xml>\n\t<appname>\t#menu:login/version\t</appname>\n\t<version> v.2.4.1.1 #992 </version>\n</version.xml>';
+    listing.files.forEach((f) => { f.client = 'World of Tanks v.2.4.1.1 #992'; });
+    fs.writeFileSync(listPath, 'ArmorInspectorData.receive(' + JSON.stringify(['replayFiles', listing]) + ');\n');
     // 2. the page as it ships; the hits page's battle list holds the recorded battle (it has no replay file here)
     copyDir(path.join(ROOT, 'web'), path.join(stage, 'web'));
     fs.writeFileSync(path.join(stage, 'data', 'index.js'), 'ArmorInspectorData.receive(' + JSON.stringify(['index', {application: 'local.armor_inspector', version: 'test',
@@ -86,23 +93,29 @@ const HOST = (files) => `(function () {
     browser = await launch({width: 1280, height: 720});
     if (!browser) skip('no Chrome or Edge on this machine');
     const page = await browser.open('file:///' + path.join(stage, 'web', 'playback.html').replace(/\\/g, '/') + '#host=game', HOST(files));
+    // 19.11 (the user, in the game): one list only - the battle selector at the top; the separate panel of replays (its
+    // rows had collapsed to empty strips) is gone
     let list = null;
-    for (let i = 0; i < 40 && !(list && list.rows.length); i++) {
+    for (let i = 0; i < 40 && !(list && list.rows.length > 1); i++) {
       await new Promise(function (r) { setTimeout(r, 250); });
-      list = await page.evaluate("({list: !!window.__list, shown: !document.getElementById('files').hidden, rows: [].map.call(document.querySelectorAll('#files-rows .frow'), (b) => [b.getAttribute('data-id'), b.textContent, b.className]), host: window.__host, error: window.__error || null})");
+      list = await page.evaluate("({list: !!window.__list, panel: !!document.getElementById('files'), rows: [].map.call(document.getElementById('sel-battle').options, (o) => [o.value, o.textContent, o.parentNode.label || '']), host: window.__host, error: window.__error || null})");
     }
-    check('opened with no battle, the viewer shows the list of replays and asked the mod for it', list && list.list && list.shown && !list.error &&
-      list.host.map((c) => c.action).join(',') === 'replayFiles', JSON.stringify(list && {host: list.host, error: list.error}));
-    // the rows: the other player's replay first (the newest), the own one once and marked kept, the replay limit's bh_ file
-    // of the battle REPLAY (playback_job.py's) under that Hits battle's id, last the Hits battle without a file
-    const rows = list ? list.rows : [];
+    check('opened with no battle: no separate panel, the selector at the top lists the replays, the mod asked for them', list && list.list && !list.panel && !list.error &&
+      list.host.map((c) => c.action).join(',') === 'replayFiles', JSON.stringify(list && {panel: list.panel, host: list.host, error: list.error}));
+    // the entries: the other player's replay first (the newest), the own one once and marked kept, the replay limit's bh_
+    // file of the battle REPLAY (playback_job.py's) under that Hits battle's id, last the Hits battle without a file
+    const rows = list ? list.rows.filter((r) => r[0]) : [];
     const own = rows.filter((r) => / · Bullba/.test(r[1]));
-    check('the list: the other player\'s replay first, the own one once and marked kept, the Hits battle without a file last', rows.length === 4 &&
+    check('the selector: the other player\'s replay first, the own one once and marked kept, the Hits battle without a file last', rows.length === 4 &&
       rows[0][0] === other.id && /SomeoneElse/.test(rows[0][1]) && /Malinovka/.test(rows[0][1]) && own.length === 1 && /★/.test(own[0][1]) &&
-      /kept/.test(own[0][2]) && rows[3][0] === BATTLE && /hits/.test(rows[3][2]), JSON.stringify(rows));
-    check('a file the replay limit ties to a Hits battle is listed under that battle\'s id', rows.some((r) => r[0] === REPLAY && !/hits/.test(r[2])), JSON.stringify(rows));
+      rows[3][0] === BATTLE && rows[3][2] === 'Bullba Hits battles', JSON.stringify(rows));
+    check('a file the replay limit ties to a Hits battle is listed under that battle\'s id', rows.some((r) => r[0] === REPLAY && r[2] === 'Replay files'), JSON.stringify(rows));
+    // (the stage's bh_ file of REPLAY has no player or vehicle in its listing entry: only the two full ones are read here)
+    const files3 = rows.filter((r) => r[2] === 'Replay files'), full = files3.filter((r) => r[0] !== REPLAY);
+    check('each replay entry: date and time, map, vehicle, player; the same client in two spellings is not called older', files3.length === 3 && full.length === 2 &&
+      full.every((r) => /^\d\d\.\d\d · \d\d:\d\d · Malinovka · \S.* · \S+/.test(r[1])) && files3.every((r) => !/older client/.test(r[1])), JSON.stringify(files3));
     const chose = Date.now();
-    await page.evaluate("document.querySelector('#files-rows .frow[data-id=\"" + other.id + "\"]').click()");
+    await page.evaluate("(() => { const s = document.getElementById('sel-battle'); s.value = '" + other.id + "'; s.dispatchEvent(new Event('change')); })()");
     let state = null;
     for (let i = 0; i < 360 && !state; i++) {
       await new Promise(function (r) { setTimeout(r, 500); });

@@ -147,10 +147,11 @@ function takeLiteral(src, pattern, what) {
 // leaks into them and nothing of them leaks out: `viewer`, `activeHit` and the Target switches are the
 // values the automatic pass sees in the page (no viewer yet, no hit open, no switch moved by hand), which is
 // what "the record's own liner factor, no user modifiers" means.
-function verdictModule(appSource, deps) {
+// rowsSource: web/hit-rows.js, where the server effect names live since 19.11.2026 (BACKLOG 109, shared with the replay viewer).
+function verdictModule(appSource, deps, rowsSource) {
   const parts = [
     '\'use strict\';',
-    'var effects=' + takeLiteral(appSource, /var\s+effects=(\{[^}]*\})/, 'the server effect names') + ';',
+    'var effects=' + takeLiteral(rowsSource, /var\s+effects=(\{[^}]*\})/, 'the server effect names') + ';',
     'var partNames=' + takeLiteral(appSource, /partNames=(\[[^\]]*\])/, 'the part names') + ';',
     'var modsState={},modsType=\'\',viewer=null,activeHit=null;',
     takeFunction(appSource, 'modsFactor'),
@@ -287,6 +288,7 @@ function main(argv) {
   const sandboxWindow = {console: pen, ArmorViewer: probeViewer, ArmorBallistics: ArmorBallistics};
 
   const appSource = fs.readFileSync(path.join(WEB, 'app.js'), 'utf8');
+  const rowsSource = fs.readFileSync(path.join(WEB, 'hit-rows.js'), 'utf8');
 
   return Data.index().then(function (index) {
     if (index.application !== 'local.armor_inspector' || !Array.isArray(index.battles)) throw new Error('Invalid battle list');
@@ -300,7 +302,7 @@ function main(argv) {
       console: pen, document: window.document, window: sandboxWindow, setTimeout: fakeTimeout,
       ArmorInspectorData: probeData, ArmorShotContext: ArmorShotContext, ArmorViewer: probeViewer,
       ArmorBallistics: ArmorBallistics, ArmorCrits: ArmorCrits, recordsVersion: recordsVersion
-    });
+    }, rowsSource);
 
     let ids = index.battles.map(function (b) { return b.id; });
     if (opt.battle) {

@@ -30,14 +30,22 @@ client's packages - read only -, the battle file last). Checks:
             those resources listed held, not copied; a raw set there already: the page told at once, nothing queued
   report    the page's report of an opening (playback_report): a map read from IndexedDB that was built in this game
             session keeps its raw set; one built before this session started removes it (without --stage)
-  current   once made, a request queues nothing (the file is there)
+  current   once made, a request queues nothing (the file is there); a battle file whose record lacks the client (an
+            earlier build's: 23_westfeld in the game, 19.11) is not current
   slices    no slice longer than SLICE_LIMIT seconds (the job's own BATTLE_SLICE plus one step; in the game the export
-            thread shares the interpreter with the game, the stand does not)
+            thread shares the interpreter with the game, the stand does not); the map's copy within MAP_SLICE_LIMIT; the
+            package table made from nothing in steps of at most BATTLE_SLICE (19.11: one sort of 0.24 s before)
+  map       also: the page's RAW_VERSION (mapbuild-page.js) is map_raw.MANIFEST_VERSION
+  stall     the closing lines of the playback and the map job say what the game's own thread felt (exporter.GameStall):
+            "the game's own thread: longest stall X s (... N ticks)" with ticks counted - here a stand BigWorld whose
+            callback runs on a timer thread stands for the game thread, started as the mod's game thread starts it (the
+            page's request); the tick's chain has stopped after the jobs
 
 No fixture or no client packages: SKIP (exit 77). Verdict through BULLBA_PY27_RESULT (see run27.py).
 """
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -54,10 +62,30 @@ RESULT = os.environ.get('BULLBA_PY27_RESULT')
 # The longest slice allowed on the stand: BATTLE_SLICE (0.1 s) plus the longest single step measured here (a resource
 # walk of one object, a vehicle type's collision model) with room for a slow core.
 SLICE_LIMIT = 0.6
+# The map's copy (run_map_job) starts a step only when it ends within BATTLE_SLICE (0.1 s); the rest is a garbage
+# collection inside a step and this clock's 15.6 ms resolution (time.time on Windows).
+MAP_SLICE_LIMIT = 0.15
 sys.path.insert(0, os.path.join(REPO, 'mod'))
 sys.dont_write_bytecode = True
 
 from local_armor_inspector import exporter, playback, map_raw
+
+
+def table_steps():
+    """The package table made from nothing (Packages.build_steps, the first map request after an install or a client
+    update), on a temporary folder: its steps' longest and their total (exporter.TTX_TIMER, the slices' clock)."""
+    folder = tempfile.mkdtemp(prefix='bullba-index-')
+    try:
+        pk = map_raw.Packages(GAME, os.path.join(folder, 'index'), build=False)
+        steps, began = [], exporter.TTX_TIMER()
+        for _ in pk.scan_steps():
+            now = exporter.TTX_TIMER()
+            steps.append(now - began)
+            began = now
+        steps.append(exporter.TTX_TIMER() - began)
+        return {'longest': max(steps), 'total': sum(steps), 'steps': len(steps)}
+    finally:
+        shutil.rmtree(folder, True)
 
 
 def stage(folder):
@@ -67,6 +95,47 @@ def stage(folder):
         if not os.path.isdir(target): os.makedirs(target)
         for name in os.listdir(source):
             shutil.copyfile(os.path.join(source, name), os.path.join(target, name))
+
+
+class StandBigWorld(object):
+    """BigWorld.callback of the stand: the function after `delay` s on a timer thread (the game thread's stand-in)."""
+
+    @staticmethod
+    def callback(delay, function):
+        import threading
+        timer = threading.Timer(delay, function)
+        timer.daemon = True
+        timer.start()
+        return timer
+
+
+class Lines(object):
+    """The exporter's log lines, kept (logging.Handler made at use: logging imported by the exporter)."""
+
+    def __init__(self):
+        import logging
+
+        class Keep(logging.Handler):
+            def emit(handler, record):
+                try: self.lines.append(record.getMessage())
+                except Exception: pass
+        self.lines = []
+        self.handler = Keep()
+        exporter.LOG.addHandler(self.handler)
+        if not exporter.LOG.isEnabledFor(logging.INFO): exporter.LOG.setLevel(logging.INFO)
+
+    def matching(self, prefix):
+        return [line for line in self.lines if line.startswith(prefix)]
+
+
+STALL_RE = re.compile(r"; the game's own thread: longest stall (\d+\.\d\d) s \(the longest delay of its 0\.05 s tick, (\d+) ticks\)$")
+
+
+def stall_of(lines, prefix):
+    """The stall figure of the last closing line starting with `prefix`: (seconds, ticks) or None."""
+    found = [line for line in lines.matching(prefix) if "the game's own thread" in line]
+    match = STALL_RE.search(found[-1]) if found else None
+    return (float(match.group(1)), int(match.group(2))) if match else None
 
 
 class Stand(exporter.Exporter):
@@ -152,7 +221,10 @@ def check():
         # The session's definitions first, as the game builds them in the hangar at setup ('definitions' job): here by the
         # decoder's package scan, seconds in one go - not a part of the job's slices.
         stand.replay_defs()
+        lines = Lines()
+        sys.modules['BigWorld'] = StandBigWorld
         queued = stand.request_playback(BATTLE)
+        stand.stall.start()     # the game thread's part of the page's request (Recorder.start_stall_tick)
         again = stand.request_playback(BATTLE)
         jobs = [j for j in stand.jobs if j[2] == 'playback']
         ok('queue', queued and len(jobs) == 1 and jobs[0][0] == exporter.JOB_PAGE,
@@ -167,6 +239,9 @@ def check():
             longest = max(longest, spent)
             slices += 1
             if time.time() - began > 170: break
+        stall_playback = stall_of(lines, 'Playback of %s:' % BATTLE)
+        ok('stall', stall_playback and stall_playback[1] > 0, 'the playback job\'s closing line: %r'
+           % (lines.matching('Playback of %s:' % BATTLE)[-1:],))
         path = playback.data_path(folder, BATTLE)
         value = exporter.read_data_file(path) if os.path.isfile(path) else None
         ok('file', isinstance(value, dict) and value.get('format') == playback.FORMAT and not value.get('error'),
@@ -190,6 +265,7 @@ def check():
         def map_job(payload):
             stand.page_notes.clear()
             queued = stand.request_map_raw(payload)
+            stand.stall.start()
             longest_, slices_, t0 = 0.0, 0, time.time()
             while any(j[2] == 'mapraw' for j in stand.jobs):
                 stand.last_job = 0
@@ -206,6 +282,11 @@ def check():
             text = open(path, 'rb').read().decode('utf-8') if os.path.isfile(path) else ''
             return json.loads(text[len('MapRaw.manifest('):text.rindex(')')]) if text.startswith('MapRaw.manifest(') else {}
         queued = map_job({'arena': ARENA})
+        stall_map = stall_of(lines, 'Map raw files of %s:' % ARENA)
+        ok('stall', stall_map and stall_map[1] > 0, 'the map job\'s closing line: %r'
+           % ([l for l in lines.matching('Map raw files of %s:' % ARENA) if ' in ' in l][-1:],))
+        time.sleep(3 * exporter.STALL_TICK)
+        ok('stall', not stand.stall.running and not stand.stall.windows, 'the tick still runs after the job')
         notes = list(stand.page_notes)
         ok('notes', queued and notes and notes[0].get('state') == 'queued' and notes[-1] == {'kind': 'map', 'arena': ARENA, 'state': 'ready'}
            and any(n.get('state') == 'copying' and n.get('stage') for n in notes), notes)
@@ -247,14 +328,37 @@ def check():
             map_raw.remove_set(root, ARENA)
             map_job({'arena': ARENA})
         ok('current', stand.request_playback(BATTLE) is False and not stand.jobs, 'a request after the file was made queued %r' % stand.jobs)
-        ok('slices', longest <= SLICE_LIMIT and first['longest'] <= SLICE_LIMIT, 'the longest of %d slices took %.3f s; of the map %d, %.3f s'
-           % (slices, longest, first['slices'], first['longest']))
+        # 19.11, 23_westfeld in the game: a battle file of an earlier build, its record without the client - the page could
+        # not find its map in IndexedDB by the client and asked for the raw files; such a file is not current (made again)
+        path = playback.data_path(folder, BATTLE)
+        with open(path, 'rb') as handle: made_text = handle.read()
+        old_text = re.sub(br',"client":"[^"]*"|"client":"[^"]*",', b'', made_text, count=1)
+        try:
+            with open(path, 'wb') as handle: handle.write(old_text)
+            ok('current', old_text != made_text and not playback.current(folder, BATTLE, ARENA),
+               'a battle file without the client in its record counts as current')
+        finally:
+            with open(path, 'wb') as handle: handle.write(made_text)
+        ok('current', playback.current(folder, BATTLE, ARENA), 'the battle file as made is not current')
+        # the page reads the raw set of the mod's format only (web/playback/mapbuild-page.js RAW_VERSION)
+        with open(os.path.join(REPO, 'web', 'playback', 'mapbuild-page.js'), 'rb') as handle:
+            raw_version = re.search(br'var RAW_VERSION = (\d+);', handle.read())
+        ok('map', raw_version and int(raw_version.group(1)) == map_raw.MANIFEST_VERSION,
+           'mapbuild-page.js RAW_VERSION %r, map_raw.MANIFEST_VERSION %d' % (raw_version and raw_version.group(1), map_raw.MANIFEST_VERSION))
+        table = table_steps()
+        ok('slices', longest <= SLICE_LIMIT and first['longest'] <= MAP_SLICE_LIMIT and table['longest'] <= exporter.BATTLE_SLICE,
+           'the longest of %d slices took %.3f s; of the map %d, %.3f s; the package table\'s longest step %.3f s'
+           % (slices, longest, first['slices'], first['longest'], table['longest']))
         made = (value or {}).get('made') or {}
         note = 'made in %d slices, %.1f s; work %r; map copied in %.2f s (%d slices, the longest %.3f s), %.1f MB written in %d files' % (
             slices, time.time() - began, made.get('seconds'), first['seconds'], first['slices'], first['longest'], written / 1e6, nfiles)
+        note += '; package table made in %.2f s (%d steps, the longest %.3f s)' % (table['total'], table['steps'], table['longest'])
+        note += '; the stand\'s "game thread" (a timer thread): longest stall %s s in the playback job, %s s in the map\'s' % (
+            stall_playback and stall_playback[0], stall_map and stall_map[0])
         note += '; ' + replay_battle(stand, folder, ok, keep is not None)
         return checks, note
     finally:
+        sys.modules.pop('BigWorld', None)
         if keep is None: shutil.rmtree(folder, True)
 
 

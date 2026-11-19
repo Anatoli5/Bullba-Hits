@@ -24,7 +24,8 @@ import array, bisect, io, json, os, re, shutil, struct, sys, time, zlib, base64,
 PART_BYTES = 8 << 20       # raw bytes per part script (~11 MB of base64 text)
 INDEX_VERSION = 3
 MANIFEST_VERSION = 3       # of <arena>/manifest.js; an older one is copied again (exporter.request_map_raw)
-HASH_STEP = 20000          # index entries hashed a step (Index.build_steps)
+HASH_STEP = 20000          # index entries hashed a step (Packages.build_steps)
+SORT_BITS = 6              # the table sorted in 2**SORT_BITS runs, a run a step (Packages.build_steps)
 # Arenas whose minimap is a rendered top view: the page balances the global colour map on it (the trial's
 # mapbuild9.MINIMAP_RENDERED, one table on each side: web/playback/mapbuild9.js has the same).
 MINIMAP_RENDERED = ('05_prohorovka',)
@@ -136,8 +137,10 @@ class Packages(object):
         COUNT['index read'] += 1
 
     def build_steps(self, names):
-        """Every package's directory into the table: hashed in steps, sorted once (C sort of 490k integers, 0.15 s on
-        the stand's python27), written as arrays."""
+        """Every package's directory into the table: read and hashed in steps, sorted in SORT_BUCKETS runs by the top
+        bits of the path's crc32 (a run a step; the runs in bucket order are the whole table in key order), written a
+        column a step. 19.11: one sort of all 490k keys was a single C call of 0.24 s on the stand's python27 - the
+        interpreter lock held, the game stood still for it; a run is a few ms (the longest step of the build 0.03 s)."""
         self.names = list(names)
         raw = dict((key, array.array(code)) for key, code in FIELDS)
         chunks = []
@@ -160,20 +163,27 @@ class Packages(object):
                 yield
         n = len(raw['k1'])
         k1, k2 = raw['k1'], raw['k2']
-        order = sorted((k1[i] << 52 | k2[i] << 20 | i) for i in xrange(n))   # i < 2**20
-        yield
-        order = [v & 0xfffff for v in order]
-        yield
-        cols = {}
-        for key, code in FIELDS:
-            col = raw.pop(key)
-            cols[key] = array.array(code, [col[i] for i in order])
+        shift = 32 - SORT_BITS
+        runs = [[] for _ in xrange(1 << SORT_BITS)]
+        for at in xrange(0, n, HASH_STEP):
+            for i in xrange(at, min(n, at + HASH_STEP)):
+                runs[k1[i] >> shift].append(k1[i] << 52 | k2[i] << 20 | i)   # i < 2**20
             yield
+        cols = dict((key, array.array(code)) for key, code in FIELDS)
+        for run in runs:
+            run.sort()
+            order = [v & 0xfffff for v in run]
+            for key, _ in FIELDS:
+                col = raw[key]
+                cols[key].extend(array.array(cols[key].typecode, [col[i] for i in order]))
+            yield
+        del runs, raw
         self.cols = cols
         temp = os.path.join(self.idx_dir, 'entries.bin.tmp')
         with open(temp, 'wb') as f:
             for key, code in FIELDS:
                 cols[key].tofile(f)
+                yield
         target = os.path.join(self.idx_dir, 'entries.bin')
         if os.path.exists(target): os.remove(target)
         os.rename(temp, target)

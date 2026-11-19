@@ -13,7 +13,7 @@ vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'web', 'local-data
 const Data = sandbox.window.ArmorInspectorData;
 const lines = [];
 const make = new Function('console', '$', 'ArmorCrits', 'recordsVersion', 'ArmorInspectorData', [
-  'var effects=' + takeLiteral(app, /var\s+effects=(\{[^}]*\})/, 'effects') + ';',
+  'var effects=' + takeLiteral(fs.readFileSync(path.join(__dirname, '..', 'web', 'hit-rows.js'), 'utf8'), /var\s+effects=(\{[^}]*\})/, 'effects') + ';',
   'var partNames=' + takeLiteral(app, /partNames=(\[[^\]]*\])/, 'partNames') + ';',
   'var verdictLines=0;function verdictStatus(){}function shellModeColumns(){return \'\';}function damageColumns(){return \'\';}',
   takeFunction(app, 'logPart'), takeFunction(app, 'prefabColumns'), takeFunction(app, 'sceneColumns'), takeFunction(app, 'verdictLine'), 'return verdictLine;'].join('\n'));

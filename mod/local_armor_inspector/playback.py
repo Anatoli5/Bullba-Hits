@@ -50,7 +50,7 @@ SOURCE_KEY = 'playback-source:'
 DEFS_KEY = 'playback-defs:'
 SOURCE_EXT = '.src.js'
 HEAD_LINES = 400                # lines of the raw record read for the battle record and the first roster
-HEAD_BYTES = 400                # of the battle file read by current(): format, id, defs come first
+HEAD_BYTES = 1024               # of the battle file read by current(): format, id, defs, source and record come first
 STICKERS_XML = 'scripts/item_defs/vehicles/common/damage_stickers.xml'
 TEXT = type(u'')
 
@@ -109,8 +109,9 @@ def raw_root(folder):
 
 
 def current(folder, name, arena):
-    """True when the battle's playback file is of this format, made (not an error), and its source and its definitions
-    file are on disk: nothing to do. Reads the file's first bytes only. (The map's raw set is MapJob's.)"""
+    """True when the battle's playback file is of this format, made (not an error), its record names the client, and its
+    source and its definitions file are on disk: nothing to do. Reads the file's first bytes only. (The map's raw set is
+    MapJob's.)"""
     path = data_path(folder, name)
     if not arena or not os.path.isfile(path): return False
     try:
@@ -118,8 +119,11 @@ def current(folder, name, arena):
     except (IOError, OSError): return False
     prefix = 'ArmorInspectorData.receive(["%s%s",{"format":%d,"id":' % (KEY, name, FORMAT)
     found = re.search(r'"defs":"(defs-[0-9a-f]{8})"', head)
+    # 19.11: a file of an earlier build has no client in its record; without it the page cannot find the map it built under
+    # this client in its IndexedDB and asks for the map's raw files (23_westfeld in the game: 25.5 MB copied for nothing)
+    record = re.search(r'"record":\{[^}]*\}', head)
     return (head.startswith(prefix) and found is not None and os.path.isfile(data_path(folder, found.group(1)))
-            and os.path.isfile(source_path(folder, name)))
+            and record is not None and '"client":"' in record.group(0) and os.path.isfile(source_path(folder, name)))
 
 
 def battle_arena(folder, name):

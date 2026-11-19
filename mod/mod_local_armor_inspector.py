@@ -1181,6 +1181,7 @@ class Recorder(object):
         """The page is open in the game right now: one float, read by the export thread's TTX sweep. Game thread."""
         self.page_open_until = time.time()+float(seconds)
         self.start_frames()
+        self.start_stall_tick(0)
 
     def sweep_request(self, start, kind='ttx'):
         """The page's Start or Stop of a sweep ('ttx' the characteristics, 'models' the collision models): the export
@@ -1233,7 +1234,21 @@ class Recorder(object):
     def request_playback(self, battle_id):
         """The page opened a battle in the 3D replay player and its file is missing (BACKLOG 104). Game thread: the id goes
         through the export queue; decoding the replay and copying the map belong to that thread."""
-        if battle_id: self.writer.put_export('playback', str(battle_id))
+        if battle_id:
+            self.writer.put_export('playback', str(battle_id))
+            self.start_stall_tick()
+
+    def start_stall_tick(self, grace=None):
+        """Game thread: the tick that measures what this thread feels while a job of the page runs (exporter.GameStall),
+        started here only - the export thread never calls BigWorld. grace None: a request (keep ticking until its job
+        starts); 0: the page is open (only while a job runs)."""
+        exporter = getattr(getattr(self, 'writer', None), 'exporter', None)
+        if exporter is None: return
+        try:
+            if grace is None: exporter.stall.start()
+            else: exporter.stall.start(grace)
+        except Exception:
+            LOG.warning('The game thread tick of the page\'s jobs not started', exc_info=True)
 
     def request_replays(self, payload):
         """The page's word on the mod's replay folder (BACKLOG 107): keep a battle's replay forever or not, or the number of
@@ -1979,11 +1994,18 @@ def open_replays(battle_id=None):
         LOG.exception('Could not open the replay viewer')
 
 
-def page_window(window, battle_id=None):
+def page_window(window, battle_id=None, shot=None):
     """The pages' 'openReplays' / 'openHits' (game thread): the viewer's window on a battle, or Hits' window when it is not
-    open (an open one is never re-navigated from the viewer)."""
+    open (an open one is never re-navigated from the viewer). A shot of the viewer's shots panel (`shot`, Hits' fragment,
+    19.11 BACKLOG 109): an open Hits window gets it as its new fragment (the page's hashchange opens that shot), else Hits
+    opens on it."""
     from local_armor_inspector import presentation
     if window == presentation.REPLAYS: return open_replays(battle_id)
+    if shot:
+        if presentation.window_open(presentation.HITS) and presentation.show_fragment(presentation.HITS, shot): return
+        try: presentation.open_in_game(VIEWER_PATH, shot)
+        except Exception: LOG.exception('Could not open the local HTML viewer on a shot')
+        return
     if presentation.window_open(presentation.HITS):
         LOG.info('Bullba Hits window already open; left as it is')
         return
@@ -2149,6 +2171,7 @@ def page_player(kind, payload):
     queue (the map's copy and the log line with what it decides belong to that thread)."""
     if _recorder is None or not payload: return
     _recorder.writer.put_export(kind, dict(payload))
+    if kind == 'mapraw': _recorder.start_stall_tick()
 
 
 def page_replays(payload):

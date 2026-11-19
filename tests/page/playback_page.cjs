@@ -156,6 +156,14 @@ const reported = (host) => (host || []).filter((c) => c.action === 'playbackRepo
         if (after.t > before) break;
       }
       check('Play moves the battle clock', after && after.playing && after.t > before, JSON.stringify({before: before, after: after}));
+      // the shots panel (19.11, BACKLOG 109): the 'hits' button of the own vehicle's row (the first of the left list) opens
+      // the panel beside the list with his rows; a row's click puts the battle 2 s before that shot, the speed kept
+      const sp = await page.evaluate("(() => { const row = document.querySelector('#list-own .veh'), b = row && row.querySelector('.sp-btn'); if (!b) return null; b.click();" +
+        " const P = MapBench.shotsPanel(), box = P.element, r = box.getBoundingClientRect(), a = document.getElementById('list-own').getBoundingClientRect(), speed = MapBench.state().speed;" +
+        " const first = box.querySelector('.sp-row .hit'); const out = {shown: P.shown(), count: P.count(), tile: !!row.querySelector('.vehicle-tile.compact'), beside: r.left - a.right, top: r.top - a.top, height: r.height - a.height};" +
+        " if (first) { first.click(); out.t = MapBench.state().t; out.speed = MapBench.state().speed === speed; out.playing = MapBench.state().playing; } return out; })()");
+      check('the shots panel: the own row\'s hits button opens it beside the list, his rows in it; a row rewinds the battle, the speed kept', sp && sp.shown === OWN && sp.count > 0 && sp.tile &&
+        sp.beside > 0 && sp.beside < 20 && Math.abs(sp.top) < 1 && Math.abs(sp.height) < 1 && Number.isFinite(sp.t) && sp.speed && sp.playing, JSON.stringify(sp));
       // round 13 (19.11.2026): every vehicle mesh drawn with the Hits look (flat faces, seams; a collision model's groups
       // in its group table), the team tint and foliage sliders in place of the see-through checkbox, and the slow speeds
       const r13 = await page.evaluate("(() => { const look = MapBench.vehicleLook();" +
@@ -163,6 +171,28 @@ const reported = (host) => (host || []).filter((c) => c.action === 'playbackRepo
         " return {look: look, tint: !!document.getElementById('rng-tint'), foliage: !!document.getElementById('rng-foliage'), oldBox: !!document.getElementById('sw-foliage'), slow: slow, speed: MapBench.state().speed}; })()");
       check('round 13: vehicles drawn flat with seams from their group tables, tint and foliage sliders, the old checkbox gone, speed 1/8 and back',
         r13 && r13.look.meshes >= 3 && r13.look.flat === r13.look.meshes && r13.look.grouped >= 3 && r13.tint && r13.foliage && !r13.oldBox && r13.slow === 0.125 && r13.speed === 1, JSON.stringify(r13));
+      // round 14 (19.11.2026, the user in the game): the sky off by default and in the top line; with it off nothing fades
+      // toward a pale colour - a black probe beyond the playable border, looked at above, along and below the horizon
+      // through the page's own fog, stays black (it was the pale sky / horizon grey: the rim fade and the haze took the
+      // sky's colours by direction whatever the sky switch said); with it on the sky above and the grey below
+      const setSky = (on) => page.evaluate("(() => { const s = document.getElementById('sw-sky'); s.checked = " + on + "; s.dispatchEvent(new Event('change')); return MapBench.fogProbe(); })()");
+      const skyDefault = await page.evaluate("(() => { const s = document.getElementById('sw-sky'); return s ? {checked: s.checked, top: !!s.closest('#topline'), grey: !!document.getElementById('sw-grey')} : null; })()");
+      check('round 14: the sky switch in the top line, off by default; the grey switch gone', skyDefault && !skyDefault.checked && skyDefault.top && !skyDefault.grey, JSON.stringify(skyDefault));
+      const dark = await setSky(false), lit = await setSky(true);
+      await setSky(false);
+      const black = (c) => c && Math.max(c[0], c[1], c[2]) < 0.05;
+      // (before the fix, sky off: up = the pale sky [0.62, 0.75, 0.89], along = the horizon grey [0.56, 0.58, 0.60])
+      check('round 14: sky off (haze on) - the fade beyond the border is black above, along and below the horizon', dark && black(dark.up) && black(dark.horizon) && black(dark.below), JSON.stringify(dark));
+      check('round 14: sky on - sky above, grey below the horizon', lit && lit.up && lit.up[2] > 0.6 && lit.below && lit.below[0] > 0.2 && lit.below[0] < 0.5 &&
+        Math.abs(lit.below[2] - lit.below[0]) < 0.05, JSON.stringify(lit));
+      // round 14: the vehicles' colour - a preset (steel grey by default) and a brightness beside the team tint
+      const vc = await page.evaluate("(() => { const s = document.getElementById('sel-vcolor'), b = document.getElementById('rng-vbright'), t = document.getElementById('rng-tint'); if (!s || !b) return null;" +
+        " const a = MapBench.vehicleLook().base; s.value = 'khaki'; s.dispatchEvent(new Event('change')); b.value = '1.5'; b.dispatchEvent(new Event('input')); const o = MapBench.vehicleLook().base;" +
+        " s.value = 'steel'; s.dispatchEvent(new Event('change')); b.value = '1'; b.dispatchEvent(new Event('input'));" +
+        " return {preset: s.value, near: s.parentNode.parentNode === t.parentNode.parentNode, steel: a, khaki: o}; })()");
+      const sat = (c) => Math.max(c[0], c[1], c[2]) - Math.min(c[0], c[1], c[2]);
+      check('round 14: vehicle colour steel grey by default (neutral, mid-dark), khaki and brightness change it, beside the team tint', vc && vc.preset === 'steel' && vc.near &&
+        sat(vc.steel) < 0.03 && vc.steel[1] > 0.08 && vc.steel[1] < 0.3 && vc.khaki[1] > vc.steel[1] && vc.khaki[2] < vc.khaki[0], JSON.stringify(vc));
       // 3. the battle selector and the remembered settings
       const pick = await page.evaluate("(() => { const s = document.getElementById('sel-battle'); return s ? {value: s.value, options: [].map.call(s.options, (o) => [o.value, o.textContent])} : null; })()");
       check('the selector lists the battles newest first, the current one chosen', pick && pick.value === BATTLE && pick.options.length === 2 &&

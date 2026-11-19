@@ -123,6 +123,8 @@ ASSETS = ('Viewer.html', 'web/style.css', 'web/icon.svg', 'web/viewer.js',
           'web/local-data.js', 'web/frame.js', 'web/host.js', 'web/app.js', 'web/modifiers.js', 'web/equipment.js', 'web/vehicle-modes.js', 'web/ballistics.js', 'web/shot-telemetry.js', 'web/shot-context.js', 'web/crits.js', 'web/ttx.js', 'web/settings-store.js', 'web/tooltips.js', 'web/aim-sound.js', 'web/aim-sound-samples.js', 'web/screen-armor.js', 'web/vendor/three.min.js',
           'web/playback.html', 'web/playback/playback.js', 'web/playback/mapbuild.js', 'web/playback/mapbuild9.js',
           'web/playback/mapbuild-page.js', 'web/playback/decoder.js', 'web/playback/battle.js', 'web/playback/battle-page.js',
+          # the vehicle tile and hit row both pages share, and the viewer's shots panel (19.11, BACKLOG 109)
+          'web/hit-rows.js', 'web/rows.css', 'web/playback/shots-panel.js', 'web/playback/shots-panel.css',
           'web/vendor/three.LICENSE', 'web/vendor/three-mesh-bvh.umd.js',
           # THIRD_PARTY.md ships with the page and points at these two: the packed-XML reader's licence and
           # the vendor manifest with the sources and hashes of three.js / three-mesh-bvh (inspection, 20.09).
@@ -199,6 +201,10 @@ DERIVED_FORMAT = 5
 # (SWEEP_SHARE) of the time the slice took, with no cap.
 BATTLE_SLICE = 0.1
 MAP_NOTE_EVERY = 0.5   # seconds between two progress notes of a map's copy to the player page (run_map_job)
+# What the game's own thread felt while a page's job ran (GameStall): its tick every STALL_TICK s, kept going STALL_GRACE s
+# after the page's request until the export thread takes the job.
+STALL_TICK = 0.05
+STALL_GRACE = 10.0
 # Battles published from their replay kept in memory this session (Exporter.replay_battles), the oldest out first: one
 # such battle is its raw records (a few MB); an evicted one keeps its file until something publishes it again.
 REPLAY_BATTLES_KEPT = 16
@@ -3667,6 +3673,79 @@ def ttx_block(type_name, version, log=True):
     return result
 
 
+class GameStall(object):
+    """What the game's own thread felt while a job of the page ran (19.11: the map job logged 212.9 s for 3.2 s of the
+    stand's work, its longest slice 9 s - waiting for the interpreter, or the game frozen by it?). The jobs' slices run on
+    the export thread, so their wall time is not what the game felt: a tick on the GAME thread every STALL_TICK s
+    (BigWorld.callback) does, its lateness beyond STALL_TICK being how long that thread could not run Python - for any
+    cause: our slice holding the interpreter, the game's own work (a frame, a space loading). The chain is started only on
+    the game thread (start: the page's request, the page's 'open'; the module never calls BigWorld from the export
+    thread), runs while a job's window is open or STALL_GRACE s after a request, and stops by itself after that.
+    Export thread: open() when a job starts, close(window) at its closing line -> (longest stall s, ticks)."""
+
+    def __init__(self, stopped=None):
+        self.stopped = stopped or (lambda: False)
+        self.windows = ()          # the open windows; replaced whole by the export thread, read by the game thread
+        self.grace_until = 0.0
+        self.running = False       # game thread only, like last
+        self.last = None
+
+    def open(self):
+        """Export thread: a job starts; its window gets every tick's lateness from now on (and keeps the chain going: the
+        request's grace is over)."""
+        window = {'longest': 0.0, 'ticks': 0}
+        self.windows = self.windows + (window,)
+        self.grace_until = 0.0
+        return window
+
+    def close(self, window):
+        """Export thread: the job's closing line. -> (the longest stall in s, the ticks counted); ticks 0: not measured
+        (the chain did not run: no game thread - the stand -, or not started)."""
+        self.windows = tuple(w for w in self.windows if w is not window)
+        if window is None: return 0.0, 0
+        return window['longest'], window['ticks']
+
+    def start(self, grace=STALL_GRACE):
+        """Game thread: the page asked for a job (grace: keep ticking that long until its window opens) or is open (0:
+        only when a window is open). One chain at a time."""
+        self.grace_until = max(self.grace_until, TTX_TIMER() + grace)
+        if self.running or self.stopped() or not (self.windows or grace > 0): return
+        try:
+            import BigWorld
+            BigWorld.callback(STALL_TICK, self.tick)
+            self.running = True
+            self.last = TTX_TIMER()
+        except Exception:
+            self.running = False
+
+    def tick(self):
+        """Game thread: one tick; its lateness goes to every open window; the next while a window is open or the grace runs."""
+        self.running = False
+        now = TTX_TIMER()
+        if self.last is not None:
+            late = max(0.0, now - self.last - STALL_TICK)
+            for window in self.windows:
+                window['ticks'] += 1
+                if late > window['longest']: window['longest'] = late
+        self.last = None
+        if (self.windows or now < self.grace_until) and not self.stopped():
+            try:
+                import BigWorld
+                BigWorld.callback(STALL_TICK, self.tick)
+                self.running = True
+                self.last = now
+            except Exception:
+                pass
+
+    @staticmethod
+    def text(figures):
+        """The closing lines' part: '; the game's own thread: longest stall 0.12 s (... ticks)'."""
+        longest, ticks = figures
+        if not ticks: return "; the game's own thread: not measured (its tick did not run)"
+        return "; the game's own thread: longest stall %.2f s (the longest delay of its %.2f s tick, %d ticks)" % (
+            longest, STALL_TICK, ticks)
+
+
 class Exporter(object):
     # The TTX sweep's run state and progress state, by the names its code has always used.
     ttx_sweep = property(lambda self: self.sweeps['ttx'], lambda self, value: self.sweeps.__setitem__('ttx', value))
@@ -3823,6 +3902,8 @@ class Exporter(object):
         # gets the copy's stage at most every MAP_NOTE_EVERY seconds.
         self.map_work = None
         self.map_noted = 0.0
+        # What the game's own thread felt while those two jobs ran (GameStall): their closing lines say it.
+        self.stall = GameStall(lambda: self.ttx_stopped)
         # What the mod tells the open player page (notify_page: the battle file or a map's raw set made, a copy's stage):
         # the mod's hook to the page's window (presentation.notify_page); the last ones kept for the stand's checks.
         self.page_notify = None
@@ -4847,9 +4928,11 @@ class Exporter(object):
         if self.ttx_stopped: return True
         work = self.playback_work
         if work is None or work.name != name:
+            if work is not None: self.stall.close(work.stall)
             work = self.playback_work = Job(self.folder, self.game, name, self)
             work.gen = work.steps()
             work.longest = 0.0
+            work.stall = self.stall.open()
         began = TTX_TIMER()
         deadline = began + BATTLE_SLICE
         done = False
@@ -4869,9 +4952,9 @@ class Exporter(object):
         work.longest = max(work.longest, spent)
         if not done: return True
         self.playback_work = None
-        LOG.info('Playback of %s: %s in %.1f s (%.2f s of work in %d slices, the longest %.3f s: %s)', name, work.outcome,
+        LOG.info('Playback of %s: %s in %.1f s (%.2f s of work in %d slices, the longest %.3f s: %s)%s', name, work.outcome,
                  TTX_TIMER() - work.began, work.work, work.slices, work.longest,
-                 ', '.join('%s %.2f s' % kv for kv in sorted(work.times.items())))
+                 ', '.join('%s %.2f s' % kv for kv in sorted(work.times.items())), GameStall.text(self.stall.close(work.stall)))
         self.notify_page({'kind': 'playback', 'id': name, 'state': 'ready'})
         return False
 
@@ -4927,19 +5010,26 @@ class Exporter(object):
                     held = set(hashes)
             except Exception:
                 LOG.warning('Map raw files of %s: the page\'s held products unreadable; copied whole', arena, exc_info=True)
+            if work is not None: self.stall.close(work.stall)
             work = self.map_work = MapJob(self.folder, self.game, arena, held, payload.get('resv'), payload.get('whole') is True)
             work.gen = work.steps()
-            work.longest = 0.0
+            work.longest = work.step_longest = 0.0
+            work.stall = self.stall.open()
         began = TTX_TIMER()
         deadline = began + BATTLE_SLICE
         done = False
         try:
             while True:
+                step = TTX_TIMER()
                 try: next(work.gen)
                 except StopIteration:
                     done = True
                     break
-                if TTX_TIMER() >= deadline or self.battle_stop(): break
+                # The next step is taken as long as the job's longest so far: it runs only when it would end within the
+                # slice (19.11: a slice ran one step past BATTLE_SLICE, 0.12 s on the stand).
+                now = TTX_TIMER()
+                work.step_longest = max(work.step_longest, now - step)
+                if now + work.step_longest >= deadline or self.battle_stop(): break
         except Exception:
             done = True
             LOG.exception('Map raw files of %s failed', arena)
@@ -4958,9 +5048,10 @@ class Exporter(object):
         self.map_work = None
         res = report.get('resources') or {}
         LOG.info('Map raw files of %s: %s in %.1f s (%.2f s of work in %d slices, the longest %.3f s); %d parts, %.1f MB '
-                 'written; resources: %d copied, %d of them in part (LODs only counted), %d held back (the page has them)',
+                 'written; resources: %d copied, %d of them in part (LODs only counted), %d held back (the page has them)%s',
                  arena, work.outcome, TTX_TIMER() - work.began, work.work, work.slices, work.longest, report.get('parts') or 0,
-                 (report.get('written') or 0) / 1e6, res.get('resources') or 0, res.get('sparse') or 0, res.get('held') or 0)
+                 (report.get('written') or 0) / 1e6, res.get('resources') or 0, res.get('sparse') or 0, res.get('held') or 0,
+                 GameStall.text(self.stall.close(work.stall)))
         if work.error: self.notify_page({'kind': 'map', 'arena': arena, 'state': 'error', 'error': work.error})
         else: self.notify_page({'kind': 'map', 'arena': arena, 'state': 'ready'})
         return False

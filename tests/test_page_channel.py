@@ -278,7 +278,7 @@ class TwoPagesOneChannelTests(unittest.TestCase):
 
     def test_the_viewer_commands_reach_their_own_requests(self):
         windows, files, vehicles = [], [], []
-        presentation.set_window_request(lambda window, battle: windows.append((window, battle)))
+        presentation.set_window_request(lambda window, battle, shot=None: windows.append((window, battle) if shot is None else (window, battle, shot)))
         presentation.set_files_request(lambda: files.append(True))
         presentation.set_vehicles_request(lambda battle, rows: vehicles.append((battle, rows)))
         self.addCleanup(presentation.set_window_request, None)
@@ -289,10 +289,15 @@ class TwoPagesOneChannelTests(unittest.TestCase):
             handler(Command(action='openReplays', battleId='f-0123456789abcdef'), {})
             handler(Command(action='openReplays', battleId='bad id!'), {})
             handler(Command(action='openHits'), {})
+            # a row of the viewer's shots panel (19.11, BACKLOG 109): Hits' fragment of that shot; a bad value - Hits' window only
+            handler(Command(action='openHits', battleId='2315856430906286521-d36eff9b31bb', at=1234.5, attacker=7, target=9, focus=7), {})
+            handler(Command(action='openHits', battleId='2315856430906286521-d36eff9b31bb', at='x', attacker=7, target=9, focus=7), {})
             handler(Command(action='replayFiles'), {})
             handler(Command(action='playbackVehicles', battleId='f-0123456789abcdef',
                             vehicles=[{'type': 'usa:A83_T110E4', 'descr': 'AQIDBA=='}, {'type': 'bad'}, 'x']), {})
-        self.assertEqual(windows, [(presentation.REPLAYS, 'f-0123456789abcdef'), (presentation.HITS, None)])
+        self.assertEqual(windows, [(presentation.REPLAYS, 'f-0123456789abcdef'), (presentation.HITS, None),
+                                   (presentation.HITS, None, 'host=game&battle=2315856430906286521-d36eff9b31bb&at=1234.500&attacker=7&target=9&focus=7'),
+                                   (presentation.HITS, None)])
         self.assertEqual(files, [True])
         self.assertEqual(vehicles, [('f-0123456789abcdef', [('usa:A83_T110E4', 'AQIDBA==')])])
         self.assertEqual(self.calls if hasattr(self, 'calls') else [], [])

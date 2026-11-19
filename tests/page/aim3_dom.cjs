@@ -448,6 +448,10 @@ global.BullbaTtx = window.BullbaTtx;
 // player), loaded before app.js as the page loads it.
 try { require(path + 'settings-store.js'); } catch (e) { if (e.code !== 'MODULE_NOT_FOUND') throw e; }
 global.BullbaSettings = window.BullbaSettings;
+// The vehicle tile and the hit row (19.11.2026, BACKLOG 109: moved out of app.js into web/hit-rows.js, shared with the 3D
+// replay viewer's shots panel), loaded before app.js as the page loads it.
+try { require(path + 'hit-rows.js'); } catch (e) { if (e.code !== 'MODULE_NOT_FOUND') throw e; }
+global.BullbaRows = window.BullbaRows;
 // The emulation's sound (08.10): its samples and its owner, loaded before app.js as the page loads them. No audio
 // context exists here until the sound checks at the end give the window a stand-in one.
 try { require(path + 'aim-sound-samples.js'); require(path + 'aim-sound.js'); } catch (e) { if (e.code !== 'MODULE_NOT_FOUND') throw e; }
@@ -6160,7 +6164,9 @@ settle(20).then(function () {
      && /\$\('ttx-mode'\)\.onpointerdown=xiDown;/.test(appSrc));
   // Its accent (user, 27.09): a colour of its own on :root, the idle outline, a fuller fill lit, dimmed for 'skip' - and none
   // of the page's other meanings (mint / red better-worse, gold manual motion and lit switches, the cyan / magenta circles).
-  const rootTok = function (name) { const m = new RegExp('^:root\\{[^}]*' + name + ':([^;}]+)').exec(styleSrc); return m ? m[1] : null; };
+  // The four tokens of the shared hit rows (mint, red, gold, muted) are on web/rows.css's :root since 19.11.2026 (BACKLOG 109).
+  const rowsSrc = (function () { try { return fs.readFileSync(path + 'rows.css', 'utf8'); } catch (e) { return ''; } })();
+  const rootTok = function (name) { const m = new RegExp('^:root\\{[^}]*' + name + ':([^;}]+)').exec(styleSrc) || new RegExp('\\n:root\\{[^}]*' + name + ':([^;}]+)').exec(rowsSrc); return m ? m[1] : null; };
   ok('xi: the mode button’s accent - lavender tokens on :root, an outline at rest, a fuller fill while lit, a ring of its hue, dashed while it runs down, dimmed and dotted for a mechanic not emulated',
      rootTok('--mode') === '#b9a6ff' && rootTok('--mode-fill') === '#40357a' && rootTok('--mode-soft') === 'rgba(185,166,255,.12)' && rootTok('--mode-dim') === 'rgba(185,166,255,.38)'
      && ['--mint', '--red', '--gold', '--aim-live', '--aim-shot', '--warn'].every(function (t) { const v = rootTok(t); return v && v !== rootTok('--mode') && v !== rootTok('--mode-fill'); })

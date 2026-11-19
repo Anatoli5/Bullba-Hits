@@ -1,0 +1,23 @@
+/* The replay viewer's shots panel and the team lists' Hits look (BACKLOG 109, 19.11.2026). The rows themselves are Bullba
+   Hits' (web/rows.css, web/hit-rows.js); here only what this page needs around them: the panel beside a team list, the
+   button base Hits' page gives every button (its style.css 'button' rule), the 'hits' button of a team-list row. */
+.shots-panel{position:fixed;z-index:5;width:250px;display:flex;flex-direction:column;background:#101a25;border:1px solid #293544;border-radius:6px;
+  color:#e5edf5;font:13px/1.3 Segoe UI,Arial,sans-serif;box-shadow:0 4px 18px rgba(0,0,0,.45);box-sizing:border-box;min-height:120px}
+.shots-panel[hidden]{display:none}
+.shots-panel *{box-sizing:border-box}
+.sp-head{display:flex;align-items:center;gap:6px;padding:5px 6px 5px 9px;border-bottom:1px solid #293544}
+.sp-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;letter-spacing:.5px;color:var(--muted)}
+.sp-close{flex:0 0 auto;min-height:0;padding:1px 6px;background:transparent;border:1px solid #35475a;border-radius:4px;color:var(--muted)}
+.sp-list{flex:1;min-height:0;overflow-y:auto;padding:6px 6px 0}
+.sp-empty{margin:4px 2px 8px;color:var(--muted);font-size:12px}
+.sp-row{display:flex;align-items:stretch;gap:3px}
+.sp-row .hit{font:inherit;color:inherit;border-radius:5px;cursor:pointer;flex:1;min-width:0}
+.sp-row .hit:hover{background:#263749}
+.sp-row .hit[aria-pressed=true]:hover{background:#302d25}
+.sp-open{flex:0 0 auto;margin-bottom:6px;min-height:0;padding:0 5px;font:11px Segoe UI,Arial,sans-serif;background:#172330;border:1px solid #35475a;border-radius:5px;color:var(--gold);cursor:pointer}
+.sp-open:hover{background:#263749}
+/* the team lists in Hits' dark tone: the compact tile for the vehicle, the nickname beside it, the small 'hits' button */
+.tlist .veh{background:rgba(16,26,37,.72)}
+.tlist .veh .vehicle-tile.compact{position:relative;flex:0 1 auto;max-width:60%;min-width:0;text-shadow:0 1px 1px #000}
+.sp-btn{position:relative;flex:0 0 auto;min-height:0;padding:0 4px;font:10px/13px Segoe UI,Arial,sans-serif;background:rgba(23,35,48,.85);border:1px solid #35475a;border-radius:3px;color:var(--muted);cursor:pointer}
+.sp-btn.on{border-color:var(--gold);color:var(--gold)}

@@ -26,7 +26,7 @@ _viewer = {'browser_id': None, 'trace': None}
 # checks that every action a page sends is here once and that _handle_web_command answers each.
 ACTIONS = ('busy', 'sweepStart', 'sweepStop', 'open', 'windowSize', 'follow', 'prepareBattle', 'playback', 'mapRaw',
            'playbackReport', 'replayKeep', 'replayLimit', 'prioritise', 'exportTtx', 'exportVehicle',
-           'openReplays', 'openHits', 'replayFiles', 'playbackVehicles')
+           'openReplays', 'openHits', 'replayFiles', 'playbackVehicles', 'inputLog')
 _window_request = None
 _files_request = None
 _vehicles_request = None
@@ -214,9 +214,38 @@ def _pump_notes():
 
 def set_window_request(handler):
     """The pages' 'openReplays' (Hits' 3D control: the replay viewer's window on a battle, `battleId`) and 'openHits' (the
-    viewer's back control: Hits' window): handler(window, battle id or None), on the game thread."""
+    viewer's back control: Hits' window; with `battleId`, `at`, `attacker`, `target`, `focus` - a row of its shots panel,
+    19.11 - one shot): handler(window, battle id or None[, Hits' fragment of the shot]), on the game thread."""
     global _window_request
     _window_request = handler
+
+
+def shot_fragment(battle_id, command):
+    """The fragment of Hits' page for one shot of the viewer's shots panel (BACKLOG 109): 'host=game&battle=<id>&at=
+    <gameTime>&attacker=<id>&target=<id>&focus=<id>' (web/app.js openShot), or None when a value is not a number."""
+    try:
+        at = float(getattr(command, 'at', None))
+        ids = [int(getattr(command, k, None)) for k in ('attacker', 'target', 'focus')]
+    except (TypeError, ValueError):
+        _warn_once('open-shot', 'Bullba Hits page command: no shot in %r', getattr(command, '__dict__', command))
+        return None
+    if at != at or at in (float('inf'), float('-inf')): return None
+    return 'host=game&battle=%s&at=%.3f&attacker=%d&target=%d&focus=%d' % ((str(battle_id), at) + tuple(ids))
+
+
+def show_fragment(window, fragment):
+    """Game thread: an open window's page gets a new fragment (location.hash: the page's hashchange reads it); False
+    when the window is not open or cannot be told."""
+    try:
+        from helpers import dependency
+        from skeletons.gui.game_control import IBrowserController
+        web = dependency.instance(IBrowserController).getBrowser(window_id(window))
+        if web is None: return False
+        web.executeJavascript('location.hash=%s' % json.dumps('#' + fragment), '')
+        return True
+    except Exception:
+        _warn_once('show-fragment', 'Bullba Hits: the %s window was not told its new fragment', window)
+        return False
 
 
 def set_files_request(handler):
@@ -383,15 +412,25 @@ def _handle_web_command(command, ctx):
                 return
             _player_request('playbackReport', dict((str(k), v) for k, v in list(report.items())[:40]))
             return
+        if action == 'inputLog':
+            # The replay viewer's temporary input diagnostic (19.11): which keys and buttons reached the page.
+            for line in (getattr(command, 'lines', None) or [])[:50]: LOG.info('Page input: %s', line)
+            return
         if action in ('openReplays', 'openHits'):
-            battle_id = getattr(command, 'battleId', None) if action == 'openReplays' else None
+            battle_id = getattr(command, 'battleId', None)
             if battle_id is not None and not BATTLE_ID.match(str(battle_id)):
                 _warn_once('open-window-id', 'Bullba Hits page command: no battle id in %r', battle_id)
                 return
             if _window_request is None:
                 _warn_once('open-window', 'Bullba Hits page command: the recorder is not running')
                 return
-            _window_request(REPLAYS if action == 'openReplays' else HITS, str(battle_id) if battle_id else None)
+            if action == 'openHits':
+                # 19.11 (BACKLOG 109): the viewer's shots panel - one shot of a battle in Hits' window
+                shot = shot_fragment(battle_id, command) if battle_id is not None else None
+                if shot is not None: _window_request(HITS, None, shot)
+                else: _window_request(HITS, None)
+                return
+            _window_request(REPLAYS, str(battle_id) if battle_id else None)
             return
         if action == 'replayFiles':
             if _files_request is None:
@@ -535,6 +574,8 @@ def web_handlers():
             report = Field(type=dict)
             # 'playbackVehicles' (19.11): [{type, descr}] - the battle's types with no vehicle file and their descriptors.
             vehicles = Field(type=list)
+            # 'inputLog' (19.11, temporary): the lines of the replay viewer's input diagnostic.
+            lines = Field(type=list)
         return [createCommandHandler(WEB_COMMAND, BullbaHitsSchema, _handle_web_command, None)]
     except Exception:
         LOG.exception('Bullba Hits page command could not be registered')
@@ -1181,6 +1222,18 @@ def open_in_game(path, fragment='host=game', window=HITS):
             global _browser_id
             if window == HITS: _browser_id = browser_id
             else: _viewer['browser_id'] = browser_id
+            # The client's browser drops the right and middle buttons and Ctrl/Shift + left clicks unless
+            # the window says otherwise (WebBrowser's public switches, set the same way by the game's own
+            # pages; outputs/game-browser-input-2026-11-19.md): both pages pan the camera with them.
+            # Read from the client's code on 19.11.2026, not yet seen working in the game.
+            try:
+                web = browser.getBrowser(browser_id)
+                for name, value in (('allowRightClick', True), ('allowMiddleClick', True),
+                                    ('ignoreCtrlClick', False), ('ignoreShiftClick', False)):
+                    setattr(web, name, value)
+                LOG.info('Window %s: right and middle buttons and Ctrl/Shift clicks let through', browser_id)
+            except Exception:
+                LOG.exception('Window %s: the mouse switches could not be set', browser_id)
             # The window's steps from here on, one line each (WindowTrace); it cannot break the open.
             follow_window(browser, browser_id, opened, ticket, step, window)
         # An open window is re-navigated by the controller (BrowserController.load: 'Re-navigating an

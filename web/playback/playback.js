@@ -98,7 +98,10 @@
     lakeville: { D: 0.0012, H: 50, F: 0.005, S: 25, k: 0.5 } };
   var SKY_FN = '';
   var SKY_COL = { zen: [0.62, 0.75, 0.90], band: [0.56, 0.58, 0.60], below: [0.33, 0.34, 0.35], black: [0.012, 0.014, 0.016] };  // display (sRGB) values
-  var hazeOn = false, skyOn = true, greyOn = false, skyMesh = null, skyU = { uGrey: { value: 0 }, uHor: { value: new T.Vector3() }, uZen: { value: new T.Vector3() }, uLow: { value: new T.Vector3() }, uSunD: { value: new T.Vector3(0, 1, 0) } };
+  // round 14 (the user, 19.11): two looks only - sky off (the default): black all round, the map hangs in the dark, and
+  // nothing fades toward a sky colour; sky on: the sky above, the grey below the horizon. The in-between (sky over black)
+  // and its grey switch are gone.
+  var hazeOn = false, skyOn = false, skyMesh = null, skyU = { uHor: { value: new T.Vector3() }, uZen: { value: new T.Vector3() }, uLow: { value: new T.Vector3() }, uSunD: { value: new T.Vector3(0, 1, 0) } };
   function setupHaze() {
     var E = HAZE_ENV[MAP] || mapData.haze || HAZE_ENV.prohorovka, ar = mapData.arena, bx = mapData.box || ar, margin = Math.max(5, Math.min(bx[2] - ar[2], ar[0] - bx[0], bx[3] - ar[3], ar[1] - bx[1]));
     var num = function (x) { var s = String(+x); return s.indexOf('.') < 0 && s.indexOf('e') < 0 ? s + '.0' : s; };
@@ -107,9 +110,13 @@
     C.fog_vertex = C.fog_vertex.replace('vFogDepth = - mvPosition.z;', 'vFogDepth = - mvPosition.z;\n\tvHazeW = transpose( mat3( viewMatrix ) ) * mvPosition.xyz;');
     var v3 = function (c) { return 'vec3( ' + c.map(num).join(', ') + ' )'; };
     // the background colour by view direction: the haze and the rim fade toward exactly what lies behind them
-    SKY_FN = ['vec3 skyCol5d( vec3 d, float g ) { float e = d.y;',  // g: 1 = the grey below the horizon, 0 = black (round 12)
-      // above: the grey band (to ~2 deg) lightening into the sky by ~27 deg; below: the band darkening by ~6 deg down
-      ' return e >= 0.0 ? mix( ' + v3(SKY_COL.band) + ', ' + v3(SKY_COL.zen) + ', pow( smoothstep( 0.03, 0.45, e ), 0.8 ) ) : mix( ' + v3(SKY_COL.band) + ', mix( ' + v3(SKY_COL.black) + ', ' + v3(SKY_COL.below) + ', g ), smoothstep( 0.0, 0.10, - e ) ); }'].join('\n');
+    // round 14: g = the sky switch (fogFar carries it to the fog chunk). Off: black in every direction - before, the haze
+    // and the rim fade took the sky's colours by direction whatever the switch said, so with the sky off whatever stood
+    // beyond the border or far up a height still faded toward the pale sky (above) or the horizon grey (along it)
+    SKY_FN = ['vec3 skyCol5d( vec3 d, float g ) { float e = d.y;',
+      ' if ( g < 0.5 ) return ' + v3(SKY_COL.black) + ';',
+      // above: the grey band (to ~2 deg) lightening into the sky by ~27 deg; below: the band darkening into the grey by ~6 deg down
+      ' return e >= 0.0 ? mix( ' + v3(SKY_COL.band) + ', ' + v3(SKY_COL.zen) + ', pow( smoothstep( 0.03, 0.45, e ), 0.8 ) ) : mix( ' + v3(SKY_COL.band) + ', ' + v3(SKY_COL.below) + ', smoothstep( 0.0, 0.10, - e ) ); }'].join('\n');
     C.fog_pars_fragment += ['', '#ifdef USE_FOG', 'varying vec3 vHazeW;', SKY_FN,
       'float hazeFactor( float k ) {',
       ' vec3 w = vHazeW; float L = length( w ); vec3 P = cameraPosition + w;',
@@ -132,13 +139,13 @@
     sm.onBeforeCompile = function (sh) {
       Object.assign(sh.uniforms, skyU);
       sh.vertexShader = 'varying vec3 vSkyD;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n vSkyD = position;');
-      sh.fragmentShader = 'varying vec3 vSkyD;\nuniform vec3 uHor, uZen, uLow, uSunD;\nuniform float uGrey;\n' + SKY_FN + '\n' + sh.fragmentShader.replace('#include <colorspace_fragment>', [
+      sh.fragmentShader = 'varying vec3 vSkyD;\nuniform vec3 uHor, uZen, uLow, uSunD;\n' + SKY_FN + '\n' + sh.fragmentShader.replace('#include <colorspace_fragment>', [
         '#include <colorspace_fragment>',
-        ' vec3 sd = normalize( vSkyD ); float e = sd.y; vec3 sc = skyCol5d( sd, uGrey );',
+        ' vec3 sd = normalize( vSkyD ); float e = sd.y; vec3 sc = skyCol5d( sd, 1.0 );',  // drawn only while the sky is on
         ' sc += vec3( 1.0, 0.95, 0.85 ) * 0.06 * pow( max( dot( sd, uSunD ), 0.0 ), 8.0 ) * step( 0.0, e );',
         ' gl_FragColor = vec4( sc, 1.0 );'].join('\n'));
     };
-    sm.customProgramCacheKey = function () { return 'sky12'; };
+    sm.customProgramCacheKey = function () { return 'sky14'; };
     skyMesh = new T.Mesh(new T.SphereGeometry(3000, 32, 16), sm);
     skyMesh.frustumCulled = false; skyMesh.renderOrder = -1000; skyMesh.matrixAutoUpdate = true;
     skyMesh.onBeforeRender = function (r, s, c) { skyMesh.position.copy(c.position); skyMesh.updateMatrixWorld(); };
@@ -149,13 +156,11 @@
   function applySky() {
     if (skyMesh) skyMesh.visible = skyOn;
     scene.background = skyOn ? null : new T.Color().setRGB(SKY_COL.black[0], SKY_COL.black[1], SKY_COL.black[2], T.SRGBColorSpace);  // round 12: no sky = black, the pale fill is gone
-    skyU.uGrey.value = greyOn ? 1 : 0;
-    if (skyOn || hazeOn) { var c = SKY_COL.band; scene.fog.color.setRGB(c[0], c[1], c[2], T.SRGBColorSpace); scene.fog.near = hazeOn ? -(HAZE_ENV[MAP] || mapData.haze || HAZE_ENV.prohorovka).k : -1e-6; scene.fog.far = greyOn ? 1 : 0; }  // fogFar is free in this mode: it carries the grey/black choice to skyCol5d
+    if (skyOn || hazeOn) { var c = skyOn ? SKY_COL.band : SKY_COL.black; scene.fog.color.setRGB(c[0], c[1], c[2], T.SRGBColorSpace); scene.fog.near = hazeOn ? -(HAZE_ENV[MAP] || mapData.haze || HAZE_ENV.prohorovka).k : -1e-6; scene.fog.far = skyOn ? 1 : 0; }  // fogFar is free in this mode: it carries the sky switch to skyCol5d
     else { scene.fog.color.setRGB(SKY_COL.black[0], SKY_COL.black[1], SKY_COL.black[2], T.SRGBColorSpace); scene.fog.near = 700; scene.fog.far = 2600; }
   }
   function setHaze(on) { hazeOn = !!on; $('sw-haze').checked = hazeOn; applySky(); }
   function setSky(on) { skyOn = !!on; $('sw-sky').checked = skyOn; applySky(); }
-  function setGrey(on) { greyOn = !!on; $('sw-grey').checked = greyOn; applySky(); }
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
   sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.4;
@@ -1741,18 +1746,41 @@
   function srgbToLinear(c) { return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); }
   // viewer.js baseColors, the same sRGB figures made linear the same way (viewer.js linear); not exported by viewer.js
   var HITS_PART = [[.38, .46, .54], [.65, .73, .8], [.75, .83, .87], [.55, .65, .72]].map(function (c) { return c.map(srgbToLinear); });
-  var hitsTintU = { value: 0 }, HITS_SEAM = [0.05, 0.07, 0.09, 0.6];
+  // round 14 (the user in the game, 19.11: light blue and too bright, unnatural for a tank): Hits' tones are a light
+  // grey-blue (sRGB blue 0.15 above red, hull 0.73 bright) made for Hits' dark background and camera-side light; under the
+  // map's sun and sky they come out pale blue. Now the model's colour is a chosen base (a preset, sRGB, mid luminance,
+  // low saturation) times a brightness; Hits' part tones stay as each part's brightness against the hull's (chassis
+  // darker, turret lighter, gun between), the outer layer greyer and darker, the groups a shade apart and the seams.
+  var VEHICLE_COLORS = { steel: [0.45, 0.46, 0.47], khaki: [0.42, 0.39, 0.26], green: [0.29, 0.34, 0.21], panzer: [0.29, 0.31, 0.33] };
+  // The game's own base paint of each nation (19.11): scripts/item_defs/customization/default.xml, the first colour of
+  // the nation's list - what every tech-tree vehicle wears (outputs/nation-paint-colours-2026-11-19.md); sRGB.
+  var NATION_COLORS = { ussr: [0.298, 0.298, 0.235], germany: [0.353, 0.353, 0.353], usa: [0.412, 0.384, 0.302],
+    china: [0.239, 0.322, 0.247], france: [0.200, 0.286, 0.294], uk: [0.459, 0.439, 0.365], japan: [0.255, 0.302, 0.220],
+    czech: [0.318, 0.290, 0.235], sweden: [0.243, 0.267, 0.212], poland: [0.310, 0.286, 0.204], italy: [0.502, 0.443, 0.325] };
+  var LUM = function (c) { return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]; };
+  var HITS_TONE = HITS_PART.map(function (c) { return LUM(c) / LUM(HITS_PART[1]); });
+  var hitsTintU = { value: 0 }, hitsBaseU = { value: new T.Vector3() }, HITS_SEAM = [0.05, 0.07, 0.09, 0.6];
+  function setVehicleColor() {
+    var sel = $('sel-vcolor').value, key = VEHICLE_COLORS[sel] ? sel : 'steel', c = VEHICLE_COLORS[key], k = +$('rng-vbright').value;
+    hitsBaseU.value.set(srgbToLinear(c[0]) * k, srgbToLinear(c[1]) * k, srgbToLinear(c[2]) * k);
+    // each vehicle's own base: the preset, or with 'nation' its nation's paint (a nation not in the table: the grey)
+    vehicles.forEach(function (r) {
+      var n = sel === 'nation' ? NATION_COLORS[String(r.v.type).split(':')[0]] : null, b = r.mat.userData.u.uBase.value;
+      if (n) b.set(srgbToLinear(n[0]) * k, srgbToLinear(n[1]) * k, srgbToLinear(n[2]) * k); else b.copy(hitsBaseU.value);
+    });
+    $('vbright-v').textContent = k.toFixed(2);
+    if (typeof poseHalo === 'function' && vehicles.length) poseHalo();
+  }
   // the halo's colour of a vehicle: its hull tone mixed toward its team colour as the model is
   function hitsHaloColor(r, out) {
-    var c = r.mat.userData.u.uTeam.value, h = HITS_PART[1], k = hitsTintU.value;
-    return out.set(h[0] + (c.r - h[0]) * k, h[1] + (c.g - h[1]) * k, h[2] + (c.b - h[2]) * k);
+    var c = r.mat.userData.u.uTeam.value, h = r.mat.userData.u.uBase.value, k = hitsTintU.value;
+    return out.set(h.x + (c.r - h.x) * k, h.y + (c.g - h.y) * k, h.z + (c.b - h.z) * k);
   }
   function setTeamTint(k) {
     if (k != null) $('rng-tint').value = k;
     hitsTintU.value = +$('rng-tint').value; $('tint-v').textContent = hitsTintU.value.toFixed(2);
     if (typeof poseHalo === 'function' && vehicles.length) poseHalo();
   }
-  function hitsPart(pid) { return HITS_PART[pid > 0 ? pid % 4 : 0]; }  // viewer.js partColor: track pairs (4) and wheels (-1) take the chassis'
   // P positions (xyz per vertex), I indices, G group per vertex and gt [part id, outer] per group (build.py geo), or
   // none (an older file, a box): every face then the part `part`
   function hitsGeometry(P, I, G, gt, part) {
@@ -1789,14 +1817,12 @@
     for (f = 0; f < nf; f++) {
       var off = [0, 0, 0];
       for (k = 0; k < 3; k++) { var r = edges.get(ekey(vid[f * 3 + (k + 1) % 3], vid[f * 3 + (k + 2) % 3])); off[k] = r.n === 1 || r.mixed ? 0 : 10; }
-      var info = gt && gt[fg[f]], pid = info ? info[0] : part, base = hitsPart(pid), cc = base;
-      if (info && info[1]) {  // the outer layer: greyer and darker than its part
-        var lum = 0.2126 * base[0] + 0.7152 * base[1] + 0.0722 * base[2];
-        cc = [0, 1, 2].map(function (q) { return (base[q] + (lum - base[q]) * 0.55) * 0.78; });
-      }
+      // round 14: the colour attribute is (part tone x group shade, outer layer 0/1, 0); the base colour is the shader's
+      var info = gt && gt[fg[f]], pid = info ? info[0] : part, outer = info && info[1] ? 1 : 0;
       var h = Math.sin((fg[f] + 1) * 12.9898) * 43758.5453, jit = 1 + 0.035 * (2 * (h - Math.floor(h)) - 1);  // groups a shade apart
+      var cc = [HITS_TONE[pid > 0 ? pid % 4 : 0] * jit, outer, 0];  // viewer.js partColor: track pairs (4) and wheels (-1) take the chassis'
       for (k = 0; k < 3; k++) for (j = 0; j < 3; j++) {
-        col[f * 9 + k * 3 + j] = cc[j] * jit;
+        col[f * 9 + k * 3 + j] = cc[j];
         seam[f * 9 + k * 3 + j] = (j === k ? 1 : 0) + off[j];
       }
     }
@@ -1813,22 +1839,23 @@
   // one material per vehicle (its team and its death are its own uniforms), one program for all
   function hitsMaterial(team) {
     var mat = new T.MeshLambertMaterial({ vertexColors: true, side: T.DoubleSide });
-    var u = mat.userData.u = { uTeam: { value: new T.Color(team) }, uTint: hitsTintU, uDead: { value: 0 } };
+    var u = mat.userData.u = { uTeam: { value: new T.Color(team) }, uTint: hitsTintU, uBase: { value: hitsBaseU.value.clone() }, uDead: { value: 0 } };
     mat.onBeforeCompile = function (sh) {
       Object.assign(sh.uniforms, u);
       sh.vertexShader = 'attribute vec3 aSeam;\nvarying vec3 vSeam;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n vSeam = aSeam;');
-      // the colour only (tint, death, seams); the scene's lights and shadows then light it as any other object
-      sh.fragmentShader = 'uniform vec3 uTeam;\nuniform float uTint;\nuniform float uDead;\nvarying vec3 vSeam;\n' + sh.fragmentShader.replace(
+      // the colour only (base x part tone, outer layer, tint, death, seams); the scene's lights and shadows then light it as any other object
+      sh.fragmentShader = 'uniform vec3 uTeam;\nuniform float uTint;\nuniform vec3 uBase;\nuniform float uDead;\nvarying vec3 vSeam;\n' + sh.fragmentShader.replace(
         '#include <color_fragment>', ['#include <color_fragment>',
-          'vec3 hc = diffuseColor.rgb;',
+          'vec3 hc = uBase * diffuseColor.r;',
           'float hl = dot(hc, vec3(0.2126, 0.7152, 0.0722));',
+          'if (diffuseColor.g > 0.5) { hc = mix(hc, vec3(hl), 0.55) * 0.78; hl *= 0.78; }',  // the outer layer: greyer and darker than its part
           'hc = mix(hc, uTeam, uTint);',
-          'hc = mix(hc, vec3(hl * 0.17), uDead);',
+          'hc = mix(hc, vec3(diffuseColor.r * (diffuseColor.g > 0.5 ? 0.78 : 1.0) * 0.083), uDead);',  // destroyed: as dark a grey as before round 14, whatever the base
           'vec3 hd = vSeam / max(fwidth(vSeam), vec3(1e-6));',
           'float hk = 1.0 - smoothstep(0.35, 1.0, min(min(hd.x, hd.y), hd.z));',
           'diffuseColor.rgb = mix(hc, vec3(' + HITS_SEAM.slice(0, 3).join(', ') + '), ' + HITS_SEAM[3] + ' * hk);'].join('\n '));
     };
-    mat.customProgramCacheKey = function () { return 'hits-vehicle'; };
+    mat.customProgramCacheKey = function () { return 'hits-vehicle14'; };
     return mat;
   }
 
@@ -2271,7 +2298,9 @@
   }
   var drag = null;
   renderer.domElement.addEventListener('contextmenu', function (e) { e.preventDefault(); });
-  renderer.domElement.addEventListener('pointerdown', function (e) { drag = { x: e.clientX, y: e.clientY, b: e.button }; renderer.domElement.setPointerCapture(e.pointerId); });
+  // round 14: pan by the right or the middle button, or Shift + left (the game's browser gives the right and middle
+  // buttons and Shift + click only when the mod switches them on); orbit by the left button alone
+  renderer.domElement.addEventListener('pointerdown', function (e) { drag = { x: e.clientX, y: e.clientY, b: e.button === 0 && e.shiftKey ? 2 : e.button }; renderer.domElement.setPointerCapture(e.pointerId); if (e.button === 1) e.preventDefault(); });
   renderer.domElement.addEventListener('pointerup', function () { drag = null; });
   renderer.domElement.addEventListener('pointermove', function (e) {
     if (!drag) return;
@@ -2298,8 +2327,14 @@
     cam.tx += right * cy - fwd * sy; cam.tz += right * sy + fwd * cy;
     if (heightAt) cam.tyGoal = heightAt(cam.tx, cam.tz) + cam.tyOff;
   }
-  window.addEventListener('keydown', function (e) { keys[e.code] = true; if (e.code === 'Space') { togglePlay(); e.preventDefault(); } if (e.code.indexOf('Arrow') === 0 && !/^(INPUT|SELECT|TEXTAREA)$/.test((e.target && e.target.tagName) || '')) e.preventDefault(); });
-  window.addEventListener('keyup', function (e) { keys[e.code] = false; });
+  // round 14: the arrows by e.key as well as e.code - the game's browser may hand an arrow with the code of its numpad
+  // twin (Numpad8 ...) and the key ArrowUp (unverified, outputs/game-browser-input-2026-11-19.md section 5); keyup clears
+  // the same two names, so no key sticks
+  function keyNames(e) { var n = [e.code]; if (/^Arrow(Up|Down|Left|Right)$/.test(e.key) && e.key !== e.code) n.push(e.key); return n; }
+  window.addEventListener('keydown', function (e) { keyNames(e).forEach(function (k) { keys[k] = true; }); if (e.code === 'Space') { togglePlay(); e.preventDefault(); } if (keyNames(e).some(function (k) { return k.indexOf('Arrow') === 0; }) && !/^(INPUT|SELECT|TEXTAREA)$/.test((e.target && e.target.tagName) || '')) e.preventDefault(); });
+  var NUMPAD_ARROW = { Numpad8: 'ArrowUp', Numpad2: 'ArrowDown', Numpad4: 'ArrowLeft', Numpad6: 'ArrowRight' };
+  window.addEventListener('keyup', function (e) { keyNames(e).forEach(function (k) { keys[k] = false; }); if (NUMPAD_ARROW[e.code]) keys[NUMPAD_ARROW[e.code]] = false; });
+  window.addEventListener('blur', function () { keys = {}; });
   function keyMove(dt) {
     var s = panSpeed(cam.dist) * dt, any = false;
     if (keys.KeyW || keys.ArrowUp) { move(0, s); any = true; } if (keys.KeyS || keys.ArrowDown) { move(0, -s); any = true; }
@@ -2311,6 +2346,36 @@
     if (any) setFollow(null);
     glideTarget(dt);
   }
+  // round 14, temporary: the input log (Settings > input log, off on every opening, not remembered) - what the page
+  // receives, to settle what the game's browser delivers (outputs/game-browser-input-2026-11-19.md section 7): every key,
+  // button, wheel, double click and context menu on the page (no pointer moves), the last 12 lines in a corner and, in the
+  // game, to the mod's log through the page channel ('inputLog', {lines}), at most one send a second
+  var inputLog = { on: false, shown: [], queue: [], timer: null, t0: performance.now() };
+  function inputLine(e) {
+    var m = (e.shiftKey ? 'S' : '-') + (e.ctrlKey ? 'C' : '-') + (e.altKey ? 'A' : '-') + (e.metaKey ? 'M' : '-'), s = ((performance.now() - inputLog.t0) / 1000).toFixed(2) + ' ' + e.type + ' ';
+    if (e.type === 'keydown' || e.type === 'keyup') s += 'key=' + JSON.stringify(e.key) + ' code=' + e.code + ' keyCode=' + e.keyCode + ' loc=' + e.location + (e.repeat ? ' repeat' : '');
+    else if (e.type === 'wheel') s += 'dY=' + e.deltaY + ' dX=' + e.deltaX + ' mode=' + e.deltaMode;
+    else s += 'button=' + e.button + ' buttons=' + e.buttons;
+    s += ' mods=' + m + ' on=' + ((e.target && (e.target.id || e.target.tagName)) || '?');
+    inputLog.shown.push(s); if (inputLog.shown.length > 12) inputLog.shown.shift();
+    $('inputlog').textContent = inputLog.shown.join('\n');
+    if (host.game && host.canSend()) {
+      if (inputLog.queue.length < 200) inputLog.queue.push(s);
+      if (!inputLog.timer) inputLog.timer = setTimeout(inputFlush, 1000);
+    }
+  }
+  function inputFlush() {
+    inputLog.timer = null; var lines = inputLog.queue.splice(0, 50);
+    if (lines.length) host.send('bullba_hits', { action: 'inputLog', lines: lines }).catch(function (err) { console.warn('Bullba Hits inputLog failed: ' + err.message); });
+    if (inputLog.queue.length) inputLog.timer = setTimeout(inputFlush, 1000);
+  }
+  ['keydown', 'keyup', 'pointerdown', 'pointerup', 'wheel', 'dblclick', 'contextmenu'].forEach(function (type) {
+    window.addEventListener(type, function (e) { if (inputLog.on) inputLine(e); }, { capture: true, passive: true });
+  });
+  $('sw-inputlog').onchange = function () {
+    inputLog.on = this.checked; $('inputlog').hidden = !inputLog.on;
+    if (inputLog.on) { inputLog.shown = []; $('inputlog').textContent = 'input log: press keys, click, turn the wheel'; }
+  };
   function setFollow(r) {
     if (follow === r) return; follow = r;
     if (r) cam.dist = Math.min(cam.dist, 30);
@@ -2358,6 +2423,8 @@
   $('sw-grain').onchange = function () { setGrain(this.checked); };
   $('rng-grain').oninput = function () { setGrain($('sw-grain').checked); };
   $('rng-tint').oninput = function () { setTeamTint(); };
+  $('sel-vcolor').onchange = function () { setVehicleColor(); };
+  $('rng-vbright').oninput = function () { setVehicleColor(); };
   $('rng-foliage').oninput = function () { setFoliage(); };
   $('sel-ground').onchange = function () { setGround(this.value); };
   $('sel-outside').onchange = function () { outsideMode = +this.value; applyOutside(); };  // applyOutside marks the shadows
@@ -2368,7 +2435,6 @@
   $('rng-halo').oninput = $('rng-halo-all').oninput = $('rng-halo-reach').oninput = $('rng-halo-shade').oninput = $('rng-halo-grad').oninput = function () { setHalo($('sw-halo').checked); };
   $('sw-haze').onchange = function () { setHaze(this.checked); };
   $('sw-sky').onchange = function () { setSky(this.checked); };
-  $('sw-grey').onchange = function () { setGrey(this.checked); };
   $('sw-light').onchange = function () { setLight(this.checked); };
   $('rng-light').oninput = function () { setLight($('sw-light').checked); };
   $('sw-cost').onchange = function () { costOn = this.checked; $('cost').style.display = costOn ? 'block' : 'none'; gpuHist.length = 0; };
@@ -2381,6 +2447,46 @@
   function quant(a, q) { if (!a.length) return NaN; var s = a.slice().sort(function (x, y) { return x - y; }); return s[Math.min(s.length - 1, Math.floor(q * s.length))]; }
   function window3s(list, now) { while (list.length && now - list[0][0] > 3000) list.shift(); return list.map(function (x) { return x[1]; }); }
 
+  // ------------------------------------------------------------------ the shots panel (BACKLOG 109, stage 1, 19.11)
+  // web/playback/shots-panel.js: a vehicle's shots and the hits it took, as Bullba Hits' rows, beside its team list; a row
+  // rewinds the battle to 2 s before the shot, the camera on the shooter and the target, and plays on
+  function tileOf(r) { return r.md.tile || { name: r.md.name || r.v.type.split(':')[1], type: r.v.type }; }
+  var panel = null;
+  function shotsPanel() {
+    if (!panel) panel = BullbaShotsPanel.create({ battle: battle,
+      info: function (id) { var r = fxById[id]; return r ? tileOf(r) : null; },
+      player: function (id) { var r = fxById[id]; return (r && r.v.player) || ''; },
+      clock: function (s) { return fmt(s - tBattle); },
+      pick: function (row, j) { jumpTo(j); },
+      hits: hitsOpener,
+      changed: function () { renderList(false); } });
+    return panel;
+  }
+  // 'Hits' on a row: that shot in Bullba Hits' window - only for a battle Hits has (its index, data/index.js) and a row with
+  // a hit (Hits lists hits, not shots that met nothing). 'at' is the hit on the server's clock: the replay's server start +
+  // the replay's time, the gameTime a Hits battle made from this replay stamps (replay_records.game_time); Hits looks the
+  // hit up by attacker, target and that time (web/app.js openShot). In the game the mod opens or tells Hits' window
+  // ('openHits'), outside it this window goes to Hits' page.
+  function hitsOpener(row, id) {
+    var known = INDEX && Array.isArray(INDEX.battles) && INDEX.battles.some(function (x) { return x && x.id === BID; });
+    var h = row.hits[0], start = battle && battle.meta && battle.meta.serverStart;
+    if (!known || !h || h.attacker == null || !Number.isFinite(start)) return null;
+    var shot = { battleId: BID, at: +(start + h.t).toFixed(3), attacker: h.attacker, target: h.target, focus: id };
+    return function () {
+      if (host.game && host.canSend()) { host.send('bullba_hits', Object.assign({ action: 'openHits' }, shot)).catch(function (e) { console.warn('Bullba Hits openHits failed: ' + e.message); }); return; }
+      location.href = BASE + 'Viewer.html#' + (host.game ? 'host=game&' : '') + 'battle=' + encodeURIComponent(BID) + '&at=' + shot.at + '&attacker=' + shot.attacker + '&target=' + shot.target + '&focus=' + shot.focus;
+    };
+  }
+  function jumpTo(j) {
+    t = Math.min(tEnd, Math.max(0, j.t)); $('slider').value = t;
+    if (j.camera) {
+      setFollow(null); var c = j.camera;
+      cam.tx = c.tx; cam.ty = c.ty; cam.tz = c.tz; cam.yaw = c.yaw; cam.pitch = c.pitch; cam.dist = c.dist; cam.tyGoal = null;
+      if (heightAt) cam.tyOff = cam.ty - heightAt(cam.tx, cam.tz);
+    }
+    if (!playing) togglePlay();
+  }
+
   var listRows = [];
   function renderList(force) {
     if (!force && listRows.length) {
@@ -2388,6 +2494,7 @@
         var r = row.r, hp = r.lastHp == null ? r.v.maxHealth : r.lastHp;
         row.el.className = row.base + (r.visible ? '' : ' out') + (r.dead ? ' dead' : '') + (follow === r ? ' follow' : '');
         row.bar.style.width = Math.max(0, Math.min(100, 100 * hp / (r.v.maxHealth || 1))) + '%';
+        if (row.hb) row.hb.classList.toggle('on', !!panel && panel.shown() === r.v.id);
       });
       return;
     }
@@ -2399,12 +2506,16 @@
       // fill in the team's colour as wide as the HP left (from the outer edge: the enemy list is mirrored)
       var bar = document.createElement('i'); bar.className = 'fill';
       var pl = document.createElement('span'); pl.className = 'pl'; pl.textContent = r.v.player || '';
-      var nm = document.createElement('span'); nm.className = 'nm';
-      nm.textContent = (r.md.name || r.v.type.split(':')[1]) + (r.md.model ? '' : ' [box]') + (r.v.modulesMatch === false ? ' [other turret/gun]' : '');
+      // 19.11 (BACKLOG 109): the vehicle as Bullba Hits' tile in its compact one-line mode (class mark, tier, name - no flag:
+      // the list lies over the 3D view), and the 'hits' button that opens the shots panel beside this list
+      var nm = BullbaRows.vehicleTile(tileOf(r), true, { compact: true }); nm.classList.add('nm');
+      nm.querySelector('.vt-name').textContent += (r.md.model ? '' : ' [box]') + (r.v.modulesMatch === false ? ' [other turret/gun]' : '');
       nm.title = r.v.type + (r.v.modulesMatch == null ? ' - turret/gun of the battle not compared' : (r.v.modulesMatch ? ' - turret/gun as in the battle' : ' - the battle had another turret/gun'));
-      el.appendChild(bar); el.appendChild(pl); el.appendChild(nm);
+      var side = r.role === 'enemy' ? 'enemy' : 'own', box = side === 'enemy' ? boxEnemy : boxOwn;
+      var hb = BullbaShotsPanel.button(function () { shotsPanel().toggle(r.v.id, box, side); });
+      el.appendChild(bar); el.appendChild(pl); el.appendChild(nm); el.appendChild(hb);
       el.onclick = function () { setFollow(follow === r ? null : r); };
-      (r.role === 'enemy' ? boxEnemy : boxOwn).appendChild(el); listRows.push({ r: r, el: el, bar: bar, base: base });
+      box.appendChild(el); listRows.push({ r: r, el: el, bar: bar, base: base, hb: hb });
     });
     if (listRows.length) renderList(false);  // round 9: a map alone has no vehicles
   }
@@ -2821,7 +2932,8 @@
     if (samples.length) { pmin = Math.min.apply(null, samples.map(function (s) { return s[1]; })); pmax = Math.max.apply(null, samples.map(function (s) { return s[2]; })); }
     var gun = geo(['gun'], gt.slice(12, 15)), gl0 = 0;
     for (var q = 2; q < gun.v.length; q += 3) if (gun.v[q] > gl0) gl0 = gun.v[q];
-    return { model: true, name: veh.name, cls: veh['class'], turretAt: tt.slice(12, 15), gunAt: [gt[12] - tt[12], gt[13] - tt[13], gt[14] - tt[14]],
+    // tile: what Bullba Hits' vehicle tile shows (web/hit-rows.js) - the team lists and the shots panel (BACKLOG 109)
+    return { model: true, name: veh.name, cls: veh['class'], tile: { name: veh.name, level: veh.level, 'class': veh['class'], role: veh.role, nation: veh.nation, type: veh.type }, turretAt: tt.slice(12, 15), gunAt: [gt[12] - tt[12], gt[13] - tt[13], gt[14] - tt[14]],
       pitch: [pmin, pmax], wheels: wheels.length, gunLength: gl0, turretGun: turretGun(veh.compactDescriptor),
       hull: geo(['chassis', 'hull'].concat(wheels), [0, 0, 0]), turret: geo(['turret'], tt.slice(12, 15)), gun: gun };
   }
@@ -2875,7 +2987,7 @@
   // polling of a missing file; a look every FALLBACK_MS only in case the word does not come). Outside the game nobody can
   // make it. The battle itself is built from the source in the page (battle-page.js, battle.js) and kept in IndexedDB.
   var host = window.BullbaHost || { game: false, canSend: function () { return false; } };
-  var BASE = '../', PAGE_BASE = '', FORMAT = 2, FALLBACK_MS = 4000, WAIT_MS = 10 * 60 * 1000;
+  var BASE = '../', PAGE_BASE = '', FORMAT = 2, FALLBACK_MS = 250 /* 19.11: in the game the mod's word never comes (the client has no executeJavascript), the look is how the page learns */, WAIT_MS = 10 * 60 * 1000;
   var received = {}, FILE = null, waited = { mod: 0 };
   window.ArmorInspectorData = { receive: function (pair) { received[pair[0]] = pair[1]; } };
   function loadData(src, key) {
@@ -2912,7 +3024,8 @@
   }
   function readFile(bid) {
     return loadData('data/playback/' + bid + '.js', 'playback:' + bid).then(function (b) {
-      if (b && b.format === FORMAT) return b;
+      // In the game a file of an earlier build (no client in its record) is asked for again (19.11, westfeld).
+      if (b && b.format === FORMAT && (!host.canSend() || (b.record && b.record.client))) return b;
       throw new Error('format');
     });
   }
@@ -2984,9 +3097,16 @@
     var m = /^(\d{4})-(\d\d)-(\d\d) (\d\d):(\d\d)/.exec(f.when || '');
     return m ? m[3] + '.' + m[2] + ' · ' + m[4] + ':' + m[5] : '';
   }
+  // round 14: a client's version as both spellings carry it - the list's client is the whole text of version.xml in the
+  // user's game ('<version> v.2.4.1.1 #992 </version>'), a file's is its header's ('World of Tanks v.2.4.1.1 #992'):
+  // compared as text they always differed, and every entry said "older client"
+  function clientVersion(s) { var m = /(\d+(?:\.\d+)+)\s*#\s*(\d+)/.exec(String(s || '')); return m ? m[1] + '#' + m[2] : null; }
+  // a file tied to a Hits battle takes what its own entry lacks (map, vehicle) from that battle's row
   function fileText(f, client) {
-    return [fileWhen(f), f.mapTitle || f.map, vehicleShort(f.vehicle), f.player].filter(Boolean).join(' · ') +
-      (f.kept ? ' ★' : '') + (client && f.client && f.client !== client ? ' (older client)' : '');
+    var hb = f.battle && INDEX && Array.isArray(INDEX.battles) ? INDEX.battles.filter(function (b) { return b && b.id === f.battle; })[0] : null;
+    var cv = clientVersion(client), fv = clientVersion(f.client);
+    return [fileWhen(f), f.mapTitle || (hb && hb.map) || f.map, f.vehicle ? vehicleShort(f.vehicle) : hb && hb.vehicle && hb.vehicle.name, f.player].filter(Boolean).join(' · ') +
+      (f.kept ? ' ★' : '') + (cv && fv && cv !== fv ? ' (older client)' : '');
   }
   function fileRows() { return FILES && Array.isArray(FILES.files) ? FILES.files.filter(function (f) { return f && f.id; }) : []; }
   function battleSelect(index) {
@@ -3013,31 +3133,15 @@
       add(parent, b.id, b.map ? [battleWhen(+b.startedAt), b.map, b.vehicle && b.vehicle.name].filter(Boolean).join(' · ') : 'This battle');
     });
     sel.value = BID;
-    fileList();
+    noBattle();
   }
-  // Opened with no battle (the viewer's own button): the list of replays fills the screen and waits for a choice.
-  function fileList() {
-    var box = document.getElementById('files');
-    if (!box || BID) return;
-    var rows = fileRows();
-    box.hidden = false;
-    var body = document.getElementById('files-rows');
-    body.replaceChildren();
-    rows.forEach(function (f) {
-      var b = document.createElement('button'); b.type = 'button'; b.className = 'frow' + (f.kept ? ' kept' : '');
-      b.setAttribute('data-id', f.battle || f.id); b.textContent = fileText(f, FILES.client);
-      b.title = (f.file || '') + (f.battle ? '\nRecorded by Bullba Hits too: opens with its record.' : '');
-      b.onclick = function () { choose(f.battle || f.id); };
-      body.appendChild(b);
-    });
-    BATTLES.forEach(function (bt) {
-      var b = document.createElement('button'); b.type = 'button'; b.className = 'frow hits'; b.setAttribute('data-id', bt.id);
-      b.textContent = [battleWhen(+bt.startedAt), bt.map, bt.vehicle && bt.vehicle.name].filter(Boolean).join(' · ') + ' (Bullba Hits)';
-      b.onclick = function () { choose(bt.id); };
-      body.appendChild(b);
-    });
-    $('msg').style.display = 'none';
-    document.getElementById('files-note').textContent = rows.length || BATTLES.length ? 'Choose a replay: newest first; ★ kept forever by the replay limit.'
+  // Opened with no battle (the viewer's own button): round 14 (the user, 19.11) - one list only, the selector at the top;
+  // the separate panel of replays is gone (its rows, buttons with overflow:hidden in a flex column of 1200+ entries,
+  // shrank to empty strips). The message in the middle points at the selector.
+  function noBattle() {
+    if (BID) return;
+    var n = fileRows().length + BATTLES.length;
+    $('msg').textContent = n ? 'Choose a replay in the battle list at the top: newest first, ★ kept forever by the replay limit.'
       : (FILES ? 'No replays in the game\'s replays folder yet.' : 'Reading the replays folder...');
   }
   function choose(id) {
@@ -3060,8 +3164,15 @@
   // Every control of the settings panel, the destruction panel's outline switch and the speed: one localStorage object
   // of this page through the pages' one store (web/settings-store.js, as Viewer.html keeps its own); restored once the
   // scene is built (each control's own handler runs), the defaults are this page's HTML.
-  var settingStore = BullbaSettings.bind({ key: 'bullba-playback-settings', version: 1,
-    controls: [].slice.call(document.querySelectorAll('#settings input[id], #settings select[id], #sw-flash, #speed-value')) });
+  // version 2 (round 14): the sky's default turned to off and its switch moved to the top line - a box of version 1 holds
+  // the sky as the old default left it (every control is written), so its sky value is dropped and the new default holds
+  var settingStore = BullbaSettings.bind({ key: 'bullba-playback-settings', version: 2,
+    read: function (box) {
+      var v = box && box.values && typeof box.values === 'object' ? box.values : null;
+      if (v && !(box.v >= 2)) { v = Object.assign({}, v); delete v['sw-sky']; }
+      return v;
+    },
+    controls: [].slice.call(document.querySelectorAll('#settings input[id], #settings select[id], #sw-sky, #sw-flash, #speed-value')).filter(function (el) { return el.id !== 'sw-inputlog'; }) });
 
   // ------------------------------------------------------------------ start
   var mapData, battleInfo = null;
@@ -3077,9 +3188,8 @@
     battleSelect(null);
     loadData('data/index.js', 'index').then(battleSelect, function () {});
     loadFiles().then(function (f) { FILES = f; battleSelect(); });
-    if (!BID) { window.__list = true; fileList(); return new Promise(function () {}); }
+    if (!BID) { window.__list = true; noBattle(); return new Promise(function () {}); }
     if (!/^[-a-zA-Z0-9_]{1,100}$/.test(BID)) throw new Error('No battle named.');
-    document.getElementById('files').hidden = true;
     MAP = BID;
     return battleFile(BID);
   }).then(function (info) {
@@ -3135,9 +3245,10 @@
     $('slider').max = tEnd; t = tBattle;
     buildDestrList();
     setFoliage(null);
+    setVehicleColor();  // round 14: before the tint and the halo (the halo takes the model's colour)
     setTeamTint(null);  // round 13: the slider's value (its default or the remembered one)
     setHalo(true, null);
-    setHaze(true); setSky(true);
+    setHaze(true); setSky(false);
     var a = mapData.arena; cam.tx = (a[0] + a[2]) / 2; cam.tz = (a[1] + a[3]) / 2;
     cam.ty = heightAt(cam.tx, cam.tz) + cam.tyOff;
     resize(); renderList(true); setFollow(null);
@@ -3204,7 +3315,28 @@
     return { materials: R ? R.mats.length : 0, layers: R ? R.n : 0, models: mapData ? mapData.visual.filter(function (r) { return r.rock; }).length : 0,
       texture: !!(rockTex && rockTex.isCompressedArrayTexture), textureLayers: rockTex ? rockTex.image.depth : 0, drawn: info.rockModels || 0, s3tc: s3tc };
   }
-  window.MapBench = { rocks: rockInfo, circles: drawnCircles, mapCircles: function () { return (mapData && mapData.mode && mapData.mode.circles) || []; }, gpu: async function (n, every) { var g = await gpuTimes(n || 40, function () { if (every) shadowsRedrawAll(); step(t); }); return +quant(g, 0.5).toFixed(3); }, shadowInfo: shadowInfo, vehicleShadowInfo: vehicleShadowInfo, render: function () { step(t); renderer.render(scene, camera); }, run: runBench, groundBench: runGroundBench, shadowBench: runShadowBench, shadowQuality: setShadowQuality, grain: setGrain, ground: setGround, relief: setRelief, light: setLight, lightInfo: function () { return lightInfo; }, g5Info: function () { return g5Info; },
+  // round 14: what the page's own fog (scene.fog through the patched chunks: the haze, the rim fade beyond the border)
+  // makes of a black card beyond the playable border, looked at from inside it above, along and below the horizon -
+  // display values 0..1 (fog is mixed after the colour-space step); nothing else drawn
+  function fogProbe() {
+    var ar = mapData.arena, bx = mapData.box || ar, margin = Math.max(5, Math.min(bx[2] - ar[2], ar[0] - bx[0], bx[3] - ar[3], ar[1] - bx[1]));
+    var cx = ar[2] - 30, cz = (ar[1] + ar[3]) / 2, cy = heightAt(cx, cz) + 2;
+    var rt = new T.WebGLRenderTarget(4, 4), sc = new T.Scene(), cm = new T.PerspectiveCamera(5, 1, 0.5, 4000);
+    sc.fog = scene.fog;
+    var card = new T.Mesh(new T.PlaneGeometry(200, 200), new T.MeshBasicMaterial({ color: 0x000000, side: T.DoubleSide })); sc.add(card);
+    var rt0 = renderer.getRenderTarget(), oc = renderer.getClearColor(new T.Color()), oa = renderer.getClearAlpha(), out = {}, px = new Uint8Array(64);
+    [['up', 0.4], ['horizon', 0.01], ['below', -0.3]].forEach(function (p) {
+      var e = p[1], h = Math.sqrt(1 - e * e), L = (30 + margin + 40) / h, dir = new T.Vector3(h, e, 0);
+      cm.position.set(cx, cy, -cz); var at = cm.position.clone().addScaledVector(dir, L);
+      card.position.copy(at); card.lookAt(cm.position); cm.lookAt(at); cm.updateMatrixWorld(); card.updateMatrixWorld();
+      renderer.setRenderTarget(rt); renderer.setClearColor(0xff00ff, 1); renderer.clear(); renderer.render(sc, cm);
+      renderer.readRenderTargetPixels(rt, 0, 0, 4, 4, px);
+      out[p[0]] = [px[40] / 255, px[41] / 255, px[42] / 255];
+    });
+    renderer.setRenderTarget(rt0); renderer.setClearColor(oc, oa); rt.dispose(); card.geometry.dispose(); card.material.dispose();
+    return out;
+  }
+  window.MapBench = { shotsPanel: function () { return shotsPanel(); }, camera: function () { return { tx: cam.tx, ty: cam.ty, tz: cam.tz, yaw: cam.yaw, pitch: cam.pitch, dist: cam.dist }; }, rocks: rockInfo, fogProbe: fogProbe, circles: drawnCircles, mapCircles: function () { return (mapData && mapData.mode && mapData.mode.circles) || []; }, gpu: async function (n, every) { var g = await gpuTimes(n || 40, function () { if (every) shadowsRedrawAll(); step(t); }); return +quant(g, 0.5).toFixed(3); }, shadowInfo: shadowInfo, vehicleShadowInfo: vehicleShadowInfo, render: function () { step(t); renderer.render(scene, camera); }, run: runBench, groundBench: runGroundBench, shadowBench: runShadowBench, shadowQuality: setShadowQuality, grain: setGrain, ground: setGround, relief: setRelief, light: setLight, lightInfo: function () { return lightInfo; }, g5Info: function () { return g5Info; },
     view5: function (name) { views5()[name](); }, cost: groundCost, sheet: plantSheet, playback: runPlayback, whereVisual: whereVisual, ensureCollision: ensureCollision,
     split: function () { splitPlants(true); },
     // round 6: the hits switch and the counts check (data events against the effects drawn over the whole battle)
@@ -3219,7 +3351,7 @@
       return c.toDataURL('image/png');
     }, state: function () { return { t: t, playing: playing, speed: speed }; },
     // round 13: the vehicles' meshes drawn with the Hits look (flat faces with the seam attribute) and those whose model had a group table
-    vehicleLook: function () { var n = 0, flat = 0, grouped = 0; layers.vehicles.traverse(function (o) { if (!o.isMesh || !o.material.userData.u) return; n++; var g = o.geometry; if (g.attributes.aSeam && !g.index) flat++; if (g.userData.groupTable) grouped++; }); return { meshes: n, flat: flat, grouped: grouped }; },
+    vehicleLook: function () { var n = 0, flat = 0, grouped = 0; layers.vehicles.traverse(function (o) { if (!o.isMesh || !o.material.userData.u) return; n++; var g = o.geometry; if (g.attributes.aSeam && !g.index) flat++; if (g.userData.groupTable) grouped++; }); return { meshes: n, flat: flat, grouped: grouped, base: hitsBaseU.value.toArray() }; },
     seek: function (x) { t = x; }, follow: function (i) { setFollow(i == null ? null : vehicles[i]); },
     followOwn: function () { setFollow(vehicles.filter(function (r) { return r.v.own; })[0] || vehicles[0]); },
     battleStart: function () { return tBattle; },

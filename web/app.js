@@ -1,7 +1,8 @@
 (function(){
   'use strict';
   var $=function(id){return document.getElementById(id);},viewer=null,current=null,selected=null,filter='all',generation=0,battleGeneration=0;
-  var effects={0:'Penetration without damage',1:'Intermediate ricochet',2:'Ricochet',3:'No penetration',4:'Penetration',5:'Critical hit',6:'Penetration with module damage'};
+  // The vehicle tile and the hit row are shared with the 3D replay viewer (web/hit-rows.js, BACKLOG 109): its names here.
+  var Rows=window.BullbaRows,effects=Rows.effects;
   var shellNames={ARMOR_PIERCING:'AP',ARMOR_PIERCING_CR:'APCR',HOLLOW_CHARGE:'HEAT',HIGH_EXPLOSIVE:'HE'},candidates=[],activeHit=null,shotContext=null,manualPen='',manualAlpha='',lastDistance=null,analysisKey=null,recordsVersion='';
   // Fingerprint of the RECORDED hit the scene was built from - the hit, or the hit a swapped view or a picked
   // shooter was made from - so an index bump that changed nothing does not rebuild it. Set by the scene's one
@@ -22,48 +23,9 @@
   // An element shown or hidden, written only when that changes (a write of the same value is still a mutation).
   function showEl(el,on){if(el&&el.hidden===!!on)el.hidden=!on;}
   function node(tag,text,cls){var e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e;}
-  // Vehicle tile: tier, name, nation flag, class and role. Any field may be missing in
-  // records written before the recorder saved them; missing slots stay empty and keep their size.
-  var tierRomans=['','I','II','III','IV','V','VI','VII','VIII','IX','X','XI'];
-  var classNames={lightTank:'Light tank',mediumTank:'Medium tank',heavyTank:'Heavy tank','AT-SPG':'Tank destroyer',SPG:'SPG'};
-  // WoT class marks: one rhombus LT, two MT, three HT, inverted triangle TD, trapezoid SPG.
-  // Role families share one icon each (the client's own roleExp icons); the class mark tells the families apart.
-  var roleFamilies={role_SPG:'spg',role_HT_assault:'assault',role_HT_break:'break',role_HT_universal:'universal',role_HT_support:'support',
-    role_MT_assault:'assault',role_MT_universal:'universal',role_MT_sniper:'sniper',role_MT_support:'support',
-    role_ATSPG_assault:'assault',role_ATSPG_universal:'universal',role_ATSPG_sniper:'sniper',role_ATSPG_support:'support',
-    role_LT_universal:'universal',role_LT_scout:'scout',role_LT_support:'support'};
-  var roleNames={spg:'SPG',assault:'Assault',break:'Breakthrough',universal:'Universal',support:'Support',sniper:'Sniper',scout:'Scout'};
-  var nationNames={ussr:'USSR',germany:'Germany',usa:'USA',china:'China',france:'France',uk:'UK',
-    japan:'Japan',czech:'Czechoslovakia',sweden:'Sweden',poland:'Poland',italy:'Italy'};
-  function vehicleNation(info){return info.nation||String(info.type||'').split(':')[0];}
-  // The tile's words in the page's tooltip markup: the name as the heading, then tier, nation, class and role in
-  // one line. A list row that carries its own tooltip takes these words into it and asks for a bare tile
-  // (bare = true), so the tile, which covers most of the row, does not hide the row's words under its own.
-  function vehicleWords(info){
-    info=info||{};
-    var cls=classNames[info['class']]?info['class']:null,family=roleFamilies[info.role]||null;
-    var line=[tierRomans[info.level]?'Tier '+tierRomans[info.level]:'',nationNames[vehicleNation(info)]||'',classNames[cls]||'',
-      family&&family!=='spg'?roleNames[family]+' role':''].filter(Boolean).join(' \u00b7 ');
-    return (info.name||'Unknown vehicle')+(line?'\n'+line:'');
-  }
-  function vehicleTile(info,bare){
-    info=info||{};
-    var tile=node('span',undefined,'vehicle-tile'),nation=vehicleNation(info);
-    if(nationNames[nation])tile.setAttribute('data-nation',nation);
-    var tier=tierRomans[info.level]||'',cls=classNames[info['class']]?info['class']:null,family=roleFamilies[info.role]||null;
-    tile.appendChild(node('span',info.name||'Unknown vehicle','vt-name'));
-    // Second line: tier, class icon (the client's own outline icon), role icon.
-    var meta=node('span',undefined,'vt-meta');
-    meta.appendChild(node('span',tier,'vt-tier'));
-    var mark=node('span',undefined,'vt-class');
-    if(cls){mark.setAttribute('data-class',cls);mark.title=classNames[cls];}
-    meta.appendChild(mark);
-    var role=node('span',undefined,'vt-role');
-    if(family){role.setAttribute('data-role',family);role.title='Role: '+roleNames[family]+(cls&&family!=='spg'?' ('+classNames[cls].toLowerCase()+')':'');}
-    meta.appendChild(role);tile.appendChild(meta);
-    if(!bare)tile.title=vehicleWords(info);
-    return tile;
-  }
+  // Vehicle tile (web/hit-rows.js): tier, name, nation flag, class and role.
+  var tierRomans=Rows.tierRomans,classNames=Rows.classNames,roleFamilies=Rows.roleFamilies,roleNames=Rows.roleNames,nationNames=Rows.nationNames;
+  var vehicleNation=Rows.vehicleNation,vehicleWords=Rows.vehicleWords,vehicleTile=Rows.vehicleTile;
   // ============================ Vehicles mode =============================
   // The side panel works in two modes. “Battles” is the recorded history, unchanged to the pixel.
   // “Vehicles” is the client's own catalogue: filter pills at the top, every vehicle of the client below,
@@ -684,6 +646,7 @@
   // browses vehicles: a battle on screen stays (followSync).
   function applyFragment(initial){
     var params=fragment(),id=String(params.vehicle||''),follow=params.follow?String(params.follow):'';
+    if(params.battle){openShot(params);return;}
     if(!id||!VEHICLE_ID.test(id)){if(!initial)lastFragment=null;return;}
     var key=follow?id+'#'+follow:id;
     if(!initial&&key===lastFragment)return;
@@ -705,6 +668,44 @@
       if(row&&row.outdated)askExport(row);
       open();
     });
+  }
+  // A shot sent from the 3D replay viewer's shots panel (19.11, BACKLOG 109): '#[host=game&]battle=<id>&at=<gameTime>&
+  // attacker=<vehicle id>&target=<vehicle id>&focus=<vehicle id>' - from the mod ('openHits' with these, an open window
+  // told by its fragment, so 'hashchange' brings it here), or the viewer itself outside the game. The battle is opened
+  // read from the focus vehicle's seat, and its hit with that attacker and target nearest to 'at' is selected; none
+  // within SHOT_AT - the battle stays on that vehicle with no hit selected, never another hit.
+  // SHOT_AT, a GUESS (the coordinator's choice, 19.11.2026): a battle made from its replay stamps gameTime = the replay's
+  // server start + its clock, the viewer's 'at' the same - equal; a battle recorded live stamps the client's server clock
+  // as the hit arrived, its distance from the replay's clock not measured - 0.5 s is taken as the bound.
+  var SHOT_AT=0.5,lastShot=null,SHOT_WAIT=15000;
+  function shotHit(b,at,attacker,target){
+    var best=null,gap=Infinity;
+    (b.hits||[]).forEach(function(h){if(h.attackerId!==attacker||h.targetId!==target||!Number.isFinite(h.gameTime))return;var d=Math.abs(h.gameTime-at);if(d<=SHOT_AT&&d<gap){gap=d;best=h;}});
+    return best;
+  }
+  function openShot(params){
+    var id=String(params.battle||''),at=Number(params.at),attacker=Number(params.attacker),target=Number(params.target),focus=Number(params.focus);
+    if(!VEHICLE_ID.test(id))return;
+    var key=[id,params.at,params.attacker,params.target,params.focus].join('|');if(key===lastShot)return;lastShot=key;
+    setMode('battles');
+    var until=Date.now()+SHOT_WAIT;
+    // the battle list may still be on its way (the page's first read): its row is waited for
+    (function look(){
+      if(lastShot!==key)return;
+      if(![].some.call($('battles').options,function(o){return o.value===id;})){if(Date.now()<until)setTimeout(look,250);else message('This battle is not in the Bullba Hits list.');return;}
+      var picker=$('battles');picker.value=id;syncBattlePick();
+      (current&&current.id===id?Promise.resolve():loadBattle(id,false,'pick')).then(function(){
+        if(lastShot!==key||!current||current.id!==id)return;
+        var h=Number.isFinite(at)?shotHit(current,at,attacker,target):null;
+        var seat=Number.isFinite(focus)?focus:h?h.attackerId:null;
+        if(seat!=null&&!rosterRow(seat)&&!(current.hits||[]).some(function(x){return x.attackerId===seat||x.targetId===seat;}))seat=null;
+        if(!h){if(seat!=null)chooseFocus(seat);return;}
+        var wanted=seat==null||seat===playerId()?null:seat;
+        if(wanted!==focusVehicle){focusVehicle=wanted;focusScene=null;focusSceneKey=null;focusNote='';}
+        selected=h.id;renderHits();
+        selectHit(h.id).catch(function(){});
+      }).catch(function(e){warnings([e.message]);});
+    })();
   }
   function restoreSidebar(){
     buildFilters();buildInfo();
@@ -793,8 +794,7 @@
   }
   function message(text,spinner){var e=$('scene-message');e.textContent=text;e.hidden=!text;e.classList.toggle('busy',!!(text&&spinner));}
   function warnings(lines){$('warnings').textContent=lines.map(function(line){return line==='Additional vehicle parts are not yet rendered'?'Extra parts of this vehicle are not shown and not included in the estimate.':line;}).join(' · ');$('warnings').hidden=!lines.length;}
-  function result(hit){if(hit.damage>0)return 'Damage '+hit.damage+' HP';var p=(hit.points||[]).filter(function(p){return p.effect!==undefined;});return p.length?(effects[p[p.length-1].effect]||'Result '+p[p.length-1].effect):'Result not decoded';}
-  function resultIcon(hit){if(hit.damage>0)return '▰ −'+hit.damage;var p=(hit.points||[]).filter(function(p){return p.effect!==undefined;}),effect=p.length?p[p.length-1].effect:null;return effect===2||effect===1?'↪':effect===3?'▰ ×':effect===4?'▰ ✓':effect===5||effect===6||effect===0?'▰ 0':'—';}
+  var result=Rows.result,resultIcon=Rows.resultIcon;
   function clock(seconds){if(!Number.isFinite(seconds))return '—';var d=new Date(seconds*1000);return d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'});}
   function detail(label,value,small){var e=node('div');e.appendChild(node('div',label,'detail-label'));e.appendChild(node('div',String(value),'detail-value'));if(small)e.appendChild(node('div',small,'detail-small'));$('details').appendChild(e);}
   // Which of the candidates the page assumed when the record does not say (22.09); -1 when it does say, or
@@ -8189,16 +8189,8 @@
     var name=eventReason(e).glyph,box=node('span',undefined,'event-glyph');box.setAttribute('data-glyph',name);box.setAttribute('aria-hidden','true');
     box.innerHTML='<svg viewBox="0 0 20 20" focusable="false"><path d="'+EVENT_GLYPHS[name]+'"/></svg>';return box;
   }
-  // The icon column of a list row (25.09): one fixed width on every hit and event row, so the flags of the vehicle
-  // tiles stand in one line. Up to four icons ({src,title} - web/crits.js decides every file), centred: one alone,
-  // two side by side, three or four 2x2. An icon's words are its own: a click shows them, not the row (data-tip-own).
-  // An icon that fails to load takes itself away; the column stays.
-  function iconColumn(list){
-    var box=node('span',undefined,'hit-crits');box.setAttribute('data-n',String(list.length));
-    list.forEach(function(c){var i=node('img',undefined,'crit-icon');i.alt='';i.title=c.title;i.setAttribute('data-tip-own','');
-      i.onerror=function(){i.remove();box.setAttribute('data-n',String(box.children.length));};i.src=c.src;box.appendChild(i);});
-    return box;
-  }
+  // The icon column of a list row (25.09; web/hit-rows.js): one fixed width on every hit and event row.
+  var iconColumn=Rows.iconColumn;
   // The other party of an event, as a tile knows a vehicle: his roster row with what the catalogue or this battle's
   // hits know of his type, else the block of a hit he took part in. Null for none (a fall, the vehicle's own overload).
   // t: the battle time (gameTime) of the moment - a respawn mode's player comes back in another vehicle under the same id
@@ -8361,26 +8353,16 @@
       container.appendChild(node('p',!current?'No records yet. Start the game with the recorder and play a battle. The viewer can stay open.':any?'No hits for the chosen filter.':focusNote||'No hits for '+focusName()+' in this battle','empty'));
       return;}
     var next=0,flush=function(before){while(next<events.length&&!(events[next].gameTime>=before)){container.appendChild(eventRow(events[next],eventDirection(events[next])));next++;}};
-    hits.forEach(function(h){if(Number.isFinite(h.gameTime))flush(h.gameTime);var hasDamage=h.damage>0,view=viewDirection(h),b=node('button',undefined,'hit');b.setAttribute('aria-pressed',String(selected===h.id&&!poseDetached));b.setAttribute('data-hit',String(h.id));b.setAttribute('data-direction',view);b.setAttribute('data-result',hasDamage?'damage':'none');
+    hits.forEach(function(h){if(Number.isFinite(h.gameTime))flush(h.gameTime);var view=viewDirection(h);
       // One tooltip for the whole row (the tile inside is bare): who, then the result and the critical damage.
       // result() speaks for a details row labelled Result: after the key its own leading "Result" goes.
       var critWords=ArmorCrits.describe(h,true),said=result(h).replace(/^Result (\d)/,'Effect $1').replace(/^Result not/,'Not');
       // A hit of the death camera (11.11) has no recorded blocks of its vehicles: the roster names them.
       var other=view==='incoming'?h.attacker||vehicleInfo(h.attackerId,h.gameTime):h.target||vehicleInfo(h.targetId,h.gameTime),only=replayOnlyWords(h);
+      // The row itself (web/hit-rows.js, shared with the replay viewer's shots panel): the tile, the crit icons, the outcome.
+      var mark=null;if(only){mark=sceneMark('replay');mark.classList.add('replay-only');mark.title=only.mark;mark.setAttribute('data-tip-own','');}
+      var b=Rows.hitRow(h,view,other,{pressed:selected===h.id&&!poseDetached,crits:ArmorCrits.badges(h,view),time:hitClock(h),mark:mark});b.setAttribute('data-hit',String(h.id));
       b.title=(view==='incoming'?'Incoming from '+((other||{}).name||'?'):'Outgoing at '+((other||{}).name||'?'))+'\n• Result: '+said+(critWords?'\n• Critical damage: '+critWords:'')+(only?'\n• Scene: '+only.row:'');
-      b.appendChild(vehicleTile(other,true));
-      // Critical damage (22.09): the client's own icons of the damaged modules and injured crew, up to four, every
-      // word in the icon's title. The column is on every row, empty when nothing is known about the crits (25.09).
-      b.appendChild(iconColumn(ArmorCrits.badges(h,view).slice(0,4)));
-      // Outcome column: damage in the direction colour, or the muted result icon; the full result text stays in the button title.
-      // Outcome widget: direction arrow in the top-left corner, the figure (damage, or the no-damage result icon)
-      // in the top-right, the time underneath - the arrow never glues to the figure.
-      var outcome=node('span',undefined,'hit-outcome'),line=node('span',undefined,'outcome-line');
-      line.appendChild(node('span',view==='incoming'?'\u2199':'\u2197','outcome-dir'));
-      line.appendChild(hasDamage?node('span',String(h.damage),'hit-damage'):node('span',resultIcon(h).replace(/▰ ?/,''),'hit-result'));
-      var time=node('span',hitClock(h),'hit-time');
-      if(only){var mark=sceneMark('replay');mark.classList.add('replay-only');mark.title=only.mark;mark.setAttribute('data-tip-own','');time.insertBefore(mark,time.firstChild);}
-      outcome.appendChild(line);outcome.appendChild(time);b.appendChild(outcome);
       b.onclick=function(){selectHit(h.id).catch(function(){});};container.appendChild(b);});
     flush(Infinity);
   }
