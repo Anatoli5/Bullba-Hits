@@ -1206,7 +1206,7 @@
   var treeRecs = [], NEAR0 = 4.0, NEAR1 = 9.0, plantMats = [], crownMode = 'lod';
   var fadeU = { uNear0: { value: NEAR0 }, uNear1: { value: NEAR1 }, uSee: { value: 0 } };
   function hullGeometry(k) {
-    var R = k.ys.length, S = k.r[0].length, pos = [], col = [], idx = [];
+    var R = k.ys.length, S = k.r[0].length, pos = [], col = [], idx = [], lf = [];
     var leaf = (k.tex.leaf && k.tex.leaf.avg) || [0.3, 0.38, 0.2], bark = (k.tex.bark && k.tex.bark.avg) || [0.33, 0.28, 0.23];
     var rmax = 0; k.r.forEach(function (row) { row.forEach(function (v) { rmax = Math.max(rmax, v); }); });
     for (var i = 0; i < R; i++) {
@@ -1215,31 +1215,44 @@
       for (var s = 0; s < S; s++) {
         var ang = (s + 0.5) / S * Math.PI * 2, r = Math.max(0.05, k.r[i][s]);
         pos.push(Math.cos(ang) * r, k.ys[i], Math.sin(ang) * r);
-        col.push(c[0], c[1], c[2]);
+        col.push(c[0], c[1], c[2]); lf.push(c === bark ? 0 : 1);
       }
     }
     for (i = 0; i < R - 1; i++) for (s = 0; s < S; s++) {
       var a = i * S + s, b = i * S + (s + 1) % S, cc = a + S, d = b + S;
       idx.push(a, cc, b, b, cc, d);
     }
-    var top = pos.length / 3; pos.push(0, k.hi[1], 0); col.push(leaf[0], leaf[1], leaf[2]);
+    var top = pos.length / 3; pos.push(0, k.hi[1], 0); col.push(leaf[0], leaf[1], leaf[2]); lf.push(1);
     for (s = 0; s < S; s++) idx.push((R - 1) * S + s, top, (R - 1) * S + (s + 1) % S);
     var g = new T.BufferGeometry();
     g.setAttribute('position', new T.Float32BufferAttribute(pos, 3));
     g.setAttribute('color', new T.Float32BufferAttribute(col, 3));
+    g.setAttribute('aLeaf', new T.Float32BufferAttribute(lf, 1));
     g.setIndex(idx); g.computeVertexNormals();
     return g;
   }
-  function withFade(material, depth) {
+  // round 13: the foliage slider - uSee 0 solid .. 1 gone: that share of a crown's or bush's pixels is left out on a fixed
+  // 4x4 ordered pattern (no sorting, the cost of solid; 0.5 is the former see-through checkbox's look). `see`: 0 never
+  // (bark: trunks stay), 1 always (leaves; the far pictures, whose trunk is in the picture), 2 by the vertex's aLeaf (the
+  // simple crowns: leaf rings 1, trunk rings 0). The shadow pass is not touched: crowns still cast their shadows.
+  function setFoliage(k) {
+    if (k != null) $('rng-foliage').value = k;
+    fadeU.uSee.value = +$('rng-foliage').value; $('foliage-v').textContent = fadeU.uSee.value.toFixed(2);
+  }
+  function withFade(material, depth, see) {
     material.onBeforeCompile = function (sh) {
       Object.assign(sh.uniforms, fadeU);
-      sh.vertexShader = 'varying float vCamDist;\n' + sh.vertexShader.replace('#include <project_vertex>', '#include <project_vertex>\n vCamDist = -mvPosition.z;');
-      sh.fragmentShader = 'uniform float uNear0;\nuniform float uNear1;\nuniform float uSee;\nvarying float vCamDist;\n' +
+      var useAttr = !depth && see === 2, useSee = !depth && (see === 1 || see === 2);
+      sh.vertexShader = 'varying float vCamDist;\n' + (useAttr ? 'attribute float aLeaf;\nvarying float vLeaf;\n' : '') +
+        sh.vertexShader.replace('#include <project_vertex>', '#include <project_vertex>\n vCamDist = -mvPosition.z;' + (useAttr ? ' vLeaf = aLeaf;' : ''));
+      sh.fragmentShader = 'uniform float uNear0;\nuniform float uNear1;\nuniform float uSee;\nvarying float vCamDist;\n' + (useAttr ? 'varying float vLeaf;\n' : '') +
+        (useSee ? 'const float SEE_BAYER[16] = float[16](0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);\n' : '') +
         sh.fragmentShader.replace('void main() {', 'void main() {\n float fadeK = clamp((vCamDist - uNear0) / (uNear1 - uNear0), 0.0, 1.0);\n' +
           ' float dith = fract(sin(dot(floor(gl_FragCoord.xy), vec2(12.9898, 78.233))) * 43758.5453);\n' +
-          ' if (fadeK < dith) discard;\n' + (depth ? '' : ' if (uSee > 0.5 && fract(dot(floor(gl_FragCoord.xy), vec2(0.5, 0.5))) > 0.25) discard;\n'));
+          ' if (fadeK < dith) discard;\n' + (useSee ? ' { ivec2 sq = ivec2(mod(floor(gl_FragCoord.xy), 4.0)); if ((SEE_BAYER[sq.x + sq.y * 4] + 0.5) / 16.0 < uSee' +
+          (useAttr ? ' * step(0.5, vLeaf)' : '') + ') discard; }\n' : ''));
     };
-    material.customProgramCacheKey = function () { return (depth ? 'fade-depth-' : 'fade-') + material.uuid; };
+    material.customProgramCacheKey = function () { return (depth ? 'fade-depth-' : 'fade-' + (see | 0) + '-') + material.uuid; };
     return material;
   }
   var plantTexLoads = [];  // the impostors are rendered once every plant texture has decoded
@@ -1278,7 +1291,7 @@
       var t = k.tex[key] || k.tex.leaf, leaf = key === 'leaf';
       var map = t ? plantTexture(t, !leaf) : null;
       var mat = withFade(new T.MeshLambertMaterial({ map: map, color: map ? 0xffffff : 0x56663a, alphaTest: leaf ? 0.4 : 0,
-        side: T.DoubleSide }));
+        side: T.DoubleSide }), false, leaf ? 1 : 0);
       var dm = withFade(new T.MeshDepthMaterial({ depthPacking: T.RGBADepthPacking, map: leaf ? map : null, alphaTest: leaf ? 0.4 : 0 }), true);
       plantMats.push(mat);
       return { geo: g, mat: mat, depth: dm };
@@ -1310,8 +1323,8 @@
     sc.add(new T.HemisphereLight(0xffffff, 0x9a9488, 2.2));
     var dl = new T.DirectionalLight(0xffffff, 1.3); dl.position.set(0.3, 1, 0.6); sc.add(dl);
     var cam = new T.OrthographicCamera(-1, 1, 1, -1, -1000, 1000);
-    var oldN0 = fadeU.uNear0.value, oldN1 = fadeU.uNear1.value, oldClear = renderer.getClearAlpha(), oldColor = renderer.getClearColor(new T.Color());
-    fadeU.uNear0.value = -1e6; fadeU.uNear1.value = -1e6 + 1;
+    var oldSee = fadeU.uSee.value, oldN0 = fadeU.uNear0.value, oldN1 = fadeU.uNear1.value, oldClear = renderer.getClearAlpha(), oldColor = renderer.getClearColor(new T.Color());
+    fadeU.uNear0.value = -1e6; fadeU.uNear1.value = -1e6 + 1; fadeU.uSee.value = 0;  // the pictures of whole plants
     renderer.setRenderTarget(rt); renderer.setClearColor(0x000000, 0); renderer.clear();
     renderer.setScissorTest(true);
     kinds.forEach(function (k, i) {
@@ -1330,9 +1343,9 @@
     });
     renderer.setScissorTest(false); renderer.setRenderTarget(null); renderer.setClearColor(oldColor, oldClear);
     renderer.setViewport(0, 0, renderer.domElement.width / renderer.getPixelRatio(), renderer.domElement.height / renderer.getPixelRatio());
-    fadeU.uNear0.value = oldN0; fadeU.uNear1.value = oldN1;
+    fadeU.uNear0.value = oldN0; fadeU.uNear1.value = oldN1; fadeU.uSee.value = oldSee;
     impostorTex = rt.texture; impostorRT = rt;
-    impostorMat = withFade(new T.MeshLambertMaterial({ map: impostorTex, alphaTest: 0.45, side: T.DoubleSide }));
+    impostorMat = withFade(new T.MeshLambertMaterial({ map: impostorTex, alphaTest: 0.45, side: T.DoubleSide }), false, 1);
     // the cards' normals point up (lit like a crown from above) on both faces: no flip on the back face
     var fadeCompile = impostorMat.onBeforeCompile;
     impostorMat.onBeforeCompile = function (sh) { fadeCompile(sh); sh.fragmentShader = sh.fragmentShader.replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>' + String.fromCharCode(10) + ' normal = normalize(vNormal);'); };
@@ -1416,7 +1429,7 @@
     var parts;
     if (crownMode === 'hull') {
       if (!kp.hull) kp.hull = hullGeometry(kp.k);
-      hullMat = hullMat || withFade(new T.MeshLambertMaterial({ vertexColors: true, side: T.DoubleSide }));
+      hullMat = hullMat || withFade(new T.MeshLambertMaterial({ vertexColors: true, side: T.DoubleSide }), false, 2);
       parts = [{ geo: kp.hull, mat: hullMat, depth: null }];
     } else parts = kp.lod;
     parts.forEach(function (p) { addPlantMesh(r, p.geo, p.mat, p.depth, false); });
@@ -1713,21 +1726,128 @@
     return m;
   }
 
+  // ------------------------------------------------------------------ round 13: vehicles drawn as Bullba Hits draws them
+  // What makes Hits' parts view read well (outputs/render-compare-2026-11-19.md §3), without its heat map and without its
+  // camera-side light (the user, 19.11: a vehicle sits in the map's light like everything else - the scene's sun, sky
+  // and shadows, as before round 13): flat faces with Hits' own visual normals (BullbaScreenArmor.visualNormals:
+  // smoothed only inside one group and below 35 degrees, so plates stay plates), one grey-blue tone per part (viewer.js
+  // baseColors / partColor: chassis, hull, turret, gun), and Hits' 1 px dark seams (.05,.07,.09 at 60 %) where one
+  // collision group meets another or a face has no neighbour - drawn in the same pass from a per-corner edge attribute,
+  // no extra draw. Unlike Hits the outer layer (tracks, wheels, spaced screens: viewer.js externalLayer) is opaque, a
+  // greyer, darker shade of its part.
+  // The team: the markers and the rows tell it, as in the game; the "team tint" slider mixes the model toward its team
+  // colour (0 the neutral Hits look, the default; 1 the team colour of before), and the halo takes the model's colour
+  // (hitsHaloColor), so it is neutral when the model is. Destroyed: grey and dark, the part tones still apart.
+  function srgbToLinear(c) { return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); }
+  // viewer.js baseColors, the same sRGB figures made linear the same way (viewer.js linear); not exported by viewer.js
+  var HITS_PART = [[.38, .46, .54], [.65, .73, .8], [.75, .83, .87], [.55, .65, .72]].map(function (c) { return c.map(srgbToLinear); });
+  var hitsTintU = { value: 0 }, HITS_SEAM = [0.05, 0.07, 0.09, 0.6];
+  // the halo's colour of a vehicle: its hull tone mixed toward its team colour as the model is
+  function hitsHaloColor(r, out) {
+    var c = r.mat.userData.u.uTeam.value, h = HITS_PART[1], k = hitsTintU.value;
+    return out.set(h[0] + (c.r - h[0]) * k, h[1] + (c.g - h[1]) * k, h[2] + (c.b - h[2]) * k);
+  }
+  function setTeamTint(k) {
+    if (k != null) $('rng-tint').value = k;
+    hitsTintU.value = +$('rng-tint').value; $('tint-v').textContent = hitsTintU.value.toFixed(2);
+    if (typeof poseHalo === 'function' && vehicles.length) poseHalo();
+  }
+  function hitsPart(pid) { return HITS_PART[pid > 0 ? pid % 4 : 0]; }  // viewer.js partColor: track pairs (4) and wheels (-1) take the chassis'
+  // P positions (xyz per vertex), I indices, G group per vertex and gt [part id, outer] per group (build.py geo), or
+  // none (an older file, a box): every face then the part `part`
+  function hitsGeometry(P, I, G, gt, part) {
+    var nf = I.length / 3, pos = new Float32Array(nf * 9), nor = new Float32Array(nf * 9), ids = new Float32Array(nf * 3);
+    var col = new Float32Array(nf * 9), seam = new Float32Array(nf * 9), fg = new Int32Array(nf), f, k, j;
+    var ax, ay, az, bx, by, bz, cx, cy, cz, nx, ny, nz, l;
+    for (f = 0; f < nf; f++) {
+      var a = I[f * 3], b = I[f * 3 + 1], c = I[f * 3 + 2], o = f * 9;
+      pos[o] = P[a * 3]; pos[o + 1] = P[a * 3 + 1]; pos[o + 2] = P[a * 3 + 2];
+      pos[o + 3] = P[b * 3]; pos[o + 4] = P[b * 3 + 1]; pos[o + 5] = P[b * 3 + 2];
+      pos[o + 6] = P[c * 3]; pos[o + 7] = P[c * 3 + 1]; pos[o + 8] = P[c * 3 + 2];
+      ax = pos[o + 3] - pos[o]; ay = pos[o + 4] - pos[o + 1]; az = pos[o + 5] - pos[o + 2];
+      bx = pos[o + 6] - pos[o]; by = pos[o + 7] - pos[o + 1]; bz = pos[o + 8] - pos[o + 2];
+      nx = ay * bz - az * by; ny = az * bx - ax * bz; nz = ax * by - ay * bx; l = Math.hypot(nx, ny, nz) || 1;
+      for (k = 0; k < 3; k++) { nor[o + k * 3] = nx / l; nor[o + k * 3 + 1] = ny / l; nor[o + k * 3 + 2] = nz / l; }
+      fg[f] = G ? G[a] : 0; ids[f * 3] = ids[f * 3 + 1] = ids[f * 3 + 2] = fg[f];
+    }
+    var SA = window.BullbaScreenArmor, vis = SA && SA.visualNormals ? SA.visualNormals(pos, nor, ids) : nor;
+    // the seams: corners welded across groups (1 mm); an edge is a seam when its faces are not all of one group, or it
+    // has one face only. Per corner a vec3: component k is the corner's barycentric k plus 0 when the edge opposite
+    // corner k is a seam, plus 10 when it is not - the fragment's distance to the nearest seam edge in pixels is then
+    // min(v / fwidth(v)).
+    var weld = new Map(), vid = new Int32Array(nf * 3), nv = 0, edges = new Map();
+    for (k = 0; k < nf * 3; k++) {
+      var key = Math.round(pos[k * 3] * 1000) + ',' + Math.round(pos[k * 3 + 1] * 1000) + ',' + Math.round(pos[k * 3 + 2] * 1000);
+      var w = weld.get(key); if (w === undefined) { w = nv++; weld.set(key, w); } vid[k] = w;
+    }
+    weld.clear();
+    function ekey(p, q) { return p < q ? p * nv + q : q * nv + p; }
+    for (f = 0; f < nf; f++) for (k = 0; k < 3; k++) {
+      var e = ekey(vid[f * 3 + (k + 1) % 3], vid[f * 3 + (k + 2) % 3]), rec = edges.get(e);
+      if (!rec) edges.set(e, { n: 1, g: fg[f], mixed: false }); else { rec.n++; if (rec.g !== fg[f]) rec.mixed = true; }
+    }
+    for (f = 0; f < nf; f++) {
+      var off = [0, 0, 0];
+      for (k = 0; k < 3; k++) { var r = edges.get(ekey(vid[f * 3 + (k + 1) % 3], vid[f * 3 + (k + 2) % 3])); off[k] = r.n === 1 || r.mixed ? 0 : 10; }
+      var info = gt && gt[fg[f]], pid = info ? info[0] : part, base = hitsPart(pid), cc = base;
+      if (info && info[1]) {  // the outer layer: greyer and darker than its part
+        var lum = 0.2126 * base[0] + 0.7152 * base[1] + 0.0722 * base[2];
+        cc = [0, 1, 2].map(function (q) { return (base[q] + (lum - base[q]) * 0.55) * 0.78; });
+      }
+      var h = Math.sin((fg[f] + 1) * 12.9898) * 43758.5453, jit = 1 + 0.035 * (2 * (h - Math.floor(h)) - 1);  // groups a shade apart
+      for (k = 0; k < 3; k++) for (j = 0; j < 3; j++) {
+        col[f * 9 + k * 3 + j] = cc[j] * jit;
+        seam[f * 9 + k * 3 + j] = (j === k ? 1 : 0) + off[j];
+      }
+    }
+    var g = new T.BufferGeometry();
+    g.setAttribute('position', new T.BufferAttribute(pos, 3));
+    g.setAttribute('normal', new T.BufferAttribute(vis, 3));
+    g.setAttribute('color', new T.BufferAttribute(col, 3));
+    g.setAttribute('aSeam', new T.BufferAttribute(seam, 3));
+    g.userData.groupTable = !!gt;
+    g.computeBoundingSphere();
+    return g;
+  }
+  function vehicleGeometry(m, part) { return hitsGeometry(m.vmin ? deq(m.v, m.vmin, m.vrange) : f32(m.v), m.i32 ? u32(m.i) : u16(m.i), m.gv ? u16(m.gv) : null, m.gt || null, part); }
+  // one material per vehicle (its team and its death are its own uniforms), one program for all
+  function hitsMaterial(team) {
+    var mat = new T.MeshLambertMaterial({ vertexColors: true, side: T.DoubleSide });
+    var u = mat.userData.u = { uTeam: { value: new T.Color(team) }, uTint: hitsTintU, uDead: { value: 0 } };
+    mat.onBeforeCompile = function (sh) {
+      Object.assign(sh.uniforms, u);
+      sh.vertexShader = 'attribute vec3 aSeam;\nvarying vec3 vSeam;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n vSeam = aSeam;');
+      // the colour only (tint, death, seams); the scene's lights and shadows then light it as any other object
+      sh.fragmentShader = 'uniform vec3 uTeam;\nuniform float uTint;\nuniform float uDead;\nvarying vec3 vSeam;\n' + sh.fragmentShader.replace(
+        '#include <color_fragment>', ['#include <color_fragment>',
+          'vec3 hc = diffuseColor.rgb;',
+          'float hl = dot(hc, vec3(0.2126, 0.7152, 0.0722));',
+          'hc = mix(hc, uTeam, uTint);',
+          'hc = mix(hc, vec3(hl * 0.17), uDead);',
+          'vec3 hd = vSeam / max(fwidth(vSeam), vec3(1e-6));',
+          'float hk = 1.0 - smoothstep(0.35, 1.0, min(min(hd.x, hd.y), hd.z));',
+          'diffuseColor.rgb = mix(hc, vec3(' + HITS_SEAM.slice(0, 3).join(', ') + '), ' + HITS_SEAM[3] + ' * hk);'].join('\n '));
+    };
+    mat.customProgramCacheKey = function () { return 'hits-vehicle'; };
+    return mat;
+  }
+
   // ------------------------------------------------------------------ battle, vehicles
   var battle, vehicles = [], shots = [], tEnd = 0, tBattle = 0;
   function buildVehicles(b, models) {
     var own = b.vehicles.filter(function (v) { return v.own; })[0];
     var ownTeam = own ? own.team : 1;
     var geos = {};
-    var box = new T.BoxGeometry(3.4, 2.2, 7); box.translate(0, 1.1, 0);
+    var box0 = new T.BoxGeometry(3.4, 2.2, 7); box0.translate(0, 1.1, 0);
+    var box = hitsGeometry(box0.attributes.position.array, box0.index.array, null, null, 1);
     b.vehicles.forEach(function (v) {
       var md = models[v.type] || { model: false };
       var role = v.own ? 'own' : (v.team === ownTeam ? 'ally' : 'enemy');
-      var mat = new T.MeshLambertMaterial({ color: TEAM_COLOR[role] });
+      var mat = hitsMaterial(TEAM_COLOR[role]);
       var g = new T.Group(), turret = null, gun = null;
       function add(parent, geo) { var m = new T.Mesh(geo, mat); m.castShadow = true; m.receiveShadow = true; parent.add(m); }
       if (md.model) {
-        var gg = geos[v.type] || (geos[v.type] = { hull: meshGeometry(md.hull), turret: meshGeometry(md.turret), gun: meshGeometry(md.gun) });
+        var gg = geos[v.type] || (geos[v.type] = { hull: vehicleGeometry(md.hull, 1), turret: vehicleGeometry(md.turret, 2), gun: vehicleGeometry(md.gun, 3) });
         add(g, gg.hull);
         turret = new T.Group(); turret.position.fromArray(md.turretAt); add(turret, gg.turret); g.add(turret);
         gun = new T.Group(); gun.position.fromArray(md.gunAt); add(gun, gg.gun); turret.add(gun);
@@ -1810,7 +1930,7 @@
       var hi = search(r.hp, 2, v.nh, t), hp = hi < 0 ? v.maxHealth : r.hp[hi * 2 + 1];
       if (hp !== r.lastHp) {
         r.lastHp = hp; r.dead = hp <= 0;
-        r.mat.color.setHex(r.dead ? TEAM_COLOR.dead : TEAM_COLOR[r.role]);
+        r.mat.userData.u.uDead.value = r.dead ? 1 : 0;
         drawMarker(r, hp);
         r.tex.needsUpdate = true; r.bar.visible = !r.dead;
       }
@@ -1833,7 +1953,7 @@
       haloSph.center.set(haloU.uHvP.value[n].x, p.y, -haloU.uHvP.value[n].y); haloSph.radius = R + 3;
       if (!haloBenchAll && !haloFr.intersectsSphere(haloSph)) continue;
       haloU.uHvS.value[n].set(f.hx, f.hz, r.dead ? 0 : 1, R * R);
-      haloU.uHvC.value[n].set(r.mat.color.r, r.mat.color.g, r.mat.color.b); haloU.uHvK.value[n].set(f.kx, f.kz);
+      hitsHaloColor(r, haloCol); haloU.uHvC.value[n].set(haloCol.r, haloCol.g, haloCol.b); haloU.uHvK.value[n].set(f.kx, f.kz);
       n++;
     }
     // bench only: a full battle's 30 hulls - the replay's vehicles plus copies on a 60 x 50 m grid round the arena centre
@@ -1843,7 +1963,7 @@
     }
     H.x = n;
   }
-  var haloOn = true, haloBenchAll = false, haloFr = new T.Frustum(), haloMat = new T.Matrix4(), haloSph = new T.Sphere();
+  var haloCol = new T.Color(), haloOn = true, haloBenchAll = false, haloFr = new T.Frustum(), haloMat = new T.Matrix4(), haloSph = new T.Sphere();
   function setHalo(on, k) {
     if (k != null) $('rng-halo').value = k;
     haloOn = !!on; $('sw-halo').checked = haloOn;
@@ -2204,8 +2324,9 @@
   function togglePlay() { playing = !playing; $('play').textContent = playing ? 'Pause' : 'Play'; }
   $('play').onclick = togglePlay;
   $('slider').oninput = function () { t = +this.value; };
-  // the speed is a setting (remembered with the others): the hidden #speed-value holds it, the x1..x8 buttons set it
-  var SPEEDS = [1, 2, 4, 8];
+  // the speed is a setting (remembered with the others): the hidden #speed-value holds it, the 1/8..x8 buttons set it
+  // (round 13: 1/2, 1/4, 1/8 - every effect runs on the battle clock t, so it slows with it)
+  var SPEEDS = [0.125, 0.25, 0.5, 1, 2, 4, 8];
   $('speed-value').onchange = function () {
     speed = SPEEDS.indexOf(+this.value) >= 0 ? +this.value : 1;
     Array.prototype.forEach.call(document.querySelectorAll('[data-speed]'), function (x) { x.classList.toggle('on', +x.dataset.speed === speed); });
@@ -2236,7 +2357,8 @@
   }
   $('sw-grain').onchange = function () { setGrain(this.checked); };
   $('rng-grain').oninput = function () { setGrain($('sw-grain').checked); };
-  $('sw-foliage').onchange = function () { fadeU.uSee.value = this.checked ? 1 : 0; };
+  $('rng-tint').oninput = function () { setTeamTint(); };
+  $('rng-foliage').oninput = function () { setFoliage(); };
   $('sel-ground').onchange = function () { setGround(this.value); };
   $('sel-outside').onchange = function () { outsideMode = +this.value; applyOutside(); };  // applyOutside marks the shadows
   $('sel-crowns').onchange = function () { setCrowns(this.value); };
@@ -2671,11 +2793,19 @@
     });
     ['chassis', 'hull', 'turret', 'gun'].forEach(function (n) { if (!parts[n]) throw new Error('part ' + n + ' missing'); });
     var tt = parts.turret[0], gt = parts.gun[0];
+    // round 13: gv - each vertex's entry in gt; gt - one [part id, outer layer] per collision group; outer as Hits'
+    // viewer.externalLayer: the chassis (tracks), wheels, an outer track pair, or armour with vehicleDamageFactor ~0
+    // (a spaced screen) - for the Hits look (hitsGeometry)
+    var pinfo = {};
+    veh.parts.forEach(function (p) { pinfo[p.name] = [p.wheel ? -1 : (p.id == null ? -1 : p.id), p.armor || {}]; });
     function geo(names, off) {
-      var vs = [], ids = [];
+      var vs = [], ids = [], gv = [], gt = [];
       names.forEach(function (n) {
-        var tr = parts[n][0];
+        var tr = parts[n][0], pid = pinfo[n][0], armor = pinfo[n][1];
         parts[n][1].groups.forEach(function (g) {
+          var a = armor[g.material] || {}, vdf = a.vehicleDamageFactor;
+          gt.push([pid, pid <= 0 || pid >= 4 || (typeof vdf === 'number' && vdf <= 1e-5) ? 1 : 0]);
+          for (var q = 0; q < g.vertices.length; q++) gv.push(gt.length - 1);
           var base = vs.length / 3;
           g.vertices.forEach(function (v) {
             vs.push(tr[0] * v[0] + tr[4] * v[1] + tr[8] * v[2] + tr[12] - off[0], tr[1] * v[0] + tr[5] * v[1] + tr[9] * v[2] + tr[13] - off[1],
@@ -2685,7 +2815,7 @@
         });
       });
       var big = vs.length / 3 >= 65536;
-      return { v: new Float32Array(vs), i: big ? new Uint32Array(ids) : new Uint16Array(ids), i32: big, nt: ids.length / 3 };
+      return { v: new Float32Array(vs), i: big ? new Uint32Array(ids) : new Uint16Array(ids), i32: big, nt: ids.length / 3, gv: new Uint16Array(gv), gt: gt };
     }
     var samples = (veh.gunPitchLimits || {}).samples || [], pmin = -0.2, pmax = 0.1;
     if (samples.length) { pmin = Math.min.apply(null, samples.map(function (s) { return s[1]; })); pmax = Math.max.apply(null, samples.map(function (s) { return s[2]; })); }
@@ -3004,6 +3134,8 @@
     tBattle = p3 ? p3[0] : 0;
     $('slider').max = tEnd; t = tBattle;
     buildDestrList();
+    setFoliage(null);
+    setTeamTint(null);  // round 13: the slider's value (its default or the remembered one)
     setHalo(true, null);
     setHaze(true); setSky(true);
     var a = mapData.arena; cam.tx = (a[0] + a[2]) / 2; cam.tz = (a[1] + a[3]) / 2;
@@ -3086,6 +3218,8 @@
       ctx.fillStyle = '#ccc'; ctx.fillRect(0, 0, w, h); var c2 = document.createElement('canvas'); c2.width = w; c2.height = h; c2.getContext('2d').putImageData(im, 0, 0); ctx.drawImage(c2, 0, 0);
       return c.toDataURL('image/png');
     }, state: function () { return { t: t, playing: playing, speed: speed }; },
+    // round 13: the vehicles' meshes drawn with the Hits look (flat faces with the seam attribute) and those whose model had a group table
+    vehicleLook: function () { var n = 0, flat = 0, grouped = 0; layers.vehicles.traverse(function (o) { if (!o.isMesh || !o.material.userData.u) return; n++; var g = o.geometry; if (g.attributes.aSeam && !g.index) flat++; if (g.userData.groupTable) grouped++; }); return { meshes: n, flat: flat, grouped: grouped }; },
     seek: function (x) { t = x; }, follow: function (i) { setFollow(i == null ? null : vehicles[i]); },
     followOwn: function () { setFollow(vehicles.filter(function (r) { return r.v.own; })[0] || vehicles[0]); },
     battleStart: function () { return tBattle; },

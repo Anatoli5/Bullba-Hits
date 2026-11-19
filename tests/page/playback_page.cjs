@@ -156,6 +156,13 @@ const reported = (host) => (host || []).filter((c) => c.action === 'playbackRepo
         if (after.t > before) break;
       }
       check('Play moves the battle clock', after && after.playing && after.t > before, JSON.stringify({before: before, after: after}));
+      // round 13 (19.11.2026): every vehicle mesh drawn with the Hits look (flat faces, seams; a collision model's groups
+      // in its group table), the team tint and foliage sliders in place of the see-through checkbox, and the slow speeds
+      const r13 = await page.evaluate("(() => { const look = MapBench.vehicleLook();" +
+        " document.querySelector('[data-speed=\"0.125\"]').click(); const slow = MapBench.state().speed; document.querySelector('[data-speed=\"1\"]').click();" +
+        " return {look: look, tint: !!document.getElementById('rng-tint'), foliage: !!document.getElementById('rng-foliage'), oldBox: !!document.getElementById('sw-foliage'), slow: slow, speed: MapBench.state().speed}; })()");
+      check('round 13: vehicles drawn flat with seams from their group tables, tint and foliage sliders, the old checkbox gone, speed 1/8 and back',
+        r13 && r13.look.meshes >= 3 && r13.look.flat === r13.look.meshes && r13.look.grouped >= 3 && r13.tint && r13.foliage && !r13.oldBox && r13.slow === 0.125 && r13.speed === 1, JSON.stringify(r13));
       // 3. the battle selector and the remembered settings
       const pick = await page.evaluate("(() => { const s = document.getElementById('sel-battle'); return s ? {value: s.value, options: [].map.call(s.options, (o) => [o.value, o.textContent])} : null; })()");
       check('the selector lists the battles newest first, the current one chosen', pick && pick.value === BATTLE && pick.options.length === 2 &&
