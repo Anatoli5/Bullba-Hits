@@ -77,10 +77,11 @@ try {
         throw 'Close World of Tanks before installing. The installer does not close the game itself.'
     }
 
-    # 4. Every build of our recorder is local.armor_inspector_<x.y.z>.wotmod. Anything else under that
-    #    name is not ours to move aside.
+    # 4. Every build of our recorder is local.armor_inspector_<x.y.z>.wotmod (up to 0.9.x) or <x.yy>.wotmod
+    #    (1.0 and later: one dot). Anything else under that name is not ours to move aside.
+    #    19.11.2026: the pattern knew only x.y.z and refused to install 1.11 over the installed 1.10.
     $modsFolder = Join-Path $game 'mods\{MODS}'
-    $ourName = '^local\.armor_inspector_(\d+\.\d+\.\d+)\.wotmod$'
+    $ourName = '^local\.armor_inspector_(\d+\.\d+(?:\.\d+)?)\.wotmod$'
     if (Test-Path -LiteralPath $modsFolder -PathType Container) {
         foreach ($file in Get-ChildItem -LiteralPath $modsFolder -File) {
             if (-not ($file.Name -like 'local.armor_inspector*.wotmod')) { continue }
