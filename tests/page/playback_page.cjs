@@ -191,7 +191,7 @@ const reported = (host) => (host || []).filter((c) => c.action === 'playbackRepo
         " s.value = 'steel'; s.dispatchEvent(new Event('change')); b.value = '1'; b.dispatchEvent(new Event('input'));" +
         " return {preset: s.value, near: s.parentNode.parentNode === t.parentNode.parentNode, steel: a, khaki: o}; })()");
       const sat = (c) => Math.max(c[0], c[1], c[2]) - Math.min(c[0], c[1], c[2]);
-      check('round 14: vehicle colour steel grey by default (neutral, mid-dark), khaki and brightness change it, beside the team tint', vc && vc.preset === 'steel' && vc.near &&
+      check('round 14: vehicle colour by nation by default, steel grey its fallback (neutral, mid-dark), khaki and brightness change it, beside the team tint', vc && vc.preset === 'nation' && vc.near &&
         sat(vc.steel) < 0.03 && vc.steel[1] > 0.08 && vc.steel[1] < 0.3 && vc.khaki[1] > vc.steel[1] && vc.khaki[2] < vc.khaki[0], JSON.stringify(vc));
       // 3. the battle selector and the remembered settings
       const pick = await page.evaluate("(() => { const s = document.getElementById('sel-battle'); return s ? {value: s.value, options: [].map.call(s.options, (o) => [o.value, o.textContent])} : null; })()");
