@@ -1,5 +1,5 @@
-/* Bullba Hits' 3D replay player (BACKLOG 104), copied unchanged from the trial (work/map-playback/mapbuild9.js; the raw
-   files now from the mod's map_raw.py). Round 9: the rest of the JS map builder - the map stands
+/* Bullba Hits' 3D replay player (BACKLOG 104), copied from the trial (work/map-playback/mapbuild9.js; the raw
+   files now from the mod's map_raw.py); 19.11: plus the rocks (Rocks, the trial's objects_visual.py round 11). Round 9: the rest of the JS map builder - the map stands
    alone on the raw files the copy step wrote (rawcopy.py), with no prebuilt data/<map>.map.js.
    Loaded after mapbuild.js (worker and node). Stages, each named after the Python step it mirrors:
      space.bin  BWST strings, BSMI instances, BSMO models, SpTr plants, WGDE destructibles (spacebin.SpaceBin)
@@ -13,8 +13,8 @@
 (function (G) {
   'use strict';
   var MB = G.MapBuild, f = Math.fround, C = MB.counts;
-  MB.VERSION = 'r9.1';
-  var RESV = 'p1';   // version of the per-resource products
+  MB.VERSION = 'r9.2';   // r9.2 (19.11): the rock shader's data (atlas.rocks, rec.rock)
+  var RESV = 'p2';   // version of the per-resource products (p2: a LOD's numeric material properties and uv2)
   var now = (typeof performance !== 'undefined') ? function () { return performance.now(); } : Date.now;
   var reset0 = MB.resetCounts;
   MB.resetCounts = function () { reset0(); C.cacheHit = {}; C.cacheBuilt = {}; C.resLoaded = 0; };
@@ -337,7 +337,12 @@
         var groups = [];
         g.findall('primitiveGroup').forEach(function (pg) {
           var m = pg.find('material'), props = {};
-          if (m) m.findall('property').forEach(function (pp) { var tex = pp.findtext('Texture'); if (tex) props[(pp.text || '').trim()] = tex.trim(); });
+          if (m) m.findall('property').forEach(function (pp) {
+            var tex = pp.findtext('Texture');
+            if (tex) props[(pp.text || '').trim()] = tex.trim();
+            // 19.11 (visual_model.visual, round 11): numeric properties too ('#' + name -> the value's text)
+            else pp.kids.forEach(function (ch) { if (ROCK_VALUE_TAGS.indexOf(ch.tag) >= 0) props['#' + (pp.text || '').trim()] = (ch.text || '').trim(); });
+          });
           groups.push([parseInt((pg.text || '0').trim() || '0', 10), m ? (m.findtext('identifier') || '').trim() : '', props, m ? (m.findtext('fx') || '').trim() : '']);
         });
         out.push([(g.findtext('vertices') || '').trim(), (g.findtext('primitive') || '').trim(), groups]);
@@ -354,7 +359,8 @@
       var bl = primBlocks(data), groups = [], sets = {};
       vis.forEach(function (r, ri) {
         if (!bl[r[0]] || !bl[r[1]]) return;
-        sets[ri] = [bl[r[0]], bl[r[1]]];
+        // 19.11: the blocks that may hold the set's second texcoord stream (visual_model.second_uv's names)
+        sets[ri] = [bl[r[0]], bl[r[1]], [r[0].split('vertices').join('uv2'), 'uv2', r[0] + '.uv2'].filter(function (nm) { return bl[nm]; }).map(function (nm) { return bl[nm]; })];
         var ih = indexHead(data, bl[r[1]][0]);
         r[2].forEach(function (g) {
           if (g[0] >= ih.groups.length) return;
@@ -380,7 +386,7 @@
         var stride = Math.floor((pos + size - start) / Math.max(1, n)), P3 = new Float32Array(n * 3), UV = null;
         for (var i = 0; i < n; i++) for (var k = 0; k < 3; k++) P3[i * 3 + k] = dv.getFloat32(start + i * stride + 4 * k, true);
         if (fmt.split('/').pop().indexOf('xyznuv') === 0) { UV = new Float32Array(n * 2); for (i = 0; i < n; i++) { UV[i * 2] = dv.getFloat32(start + i * stride + 16, true); UV[i * 2 + 1] = dv.getFloat32(start + i * stride + 20, true); } }
-        sets[ri] = { pos: P3, uv: UV, n: n };
+        sets[ri] = { pos: P3, uv: UV, n: n, uv2: secondUv(data, dv, info.sets[ri][2] || [], n) };
         heads[ri] = indexHead(data, info.sets[ri][1][0]);
       });
       var tris = info.groups.map(function (g) {
@@ -471,6 +477,173 @@
     }
     return out;
   }
+  // ---------------------------------------------------------------- 19.11: rocks (objects_visual.py round 11, Rocks)
+  // The game's PBS_tiled_atlas_global (rocks, cliffs): three tiles of the albedo-height atlas at the tile scale (uv1),
+  // mixed by the model's blend mask (uv2), tints, dirt, the global texture (the trial's objects_visual.py comment has
+  // the formula). The page gets every texture as a layer of one DXT5 array (ROCK_SIZE px, the game's own blocks copied
+  // at that mip; the mod's map_raw.py copies each texture from that level down) and per material 5 vec4s.
+  var ROCK_VALUE_TAGS = ['Vector4', 'Float', 'Int', 'Bool'];
+  var ROCK_FX = 'pbs_tiled_atlas_global', ROCK_SIZE = 128, ROCK_MIN = 4;
+  var ROCK_DEFAULTS = { g_atlasSizes: [2, 2, 8, 1], g_tileUVScale: [1, 1, 0, 0], g_atlasIndexes: [0, 0, 0, 0],
+    g_tile0Tint: [1, 1, 1, 1], g_tile1Tint: [1, 1, 1, 1], g_tile2Tint: [1, 1, 1, 1], g_dirtColor: [0.47, 0.43, 0.38, 1] };
+  // visual_model.second_uv: block 'uv2' ('BPVS', 'set3/uv2pc': n x 2 f32) of a vertex block of n vertices, or null
+  function secondUv(data, dv, blocks, n) {
+    for (var c = 0; c < blocks.length; c++) {
+      var pos = blocks[c][0], size = blocks[c][1];
+      if (!(data[pos] === 0x42 && data[pos + 1] === 0x50 && data[pos + 2] === 0x56 && data[pos + 3] === 0x53)) continue;
+      var cnt = dv.getUint32(pos + 132, true);
+      if (cnt !== n || size - 136 < n * 8) continue;
+      var out = new Float32Array(n * 2);
+      for (var i = 0; i < n * 2; i++) out[i] = dv.getFloat32(pos + 136 + 4 * i, true);
+      return out;
+    }
+    return null;
+  }
+  function rockHead(data) {  // objects_visual._dds_head
+    if (!data || !(data[0] === 0x44 && data[1] === 0x44 && data[2] === 0x53 && data[3] === 0x20)) return null;
+    var dv = dvOf(data), h = dv.getUint32(12, true), w = dv.getUint32(16, true), mips = Math.max(1, dv.getUint32(28, true));
+    var four = String.fromCharCode(data[84], data[85], data[86], data[87]), p = 128;
+    if (four === 'DX10') { four = ({ 71: 'DXT1', 72: 'DXT1', 77: 'DXT5', 78: 'DXT5' })[dv.getUint32(128, true)]; p += 20; }
+    var bs = four === 'DXT1' ? 8 : four === 'DXT5' ? 16 : 0;
+    return bs ? { w: w, h: h, mips: mips, p: p, bs: bs } : null;
+  }
+  // objects_visual.dxt5_region: DXT5 blocks of the square region (x0, y0, cw, ch) at the mip where it is `size` px and
+  // the levels below down to ROCK_MIN px ([Uint8Array per level]) or null; DXT1 blocks get an opaque alpha block
+  function dxt5Region(data, x0, y0, cw, ch, size) {
+    size = size || ROCK_SIZE;
+    var hd = rockHead(data);
+    if (!hd || cw !== ch || cw < size) return null;
+    var bs = hd.bs, p = hd.p, ww = hd.w, hh = hd.h, out = [];
+    for (var l = 0; l < hd.mips; l++) {
+      var bw = Math.max(1, (ww + 3) >> 2), bh = Math.max(1, (hh + 3) >> 2), n = bw * bh, rw = cw >> l;
+      if (size >= rw && rw >= ROCK_MIN) {
+        if (rw !== size && !out.length) return null;
+        var rx = x0 >> l, ry = y0 >> l;
+        if (rx % 4 || ry % 4 || rw % 4) return null;
+        if (p + n * bs > data.length) return null;
+        var nb = rw >> 2, bx = rx >> 2, by = ry >> 2;
+        if (by + nb > bh || bx + nb > bw) return null;   // the region's shape check (numpy slicing clips)
+        var o = new Uint8Array(nb * nb * 16), k = 0;
+        for (var r = 0; r < nb; r++) for (var c = 0; c < nb; c++) {
+          var src = p + ((by + r) * bw + bx + c) * bs;
+          if (bs === 8) { o[k] = 255; o[k + 1] = 255; o.set(data.subarray(src, src + 8), k + 8); }
+          else o.set(data.subarray(src, src + 16), k);
+          k += 16;
+        }
+        out.push(o);
+      }
+      p += n * bs; ww = Math.max(1, ww >> 1); hh = Math.max(1, hh >> 1);
+    }
+    var want = 0; for (var s_ = size; s_ >= ROCK_MIN; s_ >>= 1) want++;
+    return out.length === want ? out : null;
+  }
+  function rockVec(props, name) {  // objects_visual._vec
+    var v = props['#' + name], d = ROCK_DEFAULTS[name];
+    if (v == null) return d.slice();
+    var t = String(v).split(/\s+/).filter(Boolean), fv = t.map(Number);
+    if (fv.some(function (x) { return isNaN(x); })) return d.slice();
+    return fv.concat(d.slice(fv.length));
+  }
+  function ddsOf(P, path) {  // objects_visual._dds_of
+    if (!path) return null;
+    var i = path.lastIndexOf('.'), base = i >= 0 ? path.slice(0, i) : path, k = base.lastIndexOf('/');
+    var cands = [base + '.dds'].concat(k >= 0 ? [base.slice(0, k) + '/dds/' + base.slice(k + 1) + '.dds'] : []);
+    for (var c = 0; c < cands.length; c++) if (P.raw.resEntry(cands[c])) return cands[c];
+    return null;
+  }
+  // objects_visual.atlas_tiles: ['tiles', Map(rect key -> {rect, dds})] for an '.atlas', ['dds', path] for a texture, or null
+  function rockAtlasTiles(P, memo, path) {
+    if (memo.has(path)) return memo.get(path);
+    var out = null;
+    if (/\.atlas$/i.test(path)) {
+      var data = P.raw.res(path.slice(0, path.lastIndexOf('.')) + '.atlas_processed');
+      if (data && data.length > 16) {
+        var dv = dvOf(data), W = dv.getUint32(4, true), H = dv.getUint32(8, true), tiles = new Map(), p = 16;
+        while (p + 16 < data.length) {
+          var x0 = dv.getUint32(p, true), x1 = dv.getUint32(p + 4, true), y0 = dv.getUint32(p + 8, true), y1 = dv.getUint32(p + 12, true); p += 16;
+          var e = data.indexOf(0, p); if (e < 0) break;
+          var name = latin(data.subarray(p, e)); p = e + 1;
+          var dd = ddsOf(P, name);
+          if (dd && x1 > x0) tiles.set([x0, x1, y0, y1, W, H].join(','), { r: [x0, x1, y0, y1, W, H], dds: dd });
+        }
+        out = tiles.size ? ['tiles', tiles] : null;
+      }
+    } else if (path) {
+      var d2 = ddsOf(P, path);
+      out = d2 ? ['dds', d2] : null;
+    }
+    memo.set(path, out);
+    return out;
+  }
+  function Rocks(P) { this.P = P; this.layers = new Map(); this.keys = []; this.mats = new Map(); this.vecs = []; this.stats = {}; this.atlases = new Map(); }
+  Rocks.prototype.stat = function (k) { this.stats[k] = (this.stats[k] || 0) + 1; };
+  Rocks.prototype.layer = function (key, fn) {
+    if (!this.layers.has(key)) {
+      var lv = fn();
+      if (lv == null) { this.stat('layers unreadable'); return -1; }
+      this.layers.set(key, lv); this.keys.push(key);
+    }
+    return this.keys.indexOf(key);
+  };
+  Rocks.prototype.full = function (path) {
+    var P = this.P;
+    return this.layer(JSON.stringify(['full', path.toLowerCase()]), function () {
+      var data = P.raw.res(path), hd = rockHead(data);
+      return hd ? dxt5Region(data, 0, 0, hd.w, hd.h) : null;
+    });
+  };
+  Rocks.prototype.cell = function (path, cols, rows, i) {
+    var P = this.P;
+    return this.layer(JSON.stringify(['cell', path.toLowerCase(), cols, rows, i]), function () {
+      var data = P.raw.res(path), hd = rockHead(data);
+      if (!hd) return null;
+      var cw = Math.floor(hd.w / cols), ch = Math.floor(hd.h / rows);
+      return dxt5Region(data, (i % cols) * cw, Math.floor(i / cols) * ch, cw, ch);
+    });
+  };
+  // -> material index, or null when its textures cannot be had (the group keeps the atlas look)
+  Rocks.prototype.material = function (gr) {
+    var t = gr.tex, sizes = rockVec(t, 'g_atlasSizes'), idx = rockVec(t, 'g_atlasIndexes');
+    var g4 = sizes.slice(0, 4).map(function (v) { return Math.max(1, rhe(v)); }), cols = g4[0], rows = g4[1], bcols = g4[2], brows = g4[3];
+    var own = Object.keys(t).filter(function (k) { return k.charAt(0) === '#'; }).sort().map(function (k) { return [k, t[k]]; });
+    var key = JSON.stringify([t.atlasAlbedoHeight, t.atlasBlend, t.globalTex, t.dirtMap].map(function (x) { return x == null ? null : x; }).concat(own));
+    if (this.mats.has(key)) return this.mats.get(key);
+    var at = rockAtlasTiles(this.P, this.atlases, t.atlasAlbedoHeight || '');
+    if (!at) { this.stat('no albedo atlas'); return null; }
+    var tl = [];
+    for (var k = 0; k < 3; k++) {
+      var i = Math.max(0, rhe(idx[k]));
+      if (at[0] === 'tiles') {
+        var hit = [];
+        at[1].forEach(function (x) { var r = x.r; if (Math.floor(r[0] * cols / r[4]) + Math.floor(r[2] * rows / r[5]) * cols === i) hit.push(x.dds); });
+        if (!hit.length) { this.stat('tile index missing'); hit = [at[1].values().next().value.dds]; }   // an index past the atlas' tiles: its first tile
+        tl.push(this.full(hit[0]));
+      } else tl.push(this.cell(at[1], cols, rows, i));
+    }
+    var inset = at[0] === 'dds' ? 0.0625 : 0.0, bl = ddsOf(this.P, t.atlasBlend);
+    if (bl == null || Math.min.apply(null, tl) < 0) { this.stat('no blend or tile'); return null; }
+    var bi = this.cell(bl, bcols, brows, Math.max(0, rhe(idx[3])));
+    if (bi < 0) return null;
+    var gt = ddsOf(this.P, t.globalTex), dt = ddsOf(this.P, t.dirtMap), gi = gt ? this.full(gt) : -1, di = dt ? this.full(dt) : -1;
+    var sc = rockVec(t, 'g_tileUVScale'), dc = rockVec(t, 'g_dirtColor'), t0 = rockVec(t, 'g_tile0Tint'), t1 = rockVec(t, 'g_tile1Tint'), t2 = rockVec(t, 'g_tile2Tint');
+    var v = [tl[0], tl[1], tl[2], di, bi, gi, sc[0], sc[1], t0[0], t0[1], t0[2], inset, t1[0], t1[1], t1[2], dc[3], t2[0], t2[1], t2[2], 0.0];
+    this.vecs.push(v.map(function (x) { return pyRound(x, 5); }));
+    this.mats.set(key, this.vecs.length - 1);
+    return this.vecs.length - 1;
+  };
+  Rocks.prototype.out = function () {
+    var n = this.keys.length; if (!n) return null;
+    var lv = this.keys.map(function (k) { return this.layers.get(k); }, this), levels = [], s_ = ROCK_SIZE;
+    for (var l = 0; l < lv[0].length; l++) {
+      var len = 0; lv.forEach(function (x) { len += x[l].length; });
+      var b = new Uint8Array(len), at = 0; lv.forEach(function (x) { b.set(x[l], at); at += x[l].length; });
+      levels.push({ w: s_, h: s_, dxt5: b }); s_ >>= 1;
+    }
+    var names = this.keys.map(function (k) { var a = JSON.parse(k); return a[1].split('/').pop() + (a[0] === 'full' ? '' : '#' + a[4]); });
+    return { size: ROCK_SIZE, n: n, levels: levels, mats: this.vecs, layers: names };
+  };
+  MB.dxt5Region = dxt5Region;
+
   var ATLAS_W = 1024, LEVELS = 5;
   function budget(diag, n) { return Math.min(diag > 12 ? 800 : (diag > 4 ? 360 : 160), Math.max(100, Math.floor(50000 / Math.max(1, n)))); }
   function skipPath(p) { var pl = p.toLowerCase(); return pl.indexOf('particles/') === 0 || pl.indexOf('objects/misc/') === 0 || pl.indexOf('system/') === 0 || pl.indexOf('null_model') >= 0; }
@@ -493,7 +666,7 @@
   function visualModels(P, objs, destr, arena, stats) {
     var byprim = new Map();
     objs.forEach(function (o, key) { var p = o.k0; if (p && /\.primitives$/.test(p) && !skipPath(p)) { if (!byprim.has(p)) byprim.set(p, []); byprim.get(p).push([key, o]); } });
-    var tiles = new Map(), pending = [];
+    var tiles = new Map(), pending = [], rocks = new Rocks(P);
     function want(path, size) { var t = tiles.get(path); if (!t || t.want < size) tiles.set(path, { want: size }); }
     byprim.forEach(function (items, prim) {
       var stem = prim.slice(0, prim.lastIndexOf('.'));
@@ -509,7 +682,11 @@
       ch.pick.info.groups.forEach(function (gr, gi) {
         var tex = textureOf(P, gr);
         if (!tex || gr.fx.toLowerCase().indexOf('distortion') >= 0) { stats['groups without texture'] = (stats['groups without texture'] || 0) + 1; return; }
-        want(tex, size); parts.push([gi, tex, moduleOf(gr.material, mods)]);
+        want(tex, size);
+        // 19.11 (round 11): a group drawn by the rock shader whose render set has a second texcoord stream
+        var rm = null;
+        if (gr.fx.toLowerCase().indexOf(ROCK_FX) >= 0 && lodGeometry(P, vs).sets[gr.rs].uv2) rm = rocks.material(gr);
+        parts.push([gi, tex, moduleOf(gr.material, mods), rm]);
       });
       if (!parts.length) { stats['models without textured groups'] = (stats['models without textured groups'] || 0) + 1; return; }
       pending.push({ prim: prim, items: items, vs: vs, tried: ch.tried, parts: parts, d: d });
@@ -546,18 +723,21 @@
         var gr = info.groups[pt[0]], tri = geo.tris[pt[0]].tri, set = geo.sets[gr.rs];
         var used = Array.from(new Set(tri)).sort(function (a, b) { return a - b; }), remap = new Map();
         used.forEach(function (u, i) { remap.set(u, i); });
-        Ps.push({ set: set, used: used }); Rs.push(rect(tex)); Ms.push([pt[2], used.length]);
+        Ps.push({ set: set, used: used, rm: pt[3] }); Rs.push(rect(tex)); Ms.push([pt[2], used.length]);
         var I = new Uint32Array(tri.length); for (var i = 0; i < tri.length; i++) I[i] = remap.get(tri[i]) + base;
         Is.push(I); base += used.length; nv += used.length; ni += tri.length;
       });
       if (!Ps.length) return;
       var Pf = new Float32Array(nv * 3), Uf = new Float32Array(nv * 2), Mi = new Int8Array(nv), Ri = new Array(nv), o = 0;
+      var U2 = new Float32Array(nv * 2), RM = new Int16Array(nv);   // 19.11: rocks' uv2 and material per vertex (-1: none)
       Ps.forEach(function (ps, pi) {
         var S = ps.set;
         ps.used.forEach(function (u) {
           Pf[o * 3] = S.pos[u * 3]; Pf[o * 3 + 1] = S.pos[u * 3 + 1]; Pf[o * 3 + 2] = S.pos[u * 3 + 2];
           if (S.uv) { Uf[o * 2] = S.uv[u * 2]; Uf[o * 2 + 1] = S.uv[u * 2 + 1]; }
-          Mi[o] = Ms[pi][0]; Ri[o] = pi; o++;
+          Mi[o] = Ms[pi][0]; Ri[o] = pi;
+          if (ps.rm != null) { U2[o * 2] = S.uv2[u * 2]; U2[o * 2 + 1] = S.uv2[u * 2 + 1]; RM[o] = ps.rm; } else RM[o] = -1;
+          o++;
         });
       });
       // np.unique(R, axis=0): the distinct rects sorted by their float32 rows; tile = index into them
@@ -576,13 +756,23 @@
         rects: rects.map(function (r) { return r.map(function (x) { return pyRound(x, 6); }); }), i: I, i32: nv >= 65536, m: mats,
         collision: pd.items.some(function (it) { return !!it[1].havok; }), destructible: pd.d.kind || null };
       if (Mi.some(function (x) { return x !== 0; })) rec.mod = Mi;
+      var allRock = nv > 0, anyRock = false;
+      for (v = 0; v < nv; v++) { if (RM[v] >= 0) anyRock = true; else allRock = false; }
+      if (allRock) {  // a rock: every group drawn by the rock shader
+        var q2 = quant32(U2, 2, f(1e-4));
+        rec.rock = { uv2: q2.q, u2min: q2.min, u2range: q2.range, mat: Uint8Array.from(RM) };
+        stats['rock models'] = (stats['rock models'] || 0) + 1;
+      } else if (anyRock) stats['models with rock and other groups (atlas look kept)'] = (stats['models with rock and other groups (atlas look kept)'] || 0) + 1;
       if (anyOut) rec.out = out;
       pd.items.forEach(function (it, k) { index.set(it[0], [recs.length, k]); });
       recs.push(rec);
       stats.models = (stats.models || 0) + 1; stats.instances = (stats.instances || 0) + pd.items.length;
     });
     stats['atlas tiles'] = tiles.size;
-    return { recs: recs, atlas: { w: W, h: H, levels: levels }, index: index };
+    var atl = { w: W, h: H, levels: levels }, rk = rocks.out();
+    if (rk) { atl.rocks = rk; stats['rock materials'] = rocks.vecs.length; stats['rock texture layers'] = rk.n; }   // carried with the atlas (the page's buildVisual gets both)
+    Object.keys(rocks.stats).forEach(function (k) { stats['rocks: ' + k] = rocks.stats[k]; });
+    return { recs: recs, atlas: atl, index: index };
   }
   // u16 over the float32 range (objects_visual: (P - lo) / rng * 65535 in float32, np.round)
   function quant32(a, k, eps) {

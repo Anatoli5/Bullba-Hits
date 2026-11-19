@@ -21,7 +21,9 @@ client's packages - read only -, the battle file last). Checks:
             file holds the decoder's entities, the vehicle names and the damage sticker kinds
   replay    a second battle REPLAY from a .wotreplay: its source file holds that replay byte for byte
   drop      that second request removed the first battle's source file; its battle file stays
-  map       mapraw/<arena>/manifest.js and its parts; the shared resources under mapraw/res
+  map       mapraw/<arena>/manifest.js and its parts; the shared resources under mapraw/res; the rock shader's
+            textures among them (19.11: Malinovka's cliffs - a texture kept from the level where its atlas cell is
+            128 px, map_raw.rock_textures)
   current   once made, a request queues nothing (the file and the map's raw set are there)
   slices    no slice longer than SLICE_LIMIT seconds (the job's own BATTLE_SLICE plus one step; in the game the export
             thread shares the interpreter with the game, the stand does not)
@@ -175,13 +177,15 @@ def check():
                and len(defs['stickers']) >= 20, 'definitions %s' % (sorted(defs) if defs else defs))
         manifest = map_raw.manifest_path(playback.raw_root(folder), ARENA)
         text = open(manifest, 'rb').read().decode('utf-8') if os.path.isfile(manifest) else ''
-        parts = []
+        parts, entries = [], []
         if text.startswith('MapRaw.manifest('):
-            parts = json.loads(text[len('MapRaw.manifest('):text.rindex(')')])['parts']
+            man = json.loads(text[len('MapRaw.manifest('):text.rindex(')')])
+            parts, entries = man['parts'], man.get('res') or []
         ok('map', parts and all(os.path.isfile(os.path.join(playback.raw_root(folder), ARENA, p)) for p in parts),
            'manifest %s, parts %r' % (manifest, parts))
         res = os.path.join(playback.raw_root(folder), 'res')
         ok('map', os.path.isdir(res) and len(os.listdir(res)) > 100, 'shared resources: %d files' % (len(os.listdir(res)) if os.path.isdir(res) else 0))
+        ok('map', any(e.get('slice') for e in entries), 'no rock texture copied at its cell level among %d resources' % len(entries))
         ok('current', stand.request_playback(BATTLE) is False and not stand.jobs, 'a request after the file was made queued %r' % stand.jobs)
         ok('slices', longest <= SLICE_LIMIT, 'the longest of %d slices took %.3f s' % (slices, longest))
         made = (value or {}).get('made') or {}

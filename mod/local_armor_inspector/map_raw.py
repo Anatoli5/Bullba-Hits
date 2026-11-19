@@ -283,6 +283,12 @@ def packed_xml(data):
             section(el, a, b)
         elif kind == 1:
             el.text = data[a:b].decode('utf-8', 'replace')
+        elif kind == 2:   # 19.11: integers and floats too (the rock shader's g_atlasSizes), as packed_xml.decode
+            raw = bytearray(data[a:b])
+            n = sum(v << (8 * i) for i, v in enumerate(raw))
+            el.text = str(n - (1 << (8 * len(raw))) if raw and raw[-1] & 128 else n)
+        elif kind == 3:
+            el.text = ' '.join(str(struct.unpack_from('<f', data, i)[0]) for i in range(a, b - 3, 4))
 
     def section(el, a, b):
         count, own = struct.unpack_from('<HI', data, a)
@@ -396,17 +402,28 @@ class Resources(object):
         return self.data[low]
 
     def add(self, path, texture=False):
-        """Copy one resource (once); -> its manifest entry or None when the client has no such file."""
+        """Copy one resource (once); -> its manifest entry or None when the client has no such file. `texture`: True (the
+        mip levels from TEX_MAX px down) or the largest level wanted in px (19.11, the rock stage: a cell of an atlas at
+        ROCK_SIZE); a texture already added with smaller levels is copied again with the larger ones (another file)."""
         low = path.lower()
+        size = (TEX_MAX if texture is True else int(texture)) if texture else None
         if low in self.entries:
-            return self.entries[low]
+            old = self.entries[low]
+            if old is None or size is None or old.get('slice', TEX_MAX) >= size:
+                return old
+            self.count['resources'] -= 1
+            self.count['bytesRaw'] -= old['size'] or 0
+            del self.entries[low]
         pkg, e = self.entry(path)
         if e is None:
             self.entries[low] = None
             return None
         name = e[0]
-        fn = '%08x-%08x-%s.js' % (e[5], binascii.crc32(low.encode('utf-8')) & 0xffffffff, re.sub(r'[^A-Za-z0-9_.-]', '_', name.split('/')[-1]))
+        fn = '%08x-%08x-%s%s.js' % (e[5], binascii.crc32(low.encode('utf-8')) & 0xffffffff, '' if size in (None, TEX_MAX) else '%d-' % size,
+                                    re.sub(r'[^A-Za-z0-9_.-]', '_', name.split('/')[-1]))
         ent = dict(path=low, crc=e[5], file=fn, pkg=pkg, sourceSize=e[4])
+        if size is not None and size != TEX_MAX:
+            ent['slice'] = size
         target = os.path.join(self.dir, fn)
         self.count['resources'] += 1
         if os.path.isfile(target):
@@ -415,7 +432,7 @@ class Resources(object):
         else:
             b = self.bytes(path)
             if texture:
-                b = dds_slice(b, TEX_MAX)
+                b = dds_slice(b, size)
             write_bytes(target, b'MapRaw.put(' + json.dumps('res:' + low).encode('ascii') + b',"' + base64.b64encode(b) + b'");\n')
             write_text(target + '.size', str(len(b)))
             ent['size'] = len(b)
@@ -424,12 +441,13 @@ class Resources(object):
         self.entries[low] = ent
         return ent
 
-    def refs(self, path, find):
-        """Cached references of a resource (find(bytes) -> [paths]); the resource itself is added first."""
+    def refs(self, path, find, kind=None):
+        """Cached references of a resource (find(bytes) -> [paths]); the resource itself is added first. `kind` names
+        another finder of the same resource (its own cache entry)."""
         ent = self.add(path)
         if ent is None:
             return []
-        key = '%s|%08x' % (ent['path'], ent['crc'])
+        key = '%s|%08x' % (ent['path'], ent['crc']) + ('|' + kind if kind else '')
         if key in self.deps:
             self.count['depsFromCache'] += 1
             return self.deps[key]
@@ -507,9 +525,105 @@ def visual_textures(b):
     return out
 
 
+# ---------------------------------------------------------------- 19.11: the rock shader's inputs (objects_visual.Rocks)
+ROCK_FX = 'pbs_tiled_atlas_global'
+ROCK_SIZE = 128                      # objects_visual.ROCK_SIZE: every layer is copied at the mip where it is 128 px
+ROCK_SIZES = (2, 2, 8, 1)            # g_atlasSizes' default (the shader's cbuffer)
+
+
+def visual_rocks(b):
+    """The rock-shader groups' inputs of a visual (objects_visual.Rocks.material reads them): [albedo-height atlas,
+    blend mask, global texture, dirt map, cells across the albedo atlas, cells across the blend mask] (the larger of a
+    grid's columns and rows: the copy keeps the levels where a cell is ROCK_SIZE px)."""
+    v = packed_xml(b)
+    out = []
+    if v is None:
+        return out
+    for rs in [k for k in v.kids if k.tag == 'renderSet']:
+        for g in [k for k in rs.kids if k.tag == 'geometry']:
+            for pg in [k for k in g.kids if k.tag == 'primitiveGroup']:
+                m = pg.find('material')
+                if m is None or ROCK_FX not in (m.findtext('fx') or '').strip().lower():
+                    continue
+                props, sizes = {}, list(ROCK_SIZES)
+                for pp in [k for k in m.kids if k.tag == 'property']:
+                    name = (pp.text or '').strip()
+                    tex = pp.findtext('Texture')
+                    if tex:
+                        props[name] = tex.strip()
+                    elif name == 'g_atlasSizes':
+                        for ch in pp.kids:
+                            if ch.tag in ('Vector4', 'Float', 'Int', 'Bool'):
+                                try:
+                                    f = [float(x) for x in (ch.text or '').split()]
+                                    sizes = f + sizes[len(f):]
+                                except ValueError:
+                                    sizes = list(ROCK_SIZES)
+                cols, rows, bcols, brows = [max(1, int(round(x))) for x in sizes[:4]]
+                item = [props.get('atlasAlbedoHeight') or '', props.get('atlasBlend') or '', props.get('globalTex') or '',
+                        props.get('dirtMap') or '', max(cols, rows), max(bcols, brows)]
+                if item not in out:
+                    out.append(item)
+    return out
+
+
+def dds_of(R, path):
+    """objects_visual._dds_of: a material's texture path (.png / .dds as named) -> the .dds the packages have, or None."""
+    if not path:
+        return None
+    base = path.rsplit('.', 1)[0]
+    if '/' not in base:
+        return None
+    for cand in (base + '.dds', base.rsplit('/', 1)[0] + '/dds/' + base.rsplit('/', 1)[1] + '.dds'):
+        if R.exists(cand):
+            return cand
+    return None
+
+
+def atlas_tiles(R, data):
+    """objects_visual.atlas_tiles: every tile texture an .atlas_processed lists (u32 1, W, H, 1, then per tile x0, x1,
+    y0, y1 and a zero-ended path)."""
+    out = []
+    if not data or len(data) <= 16:
+        return out
+    p = 16
+    while p + 16 < len(data):
+        x0, x1 = struct.unpack_from('<2I', data, p)
+        p += 16
+        e = data.find(b'\0', p)
+        if e < 0:
+            break
+        name = data[p:e].decode('ascii', 'replace')
+        p = e + 1
+        dd = dds_of(R, name)
+        if dd and x1 > x0 and dd not in out:
+            out.append(dd)
+    return out
+
+
+def rock_textures(R, item):
+    """Copy what the rock stage reads for one rock material: the atlas' tiles (an .atlas) or the atlas texture (a .dds,
+    at the levels where a cell is ROCK_SIZE px), the blend mask (likewise), the global texture and the dirt map."""
+    alb, blend, glob, dirt, grid, bgrid = item
+    if alb.lower().endswith('.atlas'):
+        ap = alb.rsplit('.', 1)[0] + '.atlas_processed'
+        if R.exists(ap):
+            for t in R.refs(ap, lambda b: atlas_tiles(R, b), 'rock-tiles'):
+                R.add(t, texture=ROCK_SIZE)
+    elif alb:
+        d = dds_of(R, alb)
+        if d:
+            R.add(d, texture=ROCK_SIZE * grid)
+    for p, size in ((blend, ROCK_SIZE * bgrid), (glob, ROCK_SIZE), (dirt, ROCK_SIZE)):
+        d = dds_of(R, p)
+        if d:
+            R.add(d, texture=size)
+
+
 def collect_resources(R, objects, plants):
     """Every file the builder will read for these objects and plants (objects_visual.build, build.build_statics,
-    build.plant_kind): visual LOD chains, their geometry and colour textures, havok, .srt and their textures. A generator:
+    build.plant_kind): visual LOD chains, their geometry and colour textures, the rock shader's textures (19.11,
+    rock_textures), havok, .srt and their textures. A generator:
     it yields after each object and plant kind."""
     for prim, hav in objects:
         yield
@@ -533,6 +647,8 @@ def collect_resources(R, objects, plants):
                         R.add(t, texture=True)
                 else:
                     R.add(tex, texture=True)
+            for item in R.refs(vs + '.visual_processed', visual_rocks, 'rock1'):   # 19.11: the rock shader's inputs
+                rock_textures(R, item)
             stem = r[1]
     for path in plants:
         yield

@@ -1084,12 +1084,73 @@
     material.customProgramCacheKey = function () { return depth ? 'atlas-depth' : 'atlas'; };
     return material;
   }
+  // round 11: rocks and cliffs (the game's PBS_tiled_atlas_global, objects_visual.py Rocks): three tiles of the game's
+  // albedo-height atlas repeated at the material's tile scale (first texcoord), mixed by the model's blend mask (second
+  // texcoord: R, G, 1 - R - G times each tile's height, ^8), dirt by the mask's B, brightness and normal from the
+  // global texture, occlusion from the mask's alpha; every texture a layer of one DXT5 array, 5 vec4s per material
+  // (atlas.rocks.mats: layers t0 t1 t2 dirt | blend global scale.xy | tint0 + cell inset | tint1 + dirt strength | tint2).
+  function withRock(material, tex, mats) {
+    var vecs = [];
+    mats.forEach(function (m) { for (var j = 0; j < 20; j += 4) vecs.push(new T.Vector4(m[j], m[j + 1], m[j + 2], m[j + 3])); });
+    var u = { uRockTex: { value: tex }, uRockM: { value: vecs } };
+    material.onBeforeCompile = function (sh) {
+      sh.uniforms.uOutside = outsideU; Object.assign(sh.uniforms, u);
+      sh.vertexShader = 'attribute float aMod;\nattribute float iDead;\nattribute float iOut;\nattribute vec2 aUv2;\nattribute float aRockMat;\nuniform float uOutside;\nvarying float vOutDim;\nvarying vec2 vUv2;\nvarying float vRockMat;\n' +
+        sh.vertexShader.replace('#include <project_vertex>', '#include <project_vertex>\n' + MOD_SHADER +
+          '\n vUv2 = aUv2; vRockMat = aRockMat; vOutDim = (iOut > 0.5 && uOutside > 0.5) ? 0.5 : 1.0;\n if (iOut > 0.5 && uOutside > 1.5) gl_Position = vec4(0.0, 0.0, 2.0, 1.0);');
+      sh.fragmentShader = 'precision highp sampler2DArray;\nuniform sampler2DArray uRockTex;\nuniform vec4 uRockM[' + vecs.length + '];\nvarying float vOutDim;\nvarying vec2 vUv2;\nvarying float vRockMat;\n' + sh.fragmentShader
+        .replace('#include <map_fragment>', [
+          ' float rAO = 1.0; vec3 rMapN = vec3(0.0, 0.0, 1.0);',
+          ' { int rmi = int(vRockMat + 0.5) * 5;',
+          '   vec4 rm0 = uRockM[rmi], rm1 = uRockM[rmi + 1], rt0 = uRockM[rmi + 2], rt1 = uRockM[rmi + 3], rt2 = uRockM[rmi + 4];',
+          '   vec2 rTu = vMapUv * rm1.zw; float rIn = rt0.w, rK = 1.0 - 2.0 * rIn;',
+          '   vec2 rF = rIn + fract(rTu) * rK, rGx = dFdx(rTu) * rK, rGy = dFdy(rTu) * rK;',
+          '   vec4 rA0 = textureGrad(uRockTex, vec3(rF, rm0.x), rGx, rGy);',
+          '   vec4 rA1 = textureGrad(uRockTex, vec3(rF, rm0.y), rGx, rGy);',
+          '   vec4 rA2 = textureGrad(uRockTex, vec3(rF, rm0.z), rGx, rGy);',
+          '   vec4 rBl = texture(uRockTex, vec3(vUv2, rm1.x));',
+          '   vec3 rH = vec3(rA0.a, rA1.a, rA2.a);',
+          '   vec3 rW = clamp(vec3(rBl.r, rBl.g, clamp(1.0 - rBl.r - rBl.g, 0.0, 1.0)) * rH, 0.0, 1.0);',
+          '   rW.z += 0.01; rW *= rW; rW *= rW; rW *= rW; rW /= max(1e-6, rW.x + rW.y + rW.z);',
+          '   vec3 rAlb = pow(rA0.rgb, vec3(2.2)) * rt0.rgb * rW.x + pow(rA1.rgb, vec3(2.2)) * rt1.rgb * rW.y + pow(rA2.rgb, vec3(2.2)) * rt2.rgb * rW.z;',
+          '   float rHb = dot(rW, rH);',
+          '   if (rm0.w >= 0.0) {',
+          '     vec4 rD = textureGrad(uRockTex, vec3(fract(rTu), rm0.w), dFdx(rTu), dFdy(rTu));',
+          '     float rb = rBl.b * 2.0 - 1.0, rMix = mix(1.0 - rHb, rHb, clamp(rb * 10.0, 0.0, 1.0));',
+          '     rAlb = mix(rAlb, pow(rD.rgb, vec3(2.2)), clamp((rb * rb - rMix) * 6.0 * rt1.w + rb * rb, 0.0, 1.0) * rD.a);',
+          '   }',
+          '   vec4 rG = rm1.y >= 0.0 ? texture(uRockTex, vec3(vUv2, rm1.y)) : vec4(0.5, 0.5, 0.25, 0.5);',
+          '   rAlb *= 2.0 * rG.b; rAO = rBl.a;',
+          '   rMapN.xy = vec2(rG.a * 2.0 - 1.0, 1.0 - rG.g * 2.0); rMapN.z = sqrt(max(0.0, 1.0 - dot(rMapN.xy, rMapN.xy)));',
+          '   diffuseColor.rgb *= rAlb; }'].join('\n'))
+        .replace('#include <normal_fragment_maps>', [
+          ' { vec3 q0 = dFdx(-vViewPosition), q1 = dFdy(-vViewPosition); vec2 s0 = dFdx(vUv2), s1 = dFdy(vUv2);',
+          '   vec3 q1p = cross(q1, normal), q0p = cross(normal, q0);',
+          '   vec3 rT = q1p * s0.x + q0p * s1.x, rB = q1p * s0.y + q0p * s1.y;',
+          '   float rDet = max(dot(rT, rT), dot(rB, rB)), rS = rDet == 0.0 ? 0.0 : inversesqrt(rDet);',
+          '   normal = normalize(rT * (rS * rMapN.x) + rB * (rS * rMapN.y) + normal * rMapN.z); }'].join('\n'))
+        .replace('#include <aomap_fragment>', '#include <aomap_fragment>\n reflectedLight.indirectDiffuse *= rAO; reflectedLight.directDiffuse *= 0.5 + 0.5 * rAO;')
+        .replace('#include <color_fragment>', '#include <color_fragment>\n diffuseColor.rgb *= vOutDim;');
+    };
+    material.customProgramCacheKey = function () { return 'rock'; };
+    return material;
+  }
+  var rockTex = null;   // 19.11: the rock layers' array texture once made (MapBench.rocks)
+  function rockTexture(R) {
+    var mips = R.levels.map(function (l) { return { data: u8(l.dxt5), width: l.w, height: l.h }; });
+    var t = new T.CompressedArrayTexture(mips, R.size, R.size, R.n, T.RGBA_S3TC_DXT5_Format);
+    t.wrapS = t.wrapT = T.RepeatWrapping; t.minFilter = T.LinearMipmapLinearFilter; t.magFilter = T.LinearFilter;
+    t.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy()); t.colorSpace = T.NoColorSpace; t.needsUpdate = true;
+    rockTex = t;
+    return t;
+  }
   var atlasTexel = { value: new T.Vector2(0, 0) };
   function buildVisual(visual, atlas) {
     if (!visual || !atlas) return;
     var tex = bc1Texture(atlas.levels);
     atlasTexel.value.set(0.5 / atlas.w, 0.5 / atlas.h);
     var mat = withAtlas(new T.MeshLambertMaterial({ map: tex }));
+    var R = atlas.rocks, rockMat = R && s3tc ? withRock(new T.MeshLambertMaterial({ map: tex }), rockTexture(R), R.mats) : null;
     var depth = withModules(new T.MeshDepthMaterial({ depthPacking: T.RGBADepthPacking }), true);
     visual.forEach(function (rec, vi) {
       var g = new T.BufferGeometry();
@@ -1103,7 +1164,13 @@
       g.computeVertexNormals();
       var a = f32(rec.m), base = [];
       for (var k = 0; k < rec.n; k++) base.push(placementMatrix(a, k * 12));
-      var im = new T.InstancedMesh(g, mat, rec.n), dead = new Float32Array(rec.n);
+      var rock = rockMat && rec.rock;
+      if (rock) {
+        g.setAttribute('aUv2', new T.BufferAttribute(deq(rec.rock.uv2, rec.rock.u2min, rec.rock.u2range), 2));
+        g.setAttribute('aRockMat', new T.BufferAttribute(new Float32Array(u8(rec.rock.mat)), 1));
+        info.rockModels = (info.rockModels || 0) + 1;
+      }
+      var im = new T.InstancedMesh(g, rock ? rockMat : mat, rec.n), dead = new Float32Array(rec.n);
       im.customDepthMaterial = depth;
       g.setAttribute('iDead', new T.InstancedBufferAttribute(dead, 1));
       g.setAttribute('iOut', new T.InstancedBufferAttribute(rec.out ? new Float32Array(u8(rec.out)) : new Float32Array(rec.n), 1));
@@ -2870,7 +2937,13 @@
     }
     return null;
   }
-  window.MapBench = { circles: drawnCircles, mapCircles: function () { return (mapData && mapData.mode && mapData.mode.circles) || []; }, gpu: async function (n, every) { var g = await gpuTimes(n || 40, function () { if (every) shadowsRedrawAll(); step(t); }); return +quant(g, 0.5).toFixed(3); }, shadowInfo: shadowInfo, vehicleShadowInfo: vehicleShadowInfo, render: function () { step(t); renderer.render(scene, camera); }, run: runBench, groundBench: runGroundBench, shadowBench: runShadowBench, shadowQuality: setShadowQuality, grain: setGrain, ground: setGround, relief: setRelief, light: setLight, lightInfo: function () { return lightInfo; }, g5Info: function () { return g5Info; },
+  // 19.11: the rocks as built (the map's rock materials, layers and rock models) and as drawn (the array texture, the models on the rock material)
+  function rockInfo() {
+    var R = mapData && mapData.atlas && mapData.atlas.rocks;
+    return { materials: R ? R.mats.length : 0, layers: R ? R.n : 0, models: mapData ? mapData.visual.filter(function (r) { return r.rock; }).length : 0,
+      texture: !!(rockTex && rockTex.isCompressedArrayTexture), textureLayers: rockTex ? rockTex.image.depth : 0, drawn: info.rockModels || 0, s3tc: s3tc };
+  }
+  window.MapBench = { rocks: rockInfo, circles: drawnCircles, mapCircles: function () { return (mapData && mapData.mode && mapData.mode.circles) || []; }, gpu: async function (n, every) { var g = await gpuTimes(n || 40, function () { if (every) shadowsRedrawAll(); step(t); }); return +quant(g, 0.5).toFixed(3); }, shadowInfo: shadowInfo, vehicleShadowInfo: vehicleShadowInfo, render: function () { step(t); renderer.render(scene, camera); }, run: runBench, groundBench: runGroundBench, shadowBench: runShadowBench, shadowQuality: setShadowQuality, grain: setGrain, ground: setGround, relief: setRelief, light: setLight, lightInfo: function () { return lightInfo; }, g5Info: function () { return g5Info; },
     view5: function (name) { views5()[name](); }, cost: groundCost, sheet: plantSheet, playback: runPlayback, whereVisual: whereVisual, ensureCollision: ensureCollision,
     split: function () { splitPlants(true); },
     // round 6: the hits switch and the counts check (data events against the effects drawn over the whole battle)

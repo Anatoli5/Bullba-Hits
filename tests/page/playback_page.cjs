@@ -22,6 +22,8 @@
  *    are changed, the other battle is chosen: the page opens it (ready again, its id in the fragment, the selector on it),
  *    the haze and the speed came back as they were left; Reset to defaults puts them back and empties the store.
  * The base circles (19.11.2026): the rings drawn equal the map file's WTCP records of the battle's mode (two of 50 m).
+ * The rocks (19.11.2026): the JS-built map has the rock shader's materials (Malinovka's cliffs), its rock models drawn
+ * with them and their DXT5 array texture created with one layer per texture the map lists.
  * The one figure printed: the time from opening the page to ready, and the mod job's time before it.
  * No fixture, no client packages or no browser: SKIP (exit 77).
  */
@@ -110,6 +112,10 @@ async function openBattle(page, id) {
       const pairs = (a) => JSON.stringify((a || []).map((c) => [c.team, c.radius]).sort());
       check('a ring of the map file radius at each base of the battle mode', pairs(rings.drawn) === '[[1,50],[2,50]]' && pairs(rings.data) === pairs(rings.drawn),
         JSON.stringify(rings));
+      // the rocks (19.11): materials of PBS_tiled_atlas_global built from the raw files, and drawn with their array texture
+      const rocks = await page.evaluate('MapBench.rocks()');
+      check('the map has rock materials, its rock models drawn with their array texture', rocks.materials > 0 && rocks.layers > 0 && rocks.models > 0 &&
+        rocks.texture && rocks.textureLayers === rocks.layers && rocks.drawn === rocks.models, JSON.stringify(rocks));
       // the battle clock moves when played (software WebGL in headless Chrome draws this scene slowly: frames are waited for)
       await page.send('Page.bringToFront');   // a background target gets no animation frames
       const before = await page.evaluate('MapBench.state().t');
