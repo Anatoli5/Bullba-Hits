@@ -1820,7 +1820,7 @@
       // round 14: the colour attribute is (part tone x group shade, outer layer 0/1, 0); the base colour is the shader's
       var info = gt && gt[fg[f]], pid = info ? info[0] : part, outer = info && info[1] ? 1 : 0;
       var h = Math.sin((fg[f] + 1) * 12.9898) * 43758.5453, jit = 1 + 0.035 * (2 * (h - Math.floor(h)) - 1);  // groups a shade apart
-      var cc = [HITS_TONE[pid > 0 ? pid % 4 : 0] * jit, outer, 0];  // viewer.js partColor: track pairs (4) and wheels (-1) take the chassis'
+      var cc = [HITS_TONE[pid > 0 ? pid % 4 : 0] * jit, outer, (pid > 0 ? pid % 4 : 0) === 0 ? 1 : 0];  // blue = 1: the running gear (chassis, tracks, wheels) - bare metal, not paint  // viewer.js partColor: track pairs (4) and wheels (-1) take the chassis'
       for (k = 0; k < 3; k++) for (j = 0; j < 3; j++) {
         col[f * 9 + k * 3 + j] = cc[j];
         seam[f * 9 + k * 3 + j] = (j === k ? 1 : 0) + off[j];
@@ -1848,14 +1848,17 @@
         '#include <color_fragment>', ['#include <color_fragment>',
           'vec3 hc = uBase * diffuseColor.r;',
           'float hl = dot(hc, vec3(0.2126, 0.7152, 0.0722));',
-          'if (diffuseColor.g > 0.5) { hc = mix(hc, vec3(hl), 0.55) * 0.78; hl *= 0.78; }',  // the outer layer: greyer and darker than its part
+          'if (diffuseColor.g > 0.5) { hc = mix(hc, vec3(hl), 0.55) * 0.78; hl *= 0.78; }',
+          // 19.11 (the user): the running gear and the screens are metal rather than body paint - a grey steel mixed in
+          'float hm = max(diffuseColor.b > 0.5 ? 0.6 : 0.0, diffuseColor.g > 0.5 ? 0.4 : 0.0);',
+          'hc = mix(hc, vec3(0.080, 0.084, 0.090) * diffuseColor.r, hm);',  // the outer layer: greyer and darker than its part
           'hc = mix(hc, uTeam, uTint);',
           'hc = mix(hc, vec3(diffuseColor.r * (diffuseColor.g > 0.5 ? 0.78 : 1.0) * 0.083), uDead);',  // destroyed: as dark a grey as before round 14, whatever the base
           'vec3 hd = vSeam / max(fwidth(vSeam), vec3(1e-6));',
           'float hk = 1.0 - smoothstep(0.35, 1.0, min(min(hd.x, hd.y), hd.z));',
           'diffuseColor.rgb = mix(hc, vec3(' + HITS_SEAM.slice(0, 3).join(', ') + '), ' + HITS_SEAM[3] + ' * hk);'].join('\n '));
     };
-    mat.customProgramCacheKey = function () { return 'hits-vehicle14'; };
+    mat.customProgramCacheKey = function () { return 'hits-vehicle15'; };
     return mat;
   }
 

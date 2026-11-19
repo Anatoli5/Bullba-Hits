@@ -187,9 +187,9 @@ const reported = (host) => (host || []).filter((c) => c.action === 'playbackRepo
         Math.abs(lit.below[2] - lit.below[0]) < 0.05, JSON.stringify(lit));
       // round 14: the vehicles' colour - a preset (steel grey by default) and a brightness beside the team tint
       const vc = await page.evaluate("(() => { const s = document.getElementById('sel-vcolor'), b = document.getElementById('rng-vbright'), t = document.getElementById('rng-tint'); if (!s || !b) return null;" +
-        " const a = MapBench.vehicleLook().base; s.value = 'khaki'; s.dispatchEvent(new Event('change')); b.value = '1.5'; b.dispatchEvent(new Event('input')); const o = MapBench.vehicleLook().base;" +
-        " s.value = 'steel'; s.dispatchEvent(new Event('change')); b.value = '1'; b.dispatchEvent(new Event('input'));" +
-        " return {preset: s.value, near: s.parentNode.parentNode === t.parentNode.parentNode, steel: a, khaki: o}; })()");
+        " const first = s.value, a = MapBench.vehicleLook().base; s.value = 'khaki'; s.dispatchEvent(new Event('change')); b.value = '1.5'; b.dispatchEvent(new Event('input')); const o = MapBench.vehicleLook().base;" +
+        " s.value = first; s.dispatchEvent(new Event('change')); b.value = '1'; b.dispatchEvent(new Event('input'));" +
+        " return {preset: first, near: s.parentNode.parentNode === t.parentNode.parentNode, steel: a, khaki: o}; })()");
       const sat = (c) => Math.max(c[0], c[1], c[2]) - Math.min(c[0], c[1], c[2]);
       check('round 14: vehicle colour by nation by default, steel grey its fallback (neutral, mid-dark), khaki and brightness change it, beside the team tint', vc && vc.preset === 'nation' && vc.near &&
         sat(vc.steel) < 0.03 && vc.steel[1] > 0.08 && vc.steel[1] < 0.3 && vc.khaki[1] > vc.steel[1] && vc.khaki[2] < vc.khaki[0], JSON.stringify(vc));
