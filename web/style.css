@@ -82,19 +82,12 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 /* The list under the tile: map, the player's vehicle tile, and the start day and time kept secondary. */
 .battle-list{position:absolute;left:0;top:calc(100% + 8px);z-index:14;min-width:100%;width:max-content;max-width:min(430px,calc(100vw - 40px));max-height:min(60vh,420px);overflow:auto;display:flex;flex-direction:column;gap:3px;padding:12px;border-radius:8px;background:#15212e;box-shadow:0 15px 50px #0009}
 .battle-list[hidden]{display:none}
-.battle-option{display:grid;grid-template-columns:minmax(0,1fr) auto auto auto auto;align-items:center;gap:14px;width:100%;text-align:left;min-height:48px;padding:3px 10px;font-size:15px;border:1px solid #293849;border-radius:4px;background:#172330}
+.battle-option{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:14px;width:100%;text-align:left;min-height:48px;padding:3px 10px;font-size:15px;border:1px solid #293849;border-radius:4px;background:#172330}
 .battle-option[aria-selected=true]{border-color:var(--gold);background:#302d25;box-shadow:inset 3px 0 var(--gold)}
 .battle-option-map{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .battle-option-vehicle{display:flex;align-items:center;min-width:0}
 .battle-option-vehicle .vehicle-tile{flex:0 0 auto;width:168px;padding-right:40px}
 .battle-option-when{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
-/* BACKLOG 104: the 3D replay player of the row's battle (web/playback.html) */
-.battle-option-replay{font-size:12px;padding:3px 8px;border:1px solid #3a4a5c;border-radius:3px;color:var(--gold);white-space:nowrap}
-.battle-option-replay:hover{background:#243446}
-/* BACKLOG 107: a battle whose replay is no longer kept; its keep mark (☆ / ★, ∅ when the limit removed it) */
-.battle-option-replay.no-replay{opacity:.45}
-.battle-option-keep{min-width:1.2em;font-size:17px;line-height:1;text-align:center;color:var(--gold)}
-.battle-option-keep[data-state=removed]{color:var(--muted);font-size:14px}
 
 /* Scene overlays: the vehicle whose collision model is drawn stays centred over the model, the shooter
    under it. The caption sits to the LEFT of the vehicle tile (a label, not a header). Backdrops are almost

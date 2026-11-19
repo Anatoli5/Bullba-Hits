@@ -13,7 +13,7 @@ try:
 except ImportError:
     import queue
 
-VERSION = '1.11'
+VERSION = '1.12'
 VIEWER_PATH = os.path.join('mods', 'configs', 'local.armor_inspector', 'Viewer.html')
 LOG = logging.getLogger('local.armor_inspector')
 PARTS = ('chassis', 'hull', 'turret', 'gun')
@@ -697,8 +697,6 @@ class Writer(object):
             elif name == 'prioritise': self.exporter.prioritise(payload)
             elif name == 'ttx': self.exporter.request_ttx(payload)
             elif name == 'battle': self.exporter.request_battle(payload)
-            elif name == 'playback': self.exporter.request_playback(payload)
-            elif name == 'replays': self.exporter.replay_library_command(payload)
             elif name == 'sweepStart': self.exporter.confirm_sweep(payload or 'ttx')
             elif name == 'sweepStop': self.exporter.stop_sweep(payload or 'ttx')
             # The replay stream of one battle (replay_source.ReplaySource.handover): its consumer is the
@@ -1215,16 +1213,6 @@ class Recorder(object):
         """The page opened a saved battle whose file is stale (BACKLOG 55). Game thread: the id goes through the export
         queue; reading the raw file and writing the battle belong to that thread."""
         if battle_id: self.writer.put_export('battle', str(battle_id))
-
-    def request_playback(self, battle_id):
-        """The page opened a battle in the 3D replay player and its file is missing (BACKLOG 104). Game thread: the id goes
-        through the export queue; decoding the replay and copying the map belong to that thread."""
-        if battle_id: self.writer.put_export('playback', str(battle_id))
-
-    def request_replays(self, payload):
-        """The page's word on the mod's replay folder (BACKLOG 107): keep a battle's replay forever or not, or the number of
-        replays kept. Game thread: through the export queue; the files belong to that thread."""
-        if payload: self.writer.put_export('replays', dict(payload))
 
     def request_ttx(self, type_name):
         """The page asks for the characteristics file of one type (data/ttx/<id>.js). Game thread: the
@@ -2050,18 +2038,6 @@ def page_battle(battle_id):
     _recorder.request_battle(battle_id)
 
 
-def page_playback(battle_id):
-    """The page opened a battle in the 3D replay player (BACKLOG 104). Game thread: the request only."""
-    if _recorder is None: return
-    _recorder.request_playback(battle_id)
-
-
-def page_replays(payload):
-    """The page's 'replayKeep' / 'replayLimit' (BACKLOG 107). Game thread: the request only."""
-    if _recorder is None: return
-    _recorder.request_replays(payload)
-
-
 def page_ttx(type_name):
     """The page has no current characteristics file of this type. Game thread: the request only."""
     if _recorder is None: return
@@ -2238,14 +2214,10 @@ def init():
             # record and goes to the export thread after the battle (and, after a crash, at this start).
             # Its gate is the recording gate without the arena (the arena comes after the avatar): a replay being
             # played is refused inside, a spectator seat here.
-            # The replay limit (BACKLOG 107): with it on, the battle's whole final file is renamed to the mod's name.
             from local_armor_inspector.replay_source import ReplaySource
-            from local_armor_inspector.replay_library import Library
             from local_armor_inspector.telemetry import observer_seat
-            library = Library(os.path.join(os.getcwd(), 'replays'), os.path.dirname(os.path.abspath(_recorder.writer.folder)))
             _recorder.replay = ReplaySource(_recorder.writer.folder, _recorder.session, _recorder.writer.put_export,
-                                            gate=lambda player: recorder.enabled and not observer_seat(player),
-                                            library=library)
+                                            gate=lambda player: recorder.enabled and not observer_seat(player))
             _recorder.replay.install()
         except Exception: LOG.exception('Replay source unavailable; hit recording continues')
         try: _context_menu = install_context_menu()
@@ -2259,8 +2231,6 @@ def init():
             presentation.set_open_request(page_open)
             presentation.set_sweep_request(page_sweep)
             presentation.set_battle_request(page_battle)
-            presentation.set_playback_request(page_playback)
-            presentation.set_replays_request(page_replays)
             presentation.set_load_listener(_recorder.note_page_loading)
         except Exception: LOG.exception('Page export command unavailable; hit recording continues')
         try:
@@ -2289,8 +2259,6 @@ def fini():
         presentation.set_open_request(None)
         presentation.set_sweep_request(None)
         presentation.set_battle_request(None)
-        presentation.set_playback_request(None)
-        presentation.set_replays_request(None)
         presentation.set_load_listener(None)
         # The open window's trace (blue window, 03.10): its listeners and wrappers leave the client's objects.
         presentation.close_window_trace()

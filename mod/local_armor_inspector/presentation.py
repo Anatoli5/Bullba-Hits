@@ -20,8 +20,6 @@ _ttx_request = None
 _open_request = None
 _sweep_request = None
 _battle_request = None
-_playback_request = None
-_replays_request = None
 # The page's loading (the replay job waits for it): called with True when the window opens, False on its onLoadEnd, None
 # when it is gone (Recorder.note_page_loading).
 _load_listener = None
@@ -130,19 +128,6 @@ def set_battle_request(handler):
     _battle_request = handler
 
 
-def set_playback_request(handler):
-    """The page opened a battle in the 3D replay player ('playback', BACKLOG 104): the mod makes that battle's file."""
-    global _playback_request
-    _playback_request = handler
-
-
-def set_replays_request(handler):
-    """The page's word on the mod's replay folder (BACKLOG 107): 'replayKeep' (a battle's replay kept forever or put back
-    under the limit) and 'replayLimit' (how many replays are kept); the handler gets one dict."""
-    global _replays_request
-    _replays_request = handler
-
-
 def set_ttx_request(handler):
     """The page asks for the characteristics file of one vehicle type (data/ttx/<id>.js)."""
     global _ttx_request
@@ -191,7 +176,7 @@ def _warn_once(key, message, *args):
 def _handle_web_command(command, ctx):
     """One w2c command from the page, on the game thread. Only the request is done here.
 
-    Fire-and-forget actions: 'exportVehicle' asks for one vehicle type,
+    Ten fire-and-forget actions: 'exportVehicle' asks for one vehicle type,
     'exportTtx' for the characteristics file of one type (no collision models),
     'busy' says the user is dragging or zooming the page right now,
     'prioritise' names the vehicle types whose collision models the page is
@@ -199,11 +184,8 @@ def _handle_web_command(command, ctx):
     'sweepStart'/'sweepStop' are the user's Start and Stop of a sweep, its
     'kind' - 'ttx' when absent, or 'models' - and 'prepareBattle' names the saved
     battle the page opened whose file is stale ('battleId'), 'windowSize' is the
-    step of the window's size the page's Settings hold ('step', BACKLOG 94),
-    'follow' says whether the page browses vehicles now ('on'), 'playback' names
-    the battle the page's 3D replay player opened ('battleId', BACKLOG 104),
-    'replayKeep' keeps a battle's replay forever or not ('battleId', 'keep') and
-    'replayLimit' is the replay limit's mode: on or off ('on') and how many replays ('limit', BACKLOG 107).
+    step of the window's size the page's Settings hold ('step', BACKLOG 94) and
+    'follow' says whether the page browses vehicles now ('on').
     None of them may cost the game thread more than a flag (a resize goes out on the next tick).
     """
     try:
@@ -250,34 +232,6 @@ def _handle_web_command(command, ctx):
                 _warn_once('battle', 'Bullba Hits page command: the recorder is not running')
                 return
             _battle_request(str(battle_id))
-            return
-        if action == 'playback':
-            battle_id = getattr(command, 'battleId', None)
-            if not battle_id or not BATTLE_ID.match(str(battle_id)):
-                _warn_once('playback-id', 'Bullba Hits page command: no battle id in %r', battle_id)
-                return
-            if _playback_request is None:
-                _warn_once('playback', 'Bullba Hits page command: the recorder is not running')
-                return
-            _playback_request(str(battle_id))
-            return
-        if action in ('replayKeep', 'replayLimit'):
-            if _replays_request is None:
-                _warn_once('replays', 'Bullba Hits page command: the recorder is not running')
-                return
-            if action == 'replayKeep':
-                battle_id, keep = getattr(command, 'battleId', None), getattr(command, 'keep', None)
-                if not battle_id or not BATTLE_ID.match(str(battle_id)) or not isinstance(keep, bool):
-                    _warn_once('replay-keep', 'Bullba Hits page command: no battle id or keep in %r %r', battle_id, keep)
-                    return
-                _replays_request({'action': 'keep', 'battleId': str(battle_id), 'keep': keep})
-                return
-            limit, on = getattr(command, 'limit', None), getattr(command, 'on', None)
-            if (isinstance(limit, bool) or not isinstance(limit, numbers.Integral) or not 1 <= limit <= 100
-                    or not isinstance(on, bool)):
-                _warn_once('replay-limit', 'Bullba Hits page command: no replay limit in %r %r', on, limit)
-                return
-            _replays_request({'action': 'limit', 'on': on, 'limit': int(limit)})
             return
         if action == 'prioritise':
             types = getattr(command, 'vehicleTypes', None)
@@ -358,17 +312,12 @@ def web_handlers():
             vehicleTypes = Field(type=list)
             # 'sweepStart'/'sweepStop': which sweep ('ttx' when absent, 'models').
             kind = Field(type=basestring)
-            # 'prepareBattle': the saved battle the page opened (BACKLOG 55); 'playback': the battle its 3D replay
-            # player opened (BACKLOG 104).
+            # 'prepareBattle': the saved battle the page opened (BACKLOG 55).
             battleId = Field(type=basestring)
             # 'windowSize': the step of the window's size (0 full screen .. WINDOW_STEPS - 1); 'follow': whether the page
             # browses vehicles, so the hangar's choice may point it at another (BACKLOG 94).
             step = Field(type=int)
             on = Field(type=bool)
-            # 'replayKeep': keep the battle's replay forever (True) or put it back under the limit; 'replayLimit': the
-            # replay limit on or off ('on', above) and how many replays it keeps (BACKLOG 107).
-            keep = Field(type=bool)
-            limit = Field(type=int)
         return [createCommandHandler(WEB_COMMAND, BullbaHitsSchema, _handle_web_command, None)]
     except Exception:
         LOG.exception('Bullba Hits page command could not be registered')

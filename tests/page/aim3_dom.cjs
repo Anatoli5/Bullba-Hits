@@ -202,8 +202,7 @@ function runNamed(name) {
   rafQueue = rafQueue.filter(function (x) { return !(x.fn && x.fn.name === name); });
   f.forEach(function (x) { x.fn(clock * 1000); });
 }
-// The pending save: web/settings-store.js's saveNow since 18.11.2026 (app.js's own persistNow before it).
-function savedSettings() { runNamed('saveNow'); runNamed('persistNow'); return storage['bullba-settings']; }
+function savedSettings() { runNamed('persistNow'); return storage['bullba-settings']; }
 function tick(seconds) {
   clock += seconds;
   const frames = rafQueue; rafQueue = [];
@@ -444,10 +443,6 @@ global.ArmorCrits = window.ArmorCrits;
 // TTX (23.09): the characteristics panel's arithmetic, loaded before app.js as the page loads it.
 try { require(path + 'ttx.js'); } catch (e) { if (e.code !== 'MODULE_NOT_FOUND') throw e; }
 global.BullbaTtx = window.BullbaTtx;
-// The pages' remembered settings (18.11.2026: moved out of app.js into web/settings-store.js, shared with the 3D replay
-// player), loaded before app.js as the page loads it.
-try { require(path + 'settings-store.js'); } catch (e) { if (e.code !== 'MODULE_NOT_FOUND') throw e; }
-global.BullbaSettings = window.BullbaSettings;
 // The emulation's sound (08.10): its samples and its owner, loaded before app.js as the page loads them. No audio
 // context exists here until the sound checks at the end give the window a stand-in one.
 try { require(path + 'aim-sound-samples.js'); require(path + 'aim-sound.js'); } catch (e) { if (e.code !== 'MODULE_NOT_FOUND') throw e; }
@@ -9193,8 +9188,6 @@ settle(20).then(function () {
 }).then(function () {
   return currentBuilds();
 }).then(function () {
-  return replayFolder();
-}).then(function () {
 
 
   if (thrown.length) console.log('\nEXCEPTIONS: ' + thrown.map(function (e) { return e && e.stack; }).join('\n'));
@@ -11038,7 +11031,6 @@ function soundChecks() {
   // settings machinery keeps it, restores it and "Reset to defaults" unticks it. The cluster under ⌖ is hidden in the
   // markup itself and the stylesheet gives a hidden cluster no room.
   const cssSrc = fs.readFileSync(path + 'style.css', 'utf8'), ownerSrc = fs.readFileSync(path + 'aim-sound.js', 'utf8');
-  const storeSrc = fs.existsSync(path + 'settings-store.js') ? fs.readFileSync(path + 'settings-store.js', 'utf8') : '';
   const devAt = pageSrc.indexOf('id="aim-sound-dev"'), menuSrc = pageSrc.slice(pageSrc.indexOf('class="settings-content"'), pageSrc.indexOf('id="reset-settings"'));
   ok('sound: the developer\'s checkbox - Settings, a section "Developer" after the shot ring lab, ONE checkbox "Countdown sound (demo)", unticked, not hidden; its help says in one sentence what it is - a bench of the mod Bullba Countdown\'s sound scheme, not a feature of Bullba Hits; the section has its own "?"',
      /<\/details>\n<details id="dev-lab" class="settings-lab"><summary title="Developer&#10;[^"]+">Developer<\/summary><div class="lab-help" id="dev-lab-help"><\/div><div class="settings-grid"><label title="Countdown sound \(demo\)&#10;A listening bench for the sound scheme of the mod Bullba Countdown, not a feature of Bullba Hits\.&#10;[^"]+">Countdown sound \(demo\)<span class="hatch-row"><input type="checkbox" id="aim-sound-dev"><\/span><\/label><\/div><\/details>/.test(menuSrc)
@@ -11047,9 +11039,7 @@ function soundChecks() {
   ok('sound: it is a plain control of the menu with the sound\'s one handler - the settings machinery (every input with an id in the menu) stores it, restores it and resets it to its markup, unticked; only the two scene switches are kept out of the restore',
      /\$\('aim-sound-dev'\)\.onchange=aimSoundSettings;/.test(appSrc)
      && /var settingControls=settingsBox\?\[\]\.slice\.call\(settingsBox\.querySelectorAll\('input\[id\],select\[id\]'\)\):\[\];/.test(appSrc)
-     // since 18.11.2026 the machinery is web/settings-store.js (shared with the 3D replay player); app.js binds its controls to it
-     && /\$\('reset-settings'\)\.onclick=function\(\)\{settingStore\.reset\(\);\};/.test(appSrc) && /controls:settingControls/.test(appSrc)
-     && /o\.controls\.forEach\(function\(el\)\{set\(el,defaults\[el\.id\]\);run\(el\);\}\);/.test(storeSrc)
+     && /\$\('reset-settings'\)\.onclick=function\(\)\{\n    settingControls\.forEach\(function\(el\)\{settingSet\(el,settingDefaults\[el\.id\]\);settingRun\(el\);\}\);/.test(appSrc)
      && appSrc.split("'aim-sound-dev'").length === 4 && appSrc.indexOf("el.id!=='aim-sound-dev'") < 0);
   ok('sound: ONE owner of what the checkbox gates - the sound\'s handler alone reads it: unticked, it puts the switch out before the owner of the sound is asked and hides the cluster; no other line of the page shows or hides the cluster, and a hidden cluster takes no room',
      /var dev = !!\(\$\('aim-sound-dev'\) \|\| \{\}\)\.checked;\n    if \(!dev\) box\.checked = false;\n/.test(appSrc)
@@ -11083,11 +11073,10 @@ function soundChecks() {
      && ['aim-sound-on', 'aim-sound-signals-value', 'aim-sound-count-value', 'aim-sound-ticks-value'].every(function (id) {
        return pageSrc.indexOf('class="settings-content"') < pageSrc.indexOf('id="' + id + '"') && pageSrc.indexOf('id="' + id + '"') < pageSrc.indexOf('id="reset-settings"'); }));
   ok('sound: the switch itself is not remembered (a browser gives a page sound only from a user\'s action, and a switch shown lit without sound would lie); its three choices are',
-     /keep:function\(el\)\{return el\.id!=='fun-mode'&&el\.id!=='aim-sound-on';\}/.test(appSrc)
-     && /if\(s&&\(!o\.keep\|\|o\.keep\(el\)\)&&Object\.prototype\.hasOwnProperty\.call\(s,el\.id\)/.test(storeSrc));
+     /if\(stored&&el\.id!=='fun-mode'&&el\.id!=='aim-sound-on'&&Object\.prototype\.hasOwnProperty\.call\(stored,el\.id\)/.test(appSrc));
   ok('sound: Signals was 4 by default in the first previews - a store written then lets that 4 go for the new default once (the store\'s version 5, as the earlier changes of a default did); a choice made after it is kept',
      /if\(!\(box\.v>=5\)&&String\(box\.values\['aim-sound-signals-value'\]\)==='4'\)delete box\.values\['aim-sound-signals-value'\];/.test(appSrc)
-     && /version:7,controls:settingControls/.test(appSrc) && /extra:function\(\)\{return \{aim:aimStored\(\)\};\}/.test(appSrc));
+     && /JSON\.stringify\(\{v:7,values:values,aim:aimStored\(\)\}\)/.test(appSrc));
   ok('sound: Time ticks was "one tone" by default in the previews before 09.10 - a store written then lets its choice of the ticks go for the new default, the tone of the shot, once (the store\'s version 6); a choice made after it is kept',
      /if\(!\(box\.v>=6\)\)delete box\.values\['aim-sound-ticks-value'\];/.test(appSrc)
      && /if \(kind !== 'one'\) kind = 'shot';/.test(appSrc));
@@ -11106,7 +11095,7 @@ function soundChecks() {
      && appSrc.indexOf("$('aim-sound-sweep") < 0 && appSrc.indexOf("$('aim-sound-strike") < 0 && !/S\.set\('(sweep|strike)'/.test(appSrc)
      && !/sweep|strikeOf|strikeMs|playbackRate|state\.rounds|state\.left/i.test(ownerSrc)
      && /delete box\.values\['aim-sound-sweep-on'\];delete box\.values\['aim-sound-strike-value'\];/.test(appSrc)
-     && /if\(s&&[^\n]*Object\.prototype\.hasOwnProperty\.call\(s,el\.id\)&&valid\(el,s\[el\.id\]\)\)set\(el,s\[el\.id\]\);/.test(storeSrc));
+     && /if\(stored&&[^\n]*Object\.prototype\.hasOwnProperty\.call\(stored,el\.id\)&&settingValid\(el,stored\[el\.id\]\)\)settingSet\(el,stored\[el\.id\]\);/.test(appSrc));
 
   // ONE OWNER, told at every change of the load (static). Each function of app.js that writes the load's state - the
   // reload, the magazine, the round loading back, the heat, the emulation being live - tells the sound itself or goes
@@ -12074,111 +12063,5 @@ function soundChecks() {
     S.tell = realTell;
     D.battle = keep.battle; D.scene = keep.scene; D.ttx = keep.ttx; D.index = keep.index;
     delete window.AudioContext;
-  });
-}
-
-// ================= THE REPLAY LIMIT (BACKLOG 107, 18.11.2026) =================
-// A recording mode beside the game's "last battle" and "all": on, the mod keeps the replays of the last N battles in the
-// game's replays folder under its own names (bh_...) and says so in data/replays.js. A battle's row shows its replay - ☆
-// one of the last N, ★ kept forever (replays/bullba_hits), ∅ removed by the limit, nothing without one - and its 3D ▶ is
-// dimmed with the reason when the replay is gone. ☆ / ★ asks the mod (replayKeep) and shows the change at once, without
-// opening the battle. Settings -> Replay limit is the MOD's mode (a switch, OFF by default, and N): shown from its file,
-// sent when changed (N clamped to 1 … 100), never one of the page's remembered settings; outside the game it is shown
-// only and nothing is sent.
-function replayFolder() {
-  if (RELOAD) return Promise.resolve();
-  const $ = function (id) { return document.getElementById(id); };
-  const D = global.ArmorInspectorData, H = global.BullbaHost;
-  const keep = {index: D.index, replays: D.replays, battle: D.battle};
-  const keepHost = {game: H.game, canSend: H.canSend, send: H.send};
-  const rows = [{id: 'k1', startedAt: 4, map: 'Alpha', hits: 1, rev: 'r.1'}, {id: 'k2', startedAt: 3, map: 'Bravo', hits: 1, rev: 'r.2'},
-                {id: 'k3', startedAt: 2, map: 'Charlie', hits: 1, rev: 'r.3'}, {id: 'k4', startedAt: 1, map: 'Delta', hits: 1, rev: 'r.4'},
-                {id: 'k5', startedAt: 0, map: 'Echo', hits: 1, rev: 'r.5'}];
-  const view = {format: 2, enabled: true, limit: 30, battles: {k1: 'rolling', k2: 'kept'}, removed: ['k3'], streams: ['k5']};
-  const sent = [];
-  let reads = 0;
-  D.index = function () {
-    return Promise.resolve({application: 'local.armor_inspector', version: 'test', updatedAt: 77, battles: rows.map(function (r) { return Object.assign({}, r); })});
-  };
-  D.battle = function () { return Promise.reject(new Error('no battle')); };
-  D.replays = function () { reads++; return Promise.resolve(JSON.parse(JSON.stringify(view))); };
-  H.game = true; H.canSend = function () { return true; };
-  H.send = function (name, payload) { sent.push(payload); return new Promise(function () {}); };
-  const row = function (id) { return $('battle-list').children.filter(function (c) { return c.getAttribute('data-id') === id; })[0]; };
-  const part = function (id, cls) {
-    const r = row(id);
-    return r ? r.children.filter(function (c) { return String(c.className).split(' ').indexOf(cls) >= 0; })[0] : null;
-  };
-  const mark = function (id) { const t = part(id, 'battle-option-keep'); return t ? t.textContent + '/' + t.getAttribute('data-state') : 'no tile'; };
-  const dim = function (id) { const t = part(id, 'battle-option-replay'); return !!t && String(t.className).indexOf('no-replay') >= 0; };
-  const poll = function () { tick(5.1); return settle(30); };
-  const click = function (id) { let stopped = false; part(id, 'battle-option-keep').onclick({stopPropagation: function () { stopped = true; }}); return stopped; };
-  sidebarModes[0].onclick();
-  return settle(20).then(poll).then(poll).then(function () {
-    ok('replays: the rows show each battle\'s replay - ☆ one of the last N, ★ kept, ∅ removed, nothing for an older stream or none',
-       mark('k1') === '☆/rolling' && mark('k2') === '★/kept' && mark('k3') === '∅/removed' && mark('k5') === '/stream' && mark('k4') === '/none',
-       ['k1', 'k2', 'k3', 'k4', 'k5'].map(mark).join(' '));
-    ok('replays: 3D ▶ dimmed where the replay is gone (removed, none), with the reason in its words; an older kept stream plays',
-       dim('k3') && dim('k4') && !dim('k1') && !dim('k2') && !dim('k5')
-       && part('k3', 'battle-option-replay').title.indexOf('• Its replay was removed: the replay limit keeps the last 30') > 0
-       && part('k4', 'battle-option-replay').title.indexOf('• No replay of this battle is kept') > 0);
-    ok('replays: the ☆ says what it does in the page\'s tooltip form (heading, one sentence, points)',
-       part('k1', 'battle-option-keep').title.indexOf('Keep this replay forever\nMoves this battle’s replay to replays/bullba_hits, where') === 0
-       && part('k2', 'battle-option-keep').title.indexOf('Replay kept forever\n') === 0, part('k1', 'battle-option-keep').title);
-    ok('replays: Settings -> Replay limit shows the mod\'s mode (on, 30), live in the game', $('replay-limit').value === '30' && $('replay-limit').disabled === false
-       && $('replay-limit-on').checked === true && $('replay-limit-on').disabled === false
-       && $('replay-limit-label').title.indexOf('Replay limit\nKeeps the replays of your last battles') === 0 && $('replay-limit-label').title.indexOf('• Now: on, the last 30') > 0,
-       $('replay-limit').value + ' ' + $('replay-limit-label').title);
-    const picked = $('battles').value;
-    const stopped = click('k1');
-    ok('replays: ☆ asks the mod to keep the replay forever, shows ★ at once and does not open the battle',
-       sent.length === 1 && sent[0].action === 'replayKeep' && sent[0].battleId === 'k1' && sent[0].keep === true
-       && mark('k1') === '★/kept' && stopped && $('battles').value === picked, JSON.stringify(sent) + ' ' + mark('k1'));
-    view.battles.k1 = 'kept';
-    return poll();
-  }).then(function () {
-    ok('replays: the mod\'s file agrees - still ★', mark('k1') === '★/kept');
-    click('k2');
-    ok('replays: ★ puts the replay back under the limit (keep false), ☆ at once',
-       sent.length === 2 && sent[1].action === 'replayKeep' && sent[1].battleId === 'k2' && sent[1].keep === false && mark('k2') === '☆/rolling',
-       JSON.stringify(sent));
-    const ownBefore = typeof part('k3', 'battle-option-keep').onclick;
-    ok('replays: ∅ (removed) does nothing on a click', ownBefore !== 'function');
-    const el = $('replay-limit');
-    el.value = '120'; el.onchange();
-    ok('replays: N 120 is clamped to 100 and sent to the mod with the mode', sent.length === 3 && sent[2].action === 'replayLimit' && sent[2].limit === 100 && sent[2].on === true && el.value === '100',
-       JSON.stringify(sent[2]) + ' ' + el.value);
-    el.value = '0'; el.onchange();
-    ok('replays: 0 is clamped to 1', sent.length === 4 && sent[3].limit === 1 && el.value === '1', JSON.stringify(sent[3]));
-    el.value = 'x'; el.onchange();
-    ok('replays: a value that is not a number goes back to the number in force, nothing sent', sent.length === 4 && el.value === '1', el.value);
-    const sw = $('replay-limit-on');
-    sw.checked = false; sw.onchange();
-    ok('replays: the switch off - sent (on false, N kept), N greyed, the words say the game\'s own setting rules',
-       sent.length === 5 && sent[4].action === 'replayLimit' && sent[4].on === false && sent[4].limit === 1 && el.disabled === true
-       && $('replay-limit-label').title.indexOf('• Now: off, the game’s own setting rules') > 0, JSON.stringify(sent[4]));
-    sw.checked = true; sw.onchange();
-    ok('replays: and on again', sent.length === 6 && sent[5].on === true && el.disabled === false, JSON.stringify(sent[5]));
-    runNamed('saveNow');
-    const box = storage['bullba-settings'] ? JSON.parse(storage['bullba-settings']) : {values: {}};
-    ok('replays: the replay limit is not one of the page\'s remembered settings (the mod owns it)', !box.values || (box.values['replay-limit'] === undefined && box.values['replay-limit-on'] === undefined));
-    view.battles.k2 = 'rolling'; view.limit = 1;
-    H.canSend = function () { return false; }; H.game = false;
-    view.removed = ['k3', 'k4'];
-    return poll();
-  }).then(function () {
-    const was = sent.length;
-    click('k2');
-    const el = $('replay-limit');
-    el.value = '20'; el.onchange();
-    ok('replays: outside the game - shown only, nothing sent, the limit control disabled and saying so',
-       sent.length === was && mark('k2') === '☆/rolling' && el.disabled === true && el.value === '1' && $('replay-limit-on').disabled === true
-       && $('replay-limit-label').title.indexOf('• Here: shown only; set it in the game') > 0
-       && part('k2', 'battle-option-keep').title.indexOf('• Here: shown only; it works in the game') > 0,
-       sent.length + ' ' + el.value + ' ' + el.disabled);
-    ok('replays: the file is read with the poll', reads >= 3, String(reads));
-  }).then(function () {
-    D.index = keep.index; D.replays = keep.replays; D.battle = keep.battle;
-    H.game = keepHost.game; H.canSend = keepHost.canSend; H.send = keepHost.send;
   });
 }

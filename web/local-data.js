@@ -17,8 +17,6 @@
     if(key==='ttxSweep')return 'data/ttx-sweep.js';
     // The model sweep's progress (25.09): the page's Export all models and its bar.
     if(key==='modelsSweep')return 'data/models-sweep.js';
-    // The mod's replay folder (BACKLOG 107, 18.11.2026): its limit and which battles still have their replay.
-    if(key==='replays')return 'data/replays.js';
     // A definition of the shared store (BACKLOG 27, 12.11.2026): definitions/<kind>/<content hash>.js beside data/.
     var shared=/^definition:(armor|pitch|static):([a-f0-9]{32}(?:[a-f0-9]{32})?)$/.exec(key);
     if(shared)return 'definitions/'+shared[1]+'/'+shared[2]+'.js';
@@ -415,5 +413,5 @@
   // expandBattle is published so the offline tools that read a battle file straight from disk
   // (tools/check_shot_selection.cjs, tests/test_ballistics.cjs) use this one
   // reader instead of a second copy of the rules.
-  window.ArmorInspectorData={receive:receive,index:function(){return read('index');},battle:readBattle,vehicles:function(){return read('vehicles');},vehicle:function(id,once){return read('vehicle:'+id,once?RETRIES:0);},ttx:function(id){return read('ttx:'+id);},ttxSweep:function(){return read('ttxSweep');},modelsSweep:function(){return read('modelsSweep');},replays:function(){return read('replays');},scene:scene,sceneFor:sceneFor,sceneHit:sceneHit,scenesOf:scenesOf,NO_SCENE:NO_SCENE,wheelModel:wheelModel,prefabPose:prefabPose,settlePrefabs:settlePrefabs,PREFAB_FIT_MAX:PREFAB_FIT_MAX,expandBattle:expandBattle,sharedTables:sharedTables,rosterAt:rosterAt,rosterLife:rosterLife};
+  window.ArmorInspectorData={receive:receive,index:function(){return read('index');},battle:readBattle,vehicles:function(){return read('vehicles');},vehicle:function(id,once){return read('vehicle:'+id,once?RETRIES:0);},ttx:function(id){return read('ttx:'+id);},ttxSweep:function(){return read('ttxSweep');},modelsSweep:function(){return read('modelsSweep');},scene:scene,sceneFor:sceneFor,sceneHit:sceneHit,scenesOf:scenesOf,NO_SCENE:NO_SCENE,wheelModel:wheelModel,prefabPose:prefabPose,settlePrefabs:settlePrefabs,PREFAB_FIT_MAX:PREFAB_FIT_MAX,expandBattle:expandBattle,sharedTables:sharedTables,rosterAt:rosterAt,rosterLife:rosterLife};
 }());

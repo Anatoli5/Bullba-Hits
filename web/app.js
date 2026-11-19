@@ -7284,101 +7284,11 @@
       o.appendChild(node('span',(b.map||'Unknown map')+(b.damaged?' \u26a0':''),'battle-option-map'));
       var slot=node('span',undefined,'battle-option-vehicle');if(b.vehicle)slot.appendChild(vehicleTile(b.vehicle,true));
       o.appendChild(slot);o.appendChild(node('span',battleWhen(b.startedAt),'battle-option-when'));
-      // BACKLOG 104: the battle played over its map in 3D (web/playback.html; the mod prepares it the first time).
-      // BACKLOG 107: dimmed, and its words say why, when the battle's replay is no longer kept.
-      var kind=replayKind(b.id),gone=kind==='removed'||kind==='none';
-      var replay=node('span','3D ▶','battle-option-replay'+(gone?' no-replay':''));replay.setAttribute('data-replay',b.id);
-      replay.setAttribute('data-state',kind||'unknown');
-      replay.title=tipJoin(['3D replay','Plays this battle over its map: vehicles, shots, hits and destruction, from its replay.',
-        '• The first time, the game prepares the battle and its map: a few seconds',
-        kind==='removed'?'• Its replay was removed: the replay limit keeps the last '+replayLimit()+' (Settings, Replay limit); it plays only if it was prepared before':null,
-        kind==='none'?'• No replay of this battle is kept: it plays only if it was prepared before':null]);
-      o.appendChild(replay);
-      o.appendChild(keepTile(b.id,kind));
       var line=[b.vehicle&&b.vehicle.name,battleWhen(b.startedAt)].filter(Boolean).join(' \u00b7 ');
       o.title=(b.map||'Unknown map')+(line?'\n'+line:'')+(b.damaged?'\nDamaged: '+b.damaged+' recorded definition'+(b.damaged===1?' is':'s are')+' missing':'');
-      o.onclick=function(e){if(e&&e.target&&e.target.closest&&e.target.closest('.battle-option-replay'))return openPlayback(b.id);pickBattle(b.id);};
+      o.onclick=function(){pickBattle(b.id);};
       list.appendChild(o);
     });
-  }
-  // THE REPLAY LIMIT (BACKLOG 107, user 18.11): a recording mode beside the game's "last battle" and "all" - on, the mod
-  // keeps the replays of the player's last N battles in the game's replays folder under its own names (bh_...), older ones
-  // removed; OFF by default (Settings -> Replay limit, the MOD's own setting: data/replays.js shows it, this page only
-  // sends a change). A battle's ☆ on its row keeps its replay forever (moved to replays/bullba_hits, ★) or puts it back
-  // under the limit. The row says whether the battle still has its replay. The file is read with the poll; outside
-  // the game it is not read again once it is missing (nothing would write it). A click is shown at once and waits up to
-  // REPLAY_WAIT ms for the mod's file to agree.
-  var replayView=null,replayMissing=false,replayAsked={},replayStamp='',REPLAY_WAIT=10000;
-  function readReplays(){
-    if(replayMissing||!ArmorInspectorData.replays)return;
-    ArmorInspectorData.replays().then(function(v){
-      if(!v||typeof v!=='object')return;
-      var stamp=JSON.stringify(v);if(stamp===replayStamp)return;replayStamp=stamp;replayView=v;
-      Object.keys(replayAsked).forEach(function(id){if(replayKind(id,true)===(replayAsked[id].keep?'kept':'rolling'))delete replayAsked[id];});
-      paintReplayLimit();renderBattleList();syncBattlePick();
-    },function(){if(!host.game)replayMissing=true;});
-  }
-  // A battle's replay: 'kept' (forever), 'rolling' (one of the last N), 'stream' (an older battle's stream the mod kept),
-  // 'removed' (by the limit), 'none', or '' while the mod's word is unknown.
-  function replayKind(id,fileOnly){
-    var v=replayView;if(!v)return '';
-    var asked=!fileOnly&&replayAsked[id];
-    if(asked&&Date.now()-asked.at<REPLAY_WAIT)return asked.keep?'kept':'rolling';
-    var s=v.battles&&v.battles[id];if(s==='kept'||s==='rolling')return s;
-    if((v.streams||[]).indexOf(id)>=0)return 'stream';
-    if((v.removed||[]).indexOf(id)>=0)return 'removed';
-    return 'none';
-  }
-  function replayLimit(){var v=replayView,n=v?Math.round(Number(v.limit)):NaN;return n>=1&&n<=100?n:50;}
-  // The row's ☆ / ★ (a removed replay: ∅, no action; no mark without a replay under the mod's name).
-  function keepTile(id,kind){
-    var n=replayLimit(),live=host.canSend(),here=live?null:'• Here: shown only; it works in the game';
-    var tile=node('span',kind==='kept'?'\u2605':kind==='rolling'?'\u2606':kind==='removed'?'\u2205':'','battle-option-keep');
-    tile.setAttribute('data-keep',id);tile.setAttribute('data-state',kind||'unknown');
-    if(kind==='rolling')tile.title=tipJoin(['Keep this replay forever','Moves this battle’s replay to replays/bullba_hits, where the limit never removes it.',
-      '• Now: one of the last '+n+' replays the mod keeps',here]);
-    else if(kind==='kept')tile.title=tipJoin(['Replay kept forever','This battle’s replay stays in replays/bullba_hits and is never removed.',
-      '• Click: back to the replays folder, under the limit of the last '+n+' replays','• A replay older than the last '+n+' then goes when the next battle’s replay is added',here]);
-    else if(kind==='removed')tile.title=tipJoin(['Replay removed','The replay limit keeps the replays of the last '+n+' battles, and this battle is older.',
-      '• The battle still opens with its hits','• 3D replay: only if it was prepared before']);
-    if(kind==='kept'||kind==='rolling')tile.onclick=function(e){if(e&&e.stopPropagation)e.stopPropagation();toggleKeep(id);};
-    return tile;
-  }
-  function toggleKeep(id){
-    var kind=replayKind(id);if((kind!=='kept'&&kind!=='rolling')||!host.canSend())return;
-    var keep=kind!=='kept';replayAsked[id]={keep:keep,at:Date.now()};
-    sendCommand('replayKeep',{battleId:id,keep:keep});
-    renderBattleList();syncBattlePick();
-  }
-  // Settings -> Replay limit: the mod's mode - the switch (off by default) and N - sent when changed here (N 1 … 100).
-  // Outside the game it is shown only.
-  function replayLimitOn(){return !!(replayView&&replayView.enabled===true);}
-  function paintReplayLimit(){
-    var el=$('replay-limit'),on=$('replay-limit-on'),live=host.canSend(),n=replayLimit(),enabled=replayLimitOn();
-    if(document.activeElement!==el)el.value=String(n);
-    on.checked=enabled;on.disabled=!live;el.disabled=!live||!enabled;
-    $('replay-limit-label').title=tipJoin(['Replay limit','Keeps the replays of your last battles in the game’s replays folder, older ones removed: a recording mode beside the game’s “last battle” and “all”.',
-      '• Now: '+(enabled?'on, the last '+n:'off, the game’s own setting rules')+' (1 … 100, 50 by default)',
-      '• On: each battle’s replay is renamed bh_date_time_vehicle_map; the oldest beyond the number go when the next battle’s replay is added',
-      '• Kept forever (\u2605 in the battle list): moved to replays/bullba_hits, never removed',
-      '• Replays without the bh_ name: never counted, never touched','• A bh_ replay you rename stops being the mod’s',
-      live?null:'• Here: shown only; set it in the game']);
-  }
-  function sendReplayLimit(){
-    var el=$('replay-limit'),n=Math.round(Number(el.value)),enabled=!!$('replay-limit-on').checked;
-    if(!host.canSend()){paintReplayLimit();return;}
-    if(!isFinite(n)||el.value==='')n=replayLimit();
-    n=Math.max(1,Math.min(100,n));el.value=String(n);
-    if(n===replayLimit()&&enabled===replayLimitOn())return paintReplayLimit();
-    replayView=replayView||{battles:{},removed:[],streams:[]};replayView.limit=n;replayView.enabled=enabled;   // shown at once; the mod's file says it again
-    sendCommand('replayLimit',{on:enabled,limit:n});paintReplayLimit();renderBattleList();syncBattlePick();
-  }
-  $('replay-limit').onchange=sendReplayLimit;
-  $('replay-limit-on').onchange=sendReplayLimit;
-  // The 3D replay player of a battle (BACKLOG 104): its own page beside this one, with the host kept in its fragment.
-  function openPlayback(id){
-    openBattleList(false);
-    window.location.href='web/playback.html#'+(host.game?'host=game&':'')+'battle='+encodeURIComponent(id);
   }
   // The tile's title text and the selected row, from whatever #battles currently holds. In the Vehicles mode
   // the same slot carries the vehicle name (renderVehicleHeading), so it is left alone there.
@@ -10231,22 +10141,44 @@
     $('outline-brightness-value').textContent=$('outline-brightness').value+' %';$('outline-opacity-value').textContent=$('outline-opacity').value+' %';}
   $('outline-brightness').oninput=outline;$('outline-opacity').oninput=outline;
   // ------------------------------ Settings --------------------------------
-  // Every control of the Settings menu is remembered in one localStorage object (web/settings-store.js, the one owner of
-  // the pages' remembered settings: storage guarded, the control's own handler run, defaults from the HTML); the
-  // per-control keys of 0.7.x are folded into it once and removed. What is this page's own is below: its key, its
-  // migrations (settingsRead), the aim presets riding in the same box, the switches that are saved but not restored.
+  // Every control of the Settings menu is remembered in one localStorage object, so nothing resets on the next
+  // launch; the per-control keys of 0.7.x are folded into it once and removed. Storage may be refused (the
+  // game's CEF, a private window, a full quota): every read and write is guarded and the page works without it.
+  // The stored value is applied to the control and then the control's OWN handler runs - the viewer is
+  // configured by the same code path a click would take, never by a second copy of it.
   var SETTINGS_KEY='bullba-settings';
   var SETTINGS_LEGACY=[['bullba-bounce-mode','bounce-mode',String],['bullba-tint','ricochet-tint',String],
     ['bullba-tint-on','ricochet-tint-on',legacyFlag],['bullba-dots-spacing','ricochet-dots',String],
     ['bullba-dots','ricochet-dots-on',legacyFlag],['bullba-edges','part-edges',String],['bullba-outline','zone-outline',String]];
   function legacyFlag(v){return v==='on'||v==='1'||v==='true';}
   var settingsBox=document.querySelector('.settings-menu .settings-content');
-  // A control the MOD owns (data-mod-setting: Replays kept, BACKLOG 107) is shown from its file, not remembered here.
   var settingControls=settingsBox?[].slice.call(settingsBox.querySelectorAll('input[id],select[id]')):[];
-  settingControls=settingControls.filter(function(el){return !el.hasAttribute('data-mod-setting');});
-  // A parsed box -> its values, after this page's migrations (settings-store.js reads and parses it).
-  function settingsRead(box){
-    if(box){
+  var settingDefaults={};
+  function settingValue(el){return el.type==='checkbox'?el.checked:el.value;}
+  // The default is what the HTML carries: defaultChecked, defaultValue, the option marked selected (or the first).
+  function settingDefault(el){
+    if(el.type==='checkbox')return el.defaultChecked;
+    if(el.tagName==='SELECT'){var picked=el.querySelector('option[selected]');return picked?picked.value:el.options.length?el.options[0].value:'';}
+    return el.defaultValue;
+  }
+  // A stored value is taken only when it still fits the control: an option that exists, a number inside
+  // min..max, a real boolean. Anything else falls back to the default.
+  function settingValid(el,v){
+    if(el.type==='checkbox')return typeof v==='boolean';
+    if(typeof v!=='string'&&typeof v!=='number')return false;
+    var text=String(v);
+    if(el.tagName==='SELECT')return [].some.call(el.options,function(o){return o.value===text;});
+    if(el.type==='range'||el.type==='number'){var n=Number(text);
+      if(!isFinite(text===''?NaN:n))return false;
+      return n>=(el.min===''?-Infinity:Number(el.min))&&n<=(el.max===''?Infinity:Number(el.max));}
+    return true;
+  }
+  function settingSet(el,v){if(el.type==='checkbox')el.checked=!!v;else el.value=String(v);}
+  function settingRun(el){var fn=(el.type==='range'&&el.oninput)||el.onchange||el.oninput;if(fn)fn.call(el);}
+  function settingsStored(){
+    var raw=null;try{raw=window.localStorage.getItem(SETTINGS_KEY);}catch(e){}
+    if(raw===null||raw===undefined)return null;
+    try{var box=JSON.parse(raw);
       // The shooter presets ride in the same object under their own key, so one read and one write serve
       // the whole page. A stored object that fails the checks in adoptAimStore is simply not adopted.
       if(box&&box.aim)adoptAimStore(box.aim);
@@ -10284,7 +10216,7 @@
         delete box.values['mode-switch-time'];
         // The sound's Magazine sweep and its strike length (previews of 09-10.10) are gone (user, 10.10): the same.
         delete box.values['aim-sound-sweep-on'];delete box.values['aim-sound-strike-value'];
-        return box.values;}}
+        return box.values;}}catch(e){}
     return null;
   }
   // The keys of 0.7.x, read once and dropped.
@@ -10298,18 +10230,18 @@
     });
     return values;
   }
-  // One store for the whole Settings box (settings-store.js: the save is one write a moment after the last change).
-  // ✸ is not remembered (user, 23.09): every opening of the page shows the recorded shot as it was, the emulation layer
-  // (HP bar, RNG shots, Hitmarks) waits for its switch. Its own sub-switches (real reload) still are. Nor is the
-  // emulation's sound (08.10): a browser gives a page sound only from a user's action, so a switch restored as ON would
-  // stand lit and silent. Its choices (signals, countdown, time ticks) are remembered, and so is the developer's checkbox
-  // that shows the switch at all (#aim-sound-dev, 10.10). The shooter presets a user saved and the build he made by hand
-  // are his own data, not settings of this menu: a reset keeps them.
-  var settingStore=BullbaSettings.bind({key:SETTINGS_KEY,version:7,controls:settingControls,read:settingsRead,legacy:settingsLegacy,
-    extra:function(){return {aim:aimStored()};},keep:function(el){return el.id!=='fun-mode'&&el.id!=='aim-sound-on';},
-    keepOnReset:function(){return !!(aimUserNames().length||Object.keys(aimStore.custom).length||Object.keys(aimStore.pairs).length);}});
-  function persistNow(){settingStore.saveNow();}
-  function persistSettings(){settingStore.save();}
+  // The save is one write a moment after the last change, not one per event: a slider turned by the wheel sends
+  // an 'input' per notch, and serialising every setting and the presets into localStorage (a synchronous disk
+  // write) on each of them made the wheel stall (user, 24.09). Leaving the page writes a pending save at once.
+  var persistTimer=null;
+  function persistNow(){
+    if(persistTimer!==null){window.clearTimeout(persistTimer);persistTimer=null;}
+    var values={};settingControls.forEach(function(el){values[el.id]=settingValue(el);});
+    try{window.localStorage.setItem(SETTINGS_KEY,JSON.stringify({v:7,values:values,aim:aimStored()}));}catch(e){}
+  }
+  function persistSettings(){if(persistTimer===null)persistTimer=window.setTimeout(persistNow,300);}
+  window.addEventListener('pagehide',function(){if(persistTimer!==null)persistNow();});
+  document.addEventListener('visibilitychange',function(){if(document.hidden&&persistTimer!==null)persistNow();});
   // THE GAME WINDOW'S SIZE (BACKLOG 94, user 12.11): − and + in the header step it, from the whole screen (step 1 of 7)
   // through the usual size (2), the hangar's vehicle carousel left free - one row (3), two rows (4) - to three smaller
   // ones. The step is a setting like the others (#window-size-value in the Settings box: remembered, restored, reset);
@@ -10334,7 +10266,25 @@
   }
   $('window-smaller').onclick=function(){stepWindow(1);};
   $('window-larger').onclick=function(){stepWindow(-1);};
-  function restoreSettings(){settingStore.restore();}
+  function restoreSettings(){
+    var stored=settingsStored(),migrated=false;
+    if(!stored){stored=settingsLegacy();migrated=!!stored;}
+    settingControls.forEach(function(el){
+      settingDefaults[el.id]=settingDefault(el);
+      // ✸ is not remembered (user, 23.09): every opening of the page shows the recorded shot as it was, the emulation
+      // layer (HP bar, RNG shots, Hitmarks) waits for its switch. Its own sub-switches (real reload) still are.
+      // Nor is the emulation's sound (08.10): a browser gives a page sound only from a user's action, so a switch
+      // restored as ON would stand lit and silent. Its choices (signals, countdown, time ticks) are remembered, and so
+      // is the developer's checkbox that shows the switch at all (#aim-sound-dev, 10.10).
+      if(stored&&el.id!=='fun-mode'&&el.id!=='aim-sound-on'&&Object.prototype.hasOwnProperty.call(stored,el.id)&&settingValid(el,stored[el.id]))settingSet(el,stored[el.id]);
+      settingRun(el);
+      // One shared listener per control instead of a save inside every handler; a programmatic change below
+      // fires no event, so a restore and a reset never write anything back.
+      el.addEventListener('change',persistSettings);
+      if(el.type==='range')el.addEventListener('input',persistSettings);
+    });
+    if(migrated)persistSettings();
+  }
   // True while the wheel is turning a slider or a number box (from its first notch until the turn's one 'change'); the camera
   // callback reads it to put the shell off until the turn stops.
   var controlTurning=false;
@@ -10440,7 +10390,13 @@
       step(el,dir);
     },true);
   }());
-  $('reset-settings').onclick=function(){settingStore.reset();};
+  $('reset-settings').onclick=function(){
+    settingControls.forEach(function(el){settingSet(el,settingDefaults[el.id]);settingRun(el);});
+    try{window.localStorage.removeItem(SETTINGS_KEY);}catch(e){}
+    // The shooter presets a user saved and the build he made by hand are his own data, not settings of this
+    // menu, so they are kept.
+    if(aimUserNames().length||Object.keys(aimStore.custom).length||Object.keys(aimStore.pairs).length)persistSettings();
+  };
   // The Target group is built before the settings are restored: restoring the Display setting already runs
   // updateShell(), which asks the group whether it belongs on screen.
   buildTargetMods();
@@ -10690,7 +10646,6 @@
   // The catalogue is read once at start when the fragment names a vehicle, whatever the remembered mode is.
   restoreSidebar();
   refresh();applyFragment(true);
-  paintReplayLimit();readReplays();
   // One console line per fragment that reached this page without a reload (game.log in the game): whether the game's
   // window re-navigated to a new fragment keeps the page or loads it again (BACKLOG 94) is read from it.
   window.addEventListener('hashchange',function(){if(window.console)console.info('Bullba Hits page: new fragment without a reload ('+String(fragment().vehicle||'no vehicle')+')');applyFragment(false);});
@@ -10703,7 +10658,6 @@
     if(viewer){if(viewer.kick)viewer.kick();frameBadge();}
     refresh();if(sidebarMode==='vehicles')loadCatalogue();
     sweepTick();
-    readReplays();
     schedulePoll();
   }
   // THE SWEEPS OF EVERY VEHICLE: the characteristics (24.09) and the collision models (25.09), the user's decisions of

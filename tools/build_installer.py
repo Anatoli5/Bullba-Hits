@@ -27,7 +27,12 @@ def digest(path): return hashlib.sha256(path.read_bytes()).hexdigest()
 # retired_lines() refuses anything else. Append when a file leaves ASSETS (exporter.py) or the extras below; never drop a
 # line - an old game folder may still hold the file. 24.09.2026: the union of installer/upgrades/*.json and every
 # ASSETS in the git history of exporter.py (0.2.0 - 0.7.42), minus what 0.7.42 ships.
-RETIRED_FILES=('web/heatmap-gpu.js',)
+RETIRED_FILES=('web/heatmap-gpu.js',
+               # 19.11.2026: build 1.11 (installed on the author's machine only, never published) shipped the 3D replay
+               # player; it left Bullba Hits for a mod of its own.
+               'web/playback.html','web/settings-store.js','web/playback/battle-page.js','web/playback/battle.js',
+               'web/playback/decoder.js','web/playback/mapbuild-page.js','web/playback/mapbuild.js',
+               'web/playback/mapbuild9.js','web/playback/playback.js')
 # The viewer's own files only: web/ and licenses/, or a top-level page or document (Viewer.html, README.md, ...).
 RETIRED_SAFE=re.compile(r'^(?:(?:web|licenses)(?:/[A-Za-z0-9_-][A-Za-z0-9_.-]*)+|[A-Za-z0-9_-][A-Za-z0-9_.-]*\.(?:html|md))$')
 
