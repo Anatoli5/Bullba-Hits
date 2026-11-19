@@ -32,7 +32,9 @@ it before a build and refuses to build on red. Suites (they run side by side, ~1
             shooter move and at rest, on a heavy model's ray cost, within a budget; its figure the exact integral at rest;
             the Statistics log's pass under an orbit;
             tests/page/stats_pass.cjs: the Statistics log's pass - a battle written once (the mark, a reload), its pace,
-            the aim loop alive, what computes a battle again; and the user's battle of 04.10 (a local fixture)
+            the aim loop alive, what computes a battle again; and the user's battle of 04.10 (a local fixture);
+            tests/page/playback_page.cjs: the 3D replay player on the user's battle of 14.11 (a local fixture) - the mod's
+            job makes its file and the map's raw files under the client's python27, the shipped page builds the map
   py27      tests/py27/*.py under the client's own python27.dll (the recorder through two battles, ...)
   installer (only with --installer) tests/installer_cleanup_check.py: a test build of the installer into a fake game
 
@@ -289,6 +291,13 @@ def check_browser(result):
     code, out, _ = run([exe, 'tests/page/stats_pass.cjs'], timeout=300)
     passed = result.passed
     harness_lines(result, 'stats_pass', code, out)
+    total = re.search(r'(\d+) checks, (\d+) failed', out)
+    if total: result.passed = passed + int(total.group(1)) - int(total.group(2))
+    # The 3D replay player (BACKLOG 104, 18.11): the mod's job makes a battle's file and its map's raw files (under the
+    # client's python27), the shipped page builds the map and plays the battle. Local fixture and client: absent, SKIP.
+    code, out, _ = run([exe, 'tests/page/playback_page.cjs'], timeout=600, env={'BULLBA_PYTHON': sys.executable})
+    passed = result.passed
+    harness_lines(result, 'playback_page', code, out)
     total = re.search(r'(\d+) checks, (\d+) failed', out)
     if total: result.passed = passed + int(total.group(1)) - int(total.group(2))
 

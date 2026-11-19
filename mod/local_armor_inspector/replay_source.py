@@ -32,8 +32,9 @@ appended bytes, the end and the hand-over) runs on the thread `ArmorInspectorRep
 is walked by packet headers only (12 bytes each) to know where the last whole packet ends.
 
 What goes to the export thread, once per battle: `put_export('replay', message)` with the fields of `handover()`.
-Every line this module logs starts with 'Replay source:'; the ones that answer what the bytecode could not are named
-in docs/map/mod.md (block «Replay source»).
+With the replay limit on (replay_library, BACKLOG 107), the battle's whole final file is renamed to the mod's name inside
+replays/ before the hand-over (Library.add); a rename that fails is tried again at the start of every later pass for
+COPY_RETRY s while the game's file is unchanged, then the file is copied instead. With it off nothing is renamed.
 """
 from __future__ import absolute_import
 import glob
@@ -66,6 +67,7 @@ CHUNK = 1 << 20
 PACKET = struct.Struct('<IIf')
 ARENA_PERIOD = 0x16   # packet: u32 the arena period the client switched to (replay_objects.small_packet)
 AFTERBATTLE = 4       # constants.ARENA_PERIOD.AFTERBATTLE: the fight is over (replay_run.fight_end says why it is the end)
+COPY_RETRY = 60.0     # seconds a failed copy into the mod's replay folder is tried again (the game may hold the file)
 
 
 def controller():
@@ -255,8 +257,10 @@ class StreamCopy(object):
 
 
 class ReplaySource(object):
-    def __init__(self, folder, session, put_export, replay_dir='replays', gate=None, threaded=True):
+    def __init__(self, folder, session, put_export, replay_dir='replays', gate=None, threaded=True, library=None):
         self.folder = folder
+        self.library = library           # replay_library.Library: the replay limit, None for none (a bare test)
+        self.copies = []                 # renames to the mod's name that failed, tried again (retry_copies)
         self.session = session
         self.put_export = put_export
         self.replay_dir = replay_dir
@@ -451,6 +455,8 @@ class ReplaySource(object):
 
     def step(self, final=False, now=None):
         """One pass: the inbox, the growing copy, the end. final: hand over whatever is ending, without waiting."""
+        # A rename to the mod's name that failed at an earlier pass (store_copy) is tried again first.
+        if self.copies: self.retry_copies(final, now)
         while True:
             try: name, payload = self.inbox.get_nowait()
             except queue.Empty: break
@@ -537,7 +543,7 @@ class ReplaySource(object):
                      (header[0] - copy.copied) if header else 0, whole)
         else:
             LOG.info('Replay source: no final file of %s %.1f s after the end', copy.name, now - ending['at'])
-        self.handover(copy, ending, final_path, header)
+        self.handover(copy, ending, final_path, header, now)
 
     def own_final(self):
         return os.path.join(self.replay_dir, OWN_RESULT_NAME + REPLAY_EXT)
@@ -549,8 +555,9 @@ class ReplaySource(object):
         if copy.owned: candidates = [self.own_final()]
         elif copy.setting == 1: candidates = [os.path.join(self.replay_dir, FIXED_REPLAY_FILENAME + REPLAY_EXT)]
         else:
+            # Not temp, and not a replay the replay limit already took (its mark, replay_library.MARK).
             candidates = [p for p in glob.glob(os.path.join(self.replay_dir, '*' + REPLAY_EXT))
-                          if not os.path.basename(p).lower().startswith('temp')]
+                          if not os.path.basename(p).lower().startswith(('temp', 'bh_'))]
         found = []
         for path in candidates:
             try: mtime = os.path.getmtime(path)
@@ -563,7 +570,7 @@ class ReplaySource(object):
         found.sort()
         return found[-1][1], found[-1][2]
 
-    def handover(self, copy, ending, final_path, header):
+    def handover(self, copy, ending, final_path, header, now=None):
         stream_bytes = header[0] if header else None
         complete = bool(copy.arena_ok and not copy.carry and stream_bytes is not None and stream_bytes == copy.copied
                         and header[2] and not copy.failure)
@@ -575,15 +582,27 @@ class ReplaySource(object):
             # under the setting `none`; under the other settings the next login's record() truncates it anyway).
             if copy.owned and copy.foreign is None and remove(copy.source): temp = 'removed'
         if copy.foreign: temp = 'foreign (%s)' % copy.foreign
-        if complete and copy.owned and final_path and remove(final_path): give_final, final_path = None, None
+        # The replay limit (BACKLOG 107): the whole final file renamed to the mod's name before anything else reads it;
+        # None with the limit off. The message then names the renamed file, which is no longer the mod's to delete.
+        stored = None
+        if self.library is not None and final_path is not None and header is not None and header[2]:
+            stored = self.store_copy({'battle': copy.name, 'source': final_path, 'started': copy.started,
+                                      'arena': copy.arena, 'owned': copy.owned and complete}, now)
+        if stored:
+            if give_final: give_final = stored
+            final_path = stored
+        # The mod's own final file goes when the limit did not take it (a rename still to be retried decides then).
+        elif (complete and copy.owned and final_path and not self.copies_of(copy.name)
+                and remove(final_path)): give_final, final_path = None, None
         message = {'schema': SCHEMA, 'battle': copy.name, 'arenaId': copy.arena,
                    'stream': os.path.abspath(copy.path) if copy.copied else None, 'streamBytes': copy.copied,
                    'packets': copy.packets, 'partialBytes': len(copy.carry), 'lastClock': copy.last_clock,
                    'arenaChecked': copy.arena_ok, 'complete': complete, 'end': ending['reason'],
                    'final': os.path.abspath(give_final) if give_final else None,
                    'finalStreamBytes': stream_bytes if give_final else None,
-                   'finalOwned': bool(give_final and copy.owned), 'recordingOwned': copy.owned, 'temp': temp,
-                   'fightEnd': list(copy.fight_end) if copy.fight_end else None, 'copyFailure': copy.failure}
+                   'finalOwned': bool(give_final and copy.owned and not stored), 'recordingOwned': copy.owned, 'temp': temp,
+                   'fightEnd': list(copy.fight_end) if copy.fight_end else None, 'copyFailure': copy.failure,
+                   'library': stored}
         try: self.put_export('replay', message)
         except Exception: LOG.warning('Replay source: hand-over of %s failed', copy.name, exc_info=True)
         self.handed.append(copy.name)
@@ -594,6 +613,50 @@ class ReplaySource(object):
                  'final %s, temp %s, copy failure %s', copy.name, copy.copied, copy.packets, len(copy.carry), complete,
                  'in the copy' if copy.fight_end else 'not in the copy', message['final'], temp, copy.failure)
         self.copy, self.ending = None, None
+
+    def copies_of(self, name):
+        return [item for item in self.copies if item['battle'] == name]
+
+    def store_copy(self, item, now=None, copy=False):
+        """With the replay limit on, rename a battle's final file to the mod's name (`copy`: copy it instead); on a
+        failure the rename is tried again (retry_copies) while the game's file keeps the size and time it had now. Returns
+        the file's path, None with the limit off or after a failure."""
+        try:
+            return self.library.add(item['battle'], item['source'], item['started'], item['arena'], copy=copy)
+        except Exception as error:
+            if 'stamp' not in item:
+                try: item['stamp'] = (os.path.getsize(item['source']), os.path.getmtime(item['source']))
+                except OSError: item['stamp'] = None
+                item['deadline'] = (time.time() if now is None else now) + COPY_RETRY
+                item['tries'] = 0
+                self.copies.append(item)
+                LOG.warning("Replay source: the replay of %s not renamed to the mod's name yet (%s: %s); tried again",
+                            item['battle'], type(error).__name__, error)
+            return None
+
+    def retry_copies(self, final=False, now=None):
+        now = time.time() if now is None else now
+        for item in list(self.copies):
+            item['tries'] += 1
+            try: stamp = (os.path.getsize(item['source']), os.path.getmtime(item['source']))
+            except OSError: stamp = None
+            if stamp is None or stamp != item['stamp']:
+                self.copies.remove(item)
+                LOG.warning("Replay source: the replay of %s not taken: the game's file %s changed or went before the "
+                            'rename succeeded', item['battle'], item['source'])
+                continue
+            last = final or now >= item['deadline']
+            # The rename kept failing: the file copied instead (two files of the battle; Library.add's line says so).
+            stored = self.store_copy(item, now, copy=last)
+            if stored:
+                self.copies.remove(item)
+                LOG.info('Replay source: the replay of %s %s on try %d', item['battle'], 'copied' if last else 'renamed',
+                         item['tries'] + 1)
+                if last and item.get('owned'): remove(item['source'])
+            elif last:
+                self.copies.remove(item)
+                LOG.warning("Replay source: the replay of %s neither renamed nor copied after %d tries; the game's "
+                            'file %s stays as it is', item['battle'], item['tries'] + 1, item['source'])
 
     def drop_own_final(self, final=False, now=None):
         """The own recording of a seat that records nothing (a spectator): its final file is removed when it appears."""

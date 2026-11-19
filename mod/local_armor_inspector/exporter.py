@@ -6,6 +6,7 @@ JSONL is authoritative; every file written here can be regenerated from it and
 the matching client resources. Models are retained across game updates.
 """
 from __future__ import absolute_import
+import collections
 import copy
 import gc
 import glob
@@ -44,7 +45,7 @@ STAND_CHANGED = tuple(getattr(_client_code, 'STAND_CHANGED', ()))
 STAND_CLIENT = getattr(_client_code, 'STAND_CLIENT', None)
 
 LOG = logging.getLogger('local.armor_inspector')
-VERSION = '1.12'
+VERSION = '1.11'
 RESOURCE = re.compile(r'^(?:[A-Za-z0-9_-]+/)?vehicles/[A-Za-z0-9_/-]+\.(?:model|havok)\Z')
 IDENTIFIER = re.compile(r'^[-a-zA-Z0-9_]{1,100}\Z')
 # The interface icons of the aim configuration (equipment, perks, shells) ship with the page in web/icons
@@ -119,7 +120,9 @@ CRIT_ICON_FILES = tuple('web/icons/crits/%s.png' % name for name in (
 # web/ttx.js (23.09) is the arithmetic of the characteristics panel; index.html loads it before app.js, and without it
 # here the panel would stay hidden in the package the way the modifier group did.
 ASSETS = ('Viewer.html', 'web/style.css', 'web/icon.svg', 'web/viewer.js',
-          'web/local-data.js', 'web/frame.js', 'web/host.js', 'web/app.js', 'web/modifiers.js', 'web/equipment.js', 'web/vehicle-modes.js', 'web/ballistics.js', 'web/shot-telemetry.js', 'web/shot-context.js', 'web/crits.js', 'web/ttx.js', 'web/tooltips.js', 'web/aim-sound.js', 'web/aim-sound-samples.js', 'web/screen-armor.js', 'web/vendor/three.min.js',
+          'web/local-data.js', 'web/frame.js', 'web/host.js', 'web/app.js', 'web/modifiers.js', 'web/equipment.js', 'web/vehicle-modes.js', 'web/ballistics.js', 'web/shot-telemetry.js', 'web/shot-context.js', 'web/crits.js', 'web/ttx.js', 'web/settings-store.js', 'web/tooltips.js', 'web/aim-sound.js', 'web/aim-sound-samples.js', 'web/screen-armor.js', 'web/vendor/three.min.js',
+          'web/playback.html', 'web/playback/playback.js', 'web/playback/mapbuild.js', 'web/playback/mapbuild9.js',
+          'web/playback/mapbuild-page.js', 'web/playback/decoder.js', 'web/playback/battle.js', 'web/playback/battle-page.js',
           'web/vendor/three.LICENSE', 'web/vendor/three-mesh-bvh.umd.js',
           # THIRD_PARTY.md ships with the page and points at these two: the packed-XML reader's licence and
           # the vendor manifest with the sources and hashes of three.js / three-mesh-bvh (inspection, 20.09).
@@ -195,6 +198,7 @@ DERIVED_FORMAT = 5
 # the slice ends early for a battle, a drag, a command of the page or the mod closing; after it the game gets its share
 # (SWEEP_SHARE) of the time the slice took, with no cap.
 BATTLE_SLICE = 0.1
+MAP_NOTE_EVERY = 0.5   # seconds between two progress notes of a map's copy to the player page (run_map_job)
 # Battles published from their replay kept in memory this session (Exporter.replay_battles), the oldest out first: one
 # such battle is its raw records (a few MB); an evicted one keeps its file until something publishes it again.
 REPLAY_BATTLES_KEPT = 16
@@ -290,6 +294,12 @@ def job_key(kind, payload):
     # 'replay' (the replay stream of a battle, Exporter.replay_stream) is one job per battle too.
     if kind == 'replay':
         return ('replay', str((payload or {}).get('battle') or ''))
+    # 'playback' (the 3D replay player's file of a battle, Exporter.request_playback): one job per battle.
+    if kind == 'playback':
+        return ('playback', str((payload or {}).get('battleId') or ''))
+    # 'mapraw' (the raw files of one map for the player's builder, Exporter.request_map_raw): one job per arena.
+    if kind == 'mapraw':
+        return ('mapraw', str((payload or {}).get('arena') or ''))
     # 'vehicle', 'ttx' (the characteristics file of a type) and 'extras' (Exporter.type_extras) are one job per type each.
     return (kind, str((payload or {}).get('vehicleType') or ''))
 
@@ -3801,6 +3811,21 @@ class Exporter(object):
         # progress both continue (replay_defs_steps); CFG/replay/index.json - {battle id: what became of its replay
         # stream} - read when first needed.
         self.replay_work = None
+        # The 3D replay player's battle file in the making (playback.Job, run_playback_job), one at a time.
+        self.playback_work = None
+        # The raw files of one map in the making (playback.MapJob, run_map_job), one at a time; the page's progress line
+        # gets the copy's stage at most every MAP_NOTE_EVERY seconds.
+        self.map_work = None
+        self.map_noted = 0.0
+        # What the mod tells the open player page (notify_page: the battle file or a map's raw set made, a copy's stage):
+        # the mod's hook to the page's window (presentation.notify_page); the last ones kept for the stand's checks.
+        self.page_notify = None
+        self.page_notes = collections.deque(maxlen=64)
+        # When this game session's mod started: a map the page built before it and read back from IndexedDB now has
+        # proved that IndexedDB keeps it over a restart of the game (playback_report removes its raw set then).
+        self.session_started = time.time()
+        # The game's replays folder; the mod's own replay folder is its bullba_hits/ (replay_library, BACKLOG 107).
+        self.replays_folder = os.path.join(self.game, 'replays')
         # The last replay slice's speed against the job's fastest (its probe; run_job scales the rest by it) and the hold
         # of the queued replay while the game loads (replay_held: [battle, reason, since], logged once each way).
         self.replay_speed = 1.0
@@ -3867,6 +3892,8 @@ class Exporter(object):
         # The replay streams collected and never consumed (the game closed first): queued again (replay_setup).
         try: self.replay_setup()
         except Exception: LOG.exception('Replay streams left from the last session not looked for; they stay on disk')
+        # The page's view of the replay limit (data/replays.js): the mode, which battles still have their replay.
+        self.replay_library().publish()
         self.replay_defs_prepare()
         step = lap('battles')
         self.replay_vehicle_requests()
@@ -4627,6 +4654,198 @@ class Exporter(object):
         self.queue_job(JOB_PAGE, 'battle', {'battleId': name})
         LOG.info('Saved battle %s asked for by the page: prepared now', name)
         return True
+
+    def replay_library(self):
+        """The replay limit (replay_library.Library: the mod's marked replays in <game>/replays, kept ones in its
+        bullba_hits/, its manifest in CFG/replay/)."""
+        from .replay_library import Library
+        return Library(self.replays_folder, self.folder)
+
+    def replay_library_command(self, payload):
+        """The page's 'replayKeep' / 'replayLimit' (presentation -> Recorder.request_replays): {'action': 'keep',
+        'battleId', 'keep'} or {'action': 'limit', 'on', 'limit'} (the mode). The library publishes data/replays.js after
+        a change."""
+        payload = payload or {}
+        library = self.replay_library()
+        if payload.get('action') == 'keep':
+            name = str(payload.get('battleId') or '')
+            if not IDENTIFIER.match(name): return False
+            return library.keep(name, payload.get('keep') is True)
+        if payload.get('action') == 'limit':
+            return library.set_mode(payload.get('on') is True, payload.get('limit'))
+        return False
+
+    def request_playback(self, battle_id):
+        """The page's 'playback' (BACKLOG 104): the user opened a battle in the 3D replay player and its file
+        (data/playback/<id>.js) is missing or of another format. Made at the page's turn (JOB_PAGE), in slices
+        (run_playback_job), never in a battle; nothing when the file and its map's raw set are there. True when queued."""
+        from .playback import current, battle_arena
+        name = str(battle_id or '')
+        if not IDENTIFIER.match(name): return False
+        if current(self.folder, name, battle_arena(self.folder, name)):
+            self.notify_page({'kind': 'playback', 'id': name, 'state': 'ready'})
+            return False
+        self.queue_job(JOB_PAGE, 'playback', {'battleId': name})
+        LOG.info('Playback of %s asked for by the page: prepared now', name)
+        return True
+
+    def run_playback_job(self, payload):
+        """One slice (BATTLE_SLICE) of a battle's playback file (playback.Job.steps), ended early by a battle, a command of
+        the page waiting or the mod closing (battle_stop). True when another slice is needed (run_job puts the job back)."""
+        from .playback import Job
+        name = str((payload or {}).get('battleId') or '')
+        if self.ttx_stopped: return True
+        work = self.playback_work
+        if work is None or work.name != name:
+            work = self.playback_work = Job(self.folder, self.game, name, self)
+            work.gen = work.steps()
+            work.longest = 0.0
+        began = TTX_TIMER()
+        deadline = began + BATTLE_SLICE
+        done = False
+        try:
+            while True:
+                try: next(work.gen)
+                except StopIteration:
+                    done = True
+                    break
+                if TTX_TIMER() >= deadline or self.battle_stop(): break
+        except Exception:
+            done = True
+            LOG.exception('Playback of %s failed', name)
+        spent = TTX_TIMER() - began
+        work.work += spent
+        work.slices += 1
+        work.longest = max(work.longest, spent)
+        if not done: return True
+        self.playback_work = None
+        LOG.info('Playback of %s: %s in %.1f s (%.2f s of work in %d slices, the longest %.3f s: %s)', name, work.outcome,
+                 TTX_TIMER() - work.began, work.work, work.slices, work.longest,
+                 ', '.join('%s %.2f s' % kv for kv in sorted(work.times.items())))
+        self.notify_page({'kind': 'playback', 'id': name, 'state': 'ready'})
+        return False
+
+    def notify_page(self, note):
+        """Tell the open player page (BACKLOG 104, 19.11: instead of its polling a missing file once a second): through the
+        mod's hook to its window, else (a bare stand) only kept in page_notes."""
+        self.page_notes.append(note)
+        hook = self.page_notify
+        if hook is None: return
+        try: hook(note)
+        except Exception: LOG.warning('Playback: the page was not told %r', note, exc_info=True)
+
+    def request_map_raw(self, payload):
+        """The player page's 'mapRaw' (19.11): its IndexedDB lacks the map of `arena`, so it wants the map's raw files
+        (CFG/mapraw/<arena>/). `held`: base64 of the FNV-1a hashes (u32 LE) of the builder's products its IndexedDB holds,
+        `resv` their version - the resources those cover are not copied; `whole`: copy everything (the page's second
+        asking, after its build needed a resource held back or a LOD copied in part). A raw set of this format already
+        there (not `whole`): the page is told at once. True when queued."""
+        from . import map_raw
+        from .playback import raw_root
+        payload = payload or {}
+        arena = str(payload.get('arena') or '')
+        if not re.match(r'^[0-9a-z_]{1,80}\Z', arena): return False
+        whole = payload.get('whole') is True
+        if not whole and map_raw.manifest_current(raw_root(self.folder), arena):
+            self.notify_page({'kind': 'map', 'arena': arena, 'state': 'ready'})
+            return False
+        if job_key('mapraw', {'arena': arena}) in self.job_index or (self.map_work is not None and self.map_work.arena == arena):
+            return False
+        self.queue_job(JOB_PAGE, 'mapraw', {'arena': arena, 'held': payload.get('held'), 'resv': payload.get('resv'),
+                                             'whole': whole})
+        self.notify_page({'kind': 'map', 'arena': arena, 'state': 'queued'})
+        LOG.info('Map raw files of %s asked for by the page: copied now%s', arena, ' (whole)' if whole else '')
+        return True
+
+    def run_map_job(self, payload):
+        """One slice (BATTLE_SLICE) of a map's raw files (playback.MapJob.steps), ended early by a battle, a command of
+        the page waiting or the mod closing (battle_stop). True when another slice is needed (run_job puts the job back)."""
+        from .playback import MapJob
+        payload = payload or {}
+        arena = str(payload.get('arena') or '')
+        if self.ttx_stopped: return True
+        work = self.map_work
+        if work is None or work.arena != arena:
+            held = set()
+            try:
+                text = payload.get('held')
+                if text:
+                    import array, base64
+                    hashes = array.array('I')
+                    data = base64.b64decode(text)
+                    (getattr(hashes, 'frombytes', None) or getattr(hashes, 'fromstring'))(data[:len(data) // 4 * 4])
+                    held = set(hashes)
+            except Exception:
+                LOG.warning('Map raw files of %s: the page\'s held products unreadable; copied whole', arena, exc_info=True)
+            work = self.map_work = MapJob(self.folder, self.game, arena, held, payload.get('resv'), payload.get('whole') is True)
+            work.gen = work.steps()
+            work.longest = 0.0
+        began = TTX_TIMER()
+        deadline = began + BATTLE_SLICE
+        done = False
+        try:
+            while True:
+                try: next(work.gen)
+                except StopIteration:
+                    done = True
+                    break
+                if TTX_TIMER() >= deadline or self.battle_stop(): break
+        except Exception:
+            done = True
+            LOG.exception('Map raw files of %s failed', arena)
+            work.error = work.error or 'The map files could not be copied'
+        spent = TTX_TIMER() - began
+        work.work += spent
+        work.slices += 1
+        work.longest = max(work.longest, spent)
+        report = work.report
+        if not done:
+            if time.time() - self.map_noted >= MAP_NOTE_EVERY:
+                self.map_noted = time.time()
+                self.notify_page({'kind': 'map', 'arena': arena, 'state': 'copying', 'stage': report.get('stage'),
+                                  'done': report.get('done'), 'total': report.get('total')})
+            return True
+        self.map_work = None
+        res = report.get('resources') or {}
+        LOG.info('Map raw files of %s: %s in %.1f s (%.2f s of work in %d slices, the longest %.3f s); %d parts, %.1f MB '
+                 'written; resources: %d copied, %d of them in part (LODs only counted), %d held back (the page has them)',
+                 arena, work.outcome, TTX_TIMER() - work.began, work.work, work.slices, work.longest, report.get('parts') or 0,
+                 (report.get('written') or 0) / 1e6, res.get('resources') or 0, res.get('sparse') or 0, res.get('held') or 0)
+        if work.error: self.notify_page({'kind': 'map', 'arena': arena, 'state': 'error', 'error': work.error})
+        else: self.notify_page({'kind': 'map', 'arena': arena, 'state': 'ready'})
+        return False
+
+    def playback_report(self, payload):
+        """The player page's one report of an opening (19.11): one log line - where the map and the battle came from and
+        the seconds of each part of the wait. A map read back from IndexedDB that the page built before this game session
+        started has proved the store keeps it over a restart: its raw set is removed then (only then: until that proof the
+        raw files stay, the page may need them again). -> 'removed', 'kept' or 'none'."""
+        from . import map_raw
+        from .playback import raw_root
+        payload = payload or {}
+
+        def seconds(key):
+            value = payload.get(key)
+            return float(value) if isinstance(value, numbers.Number) and not isinstance(value, bool) else float('nan')
+        arena = str(payload.get('map') or '')
+        raw = 'none'
+        if re.match(r'^[0-9a-z_]{1,80}\Z', arena) and os.path.isdir(os.path.join(raw_root(self.folder), arena)):
+            built = seconds('mapBuiltAt') / 1000.0
+            if payload.get('mapFrom') == 'IndexedDB' and built == built and built < self.session_started:
+                try:
+                    map_raw.remove_set(raw_root(self.folder), arena)
+                    raw = 'removed'
+                except OSError:
+                    LOG.warning('Playback: the raw files of %s not removed', arena, exc_info=True)
+                    raw = 'kept (not removable)'
+            else:
+                raw = 'kept'
+        LOG.info('Playback page opened battle %s on %s: map from %s, battle from %s; waiting for the mod %.2f s, raw files '
+                 'loaded %.2f s, map built %.2f s, battle built %.2f s, ready %.2f s after opening; WebGL %s; map raw files %s',
+                 str(payload.get('battleId') or '?')[:100], arena or '?', str(payload.get('mapFrom') or '?')[:20],
+                 str(payload.get('battleFrom') or '?')[:20], seconds('waitMod'), seconds('loadRaw'), seconds('buildMap'),
+                 seconds('buildBattle'), seconds('total'), 'created' if payload.get('webgl') is True else 'NOT created', raw)
+        return raw
 
     def run_battle_job(self, payload):
         """One slice of a saved battle the page asked for (request_battle): lines of its raw file (BattleReader), then its hits
@@ -6542,6 +6761,16 @@ class Exporter(object):
                 finally: self.preparing_page = False
             # A battle's replay stream (replay_stream): in slices, like a saved battle.
             elif job[2] == 'replay': more = self.run_replay_job(job[3])
+            # The 3D replay player's file of a battle the page opened (request_playback): in slices, through a drag.
+            elif job[2] == 'playback':
+                self.preparing_page = page
+                try: more = self.run_playback_job(job[3])
+                finally: self.preparing_page = False
+            # The raw files of a map the player's builder needs (request_map_raw): in slices, through a drag.
+            elif job[2] == 'mapraw':
+                self.preparing_page = page
+                try: more = self.run_map_job(job[3])
+                finally: self.preparing_page = False
             # The session's entity definitions, built in the hangar before the first battle's replay needs them.
             elif job[2] == 'definitions': more = self.run_defs_job()
             else: self.run_vehicle_job(job[3], page)
@@ -6566,7 +6795,7 @@ class Exporter(object):
             rest = max(min(rest, BATTLE_SLICE), rest * self.replay_speed)
         # A slice of a saved battle of setup's backlog (27.09) is no extraction either: the game's share after it, all of it
         # (review of 4b1c8c8 #4: a 1 s cap left the work 85-95 % of the time when a battle took seconds in one go).
-        self.job_rest = rest if job[2] in ('battle', 'replay', 'definitions') else min(SWEEP_REST_MAX, rest) if job[2] == 'ttx' else PACE
+        self.job_rest = rest if job[2] in ('battle', 'replay', 'definitions', 'playback', 'mapraw') else min(SWEEP_REST_MAX, rest) if job[2] == 'ttx' else PACE
         return True
 
     def run_model_job(self, payload):

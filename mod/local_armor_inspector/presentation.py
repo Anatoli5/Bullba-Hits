@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """Local presentation helpers; no external browser, service or network request."""
 from __future__ import absolute_import
+import collections
+import json
 import logging
 import math
 import numbers
@@ -20,6 +22,18 @@ _ttx_request = None
 _open_request = None
 _sweep_request = None
 _battle_request = None
+_playback_request = None
+_player_request = None
+_replays_request = None
+# What the export thread tells the player page (19.11, notify_page): queued here (a deque's append and popleft are atomic),
+# delivered on the game thread (_pump_notes) into the window whose page sent the last player command (its Browser view,
+# the client's ctx['browser_view']) as one call of window.BullbaPlayback.notify(note) (WebBrowser.executeJavascript).
+_notes = collections.deque(maxlen=256)
+_note_view = None
+_pump = {'running': False, 'until': 0.0}
+NOTE_PUMP = 0.25          # seconds between two looks at the queue while a player page waits
+NOTE_PUMP_FOR = 15 * 60   # seconds the look goes on after the page's last player command
+ARENA = re.compile(r'^[0-9a-z_]{1,80}\Z')
 # The page's loading (the replay job waits for it): called with True when the window opens, False on its onLoadEnd, None
 # when it is gone (Recorder.note_page_loading).
 _load_listener = None
@@ -128,6 +142,68 @@ def set_battle_request(handler):
     _battle_request = handler
 
 
+def set_playback_request(handler):
+    """The page opened a battle in the 3D replay player ('playback', BACKLOG 104): the mod makes that battle's file."""
+    global _playback_request
+    _playback_request = handler
+
+
+def set_player_request(handler):
+    """The 3D replay player's other commands (19.11): handler(kind, payload) - 'mapraw' (a map's raw files, the page's
+    IndexedDB lacking the map) and 'playbackReport' (the page's one report of an opening: the mod's log line)."""
+    global _player_request
+    _player_request = handler
+
+
+def notify_page(note):
+    """Any thread: a note for the open player page (the export thread's: a battle file or a map's raw set made, a copy's
+    stage). Delivered on the game thread's next look (_pump_notes)."""
+    _notes.append(note)
+
+
+def _player_view(ctx):
+    """The window of a player command: the notes go to it; the look at the queue runs while the page waits."""
+    global _note_view
+    view = ctx.get('browser_view') if isinstance(ctx, dict) else None
+    if view is not None: _note_view = view
+    _pump['until'] = time.time() + NOTE_PUMP_FOR
+    if not _pump['running']:
+        try:
+            import BigWorld
+            BigWorld.callback(NOTE_PUMP, _pump_notes)
+            _pump['running'] = True
+        except Exception:
+            _warn_once('note-pump', 'Bullba Hits: the player page cannot be told (no game callback)')
+
+
+def _pump_notes():
+    """Game thread: the queued notes into the player page, one script each; again in NOTE_PUMP s while a page waits."""
+    _pump['running'] = False
+    view = _note_view
+    while _notes:
+        note = _notes.popleft()
+        try:
+            browser = getattr(view, 'browser', None)
+            if browser is None: break
+            browser.executeJavascript('window.BullbaPlayback&&window.BullbaPlayback.notify(%s)' % json.dumps(note), '')
+        except Exception:
+            _warn_once('note', 'Bullba Hits: the player page was not told %r', note)
+    if time.time() < _pump['until']:
+        try:
+            import BigWorld
+            BigWorld.callback(NOTE_PUMP, _pump_notes)
+            _pump['running'] = True
+        except Exception:
+            pass
+
+
+def set_replays_request(handler):
+    """The page's word on the mod's replay folder (BACKLOG 107): 'replayKeep' (a battle's replay kept forever or put back
+    under the limit) and 'replayLimit' (how many replays are kept); the handler gets one dict."""
+    global _replays_request
+    _replays_request = handler
+
+
 def set_ttx_request(handler):
     """The page asks for the characteristics file of one vehicle type (data/ttx/<id>.js)."""
     global _ttx_request
@@ -176,7 +252,7 @@ def _warn_once(key, message, *args):
 def _handle_web_command(command, ctx):
     """One w2c command from the page, on the game thread. Only the request is done here.
 
-    Ten fire-and-forget actions: 'exportVehicle' asks for one vehicle type,
+    Fire-and-forget actions: 'exportVehicle' asks for one vehicle type,
     'exportTtx' for the characteristics file of one type (no collision models),
     'busy' says the user is dragging or zooming the page right now,
     'prioritise' names the vehicle types whose collision models the page is
@@ -184,8 +260,13 @@ def _handle_web_command(command, ctx):
     'sweepStart'/'sweepStop' are the user's Start and Stop of a sweep, its
     'kind' - 'ttx' when absent, or 'models' - and 'prepareBattle' names the saved
     battle the page opened whose file is stale ('battleId'), 'windowSize' is the
-    step of the window's size the page's Settings hold ('step', BACKLOG 94) and
-    'follow' says whether the page browses vehicles now ('on').
+    step of the window's size the page's Settings hold ('step', BACKLOG 94),
+    'follow' says whether the page browses vehicles now ('on'), 'playback' names
+    the battle the page's 3D replay player opened ('battleId', BACKLOG 104),
+    'replayKeep' keeps a battle's replay forever or not ('battleId', 'keep') and
+    'replayLimit' is the replay limit's mode: on or off ('on') and how many replays ('limit', BACKLOG 107);
+    'mapRaw' asks for a map's raw files ('arena', 'held', 'resv', 'whole') and 'playbackReport' brings the player's
+    report of an opening ('report') - both the 3D replay player's (19.11), answered through notify_page.
     None of them may cost the game thread more than a flag (a resize goes out on the next tick).
     """
     try:
@@ -232,6 +313,54 @@ def _handle_web_command(command, ctx):
                 _warn_once('battle', 'Bullba Hits page command: the recorder is not running')
                 return
             _battle_request(str(battle_id))
+            return
+        if action == 'playback':
+            battle_id = getattr(command, 'battleId', None)
+            if not battle_id or not BATTLE_ID.match(str(battle_id)):
+                _warn_once('playback-id', 'Bullba Hits page command: no battle id in %r', battle_id)
+                return
+            if _playback_request is None:
+                _warn_once('playback', 'Bullba Hits page command: the recorder is not running')
+                return
+            _player_view(ctx)
+            _playback_request(str(battle_id))
+            return
+        if action in ('mapRaw', 'playbackReport'):
+            if _player_request is None:
+                _warn_once('player', 'Bullba Hits page command: the recorder is not running')
+                return
+            _player_view(ctx)
+            if action == 'mapRaw':
+                arena, held, resv = getattr(command, 'arena', None), getattr(command, 'held', None), getattr(command, 'resv', None)
+                if not arena or not ARENA.match(str(arena)):
+                    _warn_once('map-arena', 'Bullba Hits page command: no arena in %r', arena)
+                    return
+                _player_request('mapraw', {'arena': str(arena), 'held': str(held) if held else None,
+                                           'resv': str(resv)[:16] if resv else None, 'whole': getattr(command, 'whole', None) is True})
+                return
+            report = getattr(command, 'report', None)
+            if not isinstance(report, dict):
+                _warn_once('report', 'Bullba Hits page command: no report in %r', report)
+                return
+            _player_request('playbackReport', dict((str(k), v) for k, v in list(report.items())[:40]))
+            return
+        if action in ('replayKeep', 'replayLimit'):
+            if _replays_request is None:
+                _warn_once('replays', 'Bullba Hits page command: the recorder is not running')
+                return
+            if action == 'replayKeep':
+                battle_id, keep = getattr(command, 'battleId', None), getattr(command, 'keep', None)
+                if not battle_id or not BATTLE_ID.match(str(battle_id)) or not isinstance(keep, bool):
+                    _warn_once('replay-keep', 'Bullba Hits page command: no battle id or keep in %r %r', battle_id, keep)
+                    return
+                _replays_request({'action': 'keep', 'battleId': str(battle_id), 'keep': keep})
+                return
+            limit, on = getattr(command, 'limit', None), getattr(command, 'on', None)
+            if (isinstance(limit, bool) or not isinstance(limit, numbers.Integral) or not 1 <= limit <= 100
+                    or not isinstance(on, bool)):
+                _warn_once('replay-limit', 'Bullba Hits page command: no replay limit in %r %r', on, limit)
+                return
+            _replays_request({'action': 'limit', 'on': on, 'limit': int(limit)})
             return
         if action == 'prioritise':
             types = getattr(command, 'vehicleTypes', None)
@@ -312,12 +441,25 @@ def web_handlers():
             vehicleTypes = Field(type=list)
             # 'sweepStart'/'sweepStop': which sweep ('ttx' when absent, 'models').
             kind = Field(type=basestring)
-            # 'prepareBattle': the saved battle the page opened (BACKLOG 55).
+            # 'prepareBattle': the saved battle the page opened (BACKLOG 55); 'playback': the battle its 3D replay
+            # player opened (BACKLOG 104).
             battleId = Field(type=basestring)
             # 'windowSize': the step of the window's size (0 full screen .. WINDOW_STEPS - 1); 'follow': whether the page
             # browses vehicles, so the hangar's choice may point it at another (BACKLOG 94).
             step = Field(type=int)
             on = Field(type=bool)
+            # 'replayKeep': keep the battle's replay forever (True) or put it back under the limit; 'replayLimit': the
+            # replay limit on or off ('on', above) and how many replays it keeps (BACKLOG 107).
+            keep = Field(type=bool)
+            limit = Field(type=int)
+            # 'mapRaw' (19.11): the map whose raw files the player's builder needs, the FNV-1a hashes of the products its
+            # IndexedDB holds (base64 of u32 LE) and their version, whether to copy all of it; 'playbackReport': the
+            # page's one report of an opening (an object of plain values).
+            arena = Field(type=basestring)
+            held = Field(type=basestring)
+            resv = Field(type=basestring)
+            whole = Field(type=bool)
+            report = Field(type=dict)
         return [createCommandHandler(WEB_COMMAND, BullbaHitsSchema, _handle_web_command, None)]
     except Exception:
         LOG.exception('Bullba Hits page command could not be registered')
