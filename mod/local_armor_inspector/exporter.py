@@ -44,7 +44,7 @@ STAND_CHANGED = tuple(getattr(_client_code, 'STAND_CHANGED', ()))
 STAND_CLIENT = getattr(_client_code, 'STAND_CLIENT', None)
 
 LOG = logging.getLogger('local.armor_inspector')
-VERSION = '1.10'
+VERSION = '1.11'
 RESOURCE = re.compile(r'^(?:[A-Za-z0-9_-]+/)?vehicles/[A-Za-z0-9_/-]+\.(?:model|havok)\Z')
 IDENTIFIER = re.compile(r'^[-a-zA-Z0-9_]{1,100}\Z')
 # The interface icons of the aim configuration (equipment, perks, shells) ship with the page in web/icons
@@ -119,7 +119,9 @@ CRIT_ICON_FILES = tuple('web/icons/crits/%s.png' % name for name in (
 # web/ttx.js (23.09) is the arithmetic of the characteristics panel; index.html loads it before app.js, and without it
 # here the panel would stay hidden in the package the way the modifier group did.
 ASSETS = ('Viewer.html', 'web/style.css', 'web/icon.svg', 'web/viewer.js',
-          'web/local-data.js', 'web/frame.js', 'web/host.js', 'web/app.js', 'web/modifiers.js', 'web/equipment.js', 'web/vehicle-modes.js', 'web/ballistics.js', 'web/shot-telemetry.js', 'web/shot-context.js', 'web/crits.js', 'web/ttx.js', 'web/tooltips.js', 'web/aim-sound.js', 'web/aim-sound-samples.js', 'web/screen-armor.js', 'web/vendor/three.min.js',
+          'web/local-data.js', 'web/frame.js', 'web/host.js', 'web/app.js', 'web/modifiers.js', 'web/equipment.js', 'web/vehicle-modes.js', 'web/ballistics.js', 'web/shot-telemetry.js', 'web/shot-context.js', 'web/crits.js', 'web/ttx.js', 'web/settings-store.js', 'web/tooltips.js', 'web/aim-sound.js', 'web/aim-sound-samples.js', 'web/screen-armor.js', 'web/vendor/three.min.js',
+          'web/playback.html', 'web/playback/playback.js', 'web/playback/mapbuild.js', 'web/playback/mapbuild9.js',
+          'web/playback/mapbuild-page.js', 'web/playback/decoder.js', 'web/playback/battle.js', 'web/playback/battle-page.js',
           'web/vendor/three.LICENSE', 'web/vendor/three-mesh-bvh.umd.js',
           # THIRD_PARTY.md ships with the page and points at these two: the packed-XML reader's licence and
           # the vendor manifest with the sources and hashes of three.js / three-mesh-bvh (inspection, 20.09).
@@ -290,6 +292,9 @@ def job_key(kind, payload):
     # 'replay' (the replay stream of a battle, Exporter.replay_stream) is one job per battle too.
     if kind == 'replay':
         return ('replay', str((payload or {}).get('battle') or ''))
+    # 'playback' (the 3D replay player's file of a battle, Exporter.request_playback): one job per battle.
+    if kind == 'playback':
+        return ('playback', str((payload or {}).get('battleId') or ''))
     # 'vehicle', 'ttx' (the characteristics file of a type) and 'extras' (Exporter.type_extras) are one job per type each.
     return (kind, str((payload or {}).get('vehicleType') or ''))
 
@@ -3801,6 +3806,10 @@ class Exporter(object):
         # progress both continue (replay_defs_steps); CFG/replay/index.json - {battle id: what became of its replay
         # stream} - read when first needed.
         self.replay_work = None
+        # The 3D replay player's battle file in the making (playback.Job, run_playback_job), one at a time.
+        self.playback_work = None
+        # The game's replays folder; the mod's own replay folder is its bullba_hits/ (replay_library, BACKLOG 107).
+        self.replays_folder = os.path.join(self.game, 'replays')
         # The last replay slice's speed against the job's fastest (its probe; run_job scales the rest by it) and the hold
         # of the queued replay while the game loads (replay_held: [battle, reason, since], logged once each way).
         self.replay_speed = 1.0
@@ -3867,6 +3876,8 @@ class Exporter(object):
         # The replay streams collected and never consumed (the game closed first): queued again (replay_setup).
         try: self.replay_setup()
         except Exception: LOG.exception('Replay streams left from the last session not looked for; they stay on disk')
+        # The page's view of the replay limit (data/replays.js): the mode, which battles still have their replay.
+        self.replay_library().publish()
         self.replay_defs_prepare()
         step = lap('battles')
         self.replay_vehicle_requests()
@@ -4627,6 +4638,73 @@ class Exporter(object):
         self.queue_job(JOB_PAGE, 'battle', {'battleId': name})
         LOG.info('Saved battle %s asked for by the page: prepared now', name)
         return True
+
+    def replay_library(self):
+        """The replay limit (replay_library.Library: the mod's marked replays in <game>/replays, kept ones in its
+        bullba_hits/, its manifest in CFG/replay/)."""
+        from .replay_library import Library
+        return Library(self.replays_folder, self.folder)
+
+    def replay_library_command(self, payload):
+        """The page's 'replayKeep' / 'replayLimit' (presentation -> Recorder.request_replays): {'action': 'keep',
+        'battleId', 'keep'} or {'action': 'limit', 'on', 'limit'} (the mode). The library publishes data/replays.js after
+        a change."""
+        payload = payload or {}
+        library = self.replay_library()
+        if payload.get('action') == 'keep':
+            name = str(payload.get('battleId') or '')
+            if not IDENTIFIER.match(name): return False
+            return library.keep(name, payload.get('keep') is True)
+        if payload.get('action') == 'limit':
+            return library.set_mode(payload.get('on') is True, payload.get('limit'))
+        return False
+
+    def request_playback(self, battle_id):
+        """The page's 'playback' (BACKLOG 104): the user opened a battle in the 3D replay player and its file
+        (data/playback/<id>.js) is missing or of another format. Made at the page's turn (JOB_PAGE), in slices
+        (run_playback_job), never in a battle; nothing when the file and its map's raw set are there. True when queued."""
+        from .playback import current, battle_arena
+        name = str(battle_id or '')
+        if not IDENTIFIER.match(name): return False
+        if current(self.folder, name, battle_arena(self.folder, name)): return False
+        self.queue_job(JOB_PAGE, 'playback', {'battleId': name})
+        LOG.info('Playback of %s asked for by the page: prepared now', name)
+        return True
+
+    def run_playback_job(self, payload):
+        """One slice (BATTLE_SLICE) of a battle's playback file (playback.Job.steps), ended early by a battle, a command of
+        the page waiting or the mod closing (battle_stop). True when another slice is needed (run_job puts the job back)."""
+        from .playback import Job
+        name = str((payload or {}).get('battleId') or '')
+        if self.ttx_stopped: return True
+        work = self.playback_work
+        if work is None or work.name != name:
+            work = self.playback_work = Job(self.folder, self.game, name, self)
+            work.gen = work.steps()
+            work.longest = 0.0
+        began = TTX_TIMER()
+        deadline = began + BATTLE_SLICE
+        done = False
+        try:
+            while True:
+                try: next(work.gen)
+                except StopIteration:
+                    done = True
+                    break
+                if TTX_TIMER() >= deadline or self.battle_stop(): break
+        except Exception:
+            done = True
+            LOG.exception('Playback of %s failed', name)
+        spent = TTX_TIMER() - began
+        work.work += spent
+        work.slices += 1
+        work.longest = max(work.longest, spent)
+        if not done: return True
+        self.playback_work = None
+        LOG.info('Playback of %s: %s in %.1f s (%.2f s of work in %d slices, the longest %.3f s: %s)', name, work.outcome,
+                 TTX_TIMER() - work.began, work.work, work.slices, work.longest,
+                 ', '.join('%s %.2f s' % kv for kv in sorted(work.times.items())))
+        return False
 
     def run_battle_job(self, payload):
         """One slice of a saved battle the page asked for (request_battle): lines of its raw file (BattleReader), then its hits
@@ -6542,6 +6620,11 @@ class Exporter(object):
                 finally: self.preparing_page = False
             # A battle's replay stream (replay_stream): in slices, like a saved battle.
             elif job[2] == 'replay': more = self.run_replay_job(job[3])
+            # The 3D replay player's file of a battle the page opened (request_playback): in slices, through a drag.
+            elif job[2] == 'playback':
+                self.preparing_page = page
+                try: more = self.run_playback_job(job[3])
+                finally: self.preparing_page = False
             # The session's entity definitions, built in the hangar before the first battle's replay needs them.
             elif job[2] == 'definitions': more = self.run_defs_job()
             else: self.run_vehicle_job(job[3], page)
@@ -6566,7 +6649,7 @@ class Exporter(object):
             rest = max(min(rest, BATTLE_SLICE), rest * self.replay_speed)
         # A slice of a saved battle of setup's backlog (27.09) is no extraction either: the game's share after it, all of it
         # (review of 4b1c8c8 #4: a 1 s cap left the work 85-95 % of the time when a battle took seconds in one go).
-        self.job_rest = rest if job[2] in ('battle', 'replay', 'definitions') else min(SWEEP_REST_MAX, rest) if job[2] == 'ttx' else PACE
+        self.job_rest = rest if job[2] in ('battle', 'replay', 'definitions', 'playback') else min(SWEEP_REST_MAX, rest) if job[2] == 'ttx' else PACE
         return True
 
     def run_model_job(self, payload):

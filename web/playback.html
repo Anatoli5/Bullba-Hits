@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bullba Hits - 3D replay</title>
+<style>
+  :root { --bg:#14171a; --panel:rgba(20,24,28,.86); --text:#d8dde2; --dim:#8b949c; --line:#2c333a; --accent:#e0b44a; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--text); font:12px/1.35 system-ui,Segoe UI,Arial,sans-serif; overflow:hidden; }
+  #view { position:absolute; inset:0; }
+  #view canvas { display:block; width:100%; height:100%; }
+  .panel { position:absolute; background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:6px 8px; }
+  #bar { left:8px; right:8px; bottom:8px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  #bar input[type=range] { flex:1; min-width:160px; }
+  button { background:#262c33; color:var(--text); border:1px solid #3a434c; border-radius:4px; padding:3px 8px; font:inherit; cursor:pointer; }
+  button.on { background:#4a3e1c; border-color:var(--accent); color:#fff; }
+  #time { font-variant-numeric:tabular-nums; min-width:150px; }
+  /* top centre: the battle line and the settings button always; the settings body drops down under them */
+  #meter { top:8px; left:50%; transform:translateX(-50%); max-width:min(480px, calc(100% - 460px)); min-width:0; padding:4px 6px; font-variant-numeric:tabular-nums; background:rgba(20,24,28,.72); }
+  #topline { display:flex; align-items:center; gap:6px; white-space:nowrap; justify-content:center; }
+  #topline label { display:flex; align-items:center; gap:4px; min-width:0; }
+  #title { overflow:hidden; text-overflow:ellipsis; }
+  #topline select { min-width:0; }
+  #settings { margin-top:4px; max-height:calc(100vh - 110px); overflow:auto; }
+  #settings[hidden] { display:none; }
+  #meter label { white-space:nowrap; }
+  #meter table { border-collapse:collapse; }
+  #meter td { padding:0 6px 0 0; }
+  #meter td.v { text-align:right; color:#fff; }
+  #layers label { margin-right:8px; white-space:nowrap; }
+  /* team lists as in the game's battle screen: own team down the left edge, the enemy down the right edge */
+  .tlist { position:absolute; top:8px; width:200px; overflow:auto; font-size:11px; line-height:14px; }
+  #list-own { left:8px; max-height:calc(100% - 72px); }
+  #list-enemy { right:8px; max-height:calc(100% - 112px); }
+  body.dopen #list-enemy { max-height:calc(100% - 32vh - 150px); }
+  /* round 10: a row = the nickname and the vehicle at its two edges; the row's background is its HP bar (.fill, the
+     team's colour, half transparent, as wide as the HP left; from the outer edge in the mirrored enemy list) */
+  .veh { position:relative; display:flex; align-items:center; justify-content:space-between; gap:6px; padding:1px 4px; margin-bottom:1px; cursor:pointer; background:rgba(12,14,16,.5); border-radius:2px; overflow:hidden; }
+  .veh .fill { position:absolute; top:0; bottom:0; left:0; width:100%; background:rgba(106,168,81,.32); pointer-events:none; }
+  .tlist.enemy .veh .fill { left:auto; right:0; background:rgba(192,86,74,.34); }
+  .veh.own .fill { background:rgba(208,170,82,.36); }
+  .tlist.enemy .veh { flex-direction:row-reverse; }
+  .veh .pl, .veh .nm { position:relative; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; text-shadow:0 1px 1px #000; }
+  .veh .pl { flex:1 1 auto; min-width:0; color:#c9ced3; }
+  .veh .nm { flex:0 1 auto; max-width:60%; text-align:right; }
+  .tlist.enemy .veh .pl { text-align:right; }
+  .tlist.enemy .veh .nm { text-align:left; }
+  .veh.out { background:rgba(12,14,16,.3); }
+  .veh.out .nm, .veh.out .pl { color:var(--dim); }
+  .veh.dead { background:rgba(12,14,16,.25); }
+  .veh.dead .nm, .veh.dead .pl { text-decoration:line-through; color:var(--dim); }
+  .veh.follow { outline:1px solid var(--accent); }
+  .dim { color:var(--dim); }
+  #msg { position:absolute; left:50%; top:45%; transform:translate(-50%,-50%); font-size:15px; }
+  #help { color:var(--dim); }
+  #destr { right:8px; bottom:56px; width:300px; }
+  #destr summary { cursor:pointer; }
+  #destr-rows { max-height:32vh; overflow:auto; margin-top:4px; font-variant-numeric:tabular-nums; }
+  .drow { display:flex; gap:6px; padding:1px 2px; cursor:pointer; white-space:nowrap; }
+  .drow:hover { background:#262c33; }
+  .drow .dt { width:36px; flex:none; text-align:right; }
+  .drow .dk { width:70px; flex:none; color:var(--dim); }
+  .drow .dn { flex:1; overflow:hidden; text-overflow:ellipsis; }
+  .drow.init { color:var(--dim); font-style:italic; }
+  .drow.done .dt { color:var(--dim); }
+  .drow.fresh { background:#4a3e1c; color:#fff; }
+  /* Reset to defaults: the main page's widget and look (style.css .settings-actions) */
+  .settings-actions { display:flex; justify-content:flex-end; margin-top:16px; }
+  .settings-actions button { font-size:13px; min-height:34px; padding:7px 11px; }
+  /* the game's browser: host.js draws a select's list as a DOM list (style.css .choice-list, in this page's colours) */
+  .choice-list { position:fixed; z-index:1000; display:flex; flex-direction:column; max-height:50vh; overflow:auto; background:#1b2025; border:1px solid var(--line); border-radius:6px; box-shadow:0 10px 30px #000a; padding:4px; }
+  .choice-item { text-align:left; font:inherit; color:var(--text); background:transparent; border:0; border-radius:4px; padding:6px 10px; cursor:pointer; white-space:nowrap; }
+  .choice-item:hover, .choice-item:focus-visible { background:#262c33; outline:none; }
+  .choice-item[aria-selected=true] { color:var(--accent); }
+  select[aria-expanded=true] { border-color:var(--accent); }
+</style>
+</head>
+<body>
+<div id="view"></div>
+<div id="msg">Loading...</div>
+<div id="meter" class="panel">
+  <div id="topline">
+    <button id="back" title="Back&#10;Returns to the recorded hits.">&#9664; Hits</button>
+    <span id="title">3D replay</span>
+    <label title="Battle&#10;Opens another recorded battle in the 3D replay: date and start time, map, your vehicle.&#10;- the battles of the hits page, newest first&#10;- the first time, the game prepares the battle and its map: a few seconds">battle <select id="sel-battle" style="max-width:300px"></select></label>
+    <button id="settings-btn" title="Settings&#10;Opens or closes the settings: layers, shadows, grain, light, halo, sky, haze, crowns.">Settings &#9662;</button>
+  </div>
+  <div id="settings" hidden>
+  <div><b id="mapname">-</b> <span class="dim" id="gpu"></span></div>
+  <div id="layers" style="margin-top:4px">
+    <label><input type="checkbox" id="ly-terrain" data-layer="terrain" checked> terrain</label>
+    <label><input type="checkbox" id="ly-objects" data-layer="objects" checked> objects</label>
+    <label title="Trees&#10;Plants a vehicle can knock down (numbered as destructibles by the map)."><input type="checkbox" id="ly-trees" data-layer="trees" checked> trees</label>
+    <label title="Bushes&#10;Plants the game never fells: kinds in vegetation/bushes.xml, and plants without a destructible number."><input type="checkbox" id="ly-bushes" data-layer="bushes" checked> bushes</label>
+    <label><input type="checkbox" id="ly-vehicles" data-layer="vehicles" checked> vehicles</label>
+    <label><input type="checkbox" id="ly-tracers" data-layer="tracers" checked> tracers</label>
+    <label title="Hits&#10;Shows who fires and what each hit did, from the replay's own shot and hit events.&#10;- a muzzle flash when a vehicle fires&#10;- at the hit point a flash, then a mark that stays on the armour: a penetration glows hot and cools into a black hole; a non-penetration leaves a dark mark; a ricochet throws sparks (the shell flies on as a tracer) and leaves a light scrape&#10;- marks made while a vehicle was out of sight appear when it comes back into view, without a flash (when they were made is not recorded)&#10;- hits on vehicles your client could not see are not in the replay: nothing is shown for them"><input type="checkbox" id="sw-hits" checked> hits</label>
+    <label><input type="checkbox" id="ly-water" data-layer="water" checked> water</label>
+    <label><input type="checkbox" id="ly-mode" data-layer="mode" checked> bases/spawns</label>
+  </div>
+  <div style="margin-top:2px">
+    <label title="Shadows&#10;The sun's shadows of the ground, objects, trees and vehicles."><input type="checkbox" id="sw-shadows" checked> shadows</label>
+    <select id="sel-shadowq" title="Shadow look&#10;How detailed the shadows are; soft and sharp cover all the ground in view.&#10;- soft (default): blurred edges, the same near the camera at any view; plants cast a rough outline, the ground casts none; three maps, fine near and coarse far&#10;- sharp: the same three maps at twice the detail, plants cast their 3D shape near the camera; crisp close up at any tilt&#10;- all redraw the shadows only when the view, the time or something casting changed"><option value="soft">soft</option><option value="sharp" selected>sharp</option></select>
+    <select id="sel-shadowd" title="Sharp shadow detail&#10;The size of sharp's near shadow map; the cost readout shows the memory it takes.&#10;- 4096: as fine close up as the old one-map sharp&#10;- 2048 (default), 1024: coarser, less memory&#10;- soft is not affected"><option value="4096">4096</option><option value="2048" selected>2048</option><option value="1024">1024</option></select>
+    <label title="Grain&#10;Adds a fine neutral grain to the ground, the same in every ground mode.&#10;- the slider sets how strong it is; 0.72 is the «texture kinds» grain&#10;- off: the ground as its mode colours it"><input type="checkbox" id="sw-grain" checked> grain</label>
+    <input type="range" id="rng-grain" min="0" max="1.5" step="0.01" value="1.5" style="width:70px;vertical-align:middle" title="Grain strength&#10;How strong the ground grain is (0 to 1.5)."> <span id="grain-v" class="dim">0.72</span>
+    <label title="Client delay&#10;Draws vehicles where the game client drew them: 0.20 s (own) / 0.15 s (others) after their position packet."><input type="checkbox" id="sw-delay" checked> client delay</label>
+    <label title="See-through foliage&#10;Draws trees and bushes half transparent, to see vehicles inside them."><input type="checkbox" id="sw-foliage"> see-through foliage</label>
+  </div>
+  <div style="margin-top:2px">
+    <label title="Relief&#10;How strongly slopes facing the sun and hollows show on the ground.&#10;- sun only: the sun's light alone&#10;- game-like: plus a light hollow / ridge shade (as before)&#10;- strong: slopes toward the sun brighter, slopes away and hollows darker">relief <select id="sel-relief"><option value="off">sun only</option><option value="game" selected>game-like</option><option value="strong">strong</option></select></label>
+    <label title="Light&#10;Darkens hollows and the ground around plants and objects, lightens ridges, and strengthens slopes toward the sun, so the relief reads as on the minimap.&#10;- baked ahead from the map's own heights and placements: one texture read, no other cost while drawing&#10;- the first slider sets the colour's strength (0 to 2); shade and gradient have their own sliders&#10;- while it is on, the relief switch is off (no double shade); off: the relief switch as before"><input type="checkbox" id="sw-light" checked> light</label>
+    <input type="range" id="rng-light" min="0" max="2" step="0.01" value="0.25" style="width:70px;vertical-align:middle" title="Light strength&#10;How strong the baked light is (0 to 2)."> <span id="light-v" class="dim">0.50</span>
+    <span style="display:inline-block;max-width:100%;box-sizing:border-box;border:1px solid rgba(255,255,255,.18);border-radius:4px;padding:1px 5px"><label title="Halo&#10;Shades the ground at each vehicle's base and tints it with the vehicle's colour, as sky and sunlight around a real vehicle do.&#10;- an oval along the hull: darker right at the hull, fading within about 1.5 m&#10;- the colour glow reaches about 3.5 m, strong on the side facing the sun, faint on the far side; a destroyed vehicle only shades&#10;- the first slider sets the colour's strength (0 to 2); shade and gradient have their own sliders"><input type="checkbox" id="sw-halo" checked> halo</label>
+    <input type="range" id="rng-halo-all" min="0" max="2" step="0.01" value="1" style="width:70px;vertical-align:middle" title="Halo strength&#10;The overall strength of the whole halo: scales its colour, shade and gradient together (0 to 2).&#10;- balance it against the light slider; the sliders to the right set the mix inside the halo"> <span id="halo-all-v" class="dim">1.00</span> <label title="Halo colour&#10;How strong the vehicle's colour on the ground is (0 to 2).">colour <input type="range" id="rng-halo" min="0" max="2" step="0.01" value="1" style="width:60px;vertical-align:middle"></label> <span id="halo-v" class="dim">1.00</span> <label title="Halo shade&#10;How dark the ground gets right at the hull.&#10;- 0: no shade, 1: as before">shade <input type="range" id="rng-halo-shade" min="0" max="2" step="0.05" value="1" style="width:60px;vertical-align:middle"></label> <span id="halo-shade-v" class="dim">1.00</span> <label title="Halo shade reach&#10;How far from the hull the shade spreads, in metres.&#10;- small: a tight shade hugging the hull and tracks&#10;- large: a wide soft patch">reach <input type="range" id="rng-halo-reach" min="0.1" max="2.5" step="0.05" value="1" style="width:60px;vertical-align:middle"></label> <span id="halo-reach-v" class="dim">1.00</span> <label title="Halo gradient&#10;How much the halo differs in brightness between the sunlit and the far side.&#10;- 0: the same brightness all round&#10;- higher: lighter toward the sun, darker on the far side">gradient <input type="range" id="rng-halo-grad" min="0" max="2" step="0.05" value="1" style="width:60px;vertical-align:middle"></label> <span id="halo-grad-v" class="dim">1.00</span></span>
+    <label title="Sky&#10;Draws the sky light overhead, darkening toward the horizon into a dull grey haze, and dim grey below the horizon.&#10;- the scenery beyond the playable border fades into that haze instead of ending in a cut; the playable ground stays clear&#10;- off: the flat sky colour"><input type="checkbox" id="sw-sky" checked> sky</label>
+    <label title="Haze&#10;Lets far ground and objects fade into the horizon haze, with the map's own fog values.&#10;- light at playing distances and from above, thicker over a kilometre&#10;- off: the map stays clear"><input type="checkbox" id="sw-haze" checked> haze</label>
+    <label title="Outside the border&#10;Scenery beyond the playable box (vehicles cannot go there).">outside <select id="sel-outside"><option value="1">dimmed</option><option value="0">as is</option><option value="2">hidden</option></select></label>
+    <label title="Crowns&#10;- game LOD, flat far: the plant's lowest 3D level of detail from its .srt within 160 m, beyond it a flat picture of the same plant&#10;- game LOD everywhere: 3D at any distance (heavier)&#10;- simple: a low hull of the same geometry (cheaper)">crowns <select id="sel-crowns"><option value="lod">game LOD, flat far</option><option value="lodall">game LOD everywhere</option><option value="hull">simple</option></select></label>
+  </div>
+  <div id="help">drag: orbit; wheel: zoom; space: play</div>
+  <div class="settings-actions"><button type="button" id="reset-settings" title="All settings here back to default">Reset to defaults</button></div>
+  </div>
+</div>
+<div id="list-own" class="tlist own"></div>
+<div id="list-enemy" class="tlist enemy"></div>
+<details id="destr" class="panel">
+  <summary title="Destruction&#10;Everything the battle file records as broken: trees, fences and other fragile objects, house parts, lamp posts.&#10;- time is battle time; grey italic rows were already broken when their area came into view (when they broke is unknown)&#10;- click a row: the replay goes to 2 s before it and the camera looks at the object&#10;- a row turns yellow while its object's outline is shown">Destruction (<span id="destr-n">0</span>)</summary>
+  <label title="Outline on break&#10;Marks an object with a blinking yellow box for 2.5 s after it breaks, drawn over vehicles and walls.&#10;- off: no marks"><input type="checkbox" id="sw-flash" checked> outline when it breaks</label>
+  <div id="destr-rows"></div>
+</details>
+<div id="bar" class="panel">
+  <button id="play">Play</button>
+  <span id="time">0:00</span>
+  <input type="range" id="slider" min="0" max="1000" step="0.1" value="0">
+  <input type="hidden" id="speed-value" value="1">
+  <button data-speed="1" class="on">x1</button><button data-speed="2">x2</button><button data-speed="4">x4</button><button data-speed="8">x8</button>
+  <button id="free">Free camera</button>
+</div>
+<script src="vendor/three.min.js"></script>
+<script src="host.js"></script>
+<script src="settings-store.js"></script>
+<script src="playback/mapbuild.js"></script>
+<script src="playback/mapbuild9.js"></script>
+<script src="playback/mapbuild-page.js"></script>
+<script src="playback/battle.js"></script>
+<script src="playback/battle-page.js"></script>
+<script src="playback/playback.js"></script>
+</body>
+</html>
