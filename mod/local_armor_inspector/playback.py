@@ -18,8 +18,9 @@ request_playback), and the export thread's 'playback' job (Job.steps, in slices)
      (the page's IndexedDB key) and the definitions file's name.
 A replay FILE (19.11: the replay viewer's list, replay_files; id 'f-...') is played the same way with no record of
 Bullba Hits: its map, mode, own vehicle and roster from the file's plain header (the cached scan), its source the file
-itself, its part boxes from the client's own box table (client_boxes, CFG/data/playback/boxes.js) - a battle with stored
-records keeps its own boxes, and takes the table's only for the models those lack.
+itself. Its part boxes (19.11): a battle's stored ones first, then each roster vehicle file's static parts - the part's
+clientBox, else Exporter.part_box (geometry.client_box: the client's own box, read from the part's .havok); a part with
+neither (a model a mod overrides, another client's battle) is left to the page's vertex box, marked approximate.
 The map's raw files are not this job's (19.11): the page asks for them ('mapRaw') only when its IndexedDB lacks the map,
 and MapJob copies them (map_raw.copy_steps).
 The page (web/playback/battle-page.js, battle.js) decrypts or inflates the source, decodes it and builds the battle - the
@@ -63,7 +64,6 @@ W_GONE = 'The replay of this battle is no longer in the game\'s replays folder u
 W_MAP = 'The map of this battle could not be copied from the game files (%s)'
 W_FAILED = 'The replay of this battle could not be prepared (%s)'
 W_NO_FILE = 'This replay file is no longer in the game\'s replays folder (it was moved, renamed or removed)'
-BOXES_FILE = 'boxes'            # CFG/data/playback/boxes.js (client_boxes.Table)
 VEHICLES_FOLDER = 'vehicles'    # CFG/data/playback/vehicles/<id>.js: a vehicle from the client's XML (vehicle_xml)
 
 
@@ -71,10 +71,6 @@ def is_file(name):
     """A replay file's id (replay_files.file_id), not a battle of Bullba Hits."""
     from .replay_files import PREFIX
     return str(name).startswith(PREFIX)
-
-
-def boxes_path(folder):
-    return data_path(folder, BOXES_FILE)
 
 
 def vehicle_files(folder):
@@ -86,14 +82,6 @@ def vehicle_files(folder):
         except OSError: names = []
         out[key] = sorted(n[:-3] for n in names if n.endswith('.js') and not n.endswith(SOURCE_EXT))
     return out
-
-
-def client_box_table(folder, client):
-    """{resource: box} of the client's own box table (client_boxes) when it is of this client, else {}."""
-    from .client_boxes import read_file
-    value = read_file(boxes_path(folder)) or {}
-    if client and value.get('client') not in (None, client): return {}
-    return dict(value.get('boxes') or {})
 
 
 def data_path(folder, name):
@@ -387,6 +375,43 @@ class Job(object):
         out['name'] = made[0]
         out['client'] = (made[1].get('schema') or {}).get('client')
 
+    def model_boxes_steps(self, roster, boxes):
+        """The client's part box of every static part of the roster's vehicle files (data/vehicles, else
+        data/playback/vehicles) into `boxes` where it has none: the part's clientBox, else computed from its model
+        (self.defs.part_box, the exporter's). One vehicle type a step; counts in self.box_counts."""
+        from .exporter import vehicle_id, read_data_file
+        counts = self.box_counts = {}
+        compute = getattr(self.defs, 'part_box', None)
+        kinds = sorted(set(str(r.get('type')) for r in roster.get('vehicles') or () if isinstance(r, dict)
+                           and isinstance(r.get('type'), (TEXT, str)) and ':' in r.get('type')))
+        for kind in kinds:
+            doc = None
+            for sub in (('data', 'vehicles'), ('data', DATA_FOLDER, VEHICLES_FOLDER)):
+                path = os.path.join(self.folder, *(sub + (vehicle_id(kind) + '.js',)))
+                if os.path.isfile(path):
+                    try: doc = read_data_file(path)
+                    except Exception: doc = None
+                    if isinstance(doc, dict): break
+            if not isinstance(doc, dict):
+                counts['types without a vehicle file'] = counts.get('types without a vehicle file', 0) + 1
+                yield
+                continue
+            for part in doc.get('parts') or ():
+                if not isinstance(part, dict) or not isinstance(part.get('id'), int) or part['id'] < 0                         or part.get('prefab') or not part.get('resource') or part['resource'] in boxes:
+                    continue
+                box, how = part.get('clientBox'), 'from the vehicle file'
+                if not box and compute is not None:
+                    box, how = compute(part['resource']), 'from the model'
+                if box:
+                    boxes[part['resource']] = [float(v) for v in box]
+                    counts['parts ' + how] = counts.get('parts ' + how, 0) + 1
+                else:
+                    # a model a mod overrides, another client's: the page's vertex box, marked approximate
+                    counts['parts left to the vertex box'] = counts.get('parts left to the vertex box', 0) + 1
+            yield
+        LOG.info('Playback of %s: part boxes of %d vehicle types: %s', self.name, len(kinds),
+                 ', '.join('%s %d' % kv for kv in sorted(counts.items())) or 'all known')
+
     def make(self):
         started = TIMER()
         if is_file(self.name):
@@ -415,10 +440,12 @@ class Job(object):
         yield
         started = TIMER()
         boxes = part_boxes(self.folder, self.name)
-        # the client's own box table for the models this battle's records lack (all of them for a replay file)
-        table = client_box_table(self.folder, getattr(self.defs, 'version', None))
-        for resource, box in table.items():
-            if resource not in boxes: boxes[resource] = box
+        # the box of each part of the roster's vehicles from its model file (the vehicle file's clientBox, else
+        # Exporter.part_box: geometry.client_box); a part with neither gets the page's vertex box, marked approximate
+        for _ in self.model_boxes_steps(roster, boxes):
+            self.lap('boxes', started)
+            yield
+            started = TIMER()
         self.lap('boxes', started)
         yield
         got = {}

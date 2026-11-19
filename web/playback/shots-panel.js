@@ -2,7 +2,8 @@
    and the hits it took in this battle, in time order, each row as Bullba Hits draws a hit (web/hit-rows.js: the same tile,
    icon column and outcome, the same styles in web/rows.css); a click on a row rewinds the battle to about 2 s before the
    shot and puts the camera where it shows the shooter and the target; a row of a battle with a Hits record also opens that
-   shot in Bullba Hits.
+   shot in Bullba Hits (its 'Bullba Hits' link). The panel is as tall as a full team list (FULL_TEAM rows), whatever its
+   list holds; its type takes the team rows' sizes (shots-panel.css).
 
    What a row rests on - the battle the page decoded from the replay (web/playback/battle.js), nothing else:
    - a SHOT: a tracer the replay carries (showTracer; 'shots', a ricochet's own tracer not counted as a shot), with the
@@ -25,6 +26,10 @@
   var R = root.BullbaRows;
   var LINK_WINDOW = 0.15;   // s: a hit to its tracer's end (shot-context.js GAME_END_WINDOW for replay-made battles)
   var BEFORE = 2;           // s: the battle rewinds this far before the shot (the user's word, 19.11)
+  // the row link's mark: an arrow leaving a box ("opens elsewhere"); not ↗, which a row's outcome uses for an outgoing shot
+  var OUT_ICON = '<svg class="sp-open-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M7 3H3v10h10V9" fill="none" stroke="currentColor" stroke-width="1.5"/>' +
+    '<path d="M9 2h5v5M14 2 7.5 8.5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>';
+  var FULL_TEAM = 15;      // rows: the panel is as tall as a team list of a standard battle (the user's word, 20.11)
   var SHOT = { t: 0, shooter: 1, ricochet: 2, sx: 3, sy: 4, sz: 5, tEnd: 10, ex: 11, ey: 12, ez: 13, caliber: 15 };
 
   // ---- the model: rows from the battle object (pure, also under node) ---------------------------------------------------
@@ -123,6 +128,16 @@
   }
 
   // ---- the panel ------------------------------------------------------------------------------------------------------
+  // The outer height of a team list holding FULL_TEAM rows: its first row's height and the margin under it, times FULL_TEAM,
+  // plus the list's own padding and border. A list with no row: its box as it is.
+  function fullHeight(list, r) {
+    var row = list.firstElementChild;
+    if (!row) return r.height;
+    var cs = getComputedStyle(row), ls = getComputedStyle(list);
+    var pitch = row.getBoundingClientRect().height + (parseFloat(cs.marginTop) || 0) + (parseFloat(cs.marginBottom) || 0);
+    var frame = ['paddingTop', 'paddingBottom', 'borderTopWidth', 'borderBottomWidth'].reduce(function (s, k) { return s + (parseFloat(ls[k]) || 0); }, 0);
+    return FULL_TEAM * pitch + frame;
+  }
   // options: {battle, info(id) -> the tile's vehicle {name, level, class, role, nation, type} or null, player(id) -> the
   // nickname or '', clock(t) -> the row's time text, pick(row, jump) - jump: {t, camera} -, hits(row, id) -> a function that
   // opens the row in Bullba Hits, or null when the battle has no Hits record; parent (document.body)}
@@ -142,7 +157,8 @@
       var cal = row.shot && row.shot.caliber ? row.shot.caliber : (row.hits[0] && row.hits[0].points[0] ? row.hits[0].points[0].caliber : 0);
       if (cal) lines.push('• Calibre: ' + Math.round(cal) + ' mm');
       if (!row.shot) lines.push('• Tracer: not in the replay');
-      lines.push('• Time: ' + o.clock(row.t), '', '• Click: the battle from ' + BEFORE + ' s before the shot, the camera on both vehicles');
+      // 19.11 (the shot view, playback/shot-view.js): the click shows the shot as Bullba Hits does
+      lines.push('• Time: ' + o.clock(row.t), '', '• Click: the shot view - from the shooter’s spot, ' + BEFORE + ' s before the shot, slowed, stopped at the hit; the target as Bullba Hits shows it');
       return lines.join('\n');
     }
     function rowEl(row) {
@@ -155,8 +171,12 @@
       wrap.appendChild(b0);
       var open = o.hits ? o.hits(row, state.id) : null;
       if (open) {
-        var h = R.node('button', 'Hits', 'sp-open'); h.type = 'button';
-        h.title = 'Open in Bullba Hits\nThis shot in the Bullba Hits window: its armour from the shooter’s point of view.';
+        // 20.11: an arrow out of a box and the mod's full name, not 'Hits' - the team row's 'shots' button and this link read
+        // as the same thing
+        var h = R.node('button', undefined, 'sp-open'); h.type = 'button';
+        h.innerHTML = OUT_ICON; h.appendChild(R.node('span', 'Bullba Hits', 'sp-open-name'));
+        h.title = 'Open in Bullba Hits\nOpens this shot in the Bullba Hits window: the target’s armour from the shooter’s point of view.\n' +
+          '• Shown on a row with a hit whose shooter the replay names, in a battle Bullba Hits recorded';
         h.onclick = function (e) { e.stopPropagation(); open(); };
         wrap.appendChild(h);
       }
@@ -181,12 +201,13 @@
       if (o.changed) o.changed(id);
     }
     function hide() { state.id = null; box.hidden = true; if (o.changed) o.changed(null); }
-    // beside the team list it belongs to, its height (the list's box on the screen): right of the left list, left of the
-    // right one
+    // beside the team list it belongs to, from the list's top: right of the left list, left of the right one. Its height is
+    // that of a full team list (20.11: a short tournament team squeezed it to 1.5 rows) - FULL_TEAM rows at the list's own
+    // row pitch, so it follows the font; the page's max-height for its side (playback.html, the lists' bottom) limits it
     function place() {
       if (box.hidden || !state.anchor) return;
       var r = state.anchor.getBoundingClientRect(), gap = 6;
-      box.style.top = Math.round(r.top) + 'px'; box.style.height = Math.round(r.height) + 'px';
+      box.style.top = Math.round(r.top) + 'px'; box.style.height = Math.round(fullHeight(state.anchor, r)) + 'px';
       if (state.side === 'enemy') { box.style.left = ''; box.style.right = Math.round(window.innerWidth - r.left + gap) + 'px'; }
       else { box.style.right = ''; box.style.left = Math.round(r.right + gap) + 'px'; }
     }
@@ -199,13 +220,14 @@
     };
   }
   // The small button of a team-list row that opens the panel (its own click: the row's click follows the vehicle).
+  // 20.11: 'shots' (it lists shots; 'hits' read as the rows' link to Bullba Hits)
   function button(onclick) {
-    var b = R.node('button', 'hits', 'sp-btn'); b.type = 'button';
-    b.title = 'Shots and hits\nThis vehicle’s shots and the hits it took, in a list beside this one.\n• A row: the battle from ' + BEFORE + ' s before that shot';
+    var b = R.node('button', 'shots', 'sp-btn'); b.type = 'button'; b.setAttribute('aria-pressed', 'false');
+    b.title = 'Shots and hits\nOpens this vehicle’s shots and the hits it took, in a list beside this one.\n• A row: the shot view of that shot';
     b.onclick = function (e) { e.stopPropagation(); onclick(); };
     return b;
   }
 
-  var api = { rows: rows, linkHits: linkHits, positionAt: positionAt, frame: frame, places: places, create: create, button: button, BEFORE: BEFORE, LINK_WINDOW: LINK_WINDOW };
+  var api = { rows: rows, linkHits: linkHits, shownHit: shownHit, positionAt: positionAt, frame: frame, places: places, create: create, button: button, BEFORE: BEFORE, LINK_WINDOW: LINK_WINDOW };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.BullbaShotsPanel = api;
 })(typeof window !== 'undefined' ? window : this);

@@ -46,6 +46,19 @@ def transform(v, position, quaternion):
     return [v[0]+w*tx+y*tz-z*ty+position[0], v[1]+w*ty+z*tx-x*tz+position[1], v[2]+w*tz+x*ty-y*tx+position[2]]
 
 
+def client_box(data):
+    """[lo x, y, z, hi x, y, z] - the client's own box of a collision model (collisions.getBoundingBox of the part, the
+    box DamageFromShotDecoder decodes a hit point in): HKBodyFlagsData's minBounds_ / maxBounds_ of its .havok (float32).
+    Equal, to the last bit, to the box the client gave for all 1405 models the mod's records of client 2.4.1.1 hold
+    (partBounds of hit points, replay-store bounds; 19.11.2026, work/boxes-geom/match.py). Not the vertex box of the shot
+    mesh (differs for 25 of 79 models, up to 0.81 m). None when the file has no such block."""
+    for handle in TagFile(data).root['namedVariants'][0]['variant']['resourceHandles']:
+        if handle['name'] == 'HKBodyFlagsData':
+            flags = handle['variant']
+            return [float(v) for v in list(flags['minBounds_'][:3]) + list(flags['maxBounds_'][:3])]
+    return None
+
+
 def extract(data):
     root = TagFile(data).root
     systems = root['namedVariants'][0]['variant']['resourceHandles']

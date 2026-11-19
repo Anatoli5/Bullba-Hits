@@ -649,6 +649,9 @@ class Consumption(object):
         self.message = dict(message or {})
         self.name = str(self.message.get('battle') or '')
         self.arena = str(self.message.get('arenaId') or self.name.split('-', 1)[0])
+        # A replay FILE of the viewer's list with no battle of the recorder (19.11, Exporter.request_replay_battle): its id
+        # names no arena - the arena is the stream's own (its battle record), not checked against a name.
+        if self.message.get('arenaFrom') == 'stream': self.arena = None
         self.began = TIMER()
         self.work = 0.0
         self.slices = 0
@@ -782,7 +785,7 @@ class Consumption(object):
                     yield
                 started = TIMER()
                 final_stream = reader.stream()
-                arena = arena_check(final_stream, self.arena)
+                arena = arena_check(final_stream, self.arena) if self.arena is not None else True
                 if arena is not True: raise ValueError('its stream does not carry this battle\'s arena id')
                 if stream is not None and not same_start(final_stream, stream[:4096]):
                     raise ValueError('its stream does not start with the copy')
@@ -845,6 +848,7 @@ class Consumption(object):
             if not whole: notes.append(W_CUT % clock_text(last_clock))
             got = records[0].get('arenaId') if records and records[0].get('type') == 'battle' else None
             if got is None: raise Unusable(W_NO_START % 'no battle header')
+            if self.arena is None: self.arena = str(got)
             if str(got) != self.arena: raise Unusable(W_FOREIGN % (got, self.arena))
             if not any(r.get('type') == 'roster' for r in records): raise Unusable(W_NO_START % 'no vehicle list')
             yield

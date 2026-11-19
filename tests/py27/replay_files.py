@@ -21,12 +21,14 @@ Checks:
   id        the id is the content's: OTHER renamed keeps its id
   record    OTHER opened ('playback' with its id): its battle file - map and mode from the header, the header's roster
             with nicknames and max HP, the own vehicle from the header, the source the .wotreplay byte for byte, the part
-            boxes from the client's own box table (Exporter.store_part_boxes), the vehicle files listed
+            boxes of every static part of the staged vehicle files computed from the model (Exporter.part_box =
+            geometry.client_box of the client's .havok), the vehicle files listed
   vehicles  a type with no vehicle file ('playbackVehicles'): on the stand the client's descriptor cannot be built (no
             items.vehicles), so the client's XML route makes data/playback/vehicles/<id>.js - its parts' resources those
             of the fixture's vehicle file of that type, every model file there; the page told with the files
 No fixture or no client packages: SKIP (exit 77). Verdict through BULLBA_PY27_RESULT (see run27.py).
 """
+import glob
 import json
 import logging
 import os
@@ -160,7 +162,6 @@ def check():
            [(f['id'], f['file']) for f in again])
 
         # record
-        stand.store_part_boxes({'boxes': {'vehicles/usa/A83_T110E4/collision/Hull.model': [-1, -1, -2, 1, 1, 2]}, 'types': 1})
         stand.page_notes.clear()
         queued = stand.request_playback(file_id)
         run_jobs(stand, ('playback',))
@@ -177,8 +178,14 @@ def check():
         with open(moved, 'rb') as handle: data = handle.read()
         ok('record', source.get('kind') == 'wotreplay' and source.get('size') == len(data)
            and source.get('crc') == zlib.crc32(data) & 0xffffffff, source)
-        ok('record', (battle.get('boxes') or {}).get('vehicles/usa/A83_T110E4/collision/Hull.model') == [-1, -1, -2, 1, 1, 2],
-           'the client table\'s box is missing: %d boxes' % len(battle.get('boxes') or {}))
+        boxes_ = battle.get('boxes') or {}
+        staged = set()
+        for f in glob.glob(os.path.join(folder, 'data', 'vehicles', '*.js')):
+            staged.update(p['resource'] for p in exporter.read_data_file(f).get('parts') or ()
+                          if isinstance(p.get('id'), int) and p['id'] >= 0 and p.get('resource') and not p.get('prefab'))
+        boxed = [r for r in staged if boxes_.get(r) and boxes_.get(r) == stand.part_box(r)]
+        ok('record', staged and len(boxed) == len(staged), 'boxes from the model: %d of %d staged parts'
+           % (len(boxed), len(staged)))
         listed = battle.get('vehicleFiles') or {}
         ok('record', MISSING.replace(':', '-') not in (listed.get('hits') or ()) and len(listed.get('hits') or ()) == 25, listed)
         ok('record', {'kind': 'playback', 'id': file_id, 'state': 'ready'} in list(stand.page_notes), list(stand.page_notes))
@@ -195,6 +202,9 @@ def check():
         res = sorted(p.get('resource') for p in veh.get('parts') or () if p.get('resource'))
         want_res = sorted(p.get('resource') for p in want.get('parts') or () if p.get('resource'))
         ok('vehicles', res and res == want_res, (res, want_res))
+        boxed = [p for p in veh.get('parts') or () if p.get('resource') and p.get('clientBox') == stand.part_box(p['resource'])
+                 and p.get('clientBox')]
+        ok('vehicles', len(boxed) == len(res), 'clientBox from the model on %d of %d parts' % (len(boxed), len(res)))
         models = [p.get('modelKey') for p in veh.get('parts') or () if p.get('resource')]
         ok('vehicles', models and all(os.path.isfile(os.path.join(folder, 'data', 'models', k + '.js')) for k in models), models)
         note = [n for n in stand.page_notes if n.get('kind') == 'vehicles']

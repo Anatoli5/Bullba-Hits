@@ -157,9 +157,8 @@ function verdictModule(appSource, deps, rowsSource) {
     takeFunction(appSource, 'modsFactor'),
     takeFunction(appSource, 'linerFactor'),
     takeFunction(appSource, 'targetFactor'),
-    // A manual shell borrows the shooter's alpha (22.09); shellAt reaches for both of these, and although
-    // this pass only ever hands it a saved candidate, the cut-out copy must still be able to run.
-    'var MANUAL_DAMAGE_KEYS=' + takeLiteral(appSource, /var\s+MANUAL_DAMAGE_KEYS=(\[[^\]]*\])/, 'the manual-shell damage keys') + ';',
+    // A manual shell borrows the shooter's alpha (22.09); since 19.11.2026 shellAt and manualDamageFrom are the page's
+    // wrappers over web/shot-shell.js (BullbaShotShell, one of the collaborators below), the damage keys live there.
     takeFunction(appSource, 'manualDamageFrom'),
     takeFunction(appSource, 'shellAt'),
     takeLiteral(appSource, /(var\s+verdictLines=[^\n]*)\n/, 'the verdict counters'),
@@ -178,7 +177,7 @@ function verdictModule(appSource, deps, rowsSource) {
     'return {queueVerdicts:queueVerdicts,pending:function(){return verdictQueue.length>0||verdictBusy;},lines:function(){return verdictLines;}};'
   ];
   const names = ['$', 'console', 'document', 'window', 'setTimeout', 'ArmorInspectorData', 'ArmorShotContext',
-    'ArmorViewer', 'ArmorBallistics', 'ArmorCrits', 'recordsVersion'];
+    'ArmorViewer', 'ArmorBallistics', 'ArmorCrits', 'recordsVersion', 'BullbaShotShell'];
   let make;
   try { make = new Function(names.join(','), parts.join('\n')); }
   catch (e) { throw new Error('the verdict code of web/app.js could not be compiled on its own: ' + e.message); }
@@ -216,6 +215,9 @@ function main(argv) {
   // The crit fields of the line (22.09): without this module the cut-out verdictLine would throw at the first line.
   require(path.join(WEB, 'crits.js'));
   require(path.join(WEB, 'local-data.js'));
+  // The shell at its range and the pass's chooser (19.11.2026: moved out of app.js into web/shot-shell.js); app.js's shellAt
+  // and drainVerdicts, cut out below, call it.
+  require(path.join(WEB, 'shot-shell.js'));
   const ArmorBallistics = window.ArmorBallistics, ArmorShotContext = window.ArmorShotContext, ArmorCrits = window.ArmorCrits;
   // viewer.js reaches the ballistics as a global (its verdicts are ArmorBallistics.verdicts since 28.09), as in the page.
   global.ArmorBallistics = ArmorBallistics;
@@ -301,7 +303,7 @@ function main(argv) {
       $: function (id) { return id === 'app-version' ? versionBadge : null; },
       console: pen, document: window.document, window: sandboxWindow, setTimeout: fakeTimeout,
       ArmorInspectorData: probeData, ArmorShotContext: ArmorShotContext, ArmorViewer: probeViewer,
-      ArmorBallistics: ArmorBallistics, ArmorCrits: ArmorCrits, recordsVersion: recordsVersion
+      ArmorBallistics: ArmorBallistics, ArmorCrits: ArmorCrits, recordsVersion: recordsVersion, BullbaShotShell: window.BullbaShotShell
     }, rowsSource);
 
     let ids = index.battles.map(function (b) { return b.id; });

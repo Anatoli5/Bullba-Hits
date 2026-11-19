@@ -125,6 +125,9 @@ ASSETS = ('Viewer.html', 'web/style.css', 'web/icon.svg', 'web/viewer.js',
           'web/playback/mapbuild-page.js', 'web/playback/decoder.js', 'web/playback/battle.js', 'web/playback/battle-page.js',
           # the vehicle tile and hit row both pages share, and the viewer's shots panel (19.11, BACKLOG 109)
           'web/hit-rows.js', 'web/rows.css', 'web/playback/shots-panel.js', 'web/playback/shots-panel.css',
+          # the shot of a hit at its range and the 3D viewer's marks both pages share, and the viewer's shot view (19.11,
+          # NOTEBOOK N5: Bullba Hits' own viewer over the replay's scene)
+          'web/shot-shell.js', 'web/viewer.css', 'web/playback/shot-view.js', 'web/playback/shot-view.css',
           'web/vendor/three.LICENSE', 'web/vendor/three-mesh-bvh.umd.js',
           # THIRD_PARTY.md ships with the page and points at these two: the packed-XML reader's licence and
           # the vendor manifest with the sources and hashes of three.js / three-mesh-bvh (inspection, 20.09).
@@ -2564,6 +2567,13 @@ class SceneSource(object):
     def statics(self, compact):
         descr = vehicle_descr(compact)
         value = scene_statics(descr)
+        # The part's box from its model (Exporter.part_box, the one owner: the client's own box, read from the .havok)
+        # over the hit tester's bbox, which is None until the client built that model this session and zero for a
+        # turret / gun built detached; a model part_box cannot give (overridden by a mod) keeps what the client set.
+        compute = getattr(self.exporter, 'part_box', None)
+        for part in value.get('parts') or ():
+            box = compute(part['resource'], self.version) if compute is not None and part.get('resource') else None
+            if box: part['bounds'] = [list(box[:3]), list(box[3:])]
         value.update(self.extras(descr))
         return value
 
@@ -4073,8 +4083,11 @@ class Exporter(object):
         nothing read. `models` (setup: the model keys on disk, one listing): every model it names that was there is still
         there - a model file deleted since would leave its parts empty until the next build."""
         if not entry or entry.get('stamp') != self.stamp or entry.get('waits') or entry.get('repair'): return False
+        raw = os.path.join(self.folder, 'battles', name+'.jsonl')
         try:
-            if not (entry.get('rawSize') == os.path.getsize(os.path.join(self.folder, 'battles', name+'.jsonl')) and
+            # (19.11) a battle made from a replay file alone has no raw file: its stored replay records are what it is built from
+            alone = not os.path.isfile(raw) and self.replay_kept(name)
+            if not ((alone or entry.get('rawSize') == os.path.getsize(raw)) and
                     entry.get('size') == os.path.getsize(os.path.join(self.folder, 'data', 'battles', name+'.js'))):
                 return False
         except OSError:
@@ -4121,7 +4134,12 @@ class Exporter(object):
         models = self.model_files() if stored else None
         previous = None
         named, refs_known, current, queued = True, True, 0, []
-        for path in sorted(glob.glob(os.path.join(self.folder, 'battles', '*.jsonl'))):
+        paths = sorted(glob.glob(os.path.join(self.folder, 'battles', '*.jsonl')))
+        # (19.11) and the battles made from a replay file alone (request_replay_battle): no raw file, their stored records
+        raws = set(os.path.basename(p)[:-6] for p in paths)
+        paths += [os.path.join(self.folder, 'battles', n + '.jsonl') for n in sorted(self.replay_state())
+                  if n not in raws and IDENTIFIER.match(n) and self.replay_kept(n)]
+        for path in paths:
             name = os.path.basename(path)[:-6]
             # A name that is not a battle id ("X - Copy.jsonl" from a file manager or a sync conflict) cannot be
             # published, and its hits may name models no other battle does: the set is then incomplete (F5, 24.09).
@@ -4177,6 +4195,12 @@ class Exporter(object):
         self.drop_battle_work(battle_id)
         if self.current is not None and self.current.get('id') == battle_id:
             self.publish(self.current)
+            return
+        # A battle made from a replay file alone (no raw file, request_replay_battle): from its stored records only.
+        if not os.path.isfile(os.path.join(self.folder, 'battles', battle_id+'.jsonl')) and self.replay_kept(battle_id):
+            battle = self.replay_restore(battle_id, None)
+            if battle is None: raise ValueError('the stored replay records of %s do not read' % battle_id)
+            self.publish(battle)
             return
         reader = BattleReader(os.path.join(self.folder, 'battles', battle_id+'.jsonl'))
         reader.step()
@@ -4735,12 +4759,35 @@ class Exporter(object):
         in a battle); its new revision in the index tells the page to read it again. True when a job was queued."""
         name = str(battle_id or '')
         if not IDENTIFIER.match(name) or name in self.skipped: return False
-        if not os.path.isfile(os.path.join(self.folder, 'battles', name + '.jsonl')): return False
+        if not os.path.isfile(os.path.join(self.folder, 'battles', name + '.jsonl')):
+            # A replay file of the 3D viewer's list with no battle of the recorder (19.11): its Hits battle made from it by
+            # the replay route (request_replay_battle); once made, republished from its stored records like any replay-made
+            # battle (run_battle_job -> republish_saved -> replay_restore).
+            from .playback import is_file
+            if not is_file(name): return False
+            if not self.replay_kept(name): return self.request_replay_battle(name)
         if name not in self.stale and self.published_current(name, self.published.get(name)): return False
         if self.current is not None and self.current.get('id') == name: return False
         self.queue_job(JOB_PAGE, 'battle', {'battleId': name})
         LOG.info('Saved battle %s asked for by the page: prepared now', name)
         return True
+
+    def request_replay_battle(self, name):
+        """A Bullba Hits battle made from a replay FILE of the viewer's list that the recorder has no battle of (19.11, the
+        owner: the shot view works for any replay the viewer opens): the file (replay_files.find, by its id) handed to the
+        replay route as a final file - the same 'replay' job as after a battle (replay_stream -> replay_run.Consumption ->
+        publish_replay_steps with no live record, stored), its arena taken from the stream (the id names none). The user's
+        file is only read. A file whose replay failed before is not tried again this session. True when queued."""
+        found = self.replay_file(name)
+        if found is None or not os.path.isfile(found[0]):
+            LOG.info('Replay file %s asked for by the page: not in the last scan of the replay files', name)
+            return False
+        entry = self.replay_entry(name)
+        if entry.get('status') == 'failed' and (entry.get('message') or {}).get('final') == found[0]: return False
+        if entry.get('status') not in (None, 'pending'): entry['status'] = 'pending'
+        LOG.info('Replay file %s asked for by the page: its Bullba Hits battle made from it', name)
+        return self.replay_stream({'battle': name, 'final': found[0], 'finalOwned': False, 'arenaFrom': 'stream',
+                                   'end': 'replay file'})
 
     def replay_library(self):
         """The replay limit (replay_library.Library: the mod's marked replays in <game>/replays, kept ones in its
@@ -4899,26 +4946,15 @@ class Exporter(object):
             if part.get('error') and not part.get('resource'): raise ValueError(part['error'])
             key, error = self.model_extract(part['resource'], self.version)
             if error is not None: raise ValueError('model %s: %s' % (part['resource'], error))
-            parts.append({'id': part['id'], 'name': part['name'], 'resource': part['resource'],
-                          'transform': part['transform'], 'modelKey': key})
+            row = {'id': part['id'], 'name': part['name'], 'resource': part['resource'],
+                   'transform': part['transform'], 'modelKey': key}
+            box = self.part_box(part['resource'])
+            if box: row['clientBox'] = box
+            parts.append(row)
         pitch = built.get('gunPitch') or [-0.2, 0.1]
         return OrderedDict([('type', kind), ('name', kind.split(':', 1)[1]), ('class', doc.get('class')),
                             ('compactDescriptor', descr), ('source', 'client XML (vehicle_xml)'), ('client', self.version),
                             ('parts', parts), ('gunPitchLimits', {'samples': [[0.0, pitch[0], pitch[1]]]})])
-
-    def store_part_boxes(self, payload):
-        """The game thread's harvest of the client's own part boxes (client_boxes.Harvest, after the hangar loads): merged
-        into CFG/data/playback/boxes.js of this client (client_boxes.Table)."""
-        from .client_boxes import Table
-        from .playback import boxes_path
-        boxes = (payload or {}).get('boxes') or {}
-        table = Table(boxes_path(self.folder), self.version)
-        table.load()
-        added, changed = table.merge(boxes)
-        if added or changed: table.save()
-        LOG.info('Part boxes of the client: %d read from %s types, %d new, %d changed, %d in the table', len(boxes),
-                 (payload or {}).get('types'), added, changed, len(table.boxes))
-        return added, changed
 
     def run_playback_job(self, payload):
         """One slice (BATTLE_SLICE) of a battle's playback file (playback.Job.steps), ended early by a battle, a command of
@@ -5855,6 +5891,28 @@ class Exporter(object):
             raise
         self.package_scan_failed = None
 
+    def part_box(self, resource, version=None):
+        """The client's part box of a collision model resource (geometry.client_box: the HKBodyFlagsData bounds of its
+        .havok - the very box collisions.getBoundingBox gives, 1405 of 1405 recorded models of client 2.4.1.1), of the
+        running client only (another client's battle: None); a model a mod overrides: None. Kept per resource."""
+        from .geometry import client_box
+        if version is not None and canonical(version) != self.version: return None
+        cache = self.__dict__.setdefault('part_box_cache', {})
+        if resource in cache: return cache[resource]
+        name = str(resource).rsplit('.', 1)[0] + '.havok'
+        try:
+            self.ensure_packages()
+            if name not in self.packages or name in (self.package_conflicts or ()): box = None
+            elif name in (self.overrides or ()) or resource in (self.overrides or ()): box = None
+            elif any(os.path.isfile(os.path.join(root, name)) or os.path.isfile(os.path.join(root, resource))
+                     for root in glob.glob(os.path.join(self.game, 'res_mods', '*'))): box = None
+            else: box = client_box(self.read_resource(name))
+        except Exception:
+            LOG.warning('Part box of %s not read', resource, exc_info=True)
+            return None
+        cache[resource] = box if box and all(box[3 + j] - box[j] > 1e-6 for j in range(3)) else None
+        return cache[resource]
+
     def read_resource(self, name):
         """The bytes of one indexed collision resource.
 
@@ -6034,6 +6092,11 @@ class Exporter(object):
                     part['modelKey'] = key
                     if error: part['modelError'] = error
             except Exception as exc: part['modelError'] = str(exc)
+            # An exported vehicle's part carries the client's box of its model (part_box; 19.11) - not a hit's part:
+            # battle files stay byte for byte what they were.
+            if extract:
+                box = self.part_box(part['resource'], client_version)
+                if box: part['clientBox'] = box
             if 'armor' not in part:
                 try:
                     # Keyed by what the table is read from (review 02.10 #3): the vehicle's XML and the common vehicle.xml
@@ -6617,6 +6680,9 @@ class Exporter(object):
         # What this file was built from (PUBLISHED_FILE): the next start takes it as it is when nothing of it changed.
         # A battle still waiting for a model or for its vehicle XML is published again then, which queues that wait anew.
         if offset is None and active: offset = self.raw_offsets.get(battle['id'])
+        # (19.11) made from a replay file alone (request_replay_battle): no raw file to read on, its entry says where it stands
+        if offset is None and battle.get('source') == 'replay' and not os.path.isfile(os.path.join(self.folder, 'battles', battle['id']+'.jsonl')):
+            offset = 0
         if offset is None:
             self.published.pop(battle['id'], None)
         else:

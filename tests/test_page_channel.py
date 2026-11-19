@@ -285,7 +285,7 @@ class TwoPagesOneChannelTests(unittest.TestCase):
         self.addCleanup(presentation.set_files_request, None)
         self.addCleanup(presentation.set_vehicles_request, None)
         handler = presentation.web_handlers()[0].handler
-        with patch.object(presentation, '_player_view', lambda ctx: None):
+        with patch.object(presentation, 'notify_page', lambda note: None):
             handler(Command(action='openReplays', battleId='f-0123456789abcdef'), {})
             handler(Command(action='openReplays', battleId='bad id!'), {})
             handler(Command(action='openHits'), {})
@@ -301,6 +301,20 @@ class TwoPagesOneChannelTests(unittest.TestCase):
         self.assertEqual(files, [True])
         self.assertEqual(vehicles, [('f-0123456789abcdef', [('usa:A83_T110E4', 'AQIDBA==')])])
         self.assertEqual(self.calls if hasattr(self, 'calls') else [], [])
+
+    def test_open_hits_takes_the_shot_from_the_games_custom_parameters(self):
+        # 19.11, 1.13 in the game: the schema has no fields for at/attacker/target/focus, so the client's command carries
+        # them as None attributes and hands the values over in `custom_parameters` - the shot was refused as "no shot"
+        windows = []
+        presentation.set_window_request(lambda window, battle, shot=None: windows.append((window, battle, shot)))
+        self.addCleanup(presentation.set_window_request, None)
+        game = Command(action='openHits', battleId='2315856430906286521-d36eff9b31bb', at=None, attacker=None, target=None, focus=None,
+                       custom_parameters={'at': 1234.5, 'attacker': 7, 'target': 9, 'focus': 7})
+        fragment = 'host=game&battle=2315856430906286521-d36eff9b31bb&at=1234.500&attacker=7&target=9&focus=7'
+        self.assertEqual(presentation.shot_fragment('2315856430906286521-d36eff9b31bb', game), fragment)
+        with patch.object(presentation, 'notify_page', lambda note: None):
+            presentation.web_handlers()[0].handler(game, {})
+        self.assertEqual(windows, [(presentation.HITS, None, fragment)])
 
 
 class PickerDescriptorTests(unittest.TestCase):

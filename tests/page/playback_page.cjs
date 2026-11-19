@@ -101,6 +101,10 @@ const reported = (host) => (host || []).filter((c) => c.action === 'playbackRepo
     if (run.status !== 0) return;
     // 2. the page as it ships
     copyDir(path.join(ROOT, 'web'), path.join(stage, 'web'));
+    // the battle Bullba Hits published from this replay (tests/page/shot_view.cjs's fixture), when this machine has it: the
+    // index below lists the battle, so a shots-panel row's shot view reads it (19.11) - without it that read fails
+    const HITS = path.join(ROOT, 'tests', 'fixtures-local', 'shot-view-2026-11-19');
+    if (fs.existsSync(HITS)) { copyDir(path.join(HITS, 'data'), path.join(stage, 'data')); copyDir(path.join(HITS, 'definitions'), path.join(stage, 'definitions')); }
     // 3's inputs: the battle list of the hits page (oldest first, as no order is promised) and the second battle's file
     const pbDir = path.join(stage, 'data', 'playback');
     for (const ext of ['.js', '.src.js']) fs.writeFileSync(path.join(pbDir, OTHER + ext), fs.readFileSync(path.join(pbDir, BATTLE + ext), 'utf8').split(BATTLE).join(OTHER));
@@ -157,13 +161,17 @@ const reported = (host) => (host || []).filter((c) => c.action === 'playbackRepo
       }
       check('Play moves the battle clock', after && after.playing && after.t > before, JSON.stringify({before: before, after: after}));
       // the shots panel (19.11, BACKLOG 109): the 'hits' button of the own vehicle's row (the first of the left list) opens
-      // the panel beside the list with his rows; a row's click puts the battle 2 s before that shot, the speed kept
+      // the panel beside the list with his rows; a row's click opens its shot view (19.11, tests/page/shot_view.cjs): the battle 2 s
+      // before that shot, paused while the view is prepared, the speed kept until the episode starts
       const sp = await page.evaluate("(() => { const row = document.querySelector('#list-own .veh'), b = row && row.querySelector('.sp-btn'); if (!b) return null; b.click();" +
         " const P = MapBench.shotsPanel(), box = P.element, r = box.getBoundingClientRect(), a = document.getElementById('list-own').getBoundingClientRect(), speed = MapBench.state().speed;" +
         " const first = box.querySelector('.sp-row .hit'); const out = {shown: P.shown(), count: P.count(), tile: !!row.querySelector('.vehicle-tile.compact'), beside: r.left - a.right, top: r.top - a.top, height: r.height - a.height};" +
-        " if (first) { first.click(); out.t = MapBench.state().t; out.speed = MapBench.state().speed === speed; out.playing = MapBench.state().playing; } return out; })()");
+        " if (first) { first.click(); var v = MapBench.shotView(); out.t = MapBench.state().t; out.speed = MapBench.state().speed === speed; out.open = !!(v && v.open); out.start = v && v.start; } return out; })()");
       check('the shots panel: the own row\'s hits button opens it beside the list, his rows in it; a row rewinds the battle, the speed kept', sp && sp.shown === OWN && sp.count > 0 && sp.tile &&
-        sp.beside > 0 && sp.beside < 20 && Math.abs(sp.top) < 1 && Math.abs(sp.height) < 1 && Number.isFinite(sp.t) && sp.speed && sp.playing, JSON.stringify(sp));
+        sp.beside > 0 && sp.beside < 20 && Math.abs(sp.top) < 1 && Math.abs(sp.height) < 1 && Number.isFinite(sp.t) && sp.speed && sp.open && Math.abs(sp.t - sp.start) < 1e-6, JSON.stringify(sp));
+      // the shot view made (or its reason said), then left: the checks below see the battle view
+      for (let i = 0; i < 120; i++) { const m = await page.evaluate('(MapBench.shotView() || {}).mode'); if (m && m !== 'wait') break; await new Promise(function (r) { setTimeout(r, 500); }); }
+      await page.evaluate("(() => { const b = document.querySelector('.sv-leave'); if (b) b.click(); })()");
       // round 13 (19.11.2026): every vehicle mesh drawn with the Hits look (flat faces, seams; a collision model's groups
       // in its group table), the team tint and foliage sliders in place of the see-through checkbox, and the slow speeds
       const r13 = await page.evaluate("(() => { const look = MapBench.vehicleLook();" +
@@ -193,6 +201,52 @@ const reported = (host) => (host || []).filter((c) => c.action === 'playbackRepo
       const sat = (c) => Math.max(c[0], c[1], c[2]) - Math.min(c[0], c[1], c[2]);
       check('round 14: vehicle colour by nation by default, steel grey its fallback (neutral, mid-dark), khaki and brightness change it, beside the team tint', vc && vc.preset === 'nation' && vc.near &&
         sat(vc.steel) < 0.03 && vc.steel[1] > 0.08 && vc.steel[1] < 0.3 && vc.khaki[1] > vc.steel[1] && vc.khaki[2] < vc.khaki[0], JSON.stringify(vc));
+      // N7 (19.11, the user in 1.13: a wreck looked painted in Germany's grey): the wreck's hull tone is a burnt charcoal -
+      // under half the luminance of the darkest nation paint (brightness 1), warm (red > green > blue)
+      const look = await page.evaluate('MapBench.vehicleLook()');
+      const lumOf = (c) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2], darkest = Math.min.apply(null, look.nations.map((n) => lumOf(n.slice(1))));
+      check('N7: a wreck is a warm charcoal, under half the luminance of the darkest nation paint (' + lumOf(look.wreck).toFixed(4) + ' against ' + darkest.toFixed(4) + ', linear)',
+        lumOf(look.wreck) < darkest / 2 && look.wreck[0] > look.wreck[1] && look.wreck[1] > look.wreck[2], JSON.stringify({wreck: look.wreck, nations: look.nations}));
+      // N8 (19.11, the user in 1.13): (a) the marks' sizes - N12 below; (b) a mark on a plate's edge ends
+      // where the armour ends - MapBench.markEdge: a mark on the hull's outermost vertex to each side, drawn from straight
+      // above with the hull alone; its pixels outside the hull's silhouette (the same camera) are counted
+      // N12 (19.11, his correction of N8a): a mark's hole is its shell's calibre across, and on a sloped plate an ellipse whose
+      // long axis over its short one is 1 / cos of the impact angle (the shell's section projected along its path), held to 10 (the user, 19.11)
+      const marks = await page.evaluate('MapBench.hitsInfo()'), holes = (marks && marks.holes) || [];
+      const withCal = holes.filter((h) => h.cal && h.short != null), cm = withCal.map((h) => h.short * 100);
+      const badHole = withCal.filter((h) => Math.abs(h.short * 1000 - h.cal) > 0.01 * h.cal), badRatio = withCal.filter((h) => Math.abs(h.long / h.short - Math.min(1 / h.cos, 10)) > 0.02 * Math.min(1 / h.cos, 10));
+      const capped = withCal.filter((h) => 1 / h.cos > 10).length, ratios = withCal.map((h) => h.long / h.short);
+      check('N12: each of ' + withCal.length + ' marks with a calibre has a hole of its calibre (' + Math.min.apply(null, cm).toFixed(1) + '..' + Math.max.apply(null, cm).toFixed(1) +
+        ' cm), long / short = 1/cos of the impact angle held to 10 (' + Math.min.apply(null, ratios).toFixed(2) + '..' + Math.max.apply(null, ratios).toFixed(2) + ', ' + capped + ' held); ' +
+        (holes.length - withCal.length) + ' of ' + holes.length + ' marks without a calibre or a face under the centre (no calibre ' + (marks && marks.noCalibre) +
+        ', stickers made out of view ' + (marks && marks.marksFromStickers) + '); cut onto the models in ' + (marks && marks.ms) + ' ms, not placed ' +
+        JSON.stringify(marks && marks.notPlaced), withCal.length > 30 && !badHole.length && !badRatio.length,
+        JSON.stringify({badHole: badHole.slice(0, 5), badRatio: badRatio.slice(0, 5), noCal: holes.filter((h) => !h.cal).slice(0, 5)}));
+      const edge = await page.evaluate('MapBench.markEdge()');
+      check('N8b: marks on the hull\'s outermost edges draw ' + (edge && edge.outside) + ' pixels outside its silhouette (' + (edge && edge.inside) + ' on it)',
+        edge && edge.probes.length === 4 && edge.inside > 200 && edge.outside === 0, JSON.stringify(edge));
+      // N9, N10 (19.11, the user in 1.13): a team row's tile has Hits' frame of a pressable tile, gold and filled while that
+      // vehicle is followed; only one is; the 'shots' button beside the tile has its own frame, lit while its panel is open,
+      // and pressing it also follows that vehicle; clicking a tile only follows
+      const rowsState = "(() => { const gold = getComputedStyle(document.documentElement).getPropertyValue('--gold').trim(); const tile = (row) => row.querySelector('.veh-tile') || row;" +
+        " const rows = [].slice.call(document.querySelectorAll('.tlist .veh')); return rows.map((row, i) => { const t = tile(row), cs = getComputedStyle(t), l = row.parentNode.getBoundingClientRect(), r = t.getBoundingClientRect(), b = row.querySelector('.sp-btn');" +
+        " const sides = ['Top', 'Right', 'Bottom', 'Left'].every((s) => parseFloat(cs['border' + s + 'Width']) >= 1 && cs['border' + s + 'Color'] === cs.borderTopColor);" +
+        " const framed = sides && r.left >= l.left && r.right <= l.right && !t.contains(b);" +
+        " return {i: i, follow: row.classList.contains('follow'), framed: framed, gold: framed && cs.borderTopColor === (function () { const d = document.createElement('i'); d.style.color = gold; document.body.appendChild(d); const c = getComputedStyle(d).color; d.remove(); return c; })()," +
+        " button: !!b && (b.classList.contains('on') || b.getAttribute('aria-pressed') === 'true')}; }); })()";
+      const clickRow = (i, what) => page.evaluate("(() => { const row = document.querySelectorAll('.tlist .veh')[" + i + "]; (" + (what === 'button' ? "row.querySelector('.sp-btn')" : "(row.querySelector('.veh-tile') || row)") + ").click(); })()");
+      const summary = (s) => ({followed: s.filter((x) => x.follow).map((x) => x.i), gold: s.filter((x) => x.gold).map((x) => x.i), framed: s.filter((x) => x.framed).length, lit: s.filter((x) => x.button).map((x) => x.i), rows: s.length});
+      await page.evaluate('MapBench.follow(null)'); if (await page.evaluate('!!(MapBench.shotsPanel().shown())')) await page.evaluate('MapBench.shotsPanel().close()');
+      await clickRow(1, 'tile'); await clickRow(2, 'tile');
+      const s1 = summary(await page.evaluate(rowsState));
+      check('N9: every team row a framed tile; after clicking two rows only the second carries the followed mark (gold frame)', s1.framed === s1.rows && s1.followed.join() === '2' && s1.gold.join() === '2' && !s1.lit.length, JSON.stringify(s1));
+      await clickRow(3, 'button');
+      const s2 = summary(await page.evaluate(rowsState));
+      check('N10: \'shots\' on a row lights its button and follows that vehicle, nothing else marked', s2.followed.join() === '3' && s2.gold.join() === '3' && s2.lit.join() === '3', JSON.stringify(s2));
+      await clickRow(1, 'tile');
+      const s3 = summary(await page.evaluate(rowsState));
+      check('N10: a tile\'s click then follows its vehicle only; the open panel\'s button stays lit', s3.followed.join() === '1' && s3.gold.join() === '1' && s3.lit.join() === '3', JSON.stringify(s3));
+      await clickRow(3, 'button'); await page.evaluate('MapBench.follow(null)');
       // 3. the battle selector and the remembered settings
       const pick = await page.evaluate("(() => { const s = document.getElementById('sel-battle'); return s ? {value: s.value, options: [].map.call(s.options, (o) => [o.value, o.textContent])} : null; })()");
       check('the selector lists the battles newest first, the current one chosen', pick && pick.value === BATTLE && pick.options.length === 2 &&

@@ -1,0 +1,16 @@
+/* The 3D viewer's marks over its canvas (web/viewer.js: the hit-point crosses of its reticle layer, the live ring's centre
+   mark) - moved out of style.css unchanged, in their order (19.11.2026), so the replay viewer's shot view (web/playback.html),
+   which runs the same viewer, draws them the same. Loaded by both pages before their own styles. */
+.hit-reticle-layer{position:absolute;inset:0;pointer-events:none;overflow:hidden}.hit-reticle{position:absolute;width:120px;height:120px;transform:translate(-50%,-50%)}.hit-reticle[hidden]{display:none}.hit-reticle svg{display:block;width:100%;height:100%;fill:none;stroke-linecap:round}.reticle-stroke{stroke:#79cfff;stroke-width:1.6;opacity:1;vector-effect:non-scaling-stroke}
+.hit-reticle.pinned .reticle-stroke{stroke:#8fd3ff}.hit-reticle.second .reticle-stroke{stroke:#fb8580}.hit-reticle.lost .reticle-stroke{stroke:#fb8580;stroke-dasharray:2 2}
+/* The centre mark of the live aiming ring (viewer.updateAimMarker; Settings -> Crosshair, 28.09): where the gun
+   points, apart from the pointer while the turret catches up. Small, thin, with a faint outline and an open middle,
+   so it neither hides the tracer behind it nor merges with the pointer. */
+.aim-marker{position:absolute;width:20px;height:20px;transform:translate(-50%,-50%);pointer-events:none;background:no-repeat center/20px 20px url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20'%3E%3Cg fill='none' stroke-linecap='round'%3E%3Cpath d='M10 1.5v5M10 13.5v5M1.5 10h5M13.5 10h5' stroke='%23000' stroke-opacity='.35' stroke-width='2.4'/%3E%3Cpath d='M10 1.5v5M10 13.5v5M1.5 10h5M13.5 10h5' stroke='%235ee0ff' stroke-width='1.1'/%3E%3C/g%3E%3C/svg%3E")}
+.aim-marker[data-shape=dot]{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20'%3E%3Ccircle cx='10' cy='10' r='1.7' fill='%235ee0ff' stroke='%23000' stroke-opacity='.35' stroke-width='1.2'/%3E%3C/svg%3E")}
+.aim-marker[hidden]{display:none}
+/* 20.09 (user): the cross at an impact point is a large thin cross, and from the shooter's seat - where the
+   tracer is a single dot - it reads too heavy over the armour. Settings -> Scene sets how strongly it is
+   drawn; viewer.js writes the variable on the layer and every cross inherits it. Nothing else is dimmed. */
+.hit-reticle{opacity:var(--impact-opacity,.5)}
+.hit-reticle.contact .reticle-stroke{stroke:#ff5a4f}

@@ -708,7 +708,6 @@ class Writer(object):
             elif name == 'replays': self.exporter.replay_library_command(payload)
             elif name == 'replayFiles': self.exporter.request_replay_files()
             elif name == 'playbackVehicles': self.exporter.request_playback_vehicles(payload)
-            elif name == 'boxes': self.exporter.store_part_boxes(payload)
             elif name == 'sweepStart': self.exporter.confirm_sweep(payload or 'ttx')
             elif name == 'sweepStop': self.exporter.stop_sweep(payload or 'ttx')
             # The replay stream of one battle (replay_source.ReplaySource.handover): its consumer is the
@@ -1168,7 +1167,6 @@ class Recorder(object):
         self.hangar_wait_until = now + HANGAR_SETTLE
         left = self.battle_left_at
         LOG.info('Hangar loaded%s', ' %.1f s after the battle was left' % (now - left) if left is not None else '')
-        harvest_boxes(self)
 
     def note_page_loading(self, state):
         """The page's window (presentation.open_in_game, WindowTrace): True - it starts loading, the replay job waits
@@ -1943,42 +1941,6 @@ def open_viewer():
         LOG.exception('Could not open local HTML viewer')
 
 
-# The client's own part boxes for the replay viewer (client_boxes, 19.11): read on the game thread outside battle, in
-# steps of client_boxes.BUDGET seconds, HARVEST_AFTER s after the hangar is loaded; the boxes go to the export thread.
-HARVEST_AFTER = 5.0
-HARVEST_PAUSE = 0.05
-_harvest = {'job': None}
-
-
-def harvest_boxes(recorder):
-    """One harvest pass of the client's cached vehicle types (client_boxes.Harvest); a pass already running goes on."""
-    if _harvest['job'] is not None: return
-    try:
-        import BigWorld
-        from local_armor_inspector import client_boxes
-    except Exception:
-        return
-    job = _harvest['job'] = client_boxes.Harvest()
-
-    def step():
-        if _recorder is not recorder or _harvest['job'] is not job: return
-        try:
-            if client_boxes.in_battle():
-                _harvest['job'] = None
-                return
-            boxes = job.step()
-        except Exception:
-            _harvest['job'] = None
-            LOG.exception('Part boxes of the client not read')
-            return
-        if boxes is None:
-            BigWorld.callback(HARVEST_PAUSE, step)
-            return
-        _harvest['job'] = None
-        recorder.writer.put_export('boxes', {'boxes': boxes, 'types': job.types, 'errors': len(job.errors)})
-    BigWorld.callback(HARVEST_AFTER, step)
-
-
 def open_replays(battle_id=None):
     """The replay viewer's mods-list button (no battle: the viewer shows the list of replay files) or Hits' 3D control on a
     battle row ('openReplays', a battle id): the viewer in its own window (presentation.REPLAYS); Hits' window, open or not,
@@ -2002,7 +1964,6 @@ def page_window(window, battle_id=None, shot=None):
     from local_armor_inspector import presentation
     if window == presentation.REPLAYS: return open_replays(battle_id)
     if shot:
-        if presentation.window_open(presentation.HITS) and presentation.show_fragment(presentation.HITS, shot): return
         try: presentation.open_in_game(VIEWER_PATH, shot)
         except Exception: LOG.exception('Could not open the local HTML viewer on a shot')
         return

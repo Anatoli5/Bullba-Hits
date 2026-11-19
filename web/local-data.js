@@ -5,6 +5,9 @@
   // A momentary read failure is read again this many times, 400 ms apart; a poll that reads again anyway passes it as
   // retryCount (vehicle(id,true): the page waiting for a clicked vehicle's export) and fails at once.
   var RETRIES=2;
+  // Where data/ and definitions/ are from the page: '' for Viewer.html (beside them); the replay viewer (web/playback.html,
+  // one folder down) sets '../' (setBase, 19.11.2026: its shot view reads Hits' battle and scene through this file).
+  var BASE='';
   function filename(key){
     if(key==='index')return 'data/index.js';
     if(/^battle:[-a-zA-Z0-9_]{1,100}$/.test(key))return 'data/battles/'+key.slice(7)+'.js';
@@ -35,7 +38,7 @@
       // A momentary read failure (file being replaced by the recorder, browser hiccup) gets two retries before it is reported.
       script.onerror=function(){if(entry.retries<RETRIES){entry.retries++;clearTimeout(timer);script.remove();delete pending[key];setTimeout(function(){read(key,entry.retries).then(resolve,reject);},400);return;}finish(new Error('Not found '+path+'. Open Viewer.html from mods/configs/local.armor_inspector after running the game with the mod.'));};
       // A fresh URL avoids reusing a snapshot between polls.
-      script.src=path+'?read='+Date.now()+'-'+(++serial);
+      script.src=BASE+path+'?read='+Date.now()+'-'+(++serial);
     });
     pending[key]=entry;document.head.appendChild(script);return entry.promise;
   }
@@ -412,8 +415,17 @@
     if(!pick.shown&&hit.source==='replay')return Promise.resolve({hit:hit,models:{},warnings:(battle.warnings||[]).concat(hit.warnings||[]),partial:[],geometryIncomplete:true,geometryError:NO_SCENE});
     return sceneFor(battle,pick.hit);
   }
+  // THE HIT OF A SHOT GIVEN BY ITS MOMENT (moved out of app.js shotHit 19.11.2026; users: app.js openShot - the replay
+  // viewer's row link -, the replay viewer's shot view): the hit of `battle` by `attacker` on `target` whose gameTime is
+  // nearest `at` (the server's clock), within HIT_AT seconds - a guess for live-recorded battles. Null: none.
+  var HIT_AT=0.5;
+  function hitAt(battle,at,attacker,target){
+    var best=null,gap=Infinity;
+    ((battle&&battle.hits)||[]).forEach(function(h){if(h.attackerId!==attacker||h.targetId!==target||!Number.isFinite(h.gameTime))return;var d=Math.abs(h.gameTime-at);if(d<=HIT_AT&&d<gap){gap=d;best=h;}});
+    return best;
+  }
   // expandBattle is published so the offline tools that read a battle file straight from disk
   // (tools/check_shot_selection.cjs, tests/test_ballistics.cjs) use this one
   // reader instead of a second copy of the rules.
-  window.ArmorInspectorData={receive:receive,index:function(){return read('index');},battle:readBattle,vehicles:function(){return read('vehicles');},vehicle:function(id,once){return read('vehicle:'+id,once?RETRIES:0);},ttx:function(id){return read('ttx:'+id);},ttxSweep:function(){return read('ttxSweep');},modelsSweep:function(){return read('modelsSweep');},replays:function(){return read('replays');},scene:scene,sceneFor:sceneFor,sceneHit:sceneHit,scenesOf:scenesOf,NO_SCENE:NO_SCENE,wheelModel:wheelModel,prefabPose:prefabPose,settlePrefabs:settlePrefabs,PREFAB_FIT_MAX:PREFAB_FIT_MAX,expandBattle:expandBattle,sharedTables:sharedTables,rosterAt:rosterAt,rosterLife:rosterLife};
+  window.ArmorInspectorData={receive:receive,index:function(){return read('index');},battle:readBattle,vehicles:function(){return read('vehicles');},vehicle:function(id,once){return read('vehicle:'+id,once?RETRIES:0);},ttx:function(id){return read('ttx:'+id);},ttxSweep:function(){return read('ttxSweep');},modelsSweep:function(){return read('modelsSweep');},replays:function(){return read('replays');},scene:scene,sceneFor:sceneFor,sceneHit:sceneHit,scenesOf:scenesOf,NO_SCENE:NO_SCENE,wheelModel:wheelModel,prefabPose:prefabPose,settlePrefabs:settlePrefabs,PREFAB_FIT_MAX:PREFAB_FIT_MAX,expandBattle:expandBattle,sharedTables:sharedTables,rosterAt:rosterAt,rosterLife:rosterLife,hitAt:hitAt,HIT_AT:HIT_AT,setBase:function(prefix){BASE=String(prefix||'');}};
 }());

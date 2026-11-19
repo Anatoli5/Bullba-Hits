@@ -313,6 +313,13 @@ def check_browser(result):
     harness_lines(result, 'shots_panel', code, out)
     total = re.search(r'(\d+) checks, (\d+) failed', out)
     if total: result.passed = passed + int(total.group(1)) - int(total.group(2))
+    # The viewer's shot view (19.11, NOTEBOOK N5): a shot opened in Bullba Hits' own viewer over the battle - the heat map
+    # composed on the target, the episode stopped at the hit, the camera at the tracer's start.
+    code, out, _ = run([exe, 'tests/page/shot_view.cjs'], timeout=600, env={'BULLBA_PYTHON': sys.executable})
+    passed = result.passed
+    harness_lines(result, 'shot_view', code, out)
+    total = re.search(r'(\d+) checks, (\d+) failed', out)
+    if total: result.passed = passed + int(total.group(1)) - int(total.group(2))
 
 
 def check_py27(result):

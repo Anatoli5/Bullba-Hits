@@ -677,12 +677,10 @@
   // SHOT_AT, a GUESS (the coordinator's choice, 19.11.2026): a battle made from its replay stamps gameTime = the replay's
   // server start + its clock, the viewer's 'at' the same - equal; a battle recorded live stamps the client's server clock
   // as the hit arrived, its distance from the replay's clock not measured - 0.5 s is taken as the bound.
-  var SHOT_AT=0.5,lastShot=null,SHOT_WAIT=15000;
-  function shotHit(b,at,attacker,target){
-    var best=null,gap=Infinity;
-    (b.hits||[]).forEach(function(h){if(h.attackerId!==attacker||h.targetId!==target||!Number.isFinite(h.gameTime))return;var d=Math.abs(h.gameTime-at);if(d<=SHOT_AT&&d<gap){gap=d;best=h;}});
-    return best;
-  }
+  // The search itself is local-data.js hitAt (19.11.2026: the replay viewer's shot view finds its hit the same way);
+  // SHOT_AT is its HIT_AT.
+  var lastShot=null,SHOT_WAIT=15000;
+  function shotHit(b,at,attacker,target){return ArmorInspectorData.hitAt(b,at,attacker,target);}
   function openShot(params){
     var id=String(params.battle||''),at=Number(params.at),attacker=Number(params.attacker),target=Number(params.target),focus=Number(params.focus);
     if(!VEHICLE_ID.test(id))return;
@@ -909,7 +907,7 @@
   }
   // The spall-liner factor of the vehicle under fire: the hit's target, or the browsed vehicle's own record.
   // Records written before 0.7.13 carry none, and without one the law reads the target as unlined (1.0).
-  function linerFactor(hit){var t=(hit||activeHit||{}).target;return t&&t.linerFactor>0?t.linerFactor:1;}
+  function linerFactor(hit){return BullbaShotShell.linerFactor(hit||activeHit);}   // web/shot-shell.js since 19.11.2026
   // Target modifiers (19.09): three things of the client multiply miscAttrs/antifragmentationLiningFactor and
   // the record cannot tell them apart - the mounted spall liner, the field modification “Spalling resistance”
   // and the driver's Reliable Placement. C = liner x field x (1 + 0.15 x skill), and the non-penetration
@@ -6545,14 +6543,9 @@
     if (!aimNow) { viewer.clearLiveAim(); return; }
     paintAim(aimState());
   }
-  // What a shell chosen BY HAND borrows from the shooter (user, 22.09). A manual shell is a type, a
-  // penetration and a calibre the user typed - ArmorBallistics.shell() gives it no alpha at all, and every
-  // damage figure on the page then read "—" or 0 %. It is still a shell of the SAME shooter, so the damage
-  // side comes from his own shell of that type: his candidate of the kind the user picked, else the shell
-  // the record resolved for the hit, else his first shell that has an alpha. What the user typed - kind,
-  // penetration, calibre - is never touched. A record whose shells carry no alpha at all (before 0.7.13)
-  // has nothing to lend, and the circle then prints the penetration chance instead (circleFigure).
-  var MANUAL_DAMAGE_KEYS=['alpha','spallDamage','spallAbsorption','nonPiercingArmorDamage','damageRandomization','mechanics'];
+  // What a shell chosen BY HAND borrows from the shooter, and the shell at a distance: web/shot-shell.js (BullbaShotShell,
+  // moved out of this file 19.11.2026 for the replay viewer's shot view). These two keep their names and calls; the target's
+  // liner factor is this page's (targetFactor: the Target switches).
   // The shooter's own shells, best first: the one the record named for this hit (or the one the page
   // assumed), then the rest of the list on screen. Only a manual shell ever reads it.
   function manualPool(){
@@ -6561,56 +6554,8 @@
     else if(shellAssumed>=0&&candidates[shellAssumed])out.push(candidates[shellAssumed]);
     return out.concat(candidates||[]);
   }
-  function manualDamageFrom(hit,kind,pool){
-    var all=[];
-    function add(list){if(Array.isArray(list))list.forEach(function(s){if(s&&s.alpha>0)all.push(s);});}
-    add(pool);
-    if(hit){add(hit.shellCandidates);add(hit.availableShells);add(hit.shells);
-      if(hit.attacker)add(hit.attacker.modeShells);}
-    if(!all.length)return null;
-    var ofKind=all.filter(function(s){return s.kind===kind;});
-    return ofKind.length?ofKind[0]:all[0];
-  }
-  function shellAt(c,choice,penetration,caliber,distance,hit,pool,alpha){
-    if(!choice||!(penetration>0)||penetration>3000||!(caliber>0)||caliber>1000)return null;
-    var shell=ArmorBallistics.shell(c?c.kind:choice,penetration,caliber);
-    shell.liner=targetFactor(hit);
-    if(!c){
-      var lend=manualDamageFrom(hit,choice,pool);
-      if(lend){MANUAL_DAMAGE_KEYS.forEach(function(k){if(lend[k]!==undefined&&lend[k]!==null)shell[k]=lend[k];});
-        shell.alphaFrom=lend.name||'';}
-    }
-    // Every one of these is taken from the shell OBJECT, never from a constant, so a second-mode shell's
-    // own normalisation, ricochet angle, jet loss and alpha flow straight into the ballistics (P4).
-    // `damageRandomization` rides along for the damage roll of the fun layer (22.09), the same field a
-    // manual shell already borrows through MANUAL_DAMAGE_KEYS: the ballistics never read it, so the
-    // chances, the colours and the verdict lines are untouched by its being there.
-    if(c){['normalization','ricochetCos','jetLossPerMeter','traceRicochet','randomization','randomizationType','shieldPenetration',
-      'alpha','spallDamage','spallAbsorption','mechanics','nonPiercingArmorDamage','vehicleMode','damageRandomization'].forEach(function(k){if(c[k]!==undefined)shell[k]=c[k];});
-      // The penetration at this distance is the client's law in ballistics.js, never a copy of it here (BACKLOG
-      // № 32): the field holds the shell's first value (up to 50 m) and falls off by the record's own factor, so
-      // a number typed over the record's falls off exactly as the record's would.
-      if(c.penetration100>0)shell.penetration=penetration*ArmorBallistics.penetrationAt(c,distance)/c.penetration100;}
-    // The alpha falls off with the distance on the Polish smoothbore APCR alone (damageMutable, alphaFar in the
-    // record); the factor is exactly 1 on every other shell, which is then what it always was.
-    var fall=c&&c.alpha>0?ArmorBallistics.alphaAt(c,distance)/c.alpha:1;
-    // The alpha field (user, 22.09): the user's own number wins over the record's and over the borrowed
-    // one, exactly as his penetration and calibre do. HE's spall damage is the non-penetration base and
-    // moves with the alpha - the record's own ratio is kept when there is one, the ballistics default
-    // otherwise. 0 or empty means "no alpha": every damage figure then falls back to the chance.
-    if(alpha!==undefined&&alpha!==null&&alpha!==''){
-      var want=Number(alpha);
-      if(want>0&&want<=5000){
-        var ratio=shell.alpha>0&&shell.spallDamage>0?shell.spallDamage/shell.alpha:0;
-        shell.alpha=want;
-        if(ratio>0)shell.spallDamage=want*ratio;
-      }else if(!(want>0))shell.alpha=null;
-    }
-    // The alpha field, like the penetration field, holds the value up to 50 m; the one that counts at this
-    // distance goes on the shell, and the one of the field stays beside it for the tooltips and the log line.
-    if(fall!==1&&shell.alpha>0){shell.alphaNear=shell.alpha;shell.alpha*=fall;}
-    return shell;
-  }
+  function manualDamageFrom(hit,kind,pool){return BullbaShotShell.manualDamageFrom(hit,kind,pool);}
+  function shellAt(c,choice,penetration,caliber,distance,hit,pool,alpha){return BullbaShotShell.shellAt(c,choice,penetration,caliber,distance,hit,pool,alpha,targetFactor(hit));}
   var totalTimer=null,totalKey=null,totalEngine=null,totalAim=null,totalEstimate=null,verdictKey=null,partNames=['chassis','hull','turret','gun','trackPair1'];
   // Verdict log (user, 14.09): one console line per recorded contact point - the server's result as a fact next to our
   // estimate along the drawn line. The game writes the page's console into game.log; tools/verdicts_from_log.py
@@ -6743,11 +6688,9 @@
       // and made the guessed lines of the Statistics log disagree with the view. Still marked as a guess.
       // The damage window of the assumed shell is taken at the hit's own range, the one prepareShell hands it
       // too: a Polish APCR's alpha falls off with it, and the window at the muzzle threw the right shell out.
-      var context=ArmorShotContext.resolve(hit,battle.shotEvents||[],battle),c=context.choices[context.index]||null;
-      var range=context.range>0?context.range:hit.rangeAtImpact>0?hit.rangeAtImpact:100;
-      // ArmorShotContext.pick: the same shell prepareShell shows - of the hit's type, else of its calibre, else the first.
-      if(!c)c=context.choices[ArmorShotContext.pick(context,hit).index]||null;
-      var shell=c?shellAt(c,c.kind,c.penetration100,c.caliber,range,hit):null;
+      // The chooser is web/shot-shell.js's (recorded, 19.11.2026: shared with the replay viewer's shot view): ArmorShotContext.pick,
+      // the same shell prepareShell shows - of the hit's type, else of its calibre, else the first.
+      var rec=BullbaShotShell.recorded(hit,battle,targetFactor(hit)),context=rec.context,shell=rec.shell;
       // A flat engine (one leaf, no kd-tree): the tree would cost far more to build than the one to three rays
       // cast through it here save, and the verdicts are the same. Built and cast in the page's worker when there is one
       // (ArmorViewer.verdictsFor, 28.09: the build was the pass's cost on the frame), else here.

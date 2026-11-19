@@ -95,6 +95,9 @@ class ProjectMapTest(unittest.TestCase):
         text = '\n'.join(part.read_text(encoding='utf-8') for part in parts)
         unnamed = []
         for path in sources:
+            # a tracked file already removed from the tree (moved to recycle/, its removal not committed yet) is no source
+            if not (ROOT / path).exists():
+                continue
             base = path.rsplit('/', 1)[-1]
             # A part often names a file by its base name inside a block whose `Files:` line already set the folder;
             # a bare word match keeps `armor.py` from counting as `class_armor.py`.

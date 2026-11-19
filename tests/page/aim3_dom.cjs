@@ -452,6 +452,10 @@ global.BullbaSettings = window.BullbaSettings;
 // replay viewer's shots panel), loaded before app.js as the page loads it.
 try { require(path + 'hit-rows.js'); } catch (e) { if (e.code !== 'MODULE_NOT_FOUND') throw e; }
 global.BullbaRows = window.BullbaRows;
+// The shell of a shot at its range (19.11.2026: shellAt and its chooser moved out of app.js into web/shot-shell.js, shared
+// with the replay viewer's shot view), loaded before app.js as the page loads it.
+try { require(path + 'shot-shell.js'); } catch (e) { if (e.code !== 'MODULE_NOT_FOUND') throw e; }
+global.BullbaShotShell = window.BullbaShotShell;
 // The emulation's sound (08.10): its samples and its owner, loaded before app.js as the page loads them. No audio
 // context exists here until the sound checks at the end give the window a stand-in one.
 try { require(path + 'aim-sound-samples.js'); require(path + 'aim-sound.js'); } catch (e) { if (e.code !== 'MODULE_NOT_FOUND') throw e; }
@@ -3429,8 +3433,9 @@ settle(20).then(function () {
     for (; i < appSrc.length; i++) { if (appSrc[i] === '{') depth++; else if (appSrc[i] === '}' && --depth === 0) break; }
     return appSrc.slice(at, i + 1);
   };
-  const pageShell = new Function('ArmorBallistics', 'function targetFactor(){return 1;}function manualDamageFrom(){return null;}var MANUAL_DAMAGE_KEYS=[];\n'
-    + cutFn('shellAt') + '\n' + cutFn('damageColumns') + '\nreturn {shellAt:shellAt,damageColumns:damageColumns};')(AB);
+  // (19.11.2026: app.js's shellAt hands the work to web/shot-shell.js - BullbaShotShell - with the page's targetFactor.)
+  const pageShell = new Function('ArmorBallistics', 'BullbaShotShell', 'function targetFactor(){return 1;}function manualDamageFrom(){return null;}var MANUAL_DAMAGE_KEYS=[];\n'
+    + cutFn('shellAt') + '\n' + cutFn('damageColumns') + '\nreturn {shellAt:shellAt,damageColumns:damageColumns};')(AB, window.BullbaShotShell);
   const b30 = pageShell.shellAt(BLY, BLY.kind, 292, 85, 30, null, null, '800'), b300 = pageShell.shellAt(BLY, BLY.kind, 292, 85, 300, null, null, '800');
   const b500 = pageShell.shellAt(BLY, BLY.kind, 292, 85, 500, null, null, '800'), b700 = pageShell.shellAt(BLY, BLY.kind, 292, 85, 700, null, null, '800');
   ok('distance: the page’s shell (shellAt) - Błyskawica APCR 800 at 30 m, 522 at 300, 300 at 500, 78 at 700, the field’s 800 kept beside it',
@@ -3469,14 +3474,18 @@ settle(20).then(function () {
      at300.index === 0 && /recorded damage/.test(at300.reason) && noRange.index === 1, '(' + at300.index + ' / ' + noRange.index + ')');
   // One copy of the law: every caller asks ballistics.js, and the old (d-100)/400 is gone from the page.
   const ttxSrc = fs.readFileSync(path + 'ttx.js', 'utf8'), ctxSrc = fs.readFileSync(path + 'shot-context.js', 'utf8');
+  // (19.11.2026: shellAt moved into web/shot-shell.js, shared with the replay viewer's shot view; B is its ArmorBallistics)
+  const shellSrc = fs.existsSync(path + 'shot-shell.js') ? fs.readFileSync(path + 'shot-shell.js', 'utf8') : '';
+  const lawSrc = shellSrc ? shellSrc.replace(/\bB\./g, 'ArmorBallistics.') : appSrc;
   ok('distance: shellAt, the shell choice and the characteristics panel ask ballistics.js, and no second copy of the law is left',
-     /ArmorBallistics\.penetrationAt\(c,distance\)/.test(appSrc) && /ArmorBallistics\.alphaAt\(c,distance\)/.test(appSrc)
+     /ArmorBallistics\.penetrationAt\(c,distance\)/.test(lawSrc) && /ArmorBallistics\.alphaAt\(c,distance\)/.test(lawSrc)
      && /B\.alphaAt\(c,range\)/.test(ctxSrc) && /R\.atDistance\(P, far, d\)/.test(ttxSrc)
-     && !/\/400/.test(appSrc) && !/\/ ?450/.test(appSrc + ctxSrc + ttxSrc)
+     && !/\/400/.test(appSrc + shellSrc) && !/\/ ?450/.test(appSrc + shellSrc + ctxSrc + ttxSrc)
      // BACKLOG 38 (23.09): both calls hand on the Borkenkäfer's mark as well (the window's top on a marked target) - since
      // 25.09 through the one owner, ArmorShotContext.pick, which both the scene and the Statistics log call.
      && /assume\(choices,ctx\.kind,hit&&hit\.damage,ctx\.range,ctx\.mark\)/.test(ctxSrc)
-     && /ArmorShotContext\.pick\(context,hit\)/.test(appSrc) && /ArmorShotContext\.pick\(shotContext,hit\)/.test(appSrc));
+     && (/ArmorShotContext\.pick\(context,hit\)/.test(appSrc) || (/BullbaShotShell\.recorded\(hit,battle,/.test(appSrc) && /S\.pick\(context,hit\)/.test(shellSrc)))
+     && /ArmorShotContext\.pick\(shotContext,hit\)/.test(appSrc));
   ok('distance: the characteristics panel’s 500 m figure is the garage’s - 194 for 218/194, 199.3 at int(maxDistance) for a shell that flies 400 m',
      (function () { const v = global.BullbaTtx && global.BullbaTtx.values({shells: [APCR218, Object.assign({}, APCR218, {maxDistance: 400})]});
        return !!v && v.shells[0].pen500 === 194 && r1(v.shells[1].pen500) === 199.3; })());
@@ -6214,7 +6223,8 @@ settle(20).then(function () {
   ok('mark: the bottom of the window stays (whether the marking shot itself gets the bonus is not known) - 250 HP fits the 320 either way',
      realShot.assume(PAIR, 'ARMOR_PIERCING', 250, 100, on).index === 0 && realShot.assume(PAIR, 'ARMOR_PIERCING', 250, 100).index === 0);
   ok('mark: resolve() hands the mark on with the context, and the page passes it to assume() at both calls',
-     /mark:markOf\(hit\)/.test(fs.readFileSync(path + 'shot-context.js', 'utf8')) && /ArmorShotContext\.pick\(context,hit\)/.test(appSrc) && /ArmorShotContext\.pick\(shotContext,hit\)/.test(appSrc)
+     /mark:markOf\(hit\)/.test(fs.readFileSync(path + 'shot-context.js', 'utf8')) && (/ArmorShotContext\.pick\(context,hit\)/.test(appSrc) || (/BullbaShotShell\.recorded\(hit,battle,/.test(appSrc) &&
+       fs.existsSync(path + 'shot-shell.js') && /S\.pick\(context,hit\)/.test(fs.readFileSync(path + 'shot-shell.js', 'utf8')))) && /ArmorShotContext\.pick\(shotContext,hit\)/.test(appSrc)
      && /assume\(choices,ctx\.kind,hit&&hit\.damage,ctx\.range,ctx\.mark\)/.test(fs.readFileSync(path + 'shot-context.js', 'utf8')));
 
   // ---- 3. through the page ------------------------------------------------------------------------------------------------

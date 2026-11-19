@@ -1742,7 +1742,7 @@
   // greyer, darker shade of its part.
   // The team: the markers and the rows tell it, as in the game; the "team tint" slider mixes the model toward its team
   // colour (0 the neutral Hits look, the default; 1 the team colour of before), and the halo takes the model's colour
-  // (hitsHaloColor), so it is neutral when the model is. Destroyed: grey and dark, the part tones still apart.
+  // (hitsHaloColor), so it is neutral when the model is. Destroyed: a burnt charcoal (WRECK), the part tones still apart.
   function srgbToLinear(c) { return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); }
   // viewer.js baseColors, the same sRGB figures made linear the same way (viewer.js linear); not exported by viewer.js
   var HITS_PART = [[.38, .46, .54], [.65, .73, .8], [.75, .83, .87], [.55, .65, .72]].map(function (c) { return c.map(srgbToLinear); });
@@ -1757,6 +1757,10 @@
   var NATION_COLORS = { ussr: [0.298, 0.298, 0.235], germany: [0.353, 0.353, 0.353], usa: [0.412, 0.384, 0.302],
     china: [0.239, 0.322, 0.247], france: [0.200, 0.286, 0.294], uk: [0.459, 0.439, 0.365], japan: [0.255, 0.302, 0.220],
     czech: [0.318, 0.290, 0.235], sweden: [0.243, 0.267, 0.212], poland: [0.310, 0.286, 0.204], italy: [0.502, 0.443, 0.325] };
+  // N7 (19.11, the user in 1.13: a wreck looked painted in Germany's grey - the old dead tone, a neutral linear 0.083, was
+  // that paint's family): a destroyed vehicle's hull tone, linear - a burnt charcoal with a rust cast (sRGB about
+  // #2d241d), a third of the darkest nation paint's luminance; the part tones still multiply it
+  var WRECK = [0.026, 0.017, 0.012];
   var LUM = function (c) { return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]; };
   var HITS_TONE = HITS_PART.map(function (c) { return LUM(c) / LUM(HITS_PART[1]); });
   var hitsTintU = { value: 0 }, hitsBaseU = { value: new T.Vector3() }, HITS_SEAM = [0.05, 0.07, 0.09, 0.6];
@@ -1853,7 +1857,7 @@
           'float hm = max(diffuseColor.b > 0.5 ? 0.6 : 0.0, diffuseColor.g > 0.5 ? 0.4 : 0.0);',
           'hc = mix(hc, vec3(0.080, 0.084, 0.090) * diffuseColor.r, hm);',  // the outer layer: greyer and darker than its part
           'hc = mix(hc, uTeam, uTint);',
-          'hc = mix(hc, vec3(diffuseColor.r * (diffuseColor.g > 0.5 ? 0.78 : 1.0) * 0.083), uDead);',  // destroyed: as dark a grey as before round 14, whatever the base
+          'hc = mix(hc, vec3(' + WRECK.join(', ') + ') * diffuseColor.r * (diffuseColor.g > 0.5 ? 0.78 : 1.0), uDead);',  // destroyed: the wreck's colour (WRECK), whatever the base
           'vec3 hd = vSeam / max(fwidth(vSeam), vec3(1e-6));',
           'float hk = 1.0 - smoothstep(0.35, 1.0, min(min(hd.x, hd.y), hd.z));',
           'diffuseColor.rgb = mix(hc, vec3(' + HITS_SEAM.slice(0, 3).join(', ') + '), ' + HITS_SEAM[3] + ' * hk);'].join('\n '));
@@ -2170,8 +2174,22 @@
     return n;
   }
 
-  // lasting marks: quads on the part's surface (1.2 cm off it along the plate's normal), coloured by the outcome in the shader;
+  // lasting marks: decals on the part's own faces, coloured by the outcome in the shader;
   // aI = (birth time, kind, seed, 0): kind 0 penetration, 1 not pierced, 2 ricochet, 3 hole made out of view, 4 resisted made out of view
+  // N8 (19.11, the user: sizes differing several times, a flat sticker sticking out past the armour's edge). The size was
+  // the game's damage sticker's (damage_stickers.xml modelSizes, by calibre class and pierced or not; build.py
+  // calibre_size when the hit had no sticker), stretched by 1 / cos of the impact angle up to 3x, the ricochet's quad 3x
+  // the size along the plate - drawn half-extents 0.07..0.63 m in the battle of 14.11. N12 (19.11, the user's correction):
+  // the hole is the shell's calibre across (the hit point's calibre, mm), the scorch around a penetration 2.5 calibres,
+  // semi-transparent with a soft edge; a non-penetration or a ricochet a scuff of the same scale. The shell's round
+  // section is projected onto the faces along the shell's direction, so a sloped plate gets an ellipse of calibre x
+  // calibre / cos by construction; the long axis held to MARK_CAP times the short one (a near-grazing hit). The mark is cut
+  // out of the part's own triangles (a decal: the faces within its box, facing the shooter, clipped to it), so it lies on
+  // the armour and ends where the armour ends; one mesh per part as before, built once. A mark with no calibre (a sticker
+  // made out of view; a hit point of calibre 0): the hole its game sticker gave before (0.4 x its modelSizes), along the
+  // plate's normal.
+  // MARK_HOLE: the shader's hole radius in quad units (the scorch ends at 0.5, the scuff's smear at 0.34)
+  var MARK_HOLE = 0.2, MARK_CAP = 10, MARK_CLIP = [0.65, 0.45, 0.45, 0.65, 0.45];
   var markU = { uTime: { value: 0 } };
   var markMat = new T.ShaderMaterial({ uniforms: markU, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4,
     vertexShader: 'attribute vec2 aUv; attribute vec4 aI; uniform float uTime; varying vec2 vUv; varying vec4 vI; varying float vAge;\n' +
@@ -2188,12 +2206,12 @@
       '  float fl = 0.78 + 0.22 * sin(uTime * 5.0 + vI.z * 40.0) * sin(uTime * 1.7 + vI.z * 9.0);\n' +  // the ember's flicker
       '  vec3 ember = vec3(0.95, 0.25, 0.03) * fl * mix(0.5, 1.2, 1.0 - clamp(rr / 0.2, 0.0, 1.0));\n' +
       '  col = mix(vec3(0.07, 0.055, 0.045), ember, core);\n' +
-      '  float glow = H * (1.0 - smoothstep(0.12, 0.95, rr));\n' +
+      '  float glow = H * (1.0 - smoothstep(0.12, 0.5, rr));\n' +  // within the decal's cut (MARK_CLIP)
       '  col = col * (1.0 - glow) + hot * glow * 1.6;\n' +
-      '  float sc = 1.0 - clamp((rr - 0.2) / 0.24, 0.0, 1.0);\n' +  // the scorch: dense at the crater, gone 0.24 further out
-      '  a = max(max(core, 0.85 * sc * sqrt(sc)), glow);\n' +
-      ' } else if (k < 1.5 || k > 3.5) {\n' +  // not pierced: a ragged gouge of bare metal, light and darker grey streaks from its centre, a grey smear fading out; briefly hot
-      '  float F = k < 1.5 ? max(0.0, 1.0 - vAge / 1.2) : 0.0;\n' +
+      '  float sc = 1.0 - clamp((rr - 0.2) / 0.3, 0.0, 1.0);\n' +  // N12: the scorch, semi-transparent with a soft edge, out to 2.5 calibres across (rr 0.5)
+      '  a = max(max(core, 0.6 * sc * sc), glow);\n' +
+      ' } else {\n' +  // not pierced, and (N12) a ricochet: a ragged gouge of bare metal, light and darker grey streaks from its centre, a grey smear fading out; briefly hot
+      '  float F = k < 2.5 ? max(0.0, 1.0 - vAge / 1.2) : 0.0;\n' +
       '  float core = 1.0 - smoothstep(0.17, 0.2, rr);\n' +
       '  float stv = 0.5 + 0.5 * sin(an * 9.0 + vI.z * 11.0) * sin(an * 4.0 + vI.z * 3.0);\n' +
       '  vec3 metal = mix(vec3(0.4, 0.41, 0.43), vec3(0.86, 0.87, 0.89), stv * (1.0 - 0.5 * clamp(rr / 0.2, 0.0, 1.0)) + 0.25);\n' +
@@ -2201,60 +2219,162 @@
       '  col = mix(vec3(0.3, 0.31, 0.33), metal, core);\n' +
       '  float sc = 1.0 - clamp((rr - 0.2) / 0.14, 0.0, 1.0);\n' +
       '  a = max(core, 0.6 * sc * sqrt(sc));\n' +
-      ' } else {\n' +  // ricochet: a thin tapered scratch along the shell's path (the quad is long along it) and a fainter one beside it; bare metal, briefly hot
-      '  float F = max(0.0, 1.0 - vAge / 1.2);\n' +
-      '  float x = vUv.x, y = vUv.y - 0.05 * sin(x * 6.0 + vI.z * 5.0);\n' +
-      '  float w1 = 0.15 * pow(max(0.0, 1.0 - x * x / 0.8), 0.7) * (1.0 + 0.25 * sin(x * 17.0 + vI.z * 8.0));\n' +
-      '  float y2 = y - 0.3 - 0.04 * sin(x * 4.0 + vI.z * 3.0), x2 = (x + 0.15) / 0.55;\n' +
-      '  float w2 = 0.07 * max(0.0, 1.0 - x2 * x2);\n' +
-      '  float m1 = w1 > 0.001 ? 1.0 - clamp(abs(y) / w1, 0.0, 1.0) : 0.0, m2 = w2 > 0.001 ? 1.0 - clamp(abs(y2) / w2, 0.0, 1.0) : 0.0;\n' +
-      '  float m = max(m1, 0.7 * m2);\n' +
-      '  col = mix(mix(vec3(0.36, 0.37, 0.39), vec3(0.9, 0.91, 0.93), m), vec3(1.0, 0.6, 0.2), F);\n' +
-      '  a = smoothstep(0.0, 0.3, m);\n' +
       ' }\n' +
       ' if (a < 0.01) discard; gl_FragColor = vec4(col, a); }' });
-  // all marks of one vehicle part in one geometry
-  function buildMarks() {
-    var per = {}, info = { hitPoints: fxHits.length, marksFromHits: 0, marksFromStickers: 0, notPlaced: {}, meshes: 0, byKind: [0, 0, 0, 0, 0] };
-    function note(why) { info.notPlaced[why] = (info.notPlaced[why] || 0) + 1; }
-    function add(r, grp, t, kind, p, nrm, d, size, seed) {
-      var key = r.v.id + ':' + grp, L = per[key] || (per[key] = { r: r, grp: grp, pos: [], uv: [], inf: [], first: 1e9 });
-      var N = new T.Vector3(nrm[0], nrm[1], nrm[2]).normalize(), U = new T.Vector3(d[0], d[1], d[2]);
-      var dl0 = U.length(), st = dl0 > 1e-6 ? Math.min(3, dl0 / Math.max(Math.abs(U.dot(N)), 1e-3)) : 1;  // 1 / cos of the impact angle: head-on round, glancing long (up to 3x)
-      U.addScaledVector(N, -U.dot(N));  // the shell's direction along the plate
-      if (U.lengthSq() < 1e-6) { U.set(Math.abs(N.y) < 0.9 ? 0 : 1, Math.abs(N.y) < 0.9 ? 1 : 0, 0).cross(N); }
-      U.normalize();
-      if (kind !== 2 && st < 1.15) U.applyAxisAngle(N, seed * Math.PI * 2);  // a round mark: any turn (the client's randomYaw)
-      var V = new T.Vector3().crossVectors(N, U), hu = kind === 2 ? size * 1.5 : size * st, hv = kind === 2 ? size * 0.5 : size;
-      var c = new T.Vector3(p[0], p[1], p[2]).addScaledVector(N, 0.012);
-      [[-1, -1], [1, -1], [1, 1], [-1, 1]].forEach(function (q) {
-        L.pos.push(c.x + U.x * hu * q[0] + V.x * hv * q[1], c.y + U.y * hu * q[0] + V.y * hv * q[1], c.z + U.z * hu * q[0] + V.z * hv * q[1]);
-        L.uv.push(q[0], q[1]); L.inf.push(t, kind, seed, 0);
+  // the drawn geometry of a vehicle part (hull 0, turret 1, gun 2): flat triangles in the part's frame, as the marks' points
+  function markPartGeo(r, grp) { var g = null; fxPart(r, grp).children.forEach(function (o) { if (!g && o.isMesh && o.material === r.mat) g = o.geometry; }); return g; }
+  // one mark cut out of the part's triangles A (non-indexed xyz): in the mark's box (centre c; U, V across the shell's
+  // section, N the projection axis toward the shooter; half-sizes hu, hv, hd in metres, `lim` of hu and hv kept) each face
+  // turned toward N (or either way, `facing` false) is clipped to the box; its pieces go into L with their (u, v) in the
+  // mark's quad units. `shape` (optional) gets the drawn ellipse's half-axes on the face under the mark's centre (the
+  // singular values of the map from (u, v) to the face). Returns the pieces made.
+  function markDecal(A, c, U, V, N, hu, hv, hd, lim, L, inf, facing, shape) {
+    var made = 0, nf = A.length / 9, P = [[0, 0, 0], [0, 0, 0], [0, 0, 0]], MARK_DEPTH = hd;
+    for (var f = 0; f < nf; f++) {
+      var o = f * 9, k, out = 0;
+      for (k = 0; k < 3; k++) {
+        var dx = A[o + k * 3] - c.x, dy = A[o + k * 3 + 1] - c.y, dz = A[o + k * 3 + 2] - c.z;
+        P[k][0] = (dx * U.x + dy * U.y + dz * U.z) / hu; P[k][1] = (dx * V.x + dy * V.y + dz * V.z) / hv; P[k][2] = (dx * N.x + dy * N.y + dz * N.z) / MARK_DEPTH;
+      }
+      // all three corners beyond one side of the box: nothing of this face in it
+      for (k = 0; k < 3 && !out; k++) {
+        var lk = k < 2 ? lim : 1;
+        if (P[0][k] > lk && P[1][k] > lk && P[2][k] > lk) out = 1; else if (P[0][k] < -lk && P[1][k] < -lk && P[2][k] < -lk) out = 1;
+      }
+      if (out) continue;
+      var ax = A[o + 3] - A[o], ay = A[o + 4] - A[o + 1], az = A[o + 5] - A[o + 2], bx = A[o + 6] - A[o], by = A[o + 7] - A[o + 1], bz = A[o + 8] - A[o + 2];
+      var nx = ay * bz - az * by, ny = az * bx - ax * bz, nz = ax * by - ay * bx, nl = Math.hypot(nx, ny, nz);
+      if (nl < 1e-12) continue;
+      var dn = (nx * N.x + ny * N.y + nz * N.z) / nl;
+      if (facing ? dn < 0.02 : Math.abs(dn) < 0.02) continue;
+      if (shape) {  // the face under the centre: (0, 0) inside its (u, v) triangle, the nearest to depth 0
+        var e = function (a, b) { return (P[b][0] - P[a][0]) * (0 - P[a][1]) - (P[b][1] - P[a][1]) * (0 - P[a][0]); };
+        var s0 = e(0, 1), s1 = e(1, 2), s2 = e(2, 0), ss = s0 + s1 + s2;
+        var z0 = Math.abs(ss) > 1e-12 ? Math.abs((s1 * P[0][2] + s2 * P[1][2] + s0 * P[2][2]) / ss) : 1e9;
+        if (((s0 >= 0 && s1 >= 0 && s2 >= 0) || (s0 <= 0 && s1 <= 0 && s2 <= 0)) && !(shape.z <= z0)) {
+          shape.z = z0;
+          // moving along u or v on the face: the projection axis takes up the plane's slope (n . U / n . N)
+          var fu = (nx * U.x + ny * U.y + nz * U.z) / (nx * N.x + ny * N.y + nz * N.z), fv = (nx * V.x + ny * V.y + nz * V.z) / (nx * N.x + ny * N.y + nz * N.z);
+          var Ju = U.clone().addScaledVector(N, -fu).multiplyScalar(hu), Jv = V.clone().addScaledVector(N, -fv).multiplyScalar(hv);
+          var ga = Ju.dot(Ju), gb = Ju.dot(Jv), gc = Jv.dot(Jv), mid = (ga + gc) / 2, dev = Math.sqrt((ga - gc) * (ga - gc) / 4 + gb * gb);
+          shape.long = Math.sqrt(mid + dev); shape.short = Math.sqrt(Math.max(0, mid - dev)); shape.done = true;
+        }
+      }
+      var poly = [P[0].slice(), P[1].slice(), P[2].slice()];
+      for (var ax2 = 0; ax2 < 3 && poly.length; ax2++) for (var sg = -1; sg <= 1 && poly.length; sg += 2) {
+        var lm = ax2 < 2 ? lim : 1, next = [];  // keep sg * x <= lm
+        for (var i = 0; i < poly.length; i++) {
+          var p0 = poly[i], p1 = poly[(i + 1) % poly.length], d0 = sg * p0[ax2] - lm, d1 = sg * p1[ax2] - lm;
+          if (d0 <= 0) next.push(p0);
+          if ((d0 < 0 && d1 > 0) || (d0 > 0 && d1 < 0)) { var s = d0 / (d0 - d1); next.push([p0[0] + (p1[0] - p0[0]) * s, p0[1] + (p1[1] - p0[1]) * s, p0[2] + (p1[2] - p0[2]) * s]); }
+        }
+        poly = next;
+      }
+      if (poly.length < 3) continue;
+      for (i = 1; i + 1 < poly.length; i++) [poly[0], poly[i], poly[i + 1]].forEach(function (q) {
+        L.pos.push(c.x + U.x * q[0] * hu + V.x * q[1] * hv + N.x * q[2] * MARK_DEPTH, c.y + U.y * q[0] * hu + V.y * q[1] * hv + N.y * q[2] * MARK_DEPTH,
+          c.z + U.z * q[0] * hu + V.z * q[1] * hv + N.z * q[2] * MARK_DEPTH);
+        L.uv.push(q[0], q[1]); L.inf.push(inf[0], inf[1], inf[2], inf[3]);
       });
-      L.first = Math.min(L.first, t); info.byKind[kind]++;
+      made++;
     }
-    fxHits.forEach(function (h, i) {
+    return made;
+  }
+  // all marks of one vehicle part in one geometry
+  // `probe` (MapBench.markEdge only): build these marks [{r, grp, kind, p, n}] instead of the battle's
+  function buildMarks(probe) {
+    fxMarkMeshes.forEach(function (m) { if (m.parent) m.parent.remove(m); m.geometry.dispose(); }); fxMarkMeshes = [];
+    var per = {}, info = { hitPoints: fxHits.length, marksFromHits: 0, marksFromStickers: 0, notPlaced: {}, meshes: 0, byKind: [0, 0, 0, 0, 0], holes: [], noCalibre: 0 }, began = performance.now();
+    function note(why) { info.notPlaced[why] = (info.notPlaced[why] || 0) + 1; return false; }
+    // cal: the hit point's calibre in mm (0 or none: no calibre, `size` the game sticker's modelSizes); d: the shell's
+    // direction in the part's frame (none: along the plate's normal)
+    function add(r, grp, t, kind, p, nrm, d, size, seed, cal) {
+      var key = r.v.id + ':' + grp, L = per[key] || (per[key] = { r: r, grp: grp, pos: [], uv: [], inf: [], first: 1e9, geo: markPartGeo(r, grp) });
+      var N = new T.Vector3(nrm[0], nrm[1], nrm[2]).normalize(), W = new T.Vector3(-d[0], -d[1], -d[2]);
+      if (W.lengthSq() < 1e-6) W.copy(N); else W.normalize();  // the projection axis: back along the shell, toward the shooter
+      var cosI = Math.max(1e-3, Math.abs(N.dot(W))), stretch = 1 / cosI, kept = Math.min(stretch, MARK_CAP);
+      var U = N.clone().addScaledVector(W, -N.dot(W));  // across the section, the way the plate slopes away: the ellipse's long axis
+      var round = U.lengthSq() < 1e-8 || stretch < 1.02;
+      if (U.lengthSq() < 1e-8) U.set(Math.abs(W.y) < 0.9 ? 0 : 1, Math.abs(W.y) < 0.9 ? 1 : 0, 0).cross(W);
+      U.normalize();
+      if (round) U.applyAxisAngle(W, seed * Math.PI * 2);  // a round mark: any turn (the client's randomYaw)
+      var V = new T.Vector3().crossVectors(W, U), hole = cal > 0 ? cal / 1000 : 0.4 * size;
+      var hv = hole / (2 * MARK_HOLE), hu = hv * kept / stretch, lim = MARK_CLIP[kind];
+      // the box's depth along the projection: the slope over the mark's kept width, plus 5 cm for the surface's curvature
+      var hd = lim * hu * Math.sqrt(Math.max(0, 1 - cosI * cosI)) / cosI + 0.05;
+      var c = new T.Vector3(p[0], p[1], p[2]), A = L.geo && L.geo.attributes.position.array, inf = [t, kind, seed, 0], shape = {};
+      if (!A) return note('part without its model');
+      // the faces facing the shooter; none (a model wound the other way): either way
+      if (!markDecal(A, c, U, V, W, hu, hv, hd, lim, L, inf, true, shape) && !markDecal(A, c, U, V, W, hu, hv, hd, lim, L, inf, false, shape)) return note('no face under the mark');
+      L.first = Math.min(L.first, t); info.byKind[kind]++;
+      if (!(cal > 0)) info.noCalibre++;
+      // the drawn hole on the face under the centre (diameter = 2 x MARK_HOLE x the ellipse's half-axes), and the ratio
+      // its long axis should have: 1 / cos of the impact angle, held to MARK_CAP
+      info.holes.push({ cal: cal > 0 ? cal : null, short: shape.short != null ? +(2 * MARK_HOLE * shape.short).toFixed(5) : null,
+        long: shape.long != null ? +(2 * MARK_HOLE * shape.long).toFixed(5) : null, want: +kept.toFixed(4), cos: +cosI.toFixed(4) });
+    }
+    if (probe) probe.forEach(function (m) { add(m.r, m.grp, 0, m.kind, m.p, m.n, [-m.n[0], -m.n[1], -m.n[2]], 0, 0.5, 100); });
+    else fxHits.forEach(function (h, i) {
       var r = fxById[h[1]];
       if (!r) return note('vehicle not in the battle file'); if (!r.md.model) return note('vehicle drawn as a box');
-      add(r, h[7], h[0], fxClass(h[6]), [h[8], h[9], h[10]], [h[11], h[12], h[13]], [h[14], h[15], h[16]], h[17], fxRand(i * 3 + 1)); info.marksFromHits++;
+      add(r, h[7], h[0], fxClass(h[6]), [h[8], h[9], h[10]], [h[11], h[12], h[13]], [h[14], h[15], h[16]], h[17], fxRand(i * 3 + 1), h[23]) !== false && info.marksFromHits++;
     });
-    (battle.marks || []).forEach(function (m, i) {
+    (probe ? [] : battle.marks || []).forEach(function (m, i) {
       var r = fxById[m[1]];
       if (!r) return note('vehicle not in the battle file'); if (!r.md.model) return note('vehicle drawn as a box');
-      add(r, m[2], m[0], m[3] ? 4 : 3, [m[4], m[5], m[6]], [m[7], m[8], m[9]], [0, 0, 0], m[10], fxRand(i * 3 + 2)); info.marksFromStickers++;
+      add(r, m[2], m[0], m[3] ? 4 : 3, [m[4], m[5], m[6]], [m[7], m[8], m[9]], [0, 0, 0], m[10], fxRand(i * 3 + 2)) !== false && info.marksFromStickers++;
     });
     Object.keys(per).forEach(function (key) {
-      var L = per[key], g = new T.BufferGeometry(), nq = L.pos.length / 12, idx = [];
-      for (var q = 0; q < nq; q++) idx.push(q * 4, q * 4 + 1, q * 4 + 2, q * 4, q * 4 + 2, q * 4 + 3);
+      var L = per[key], g = new T.BufferGeometry();
+      if (!L.pos.length) return;
       g.setAttribute('position', new T.Float32BufferAttribute(L.pos, 3));
       g.setAttribute('aUv', new T.Float32BufferAttribute(L.uv, 2));
       g.setAttribute('aI', new T.Float32BufferAttribute(L.inf, 4));
-      g.setIndex(idx);
       var mesh = new T.Mesh(g, markMat); mesh.castShadow = false; mesh.receiveShadow = false; mesh.renderOrder = 5;
       mesh.userData.first = L.first; mesh.visible = false;
       fxPart(L.r, L.grp).add(mesh); fxMarkMeshes.push(mesh); info.meshes++;
     });
-    fxMarkInfo = info;
+    info.ms = Math.round(performance.now() - began);
+    if (!probe) fxMarkInfo = info;
+    return info;
+  }
+  // the check of N8 (19.11): a mark centred on a hull's outermost vertex (to the right, left, front, back) - its plate facing
+  // up - drawn from straight above in a probe scene with the hull alone; pixels of the mark where the hull's own silhouette
+  // (the same camera, the hull in white) has none = the mark sticking out past the armour
+  function markEdge() {
+    var r = vehicles.filter(function (x) { return x.md.model; })[0], hull = null;
+    if (!r) return null;
+    r.group.children.forEach(function (o) { if (!hull && o.isMesh && o.material === r.mat) hull = o; });
+    var P = hull.geometry.attributes.position, nf = P.count / 3, a = new T.Vector3(), b = new T.Vector3(), c = new T.Vector3(), n = new T.Vector3();
+    var dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]], best = dirs.map(function () { return { s: -1e9, p: null, n: null }; });
+    for (var f = 0; f < nf; f++) {
+      a.fromBufferAttribute(P, f * 3); b.fromBufferAttribute(P, f * 3 + 1); c.fromBufferAttribute(P, f * 3 + 2);
+      n.subVectors(b, a).cross(c.clone().sub(a)); if (n.lengthSq() < 1e-12) continue; n.normalize(); if (n.y < 0) n.negate();
+      if (n.y < 0.6) continue;
+      [a, b, c].forEach(function (v) { dirs.forEach(function (d, k) { var s = v.x * d[0] + v.z * d[1]; if (s > best[k].s) best[k] = { s: s, p: v.clone(), n: n.clone() }; }); });
+    }
+    var rt = new T.WebGLRenderTarget(256, 256), px = new Uint8Array(256 * 256 * 4), mask = new Uint8Array(256 * 256 * 4);
+    var white = new T.MeshBasicMaterial({ color: 0xffffff, side: T.DoubleSide }), depthOnly = new T.MeshBasicMaterial({ colorWrite: false, side: T.DoubleSide });
+    var sc = new T.Scene(), hm = new T.Mesh(hull.geometry, white); sc.add(hm);
+    var oc = new T.OrthographicCamera(-0.6, 0.6, 0.6, -0.6, 0.1, 20), cc = new T.Color(), ca = renderer.getClearAlpha(), time = markU.uTime.value;
+    renderer.getClearColor(cc); renderer.setClearColor(0x000000, 0); markU.uTime.value = 10;
+    var out = { probes: [] };
+    best.forEach(function (bp) {
+      if (!bp.p) return;
+      var info = buildMarks([{ r: r, grp: 0, kind: 1, p: bp.p.toArray(), n: bp.n.toArray() }]), mm = new T.Mesh(fxMarkMeshes[0].geometry, markMat);
+      oc.position.set(bp.p.x, bp.p.y + 5, bp.p.z); oc.up.set(0, 0, 1); oc.lookAt(bp.p); oc.updateMatrixWorld();
+      renderer.setRenderTarget(rt);
+      hm.material = white; renderer.clear(); renderer.render(sc, oc); renderer.readRenderTargetPixels(rt, 0, 0, 256, 256, mask);
+      hm.material = depthOnly; sc.add(mm); renderer.clear(); renderer.render(sc, oc); renderer.readRenderTargetPixels(rt, 0, 0, 256, 256, px); sc.remove(mm);
+      var inside = 0, outside = 0;
+      for (var q = 0; q < 256 * 256; q++) if (px[q * 4] + px[q * 4 + 1] + px[q * 4 + 2] > 6) { if (mask[q * 4] > 128) inside++; else outside++; }
+      out.probes.push({ at: bp.p.toArray().map(function (x) { return +x.toFixed(3); }), inside: inside, outside: outside, hole: info.holes[0] });
+    });
+    renderer.setRenderTarget(null); renderer.setClearColor(cc, ca); markU.uTime.value = time;
+    rt.dispose(); white.dispose(); depthOnly.dispose();
+    buildMarks(); fxStep(t);
+    out.vehicle = r.v.type; out.outside = out.probes.reduce(function (s, x) { return s + x.outside; }, 0); out.inside = out.probes.reduce(function (s, x) { return s + x.inside; }, 0);
+    return out;
   }
   function setHits(on) { hitsOn = !!on; $('sw-hits').checked = hitsOn; fxStep(t); }
   // the counts check: data events against the effects the page draws over the whole battle (a sweep of the battle in
@@ -2296,7 +2416,8 @@
     var x = cam.tx + cam.dist * Math.cos(cam.pitch) * Math.sin(cam.yaw), y = cam.ty + cam.dist * Math.sin(cam.pitch),
       z = -cam.tz + cam.dist * Math.cos(cam.pitch) * Math.cos(cam.yaw);
     // never below the ground (round 2 could put the ground camera into the terrain on slopes)
-    if (heightAt) y = Math.max(y, heightAt(x, -z) + 0.9);  // round 5d: 0.9 m (was 1.2): a driver's eye level
+    // (the shot view without Hits' viewer: no floor - the eye stands at the tracer's start, the owner's word 19.11)
+    if (heightAt && !(shotView && shotView.free())) y = Math.max(y, heightAt(x, -z) + 0.9);  // round 5d: 0.9 m (was 1.2): a driver's eye level
     camera.position.set(x, y, z); camera.lookAt(cam.tx, cam.ty, -cam.tz);
   }
   var drag = null;
@@ -2460,7 +2581,8 @@
       info: function (id) { var r = fxById[id]; return r ? tileOf(r) : null; },
       player: function (id) { var r = fxById[id]; return (r && r.v.player) || ''; },
       clock: function (s) { return fmt(s - tBattle); },
-      pick: function (row, j) { jumpTo(j); },
+      // the shot view takes the camera: no vehicle followed (the shots button follows its vehicle), free after Leave
+      pick: function (row, j) { var sv = shotViewer(); if (sv) { setFollow(null); sv.open(row); } else jumpTo(j); },
       hits: hitsOpener,
       changed: function () { renderList(false); } });
     return panel;
@@ -2489,6 +2611,47 @@
     }
     if (!playing) togglePlay();
   }
+  // ------------------------------------------------------------------ the shot view (19.11, NOTEBOOK N5, BACKLOG 109)
+  // web/playback/shot-view.js: a row of the shots panel shown as Bullba Hits shows a shot (Hits' own viewer over this
+  // canvas, this camera following Hits' camera), an episode from 2 s before the shot, slowed, stopped at the hit. Its hooks
+  // into this page: the clock (seek, play, the episode's speed), this camera (placed from Hits', or the orbit), the veil
+  // over this page's drawing of the target, and this page's frame (run by Hits' frame loop while Hits' viewer is on).
+  var shotView = null, episodeSpeed = null;
+  function shotViewer() {
+    if (shotView || !window.BullbaShotView || !window.ArmorViewer || !battle) return shotView;
+    var known = INDEX && Array.isArray(INDEX.battles) && INDEX.battles.some(function (x) { return x && x.id === BID; });
+    shotView = BullbaShotView.create({ view: $('view'), camera: camera, battle: battle, hitsBattle: known ? BID : null, battleId: BID, dataBase: BASE,
+      vehicle: function (id) { return fxById[id] || null; },
+      name: function (id) { var r = id == null ? null : fxById[id]; return r ? tileOf(r).name : 'not named'; },
+      clock: function (s) { return fmt(s - tBattle); },
+      seek: function (x) { t = Math.min(tEnd, Math.max(0, x)); $('slider').value = t; },
+      play: function (on) { if (!!on !== playing) togglePlay(); },
+      speed: setEpisodeSpeed, orbit: orbitFrom, veil: veil, frame: frameBody });
+    return shotView;
+  }
+  // the episode's speed is not the remembered one (#speed-value): the buttons show it, leaving puts the user's back
+  function setEpisodeSpeed(v) {
+    episodeSpeed = v;
+    if (v == null) { $('speed-value').dispatchEvent(new Event('change')); return; }
+    speed = v;
+    Array.prototype.forEach.call(document.querySelectorAll('[data-speed]'), function (x) { x.classList.toggle('on', +x.dataset.speed === v); });
+  }
+  // this page's orbit camera looking at `at` from `eye` (scene coordinates; placeCamera's eye inverted)
+  function orbitFrom(eye, at) {
+    setFollow(null);
+    var dx = eye.x - at.x, dy = eye.y - at.y, dz = eye.z - at.z, d = Math.max(ZOOM.min, Math.hypot(dx, dy, dz));
+    cam.tx = at.x; cam.ty = at.y; cam.tz = -at.z; cam.dist = Math.min(ZOOM.max, d);
+    cam.pitch = Math.asin(Math.max(-1, Math.min(1, dy / d))); cam.yaw = Math.atan2(dx, dz); cam.tyGoal = null;
+    if (heightAt) cam.tyOff = cam.ty - heightAt(cam.tx, cam.tz);
+  }
+  // this page's drawing of a vehicle veiled while Hits' viewer draws it: the model not drawn but still casting its shadow
+  // (its one material writes no colour and no depth), its marker and its hit marks hidden. Run every frame after fxStep,
+  // which shows the marks again.
+  function veil(r, on) {
+    r.mat.colorWrite = !on; r.mat.depthWrite = !on; r.veiled = !!on;
+    r.bar.visible = !on && !r.dead;
+    fxMarkMeshes.forEach(function (m) { var p = m.parent; while (p && p !== r.group) p = p.parent; if (p) m.visible = on ? false : (hitsOn && t >= m.userData.first); });
+  }
 
   var listRows = [];
   function renderList(force) {
@@ -2497,7 +2660,7 @@
         var r = row.r, hp = r.lastHp == null ? r.v.maxHealth : r.lastHp;
         row.el.className = row.base + (r.visible ? '' : ' out') + (r.dead ? ' dead' : '') + (follow === r ? ' follow' : '');
         row.bar.style.width = Math.max(0, Math.min(100, 100 * hp / (r.v.maxHealth || 1))) + '%';
-        if (row.hb) row.hb.classList.toggle('on', !!panel && panel.shown() === r.v.id);
+        if (row.hb) { var lit = !!panel && panel.shown() === r.v.id; row.hb.classList.toggle('on', lit); row.hb.setAttribute('aria-pressed', String(lit)); }
       });
       return;
     }
@@ -2515,9 +2678,13 @@
       nm.querySelector('.vt-name').textContent += (r.md.model ? '' : ' [box]') + (r.v.modulesMatch === false ? ' [other turret/gun]' : '');
       nm.title = r.v.type + (r.v.modulesMatch == null ? ' - turret/gun of the battle not compared' : (r.v.modulesMatch ? ' - turret/gun as in the battle' : ' - the battle had another turret/gun'));
       var side = r.role === 'enemy' ? 'enemy' : 'own', box = side === 'enemy' ? boxEnemy : boxOwn;
-      var hb = BullbaShotsPanel.button(function () { shotsPanel().toggle(r.v.id, box, side); });
-      el.appendChild(bar); el.appendChild(pl); el.appendChild(nm); el.appendChild(hb);
-      el.onclick = function () { setFollow(follow === r ? null : r); };
+      // N9, N10 (19.11, the user): the row = the vehicle's tile (Hits' pressable tile: framed, the frame gold and filled while
+      // the camera follows it - one at a time) and beside it the 'shots' button, a control of its own (lit while its panel
+      // is open); 'shots' also follows the vehicle, a click on the tile only follows (or stops following)
+      var tile = document.createElement('div'); tile.className = 'veh-tile';
+      var hb = BullbaShotsPanel.button(function () { shotsPanel().toggle(r.v.id, box, side); setFollow(r); });
+      tile.appendChild(bar); tile.appendChild(pl); tile.appendChild(nm); el.appendChild(tile); el.appendChild(hb);
+      tile.onclick = function () { setFollow(follow === r ? null : r); };
       box.appendChild(el); listRows.push({ r: r, el: el, bar: bar, base: base, hb: hb });
     });
     if (listRows.length) renderList(false);  // round 9: a map alone has no vehicles
@@ -2526,10 +2693,15 @@
   var lastList = 0, lastMeter = 0;
   function frame(now) {
     requestAnimationFrame(frame);
+    // the shot view with Hits' viewer on: this frame runs in Hits' frame loop, after Hits' camera (shot-view.js)
+    if (shotView && shotView.drives()) { shotView.want(); return; }
+    frameBody(now);
+  }
+  function frameBody(now) {
     var dt = lastFrame ? Math.min(0.25, (now - lastFrame) / 1000) : 0;
     if (lastFrame) intervals.push([now, now - lastFrame]);
     lastFrame = now;
-    if (playing) { t += dt * speed; if (t >= tEnd) { t = tEnd; togglePlay(); } }
+    if (playing) { var t0 = t; t += dt * speed; if (shotView) t = shotView.clamp(t0, t); if (t >= tEnd) { t = tEnd; togglePlay(); } }
     keyMove(dt);
     var c0 = performance.now(), cq = null;
     if (costOn && timerExt && !benchBusy && costQ.length < 6) { cq = gl.createQuery(); gl.beginQuery(timerExt.TIME_ELAPSED_EXT, cq); }
@@ -2555,7 +2727,9 @@
     var d0 = dApplied, rs = dTime > time;
     stepDestruction(time); if (dApplied !== d0 || rs) shadowDirty();  // objects broke / the battle went back: casters changed
     stepFlash(time);
-    poseVehicles(time); poseTracers(time); fxStep(time); placeCamera(); splitPlants(false); placeSun();  // placeSun last: it reads the casters' redraw flag
+    poseVehicles(time); poseTracers(time); fxStep(time);
+    if (!(shotView && shotView.place(time))) placeCamera();  // the shot view: this camera from Hits' (shot-view.js place)
+    splitPlants(false); placeSun();  // placeSun last: it reads the casters' redraw flag
   }
 
   // ------------------------------------------------------------------ bench: synchronised frame cost per layer set
@@ -2992,7 +3166,10 @@
   var host = window.BullbaHost || { game: false, canSend: function () { return false; } };
   var BASE = '../', PAGE_BASE = '', FORMAT = 2, FALLBACK_MS = 250 /* 19.11: in the game the mod's word never comes (the client has no executeJavascript), the look is how the page learns */, WAIT_MS = 10 * 60 * 1000;
   var received = {}, FILE = null, waited = { mod: 0 };
-  window.ArmorInspectorData = { receive: function (pair) { received[pair[0]] = pair[1]; } };
+  // 19.11 (the shot view): Bullba Hits' own reader (web/local-data.js, loaded before this file) reads Hits' battle and its
+  // scene; a data file calls ArmorInspectorData.receive, so both readers get it (each keeps only what it asked for)
+  var hitsData = window.ArmorInspectorData && window.ArmorInspectorData.battle ? window.ArmorInspectorData : null;
+  window.ArmorInspectorData = Object.assign({}, hitsData || {}, { receive: function (pair) { received[pair[0]] = pair[1]; if (hitsData) hitsData.receive(pair); } });
   function loadData(src, key) {
     delete received[key];
     return load(BASE + src + '?read=' + Date.now()).then(function () {
@@ -3339,11 +3516,15 @@
     renderer.setRenderTarget(rt0); renderer.setClearColor(oc, oa); rt.dispose(); card.geometry.dispose(); card.material.dispose();
     return out;
   }
-  window.MapBench = { shotsPanel: function () { return shotsPanel(); }, camera: function () { return { tx: cam.tx, ty: cam.ty, tz: cam.tz, yaw: cam.yaw, pitch: cam.pitch, dist: cam.dist }; }, rocks: rockInfo, fogProbe: fogProbe, circles: drawnCircles, mapCircles: function () { return (mapData && mapData.mode && mapData.mode.circles) || []; }, gpu: async function (n, every) { var g = await gpuTimes(n || 40, function () { if (every) shadowsRedrawAll(); step(t); }); return +quant(g, 0.5).toFixed(3); }, shadowInfo: shadowInfo, vehicleShadowInfo: vehicleShadowInfo, render: function () { step(t); renderer.render(scene, camera); }, run: runBench, groundBench: runGroundBench, shadowBench: runShadowBench, shadowQuality: setShadowQuality, grain: setGrain, ground: setGround, relief: setRelief, light: setLight, lightInfo: function () { return lightInfo; }, g5Info: function () { return g5Info; },
+  window.MapBench = { shotsPanel: function () { return shotsPanel(); },
+    // the shot view (19.11): its state, the clock, this camera's eye in game coordinates
+    shotRows: function (id) { return BullbaShotsPanel.rows(battle, id); }, shotViewer: function () { return shotView ? shotView.viewer() : null; },
+    shotView: function () { var s = shotView ? shotView.state() : null; if (s) { s.t = t; s.playing = playing; s.speed = speed; s.eye = [camera.position.x, camera.position.y, -camera.position.z]; } return s; },
+    camera: function () { return { tx: cam.tx, ty: cam.ty, tz: cam.tz, yaw: cam.yaw, pitch: cam.pitch, dist: cam.dist }; }, rocks: rockInfo, fogProbe: fogProbe, circles: drawnCircles, mapCircles: function () { return (mapData && mapData.mode && mapData.mode.circles) || []; }, gpu: async function (n, every) { var g = await gpuTimes(n || 40, function () { if (every) shadowsRedrawAll(); step(t); }); return +quant(g, 0.5).toFixed(3); }, shadowInfo: shadowInfo, vehicleShadowInfo: vehicleShadowInfo, render: function () { step(t); renderer.render(scene, camera); }, run: runBench, groundBench: runGroundBench, shadowBench: runShadowBench, shadowQuality: setShadowQuality, grain: setGrain, ground: setGround, relief: setRelief, light: setLight, lightInfo: function () { return lightInfo; }, g5Info: function () { return g5Info; },
     view5: function (name) { views5()[name](); }, cost: groundCost, sheet: plantSheet, playback: runPlayback, whereVisual: whereVisual, ensureCollision: ensureCollision,
     split: function () { splitPlants(true); },
     // round 6: the hits switch and the counts check (data events against the effects drawn over the whole battle)
-    hits: setHits, hitsSweep: hitsSweep, hitsInfo: function () { return fxMarkInfo; },
+    hits: setHits, hitsSweep: hitsSweep, hitsInfo: function () { return fxMarkInfo; }, markEdge: markEdge,
     // the impostor pictures as a PNG data URL (for the report's check)
     impostorPng: function () {
       var w = impostorRT.width, h = impostorRT.height, px = new Uint8Array(w * h * 4);
@@ -3354,7 +3535,8 @@
       return c.toDataURL('image/png');
     }, state: function () { return { t: t, playing: playing, speed: speed }; },
     // round 13: the vehicles' meshes drawn with the Hits look (flat faces with the seam attribute) and those whose model had a group table
-    vehicleLook: function () { var n = 0, flat = 0, grouped = 0; layers.vehicles.traverse(function (o) { if (!o.isMesh || !o.material.userData.u) return; n++; var g = o.geometry; if (g.attributes.aSeam && !g.index) flat++; if (g.userData.groupTable) grouped++; }); return { meshes: n, flat: flat, grouped: grouped, base: hitsBaseU.value.toArray() }; },
+    vehicleLook: function () { var n = 0, flat = 0, grouped = 0; layers.vehicles.traverse(function (o) { if (!o.isMesh || !o.material.userData.u) return; n++; var g = o.geometry; if (g.attributes.aSeam && !g.index) flat++; if (g.userData.groupTable) grouped++; }); return { meshes: n, flat: flat, grouped: grouped, base: hitsBaseU.value.toArray(), wreck: WRECK.slice(),
+      nations: Object.keys(NATION_COLORS).map(function (k) { return [k].concat(NATION_COLORS[k].map(srgbToLinear)); }) }; },
     seek: function (x) { t = x; }, follow: function (i) { setFollow(i == null ? null : vehicles[i]); },
     followOwn: function () { setFollow(vehicles.filter(function (r) { return r.v.own; })[0] || vehicles[0]); },
     battleStart: function () { return tBattle; },

@@ -40,14 +40,6 @@ _battle_request = None
 _playback_request = None
 _player_request = None
 _replays_request = None
-# What the export thread tells the player page (19.11, notify_page): queued here (a deque's append and popleft are atomic),
-# delivered on the game thread (_pump_notes) into the window whose page sent the last player command (its Browser view,
-# the client's ctx['browser_view']) as one call of window.BullbaPlayback.notify(note) (WebBrowser.executeJavascript).
-_notes = collections.deque(maxlen=256)
-_note_view = None
-_pump = {'running': False, 'until': 0.0}
-NOTE_PUMP = 0.25          # seconds between two looks at the queue while a player page waits
-NOTE_PUMP_FOR = 15 * 60   # seconds the look goes on after the page's last player command
 ARENA = re.compile(r'^[0-9a-z_]{1,80}\Z')
 # The page's loading (the replay job waits for it): called with True when the window opens, False on its onLoadEnd, None
 # when it is gone (Recorder.note_page_loading).
@@ -171,45 +163,9 @@ def set_player_request(handler):
 
 
 def notify_page(note):
-    """Any thread: a note for the open player page (the export thread's: a battle file or a map's raw set made, a copy's
-    stage). Delivered on the game thread's next look (_pump_notes)."""
-    _notes.append(note)
-
-
-def _player_view(ctx):
-    """The window of a player command: the notes go to it; the look at the queue runs while the page waits."""
-    global _note_view
-    view = ctx.get('browser_view') if isinstance(ctx, dict) else None
-    if view is not None: _note_view = view
-    _pump['until'] = time.time() + NOTE_PUMP_FOR
-    if not _pump['running']:
-        try:
-            import BigWorld
-            BigWorld.callback(NOTE_PUMP, _pump_notes)
-            _pump['running'] = True
-        except Exception:
-            _warn_once('note-pump', 'Bullba Hits: the player page cannot be told (no game callback)')
-
-
-def _pump_notes():
-    """Game thread: the queued notes into the player page, one script each; again in NOTE_PUMP s while a page waits."""
-    _pump['running'] = False
-    view = _note_view
-    while _notes:
-        note = _notes.popleft()
-        try:
-            browser = getattr(view, 'browser', None)
-            if browser is None: break
-            browser.executeJavascript('window.BullbaPlayback&&window.BullbaPlayback.notify(%s)' % json.dumps(note), '')
-        except Exception:
-            _warn_once('note', 'Bullba Hits: the player page was not told %r', note)
-    if time.time() < _pump['until']:
-        try:
-            import BigWorld
-            BigWorld.callback(NOTE_PUMP, _pump_notes)
-            _pump['running'] = True
-        except Exception:
-            pass
+    """Any thread: a note of the export thread for the open player page. Nothing is sent: the client of 2.4.1.1 has no
+    call that runs a script in a page (WebBrowser.executeJavascript names a native method the exe lacks - 19.11), so
+    the page learns of a finished job by looking at the file every 0.25 s. Kept as the one hook a later channel plugs into."""
 
 
 def set_window_request(handler):
@@ -223,29 +179,21 @@ def set_window_request(handler):
 def shot_fragment(battle_id, command):
     """The fragment of Hits' page for one shot of the viewer's shots panel (BACKLOG 109): 'host=game&battle=<id>&at=
     <gameTime>&attacker=<id>&target=<id>&focus=<id>' (web/app.js openShot), or None when a value is not a number."""
+    # In the game the schema has no fields for these four, so the client hands them over in the command's
+    # `custom_parameters` (seen 19.11, 1.13: the shot was refused as "no shot"); a test's plain object has attributes.
+    extra = getattr(command, 'custom_parameters', None)
+    if not isinstance(extra, dict): extra = {}
+    def value(name):
+        v = getattr(command, name, None)
+        return extra.get(name) if v is None else v
     try:
-        at = float(getattr(command, 'at', None))
-        ids = [int(getattr(command, k, None)) for k in ('attacker', 'target', 'focus')]
+        at = float(value('at'))
+        ids = [int(value(k)) for k in ('attacker', 'target', 'focus')]
     except (TypeError, ValueError):
         _warn_once('open-shot', 'Bullba Hits page command: no shot in %r', getattr(command, '__dict__', command))
         return None
     if at != at or at in (float('inf'), float('-inf')): return None
     return 'host=game&battle=%s&at=%.3f&attacker=%d&target=%d&focus=%d' % ((str(battle_id), at) + tuple(ids))
-
-
-def show_fragment(window, fragment):
-    """Game thread: an open window's page gets a new fragment (location.hash: the page's hashchange reads it); False
-    when the window is not open or cannot be told."""
-    try:
-        from helpers import dependency
-        from skeletons.gui.game_control import IBrowserController
-        web = dependency.instance(IBrowserController).getBrowser(window_id(window))
-        if web is None: return False
-        web.executeJavascript('location.hash=%s' % json.dumps('#' + fragment), '')
-        return True
-    except Exception:
-        _warn_once('show-fragment', 'Bullba Hits: the %s window was not told its new fragment', window)
-        return False
 
 
 def set_files_request(handler):
@@ -390,14 +338,12 @@ def _handle_web_command(command, ctx):
             if _playback_request is None:
                 _warn_once('playback', 'Bullba Hits page command: the recorder is not running')
                 return
-            _player_view(ctx)
             _playback_request(str(battle_id))
             return
         if action in ('mapRaw', 'playbackReport'):
             if _player_request is None:
                 _warn_once('player', 'Bullba Hits page command: the recorder is not running')
                 return
-            _player_view(ctx)
             if action == 'mapRaw':
                 arena, held, resv = getattr(command, 'arena', None), getattr(command, 'held', None), getattr(command, 'resv', None)
                 if not arena or not ARENA.match(str(arena)):
@@ -436,7 +382,6 @@ def _handle_web_command(command, ctx):
             if _files_request is None:
                 _warn_once('replay-files', 'Bullba Hits page command: the recorder is not running')
                 return
-            _player_view(ctx)
             _files_request()
             return
         if action == 'playbackVehicles':
@@ -453,7 +398,6 @@ def _handle_web_command(command, ctx):
             if _vehicles_request is None:
                 _warn_once('pb-vehicles-off', 'Bullba Hits page command: the recorder is not running')
                 return
-            _player_view(ctx)
             _vehicles_request(str(battle_id), wanted)
             return
         if action in ('replayKeep', 'replayLimit'):

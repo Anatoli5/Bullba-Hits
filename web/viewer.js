@@ -1317,7 +1317,10 @@
   // pose or a pinned shot replaces them until the user returns.
   // The recorded pose, to the viewer's one threshold: the marks, the line's figure and the ring integrals all ask this.
   Viewer.prototype.recordedPose=function(){return Math.abs(this.turretAngle)<.001&&Math.abs(this.gunAngle)<.001;};
-  Viewer.prototype.recordedShown=function(){return aimShown()&&this.recordedPose()&&!this.pinned;};
+  Viewer.prototype.recordedShown=function(){return aimShown()&&this.recordedPose()&&!this.pinned&&!this.shotHeld;};
+  // The recorded shot held back (19.11.2026, the replay viewer's shot view: its episode plays the 2 s before the hit, and the
+  // hit line and its crosses come with the hit). Bullba Hits never holds it.
+  Viewer.prototype.holdShot=function(on){this.shotHeld=!!on;this.syncRecorded();this.draw();};
   Viewer.prototype.syncRecorded=function(){var show=this.recordedShown();this.root.children.forEach(function(o){if(o!==this.paintMesh&&o!==this.trackGroup&&o!==this.outline&&o!==this.outlineDepth&&o!==this.aimGroup&&!o.userData.horizon)o.visible=show;},this);};
   Viewer.prototype.shotProbability=function(shell){
     if(this.pinned&&this.engine&&shell)return this.engine.ray(this.pinned.origin.toArray(),this.pinned.direction.toArray(),shell);
