@@ -2,7 +2,7 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.1.1 from 1.05 on, 2.4.1.0 from 1.02 on, 2.4.0.2 from 0.9.3 on, 2.4.0.1 #950 from 0.7.6, 2.4.0.0 #945 before.
 
-## Unreleased
+## 1.18 (2026-11-20)
 
 - Replay viewer, shot view: Replay episode keeps the camera where you put it; clicking the shot's row gives the shooter's view again.
 - **Shot view: the camera stays on the tracer:** from the moment of the shot the eye leaves the shooter and stands on the shell's line where it left, looking at the hit, while the shooter drives on. After the hit the wheel moves the eye along that line towards the target and back; a drag still turns the camera round the target.
