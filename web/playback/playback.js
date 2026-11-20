@@ -2728,7 +2728,7 @@
       seek: function (x) { t = Math.min(tEnd, Math.max(0, x)); $('slider').value = t; },
       play: function (on) { if (!!on !== playing) togglePlay(); },
       speed: setEpisodeSpeed, orbit: orbitFrom, veil: veil, look: shotLook,
-      recordedOk: shotRecordedOk, recorded: shotRecordedCamera, gunAt: shotGunAt,
+      recordedOk: shotRecordedOk, recorded: shotRecordedCamera, gunAt: shotGunAt, track: shotTrackState,
       delay: function (id) { var r = fxById[id]; return r ? delayOf(r) : 0; },
       foliage: shotFoliage, plantStencil: shotPlantStencil, sight: shotSight,
       corridor: { open: shotCorridorOpen, keep: shotCorridorKeep, vehicles: shotCorridorVehicles, close: shotCorridorClose } });
@@ -2772,6 +2772,34 @@
   }
   // the gun's world matrix (its frame -> the scene) of vehicle `id` at the clock t, as this page would draw it then; the
   // vehicle's drawn pose is put back. null: no pose or no gun
+  // THE SHOOTER'S MOTION AT THE SHOT from this replay's track (20.11, NOTEBOOK U3: the alternative circle keeps the speed
+  // and the hull turning of the shot), for a record without the client's own figures (tracer / attacker `motion`): the
+  // size model's rule of the mod's estimate (replay_aim_other.py tick_state: centred differences over SIZE_WINDOW s taken
+  // SIZE_LAG s before the clock) on the 0x0a positions and hull yaw; the turret's yaw on the hull at the clock (packed gun
+  // angles, as drawn: turret.rotation.y). {speed m/s, hullTurn rad/s, turretYaw | null}, or null without samples.
+  var TRACK_WINDOW = 0.2, TRACK_LAG = 0.3;
+  function trackAt(r, tt) {
+    var v = r.v, p = r.pos, i = search(p, 7, v.np, tt);
+    if (i < 0 || !v.np) return null;
+    var a = i * 7, b = a, f = 0;
+    if (i + 1 < v.np && p[a + 7] - p[a] < 1.0) { b = a + 7; f = Math.max(0, Math.min(1, (tt - p[a]) / (p[b] - p[a]))); }
+    return [p[a + 1] + (p[b + 1] - p[a + 1]) * f, p[a + 2] + (p[b + 2] - p[a + 2]) * f, p[a + 3] + (p[b + 3] - p[a + 3]) * f, angLerp(p[a + 4], p[b + 4], f)];
+  }
+  function shotTrackState(id, t) {
+    var r = fxById[id];
+    if (!r || !r.v || !r.v.np) return null;
+    var t0 = t - TRACK_LAG - TRACK_WINDOW / 2, t1 = t - TRACK_LAG + TRACK_WINDOW / 2, A = trackAt(r, t0), B = trackAt(r, t1);
+    if (!A || !B) return null;
+    var d = B[3] - A[3]; d = Math.atan2(Math.sin(d), Math.cos(d));
+    var yaw = null;
+    if (r.v.ng && r.gunT) {
+      var q = r.gunT, gi = search(q, 3, r.v.ng, t); if (gi < 0) gi = 0;
+      var c = gi * 3, e = c, g = 0;
+      if (gi + 1 < r.v.ng && q[c + 3] - q[c] < 0.5 && t > q[c]) { e = c + 3; g = Math.min(1, (t - q[c]) / (q[e] - q[c])); }
+      yaw = angLerp(q[c + 1], q[e + 1], g);
+    }
+    return { speed: Math.hypot(B[0] - A[0], B[1] - A[1], B[2] - A[2]) / TRACK_WINDOW, hullTurn: Math.abs(d) / TRACK_WINDOW, turretYaw: yaw };
+  }
   function shotGunAt(id, t, out) {
     var r = fxById[id];
     if (!r || !r.turret || !r.gun) return null;

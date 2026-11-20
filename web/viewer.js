@@ -1592,20 +1592,26 @@
   // Whether the recorded rings are on screen at this moment. A pinned point and the user's first emulated
   // shot both take them away, and the page prints a figure only for a ring the user can actually see.
   Viewer.prototype.savedAimShown=function(){return !!(this.aimGroup&&this.aimGroup.visible);};
-  Viewer.prototype.savedAimProbability=function(shell){
+  // The integrals below as samplers (20.11.2026, the replay viewer's shot view: it hands them to the worker, sampler.post)
+  // - the same rays; ...Probability takes the sampler in one piece.
+  Viewer.prototype.savedAimSampler=function(shell){
     if(!this.savedAim||!this.savedAim.origin||!this.engine||!shell||!this.recordedPose())return null;
-    // 'damage' is the mean expected damage over the circle, HP: a miss is 0 HP exactly as it is 0 %.
     var aim=this.savedAim;
-    return sampleCircle(this.engine,shell,aim.origin,aim.center,aim.right,aim.up,aim.radius,256,this.aimProfileId());
+    return circleSampler(this.engine,shell,aim.origin,aim.center,aim.right,aim.up,aim.radius,256,this.aimProfileId());
+  };
+  Viewer.prototype.estimateAimSampler=function(shell){
+    var aim=this.estimateAim;
+    if(!aim||!aim.origin||!this.engine||!shell||!this.recordedPose())return null;
+    return circleSampler(this.engine,shell,aim.origin,aim.center,aim.right,aim.up,aim.radius,256,this.aimProfileId());
+  };
+  Viewer.prototype.savedAimProbability=function(shell){
+    // 'damage' is the mean expected damage over the circle, HP: a miss is 0 HP exactly as it is 0 %.
+    var s=this.savedAimSampler(shell);return s?s.step(Infinity):null;
   };
   // The same integral over the NOMINAL ring of a hit that has no recorded reticle (user, 20.09: the
   // circle figure belongs to every ring on screen). It is an estimate of the circle, so the figure is an
   // estimate too - the panel line says so - and it is still kept out of the reticle tile's own number.
-  Viewer.prototype.estimateAimProbability=function(shell){
-    var aim=this.estimateAim;
-    if(!aim||!aim.origin||!this.engine||!shell||!this.recordedPose())return null;
-    return sampleCircle(this.engine,shell,aim.origin,aim.center,aim.right,aim.up,aim.radius,256,this.aimProfileId());
-  };
+  Viewer.prototype.estimateAimProbability=function(shell){var s=this.estimateAimSampler(shell);return s?s.step(Infinity):null;};
   Viewer.prototype.paint=function(){
     if(!this.paintMesh)return;
     var composed=false;

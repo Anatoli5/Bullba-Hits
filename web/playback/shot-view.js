@@ -61,6 +61,26 @@
    file the mod reads from the client (o.sight, game_sight.py); without it a thin cross of the page. Hits' own blue
    hit-location crosses are not drawn in the mode (the sight stands for them).
 
+   THE SHOT'S FIGURES (20.11, NOTEBOOK U2; cells()): two cells in the bar, as Bullba Hits' panels read a shot. "Hit line":
+   the recorded line (viewer.shotProbability with the shell at the record's range) in Hits' words (web/armor-line.js line)
+   and "Circle" over the ring Hits draws for the hit (the own recorded one - viewer.savedAimSampler -, else Hits' estimate -
+   estimateAimSampler -, then headed "Circle, estimate"), its figure and words armor-line.js circleFigure / circleText /
+   CIRCLE_TITLES; the integral goes to Hits' worker (sampler.post), the frame takes one 3 ms slice of it at most (Hits'
+   AIM_EST_SLICE). Not here: Hits' track chip (it reads the characteristics file through app.js).
+   WHERE ELSE COULD THE SHOT GO (U3; alt()): once stopped at the hit with the eye at the shell's start (on the line, the
+   wheel not moved, the glide done - after the stop it finishes on the wall clock), the right cell reads the point under
+   the cursor (Hits' viewer.inspect: one reading a frame, from the eye) and a cyan circle aims there as Hits' live circle
+   does in its manual motion: the gun chases the cursor at the turret's speed (viewer.aimGap, ArmorBallistics.turretChase,
+   viewer.chaseAim), the circle is ArmorBallistics.aimStep over {the shot's speed, the shot's hull turn, the chase's
+   turret term}. It starts as the ring of the "Hit line" (its centre and size, K = its angle / the block's dispersion) and
+   settles to the steady size of that motion with the gun held on its aim; the crew and equipment the record's block does
+   not hold enter as Hits' `mult` modifier c = min(1, K / that steady size), so it never jumps at the start. The speed and
+   the hull turn: the record's `motion` (the client's own figures) where it has them, else this replay's track
+   (o.track). Its figure: Hits' live rule (estimateLive): 256 rays at most every ALT_COARSE s while it moves, 1024 once
+   at rest, in the worker. A click pins the point (Hits' pin; the circle stays on it, as Hits' Alt + click); the HUD's
+   sight follows (the centre mark at the cursor, the gun tag at the circle's centre), the system pointer hidden over the
+   picture. Not here: firing, reload, re-placing the tracer, moving the vehicle.
+
    A replay file Bullba Hits has no battle of: the mod makes it from the replay ('prepareBattle' with the file's id).
    What cannot be had (outside the game; a replay the route refuses; a shot with no hit; a hit the battle does not list; a
    scene without its models; no WebGL 2) is not made up: the episode plays and the bar says what is missing.
@@ -70,6 +90,7 @@
    o: {view (the element the canvas is in), camera, renderer, battle, hitsBattle, battleId, dataBase, vehicle(id), name(id),
    clock(t), seek(t), play(on), speed(v | null), orbit(eye, at) (scene coordinates), veil(r, on), look(r, material | null),
    recordedOk(id, t0, t1), recorded(id, t, pos, quat) -> fov | null, gunAt(id, t, matrix) -> matrix | null, delay(id) -> s,
+   track(id, t) -> {speed, hullTurn, turretYaw} | null (the shooter's motion at the shot from the replay's track),
    foliage(k | null), plantStencil(on), sight() -> Promise<the sight file's value | null>}. */
 (function (root) {
   'use strict';
@@ -97,6 +118,10 @@
   // stood on it. 0.6 m: a shell is under 0.2 m wide, and a little more leaves no plank or post at the gun cutting the view;
   // the target's own half-size (1.5-2 m) would clear whole house walls beside the line.
   var CORRIDOR = 0.6;
+  // U2, U3: Hits' cadence of a circle's figure (app.js estimateLive, AIM_EST_SLICE): the coarse figure at most every
+  // ALT_COARSE s while the circle moves, of COARSE rays; the fine one of FINE rays once at rest; one SLICE ms a frame on
+  // the main thread when there is no worker
+  var ALT_COARSE = 0.12, COARSE = 256, FINE = 1024, SLICE = 3;
   // Hits' look of the heat map: the user's own settings of Bullba Hits (its remembered box, 'bullba-settings', which both
   // file:// pages share) where they are, else the defaults Hits' page carries (web/index.html, the controls of these ids).
   var HITS_LOOK = { 'armor-mode': 'damage', palette: 'classic', 'soft-lighting': true, 'light-strength': '200',
@@ -111,6 +136,7 @@
     return out;
   }
   function num(s, d) { var n = Number(s); return isFinite(n) ? n : d; }
+  function wallNow() { return root.performance && root.performance.now ? root.performance.now() : Date.now(); }
   // The row's hit as the panel's row shows it (shots-panel.js shownHit: the one with damage, else the last); null: none
   function shownHit(row) { return row.hits && row.hits.length ? root.BullbaShotsPanel.shownHit(row) : null; }
   function node(tag, text, cls) { var e = document.createElement(tag); if (text != null) e.textContent = text; if (cls) e.className = cls; return e; }
@@ -138,17 +164,30 @@
     // ---- the bar: what is shown, Replay episode, Leave; the pinned point's reading --------------------------------------
     var bar = node('div', undefined, 'panel sv-bar'), title = node('span', '', 'sv-title'), note = node('div', '', 'sv-note');
     var again = node('button', 'Replay episode', 'sv-again'), leave = node('button', 'Leave', 'sv-leave');
-    var pin = node('div', undefined, 'sv-pin'), pinLabel = node('b', '', 'sv-pin-label'), pinChips = node('span', '', 'sv-pin-chips'), unpin = node('button', '×', 'sv-unpin');
+    // U2, U3: the two cells - the recorded shot ("Hit line") and the other point ("Under the cursor" / "Pinned point") - as
+    // Bullba Hits' panels: a heading, the chance or the share of alpha with the alpha muted, the circle's tile; the chips
+    // of the line below, the screens on a row of their own (app.js fillPanel)
+    function cell(cls) {
+      var c = { el: node('div', undefined, 'sv-cell ' + cls), head: node('div', undefined, 'sv-cell-head'), name: node('span', '', 'sv-cell-name'),
+        chance: node('b', '', 'sv-cell-chance'), alpha: node('span', '', 'sv-cell-alpha'), tile: node('span', undefined, 'sv-circle'),
+        tileHead: node('span', 'Circle', 'sv-circle-head'), tileVal: node('b', '', 'sv-circle-val'), chips: node('div', '', 'sv-chips'), extra: node('div', '', 'sv-chips sv-extra') };
+      c.alpha.title = 'The shell’s alpha damage, HP';
+      c.tile.appendChild(c.tileHead); c.tile.appendChild(c.tileVal); c.tile.hidden = true;
+      c.head.appendChild(c.name); c.head.appendChild(c.chance); c.head.appendChild(c.alpha); c.head.appendChild(c.tile);
+      c.el.appendChild(c.head); c.el.appendChild(c.chips); c.el.appendChild(c.extra); c.el.hidden = true;
+      return c;
+    }
+    var figs = node('div', undefined, 'sv-figs'), cellA = cell('sv-hitline'), cellB = cell('sv-other'), unpin = node('button', '×', 'sv-unpin');
     again.type = leave.type = unpin.type = 'button';
     again.title = 'Replay episode\nPlays the shot again from ' + BEFORE + ' s before it, seen by the shooter, and stops at the hit.\n• Played on, the shot view closes ' + AFTER + ' s after the hit';
     leave.title = 'Leave the shot view\nBack to the battle view: the free camera and your speed.\n• Esc does the same';
-    unpin.title = 'Unpin\nDrops the pinned line: the recorded hit line comes back.';
-    pin.title = 'Pinned line\nBullba Hits’ reading of the line from the camera through the point you clicked on the target.';
+    unpin.title = 'Unpin\nDrops the pinned point.';
     again.onclick = function () { episode(); };
     leave.onclick = function () { close(); };
     unpin.onclick = function () { if (S.viewer) S.viewer.unpin(); };
-    pin.appendChild(pinLabel); pin.appendChild(pinChips); pin.appendChild(unpin); pin.hidden = true;
-    bar.appendChild(title); bar.appendChild(again); bar.appendChild(leave); bar.appendChild(note); bar.appendChild(pin); bar.hidden = true;
+    cellB.head.appendChild(unpin); unpin.hidden = true;
+    figs.appendChild(cellA.el); figs.appendChild(cellB.el);
+    bar.appendChild(title); bar.appendChild(again); bar.appendChild(leave); bar.appendChild(figs); bar.appendChild(note); bar.hidden = true;
     document.body.appendChild(bar);
     window.addEventListener('keydown', function (e) { if (e.key === 'Escape' && S.row) { close(); e.preventDefault(); } });
     // ---- Hits' viewer, hosted on this page's renderer and camera -------------------------------------------------------
@@ -206,6 +245,7 @@
       S.viewer = new root.ArmorViewer(o.view, host);
       S.viewer.grid.visible = false;
       S.viewer.onPin = pinShown;
+      S.viewer.onInspect = altReading;   // U3: the reading under the cursor (Hits' inspect, while the alternative is on)
       return S.viewer;
     }
     // Hits' look (its setters, as Hits' page calls them from its controls); the model's wireframe is not drawn - this page's
@@ -221,7 +261,7 @@
       return L;
     }
     // ---- a click on the target: Hits' pin ----------------------------------------------------------------------------------
-    var press = null, held = null, canvas = o.renderer.domElement;
+    var press = null, held = null, canvas = o.renderer.domElement, ptr = { clientX: NaN, clientY: NaN, fresh: false };
     // the user takes the camera (release()): the wheel before the shot - caught before this page's own wheel, which then
     // moves the eye closer / farther from where the shooter's eye was -, or a drag past 3 px (a click stays a pin). From
     // the shot on, the wheel moves the eye along the shell's line instead (lineWheel), and this page's zoom is not run.
@@ -234,22 +274,98 @@
       held = { x: e.clientX, y: e.clientY };
       press = S.mode === 'hits' && e.button === 0 && !e.shiftKey && !e.ctrlKey && !e.altKey ? { x: e.clientX, y: e.clientY } : null;
     });
-    canvas.addEventListener('pointermove', function (e) { if (held && S.fp && Math.abs(e.clientX - held.x) + Math.abs(e.clientY - held.y) > 3) release(); });
+    canvas.addEventListener('pointermove', function (e) {
+      if (held && S.fp && Math.abs(e.clientX - held.x) + Math.abs(e.clientY - held.y) > 3) release();
+      // U3: the pointer for the alternative's one reading a frame (alt(): Hits' frameHover takes the last event of a burst)
+      ptr.clientX = e.clientX; ptr.clientY = e.clientY; ptr.fresh = true;
+    });
     canvas.addEventListener('pointerup', function (e) {
       var p = press; press = null; held = null;
       if (!p || S.mode !== 'hits' || !S.viewer || !S.haveA || Math.abs(e.clientX - p.x) + Math.abs(e.clientY - p.y) > 3) return;
       S.viewer.resize(); S.viewer.placeCamera(); S.viewer.pinAt(e);
     });
+    // ---- the figures (U2, U3) -------------------------------------------------------------------------------------------
+    var AL = root.BullbaArmorLine;
+    // Hits' Display of this map: Expected damage with a shell that has an alpha, else the chance; the colour of a figure
+    function damageOn() { var L = S.look || hitsLook(), shell = S.viewer && S.viewer.shell; return L['armor-mode'] === 'damage' && !!(shell && shell.alpha > 0); }
+    function rgbOf(x) {
+      var L = S.look || hitsLook(), tint = L['ricochet-tint-on'] ? num(L['ricochet-tint'], 50) / 100 : 0;
+      return 'rgb(' + root.ArmorBallistics.color(x, L.palette, tint, damageOn() ? 'damage' : 'chance').map(function (c) { return Math.round(c * 255); }).join(',') + ')';
+    }
+    // a ballistic result in Hits' words, with the shell on screen (the shot's, at the record's range)
+    function lineOf(r) {
+      var shell = S.viewer && S.viewer.shell;
+      return AL.line(r, shell ? shell.penetration : null, S.rec ? S.rec.range : null, { damage: damageOn(), shell: shell, rgb: rgbOf,
+        parts: S.data && S.data.hit.target ? S.data.hit.target.parts : null });
+    }
+    function chipsInto(box, groups) { box.replaceChildren(); groups.forEach(function (g) { var c = node('span', g.text, 'chip ' + g.kind); if (g.title) c.title = g.title; box.appendChild(c); }); box.hidden = !groups.length; }
+    // one cell: its heading, the line's label in its colour, the alpha muted, the chips (app.js fillPanel's split)
+    function fillCell(c, name, line, tip) {
+      var shell = S.viewer && S.viewer.shell, alpha = shell && shell.alpha > 0 ? shell.alpha : 0;
+      var low = function (g) { return g.kind === 'screen' || g.kind === 'track'; };
+      c.name.textContent = name; c.el.title = tip || '';
+      c.chance.textContent = line.label; c.chance.style.color = line.color;
+      c.alpha.textContent = alpha ? '/ ' + Math.round(alpha) : ''; c.alpha.hidden = !alpha;
+      chipsInto(c.chips, line.groups.filter(function (g) { return !low(g); })); chipsInto(c.extra, line.groups.filter(low));
+      c.el.hidden = false;
+    }
+    function placeholder(c, name, text, tip) {
+      c.name.textContent = name; c.el.title = tip || ''; c.chance.textContent = '—'; c.chance.style.color = ''; c.alpha.hidden = true;
+      chipsInto(c.chips, [{ kind: 'placeholder', text: text }]); chipsInto(c.extra, []); c.el.hidden = false;
+    }
+    // the circle's tile: Hits' figure (armor-line.js circleText), its colour on the chance scale, Hits' words; `estimate`
+    // heads it "Circle, estimate"; `more` the tooltip's own points
+    function fillCircle(c, figure, kind, estimate, more) {
+      var text = figure ? AL.circleText(figure) : '';
+      c.tile.hidden = !text;
+      if (!text) return;
+      c.tileHead.textContent = estimate ? 'Circle, estimate' : 'Circle';
+      c.tileVal.textContent = text;
+      var pct = figure.alpha ? figure.damage : figure.low;
+      c.tileVal.style.color = pct >= 0 ? rgbOf({ chance: pct, expectedShare: pct / 100 }) : '';
+      var prof = root.ArmorBallistics.aimProfile(S.viewer ? S.viewer.aimProfileName : undefined);
+      c.tile.title = (AL.CIRCLE_TITLES[kind] || AL.CIRCLE_TITLES.live) + (figure.alpha ? AL.SHARE : AL.NO_ALPHA) + '\n• ' + AL.circleModel(damageOn(), prof.label) + (more || '');
+    }
+    // THE HIT LINE (U2): the recorded line and the ring Hits draws for the hit, taken again whenever the viewer's engine is
+    // another (the pose this page draws the target in commits a new one: app.js shotStats takes its figures again then too)
+    var HIT_TIP = 'Hit line\nBullba Hits’ reading of the recorded shot: the shell’s nominal penetration at the recorded range against the armour and screens on the line - the odds the shot had, not the rolled RNG.';
+    function hitLine() {
+      var v = S.viewer, shell = v && v.shell;
+      S.lineEngine = v ? v.engine : null; S.lineJob = null; S.lineFig = null;
+      if (!v || !v.engine) return;
+      fillCell(cellA, 'Hit line', lineOf(v.shotProbability(shell)), HIT_TIP);
+      S.lineKind = v.savedAim ? (v.savedAim.kind === 'fired' ? 'fired' : 'saved') : v.estimateAim ? (v.estimateAim.rebuilt ? 'rebuilt' : 'estimate') : null;
+      var s = !shell ? null : v.savedAim ? v.savedAimSampler(shell) : v.estimateAimSampler(shell);
+      // the old figure stands until the new one lands (app.js shotStats: a tile that blanks and comes back reads as a fault)
+      if (s) S.lineJob = { s: s.post('shot'), shell: shell }; else fillCircle(cellA, null);
+    }
+    // the figures' jobs, one slice a frame, the shot's first (app.js aimEstSlice)
+    function stepJobs() {
+      var until = (root.performance ? root.performance.now() : Date.now()) + SLICE, r;
+      if (S.lineJob) {
+        if ((r = S.lineJob.s.step(until))) { S.lineFig = AL.circleFigure(r, S.lineJob.shell); S.lineJob = null; fillCircle(cellA, S.lineFig, S.lineKind, S.lineKind === 'rebuilt' || S.lineKind === 'estimate'); }
+        return;
+      }
+      var X = S.alt;
+      if (!X || !X.job) return;
+      if (X.job.s.engine !== S.viewer.engine) { X.job = null; X.fine = false; return; }
+      if ((r = X.job.s.step(until))) { X.fig = AL.circleFigure(r, X.job.shell); X.fine = X.job.fine; X.job = null; altCircle(); }
+    }
+    // the other cell: the pinned point (in the orbit too), else the alternative's point under the cursor, else nothing
+    var PIN_TIP = 'Pinned point\nBullba Hits’ reading of the line from the eye through the point you clicked, with this shot’s shell.\n• × drops it';
+    var UNDER_TIP = 'Under the cursor\nBullba Hits’ reading of a shot from the shell’s start through the point under the cursor, with this shot’s shell.\n• Click on the target: pin that point';
     function pinShown() {
-      var v = S.viewer, r = v && v.pinned ? v.pinResult : null;
-      pin.hidden = !(v && v.pinned);
-      if (pin.hidden) return;
-      var shell = v.shell, L = S.look || hitsLook(), mode = L['armor-mode'] === 'damage' && shell && shell.alpha > 0 ? 'damage' : 'chance', tint = L['ricochet-tint-on'] ? num(L['ricochet-tint'], 50) / 100 : 0;
-      var line = root.BullbaArmorLine.line(r, shell ? shell.penetration : null, S.rec ? S.rec.range : null, { damage: mode === 'damage', shell: shell,
-        parts: S.data && S.data.hit.target ? S.data.hit.target.parts : null,
-        rgb: function (x) { return 'rgb(' + root.ArmorBallistics.color(x, L.palette, tint, mode).map(function (c) { return Math.round(c * 255); }).join(',') + ')'; } });
-      pinLabel.textContent = line.label; pinLabel.style.color = line.color;
-      pinChips.replaceChildren(); line.groups.forEach(function (g) { var c = node('span', g.text, 'chip ' + g.kind); if (g.title) c.title = g.title; pinChips.appendChild(c); });
+      var v = S.viewer, on = !!(v && v.pinned);
+      unpin.hidden = !on;
+      if (S.alt && v) { v.spreadAim = on && v.pinned.point ? v.pinned.point.clone() : null; if (!on) { v.inspectKey = null; ptr.fresh = true; } }
+      if (on) { fillCell(cellB, 'Pinned point', lineOf(v.pinResult), PIN_TIP); if (!S.alt) fillCircle(cellB, null); return; }
+      if (S.alt) { if (!S.alt.read) placeholder(cellB, 'Under the cursor', 'Hover over the armour', UNDER_TIP); return; }
+      cellB.el.hidden = true;
+    }
+    function altReading(r) {
+      if (!S.alt || (S.viewer && S.viewer.pinned)) return;
+      S.alt.read = true;
+      fillCell(cellB, 'Under the cursor', lineOf(r), UNDER_TIP + (S.alt.why ? S.alt.tip : ''));
     }
     // ---- THE MODE: its entry and its exit, the one place what the shot view changes in this page is set and put back ------
     // Entry: the camera's lens as it was (fov, zoom, near, far) kept; the shot view then sets the clock (the episode, its
@@ -346,6 +462,10 @@
       lineM.lookAt(lineEye, L.b, UP); lineQ.setFromRotationMatrix(lineM);
       if (!S.glide) { o.camera.updateMatrixWorld(); S.glide = { p: o.camera.position.clone(), q: o.camera.quaternion.clone() }; }
       var f = GLIDE > 0 ? Math.max(0, Math.min(1, (t - L.t) / GLIDE)) : 1;
+      // stopped at the hit before the glide ended (a shell that flew under GLIDE s): it ends on the wall clock (U3: the eye
+      // stands at the shell's start for the alternative)
+      if (f < 1 && S.stopAt != null) f = Math.min(1, S.stopF + (wallNow() - S.stopAt) / 1000 / GLIDE);
+      S.glided = f >= 1;
       if (f < 1) { fpPos.copy(S.glide.p).lerp(lineEye, f); fpQ.copy(S.glide.q).slerp(lineQ, f); }
       else { fpPos.copy(lineEye); fpQ.copy(lineQ); }
       pose.position = fpPos; pose.quaternion = fpQ; pose.look = null;
@@ -397,9 +517,10 @@
       S.mode = 'wait'; S.error = null; S.data = null; S.rec = null; S.aim = null; S.haveA = false;
       S.focusGroup = null; S.view = firstPerson(row); S.fp = true; S.lock = true; S.lastPose = null;
       S.line = shotLine(row); S.u = 0; S.glide = null; S.t = S.start; S.estimate = null; S.disc = undefined;
+      S.stopAt = null; S.glided = false; S.lineEngine = null; S.lineJob = null; S.lineFig = null;
       pose.fov = S.saved ? S.saved.fov : o.camera.fov;
       title.textContent = 'Shot view · ' + o.name(row.shooter) + ' → ' + (S.target == null ? 'no hit in the replay' : o.name(S.target)) + ' · ' + o.clock(row.t);
-      note.textContent = 'Preparing the shot view… · ' + S.view.words; bar.hidden = false; pin.hidden = true;
+      note.textContent = 'Preparing the shot view… · ' + S.view.words; bar.hidden = false; cellA.el.hidden = cellB.el.hidden = true; unpin.hidden = true;
       o.play(false); o.seek(S.start);
       var sight = o.sight ? o.sight().catch(function () { return null; }) : Promise.resolve(null);
       return Promise.all([hitsScene(row, h), sight]).then(function (both) {
@@ -733,13 +854,123 @@
         else Q3.copy(E.n).multiplyScalar(E.D).add(E.o);
         if (toScreen(Q3)) { tx = scr.x; ty = scr.y; tag = true; if (!hitsRings) ring(scr.x, scr.y, Math.tan(E.angle) * focal, AIM_COLOUR, 1.5, 0.8, DASH_ESTIMATE); }
       }
+      // U3: the sight follows the alternative - the centre mark at the cursor's point, the gun tag at its circle's centre
+      // (the viewer's points, in its frame: A puts them into the scene)
+      var X = S.alt, vw = S.viewer;
+      if (X && X.a && vw && S.haveA) {
+        if (vw.aimCursorPoint) { Q3.copy(vw.aimCursorPoint).applyMatrix4(A); if (toScreen(Q3)) { cx = scr.x; cy = scr.y; } }
+        if (vw.liveAim) { Q3.copy(vw.liveAim.center).applyMatrix4(A); if (toScreen(Q3)) { tx = scr.x; ty = scr.y; tag = true; } }
+      }
       mark(cx, cy, im, 'centre');
       if (tag) mark(tx, ty, im, 'tag');
       hud2d.globalAlpha = 1;
     }
+    // ---- WHERE ELSE COULD THE SHOT GO (U3) --------------------------------------------------------------------------------
+    var B = root.ArmorBallistics;
+    // whether it may run this frame: stopped at the hit, the eye standing at the shell's start (on the line, the wheel not
+    // moved, the glide done), Hits' scene and its shell there
+    function altOk() {
+      var v = S.viewer;
+      return !!(S.row && S.mode === 'hits' && v && v.engine && v.shell && S.haveA && S.fp && S.line && onLine() && S.u === 0 && S.glided &&
+        !S.armed && S.stop != null && Math.abs(S.t - S.stop) < 1e-6);
+    }
+    // the gun's horizontal sector of the block (app.js aimYawLimits without the ✸ layer's static yaw): null turns all round
+    function yawLimits(a) {
+      var l = a && a.turretYawLimits;
+      if (!Array.isArray(l) || l.length !== 2) return null;
+      var lo = Number(l[0]), hi = Number(l[1]);
+      return isFinite(lo) && isFinite(hi) && hi > lo && hi - lo < 2 * Math.PI - 1e-6 ? l : null;
+    }
+    // the shooter's motion at the shot: the record's own (motion: the client's speed and hull rotation speed - the own
+    // tracer's, or the shooter's of a hit on the player), else this replay's track. {speed, hullTurn, turretYaw, from} | null
+    function shotMotion() {
+      var hit = S.data.hit, at = hit.attacker || {}, tracer = S.rec && S.rec.context ? S.rec.context.tracer : null, C = root.ArmorShotContext, m = null;
+      if (C && C.motionAt) {
+        if (tracer && tracer.own && tracer.motion) m = C.motionAt(tracer.motion, Number(tracer.gameTime));
+        if (!(m && m.speed !== undefined) && at.motion) {
+          var fly = Number(hit.rangeAtImpact) > 0 && Number(hit.shellVelocity) > 0 ? hit.rangeAtImpact / hit.shellVelocity : 0;
+          m = C.motionAt(at.motion, Number(hit.gameTime) - fly);
+        }
+      }
+      if (m && isFinite(m.speed) && isFinite(m.hullYawRate)) return { speed: Math.abs(m.speed), hullTurn: Math.abs(m.hullYawRate), turretYaw: m.turretYaw, from: 'the record (the client’s own figures)' };
+      var t = o.track ? o.track(S.row.shooter, S.row.t) : null;
+      return t ? { speed: t.speed, hullTurn: t.hullTurn, turretYaw: t.turretYaw, from: 'the replay’s positions' } : null;
+    }
+    function altStart() {
+      var v = S.viewer, hit = S.data.hit, a = hit.attacker && hit.attacker.aim, ring = v.savedAim || v.estimateAim;
+      var X = S.alt = { read: false, job: null, fig: null, fine: false, estAt: 0, last: 0, cursor: canvas.style.cursor, why: '', a: null };
+      v.inspectKey = null; ptr.fresh = true;
+      var m = shotMotion();
+      if (!(a && a.dispersion > 0)) X.why = 'the record holds no aim block of this shooter';
+      else if (!(ring && ring.origin && ring.radius > 0)) X.why = 'Bullba Hits has no circle of this shot to start from';
+      else if (!m) X.why = 'neither the record nor the replay gives the shooter’s speed at the shot';
+      if (X.why) { X.tip = '\n• No circle here: ' + X.why; pinShown(); return; }
+      var range = ring.origin.distanceTo(ring.center), K = ring.radius / range / a.dispersion;
+      // the steady state of that motion with the gun held on its aim: Hits' manual motion (app.js aimState) - the turret
+      // holding the aim against the hull's turn spends the hull's rate (turretChase with no gap)
+      var hold = m.hullTurn ? B.turretChase(0, m.hullTurn, a, null, 1 / 60, false).turretTurn : 0;
+      var steady = B.aimFactor(a, { speed: m.speed, hullTurn: m.hullTurn, turretTurn: hold }, null);
+      var c = steady && steady.ideal > 0 && K > 0 ? Math.min(1, K / steady.ideal) : 1;
+      X.a = a; X.m = m; X.K = K; X.c = c; X.mods = { mult: c }; X.limits = yawLimits(a);
+      X.now = { start: K, elapsed: 0 };
+      var est = !!v.estimateAim && !v.savedAim;
+      X.kind = est ? 'estimate' : 'live';
+      X.tip = '\n• Kept as at the shot: the speed (' + Math.round(m.speed * 3.6) + ' km/h) and the hull’s turning (' + (m.hullTurn * 180 / Math.PI).toFixed(1) + '°/s), from ' + m.from +
+        '; follows the mouse: the turret and the gun, at the turret’s speed' +
+        '\n• Starts as the shot’s own circle and settles to the size of that motion with the gun held on its aim' +
+        (c < 1 ? '\n• The crew and equipment the record does not hold: taken from the shot’s own circle (×' + c.toFixed(2) + ')' : '') +
+        (est ? '\n• An estimate: it starts from Bullba Hits’ estimate of this shooter’s circle' : '');
+      canvas.style.cursor = 'none';   // the game's sight stands at the cursor (hud())
+      v.setAimEmulation(true); v.setAimOffset(null);
+      v.aimCursorPoint = ring.center.clone(); v.liveAimPoint = ring.center.clone();
+      v.aimYaw = isFinite(m.turretYaw) ? m.turretYaw : 0;
+      v.spreadAim = v.pinned && v.pinned.point ? v.pinned.point.clone() : null;
+      v.setLiveAim(K * a.dispersion * 100);
+      pinShown();
+    }
+    function altStop() {
+      var X = S.alt, v = S.viewer;
+      if (!X) return;
+      S.alt = null;
+      canvas.style.cursor = X.cursor;
+      if (v) { v.spreadAim = null; v.clearLiveAim(); v.setAimEmulation(false); }
+      fillCircle(cellB, null);
+      pinShown();
+    }
+    // Hits' live figure (app.js estimateLive): a coarse one at most every ALT_COARSE s while the circle moves - one running
+    // is let finish -, the fine one once at rest
+    function altEstimate(fine, now) {
+      var X = S.alt, v = S.viewer, shell = v.shell;
+      if (X.job) { if (X.job.fine === fine) return; if (!fine) X.fine = false; X.job = null; }
+      if (!fine && X.estAt && now - X.estAt < ALT_COARSE) return;
+      var s = v.liveAimSampler(shell, fine ? FINE : COARSE, false, 'live');
+      X.estAt = now;
+      if (!s) { X.fig = null; X.fine = fine; altCircle(); return; }
+      X.job = { s: s, fine: fine, shell: shell };
+    }
+    function altCircle() { var X = S.alt; if (X && X.a) fillCircle(cellB, X.fig, X.kind, X.kind === 'estimate', X.tip); }
+    // one frame of it, after Hits' frame (the viewer's camera is this one's): the reading under the cursor, the chase, the
+    // circle (app.js aimTickRun in its manual motion)
+    function alt(now) {
+      var ok = altOk();
+      if (!ok) { if (S.alt) altStop(); return; }
+      if (!S.alt) altStart();
+      var X = S.alt, v = S.viewer, moved = false;
+      if (ptr.fresh && isFinite(ptr.clientX)) { ptr.fresh = false; v.resize(); v.inspect(ptr); moved = true; }
+      if (!X.a) return;
+      var dt = X.last ? Math.max(0, now - X.last) : 0; X.last = now;
+      if (!dt) dt = 1 / 60;   // Hits: one nominal frame, never a zero step
+      var chase = B.turretChase(v.aimGap(X.limits), X.m.hullTurn, X.a, X.mods, dt, false);
+      var turned = (chase.step > 0 || chase.pitchStep > 0) && !!v.chaseAim(chase.step, X.limits, chase.pitchStep);
+      X.now = B.aimStep(X.now, { speed: X.m.speed, hullTurn: X.m.hullTurn, turretTurn: chase.turretTurn }, X.a, X.mods, dt) || X.now;
+      if (X.now.radius100 > 0) v.setLiveAim(X.now.radius100);
+      if (!moved && !turned && chase.caught && X.now.settled) { if (!X.fine) altEstimate(true, now); }
+      else altEstimate(false, now);
+    }
     // ---- the episode ----------------------------------------------------------------------------------------------------
     function episode() {
       if (!S.row) return;
+      altStop(); S.stopAt = null; S.glided = false;
       o.seek(S.start); S.armed = true; S.fp = true; S.lock = true; S.lastPose = null;
       if (S.viewer && S.mode === 'hits') { S.viewer.holdShot(true); S.held = true; }
       S.u = 0; S.glide = null;
@@ -749,7 +980,11 @@
     // by itself AFTER s later (its exit: the heat map off, the user's speed and lens back)
     function clamp(t0, t1) {
       if (!S.row || S.stop == null) return t1;
-      if (S.armed && t1 >= S.stop && t0 <= S.stop) { S.armed = false; o.play(false); return S.stop; }
+      if (S.armed && t1 >= S.stop && t0 <= S.stop) {
+        S.armed = false; o.play(false);
+        S.stopAt = wallNow(); S.stopF = S.line && GLIDE > 0 ? Math.max(0, Math.min(1, (S.stop - S.line.t) / GLIDE)) : 1;
+        return S.stop;
+      }
       if (!S.armed && t1 >= S.stop + AFTER) close(false);
       return t1;
     }
@@ -771,6 +1006,10 @@
       var on = !!v.composed;
       S.extras.forEach(function (m) { m.visible = on; });
       o.look(r, on ? paintMat : null);
+      // U2, U3: the figures after Hits' frame (its camera is this one's now)
+      if (S.lineEngine !== v.engine) hitLine();
+      alt((now != null ? now : wallNow()) / 1000);
+      stepJobs();
     }
     // Hits' marks over this page's picture: on the target (stencil 1) through the model, as Hits draws them; elsewhere behind
     // whatever of the map stands in front. The renderer's state is put back.
@@ -818,6 +1057,9 @@
     function close(reopen) {
       var was = S.mode, r = S.target == null ? null : o.vehicle(S.target), sh = S.row ? o.vehicle(S.row.shooter) : null;
       S.token++;
+      altStop();
+      if (S.lineJob || was === 'hits') root.ArmorBallistics.release('circles');   // Hits' emulation off (app.js aimEstStop)
+      S.lineJob = null; S.lineEngine = null; S.lineFig = null; S.stopAt = null; S.glided = false;
       release(); S.lock = false; S.view = null;   // the camera handed to the battle view's orbit where the shooter's eye was
       dropExtras();
       if (o.corridor && S.corridor) o.corridor.close(); S.corridor = null;
@@ -827,7 +1069,7 @@
       if (S.viewer && S.viewer.reticleLayer) S.viewer.reticleLayer.style.visibility = '';
       hudCanvas.hidden = true; S.line = null; S.estimate = null; S.disc = undefined;
       S.mode = null; S.row = null; S.armed = false; S.held = null; S.haveA = false; S.data = null; S.rec = null; S.veiled = false; S.posed = false;
-      pin.hidden = true;
+      cellA.el.hidden = cellB.el.hidden = true; unpin.hidden = true; cellA.tile.hidden = cellB.tile.hidden = true;
       if (!reopen) { bar.hidden = true; if (was) o.speed(null); exit(); }
     }
     function state() {
@@ -837,7 +1079,13 @@
         shell: S.rec && S.rec.shell ? { kind: S.rec.shell.kind, penetration: S.rec.shell.penetration, guess: S.rec.guess } : null,
         composed: !!(v && v.composed), faces: sf && sf.mesh && sf.mesh.geometry && sf.mesh.geometry.attributes.position ? sf.mesh.geometry.attributes.position.count / 3 : 0,
         ricochetLeg: !!(sf && sf.bounce), shotHeld: !!(v && v.shotHeld), backend: v ? v.backendShown : null,
-        pinned: !!(v && v.pinned), pin: pin.hidden ? null : pinLabel.textContent + ' ' + pinChips.textContent, lens: { fov: o.camera.fov, zoom: o.camera.zoom }, inMode: !!S.saved,
+        pinned: !!(v && v.pinned), pin: v && v.pinned && !cellB.el.hidden ? cellB.chance.textContent + ' ' + cellB.chips.textContent : null,
+        hitLine: cellA.el.hidden ? null : { label: cellA.chance.textContent, chips: cellA.chips.textContent, extra: cellA.extra.textContent,
+          circle: cellA.tile.hidden ? null : cellA.tileHead.textContent + ' ' + cellA.tileVal.textContent },
+        other: cellB.el.hidden ? null : { name: cellB.name.textContent, label: cellB.chance.textContent, chips: cellB.chips.textContent,
+          circle: cellB.tile.hidden ? null : cellB.tileHead.textContent + ' ' + cellB.tileVal.textContent },
+        alt: S.alt ? { why: S.alt.why || null, speed: S.alt.m ? S.alt.m.speed : null, hullTurn: S.alt.m ? S.alt.m.hullTurn : null, from: S.alt.m ? S.alt.m.from : null,
+          K: S.alt.K || null, c: S.alt.c || null, radius100: S.alt.now && S.alt.now.radius100 || null, fine: S.alt.fine } : null, lens: { fov: o.camera.fov, zoom: o.camera.zoom }, inMode: !!S.saved,
         view: S.view ? S.view.kind : null, firstPerson: !!S.fp, focusLocked: !!S.lock,
         line: S.line ? { t: S.line.t, length: S.line.len, along: S.u, on: onLine() } : null, hud: !hudCanvas.hidden,
         sight: sightImg.arcade ? 'game' : (sightWhy || 'not read'), estimate: S.estimate ? (S.estimate.why || 'drawn') : null, disc: S.disc ? S.disc.angle : null,

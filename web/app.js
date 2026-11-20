@@ -3915,40 +3915,11 @@
   // saved candidate behind them - has no alpha at all, so a share of alpha is meaningless. It then carries
   // the mean PENETRATION CHANCE over the circle instead, which needs no alpha, and the tooltip says so. A
   // saved shell whose penetration or calibre the user edited keeps its own alpha and its damage figure.
-  function circleFigure(r, shell) {
-    if (!r) return null;
-    if (shell && shell.alpha > 0) return {alpha: true, damage: damagePct(r.damage, shell)};
-    return {alpha: false, low: r.low, high: r.high, unknown: !!r.unknown};
-  }
-  // The figure alone: the word "Circle" is the heading of the tile it is written into (user, 22.09). And no
-  // figure to be had is no tile at all - an empty text puts the tile away instead of printing the old dash.
-  function circleText(figure) {
-    if (!figure) return '';
-    if (figure.alpha) return figure.damage + ' %';
-    if (!(figure.low >= 0)) return '';
-    return (figure.unknown ? Math.round(figure.low) + '–' + Math.round(figure.high) : Math.round(figure.low)) + ' %';
-  }
-  var SHARE = '\n• Figure: expected damage of a shot inside it, as a share of the shell’s alpha';
-  var NO_ALPHA = '\n• Figure: penetration chance over the circle (this shell has no alpha)';
-  // Every circle's words have one shape (user, 25.09): a heading, its colour word and what it is, then the figure and
-  // the model; a recorded circle adds the legend of its rings. The heading takes the tile's colour (data-tip-tint).
-  var CIRCLE_TITLES = {
-    live: 'Live aiming circle\nCyan: the emulation’s circle as it is now; the figure is for a shot fired at this moment.',
-    shot: 'Last shot’s circle\nMagenta: the circle your emulated shot left on the model; the figure is for that shot.',
-    // The recorded reticle: the circle the shooter's own client had at the instant of the shot, slid
-    // along the shot line onto the impact point - the ring drawn solid magenta on the model.
-    saved: 'Recorded aiming circle\nMagenta: this hit’s own circles at the press; the figure is over the solid one.',
-    // The shot ring of an own shot (BACKLOG 28 step 2, 24.09): the circle the server fired from. The figure is
-    // sampled over it while it is on screen (viewer.shotDiscAim), over the solid ring when it is switched off.
-    fired: 'Shot circle\nMagenta: this hit’s own circles; the figure is over the thick one, the circle the server fired from.',
-    // No recorded reticle: the dashed magenta ring is the nominal full-aim estimate, and the figure is
-    // an estimate with it. Said on the line itself, so the number is never read as a recorded one.
-    estimate: 'Nominal full-aim circle\nMagenta: this hit has no recorded reticle, so the circle and its figure are an estimate.',
-    // Another vehicle's circle rebuilt from the replay (BACKLOG 82, 12.11): still an estimate, dashed like the nominal one;
-    // the figure over it is printed as an estimate too - it is no worse founded than the nominal ring's (both sit near the
-    // shell vertically; this one has the shooter's own size and its left/right aim), and the words say what it rests on.
-    rebuilt: 'Estimated aiming circle\nAn estimate rebuilt from the replay: where this vehicle’s gun pointed at the shot and how wide its circle was; the figure is an estimate with it.'
-  };
+  // The figure of a circle, its text and its words: web/armor-line.js (BullbaArmorLine, 20.11.2026: shared with the replay
+  // viewer's shot view), moved there unchanged.
+  function circleFigure(r, shell) { return BullbaArmorLine.circleFigure(r, shell); }
+  function circleText(figure) { return BullbaArmorLine.circleText(figure); }
+  var SHARE = BullbaArmorLine.SHARE, NO_ALPHA = BullbaArmorLine.NO_ALPHA, CIRCLE_TITLES = BullbaArmorLine.CIRCLE_TITLES;
   // One tile per ring, in the colour of the ring it belongs to (user, 20.09; a column of its own at the top
   // RIGHT of the scene since 22.09, each tile on the row of the panel it belongs to): the live cyan one
   // beside "Under the cursor", the STANDING magenta ring beside the hit-line panel above it. That ring is
@@ -6937,8 +6908,7 @@
   function aimTitle(){
     var status=aimLegend&&viewer?ringLegend(viewer.ringAim,viewer.discOn?viewer.discAim:null):aimStatus;
     aimExtra=status?'\n\n'+status:'';
-    aimModel='\n• Model: '+ArmorBallistics.aimProfile().label+', 256 rays, misses = 0; no map obstacles, target motion or '+
-      (damageView?'splash onto other parts':'blast damage')+'; server formula not confirmed'+(damageView?', the non-penetration part a reconstruction':'');
+    aimModel='\n• '+BullbaArmorLine.circleModel(damageView,ArmorBallistics.aimProfile().label);
   }
   // The heading row has no space for the full wording: the label reads “Pen.” and the sentence lives in its title.
   // A saved shell's field holds the client's first value, which holds up to 50 m and falls off beyond (BACKLOG № 32).

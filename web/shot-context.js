@@ -483,6 +483,10 @@
     function lin(key){return lo[f[key]]+(hi[f[key]]-lo[f[key]])*k;}
     function ang(key){var a=lo[f[key]],d=hi[f[key]]-a;return a+Math.atan2(Math.sin(d),Math.cos(d))*k;}
     var out={position:[lin('x'),lin('y'),lin('z')],hullYaw:ang('hullYaw'),turretYaw:ang('turretYaw'),gunPitch:lin('gunPitch')};
+    // the client's instantaneous speed (m/s) and hull rotation speed (rad/s), when the record has them (motion.py FIELDS):
+    // the two the dispersion formula reads (20.11.2026, the replay viewer's shot view)
+    if(f.speed>=0&&Number.isFinite(lin('speed')))out.speed=lin('speed');
+    if(f.hullYawRate>=0&&Number.isFinite(lin('hullYawRate')))out.hullYawRate=lin('hullYawRate');
     return [out.position[0],out.position[1],out.position[2],out.hullYaw,out.turretYaw,out.gunPitch].every(Number.isFinite)?out:null;
   }
   // The first resolved point on a part posed AT THE HIT (review of 5f2bee5): a wheel's transform is its place at rest
@@ -501,5 +505,5 @@
     var w=point(W,point(part.transform,p.position)),dx=w[0]-at.position[0],dz=w[2]-at.position[2],c=Math.cos(at.hullYaw),s=Math.sin(at.hullYaw);
     return {eye:[c*dx-s*dz,w[1]-at.position[1],s*dx+c*dz],pose:{yaw:at.turretYaw,pitch:at.gunPitch},from:from};
   }
-  root.ArmorShotContext={resolve:resolve,serverShot:serverShot,assume:assume,pick:pick,modeLabel:modeLabel,identical:identical,gunNotes:gunNotes,markOf:markOf,swapStart:swapStart};
+  root.ArmorShotContext={resolve:resolve,serverShot:serverShot,assume:assume,pick:pick,modeLabel:modeLabel,identical:identical,gunNotes:gunNotes,markOf:markOf,swapStart:swapStart,motionAt:motionAt};
 }(typeof window==='undefined'?globalThis:window));
