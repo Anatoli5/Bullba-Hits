@@ -23,6 +23,9 @@ Checks:
             with nicknames and max HP, the own vehicle from the header, the source the .wotreplay byte for byte, the part
             boxes of every static part of the staged vehicle files computed from the model (Exporter.part_box =
             geometry.client_box of the client's .havok), the vehicle files listed
+  modes     BACKLOG 112: special battle modes (replay_files.special_mode, by the header's battleType and gameplayID) -
+            the rule on known types, an Onslaught file marked in the list and a random one not, the random battle's
+            file unmarked; the count of the repository's fixture replays marked (in the summary line)
   vehicles  a type with no vehicle file ('playbackVehicles'): on the stand the client's descriptor cannot be built (no
             items.vehicles), so the client's XML route makes data/playback/vehicles/<id>.js - its parts' resources those
             of the fixture's vehicle file of that type, every model file there; the page told with the files
@@ -191,6 +194,42 @@ def check():
         ok('record', {'kind': 'playback', 'id': file_id, 'state': 'ready'} in list(stand.page_notes), list(stand.page_notes))
         ok('record', stand.request_playback(file_id) is False, 'a second request queued a job: the file is current')
 
+        # modes (BACKLOG 112, 20.11.2026): special battle modes marked in the list and in the battle file
+        ok('modes', 'special' not in (battle.get('record') or {}) and not any(f.get('special') for f in value.get('files') or ()),
+           'a random battle marked special: %r' % [f.get('special') for f in value.get('files') or ()])
+        cases = [((1, 'ctf'), None), ((14, 'domination'), None), ((22, 'ctf'), None), ((2, 'assault'), None),
+                 ((None, None), None), ((None, 'ctf'), None), ((1, None), None), ((43, 'comp7'), 'Onslaught'),
+                 ((47, 'comp7'), 'Onslaught tournament'), ((27, 'epic'), 'Frontline'), ((24, 'ctf30x30'), 'Grand Battle'),
+                 ((111, 'ctf'), 'battle type 111'), ((None, 'epic'), 'Frontline'), ((1, 'ctf30x30'), 'Grand Battle'),
+                 (('43', u'comp7'), 'Onslaught')]
+        got = [(a, (replay_files.special_mode(*a) or {}).get('name')) for a, _ in cases]
+        ok('modes', all(g[1] == w for g, (a, w) in zip(got, cases)), got)
+        special_dir = tempfile.mkdtemp(prefix='bullba-files-modes-')
+        try:
+            replays2 = os.path.join(special_dir, 'replays')
+            os.makedirs(replays2)
+            h = header(roster, 'Bullba', '15.11.2026 20:00:00', own_id)
+            h.update({'battleType': 43, 'gameplayID': 'comp7'})
+            write_final(os.path.join(replays2, 'onslaught.wotreplay'), stream, h, cipher=True)
+            write_final(os.path.join(replays2, 'random.wotreplay'), stream, header(roster, 'Bullba', '16.11.2026 20:00:00', own_id), cipher=True)
+            scan = replay_files.Scan(special_dir, replays2)
+            for _ in scan.steps(): pass
+            marks = dict((f['file'], f.get('special')) for f in scan.value['files'])
+            ok('modes', marks.get('onslaught.wotreplay') == {'name': 'Onslaught', 'bonusType': 43, 'gameplay': 'comp7'}
+               and marks.get('random.wotreplay') is None and len(marks) == 2, marks)
+        finally:
+            shutil.rmtree(special_dir, True)
+        # the repository's own replay fixtures, by their headers: how many the list marks special
+        first_block = replay_files.first_block
+        fixtures = []
+        for root, _, names in os.walk(os.path.join(REPO, 'tests', 'fixtures-local')):
+            fixtures.extend(os.path.join(root, n) for n in names if n.lower().endswith('.wotreplay'))
+        heads = [first_block(p) for p in sorted(fixtures)]
+        heads = [b for b in heads if b]
+        marked = [replay_files.special_mode(b.get('battleType'), b.get('gameplayID')) for b in heads]
+        mode_note = '%d of %d fixture replays special (%s)' % (len([m for m in marked if m]), len(heads),
+                                                               ', '.join(sorted(m['name'] for m in marked if m)) or 'none')
+
         # vehicles
         types = sorted(set(r['type'] for r in roster))
         rows_ = [(t, 'AAAA' if t != MISSING else want.get('compactDescriptor')) for t in types]
@@ -211,7 +250,7 @@ def check():
         ok('vehicles', note and note[-1].get('id') == file_id
            and MISSING.replace(':', '-') in (note[-1].get('files') or {}).get('viewer', ()), note)
         ok('vehicles', not os.path.isfile(missing), 'the XML route wrote into data/vehicles')
-        return checks, 'other player\'s replay %s, %d models of %s from the client XML' % (file_id, len(models), MISSING)
+        return checks, 'other player\'s replay %s, %d models of %s from the client XML; %s' % (file_id, len(models), MISSING, mode_note)
     finally:
         logging.getLogger('local.armor_inspector').removeHandler(lines)
         if keep is None: shutil.rmtree(folder, True)

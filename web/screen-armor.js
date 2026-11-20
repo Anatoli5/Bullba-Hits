@@ -904,6 +904,32 @@ void main(){
         return [data[i],data[i+1],data[i+2],data[i+3]];});
     }finally{u.uLegBudget.value=was;renderer.setRenderTarget(previous);scene.remove(this.quad);if(parent)parent.add(this.quad);this.quad.visible=visible;target.dispose();}
   };
+  /* THE ONE WAY A HEAT MAP IS MADE AND DRESSED (20.11.2026), for Bullba Hits' viewer (viewer.js paint) and the replay
+     viewer's shot view, which paints the replay's own vehicle with it (web/playback/shot-view.js through viewer.js's hosted
+     mode). create(): a Surface on `renderer` for `engine`, with Soft lighting and its depth put on as the viewer's settings
+     say (o.lighting, o.lightStrength) - each caught on its own, so a cosmetic light the driver will not give never reads as
+     a map that failed (the constructor's own errors are the caller's). setLook(): the mark pass's settings (o.hatch, dots,
+     edges, outline, tint). */
+  Surface.create=function(renderer,engine,o){
+    var s=new Surface(renderer,engine);o=o||{};
+    if(o.lighting){try{s.setLighting(true);}catch(light){console.warn('Soft lighting unavailable:',light.message);}}
+    if(Number.isFinite(o.lightStrength)){try{s.setLightStrength(o.lightStrength);}catch(light){console.warn('Soft lighting depth unavailable:',light.message);}}
+    return s;
+  };
+  Surface.prototype.setLook=function(o){this.hatch=o.hatch;this.dots=o.dots;this.edges=o.edges;this.outline=o.outline;this.tint=o.tint;};
+  /* The mark pass drawn into `target` instead of over a scene (20.11.2026, the replay viewer's shot view): the picture the
+     viewer's quad blends over its scene, as premultiplied colour + coverage (cleared to transparent, the quad's own normal
+     blending), texel for texel of the drawing buffer the composition was made for - a material that reads it at its
+     fragment's own pixel (gl_FragCoord) puts the map exactly where the viewer would. Run after render(); the renderer is
+     left as found. */
+  Surface.prototype.markInto=function(target){
+    var renderer=this.renderer;
+    if(!this.markScene)this.markScene=new T.Scene();
+    if(this.quad.parent!==this.markScene)this.markScene.add(this.quad);
+    var previous=renderer.getRenderTarget(),auto=renderer.autoClear,clearColor=renderer.getClearColor(this.colorSave),clearAlpha=renderer.getClearAlpha(),viewport=renderer.getViewport(this.viewportSave),scissor=renderer.getScissor(this.scissorSave),scissorTest=renderer.getScissorTest();
+    try{renderer.autoClear=false;renderer.setScissorTest(false);renderer.setClearColor(0,0);renderer.setRenderTarget(target);renderer.clear(true,false,false);this.quad.visible=true;renderer.render(this.markScene,quadView());}
+    finally{renderer.setRenderTarget(previous);renderer.setViewport(viewport);renderer.setScissor(scissor);renderer.setScissorTest(scissorTest);renderer.setClearColor(clearColor,clearAlpha);renderer.autoClear=auto;}
+  };
   Surface.prototype.dispose=function(){if(this.quad){if(this.quad.parent)this.quad.parent.remove(this.quad);this.quad.geometry.dispose();}if(this.markMaterial)this.markMaterial.dispose();if(this.compositeQuad)this.compositeQuad.geometry.dispose();if(this.material)this.material.dispose();if(this.result)this.result.dispose();if(this.mesh)this.mesh.geometry.dispose();if(this.peelMaterial)this.peelMaterial.dispose();if(this.materialTexture)this.materialTexture.dispose();if(this.bvhStruct)this.bvhStruct.dispose();if(this.faceMaterial)this.faceMaterial.dispose();this.bvh=null;this.targets.forEach(function(t){t.dispose();});if(this.depth)this.depth.dispose();if(this.blank)this.blank.dispose();
     // Soft lighting goes with the instance. The light mesh shares the peel geometry, already disposed above.
     if(this.lightTarget)this.lightTarget.dispose();if(this.lightMaterial)this.lightMaterial.dispose();if(this.neutral)this.neutral.dispose();

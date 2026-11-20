@@ -128,6 +128,10 @@ ASSETS = ('Viewer.html', 'web/style.css', 'web/icon.svg', 'web/viewer.js',
           # the shot of a hit at its range and the 3D viewer's marks both pages share, and the viewer's shot view (19.11,
           # NOTEBOOK N5: Bullba Hits' own viewer over the replay's scene)
           'web/shot-shell.js', 'web/viewer.css', 'web/playback/shot-view.js', 'web/playback/shot-view.css',
+          # the reading of one shot line both pages share (20.11: Hits' panels and the shot view's pinned point)
+          'web/armor-line.js',
+          # the replay viewer's frame log (20.11, temporary diagnostic: its frame figures to the mod's log in the game)
+          'web/playback/frame-log.js',
           'web/vendor/three.LICENSE', 'web/vendor/three-mesh-bvh.umd.js',
           # THIRD_PARTY.md ships with the page and points at these two: the packed-XML reader's licence and
           # the vendor manifest with the sources and hashes of three.js / three-mesh-bvh (inspection, 20.09).
@@ -6652,6 +6656,14 @@ class Exporter(object):
         previous_rev = (self.summaries.get(battle['id']) or {}).get('rev')
         summary = self.summaries[battle['id']] = dict((k, battle.get(k)) for k in ('id', 'startedAt', 'map'))
         summary['hits'] = len(battle['hits'])
+        # BACKLOG 112 (20.11): a battle of a special mode is marked in the replay viewer's list (replay_files.special_mode)
+        try:
+            from .replay_files import special_mode
+            mode = battle.get('mode') if isinstance(battle.get('mode'), dict) else {}
+            special = special_mode(mode.get('bonusType'), mode.get('gameplayName'))
+            if special: summary['special'] = special
+        except Exception:
+            LOG.warning('Battle %s: its mode not read for the list', battle.get('id'), exc_info=True)
         try:
             summary['vehicle'] = player_vehicle(result)
         except Exception:

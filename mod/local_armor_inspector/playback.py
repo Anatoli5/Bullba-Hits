@@ -39,6 +39,7 @@ import time
 import zlib
 
 from . import map_raw
+from .replay_files import special_mode
 
 LOG = logging.getLogger('local.armor_inspector')
 TIMER = getattr(time, 'perf_counter', None) or time.clock
@@ -417,7 +418,8 @@ class Job(object):
         if is_file(self.name):
             path, item = self.file_item()
             entry = item.get('entry') or {}
-            record = {'mode': {'geometryName': entry.get('map'), 'gameplayName': entry.get('gameplay')},
+            record = {'mode': {'geometryName': entry.get('map'), 'gameplayName': entry.get('gameplay'),
+                               'bonusType': entry.get('battleType')},
                       'map': entry.get('mapTitle'), 'startedAt': None, 'playerVehicleId': entry.get('playerVehicleId')}
             roster = {'vehicles': item.get('roster') or []}
             kind = 'wotreplay'
@@ -458,6 +460,9 @@ class Job(object):
                              'maxHealth': row.get('maxHealth'), 'player': row.get('player')})
         meta = {'map': arena, 'gameplay': gameplay, 'mapTitle': record.get('map'), 'startedAt': record.get('startedAt'),
                 'playerVehicleId': record.get('playerVehicleId'), 'client': got.get('client')}
+        # BACKLOG 112 (20.11): a special battle mode, for the page's warning on opening (replay_files.special_mode)
+        special = special_mode(mode.get('bonusType'), gameplay)
+        if special: meta['special'] = special
         # format, id and defs first: current() reads them from the file's first bytes
         value = collections.OrderedDict([
             ('format', FORMAT), ('id', self.name), ('defs', got['name']), ('source', source), ('record', meta),

@@ -19,7 +19,8 @@ with that battle's id in `battle`: the page opens it under that id (its record, 
 data/replay-files.js: ArmorInspectorData.receive(["replayFiles", {format, client, scanned, files: [entry...] newest first,
 broken: [name...]}]); entry {id, file (relative to replays/), kept, size, mtime, when ('YYYY-MM-DD HH:MM:SS' from the
 header's 'dd.mm.yyyy hh:mm:ss'), map, mapTitle, gameplay, battleType, player, vehicle (type 'nation:name'), client,
-vehicles (the header's count), battle (Hits id or absent)}. The header's per-vehicle rows (roster) are kept in the cache
+vehicles (the header's count), battle (Hits id or absent), special ({name, bonusType, gameplay} of a special battle
+mode - special_mode, BACKLOG 112 - or absent)}. The header's per-vehicle rows (roster) are kept in the cache
 only; the playback job reads them for the battle file (roster_of). Python 2.7 and 3.
 """
 from __future__ import absolute_import
@@ -40,6 +41,38 @@ CACHE_FORMAT = 1
 PREFIX = 'f-'
 SKIP = ('temp.wotreplay',)       # the game's growing in-battle file
 WHEN = re.compile(r'(\d{1,2})\.(\d{1,2})\.(\d{4}) (\d{1,2}):(\d{2})(?::(\d{2}))?')
+
+
+# --- special battle modes (BACKLOG 112, 20.11.2026): the replay viewer marks them in its battle list and warns on opening -
+# The viewer draws a battle on the map's standard picture (its bases and spawns for the gameplay, ordinary vehicles); a
+# mode with its own maps, rules or vehicles may not look as drawn. The battle type is the authority (the replay header's
+# 'battleType' = arena bonus type, the live record's mode.bonusType - outputs/vehicle-classes-modes-2026-09-21.md 1.2;
+# measured: the fixture replays carry 1, 14 and 47 there), the gameplay a second test (Grand Battle is a random-range
+# type on 30x30 maps, an event map may carry plain 'ctf' under its own type). Standard: the random-like types below
+# AND a standard gameplay; a field that is absent decides nothing; both absent: not marked (unknown).
+STANDARD_BONUS = {1: 'Random battle', 2: 'Training room', 14: 'Tournament', 15: 'Clan tournament', 22: 'Ranked battle',
+                  37: 'Mapbox', 44: 'Winback', 46: 'Random battle'}
+STANDARD_GAMEPLAY = ('ctf', 'domination', 'assault')
+# names of the special types this client knows (2.4.1.1 constants, the report above); another type is named by its id
+SPECIAL_NAMES = {24: 'Grand Battle', 25: 'Grand Battle training', 27: 'Frontline', 28: 'Frontline training',
+                 29: 'Steel Hunter', 30: 'Steel Hunter', 34: 'Steel Hunter tournament', 35: 'Steel Hunter tournament',
+                 43: 'Onslaught', 47: 'Onslaught tournament', 48: 'Onslaught training', 49: 'Onslaught Light',
+                 100: 'Story mode', 104: 'Story mode'}
+GAMEPLAY_NAMES = {'ctf30x30': 'Grand Battle', 'domination30x30': 'Grand Battle', 'epic': 'Frontline',
+                  'comp7': 'Onslaught', 'maps_training': 'Maps training', 'bootcamp': 'Boot camp'}
+
+
+def special_mode(bonus_type, gameplay):
+    """None for a standard battle (or one whose mode is unknown), else {name, bonusType, gameplay} - the mark's words."""
+    try: bonus = None if bonus_type is None or bonus_type == '' else int(bonus_type)
+    except (TypeError, ValueError): bonus = None
+    gameplay = text(gameplay) if gameplay else None
+    odd_bonus = bonus is not None and bonus not in STANDARD_BONUS
+    odd_gameplay = gameplay is not None and gameplay not in STANDARD_GAMEPLAY
+    if not odd_bonus and not odd_gameplay: return None
+    name = SPECIAL_NAMES.get(bonus) or GAMEPLAY_NAMES.get(gameplay) or (
+        'battle type %d' % bonus if odd_bonus else 'gameplay %s' % gameplay)
+    return {'name': name, 'bonusType': bonus, 'gameplay': gameplay}
 
 
 def text(value):
@@ -200,6 +233,10 @@ class Scan(object):
             entry = item.get('entry')
             if not entry: continue
             entry = dict(entry, kept=rel.split('/')[0] == KEPT, file=rel)
+            # BACKLOG 112: decided at every publish from the cached header fields (no cache format change)
+            special = special_mode(entry.get('battleType'), entry.get('gameplay'))
+            if special: entry['special'] = special
+            else: entry.pop('special', None)
             battle = tied.get(os.path.basename(rel).lower())
             if battle: entry['battle'] = battle
             else: entry.pop('battle', None)

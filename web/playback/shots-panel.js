@@ -139,7 +139,8 @@
     return FULL_TEAM * pitch + frame;
   }
   // options: {battle, info(id) -> the tile's vehicle {name, level, class, role, nation, type} or null, player(id) -> the
-  // nickname or '', clock(t) -> the row's time text, pick(row, jump) - jump: {t, camera} -, hits(row, id) -> a function that
+  // nickname or '', side(id) -> 'ally' | 'enemy' (the vehicle's team as the replay's player sees it; a row takes its
+  // shooter's) or null, clock(t) -> the row's time text, pick(row, jump) - jump: {t, camera} -, hits(row, id) -> a function that
   // opens the row in Bullba Hits, or null when the battle has no Hits record; parent (document.body)}
   function create(o) {
     var b = o.battle, box = R.node('div', undefined, 'shots-panel'), head = R.node('div', undefined, 'sp-head'), list = R.node('div', undefined, 'sp-list');
@@ -164,7 +165,9 @@
     function rowEl(row) {
       var shown = shownHit(row), other = row.view === 'outgoing' ? row.target : row.shooter;
       var tile = other == null ? { name: row.view === 'outgoing' ? 'No hit in the replay' : 'Shooter not named' } : (o.info(other) || { name: 'Unknown vehicle' });
-      var b0 = R.hitRow(shown, row.view, tile, { time: o.clock(row.t), crits: [] });
+      // 20.11 (the user on 1.14): the row coloured by its shooter's team (side)
+      var shooter = row.view === 'outgoing' ? state.id : row.shooter, side = shooter == null || !o.side ? null : o.side(shooter);
+      var b0 = R.hitRow(shown, row.view, tile, { time: o.clock(row.t), crits: [], side: side || 'unknown' });
       b0.setAttribute('data-key', row.key); b0.setAttribute('data-kind', row.kind); b0.title = words(row, shown);
       b0.onclick = function () { pick(row); };
       var wrap = R.node('div', undefined, 'sp-row');

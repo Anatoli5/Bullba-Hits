@@ -26,7 +26,7 @@ _viewer = {'browser_id': None, 'trace': None}
 # checks that every action a page sends is here once and that _handle_web_command answers each.
 ACTIONS = ('busy', 'sweepStart', 'sweepStop', 'open', 'windowSize', 'follow', 'prepareBattle', 'playback', 'mapRaw',
            'playbackReport', 'replayKeep', 'replayLimit', 'prioritise', 'exportTtx', 'exportVehicle',
-           'openReplays', 'openHits', 'replayFiles', 'playbackVehicles', 'inputLog')
+           'openReplays', 'openHits', 'replayFiles', 'playbackVehicles', 'inputLog', 'fullscreen', 'viewState')
 _window_request = None
 _files_request = None
 _vehicles_request = None
@@ -362,6 +362,19 @@ def _handle_web_command(command, ctx):
             # The replay viewer's temporary input diagnostic (19.11): which keys and buttons reached the page.
             for line in (getattr(command, 'lines', None) or [])[:50]: LOG.info('Page input: %s', line)
             return
+        if action in ('fullscreen', 'viewState'):
+            # R5 (BACKLOG 110, 20.11): the replay viewer's full-screen button ('on', 'close') and, while it is full screen,
+            # its state every few seconds - for the view's own Esc
+            state = view_state(command)
+            if state is None:
+                _warn_once('view-state', 'Bullba Replays page command: no view state in %r', getattr(command, 'state', None))
+                return
+            if action == 'viewState':
+                if fullscreen_open(): _full['state'] = state
+                return
+            if command_value(command, 'on') is True: enter_fullscreen(state)
+            else: leave_fullscreen(state, close=command_value(command, 'close') is True)
+            return
         if action in ('openReplays', 'openHits'):
             battle_id = getattr(command, 'battleId', None)
             if battle_id is not None and not BATTLE_ID.match(str(battle_id)):
@@ -520,6 +533,9 @@ def web_handlers():
             vehicles = Field(type=list)
             # 'inputLog' (19.11, temporary): the lines of the replay viewer's input diagnostic.
             lines = Field(type=list)
+            # 'fullscreen' / 'viewState' (20.11, BACKLOG 110): the replay viewer's state as its fragment, and 'close'
+            state = Field(type=basestring)
+            close = Field(type=bool)
         return [createCommandHandler(WEB_COMMAND, BullbaHitsSchema, _handle_web_command, None)]
     except Exception:
         LOG.exception('Bullba Hits page command could not be registered')
@@ -1142,6 +1158,7 @@ def open_in_game(path, fragment='host=game', window=HITS):
         # The page limits heavy settings only when it knows it runs inside the
         # game's offscreen CEF; the fragment is never sent or rewritten.
         url += '#' + fragment
+        if window == REPLAYS: _viewer['path'] = path   # the full-screen view opens the same page (R5)
         browser = dependency.instance(IBrowserController)
         width, height = GUI.screenResolution()
         try:
@@ -1166,15 +1183,10 @@ def open_in_game(path, fragment='host=game', window=HITS):
             global _browser_id
             if window == HITS: _browser_id = browser_id
             else: _viewer['browser_id'] = browser_id
-            # The client's browser drops the right and middle buttons and Ctrl/Shift + left clicks unless
-            # the window says otherwise (WebBrowser's public switches, set the same way by the game's own
-            # pages; outputs/game-browser-input-2026-11-19.md): both pages pan the camera with them.
+            # The mouse switches (let_mouse_through), set the same way by the game's own pages.
             # Read from the client's code on 19.11.2026, not yet seen working in the game.
             try:
-                web = browser.getBrowser(browser_id)
-                for name, value in (('allowRightClick', True), ('allowMiddleClick', True),
-                                    ('ignoreCtrlClick', False), ('ignoreShiftClick', False)):
-                    setattr(web, name, value)
+                let_mouse_through(browser.getBrowser(browser_id))
                 LOG.info('Window %s: right and middle buttons and Ctrl/Shift clicks let through', browser_id)
             except Exception:
                 LOG.exception('Window %s: the mouse switches could not be set', browser_id)
@@ -1213,3 +1225,197 @@ def open_in_game(path, fragment='host=game', window=HITS):
         LOG.exception('Bullba Hits in-game window could not be opened')
         settle_window(ticket)      # no 20 s check may have been set: the trace does not wait for a view without it
         SystemMessages.pushMessage(u'Bullba Hits: the in-game window is unavailable. Open the local history with the Bullba Hits shortcut after leaving the game.', type=SystemMessages.SM_TYPE.Error)
+
+
+# ---- the replay viewer in full screen (R5, BACKLOG 110, 20.11.2026) ------------------------------------------------------
+# The game's browser window keeps its WG frame whatever is asked of it (outputs/window-frame-options-2026-11-19.md B2), so
+# full screen is the client's own frameless view instead - the one its shop and premium pages use: a WebView on
+# browserScreen.swf in the FULLSCREEN_WINDOW layer, sized by the client to the whole stage, with no title bar and no close
+# button (browserParams isCloseBtnVisible False). The base WebView registers WG's own page commands only (webHandlers() =
+# createWebHandlers), so ours is a subclass that adds the 'bullba_hits' command, under our own alias. The page is loaded
+# anew in the view and in the window, so what it shows travels in its fragment (the page's viewState: battle, time,
+# camera, speed, play, followed vehicle, shots panel); the window is closed once the view stands, and opened again when
+# the view is left (the page's button, its close, or Esc). Every step is guarded: a failure leaves the window as it was
+# and writes one line. Read from the client's bytecode (2.4.1.1: WebView, event_dispatcher.showBrowserOverlayView,
+# BrowserView.makeBrowserParams; WoT-Base KNOWLEDGE-client 'Which browser views the client has'); not yet seen in the game.
+FULLSCREEN_ALIAS = 'bullbaReplaysFullScreen'
+FULLSCREEN_WAIT = 10.0          # s: the view must stand by then, else the window stays and one line says so (a guess)
+VIEW_STATE = re.compile(r'^[-a-zA-Z0-9_.,=&]{0,600}\Z')
+_full = {'class': None, 'registered': False, 'view': None, 'state': '', 'asked': None}
+
+
+def command_value(command, name):
+    """A field of a page command: its attribute, else the client's `custom_parameters` (fields the schema lacks)."""
+    value = getattr(command, name, None)
+    if value is not None: return value
+    extra = getattr(command, 'custom_parameters', None)
+    return extra.get(name) if isinstance(extra, dict) else None
+
+
+def view_state(command):
+    """The viewer's state as the page sends it ('battle=..&at=..&cam=..'), '' when none, None when it does not read: only
+    the page's own characters, and never 'host' or 'view' (the mod sets those)."""
+    value = command_value(command, 'state')
+    if value is None: return ''
+    value = str(value)
+    if not VIEW_STATE.match(value): return None
+    keys = [part.split('=')[0] for part in value.split('&') if part]
+    if 'host' in keys or 'view' in keys: return None
+    return value
+
+
+def full_fragment(state, full):
+    """The page's fragment in the full-screen view (full) or in the window."""
+    return 'host=game' + ('&view=full' if full else '') + ('&' + state if state else '')
+
+
+def fullscreen_open():
+    return _full['view'] is not None
+
+
+def let_mouse_through(web):
+    """The client's browser drops the right and middle buttons and Ctrl/Shift + left clicks unless the window says
+    otherwise (WebBrowser's public switches, outputs/game-browser-input-2026-11-19.md); both pages pan with them."""
+    for name, value in (('allowRightClick', True), ('allowMiddleClick', True), ('ignoreCtrlClick', False), ('ignoreShiftClick', False)):
+        setattr(web, name, value)
+
+
+def fullscreen_loaded():
+    """The full-screen view's callbackOnLoad (WebView.__loadBrowserAS calls it once its browser shows): the client's
+    WebView sets the right button and Ctrl/Shift from our ctx but never the middle one - the same switches as the window."""
+    try:
+        let_mouse_through(_full['view'].getBrowser())
+        LOG.info('Bullba Replays full screen: right and middle buttons and Ctrl/Shift clicks let through')
+    except Exception:
+        LOG.exception('Bullba Replays full screen: the mouse switches could not be set')
+
+
+def fullscreen_class():
+    """Our WebView subclass, made once (the client's class is imported only in the game)."""
+    if _full['class'] is not None: return _full['class']
+    from gui.Scaleform.daapi.view.lobby.shared.web_view import WebView
+
+    class BullbaFullScreenView(WebView):
+        """The client's frameless full-screen browser view with the page's 'bullba_hits' command added."""
+
+        def webHandlers(self):
+            try: base = list(super(BullbaFullScreenView, self).webHandlers() or ())
+            except Exception: base = []
+            return base + web_handlers()
+
+        def _populate(self):
+            super(BullbaFullScreenView, self)._populate()
+            fullscreen_stood(self)
+
+        def onEscapePress(self):
+            # the view's own Esc: back to the window with the page's last state (not the base's plain destroy)
+            leave_fullscreen(None)
+
+        def _dispose(self):
+            try:
+                super(BullbaFullScreenView, self)._dispose()
+            finally:
+                fullscreen_gone(self)
+
+    _full['class'] = BullbaFullScreenView
+    return BullbaFullScreenView
+
+
+def register_fullscreen():
+    """Our alias in the client's view factory, once: the frameless browser screen on the full-screen layer."""
+    if _full['registered']: return
+    from gui.Scaleform.framework import g_entitiesFactories, ViewSettings, ScopeTemplates
+    from frameworks.wulf import WindowLayer
+    g_entitiesFactories.addSettings(ViewSettings(FULLSCREEN_ALIAS, fullscreen_class(), 'browserScreen.swf',
+                                                 WindowLayer.FULLSCREEN_WINDOW, None, ScopeTemplates.LOBBY_SUB_SCOPE))
+    _full['registered'] = True
+
+
+def page_url(path, fragment):
+    url = 'file:' + pathname2url(os.path.abspath(path))
+    if not url.startswith('file:///'): url = 'file:///' + pathname2url(os.path.abspath(path)).lstrip('/')
+    return url + '#' + fragment
+
+
+def enter_fullscreen(state):
+    """The page's full-screen button in the window: the viewer opens in the frameless view; the window closes once the
+    view stands (fullscreen_stood). Any failure: the window stays, one line."""
+    try:
+        if fullscreen_open():
+            LOG.info('Bullba Replays full screen: already open')
+            return
+        path = _viewer.get('path')
+        if not path: raise RuntimeError('the viewer page is not known yet')
+        register_fullscreen()
+        from gui.shared import g_eventBus, events, EVENT_BUS_SCOPE
+        from gui.Scaleform.framework.managers.loaders import SFViewLoadParams
+        from gui.Scaleform.daapi.view.lobby.hangar.BrowserView import makeBrowserParams
+        ctx = {'url': page_url(path, full_fragment(state, True)), 'forcedSkipEscape': False,
+               'browserParams': makeBrowserParams(isCloseBtnVisible=False, bgAlpha=1.0),
+               # the page's mouse as in the window (open_in_game): right drag, Ctrl/Shift clicks
+               'allowRightClick': True, 'ignoreCtrlClick': False, 'ignoreShiftClick': False,
+               'callbackOnLoad': fullscreen_loaded}      # the middle button: WebView's ctx has no key for it
+        _full['state'] = state
+        asked = _full['asked'] = time.time()
+        g_eventBus.handleEvent(events.LoadViewEvent(SFViewLoadParams(FULLSCREEN_ALIAS), ctx=ctx), scope=EVENT_BUS_SCOPE.LOBBY)
+        LOG.info('Bullba Replays full screen: opening the frameless view (%s)', state or 'no battle')
+        import BigWorld
+        BigWorld.callback(FULLSCREEN_WAIT, lambda: fullscreen_check(asked))
+    except Exception as error:
+        _full['asked'] = None
+        LOG.warning('Bullba Replays full screen could not open (%s: %s); the window stays', type(error).__name__, error)
+
+
+def fullscreen_check(asked):
+    """FULLSCREEN_WAIT after an open: the view did not stand - the window is left as it is, one line."""
+    if _full['asked'] == asked and not fullscreen_open():
+        _full['asked'] = None
+        LOG.warning('Bullba Replays full screen: the view did not open in %d s; the window stays', int(FULLSCREEN_WAIT))
+
+
+def fullscreen_stood(view):
+    """Our view is populated: it is the viewer now, the window closes (its trace and browser go with it)."""
+    _full['view'], _full['asked'] = view, None
+    close_viewer_window()
+    LOG.info('Bullba Replays full screen: the frameless view stands, the window closed')
+
+
+def fullscreen_gone(view):
+    if _full['view'] is view: _full['view'] = None
+
+
+def close_viewer_window():
+    """The viewer's window closed: its BrowserWindow view destroyed (the trace's), else its browser deleted."""
+    trace, browser_id = _viewer['trace'], _viewer['browser_id']
+    try:
+        window = trace.window if trace is not None else None
+        if window is not None:
+            window.destroy()
+        elif browser_id is not None:
+            from helpers import dependency
+            from skeletons.gui.game_control import IBrowserController
+            dependency.instance(IBrowserController).delBrowser(browser_id)
+    except Exception as error:
+        LOG.warning('Bullba Replays full screen: the window could not be closed (%s: %s)', type(error).__name__, error)
+
+
+def leave_fullscreen(state, close=False):
+    """The page's button or Esc in the view (state: the page's, None: the last it told) - the window opens again on that
+    state and the view goes; `close`: the page's close button - the view goes, no window."""
+    view = _full['view']
+    if view is None:
+        if not close: LOG.info('Bullba Replays full screen: not open; nothing to leave')
+        return
+    if state is not None: _full['state'] = state
+    try:
+        if not close:
+            path = _viewer.get('path')
+            if path: open_in_game(path, full_fragment(_full['state'], False), window=REPLAYS)
+            else: LOG.warning('Bullba Replays full screen: the viewer page is not known; the window is not opened again')
+    finally:
+        fullscreen_gone(view)
+        try:
+            view.destroy()
+        except Exception as error:
+            LOG.warning('Bullba Replays full screen: the view could not be closed (%s: %s)', type(error).__name__, error)
+        LOG.info('Bullba Replays full screen: %s', 'closed' if close else 'back to the window')

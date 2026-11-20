@@ -317,6 +317,168 @@ class TwoPagesOneChannelTests(unittest.TestCase):
         self.assertEqual(windows, [(presentation.HITS, None, fragment)])
 
 
+class FullScreenTests(unittest.TestCase):
+    """R5 (BACKLOG 110, 20.11.2026): the replay viewer's full-screen button in the game. The client's frameless view, its
+    factory and event bus are stand-ins with the names presentation imports (read from the 2.4.1.1 bytecode); what is
+    tested is the mod's side: the state the page sends, the view registered and opened with it, the window closed once
+    the view stands, Esc and the page's button back to the window with the state, and every failure leaving the window
+    with one log line. Whether the client draws the view is for the game to show."""
+
+    def setUp(self):
+        presentation._full.update({'class': None, 'registered': False, 'view': None, 'state': '', 'asked': None})
+        self.addCleanup(presentation._full.update, {'class': None, 'registered': False, 'view': None, 'state': '', 'asked': None})
+        saved = dict(presentation._viewer)
+        self.addCleanup(presentation._viewer.update, saved)
+        presentation._viewer.update({'path': '/game/mods/configs/local.armor_inspector/playback.html', 'browser_id': 77, 'trace': None})
+
+    def client(self):
+        """Stand-ins of the client's modules the full-screen path imports; returns what they record."""
+        rec = {'settings': [], 'events': [], 'callbacks': [], 'destroyed': [], 'deleted': []}
+
+        class WebView(object):
+            def __init__(self, ctx=None): self.ctx = ctx
+            def webHandlers(self): return ['wg']
+            def getBrowser(self): return rec.setdefault('browser', types.SimpleNamespace())
+            def _populate(self): rec['populated'] = True
+            def _dispose(self): rec['disposed'] = True
+            def destroy(self): rec['destroyed'].append(self); self._dispose()
+
+        def module(name, **names):
+            m = types.ModuleType(name); m.__dict__.update(names); return m
+        factories = types.SimpleNamespace(addSettings=lambda s: rec['settings'].append(s))
+        bus = types.SimpleNamespace(handleEvent=lambda e, scope=None: rec['events'].append((e, scope)))
+        events = types.SimpleNamespace(LoadViewEvent=lambda params, ctx=None: {'params': params, 'ctx': ctx})
+        mods = {}
+        for name in ('gui', 'gui.Scaleform', 'gui.Scaleform.daapi', 'gui.Scaleform.daapi.view', 'gui.Scaleform.daapi.view.lobby',
+                     'gui.Scaleform.daapi.view.lobby.shared', 'gui.Scaleform.daapi.view.lobby.hangar', 'gui.Scaleform.framework.managers',
+                     'frameworks', 'helpers', 'skeletons', 'skeletons.gui'):
+            mods[name] = module(name)
+        mods['gui.Scaleform.daapi.view.lobby.shared.web_view'] = module('web_view', WebView=WebView)
+        mods['gui.Scaleform.framework'] = module('framework', g_entitiesFactories=factories, ScopeTemplates=types.SimpleNamespace(LOBBY_SUB_SCOPE='lobbySub'),
+                                                 ViewSettings=lambda *a: a)
+        mods['frameworks.wulf'] = module('wulf', WindowLayer=types.SimpleNamespace(FULLSCREEN_WINDOW='fullscreen'))
+        mods['gui.shared'] = module('shared', g_eventBus=bus, events=events, EVENT_BUS_SCOPE=types.SimpleNamespace(LOBBY='lobby'))
+        mods['gui.Scaleform.framework.managers.loaders'] = module('loaders', SFViewLoadParams=lambda alias: ('params', alias))
+        mods['gui.Scaleform.daapi.view.lobby.hangar.BrowserView'] = module('BrowserView', makeBrowserParams=lambda **k: dict(k))
+        mods['BigWorld'] = module('BigWorld', callback=lambda delay, fn: rec['callbacks'].append((delay, fn)))
+        mods['helpers.dependency'] = module('dependency', instance=lambda cls: types.SimpleNamespace(delBrowser=lambda i: rec['deleted'].append(i)))
+        mods['helpers'].dependency = mods['helpers.dependency']
+        mods['skeletons.gui.game_control'] = module('game_control', IBrowserController=object)
+        patcher = patch.dict(sys.modules, mods)
+        patcher.start(); self.addCleanup(patcher.stop)
+        return rec
+
+    def test_the_state_the_page_sends_is_read_only_as_its_own_fragment(self):
+        good = 'battle=f-0123456789abcdef&at=123.45&cam=10.5,-3.25,800.00,0.6000,0.4200,35.00&speed=0.5&play=1&follow=7&panel=9'
+        self.assertEqual(presentation.view_state(Command(state=good)), good)
+        # the client hands a field the schema lacks in custom_parameters (as openHits' shot, 19.11)
+        self.assertEqual(presentation.view_state(Command(state=None, custom_parameters={'state': good})), good)
+        self.assertEqual(presentation.view_state(Command()), '')
+        for bad in ('battle=x&host=evil', 'view=full&battle=x', 'battle=x#y', 'battle=<script>', 'a' * 601):
+            self.assertIsNone(presentation.view_state(Command(state=bad)), bad)
+        self.assertEqual(presentation.full_fragment(good, True), 'host=game&view=full&' + good)
+        self.assertEqual(presentation.full_fragment('', False), 'host=game')
+
+    def test_the_commands_reach_enter_and_leave_with_the_state(self):
+        calls = []
+        handler = presentation.web_handlers()[0].handler
+        with patch.object(presentation, 'enter_fullscreen', lambda s: calls.append(('enter', s))), \
+                patch.object(presentation, 'leave_fullscreen', lambda s, close=False: calls.append(('leave', s, close))):
+            handler(Command(action='fullscreen', on=True, state='battle=b1&at=5.00'), {})
+            handler(Command(action='fullscreen', on=False, state='battle=b1&at=6.00'), {})
+            handler(Command(action='fullscreen', on=False, close=True), {})
+            handler(Command(action='fullscreen', on=True, state='host=game'), {})       # refused: not the page's state
+            handler(Command(action='viewState', state='battle=b1&at=7.00'), {})        # no view open: not kept
+        self.assertEqual(calls, [('enter', 'battle=b1&at=5.00'), ('leave', 'battle=b1&at=6.00', False), ('leave', '', True)])
+        self.assertEqual(presentation._full['state'], '')
+
+    def test_outside_the_client_the_window_stays_and_one_line_says_why(self):
+        closed = []
+        with patch.object(presentation, 'close_viewer_window', lambda: closed.append(True)), \
+                self.assertLogs('local.armor_inspector', level='WARNING') as logs:
+            presentation.enter_fullscreen('battle=b1')
+        self.assertEqual(len(logs.output), 1)
+        self.assertIn('the window stays', logs.output[0])
+        self.assertEqual((closed, presentation.fullscreen_open(), presentation._full['asked']), ([], False, None))
+
+    def test_the_view_opens_with_the_state_then_the_window_closes_and_esc_brings_it_back(self):
+        rec = self.client()
+        window = types.SimpleNamespace(destroy=lambda: rec['destroyed'].append('window'))
+        presentation._viewer['trace'] = types.SimpleNamespace(window=window)
+        state = 'battle=f-0123456789abcdef&at=123.45&cam=1.00,2.00,3.00,0.6000,0.4200,35.00&speed=2&play=1'
+        presentation.enter_fullscreen(state)
+        # registered once under our alias: the client's frameless screen on the full-screen layer
+        self.assertEqual(len(rec['settings']), 1)
+        alias, cls, swf, layer, event, scope = rec['settings'][0]
+        self.assertEqual((alias, swf, layer, event, scope), (presentation.FULLSCREEN_ALIAS, 'browserScreen.swf', 'fullscreen', None, 'lobbySub'))
+        (load, scope), = rec['events']
+        ctx = load['ctx']
+        self.assertEqual((load['params'], scope), (('params', presentation.FULLSCREEN_ALIAS), 'lobby'))
+        self.assertTrue(ctx['url'].startswith('file:///') and ctx['url'].endswith('playback.html#host=game&view=full&' + state), ctx['url'])
+        self.assertEqual(ctx['browserParams'], {'isCloseBtnVisible': False, 'bgAlpha': 1.0})
+        self.assertEqual((ctx['allowRightClick'], ctx['ignoreCtrlClick'], ctx['ignoreShiftClick'], ctx['forcedSkipEscape']), (True, False, False, False))
+        self.assertEqual(rec['destroyed'], [])                     # the window stays until the view stands
+        # the client makes the view: our page command is among its handlers, the window goes when it stands
+        view = cls({'url': ctx['url']})
+        handlers = view.webHandlers()
+        self.assertEqual(handlers[0], 'wg')
+        self.assertEqual([getattr(h, 'name', None) for h in handlers[1:]], [presentation.WEB_COMMAND])
+        view._populate()
+        self.assertTrue(presentation.fullscreen_open())
+        self.assertEqual(rec['destroyed'], ['window'])
+        # its browser shows (the client's callbackOnLoad): the middle button let through too, as in the window
+        ctx['callbackOnLoad']()
+        b = rec['browser']
+        self.assertEqual((b.allowRightClick, b.allowMiddleClick, b.ignoreCtrlClick, b.ignoreShiftClick), (True, True, False, False))
+        # its 10 s check finds it standing: no line
+        delay, check = rec['callbacks'][0]
+        self.assertEqual(delay, presentation.FULLSCREEN_WAIT)
+        check()
+        # the page tells its state while full screen; Esc (the view's own) opens the window on it and the view goes
+        presentation.web_handlers()[0].handler(Command(action='viewState', state='battle=f-0123456789abcdef&at=200.00&play=0'), {})
+        opened = []
+        with patch.object(presentation, 'open_in_game', lambda path, fragment='host=game', window=presentation.HITS: opened.append((path, fragment, window))):
+            view.onEscapePress()
+        self.assertEqual(opened, [(presentation._viewer['path'], 'host=game&battle=f-0123456789abcdef&at=200.00&play=0', presentation.REPLAYS)])
+        self.assertIn(view, rec['destroyed'])
+        self.assertFalse(presentation.fullscreen_open())
+        # a second leave (the page's Esc after the view's) does nothing
+        with patch.object(presentation, 'open_in_game', lambda *a, **k: opened.append(a)):
+            presentation.leave_fullscreen('battle=x')
+        self.assertEqual(len(opened), 1)
+
+    def test_the_page_close_button_closes_the_view_without_a_window(self):
+        rec = self.client()
+        presentation.enter_fullscreen('battle=b1')
+        view = rec['settings'][0][1]({})
+        view._populate()
+        self.assertEqual(rec['deleted'], [77])                     # no trace window: the browser deleted by its id
+        opened = []
+        with patch.object(presentation, 'open_in_game', lambda *a, **k: opened.append(a)):
+            presentation.web_handlers()[0].handler(Command(action='fullscreen', on=False, close=True), {})
+        self.assertEqual((opened, presentation.fullscreen_open()), ([], False))
+        self.assertIn(view, rec['destroyed'])
+
+    def test_a_view_that_never_stands_leaves_the_window_and_one_line(self):
+        rec = self.client()
+        presentation.enter_fullscreen('battle=b1')
+        with self.assertLogs('local.armor_inspector', level='WARNING') as logs:
+            rec['callbacks'][0][1]()
+        self.assertEqual(len(logs.output), 1)
+        self.assertIn('did not open', logs.output[0])
+        self.assertEqual((rec['destroyed'], rec['deleted']), ([], []))
+
+    def test_a_refused_open_leaves_the_window_and_one_line(self):
+        rec = self.client()
+        def refuse(event, scope=None): raise RuntimeError('no such alias')
+        sys.modules['gui.shared'].g_eventBus = types.SimpleNamespace(handleEvent=refuse)
+        with self.assertLogs('local.armor_inspector', level='WARNING') as logs:
+            presentation.enter_fullscreen('battle=b1')
+        self.assertEqual(len(logs.output), 1)
+        self.assertIn('RuntimeError: no such alias', logs.output[0])
+        self.assertEqual((rec['callbacks'], rec['destroyed'], presentation.fullscreen_open()), ([], [], False))
+
+
 class PickerDescriptorTests(unittest.TestCase):
     """The configuration chosen for a vehicle picked in the page's list."""
 

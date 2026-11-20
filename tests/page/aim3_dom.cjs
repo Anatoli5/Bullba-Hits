@@ -456,6 +456,10 @@ global.BullbaRows = window.BullbaRows;
 // with the replay viewer's shot view), loaded before app.js as the page loads it.
 try { require(path + 'shot-shell.js'); } catch (e) { if (e.code !== 'MODULE_NOT_FOUND') throw e; }
 global.BullbaShotShell = window.BullbaShotShell;
+// The reading of one shot line (20.11.2026: armorLineOf's words moved out of app.js into web/armor-line.js, shared with the
+// replay viewer's pinned point), loaded before app.js as the page loads it.
+try { require(path + 'armor-line.js'); } catch (e) { if (e.code !== 'MODULE_NOT_FOUND') throw e; }
+global.BullbaArmorLine = window.BullbaArmorLine;
 // The emulation's sound (08.10): its samples and its owner, loaded before app.js as the page loads them. No audio
 // context exists here until the sound checks at the end give the window a stand-in one.
 try { require(path + 'aim-sound-samples.js'); require(path + 'aim-sound.js'); } catch (e) { if (e.code !== 'MODULE_NOT_FOUND') throw e; }

@@ -59,14 +59,24 @@
   // are running gear and take the chassis'.
   function partColor(part){return baseColors[part>0?part%4:0];}
   function externalLayer(t){return t.part===0||!!(t.armor&&Number.isFinite(t.armor.vehicleDamageFactor)&&t.armor.vehicleDamageFactor<=1e-5);}
-  function Viewer(container) {
+  /* HOSTED (20.11.2026, the replay viewer's shot view, NOTEBOOK R1): `host` {renderer, camera(c), paintTarget(), want()}
+     makes this viewer Bullba Hits' mechanics for a vehicle another page draws, in that page's one renderer and camera: no
+     canvas, no input and no frame of its own. The host fills this.camera (camera(c): its own camera seen from this viewer's
+     frame), calls hostFrame() in its frame (the map composed into paintTarget() - markInto - instead of a quad over this
+     scene; the crosses placed) and draws this.scene's marks (the hit line, the circles, a pin) over its own picture; the
+     model's pose is the host's (hostPose). Hits' own window never passes `host`. */
+  function Viewer(container, host) {
     var self = this, T = THREE;
     this.container = container;
+    this.hosted = host && host.renderer ? host : null;
     this.scene = new T.Scene();
     this.camera = new T.PerspectiveCamera(38, 1, 0.01, 10000);
+    if (this.hosted) { this.renderer = host.renderer; this.autoFrame = false; }
+    else {
     this.renderer = new T.WebGLRenderer({ antialias: true, alpha: true, stencil: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     container.appendChild(this.renderer.domElement);
+    }
     this.reticles=[];this.reticleLayer=document.createElement('div');this.reticleLayer.className='hit-reticle-layer';container.appendChild(this.reticleLayer);
     this.impactOpacity=.5;this.setImpactOpacity(.5);this.discOn=true;this.ringAxes=false;this.viewFrom='fired';this.viewPoints=null;this.discOpacity=.25;this.ringLook=Object.assign({},SHOT_RING_LOOK);this.ringAim=this.discAim=this.shotDisc=null;   // the default of the Settings slider, applied before the first cross exists
     this.grid = new T.GridHelper(24, 24, 0x4a5d6f, 0x263746); this.scene.add(this.grid);
@@ -120,7 +130,9 @@
     this.viewWidth=0;this.viewHeight=0;this.viewRect=null;this.poseGeometries=null;this.poseBuilt=null;this.poseStale=false;this.poseAt=0;
     this.quality='auto';this.bounceMode='always';this.bounceTimer=null;this.dots=true;this.dotSpacing=3;this.tint=.5;this.partEdges=true;this.zoneOutline=false;this.turretAngle=0;this.turretTimer=null;this.turretPending=false;
     this.trackGroup=null;this.trackMesh=null;this.trackTriangles=[];this.trackOpacity=.2;this.trackKey=null;this.pinCache=null;this.liveRingMaterial=null;this.surface=null;this.surfaceAttempted=false;this.surfaceError=null;this.lighting=false;this.gunAngle=0;this.autoFrame=true;this.frameScale=this.defaults.scale;this.outline=null;this.outlineDepth=null;this.outlineStyle={brightness:.8,opacity:.06};this.showOutline=false;
+    if(this.hosted)this.autoFrame=false;   // the host's camera, the host's lens
     var drag = null;
+    if (!this.hosted) {   // hosted: the input and the context are the host's
     container.addEventListener('contextmenu', function(e) { e.preventDefault(); });
     /* A selection on the page (a left-button sweep over the panels selects their text, and the scene with it) made a
        press on the scene start the browser's own drag of that selection: pointercancel after a few pixels, and the
@@ -160,6 +172,7 @@
       this.renderer.domElement.addEventListener('webglcontextlost',function(e){e.preventDefault();self.contextLost=true;self.cancelDraw();self.cancelHover();self.cancelOrbit();window.dispatchEvent(new Event('armor-context-lost'));});
       this.renderer.domElement.addEventListener('webglcontextrestored',function(){self.restoreContext();});
     }
+    }
     // Returning to the page asks for one frame and nothing else: no rebuild, no re-creation. A frame requested
     // while the host had stopped painting may never fire, and draw() would then decline every later frame
     // forever (a frozen picture over working panels), so the pending ids are dropped first.
@@ -177,7 +190,7 @@
   Viewer.prototype.projection=function(){var w=this.viewWidth||1,h=this.viewHeight||1,z=this.camera.zoom,mid=this.frameCenter.x/Math.max(.001,this.distance);this.camera.setViewOffset(w,h,0,-(mid*z-this.frameCenter.y)*h/2,w,h);};
   // The only place that reads the container's layout: clientWidth/Height and getBoundingClientRect() force a
   // style recalculation, which used to happen several times per frame in paint(), the reticles and every hover.
-  Viewer.prototype.resize=function(){var w=this.container.clientWidth,h=this.container.clientHeight;if(!w||!h)return;this.renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2));this.viewWidth=w;this.viewHeight=h;this.viewRect=this.container.getBoundingClientRect();this.renderer.setSize(w,h,false);this.projection();this.render();};
+  Viewer.prototype.resize=function(){var w=this.container.clientWidth,h=this.container.clientHeight;if(!w||!h)return;if(this.hosted){this.viewWidth=w;this.viewHeight=h;this.viewRect=this.container.getBoundingClientRect();return;}this.renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2));this.viewWidth=w;this.viewHeight=h;this.viewRect=this.container.getBoundingClientRect();this.renderer.setSize(w,h,false);this.projection();this.render();};
   // A restored context: three rebuilds its own property cache and re-uploads textures, geometries and render
   // targets by itself. The composition is not kept: it asked the driver once, in its constructor, for the float
   // colour buffers and the texture units it needs, and a restored context need not grant them again - a kept
@@ -200,7 +213,7 @@
     return t[name]=window.BullbaFrame.task(name==='orbit'?'camera':name,name,fn);
   };
   // Coalesce input and color updates into one draw in the frame (the render task, after the camera and the aim of that frame).
-  Viewer.prototype.draw=function(){if(this.contextLost||this.frameId!==null)return;this.frameAt=clock();this.frameId=1;this.loopTask('render').want();};
+  Viewer.prototype.draw=function(){if(this.hosted){if(this.hosted.want)this.hosted.want();return;}if(this.contextLost||this.frameId!==null)return;this.frameAt=clock();this.frameId=1;this.loopTask('render').want();};
   Viewer.prototype.cancelDraw=function(){if(this.loopTasks&&this.loopTasks.render)this.loopTasks.render.cancel();this.frameId=null;};
   Viewer.prototype.frameRender=function(){
     if(this.frameId===null||this.contextLost){this.frameId=null;return;}
@@ -232,7 +245,40 @@
   // with it, and so does fit(): setPivot and the like change the orbit and fit at once, before any render, and a Fit
   // measured through the camera of the old centre put the model off screen (user 23.09, once Auto-frame, which re-zoomed
   // every frame and hid it, was off by default).
-  Viewer.prototype.placeCamera=function(){var c=Math.cos(this.pitch);this.camera.position.set(this.target.x+this.distance*c*Math.sin(this.yaw),this.target.y+this.distance*Math.sin(this.pitch),this.target.z+this.distance*c*Math.cos(this.yaw));this.camera.near=Math.max(.05,this.distance*.02);this.camera.far=this.distance*4+200;this.projection();this.camera.lookAt(this.target);this.camera.updateMatrixWorld();if(this.pan.x||this.pan.y){var m=this.camera.matrixWorld,off=new THREE.Vector3().setFromMatrixColumn(m,0).multiplyScalar(this.pan.x).add(new THREE.Vector3().setFromMatrixColumn(m,1).multiplyScalar(this.pan.y));this.camera.position.add(off);this.camera.updateMatrixWorld();}};
+  Viewer.prototype.placeCamera=function(){if(this.hosted){this.hosted.camera(this.camera);return;}var c=Math.cos(this.pitch);this.camera.position.set(this.target.x+this.distance*c*Math.sin(this.yaw),this.target.y+this.distance*Math.sin(this.pitch),this.target.z+this.distance*c*Math.cos(this.yaw));this.camera.near=Math.max(.05,this.distance*.02);this.camera.far=this.distance*4+200;this.projection();this.camera.lookAt(this.target);this.camera.updateMatrixWorld();if(this.pan.x||this.pan.y){var m=this.camera.matrixWorld,off=new THREE.Vector3().setFromMatrixColumn(m,0).multiplyScalar(this.pan.x).add(new THREE.Vector3().setFromMatrixColumn(m,1).multiplyScalar(this.pan.y));this.camera.position.add(off);this.camera.updateMatrixWorld();}};
+  // The eye the orbit stands at (placeCamera's, without the pan): hosted, where Hits' focus() put Hits' camera - the host
+  // stands its own camera there.
+  Viewer.prototype.orbitEye=function(){var c=Math.cos(this.pitch);return new THREE.Vector3(this.target.x+this.distance*c*Math.sin(this.yaw),this.target.y+this.distance*Math.sin(this.pitch),this.target.z+this.distance*c*Math.cos(this.yaw));};
+  // Hosted: one frame of Hits' mechanics in the host's frame, before the host draws - the camera from the host, the map
+  // composed for that eye into the host's paint target, the crosses placed.
+  // Hosted: the zoom Hits' Fit picks for the host's camera where it stands (the eye kept, only the lens; Hits' framing
+  // bands and minimum x1), measured through the host's camera at zoom 1 - the host sets its zoom to 1 first. The lens
+  // shift Fit also picks is not the host's (its camera stays centred on the orbit centre).
+  Viewer.prototype.hostFit=function(){if(!this.hosted)return null;this.fit(false);var z=this.camera.zoom;this.frameCenter.set(0,0);return z;};
+  Viewer.prototype.hostFrame=function(){if(!this.hosted||this.contextLost)return;this.placeCamera();if(this.paintMesh)this.paint();this.updateReticles();};
+  /* Hosted: the pose the host draws the model in - {part id: transform} in the record's convention (part.transform, the
+     game's axes), for the parts it moves (the replay's turret and gun). Hits' own drag path: a change is previewed at once
+     on the drawn geometry and the composition (poseArray, Surface.pose: display only, the ricochet leg waits), and the
+     engine is rebuilt with it (posedData -> rebuild) once the pose has stood still POSE_SETTLE ms - the hit line and its
+     crosses stay where the record put them. */
+  Viewer.prototype.hostPose=function(transforms){
+    var data=this.loadedData;if(!data||!transforms)return;var T=THREE,base=this.posedData||data,now=clock(),moved=false,key=[];
+    Object.keys(transforms).forEach(function(id){key.push(id+':'+transforms[id].map(function(x){return x.toFixed(6);}).join(','));});key=key.join('|');
+    if(key===this.hostPoseKey){if(this.poseStale&&now-this.poseAt>=POSE_SETTLE)commit.call(this);return;}
+    this.hostPoseKey=key;
+    var built={};(base.hit.target.parts||[]).forEach(function(p){if(p.transform)built[p.id]=p.transform;});
+    var mirror=new T.Matrix4().makeScale(1,1,-1),delta={};
+    Object.keys(transforms).forEach(function(id){var b=built[id];if(!b)return;var same=true;for(var i=0;i<16;i++)if(Math.abs(b[i]-transforms[id][i])>1e-7)same=false;if(same)return;moved=true;
+      delta[id]=new T.Matrix4().copy(mirror).multiply(new T.Matrix4().fromArray(transforms[id])).multiply(new T.Matrix4().fromArray(b).invert()).multiply(mirror);});
+    this.hostTransforms=transforms;
+    if(!moved){this.poseStale=false;return;}
+    if(!this.poseGeometries||!this.poseGeometries.length){commit.call(this);return;}
+    this.poseGeometries.forEach(function(record){Viewer.poseArray(record,delta);});
+    this.dropPickTrees();if(this.surface&&this.surface.pose)this.surface.pose(delta);
+    this.poseStale=true;this.poseAt=now;
+    function commit(){var t=this.hostTransforms,src=this.loadedData,parts=src.hit.target.parts.map(function(p){return t[p.id]?Object.assign({},p,{transform:t[p.id].slice()}):p;});
+      this.posedData={hit:Object.assign({},src.hit,{target:Object.assign({},src.hit.target,{parts:parts})}),models:src.models};this.poseStale=false;this.rebuild();if(this.pinned){this.refreshPin();if(this.onPin)this.onPin(true);}}
+  };
   Viewer.prototype.render=function(){this.placeCamera();if(this.autoFrame)this.autoFit();this.draw();this.notifyCamera();};
   // ONE CAMERA REPORT PER REAL CHANGE (audit VIEW-07, 24.09). onCamera runs the page's camera handler - a dozen DOM writes,
   // the live ring, and on a new range the whole shell pipeline - and it used to run on every render(): a hit click sent it
@@ -291,8 +337,11 @@
   // at two notches); `zoom` false moves the orbit distance, true the zoom (the frame scale under Auto frame); `gain` is
   // the share of the scene's own step (1). The glide continues from the target a glide still running is heading for.
   var WHEEL_RATE=.002;
+  // One wheel event as the exponent of its step (the rule below; hosted, the replay viewer's shot view zooms by it too).
+  Viewer.wheelStep=function(e,gain){var delta=e.deltaY||e.deltaX||0,amount=Math.max(-200,Math.min(200,delta*(e.deltaMode===1?16:e.deltaMode===2?300:1)));return amount*WHEEL_RATE*(gain>0?gain:1);};
+  Viewer.clampZoom=clampZoom;
   Viewer.prototype.wheel=function(e,zoom,gain){
-    var delta=e.deltaY||e.deltaX||0,amount=Math.max(-200,Math.min(200,delta*(e.deltaMode===1?16:e.deltaMode===2?300:1))),k=amount*WHEEL_RATE*(gain>0?gain:1);
+    var k=Viewer.wheelStep(e,gain);
     if(!k)return;
     if(!zoom)this.distanceTo((this.targetDistance!==null?this.targetDistance:this.distance)*Math.exp(k));
     else if(this.autoFrame)this.scaleTo((this.targetScale!==null?this.targetScale:this.frameScale)*Math.exp(-k));
@@ -1561,14 +1610,14 @@
     if(!this.paintMesh)return;
     var composed=false;
     if(this.heatmap&&!this.look){
-      if(!this.surfaceAttempted){this.surfaceAttempted=true;try{this.surface=new BullbaScreenArmor(this.renderer,this.engine);this.scene.add(this.surface.quad);
-        // A fresh composition starts unlit, so the switch is re-applied here - the one path every new
-        // instance goes through: the first paint, a new model, a quality change and a restored context.
-        // Caught on its own: a cosmetic light the driver will not give must never read as a map that failed.
-        if(this.lighting){try{this.surface.setLighting(true);}catch(light){console.warn('Soft lighting unavailable:',light.message);}}
-        if(Number.isFinite(this.lightStrength)&&this.surface.setLightStrength){try{this.surface.setLightStrength(this.lightStrength);}catch(light){console.warn('Soft lighting depth unavailable:',light.message);}}}catch(e){this.surfaceError=e.message;console.warn('Screen composition unavailable:',e.message);if(window.BullbaHost)window.BullbaHost.mark('Layer composition','unavailable: '+e.message);}}
+      // A fresh composition starts unlit, so the switch is re-applied by create() - the one path every new instance goes
+      // through: the first paint, a new model, a quality change and a restored context (BullbaScreenArmor.create, 20.11:
+      // shared with the replay viewer's shot view). Hosted (the shot view) the quad is not in this scene: the host paints.
+      if(!this.surfaceAttempted){this.surfaceAttempted=true;try{this.surface=BullbaScreenArmor.create(this.renderer,this.engine,{lighting:this.lighting,lightStrength:this.lightStrength});if(!this.hosted)this.scene.add(this.surface.quad);
+        }catch(e){this.surfaceError=e.message;console.warn('Screen composition unavailable:',e.message);if(window.BullbaHost)window.BullbaHost.mark('Layer composition','unavailable: '+e.message);}}
       if(this.surface){try{
-        this.surface.hatch=this.dotSpacing;this.surface.dots=this.dots;this.surface.edges=this.partEdges;this.surface.outline=this.zoneOutline;this.surface.tint=this.tint;/* The user's Detail and Ricochet trace settings hold during a drag too: 'Always' means live while rotating (0.7.4 lowered both while dragging; reverted on his feedback). */var size=this.surface.render(this.camera,this.target,this.shell,this.palette,this.trackOpacity,this.quality,this.viewWidth,this.viewHeight,this.renderer.getPixelRatio(),this.bounceMode,this.mapMode);
+        this.surface.setLook({hatch:this.dotSpacing,dots:this.dots,edges:this.partEdges,outline:this.zoneOutline,tint:this.tint});/* The user's Detail and Ricochet trace settings hold during a drag too: 'Always' means live while rotating (0.7.4 lowered both while dragging; reverted on his feedback). */var size=this.surface.render(this.camera,this.target,this.shell,this.palette,this.trackOpacity,this.quality,this.viewWidth,this.viewHeight,this.renderer.getPixelRatio(),this.bounceMode,this.mapMode);
+        if(this.hosted)this.surface.markInto(this.hosted.paintTarget());
         composed=true;this.surfaceError=null;
         // The hatched layer is due once the camera has stood still: one redraw later, not a loop.
         if(this.surface.bouncePending&&this.bounceTimer===null){var self=this;this.bounceTimer=setTimeout(function(){self.bounceTimer=null;self.draw();},160);}
@@ -1577,6 +1626,8 @@
     }
     if(this.surface)this.surface.quad.visible=composed;
     this.paintMesh.visible=!composed;this.trackGroup.visible=!composed;
+    // Hosted, the model is the host's own drawing (painted with the map, or its own look without one): never Hits' meshes.
+    this.composed=composed;if(this.hosted){this.paintMesh.visible=false;this.trackGroup.visible=false;if(!composed)this.backend('Estimate unavailable: '+(this.surfaceError||'GPU-composition did not run'));return;}
     if(composed)return;
     // An unavailable GPU map stays neutral; it never switches to triangle estimates.
     this.backend(this.look?'Damage event · no penetration map':this.heatmap?'Estimate unavailable: '+(this.surfaceError||'GPU-composition did not run'):'Vehicle parts · estimate off');

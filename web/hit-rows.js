@@ -80,10 +80,14 @@
   // other: the tile's vehicle (null: an empty tile); o: {crits: [{src,title}] (up to four), time: the text under the
   // figure, mark: a node put before that text (Hits' replay-only mark), pressed}. The caller sets the row's own attributes,
   // title and click.
+  // o.side 'ally' | 'enemy' | 'unknown' (the replay viewer's shots panel, 20.11): the shooter's team as the player whose
+  // battle it is sees it - rows.css colours the edge, arrow and figure by it. Hits sets none and keeps its colours by
+  // direction, which in Hits are the same thing: its outgoing shots are the player's own, its incoming ones an enemy's.
   function hitRow(hit,view,other,o){
     o=o||{};
     var hasDamage=hit.damage>0,b=node('button',undefined,'hit');b.setAttribute('aria-pressed',String(!!o.pressed));
     b.setAttribute('data-direction',view);b.setAttribute('data-result',hasDamage?'damage':'none');
+    if(o.side)b.setAttribute('data-side',o.side);
     b.appendChild(vehicleTile(other,true));
     // Critical damage (22.09): the client's own icons of the damaged modules and injured crew, up to four, every
     // word in the icon's title. The column is on every row, empty when nothing is known about the crits (25.09).

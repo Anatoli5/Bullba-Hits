@@ -82,7 +82,8 @@ function expected(b, id) {
     const page = await browser.open('file:///' + path.join(web, 'panel-test.html').replace(/\\/g, '/'));
     await new Promise((r) => setTimeout(r, 500));
     const setup = "window.__picked = []; window.P = BullbaShotsPanel.create({battle: BATTLE, info: function (id) { var v = BATTLE.vehicles.filter(function (x) { return x.id === id; })[0];" +
-      " return v ? {name: v.type.split(':')[1], type: v.type} : null; }, player: function (id) { return ''; }, clock: function (t) { return t.toFixed(1); }," +
+      " return v ? {name: v.type.split(':')[1], type: v.type} : null; }, player: function (id) { return ''; }," +
+      " side: function (id) { var v = BATTLE.vehicles.filter(function (x) { return x.id === id; })[0], o = BATTLE.vehicles.filter(function (x) { return x.id === BATTLE.meta.own; })[0]; return v && o ? (v.team === o.team ? 'ally' : 'enemy') : null; }, clock: function (t) { return t.toFixed(1); }," +
       " pick: function (row, jump) { window.__picked.push({t: row.t, jump: jump}); }, hits: function () { return function () {}; }}); true";
     check('the panel is made', await page.evaluate(setup) === true);
     // the team lists as playback.js renderList makes them (the HP fill, the nickname, the compact tile, the panel's button):
@@ -93,7 +94,7 @@ function expected(b, id) {
       " sides[side].forEach(function (id) { var el = document.createElement('div'); el.className = 'veh'; var bar = document.createElement('i'); bar.className = 'fill';" +
       " var pl = document.createElement('span'); pl.className = 'pl'; pl.textContent = 'player_' + id; var v = BATTLE.vehicles.filter(function (x) { return x.id === id; })[0];" +
       " var nm = BullbaRows.vehicleTile({name: v.type.split(':')[1], type: v.type}, true, {compact: true}); nm.classList.add('nm');" +
-      " var tile = document.createElement('div'); tile.className = 'veh-tile'; tile.appendChild(bar); tile.appendChild(pl); tile.appendChild(nm); el.appendChild(tile);" +
+      " var tile = document.createElement('div'); tile.className = 'veh-tile'; tile.setAttribute('data-side', side === 'enemy' ? 'enemy' : 'ally'); tile.appendChild(bar); tile.appendChild(pl); tile.appendChild(nm); el.appendChild(tile);" +
       " el.appendChild(BullbaShotsPanel.button(function () {})); box.appendChild(el); }); });" +
       " var row = document.querySelector('#list-own .veh'), cs = getComputedStyle(row); return {own: document.querySelectorAll('#list-own .veh').length, enemy: document.querySelectorAll('#list-enemy .veh').length," +
       " pitch: row.getBoundingClientRect().height + parseFloat(cs.marginTop) + parseFloat(cs.marginBottom), label: row.querySelector('.sp-btn').textContent}; })(" + JSON.stringify({own: ownTeamIds, enemy: enemyIds}) + ")");
@@ -115,6 +116,57 @@ function expected(b, id) {
       check(label + ': the panel ' + got.height.toFixed(1) + ' px tall = 15 team rows ' + full.toFixed(1) + ' px, beside a list of ' + got.list.toFixed(1) + ' px',
         Math.abs(got.height - Math.round(full)) < 1 && (side === 'own' ? got.list < full / 2 : Math.abs(got.list - full) < 1), JSON.stringify({got: got.height, full: full, list: got.list}));
     }
+    // R2, R3 (20.11, the user on 1.14: the shot rows read larger than the team tiles; Hits' coloured left edge missing).
+    // R2: the computed type of a shot row against a team row - one text line of a shot row is one line of a team row: the
+    // same font size and line height for the same kind of text (the vehicle's name and the row's figures = the team row's
+    // name and nickname; the tier, the time and the link = the team row's tier and its 'shots' button). The row keeps its
+    // two lines and all it shows (the tile's flag and role mark, the link's name); its height is reported (was 50 px).
+    // R3: the left edge of every shot row (3 px, the SHOOTER'S team as the replay's player sees it: an ally's shot mint, an
+    // enemy's red, faded .6 with no damage; a shooter not named: the plain edge) - in the own vehicle's panel and in the
+    // enemy's (whose own shots are red) - and of every team row (allies mint, enemies red, on the left as in Hits); and how
+    // far a faded edge stands from the row's frame and from the row (contrast ratio, WCAG luminance).
+    const look = await page.evaluate("(function (own, enemy, ownTeam) {" +
+      " function px(el, k) { return el ? parseFloat(getComputedStyle(el)[k]) : null; }" +
+      " function ty(el) { return el ? px(el, 'fontSize') + '/' + px(el, 'lineHeight') : null; }" +
+      " function rgba(c) { var m = /rgba?\\(([^)]+)\\)/.exec(c)[1].split(',').map(Number); return m.length === 3 ? m.concat(1) : m; }" +
+      " function over(c, bg) { var a = rgba(c), b = rgba(bg); return [0, 1, 2].map(function (i) { return a[i] * a[3] + b[i] * (1 - a[3]); }); }" +
+      " function lum(c) { return c.map(function (v) { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }).reduce(function (s, v, i) { return s + v * [0.2126, 0.7152, 0.0722][i]; }, 0); }" +
+      " function ratio(a, b) { var x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); }" +
+      " var C = {mint: 'rgb(104, 215, 190)', red: 'rgb(251, 133, 128)', mintDim: 'rgba(104, 215, 190, 0.6)', redDim: 'rgba(251, 133, 128, 0.6)', plain: 'rgb(58, 74, 92)'};" +
+      " var team = document.querySelector('#list-own .veh'), tile = team.querySelector('.veh-tile'), out = {rows: [], cut: [], names: 0, namesCut: 0};" +
+      " [[own, 'own'], [enemy, 'enemy']].forEach(function (p) { P.open(p[0], document.getElementById('list-' + p[1]), p[1]); var model = BullbaShotsPanel.rows(BATTLE, p[0]), byKey = {}; model.forEach(function (r) { byKey[r.key] = r; });" +
+      "  [].forEach.call(P.element.querySelectorAll('.sp-row .hit'), function (el) { var r = byKey[el.getAttribute('data-key')], shooter = r.view === 'outgoing' ? p[0] : r.shooter;" +
+      "   var v = BATTLE.vehicles.filter(function (x) { return x.id === shooter; })[0], side = v ? (v.team === ownTeam ? 'ally' : 'enemy') : 'unknown', none = el.getAttribute('data-result') === 'none', cs = getComputedStyle(el);" +
+      "   var want = side === 'unknown' ? C.plain : side === 'ally' ? (none ? C.mintDim : C.mint) : (none ? C.redDim : C.red);" +
+      "   out.rows.push({panel: p[1], dir: r.view, side: side, none: none, w: parseFloat(cs.borderLeftWidth), c: cs.borderLeftColor, ok: parseFloat(cs.borderLeftWidth) === 3 && cs.borderLeftColor === want});" +
+      "   ['.hit-damage, .hit-result', '.hit-time'].forEach(function (q) { var x = el.querySelector(q); if (x && x.scrollWidth > x.clientWidth + 0.5) out.cut.push(x.textContent); });" +
+      "   var n = el.querySelector('.vt-name'); out.names++; if (n.scrollWidth > n.clientWidth + 0.5) out.namesCut++; }); });" +
+      " var row = P.element.querySelector('.sp-row .hit'), bg = getComputedStyle(row).backgroundColor, frame = getComputedStyle(row).borderTopColor, panelBg = getComputedStyle(P.element).backgroundColor;" +
+      " var rowBg = over(bg, panelBg), dimMint = over(C.mintDim, bg), dimRed = over(C.redDim, bg), oldMint = over('rgba(104, 215, 190, 0.35)', bg), oldRed = over('rgba(251, 133, 128, 0.35)', bg), fr = over(frame, bg);" +
+      " out.contrast = {fadedRedToFrame: ratio(dimRed, fr), fadedMintToFrame: ratio(dimMint, fr), fadedRedToRow: ratio(dimRed, rowBg), hitsFadedRedToFrame: ratio(oldRed, fr), hitsFadedMintToFrame: ratio(oldMint, fr), hitsFadedRedToRow: ratio(oldRed, rowBg)};" +
+      " var lk = P.element.querySelector('.sp-open');" +
+      " out.team = {name: ty(tile.querySelector('.vt-name')), player: ty(tile.querySelector('.pl')), tier: ty(tile.querySelector('.vt-tier')), button: px(team.querySelector('.sp-btn'), 'fontSize'), line: px(tile, 'lineHeight'), height: tile.getBoundingClientRect().height};" +
+      " out.shot = {name: ty(row.querySelector('.vt-name')), tier: ty(row.querySelector('.vt-tier')), figure: ty(row.querySelector('.hit-damage, .hit-result')), arrow: ty(row.querySelector('.outcome-dir')), time: ty(row.querySelector('.hit-time')), link: ty(lk.querySelector('.sp-open-name'))," +
+      "  height: row.getBoundingClientRect().height, flag: !!row.querySelector('.vehicle-tile[data-nation]'), role: !!row.querySelector('.vt-role'), linkName: lk.textContent, panelWidth: P.element.getBoundingClientRect().width};" +
+      " out.teams = [].map.call(document.querySelectorAll('.tlist .veh-tile'), function (x) { var cs = getComputedStyle(x), en = !!x.closest('.tlist.enemy'); return {enemy: en, w: parseFloat(cs.borderLeftWidth), c: cs.borderLeftColor, ok: parseFloat(cs.borderLeftWidth) === 3 && cs.borderLeftColor === (en ? C.red : C.mint)}; });" +
+      " return out; })(" + own + ", " + enemy + ", " + ownTeam + ")");
+    console.log('     type and box (px): team row ' + JSON.stringify(look.team) + '\n     shot row ' + JSON.stringify(look.shot) + '\n     edge contrast ' + JSON.stringify(look.contrast));
+    const T = look.team, Sh = look.shot;
+    const small = T.button + '/' + T.line;  // the 'shots' button's size on the team row's 14 px line
+    check('R2: one text line of a shot row = one line of a team row (px size/line): name ' + Sh.name + ' = ' + T.name + ' (nickname ' + T.player + '), figures ' + Sh.figure + ', ' + Sh.arrow +
+      ' = ' + T.name + ', tier ' + Sh.tier + ' = ' + T.tier + ', time ' + Sh.time + ' and link ' + Sh.link + ' = button ' + small + '; the row ' + Sh.height + ' px (two lines; 1.14: 50 px), the team row ' + T.height + ' px',
+      Sh.name === T.name && T.name === T.player && Sh.figure === T.name && Sh.arrow === T.name && Sh.tier === T.tier && Sh.time === small && Sh.link === small && Sh.height <= 2 * T.height + 2, JSON.stringify(look.team) + ' ' + JSON.stringify(look.shot));
+    check('R2: nothing of a row lost - the tile keeps its flag and role mark, the link its name, no figure or time cut (' + look.cut.length + ' cut in ' + look.rows.length + ' rows); names cut short: ' + look.namesCut + ' of ' + look.names + ' (panel ' + Sh.panelWidth + ' px)',
+      Sh.flag && Sh.role && Sh.linkName === 'Bullba Hits' && !look.cut.length, JSON.stringify(look.cut.slice(0, 5)));
+    const badRows = look.rows.filter((r) => !r.ok), badTeams = look.teams.filter((r) => !r.ok), by = (f) => look.rows.filter(f).length;
+    check('R3: the left edge, 3 px, by the shooter\'s team: ' + (look.rows.length - badRows.length) + ' of ' + look.rows.length + ' shot rows (' + by((r) => r.side === 'ally') + ' an ally\'s shot mint, ' +
+      by((r) => r.side === 'enemy') + ' an enemy\'s red, ' + by((r) => r.side === 'unknown') + ' shooter not named; ' + by((r) => r.none) + ' faded with no damage; in the enemy\'s panel ' +
+      by((r) => r.panel === 'enemy' && r.dir === 'outgoing' && r.side === 'enemy') + ' of its own shots red), ' + (look.teams.length - badTeams.length) + ' of ' + look.teams.length + ' team rows (allies mint, enemies red)',
+      look.rows.length > 0 && !badRows.length && by((r) => r.side === 'ally') > 0 && by((r) => r.side === 'enemy') > 0 && look.teams.length === 17 && !badTeams.length, JSON.stringify({rows: badRows.slice(0, 3), teams: badTeams.slice(0, 3)}));
+    const K = look.contrast;
+    check('R3: a faded edge stands apart: red to the frame ' + K.fadedRedToFrame.toFixed(2) + ' (Hits\' .35: ' + K.hitsFadedRedToFrame.toFixed(2) + '), mint to the frame ' + K.fadedMintToFrame.toFixed(2) +
+      ' (' + K.hitsFadedMintToFrame.toFixed(2) + '), red to the row ' + K.fadedRedToRow.toFixed(2) + ' (' + K.hitsFadedRedToRow.toFixed(2) + ')',
+      K.fadedRedToFrame > K.hitsFadedRedToFrame && K.fadedRedToFrame >= 2 && K.fadedMintToFrame >= 3, JSON.stringify(K));
     const picked = await page.evaluate("(function () { var rows = P.element.querySelectorAll('.sp-row .hit'); rows[rows.length - 1].click(); return {picked: __picked.slice(-1)[0], pressed: P.element.querySelectorAll('.hit[aria-pressed=true]').length}; })()");
     const p = picked.picked;
     check('a row\'s click asks for the battle 2 s before its shot, with a camera on both vehicles; the row pressed', p && Math.abs(p.jump.t - Math.max(0, p.t - 2)) < 1e-6 && p.jump.camera &&

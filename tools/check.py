@@ -18,7 +18,8 @@ it before a build and refuses to build on red. Suites (they run side by side, ~1
             tools/verdicts_offline.cjs end to end on a synthetic folder (it was dead from 28.09 to 04.10, unnoticed)
   page      tests/page/*: aim3_dom (app.js on a stub DOM: wiring, emulation, Config, the path matrix with painter
             counts), tooltips_dom, gs_page, viewer_batch (the real viewer.js + screen-armor.js on a counting fake
-            renderer: passes per zoom/distance notch, shot range, camera reports, picking), ttx_samples and ttx_accept
+            renderer: passes per zoom/distance notch, shot range, camera reports, picking), frame_log (the replay
+            viewer's frame log on a fake clock), ttx_samples and ttx_accept
             (the panel against the client's own strings)
   browser   tests/page/real_page.cjs: the REAL page in a local headless Chrome/Edge on synthetic data - the path
             matrix on the rendered DOM and a leak counter over 50 scene switches; tests/page/real_scene.cjs: the real
@@ -216,7 +217,7 @@ def check_node(result):
 def check_page(result):
     exe = node()
     if not exe: return result.fail('node not found: set BULLBA_NODE to node.exe')
-    for name in ('aim3_dom', 'tooltips_dom', 'gs_page', 'viewer_batch'):
+    for name in ('aim3_dom', 'tooltips_dom', 'gs_page', 'viewer_batch', 'frame_log'):
         code, out, _ = run([exe, 'tests/page/%s.cjs' % name])
         harness_lines(result, name, code, out)
     local = os.path.join(ROOT, 'tests', 'fixtures-local')

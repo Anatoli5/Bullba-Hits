@@ -74,7 +74,17 @@
       try{window.localStorage.removeItem(o.key);}catch(e){}
       if(o.keepOnReset&&o.keepOnReset())save();
     }
-    return {restore:restore,save:save,saveNow:saveNow,reset:reset,defaults:defaults};
+    // peek(el): the control's remembered value (else its HTML default) before restore runs - a page that needs one
+    // setting early (the replay viewer's special-mode warning, 20.11). remember(el, v): that one value written into the
+    // stored box at once, the rest of the box left as it is (a saveNow before restore would write every default).
+    function peek(el){var s=stored();return s&&Object.prototype.hasOwnProperty.call(s,el.id)&&valid(el,s[el.id])?s[el.id]:byDefault(el);}
+    function remember(el,v){
+      var box=null;try{box=JSON.parse(window.localStorage.getItem(o.key));}catch(e){}
+      if(!box||typeof box!=='object'||!box.values||typeof box.values!=='object')box={v:o.version,values:{}};
+      box.values[el.id]=v;
+      try{window.localStorage.setItem(o.key,JSON.stringify(box));}catch(e){}
+    }
+    return {restore:restore,save:save,saveNow:saveNow,reset:reset,defaults:defaults,peek:peek,remember:remember};
   }
   window.BullbaSettings={bind:bind,value:value,byDefault:byDefault,valid:valid,set:set,run:run};
 })();

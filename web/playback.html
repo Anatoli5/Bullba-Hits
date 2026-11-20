@@ -6,7 +6,10 @@
 <title>Bullba Replays</title>
 <style>
   :root { color-scheme:dark; --bg:#14171a; --panel:rgba(20,24,28,.86); --text:#d8dde2; --dim:#8b949c; --line:#2c333a; --accent:#e0b44a; }
-  html,body { margin:0; height:100%; background:var(--bg); color:var(--text); font:12px/1.35 system-ui,Segoe UI,Arial,sans-serif; overflow:hidden; }
+  /* R6 (20.11, one type scale on the whole page): 12 px on a 16 px line - every text one reads (top line, settings, time bar,
+     destruction list, team rows, shot rows, shot-view bar); 11 px on the same line - a small mark inside a row or a small
+     button (tier, shot time, 'shots', the Hits link); 13 px - a heading standing alone (special-mode warning, loading) */
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--text); font:12px/16px system-ui,Segoe UI,Arial,sans-serif; overflow:hidden; }
   #view { position:absolute; inset:0; }
   #view canvas { display:block; width:100%; height:100%; }
   .panel { position:absolute; background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:6px 8px; }
@@ -26,7 +29,17 @@
   #topline { display:flex; align-items:center; gap:6px; white-space:nowrap; justify-content:center; }
   #topline > * { flex:none; }
   #topline label { display:flex; align-items:center; gap:4px; }
-  #title { flex:0 4 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; }
+  #topline button[hidden] { display:none; }
+  /* R9 (20.11, the user on 1.14): the line in three groups by meaning, a thin divider between them - the battle (Hits, the
+     battle choice: the battle named once, by the choice), the view (Settings, the sky switch a little apart to its right),
+     the window (full screen, close) */
+  .tl-group { display:flex; align-items:center; gap:6px; }
+  #topline > .tl-battle { flex:0 1 auto; min-width:0; }
+  .tl-view { gap:8px; }
+  .tl-window { gap:4px; }
+  .tl-sep { width:1px; align-self:stretch; margin:0 2px; background:var(--line); }
+  #fullscreen { padding:3px 6px; line-height:0; }
+  #fullscreen svg { vertical-align:middle; }
   #topline label.give { flex:0 1 auto; min-width:0; overflow:hidden; }
   #topline select { flex:0 1 auto; min-width:60px; }
   #settings { margin-top:4px; max-height:calc(100vh - 110px); overflow:auto; }
@@ -37,7 +50,9 @@
   #meter td.v { text-align:right; color:#fff; }
   #layers label { margin-right:8px; white-space:nowrap; }
   /* team lists as in the game's battle screen: own team down the left edge, the enemy down the right edge */
-  .tlist { position:absolute; top:8px; width:200px; overflow:auto; font-size:11px; line-height:14px; }
+  .tlist { position:absolute; top:8px; width:200px; overflow:auto; font-size:12px; line-height:16px; }
+  /* R6: the tier numeral of a team row is a small mark (rows.css keeps Bullba Hits' own 10 px) */
+  .tlist .vehicle-tile.compact .vt-tier { font-size:11px; line-height:16px; }
   /* the room a team list may take; the shots panel beside it (top at the list's top) is held to the same bottom */
   #list-own { left:8px; }
   #list-enemy { right:8px; }
@@ -69,7 +84,7 @@
   /* round 14: the input log (a temporary diagnostic, Settings > input log): the last events, bottom left */
   #inputlog { left:8px; bottom:56px; width:420px; max-width:calc(100% - 340px); font:11px/1.3 Consolas,monospace; white-space:pre; overflow:hidden; pointer-events:none; z-index:5; }
   #inputlog[hidden] { display:none; }
-  #msg { position:absolute; left:50%; top:45%; transform:translate(-50%,-50%); font-size:15px; }
+  #msg { position:absolute; left:50%; top:45%; transform:translate(-50%,-50%); font-size:13px; }
   #help { color:var(--dim); }
   #destr { right:8px; bottom:56px; width:300px; }
   #destr summary { cursor:pointer; }
@@ -84,13 +99,20 @@
   .drow.fresh { background:#4a3e1c; color:#fff; }
   /* Reset to defaults: the main page's widget and look (style.css .settings-actions) */
   .settings-actions { display:flex; justify-content:flex-end; margin-top:16px; }
-  .settings-actions button { font-size:13px; min-height:34px; padding:7px 11px; }
+  .settings-actions button { min-height:34px; padding:7px 11px; }
   /* the game's browser: host.js draws a select's list as a DOM list (style.css .choice-list, in this page's colours) */
   .choice-list { position:fixed; z-index:1000; display:flex; flex-direction:column; max-height:50vh; overflow:auto; background:#172330; border:1px solid #35475a; border-radius:6px; box-shadow:0 10px 30px #000a; padding:4px; }
   .choice-item { flex:none; text-align:left; font:inherit; color:var(--text); background:transparent; border:0; border-radius:4px; padding:6px 10px; cursor:pointer; white-space:nowrap; }
   .choice-item:hover, .choice-item:focus-visible { background:#233446; outline:none; }
   .choice-item[aria-selected=true] { color:var(--gold); }
   select[aria-expanded=true] { border-color:var(--gold); }
+  /* R4 (BACKLOG 112): the special-mode warning, in the middle over the view, above the lists and the panel */
+  #special-warn { left:50%; top:40%; transform:translate(-50%,-50%); width:360px; max-width:calc(100% - 32px); box-sizing:border-box; z-index:20; padding:10px 12px; background:rgba(20,24,28,.96); border-color:var(--accent); }
+  #special-warn[hidden] { display:none; }
+  #special-head { font-size:13px; line-height:16px; color:var(--accent); }
+  #special-warn p { margin:6px 0 10px; }
+  .special-actions { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  .special-actions label { display:flex; align-items:center; gap:4px; }
 </style>
 <!-- Bullba Hits' vehicle tile and hit row (web/rows.css) and the shots panel around them (BACKLOG 109, 19.11) -->
 <link rel="stylesheet" href="rows.css"><link rel="stylesheet" href="playback/shots-panel.css"><link rel="stylesheet" href="viewer.css"><link rel="stylesheet" href="playback/shot-view.css">
@@ -101,11 +123,20 @@
 <div id="inputlog" class="panel" hidden></div>
 <div id="meter" class="panel">
   <div id="topline">
+    <span class="tl-group tl-battle">
     <button id="back" title="Bullba Hits&#10;Opens the recorded hits; in the game in a window of their own, this one stays.">&#9664; Hits</button>
-    <span id="title">Bullba Replays</span>
-    <label class="give" title="Battle&#10;Opens another battle in the 3D replay: date and start time, map, vehicle, player.&#10;- the replay files of the game's replays folder, any player's, newest first; ★ kept forever&#10;- then the battles of Bullba Hits that have no replay file&#10;- the first time, the game prepares the battle and its map: a few seconds">battle <select id="sel-battle" style="max-width:300px"></select></label>
-    <label title="Sky&#10;Draws the sky: light overhead, a dull grey haze at the horizon, grey below it.&#10;- the scenery beyond the playable border fades into that haze instead of ending in a cut&#10;- off (default): black all round - the map hangs in the dark and fades into black"><input type="checkbox" id="sw-sky"> sky</label>
+    <label class="give" title="Battle&#10;Opens another battle in the 3D replay: date and start time, map, vehicle, player.&#10;- the replay files of the game's replays folder, any player's, newest first; ★ kept forever&#10;- then the battles of Bullba Hits that have no replay file&#10;- ⚠ a special battle mode (Onslaught, Frontline, Steel Hunter, events): the picture may be wrong for it&#10;- the first time, the game prepares the battle and its map: a few seconds">battle <select id="sel-battle" style="max-width:300px"></select></label>
+    </span>
+    <span class="tl-sep" aria-hidden="true"></span>
+    <span class="tl-group tl-view">
     <button id="settings-btn" title="Settings&#10;Opens or closes the settings: layers, shadows, grain, light, vehicle colour, halo, haze, crowns.">Settings &#9662;</button>
+    <label title="Sky&#10;Draws the sky: light overhead, a dull grey haze at the horizon, grey below it.&#10;- on (default): the scenery beyond the playable border fades into that haze instead of ending in a cut&#10;- off: black all round - the map hangs in the dark and fades into black"><input type="checkbox" id="sw-sky" checked> sky</label>
+    </span>
+    <span class="tl-sep" aria-hidden="true"></span>
+    <span class="tl-group tl-window">
+    <button id="fullscreen" type="button" aria-pressed="false" title="Full screen"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></button>
+    <button id="close-view" type="button" hidden title="Close&#10;Closes Bullba Replays (the full-screen view has no window frame and no close button of its own).">&#10005;</button>
+    </span>
   </div>
   <div id="settings" hidden>
   <div><b id="mapname">-</b> <span class="dim" id="gpu"></span></div>
@@ -142,10 +173,17 @@
     <label title="Outside the border&#10;Scenery beyond the playable box (vehicles cannot go there).">outside <select id="sel-outside"><option value="1">dimmed</option><option value="0">as is</option><option value="2">hidden</option></select></label>
     <label title="Crowns&#10;- game LOD, flat far: the plant's lowest 3D level of detail from its .srt within 160 m, beyond it a flat picture of the same plant&#10;- game LOD everywhere: 3D at any distance (heavier)&#10;- simple: a low hull of the same geometry (cheaper)">crowns <select id="sel-crowns"><option value="lod">game LOD, flat far</option><option value="lodall">game LOD everywhere</option><option value="hull">simple</option></select></label>
   </div>
-  <div id="help">drag: orbit; right, middle or Shift + drag: pan; wheel: zoom; WASD or arrows: move; R/F: up/down; space: play
+  <div style="margin-top:2px"><label title="Warn on special modes&#10;Shows a warning when a battle of a special mode opens: Onslaught, Frontline, Steel Hunter, Grand Battle, events.&#10;- the viewer draws the map's standard picture; such a mode may not look like it&#10;- the warning's &quot;Don't show again&quot; turns this off&#10;- the ⚠ in the battle list stays either way"><input type="checkbox" id="sw-special-warn" checked> warn on special modes</label></div>
+  <div id="help">drag: orbit; right or Shift + drag: pan; wheel: zoom; WASD or arrows: move; R/F: up/down; space: play
     <label style="margin-left:8px" title="Input log&#10;Shows the last keys, clicks and wheel turns the page receives, and writes them to the mod's log.&#10;- a temporary check of what the game's browser delivers; not remembered, off on every opening"><input type="checkbox" id="sw-inputlog"> input log</label></div>
   <div class="settings-actions"><button type="button" id="reset-settings" title="All settings here back to default">Reset to defaults</button></div>
   </div>
+</div>
+<!-- R4 (BACKLOG 112, 20.11): the warning on opening a battle of a special mode (playback.js specialWarning) -->
+<div id="special-warn" class="panel" role="dialog" aria-labelledby="special-head" hidden>
+  <div id="special-head">&#9888; Special battle mode: <b id="special-mode"></b></div>
+  <p>The viewer draws the map's standard picture, its bases and the vehicles as in a standard battle. In this mode they may differ, so the picture may be wrong. The map of a special mode may also take longer to open and more disk space.</p>
+  <div class="special-actions"><label title="Don't show again&#10;No warning on opening a special mode from now on.&#10;- Settings > warn on special modes turns it back on"><input type="checkbox" id="special-again"> Don't show again</label> <button type="button" id="special-ok">OK</button></div>
 </div>
 <div id="list-own" class="tlist own"></div>
 <div id="list-enemy" class="tlist enemy"></div>
@@ -165,6 +203,7 @@
 <script src="vendor/three.min.js"></script>
 <script src="frame.js"></script>
 <script src="host.js"></script>
+<script src="playback/frame-log.js"></script>
 <script src="settings-store.js"></script>
 <script src="playback/mapbuild.js"></script>
 <script src="playback/mapbuild9.js"></script>
@@ -178,6 +217,7 @@
 <script src="shot-context.js"></script>
 <script src="local-data.js"></script>
 <script src="shot-shell.js"></script>
+<script src="armor-line.js"></script>
 <script src="hit-rows.js"></script>
 <script src="playback/shots-panel.js"></script>
 <script src="playback/shot-view.js"></script>

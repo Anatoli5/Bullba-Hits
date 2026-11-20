@@ -83,6 +83,9 @@ const HOST = (files) => `(function () {
     // gives it ('World of Tanks v.2.4.1.1 #992'): the same client in two spellings - the stage takes that shape
     listing.client = '<version.xml>\n\t<appname>\t#menu:login/version\t</appname>\n\t<version> v.2.4.1.1 #992 </version>\n</version.xml>';
     listing.files.forEach((f) => { f.client = 'World of Tanks v.2.4.1.1 #992'; });
+    // R4 (BACKLOG 112, 20.11): the other player's replay stands in for a battle of a special mode, as the mod marks one
+    // (replay_files.special_mode - its rule and an Onslaught header are checked in tests/py27/replay_files.py)
+    other.special = {name: 'Onslaught', bonusType: 43, gameplay: 'comp7'};
     fs.writeFileSync(listPath, 'ArmorInspectorData.receive(' + JSON.stringify(['replayFiles', listing]) + ');\n');
     // 2. the page as it ships; the hits page's battle list holds the recorded battle (it has no replay file here)
     copyDir(path.join(ROOT, 'web'), path.join(stage, 'web'));
@@ -113,7 +116,11 @@ const HOST = (files) => `(function () {
     // (the stage's bh_ file of REPLAY has no player or vehicle in its listing entry: only the two full ones are read here)
     const files3 = rows.filter((r) => r[2] === 'Replay files'), full = files3.filter((r) => r[0] !== REPLAY);
     check('each replay entry: date and time, map, vehicle, player; the same client in two spellings is not called older', files3.length === 3 && full.length === 2 &&
-      full.every((r) => /^\d\d\.\d\d · \d\d:\d\d · Malinovka · \S.* · \S+/.test(r[1])) && files3.every((r) => !/older client/.test(r[1])), JSON.stringify(files3));
+      full.every((r) => /^(⚠ )?\d\d\.\d\d · \d\d:\d\d · Malinovka · \S.* · \S+/.test(r[1])) && files3.every((r) => !/older client/.test(r[1])), JSON.stringify(files3));
+    // R4: the special mode's mark - on that entry alone
+    const marked = rows.filter((r) => /^⚠ /.test(r[1]));
+    check('R4: a battle of a special mode is marked in the battle list: ' + marked.length + ' of ' + rows.length + ' entries (the Onslaught one)',
+      marked.length === 1 && marked[0][0] === other.id, JSON.stringify(rows));
     const chose = Date.now();
     await page.evaluate("(() => { const s = document.getElementById('sel-battle'); s.value = '" + other.id + "'; s.dispatchEvent(new Event('change')); })()");
     let state = null;
@@ -123,6 +130,14 @@ const HOST = (files) => `(function () {
     }
     const wall = (Date.now() - chose) / 1000;
     check('the other player\'s replay (no record of Bullba Hits) opens', state && !state.error, state ? state.error : 'not ready after 180 s');
+    // R4: on opening it, the warning with "Don't show again"; ticked and OK - remembered in the page's settings box
+    const warn = await page.evaluate("(() => { const w = document.getElementById('special-warn'); return {shown: !w.hidden, mode: document.getElementById('special-mode').textContent, text: w.textContent," +
+      " box: !!document.getElementById('special-again')}; })()");
+    check('R4: opening it shows the warning, the mode named, with a "Don\'t show again" box', warn.shown && warn.mode === 'Onslaught' && warn.box && /picture may be wrong/.test(warn.text), JSON.stringify(warn));
+    const kept = await page.evaluate("(() => { document.getElementById('special-again').checked = true; document.getElementById('special-ok').click();" +
+      " let box = null; try { box = JSON.parse(localStorage.getItem('bullba-playback-settings')); } catch (e) {} return {hidden: document.getElementById('special-warn').hidden," +
+      " stored: box && box.values ? box.values['sw-special-warn'] : null, others: box && box.values ? Object.keys(box.values).length : 0, setting: document.getElementById('sw-special-warn').checked}; })()");
+    check('R4: "Don\'t show again" + OK: the warning goes, the settings switch off and remembered (' + kept.others + ' settings in the box)', kept.hidden && kept.stored === false && kept.setting === false, JSON.stringify(kept));
     if (state && !state.error) {
       check('built in the page from the .wotreplay', state.battleBuild && state.battleBuild.source === 'built', JSON.stringify(state.battleBuild));
       check('every vehicle drawn with its model', state.vehicles === 30 && state.boxes === 0, 'vehicles ' + state.vehicles + ', boxes ' + state.boxes);
@@ -134,6 +149,33 @@ const HOST = (files) => `(function () {
         asked[0].vehicles.length === 1 && asked[0].vehicles[0].type === MISSING.replace('-', ':') && typeof asked[0].vehicles[0].descr === 'string', JSON.stringify(asked));
       const sel = await page.evaluate("(() => { const s = document.getElementById('sel-battle'); return {value: s.value, groups: [].map.call(s.querySelectorAll('optgroup'), (g) => g.label)}; })()");
       check('the selector stands on the replay, files first', sel.value === other.id && sel.groups[0] === 'Replay files', JSON.stringify(sel));
+      // R5 in the game: the full-screen button asks the mod for the frameless view with the page's state
+      const fs = await page.evaluate("(() => { window.__host.length = 0; document.getElementById('fullscreen').click(); return new Promise((r) => setTimeout(() => r({host: window.__host.slice(), cam: MapBench.camera(), st: MapBench.state(), close: document.getElementById('close-view').hidden}), 100)); })()");
+      const cmd = (fs.host || []).filter((c) => c.action === 'fullscreen')[0] || {};
+      const kv = {}; String(cmd.state || '').split('&').forEach((p) => { const i = p.indexOf('='); if (i > 0) kv[p.slice(0, i)] = p.slice(i + 1); });
+      const camNums = String(kv.cam || '').split(',').map(Number);
+      check('R5 in the game: the button sends fullscreen on with the battle, time, camera, speed and play state (' + cmd.state + '); no close button in the window',
+        cmd.on === true && kv.battle === other.id && Math.abs(+kv.at - fs.st.t) < 0.05 && camNums.length === 6 && Math.abs(camNums[5] - fs.cam.dist) < 0.01 &&
+        +kv.speed === fs.st.speed && kv.play === (fs.st.playing ? '1' : '0') && !('host' in kv) && !('view' in kv) && fs.close === true, JSON.stringify({cmd: cmd, cam: fs.cam, st: fs.st}));
+      // R5 outside the game, in a second tab of the same browser (the same page storage): opened as the mod reopens it,
+      // with the carried state; the in-page full screen on and off by the button; the warning not shown again
+      const carried = 'battle=' + other.id + '&at=100.00&cam=' + [fs.cam.tx + 5, fs.cam.ty, fs.cam.tz - 5, 0.5, 0.4, 123].map((v) => (+v).toFixed(2)).join(',') + '&speed=2&play=0';
+      const page2 = await browser.open('file:///' + path.join(stage, 'web', 'playback.html').replace(/\\/g, '/') + '#' + carried);
+      let ready2 = null;
+      for (let i = 0; i < 240 && !ready2; i++) { await new Promise((r) => setTimeout(r, 500)); ready2 = await page2.evaluate('window.__error ? {error: window.__error} : (window.__ready || null)'); }
+      const back = ready2 && !ready2.error ? await page2.evaluate("({st: MapBench.state(), cam: MapBench.camera(), warn: !document.getElementById('special-warn').hidden})") : null;
+      check('R5: the page opened with the carried state takes it back: time 100 s, the camera, speed x2, paused; R4: no warning again', back && Math.abs(back.st.t - 100) < 0.01 &&
+        Math.abs(back.cam.dist - 123) < 0.01 && Math.abs(back.cam.yaw - 0.5) < 1e-6 && back.st.speed === 2 && back.st.playing === false && back.warn === false, JSON.stringify(ready2 && ready2.error ? ready2 : back));
+      // (headless Chrome enters the page's full screen but never finishes leaving it - no window to restore - so the way
+      // out is checked as the call the button makes: document.exitFullscreen)
+      const inPage = await page2.evaluate("(async () => { const b = document.getElementById('fullscreen'), out = {};" +
+        " b.click(); await new Promise((r) => setTimeout(r, 1000)); out.on = document.fullscreenElement === document.documentElement; out.pressed = b.getAttribute('aria-pressed');" +
+        " const exit = document.exitFullscreen.bind(document); out.exits = 0; document.exitFullscreen = function () { out.exits++; return exit(); };" +
+        " b.click(); await new Promise((r) => setTimeout(r, 300)); return out; })()");
+      check('R5 outside the game: the button puts the page in full screen (document.fullscreenElement = the page, the button pressed); pressed again it calls exitFullscreen',
+        inPage.on && inPage.pressed === 'true' && inPage.exits === 1, JSON.stringify(inPage));
+      const errors2 = page2.errors.slice();
+      check('the second tab: no page error', !errors2.length, errors2.join(' | ').slice(0, 800));
       console.log('note the other player\'s replay ready ' + wall.toFixed(1) + ' s after the choice (battle built in ' + (state.battleBuild.ms / 1000).toFixed(2) +
         ' s, map built in the page); the mod jobs before it ' + modSeconds.toFixed(1) + ' s (stand, python27)');
     }

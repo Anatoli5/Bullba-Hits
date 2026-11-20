@@ -68,3 +68,25 @@
 .vehicle-tile.compact .vt-class{flex:0 0 auto;width:13px;height:13px}
 .vehicle-tile.compact .vt-tier{flex:0 0 auto;min-width:0;font-size:10px;line-height:14px}
 .vehicle-tile.compact .vt-name{flex:0 1 auto;font-size:inherit;line-height:inherit}
+/* The replay viewer's shot row (hitRow o.side - 20.11.2026, the user on 1.14). Bullba Hits never sets it, so its rows above
+   stay as they are.
+   Side: the edge, the arrow and the figure in the colour of the SHOOTER'S team as the player whose battle it is sees it -
+   an ally's shot mint, an enemy's red (in Hits the same colours go by direction: its outgoing shots are the player's own,
+   its incoming ones an enemy's); a shooter the replay does not name keeps the row's plain edge. A row with no damage is
+   faded less than Hits' (.6, not .35): on the panel's dark rows .35 left the red edge hardly apart from the row's frame. */
+.hit[data-side=ally]{border-left-color:var(--mint)}
+.hit[data-side=enemy]{border-left-color:var(--red)}
+.hit[data-side=unknown]{border-left-color:#3a4a5c}
+.hit[data-side=ally][data-result=none]{border-left-color:rgba(104,215,190,.6)}
+.hit[data-side=enemy][data-result=none]{border-left-color:rgba(251,133,128,.6)}
+.hit[data-side=ally] .outcome-dir,.hit[data-side=ally] .hit-damage{color:var(--mint)}
+.hit[data-side=enemy] .outcome-dir,.hit[data-side=enemy] .hit-damage{color:var(--red)}
+.hit[data-side=unknown] .outcome-dir,.hit[data-side=unknown] .hit-damage{color:var(--muted)}
+.hit[data-side][aria-pressed=true]{border-left-color:var(--gold)}
+/* The replay viewer's team rows (playback.html .veh-tile with data-side, 20.11.2026): Bullba Hits' team stripe of its
+   battle-scope vehicle rows (style.css .vehicle-row[data-side]: 3 px on the left, allies mint, enemies red, kept while the
+   row is pressed - here while the camera follows it). On the left in the mirrored enemy list too: Hits has no mirrored
+   list, its stripe is always on the left. */
+.tlist .veh-tile[data-side]{border-left-width:3px}
+.tlist .veh-tile[data-side=ally]{border-left-color:var(--mint)}
+.tlist .veh-tile[data-side=enemy]{border-left-color:var(--red)}

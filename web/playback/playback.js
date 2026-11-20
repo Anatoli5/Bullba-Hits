@@ -2422,9 +2422,13 @@
   }
   var drag = null;
   renderer.domElement.addEventListener('contextmenu', function (e) { e.preventDefault(); });
-  // round 14: pan by the right or the middle button, or Shift + left (the game's browser gives the right and middle
-  // buttons and Shift + click only when the mod switches them on); orbit by the left button alone
-  renderer.domElement.addEventListener('pointerdown', function (e) { drag = { x: e.clientX, y: e.clientY, b: e.button === 0 && e.shiftKey ? 2 : e.button }; renderer.domElement.setPointerCapture(e.pointerId); if (e.button === 1) e.preventDefault(); });
+  // round 14: pan by the right button or Shift + left (the game's browser gives the right button and Shift + click only
+  // when the mod switches them on); orbit by the left button alone. 20.11 (the user: one function, not several buttons
+  // "just in case"): the middle button (let through by the mod in both windows) and any other one do nothing here
+  renderer.domElement.addEventListener('pointerdown', function (e) {
+    if (e.button !== 0 && e.button !== 2) { if (e.button === 1) e.preventDefault(); return; }  // the middle one: not even the browser's autoscroll
+    drag = { x: e.clientX, y: e.clientY, b: e.button === 0 && e.shiftKey ? 2 : e.button }; renderer.domElement.setPointerCapture(e.pointerId);
+  });
   renderer.domElement.addEventListener('pointerup', function () { drag = null; });
   renderer.domElement.addEventListener('pointermove', function (e) {
     if (!drag) return;
@@ -2506,6 +2510,28 @@
     $('free').classList.toggle('on', !r);
     renderList(true);
   }
+  // R7 (20.11, the user on 1.14: the opening view looked at a point he could not make sense of - the map's centre from 700 m):
+  // a battle opens behind the replay's own vehicle at the battle's start, looking along its hull, the camera following it
+  // (the game's replay starts on the player); 20 m = the game's own arcade camera start distance (the client's
+  // gui/avatar_input_handler.xml arcadeMode/camera optimalStartDist 20, distRange 2-25), 0.35 rad (20 deg) down - a guess, the
+  // game's start pitch is not read. No position at the start: the vehicle's first one; no own vehicle or no position at
+  // all: the rule before (the arena's centre, 700 m). Returns which: 'own' or 'centre'.
+  var START_VIEW = { dist: 20, pitch: 0.35 };
+  function startView(own) {
+    var r = own ? vehicles.filter(function (x) { return x.v === own; })[0] : null, o = new T.Object3D(), at = null, h = 0;
+    if (r && poseInto(r, tBattle - delayOf(r), o)) { at = o.position; h = o.rotation.y; }
+    else if (r && r.v.np > 0) { at = new T.Vector3(r.pos[1], r.pos[2], r.pos[3]); h = r.pos[4]; }
+    cam.tyGoal = null;
+    if (!at) {
+      var a = mapData.arena; cam.tx = (a[0] + a[2]) / 2; cam.tz = (a[1] + a[3]) / 2; cam.ty = heightAt(cam.tx, cam.tz) + cam.tyOff;
+      cam.yaw = 0.6; cam.pitch = 0.75; cam.dist = 700; setFollow(null);
+      return 'centre';
+    }
+    // the hull's forward in game coordinates is (sin h, cos h); placeCamera's eye lies at (sin yaw, -cos yaw) from the target
+    cam.tx = at.x; cam.ty = at.y + 2.5; cam.tz = at.z; cam.yaw = -h; cam.pitch = START_VIEW.pitch; cam.dist = START_VIEW.dist;
+    setFollow(r);
+    return 'own';
+  }
 
   // ------------------------------------------------------------------ playback, meter, switches
   var t = 0, playing = false, speed = 1, lastFrame = 0;
@@ -2580,9 +2606,11 @@
     if (!panel) panel = BullbaShotsPanel.create({ battle: battle,
       info: function (id) { var r = fxById[id]; return r ? tileOf(r) : null; },
       player: function (id) { var r = fxById[id]; return (r && r.v.player) || ''; },
+      // R3 (20.11): a row's colour is its shooter's team as the replay's player sees it
+      side: function (id) { var r = id == null ? null : fxById[id]; return r ? (r.role === 'enemy' ? 'enemy' : 'ally') : null; },
       clock: function (s) { return fmt(s - tBattle); },
       // the shot view takes the camera: no vehicle followed (the shots button follows its vehicle), free after Leave
-      pick: function (row, j) { var sv = shotViewer(); if (sv) { setFollow(null); sv.open(row); } else jumpTo(j); },
+      pick: function (row, j) { var sv = shotViewer(); if (sv) { setFollow(null); shotViewOpened = true; sv.open(row); } else jumpTo(j); },
       hits: hitsOpener,
       changed: function () { renderList(false); } });
     return panel;
@@ -2611,23 +2639,36 @@
     }
     if (!playing) togglePlay();
   }
-  // ------------------------------------------------------------------ the shot view (19.11, NOTEBOOK N5, BACKLOG 109)
-  // web/playback/shot-view.js: a row of the shots panel shown as Bullba Hits shows a shot (Hits' own viewer over this
-  // canvas, this camera following Hits' camera), an episode from 2 s before the shot, slowed, stopped at the hit. Its hooks
-  // into this page: the clock (seek, play, the episode's speed), this camera (placed from Hits', or the orbit), the veil
-  // over this page's drawing of the target, and this page's frame (run by Hits' frame loop while Hits' viewer is on).
+  // ------------------------------------------------------------------ the shot view (19.11, NOTEBOOK N5, BACKLOG 109; 20.11 R1)
+  // web/playback/shot-view.js: a row of the shots panel shown as Bullba Hits shows a shot, in this page's own scene: the
+  // target is this page's vehicle painted with Hits' heat map (Hits' mechanics hosted on this renderer and this camera),
+  // an episode from 2 s before the shot, slowed, stopped at the hit. Its hooks into this page: the clock (seek, play, the
+  // episode's speed), this camera (stood at the shot's origin by orbitFrom; the free camera after that), the target's
+  // look (shotLook), the shooter's veil, and two steps of this page's frame: paint (after step, before the render) and
+  // overlay (after it: Hits' hit line, circles and pin over the picture).
   var shotView = null, episodeSpeed = null;
   function shotViewer() {
     if (shotView || !window.BullbaShotView || !window.ArmorViewer || !battle) return shotView;
     var known = INDEX && Array.isArray(INDEX.battles) && INDEX.battles.some(function (x) { return x && x.id === BID; });
-    shotView = BullbaShotView.create({ view: $('view'), camera: camera, battle: battle, hitsBattle: known ? BID : null, battleId: BID, dataBase: BASE,
+    shotView = BullbaShotView.create({ view: $('view'), camera: camera, renderer: renderer, battle: battle, hitsBattle: known ? BID : null, battleId: BID, dataBase: BASE,
       vehicle: function (id) { return fxById[id] || null; },
       name: function (id) { var r = id == null ? null : fxById[id]; return r ? tileOf(r).name : 'not named'; },
       clock: function (s) { return fmt(s - tBattle); },
       seek: function (x) { t = Math.min(tEnd, Math.max(0, x)); $('slider').value = t; },
       play: function (on) { if (!!on !== playing) togglePlay(); },
-      speed: setEpisodeSpeed, orbit: orbitFrom, veil: veil, frame: frameBody });
+      speed: setEpisodeSpeed, orbit: orbitFrom, place: placeCamera, veil: veil, look: shotLook,
+      corridor: { open: shotCorridorOpen, keep: shotCorridorKeep, vehicles: shotCorridorVehicles, close: shotCorridorClose },
+      log: function (line) { if (host.game && host.canSend()) host.send('bullba_hits', { action: 'inputLog', lines: [line] }).catch(function (e) { console.warn('Bullba Hits inputLog failed: ' + e.message); }); } });
     return shotView;
+  }
+  // the shot view's target in this scene (shot-view.js): its meshes drawn with `mat` (Hits' paint; null: its own material
+  // back), its marker and this page's hit marks on it hidden while painted (Hits' crosses and line stand for them). Every
+  // frame after fxStep, which shows the marks again.
+  function shotLook(r, mat) {
+    var own = r.mat;
+    r.group.traverse(function (m) { if (m.isMesh && (m.material === own || m.material.userData.shotPaint)) m.material = mat || own; });
+    r.bar.visible = !mat && !r.dead && !r.veiled;
+    fxMarkMeshes.forEach(function (m) { var p = m.parent; while (p && p !== r.group) p = p.parent; if (p) m.visible = mat ? false : (hitsOn && t >= m.userData.first); });
   }
   // the episode's speed is not the remembered one (#speed-value): the buttons show it, leaving puts the user's back
   function setEpisodeSpeed(v) {
@@ -2644,7 +2685,125 @@
     cam.pitch = Math.asin(Math.max(-1, Math.min(1, dy / d))); cam.yaw = Math.atan2(dx, dz); cam.tyGoal = null;
     if (heightAt) cam.tyOff = cam.ty - heightAt(cam.tx, cam.tz);
   }
-  // this page's drawing of a vehicle veiled while Hits' viewer draws it: the model not drawn but still casting its shadow
+  // THE SHOT'S CORRIDOR (20.11, the shot view, shot-view.js CORRIDOR): the map objects the shot's line from the eye to the hit
+  // passes through are not drawn while the view is open - the shell reached the target, so nothing solid stood on its path,
+  // and an object at the shooter's gun would fill the frame. A thin tube round the line (radius R) is tested against every
+  // object instance's own triangles (the game model, the collision object,
+  // a plant's low hull, the mode's objects); a hit hides that instance (its matrix collapsed, as a destroyed plant's is),
+  // kept so every frame of the mode (shotCorridorKeep) and given back on Leave (shotCorridorClose). The terrain is never
+  // hidden: where it crosses the line the result says so. Vehicles on the line: shotCorridorVehicles, each frame.
+  // Nothing of this runs while the mode is closed.
+  var corridor = null, CZERO = new T.Matrix4().makeScale(0, 0, 0);
+  // does the tube (the segment a -> b grown by R) meet geometry `geo` placed by the world matrix `world`? Exact: a triangle
+  // meets it when its distance from the segment is R or less (the segment through the triangle, an end near it, or an
+  // edge near the segment), in world metres (an instance's matrix may scale).
+  var cS = new T.Sphere(), cP = new T.Vector3(), cQ = new T.Vector3(), cVa = new T.Vector3(), cVb = new T.Vector3(), cVc = new T.Vector3(), cLine = new T.Line3(), cTri = new T.Triangle(), cRay = new T.Ray();
+  var sd1 = new T.Vector3(), sd2 = new T.Vector3(), sr = new T.Vector3(), sc1 = new T.Vector3(), sc2 = new T.Vector3();
+  // squared distance between the segments p1-q1 and p2-q2 (Ericson 5.1.9)
+  function segSeg2(p1, q1, p2, q2) {
+    sd1.subVectors(q1, p1); sd2.subVectors(q2, p2); sr.subVectors(p1, p2);
+    var a = sd1.dot(sd1), e = sd2.dot(sd2), f = sd2.dot(sr), s, t, EPS = 1e-12;
+    if (a <= EPS && e <= EPS) return sr.lengthSq();
+    if (a <= EPS) { s = 0; t = Math.max(0, Math.min(1, f / e)); }
+    else { var c = sd1.dot(sr); if (e <= EPS) { t = 0; s = Math.max(0, Math.min(1, -c / a)); }
+      else { var b = sd1.dot(sd2), den = a * e - b * b; s = den !== 0 ? Math.max(0, Math.min(1, (b * f - c * e) / den)) : 0; t = (b * s + f) / e;
+        if (t < 0) { t = 0; s = Math.max(0, Math.min(1, -c / a)); } else if (t > 1) { t = 1; s = Math.max(0, Math.min(1, (b - c) / a)); } } }
+    sc1.copy(p1).addScaledVector(sd1, s); sc2.copy(p2).addScaledVector(sd2, t); return sc1.distanceToSquared(sc2);
+  }
+  function tubeHits(geo, world, a, b, R) {
+    if (!geo || !geo.attributes.position) return false;
+    if (!geo.boundingSphere) geo.computeBoundingSphere();
+    cS.copy(geo.boundingSphere).applyMatrix4(world); if (!(cS.radius > 0)) return false;
+    cLine.set(a, b); cLine.closestPointToPoint(cS.center, true, cP);
+    if (cP.distanceTo(cS.center) > cS.radius + R) return false;
+    var pos = geo.attributes.position, idx = geo.index, n = idx ? idx.count : pos.count, R2 = R * R, len = a.distanceTo(b);
+    cRay.set(a, cQ.subVectors(b, a).normalize());
+    for (var i = 0; i < n; i += 3) {
+      var i0 = idx ? idx.getX(i) : i, i1 = idx ? idx.getX(i + 1) : i + 1, i2 = idx ? idx.getX(i + 2) : i + 2;
+      cVa.fromBufferAttribute(pos, i0).applyMatrix4(world); cVb.fromBufferAttribute(pos, i1).applyMatrix4(world); cVc.fromBufferAttribute(pos, i2).applyMatrix4(world);
+      if (cRay.intersectTriangle(cVa, cVb, cVc, false, cP) && cP.distanceTo(a) <= len) return true;
+      cTri.set(cVa, cVb, cVc);
+      if (cTri.closestPointToPoint(a, cP).distanceToSquared(a) <= R2 || cTri.closestPointToPoint(b, cP).distanceToSquared(b) <= R2) return true;
+      if (segSeg2(a, b, cVa, cVb) <= R2 || segSeg2(a, b, cVb, cVc) <= R2 || segSeg2(a, b, cVc, cVa) <= R2) return true;
+    }
+    return false;
+  }
+  var cM = new T.Matrix4(), cW = new T.Matrix4();
+  // a, b: the eye and the hit point (scene coordinates); R in metres -> what was hidden, and whether the ground crosses the line
+  function shotCorridorOpen(a, b, R) {
+    shotCorridorClose();
+    var c = { a: a.clone(), b: b.clone(), R: R, inst: [], plants: [], meshes: [], ground: null, vehicles: 0 };
+    root.updateMatrixWorld(true);
+    objRecs.concat(visRecs).forEach(function (e) {
+      if (!e || !e.mesh) return;
+      var im = e.mesh, kind = visRecs.indexOf(e) >= 0 ? 'model' : 'collision';
+      for (var k = 0; k < im.count; k++) {
+        im.getMatrixAt(k, cM); cW.multiplyMatrices(im.matrixWorld, cM);
+        if (tubeHits(im.geometry, cW, a, b, R)) c.inst.push({ e: e, k: k, kind: kind, dead: e.dead[k] || 0, m: cM.clone() });
+      }
+    });
+    treeRecs.forEach(function (r, gi) {
+      if (!r) return; var kp = kindParts[r.ki]; if (!kp || !kp.k) return;
+      // the plant as it is drawn near: its LOD parts (leaves and bark), else its low hull
+      var geos = (kp.lod || []).map(function (q) { return q.geo; }).filter(Boolean); if (!geos.length) geos = [kp.low || (kp.low = lowHull(kp.k))];
+      for (var k = 0; k < r.cur.length; k++) {
+        if (r.cur[k] === HIDDEN) continue;
+        cW.multiplyMatrices(layers.trees.matrixWorld, r.cur[k]);
+        if (geos.some(function (g) { return tubeHits(g, cW, a, b, R); })) c.plants.push({ r: r, gi: gi, k: k, m: r.cur[k] });
+      }
+    });
+    layers.mode.traverse(function (m) { if (m.isMesh && !m.isInstancedMesh && m.visible && tubeHits(m.geometry, m.matrixWorld, a, b, R)) c.meshes.push({ m: m, was: m.visible }); });
+    // the ground across the line: a point of it (beyond 1 m from either end) under the terrain
+    if (heightAt) { var len = a.distanceTo(b), p = new T.Vector3(); for (var s = 1; s < len - 1; s += 0.5) { p.copy(a).lerp(b, s / len); if (p.y < heightAt(p.x, -p.z) - 0.2) { c.ground = +s.toFixed(1); break; } } }
+    corridor = c; shotCorridorKeep(); shadowDirty();
+    // what the battle's destruction records of the hidden objects (for the checks: broken before this moment, by when)
+    var when = {};
+    dEvents.forEach(function (ev) {
+      var key = null;
+      if (ev[2] === 0 || ev[2] === 1) { var vo = visOf(ev[3], ev[4]); key = vo ? 'v' + visRecs.indexOf(vo.r) + ':' + vo.k : null; var ok = 'o' + ev[3] + ':' + ev[4]; (when[ok] = when[ok] || []).push([+ev[0].toFixed(2), ev[2]]); }
+      else if (ev[2] === 2 || ev[2] === 3) key = 'p' + ev[3] + ':' + ev[4];
+      if (key) (when[key] = when[key] || []).push([+ev[0].toFixed(2), ev[2]]);
+    });
+    c.list = c.inst.map(function (x) { var key = (x.kind === 'model' ? 'v' + visRecs.indexOf(x.e) : 'o' + objRecs.indexOf(x.e)) + ':' + x.k; return { kind: x.kind, name: x.e.mesh.name || (x.e.rec && x.e.rec.name) || '', k: x.k, destroyedNow: x.dead, events: when[key] || [] }; })
+      .concat(c.plants.map(function (x) { return { kind: 'plant', name: x.r.kind && x.r.kind.name || '', k: x.k, events: when['p' + x.gi + ':' + x.k] || [] }; }))
+      .concat(c.meshes.map(function (x) { return { kind: 'mode', name: x.m.name || '' }; }));
+    return { list: c.list, t: t, a: a.toArray(), b: b.toArray(), hidden: c.inst.length + c.plants.length + c.meshes.length, models: c.inst.filter(function (x) { return x.kind === 'model'; }).length,
+      collision: c.inst.filter(function (x) { return x.kind === 'collision'; }).length, plants: c.plants.length, modeObjects: c.meshes.length, ground: c.ground,
+      destroyedAlready: c.inst.filter(function (x) { return x.dead; }).length };
+  }
+  // every frame of the mode: the hidden instances stay hidden (a destruction step or a rewind writes their matrices again)
+  function shotCorridorKeep() {
+    var c = corridor; if (!c) return;
+    var touched = [];
+    c.inst.forEach(function (x) { x.e.mesh.getMatrixAt(x.k, cM); if (!cM.equals(CZERO)) { x.m.copy(cM); x.e.mesh.setMatrixAt(x.k, CZERO); if (touched.indexOf(x.e.mesh) < 0) touched.push(x.e.mesh); } });
+    touched.forEach(function (im) { im.instanceMatrix.needsUpdate = true; });
+    c.plants.forEach(function (x) { if (x.r.cur[x.k] !== CZERO) { x.m = x.r.cur[x.k]; x.r.cur[x.k] = CZERO; x.r.dirty = true; } });
+    c.meshes.forEach(function (x) { x.m.visible = false; });
+  }
+  // other vehicles on the line (not the shooter, not the target): not drawn this frame - after poseVehicles, every frame
+  function shotCorridorVehicles(skip) {
+    var c = corridor; if (!c) return 0;
+    var n = 0;
+    vehicles.forEach(function (r) {
+      if (!r.visible || skip.indexOf(r.v.id) >= 0) return;
+      var on = false;
+      r.group.updateWorldMatrix(true, true);
+      r.group.traverse(function (m) { if (!on && m.isMesh && m.material === r.mat && tubeHits(m.geometry, m.matrixWorld, c.a, c.b, c.R)) on = true; });
+      if (on) { r.group.visible = false; n++; }
+    });
+    c.vehicles = n; return n;
+  }
+  function shotCorridorClose() {
+    var c = corridor; if (!c) return; corridor = null;
+    var touched = [];
+    c.inst.forEach(function (x) { x.e.mesh.getMatrixAt(x.k, cM); if (cM.equals(CZERO)) { x.e.mesh.setMatrixAt(x.k, x.m); if (touched.indexOf(x.e.mesh) < 0) touched.push(x.e.mesh); } });
+    touched.forEach(function (im) { im.instanceMatrix.needsUpdate = true; });
+    c.plants.forEach(function (x) { if (x.r.cur[x.k] === CZERO) { x.r.cur[x.k] = x.m; x.r.dirty = true; } });
+    c.meshes.forEach(function (x) { x.m.visible = x.was; });
+    shadowDirty();
+  }
+  // this page's drawing of a vehicle veiled (20.11: the shot view's shooter while the eye is inside it, shot-view.js
+  // INSIDE): the model not drawn but still casting its shadow
   // (its one material writes no colour and no depth), its marker and its hit marks hidden. Run every frame after fxStep,
   // which shows the marks again.
   function veil(r, on) {
@@ -2682,7 +2841,8 @@
       // the camera follows it - one at a time) and beside it the 'shots' button, a control of its own (lit while its panel
       // is open); 'shots' also follows the vehicle, a click on the tile only follows (or stops following)
       var tile = document.createElement('div'); tile.className = 'veh-tile';
-      var hb = BullbaShotsPanel.button(function () { shotsPanel().toggle(r.v.id, box, side); setFollow(r); });
+      tile.setAttribute('data-side', side === 'enemy' ? 'enemy' : 'ally');  // R3 (20.11): Hits' team stripe (rows.css)
+      var hb =BullbaShotsPanel.button(function () { shotsPanel().toggle(r.v.id, box, side); setFollow(r); });
       tile.appendChild(bar); tile.appendChild(pl); tile.appendChild(nm); el.appendChild(tile); el.appendChild(hb);
       tile.onclick = function () { setFollow(follow === r ? null : r); };
       box.appendChild(el); listRows.push({ r: r, el: el, bar: bar, base: base, hb: hb });
@@ -2690,25 +2850,46 @@
     if (listRows.length) renderList(false);  // round 9: a map alone has no vehicles
   }
 
+  // 20.11, temporary: the frame log (frame-log.js) - in the game only, the playing page's own frame figures to the mod's log
+  // through the input log's channel ('Page input: playback frames ...'), to find what the game's browser differs in
+  // (made once `host` is known: makeFrameLog at the channel's declaration below)
+  var shotViewOpened = false, frameLog = null;
+  function makeFrameLog() {
+    return host.game && window.BullbaFrameLog ? BullbaFrameLog.create({
+      send: function (line) { if (host.canSend()) host.send('bullba_hits', { action: 'inputLog', lines: [line] }).catch(function (e) { console.warn('Bullba Hits inputLog failed: ' + e.message); }); },
+      state: frameLogState }) : null;
+  }
+  function frameLogState() {
+    var c = renderer.domElement, on = function (x) { return x ? 'on' : 'off'; }, sv = shotView ? shotView.state() : null;
+    var objects = layers.visual.visible ? (layers.objects.visible ? 'both' : 'visual') : (layers.objects.visible ? 'collision' : 'off');
+    return { canvas: c.width + 'x' + c.height, dpr: (window.devicePixelRatio || 1) + ' (drawn at ' + renderer.getPixelRatio() + ')', speed: speed,
+      camera: sv && sv.open ? 'shot view' : (follow ? 'follow' : 'free'), canvases: document.getElementsByTagName('canvas').length, shotViewOpened: shotViewOpened,
+      settings: 'shadows ' + (shadowsOn ? SHQ + ' ' + shDetail : 'off') + ', sky ' + on(skyOn) + ', haze ' + on(hazeOn) + ', halo ' + on($('sw-halo').checked) +
+        ', objects ' + objects + ', trees ' + on(layers.trees.visible) + ', bushes ' + on(layers.bushes.visible) + ', water ' + on(layers.water.visible) +
+        ', outside ' + outsideMode + ', crowns ' + $('sel-crowns').value + ', relief ' + $('sel-relief').value + ', hits ' + on(hitsOn) +
+        ', cost meter ' + on(costOn) + ' (no wind setting)',
+      map: (FILE && FILE.record && FILE.record.map) || MAP };
+  }
   var lastList = 0, lastMeter = 0;
   function frame(now) {
     requestAnimationFrame(frame);
-    // the shot view with Hits' viewer on: this frame runs in Hits' frame loop, after Hits' camera (shot-view.js)
-    if (shotView && shotView.drives()) { shotView.want(); return; }
     frameBody(now);
   }
   function frameBody(now) {
-    var dt = lastFrame ? Math.min(0.25, (now - lastFrame) / 1000) : 0;
-    if (lastFrame) intervals.push([now, now - lastFrame]);
+    var gap = lastFrame ? now - lastFrame : 0, dt = Math.min(0.25, gap / 1000);
+    if (lastFrame) intervals.push([now, gap]);
     lastFrame = now;
     if (playing) { var t0 = t; t += dt * speed; if (shotView) t = shotView.clamp(t0, t); if (t >= tEnd) { t = tEnd; togglePlay(); } }
     keyMove(dt);
     var c0 = performance.now(), cq = null;
     if (costOn && timerExt && !benchBusy && costQ.length < 6) { cq = gl.createQuery(); gl.beginQuery(timerExt.TIME_ELAPSED_EXT, cq); }
     step(t);  // inside the timers: the cascades' shadow maps are drawn here
-    if (sheetOn) renderer.render(sheetOn.scene, sheetOn.cam); else renderer.render(scene, camera);
+    // the shot view (shot-view.js): the target painted with Hits' map for this camera before the render, Hits' marks after it
+    if (sheetOn) renderer.render(sheetOn.scene, sheetOn.cam); else { if (shotView) shotView.paint(t, now); renderer.render(scene, camera); if (shotView) shotView.overlay(); }
     if (cq) { gl.endQuery(timerExt.TIME_ELAPSED_EXT); costQ.push(cq); }
-    cpuTimes.push([now, performance.now() - c0]);
+    var cms = performance.now() - c0;
+    cpuTimes.push([now, cms]);
+    if (frameLog) frameLog.frame(gap, cms, playing);
     if (costOn) costTick(now);
     if (now - lastList > 250) { lastList = now; renderList(false); tickDestrList(); $('slider').value = t; $('time').textContent = fmt(t) + '  (battle ' + fmt(t - tBattle) + ')'; }
     if (now - lastMeter > 500) {
@@ -2728,7 +2909,7 @@
     stepDestruction(time); if (dApplied !== d0 || rs) shadowDirty();  // objects broke / the battle went back: casters changed
     stepFlash(time);
     poseVehicles(time); poseTracers(time); fxStep(time);
-    if (!(shotView && shotView.place(time))) placeCamera();  // the shot view: this camera from Hits' (shot-view.js place)
+    placeCamera();
     splitPlants(false); placeSun();  // placeSun last: it reads the casters' redraw flag
   }
 
@@ -3112,6 +3293,9 @@
     // tile: what Bullba Hits' vehicle tile shows (web/hit-rows.js) - the team lists and the shots panel (BACKLOG 109)
     return { model: true, name: veh.name, cls: veh['class'], tile: { name: veh.name, level: veh.level, 'class': veh['class'], role: veh.role, nation: veh.nation, type: veh.type }, turretAt: tt.slice(12, 15), gunAt: [gt[12] - tt[12], gt[13] - tt[13], gt[14] - tt[14]],
       pitch: [pmin, pmax], wheels: wheels.length, gunLength: gl0, turretGun: turretGun(veh.compactDescriptor),
+      // 20.11 (the shot view, shot-view.js partTransforms): each part's rest transform by its id, and which parts this page draws
+      rest: veh.parts.reduce(function (o, p) { if (p.id != null && p.transform) o[p.id] = { transform: p.transform, modelKey: p.modelKey || null }; return o; }, {}),
+      drawn: veh.parts.filter(function (p) { return p.wheel || ['chassis', 'hull', 'turret', 'gun'].indexOf(p.name) >= 0; }).map(function (p) { return p.id; }),
       hull: geo(['chassis', 'hull'].concat(wheels), [0, 0, 0]), turret: geo(['turret'], tt.slice(12, 15)), gun: gun };
   }
   // files (the battle file's vehicleFiles, 19.11): {hits: [ids of data/vehicles], viewer: [ids of data/playback/vehicles -
@@ -3164,6 +3348,7 @@
   // polling of a missing file; a look every FALLBACK_MS only in case the word does not come). Outside the game nobody can
   // make it. The battle itself is built from the source in the page (battle-page.js, battle.js) and kept in IndexedDB.
   var host = window.BullbaHost || { game: false, canSend: function () { return false; } };
+  frameLog = makeFrameLog();
   var BASE = '../', PAGE_BASE = '', FORMAT = 2, FALLBACK_MS = 250 /* 19.11: in the game the mod's word never comes (the client has no executeJavascript), the look is how the page learns */, WAIT_MS = 10 * 60 * 1000;
   var received = {}, FILE = null, waited = { mod: 0 };
   // 19.11 (the shot view): Bullba Hits' own reader (web/local-data.js, loaded before this file) reads Hits' battle and its
@@ -3219,7 +3404,7 @@
     return readFile(bid).catch(function () {
       if (!host.canSend()) throw new Error('This battle is not prepared for the 3D replay yet. Open it here from Bullba Hits in the game once.');
       return untilMade(bid);
-    }).then(function (b) { FILE = b; return b; });
+    }).then(function (b) { FILE = b; specialWarning(); return b; });
   }
   // the battle from its source (BattlePage.obtain); its source or definitions file gone (removed by hand): the mod writes
   // them again (playback.current checks they are there) and says so
@@ -3289,6 +3474,9 @@
       (f.kept ? ' ★' : '') + (cv && fv && cv !== fv ? ' (older client)' : '');
   }
   function fileRows() { return FILES && Array.isArray(FILES.files) ? FILES.files.filter(function (f) { return f && f.id; }) : []; }
+  // R9 (20.11): the open battle is named once, by this choice (the page's former title before it, map and date again, is
+  // gone); a battle no list names gets its date and map here once it is loaded, 'This battle' until then
+  var thisBattle = null;
   function battleSelect(index) {
     if (index !== undefined) INDEX = index;
     var sel = $('sel-battle'), list = (INDEX && Array.isArray(INDEX.battles) ? INDEX.battles : []).filter(function (b) { return b && b.id; });
@@ -3297,24 +3485,128 @@
     BATTLES = list.filter(function (b) { return !tied[b.id]; }).sort(function (a, b) { return (+b.startedAt || 0) - (+a.startedAt || 0); });
     var known = files.some(function (f) { return (f.battle || f.id) === BID; }) || BATTLES.some(function (b) { return b.id === BID; });
     sel.replaceChildren();
-    function add(parent, value, text) {
-      var o = document.createElement('option'); o.value = value; o.textContent = text; o.selected = value === BID; parent.appendChild(o);
+    // R4 (BACKLOG 112, 20.11): a battle of a special mode (the mod's replay_files.special_mode: its 'special' in the
+    // file's entry or the Hits battle's row) starts with ⚠ and names the mode in the option's title
+    function add(parent, value, text, special) {
+      var o = document.createElement('option'); o.value = value; o.textContent = (special ? '⚠ ' : '') + text; o.selected = value === BID;
+      if (special) { o.setAttribute('data-special', special.name || ''); o.title = 'Special battle mode: ' + special.name + '\nThe picture may be wrong for this mode.'; }
+      parent.appendChild(o);
     }
     if (!BID) add(sel, '', 'Choose a replay');
-    else if (!known) add(sel, BID, 'This battle');
+    else if (!known) { add(sel, BID, thisBattle || 'This battle'); sel.lastChild.setAttribute('data-this', ''); }
     if (files.length) {
       var g = document.createElement('optgroup'); g.label = 'Replay files';
-      files.forEach(function (f) { add(g, f.battle || f.id, fileText(f, FILES.client)); });
+      files.forEach(function (f) { add(g, f.battle || f.id, fileText(f, FILES.client), specialOf(f.battle || f.id)); });
       sel.appendChild(g);
     }
     var parent = sel;
     if (files.length && BATTLES.length) { parent = document.createElement('optgroup'); parent.label = 'Bullba Hits battles'; sel.appendChild(parent); }
     BATTLES.forEach(function (b) {
-      add(parent, b.id, b.map ? [battleWhen(+b.startedAt), b.map, b.vehicle && b.vehicle.name].filter(Boolean).join(' · ') : 'This battle');
+      add(parent, b.id, b.map ? [battleWhen(+b.startedAt), b.map, b.vehicle && b.vehicle.name].filter(Boolean).join(' · ') : 'This battle', specialOf(b.id));
     });
     sel.value = BID;
     noBattle();
+    specialWarning();
   }
+  // R4 (BACKLOG 112): the special mode of a battle id (a file's 'f-' id or a Hits battle's): the opened battle's own file
+  // first (data/playback/<id>.js record.special, made by the mod), then its file entry, then its Hits row; null: standard
+  // or unknown
+  function specialOf(id) {
+    if (!id) return null;
+    if (id === BID && FILE && FILE.record && FILE.record.special) return FILE.record.special;
+    var f = fileRows().filter(function (x) { return x.id === id || x.battle === id; }).filter(function (x) { return x.special; })[0];
+    if (f) return f.special;
+    var b = INDEX && Array.isArray(INDEX.battles) ? INDEX.battles.filter(function (x) { return x && x.id === id && x.special; })[0] : null;
+    return b ? b.special : null;
+  }
+  // On opening a battle of a special mode: a warning in the middle of the window, once per opening, with "Don't show
+  // again" - remembered as the Settings switch 'warn on special modes' (the page's remembered settings), read before the
+  // settings are applied (BullbaSettings peek) since the warning comes while the battle loads
+  var specialShown = false;
+  function specialWarning() {
+    var s = BID && !specialShown ? specialOf(BID) : null, sw = $('sw-special-warn');
+    if (!s || !sw) return;
+    if (!settingStore.peek(sw)) return;
+    specialShown = true;
+    $('special-mode').textContent = s.name;
+    $('special-again').checked = false;
+    $('special-warn').hidden = false;
+  }
+  $('special-ok').onclick = function () {
+    $('special-warn').hidden = true;
+    if ($('special-again').checked) { $('sw-special-warn').checked = false; settingStore.remember($('sw-special-warn'), false); }
+  };
+
+  // ------------------------------------------------------------------ full screen (R5, BACKLOG 110, 20.11)
+  // The top line's full-screen button. Outside the game: the page's own full screen (the Fullscreen API; Esc or the button
+  // leaves it). In the game the window's frame cannot be taken off, so the mod reopens this page in the client's frameless
+  // full-screen view (presentation.enter_fullscreen) and back in the window (leave_fullscreen); the page is loaded again
+  // there, so what it shows travels in the fragment the mod gives it: battle, time, camera, speed, play/pause, the followed
+  // vehicle, the open shots panel (viewState; restoreView applies it once the battle is built). In that view (#view=full)
+  // the page has its own close button; Esc leaves the full screen (the page's key, and the view's own Esc in the mod).
+  var FULL_VIEW = params.view === 'full';
+  function viewState() {
+    var parts = ['battle=' + encodeURIComponent(BID || '')], n = function (v, d) { return (+v || 0).toFixed(d); };
+    if (battle) {
+      parts.push('at=' + n(t, 2), 'cam=' + [n(cam.tx, 2), n(cam.ty, 2), n(cam.tz, 2), n(cam.yaw, 4), n(cam.pitch, 4), n(cam.dist, 2)].join(','),
+        'speed=' + speed, 'play=' + (playing ? 1 : 0));
+      if (follow) parts.push('follow=' + follow.v.id);
+      var open = panel && panel.shown(); if (open != null) parts.push('panel=' + open);
+    }
+    return parts.join('&');
+  }
+  // the carried state back, once (the battle built and the remembered settings applied)
+  function restoreView() {
+    if (!battle || (params.at == null && params.cam == null)) return;
+    var at = +params.at;
+    if (params.at != null && isFinite(at)) { t = Math.min(tEnd, Math.max(0, at)); $('slider').value = t; }
+    var c = String(params.cam || '').split(',').map(Number);
+    if (c.length === 6 && c.every(isFinite)) {
+      setFollow(null);
+      cam.tx = c[0]; cam.ty = c[1]; cam.tz = c[2]; cam.yaw = c[3]; cam.pitch = c[4]; cam.dist = c[5]; cam.tyGoal = null;
+      if (heightAt) cam.tyOff = cam.ty - heightAt(cam.tx, cam.tz);
+    }
+    if (SPEEDS.indexOf(+params.speed) >= 0 && +params.speed !== speed) { var v = $('speed-value'); v.value = params.speed; v.dispatchEvent(new Event('change')); }
+    var f = params.follow != null ? fxById[+params.follow] : null;
+    if (f) setFollow(f);
+    var p = params.panel != null ? fxById[+params.panel] : null;
+    if (p) { var side = p.role === 'enemy' ? 'enemy' : 'own'; shotsPanel().open(p.v.id, $('list-' + side), side); }
+    if ((params.play === '1') !== playing) togglePlay();
+  }
+  function fullOn() { return FULL_VIEW || !!document.fullscreenElement; }
+  function fullLook() {
+    var on = fullOn(), b = $('fullscreen');
+    b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on));
+    b.title = on ? 'Exit full screen\nBack to the window, with the same battle, time and camera.\n- Esc does the same'
+      : 'Full screen\nShows the replay over the whole screen, without the window\'s frame.\n- in the game the view opens again with the same battle, time and camera\n- this button or Esc returns to the window';
+    $('close-view').hidden = !FULL_VIEW;
+  }
+  function toggleFull() {
+    if (host.game) {
+      if (!host.canSend()) return;
+      host.send('bullba_hits', { action: 'fullscreen', on: !FULL_VIEW, state: viewState() }).catch(function (e) { console.warn('Bullba Hits fullscreen failed: ' + e.message); });
+      return;
+    }
+    var d = document, r = null;
+    if (d.fullscreenElement) r = d.exitFullscreen ? d.exitFullscreen() : null;
+    else if (d.documentElement.requestFullscreen) r = d.documentElement.requestFullscreen();
+    if (r && r.then) r.then(fullLook, function (e) { console.warn('Full screen refused: ' + e.message); });
+  }
+  $('fullscreen').onclick = toggleFull;
+  $('close-view').onclick = function () {
+    if (host.game && host.canSend()) host.send('bullba_hits', { action: 'fullscreen', on: false, close: true }).catch(function (e) { console.warn('Bullba Hits close failed: ' + e.message); });
+  };
+  document.addEventListener('fullscreenchange', fullLook);
+  // Esc in the game's full-screen view: back to the window (outside the game the browser's own Esc leaves its full screen)
+  window.addEventListener('keydown', function (e) { if (FULL_VIEW && e.key === 'Escape') { e.preventDefault(); toggleFull(); } });
+  // the mod's Esc (the view's own key) reopens the window with the last state the page told: told every 2 s when changed
+  var toldState = '';
+  if (FULL_VIEW) setInterval(function () {
+    if (!battle || !host.canSend()) return;
+    var s = viewState(); if (s === toldState) return; toldState = s;
+    host.send('bullba_hits', { action: 'viewState', state: s }).catch(function () {});
+  }, 2000);
+  fullLook();
   // Opened with no battle (the viewer's own button): round 14 (the user, 19.11) - one list only, the selector at the top;
   // the separate panel of replays is gone (its rows, buttons with overflow:hidden in a flex column of 1200+ entries,
   // shrank to empty strips). The message in the middle points at the selector.
@@ -3326,7 +3618,8 @@
   }
   function choose(id) {
     if (!/^[-a-zA-Z0-9_]{1,100}$/.test(id) || id === BID) return;
-    location.hash = (host.game ? 'host=game&' : '') + 'battle=' + encodeURIComponent(id);
+    // R5: a battle chosen in the game's full-screen view stays in it (the mod's view=full kept)
+    location.hash = (host.game ? 'host=game&' : '') + (FULL_VIEW ? 'view=full&' : '') + 'battle=' + encodeURIComponent(id);
     location.reload();
   }
   // the replay files: in the game the mod reads their headers again first ('replayFiles', a cached scan) and says when
@@ -3346,10 +3639,12 @@
   // scene is built (each control's own handler runs), the defaults are this page's HTML.
   // version 2 (round 14): the sky's default turned to off and its switch moved to the top line - a box of version 1 holds
   // the sky as the old default left it (every control is written), so its sky value is dropped and the new default holds
-  var settingStore = BullbaSettings.bind({ key: 'bullba-playback-settings', version: 2,
+  // version 3 (20.11, the user on 1.14): the sky's default turned to on - the same: a box of an older version holds the sky
+  // off as that default wrote it (not told apart from a choice), so it is dropped once and the new default holds
+  var settingStore = BullbaSettings.bind({ key: 'bullba-playback-settings', version: 3,
     read: function (box) {
       var v = box && box.values && typeof box.values === 'object' ? box.values : null;
-      if (v && !(box.v >= 2)) { v = Object.assign({}, v); delete v['sw-sky']; }
+      if (v && !(box.v >= 3)) { v = Object.assign({}, v); delete v['sw-sky']; }
       return v;
     },
     controls: [].slice.call(document.querySelectorAll('#settings input[id], #settings select[id], #sw-sky, #sw-flash, #speed-value')).filter(function (el) { return el.id !== 'sw-inputlog'; }) });
@@ -3393,7 +3688,8 @@
       v.modulesMatch = md && md.model && bt && md.turretGun ? bt[0] === md.turretGun[0] && bt[1] === md.turretGun[1] : null;
     });
     $('mapname').textContent = mapData.title + ' (' + battle.meta.gameplay + ')' + (battle.meta.dateTime ? ' ' + battle.meta.dateTime : '');
-    $('title').textContent = mapData.title + (battle.meta.dateTime ? ' · ' + battle.meta.dateTime : '');
+    thisBattle = [battle.meta.dateTime, mapData.title].filter(Boolean).join(' · ');
+    var thisOpt = $('sel-battle').querySelector('option[data-this]'); if (thisOpt) thisOpt.textContent = thisBattle;
     setupHaze();  // before any material compiles (it patches three.js's fog chunks)
     buildTerrain(mapData.terrain);
     buildVisual(mapData.visual, mapData.atlas);
@@ -3428,10 +3724,9 @@
     setVehicleColor();  // round 14: before the tint and the halo (the halo takes the model's colour)
     setTeamTint(null);  // round 13: the slider's value (its default or the remembered one)
     setHalo(true, null);
-    setHaze(true); setSky(false);
-    var a = mapData.arena; cam.tx = (a[0] + a[2]) / 2; cam.tz = (a[1] + a[3]) / 2;
-    cam.ty = heightAt(cam.tx, cam.tz) + cam.tyOff;
-    resize(); renderList(true); setFollow(null);
+    setHaze(true); setSky($('sw-sky').defaultChecked);  // 20.11: the HTML's default (on); the remembered value comes with restore
+    resize(); renderList(true);
+    var startKind = startView(own);
     var tBuilt = performance.now();
     $('msg').style.display = 'none';
     requestAnimationFrame(frame);
@@ -3439,8 +3734,9 @@
       buildImpostors(mapData.trees.kinds);
       settingStore.restore();  // runs every control's handler, the crowns' setCrowns among them
       $('reset-settings').onclick = settingStore.reset;
+      restoreView();  // R5: the state the full-screen switch carried (time, camera, speed, play, follow, panel)
       window.__ready = { jsBuild: jsBuild, battleBuild: battleInfo, load: +(tLoaded - loadStart).toFixed(0), build: +(tBuilt - tLoaded).toFixed(0), impostors: +(performance.now() - tBuilt).toFixed(0), total: +(performance.now() - loadStart).toFixed(0),
-        vehicles: vehicles.length, boxes: vehicles.filter(function (r) { return !r.md.model; }).length, shots: shots.length, own: own && own.type, ownId: own && own.id, owned: battle.vehicles.filter(function (v) { return v.own; }).length,
+        view: startKind, vehicles: vehicles.length, boxes: vehicles.filter(function (r) { return !r.md.model; }).length, shots: shots.length, own: own && own.type, ownId: own && own.id, owned: battle.vehicles.filter(function (v) { return v.own; }).length,
         destructionEvents: dEvents.length, s3tc: s3tc,
         hits: { points: fxHits.length, muzzles: fxMuzzles.length, stickerMarks: (battle.marks || []).length, marks: fxMarkInfo } };
       report(window.__ready);
@@ -3518,8 +3814,34 @@
   }
   window.MapBench = { shotsPanel: function () { return shotsPanel(); },
     // the shot view (19.11): its state, the clock, this camera's eye in game coordinates
+    frameLogState: function () { return frameLogState(); },
     shotRows: function (id) { return BullbaShotsPanel.rows(battle, id); }, shotViewer: function () { return shotView ? shotView.viewer() : null; },
     shotView: function () { var s = shotView ? shotView.state() : null; if (s) { s.t = t; s.playing = playing; s.speed = speed; s.eye = [camera.position.x, camera.position.y, -camera.position.z]; } return s; },
+    // the shot view's checks (tests/page/shot_view.cjs, 20.11): the objects, and one frame drawn now as frameBody draws it and
+    // read back in the same task. o: {paint: false - the target in its own look; mask: a material the target is drawn with
+    // instead (no Hits marks); overlay: false - no Hits marks; castShadow: false - the target casts none; add: objects in the
+    // scene for this frame}. -> the drawing buffer's RGBA bytes
+    shotObjects: function (id) { var r = fxById[id]; return { scene: scene, camera: camera, renderer: renderer, group: r ? r.group : null, visible: !!(r && r.visible), index: r ? vehicles.indexOf(r) : -1, layers: layers }; },
+    shotFrame: function (id, o) {
+      o = o || {}; var r = fxById[id], meshes = [], kept = [], bare = [];
+      (o.add || []).forEach(function (x) { scene.add(x); });
+      step(t);
+      // o.bare: the target alone on the terrain - the map's objects, its water and the other vehicles not drawn this frame
+      if (o.bare) { ['visual', 'objects', 'trees', 'bushes', 'mode', 'water'].forEach(function (k) { bare.push([layers[k], layers[k].visible]); layers[k].visible = false; });
+        vehicles.forEach(function (x) { if (x !== r) { bare.push([x.group, x.group.visible]); x.group.visible = false; } }); }
+      if (shotView && o.paint !== false) shotView.paint(t, null); else if (r) shotLook(r, null);
+      if (r) r.group.traverse(function (m) { if (m.isMesh && m.castShadow) meshes.push(m); });
+      meshes.forEach(function (m) { kept.push([m.material, m.castShadow]); if (o.mask) m.material = o.mask; if (o.castShadow === false) m.castShadow = false; });
+      if (o.castShadow === false) { step(t); if (shotView && o.paint !== false) shotView.paint(t, null); meshes.forEach(function (m) { if (o.mask) m.material = o.mask; }); }
+      renderer.render(scene, camera);
+      if (shotView && o.overlay !== false && !o.mask) shotView.overlay();
+      var px = new Uint8Array(gl.drawingBufferWidth * gl.drawingBufferHeight * 4);
+      gl.readPixels(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight, gl.RGBA, gl.UNSIGNED_BYTE, px);
+      meshes.forEach(function (m, i) { m.material = kept[i][0]; m.castShadow = kept[i][1]; });
+      bare.forEach(function (x) { x[0].visible = x[1]; });
+      (o.add || []).forEach(function (x) { scene.remove(x); });
+      return px;
+    },
     camera: function () { return { tx: cam.tx, ty: cam.ty, tz: cam.tz, yaw: cam.yaw, pitch: cam.pitch, dist: cam.dist }; }, rocks: rockInfo, fogProbe: fogProbe, circles: drawnCircles, mapCircles: function () { return (mapData && mapData.mode && mapData.mode.circles) || []; }, gpu: async function (n, every) { var g = await gpuTimes(n || 40, function () { if (every) shadowsRedrawAll(); step(t); }); return +quant(g, 0.5).toFixed(3); }, shadowInfo: shadowInfo, vehicleShadowInfo: vehicleShadowInfo, render: function () { step(t); renderer.render(scene, camera); }, run: runBench, groundBench: runGroundBench, shadowBench: runShadowBench, shadowQuality: setShadowQuality, grain: setGrain, ground: setGround, relief: setRelief, light: setLight, lightInfo: function () { return lightInfo; }, g5Info: function () { return g5Info; },
     view5: function (name) { views5()[name](); }, cost: groundCost, sheet: plantSheet, playback: runPlayback, whereVisual: whereVisual, ensureCollision: ensureCollision,
     split: function () { splitPlants(true); },
@@ -3540,6 +3862,8 @@
     seek: function (x) { t = x; }, follow: function (i) { setFollow(i == null ? null : vehicles[i]); },
     followOwn: function () { setFollow(vehicles.filter(function (r) { return r.v.own; })[0] || vehicles[0]); },
     battleStart: function () { return tBattle; },
+    // R7: the opening view again, for the page test - none: as if the battle had no own vehicle
+    startView: function (none) { return startView(none ? null : battle.vehicles.filter(function (v) { return v.own; })[0]); },
     teams: function () { return vehicles.map(function (r) { return { id: r.v.id, team: r.v.team, role: r.role }; }); },
     followId: function (id) { setFollow(vehicles.filter(function (r) { return r.v.id === id; })[0] || null); },
     mode: function () { var m = mapData.mode; return m.controlPoint || m.bases[0] || { x: 0, z: 0 }; },

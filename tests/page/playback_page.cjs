@@ -30,6 +30,8 @@
  * The base circles (19.11.2026): the rings drawn equal the map file's WTCP records of the battle's mode (two of 50 m).
  * The rocks (19.11.2026): the JS-built map has the rock shader's materials (Malinovka's cliffs), its rock models drawn
  * with them and their DXT5 array texture created with one layer per texture the map lists.
+ * 20.11.2026: R7 the opening view (behind the own vehicle, following it; its angle and distance printed), R6 the page's one
+ * type scale (its sizes printed), R9 the top line's groups at 900-1920 px, the sky on by default.
  * The one figure printed: the time from opening the page to ready, and the mod job's time before it.
  * No fixture, no client packages or no browser: SKIP (exit 77).
  */
@@ -139,6 +141,66 @@ const reported = (host) => (host || []).filter((c) => c.action === 'playbackRepo
       check('every vehicle of the battle is drawn, with its model', state.vehicles === 30 && state.boxes === 0, 'vehicles ' + state.vehicles + ', boxes ' + state.boxes);
       check('shots, hit points and destruction come through', state.shots > 40 && state.hits.points > 30 && state.destructionEvents > 0,
         JSON.stringify({shots: state.shots, hits: state.hits, destruction: state.destructionEvents}));
+      // R7 (20.11.2026, the user on 1.14): the opening view - behind the own vehicle at the battle's start, 20 m, following it.
+      // The one number: the angle between the camera's view axis (its eye to the point looked at, placeCamera's formula) and
+      // the direction from the eye to the own vehicle (its origin 1.2 m up), and that distance. The old rule (the arena's
+      // centre from 700 m, a free camera) only when the battle has no own vehicle (MapBench.startView(true)).
+      const VIEW = "(() => { const c = MapBench.camera(), v = MapBench.vehiclesAt().filter((x) => x.role === 'own')[0];" +
+        " const e = [c.tx + c.dist * Math.cos(c.pitch) * Math.sin(c.yaw), c.ty + c.dist * Math.sin(c.pitch), -c.tz + c.dist * Math.cos(c.pitch) * Math.cos(c.yaw)];" +
+        " const a = [c.tx - e[0], c.ty - e[1], -c.tz - e[2]], b = [v.x - e[0], v.y + 1.2 - e[1], -v.z - e[2]], n = (x) => Math.hypot(x[0], x[1], x[2]);" +
+        " const own = document.querySelector('.veh.own'), fol = document.querySelectorAll('.veh.follow');" +
+        " return {angle: Math.acos((a[0] * b[0] + a[1] * b[1] + a[2] * b[2]) / n(a) / n(b)) * 180 / Math.PI, dist: n(b), cam: c, hullYaw: v.yaw, t: MapBench.state().t, start: MapBench.battleStart()," +
+        "  follows: fol.length === 1 && fol[0] === own, free: document.getElementById('free').classList.contains('on')}; })()";
+      const v7 = await page.evaluate(VIEW);
+      console.log('R7 at open: the view axis ' + v7.angle.toFixed(1) + ' deg off the own vehicle, ' + v7.dist.toFixed(1) + ' m from it');
+      check('R7: the battle opens at its start behind the own vehicle, the camera following it: ' + v7.angle.toFixed(1) + ' deg off its direction, ' + v7.dist.toFixed(1) + ' m away',
+        state.view === 'own' && v7.follows && !v7.free && v7.angle <= 10 && v7.dist >= 15 && v7.dist <= 30 && Math.abs(v7.t - v7.start) < 1e-6 &&
+        Math.abs(Math.cos(v7.cam.yaw + v7.hullYaw) - 1) < 0.01, JSON.stringify(v7));
+      const centre = await page.evaluate("(() => { const k = MapBench.startView(true), c = MapBench.camera(); return {kind: k, cam: c, follows: document.querySelectorAll('.veh.follow').length, free: document.getElementById('free').classList.contains('on')}; })()");
+      const back = await page.evaluate("MapBench.startView()");
+      check('R7: the map\'s centre from 700 m, free camera, only with no own vehicle; the own view back after it', centre.kind === 'centre' && centre.cam.dist === 700 && centre.follows === 0 && centre.free && back === 'own',
+        JSON.stringify({centre: centre, back: back}));
+      // R6 (20.11.2026): one type scale - every text shown (the settings, the destruction list and a shots panel open) is
+      // 12 px (text), 11 px (a small mark in a row: tier, time, 'shots', the Hits link) or 13 px (a heading), every line 16 px;
+      // a team row's text line = the top line's = a shot row's. The sizes and the kinds are printed.
+      const types = await page.evaluate("(() => { document.getElementById('settings-btn').click(); document.getElementById('destr').open = true;" +
+        " const b = document.querySelector('#list-own .veh .sp-btn'); if (b) b.click(); const kinds = {};" +
+        " for (const el of document.body.querySelectorAll('*')) { if (/^(SCRIPT|STYLE|CANVAS|OPTION)$/i.test(el.tagName) || el.closest('svg') || el.closest('#inputlog')) continue;" +
+        "  const own = [...el.childNodes].some((x) => x.nodeType === 3 && x.textContent.trim()); if (!own && !/^(BUTTON|SELECT)$/.test(el.tagName)) continue;" +
+        "  const cs = getComputedStyle(el), r = el.getBoundingClientRect(); if (!(r.width > 0 && r.height > 0) || !own && el.tagName !== 'SELECT') continue;" +
+        "  const k = (el.id ? '#' + el.id : el.tagName.toLowerCase() + (el.classList[0] ? '.' + el.classList[0] : '')); (kinds[cs.fontSize + '/' + cs.lineHeight] = kinds[cs.fontSize + '/' + cs.lineHeight] || {})[k] = 1; }" +
+        " const out = {}; Object.keys(kinds).forEach((s) => { out[s] = Object.keys(kinds[s]); });" +
+        " document.getElementById('settings-btn').click(); document.getElementById('destr').open = false; if (b) b.click(); return out; })()");
+      const sizes = [...new Set(Object.keys(types).map((s) => s.split('/')[0]))].sort();
+      console.log('R6 font sizes on the page: ' + sizes.join(', ') + '\n' + Object.keys(types).map((s) => '  ' + s + ': ' + types[s].join(' ')).join('\n'));
+      check('R6: one type scale - sizes ' + sizes.join(', ') + ' (before: 10, 11, 12, 13, 15 px), every line 16 px but a select\'s own',
+        sizes.every((s) => ['11px', '12px', '13px'].includes(s)) && Object.keys(types).every((s) => /\/(16px|normal)$/.test(s)) &&
+        Object.keys(types).every((s) => !/normal$/.test(s) || types[s].every((k) => k.indexOf('select') === 0 || k[0] === '#' && /^#sel-/.test(k))), JSON.stringify(types));
+      // R9 (20.11.2026, the user on 1.14): the top line in three groups - the battle (Hits, the choice; the battle named once,
+      // the former title gone), the view (Settings, the sky to its right a little apart), the window (full screen, close) -
+      // and, at 900-1920 px, the open settings never over the sky switch, nothing in the line over another or cut
+      const R9 = "(() => { const q = (s) => document.querySelector(s), R = (el) => el.getBoundingClientRect(), sel = q('#sel-battle'), line = q('#topline');" +
+        " const text = [...line.querySelectorAll('button, label, span')].filter((e) => !e.closest('select') && !e.contains(sel)).map((e) => e.textContent).join(' ');" +
+        " const st = q('#settings'), wasOpen = !st.hidden; if (!wasOpen) q('#settings-btn').click();" +
+        " const sky = q('#sw-sky').closest('label'), set = R(q('#settings-btn')), sk = R(sky), pane = R(st), meter = R(q('#meter'));" +
+        " const parts = [...line.querySelectorAll('.tl-group > *')].filter((e) => !e.hidden).map(R); let cross = 0;" +
+        " for (let i = 0; i < parts.length; i++) for (let j = i + 1; j < parts.length; j++) if (parts[i].right > parts[j].left + 0.5 && parts[j].right > parts[i].left + 0.5) cross++;" +
+        " const out = {title: !!q('#title'), named: sel.selectedOptions[0] && sel.selectedOptions[0].textContent, nameElsewhere: /Malinovka/.test(text)," +
+        "  battle: !!q('.tl-battle #back') && !!q('.tl-battle #sel-battle'), view: q('.tl-view').firstElementChild === q('#settings-btn') && q('.tl-view').contains(sky)," +
+        "  window: !!q('.tl-window #fullscreen') && !!q('.tl-window #close-view'), seps: line.querySelectorAll('.tl-sep').length, skyGap: sk.left - set.right," +
+        "  over: !(sk.bottom <= pane.top || sk.top >= pane.bottom || sk.right <= pane.left || sk.left >= pane.right), inside: sk.left >= meter.left && sk.right <= meter.right," +
+        "  skyCut: sky.scrollWidth > sky.clientWidth + 0.5, cross: cross, width: innerWidth};" +
+        " if (!wasOpen) q('#settings-btn').click(); return out; })()";
+      const r9 = [];
+      for (const w of [900, 1280, 1920]) {
+        await page.send('Emulation.setDeviceMetricsOverride', {width: w, height: Math.round(w * 9 / 16), deviceScaleFactor: 1, mobile: false});
+        await new Promise(function (r) { setTimeout(r, 200); });
+        r9.push(await page.evaluate(R9));
+      }
+      await page.send('Emulation.clearDeviceMetricsOverride');
+      check('R9: the top line by meaning - Hits and the battle | Settings, sky right of it | full screen, close; the battle named once (' + (r9[0] && r9[0].named) + '); at 900, 1280, 1920 px the open settings never over the sky, nothing over another',
+        r9.length === 3 && r9.every((x) => !x.title && x.named && /Malinovka/.test(x.named) && !x.nameElsewhere && x.battle && x.view && x.window && x.seps === 2 &&
+          x.skyGap >= 4 && x.skyGap <= 16 && !x.over && x.inside && !x.skyCut && x.cross === 0), JSON.stringify(r9));
       // the base circles (19.11): from the map's own space.bin WTCP section, copied by the mod and read by the page's
       // builder - Malinovka's standard battle (ctf) has both teams' bases of 50 m (cache/base-circle/wtcp_all.json)
       const rings = await page.evaluate('({drawn: MapBench.circles(), data: MapBench.mapCircles()})');
@@ -160,6 +222,25 @@ const reported = (host) => (host || []).filter((c) => c.action === 'playbackRepo
         if (after.t > before) break;
       }
       check('Play moves the battle clock', after && after.playing && after.t > before, JSON.stringify({before: before, after: after}));
+      // the frame log (20.11, web/playback/frame-log.js): with #host=game, 10 s of playing write one 'playback frames' line
+      // through the input log's channel, its fields from this page's state (the cadence on a fake clock: tests/page/frame_log.cjs);
+      // headless, the first frames after Page.bringToFront come seconds apart, so the first line may be the stall line
+      let frames = null;
+      for (let i = 0; i < 60 && !frames; i++) {
+        await new Promise(function (r) { setTimeout(r, 500); });
+        frames = await page.evaluate("(window.__host.filter(function (p) { return p.action === 'inputLog'; }).map(function (p) { return p.lines[0]; }).filter(function (l) { return /^playback frames /.test(l); })[0]) || null");
+      }
+      check('the frame log: 10 s of playing in the game write one line with the page\'s own figures', !!frames &&
+        /^playback frames 1\/20 \((10 s after the start|an interval over 250 ms)\): \d+\.\d s played, \d+ frames; interval median [\d.]+ \/ p95 [\d.]+ \/ worst [\d.]+ ms, over 33 ms \d+, over 100 ms \d+; page CPU per frame \(step \+ render\) median [\d.]+ \/ p95 [\d.]+ \/ worst [\d.]+ ms; canvas \d+x\d+ dpr [\d.]+ \(drawn at [\d.]+\); playing x\d+, camera (follow|free); WebGL contexts [1-9]\d*, canvases [1-9]\d*; shot view opened no; shadows .*\(no wind setting\); map 02_malinovka$/.test(frames), frames);
+      if (frames) console.log('frame log line: ' + frames);
+      // 20.11 (the user): no function on the middle button - its drag does not pan (a pan frees the camera), its press
+      // kept from the browser's autoscroll
+      const mid = await page.evaluate("(() => { const c = document.querySelector('#view canvas') || document.querySelector('canvas'), free = () => document.getElementById('free').classList.contains('on'), was = free();" +
+        " const down = new PointerEvent('pointerdown', {button: 1, buttons: 4, clientX: 300, clientY: 300, pointerId: 1, bubbles: true, cancelable: true}); c.dispatchEvent(down);" +
+        " c.dispatchEvent(new PointerEvent('pointermove', {buttons: 4, clientX: 360, clientY: 340, pointerId: 1, bubbles: true}));" +
+        " c.dispatchEvent(new PointerEvent('pointerup', {button: 1, clientX: 360, clientY: 340, pointerId: 1, bubbles: true}));" +
+        " return {followedBefore: !was, followedAfter: !free(), prevented: down.defaultPrevented}; })()");
+      check('the middle button does nothing in the viewer: its drag does not pan, its press is kept from autoscroll', mid && mid.followedBefore === mid.followedAfter && mid.prevented, JSON.stringify(mid));
       // the shots panel (19.11, BACKLOG 109): the 'hits' button of the own vehicle's row (the first of the left list) opens
       // the panel beside the list with his rows; a row's click opens its shot view (19.11, tests/page/shot_view.cjs): the battle 2 s
       // before that shot, paused while the view is prepared, the speed kept until the episode starts
@@ -179,13 +260,13 @@ const reported = (host) => (host || []).filter((c) => c.action === 'playbackRepo
         " return {look: look, tint: !!document.getElementById('rng-tint'), foliage: !!document.getElementById('rng-foliage'), oldBox: !!document.getElementById('sw-foliage'), slow: slow, speed: MapBench.state().speed}; })()");
       check('round 13: vehicles drawn flat with seams from their group tables, tint and foliage sliders, the old checkbox gone, speed 1/8 and back',
         r13 && r13.look.meshes >= 3 && r13.look.flat === r13.look.meshes && r13.look.grouped >= 3 && r13.tint && r13.foliage && !r13.oldBox && r13.slow === 0.125 && r13.speed === 1, JSON.stringify(r13));
-      // round 14 (19.11.2026, the user in the game): the sky off by default and in the top line; with it off nothing fades
+      // round 14 (19.11.2026, the user in the game): the sky in the top line (20.11, the user on 1.14: on by default); with it off nothing fades
       // toward a pale colour - a black probe beyond the playable border, looked at above, along and below the horizon
       // through the page's own fog, stays black (it was the pale sky / horizon grey: the rim fade and the haze took the
       // sky's colours by direction whatever the sky switch said); with it on the sky above and the grey below
       const setSky = (on) => page.evaluate("(() => { const s = document.getElementById('sw-sky'); s.checked = " + on + "; s.dispatchEvent(new Event('change')); return MapBench.fogProbe(); })()");
       const skyDefault = await page.evaluate("(() => { const s = document.getElementById('sw-sky'); return s ? {checked: s.checked, top: !!s.closest('#topline'), grey: !!document.getElementById('sw-grey')} : null; })()");
-      check('round 14: the sky switch in the top line, off by default; the grey switch gone', skyDefault && !skyDefault.checked && skyDefault.top && !skyDefault.grey, JSON.stringify(skyDefault));
+      check('the sky switch in the top line, on by default (20.11); the grey switch gone', skyDefault && skyDefault.checked && skyDefault.top && !skyDefault.grey, JSON.stringify(skyDefault));
       const dark = await setSky(false), lit = await setSky(true);
       await setSky(false);
       const black = (c) => c && Math.max(c[0], c[1], c[2]) < 0.05;
@@ -230,7 +311,8 @@ const reported = (host) => (host || []).filter((c) => c.action === 'playbackRepo
       // and pressing it also follows that vehicle; clicking a tile only follows
       const rowsState = "(() => { const gold = getComputedStyle(document.documentElement).getPropertyValue('--gold').trim(); const tile = (row) => row.querySelector('.veh-tile') || row;" +
         " const rows = [].slice.call(document.querySelectorAll('.tlist .veh')); return rows.map((row, i) => { const t = tile(row), cs = getComputedStyle(t), l = row.parentNode.getBoundingClientRect(), r = t.getBoundingClientRect(), b = row.querySelector('.sp-btn');" +
-        " const sides = ['Top', 'Right', 'Bottom', 'Left'].every((s) => parseFloat(cs['border' + s + 'Width']) >= 1 && cs['border' + s + 'Color'] === cs.borderTopColor);" +
+        // R3 (20.11): the left side is Hits' team stripe (3 px, the team's colour, kept while followed), the frame the other three
+        " const sides = ['Top', 'Right', 'Bottom'].every((s) => parseFloat(cs['border' + s + 'Width']) >= 1 && cs['border' + s + 'Color'] === cs.borderTopColor) && parseFloat(cs.borderLeftWidth) === 3;" +
         " const framed = sides && r.left >= l.left && r.right <= l.right && !t.contains(b);" +
         " return {i: i, follow: row.classList.contains('follow'), framed: framed, gold: framed && cs.borderTopColor === (function () { const d = document.createElement('i'); d.style.color = gold; document.body.appendChild(d); const c = getComputedStyle(d).color; d.remove(); return c; })()," +
         " button: !!b && (b.classList.contains('on') || b.getAttribute('aria-pressed') === 'true')}; }); })()";
