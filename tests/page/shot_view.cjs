@@ -14,7 +14,7 @@
  * ran, its faces > 0, pixels of the overlay coloured), the episode plays at x1 and stops paused at the hit event's time,
  * the hit line held before the hit and shown at it; the camera is the shooter's first person (the replay's own camera, or
  * the gun's: near the tracer's start, the figure printed), no lens zoom, the wheel ends it; Replay episode goes back to
- * 2 s before the shot in first person again (21.11, NOTEBOOK S2); Leave gives the free camera and
+ * 2 s before the shot with the camera left as it was (20.11); Leave gives the free camera and
  * the speed back, the target drawn again; no page or console error.
  * The one number printed: faces of the target in Hits' composition, the coloured pixels, the pause time against the hit
  * time, the eye's distance from the tracer's start.
@@ -203,12 +203,12 @@ async function until(page, expr, ms) {
     const pinned = await page.evaluate('MapBench.shotView()');
     check('a click on the target pins a line, read in Hits’ words: "' + pinned.pin + '"', pinned.pinned && /(%|Ricochet|—)/.test(pinned.pin || '') && /mm/.test(pinned.pin || ''), JSON.stringify({pinned: pinned.pinned, pin: pinned.pin}));
     await page.evaluate('document.querySelector(".sv-unpin").click()');
-    // Replay episode: in the shooter's first person again (21.11)
+    // Replay episode: the camera is left as the user put it (20.11: only a row's click puts the shooter's view back)
     await page.evaluate('document.querySelector(".sv-again").click()');
     await sleep(400);
     const again = await page.evaluate('MapBench.shotView()');
-    check('Replay episode: back before the hit, playing at x1, the hit line held, the shooter’s first person again, no pin', again.playing && again.t < again.stop && again.t >= again.start && again.shotHeld && !again.pinned &&
-      again.firstPerson && again.speed === 1 && again.lens.zoom === 1, JSON.stringify({t: again.t, playing: again.playing, held: again.shotHeld, fp: again.firstPerson, view: again.view, speed: again.speed, lens: again.lens}));
+    check('Replay episode: back before the hit, playing at x1, the hit line held, no pin', again.playing && again.t < again.stop && again.t >= again.start && again.shotHeld && !again.pinned &&
+      again.speed === 1 && again.lens.zoom === 1, JSON.stringify({t: again.t, playing: again.playing, held: again.shotHeld, fp: again.firstPerson, view: again.view, speed: again.speed, lens: again.lens}));
     await until(page, 'var s = MapBench.shotView(); s && !s.playing && !s.armed ? s : null', 90000);
     // the camera flown out of the shooter (an orbit drag of 300 px): the shooter is drawn again
     await page.evaluate('(function () { var c = MapBench.shotObjects(' + TARGET + ').renderer.domElement, x = 400, y = 300, o = function (t) { c.dispatchEvent(new PointerEvent(t, {bubbles: true, clientX: x, clientY: y, button: 0, buttons: 1, pointerId: 1, isPrimary: true})); };' +

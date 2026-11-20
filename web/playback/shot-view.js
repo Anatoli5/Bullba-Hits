@@ -45,7 +45,7 @@
    drawn, its shadow kept; flown out of it, it is drawn again.
    The episode: the battle from 2 s before the shot, at x1, stopped at the hit (the row's hit event; a shot with no hit:
    its tracer's end) with the hit line shown from then on; played on, the mode leaves by itself AFTER s past the stop, so
-   the heat map's cost does not run on into the battle. Replay episode: the same, in first person again.
+   the heat map's cost does not run on into the battle. Replay episode: the same, the camera left as the user put it.
    Leave (or Esc): the mode's exit (exit()) - the lens, the user's speed, the target's look, the shooter as before.
    FOLIAGE (T2): for the whole mode the page's foliage slider is forced to FOLIAGE (o.foliage; the user's value back on
    leaving) and the foliage writes stencil 2 (o.plantStencil): the target is drawn once more with Hits' paint, half
@@ -179,10 +179,10 @@
     }
     var figs = node('div', undefined, 'sv-figs'), cellA = cell('sv-hitline'), cellB = cell('sv-other'), unpin = node('button', '×', 'sv-unpin');
     again.type = leave.type = unpin.type = 'button';
-    again.title = 'Replay episode\nPlays the shot again from ' + BEFORE + ' s before it, seen by the shooter, and stops at the hit.\n• Played on, the shot view closes ' + AFTER + ' s after the hit';
+    again.title = 'Replay episode\nPlays the shot again from ' + BEFORE + ' s before it and stops at the hit.\n• The camera stays as you left it; click the shot’s row for the shooter’s view again\n• Played on, the shot view closes ' + AFTER + ' s after the hit';
     leave.title = 'Leave the shot view\nBack to the battle view: the free camera and your speed.\n• Esc does the same';
     unpin.title = 'Unpin\nDrops the pinned point.';
-    again.onclick = function () { episode(); };
+    again.onclick = function () { episode(true); };
     leave.onclick = function () { close(); };
     unpin.onclick = function () { if (S.viewer) S.viewer.unpin(); };
     cellB.head.appendChild(unpin); unpin.hidden = true;
@@ -968,12 +968,15 @@
       else altEstimate(false, now);
     }
     // ---- the episode ----------------------------------------------------------------------------------------------------
-    function episode() {
+    // keep (the Replay episode button, the user 20.11): the camera is left as the user put it - a free camera stays free where
+    // it stands, a first-person one keeps its place along the shell's line; only opening a row puts the default view back
+    function episode(keep) {
       if (!S.row) return;
       altStop(); S.stopAt = null; S.glided = false;
-      o.seek(S.start); S.armed = true; S.fp = true; S.lock = true; S.lastPose = null;
+      o.seek(S.start); S.armed = true;
+      if (!keep) { S.fp = true; S.lock = true; S.lastPose = null; S.u = 0; }
       if (S.viewer && S.mode === 'hits') { S.viewer.holdShot(true); S.held = true; }
-      S.u = 0; S.glide = null;
+      S.glide = null;
       o.speed(SPEED); o.play(true);
     }
     // the replay's clock moved from t0 to t1 in a frame: the episode stops at the hit; played on past it, the mode leaves
