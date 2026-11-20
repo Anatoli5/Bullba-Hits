@@ -2094,7 +2094,13 @@
   var FX_PEN = { 0: 1, 4: 1, 5: 1, 6: 1 }, FX_RIC = { 1: 1, 2: 1 };
   function fxClass(eff) { return FX_PEN[eff] ? 0 : (FX_RIC[eff] ? 2 : 1); }  // 0 penetration, 1 not pierced, 2 ricochet
   var hitsOn = true, fxHits = [], fxMuzzles = [], fxById = {}, fxMarkMeshes = [], fxMarkInfo = null;
-  var FX_MAX = 512, MUZ_LIFE = 0.14, HIT_LIFE = 0.6, SPARKS = 10;
+  var FX_MAX = 512, MUZ_LIFE = 0.14, HIT_LIFE = 0.6;
+  // pieces off the hit point (BACKLOG 113, 20.11). The burst every non-penetration and ricochet threw before - SPARKS pieces
+  // of SPARK_SIZE m at SPARK_V0..SPARK_V1 m/s (x0.45 for a non-penetration) for HIT_LIFE s - kept as constants, to give it
+  // back or to reuse for a ramming effect; now a ricochet throws one piece, a non-penetration two smaller, slower ones
+  var SPARKS = 10, SPARK_SIZE = 0.22, SPARK_V0 = 18, SPARK_V1 = 40;
+  var RIC_PIECES = 1, RIC_PIECE_SIZE = SPARK_SIZE, RIC_PIECE_V0 = SPARK_V0, RIC_PIECE_V1 = SPARK_V1, RIC_PIECE_LIFE = HIT_LIFE;
+  var NP_PIECES = 2, NP_PIECE_SIZE = 0.14, NP_PIECE_V0 = 6, NP_PIECE_V1 = 12, NP_PIECE_LIFE = 0.45;
   var fxPos = new Float32Array(FX_MAX * 3), fxCol = new Float32Array(FX_MAX * 4), fxSz = new Float32Array(FX_MAX);
   var fxGeo = new T.BufferGeometry();
   fxGeo.setAttribute('position', new T.BufferAttribute(fxPos, 3).setUsage(T.DynamicDrawUsage));
@@ -2119,6 +2125,79 @@
     fxPos[n * 3] = x; fxPos[n * 3 + 1] = y; fxPos[n * 3 + 2] = z;
     fxCol[n * 4] = r; fxCol[n * 4 + 1] = g; fxCol[n * 4 + 2] = b; fxCol[n * 4 + 3] = a; fxSz[n] = s;
     return n + 1;
+  }
+  // floating damage (BACKLOG 113, 20.11): each drop of a vehicle's recorded health (the replay's Vehicle.health; never a
+  // nominal value) flies up from its marker and fades, a constant size on screen as the marker. Gold: dealt by the player's
+  // vehicle (a hit event of the same moment names him); red: lost by the player's vehicle; white: the rest. A drop whose
+  // previous sample is older than the vehicle's current time in sight is not shown (lost out of view: when, unknown).
+  // fxDmg rows: [t, vehicle id, loss, colour 0 white 1 gold 2 red, lift step]; a pool of DMG_POOL sprites, a canvas each,
+  // redrawn only when a slot takes a new number
+  var DMG_LIFE = 1.6, DMG_FADE = 0.6, DMG_RISE = 30, DMG_STEP = 12, DMG_NEAR = 0.3, DMG_POOL = 16, DMG_W = 48, DMG_H = 16;
+  var DMG_COL = ['#f2f2f2', '#ffd34d', '#ff6a5a'];
+  var fxDmg = [], dmgSlots = [], dmgShown = 0, dmgP = new T.Vector3();
+  (function () {
+    for (var i = 0; i < DMG_POOL; i++) {
+      var c = document.createElement('canvas'); c.width = DMG_W * MARKER_PX; c.height = DMG_H * MARKER_PX;
+      var tex = new T.CanvasTexture(c); tex.colorSpace = T.SRGBColorSpace;
+      var sp = new T.Sprite(new T.SpriteMaterial({ map: tex, depthTest: false, sizeAttenuation: false, transparent: true }));
+      sp.scale.set(DMG_W * MARKER_K, DMG_H * MARKER_K, 1); sp.renderOrder = 11; sp.visible = false; scene.add(sp);
+      dmgSlots.push({ sprite: sp, canvas: c, tex: tex, ev: -1, seen: false });
+    }
+  })();
+  function buildDamage() {
+    var own = battle.meta.own, hev = battle.hitEvents || [], out = [];
+    vehicles.forEach(function (r) {
+      var v = r.v, hp = r.hp;
+      for (var i = 1; i < v.nh; i++) {
+        var t1 = hp[i * 2], loss = hp[(i - 1) * 2 + 1] - Math.max(0, hp[i * 2 + 1]);
+        if (!(loss > 0)) continue;
+        var t0 = hp[(i - 1) * 2], cont = false;
+        for (var s = 0; s < v.sight.length; s++) if (t0 >= v.sight[s][0] && t1 <= v.sight[s][1] && t1 >= v.sight[s][0]) { cont = true; break; }
+        if (!cont) continue;
+        var col = v.id === own ? 2 : 0;
+        if (!col) for (var k = 0; k < hev.length; k++) {
+          var e = hev[k];
+          if (e[0] > t1 + 0.15) break;
+          if (e[1] === v.id && e[3] > 0 && e[0] >= t1 - 0.15 && e[2] === own) { col = 1; break; }
+        }
+        out.push([t1, v.id, Math.round(loss), col, 0]);
+      }
+    });
+    out.sort(function (a, b) { return a[0] - b[0]; });
+    for (var j = 0; j < out.length; j++) for (var q = j - 1; q >= 0 && out[j][0] - out[q][0] < DMG_NEAR; q--) if (out[q][1] === out[j][1]) { out[j][4] = out[q][4] + 1; break; }
+    fxDmg = out;
+    dmgSlots.forEach(function (s) { s.ev = -1; });
+  }
+  function drawDamage(s, row) {
+    var c = s.canvas, ctx = c.getContext('2d'), k = MARKER_PX;
+    ctx.clearRect(0, 0, c.width, c.height);
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.lineJoin = 'round';
+    ctx.font = '700 ' + (11 * k) + 'px system-ui,Segoe UI,Arial,sans-serif';
+    var txt = String(row[2]);
+    ctx.lineWidth = 2.5 * k; ctx.strokeStyle = 'rgba(0,0,0,.7)'; ctx.strokeText(txt, c.width / 2, c.height / 2);
+    ctx.fillStyle = DMG_COL[row[3]]; ctx.fillText(txt, c.width / 2, c.height / 2);
+    s.tex.needsUpdate = true;
+  }
+  // the numbers alive at time t (inside fxStep: the same switch, speed, pause and rewind)
+  function dmgStep(t) {
+    var used = 0, i, s, first = fxFirst(fxDmg, t - DMG_LIFE);
+    if (hitsOn) for (var j = first; j < fxDmg.length && fxDmg[j][0] <= t; j++) {
+      var row = fxDmg[j], r = fxById[row[1]];
+      if (!r || !r.visible || r.veiled || r.painted) continue;
+      s = null;
+      for (i = 0; i < DMG_POOL; i++) if (dmgSlots[i].ev === j) { s = dmgSlots[i]; break; }
+      // a free slot: not drawn this frame and its number not alive now (a slot whose number's vehicle is hidden may go)
+      if (!s) for (i = 0; i < DMG_POOL; i++) { var e = dmgSlots[i].ev; if (!dmgSlots[i].seen && (e < first || e >= fxDmg.length || fxDmg[e][0] > t || !dmgSlots[i].sprite.visible)) { s = dmgSlots[i]; s.ev = j; drawDamage(s, row); break; } }
+      if (!s) continue;  // more numbers alive than the pool: this one not drawn
+      s.seen = true; used++;
+      var tau = t - row[0], sp = s.sprite;
+      r.bar.getWorldPosition(dmgP); sp.position.copy(dmgP);
+      sp.center.set(0.5, -(MARKER_LIFT + MARKER_H + row[4] * DMG_STEP + DMG_RISE * tau / DMG_LIFE) / DMG_H);
+      sp.material.opacity = tau < DMG_LIFE - DMG_FADE ? 1 : Math.max(0, (DMG_LIFE - tau) / DMG_FADE);
+      sp.visible = true;
+    }
+    if (used || dmgShown) for (i = 0; i < DMG_POOL; i++) { s = dmgSlots[i]; if (!s.seen) s.sprite.visible = false; s.seen = false; }
+    dmgShown = used;
   }
   // why an event draws nothing now: null = it draws
   function fxWhyNot(r) { return !r ? 'vehicle not in the battle file' : (!r.md.model ? 'vehicle drawn as a box' : (!r.visible ? 'vehicle not in sight' : null)); }
@@ -2155,19 +2234,26 @@
           // along the ricochet's own tracer when the replay has it, else off the plate
           if (c === 1) { if (tau < 0.18) n = fxPut(n, fxV.x + fxN.x * 0.1, fxV.y + fxN.y * 0.1, fxV.z + fxN.z * 0.1, 1, 0.92, 0.75, 1 - tau / 0.18, 1.4 * s); }
           else if (tau < 0.12) n = fxPut(n, fxV.x, fxV.y, fxV.z, 1, 0.9, 0.6, 1 - tau / 0.12, 1.1 * s);
-          var has = c === 2 && (h[18] || h[19] || h[20]);
-          if (has) fxR.set(h[18], h[19], -h[20]); else fxR.copy(fxN);  // the tracer's velocity is in game axes: z mirrored
-          for (var q = 0; q < SPARKS; q++) {
-            var a1 = fxRand(j * 31 + q) * Math.PI * 2, sp = (has ? 0.25 : 0.8) * Math.sqrt(fxRand(j * 31 + q + 0.5)), v0 = (c === 1 ? 0.45 : 1) * (18 + 22 * fxRand(j * 17 + q));
+          // the pieces (BACKLOG 113): a ricochet one piece along the ricochet's own tracer when the replay has it, else the
+          // shell's direction reflected off the plate (d - 2 (d.n) n); a non-penetration two small ones off the plate
+          var ric = c === 2, has = ric && (h[18] || h[19] || h[20]), cone = 0.8;
+          if (has) { fxR.set(h[18], h[19], -h[20]); cone = 0; }  // the tracer's velocity is in game axes: z mirrored
+          else if (ric) { fxR.set(h[14], h[15], h[16]).transformDirection(part.matrixWorld); fxR.addScaledVector(fxN, -2 * fxR.dot(fxN)).normalize(); cone = 0; }
+          else fxR.copy(fxN);
+          var pN = ric ? RIC_PIECES : NP_PIECES, pS = ric ? RIC_PIECE_SIZE : NP_PIECE_SIZE, pLife = ric ? RIC_PIECE_LIFE : NP_PIECE_LIFE;
+          var pV0 = ric ? RIC_PIECE_V0 : NP_PIECE_V0, pV1 = ric ? RIC_PIECE_V1 : NP_PIECE_V1;
+          if (tau < pLife) for (var q = 0; q < pN; q++) {
+            var a1 = fxRand(j * 31 + q) * Math.PI * 2, sp = cone * Math.sqrt(fxRand(j * 31 + q + 0.5)), v0 = pV0 + (pV1 - pV0) * fxRand(j * 17 + q);
             // a direction within `sp` radians of fxR
             fxF.set(Math.cos(a1), Math.sin(a1), 0.37).normalize(); fxF.cross(fxR).normalize();
             var dx = fxR.x + fxF.x * Math.tan(sp), dy = fxR.y + fxF.y * Math.tan(sp), dz = fxR.z + fxF.z * Math.tan(sp), dl = Math.hypot(dx, dy, dz) || 1;
-            var fade = 1 - tau / HIT_LIFE;
-            n = fxPut(n, fxV.x + dx / dl * v0 * tau, fxV.y + dy / dl * v0 * tau - 4.9 * tau * tau, fxV.z + dz / dl * v0 * tau, 1, 0.75, 0.35, fade, 0.22);
+            var fade = 1 - tau / pLife;
+            n = fxPut(n, fxV.x + dx / dl * v0 * tau, fxV.y + dy / dl * v0 * tau - 4.9 * tau * tau, fxV.z + dz / dl * v0 * tau, 1, 0.75, 0.35, fade, pS);
           }
         }
       }
     }
+    dmgStep(t);
     fxGeo.setDrawRange(0, hitsOn ? n : 0);
     if (n) { fxGeo.attributes.position.needsUpdate = true; fxGeo.attributes.fxc.needsUpdate = true; fxGeo.attributes.fxs.needsUpdate = true; }
     fxU.uScale.value = renderer.domElement.height / (2 * Math.tan(camera.fov * Math.PI / 360));
@@ -2697,6 +2783,7 @@
   // frame after fxStep, which shows the marks again.
   function shotLook(r, mat) {
     var own = r.mat;
+    r.painted = !!mat;  // its floating damage hidden too (dmgStep)
     r.group.traverse(function (m) { if (m.isMesh && (m.material === own || m.material.userData.shotPaint)) m.material = mat || own; });
     r.bar.visible = !mat && !r.dead && !r.veiled;
     fxMarkMeshes.forEach(function (m) { var p = m.parent; while (p && p !== r.group) p = p.parent; if (p) m.visible = mat ? false : (hitsOn && t >= m.userData.first); });
@@ -3800,7 +3887,7 @@
     computeMuzzles();
     fxHits = battle.hits || []; fxMuzzles = battle.muzzles || [];
     vehicles.forEach(function (r) { fxById[r.v.id] = r; });
-    buildMarks(); hitsOn = true; $('sw-hits').checked = hitsOn;
+    buildDamage(); buildMarks(); hitsOn = true; $('sw-hits').checked = hitsOn;
     tEnd = battle.meta.end;
     var p3 = battle.meta.periods.filter(function (p) { return p[1] === 3; })[0];
     tBattle = p3 ? p3[0] : 0;
