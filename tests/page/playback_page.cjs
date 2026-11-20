@@ -275,8 +275,8 @@ const reported = (host) => (host || []).filter((c) => c.action === 'playbackRepo
       // under half the luminance of the darkest nation paint (brightness 1), warm (red > green > blue)
       const look = await page.evaluate('MapBench.vehicleLook()');
       const lumOf = (c) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2], darkest = Math.min.apply(null, look.nations.map((n) => lumOf(n.slice(1))));
-      check('N7: a wreck is a warm charcoal, under half the luminance of the darkest nation paint (' + lumOf(look.wreck).toFixed(4) + ' against ' + darkest.toFixed(4) + ', linear)',
-        lumOf(look.wreck) < darkest / 2 && look.wreck[0] > look.wreck[1] && look.wreck[1] > look.wreck[2], JSON.stringify({wreck: look.wreck, nations: look.nations}));
+      check('S1 (20.11): a wreck is a neutral near black, under half the luminance of the darkest nation paint (' + lumOf(look.wreck).toFixed(4) + ' against ' + darkest.toFixed(4) + ', linear)',
+        lumOf(look.wreck) < darkest / 2 && look.wreck[0] === look.wreck[1] && look.wreck[1] === look.wreck[2] && look.wreck[0] > 0, JSON.stringify({wreck: look.wreck, nations: look.nations}));
       // N8 (19.11, the user in 1.13): (a) the marks' sizes - N12 below; (b) a mark on a plate's edge ends
       // where the armour ends - MapBench.markEdge: a mark on the hull's outermost vertex to each side, drawn from straight
       // above with the hull alone; its pixels outside the hull's silhouette (the same camera) are counted
