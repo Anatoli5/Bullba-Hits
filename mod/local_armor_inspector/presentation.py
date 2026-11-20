@@ -26,7 +26,7 @@ _viewer = {'browser_id': None, 'trace': None}
 # checks that every action a page sends is here once and that _handle_web_command answers each.
 ACTIONS = ('busy', 'sweepStart', 'sweepStop', 'open', 'windowSize', 'follow', 'prepareBattle', 'playback', 'mapRaw',
            'playbackReport', 'replayKeep', 'replayLimit', 'prioritise', 'exportTtx', 'exportVehicle',
-           'openReplays', 'openHits', 'replayFiles', 'playbackVehicles', 'inputLog', 'fullscreen', 'viewState')
+           'openReplays', 'openHits', 'replayFiles', 'playbackVehicles', 'fullscreen', 'viewState')
 _window_request = None
 _files_request = None
 _vehicles_request = None
@@ -358,10 +358,6 @@ def _handle_web_command(command, ctx):
                 return
             _player_request('playbackReport', dict((str(k), v) for k, v in list(report.items())[:40]))
             return
-        if action == 'inputLog':
-            # The replay viewer's temporary input diagnostic (19.11): which keys and buttons reached the page.
-            for line in (getattr(command, 'lines', None) or [])[:50]: LOG.info('Page input: %s', line)
-            return
         if action in ('fullscreen', 'viewState'):
             # R5 (BACKLOG 110, 20.11): the replay viewer's full-screen button ('on', 'close') and, while it is full screen,
             # its state every few seconds - for the view's own Esc
@@ -531,8 +527,6 @@ def web_handlers():
             report = Field(type=dict)
             # 'playbackVehicles' (19.11): [{type, descr}] - the battle's types with no vehicle file and their descriptors.
             vehicles = Field(type=list)
-            # 'inputLog' (19.11, temporary): the lines of the replay viewer's input diagnostic.
-            lines = Field(type=list)
             # 'fullscreen' / 'viewState' (20.11, BACKLOG 110): the replay viewer's state as its fragment, and 'close'
             state = Field(type=basestring)
             close = Field(type=bool)
@@ -1236,8 +1230,10 @@ def open_in_game(path, fragment='host=game', window=HITS):
 # anew in the view and in the window, so what it shows travels in its fragment (the page's viewState: battle, time,
 # camera, speed, play, followed vehicle, shots panel); the window is closed once the view stands, and opened again when
 # the view is left (the page's button, its close, or Esc). Every step is guarded: a failure leaves the window as it was
-# and writes one line. Read from the client's bytecode (2.4.1.1: WebView, event_dispatcher.showBrowserOverlayView,
-# BrowserView.makeBrowserParams; WoT-Base KNOWLEDGE-client 'Which browser views the client has'); not yet seen in the game.
+# and writes one line naming the step. Every client name here was read from the client's bytecode (2.4.1.1 #992:
+# WebView, IGuiLoader.entitiesFactory / GuiEntitiesFactories, ViewSettings.__new__, LobbyPackageBusinessHandler,
+# LobbyEntry.loadView, IAppLoader.getDefLobbyApp, BrowserView.makeBrowserParams; WoT-Base KNOWLEDGE-client 'Which browser
+# views the client has'); not yet seen in the game.
 FULLSCREEN_ALIAS = 'bullbaReplaysFullScreen'
 FULLSCREEN_WAIT = 10.0          # s: the view must stand by then, else the window stays and one line says so (a guess)
 VIEW_STATE = re.compile(r'^[-a-zA-Z0-9_.,=&]{0,600}\Z')
@@ -1322,12 +1318,18 @@ def fullscreen_class():
 
 
 def register_fullscreen():
-    """Our alias in the client's view factory, once: the frameless browser screen on the full-screen layer."""
-    if _full['registered']: return
-    from gui.Scaleform.framework import g_entitiesFactories, ViewSettings, ScopeTemplates
+    """Our alias in the client's view factory, once: the frameless browser screen on the full-screen layer, as the client
+    registers its own BROWSER_OVERLAY and MAPBOX_INFO_OVERLAY (lobby/__init__ getViewSettings). The factory is the GUI
+    loader's entitiesFactory (GuiEntitiesFactories; the client's loaders.pyc adds settings to it the same way); its
+    addSettings refuses an alias it has, so it is asked first (the alias outlives a lobby reload)."""
+    from helpers import dependency
+    from skeletons.gui.impl import IGuiLoader
+    from gui.Scaleform.framework import ViewSettings, ScopeTemplates
     from frameworks.wulf import WindowLayer
-    g_entitiesFactories.addSettings(ViewSettings(FULLSCREEN_ALIAS, fullscreen_class(), 'browserScreen.swf',
-                                                 WindowLayer.FULLSCREEN_WINDOW, None, ScopeTemplates.LOBBY_SUB_SCOPE))
+    factory = dependency.instance(IGuiLoader).entitiesFactory
+    if factory.getSettings(FULLSCREEN_ALIAS) is None:
+        factory.addSettings(ViewSettings(FULLSCREEN_ALIAS, fullscreen_class(), 'browserScreen.swf',
+                                         WindowLayer.FULLSCREEN_WINDOW, FULLSCREEN_ALIAS, ScopeTemplates.LOBBY_SUB_SCOPE))
     _full['registered'] = True
 
 
@@ -1339,15 +1341,24 @@ def page_url(path, fragment):
 
 def enter_fullscreen(state):
     """The page's full-screen button in the window: the viewer opens in the frameless view; the window closes once the
-    view stands (fullscreen_stood). Any failure: the window stays, one line."""
+    view stands (fullscreen_stood). The view is loaded by the lobby app's loadView - the call the client's own
+    LobbyPackageBusinessHandler.loadViewByCtxEvent makes for BROWSER_OVERLAY; a LoadViewEvent on the event bus would reach
+    no handler for our alias. Any failure: the window stays, one line naming the step."""
+    step = 'prepare'
     try:
         if fullscreen_open():
             LOG.info('Bullba Replays full screen: already open')
             return
         path = _viewer.get('path')
         if not path: raise RuntimeError('the viewer page is not known yet')
+        step = 'register'
         register_fullscreen()
-        from gui.shared import g_eventBus, events, EVENT_BUS_SCOPE
+        step = 'lobby app'
+        from helpers import dependency
+        from skeletons.gui.app_loader import IAppLoader
+        app = dependency.instance(IAppLoader).getDefLobbyApp()
+        if app is None: raise RuntimeError('the lobby app is missing')
+        step = 'loadView'
         from gui.Scaleform.framework.managers.loaders import SFViewLoadParams
         from gui.Scaleform.daapi.view.lobby.hangar.BrowserView import makeBrowserParams
         ctx = {'url': page_url(path, full_fragment(state, True)), 'forcedSkipEscape': False,
@@ -1357,20 +1368,21 @@ def enter_fullscreen(state):
                'callbackOnLoad': fullscreen_loaded}      # the middle button: WebView's ctx has no key for it
         _full['state'] = state
         asked = _full['asked'] = time.time()
-        g_eventBus.handleEvent(events.LoadViewEvent(SFViewLoadParams(FULLSCREEN_ALIAS), ctx=ctx), scope=EVENT_BUS_SCOPE.LOBBY)
+        app.loadView(SFViewLoadParams(FULLSCREEN_ALIAS), ctx=ctx)
         LOG.info('Bullba Replays full screen: opening the frameless view (%s)', state or 'no battle')
+        step = 'wait timer'
         import BigWorld
         BigWorld.callback(FULLSCREEN_WAIT, lambda: fullscreen_check(asked))
     except Exception as error:
         _full['asked'] = None
-        LOG.warning('Bullba Replays full screen could not open (%s: %s); the window stays', type(error).__name__, error)
+        LOG.warning('Bullba Replays full screen could not open at step %s (%s: %s); the window stays', step, type(error).__name__, error)
 
 
 def fullscreen_check(asked):
     """FULLSCREEN_WAIT after an open: the view did not stand - the window is left as it is, one line."""
     if _full['asked'] == asked and not fullscreen_open():
         _full['asked'] = None
-        LOG.warning('Bullba Replays full screen: the view did not open in %d s; the window stays', int(FULLSCREEN_WAIT))
+        LOG.warning('Bullba Replays full screen, step populate: the view did not open in %d s; the window stays', int(FULLSCREEN_WAIT))
 
 
 def fullscreen_stood(view):
@@ -1396,7 +1408,7 @@ def close_viewer_window():
             from skeletons.gui.game_control import IBrowserController
             dependency.instance(IBrowserController).delBrowser(browser_id)
     except Exception as error:
-        LOG.warning('Bullba Replays full screen: the window could not be closed (%s: %s)', type(error).__name__, error)
+        LOG.warning('Bullba Replays full screen, step close window: the window could not be closed (%s: %s)', type(error).__name__, error)
 
 
 def leave_fullscreen(state, close=False):
@@ -1417,5 +1429,5 @@ def leave_fullscreen(state, close=False):
         try:
             view.destroy()
         except Exception as error:
-            LOG.warning('Bullba Replays full screen: the view could not be closed (%s: %s)', type(error).__name__, error)
+            LOG.warning('Bullba Replays full screen, step close view: the view could not be closed (%s: %s)', type(error).__name__, error)
         LOG.info('Bullba Replays full screen: %s', 'closed' if close else 'back to the window')

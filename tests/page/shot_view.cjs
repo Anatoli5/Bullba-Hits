@@ -48,11 +48,10 @@ const HOST = `(function () {
   // ONE PICTURE (20.11): every WebGL context a canvas of the page makes is counted
   var getContext = HTMLCanvasElement.prototype.getContext; window.__contexts = 0;
   HTMLCanvasElement.prototype.getContext = function (type) { var c = getContext.apply(this, arguments); if (c && /webgl/.test(String(type)) && !this.__counted) { this.__counted = true; window.__contexts++; } return c; };
-  window.__host = []; window.__lines = [];
+  window.__host = [];
   window.jsHostQuery = function (q) {
     var c = JSON.parse(q.request), p = c.params || {};
     window.__host.push(p.action);
-    if (p.action === 'inputLog') window.__lines = window.__lines.concat(p.lines || []);
     setTimeout(function () { q.onSuccess('ok'); }, 0);
     var say = function (note) { setTimeout(function () { window.BullbaPlayback && window.BullbaPlayback.notify(note); }, 50); };
     if (p.action === 'mapRaw') { say({kind: 'map', arena: p.arena, state: 'queued'}); say({kind: 'map', arena: p.arena, state: 'ready'}); }
@@ -185,10 +184,6 @@ async function until(page, expr, ms) {
     const eye = stopped ? await page.evaluate('(function () { var s = MapBench.shotView(); return s.eye; })()') : null;
     const gap = eye ? Math.hypot(eye[0] - row.start[0], eye[1] - row.start[1], eye[2] - row.start[2]) : NaN;
     check('at the hit the camera stands near the tracer’s start: ' + gap.toFixed(2) + ' m; the shooter not drawn (the eye inside it)', gap < 5 && heat.shooterHidden === true, JSON.stringify({eye: eye, start: row.start, hidden: heat.shooterHidden}));
-    // the episode's frame times: in the state, and one line to the mod's log
-    const lines = await page.evaluate('window.__lines || []');
-    check('the episode’s frame times are logged once: ' + JSON.stringify(heat.frames), heat.logged && heat.frames && heat.frames.frames > 0 &&
-      lines.filter((l) => /^shot view with Hits’ map/.test(l) && /frame time median/.test(l)).length === 1, JSON.stringify(lines));
     // the wheel zooms the lens by Hits' rule; the eye stays
     const z0 = await page.evaluate('MapBench.shotView()');
     await page.evaluate('MapBench.shotObjects(' + TARGET + ').renderer.domElement.dispatchEvent(new WheelEvent("wheel", {bubbles: true, cancelable: true, deltaY: -100, clientX: 400, clientY: 300}))');
@@ -248,7 +243,7 @@ async function until(page, expr, ms) {
     } else console.log('note no shot without a hit among the own vehicle’s rows: the path without Hits’ view not exercised');
     console.log('note the shot view: ' + reg.painted + ' painted pixels inside a silhouette of ' + reg.silhouette + ', ' + reg.outside + ' outside; ' + heat.faces + ' faces in Hits’ composition; paused at ' + (stopped ? stopped.t.toFixed(3) : '-') +
       ' s, the hit at ' + (stopped ? stopped.hitT.toFixed(3) : '-') + ' s; the eye ' + gap.toFixed(2) + ' m from the tracer’s start, zoom x' + first.lens.zoom.toFixed(2) + '; shell ' + JSON.stringify(heat.shell) + '; aim ' + heat.aim +
-      '; parts drawn for the shot view only: ' + JSON.stringify(heat.extras) + '; episode frames ' + JSON.stringify(heat.frames) + ' (headless software WebGL)');
+      '; parts drawn for the shot view only: ' + JSON.stringify(heat.extras) + ' (headless software WebGL)');
     // A REPLAY FILE WITH NO HITS BATTLE (the owner, 19.11: the shot view for any replay the viewer opens): the same battle as
     // a file of the viewer's list ('f-' id, its playback file copied under it, as playback_page.cjs copies one), no Hits battle
     // of it in the index. The row's click asks the mod 'prepareBattle' with the file's id; the mod's route (Exporter.

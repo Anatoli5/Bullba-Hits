@@ -318,8 +318,8 @@ class TwoPagesOneChannelTests(unittest.TestCase):
 
 
 class FullScreenTests(unittest.TestCase):
-    """R5 (BACKLOG 110, 20.11.2026): the replay viewer's full-screen button in the game. The client's frameless view, its
-    factory and event bus are stand-ins with the names presentation imports (read from the 2.4.1.1 bytecode); what is
+    """R5 (BACKLOG 110, 20.11.2026): the replay viewer's full-screen button in the game. The client's frameless view, the GUI
+    loader's view factory and the lobby app are stand-ins with the names presentation imports (read from the 2.4.1.1 bytecode); what is
     tested is the mod's side: the state the page sends, the view registered and opened with it, the window closed once
     the view stands, Esc and the page's button back to the window with the state, and every failure leaving the window
     with one log line. Whether the client draws the view is for the game to show."""
@@ -345,25 +345,33 @@ class FullScreenTests(unittest.TestCase):
 
         def module(name, **names):
             m = types.ModuleType(name); m.__dict__.update(names); return m
-        factories = types.SimpleNamespace(addSettings=lambda s: rec['settings'].append(s))
-        bus = types.SimpleNamespace(handleEvent=lambda e, scope=None: rec['events'].append((e, scope)))
-        events = types.SimpleNamespace(LoadViewEvent=lambda params, ctx=None: {'params': params, 'ctx': ctx})
+        known = {}
+        def add_settings(s):
+            rec['settings'].append(s); known[s[0]] = s
+        factory = types.SimpleNamespace(addSettings=add_settings, getSettings=known.get)
+        app = types.SimpleNamespace(loadView=lambda params, ctx=None: rec['events'].append({'params': params, 'ctx': ctx}))
+        rec['app'] = app
+        IGuiLoader, IAppLoader, IBrowserController = type('IGuiLoader', (), {}), type('IAppLoader', (), {}), type('IBrowserController', (), {})
+        services = {IGuiLoader: types.SimpleNamespace(entitiesFactory=factory),
+                    IAppLoader: types.SimpleNamespace(getDefLobbyApp=lambda: rec['app']),
+                    IBrowserController: types.SimpleNamespace(delBrowser=lambda i: rec['deleted'].append(i))}
         mods = {}
         for name in ('gui', 'gui.Scaleform', 'gui.Scaleform.daapi', 'gui.Scaleform.daapi.view', 'gui.Scaleform.daapi.view.lobby',
                      'gui.Scaleform.daapi.view.lobby.shared', 'gui.Scaleform.daapi.view.lobby.hangar', 'gui.Scaleform.framework.managers',
                      'frameworks', 'helpers', 'skeletons', 'skeletons.gui'):
             mods[name] = module(name)
         mods['gui.Scaleform.daapi.view.lobby.shared.web_view'] = module('web_view', WebView=WebView)
-        mods['gui.Scaleform.framework'] = module('framework', g_entitiesFactories=factories, ScopeTemplates=types.SimpleNamespace(LOBBY_SUB_SCOPE='lobbySub'),
+        mods['gui.Scaleform.framework'] = module('framework', ScopeTemplates=types.SimpleNamespace(LOBBY_SUB_SCOPE='lobbySub'),
                                                  ViewSettings=lambda *a: a)
         mods['frameworks.wulf'] = module('wulf', WindowLayer=types.SimpleNamespace(FULLSCREEN_WINDOW='fullscreen'))
-        mods['gui.shared'] = module('shared', g_eventBus=bus, events=events, EVENT_BUS_SCOPE=types.SimpleNamespace(LOBBY='lobby'))
         mods['gui.Scaleform.framework.managers.loaders'] = module('loaders', SFViewLoadParams=lambda alias: ('params', alias))
         mods['gui.Scaleform.daapi.view.lobby.hangar.BrowserView'] = module('BrowserView', makeBrowserParams=lambda **k: dict(k))
         mods['BigWorld'] = module('BigWorld', callback=lambda delay, fn: rec['callbacks'].append((delay, fn)))
-        mods['helpers.dependency'] = module('dependency', instance=lambda cls: types.SimpleNamespace(delBrowser=lambda i: rec['deleted'].append(i)))
+        mods['helpers.dependency'] = module('dependency', instance=lambda cls: services[cls])
         mods['helpers'].dependency = mods['helpers.dependency']
-        mods['skeletons.gui.game_control'] = module('game_control', IBrowserController=object)
+        mods['skeletons.gui.game_control'] = module('game_control', IBrowserController=IBrowserController)
+        mods['skeletons.gui.impl'] = module('impl', IGuiLoader=IGuiLoader)
+        mods['skeletons.gui.app_loader'] = module('app_loader', IAppLoader=IAppLoader)
         patcher = patch.dict(sys.modules, mods)
         patcher.start(); self.addCleanup(patcher.stop)
         return rec
@@ -410,10 +418,10 @@ class FullScreenTests(unittest.TestCase):
         # registered once under our alias: the client's frameless screen on the full-screen layer
         self.assertEqual(len(rec['settings']), 1)
         alias, cls, swf, layer, event, scope = rec['settings'][0]
-        self.assertEqual((alias, swf, layer, event, scope), (presentation.FULLSCREEN_ALIAS, 'browserScreen.swf', 'fullscreen', None, 'lobbySub'))
-        (load, scope), = rec['events']
+        self.assertEqual((alias, swf, layer, event, scope), (presentation.FULLSCREEN_ALIAS, 'browserScreen.swf', 'fullscreen', presentation.FULLSCREEN_ALIAS, 'lobbySub'))
+        load, = rec['events']
         ctx = load['ctx']
-        self.assertEqual((load['params'], scope), (('params', presentation.FULLSCREEN_ALIAS), 'lobby'))
+        self.assertEqual(load['params'], ('params', presentation.FULLSCREEN_ALIAS))
         self.assertTrue(ctx['url'].startswith('file:///') and ctx['url'].endswith('playback.html#host=game&view=full&' + state), ctx['url'])
         self.assertEqual(ctx['browserParams'], {'isCloseBtnVisible': False, 'bgAlpha': 1.0})
         self.assertEqual((ctx['allowRightClick'], ctx['ignoreCtrlClick'], ctx['ignoreShiftClick'], ctx['forcedSkipEscape']), (True, False, False, False))
@@ -470,8 +478,8 @@ class FullScreenTests(unittest.TestCase):
 
     def test_a_refused_open_leaves_the_window_and_one_line(self):
         rec = self.client()
-        def refuse(event, scope=None): raise RuntimeError('no such alias')
-        sys.modules['gui.shared'].g_eventBus = types.SimpleNamespace(handleEvent=refuse)
+        def refuse(params, ctx=None): raise RuntimeError('no such alias')
+        rec['app'] = types.SimpleNamespace(loadView=refuse)
         with self.assertLogs('local.armor_inspector', level='WARNING') as logs:
             presentation.enter_fullscreen('battle=b1')
         self.assertEqual(len(logs.output), 1)

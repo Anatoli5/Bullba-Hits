@@ -165,7 +165,7 @@ const reported = (host) => (host || []).filter((c) => c.action === 'playbackRepo
       // a team row's text line = the top line's = a shot row's. The sizes and the kinds are printed.
       const types = await page.evaluate("(() => { document.getElementById('settings-btn').click(); document.getElementById('destr').open = true;" +
         " const b = document.querySelector('#list-own .veh .sp-btn'); if (b) b.click(); const kinds = {};" +
-        " for (const el of document.body.querySelectorAll('*')) { if (/^(SCRIPT|STYLE|CANVAS|OPTION)$/i.test(el.tagName) || el.closest('svg') || el.closest('#inputlog')) continue;" +
+        " for (const el of document.body.querySelectorAll('*')) { if (/^(SCRIPT|STYLE|CANVAS|OPTION)$/i.test(el.tagName) || el.closest('svg')) continue;" +
         "  const own = [...el.childNodes].some((x) => x.nodeType === 3 && x.textContent.trim()); if (!own && !/^(BUTTON|SELECT)$/.test(el.tagName)) continue;" +
         "  const cs = getComputedStyle(el), r = el.getBoundingClientRect(); if (!(r.width > 0 && r.height > 0) || !own && el.tagName !== 'SELECT') continue;" +
         "  const k = (el.id ? '#' + el.id : el.tagName.toLowerCase() + (el.classList[0] ? '.' + el.classList[0] : '')); (kinds[cs.fontSize + '/' + cs.lineHeight] = kinds[cs.fontSize + '/' + cs.lineHeight] || {})[k] = 1; }" +
@@ -222,17 +222,6 @@ const reported = (host) => (host || []).filter((c) => c.action === 'playbackRepo
         if (after.t > before) break;
       }
       check('Play moves the battle clock', after && after.playing && after.t > before, JSON.stringify({before: before, after: after}));
-      // the frame log (20.11, web/playback/frame-log.js): with #host=game, 10 s of playing write one 'playback frames' line
-      // through the input log's channel, its fields from this page's state (the cadence on a fake clock: tests/page/frame_log.cjs);
-      // headless, the first frames after Page.bringToFront come seconds apart, so the first line may be the stall line
-      let frames = null;
-      for (let i = 0; i < 60 && !frames; i++) {
-        await new Promise(function (r) { setTimeout(r, 500); });
-        frames = await page.evaluate("(window.__host.filter(function (p) { return p.action === 'inputLog'; }).map(function (p) { return p.lines[0]; }).filter(function (l) { return /^playback frames /.test(l); })[0]) || null");
-      }
-      check('the frame log: 10 s of playing in the game write one line with the page\'s own figures', !!frames &&
-        /^playback frames 1\/20 \((10 s after the start|an interval over 250 ms)\): \d+\.\d s played, \d+ frames; interval median [\d.]+ \/ p95 [\d.]+ \/ worst [\d.]+ ms, over 33 ms \d+, over 100 ms \d+; page CPU per frame \(step \+ render\) median [\d.]+ \/ p95 [\d.]+ \/ worst [\d.]+ ms; canvas \d+x\d+ dpr [\d.]+ \(drawn at [\d.]+\); playing x\d+, camera (follow|free); WebGL contexts [1-9]\d*, canvases [1-9]\d*; shot view opened no; shadows .*\(no wind setting\); map 02_malinovka$/.test(frames), frames);
-      if (frames) console.log('frame log line: ' + frames);
       // 20.11 (the user): no function on the middle button - its drag does not pan (a pan frees the camera), its press
       // kept from the browser's autoscroll
       const mid = await page.evaluate("(() => { const c = document.querySelector('#view canvas') || document.querySelector('canvas'), free = () => document.getElementById('free').classList.contains('on'), was = free();" +

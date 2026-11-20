@@ -81,9 +81,11 @@
   .veh.dead .nm, .veh.dead .pl { text-decoration:line-through; color:var(--dim); }
   .veh.follow.out .veh-tile, .veh.follow.dead .veh-tile { background-color:#302b23; }
   .dim { color:var(--dim); }
-  /* round 14: the input log (a temporary diagnostic, Settings > input log): the last events, bottom left */
-  #inputlog { left:8px; bottom:56px; width:420px; max-width:calc(100% - 340px); font:11px/1.3 Consolas,monospace; white-space:pre; overflow:hidden; pointer-events:none; z-index:5; }
-  #inputlog[hidden] { display:none; }
+  /* the cost readout (Settings > cost readout, off by default): inside the top panel, under the top line and above the
+     settings, so it covers nothing of the view's other panels; the settings give up its height while it is shown */
+  #cost { display:none; margin-top:4px; }
+  #cost table { margin:0 auto; }
+  body.cost-on #settings { max-height:calc(100vh - 260px); }
   #msg { position:absolute; left:50%; top:45%; transform:translate(-50%,-50%); font-size:13px; }
   #help { color:var(--dim); }
   #destr { right:8px; bottom:56px; width:300px; }
@@ -120,7 +122,6 @@
 <body>
 <div id="view"></div>
 <div id="msg">Loading...</div>
-<div id="inputlog" class="panel" hidden></div>
 <div id="meter" class="panel">
   <div id="topline">
     <span class="tl-group tl-battle">
@@ -129,7 +130,7 @@
     </span>
     <span class="tl-sep" aria-hidden="true"></span>
     <span class="tl-group tl-view">
-    <button id="settings-btn" title="Settings&#10;Opens or closes the settings: layers, shadows, grain, light, vehicle colour, halo, haze, crowns.">Settings &#9662;</button>
+    <button id="settings-btn" title="Settings&#10;Opens or closes the settings: layers, shadows, grain, light, vehicle colour, halo, haze, crowns, cost readout.">Settings &#9662;</button>
     <label title="Sky&#10;Draws the sky: light overhead, a dull grey haze at the horizon, grey below it.&#10;- on (default): the scenery beyond the playable border fades into that haze instead of ending in a cut&#10;- off: black all round - the map hangs in the dark and fades into black"><input type="checkbox" id="sw-sky" checked> sky</label>
     </span>
     <span class="tl-sep" aria-hidden="true"></span>
@@ -137,6 +138,19 @@
     <button id="fullscreen" type="button" aria-pressed="false" title="Full screen"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></button>
     <button id="close-view" type="button" hidden title="Close&#10;Closes Bullba Replays (the full-screen view has no window frame and no close button of its own).">&#10005;</button>
     </span>
+  </div>
+  <div id="cost">
+    <table>
+      <tr><td>fps (last 3 s)</td><td class="v" id="m-fps">-</td></tr>
+      <tr><td>frame interval median / 95th (1 s)</td><td class="v" id="c-int">-</td></tr>
+      <tr><td>page CPU per frame median / 95th (1 s)</td><td class="v" id="c-cpu">-</td></tr>
+      <tr><td>GPU per frame median / 95th (1 s)</td><td class="v" id="c-gpu">-</td></tr>
+      <tr><td>triangles / draw calls</td><td class="v" id="c-tris">-</td></tr>
+      <tr><td>shadow maps</td><td class="v" id="c-shadow">-</td></tr>
+      <tr><td>ground textures</td><td class="v" id="c-ground">-</td></tr>
+      <tr><td>canvas</td><td class="v" id="m-size">-</td></tr>
+      <tr><td>destruction events applied</td><td class="v" id="m-destr">-</td></tr>
+    </table>
   </div>
   <div id="settings" hidden>
   <div><b id="mapname">-</b> <span class="dim" id="gpu"></span></div>
@@ -174,8 +188,8 @@
     <label title="Crowns&#10;- game LOD, flat far: the plant's lowest 3D level of detail from its .srt within 160 m, beyond it a flat picture of the same plant&#10;- game LOD everywhere: 3D at any distance (heavier)&#10;- simple: a low hull of the same geometry (cheaper)">crowns <select id="sel-crowns"><option value="lod">game LOD, flat far</option><option value="lodall">game LOD everywhere</option><option value="hull">simple</option></select></label>
   </div>
   <div style="margin-top:2px"><label title="Warn on special modes&#10;Shows a warning when a battle of a special mode opens: Onslaught, Frontline, Steel Hunter, Grand Battle, events.&#10;- the viewer draws the map's standard picture; such a mode may not look like it&#10;- the warning's &quot;Don't show again&quot; turns this off&#10;- the ⚠ in the battle list stays either way"><input type="checkbox" id="sw-special-warn" checked> warn on special modes</label></div>
-  <div id="help">drag: orbit; right or Shift + drag: pan; wheel: zoom; WASD or arrows: move; R/F: up/down; space: play
-    <label style="margin-left:8px" title="Input log&#10;Shows the last keys, clicks and wheel turns the page receives, and writes them to the mod's log.&#10;- a temporary check of what the game's browser delivers; not remembered, off on every opening"><input type="checkbox" id="sw-inputlog"> input log</label></div>
+  <div style="margin-top:2px"><label title="Cost readout&#10;Shows what drawing the current view costs, under the top line.&#10;- fps and frame interval: how often frames come (capped by the display or the game)&#10;- page CPU: the page's own time to step and draw one frame&#10;- GPU: the graphics card's time for one frame, where the browser has the timer; otherwise it says not available&#10;- triangles, draw calls, shadow maps, ground textures: what the view sends to the graphics card and the memory it holds"><input type="checkbox" id="sw-cost"> cost readout</label></div>
+  <div id="help">drag: orbit; right or Shift + drag: pan; wheel: zoom; WASD or arrows: move; R/F: up/down; space: play</div>
   <div class="settings-actions"><button type="button" id="reset-settings" title="All settings here back to default">Reset to defaults</button></div>
   </div>
 </div>
@@ -203,7 +217,6 @@
 <script src="vendor/three.min.js"></script>
 <script src="frame.js"></script>
 <script src="host.js"></script>
-<script src="playback/frame-log.js"></script>
 <script src="settings-store.js"></script>
 <script src="playback/mapbuild.js"></script>
 <script src="playback/mapbuild9.js"></script>

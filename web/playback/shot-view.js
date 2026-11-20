@@ -33,8 +33,7 @@
    hit: its tracer's end) with the hit line shown from then on. Replay episode: the same, the camera left where it is.
    The lens: Hits' field of view and the zoom Hits' Fit picks for that eye (the target framed for reading the map, the eye
    not moved); the wheel zooms by Hits' rule, Fit frames again; dragging orbits round the target as in the battle view.
-   Leave (or Esc): the mode's exit (exit()) - the lens, the user's speed, the target's look, the shooter as before. Each opening writes one line of the episode's frame
-   times to the mod's log in the game (o.log).
+   Leave (or Esc): the mode's exit (exit()) - the lens, the user's speed, the target's look, the shooter as before.
 
    A replay file Bullba Hits has no battle of: the mod makes it from the replay ('prepareBattle' with the file's id).
    What cannot be had (outside the game; a replay the route refuses; a shot with no hit; a hit the battle does not list; a
@@ -42,8 +41,7 @@
 
    BullbaShotView.create(o) -> {open(row), close(), active(), free(), paint(t, now), overlay(), clamp(t0, t1), state()};
    o: {view (the element the canvas is in), camera, renderer, battle, hitsBattle, battleId, dataBase, vehicle(id), name(id),
-   clock(t), seek(t), play(on), speed(v | null), orbit(eye, at) (scene coordinates), veil(r, on), look(r, material | null),
-   log(line)}. */
+   clock(t), seek(t), play(on), speed(v | null), orbit(eye, at) (scene coordinates), veil(r, on), look(r, material | null)}. */
 (function (root) {
   'use strict';
   var T = root.THREE;
@@ -87,7 +85,7 @@
     if (Data && Data.setBase) Data.setBase(o.dataBase || '');
     var S = { row: null, mode: null, start: 0, stop: null, hitT: null, armed: false, target: null, held: null, viewer: null,
       error: null, note: '', hits: null, data: null, rec: null, aim: null, token: 0, haveA: false, veiled: false, extras: [],
-      frames: [], lastNow: null, logged: false, look: null };
+      look: null };
     var Z = new T.Matrix4().makeScale(1, 1, -1), M = new T.Matrix4(), N = new T.Matrix4(), A = new T.Matrix4(), AInv = new T.Matrix4();
     var V3 = new T.Vector3(), scaleTmp = new T.Vector3(), box = new T.Box3(), size = new T.Vector2();
     var hitsBattles = {};
@@ -214,7 +212,7 @@
       S.stop = h ? h.t : (row.shot ? row.shot.tEnd : row.t);
       S.start = Math.max(0, row.t - BEFORE);
       S.target = h ? h.target : row.target;
-      S.mode = 'wait'; S.error = null; S.data = null; S.rec = null; S.aim = null; S.haveA = false; S.frames = []; S.lastNow = null; S.logged = false;
+      S.mode = 'wait'; S.error = null; S.data = null; S.rec = null; S.aim = null; S.haveA = false;
       title.textContent = 'Shot view · ' + o.name(row.shooter) + ' → ' + (S.target == null ? 'no hit in the replay' : o.name(S.target)) + ' · ' + o.clock(row.t);
       note.textContent = 'Preparing the shot view…'; bar.hidden = false; pin.hidden = true;
       o.play(false); o.seek(S.start);
@@ -397,30 +395,19 @@
     // ---- the episode ----------------------------------------------------------------------------------------------------
     function episode() {
       if (!S.row) return;
-      o.seek(S.start); S.armed = true; S.lastNow = null;
+      o.seek(S.start); S.armed = true;
       if (S.viewer && S.mode === 'hits') { S.viewer.holdShot(true); S.held = true; }
       o.speed(SLOW); o.play(true);
     }
     // the replay's clock moved from t0 to t1 in a frame: the episode stops at the hit
     function clamp(t0, t1) {
       if (!S.row || !S.armed || S.stop == null || t1 < S.stop || t0 > S.stop) return t1;
-      S.armed = false; o.play(false); logFrames();
+      S.armed = false; o.play(false);
       return S.stop;
-    }
-    // One line per opening into the mod's log (the game's figure of this view's cost): the episode's frame intervals.
-    function frameStats() {
-      var d = S.frames.slice().sort(function (a, b) { return a - b; });
-      return d.length ? { frames: d.length, median: +d[d.length >> 1].toFixed(1), worst: +d[d.length - 1].toFixed(1) } : null;
-    }
-    function logFrames() {
-      if (S.logged || !S.row) return; var f = frameStats(); if (!f) return; S.logged = true;
-      if (o.log) o.log('shot view ' + (S.mode === 'hits' ? 'with Hits’ map' : 'without Hits’ map') + ', ' + o.name(S.row.shooter) + ' -> ' + (S.target == null ? '-' : o.name(S.target)) + ' at ' + o.clock(S.row.t) +
-        ': episode ' + f.frames + ' frames, frame time median ' + f.median + ' ms, worst ' + f.worst + ' ms' + (S.viewer && S.viewer.backendShown ? ' (' + S.viewer.backendShown + ')' : ''));
     }
     // ---- this page's frame: paint before its render, overlay after it --------------------------------------------------
     function paint(time, now) {
       if (!S.row) return;
-      if (S.armed && now != null) { if (S.lastNow != null) S.frames.push(now - S.lastNow); S.lastNow = now; }
       var sh = o.vehicle(S.row.shooter), inside = !!(sh && sh.visible && eyeInside(sh));
       if (sh && (inside || S.veiled)) o.veil(sh, inside);
       S.veiled = inside;
@@ -460,7 +447,6 @@
     }
     function close(reopen) {
       var was = S.mode, r = S.target == null ? null : o.vehicle(S.target), sh = S.row ? o.vehicle(S.row.shooter) : null;
-      if (S.row && !S.logged) logFrames();
       S.token++;
       dropExtras();
       if (o.corridor && S.corridor) o.corridor.close(); S.corridor = null;
@@ -477,7 +463,7 @@
         hit: S.hits && S.hits.hit ? S.hits.hit.id : null, posed: !!S.posed, shooterHidden: S.veiled, extras: S.extras.map(function (m) { return m.userData.shotExtra; }),
         shell: S.rec && S.rec.shell ? { kind: S.rec.shell.kind, penetration: S.rec.shell.penetration, guess: S.rec.guess } : null,
         composed: !!(v && v.composed), faces: sf && sf.mesh && sf.mesh.geometry && sf.mesh.geometry.attributes.position ? sf.mesh.geometry.attributes.position.count / 3 : 0,
-        ricochetLeg: !!(sf && sf.bounce), shotHeld: !!(v && v.shotHeld), backend: v ? v.backendShown : null, frames: frameStats(), logged: S.logged,
+        ricochetLeg: !!(sf && sf.bounce), shotHeld: !!(v && v.shotHeld), backend: v ? v.backendShown : null,
         pinned: !!(v && v.pinned), pin: pin.hidden ? null : pinLabel.textContent + ' ' + pinChips.textContent, lens: { fov: o.camera.fov, zoom: o.camera.zoom }, inMode: !!S.saved,
         corridor: S.corridor ? { radius: CORRIDOR, hidden: S.corridor.hidden, models: S.corridor.models, collision: S.corridor.collision, plants: S.corridor.plants, modeObjects: S.corridor.modeObjects,
           ground: S.corridor.ground, destroyedAlready: S.corridor.destroyedAlready, vehiclesHidden: S.onLine || 0, list: S.corridor.list, t: S.corridor.t, a: S.corridor.a, b: S.corridor.b } : null };

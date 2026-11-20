@@ -2474,36 +2474,6 @@
     if (any) setFollow(null);
     glideTarget(dt);
   }
-  // round 14, temporary: the input log (Settings > input log, off on every opening, not remembered) - what the page
-  // receives, to settle what the game's browser delivers (outputs/game-browser-input-2026-11-19.md section 7): every key,
-  // button, wheel, double click and context menu on the page (no pointer moves), the last 12 lines in a corner and, in the
-  // game, to the mod's log through the page channel ('inputLog', {lines}), at most one send a second
-  var inputLog = { on: false, shown: [], queue: [], timer: null, t0: performance.now() };
-  function inputLine(e) {
-    var m = (e.shiftKey ? 'S' : '-') + (e.ctrlKey ? 'C' : '-') + (e.altKey ? 'A' : '-') + (e.metaKey ? 'M' : '-'), s = ((performance.now() - inputLog.t0) / 1000).toFixed(2) + ' ' + e.type + ' ';
-    if (e.type === 'keydown' || e.type === 'keyup') s += 'key=' + JSON.stringify(e.key) + ' code=' + e.code + ' keyCode=' + e.keyCode + ' loc=' + e.location + (e.repeat ? ' repeat' : '');
-    else if (e.type === 'wheel') s += 'dY=' + e.deltaY + ' dX=' + e.deltaX + ' mode=' + e.deltaMode;
-    else s += 'button=' + e.button + ' buttons=' + e.buttons;
-    s += ' mods=' + m + ' on=' + ((e.target && (e.target.id || e.target.tagName)) || '?');
-    inputLog.shown.push(s); if (inputLog.shown.length > 12) inputLog.shown.shift();
-    $('inputlog').textContent = inputLog.shown.join('\n');
-    if (host.game && host.canSend()) {
-      if (inputLog.queue.length < 200) inputLog.queue.push(s);
-      if (!inputLog.timer) inputLog.timer = setTimeout(inputFlush, 1000);
-    }
-  }
-  function inputFlush() {
-    inputLog.timer = null; var lines = inputLog.queue.splice(0, 50);
-    if (lines.length) host.send('bullba_hits', { action: 'inputLog', lines: lines }).catch(function (err) { console.warn('Bullba Hits inputLog failed: ' + err.message); });
-    if (inputLog.queue.length) inputLog.timer = setTimeout(inputFlush, 1000);
-  }
-  ['keydown', 'keyup', 'pointerdown', 'pointerup', 'wheel', 'dblclick', 'contextmenu'].forEach(function (type) {
-    window.addEventListener(type, function (e) { if (inputLog.on) inputLine(e); }, { capture: true, passive: true });
-  });
-  $('sw-inputlog').onchange = function () {
-    inputLog.on = this.checked; $('inputlog').hidden = !inputLog.on;
-    if (inputLog.on) { inputLog.shown = []; $('inputlog').textContent = 'input log: press keys, click, turn the wheel'; }
-  };
   function setFollow(r) {
     if (follow === r) return; follow = r;
     if (r) cam.dist = Math.min(cam.dist, 30);
@@ -2587,7 +2557,7 @@
   $('sw-sky').onchange = function () { setSky(this.checked); };
   $('sw-light').onchange = function () { setLight(this.checked); };
   $('rng-light').oninput = function () { setLight($('sw-light').checked); };
-  $('sw-cost').onchange = function () { costOn = this.checked; $('cost').style.display = costOn ? 'block' : 'none'; gpuHist.length = 0; };
+  $('sw-cost').onchange = function () { costOn = this.checked; $('cost').style.display = costOn ? 'block' : 'none'; document.body.classList.toggle('cost-on', costOn); gpuHist.length = 0; };
   $('sel-objects').onchange = function () { setObjectsMode(this.value); };
   $('sw-flash').onchange = function () { flashOn = this.checked; };
   $('destr').addEventListener('toggle', function () { document.body.classList.toggle('dopen', this.open); });
@@ -2610,7 +2580,7 @@
       side: function (id) { var r = id == null ? null : fxById[id]; return r ? (r.role === 'enemy' ? 'enemy' : 'ally') : null; },
       clock: function (s) { return fmt(s - tBattle); },
       // the shot view takes the camera: no vehicle followed (the shots button follows its vehicle), free after Leave
-      pick: function (row, j) { var sv = shotViewer(); if (sv) { setFollow(null); shotViewOpened = true; sv.open(row); } else jumpTo(j); },
+      pick: function (row, j) { var sv = shotViewer(); if (sv) { setFollow(null); sv.open(row); } else jumpTo(j); },
       hits: hitsOpener,
       changed: function () { renderList(false); } });
     return panel;
@@ -2657,8 +2627,7 @@
       seek: function (x) { t = Math.min(tEnd, Math.max(0, x)); $('slider').value = t; },
       play: function (on) { if (!!on !== playing) togglePlay(); },
       speed: setEpisodeSpeed, orbit: orbitFrom, place: placeCamera, veil: veil, look: shotLook,
-      corridor: { open: shotCorridorOpen, keep: shotCorridorKeep, vehicles: shotCorridorVehicles, close: shotCorridorClose },
-      log: function (line) { if (host.game && host.canSend()) host.send('bullba_hits', { action: 'inputLog', lines: [line] }).catch(function (e) { console.warn('Bullba Hits inputLog failed: ' + e.message); }); } });
+      corridor: { open: shotCorridorOpen, keep: shotCorridorKeep, vehicles: shotCorridorVehicles, close: shotCorridorClose } });
     return shotView;
   }
   // the shot view's target in this scene (shot-view.js): its meshes drawn with `mat` (Hits' paint; null: its own material
@@ -2850,26 +2819,6 @@
     if (listRows.length) renderList(false);  // round 9: a map alone has no vehicles
   }
 
-  // 20.11, temporary: the frame log (frame-log.js) - in the game only, the playing page's own frame figures to the mod's log
-  // through the input log's channel ('Page input: playback frames ...'), to find what the game's browser differs in
-  // (made once `host` is known: makeFrameLog at the channel's declaration below)
-  var shotViewOpened = false, frameLog = null;
-  function makeFrameLog() {
-    return host.game && window.BullbaFrameLog ? BullbaFrameLog.create({
-      send: function (line) { if (host.canSend()) host.send('bullba_hits', { action: 'inputLog', lines: [line] }).catch(function (e) { console.warn('Bullba Hits inputLog failed: ' + e.message); }); },
-      state: frameLogState }) : null;
-  }
-  function frameLogState() {
-    var c = renderer.domElement, on = function (x) { return x ? 'on' : 'off'; }, sv = shotView ? shotView.state() : null;
-    var objects = layers.visual.visible ? (layers.objects.visible ? 'both' : 'visual') : (layers.objects.visible ? 'collision' : 'off');
-    return { canvas: c.width + 'x' + c.height, dpr: (window.devicePixelRatio || 1) + ' (drawn at ' + renderer.getPixelRatio() + ')', speed: speed,
-      camera: sv && sv.open ? 'shot view' : (follow ? 'follow' : 'free'), canvases: document.getElementsByTagName('canvas').length, shotViewOpened: shotViewOpened,
-      settings: 'shadows ' + (shadowsOn ? SHQ + ' ' + shDetail : 'off') + ', sky ' + on(skyOn) + ', haze ' + on(hazeOn) + ', halo ' + on($('sw-halo').checked) +
-        ', objects ' + objects + ', trees ' + on(layers.trees.visible) + ', bushes ' + on(layers.bushes.visible) + ', water ' + on(layers.water.visible) +
-        ', outside ' + outsideMode + ', crowns ' + $('sel-crowns').value + ', relief ' + $('sel-relief').value + ', hits ' + on(hitsOn) +
-        ', cost meter ' + on(costOn) + ' (no wind setting)',
-      map: (FILE && FILE.record && FILE.record.map) || MAP };
-  }
   var lastList = 0, lastMeter = 0;
   function frame(now) {
     requestAnimationFrame(frame);
@@ -2889,7 +2838,6 @@
     if (cq) { gl.endQuery(timerExt.TIME_ELAPSED_EXT); costQ.push(cq); }
     var cms = performance.now() - c0;
     cpuTimes.push([now, cms]);
-    if (frameLog) frameLog.frame(gap, cms, playing);
     if (costOn) costTick(now);
     if (now - lastList > 250) { lastList = now; renderList(false); tickDestrList(); $('slider').value = t; $('time').textContent = fmt(t) + '  (battle ' + fmt(t - tBattle) + ')'; }
     if (now - lastMeter > 500) {
@@ -3348,7 +3296,6 @@
   // polling of a missing file; a look every FALLBACK_MS only in case the word does not come). Outside the game nobody can
   // make it. The battle itself is built from the source in the page (battle-page.js, battle.js) and kept in IndexedDB.
   var host = window.BullbaHost || { game: false, canSend: function () { return false; } };
-  frameLog = makeFrameLog();
   var BASE = '../', PAGE_BASE = '', FORMAT = 2, FALLBACK_MS = 250 /* 19.11: in the game the mod's word never comes (the client has no executeJavascript), the look is how the page learns */, WAIT_MS = 10 * 60 * 1000;
   var received = {}, FILE = null, waited = { mod: 0 };
   // 19.11 (the shot view): Bullba Hits' own reader (web/local-data.js, loaded before this file) reads Hits' battle and its
@@ -3647,7 +3594,7 @@
       if (v && !(box.v >= 3)) { v = Object.assign({}, v); delete v['sw-sky']; }
       return v;
     },
-    controls: [].slice.call(document.querySelectorAll('#settings input[id], #settings select[id], #sw-sky, #sw-flash, #speed-value')).filter(function (el) { return el.id !== 'sw-inputlog'; }) });
+    controls: [].slice.call(document.querySelectorAll('#settings input[id], #settings select[id], #sw-sky, #sw-flash, #speed-value')) });
 
   // ------------------------------------------------------------------ start
   var mapData, battleInfo = null;
@@ -3814,7 +3761,6 @@
   }
   window.MapBench = { shotsPanel: function () { return shotsPanel(); },
     // the shot view (19.11): its state, the clock, this camera's eye in game coordinates
-    frameLogState: function () { return frameLogState(); },
     shotRows: function (id) { return BullbaShotsPanel.rows(battle, id); }, shotViewer: function () { return shotView ? shotView.viewer() : null; },
     shotView: function () { var s = shotView ? shotView.state() : null; if (s) { s.t = t; s.playing = playing; s.speed = speed; s.eye = [camera.position.x, camera.position.y, -camera.position.z]; } return s; },
     // the shot view's checks (tests/page/shot_view.cjs, 20.11): the objects, and one frame drawn now as frameBody draws it and
