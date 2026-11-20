@@ -2,7 +2,7 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.1.1 from 1.05 on, 2.4.1.0 from 1.02 on, 2.4.0.2 from 0.9.3 on, 2.4.0.1 #950 from 0.7.6, 2.4.0.0 #945 before.
 
-## Unreleased
+## 1.15 (2026-11-19)
 
 - **3D replay viewer: pan with the right button or Shift + left drag only:** the middle mouse button no longer pans the map; it does nothing in the viewer now. The wheel still zooms.
 - **3D replay viewer: shot rows at the team lists' size:** the rows of the shots panel keep their two lines and everything on them (the vehicle, tier, class and role marks, the flag, the damage or result, the time, the **Bullba Hits** link), but their text is now the same size as the team lists' - one line of a row is as tall as a team row - so a row takes 32 px instead of 50. The panel is a little wider so vehicle names fit.
