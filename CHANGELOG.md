@@ -2,6 +2,15 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.1.1 from 1.05 on, 2.4.1.0 from 1.02 on, 2.4.0.2 from 0.9.3 on, 2.4.0.1 #950 from 0.7.6, 2.4.0.0 #945 before.
 
+## Unreleased
+
+- Replay viewer: the floating damage numbers are coloured by the side that lost the hit points: green for an enemy, red for an ally or you.
+- Shot view: the shot's figures keep one size whatever the shot - every figure has its own line, nothing moves when a screen, a ricochet or damage parts appear; the note under them is one line, its whole text in its tooltip.
+- Shot view: the aim circle at the cursor is now a plain screen tool, switched by "aim circle" in the shot bar (off by default, remembered): a cyan ring as wide as the shot's own circle that follows the cursor in every direction and is drawn over everything, with Bullba Hits' figure for a shot there. It no longer emulates the turret, gun limits or movement.
+- Shot view: the target looks as in Bullba Hits - tracks, wheels and spaced screens are see-through at your Screen opacity, and Bullba Hits' Grid is drawn as set there.
+- Replay viewer: the ⚠ of special-mode battles in the battle list is yellow.
+- Replay limit: 100 replays by default (was 50). A number you changed yourself is kept; a 50 left from the old default becomes 100.
+
 ## 1.18 (2026-11-20)
 
 - Replay viewer, shot view: Replay episode keeps the camera where you put it; clicking the shot's row gives the shooter's view again.

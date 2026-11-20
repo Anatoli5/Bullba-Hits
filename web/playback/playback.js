@@ -2128,13 +2128,14 @@
     return n + 1;
   }
   // floating damage (BACKLOG 113, 20.11): each drop of a vehicle's recorded health (the replay's Vehicle.health; never a
-  // nominal value) flies up from its marker and fades, a constant size on screen as the marker. Gold: dealt by the player's
-  // vehicle (a hit event of the same moment names him); red: lost by the player's vehicle; white: the rest. A drop whose
-  // previous sample is older than the vehicle's current time in sight is not shown (lost out of view: when, unknown).
-  // fxDmg rows: [t, vehicle id, loss, colour 0 white 1 gold 2 red, lift step]; a pool of DMG_POOL sprites, a canvas each,
+  // nominal value) flies up from its marker and fades, a constant size on screen as the marker. Its colour is the side of
+  // the vehicle that LOST it, from the player whose battle it is (the user on 1.18): an enemy's green, an ally's or the
+  // player's own red - in a fight it reads at once who lost it; who dealt it is not shown. A drop whose previous sample is
+  // older than the vehicle's current time in sight is not shown (lost out of view: when, unknown).
+  // fxDmg rows: [t, vehicle id, loss, colour 0 enemy green 1 ally red, lift step]; a pool of DMG_POOL sprites, a canvas each,
   // redrawn only when a slot takes a new number
   var DMG_LIFE = 1.6, DMG_FADE = 0.6, DMG_RISE = 30, DMG_STEP = 12, DMG_NEAR = 0.3, DMG_POOL = 16, DMG_W = 48, DMG_H = 16;
-  var DMG_COL = ['#f2f2f2', '#ffd34d', '#ff6a5a'];
+  var DMG_COL = ['#7ee070', '#ff6a5a'];
   var fxDmg = [], dmgSlots = [], dmgShown = 0, dmgP = new T.Vector3();
   (function () {
     for (var i = 0; i < DMG_POOL; i++) {
@@ -2146,7 +2147,7 @@
     }
   })();
   function buildDamage() {
-    var own = battle.meta.own, hev = battle.hitEvents || [], out = [];
+    var out = [];
     vehicles.forEach(function (r) {
       var v = r.v, hp = r.hp;
       for (var i = 1; i < v.nh; i++) {
@@ -2155,13 +2156,7 @@
         var t0 = hp[(i - 1) * 2], cont = false;
         for (var s = 0; s < v.sight.length; s++) if (t0 >= v.sight[s][0] && t1 <= v.sight[s][1] && t1 >= v.sight[s][0]) { cont = true; break; }
         if (!cont) continue;
-        var col = v.id === own ? 2 : 0;
-        if (!col) for (var k = 0; k < hev.length; k++) {
-          var e = hev[k];
-          if (e[0] > t1 + 0.15) break;
-          if (e[1] === v.id && e[3] > 0 && e[0] >= t1 - 0.15 && e[2] === own) { col = 1; break; }
-        }
-        out.push([t1, v.id, Math.round(loss), col, 0]);
+        out.push([t1, v.id, Math.round(loss), r.role === 'enemy' ? 0 : 1, 0]);
       }
     });
     out.sort(function (a, b) { return a[0] - b[0]; });
@@ -2728,7 +2723,7 @@
       seek: function (x) { t = Math.min(tEnd, Math.max(0, x)); $('slider').value = t; },
       play: function (on) { if (!!on !== playing) togglePlay(); },
       speed: setEpisodeSpeed, orbit: orbitFrom, veil: veil, look: shotLook,
-      recordedOk: shotRecordedOk, recorded: shotRecordedCamera, gunAt: shotGunAt, track: shotTrackState,
+      recordedOk: shotRecordedOk, recorded: shotRecordedCamera, gunAt: shotGunAt, aimToggle: $('sv-aim-circle'),
       delay: function (id) { var r = fxById[id]; return r ? delayOf(r) : 0; },
       foliage: shotFoliage, plantStencil: shotPlantStencil, sight: shotSight,
       corridor: { open: shotCorridorOpen, keep: shotCorridorKeep, vehicles: shotCorridorVehicles, close: shotCorridorClose } });
@@ -2772,34 +2767,6 @@
   }
   // the gun's world matrix (its frame -> the scene) of vehicle `id` at the clock t, as this page would draw it then; the
   // vehicle's drawn pose is put back. null: no pose or no gun
-  // THE SHOOTER'S MOTION AT THE SHOT from this replay's track (20.11, NOTEBOOK U3: the alternative circle keeps the speed
-  // and the hull turning of the shot), for a record without the client's own figures (tracer / attacker `motion`): the
-  // size model's rule of the mod's estimate (replay_aim_other.py tick_state: centred differences over SIZE_WINDOW s taken
-  // SIZE_LAG s before the clock) on the 0x0a positions and hull yaw; the turret's yaw on the hull at the clock (packed gun
-  // angles, as drawn: turret.rotation.y). {speed m/s, hullTurn rad/s, turretYaw | null}, or null without samples.
-  var TRACK_WINDOW = 0.2, TRACK_LAG = 0.3;
-  function trackAt(r, tt) {
-    var v = r.v, p = r.pos, i = search(p, 7, v.np, tt);
-    if (i < 0 || !v.np) return null;
-    var a = i * 7, b = a, f = 0;
-    if (i + 1 < v.np && p[a + 7] - p[a] < 1.0) { b = a + 7; f = Math.max(0, Math.min(1, (tt - p[a]) / (p[b] - p[a]))); }
-    return [p[a + 1] + (p[b + 1] - p[a + 1]) * f, p[a + 2] + (p[b + 2] - p[a + 2]) * f, p[a + 3] + (p[b + 3] - p[a + 3]) * f, angLerp(p[a + 4], p[b + 4], f)];
-  }
-  function shotTrackState(id, t) {
-    var r = fxById[id];
-    if (!r || !r.v || !r.v.np) return null;
-    var t0 = t - TRACK_LAG - TRACK_WINDOW / 2, t1 = t - TRACK_LAG + TRACK_WINDOW / 2, A = trackAt(r, t0), B = trackAt(r, t1);
-    if (!A || !B) return null;
-    var d = B[3] - A[3]; d = Math.atan2(Math.sin(d), Math.cos(d));
-    var yaw = null;
-    if (r.v.ng && r.gunT) {
-      var q = r.gunT, gi = search(q, 3, r.v.ng, t); if (gi < 0) gi = 0;
-      var c = gi * 3, e = c, g = 0;
-      if (gi + 1 < r.v.ng && q[c + 3] - q[c] < 0.5 && t > q[c]) { e = c + 3; g = Math.min(1, (t - q[c]) / (q[e] - q[c])); }
-      yaw = angLerp(q[c + 1], q[e + 1], g);
-    }
-    return { speed: Math.hypot(B[0] - A[0], B[1] - A[1], B[2] - A[2]) / TRACK_WINDOW, hullTurn: Math.abs(d) / TRACK_WINDOW, turretYaw: yaw };
-  }
   function shotGunAt(id, t, out) {
     var r = fxById[id];
     if (!r || !r.turret || !r.gun) return null;
@@ -3877,7 +3844,7 @@
       return v;
     },
     // a control the MOD owns (data-mod-setting: the replay limit) is shown from its file, never remembered or reset here
-    controls: [].slice.call(document.querySelectorAll('#settings input[id]:not([data-mod-setting]), #settings select[id], #sw-sky, #sw-flash, #speed-value')) });
+    controls: [].slice.call(document.querySelectorAll('#settings input[id]:not([data-mod-setting]), #settings select[id], #sw-sky, #sw-flash, #speed-value, #sv-aim-circle')) });
 
   // ------------------------------------------------------------------ start
   var mapData, battleInfo = null;

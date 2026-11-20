@@ -14,7 +14,7 @@
      the controls ask for (clamped), null when that is the mode already; assume(view, want) -> the view showing it. */
 (function (root) {
   'use strict';
-  var WAIT = 10000, MIN = 1, MAX = 100, DEFAULT = 50;
+  var WAIT = 10000, MIN = 1, MAX = 100, DEFAULT = 100;
   var HERE_KEEP = 'Here: shown only; it works in the game';
   function limit(v) { var n = v ? Math.round(Number(v.limit)) : NaN; return n >= MIN && n <= MAX ? n : DEFAULT; }
   function on(v) { return !!(v && v.enabled === true); }
@@ -37,7 +37,7 @@
     var n = limit(v);
     return ['Replay limit', 'Keeps the replays of your last battles in the game’s replays folder, older ones removed: a third replay mode beside the game’s “last battle” and “all”.',
       'On (by default): after each battle a copy of its replay is saved as bh_date_time_vehicle_map in the game’s replays folder; the game’s own file stays as the game wrote it',
-      'The oldest bh_ replays beyond the number (1 … 100, 50 by default) are removed when the next battle’s replay is added',
+      'The oldest bh_ replays beyond the number (1 … 100, 100 by default) are removed when the next battle’s replay is added',
       'Kept forever (★): the bh_ mark is removed from the name; the replay stays in the replays folder and is never removed',
       'Replays without the bh_ name: never counted, never touched',
       'The game set to keep all replays: the limit does nothing, the game keeps every replay',

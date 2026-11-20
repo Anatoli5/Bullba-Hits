@@ -63,7 +63,12 @@
     close();var options=Array.prototype.slice.call(select.options);if(!options.length||select.disabled)return;
     var list=document.createElement('div');list.className='choice-list';list.setAttribute('role','listbox');
     options.forEach(function(option){
-      var item=document.createElement('button');item.type='button';item.className='choice-item';item.setAttribute('role','option');item.setAttribute('aria-selected',String(option.selected));item.disabled=option.disabled;item.textContent=option.textContent;
+      var item=document.createElement('button');item.type='button';item.className='choice-item';item.setAttribute('role','option');item.setAttribute('aria-selected',String(option.selected));item.disabled=option.disabled;
+      // A warning sign leading the option's text (the replay viewer's special-mode battles) gets a span of its own, so the
+      // page can colour the sign alone: a native option can only colour its whole text.
+      var text=option.textContent,warn=/^⚠︎?/.exec(text);
+      if(warn){var sign=document.createElement('span');sign.className='choice-warn';sign.textContent=warn[0];item.appendChild(sign);item.appendChild(document.createTextNode(text.slice(warn[0].length)));}
+      else item.textContent=text;
       item.onclick=function(){var value=option.value;close();if(select.value!==value){select.value=value;select.dispatchEvent(new Event('change'));}select.focus();};
       list.appendChild(item);
     });

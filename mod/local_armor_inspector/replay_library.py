@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """The replay limit (BACKLOG 107; redone 20.11.2026 as the ONE store of replays): a third recording mode beside the game's
 "last battle" and "all" - the replays of the player's last N battles kept as ordinary .wotreplay files directly in the
-game's own `replays/` folder, under the mod's mark, older ones removed by the mod. ON by default (N 1..100, 50).
+game's own `replays/` folder, under the mod's mark, older ones removed by the mod. ON by default (N 1..100, 100; 50 before 1.19).
 
 The user (20.11): one store, the game's own folder, files the game plays and the player can send; the game's own file is
 LEFT ALONE. After a battle the replay source (replay_source.ReplaySource.handover, the replay thread) calls add():
@@ -55,7 +55,8 @@ KEPT = 'bullba_hits'              # replays/bullba_hits/: the keep folder of the
 MANIFEST = 'library.json'         # CFG/replay/library.json
 FORMAT = 3
 OLD_FORMATS = (2,)
-DEFAULT_LIMIT = 50
+DEFAULT_LIMIT = 100
+OLD_DEFAULT_LIMIT = 50              # the default before 1.19: written into every manifest, chosen or not
 MIN_LIMIT, MAX_LIMIT = 1, 100
 DATA_KEY = 'replays'              # data/replays.js: ArmorInspectorData.receive(["replays", value]);
 EXT = '.wotreplay'
@@ -157,13 +158,19 @@ class Library(object):
         removed = state.get('removed') if isinstance(state.get('removed'), dict) else {}
         # Absent (or an older manifest that never said): ON. An explicit false is the player's own choice.
         enabled = state.get('enabled') is not False
-        return {'format': FORMAT, 'enabled': enabled and not unreadable, 'limit': clamp(state.get('limit', DEFAULT_LIMIT)),
+        # N: the player's own only when the page changed it (limitChosen, 1.19). A manifest before 1.19 wrote the old
+        # default 50 whether or not it was chosen: with no flag, 50 reads as today's default; any other N was chosen.
+        chosen = state.get('limitChosen') is True
+        limit = state.get('limit', DEFAULT_LIMIT)
+        if not chosen and limit == OLD_DEFAULT_LIMIT: limit = DEFAULT_LIMIT
+        return {'format': FORMAT, 'enabled': enabled and not unreadable, 'limit': clamp(limit), 'limitChosen': chosen,
                 'battles': battles, 'removed': removed, 'gameSetting': state.get('gameSetting'), 'unreadable': unreadable}
 
     def write(self, state):
         from .exporter import atomic_write
         if state.get('unreadable'): return False
         value = dict((k, state.get(k)) for k in ('format', 'enabled', 'limit', 'battles', 'removed', 'gameSetting'))
+        if state.get('limitChosen'): value['limitChosen'] = True
         try:
             atomic_write(self.manifest, json.dumps(value, sort_keys=True, ensure_ascii=True,
                                                    separators=(',', ':')).encode('ascii'))
@@ -451,6 +458,8 @@ class Library(object):
             value = (bool(enabled), clamp(limit) if limit is not None else state['limit'])
             exists = os.path.isfile(self.manifest)
             if (state['enabled'], state['limit']) == value and exists: return value
+            # the page sends N with every on/off switch: only a changed N is the player's choice
+            if value[1] != state['limit']: state['limitChosen'] = True
             state['enabled'], state['limit'] = value
             self.write(state)
         LOG.info('Replay limit: %s, %d replays', 'on' if value[0] else 'off', value[1])

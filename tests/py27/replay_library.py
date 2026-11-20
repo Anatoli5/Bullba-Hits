@@ -232,7 +232,7 @@ def library_checks(root):
     game_file = os.path.join(replays, LAST)
     marked = lambda: sorted(n for n in listing(replays) if n.startswith(rl.MARK))
 
-    check('mode', 'the replay limit is ON by default (no manifest), N 50', b.library.enabled() is True and b.library.limit() == 50
+    check('mode', 'the replay limit is ON by default (no manifest), N 100', b.library.enabled() is True and b.library.limit() == 100
           and not os.path.exists(b.library.manifest))
     b.library.set_mode(True, 3)
 
@@ -359,7 +359,15 @@ def library_checks(root):
           repr(view))
     check('store', 'no stream.z in the mod\'s folder', not [n for n in listing(os.path.join(b.cfg, 'replay')) if n.endswith(rr.STREAM_EXT)])
     check('mode', 'N is clamped to 1..100', b.library.set_mode(True, 500) == (True, 100) and b.library.set_mode(False, 0) == (False, 1)
-          and b.library.set_mode(False, 'x') == (False, 50))
+          and b.library.set_mode(False, 'x') == (False, 100))
+    # 1.19: the default N 100; a manifest before it wrote 50 whether or not it was chosen
+    def manifest_n(value):
+        state = json.loads(open(b.library.manifest, 'rb').read().decode('utf-8'))
+        state.pop('limitChosen', None); state.update(value)
+        with open(b.library.manifest, 'wb') as f: f.write(json.dumps(state).encode('utf-8'))
+        return b.library.limit()
+    check('mode', 'a 1.18 manifest: 50 with no limitChosen reads as the new default 100; another N is kept; a chosen 50 stays',
+          manifest_n({'limit': 50}) == 100 and manifest_n({'limit': 30}) == 30 and manifest_n({'limit': 50, 'limitChosen': True}) == 50)
     old_checks(root)
     return b
 
