@@ -36,6 +36,10 @@ Checks, by group:
             job writes no stream.z and removes the raw copy; with no replay file and its records stored it removes the raw
             copy too (ACCEPTANCE: neither a stream.z nor a .wotstream of a consumed battle is left); decoded again later it
             reads the replay file (source 'kept replay')
+  fragment  (BACKLOG 115) a crashed battle's fragment, 40 % of the fixture's stream cut inside a packet: ACCEPTANCE one
+            bh_..._unfinished.wotreplay in replays/ whose decoded stream equals the fragment's whole packets, its header
+            from the mod's record, in the manifest under the limit, read by playback.Job.source; built under the game's
+            "all" too; none with the limit off; a build failure is one log line, no .part, the battle as published
   playback  the 3D player gets that file as it is; a battle whose replay the limit removed gets a file that says so
   log       no ERROR logged
 
@@ -390,6 +394,92 @@ def stage(folder):
             shutil.copyfile(os.path.join(source, name), os.path.join(target, name))
 
 
+def whole_packets(data):
+    """The bytes of `data` up to the end of its last whole packet (12-byte header + payload)."""
+    off = 0
+    while off + 12 <= len(data):
+        size = struct.unpack_from('<I', data, off)[0]
+        if off + 12 + size > len(data): break
+        off += 12 + size
+    return bytes(data[:off])
+
+
+def fragment_checks(stand, drain, library, cfg, replays, arena, stream):
+    """BACKLOG 115 (20.11): a crashed battle's fragment (the next start took the game's temp file, no final file) becomes a
+    replay file: bh_<date_time_vehicle_map>_unfinished.wotreplay in replays/, its stream the fragment's whole packets."""
+    from local_armor_inspector import playback
+    raw_of = lambda n: os.path.join(cfg, 'battles', n + rr.RAW_EXT)
+    cut = bytearray(stream[:int(len(stream) * 0.4)])         # the battle cut in the middle of a packet
+    expected = whole_packets(cut)
+
+    def crash(name):
+        shutil.copyfile(os.path.join(cfg, 'battles', BATTLE + '.jsonl'), os.path.join(cfg, 'battles', name + '.jsonl'))
+        with open(raw_of(name), 'wb') as f: f.write(bytes(cut))
+        stand.replay_stream({'schema': 1, 'battle': name, 'arenaId': arena, 'stream': raw_of(name), 'streamBytes': len(cut),
+                             'complete': False, 'end': 'restart', 'final': None, 'finalOwned': False, 'library': None})
+        began = time.time()
+        drain()
+        return time.time() - began
+
+    crashed = arena + '-cccccccccccc'
+    took = crash(crashed)
+    built = [n for n in os.listdir(replays) if n.endswith(rl.UNFINISHED + rl.EXT)]
+    path = os.path.join(replays, built[0]) if len(built) == 1 else None
+    plain = None
+    if path:
+        reader = rr.FinalFile(path)
+        while not reader.step(): pass
+        plain = bytes(reader.stream())
+    entry = stand.replay_state().get(crashed) or {}
+    check('fragment', 'ACCEPTANCE: after a crash pick-up replays/ holds one bh_..._unfinished.wotreplay whose decoded stream '
+          'equals the fragment\'s whole packets', path is not None and built[0].startswith(rl.MARK) and plain == expected
+          and len(expected) < len(cut), repr((built, len(plain or ''), len(expected), len(cut))))
+    head = rl.first_block(path) if path else {}
+    check('fragment', 'its header names the battle from the mod\'s record (date, map, own vehicle and player, the roster)',
+          head.get('mapName') and head.get('dateTime') and head.get('playerVehicle') and head.get('playerName')
+          and len(head.get('vehicles') or {}) > 10 and (head.get('bullbaHits') or {}).get('unfinished') is True
+          and built[0] == rl.readable_name(None, crashed, block=head, suffix=rl.UNFINISHED), repr(sorted(head)))
+    check('fragment', 'entered in the manifest as a marked replay under the limit; the raw copy removed',
+          library.status(crashed) == 'rolling' and library.file_of(crashed) == os.path.abspath(path)
+          and (entry.get('stream') or {}).get('kept') == 'replay folder' and not os.path.exists(raw_of(crashed))
+          and entry.get('status') in ('used', 'cut'), repr((library.status(crashed), entry.get('stream'))))
+    try: kind, found = playback.Job(cfg, GAME, crashed, stand).source()
+    except Exception as error: kind, found = repr(error), None
+    check('fragment', 'the page\'s source path (playback.Job.source) reads it', kind == 'wotreplay'
+          and os.path.abspath(found) == os.path.abspath(path), repr((kind, found)))
+    notes.append('a crashed fragment of %.1f MB built into %s (%.0f KB) in %.1f s of the job (stand)'
+                 % (len(expected) / 1e6, built[0] if built else '?', os.path.getsize(path) / 1e3 if path else 0, took))
+
+    # The game set to keep all replays: still built (the game wrote nothing for this battle).
+    library.note_setting(2)
+    crash(arena + '-dddddddddddd')
+    check('fragment', 'under the game\'s "all" it is built too', library.status(arena + '-dddddddddddd') == 'rolling'
+          and rl.marked(library.file_of(arena + '-dddddddddddd') or ''))
+    library.note_setting(1)
+
+    # A failure while building: one log line, no .part left, the battle as published.
+    seen = Lines()
+    log = logging.getLogger('local.armor_inspector')
+    log.addHandler(seen)
+    level = log.level
+    log.setLevel(logging.INFO)
+    step = rr.BuiltFile.step
+
+    def broken(self): raise IOError('disk full (simulated)')
+    rr.BuiltFile.step = broken
+    failed = arena + '-eeeeeeeeeeee'
+    try: crash(failed)
+    finally:
+        rr.BuiltFile.step = step
+        log.removeHandler(seen)
+        log.setLevel(level)
+    lines = [l for l in seen.lines if 'was not built' in l]
+    check('fragment', 'a failure while building: one log line, no .part, the battle published from its records',
+          len(lines) == 1 and not [n for n in os.listdir(replays) if n.endswith('.part')]
+          and (stand.replay_state().get(failed) or {}).get('status') in ('used', 'cut') and library.file_of(failed) is None,
+          repr(lines))
+
+
 def source_checks(root):
     from local_armor_inspector import exporter, playback, map_raw
     arena = BATTLE.split('-', 1)[0]
@@ -456,15 +546,21 @@ def source_checks(root):
     lone = arena + '-bbbbbbbbbbbb'
     lone_raw = os.path.join(cfg, 'battles', lone + rr.RAW_EXT)
     with open(lone_raw, 'wb') as f: f.write(bytes(stream))
+    library.set_mode(False, 50)        # the limit off: a crash's fragment gets no replay file either
+    before = sorted(os.listdir(replays))
     stand.replay_stream({'schema': 1, 'battle': lone, 'arenaId': arena, 'stream': lone_raw, 'streamBytes': len(stream),
                          'complete': True, 'end': 'restart', 'final': None, 'finalOwned': False, 'library': None})
     drain()
+    library.set_mode(True, 50)
     lone_entry = stand.replay_state().get(lone) or {}
     left = [n for n in os.listdir(os.path.join(cfg, 'replay')) if n.endswith(rr.STREAM_EXT)]
     left += [n for n in os.listdir(os.path.join(cfg, 'battles')) if n.endswith(rr.RAW_EXT)]
     check('source', 'ACCEPTANCE: neither a stream.z nor a .wotstream of a consumed battle is left in the mod\'s folder (one with '
           'its replay file, one with none)', lone_entry.get('status') in ('used', 'cut') and not left
-          and (lone_entry.get('stream') or {}).get('kept') in ('none', 'replay folder'), repr((lone_entry.get('stream'), left)))
+          and (lone_entry.get('stream') or {}).get('kept') == 'none', repr((lone_entry.get('stream'), left)))
+    check('fragment', 'the limit off: a crashed battle\'s fragment gets no replay file', sorted(os.listdir(replays)) == before,
+          repr(sorted(os.listdir(replays))))
+    fragment_checks(stand, drain, library, cfg, replays, arena, stream)
     # Decoded again later (its stored records unreadable, a store older than a format): pending without a stream.
     entry['status'] = 'pending'
     stand.write_replay_state()

@@ -11,6 +11,10 @@ LEFT ALONE. After a battle the replay source (replay_source.ReplaySource.handove
 - the setting `none` (0): the mod's own recording (replay_source.OWN_RESULT_NAME) is the mod's file: RENAMED to that name;
 - the setting `all` (2): the player keeps every replay himself - nothing is made, the limit does not apply; the battle is
   only TIED to the game's own file (state 'game') so Bullba Hits and its 3D player find it.
+- a crashed battle (BACKLOG 115): the game wrote no final file; the export thread's replay job builds one from the
+  fragment the next start picked up (replay_run.BuiltFile) and add(built=True) renames it into place as
+  MARK + date_time_vehicle_map + UNFINISHED (`bh_..._unfinished.wotreplay`) - whatever the game's setting (under `all`
+  too: it is the only replay of that battle); a rolling marked file like the others (entry `unfinished`).
 Before a file becomes the battle's (the .part copy, the own file before its rename, the game's file before the tie) it is
 checked to be THIS battle's replay: its first encrypted chunk decrypted (replay_run.library_matches, ~33 ms under the
 client's Python 2.7) carries the battle's arena id in its 0x00 packet and starts with the bytes of the mod's in-battle copy
@@ -59,6 +63,7 @@ REPLAY_MAGIC = 0x11343212
 STREAM_EXT = '.stream.z'          # replay_run.STREAM_EXT: the older kept streams, listed for the page
 SAFE = re.compile(r'[^A-Za-z0-9_.-]+')
 LOCK = threading.RLock()          # one for every Library object of the process: the two threads build their own
+UNFINISHED = '_unfinished'        # the name's word of a replay the mod built from a crashed battle's fragment
 GAME_ALL = 2                      # the game's setting `all` (BattleReplay: enableAutoRecordingBattles(2))
 FIT_BEFORE, FIT_AFTER = 120.0, 4 * 3600.0   # a file's time that can be a battle's (its start - before, + after)
 
@@ -89,10 +94,11 @@ def first_block(path):
         return {}
 
 
-def readable_name(path, battle):
+def readable_name(path, battle, block=None, suffix=''):
     """The mod's name of a battle's replay: MARK + date_time_vehicle_map as the game names its own under "all", e.g.
-    bh_20261118_2253_ussr-R04_T-34_02_malinovka.wotreplay; MARK + the battle id when the header does not say."""
-    block = first_block(path)
+    bh_20261118_2253_ussr-R04_T-34_02_malinovka.wotreplay; MARK + the battle id when the header does not say. `block`:
+    the header itself instead of the file's; `suffix`: added before the extension (UNFINISHED for a crash's fragment)."""
+    block = first_block(path) if block is None else block
     parts = []
     when = str(block.get('dateTime') or '')
     found = re.match(r'(\d{1,2})\.(\d{1,2})\.(\d{4}) (\d{1,2}):(\d{2})', when)
@@ -102,7 +108,7 @@ def readable_name(path, battle):
     for key in ('playerVehicle', 'mapName'):
         if block.get(key): parts.append(SAFE.sub('_', str(block[key])).strip('_.'))
     name = '_'.join(p for p in parts if p) if len(parts) == 3 else ''
-    return MARK + (name or 'battle_' + SAFE.sub('_', str(battle)))[:120] + EXT
+    return MARK + (name or 'battle_' + SAFE.sub('_', str(battle)))[:120] + suffix + EXT
 
 
 def this_battle(path, arena, head):
@@ -267,11 +273,19 @@ class Library(object):
         self.publish()
         return True
 
-    def add(self, name, source, started, arena=None, head=None, own=False, setting=None):
+    def fragment_target(self, name, header):
+        """Where the replay the mod builds from a crashed battle's fragment goes (replay_run.BuiltFile writes it as
+        <path>.part, add(built=True) renames it): replays/bh_<date_time_vehicle_map>_unfinished.wotreplay, unique."""
+        if not os.path.isdir(self.root): os.makedirs(self.root)
+        return os.path.join(self.root, self.unique(readable_name(None, name, block=header, suffix=UNFINISHED), self.taken()))
+
+    def add(self, name, source, started, arena=None, head=None, own=False, setting=None, built=False):
         """With the limit on: the battle's whole final file `source` made the battle's replay under the mod's name in
         replays/ - COPIED (the game's file stays), or RENAMED when it is the mod's `own` recording - once it is checked to
         be this battle's (this_battle: arena id and `head`, the in-battle copy's first bytes); then the oldest marked
         replays beyond the limit are removed. Under the game's setting `all` nothing is made: the game's file is tied.
+        `built`: `source` is <target>.part the mod built from a crashed battle's fragment (replay_run.BuiltFile): renamed
+        to <target> (its name says _unfinished), whatever the game's setting - the game wrote nothing for that battle.
         Returns the file's path; None when the limit is off or the file is not this battle's; raises IOError/OSError when
         the copy or rename failed (the caller retries)."""
         from .replay_source import final_header
@@ -284,7 +298,7 @@ class Library(object):
             entry = state['battles'].get(name)
             if entry and self.ours(entry): return os.path.abspath(self.where(entry))
             same_folder = os.path.dirname(os.path.abspath(source)) == os.path.abspath(self.root)
-            if state.get('gameSetting') == GAME_ALL and not own:
+            if state.get('gameSetting') == GAME_ALL and not own and not built:
                 if not same_folder or not this_battle(source, arena, head):
                     LOG.warning("Replay limit: %s is not the replay of %s; not tied", source, name)
                     return None
@@ -295,7 +309,18 @@ class Library(object):
                 self.write(state)
                 gone = []
             else:
-                if marked(source) and same_folder:
+                if built:
+                    file = os.path.basename(source)[:-len('.part')]
+                    taken = self.taken()
+                    taken.discard((file + '.part').lower())
+                    file = self.unique(file, taken)
+                    target = os.path.join(self.root, file)
+                    if not this_battle(source, arena, head):
+                        LOG.warning("Replay limit: the replay built for %s does not read back as its own; not taken", name)
+                        return None
+                    os.rename(source, target)
+                    how = 'built'
+                elif marked(source) and same_folder:
                     file, target, how = os.path.basename(source), source, 'taken'   # already the mod's (a retry after it landed)
                 else:
                     file = self.unique(readable_name(source, name), self.taken())
@@ -328,13 +353,14 @@ class Library(object):
                         how = 'copied'
                 state['battles'][name] = {'file': file, 'state': 'rolling', 'at': float(started or time.time()),
                                           'arena': str(arena) if arena is not None else None, 'added': time.time(), 'how': how}
+                if built: state['battles'][name]['unfinished'] = True
                 state['removed'].pop(name, None)
                 gone = self.prune(state)
                 self.write(state)
         LOG.info('Replay limit: the replay of %s %s %s%s', name,
                  {'copied': 'copied from %s to' % source, 'renamed': 'renamed from %s to' % source,
                   'tied': "tied to the game's own file (the game keeps all replays; the limit does not apply)",
-                  'taken': 'taken as'}.get(how, how), target,
+                  'taken': 'taken as', 'built': "built from the crashed battle's fragment as"}.get(how, how), target,
                  '; removed by the limit of %d: %s' % (state['limit'], ', '.join(gone)) if gone else '')
         self.publish()
         return os.path.abspath(target)

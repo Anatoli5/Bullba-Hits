@@ -23,7 +23,9 @@ Exporter.replay_stream queues it as a 'replay' job, and the job runs Consumption
      (library_matches); no stream copy is kept in CFG (no new stream.z; an older battle's stays and is still read). The
      raw copy is transient: removed once the records are stored, the replay file verified or the replay unusable; the
      mod's own final file deleted (finalOwned), the battle marked in CFG/replay/index.json - a stream collected and never
-     consumed (the game closed first) is found at the next start (Exporter.replay_setup).
+     consumed (the game closed first) is found at the next start (Exporter.replay_setup). A crashed battle's fragment
+     (end 'restart', no final file; BACKLOG 115) gets a replay file built from its whole packets with the limit on
+     (BuiltFile, fragment_header, encrypt_blocks; Library.add(built=True): bh_..._unfinished.wotreplay).
   A battle decoded again later (its stored records unreadable, a store older than a format) reads its raw copy, else its
   older stream.z, else its replay file (Library.file_of: by the manifest, else by the file's header), decrypted in steps
   (source 'kept replay'); with none of them it is published from its live record with the warning.
@@ -390,6 +392,114 @@ def decrypt_blocks(data, chain, table=None):
         out[2 * b] = pl
         out[2 * b + 1] = pr
     return struct.pack('>%dI' % (2 * n), *out), (pl, pr)
+
+
+def encrypt_blocks(data, chain, table=None):
+    """(cipher bytes, chain) of whole 8-byte blocks: the inverse of decrypt_blocks - each plain block XOR the previous
+    plain block (`chain`, carried from the step before), then Blowfish-ECB encrypted with the client's key; S0 + S1
+    looked up at once (merged_table)."""
+    if not _SCHEDULE: _SCHEDULE.append(rd._blowfish_schedule(rd.REPLAY_KEY))
+    P, (_, _, S2, S3) = _SCHEDULE[0]
+    T01 = table if table is not None else merged_table()
+    rounds = P[0:16]
+    p16, p17 = P[16], P[17]
+    n = len(data) // 8
+    vals = struct.unpack('>%dI' % (2 * n), data[:8 * n])
+    out = [0] * (2 * n)
+    pl, pr = chain
+    for b in range(n):
+        a, c = vals[2 * b], vals[2 * b + 1]
+        l, r = a ^ pl, c ^ pr
+        for k in rounds:
+            l ^= k
+            r ^= ((T01[l >> 16] ^ S2[(l >> 8) & 255]) + S3[l & 255]) & 0xffffffff
+            l, r = r, l
+        out[2 * b] = r ^ p17
+        out[2 * b + 1] = l ^ p16
+        pl, pr = a, c
+    return struct.pack('>%dI' % (2 * n), *out), (pl, pr)
+
+
+class BuiltFile(object):
+    """A .wotreplay the mod builds in steps (BACKLOG 115, 20.11: a crashed battle's fragment, the game wrote none):
+    magic, one JSON block (`header`, fragment_header), the stream's and the packed sizes, then zlib of `stream` (in C,
+    at once: 0.06 s for 2.9 MB under the client's Python 2.7) padded to 8 bytes and encrypted CHUNK bytes a step
+    (encrypt_blocks), appended to `path`. Measured on the stand under the client's Python 2.7 (20.11): the 2.86 MB stream
+    of a real battle, 1.12 MB packed - 0.92 s in all, 35 steps, the longest 0.034 s (the first, zlib, 0.09 s)."""
+
+    def __init__(self, path, stream, header):
+        self.path = path
+        self.raw_size = len(stream)
+        packed = zlib.compress(bytes(stream), 6)
+        self.packed_size = len(packed)
+        self.body = packed + b'\0' * (-len(packed) % 8)
+        self.at, self.chain, self.table = 0, (0, 0), None
+        head = json.dumps(header, sort_keys=True, ensure_ascii=True, separators=(',', ':')).encode('ascii')
+        with open(path, 'wb') as handle:
+            handle.write(struct.pack('<II', rd.REPLAY_MAGIC, 1) + struct.pack('<I', len(head)) + head
+                         + struct.pack('<II', self.raw_size, self.packed_size))
+
+    def step(self):
+        """Encrypt and append the next chunk; True when all is written."""
+        if self.at < len(self.body):
+            if self.table is None: self.table = merged_table()
+            out, self.chain = encrypt_blocks(self.body[self.at:self.at + CHUNK], self.chain, self.table)
+            self.at += CHUNK
+            with open(self.path, 'ab') as handle: handle.write(out)
+        if self.at >= len(self.body):
+            self.table = None
+            return True
+        return False
+
+
+def fragment_header(folder, name, records):
+    """The JSON block of the replay built from a crashed battle's fragment, from what the mod knows of the battle: its raw
+    record's battle record and first roster (battles/<name>.jsonl), else the replay's own converted ones (`records`).
+    Filled: dateTime, mapName, mapDisplayName, gameplayID, battleType, playerName, playerVehicle, vehicles (type, team,
+    name, maxHealth), clientVersionFromXml / FromExe and regionCode (the record's version.xml text), hasMods. Not known:
+    playerID, serverName, serverSettings, and the battle results (the game's second block)."""
+    import re as _re
+    battle = roster = None
+    try:
+        with open(os.path.join(folder, 'battles', name + '.jsonl'), 'rb') as handle:
+            for number, line in enumerate(handle):
+                if number >= 400 or (battle is not None and roster is not None): break
+                try: record = json.loads(line.decode('utf-8'))
+                except ValueError: continue
+                if record.get('type') == 'battle' and battle is None: battle = record
+                elif record.get('type') == 'roster' and roster is None: roster = record
+    except (IOError, OSError):
+        pass
+    for record in records or ():
+        if record.get('type') == 'battle' and battle is None: battle = record
+        elif record.get('type') == 'roster' and roster is None: roster = record
+    battle, roster = battle or {}, roster or {}
+    mode = battle.get('mode') if isinstance(battle.get('mode'), dict) else {}
+    own_id = battle.get('playerVehicleId') or roster.get('playerVehicleId')
+    header = {'hasMods': True, 'bullbaHits': {'unfinished': True, 'battle': name}}
+    started = battle.get('startedAt')
+    if isinstance(started, (int, float)):
+        header['dateTime'] = time.strftime('%d.%m.%Y %H:%M:%S', time.localtime(started))
+    for key, value in (('mapName', mode.get('geometryName')), ('mapDisplayName', battle.get('map')),
+                       ('gameplayID', mode.get('gameplayName')), ('battleType', mode.get('bonusType'))):
+        if value is not None: header[key] = value
+    text = str(battle.get('clientVersion') or '')
+    found = _re.search(r'v\.(\d+(?:\.\d+)+)\s*#\s*(\d+)', text)
+    if found:
+        header['clientVersionFromXml'] = u'World\xa0of\xa0Tanks v.%s #%s' % found.groups()
+        header['clientVersionFromExe'] = found.group(1)
+    realm = _re.search(r'<realm>\s*(\w+)\s*</realm>', text)
+    if realm: header['regionCode'] = realm.group(1)
+    vehicles = {}
+    for row in roster.get('vehicles') or ():
+        if not isinstance(row, dict) or row.get('id') is None: continue
+        vehicles[str(row['id'])] = {'vehicleType': row.get('type'), 'team': row.get('team'), 'name': row.get('player'),
+                                    'fakeName': row.get('player'), 'maxHealth': row.get('maxHealth'), 'isAlive': 1}
+        if row.get('id') == own_id:
+            if row.get('player'): header['playerName'] = row['player']
+            if row.get('type'): header['playerVehicle'] = str(row['type']).replace(':', '-', 1)
+    header['vehicles'] = vehicles
+    return header
 
 
 class FinalFile(object):
@@ -890,6 +1000,40 @@ class Consumption(object):
             else:
                 library.drop(name, "not this battle's replay")
                 replay = None
+        # A crashed battle's fragment (BACKLOG 115, 20.11: the next start took the game's temp file; the game wrote no final
+        # file): with the replay limit on, a .wotreplay built from its whole packets into replays/ under the mod's mark,
+        # its name saying _unfinished - whatever the game's setting (under `all` too: the game wrote nothing for it). Built
+        # here in steps (encrypt a CHUNK a step, under the job's gates); a failure is one log line, the battle stays as
+        # published from its records.
+        if (replay is None and source == 'stream copy' and message.get('end') == 'restart' and not final_used
+                and self.outcome[0] != 'failed' and library.enabled()):
+            started = TIMER()
+            part = None
+            try:
+                whole = stream[:len(stream) - (info.get('partialBytes') or 0)]
+                header = fragment_header(exporter.folder, name, records)
+                target = library.fragment_target(name, header)
+                part = target + '.part'
+                builder = BuiltFile(part, whole, header)
+                while True:
+                    done = builder.step()
+                    self.lap('fragment', started)
+                    if done: break
+                    yield
+                    started = TIMER()
+                started = TIMER()
+                replay = library.add(name, part, time.time(), self.arena, head=bytes(whole[:4096]), own=True, built=True)
+                if replay is not None:
+                    info['kept'] = 'replay folder'
+                    info['built'] = os.path.basename(replay)
+            except Exception as error:
+                LOG.warning('Replay: the replay file of the crashed battle %s was not built (%s: %s); its battle is kept as '
+                            'published', name, type(error).__name__, error)
+            if part is not None and os.path.isfile(part):
+                try: os.remove(part)
+                except OSError: pass
+            self.lap('fragment', started)
+            started = TIMER()
         if source == 'kept replay': info['kept'] = 'replay folder'
         if source == 'kept stream': kept_bytes = os.path.getsize(kept)
         elif 'kept' not in info: info['kept'] = 'none'

@@ -41,7 +41,8 @@ id and the copy's first bytes. A copy or rename that fails is tried again at the
 COPY_RETRY s while the source is unchanged. With the limit off nothing is copied or renamed. The game's setting is read
 in the hangar (hangar_check) and noted in the limit's manifest (Library.note_setting).
 After a crash the next start takes the battle's temp.wotreplay into the copy (restart) before the login's record()
-truncates it: its damage log is decoded from it; the game writes no final file then, so that battle has no replay file.
+truncates it: its damage log is decoded from it; the game writes no final file then, so with the replay limit on the
+export thread's replay job builds one from the fragment (BACKLOG 115: replay_run.BuiltFile, bh_..._unfinished).
 """
 from __future__ import absolute_import
 import glob
