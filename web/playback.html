@@ -39,6 +39,10 @@
   .tl-window { gap:4px; }
   .tl-sep { width:1px; align-self:stretch; margin:0 2px; background:var(--line); }
   #fullscreen { padding:3px 6px; line-height:0; }
+  /* the open battle's keep-forever star (BACKLOG 107): gold while kept; dimmed while it cannot act (its tooltip says why) */
+  #keep-replay { padding:2px 6px; }
+  #keep-replay.on { color:var(--gold); }
+  #keep-replay:disabled { opacity:.55; cursor:default; }
   #fullscreen svg { vertical-align:middle; }
   #topline label.give { flex:0 1 auto; min-width:0; overflow:hidden; }
   #topline select { flex:0 1 auto; min-width:60px; }
@@ -126,11 +130,12 @@
   <div id="topline">
     <span class="tl-group tl-battle">
     <button id="back" title="Bullba Hits&#10;Opens the recorded hits; in the game in a window of their own, this one stays.">&#9664; Hits</button>
-    <label class="give" title="Battle&#10;Opens another battle in the 3D replay: date and start time, map, vehicle, player.&#10;- the replay files of the game's replays folder, any player's, newest first; ★ kept forever&#10;- then the battles of Bullba Hits that have no replay file&#10;- ⚠ a special battle mode (Onslaught, Frontline, Steel Hunter, events): the picture may be wrong for it&#10;- the first time, the game prepares the battle and its map: a few seconds">battle <select id="sel-battle" style="max-width:300px"></select></label>
+    <label class="give" title="Battle&#10;Opens another battle in the 3D replay: date and start time, map, vehicle, player.&#10;- the replay files of the game's replays folder, any player's, newest first; ★ kept forever&#10;- then the battles of Bullba Hits that have no replay file&#10;- ⚠ a special battle mode (Onslaught, Frontline, Steel Hunter, events): the picture may be wrong for it&#10;- the first time, the game prepares the battle and its map: a few seconds&#10;- the star beside it keeps the open battle's replay forever; Settings > Replays: the replay limit">battle <select id="sel-battle" style="max-width:300px"></select></label>
+    <button id="keep-replay" type="button" aria-pressed="false" disabled title="Keep forever">&#9734;</button>
     </span>
     <span class="tl-sep" aria-hidden="true"></span>
     <span class="tl-group tl-view">
-    <button id="settings-btn" title="Settings&#10;Opens or closes the settings: layers, shadows, grain, light, vehicle colour, halo, haze, crowns, cost readout.">Settings &#9662;</button>
+    <button id="settings-btn" title="Settings&#10;Opens or closes the settings: layers, shadows, grain, light, vehicle colour, halo, haze, crowns, replays, cost readout.">Settings &#9662;</button>
     <label title="Sky&#10;Draws the sky: light overhead, a dull grey haze at the horizon, grey below it.&#10;- on (default): the scenery beyond the playable border fades into that haze instead of ending in a cut&#10;- off: black all round - the map hangs in the dark and fades into black"><input type="checkbox" id="sw-sky" checked> sky</label>
     </span>
     <span class="tl-sep" aria-hidden="true"></span>
@@ -188,6 +193,10 @@
     <label title="Crowns&#10;- game LOD, flat far: the plant's lowest 3D level of detail from its .srt within 160 m, beyond it a flat picture of the same plant&#10;- game LOD everywhere: 3D at any distance (heavier)&#10;- simple: a low hull of the same geometry (cheaper)">crowns <select id="sel-crowns"><option value="lod">game LOD, flat far</option><option value="lodall">game LOD everywhere</option><option value="hull">simple</option></select></label>
   </div>
   <div style="margin-top:2px"><label title="Warn on special modes&#10;Shows a warning when a battle of a special mode opens: Onslaught, Frontline, Steel Hunter, Grand Battle, events.&#10;- the viewer draws the map's standard picture; such a mode may not look like it&#10;- the warning's &quot;Don't show again&quot; turns this off&#10;- the ⚠ in the battle list stays either way"><input type="checkbox" id="sw-special-warn" checked> warn on special modes</label></div>
+  <!-- Replays (BACKLOG 107, 20.11 NOTEBOOK S3): the replay limit, the MOD's own mode (data/replays.js shows it; the same as
+       Bullba Hits' Settings > Replay limit); not one of this page's remembered settings (data-mod-setting). Its tooltip:
+       web/replay-limit.js -->
+  <div style="margin-top:2px"><b>Replays</b> <label id="replay-limit-label" title="Replay limit"><input type="checkbox" id="replay-limit-on" data-mod-setting aria-label="Replay limit on"> replay limit, keep the last <input type="number" id="replay-limit" data-mod-setting min="1" max="100" step="1" value="50" style="width:48px" aria-label="Replays kept"></label></div>
   <div style="margin-top:2px"><label title="Cost readout&#10;Shows what drawing the current view costs, under the top line.&#10;- fps and frame interval: how often frames come (capped by the display or the game)&#10;- page CPU: the page's own time to step and draw one frame&#10;- GPU: the graphics card's time for one frame, where the browser has the timer; otherwise it says not available&#10;- triangles, draw calls, shadow maps, ground textures: what the view sends to the graphics card and the memory it holds"><input type="checkbox" id="sw-cost"> cost readout</label></div>
   <div id="help">drag: orbit; right or Shift + drag: pan; wheel: zoom; WASD or arrows: move; R/F: up/down; space: play</div>
   <div class="settings-actions"><button type="button" id="reset-settings" title="All settings here back to default">Reset to defaults</button></div>
@@ -218,6 +227,7 @@
 <script src="frame.js"></script>
 <script src="host.js"></script>
 <script src="settings-store.js"></script>
+<script src="replay-limit.js"></script>
 <script src="playback/mapbuild.js"></script>
 <script src="playback/mapbuild9.js"></script>
 <script src="playback/mapbuild-page.js"></script>

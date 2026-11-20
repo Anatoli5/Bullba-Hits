@@ -460,6 +460,10 @@ global.BullbaShotShell = window.BullbaShotShell;
 // replay viewer's pinned point), loaded before app.js as the page loads it.
 try { require(path + 'armor-line.js'); } catch (e) { if (e.code !== 'MODULE_NOT_FOUND') throw e; }
 global.BullbaArmorLine = window.BullbaArmorLine;
+// The replay limit's rules and words (20.11.2026: moved out of app.js into web/replay-limit.js, shared with the replay
+// viewer), loaded before app.js as the page loads it.
+try { require(path + 'replay-limit.js'); } catch (e) { if (e.code !== 'MODULE_NOT_FOUND') throw e; }
+global.BullbaReplayLimit = window.BullbaReplayLimit;
 // The emulation's sound (08.10): its samples and its owner, loaded before app.js as the page loads them. No audio
 // context exists here until the sound checks at the end give the window a stand-in one.
 try { require(path + 'aim-sound-samples.js'); require(path + 'aim-sound.js'); } catch (e) { if (e.code !== 'MODULE_NOT_FOUND') throw e; }

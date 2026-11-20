@@ -11,9 +11,10 @@
  *    a stand-in jsHostQuery answering as the mod). The player's own vehicle's shots panel is opened and its first shot with
  *    a hit that Hits' record lists is clicked - the panel's own row button.
  * Checks: the shot view opens on Bullba Hits' viewer (mode 'hits'): Hits' heat map composed on the target (the composition
- * ran, its faces > 0, pixels of the overlay coloured), the episode plays at 1/4 and stops paused at the hit event's time,
- * the hit line held before the hit and shown at it; the camera at the hit stands near the tracer's start (the figure
- * printed); Replay episode goes back to 2 s before the shot without moving Hits' camera; Leave gives the free camera and
+ * ran, its faces > 0, pixels of the overlay coloured), the episode plays at x1 and stops paused at the hit event's time,
+ * the hit line held before the hit and shown at it; the camera is the shooter's first person (the replay's own camera, or
+ * the gun's: near the tracer's start, the figure printed), no lens zoom, the wheel ends it; Replay episode goes back to
+ * 2 s before the shot in first person again (21.11, NOTEBOOK S2); Leave gives the free camera and
  * the speed back, the target drawn again; no page or console error.
  * The one number printed: faces of the target in Hits' composition, the coloured pixels, the pause time against the hit
  * time, the eye's distance from the tracer's start.
@@ -107,10 +108,11 @@ async function until(page, expr, ms) {
     const first = await page.evaluate('MapBench.shotView()');
     const TARGET = row.hit.target, SHOOTER = own;
     check('the shot view takes the camera over: no vehicle followed', await page.evaluate('document.getElementById("free").classList.contains("on")'));
-    check('the episode starts 2 s before the shot, playing at 1/4, the hit line held', Math.abs(first.start - Math.max(0, row.t - 2)) < 1e-6 && first.speed === 0.25 && first.shotHeld && Math.abs(first.stop - row.hit.t) < 1e-9,
+    check('the episode starts 2 s before the shot, playing at x1, the hit line held', Math.abs(first.start - Math.max(0, row.t - 2)) < 1e-6 && first.speed === 1 && first.shotHeld && Math.abs(first.stop - row.hit.t) < 1e-9,
       JSON.stringify({start: first.start, t: row.t, speed: first.speed, held: first.shotHeld, stop: first.stop, hit: row.hit.t}));
-    // the lens: Hits' field of view and the zoom of Hits' Fit, the eye not moved off the shot's origin
-    check('the lens is Hits’: field of view ' + first.lens.fov + '°, zoom ×' + first.lens.zoom.toFixed(2) + ' by Hits’ Fit', first.lens.fov === 38 && first.lens.zoom >= 1, JSON.stringify(first.lens));
+    // (21.11, NOTEBOOK S2) no lens zoom: the shooter's first person - the replay's camera (its field of view) or the gun's
+    check('first person of the shooter (' + first.view + '), no lens zoom: field of view ' + first.lens.fov.toFixed(1) + '°, zoom ×' + first.lens.zoom,
+      first.firstPerson && /^(camera|gun|place)$/.test(first.view) && first.lens.zoom === 1 && (first.view === 'camera' || first.lens.fov === before.lens.fov), JSON.stringify({view: first.view, lens: first.lens}));
     // the stop at the hit
     const stopped = await until(page, 'var s = MapBench.shotView(); s && !s.playing && !s.armed ? s : null', 90000);
     check('the episode stops paused at the hit event’s time, the hit line shown', stopped && Math.abs(stopped.t - stopped.hitT) < 1e-9 && !stopped.shotHeld,
@@ -183,19 +185,16 @@ async function until(page, expr, ms) {
     check('Hits’ composition for this camera: ' + heat.faces + ' faces, the engine in this page’s pose: ' + heat.posed + ', backend: ' + heat.backend, heat.composed && heat.faces > 0 && heat.posed, JSON.stringify(heat));
     const eye = stopped ? await page.evaluate('(function () { var s = MapBench.shotView(); return s.eye; })()') : null;
     const gap = eye ? Math.hypot(eye[0] - row.start[0], eye[1] - row.start[1], eye[2] - row.start[2]) : NaN;
-    check('at the hit the camera stands near the tracer’s start: ' + gap.toFixed(2) + ' m; the shooter not drawn (the eye inside it)', gap < 5 && heat.shooterHidden === true, JSON.stringify({eye: eye, start: row.start, hidden: heat.shooterHidden}));
-    // the wheel zooms the lens by Hits' rule; the eye stays
-    const z0 = await page.evaluate('MapBench.shotView()');
+    // (the gun's first person: the eye at the tracer's start at the shot; the replay's own camera stands where the player's was)
+    check('at the hit the camera is the shooter’s (' + heat.view + '): ' + gap.toFixed(2) + ' m from the tracer’s start; the shooter not drawn while the eye is inside it',
+      heat.view === 'camera' || (gap < 5 && heat.shooterHidden === true), JSON.stringify({view: heat.view, eye: eye, start: row.start, hidden: heat.shooterHidden}));
+    // (21.11) the wheel: closer / farther as everywhere - it ends the first person, the lens stays ×1
+    const z0 = await page.evaluate('(function () { var s = MapBench.shotView(); s.cam = MapBench.camera(); return s; })()');
     await page.evaluate('MapBench.shotObjects(' + TARGET + ').renderer.domElement.dispatchEvent(new WheelEvent("wheel", {bubbles: true, cancelable: true, deltaY: -100, clientX: 400, clientY: 300}))');
+    await sleep(100);
     const z1 = await page.evaluate('(function () { var s = MapBench.shotView(); s.cam = MapBench.camera(); return s; })()');
-    check('the wheel zooms the lens (×' + z0.lens.zoom.toFixed(2) + ' -> ×' + z1.lens.zoom.toFixed(2) + '), the eye stays', z1.lens.zoom > z0.lens.zoom * 1.1 && Math.hypot(z1.eye[0] - z0.eye[0], z1.eye[1] - z0.eye[1], z1.eye[2] - z0.eye[2]) < 1e-6,
-      JSON.stringify({before: z0.lens, after: z1.lens}));
-    await page.evaluate('document.querySelector(".sv-fit").click()');
-    const zf = await page.evaluate('MapBench.shotView().lens');
-    await page.evaluate('document.querySelector(".sv-fit").click()');
-    const zf2 = await page.evaluate('MapBench.shotView().lens');
-    // (at the opening Fit frames the target where the record has it at the hit; now where this page draws it)
-    check('Fit frames the target again by Hits’ Fit: ×' + zf.zoom.toFixed(2) + ' (the wheel’s ×' + z1.lens.zoom.toFixed(2) + ' undone, the same on a second press)', zf.zoom >= 1 && Math.abs(zf.zoom - z1.lens.zoom) > 1e-3 && Math.abs(zf2.zoom - zf.zoom) < 1e-9, JSON.stringify({fit: zf, again: zf2, first: z0.lens}));
+    check('the wheel moves the camera (distance ' + z1.cam.dist.toFixed(1) + ' m), no lens zoom (×' + z1.lens.zoom + '), the first person ended', !z1.firstPerson && z1.lens.zoom === 1 && z1.lens.fov === before.lens.fov,
+      JSON.stringify({before: {fp: z0.firstPerson, lens: z0.lens}, after: {fp: z1.firstPerson, lens: z1.lens, dist: z1.cam.dist}}));
     // A CLICK ON THE TARGET pins a line through it: Hits' pinAt through this camera, its reading in Hits' words
     const at = await page.evaluate('(function () { var V = MapBench.shotViewer(), p = V.point.clone().project(V.camera), r = MapBench.shotObjects(' + TARGET + ').renderer.domElement.getBoundingClientRect();' +
       ' return {x: r.left + (p.x + 1) / 2 * r.width, y: r.top + (1 - p.y) / 2 * r.height}; })()');
@@ -204,13 +203,12 @@ async function until(page, expr, ms) {
     const pinned = await page.evaluate('MapBench.shotView()');
     check('a click on the target pins a line, read in Hits’ words: "' + pinned.pin + '"', pinned.pinned && /(%|Ricochet|—)/.test(pinned.pin || '') && /mm/.test(pinned.pin || ''), JSON.stringify({pinned: pinned.pinned, pin: pinned.pin}));
     await page.evaluate('document.querySelector(".sv-unpin").click()');
-    // Replay episode: the camera stays
-    const camBefore = await page.evaluate('(function () { var c = MapBench.camera(); c.zoom = MapBench.shotView().lens.zoom; return c; })()');
+    // Replay episode: in the shooter's first person again (21.11)
     await page.evaluate('document.querySelector(".sv-again").click()');
     await sleep(400);
-    const again = await page.evaluate('(function () { var s = MapBench.shotView(); s.cam = MapBench.camera(); s.cam.zoom = s.lens.zoom; return s; })()');
-    check('Replay episode: back before the hit, playing, the hit line held, the camera and its lens where they were, no pin', again.playing && again.t < again.stop && again.t >= again.start && again.shotHeld && !again.pinned &&
-      Object.keys(camBefore).every((k) => camBefore[k] === again.cam[k]), JSON.stringify({t: again.t, playing: again.playing, held: again.shotHeld, cam: again.cam, before: camBefore}));
+    const again = await page.evaluate('MapBench.shotView()');
+    check('Replay episode: back before the hit, playing at x1, the hit line held, the shooter’s first person again, no pin', again.playing && again.t < again.stop && again.t >= again.start && again.shotHeld && !again.pinned &&
+      again.firstPerson && again.speed === 1 && again.lens.zoom === 1, JSON.stringify({t: again.t, playing: again.playing, held: again.shotHeld, fp: again.firstPerson, view: again.view, speed: again.speed, lens: again.lens}));
     await until(page, 'var s = MapBench.shotView(); s && !s.playing && !s.armed ? s : null', 90000);
     // the camera flown out of the shooter (an orbit drag of 300 px): the shooter is drawn again
     await page.evaluate('(function () { var c = MapBench.shotObjects(' + TARGET + ').renderer.domElement, x = 400, y = 300, o = function (t) { c.dispatchEvent(new PointerEvent(t, {bubbles: true, clientX: x, clientY: y, button: 0, buttons: 1, pointerId: 1, isPrimary: true})); };' +
@@ -237,8 +235,8 @@ async function until(page, expr, ms) {
       await page.evaluate('document.querySelector(\'.shots-panel .hit[data-key="' + miss.key + '"]\').click()');
       const m = await until(page, 'var s = MapBench.shotView(); s && s.mode === "replay" && !s.playing && !s.armed ? s : null', 90000);
       const mgap = m ? Math.hypot(m.eye[0] - miss.start[0], m.eye[1] - miss.start[1], m.eye[2] - miss.start[2]) : NaN;
-      check('a shot with no hit: the episode without Hits’ view, stopped at its tracer’s end, the camera at its start (' + mgap.toFixed(2) + ' m), the reason said',
-        m && Math.abs(m.t - miss.end) < 1e-9 && mgap < 0.5 && /no vehicle this shot hit/.test(m.note), JSON.stringify(m && {t: m.t, end: miss.end, note: m.note, gap: mgap}));
+      check('a shot with no hit: the episode without Hits’ view, stopped at its tracer’s end, the shooter’s view (' + (m && m.view) + ', ' + mgap.toFixed(2) + ' m from the tracer’s start), the reason said',
+        m && Math.abs(m.t - miss.end) < 1e-9 && (m.view === 'camera' || mgap < 5) && /no vehicle this shot hit/.test(m.note), JSON.stringify(m && {t: m.t, end: miss.end, note: m.note, view: m.view, gap: mgap}));
       await page.evaluate('document.querySelector(".sv-leave").click()');
     } else console.log('note no shot without a hit among the own vehicle’s rows: the path without Hits’ view not exercised');
     console.log('note the shot view: ' + reg.painted + ' painted pixels inside a silhouette of ' + reg.silhouette + ', ' + reg.outside + ' outside; ' + heat.faces + ' faces in Hits’ composition; paused at ' + (stopped ? stopped.t.toFixed(3) : '-') +

@@ -22,30 +22,43 @@
    Parts of the target this page does not draw (an outer track pair, an armoured prefab) are drawn for the shot view from
    the scene's own models (extras), so the paint and the geometry agree.
 
-   The eye: Hits' focus (the shell's axis at its origin, looking at the vehicle) mapped into the scene by the target's pose
-   at the hit (the record's world transform), then this page's own free camera (orbit, pan, wheel, keys; no ground floor).
-   The shot's corridor (CORRIDOR): map objects and other vehicles the line from the eye to the hit passes through are not
-   drawn while the view is open (the shell reached the target: nothing solid stood there), given back on Leave; the
-   terrain never - where it crosses the line the bar says so. Objects off the line occlude as anywhere.
+   The eye (21.11, NOTEBOOK S2): from the episode's start the camera rides with the shooter, first person (camera()):
+   - the replay's own player with his camera recorded over the whole episode (playback.js shotRecordedOk: no gap over
+     0.3 s, the eye never under the ground): his camera as the replay has it - eye, turn, field of view (his sniper zoom);
+   - anyone else, or a record that does not cover the episode: the gun's view for the whole episode, never the two mixed -
+     the tracer's start and first direction put into the gun's frame at the shot (playback.js shotGunAt) and carried with
+     the gun each frame, the viewer's own field of view. A row with no tracer: the shooter's place, looking at the target.
+   The bar says which. At the stop the picture stays as the shooter saw it; the first drag, wheel or move key (release())
+   ends the first person: the field of view the viewer had, the camera orbiting the target's FOCUS - Bullba Hits' orbit
+   centre (viewer.js vehicleCentre / pivotCentre: over the hull's box, at the turret's height or the shooter's gun
+   height), ridden with the target as this page draws it -, the wheel closer / farther as everywhere. A pan or a move
+   key frees the centre from the target (panned()). No lens zoom, no Fit (the owner, 1.16).
+   The shot's corridor (CORRIDOR): map objects and other vehicles the shell's line (Hits' eye on the shell's axis at its
+   origin, to the hit) passes through are not drawn while the view is open (the shell reached the target: nothing solid
+   stood there), given back on Leave; the terrain never - where it crosses the line the bar says so. Objects off the
+   line occlude as anywhere.
    The shooter: while the eye is inside it (INSIDE: its hull, turret or gun box grown by INSIDE metres) it is veiled - not
    drawn, its shadow kept; flown out of it, it is drawn again.
-   The episode: the battle from 2 s before the shot, at 1/4 speed, stopped at the hit (the row's hit event; a shot with no
-   hit: its tracer's end) with the hit line shown from then on. Replay episode: the same, the camera left where it is.
-   The lens: Hits' field of view and the zoom Hits' Fit picks for that eye (the target framed for reading the map, the eye
-   not moved); the wheel zooms by Hits' rule, Fit frames again; dragging orbits round the target as in the battle view.
+   The episode: the battle from 2 s before the shot, at x1, stopped at the hit (the row's hit event; a shot with no hit:
+   its tracer's end) with the hit line shown from then on; played on, the mode leaves by itself AFTER s past the stop, so
+   the heat map's cost does not run on into the battle. Replay episode: the same, in first person again.
    Leave (or Esc): the mode's exit (exit()) - the lens, the user's speed, the target's look, the shooter as before.
 
    A replay file Bullba Hits has no battle of: the mod makes it from the replay ('prepareBattle' with the file's id).
    What cannot be had (outside the game; a replay the route refuses; a shot with no hit; a hit the battle does not list; a
    scene without its models; no WebGL 2) is not made up: the episode plays and the bar says what is missing.
 
-   BullbaShotView.create(o) -> {open(row), close(), active(), free(), paint(t, now), overlay(), clamp(t0, t1), state()};
+   BullbaShotView.create(o) -> {open(row), close(), active(), free(), camera(t), panned(), paint(t, now), overlay(),
+   clamp(t0, t1), state()};
    o: {view (the element the canvas is in), camera, renderer, battle, hitsBattle, battleId, dataBase, vehicle(id), name(id),
-   clock(t), seek(t), play(on), speed(v | null), orbit(eye, at) (scene coordinates), veil(r, on), look(r, material | null)}. */
+   clock(t), seek(t), play(on), speed(v | null), orbit(eye, at) (scene coordinates), veil(r, on), look(r, material | null),
+   recordedOk(id, t0, t1), recorded(id, t, pos, quat) -> fov | null, gunAt(id, t, matrix) -> matrix | null}. */
 (function (root) {
   'use strict';
   var T = root.THREE;
-  var BEFORE = 2, SLOW = 0.25;   // s before the shot; the episode's speed (the brief: "slow motion", 1/4 a guess)
+  // s before the shot; the episode's speed (x1, the owner on 1.16: 1/4 too slow); s past the stop after which a battle
+  // played on leaves the mode
+  var BEFORE = 2, SPEED = 1, AFTER = 1;
   // The shooter is not drawn while the eye is within INSIDE m of its hull, turret or gun box (each in its own frame). 0.5 m:
   // Hits' eye stands 0.30 m past the muzzle on the shell's axis (the test's figure), so it starts inside; a step away
   // from the vehicle shows it again.
@@ -91,12 +104,10 @@
     var hitsBattles = {};
     // ---- the bar: what is shown, Replay episode, Leave; the pinned point's reading --------------------------------------
     var bar = node('div', undefined, 'panel sv-bar'), title = node('span', '', 'sv-title'), note = node('div', '', 'sv-note');
-    var again = node('button', 'Replay episode', 'sv-again'), leave = node('button', 'Leave', 'sv-leave'), fit = node('button', 'Fit', 'sv-fit');
+    var again = node('button', 'Replay episode', 'sv-again'), leave = node('button', 'Leave', 'sv-leave');
     var pin = node('div', undefined, 'sv-pin'), pinLabel = node('b', '', 'sv-pin-label'), pinChips = node('span', '', 'sv-pin-chips'), unpin = node('button', '×', 'sv-unpin');
-    again.type = leave.type = unpin.type = fit.type = 'button';
-    fit.title = 'Fit\nFrames the target as Bullba Hits frames it: the lens zooms, the eye stays where it is.\n• The wheel zooms in and out (the lens, as in Bullba Hits)';
-    fit.onclick = function () { fitLens(); };
-    again.title = 'Replay episode\nPlays the shot again from ' + BEFORE + ' s before it, slowed down, and stops at the hit.\n• The camera stays where you put it';
+    again.type = leave.type = unpin.type = 'button';
+    again.title = 'Replay episode\nPlays the shot again from ' + BEFORE + ' s before it, seen by the shooter, and stops at the hit.\n• Played on, the shot view closes ' + AFTER + ' s after the hit';
     leave.title = 'Leave the shot view\nBack to the battle view: the free camera and your speed.\n• Esc does the same';
     unpin.title = 'Unpin\nDrops the pinned line: the recorded hit line comes back.';
     pin.title = 'Pinned line\nBullba Hits’ reading of the line from the camera through the point you clicked on the target.';
@@ -104,7 +115,7 @@
     leave.onclick = function () { close(); };
     unpin.onclick = function () { if (S.viewer) S.viewer.unpin(); };
     pin.appendChild(pinLabel); pin.appendChild(pinChips); pin.appendChild(unpin); pin.hidden = true;
-    bar.appendChild(title); bar.appendChild(fit); bar.appendChild(again); bar.appendChild(leave); bar.appendChild(note); bar.appendChild(pin); bar.hidden = true;
+    bar.appendChild(title); bar.appendChild(again); bar.appendChild(leave); bar.appendChild(note); bar.appendChild(pin); bar.hidden = true;
     document.body.appendChild(bar);
     window.addEventListener('keydown', function (e) { if (e.key === 'Escape' && S.row) { close(); e.preventDefault(); } });
     // ---- Hits' viewer, hosted on this page's renderer and camera -------------------------------------------------------
@@ -135,7 +146,6 @@
     function viewer() {
       if (S.viewer) return S.viewer;
       S.viewer = new root.ArmorViewer(o.view, host);
-      S.hitsFov = S.viewer.camera.fov;   // Hits' lens (38°), before the host's camera is copied into it
       S.viewer.grid.visible = false;
       S.viewer.onPin = pinShown;
       return S.viewer;
@@ -153,18 +163,17 @@
       return L;
     }
     // ---- a click on the target: Hits' pin ----------------------------------------------------------------------------------
-    var press = null, canvas = o.renderer.domElement;
-    // THE WHEEL ZOOMS in the shot view, by Bullba Hits' wheel rule (ArmorViewer.wheelStep, clampZoom): the lens, not the
-    // distance - the eye stays at the shot's origin. Caught before this page's own wheel (the orbit distance).
-    canvas.addEventListener('wheel', function (e) {
-      if (!S.row || S.mode !== 'hits') return;
-      e.preventDefault(); e.stopImmediatePropagation();
-      var k = root.ArmorViewer.wheelStep(e, 1); if (!k) return;
-      o.camera.zoom = root.ArmorViewer.clampZoom(o.camera.zoom * Math.exp(-k)); o.camera.updateProjectionMatrix();
-    }, { capture: true, passive: false });
-    canvas.addEventListener('pointerdown', function (e) { press = S.mode === 'hits' && e.button === 0 && !e.shiftKey && !e.ctrlKey && !e.altKey ? { x: e.clientX, y: e.clientY } : null; });
+    var press = null, held = null, canvas = o.renderer.domElement;
+    // the user takes the camera (release()): the wheel - caught before this page's own wheel, which then moves the eye
+    // closer / farther from where the shooter's eye was -, or a drag past 3 px (a click stays a pin)
+    canvas.addEventListener('wheel', function () { if (S.row) release(); }, { capture: true, passive: true });
+    canvas.addEventListener('pointerdown', function (e) {
+      held = { x: e.clientX, y: e.clientY };
+      press = S.mode === 'hits' && e.button === 0 && !e.shiftKey && !e.ctrlKey && !e.altKey ? { x: e.clientX, y: e.clientY } : null;
+    });
+    canvas.addEventListener('pointermove', function (e) { if (held && S.fp && Math.abs(e.clientX - held.x) + Math.abs(e.clientY - held.y) > 3) release(); });
     canvas.addEventListener('pointerup', function (e) {
-      var p = press; press = null;
+      var p = press; press = null; held = null;
       if (!p || S.mode !== 'hits' || !S.viewer || !S.haveA || Math.abs(e.clientX - p.x) + Math.abs(e.clientY - p.y) > 3) return;
       S.viewer.resize(); S.viewer.placeCamera(); S.viewer.pinAt(e);
     });
@@ -180,8 +189,8 @@
       pinChips.replaceChildren(); line.groups.forEach(function (g) { var c = node('span', g.text, 'chip ' + g.kind); if (g.title) c.title = g.title; pinChips.appendChild(c); });
     }
     // ---- THE MODE: its entry and its exit, the one place what the shot view changes in this page is set and put back ------
-    // Entry: the camera's lens as it was (fov, zoom, near, far) kept; the shot view then sets Hits' lens (HITS_FOV, the
-    // zoom of Hits' Fit), the clock (the episode, its speed), the eye. Exit: the lens, the user's speed, the target's own
+    // Entry: the camera's lens as it was (fov, zoom, near, far) kept; the shot view then sets the clock (the episode, its
+    // speed) and the eye (first person: the recorded field of view). Exit: the lens, the user's speed, the target's own
     // look, the shooter, no Hits marks - nothing of the mode stays in the battle view. (A mode that draws less of the map
     // to keep the frame rate would be switched on in enter() and off in exit().)
     function enter() {
@@ -195,14 +204,87 @@
       // nothing of the mode stays allocated: the paint target goes (Hits' composition went with viewer.clear)
       if (paintRT) { paintRT.dispose(); paintRT = null; paintMat.uniforms.uPaint.value = null; }
     }
-    // Hits' lens on this camera where it stands: Hits' field of view and the zoom of Hits' Fit (viewer.js hostFit)
-    function fitLens() {
-      var v = S.viewer, c = o.camera;
-      if (S.mode !== 'hits' || !v || !S.haveA) return;
-      c.fov = S.hitsFov; c.zoom = 1; c.updateProjectionMatrix(); if (o.place) o.place(); c.updateMatrixWorld();
-      var z = v.hostFit();
-      c.zoom = z > 0 ? z : 1; c.updateProjectionMatrix();
+    // ---- the eye: the shooter's first person, then the orbit round the target's focus -------------------------------------
+    var G = new T.Matrix4(), GI = new T.Matrix4(), fpPos = new T.Vector3(), fpLook = new T.Vector3(), fpQ = new T.Quaternion(), fpFocus = new T.Vector3();
+    var pose = { position: null, quaternion: null, look: null, fov: 55, focus: null };
+    // which first person this row gets, decided once for the whole episode: 'camera' (the replay's own), 'gun', 'place'
+    function firstPerson(row) {
+      var end = (S.stop == null ? row.t : S.stop) + AFTER;
+      if (o.recordedOk && o.recordedOk(row.shooter, S.start, end)) return { kind: 'camera', words: 'the view: the player’s own camera from the replay' };
+      var s = row.shot, sh = s && o.battle.shots ? o.battle.shots[s.index] : null, me = o.vehicle(row.shooter);
+      var why = me && me.v && me.v.own ? 'the replay’s camera does not cover this episode' : 'no camera is recorded for this vehicle';
+      if (s && sh) {
+        var at = new T.Vector3(s.start[0], s.start[1], -s.start[2]), dir = new T.Vector3(sh[6], sh[7], -sh[8]);
+        if (!(dir.lengthSq() > 1e-9)) dir.set(s.end[0] - s.start[0], s.end[1] - s.start[1], -(s.end[2] - s.start[2]));
+        dir.normalize();
+        if (o.gunAt && o.gunAt(row.shooter, row.t, G)) {
+          GI.copy(G).invert();
+          return { kind: 'gun', eye: at.applyMatrix4(GI), dir: dir.transformDirection(GI), words: 'the view: from the gun (' + why + ')' };
+        }
+        return { kind: 'place', eye: at, look: at.clone().add(dir), words: 'the view: from the shell’s start, still (' + why + '; the shooter’s gun is not drawn)' };
+      }
+      var a = o.vehicle(row.shooter), b = S.target == null ? null : o.vehicle(S.target);
+      // the vehicles' groups stand in the root's game axes, as the tracers do
+      if (a && b) return { kind: 'place', eye: new T.Vector3(a.group.position.x, a.group.position.y + 2, -a.group.position.z),
+        look: new T.Vector3(b.group.position.x, b.group.position.y + 1.5, -b.group.position.z), words: 'the view: from the shooter’s place, still (no tracer of this shot)' };
+      return { kind: 'none', words: 'the view: the camera as it was (no tracer of this shot, the shooter or the target not drawn)' };
     }
+    // the target's focus in the scene now: Bullba Hits' orbit centre (S.focusGroup, in the target group's frame)
+    function focusScene(out) {
+      var r = S.target == null ? null : o.vehicle(S.target);
+      if (!r || !r.visible) return null;
+      if (!S.focusGroup) S.focusGroup = meshCentre(r);
+      if (!S.focusGroup) return null;
+      r.group.updateWorldMatrix(true, false);
+      return out.copy(S.focusGroup).applyMatrix4(r.group.matrixWorld);
+    }
+    // Hits' rule (viewer.js vehicleCentre) on this page's drawing of the collision model, where Hits' viewer has none:
+    // over the hull's box, at the turret's box centre height (no turret: the hull's top)
+    function meshCentre(r) {
+      var hull = bodyOf(r.group, r); if (!hull) return null;
+      if (!hull.geometry.boundingBox) hull.geometry.computeBoundingBox();
+      hull.updateMatrix();
+      var hb = box.copy(hull.geometry.boundingBox).applyMatrix4(hull.matrix), c = hb.getCenter(new T.Vector3()); c.y = hb.max.y;
+      var tm = r.turret ? bodyOf(r.turret, r) : null;
+      if (tm) {
+        if (!tm.geometry.boundingBox) tm.geometry.computeBoundingBox();
+        tm.updateMatrix(); r.turret.updateMatrix();
+        c.y = box.copy(tm.geometry.boundingBox).applyMatrix4(tm.matrix).applyMatrix4(r.turret.matrix).getCenter(V3).y;
+      }
+      return c;
+    }
+    // this page's placeCamera asks: a first-person pose {position, quaternion | look, fov}, or {focus}, or null
+    function camera(t) {
+      if (!S.row) return null;
+      var V = S.view;
+      pose.focus = null;
+      if (S.fp && V && V.kind !== 'none') {
+        var ok = false, fov = S.saved ? S.saved.fov : o.camera.fov;
+        if (V.kind === 'camera') { var f = o.recorded(S.row.shooter, t, fpPos, fpQ); if (f != null) { ok = true; fov = f; } }
+        else if (V.kind === 'gun') { if (o.gunAt(S.row.shooter, t, G)) { ok = true; fpPos.copy(V.eye).applyMatrix4(G); fpLook.copy(V.dir).transformDirection(G).add(fpPos); } }
+        else { ok = true; fpPos.copy(V.eye); fpLook.copy(V.look); }
+        // no pose this frame (the shooter not posed then): the last one held (fpPos, fpQ, fpLook keep it)
+        if (!ok && !S.lastPose) return null;
+        pose.position = fpPos; pose.quaternion = V.kind === 'camera' ? fpQ : null; pose.look = V.kind === 'camera' ? null : fpLook;
+        if (ok) pose.fov = fov;
+        S.lastPose = true;
+        return pose;
+      }
+      pose.position = pose.quaternion = pose.look = null;
+      if (!S.fp && S.lock && focusScene(fpFocus)) { pose.focus = fpFocus; return pose; }
+      return null;
+    }
+    // the user takes the camera: the first person ends where the eye is; the viewer's field of view; orbiting the focus
+    function release() {
+      if (!S.fp) return;
+      S.fp = false; S.lastPose = null;
+      var c = o.camera, k = S.saved;
+      if (k) { c.fov = k.fov; c.zoom = k.zoom; c.updateProjectionMatrix(); }
+      c.updateMatrixWorld();
+      var eye = c.position.clone(), at = focusScene(new T.Vector3()) || eye.clone().add(new T.Vector3(0, 0, -20).applyQuaternion(c.quaternion));
+      o.orbit(eye, at);
+    }
+    function panned() { if (!S.row) return; release(); S.lock = false; }
     // ---- opening a row ----------------------------------------------------------------------------------------------------
     function open(row) {
       close(true);
@@ -213,8 +295,9 @@
       S.start = Math.max(0, row.t - BEFORE);
       S.target = h ? h.target : row.target;
       S.mode = 'wait'; S.error = null; S.data = null; S.rec = null; S.aim = null; S.haveA = false;
+      S.focusGroup = null; S.view = firstPerson(row); S.fp = true; S.lock = true; S.lastPose = null;
       title.textContent = 'Shot view · ' + o.name(row.shooter) + ' → ' + (S.target == null ? 'no hit in the replay' : o.name(S.target)) + ' · ' + o.clock(row.t);
-      note.textContent = 'Preparing the shot view…'; bar.hidden = false; pin.hidden = true;
+      note.textContent = 'Preparing the shot view… · ' + S.view.words; bar.hidden = false; pin.hidden = true;
       o.play(false); o.seek(S.start);
       return hitsScene(row, h).then(function (got) {
         if (tok !== S.token || !got) return;
@@ -359,15 +442,17 @@
       S.mode = 'hits'; S.data = data; S.rec = rec; S.hits = got;
       S.posed = !!(r && sameModel(r, hit.target.parts || []));
       if (r && r.md && r.md.model) addExtras(r, data);
-      // the eye where Hits' focus put Hits' camera, in the scene by the target's pose at the hit
-      var at = v.target.clone(), eye = v.orbitEye(), Ae = Arec || (r && r.visible ? new T.Matrix4().multiplyMatrices(r.group.matrixWorld, Z) : null);
-      if (Ae) o.orbit(eye.applyMatrix4(Ae), at.applyMatrix4(Ae));
-      fitLens();
-      // the shot's corridor: from the eye (placed by fitLens) to the hit point, by the target's pose at the hit
+      // the orbit's centre: Hits' own (viewer.js pivotCentre), in the target group's frame (the viewer's frame is it with z
+      // mirrored: A = the group's world x Z)
+      var pc = v.pivotCentre(); S.focusGroup = new T.Vector3(pc.x, pc.y, -pc.z);
+      // the shot's corridor: the shell's line - Hits' eye (its focus: the shell's axis at its origin) to the hit point -,
+      // by the target's pose at the hit; the camera itself is the shooter's (camera())
+      var eye = v.orbitEye(), Ae = Arec || (r && r.visible ? new T.Matrix4().multiplyMatrices(r.group.matrixWorld, Z) : null);
       S.corridor = null;
-      if (Ae && v.point && o.corridor) { o.camera.updateMatrixWorld(); S.corridor = o.corridor.open(o.camera.position.clone(), v.point.clone().applyMatrix4(Ae), CORRIDOR); }
+      if (Ae && v.point && o.corridor) S.corridor = o.corridor.open(eye.applyMatrix4(Ae), v.point.clone().applyMatrix4(Ae), CORRIDOR);
       S.aim = ready ? 'recorded' : estimate ? (estimate.rebuilt ? 'rebuilt' : 'nominal') : null;
       var c = rec.choice, lines = [];
+      if (S.view) lines.push(S.view.words);
       lines.push(rec.shell ? 'Heat map: ' + (c && c.name ? c.name + ', ' : '') + Math.round(rec.shell.penetration) + ' mm at ' + Math.round(rec.range) + ' m - nominal, not the rolled value' +
         (rec.guess ? ' (assumed: the record does not name this shot’s shell)' : '') : 'No heat map: the record holds no shell for this shot');
       lines.push(S.aim === 'recorded' ? 'Aim circles: the player’s own, recorded' : S.aim === 'rebuilt' ? 'Aim circle: estimate rebuilt from the replay (dashed), not a recorded one' :
@@ -378,32 +463,28 @@
       if (S.corridor && S.corridor.ground != null) lines.push('the ground crosses the shot’s line ' + S.corridor.ground + ' m from the eye: the replay’s positions and the shot disagree there');
       note.textContent = lines.join(' · ');
       note.title = 'Bullba Hits’ view of this hit\nThe target painted by Bullba Hits from the scene rebuilt from the replay, for the camera’s eye.\n• ' + lines.join('\n• ') +
-        '\n• Click on the target: pin a line through that point (Bullba Hits’ reading below)\n• Drag, wheel and keys move the camera as in the battle view\n• The hit’s crosses are marks over the picture: the ground does not hide them, the line it does';
+        '\n• Click on the target: pin a line through that point (Bullba Hits’ reading below)\n• Drag turns the camera round the target, the wheel moves it closer or farther (this ends the shooter’s view)\n• The hit’s crosses are marks over the picture: the ground does not hide them, the line it does';
     }
     function showReplay(why) {
       S.mode = 'replay'; S.note = why;
-      var row = S.row, s = row.shot, eye = s ? s.start : null, at = s ? s.end : null;
-      if (!eye || !at) {
-        var a = o.vehicle(row.shooter), b = S.target == null ? null : o.vehicle(S.target);
-        // the vehicles' groups stand in the root's game axes, as the tracers do
-        if (a && b) { eye = [a.group.position.x, a.group.position.y + 2, a.group.position.z]; at = [b.group.position.x, b.group.position.y + 1.5, b.group.position.z]; }
-      }
-      if (eye && at) o.orbit(new T.Vector3(eye[0], eye[1], -eye[2]), new T.Vector3(at[0], at[1], -at[2]));
-      note.textContent = 'No Bullba Hits view: ' + why + '. The episode plays with the camera at the shot’s start.';
-      note.title = 'Why there is no heat map here\n' + why + '.\n• The camera stands at the tracer’s start, looking along it; no minimum height';
+      var words = S.view ? S.view.words : '';
+      note.textContent = 'No Bullba Hits view: ' + why + '. · ' + words;
+      note.title = 'Why there is no heat map here\n' + why + '.\n• ' + words + '\n• Drag turns the camera round the target, the wheel moves it closer or farther (this ends the shooter’s view)';
     }
     // ---- the episode ----------------------------------------------------------------------------------------------------
     function episode() {
       if (!S.row) return;
-      o.seek(S.start); S.armed = true;
+      o.seek(S.start); S.armed = true; S.fp = true; S.lock = true; S.lastPose = null;
       if (S.viewer && S.mode === 'hits') { S.viewer.holdShot(true); S.held = true; }
-      o.speed(SLOW); o.play(true);
+      o.speed(SPEED); o.play(true);
     }
-    // the replay's clock moved from t0 to t1 in a frame: the episode stops at the hit
+    // the replay's clock moved from t0 to t1 in a frame: the episode stops at the hit; played on past it, the mode leaves
+    // by itself AFTER s later (its exit: the heat map off, the user's speed and lens back)
     function clamp(t0, t1) {
-      if (!S.row || !S.armed || S.stop == null || t1 < S.stop || t0 > S.stop) return t1;
-      S.armed = false; o.play(false);
-      return S.stop;
+      if (!S.row || S.stop == null) return t1;
+      if (S.armed && t1 >= S.stop && t0 <= S.stop) { S.armed = false; o.play(false); return S.stop; }
+      if (!S.armed && t1 >= S.stop + AFTER) close(false);
+      return t1;
     }
     // ---- this page's frame: paint before its render, overlay after it --------------------------------------------------
     function paint(time, now) {
@@ -448,6 +529,7 @@
     function close(reopen) {
       var was = S.mode, r = S.target == null ? null : o.vehicle(S.target), sh = S.row ? o.vehicle(S.row.shooter) : null;
       S.token++;
+      release(); S.lock = false; S.view = null;   // the camera handed to the battle view's orbit where the shooter's eye was
       dropExtras();
       if (o.corridor && S.corridor) o.corridor.close(); S.corridor = null;
       if (r) o.look(r, null);
@@ -465,12 +547,13 @@
         composed: !!(v && v.composed), faces: sf && sf.mesh && sf.mesh.geometry && sf.mesh.geometry.attributes.position ? sf.mesh.geometry.attributes.position.count / 3 : 0,
         ricochetLeg: !!(sf && sf.bounce), shotHeld: !!(v && v.shotHeld), backend: v ? v.backendShown : null,
         pinned: !!(v && v.pinned), pin: pin.hidden ? null : pinLabel.textContent + ' ' + pinChips.textContent, lens: { fov: o.camera.fov, zoom: o.camera.zoom }, inMode: !!S.saved,
+        view: S.view ? S.view.kind : null, firstPerson: !!S.fp, focusLocked: !!S.lock,
         corridor: S.corridor ? { radius: CORRIDOR, hidden: S.corridor.hidden, models: S.corridor.models, collision: S.corridor.collision, plants: S.corridor.plants, modeObjects: S.corridor.modeObjects,
           ground: S.corridor.ground, destroyedAlready: S.corridor.destroyedAlready, vehiclesHidden: S.onLine || 0, list: S.corridor.list, t: S.corridor.t, a: S.corridor.a, b: S.corridor.b } : null };
     }
     return { open: open, close: function () { close(false); }, active: function () { return !!S.row; },
-      free: function () { return !!S.row; }, paint: paint, overlay: overlay, clamp: clamp, state: state, viewer: function () { return S.viewer; },
+      free: function () { return !!S.row; }, camera: camera, panned: panned, paint: paint, overlay: overlay, clamp: clamp, state: state, viewer: function () { return S.viewer; },
       paintMaterial: paintMat, bar: bar };
   }
-  root.BullbaShotView = { create: create, BEFORE: BEFORE, SLOW: SLOW, INSIDE: INSIDE };
+  root.BullbaShotView = { create: create, BEFORE: BEFORE, SPEED: SPEED, AFTER: AFTER, INSIDE: INSIDE };
 })(window);

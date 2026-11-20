@@ -130,6 +130,8 @@ ASSETS = ('Viewer.html', 'web/style.css', 'web/icon.svg', 'web/viewer.js',
           'web/shot-shell.js', 'web/viewer.css', 'web/playback/shot-view.js', 'web/playback/shot-view.css',
           # the reading of one shot line both pages share (20.11: Hits' panels and the shot view's pinned point)
           'web/armor-line.js',
+          # the replay limit's rules and words both pages share (20.11: Hits' Settings and list, the viewer's Settings and star)
+          'web/replay-limit.js',
           'web/vendor/three.LICENSE', 'web/vendor/three-mesh-bvh.umd.js',
           # THIRD_PARTY.md ships with the page and points at these two: the packed-XML reader's licence and
           # the vendor manifest with the sources and hashes of three.js / three-mesh-bvh (inspection, 20.09).

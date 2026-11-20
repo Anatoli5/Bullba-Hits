@@ -10,8 +10,9 @@
    effects(collector, battle, defs, info, docs) -> adds hits, marks, muzzles to the battle. */
 (function () {
   'use strict';
-  var FORMAT = 2;                 // of the battle object kept in IndexedDB (battle-page.js): a change builds it again
-                                  // (2, 19.11: hitEvents and the tracers' shell fields, for the shots panel - BACKLOG 109)
+  var FORMAT = 3;                 // of the battle object kept in IndexedDB (battle-page.js): a change builds it again
+                                  // (2, 19.11: hitEvents and the tracers' shell fields, for the shots panel - BACKLOG 109;
+                                  // 3, 21.11: the player's camera (0x26), for the shot view's first person - NOTEBOOK S2)
   var DELAY_OWN = 0.20, DELAY_OTHER = 0.15;
   var DESTRUCTION_KINDS = ['destroyedFragiles', 'destroyedModules', 'fallenTrees', 'fallenColumns'];
   var PIERCED_EFFECTS = [0, 4, 5, 6];
@@ -19,7 +20,8 @@
   var NUDGES = [[1, -1], [1, 1], [0, -1], [0, 1], [2, -1], [2, 1]];
   var REPLAY_MAGIC = 0x11343212, ARENA_SCAN = 1 << 16;
   // the run-time decode's skips (replay_run.LEAN_TYPES, LEAN_PROPERTIES): what nothing here reads
-  var LEAN_TYPES = [[0x26, 1], [0x36, 0]];
+  // (0x26, the player's camera, is read since 21.11: the shot view's first person)
+  var LEAN_TYPES = [[0x36, 0]];
   var LEAN_PROPERTIES = ['engineMode', 'isStrafing', 'ownVehicleAuxPhysicsData', 'wheelsScroll'];
   var W_DECODE = 'The replay of this battle could not be read (%s)';
 
@@ -106,7 +108,7 @@
   function Collector() {
     this.created = new Set(); this.pos = new Map(); this.gun = new Map(); this.hp = new Map(); this.sight = new Map();
     this.comp = new Map(); this.tracers = new Map(); this.ends = new Map(); this.periods = []; this.own = null; this.tmax = 0; this.serverStart = null;
-    this.area = new Map(); this.destroyed = []; this.hits = []; this.shooting = []; this.stickers = [];
+    this.area = new Map(); this.destroyed = []; this.hits = []; this.shooting = []; this.stickers = []; this.camera = [];
   }
   function list(m, k) { var v = m.get(k); if (!v) m.set(k, v = []); return v; }
   Collector.prototype.feed = function (ev) {
@@ -165,6 +167,12 @@
       if (this.serverStart === null) this.serverStart = ev.serverTime;
     } else if (k === 'arena_period') {
       this.periods.push([r3n(t), ev.period]);
+    } else if (k === 'camera') {
+      // packet 0x26, one a tick: the replay's own camera - rotation (a unit quaternion x, y, z, w, the game's axes; its
+      // +z is the view), offset (the eye minus the followed vehicle's position, world axes), fov (radians: 1.178 arcade,
+      // 0.295 / 0.147 / 0.074 sniper). MEASURED 21.11 on Karelia 18.11: in sniper mode the view from vehicle + offset
+      // points at the 0x1a cursor point to a dot of 1.0000; the fov taken as vertical (BigWorld's projection) - inferred
+      this.camera.push([t].concat(ev.rotation, ev.offset, [ev.fov]));
     } else if (k === 'own_vehicle') {
       // the first: after his death 0x22 names the ally his camera watches (MEASURED 19.11 on Karelia 18.11:
       // 2996243 at 0 s, dead at 354.85 s, 2996248 at 389.25 s; tests/test_playback_own.py)
@@ -255,7 +263,8 @@
     return { collector: c, battle: { format: FORMAT, id: info.id, meta: meta, vehicles: vlist, shots: shots,
       shotFields: ['t', 'shooter', 'ricochet', 'sx', 'sy', 'sz', 'vx', 'vy', 'vz', 'gravity', 'tEnd', 'ex', 'ey', 'ez', 'shellTypeIdx', 'caliber'],
       hitEvents: hitEvents, hitEventFields: ['t', 'target', 'attacker', 'damage', 'points'], hitPointFields: ['effect', 'caliber', 'shellType'],
-      destroyed: c.destroyed, destroyedFields: ['t', 'initial', 'chunk', 'kind', 'tuple'] } };
+      destroyed: c.destroyed, destroyedFields: ['t', 'initial', 'chunk', 'kind', 'tuple'],
+      nc: c.camera.length, camera: floats(c.camera, 9), cameraFields: ['t', 'qx', 'qy', 'qz', 'qw', 'ox', 'oy', 'oz', 'fov'] } };
   }
 
   // ---- the hit points on the drawn part (playback.py Effects; replay_scene Model, decode_segment, collide_hit_point) ---

@@ -7198,8 +7198,8 @@
   // sends a change). A battle's ☆ on its row keeps its replay forever (moved to replays/bullba_hits, ★) or puts it back
   // under the limit. The row says whether the battle still has its replay. The file is read with the poll; outside
   // the game it is not read again once it is missing (nothing would write it). A click is shown at once and waits up to
-  // REPLAY_WAIT ms for the mod's file to agree.
-  var replayView=null,replayMissing=false,replayAsked={},replayStamp='',REPLAY_WAIT=10000;
+  // BullbaReplayLimit.WAIT ms for the mod's file to agree.
+  var replayView=null,replayMissing=false,replayAsked={},replayStamp='';
   function readReplays(){
     if(replayMissing||!ArmorInspectorData.replays)return;
     ArmorInspectorData.replays().then(function(v){
@@ -7211,27 +7211,15 @@
   }
   // A battle's replay: 'kept' (forever), 'rolling' (one of the last N), 'stream' (an older battle's stream the mod kept),
   // 'removed' (by the limit), 'none', or '' while the mod's word is unknown.
-  function replayKind(id,fileOnly){
-    var v=replayView;if(!v)return '';
-    var asked=!fileOnly&&replayAsked[id];
-    if(asked&&Date.now()-asked.at<REPLAY_WAIT)return asked.keep?'kept':'rolling';
-    var s=v.battles&&v.battles[id];if(s==='kept'||s==='rolling')return s;
-    if((v.streams||[]).indexOf(id)>=0)return 'stream';
-    if((v.removed||[]).indexOf(id)>=0)return 'removed';
-    return 'none';
-  }
-  function replayLimit(){var v=replayView,n=v?Math.round(Number(v.limit)):NaN;return n>=1&&n<=100?n:50;}
+  // The rules and the words: web/replay-limit.js (20.11, shared with the replay viewer).
+  function replayKind(id,fileOnly){return BullbaReplayLimit.kind(replayView,replayAsked,id,fileOnly);}
+  function replayLimit(){return BullbaReplayLimit.limit(replayView);}
   // The row's ☆ / ★ (a removed replay: ∅, no action; no mark without a replay under the mod's name).
   function keepTile(id,kind){
-    var n=replayLimit(),live=host.canSend(),here=live?null:'• Here: shown only; it works in the game';
+    var n=replayLimit(),live=host.canSend(),tip=BullbaReplayLimit.keepTip(kind,n,live);
     var tile=node('span',kind==='kept'?'\u2605':kind==='rolling'?'\u2606':kind==='removed'?'\u2205':'','battle-option-keep');
     tile.setAttribute('data-keep',id);tile.setAttribute('data-state',kind||'unknown');
-    if(kind==='rolling')tile.title=tipJoin(['Keep this replay forever','Moves this battle’s replay to replays/bullba_hits, where the limit never removes it.',
-      '• Now: one of the last '+n+' replays the mod keeps',here]);
-    else if(kind==='kept')tile.title=tipJoin(['Replay kept forever','This battle’s replay stays in replays/bullba_hits and is never removed.',
-      '• Click: back to the replays folder, under the limit of the last '+n+' replays','• A replay older than the last '+n+' then goes when the next battle’s replay is added',here]);
-    else if(kind==='removed')tile.title=tipJoin(['Replay removed','The replay limit keeps the replays of the last '+n+' battles, and this battle is older.',
-      '• The battle still opens with its hits','• 3D replay: only if it was prepared before']);
+    if(tip)tile.title=BullbaReplayLimit.join(tip,'• ');
     if(kind==='kept'||kind==='rolling')tile.onclick=function(e){if(e&&e.stopPropagation)e.stopPropagation();toggleKeep(id);};
     return tile;
   }
@@ -7243,26 +7231,14 @@
   }
   // Settings -> Replay limit: the mod's mode - the switch (off by default) and N - sent when changed here (N 1 … 100).
   // Outside the game it is shown only.
-  function replayLimitOn(){return !!(replayView&&replayView.enabled===true);}
-  function paintReplayLimit(){
-    var el=$('replay-limit'),on=$('replay-limit-on'),live=host.canSend(),n=replayLimit(),enabled=replayLimitOn();
-    if(document.activeElement!==el)el.value=String(n);
-    on.checked=enabled;on.disabled=!live;el.disabled=!live||!enabled;
-    $('replay-limit-label').title=tipJoin(['Replay limit','Keeps the replays of your last battles in the game’s replays folder, older ones removed: a recording mode beside the game’s “last battle” and “all”.',
-      '• Now: '+(enabled?'on, the last '+n:'off, the game’s own setting rules')+' (1 … 100, 50 by default)',
-      '• On: each battle’s replay is renamed bh_date_time_vehicle_map; the oldest beyond the number go when the next battle’s replay is added',
-      '• Kept forever (\u2605 in the battle list): moved to replays/bullba_hits, never removed',
-      '• Replays without the bh_ name: never counted, never touched','• A bh_ replay you rename stops being the mod’s',
-      live?null:'• Here: shown only; set it in the game']);
-  }
+  function replayLimitEls(){return {on:$('replay-limit-on'),number:$('replay-limit'),label:$('replay-limit-label')};}
+  function paintReplayLimit(){BullbaReplayLimit.paint(replayLimitEls(),replayView,host.canSend(),'• ');}
   function sendReplayLimit(){
-    var el=$('replay-limit'),n=Math.round(Number(el.value)),enabled=!!$('replay-limit-on').checked;
     if(!host.canSend()){paintReplayLimit();return;}
-    if(!isFinite(n)||el.value==='')n=replayLimit();
-    n=Math.max(1,Math.min(100,n));el.value=String(n);
-    if(n===replayLimit()&&enabled===replayLimitOn())return paintReplayLimit();
-    replayView=replayView||{battles:{},removed:[],streams:[]};replayView.limit=n;replayView.enabled=enabled;   // shown at once; the mod's file says it again
-    sendCommand('replayLimit',{on:enabled,limit:n});paintReplayLimit();renderBattleList();syncBattlePick();
+    var want=BullbaReplayLimit.asked(replayLimitEls(),replayView);
+    if(!want)return paintReplayLimit();
+    replayView=BullbaReplayLimit.assume(replayView,want);   // shown at once; the mod's file says it again
+    sendCommand('replayLimit',want);paintReplayLimit();renderBattleList();syncBattlePick();
   }
   $('replay-limit').onchange=sendReplayLimit;
   $('replay-limit-on').onchange=sendReplayLimit;
