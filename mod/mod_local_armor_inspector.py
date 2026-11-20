@@ -1944,14 +1944,17 @@ def open_viewer():
 def open_replays(battle_id=None):
     """The replay viewer's mods-list button (no battle: the viewer shows the list of replay files) or Hits' 3D control on a
     battle row ('openReplays', a battle id): the viewer in its own window (presentation.REPLAYS); Hits' window, open or not,
-    is left as it is. A click of the button while the viewer is open leaves the replay on screen."""
+    is left as it is. A click of the button while the viewer is open leaves the replay on screen. The viewer opens in the
+    mode it was last left in (U5, 20.11): its full-screen view straight away, else the window (presentation.open_viewer_view)."""
     try:
         from local_armor_inspector import presentation
+        if presentation.fullscreen_open():
+            LOG.info('%s full screen already open; left as it is', REPLAYS_NAME)
+            return
         if battle_id is None and presentation.window_open(presentation.REPLAYS):
             LOG.info('%s window already open; left as it is', REPLAYS_NAME)
             return
-        fragment = 'host=game' + ('&battle=' + str(battle_id) if battle_id else '')
-        presentation.open_in_game(PLAYBACK_PATH, fragment, window=presentation.REPLAYS)
+        presentation.open_viewer_view(PLAYBACK_PATH, 'battle=' + str(battle_id) if battle_id else '')
     except Exception:
         LOG.exception('Could not open the replay viewer')
 

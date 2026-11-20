@@ -12,6 +12,8 @@ request_playback), and the export thread's 'playback' job (Job.steps, in slices)
   2. the client's definitions for the page's decoder (definitions_value: the entities and components of the session's
      replay_run.Definitions - the export of work/decoder-probe/py/ref.py -, the roster's vehicle names, the damage sticker
      kinds of damage_stickers.xml), once per client: data/playback/defs-<crc>.js, shared by every battle;
+  2b. the game's own sight (game_sight: the centre mark and gun tag of the client's Flash sight, for the shot view), once
+     per client: data/playback/sight-<crc>.js; a sight that cannot be read is written as {error} (the page draws its own);
   3. the battle file last, so a page that finds it finds the others too: the battle record's map, mode, start, own vehicle
      and roster (nicknames), the client's version (the page keeps the maps it built under it), the client's part boxes
      of this battle (its stored records' statics: the hit points are decoded on them), the source's kind, size and CRC
@@ -44,12 +46,14 @@ from .replay_files import special_mode
 LOG = logging.getLogger('local.armor_inspector')
 TIMER = getattr(time, 'perf_counter', None) or time.clock
 
-FORMAT = 2                      # of data/playback/<id>.js; the page asks again for a file of another format
+FORMAT = 3                      # of data/playback/<id>.js; the page asks again for a file of another format
+                                # (3, 20.11: 'sight' - the game's sight file, game_sight)
 DATA_FOLDER = 'playback'        # CFG/data/playback/
 RAW_FOLDER = 'mapraw'           # CFG/mapraw/ (map_raw)
 KEY = 'playback:'
 SOURCE_KEY = 'playback-source:'
 DEFS_KEY = 'playback-defs:'
+SIGHT_KEY = 'playback-sight:'
 SOURCE_EXT = '.src.js'
 HEAD_LINES = 400                # lines of the raw record read for the battle record and the first roster
 HEAD_BYTES = 1024               # of the battle file read by current(): format, id, defs, source and record come first
@@ -376,6 +380,41 @@ class Job(object):
         out['name'] = made[0]
         out['client'] = (made[1].get('schema') or {}).get('client')
 
+    def sight_steps(self, out):
+        """The game's sight file (data/playback/sight-<crc>.js, game_sight) into out['name']: read once a session from the
+        client's packages (kept on the session's replay_run.Definitions next to its definitions file), one SWF a step;
+        written when this folder lacks it. A sight that cannot be read is written as {error} with one log line, so the
+        page draws its own sight and says why."""
+        from . import game_sight
+        started = TIMER()
+        definitions = self.defs.replay_defs()
+        made = getattr(definitions, 'playback_sight', None)
+        if made is None:
+            got = {}
+            try:
+                pk = map_raw.Packages(self.game, os.path.join(raw_root(self.folder), 'index'), build=False)
+                for _ in pk.scan_steps():
+                    self.lap('sight', started)
+                    yield
+                    started = TIMER()
+                try:
+                    for _ in game_sight.steps(pk, got):
+                        self.lap('sight', started)
+                        yield
+                        started = TIMER()
+                finally:
+                    pk.close()
+            except Exception as e:
+                got['error'] = 'the package index: %s: %s' % (type(e).__name__, e)
+            value = got.get('value') or {'format': game_sight.FORMAT, 'error': got.get('error') or 'nothing read'}
+            if 'error' in value: LOG.warning("Playback: the game's sight could not be read (%s)", value['error'])
+            text = json.dumps(value, sort_keys=True, separators=(',', ':'))
+            made = definitions.playback_sight = ('sight-%08x' % (zlib.crc32(text.encode('utf-8')) & 0xffffffff), value)
+        path = data_path(self.folder, made[0])
+        if not os.path.isfile(path): self.write(path, SIGHT_KEY + made[0], made[1])
+        self.lap('sight', started)
+        out['name'] = made[0]
+
     def model_boxes_steps(self, roster, boxes):
         """The client's part box of every static part of the roster's vehicle files (data/vehicles, else
         data/playback/vehicles) into `boxes` where it has none: the part's clientBox, else computed from its model
@@ -452,6 +491,8 @@ class Job(object):
         yield
         got = {}
         for _ in self.definitions_steps(got): yield
+        sight = {}
+        for _ in self.sight_steps(sight): yield
         started = TIMER()
         vehicles = []
         for row in roster.get('vehicles') or ():
@@ -465,7 +506,7 @@ class Job(object):
         if special: meta['special'] = special
         # format, id and defs first: current() reads them from the file's first bytes
         value = collections.OrderedDict([
-            ('format', FORMAT), ('id', self.name), ('defs', got['name']), ('source', source), ('record', meta),
+            ('format', FORMAT), ('id', self.name), ('defs', got['name']), ('sight', sight.get('name')), ('source', source), ('record', meta),
             ('roster', vehicles), ('boxes', boxes), ('vehicleFiles', vehicle_files(self.folder)),
             ('made', {'seconds': dict((k, round(v, 3)) for k, v in self.times.items())})])
         self.write(data_path(self.folder, self.name), KEY + self.name, value)

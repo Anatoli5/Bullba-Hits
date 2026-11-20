@@ -10,9 +10,10 @@
    effects(collector, battle, defs, info, docs) -> adds hits, marks, muzzles to the battle. */
 (function () {
   'use strict';
-  var FORMAT = 3;                 // of the battle object kept in IndexedDB (battle-page.js): a change builds it again
+  var FORMAT = 4;                 // of the battle object kept in IndexedDB (battle-page.js): a change builds it again
                                   // (2, 19.11: hitEvents and the tracers' shell fields, for the shots panel - BACKLOG 109;
-                                  // 3, 21.11: the player's camera (0x26), for the shot view's first person - NOTEBOOK S2)
+                                  // 3, 21.11: the player's camera (0x26), for the shot view's first person - NOTEBOOK S2;
+                                  // 4, 20.11: the player's reticles a tick (0x1a, 0x39), for the shot view's aim circles - T3)
   var DELAY_OWN = 0.20, DELAY_OTHER = 0.15;
   var DESTRUCTION_KINDS = ['destroyedFragiles', 'destroyedModules', 'fallenTrees', 'fallenColumns'];
   var PIERCED_EFFECTS = [0, 4, 5, 6];
@@ -24,6 +25,10 @@
   var LEAN_TYPES = [[0x36, 0]];
   var LEAN_PROPERTIES = ['engineMode', 'isStrafing', 'ownVehicleAuxPhysicsData', 'wheelsScroll'];
   var W_DECODE = 'The replay of this battle could not be read (%s)';
+  // Whether a 0x1a sample's fields 3-10 are the SERVER reticle: the shell's direction there (8-10) has the azimuth of the shot
+  // vector of a 0x39 near it to float precision. The rule and its constants are the mod's (replay_aim.py Track.from_server,
+  // SERVER_SPREAD, SAME_AZIMUTH; measured 12.11.2026 on 321 own shots), applied here to the page's own decode.
+  var SERVER_SPREAD = [6, 4], SAME_AZIMUTH = 2e-5;
 
   var D = typeof ReplayDecoder !== 'undefined' ? ReplayDecoder : (typeof require === 'function' ? require('./decoder.js') : null);
 
@@ -109,6 +114,7 @@
     this.created = new Set(); this.pos = new Map(); this.gun = new Map(); this.hp = new Map(); this.sight = new Map();
     this.comp = new Map(); this.tracers = new Map(); this.ends = new Map(); this.periods = []; this.own = null; this.tmax = 0; this.serverStart = null;
     this.area = new Map(); this.destroyed = []; this.hits = []; this.shooting = []; this.stickers = []; this.camera = [];
+    this.marker = []; this.server = [];
   }
   function list(m, k) { var v = m.get(k); if (!v) m.set(k, v = []); return v; }
   Collector.prototype.feed = function (ev) {
@@ -173,6 +179,14 @@
       // 0.295 / 0.147 / 0.074 sniper). MEASURED 21.11 on Karelia 18.11: in sniper mode the view from vehicle + offset
       // points at the 0x1a cursor point to a dot of 1.0000; the fov taken as vertical (BigWorld's projection) - inferred
       this.camera.push([t].concat(ev.rotation, ev.offset, [ev.fov]));
+    } else if (k === 'client_gun_marker') {
+      // packet 0x1a, one a tick: the replay controller's gun-marker state (replay_aim.py; docs/KNOWLEDGE.md section 18):
+      // 0-2 the point under the cursor, 3 the diameter of the reticle last given to the game, 5-7 its place, 8-10 the
+      // shell's direction there (the SERVER reticle while it is shown and updated), 11 the arcade (client) reticle's diameter
+      this.marker.push([t].concat(ev.point, [ev.markerDiameter], ev.markerPosition, ev.markerDirection, [ev.arcadeDiameter]));
+    } else if (k === 'server_gun_marker') {
+      // packet 0x39 of the own vehicle, one a server tick: gun position, shot vector, dispersion half-angle (rad)
+      this.server.push([t].concat(ev.gunPosition, ev.shotVector, [ev.dispersion]));
     } else if (k === 'own_vehicle') {
       // the first: after his death 0x22 names the ally his camera watches (MEASURED 19.11 on Karelia 18.11:
       // 2996243 at 0 s, dead at 354.85 s, 2996248 at 389.25 s; tests/test_playback_own.py)
@@ -264,7 +278,26 @@
       shotFields: ['t', 'shooter', 'ricochet', 'sx', 'sy', 'sz', 'vx', 'vy', 'vz', 'gravity', 'tEnd', 'ex', 'ey', 'ez', 'shellTypeIdx', 'caliber'],
       hitEvents: hitEvents, hitEventFields: ['t', 'target', 'attacker', 'damage', 'points'], hitPointFields: ['effect', 'caliber', 'shellType'],
       destroyed: c.destroyed, destroyedFields: ['t', 'initial', 'chunk', 'kind', 'tuple'],
-      nc: c.camera.length, camera: floats(c.camera, 9), cameraFields: ['t', 'qx', 'qy', 'qz', 'qw', 'ox', 'oy', 'oz', 'fov'] } };
+      nc: c.camera.length, camera: floats(c.camera, 9), cameraFields: ['t', 'qx', 'qy', 'qz', 'qw', 'ox', 'oy', 'oz', 'fov'],
+      na: c.marker.length, aim: floats(markerRows(c), 13), aimFields: ['t', 'cx', 'cy', 'cz', 'diameter', 'mx', 'my', 'mz', 'dx', 'dy', 'dz', 'arcadeDiameter', 'server'],
+      ns: c.server.length, server: floats(c.server, 8), serverFields: ['t', 'gx', 'gy', 'gz', 'vx', 'vy', 'vz', 'dispersion'] } };
+  }
+  // the 0x1a rows with their last field: 1 when fields 3-10 are the server reticle (SERVER_SPREAD, SAME_AZIMUTH above)
+  function markerRows(c) {
+    var S = c.server, k = -1;
+    return c.marker.map(function (m) {
+      while (k + 1 < S.length && S[k + 1][0] <= m[0] + 1e-6) k++;
+      var server = 0;
+      if (Math.hypot(m[8], m[10]) >= 1e-6) {
+        var az = Math.atan2(m[8], m[10]);
+        for (var kk = Math.max(0, k - SERVER_SPREAD[0]); kk < Math.min(S.length, k + SERVER_SPREAD[1] + 1); kk++) {
+          var v = S[kk]; if (Math.hypot(v[4], v[6]) < 1e-6) continue;
+          var d = Math.atan2(v[4], v[6]) - az;
+          if (Math.abs(Math.atan2(Math.sin(d), Math.cos(d))) <= SAME_AZIMUTH) { server = 1; break; }
+        }
+      }
+      return m.concat([server]);
+    });
   }
 
   // ---- the hit points on the drawn part (playback.py Effects; replay_scene Model, decode_segment, collide_hit_point) ---

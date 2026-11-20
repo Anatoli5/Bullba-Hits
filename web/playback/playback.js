@@ -1258,6 +1258,7 @@
           (useAttr ? ' * step(0.5, vLeaf)' : '') + ') discard; }\n' : ''));
     };
     material.customProgramCacheKey = function () { return (depth ? 'fade-depth-' : 'fade-' + (see | 0) + '-') + material.uuid; };
+    material.userData.see = depth ? 0 : see | 0;   // the shot view's silhouette (shotPlantStencil): foliage only, never bark
     return material;
   }
   var plantTexLoads = [];  // the impostors are rendered once every plant texture has decoded
@@ -2728,6 +2729,8 @@
       play: function (on) { if (!!on !== playing) togglePlay(); },
       speed: setEpisodeSpeed, orbit: orbitFrom, veil: veil, look: shotLook,
       recordedOk: shotRecordedOk, recorded: shotRecordedCamera, gunAt: shotGunAt,
+      delay: function (id) { var r = fxById[id]; return r ? delayOf(r) : 0; },
+      foliage: shotFoliage, plantStencil: shotPlantStencil, sight: shotSight,
       corridor: { open: shotCorridorOpen, keep: shotCorridorKeep, vehicles: shotCorridorVehicles, close: shotCorridorClose } });
     return shotView;
   }
@@ -2787,6 +2790,31 @@
     r.group.traverse(function (m) { if (m.isMesh && (m.material === own || m.material.userData.shotPaint)) m.material = mat || own; });
     r.bar.visible = !mat && !r.dead && !r.veiled;
     fxMarkMeshes.forEach(function (m) { var p = m.parent; while (p && p !== r.group) p = p.parent; if (p) m.visible = mat ? false : (hitsOn && t >= m.userData.first); });
+  }
+  // THE EPISODE'S FOLIAGE (20.11, NOTEBOOK T2): the foliage slider (setFoliage) forced to k while the shot view's episode
+  // runs; null puts the user's value back - unless he moved the slider meanwhile (then it is his)
+  var foliageKept = null, foliageForced = null;
+  function shotFoliage(k) {
+    if (k != null) { if (foliageKept == null) foliageKept = +$('rng-foliage').value; foliageForced = k; setFoliage(k); return; }
+    if (foliageKept == null) return;
+    if (Math.abs(+$('rng-foliage').value - foliageForced) < 1e-6) setFoliage(foliageKept);
+    foliageKept = foliageForced = null;
+  }
+  // the shot view's silhouette (T2): while on, the foliage's materials (leaves, far pictures, simple crowns; not bark) write
+  // stencil 2 where they are drawn, so the shot view can show the target where a plant is in front of it
+  function shotPlantStencil(on) {
+    plantMats.forEach(function (m) {
+      if (!m || !(m.userData && m.userData.see)) return;
+      m.stencilWrite = !!on; m.stencilRef = 2; m.stencilFunc = T.AlwaysStencilFunc;
+      m.stencilZPass = on ? T.ReplaceStencilOp : T.KeepStencilOp; m.stencilFail = m.stencilZFail = T.KeepStencilOp;
+    });
+  }
+  // THE GAME'S SIGHT (20.11, T4): data/playback/sight-<crc>.js the mod reads from the client (game_sight.py), named by
+  // the battle file; null: none (an older file, or the mod could not read it - its {error})
+  var sightRead = null;
+  function shotSight() {
+    if (!sightRead) sightRead = FILE && FILE.sight ? loadData('data/playback/' + FILE.sight + '.js', 'playback-sight:' + FILE.sight).catch(function () { return null; }) : Promise.resolve(null);
+    return sightRead;
   }
   // the episode's speed is not the remembered one (#speed-value): the buttons show it, leaving puts the user's back
   function setEpisodeSpeed(v) {
@@ -3445,7 +3473,7 @@
   // polling of a missing file; a look every FALLBACK_MS only in case the word does not come). Outside the game nobody can
   // make it. The battle itself is built from the source in the page (battle-page.js, battle.js) and kept in IndexedDB.
   var host = window.BullbaHost || { game: false, canSend: function () { return false; } };
-  var BASE = '../', PAGE_BASE = '', FORMAT = 2, FALLBACK_MS = 250 /* 19.11: in the game the mod's word never comes (the client has no executeJavascript), the look is how the page learns */, WAIT_MS = 10 * 60 * 1000;
+  var BASE = '../', PAGE_BASE = '', FORMAT = 3, FALLBACK_MS = 250 /* 19.11: in the game the mod's word never comes (the client has no executeJavascript), the look is how the page learns */, WAIT_MS = 10 * 60 * 1000;
   var received = {}, FILE = null, waited = { mod: 0 };
   // 19.11 (the shot view): Bullba Hits' own reader (web/local-data.js, loaded before this file) reads Hits' battle and its
   // scene; a data file calls ArmorInspectorData.receive, so both readers get it (each keeps only what it asked for)
@@ -3724,6 +3752,7 @@
         'speed=' + speed, 'play=' + (playing ? 1 : 0));
       if (follow) parts.push('follow=' + follow.v.id);
       var open = panel && panel.shown(); if (open != null) parts.push('panel=' + open);
+      if (open != null && panel.filter() !== 'all') parts.push('dir=' + panel.filter());   // the panel's filter (U1, 20.11)
     }
     return parts.join('&');
   }
@@ -3742,7 +3771,7 @@
     var f = params.follow != null ? fxById[+params.follow] : null;
     if (f) setFollow(f);
     var p = params.panel != null ? fxById[+params.panel] : null;
-    if (p) { var side = p.role === 'enemy' ? 'enemy' : 'own'; shotsPanel().open(p.v.id, $('list-' + side), side); }
+    if (p) { var side = p.role === 'enemy' ? 'enemy' : 'own'; if (params.dir) shotsPanel().filter(String(params.dir)); shotsPanel().open(p.v.id, $('list-' + side), side); }
     if ((params.play === '1') !== playing) togglePlay();
   }
   function fullOn() { return FULL_VIEW || !!document.fullscreenElement; }

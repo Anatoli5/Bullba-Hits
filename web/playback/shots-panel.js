@@ -19,7 +19,8 @@
    Nothing is guessed in their place.
 
    BullbaShotsPanel {rows(battle, id), linkHits(battle), positionAt(vehicle, t), frame(a, b), create(options)}; create ->
-   {toggle(id, anchor, side), open(id, anchor, side), close(), shown(), count(), place()}. The page (playback.js) gives the
+   {toggle(id, anchor, side), open(id, anchor, side), close(), shown(), filter([f]), count() (the rows the filter shows),
+   place()}. Under the title: Bullba Hits' direction filter (All / incoming / outgoing, 20.11 U1) and the rows' count. The page (playback.js) gives the
    anchor (its team list's box) and the side ('own' left, 'enemy' right), and the actions (pick, hits). */
 (function (root) {
   'use strict';
@@ -146,9 +147,40 @@
     var b = o.battle, box = R.node('div', undefined, 'shots-panel'), head = R.node('div', undefined, 'sp-head'), list = R.node('div', undefined, 'sp-list');
     var title = R.node('span', '', 'sp-title'), close = R.node('button', '✕', 'sp-close');
     close.type = 'button'; close.title = 'Close\nThe list of this vehicle’s shots and hits.'; close.onclick = function () { hide(); };
-    head.appendChild(title); head.appendChild(close); box.appendChild(head); box.appendChild(list);
+    head.appendChild(title); head.appendChild(close); box.appendChild(head);
+    // U1 (20.11): Bullba Hits' direction filter over its hit list (web/index.html #hit-direction, app.js renderHits) - the
+    // same group, glyphs and meaning: all rows, the hits on this vehicle (row.view 'incoming'), its shots and hits
+    // ('outgoing'); the count beside it follows the filter. The filter outlives show(): another vehicle's panel keeps it.
+    var tools = R.node('div', undefined, 'sp-tools'), group = R.node('div', undefined, 'filters'), count = R.node('span', '', 'sp-count');
+    group.setAttribute('role', 'group'); group.setAttribute('aria-label', 'Hit direction');
+    [['all', 'All', null, null], ['incoming', '↙', 'Incoming\nHits on this vehicle in the replay.', 'Hits on this vehicle'],
+      ['outgoing', '↗', 'Outgoing\nThis vehicle’s shots and hits in the replay.', 'Hits by this vehicle']].forEach(function (f) {
+      var bt = R.node('button', f[1]); bt.type = 'button'; bt.setAttribute('data-filter', f[0]); bt.setAttribute('aria-pressed', String(f[0] === 'all'));
+      if (f[2]) bt.title = f[2];
+      if (f[3]) bt.setAttribute('aria-label', f[3]);
+      bt.onclick = function () { setFilter(f[0]); };
+      group.appendChild(bt);
+    });
+    tools.appendChild(group); tools.appendChild(count); box.appendChild(tools); box.appendChild(list);
     box.hidden = true; (o.parent || document.body).appendChild(box);
-    var state = { id: null, anchor: null, side: null, rows: [] };
+    var state = { id: null, anchor: null, side: null, rows: [], filter: 'all', picked: null };
+    var FILTERS = ['all', 'incoming', 'outgoing'];
+    function setFilter(f) {
+      if (FILTERS.indexOf(f) < 0 || f === state.filter) return;
+      state.filter = f;
+      Array.prototype.forEach.call(group.querySelectorAll('button'), function (x) { x.setAttribute('aria-pressed', String(x.getAttribute('data-filter') === f)); });
+      if (!box.hidden) render();
+    }
+    // the list as the filter leaves it, the picked row kept pressed; the count in the title tooltip's words
+    function render() {
+      var shown = state.rows.filter(function (r) { return state.filter === 'all' || r.view === state.filter; });
+      var by = shown.filter(function (r) { return r.view === 'outgoing'; }).length, on = shown.length - by;
+      count.textContent = state.filter === 'outgoing' ? by + ' by it' : state.filter === 'incoming' ? on + ' on it' : by + ' by it · ' + on + ' on it';
+      list.replaceChildren();
+      if (!shown.length) list.appendChild(R.node('p', state.rows.length ? 'No shots or hits for the chosen filter.' : 'No shots or hits of this vehicle in the replay.', 'sp-empty'));
+      shown.forEach(function (r) { list.appendChild(rowEl(r)); });
+      if (state.picked) Array.prototype.forEach.call(list.querySelectorAll('.hit'), function (x) { if (x.getAttribute('data-key') === state.picked) x.setAttribute('aria-pressed', 'true'); });
+    }
     function name(id) { var v = id == null ? null : o.info(id); return (v && v.name) || (id == null ? 'not named' : 'Unknown vehicle'); }
     function words(row, shown) {
       var who = row.view === 'outgoing' ? (row.target == null ? 'Shot: no hit in the replay' : 'Shot at ' + name(row.target)) : 'Hit by ' + (row.shooter == null ? 'a vehicle the replay does not name' : name(row.shooter));
@@ -186,19 +218,19 @@
       return wrap;
     }
     function pick(row) {
+      state.picked = row.key;
       Array.prototype.forEach.call(list.querySelectorAll('.hit'), function (x) { x.setAttribute('aria-pressed', String(x.getAttribute('data-key') === row.key)); });
       var p = places(b, row);
       if (o.pick) o.pick(row, { t: Math.max(0, row.t - BEFORE), camera: frame(p.shooter, p.target) });
     }
     function show(id, anchor, side) {
+      if (state.id !== id) state.picked = null;
       state.id = id; state.anchor = anchor; state.side = side;
       state.rows = rows(b, id);
       var pl = o.player ? o.player(id) : '';
       title.textContent = name(id) + (pl ? ' · ' + pl : '');
       title.title = name(id) + '\n' + state.rows.filter(function (r) { return r.view === 'outgoing'; }).length + ' shots and hits by it, ' + state.rows.filter(function (r) { return r.view === 'incoming'; }).length + ' hits on it in the replay.';
-      list.replaceChildren();
-      if (!state.rows.length) list.appendChild(R.node('p', 'No shots or hits of this vehicle in the replay.', 'sp-empty'));
-      state.rows.forEach(function (r) { list.appendChild(rowEl(r)); });
+      render();
       box.setAttribute('data-side', side === 'enemy' ? 'enemy' : 'own');
       box.hidden = false; place();
       if (o.changed) o.changed(id);
@@ -219,6 +251,8 @@
       open: show, close: hide, place: place, element: box,
       toggle: function (id, anchor, side) { if (state.id === id && !box.hidden) hide(); else show(id, anchor, side); },
       shown: function () { return box.hidden ? null : state.id; },
+      // the direction filter: read, or set ('all' | 'incoming' | 'outgoing'; anything else is left out)
+      filter: function (f) { if (f !== undefined) setFilter(f); return state.filter; },
       count: function () { return box.hidden ? 0 : list.querySelectorAll('.sp-row').length; }
     };
   }

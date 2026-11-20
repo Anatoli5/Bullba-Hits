@@ -2,6 +2,15 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.1.1 from 1.05 on, 2.4.1.0 from 1.02 on, 2.4.0.2 from 0.9.3 on, 2.4.0.1 #950 from 0.7.6, 2.4.0.0 #945 before.
 
+## Unreleased
+
+- **Shot view: the camera stays on the tracer:** from the moment of the shot the eye leaves the shooter and stands on the shell's line where it left, looking at the hit, while the shooter drives on. After the hit the wheel moves the eye along that line towards the target and back; a drag still turns the camera round the target.
+- **Shot view: bushes see-through:** for the shot view the foliage is made mostly transparent (your foliage setting comes back when you leave), and where a bush still covers the target, the target shows through it as a half-transparent silhouette in Bullba Hits' colours. Walls and other solid objects are not touched.
+- **Shot view: aim circles while aiming:** the circles move and shrink through the whole aiming before the shot. Your own shot: the client circle (size recorded, centre at the cursor point, approximate) and the server circle (recorded, dashed), and from the shot the circle the shell left from (thick). Another vehicle: Bullba Hits' estimated circle (dashed), its size at the shot. At the hit Bullba Hits' own circles take over.
+- **Shot view: the game's own sight:** the centre mark and the gun marker's tag are the game's default ones, read from your game client; if they cannot be read, a plain cross is drawn and the bar says why. Battles already prepared for the 3D viewer are prepared once more when opened.
+- **3D replay viewer: filters in the shots panel:** the same All / ↙ / ↗ buttons as over Bullba Hits' hit list - every row, the hits on the vehicle, or its own shots and hits; the count beside them follows the filter, and the choice stays when you open another vehicle's panel or switch to full screen.
+- **3D replay viewer opens as you left it:** if you last used full screen, the viewer opens straight in full screen (from the mods list, from Bullba Hits, after a game restart); if you went back to the window, in the window. If full screen cannot open, the window opens.
+
 ## 1.17 (2026-11-20)
 
 - **3D replay viewer: damage numbers and hit pieces:** when a vehicle loses hit points, the number lost (as the replay recorded it) flies up from its marker and fades - gold for damage you dealt, red for damage you took, white for the rest. A ricochet now throws one piece off the armour, a non-penetration two small ones, instead of a burst of sparks; a penetration keeps its flash. All under the **hits** switch.

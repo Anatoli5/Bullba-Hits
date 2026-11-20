@@ -1238,6 +1238,48 @@ FULLSCREEN_ALIAS = 'bullbaReplaysFullScreen'
 FULLSCREEN_WAIT = 10.0          # s: the view must stand by then, else the window stays and one line says so (a guess)
 VIEW_STATE = re.compile(r'^[-a-zA-Z0-9_.,=&]{0,600}\Z')
 _full = {'class': None, 'registered': False, 'view': None, 'state': '', 'asked': None}
+# The mode the viewer was last left in (U5, 20.11): 'full' once the frameless view stood (closing it there keeps it),
+# 'window' once the view was left for the window; the next open takes it (open_viewer_view). One small file of this
+# module's own, read on the first open and written on a change, only where the mod's folder is (the game's).
+VIEW_MODE_FILE = os.path.join('mods', 'configs', 'local.armor_inspector', 'replays-view.json')
+VIEW_MODES = ('window', 'full')
+_view_mode = None             # None: not read yet
+
+
+def view_mode():
+    """The remembered mode, 'window' when none or unreadable."""
+    global _view_mode
+    if _view_mode is None:
+        _view_mode = 'window'
+        try:
+            if os.path.isfile(VIEW_MODE_FILE):
+                with open(VIEW_MODE_FILE, 'rb') as handle: stored = json.loads(handle.read(4096).decode('utf-8'))
+                if isinstance(stored, dict) and stored.get('mode') in VIEW_MODES: _view_mode = stored['mode']
+        except Exception as error:
+            LOG.warning('Bullba Replays: %s unreadable (%s: %s); the window mode is used', VIEW_MODE_FILE, type(error).__name__, error)
+    return _view_mode
+
+
+def remember_view_mode(mode):
+    global _view_mode
+    if mode not in VIEW_MODES or view_mode() == mode: return
+    _view_mode = mode
+    folder = os.path.dirname(VIEW_MODE_FILE)
+    if not os.path.isdir(folder): return
+    try:
+        from local_armor_inspector.exporter import atomic_write
+        atomic_write(VIEW_MODE_FILE, json.dumps({'mode': mode}).encode('ascii'))
+        LOG.info('Bullba Replays: opens in the %s mode from now on', mode)
+    except Exception as error:
+        LOG.warning('Bullba Replays: the %s mode could not be remembered (%s: %s)', mode, type(error).__name__, error)
+
+
+def open_viewer_view(path, state=''):
+    """The viewer's open (its mods-list button, Hits' 3D link): in the mode it was last left in - the frameless view
+    straight away, the window if that fails; else the window."""
+    _viewer['path'] = path
+    if view_mode() == 'full': enter_fullscreen(state, fallback=True)
+    else: open_in_game(path, full_fragment(state, False), window=REPLAYS)
 
 
 def command_value(command, name):
@@ -1339,11 +1381,18 @@ def page_url(path, fragment):
     return url + '#' + fragment
 
 
-def enter_fullscreen(state):
+def fullscreen_fallback(state):
+    """A direct open into the frameless view failed (U5): the viewer's window instead; the remembered mode is left."""
+    path = _viewer.get('path')
+    if path: open_in_game(path, full_fragment(state, False), window=REPLAYS)
+
+
+def enter_fullscreen(state, fallback=False):
     """The page's full-screen button in the window: the viewer opens in the frameless view; the window closes once the
     view stands (fullscreen_stood). The view is loaded by the lobby app's loadView - the call the client's own
     LobbyPackageBusinessHandler.loadViewByCtxEvent makes for BROWSER_OVERLAY; a LoadViewEvent on the event bus would reach
-    no handler for our alias. Any failure: the window stays, one line naming the step."""
+    no handler for our alias. Any failure: the window stays, one line naming the step. `fallback` (U5, an open with no
+    window, in the remembered full mode): a failure opens the window instead, the same one line."""
     step = 'prepare'
     try:
         if fullscreen_open():
@@ -1372,22 +1421,28 @@ def enter_fullscreen(state):
         LOG.info('Bullba Replays full screen: opening the frameless view (%s)', state or 'no battle')
         step = 'wait timer'
         import BigWorld
-        BigWorld.callback(FULLSCREEN_WAIT, lambda: fullscreen_check(asked))
+        BigWorld.callback(FULLSCREEN_WAIT, lambda: fullscreen_check(asked, state if fallback else None))
     except Exception as error:
         _full['asked'] = None
-        LOG.warning('Bullba Replays full screen could not open at step %s (%s: %s); the window stays', step, type(error).__name__, error)
+        LOG.warning('Bullba Replays full screen could not open at step %s (%s: %s); the window %s', step, type(error).__name__, error,
+                    'opens instead' if fallback else 'stays')
+        if fallback: fullscreen_fallback(state)
 
 
-def fullscreen_check(asked):
-    """FULLSCREEN_WAIT after an open: the view did not stand - the window is left as it is, one line."""
+def fullscreen_check(asked, fallback=None):
+    """FULLSCREEN_WAIT after an open: the view did not stand - the window is left as it is (or, `fallback` a state, opened
+    on it), one line."""
     if _full['asked'] == asked and not fullscreen_open():
         _full['asked'] = None
-        LOG.warning('Bullba Replays full screen, step populate: the view did not open in %d s; the window stays', int(FULLSCREEN_WAIT))
+        LOG.warning('Bullba Replays full screen, step populate: the view did not open in %d s; the window %s', int(FULLSCREEN_WAIT),
+                    'opens instead' if fallback is not None else 'stays')
+        if fallback is not None: fullscreen_fallback(fallback)
 
 
 def fullscreen_stood(view):
     """Our view is populated: it is the viewer now, the window closes (its trace and browser go with it)."""
     _full['view'], _full['asked'] = view, None
+    remember_view_mode('full')
     close_viewer_window()
     LOG.info('Bullba Replays full screen: the frameless view stands, the window closed')
 
@@ -1421,6 +1476,7 @@ def leave_fullscreen(state, close=False):
     if state is not None: _full['state'] = state
     try:
         if not close:
+            remember_view_mode('window')     # left for the window (closed in the view: the full mode stays)
             path = _viewer.get('path')
             if path: open_in_game(path, full_fragment(_full['state'], False), window=REPLAYS)
             else: LOG.warning('Bullba Replays full screen: the viewer page is not known; the window is not opened again')

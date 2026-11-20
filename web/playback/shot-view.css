@@ -12,3 +12,6 @@
 .sv-pin .chip { font-size:11px; line-height:16px; padding:0 6px; border-radius:3px; background:rgba(255,255,255,.07); white-space:nowrap; }
 .sv-pin .chip.screen, .sv-pin .chip.damage { color:var(--dim, #8b949c); }
 .sv-unpin { margin-left:auto; padding:0 7px; }
+/* the shot view's HUD (T3, T4): the aim circles and the game's sight over the picture, never in the way of the pointer */
+#view canvas.sv-hud { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; z-index:1; }
+#view canvas.sv-hud[hidden] { display:none; }
