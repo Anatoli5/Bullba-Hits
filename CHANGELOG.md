@@ -2,7 +2,7 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.1.1 from 1.05 on, 2.4.1.0 from 1.02 on, 2.4.0.2 from 0.9.3 on, 2.4.0.1 #950 from 0.7.6, 2.4.0.0 #945 before.
 
-## Unreleased
+## 1.19 (2026-11-20)
 
 - Replay viewer: the floating damage numbers are coloured by the side that lost the hit points: green for an enemy, red for an ally or you.
 - Shot view: the shot's figures keep one size whatever the shot - every figure has its own line, nothing moves when a screen, a ricochet or damage parts appear; the note under them is one line, its whole text in its tooltip.
