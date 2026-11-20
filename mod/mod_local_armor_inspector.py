@@ -13,7 +13,7 @@ try:
 except ImportError:
     import queue
 
-VERSION = '1.16'
+VERSION = '1.17'
 VIEWER_PATH = os.path.join('mods', 'configs', 'local.armor_inspector', 'Viewer.html')
 # The 3D replay viewer's own entry (19.11, the user's 'one mod, two entries'): its page, its mods-list button and icon.
 PLAYBACK_PATH = os.path.join('mods', 'configs', 'local.armor_inspector', 'web', 'playback.html')

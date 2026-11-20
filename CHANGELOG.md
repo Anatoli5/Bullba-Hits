@@ -2,7 +2,7 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.1.1 from 1.05 on, 2.4.1.0 from 1.02 on, 2.4.0.2 from 0.9.3 on, 2.4.0.1 #950 from 0.7.6, 2.4.0.0 #945 before.
 
-## Unreleased
+## 1.17 (2026-11-20)
 
 - **3D replay viewer: damage numbers and hit pieces:** when a vehicle loses hit points, the number lost (as the replay recorded it) flies up from its marker and fades - gold for damage you dealt, red for damage you took, white for the rest. A ricochet now throws one piece off the armour, a non-penetration two small ones, instead of a burst of sparks; a penetration keeps its flash. All under the **hits** switch.
 - **3D replay viewer: replay management where you watch replays:** Settings > **Replays** now holds the replay limit (on/off and how many of your last battles' replays are kept) - the same setting as in Bullba Hits, so changing it in either window changes both. Its tooltip says where replays are kept (the game's replays folder, kept-forever ones in replays/bullba_hits), what the limit removes, and whether the mod manages replays right now. A star beside the battle choice keeps the open battle's replay forever (★) or puts it back under the limit (☆); when the open replay is not one the limit saved, the star is greyed out and its tooltip says why. The battle list marks replays kept forever with ★.
