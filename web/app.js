@@ -7153,7 +7153,7 @@
       replay.title=tipJoin(['3D replay','Plays this battle over its map: vehicles, shots, hits and destruction, from its replay.',
         '• The first time, the game prepares the battle and its map: a few seconds',
         kind==='removed'?'• Its replay was removed: the replay limit keeps the last '+replayLimit()+' (Settings, Replay limit); it plays only if it was prepared before':null,
-        kind==='none'?'• No replay of this battle is kept: it plays only if it was prepared before':null]);
+        kind==='none'?'• The replay limit holds no replay of this battle: it plays if the game’s replays folder still has its replay, or if it was prepared before':null]);
       o.appendChild(replay);
       o.appendChild(keepTile(b.id,kind));
       var line=[b.vehicle&&b.vehicle.name,battleWhen(b.startedAt)].filter(Boolean).join(' \u00b7 ');
@@ -7163,10 +7163,10 @@
     });
   }
   // THE REPLAY LIMIT (BACKLOG 107, user 18.11): a recording mode beside the game's "last battle" and "all" - on, the mod
-  // keeps the replays of the player's last N battles in the game's replays folder under its own names (bh_...), older ones
-  // removed; OFF by default (Settings -> Replay limit, the MOD's own setting: data/replays.js shows it, this page only
-  // sends a change). A battle's ☆ on its row keeps its replay forever (moved to replays/bullba_hits, ★) or puts it back
-  // under the limit. The row says whether the battle still has its replay. The file is read with the poll; outside
+  // keeps the replays of the player's last N battles in the game's replays folder under its own names (bh_..., copies -
+  // the game's own file is left alone), older ones removed; ON by default since 20.11, inactive under the game's "all"
+  // (Settings -> Replay limit, the MOD's own setting: data/replays.js shows it, this page only sends a change). A
+  // battle's ☆ on its row keeps its replay forever (the bh_ mark removed from its name, ★) or puts it back under the limit. The row says whether the battle still has its replay. The file is read with the poll; outside
   // the game it is not read again once it is missing (nothing would write it). A click is shown at once and waits up to
   // BullbaReplayLimit.WAIT ms for the mod's file to agree.
   var replayView=null,replayMissing=false,replayAsked={},replayStamp='';

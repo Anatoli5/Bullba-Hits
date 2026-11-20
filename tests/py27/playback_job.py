@@ -163,8 +163,8 @@ def definitions(folder, value):
 
 
 def replay_battle(stand, folder, ok, staging):
-    """The second battle REPLAY: the fixture's stream encrypted into a .wotreplay (replay_library.write_final), renamed by
-    the replay limit, its record and stored records under the new id, no stream.z; its files made, BATTLE's source file
+    """The second battle REPLAY: the fixture's stream encrypted into a .wotreplay (replay_library.write_final), copied by
+    the replay limit (20.11: the game's file left alone), its record and stored records under the new id, no stream.z; its files made, BATTLE's source file
     removed by that request, its battle file kept. `staging`: BATTLE's source put back afterwards for the page test (the
     stage has no mod to write it again)."""
     first_source = playback.source_path(folder, BATTLE)

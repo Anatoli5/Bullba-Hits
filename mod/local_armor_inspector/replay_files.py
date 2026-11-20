@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 """The replay viewer's list of replay files (19.11.2026, the user's 'want a replay - go to replays'): every .wotreplay in
-the game's replays/ folder and in the replay limit's keep folder replays/bullba_hits/, by its plain first JSON block -
-whoever recorded it, whether Bullba Hits has a record of the battle or not.
+the game's replays/ folder (and in replays/bullba_hits/, the keep folder of the replay limit's old layout, if a machine
+still has one), by its plain first JSON block - whoever recorded it, whether Bullba Hits has a record of the battle or
+not. The cache also keeps each file's arena id from its results block (results_arena; None for a one-block file): the
+replay limit finds a battle's file by it (replay_library.Library.find).
 
     Scan(folder, replays, library).steps()   the export thread's job (Exporter.run_replay_files_job), one file a step:
                                              headers read once per (name, size, mtime) - the rest from CFG/replay/files.json
@@ -13,8 +15,10 @@ the file's size as a tie-breaker (coordinator 19.11): never the path or the name
 forever" and the player's own renames and copies change - so the same battle stays one entry and its battle built in the
 page's IndexedDB (keyed by this id) is found again. Two files of one id are one battle listed once: the kept copy first,
 then the newest file. A Hits battle id is digits-hex: no clash with 'f-'.
-A file the replay limit's manifest (replay_library: battles {id: file}) ties to a battle Bullba Hits recorded is listed
-with that battle's id in `battle`: the page opens it under that id (its record, roster and part boxes).
+A file the replay limit's manifest (replay_library: battles {id: file}) ties to a battle Bullba Hits recorded - or whose
+results block names the arena of such a battle - is listed with that battle's id in `battle`: the page opens it under
+that id (its record, roster and part boxes). `kept`: kept forever (the limit's mark removed, or the old keep folder);
+`mark`: the name carries the limit's mark (bh_).
 
 data/replay-files.js: ArmorInspectorData.receive(["replayFiles", {format, client, scanned, files: [entry...] newest first,
 broken: [name...]}]); entry {id, file (relative to replays/), kept, size, mtime, when ('YYYY-MM-DD HH:MM:SS' from the
@@ -29,15 +33,16 @@ import json
 import logging
 import os
 import re
+import struct
 
-from .replay_library import first_block, EXT, KEPT
+from .replay_library import first_block, marked, EXT, KEPT, REPLAY_MAGIC
 
 LOG = logging.getLogger('local.armor_inspector')
 FORMAT = 1
 DATA_KEY = 'replayFiles'
 DATA_FILE = 'replay-files'       # CFG/data/replay-files.js
 CACHE = 'files.json'             # CFG/replay/files.json
-CACHE_FORMAT = 1
+CACHE_FORMAT = 2                 # 2 (20.11): each entry's 'arena' from its results block
 PREFIX = 'f-'
 SKIP = ('temp.wotreplay',)       # the game's growing in-battle file
 WHEN = re.compile(r'(\d{1,2})\.(\d{1,2})\.(\d{4}) (\d{1,2}):(\d{2})(?::(\d{2}))?')
@@ -116,6 +121,24 @@ def own_vehicle(block):
     return None, None
 
 
+def results_arena(path):
+    """The arena id from a .wotreplay's second JSON block (the battle's results the game appends at the end; a file
+    written without them, e.g. replay_last_battle of a battle left early, has one block): a string, or None."""
+    try:
+        with open(path, 'rb') as handle:
+            magic, count = struct.unpack('<II', handle.read(8))
+            if magic != REPLAY_MAGIC or count < 2: return None
+            size, = struct.unpack('<I', handle.read(4))
+            handle.seek(size, 1)
+            size, = struct.unpack('<I', handle.read(4))
+            if size > (16 << 20): return None
+            value = json.loads(handle.read(size).decode('utf-8'))
+        arena = value[0].get('arenaUniqueID') if isinstance(value, list) and value and isinstance(value[0], dict) else None
+        return str(int(arena)) if arena is not None else None
+    except (IOError, OSError, ValueError, TypeError, struct.error):
+        return None
+
+
 def entry_of(path, rel, size, mtime):
     """One file's entry and its roster, or (None, reason) when it is no readable replay."""
     block = first_block(path)
@@ -123,6 +146,7 @@ def entry_of(path, rel, size, mtime):
     if not block.get('mapName'): return None, 'the header names no map'
     vid, vtype = own_vehicle(block)
     entry = {'id': file_id(block, size), 'file': rel, 'kept': rel.split('/')[0] == KEPT, 'size': size, 'mtime': mtime,
+             'arena': results_arena(path),
              'when': when_of(block), 'map': block.get('mapName'), 'mapTitle': block.get('mapDisplayName'),
              'gameplay': block.get('gameplayID'), 'battleType': block.get('battleType'), 'player': block.get('playerName'),
              'vehicle': vtype or (str(block.get('playerVehicle') or '').replace('-', ':', 1) or None),
@@ -197,14 +221,29 @@ class Scan(object):
         self.name = 'files'
 
     def battles_of(self):
-        """{file basename (lower case): Hits battle id} of the replay limit's battles that Bullba Hits has a record of."""
-        out = {}
-        if self.library is None: return out
+        """({file basename (lower case): Hits battle id}, {basename kept forever}) of the replay limit's battles that Bullba
+        Hits has a record of (its manifest: the limit's files, kept ones, the game's files tied under `all`)."""
+        out, kept = {}, set()
+        if self.library is None: return out, kept
         try: battles = self.library.read().get('battles') or {}
-        except Exception: return out
+        except Exception: return out, kept
         for battle, item in battles.items():
             name = os.path.basename(str((item or {}).get('file') or '')).lower()
-            if name and os.path.isfile(os.path.join(self.folder, 'battles', battle + '.jsonl')): out[name] = battle
+            if not name: continue
+            if (item or {}).get('state') == 'kept': kept.add(name)
+            if os.path.isfile(os.path.join(self.folder, 'battles', battle + '.jsonl')): out[name] = battle
+        return out, kept
+
+    def arenas(self):
+        """{arena id: Hits battle id} of the battles Bullba Hits has a record of (battles/<arena>-<session>.jsonl)."""
+        out = {}
+        try: names = os.listdir(os.path.join(self.folder, 'battles'))
+        except OSError: return out
+        for name in sorted(names):
+            if name.endswith('.jsonl'):
+                battle = name[:-len('.jsonl')]
+                arena = battle.split('-', 1)[0]
+                if arena.isdigit(): out[arena] = battle
         return out
 
     def steps(self):
@@ -227,12 +266,17 @@ class Scan(object):
                 files[rel] = {'size': size, 'mtime': mtime, 'entry': entry, 'roster': roster}
             yield
         write_cache(self.folder, files)
-        tied = self.battles_of()
+        tied, kept = self.battles_of()
+        arenas = self.arenas()
         chosen = {}
         for rel, item in files.items():
             entry = item.get('entry')
             if not entry: continue
-            entry = dict(entry, kept=rel.split('/')[0] == KEPT, file=rel)
+            base = os.path.basename(rel).lower()
+            entry = dict(entry, kept=rel.split('/')[0] == KEPT or base in kept, file=rel, mark=marked(rel))
+            entry.pop('arena', None)
+            # tied by the limit's manifest, else by the arena id of the file's results block (a file the player renamed)
+            if base not in tied and item['entry'].get('arena') in arenas: tied[base] = arenas[item['entry']['arena']]
             # BACKLOG 112: decided at every publish from the cached header fields (no cache format change)
             special = special_mode(entry.get('battleType'), entry.get('gameplay'))
             if special: entry['special'] = special

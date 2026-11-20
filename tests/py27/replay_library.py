@@ -1,35 +1,42 @@
 # -*- coding: utf-8 -*-
-"""The replay limit (BACKLOG 107, 18.11.2026: replay_library.py, its use in replay_source / replay_run / playback) under
-the client's own Python 2.7, on a staged folder - the game's folder is only read (the client's packages for the
-definitions).
+"""The replay limit as the one store of replays (BACKLOG 107; redone 20.11.2026: replay_library.py, its use in
+replay_source / replay_run / replay_files / playback) under the client's own Python 2.7, on a staged folder - the game's
+folder is only read (the client's packages for the definitions).
 
     python tests/py27/run27.py tests/py27/replay_library.py
 
-The user: a third recording mode beside the game's "last battle" and "all" - the replays of his last N battles in the
-game's own replays/ folder, one file per battle under the mod's marked name (bh_...), older ones removed by the mod, one
-action keeps an important one forever (replays/bullba_hits/). Those same files are what Bullba Hits and its 3D player
-decode again: such battles keep no stream.z. Off by default; off, nothing is renamed or removed.
+The user (20.11): one store - ordinary .wotreplay files in the game's own replays/ folder, the mod's marked bh_; a third
+replay mode beside the game's "last battle" and "all", ON by default (N = 50); the game's own file left alone (the mod
+COPIES it); kept forever = the bh_ mark removed from the name; which battle a file is, by its header; no lasting stream
+copy in the mod's folder; a crashed battle's temp file picked up.
 
 Checks, by group:
-  mode      off by default; N clamped to 1..100
-  rename    after a battle (the replay source's own path: the battle's message, the copy of temp, its end, the final file
-            found whole, the hand-over) the game's finished file is RENAMED in replays/ to bh_date_time_vehicle_map; no
-            second copy; the hand-over names it
-  retry     a rename the game refuses (its file held) is tried again at the next step and lands
-  fallback  a rename that keeps failing for COPY_RETRY s: the file is copied instead (with its time), the game's file
-            stays, the log says so; the copy counts like the others
-  limit     at N = 3 the 4th battle's replay removes the oldest marked one
-  keep      a kept replay moves to replays/bullba_hits/ and survives the battles after it; un-kept it is back in
-            replays/ (nothing removed at once) and the next battle's replay removes it as the oldest
-  foreign   unmarked files - the player's own (older than every marked one), another mod's, a file in bullba_hits/ the
-            mod did not put there - and a marked replay the user renamed are never counted or touched; raw records untouched
-  off       with the limit off nothing is renamed or removed
-  page      data/replays.js: the mode, each battle's state, the battles the limit removed
-  source    (the 3D player's fixture battle, its stream encrypted into a .wotreplay here, renamed by the limit) the replay
-            job writes no stream.z and removes the raw copy, the file checked to be this battle's by its first chunk;
-            decoded again later it reads that file (source 'kept replay')
-  playback  the 3D player gets that file as it is (its source file; no stream.z, no raw copy); a battle whose replay the limit
-            removed gets a file that says so in plain words
+  mode      on by default (no manifest), N 50; N clamped to 1..100; an old (format 2) manifest's explicit off kept
+  copy      after a battle under the game's `last` (the replay source's own path: its message, the copy of temp, its end,
+            the final file found whole, the hand-over) the game's replay_last_battle is COPIED to bh_date_time_vehicle_map;
+            the game's file stays byte for byte; the hand-over names the copy
+  verify    a replay_last_battle that belongs to another battle (its first chunk: another arena id, another start) is
+            never copied; no .part left
+  retry     a copy that fails (the file held) is tried again at the next step and lands
+  limit     N + 3 battles at N = 3: exactly N marked files (the ACCEPTANCE number), the game's file untouched beside them
+            and the one kept forever unmarked beside them
+  keep      kept forever: the mark removed, the file stays in replays/, not counted; un-kept: the mark back, counted again,
+            removed as the oldest by the next battle
+  header    a bh_ file the player renamed: not counted, its battle 'gone' for the limit - but still found as the battle's
+            replay by its header (the replay files' scan, the file's first chunk)
+  own       the game's setting `none`: the mod's own recording RENAMED to bh_ (no duplicate)
+  all       the game's setting `all`: nothing made, nothing removed; the battle tied to the game's own file ('game')
+  off       with the limit off nothing is copied, renamed or removed
+  old       a format-2 entry kept in replays/bullba_hits/ is still the battle's; un-kept it comes back marked into replays/
+  foreign   unmarked files are never counted or touched; raw records untouched
+  crash     a battle not handed over (a crash): the next start takes its temp.wotreplay into the copy and hands it over
+  page      data/replays.js: the mode, the game's setting, each battle's state, the battles the limit removed
+  store     no stream.z made in the mod's folder by any of it
+  source    (the 3D player's fixture battle, its stream encrypted into a .wotreplay here, copied by the limit) the replay
+            job writes no stream.z and removes the raw copy; with no replay file and its records stored it removes the raw
+            copy too (ACCEPTANCE: neither a stream.z nor a .wotstream of a consumed battle is left); decoded again later it
+            reads the replay file (source 'kept replay')
+  playback  the 3D player gets that file as it is; a battle whose replay the limit removed gets a file that says so
   log       no ERROR logged
 
 The source and playback groups need tests/fixtures-local/playback-2026-11-18 and the client's packages (else SKIP of those
@@ -147,6 +154,10 @@ def listing(folder):
 
 
 # ---- the replay source's path, battle by battle ------------------------------------------------------------------------
+LAST = 'replay_last_battle.wotreplay'
+OWN = rs.OWN_RESULT_NAME + rs.REPLAY_EXT
+
+
 class Battles(object):
     def __init__(self, root):
         self.root = root
@@ -155,32 +166,43 @@ class Battles(object):
         for folder in (self.replays, os.path.join(self.cfg, 'battles')): os.makedirs(folder)
         self.messages = []
         self.library = rl.Library(self.replays, self.cfg)
-        self.source = rs.ReplaySource(os.path.join(self.cfg, 'battles'), 'sess01', self.put, replay_dir=self.replays,
-                                      threaded=False, library=self.library)
-        self.now = time.time()
+        self.source = self.new_source()
+        self.now = time.time() - 100000.0
         self.names = {}
+        self.written = None
+
+    def new_source(self):
+        return rs.ReplaySource(os.path.join(self.cfg, 'battles'), 'sess01', self.put, replay_dir=self.replays,
+                               threaded=False, library=self.library)
 
     def put(self, name, message):
         self.messages.append((name, message))
 
-    def battle(self, k):
-        """Battle k: arena 1000 + k, the setting `last` (the game's file replay_last_battle)."""
+    def battle(self, k, setting=1, wrong=False, owned=False, game_name=None, end=True):
+        """Battle k: arena 1000 + k. The game's setting `last` (1: its file replay_last_battle), `none` (0, `owned`: the
+        mod's own recording) or `all` (2: a file the game names, `game_name`). `wrong`: the final file the game leaves is
+        another battle's replay. `end`: False for a battle that never ends (a crash)."""
         self.now += 300.0
         arena = str(1000 + k)
         temp = os.path.join(self.replays, 'temp.wotreplay')
-        stream = synthetic(arena, seed=k)
+        stream = synthetic(arena, size=20000, seed=k)
         with open(temp, 'wb') as f: f.write(bytes(stream))
-        self.source.inbox.put(('battle', {'arena': arena, 'source': temp, 'owned': False, 'setting': 1, 'recording': True,
-                                          'at': self.now}))
+        self.source.inbox.put(('battle', {'arena': arena, 'source': temp, 'owned': owned, 'setting': setting,
+                                          'recording': True, 'at': self.now}))
         self.source.step(now=self.now)
-        final = os.path.join(self.replays, 'replay_last_battle.wotreplay')
-        write_final(final, stream, {'dateTime': '18.11.2026 %02d:%02d:07' % (10 + k // 60, k % 60),
-                                    'playerVehicle': 'ussr-R04_T-34', 'mapName': '02_malinovka'})
+        self.names[k] = arena + '-sess01'
+        self.stream = stream
+        if not end: return self.names[k]
+        if owned: final = os.path.join(self.replays, OWN)
+        elif setting == 2: final = os.path.join(self.replays, game_name or '20261118_%04d_all.wotreplay' % k)
+        else: final = os.path.join(self.replays, LAST)
+        written = synthetic(str(9000 + k), size=20000, seed=100 + k) if wrong else stream
+        write_final(final, written, {'dateTime': '18.11.2026 %02d:%02d:07' % (10 + k // 60, k % 60),
+                                     'playerVehicle': 'ussr-R04_T-34', 'mapName': '02_malinovka'}, cipher=True)
         os.utime(final, (self.now + 5, self.now + 5))
-        self.written = read(final)
+        self.final, self.written = final, read(final)
         self.source.inbox.put(('end', {'at': self.now + 1, 'recording': False}))
         self.source.step(now=self.now + 2)
-        self.names[k] = arena + '-sess01'
         return self.names[k]
 
     def manifest(self):
@@ -192,36 +214,36 @@ class Battles(object):
 
 
 def library_checks(root):
+    from local_armor_inspector import replay_files
     b = Battles(root)
     replays = b.replays
-    kept_dir = b.library.kept_root
-    os.makedirs(kept_dir)
     old = os.path.join(replays, 'players_own.wotreplay')
     foreign = {old: 'the player\'s own replay, older than every replay of the mod',
-               os.path.join(replays, '20261001_1200_other_mod.wotreplay'): 'a replay another mod or the game put there',
-               os.path.join(kept_dir, 'kept_by_hand.wotreplay'): 'a file the mod did not put in bullba_hits/'}
+               os.path.join(replays, '20261001_1200_other_mod.wotreplay'): 'a replay another mod or the game put there'}
     for path, text in foreign.items():
         with open(path, 'wb') as f: f.write(text)
     os.utime(old, (1e9, 1e9))
     record = os.path.join(b.cfg, 'battles', 'raw-record.jsonl')
     with open(record, 'wb') as f: f.write('{"type":"battle"}\n')
-    game_file = os.path.join(replays, 'replay_last_battle.wotreplay')
+    game_file = os.path.join(replays, LAST)
     marked = lambda: sorted(n for n in listing(replays) if n.startswith(rl.MARK))
 
-    check('mode', 'the replay limit is off by default', b.library.enabled() is False and b.library.limit() == 50)
+    check('mode', 'the replay limit is ON by default (no manifest), N 50', b.library.enabled() is True and b.library.limit() == 50
+          and not os.path.exists(b.library.manifest))
     b.library.set_mode(True, 3)
 
+    # 1: the game's file copied, left alone.
     first = b.battle(1)
     path1 = b.where(1)
     message = b.messages[-1][1]
-    check('rename', 'after the battle the game\'s finished file is RENAMED in replays/ to the mod\'s marked, readable name',
+    check('copy', 'after the battle the game\'s replay_last_battle is COPIED in replays/ to the mod\'s marked, readable name',
           path1 and os.path.dirname(path1) == replays and os.path.basename(path1) == 'bh_20261118_1001_ussr-R04_T-34_02_malinovka.wotreplay'
-          and read(path1) == b.written and not os.path.exists(game_file), repr(listing(replays)))
-    check('rename', 'one file per battle: no copy anywhere else', marked() == [os.path.basename(path1)] and listing(kept_dir) == ['kept_by_hand.wotreplay'])
-    check('rename', 'the hand-over names the renamed file', message.get('library') == os.path.abspath(path1) and message.get('battle') == first,
+          and read(path1) == b.written, repr(listing(replays)))
+    check('copy', 'the game\'s own file stays as the game wrote it', read(game_file) == b.written)
+    check('copy', 'the hand-over names the copy', message.get('library') == os.path.abspath(path1) and message.get('battle') == first,
           repr(message.get('library')))
 
-    # A rename the game refuses (its file still open): tried again at the next step.
+    # 2: a copy the game refuses (its file held): tried again at the next step.
     real_add, failed = b.library.add, []
 
     def held(*args, **kw):
@@ -231,88 +253,130 @@ def library_checks(root):
         return real_add(*args, **kw)
     b.library.add = held
     b.battle(2)
-    check('retry', 'a rename that failed has not happened yet and is waiting', b.where(2) is None and len(b.source.copies) == 1
-          and os.path.isfile(game_file), '%r %r' % (b.where(2), b.source.copies))
+    check('retry', 'a copy that failed has not happened yet and is waiting', b.where(2) is None and len(b.source.copies) == 1,
+          '%r %r' % (b.where(2), b.source.copies))
     b.source.step(now=b.now + 4)
-    check('retry', 'tried again at the next step, it is renamed', b.where(2) is not None and not b.source.copies
-          and failed == [b.names[2]] and not os.path.exists(game_file))
+    check('retry', 'tried again at the next step, it is copied', b.where(2) is not None and not b.source.copies
+          and failed == [b.names[2]] and read(game_file) == b.written)
     b.library.add = real_add
 
-    b.battle(3)
-    check('limit', 'three battles, three marked replays (N = 3)', all(b.where(k) for k in (1, 2, 3)) and len(marked()) == 3, repr(marked()))
-    b.battle(4)
-    check('limit', 'the 4th battle\'s replay removes the oldest marked one', not os.path.exists(path1) and b.where(1) is None
-          and all(b.where(k) for k in (2, 3, 4)) and b.library.status(b.names[1]) == 'removed', repr(marked()))
+    # 3: the game's file is another battle's replay (overwritten meanwhile, or an earlier one): never copied.
+    before = marked()
+    b.battle(3, wrong=True)
+    check('verify', 'a replay_last_battle of another battle (its first chunk: another arena id and start) is not copied',
+          b.where(3) is None and marked() == before and b.messages[-1][1].get('library') is None
+          and not [n for n in listing(replays) if n.endswith('.part')] and not b.source.copies, repr(listing(replays)))
+    check('verify', 'the check itself: this battle\'s file passes, another\'s fails', rl.this_battle(path1, '1001', b'')
+          and not rl.this_battle(path1, '1002', b'') and not rl.this_battle(game_file, '1003', bytes(b.stream[:4096])))
 
-    check('keep', 'keep forever: the marked file moves to replays/bullba_hits/', b.library.keep(b.names[2], True)
-          and os.path.dirname(b.where(2)) == kept_dir and b.library.status(b.names[2]) == 'kept', repr(b.where(2)))
+    b.battle(4)
+    check('keep', 'keep forever: the mark removed, the file stays in replays/', b.library.keep(b.names[2], True)
+          and os.path.dirname(b.where(2)) == replays and os.path.basename(b.where(2)) == '20261118_1002_ussr-R04_T-34_02_malinovka.wotreplay'
+          and b.library.status(b.names[2]) == 'kept' and not os.path.isdir(os.path.join(replays, rl.KEPT)), repr(b.where(2)))
+    kept2 = b.where(2)
     b.battle(5)
-    check('keep', 'a kept one does not count: the 5th battle removes nothing (2 kept; 3, 4, 5 under the limit)',
-          all(b.where(k) for k in (2, 3, 4, 5)))
-    renamed = os.path.join(replays, 'my_best_game.wotreplay')
-    os.rename(b.where(3), renamed)
     b.battle(6)
-    check('foreign', 'a marked replay the user renamed stops being the mod\'s: not counted, not removed, its battle says gone',
-          os.path.isfile(renamed) and b.library.status(b.names[3]) == 'gone' and all(b.where(k) for k in (4, 5, 6)), repr(marked()))
-    check('keep', 'the kept one survives the battles after it', os.path.isfile(b.where(2)))
-    path2 = b.where(2)
-    check('keep', 'un-kept: back in replays/, nothing removed at once', b.library.keep(b.names[2], False)
-          and os.path.dirname(b.where(2)) == replays and b.library.status(b.names[2]) == 'rolling' and not os.path.exists(path2)
-          and all(b.where(k) for k in (4, 5, 6)), repr(marked()))
-    path2, path4 = b.where(2), b.where(4)
+    check('limit', 'the 6th battle removes the oldest marked one (1); the kept one does not count',
+          b.where(1) is None and not os.path.exists(path1) and b.library.status(b.names[1]) == 'removed'
+          and all(b.where(k) for k in (2, 4, 5, 6)), repr(marked()))
+    renamed = os.path.join(replays, 'my_best_game.wotreplay')
+    os.rename(b.where(4), renamed)
     b.battle(7)
-    check('keep', 'back under the limit: the next battle\'s replay removes it as the oldest (with the 4th)',
-          not os.path.exists(path2) and not os.path.exists(path4) and all(b.where(k) for k in (5, 6, 7)) and len(marked()) == 3,
+    check('header', 'a marked replay the player renamed: not counted, not removed, its battle \'gone\' for the limit',
+          os.path.isfile(renamed) and b.library.status(b.names[4]) == 'gone' and all(b.where(k) for k in (5, 6, 7)), repr(marked()))
+    for _ in replay_files.Scan(b.cfg, replays, b.library).steps(): pass
+    check('header', 'still found as its battle\'s replay by its header (the scan, the file\'s first chunk)',
+          b.library.file_of(b.names[4]) == os.path.abspath(renamed) and b.library.file_of(b.names[5]) == os.path.abspath(b.where(5)),
+          repr(b.library.file_of(b.names[4])))
+    b.battle(8)
+    # ACCEPTANCE: N + 3 (and more) battles copied at N = 3 under `last`.
+    names = marked()
+    check('limit', 'ACCEPTANCE: after %d battles copied at N = 3: exactly 3 marked files, the game\'s replay_last_battle untouched '
+          '(the last battle\'s, byte for byte), the kept one unmarked beside them' % 7,
+          len(names) == 3 and all(b.where(k) for k in (6, 7, 8)) and read(game_file) == b.written
+          and os.path.isfile(kept2) and not rl.marked(kept2), repr(names))
+    notes.append('acceptance: %d marked .wotreplay at N = 3 after 7 copied battles, + %s, + kept %s'
+                 % (len(names), LAST, os.path.basename(kept2)))
+
+    check('keep', 'un-kept: the mark back, in replays/, nothing removed at once', b.library.keep(b.names[2], False)
+          and rl.marked(b.where(2)) and os.path.dirname(b.where(2)) == replays and not os.path.exists(kept2)
+          and b.library.status(b.names[2]) == 'rolling' and len(marked()) == 4, repr(marked()))
+    path2, path6 = b.where(2), b.where(6)
+    b.battle(9)
+    check('keep', 'back under the limit: the next battle\'s replay removes it as the oldest (with the 6th)',
+          not os.path.exists(path2) and not os.path.exists(path6) and all(b.where(k) for k in (7, 8, 9)) and len(marked()) == 3,
           repr(marked()))
 
-    # The rename keeps failing until COPY_RETRY: the file is copied instead, and the log says so.
-    seen = Lines()
-    log = logging.getLogger('local.armor_inspector')
-    log.addHandler(seen)
-    level = log.level
-    log.setLevel(logging.INFO)
+    # The game's setting `none`: the mod's own recording is the mod's file - renamed, no duplicate.
+    b.battle(10, setting=0, owned=True)
+    check('own', 'the setting `none`: the mod\'s own recording RENAMED to bh_ (no duplicate), the oldest marked one removed',
+          b.where(10) is not None and not os.path.exists(os.path.join(replays, OWN)) and read(b.where(10)) == b.written
+          and all(b.where(k) for k in (8, 9, 10)) and b.where(7) is None and len(marked()) == 3, repr(listing(replays)))
 
-    def refused(*args, **kw):
-        if not kw.get('copy'): raise IOError('the file is held by the game (simulated)')
-        return real_add(*args, **kw)
-    b.library.add = refused
-    b.battle(8)
-    b.source.step(now=b.now + 10)
-    waiting = b.where(8) is None and len(b.source.copies) == 1
-    b.source.step(now=b.now + 2 + rs.COPY_RETRY + 1)
-    b.library.add = real_add
-    log.removeHandler(seen)
-    log.setLevel(level)
-    check('fallback', 'a rename that keeps failing: the file is copied instead, the game\'s file stays, the log says so',
-          waiting and b.where(8) is not None and read(b.where(8)) == b.written and os.path.isfile(game_file)
-          and any('COPIED' in line and 'the rename kept failing' in line for line in seen.lines), repr(seen.lines[-3:]))
-    check('fallback', 'the copied one counts like the others (N = 3: the 5th went)', b.where(5) is None
-          and all(b.where(k) for k in (6, 7, 8)) and len(marked()) == 3, repr(marked()))
+    # The game's setting `all`: the game keeps every replay - nothing made, the battle tied to the game's file.
+    b.source.inbox.put(('setting', 2))
+    before = marked()
+    b.battle(11, setting=2)
+    all_file = b.final
+    check('all', 'the setting `all`: no bh_ file made, none removed; the battle tied to the game\'s own file',
+          marked() == before and b.library.status(b.names[11]) == 'game' and b.library.file_of(b.names[11]) == os.path.abspath(all_file)
+          and read(all_file) == b.written and b.library.keep(b.names[11], True) is False, repr(listing(replays)))
+    check('all', 'the page is told the game keeps all', b.library.view()['gameSetting'] == 2)
+    b.source.inbox.put(('setting', 1))
 
-    # The limit off: the game's own setting rules - nothing renamed, nothing removed.
+    # The limit off: the game's own setting rules - nothing copied, nothing removed.
     b.library.set_mode(False, 3)
     before = marked()
-    b.battle(9)
-    check('off', 'with the limit off nothing is renamed or removed: the game\'s file stays where it lies',
-          marked() == before and b.where(9) is None and read(game_file) == b.written and not b.source.copies
-          and b.messages[-1][1].get('library') is None, repr(marked()))
+    b.battle(12)
+    check('off', 'with the limit off nothing is copied or removed', marked() == before and b.where(12) is None
+          and read(game_file) == b.written and not b.source.copies and b.messages[-1][1].get('library') is None, repr(marked()))
+
+    # A crash: the battle began, the client died; the next start takes its temp file.
+    b.library.set_mode(True, 3)
+    crashed = b.battle(13, end=False)
+    temp_bytes = bytes(b.stream)
+    b.source = b.new_source()
+    b.source.step(now=b.now + 50)
+    message = b.messages[-1][1]
+    check('crash', 'after a crash the next start takes the battle\'s temp.wotreplay and hands it over (no final file: no replay file)',
+          message.get('battle') == crashed and message.get('end') == 'restart' and message.get('stream')
+          and read(message['stream']) == temp_bytes and message.get('final') is None and b.where(13) is None, repr(message))
 
     for path, text in foreign.items():
         check('foreign', 'never counted, never touched: %s' % text, os.path.isfile(path) and read(path) == text, path)
     check('foreign', 'the raw battle records are untouched', read(record) == '{"type":"battle"}\n')
-    check('foreign', 'unmarked files in replays/ are exactly those that were there, the user\'s renamed one and the game\'s',
-          sorted(n for n in listing(replays) if not n.startswith(rl.MARK)) == sorted(['20261001_1200_other_mod.wotreplay', 'my_best_game.wotreplay',
-                                                                                    'players_own.wotreplay', 'replay_last_battle.wotreplay', 'temp.wotreplay']),
-          repr(listing(replays)))
 
     from local_armor_inspector.exporter import read_data_file
     view = read_data_file(os.path.join(b.cfg, 'data', 'replays.js'))
-    check('page', 'data/replays.js: the mode, each battle\'s state, the battles the limit removed',
-          view['enabled'] is False and view['limit'] == 3 and view['battles'] == {b.names[6]: 'rolling', b.names[7]: 'rolling', b.names[8]: 'rolling'}
-          and view['removed'] == sorted([b.names[1], b.names[2], b.names[4], b.names[5]]) and view['streams'] == [], repr(view))
+    check('page', 'data/replays.js: the mode, the game\'s setting, each battle\'s state, the battles the limit removed',
+          view['enabled'] is True and view['limit'] == 3 and view['gameSetting'] == 1
+          and view['battles'] == {b.names[8]: 'rolling', b.names[9]: 'rolling', b.names[10]: 'rolling', b.names[11]: 'game'}
+          and b.names[1] in view['removed'] and b.names[4] not in view['removed'] and view['streams'] == [] and 'keptFolder' not in view,
+          repr(view))
+    check('store', 'no stream.z in the mod\'s folder', not [n for n in listing(os.path.join(b.cfg, 'replay')) if n.endswith(rr.STREAM_EXT)])
     check('mode', 'N is clamped to 1..100', b.library.set_mode(True, 500) == (True, 100) and b.library.set_mode(False, 0) == (False, 1)
           and b.library.set_mode(False, 'x') == (False, 50))
+    old_checks(root)
     return b
+
+
+def old_checks(root):
+    """A manifest of the old layout (format 2): kept replays moved into replays/bullba_hits/."""
+    replays = os.path.join(root, 'game3', 'replays')
+    cfg = os.path.join(root, 'cfg3')
+    os.makedirs(os.path.join(replays, rl.KEPT))
+    os.makedirs(os.path.join(cfg, 'replay'))
+    with open(os.path.join(replays, rl.KEPT, 'bh_old.wotreplay'), 'wb') as f: f.write('old')
+    library = rl.Library(replays, cfg)
+    with open(library.manifest, 'wb') as f:
+        f.write(json.dumps({'format': 2, 'enabled': True, 'limit': 5,
+                            'battles': {'777-s': {'file': 'bh_old.wotreplay', 'kept': True}}}))
+    check('old', 'an old entry kept in replays/bullba_hits/ is still the battle\'s', library.status('777-s') == 'kept'
+          and library.file_of('777-s') == os.path.abspath(os.path.join(replays, rl.KEPT, 'bh_old.wotreplay')))
+    check('old', 'un-kept it comes back marked into replays/', library.keep('777-s', False) and library.status('777-s') == 'rolling'
+          and os.path.isfile(os.path.join(replays, 'bh_old.wotreplay')), repr(listing(replays)))
+    with open(library.manifest, 'wb') as f: f.write(json.dumps({'format': 2, 'enabled': False, 'limit': 5, 'battles': {}}))
+    check('mode', 'an old manifest\'s explicit off is kept', library.enabled() is False)
 
 
 # ---- the replay job and the 3D player on a kept copy ---------------------------------------------------------------------
@@ -341,8 +405,10 @@ def source_checks(root):
     notes.append('the fixture\'s stream encrypted into a .wotreplay in %.1f s' % (time.time() - started))
     library = rl.Library(replays, cfg)
     library.set_mode(True, 50)
-    copy = library.add(BATTLE, final, started, arena)
-    check('source', 'the limit on: the game\'s file renamed, one file of the battle', not os.path.exists(final)
+    game_bytes = read(final)
+    copy = library.add(BATTLE, final, started, arena, head=bytes(stream[:4096]))
+    check('source', 'the limit on: the game\'s file copied under the mod\'s name and left alone', copy is not None
+          and read(final) == game_bytes and read(copy) == game_bytes
           and os.path.basename(copy).startswith(rl.MARK) and os.path.dirname(copy) == os.path.abspath(replays), repr(copy))
     check('source', 'the copy is this battle\'s by its first chunk (arena id, the start of the stream used)',
           rr.library_matches(copy, arena, stream[:4096]) and not rr.library_matches(copy, '12345', stream[:4096])
@@ -361,6 +427,7 @@ def source_checks(root):
         def publish_replay_steps(self, name, records, live, info, notes, store, out):
             out['report'] = {}
             self.published_info = dict(info)
+            if store: self.replay_entry(name)['records'] = 1     # the store written (its own tests are elsewhere)
             return iter(())
 
     stand = Stand(GAME, cfg, '2.4.1.1')
@@ -384,6 +451,20 @@ def source_checks(root):
     check('source', 'the replay job of a battle whose replay the limit took: no stream.z, the raw copy removed, the replay kept',
           entry.get('status') == 'used' and (entry.get('stream') or {}).get('kept') == 'replay folder' and not os.path.exists(kept)
           and not os.path.exists(raw) and os.path.isfile(copy), repr((entry.get('status'), entry.get('stream'), os.listdir(os.path.join(cfg, 'replay')))))
+    # A battle with no replay file at all (the limit off and the game's file gone, or a crash): its records stored, its raw
+    # copy removed all the same - no lasting stream copy.
+    lone = arena + '-bbbbbbbbbbbb'
+    lone_raw = os.path.join(cfg, 'battles', lone + rr.RAW_EXT)
+    with open(lone_raw, 'wb') as f: f.write(bytes(stream))
+    stand.replay_stream({'schema': 1, 'battle': lone, 'arenaId': arena, 'stream': lone_raw, 'streamBytes': len(stream),
+                         'complete': True, 'end': 'restart', 'final': None, 'finalOwned': False, 'library': None})
+    drain()
+    lone_entry = stand.replay_state().get(lone) or {}
+    left = [n for n in os.listdir(os.path.join(cfg, 'replay')) if n.endswith(rr.STREAM_EXT)]
+    left += [n for n in os.listdir(os.path.join(cfg, 'battles')) if n.endswith(rr.RAW_EXT)]
+    check('source', 'ACCEPTANCE: neither a stream.z nor a .wotstream of a consumed battle is left in the mod\'s folder (one with '
+          'its replay file, one with none)', lone_entry.get('status') in ('used', 'cut') and not left
+          and (lone_entry.get('stream') or {}).get('kept') in ('none', 'replay folder'), repr((lone_entry.get('stream'), left)))
     # Decoded again later (its stored records unreadable, a store older than a format): pending without a stream.
     entry['status'] = 'pending'
     stand.write_replay_state()

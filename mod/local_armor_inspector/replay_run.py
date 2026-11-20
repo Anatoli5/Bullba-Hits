@@ -17,14 +17,16 @@ Exporter.replay_stream queues it as a 'replay' job, and the job runs Consumption
   3. Exporter.publish_replay_steps; the converted records with their poses, the statics the scenes used and the scenes are
      stored, compressed, in CFG/replay/<id>.records.z, so every later publish of the battle - a restart, the page's request,
      a format change - builds it again from them (Exporter.replay_restore) instead of from the live record alone;
-  4. the source for decoding again and for the 3D player kept: with the replay limit on (BACKLOG 107) the battle's
-     .wotreplay the replay source renamed to the mod's name in replays/ (replay_library), once its first chunk,
-     decrypted, carries this battle's arena id and starts with the stream used (library_matches) - no second copy then;
-     else (the limit off, or no such file), as before, the stream kept compressed (CFG/replay/<id>.stream.z). The raw copy removed once the source is kept,
-     the mod's own final file deleted (finalOwned), the battle marked in CFG/replay/index.json - a stream collected and
-     never consumed (the game closed first) is found at the next start (Exporter.replay_setup).
+  4. (20.11, the one store of replays) the source for decoding again and for the 3D player is the battle's .wotreplay in
+     the game's replays/ - the replay limit's file under the mod's name, or the game's own file tied to the battle
+     (replay_library) - once its first chunk, decrypted, carries this battle's arena id and starts with the stream used
+     (library_matches); no stream copy is kept in CFG (no new stream.z; an older battle's stays and is still read). The
+     raw copy is transient: removed once the records are stored, the replay file verified or the replay unusable; the
+     mod's own final file deleted (finalOwned), the battle marked in CFG/replay/index.json - a stream collected and never
+     consumed (the game closed first) is found at the next start (Exporter.replay_setup).
   A battle decoded again later (its stored records unreadable, a store older than a format) reads its raw copy, else its
-  older stream.z, else its replay under the mod's name, decrypted in steps (source 'kept replay').
+  older stream.z, else its replay file (Library.file_of: by the manifest, else by the file's header), decrypted in steps
+  (source 'kept replay'); with none of them it is published from its live record with the warning.
 
 A replay that cannot be used (no stream, a stream of another battle or without the battle's start, a decode failure)
 leaves the battle published from the live record exactly as before, with a warning in plain words; a stream that may be
@@ -574,13 +576,15 @@ def same_start(stream, copy_head):
 
 def library_matches(path, arena, head):
     """Whether a .wotreplay is this battle's: its first CHUNK decrypted (~33 ms under the client's Python 2.7) and
-    unpacked as far as it goes carries the arena id and starts with `head` (the stream used, its first bytes)."""
+    unpacked as far as it goes carries the arena id and starts with `head` (the stream used, its first bytes; empty: the
+    arena id alone decides). The plain header cannot say it: the game's replay_last_battle has one JSON block, no arena."""
     try:
         reader = FinalFile(path)
         reader.step()
         start = zlib.decompressobj().decompress(b''.join(reader.plain)[:reader.packed_size])
+        if not start: return False
         head = bytes(head[:min(len(head), len(start))])
-        return bool(head) and arena_check(bytearray(start), arena) is True and bytes(start[:len(head)]) == head
+        return arena_check(bytearray(start), arena) is True and bytes(start[:len(head)]) == head
     except Exception as error:
         LOG.warning('Replay: %s not checked (%s: %s)', path, type(error).__name__, error)
         return False
@@ -872,43 +876,31 @@ class Consumption(object):
             self.outcome = ('failed', [str(unusable)], None)
             LOG.warning('Replay of %s not used: %s', name, unusable)
         yield
-        # The source kept: the battle's replay under the mod's name when it is this battle's (the replay limit on,
-        # BACKLOG 107), else the stream compressed; the raw copy removed once it is kept; the mod's own final file deleted.
+        # The source (20.11, the one store of replays): the battle's .wotreplay in replays/ (the replay limit's under the
+        # mod's name, or the game's own file tied to it) when it is this battle's; no stream copy is kept in CFG any more
+        # (an older battle's stream.z stays as it is). The raw copy is transient: removed once the battle's records are
+        # stored, its replay file is verified, or the replay is unusable - kept only when the records failed to store and no
+        # replay file holds the stream (the next start decodes it again, Exporter.replay_setup).
         started = TIMER()
         kept_bytes = None
         replay = library.file_of(name) if stream is not None and len(stream) and source not in ('kept stream', 'kept replay') else None
         if replay is not None:
             if library_matches(replay, self.arena, stream[:4096]):
                 info['kept'] = 'replay folder'
-                if copy_path is not None and os.path.isfile(copy_path):
-                    try: os.remove(copy_path)
-                    except OSError: LOG.warning('Replay: the raw copy %s of %s could not be removed', copy_path, name)
             else:
                 library.drop(name, "not this battle's replay")
                 replay = None
         if source == 'kept replay': info['kept'] = 'replay folder'
-        if replay is not None or source == 'kept replay':
-            pass
-        elif stream is not None and len(stream) and source != 'kept stream':
-            try:
-                packer, packed = zlib.compressobj(6), []
-                for at in range(0, len(stream), COMPRESS_CHUNK):
-                    packed.append(packer.compress(bytes(stream[at:at + COMPRESS_CHUNK])))
-                    self.lap('keep', started)
-                    yield
-                    started = TIMER()
-                packed.append(packer.flush())
-                packed = b''.join(packed)
-                write_bytes(kept, packed)
-                with open(kept, 'rb') as handle:
-                    if zlib.decompress(handle.read()) != bytes(stream): raise ValueError('the kept stream does not read back')
-                kept_bytes = len(packed)
-                if copy_path is not None and os.path.isfile(copy_path):
-                    os.remove(copy_path)
-            except Exception:
-                LOG.exception('Replay: the stream of %s was not kept compressed; its raw copy stays', name)
-        elif source == 'kept stream':
-            kept_bytes = os.path.getsize(kept)
+        if source == 'kept stream': kept_bytes = os.path.getsize(kept)
+        elif 'kept' not in info: info['kept'] = 'none'
+        stored = bool(exporter.replay_entry(name).get('records')) if self.outcome[0] != 'failed' else False
+        if copy_path is not None and os.path.isfile(copy_path):
+            if stored or info.get('kept') == 'replay folder' or self.outcome[0] == 'failed':
+                try: os.remove(copy_path)
+                except OSError: LOG.warning('Replay: the raw copy %s of %s could not be removed', copy_path, name)
+            else:
+                LOG.warning('Replay: the raw copy %s of %s stays: its records were not stored and no replay file holds it',
+                            copy_path, name)
         # (also when it was not read: the copy reached the end of the fight - the replay source removes it the same way
         # when the copy is complete)
         if final and message.get('finalOwned') and (final_used or trusted) and os.path.isfile(final):

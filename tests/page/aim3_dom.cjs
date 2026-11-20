@@ -12104,9 +12104,9 @@ function soundChecks() {
 // ================= THE REPLAY LIMIT (BACKLOG 107, 18.11.2026) =================
 // A recording mode beside the game's "last battle" and "all": on, the mod keeps the replays of the last N battles in the
 // game's replays folder under its own names (bh_...) and says so in data/replays.js. A battle's row shows its replay - ☆
-// one of the last N, ★ kept forever (replays/bullba_hits), ∅ removed by the limit, nothing without one - and its 3D ▶ is
+// one of the last N, ★ kept forever (20.11: the bh_ mark removed), ∅ removed by the limit, nothing without one - and its 3D ▶ is
 // dimmed with the reason when the replay is gone. ☆ / ★ asks the mod (replayKeep) and shows the change at once, without
-// opening the battle. Settings -> Replay limit is the MOD's mode (a switch, OFF by default, and N): shown from its file,
+// opening the battle. Settings -> Replay limit is the MOD's mode (a switch, ON by default since 20.11, and N): shown from its file,
 // sent when changed (N clamped to 1 … 100), never one of the page's remembered settings; outside the game it is shown
 // only and nothing is sent.
 function replayFolder() {
@@ -12145,13 +12145,13 @@ function replayFolder() {
     ok('replays: 3D ▶ dimmed where the replay is gone (removed, none), with the reason in its words; an older kept stream plays',
        dim('k3') && dim('k4') && !dim('k1') && !dim('k2') && !dim('k5')
        && part('k3', 'battle-option-replay').title.indexOf('• Its replay was removed: the replay limit keeps the last 30') > 0
-       && part('k4', 'battle-option-replay').title.indexOf('• No replay of this battle is kept') > 0);
+       && part('k4', 'battle-option-replay').title.indexOf('• The replay limit holds no replay of this battle') > 0);
     ok('replays: the ☆ says what it does in the page\'s tooltip form (heading, one sentence, points)',
-       part('k1', 'battle-option-keep').title.indexOf('Keep this replay forever\nMoves this battle’s replay to replays/bullba_hits, where') === 0
+       part('k1', 'battle-option-keep').title.indexOf('Keep this replay forever\nRemoves the bh_ mark from this battle’s replay file') === 0
        && part('k2', 'battle-option-keep').title.indexOf('Replay kept forever\n') === 0, part('k1', 'battle-option-keep').title);
     ok('replays: Settings -> Replay limit shows the mod\'s mode (on, 30), live in the game', $('replay-limit').value === '30' && $('replay-limit').disabled === false
        && $('replay-limit-on').checked === true && $('replay-limit-on').disabled === false
-       && $('replay-limit-label').title.indexOf('Replay limit\nKeeps the replays of your last battles') === 0 && $('replay-limit-label').title.indexOf('• Now: on, the last 30') > 0,
+       && $('replay-limit-label').title.indexOf('Replay limit\nKeeps the replays of your last battles') === 0 && $('replay-limit-label').title.indexOf('• Now: on - the mod keeps the replays of your last 30') > 0,
        $('replay-limit').value + ' ' + $('replay-limit-label').title);
     const picked = $('battles').value;
     const stopped = click('k1');
@@ -12180,7 +12180,7 @@ function replayFolder() {
     sw.checked = false; sw.onchange();
     ok('replays: the switch off - sent (on false, N kept), N greyed, the words say the game\'s own setting rules',
        sent.length === 5 && sent[4].action === 'replayLimit' && sent[4].on === false && sent[4].limit === 1 && el.disabled === true
-       && $('replay-limit-label').title.indexOf('• Now: off, the game’s own setting rules') > 0, JSON.stringify(sent[4]));
+       && $('replay-limit-label').title.indexOf('• Now: off - the mod saves and removes no replays') > 0, JSON.stringify(sent[4]));
     sw.checked = true; sw.onchange();
     ok('replays: and on again', sent.length === 6 && sent[5].on === true && el.disabled === false, JSON.stringify(sent[5]));
     runNamed('saveNow');
@@ -12201,6 +12201,12 @@ function replayFolder() {
        && part('k2', 'battle-option-keep').title.indexOf('• Here: shown only; it works in the game') > 0,
        sent.length + ' ' + el.value + ' ' + el.disabled);
     ok('replays: the file is read with the poll', reads >= 3, String(reads));
+    // 20.11 (the one store): the game set to keep all replays - the limit inactive, a battle's replay the game's own file
+    const RL = global.BullbaReplayLimit;
+    ok('replays: under the game\'s "all" the limit says it is inactive; a battle tied to the game\'s file is "Kept by the game"',
+       RL.join(RL.limitTip({enabled: true, limit: 30, gameSetting: 2}, true), '• ').indexOf('• Now: on, but inactive - the game keeps all replays itself') > 0
+       && RL.kind({battles: {g1: 'game'}}, {}, 'g1') === 'game' && RL.keepTip('game', 30, true)[0] === 'Kept by the game'
+       && RL.offTip('game', 30, true)[0] === 'Kept by the game');
   }).then(function () {
     D.index = keep.index; D.replays = keep.replays; D.battle = keep.battle;
     H.game = keepHost.game; H.canSend = keepHost.canSend; H.send = keepHost.send;

@@ -133,11 +133,13 @@ def check():
         run_jobs(stand, ('replayfiles',))
         path = os.path.join(folder, 'data', replay_files.DATA_FILE + '.js')
         value = exporter.read_data_file(path) if os.path.isfile(path) else {}
-        # (with --stage after playback_job.py: its bh_ replay of the battle REPLAY is there too, tied to that battle)
-        files = [f for f in value.get('files') or [] if not f.get('file', '').startswith('bh_')]
+        # (with --stage after playback_job.py: the battle REPLAY's replay_last_battle and its bh_ copy - one content, listed
+        # once - are there too, tied to that battle)
+        theirs_too = lambda f: f.get('file', '').startswith('bh_') or f.get('file') == 'replay_last_battle.wotreplay'
+        files = [f for f in value.get('files') or [] if not theirs_too(f)]
         players = [f.get('player') for f in files]
         ok('list', len(files) == 2 and players == ['SomeoneElse', 'Bullba'], [(f.get('player'), f.get('file')) for f in files])
-        tied = [f for f in value.get('files') or [] if f.get('file', '').startswith('bh_')]
+        tied = [f for f in value.get('files') or [] if theirs_too(f)]
         ok('list', all(f.get('battle') for f in tied), 'a replay of the replay limit not tied to its battle: %r' % tied)
         mine = [f for f in files if f.get('player') == 'Bullba']
         ok('list', mine and mine[0]['kept'] and mine[0]['file'] == 'bullba_hits/my_best_battle.wotreplay',

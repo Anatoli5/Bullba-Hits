@@ -3925,7 +3925,7 @@ class Exporter(object):
         # When this game session's mod started: a map the page built before it and read back from IndexedDB now has
         # proved that IndexedDB keeps it over a restart of the game (playback_report removes its raw set then).
         self.session_started = time.time()
-        # The game's replays folder; the mod's own replay folder is its bullba_hits/ (replay_library, BACKLOG 107).
+        # The game's replays folder: the one store of replays, the mod's marked ones beside the game's (replay_library).
         self.replays_folder = os.path.join(self.game, 'replays')
         # The last replay slice's speed against the job's fastest (its probe; run_job scales the rest by it) and the hold
         # of the queued replay while the game loads (replay_held: [battle, reason, since], logged once each way).
@@ -4794,8 +4794,8 @@ class Exporter(object):
                                    'end': 'replay file'})
 
     def replay_library(self):
-        """The replay limit (replay_library.Library: the mod's marked replays in <game>/replays, kept ones in its
-        bullba_hits/, its manifest in CFG/replay/)."""
+        """The replay limit (replay_library.Library: the one store of replays - the mod's marked replays and the kept ones
+        in <game>/replays, its manifest in CFG/replay/)."""
         from .replay_library import Library
         return Library(self.replays_folder, self.folder)
 

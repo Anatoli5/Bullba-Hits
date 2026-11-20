@@ -4,9 +4,10 @@ battle itself): data/playback/<id>.js and the files it names.
 
 The user opens a recorded battle in the player (web/playback.html); the page asks the mod ('playback', Exporter.
 request_playback), and the export thread's 'playback' job (Job.steps, in slices) writes, the first time only:
-  1. the battle's source as it is kept, unread - its older stream (CFG/replay/<id>.stream.z, zlib), the raw copy not
-     consumed yet, or - a battle taken by the replay limit (BACKLOG 107) - its .wotreplay under the mod's name
-     (replay_library) - as base64 in a classic script, data/playback/<id>.src.js; nothing is decrypted or decoded here
+  1. the battle's source as it is kept, unread - an older battle's stream (CFG/replay/<id>.stream.z, zlib), the raw copy
+     not consumed yet, or (20.11, the one store) its .wotreplay in the game's replays/ folder: the replay limit's file,
+     a kept one, or the game's own file of the battle (replay_library.Library.file_of: by the manifest, else by the
+     file's header) - as base64 in a classic script, data/playback/<id>.src.js; nothing is decrypted or decoded here
      (the client's Python 2.7 decrypts at 0.72-0.80 s per MB, the page's JS at 4.9 ms per MB: outputs/decoder-rust-vs-js-
      2026-11-12.md);
   2. the client's definitions for the page's decoder (definitions_value: the entities and components of the session's
@@ -62,10 +63,10 @@ TEXT = type(u'')
 
 W_NO_RECORD = 'This battle has no record of its own on this computer, so its map is unknown'
 W_NO_MAP = 'The battle record does not name the map of this battle'
-W_NO_STREAM = 'No replay of this battle is kept: the game left no replay stream for it'
+W_NO_STREAM = 'No replay file of this battle is in the game\'s replays folder'
 W_REMOVED = ('The replay of this battle was removed: the replay limit keeps the replays of the last %d battles '
              '(Settings, Replay limit), and this battle is older')
-W_GONE = 'The replay of this battle is no longer in the game\'s replays folder under the name Bullba Hits gave it'
+W_GONE = 'The replay of this battle is no longer in the game\'s replays folder (it was moved or removed)'
 W_MAP = 'The map of this battle could not be copied from the game files (%s)'
 W_FAILED = 'The replay of this battle could not be prepared (%s)'
 W_NO_FILE = 'This replay file is no longer in the game\'s replays folder (it was moved, renamed or removed)'
@@ -317,8 +318,8 @@ class Job(object):
         return maker() if maker is not None else None
 
     def source(self):
-        """(kind, path) of the battle's source: its older kept stream ('zlib'), the raw copy ('raw'), else its replay under
-        the mod's name ('wotreplay'). A battle whose replay the limit removed says so."""
+        """(kind, path) of the battle's source: its older kept stream ('zlib'), the raw copy ('raw'), else its replay file
+        in replays/ ('wotreplay', Library.file_of). A battle whose replay the limit removed says so."""
         from .replay_run import STREAM_EXT, RAW_EXT
         kept = os.path.join(self.folder, 'replay', self.name + STREAM_EXT)
         if os.path.isfile(kept): return 'zlib', kept

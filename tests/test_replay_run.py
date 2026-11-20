@@ -659,8 +659,9 @@ class RunTimeTests(unittest.TestCase):
             self.assertIsNone(job['afterHangarLine'])     # no recorder here: not timed
             self.assertIn('not timed against the hangar line', cost[0])
             print(cost[0])
+            # 20.11 (the one store of replays): the raw copy is transient and no stream.z is kept; the records are.
             self.assertFalse(os.path.exists(path))
-            self.assertTrue(os.path.isfile(e.replay_stream_path(name)))
+            self.assertFalse(os.path.exists(e.replay_stream_path(name)))
             self.assertTrue(os.path.isfile(e.replay_records_path(name)))
             self.assertEqual(e.replay_state()[name]['status'], 'used')
             self.assertTrue(e.published[name].get('replay'))
@@ -758,9 +759,11 @@ class RunTimeTests(unittest.TestCase):
         self.assertEqual(value['replay']['stream']['from'], 'final replay file')
         self.assertFalse(value['replay']['stream']['cut'])
         self.assertFalse(os.path.exists(final))
-        import zlib
-        with open(e.replay_stream_path(stand.names[arena]), 'rb') as stream: kept = zlib.decompress(stream.read())
-        self.assertEqual(kept, bytes(final_stream(KILL_CAM[arena], t.LIVE)[1]))
+        # 20.11: no stream.z kept and the raw copy removed; the records stored from the final file's whole stream.
+        self.assertFalse(os.path.exists(e.replay_stream_path(stand.names[arena])))
+        self.assertFalse(os.path.exists(path))
+        self.assertTrue(os.path.isfile(e.replay_records_path(stand.names[arena])))
+        self.assertEqual(value['replay']['stream']['bytes'], len(final_stream(KILL_CAM[arena], t.LIVE)[1]))
         # The other reasons distrust() can see, each with the final file read for it.
         _, whole = final_stream(KILL_CAM[arena], t.LIVE)
         copy = bytearray(packet_cut(whole, 0.6))

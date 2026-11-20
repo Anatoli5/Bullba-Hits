@@ -3741,7 +3741,7 @@
       var f = BID ? fileRows().filter(function (x) { return x.id === BID || x.battle === BID; })[0] : null;
       kept = !!(f && f.kept && !f.battle);
       tip = RL.offTip(!BID ? 'noBattle' : !replayView ? 'unknown' : f && !f.battle ? (f.kept ? 'keptFile' : 'file')
-        : k === 'removed' ? 'removed' : k === 'stream' ? 'stream' : 'none', n, live);
+        : k === 'removed' ? 'removed' : k === 'stream' ? 'stream' : k === 'game' ? 'game' : 'none', n, live);
     }
     b.textContent = kept ? '★' : '☆';
     b.classList.toggle('on', !!kept); b.setAttribute('aria-pressed', String(!!kept));

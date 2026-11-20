@@ -279,7 +279,9 @@ def main():
         scenes = sum(1 for h in value['hits'] if isinstance(h.get('replayScene'), dict))
         check(scenes >= 120, '17:42: %d hits with their scene rebuilt from the replay' % scenes)
         check(not os.path.exists(final) and not os.path.exists(copy_path), '17:42: the mod\'s final file and the raw copy are gone')
-        kept, stored = os.path.getsize(e.replay_stream_path(name)), os.path.getsize(e.replay_records_path(name))
+        # 20.11 (the one store of replays): no stream.z is kept in the mod's folder any more; the records are
+        check(not os.path.exists(e.replay_stream_path(name)), "17:42: no stream.z kept in the mod's folder")
+        stored = os.path.getsize(e.replay_records_path(name))
         last = e.replay_state()[name]
         check(ratio <= SLICE_LIMIT, '17:42: the longest slice of the job %s - BATTLE_SLICE = 0.1 s, then the step that '
               'crosses it; in brackets the part of the job that slice was spent on; %s' % (longest_text(slices), text))
@@ -299,10 +301,10 @@ def main():
               '17:42: the probe min/median/max %s ms, %s contended slice(s) of %s s, own work estimated %s s of %s s'
               % (probe_ms, job.get('contendedSlices'), job.get('contendedWall'), job.get('ownWorkEstimate'), job.get('work')))
         if cost: lines.append('the mod\'s line: ' + cost[0])
-        lines.append('17:42 first battle of a session, the whole job: %.2f s (%s); kept stream %.2f MB (stream %.2f MB), '
+        lines.append('17:42 first battle of a session, the whole job: %.2f s (%s); stream %.2f MB, '
                      'stored records %.2f MB, raw record %.2f MB, published file %.2f MB'
                      % (first_wall, ', '.join('%s %.2f s' % kv for kv in sorted(work[0].times.items())) if work else '?',
-                        kept / 1e6, len(stream) / 1e6, stored / 1e6,
+                        len(stream) / 1e6, stored / 1e6,
                         os.path.getsize(os.path.join(stand.root, 'battles', name + '.jsonl')) / 1e6,
                         os.path.getsize(os.path.join(stand.root, 'data', 'battles', name + '.js')) / 1e6))
         check(last.get('status') == 'used', '17:42: marked consumed', repr(last.get('status')))
