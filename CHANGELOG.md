@@ -2,7 +2,7 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.1.1 from 1.05 on, 2.4.1.0 from 1.02 on, 2.4.0.2 from 0.9.3 on, 2.4.0.1 #950 from 0.7.6, 2.4.0.0 #945 before.
 
-## Unreleased
+## 1.16 (2026-11-19)
 
 - **3D replay viewer: cost readout is back in Settings:** tick **cost readout** to see under the top line what drawing the view costs - frames per second, frame interval, the page's CPU time and the graphics card's time per frame (where the browser can measure it), triangles and draw calls, shadow and ground memory. Off by default; remembered with the other settings.
 
