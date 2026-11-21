@@ -38,6 +38,13 @@
    along that line towards the target and back (lineWheel: the page's own zoom steps, never past LINE_NEAR m short of the
    hit - the line's length for a shorter shot - nor behind the start). A shot of any length has its line; one of no
    length looks along the shell's own direction (the gun's at the shot).
+   THE SHOT'S FLIGHT, DRAWN (1.21, the user on 1.20): from the shot for as long as the view holds it, ONE dashed line from
+   the line's start to its end - the very line the eye stands on and the wheel moves along (flightLine) - in the dashed
+   style of Hits' flight arc; the replay's own tracer of this shot is not drawn meanwhile (drawsShot, asked by playback.js
+   poseTracers: a shell stopped at the hit within its first tick had a tracer of no length there). Hits' own flight arc
+   and its start dot are not drawn here: Hits turns its flight about the contact onto the recorded segment, which in the
+   replay's world put its start metres off the gun (4.5 m on the user's shot of 19.11); Hits' hit line through the model,
+   its arrowhead, crosses and circles stay - they meet this line at that turn's angle.
    THE SHOOTER AT THE SHOT (1.20): from the shot until play goes on past the hit the shooter is drawn as it was when it
    fired (hull, turret, gun: heldPose, asked by playback.js poseVehicles), so the tracer starts at its muzzle seen from
    anywhere; the target stays at the replay's clock.
@@ -102,7 +109,7 @@
    recordedOk(id, t0, t1), recorded(id, t, pos, quat) -> fov | null, gunAt(id, t, matrix) -> matrix | null, delay(id) -> s,
    aimToggle (the option's checkbox, moved into the bar), ground(x, z) -> the ground's y | null (scene), foliage(k | null),
    plantStencil(on), sight() -> Promise<the sight file's value | null>}; heldPose(id, t) -> the clock to pose vehicle id at,
-   or null (the shooter held at the shot). */
+   or null (the shooter held at the shot); drawsShot(index, t) -> whether the view draws that shot's flight itself. */
 (function (root) {
   'use strict';
   var T = root.THREE;
@@ -1061,10 +1068,36 @@
         silHidden.length = silSwapped.length = 0;
       }
     }
+    // ---- THE SHOT'S FLIGHT (1.21): the line's start to its end, dashed as Hits' arc (viewer.js drawTracers: TRACER colour,
+    // its dash scale, over everything); in this page's scene coordinates, drawn after its render ------------------------------
+    var FLIGHT_COLOUR = 0xa8dfff, flightScene = new T.Scene(), flightPos = new Float32Array(6);
+    var flightGeo = new T.BufferGeometry(); flightGeo.setAttribute('position', new T.BufferAttribute(flightPos, 3));
+    flightGeo.setAttribute('lineDistance', new T.BufferAttribute(new Float32Array(2), 1));
+    var flightMat = new T.LineDashedMaterial({ color: FLIGHT_COLOUR, dashSize: 1, gapSize: 0.6, transparent: true, opacity: 0.9, depthTest: false, depthWrite: false });
+    var flight = new T.Line(flightGeo, flightMat); flight.frustumCulled = false; flightScene.add(flight);
+    // whether the view draws the shot's flight now: its line, from the shot's clock on
+    function flightOn(t) { return !!(S.row && S.line && S.line.len > LINE_MIN && t >= S.line.t - 1e-6); }
+    function drawsShot(index, t) { return !!(S.row && S.row.shot && S.row.shot.index === index && flightOn(t)); }
+    function flightLine() {
+      if (!flightOn(S.t)) return;
+      var L = S.line, d = flightGeo.getAttribute('lineDistance'), dash = Math.max(0.15, Math.min(5, L.len / 60));
+      flightPos[0] = L.a.x; flightPos[1] = L.a.y; flightPos[2] = L.a.z; flightPos[3] = L.b.x; flightPos[4] = L.b.y; flightPos[5] = L.b.z;
+      d.array[0] = 0; d.array[1] = L.len; d.needsUpdate = true; flightGeo.getAttribute('position').needsUpdate = true;
+      flightMat.dashSize = dash; flightMat.gapSize = dash * 0.6;
+      var R = o.renderer, auto = R.autoClear;
+      try { R.autoClear = false; R.render(flightScene, o.camera); } finally { R.autoClear = auto; }
+    }
+    // Hits' flight arc and its start dot (viewer.js drawTracers: the root's children marked shotArc - the arc a line, the
+    // dot a point; the arrowhead at the hit stays) are not drawn in this view
+    function hideHitsArc(v) {
+      v.root.children.forEach(function (c) { if (c.userData && c.userData.shotArc && (c.isLine || c.isPoints) && c.visible) c.visible = false; });
+    }
     function overlay() {
       hud();
+      flightLine();
       var v = S.viewer, r = S.target == null ? null : o.vehicle(S.target);
       if (S.mode !== 'hits' || !v || !r || !r.visible || !S.haveA) return;
+      hideHitsArc(v);
       if (v.composed && S.saved) silhouette(r);
       var R = o.renderer, auto = R.autoClear;
       // Hits' Grid (its lines and their colour-less depth pass of the main armour) is not in the two passes: it is drawn
@@ -1146,7 +1179,7 @@
           ground: S.corridor.ground, destroyedAlready: S.corridor.destroyedAlready, vehiclesHidden: S.onLine || 0, list: S.corridor.list, t: S.corridor.t, a: S.corridor.a, b: S.corridor.b } : null };
     }
     return { open: open, close: function () { close(false); }, active: function () { return !!S.row; },
-      free: function () { return !!S.row; }, heldPose: heldPose, camera: camera, panned: panned, paint: paint, overlay: overlay, clamp: clamp, state: state, viewer: function () { return S.viewer; },
+      free: function () { return !!S.row; }, heldPose: heldPose, drawsShot: drawsShot, camera: camera, panned: panned, paint: paint, overlay: overlay, clamp: clamp, state: state, viewer: function () { return S.viewer; },
       paintMaterial: paintMat, bar: bar };
   }
   root.BullbaShotView = { create: create, BEFORE: BEFORE, SPEED: SPEED, AFTER: AFTER, INSIDE: INSIDE };

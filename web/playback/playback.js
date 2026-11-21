@@ -2067,6 +2067,7 @@
     for (var s = 0; s < shots.length; s++) {
       var x = shots[s];
       if (x[0] > t) break;
+      if (shotView && shotView.drawsShot(s, t)) continue;   // 1.21: the shot view draws this shot's flight itself (one line)
       var sx = x[3], sy = x[4], sz = x[5], vx = x[6], vy = x[7], vz = x[8], g = x[9], ex = x[11], ey = x[12], ez = x[13];
       var hv = Math.hypot(vx, vz), flight = hv > 1 ? Math.hypot(ex - sx, ez - sz) / hv : 0.05;
       var tau = t - x[0];
