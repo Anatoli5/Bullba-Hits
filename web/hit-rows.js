@@ -101,7 +101,21 @@
     outcome.appendChild(line);outcome.appendChild(time);b.appendChild(outcome);
     return b;
   }
+  // A row's link to the other page (21.11, BACKLOG 118; moved out of web/playback/shots-panel.js): an arrow leaving a box
+  // ("opens elsewhere"; not ↗, which a row's outcome uses for an outgoing shot) over the other page's name - the viewer's
+  // 'Bullba Hits' beside its shot rows, Hits' 'Replays' inside its selected hit row. tag 'button' (a control of its own
+  // beside the row) or 'span' (inside the row's own button: role button, the click kept from the row); rows.css .sp-open.
+  var OUT_ICON='<svg class="sp-open-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M7 3H3v10h10V9" fill="none" stroke="currentColor" stroke-width="1.5"/>'+
+    '<path d="M9 2h5v5M14 2 7.5 8.5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>';
+  function openLink(name,title,open,tag){
+    var h=node(tag||'button',undefined,'sp-open');
+    if(h.tagName==='BUTTON')h.type='button';else{h.setAttribute('role','button');h.tabIndex=0;}
+    h.innerHTML=OUT_ICON;h.appendChild(node('span',name,'sp-open-name'));h.title=title;
+    h.onclick=function(e){e.stopPropagation();e.preventDefault();open();};
+    h.onkeydown=function(e){if(e.key==='Enter'||e.key===' '){e.stopPropagation();e.preventDefault();open();}};
+    return h;
+  }
   root.BullbaRows={node:node,effects:effects,tierRomans:tierRomans,classNames:classNames,roleFamilies:roleFamilies,roleNames:roleNames,
     nationNames:nationNames,vehicleNation:vehicleNation,vehicleWords:vehicleWords,vehicleTile:vehicleTile,iconColumn:iconColumn,
-    result:result,resultIcon:resultIcon,hitRow:hitRow};
+    result:result,resultIcon:resultIcon,hitRow:hitRow,openLink:openLink};
 })(typeof window!=='undefined'?window:this);

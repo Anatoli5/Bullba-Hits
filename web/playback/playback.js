@@ -2219,19 +2219,67 @@
   // why an event draws nothing now: null = it draws
   function fxWhyNot(r) { return !r ? 'vehicle not in the battle file' : (!r.md.model ? 'vehicle drawn as a box' : (!r.visible ? 'vehicle not in sight' : null)); }
   // the flashes and sparks alive at time t; `count` (optional) collects which events drew and why the others did not
+  // THE FLASHES ON THE WALL CLOCK (21.11, BACKLOG 121: a flash frozen at its brightest on a stop hid the armour): a flash's
+  // age is the larger of its age on the battle's clock and the time on the wall since it was first drawn, so on a pause or
+  // the shot view's stop at the hit it fades in its own time (the muzzle MUZ_LIFE, the hit flashes 0.3 / 0.18 / 0.12 s) as
+  // at x1. The clock going back (a seek, Replay episode) forgets every first sight, so the flash plays again. The pieces
+  // stay on the battle's clock. The bench's count pass (fxStep with `count`) keeps the battle's clock alone.
+  var fxWall = {}, fxWallT = -Infinity;
+  function fxAge(key, t0, t, count) {
+    var tau = t - t0;
+    if (count) return tau;
+    var now = performance.now(), w = fxWall[key];
+    if (w === undefined) { fxWall[key] = now; return tau; }
+    return Math.max(tau, (now - w) / 1000);
+  }
+  // THE CONTACT DOT (BACKLOG 121): while the shot view holds a shot (shotView.heldHits), each point of its hit stays marked
+  // by a small bright dot in the colour of its outcome, from the hit on - DOT_PX device pixels across whatever the distance
+  // (the owner's 5 px; the point's soft edge as the flashes have it), DOT_OFF m off the plate so the armour does not hide it.
+  // Outside the shot view no dot: the lasting mark there is the decal.
+  var DOT_PX = 5, DOT_OFF = 0.05, DOT_COL = [[1, 0.55, 0.15], [1, 0.95, 0.85], [1, 0.85, 0.3]];
+  // the fx rows (placed points) of a hit event by its index (battle.js fx hits' 'hit' field = the hitEvents index)
+  var fxHitRows = null, fxHitSrc = null;
+  function fxRowsOf(hi) {
+    if (fxHitSrc !== fxHits) { fxHitSrc = fxHits; fxHitRows = {}; for (var j = 0; j < fxHits.length; j++) (fxHitRows[fxHits[j][3]] || (fxHitRows[fxHits[j][3]] = [])).push(j); }
+    return fxHitRows[hi] || [];
+  }
+  // THE HIT'S CONTACT for the shot view's stub (21.11, BACKLOG 119): the first placed point of hit event `hi` and the server
+  // segment's direction there (battle.js: the point and the segment on the drawn part, in its frame), in scene coordinates,
+  // the target posed at the replay's clock t as this page draws it then; null when the point is not placed
+  function shotContact(hi, t) {
+    var js = fxRowsOf(hi);
+    if (!js.length) return null;
+    var h = fxHits[js[0]], r = fxById[h[1]];
+    if (!r || !r.md.model || !poseInto(r, t - delayOf(r), r.group, r.turret, r.gun)) return null;
+    var part = fxPart(r, h[7]); part.updateWorldMatrix(true, false);
+    var dir = new T.Vector3(h[14], h[15], h[16]).transformDirection(part.matrixWorld);
+    if (!(dir.lengthSq() > 1e-12)) return null;
+    return { point: new T.Vector3(h[8], h[9], h[10]).applyMatrix4(part.matrixWorld), dir: dir };
+  }
+  // whether the replay has vehicle `id` in sight at its clock t (battle.js sight intervals)
+  function shotSeen(id, t) {
+    var r = fxById[id], s = r && r.v.sight;
+    if (!s) return false;
+    for (var i = 0; i < s.length; i++) if (t >= s[i][0] && t < s[i][1]) return true;
+    return false;
+  }
   function fxStep(t, count) {
     var n = 0;
+    fxU.uScale.value = renderer.domElement.height / (2 * Math.tan(camera.fov * Math.PI / 360));
+    if (!count) { if (t < fxWallT - 1e-6) fxWall = {}; fxWallT = t; }
     if (hitsOn || count) {
       for (var i = fxFirst(fxMuzzles, t - MUZ_LIFE); i < fxMuzzles.length && fxMuzzles[i][0] <= t; i++) {
         var m = fxMuzzles[i], r = fxById[m[1]], why = fxWhyNot(r);
         if (count) { if (why) count.muzzleWhy[i] = count.muzzleWhy[i] || why; else count.muzzle[i] = 1; }
         if (why) continue;
-        var k = 1 - (t - m[0]) / MUZ_LIFE;
+        var ma = fxAge('m' + i, m[0], t, count);
+        if (ma > MUZ_LIFE) continue;
+        var k = 1 - ma / MUZ_LIFE;
         r.gun.updateWorldMatrix(true, false);
         fxV.set(0, 0, r.md.gunLength).applyMatrix4(r.gun.matrixWorld);
         fxF.set(0, 0, r.md.gunLength + 1).applyMatrix4(r.gun.matrixWorld).sub(fxV);  // 1 m along the drawn gun
         n = fxPut(n, fxV.x, fxV.y, fxV.z, 1, 0.8, 0.45, k, 2.2);
-        var u = 1.2 + 4 * (t - m[0]);
+        var u = 1.2 + 4 * ma;
         n = fxPut(n, fxV.x + fxF.x * u, fxV.y + fxF.y * u, fxV.z + fxF.z * u, 1, 0.5, 0.15, 0.8 * k, 1.6);
       }
       for (var j = fxFirst(fxHits, t - HIT_LIFE); j < fxHits.length && fxHits[j][0] <= t; j++) {
@@ -2244,13 +2292,13 @@
         fxV.set(h[8], h[9], h[10]).applyMatrix4(part.matrixWorld);
         fxN.set(h[11], h[12], h[13]).transformDirection(part.matrixWorld);
         var s = 0.6 + Math.min(1.5, (h[23] || 100) / 100);  // calibre in mm -> flash size
+        var fa = fxAge('h' + j, h[0], t, count);  // the flash's age, the wall clock's too (BACKLOG 121)
         if (c === 0) {  // penetration: a hot orange flash, a little off the plate
-          var kk = 1 - tau / 0.3;
-          n = fxPut(n, fxV.x + fxN.x * 0.15, fxV.y + fxN.y * 0.15, fxV.z + fxN.z * 0.15, 1, 0.55, 0.15, kk, 2.4 * s);
+          if (fa < 0.3) n = fxPut(n, fxV.x + fxN.x * 0.15, fxV.y + fxN.y * 0.15, fxV.z + fxN.z * 0.15, 1, 0.55, 0.15, 1 - fa / 0.3, 2.4 * s);
         } else {  // not pierced: a short white flash and sparks off the plate (local); ricochet: a small flash and sparks
           // along the ricochet's own tracer when the replay has it, else off the plate
-          if (c === 1) { if (tau < 0.18) n = fxPut(n, fxV.x + fxN.x * 0.1, fxV.y + fxN.y * 0.1, fxV.z + fxN.z * 0.1, 1, 0.92, 0.75, 1 - tau / 0.18, 1.4 * s); }
-          else if (tau < 0.12) n = fxPut(n, fxV.x, fxV.y, fxV.z, 1, 0.9, 0.6, 1 - tau / 0.12, 1.1 * s);
+          if (c === 1) { if (fa < 0.18) n = fxPut(n, fxV.x + fxN.x * 0.1, fxV.y + fxN.y * 0.1, fxV.z + fxN.z * 0.1, 1, 0.92, 0.75, 1 - fa / 0.18, 1.4 * s); }
+          else if (fa < 0.12) n = fxPut(n, fxV.x, fxV.y, fxV.z, 1, 0.9, 0.6, 1 - fa / 0.12, 1.1 * s);
           // the pieces (BACKLOG 113): a ricochet one piece along the ricochet's own tracer when the replay has it, else the
           // shell's direction reflected off the plate (d - 2 (d.n) n); a non-penetration two small ones off the plate
           var ric = c === 2, has = ric && (h[18] || h[19] || h[20]), cone = 0.8;
@@ -2270,10 +2318,26 @@
         }
       }
     }
+    // the contact dot of the shot the shot view holds (BACKLOG 121)
+    var held = !count && hitsOn && shotView && shotView.heldHits ? shotView.heldHits() : null;
+    if (held) {
+      camera.updateMatrixWorld();
+      for (var hh = 0; hh < held.length; hh++) {
+        var js = fxRowsOf(held[hh]);
+        for (var q2 = 0; q2 < js.length; q2++) {
+          var hd = fxHits[js[q2]], rd = fxById[hd[1]];
+          if (hd[0] > t || fxWhyNot(rd)) continue;
+          var pd = fxPart(rd, hd[7]); pd.updateWorldMatrix(true, false);
+          fxN.set(hd[11], hd[12], hd[13]).transformDirection(pd.matrixWorld);
+          fxV.set(hd[8], hd[9], hd[10]).applyMatrix4(pd.matrixWorld).addScaledVector(fxN, DOT_OFF);
+          var depth = Math.max(0.25, -fxR.copy(fxV).applyMatrix4(camera.matrixWorldInverse).z), col = DOT_COL[fxClass(hd[6])];
+          n = fxPut(n, fxV.x, fxV.y, fxV.z, col[0], col[1], col[2], 1, DOT_PX * renderer.getPixelRatio() * depth / fxU.uScale.value);
+        }
+      }
+    }
     dmgStep(t);
     fxGeo.setDrawRange(0, hitsOn ? n : 0);
     if (n) { fxGeo.attributes.position.needsUpdate = true; fxGeo.attributes.fxc.needsUpdate = true; fxGeo.attributes.fxs.needsUpdate = true; }
-    fxU.uScale.value = renderer.domElement.height / (2 * Math.tan(camera.fov * Math.PI / 360));
     markU.uTime.value = t;
     for (var mm = 0; mm < fxMarkMeshes.length; mm++) fxMarkMeshes[mm].visible = hitsOn && t >= fxMarkMeshes[mm].userData.first;
     return n;
@@ -2718,11 +2782,18 @@
   // the replay's time, the gameTime a Hits battle made from this replay stamps (replay_records.game_time); Hits looks the
   // hit up by attacker, target and that time (web/app.js openShot). In the game the mod opens or tells Hits' window
   // ('openHits'), outside it this window goes to Hits' page.
+  function hitsKnown() { return !!(INDEX && Array.isArray(INDEX.battles) && INDEX.battles.some(function (x) { return x && x.id === BID; })); }
+  // a row's shot in the pages' common words (21.11, BACKLOG 118: also this page's 'shot' fragment value, openShotParam):
+  // {at: the hit on the server's clock, attacker, target, focus: the vehicle whose list it is}, or null
+  function shotParam(row, id) {
+    var h = row && row.hits[0], start = battle && battle.meta && battle.meta.serverStart;
+    if (!h || h.attacker == null || h.target == null || !Number.isFinite(start)) return null;
+    return { at: +(start + h.t).toFixed(3), attacker: h.attacker, target: h.target, focus: id != null ? id : h.target };
+  }
   function hitsOpener(row, id) {
-    var known = INDEX && Array.isArray(INDEX.battles) && INDEX.battles.some(function (x) { return x && x.id === BID; });
-    var h = row.hits[0], start = battle && battle.meta && battle.meta.serverStart;
-    if (!known || !h || h.attacker == null || !Number.isFinite(start)) return null;
-    var shot = { battleId: BID, at: +(start + h.t).toFixed(3), attacker: h.attacker, target: h.target, focus: id };
+    var p = hitsKnown() ? shotParam(row, id) : null;
+    if (!p) return null;
+    var shot = Object.assign({ battleId: BID }, p);
     return function () {
       if (host.game && host.canSend()) { host.send('bullba_hits', Object.assign({ action: 'openHits' }, shot)).catch(function (e) { console.warn('Bullba Hits openHits failed: ' + e.message); }); return; }
       location.href = BASE + 'Viewer.html#' + (host.game ? 'host=game&' : '') + 'battle=' + encodeURIComponent(BID) + '&at=' + shot.at + '&attacker=' + shot.attacker + '&target=' + shot.target + '&focus=' + shot.focus;
@@ -2759,7 +2830,7 @@
       recordedOk: shotRecordedOk, recorded: shotRecordedCamera, gunAt: shotGunAt, aimToggle: $('sv-aim-circle'),
       ground: function (x, z) { return heightAt ? heightAt(x, -z) : null; },   // scene x, z -> the ground's scene y
       delay: function (id) { var r = fxById[id]; return r ? delayOf(r) : 0; },
-      foliage: shotFoliage, plantStencil: shotPlantStencil, sight: shotSight,
+      foliage: shotFoliage, plantStencil: shotPlantStencil, sight: shotSight, contact: shotContact, seen: shotSeen,
       corridor: { open: shotCorridorOpen, keep: shotCorridorKeep, vehicles: shotCorridorVehicles, close: shotCorridorClose } });
     return shotView;
   }
@@ -3782,8 +3853,35 @@
       if (follow) parts.push('follow=' + follow.v.id);
       var open = panel && panel.shown(); if (open != null) parts.push('panel=' + open);
       if (open != null && panel.filter() !== 'all') parts.push('dir=' + panel.filter());   // the panel's filter (U1, 20.11)
+      // the shot view's shot (21.11, BACKLOG 118): the view opens on it again (openShotParam)
+      var sp = openShot();
+      if (sp) parts.push('shot=' + [sp.at, sp.attacker, sp.target, sp.focus].join(','));
     }
     return parts.join('&');
+  }
+  // the shot view's shot now, in shotParam's words (its focus: the open panel's vehicle), or null
+  function openShot() {
+    var row = shotView && shotView.active() ? shotView.row() : null, open = panel && panel.shown();
+    return row ? shotParam(row, open != null ? open : null) : null;
+  }
+  // OPENED ON A SHOT (21.11, BACKLOG 118): '#...&shot=<at>,<attacker>,<target>,<focus>' - Bullba Hits' link of one hit (at its
+  // gameTime) or this page's own state (viewState). The row of the focus vehicle's panel whose hit has that attacker and
+  // target nearest to at - within Hits' HIT_AT (local-data.js, a guess of 19.11: a battle made from this replay stamps the
+  // same clock, one recorded live may differ) - opens in the shot view, its panel open; none: the battle 2 s before that
+  // moment, the panel open, nothing chosen in place of it. Once, after the carried state (restoreView).
+  function openShotParam() {
+    var p = String(params.shot || '').split(',').map(Number), start = battle && battle.meta && battle.meta.serverStart;
+    if (p.length !== 4 || !p.every(isFinite) || !Number.isFinite(start)) return;
+    var at = p[0] - start, attacker = p[1], target = p[2], focus = fxById[p[3]] ? p[3] : fxById[target] ? target : attacker;
+    var limit = (window.ArmorInspectorData && ArmorInspectorData.HIT_AT) || 0.5, best = null, gap = Infinity;
+    BullbaShotsPanel.rows(battle, focus).forEach(function (r) {
+      r.hits.forEach(function (h) { var d = Math.abs(h.t - at); if (h.attacker === attacker && h.target === target && d <= limit && d < gap) { gap = d; best = r; } });
+    });
+    var f = fxById[focus];
+    if (f) { var side = f.role === 'enemy' ? 'enemy' : 'own'; shotsPanel().open(focus, $('list-' + side), side); }
+    var sv = best ? shotViewer() : null;
+    if (sv) { setFollow(null); sv.open(best); return; }
+    t = Math.min(tEnd, Math.max(0, at - 2)); $('slider').value = t;
   }
   // the carried state back, once (the battle built and the remembered settings applied)
   function restoreView() {
@@ -3883,10 +3981,15 @@
   // ------------------------------------------------------------------ start
   var mapData, battleInfo = null;
   var loadStart = performance.now();
-  // in the game Hits has a window of its own (19.11): the mod opens it if it is not open, this window stays
+  // in the game Hits has a window of its own (19.11): the mod opens it; once it stands this page closes (21.11, BACKLOG 118:
+  // never two pages together). It opens on this battle when Hits has it, on the shot view's hit when one is open.
   $('back').onclick = function () {
-    if (host.game && host.canSend()) { host.send('bullba_hits', { action: 'openHits' }).catch(function (e) { console.warn('Bullba Hits openHits failed: ' + e.message); }); return; }
-    location.href = BASE + 'Viewer.html' + (host.game ? '#host=game' : '');
+    var cmd = { action: 'openHits' }, sp = hitsKnown() ? openShot() : null;
+    if (hitsKnown()) cmd.battleId = BID;
+    if (sp) Object.assign(cmd, sp);
+    if (host.game && host.canSend()) { host.send('bullba_hits', cmd).catch(function (e) { console.warn('Bullba Hits openHits failed: ' + e.message); }); return; }
+    location.href = BASE + 'Viewer.html' + (host.game ? '#host=game' : '') + (cmd.battleId ? (host.game ? '&' : '#') + 'battle=' + encodeURIComponent(BID) +
+      (sp ? '&at=' + sp.at + '&attacker=' + sp.attacker + '&target=' + sp.target + '&focus=' + sp.focus : '') : '');
   };
   Promise.resolve().then(function () {
     BID = params.battle || '';
@@ -3966,6 +4069,7 @@
       settingStore.restore();  // runs every control's handler, the crowns' setCrowns among them
       $('reset-settings').onclick = settingStore.reset;
       restoreView();  // R5: the state the full-screen switch carried (time, camera, speed, play, follow, panel)
+      openShotParam();  // 21.11 (BACKLOG 118): a shot carried by Hits' link or by that state
       window.__ready = { jsBuild: jsBuild, battleBuild: battleInfo, load: +(tLoaded - loadStart).toFixed(0), build: +(tBuilt - tLoaded).toFixed(0), impostors: +(performance.now() - tBuilt).toFixed(0), total: +(performance.now() - loadStart).toFixed(0),
         view: startKind, vehicles: vehicles.length, boxes: vehicles.filter(function (r) { return !r.md.model; }).length, shots: shots.length, own: own && own.type, ownId: own && own.id, owned: battle.vehicles.filter(function (v) { return v.own; }).length,
         destructionEvents: dEvents.length, s3tc: s3tc,

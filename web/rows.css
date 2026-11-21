@@ -90,3 +90,11 @@
 .tlist .veh-tile[data-side]{border-left-width:3px}
 .tlist .veh-tile[data-side=ally]{border-left-color:var(--mint)}
 .tlist .veh-tile[data-side=enemy]{border-left-color:var(--red)}
+/* A row's link to the other page (hit-rows.js openLink; moved from playback/shots-panel.css 21.11, BACKLOG 118): an arrow out
+   of a box over the page's name on one 16 px line at 11 px - beside the viewer's shot rows (20.11: the row is two team lines
+   high; the panel is 300 px wide for it and for the vehicle names), inside Hits' selected hit row at its right end */
+.sp-open{flex:0 0 54px;width:54px;margin-bottom:2px;min-height:0;padding:1px 2px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;
+  font-size:11px;line-height:16px;white-space:nowrap;text-align:center;background:#172330;border:1px solid #35475a;border-radius:3px;color:var(--gold);cursor:pointer}
+.sp-open:hover{background:#263749}
+.sp-open-icon{width:11px;height:11px;flex:none}
+.hit>.sp-open{margin:0 0 0 auto;align-self:stretch;box-sizing:border-box}

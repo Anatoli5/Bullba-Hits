@@ -171,7 +171,8 @@ def notify_page(note):
 def set_window_request(handler):
     """The pages' 'openReplays' (Hits' 3D control: the replay viewer's window on a battle, `battleId`) and 'openHits' (the
     viewer's back control: Hits' window; with `battleId`, `at`, `attacker`, `target`, `focus` - a row of its shots panel,
-    19.11 - one shot): handler(window, battle id or None[, Hits' fragment of the shot]), on the game thread."""
+    19.11 - one shot): handler(window, battle id or None[, Hits' fragment of the shot][, the viewer's shot - 'openReplays'
+    from one hit of Hits, 21.11 BACKLOG 118: viewer_shot]), on the game thread."""
     global _window_request
     _window_request = handler
 
@@ -194,6 +195,21 @@ def shot_fragment(battle_id, command):
         return None
     if at != at or at in (float('inf'), float('-inf')): return None
     return 'host=game&battle=%s&at=%.3f&attacker=%d&target=%d&focus=%d' % ((str(battle_id), at) + tuple(ids))
+
+
+def viewer_shot(command):
+    """The replay viewer's 'shot' value for one hit of Hits ('openReplays' with `at` - the hit's gameTime -, `attacker`,
+    `target`, `focus`; 21.11, BACKLOG 118): '<at>,<attacker>,<target>,<focus>' (web/playback/playback.js openShotParam),
+    or None when the command carries no shot (a battle row's link) or a value is not a number."""
+    if command_value(command, 'at') is None: return None
+    try:
+        at = float(command_value(command, 'at'))
+        ids = [int(command_value(command, k)) for k in ('attacker', 'target', 'focus')]
+    except (TypeError, ValueError):
+        _warn_once('open-viewer-shot', 'Bullba Hits page command: no shot in %r', getattr(command, '__dict__', command))
+        return None
+    if at != at or at in (float('inf'), float('-inf')): return None
+    return '%.3f,%d,%d,%d' % ((at,) + tuple(ids))
 
 
 def set_files_request(handler):
@@ -381,11 +397,16 @@ def _handle_web_command(command, ctx):
                 return
             if action == 'openHits':
                 # 19.11 (BACKLOG 109): the viewer's shots panel - one shot of a battle in Hits' window
-                shot = shot_fragment(battle_id, command) if battle_id is not None else None
+                # 21.11 (BACKLOG 118): the viewer's back control with its battle and no shot - Hits on that battle
+                if battle_id is not None and command_value(command, 'at') is None: shot = 'host=game&battle=%s' % battle_id
+                else: shot = shot_fragment(battle_id, command) if battle_id is not None else None
                 if shot is not None: _window_request(HITS, None, shot)
                 else: _window_request(HITS, None)
                 return
-            _window_request(REPLAYS, str(battle_id) if battle_id else None)
+            # 21.11 (BACKLOG 118): Hits' link of one hit - the viewer opens on that shot (its shot view), the state's 'shot'
+            shot = viewer_shot(command) if battle_id is not None else None
+            if shot is not None: _window_request(REPLAYS, str(battle_id), None, shot)
+            else: _window_request(REPLAYS, str(battle_id) if battle_id else None)
             return
         if action == 'replayFiles':
             if _files_request is None:
@@ -1196,11 +1217,14 @@ def open_in_game(path, fragment='host=game', window=HITS):
         except Exception:
             existing = None
         shown = [existing is not None]
-        if existing is not None: LOG.info('%s window already open; re-navigating', title)
+        if existing is not None:
+            LOG.info('%s window already open; re-navigating', title)
+            close_other(window)     # never two pages together (BACKLOG 118): this one stands already
         elif window == HITS: _page_follows = False     # a new page follows the hangar only once it says it browses vehicles
         def on_shown(*args):
             shown[0] = True
             LOG.info('%s in-game window shown (+%d ms)', title, int(round((time.time() - opened) * 1000)))
+            close_other(window)
         def check_opened():
             settle_window(ticket)
             if not shown[0]:
@@ -1444,6 +1468,7 @@ def fullscreen_stood(view):
     _full['view'], _full['asked'] = view, None
     remember_view_mode('full')
     close_viewer_window()
+    close_other(REPLAYS)        # Bullba Hits' window too (BACKLOG 118)
     LOG.info('Bullba Replays full screen: the frameless view stands, the window closed')
 
 
@@ -1452,18 +1477,52 @@ def fullscreen_gone(view):
 
 
 def close_viewer_window():
-    """The viewer's window closed: its BrowserWindow view destroyed (the trace's), else its browser deleted."""
-    trace, browser_id = _viewer['trace'], _viewer['browser_id']
+    """The viewer's window closed (its full-screen view stands)."""
+    close_window(REPLAYS)
+
+
+def close_window(window):
+    """One of the mod's windows closed: its BrowserWindow view destroyed (the trace's), else its browser deleted - the
+    calls close_viewer_window made since 1.16 (seen working: the window goes when the full-screen view stands)."""
+    trace, browser_id = window_trace(window), window_id(window)
     try:
-        window = trace.window if trace is not None else None
-        if window is not None:
-            window.destroy()
+        view = trace.window if trace is not None else None
+        if view is not None:
+            view.destroy()
         elif browser_id is not None:
             from helpers import dependency
             from skeletons.gui.game_control import IBrowserController
             dependency.instance(IBrowserController).delBrowser(browser_id)
     except Exception as error:
-        LOG.warning('Bullba Replays full screen, step close window: the window could not be closed (%s: %s)', type(error).__name__, error)
+        LOG.warning('%s window could not be closed (%s: %s)', WINDOW_TITLES.get(window, 'Bullba Hits'), type(error).__name__, error)
+
+
+# NEVER TWO PAGES TOGETHER (21.11, BACKLOG 118: the user's machine lags with both open): once one page stands - its window
+# shown (open_in_game's showBrowserCallback, or at once for an open window re-navigated) or the viewer's full-screen view
+# populated - the other page goes: its window, or the viewer's full-screen view (its remembered mode kept). A page that
+# never stands leaves the other as it was. Done on the next tick, never inside the client's own callback.
+def close_other(window):
+    def run():
+        try:
+            if window == HITS:
+                if fullscreen_open():
+                    view = _full['view']
+                    fullscreen_gone(view)
+                    view.destroy()
+                    LOG.info('Bullba Replays full screen closed: Bullba Hits opened')
+                if window_open(REPLAYS):
+                    close_window(REPLAYS)
+                    LOG.info('Bullba Replays window closed: Bullba Hits opened')
+            elif window_open(HITS):
+                close_window(HITS)
+                LOG.info('Bullba Hits window closed: Bullba Replays opened')
+        except Exception as error:
+            LOG.warning('The other page could not be closed (%s: %s)', type(error).__name__, error)
+    try:
+        import BigWorld
+        BigWorld.callback(0, run)
+    except Exception:
+        run()
 
 
 def leave_fullscreen(state, close=False):

@@ -5,6 +5,16 @@
 /* 1.19 (the user on 1.18): one size whatever the shot - a fixed width, every line one line high, a long text cut with
    its whole in the tooltip (shot-view.js say, chipsInto) */
 .sv-bar[hidden] { display:none; }
+/* 21.11 (BACKLOG 119, 120, 122): the top line - one line whatever it holds: the title is cut first, then the shell chips
+   (their whole list in their own tooltips); the two ⚠ keep their places hidden, so nothing moves when one shows */
+.sv-top { flex:1 0 100%; display:flex; flex-wrap:nowrap; align-items:center; gap:8px; min-width:0; overflow:hidden; }
+.sv-shells { display:flex; flex-wrap:nowrap; gap:4px; flex:0 1 auto; min-width:0; overflow:hidden; }
+.sv-shells:empty { display:none; }
+.sv-shells .shell-chip { flex:none; font-size:11px; line-height:16px; min-height:0; height:20px; padding:1px 6px; box-sizing:border-box; white-space:nowrap; }
+.sv-top .sv-warn { flex:none; }
+.sv-back { flex:none; white-space:nowrap; }
+.sv-back.on, .sv-back[aria-pressed=true] { border-color:var(--accent, #e0b44a); color:var(--accent, #e0b44a); }
+.sv-top > button, .sv-top > label { flex:none; }
 .sv-title { font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; flex:1 1 auto; }
 .sv-aim { display:flex; align-items:center; gap:4px; white-space:nowrap; flex:none; }
 .sv-aim[hidden] { display:none; }

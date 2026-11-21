@@ -85,5 +85,31 @@
     var shell=c?shellAt(c,c.kind,c.penetration100,c.caliber,range,hit,undefined,undefined,liner):null;
     return {context:context,choice:c,range:range,shell:shell,guess:context.index<0};
   }
-  root.BullbaShotShell={shellAt:shellAt,manualDamageFrom:manualDamageFrom,recorded:recorded,linerFactor:linerFactor,MANUAL_DAMAGE_KEYS:MANUAL_DAMAGE_KEYS};
+  // THE SHELL CHIP (21.11, BACKLOG 122; moved out of app.js paintShellLists): one button of a gun's shell - Hits' scene heading
+  // and the replay viewer's shot bar, one widget. f: {actual (the shell that flew: ●), assumed (◌, with assumedWhy and
+  // assumedNotes), second (◐ - the vehicle's second mode), mode (its client name), gunNotes (the gun at the shot)}. The label
+  // and the tooltip are app.js's unchanged; style.css/viewer.css .shell-chip.
+  var SHELL_NAMES={ARMOR_PIERCING:'AP',ARMOR_PIERCING_CR:'APCR',HOLLOW_CHARGE:'HEAT',HIGH_EXPLOSIVE:'HE'};
+  function chipLabel(c,f){return (f.actual?'● ':f.assumed?'◌ ':'')+(f.second?'◐ ':'')+(SHELL_NAMES[c.kind]||c.kind)+' '+Math.round(c.penetration100)+(c.gunInstallation>0?' ✦':'')+(c.emuGun?' ⇆':'');}
+  function chipTitle(c,f){
+    // Tooltip markup (tooltips.js): the shell is the heading, then whose it is, then its points.
+    return c.name+', '+c.caliber+' mm\n'
+      +(c.emuGun?'A shell of the gun picked on the characteristics panel - the gun the emulation fires.\n• Gun: '+c.emuGunName
+        :f.actual?(f.second?'The shooter fired in his second mode; the client’s numbers for that mode are used.':'Type from the hit.')
+        :f.assumed?'Assumed: the record does not name this shot’s shell'+(f.assumedWhy?', so '+f.assumedWhy+' was taken':'')+'.'
+          +(f.assumedNotes||[]).map(function(n){return '\n• '+n;}).join('')
+        :f.second?'The same gun in the vehicle’s second mode.':'Compare with this shell.')
+      +(c.gunInstallation>0?'\n• Ability gun'+(c.gun?': '+c.gun:''):'')
+      +(f.mode?'\n• Mode: '+f.mode:'')
+      // The live state of the shooter's gun at the shot, one short line per mechanic the record carries
+      // (22.09). It belongs to the shot, not to one shell, so every chip of this hit says the same.
+      +(!c.emuGun&&(f.gunNotes||[]).length?'\n\nGun at the shot:\n• '+f.gunNotes.join('\n• '):'');
+  }
+  function chip(c,f,onclick){
+    var b=document.createElement('button');b.className='shell-chip';b.textContent=chipLabel(c,f);b.title=chipTitle(c,f);
+    if(onclick)b.onclick=onclick;
+    return b;
+  }
+  root.BullbaShotShell={shellAt:shellAt,manualDamageFrom:manualDamageFrom,recorded:recorded,linerFactor:linerFactor,MANUAL_DAMAGE_KEYS:MANUAL_DAMAGE_KEYS,
+    SHELL_NAMES:SHELL_NAMES,chip:chip,chipLabel:chipLabel,chipTitle:chipTitle};
 })(typeof window!=='undefined'?window:this);

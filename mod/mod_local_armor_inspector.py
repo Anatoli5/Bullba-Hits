@@ -1941,11 +1941,13 @@ def open_viewer():
         LOG.exception('Could not open local HTML viewer')
 
 
-def open_replays(battle_id=None):
+def open_replays(battle_id=None, shot=None):
     """The replay viewer's mods-list button (no battle: the viewer shows the list of replay files) or Hits' 3D control on a
-    battle row ('openReplays', a battle id): the viewer in its own window (presentation.REPLAYS); Hits' window, open or not,
-    is left as it is. A click of the button while the viewer is open leaves the replay on screen. The viewer opens in the
-    mode it was last left in (U5, 20.11): its full-screen view straight away, else the window (presentation.open_viewer_view)."""
+    battle row ('openReplays', a battle id; `shot`, 21.11 BACKLOG 118: one hit of Hits - presentation.viewer_shot -, the
+    viewer opens on its shot view): the viewer in its own window (presentation.REPLAYS); once it stands Hits' window closes
+    (never two pages together, presentation.close_other). A click of the button while the viewer is open leaves the replay
+    on screen. The viewer opens in the mode it was last left in (U5, 20.11): its full-screen view straight away, else the
+    window (presentation.open_viewer_view)."""
     try:
         from local_armor_inspector import presentation
         if presentation.fullscreen_open():
@@ -1954,18 +1956,20 @@ def open_replays(battle_id=None):
         if battle_id is None and presentation.window_open(presentation.REPLAYS):
             LOG.info('%s window already open; left as it is', REPLAYS_NAME)
             return
-        presentation.open_viewer_view(PLAYBACK_PATH, 'battle=' + str(battle_id) if battle_id else '')
+        state = 'battle=' + str(battle_id) if battle_id else ''
+        if state and shot: state += '&shot=' + shot
+        presentation.open_viewer_view(PLAYBACK_PATH, state)
     except Exception:
         LOG.exception('Could not open the replay viewer')
 
 
-def page_window(window, battle_id=None, shot=None):
+def page_window(window, battle_id=None, shot=None, viewer_shot=None):
     """The pages' 'openReplays' / 'openHits' (game thread): the viewer's window on a battle, or Hits' window when it is not
     open (an open one is never re-navigated from the viewer). A shot of the viewer's shots panel (`shot`, Hits' fragment,
     19.11 BACKLOG 109): an open Hits window gets it as its new fragment (the page's hashchange opens that shot), else Hits
-    opens on it."""
+    opens on it. `viewer_shot` (21.11, BACKLOG 118): Hits' hit for the viewer's shot view (open_replays)."""
     from local_armor_inspector import presentation
-    if window == presentation.REPLAYS: return open_replays(battle_id)
+    if window == presentation.REPLAYS: return open_replays(battle_id, viewer_shot)
     if shot:
         try: presentation.open_in_game(VIEWER_PATH, shot)
         except Exception: LOG.exception('Could not open the local HTML viewer on a shot')

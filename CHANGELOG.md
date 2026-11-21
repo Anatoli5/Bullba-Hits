@@ -5,6 +5,13 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 ## Unreleased
 
 - Replay viewer: tournaments, clan battles, Strongholds and Onslaught are no longer marked as special modes in the battle list.
+- Bullba Hits and the replay viewer never stay open together: opening one from the other (or from the mods list) closes the other once the new one is up. The replay viewer opens in the mode you left it in, window or full screen.
+- Bullba Hits: the selected hit has a "Replays" link that opens the replay viewer straight on that hit's shot view; the battle list's "3D ▶" of the battle on screen does the same for the selected hit. The viewer's "Bullba Hits" back button opens that battle, and the hit of an open shot view.
+- Shot view: switching between the window and full screen keeps the shot view open on the same shot.
+- Shot view: a shot whose shooter the replay does not place (no tracer, the shooter unseen) gets a line arriving at the hit along the hit's own direction, with the camera 30 m out on it. Both distances are a convention, marked by a warning triangle; the shooter's vehicle is named when the replay knows it.
+- Shot view: "Look back" turns the camera on the shot's line to face where the shell came from; the wheel forward then flies towards the source. Click again to face the target.
+- Shot view: the shooter's other shells as Bullba Hits' shell buttons in the shot bar - the heat map and the figures are read again for the chosen shell. A shell the shot did not fire is marked as an estimate by a warning triangle.
+- Replay viewer: hit and muzzle flashes fade in real time also when the replay is paused or stopped at the hit, so a frozen flash no longer hides the armour. In the shot view a small bright dot stays at the contact point while it shows that shot.
 
 ## 1.21 (2026-11-20)
 

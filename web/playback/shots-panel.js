@@ -27,9 +27,6 @@
   var R = root.BullbaRows;
   var LINK_WINDOW = 0.15;   // s: a hit to its tracer's end (shot-context.js GAME_END_WINDOW for replay-made battles)
   var BEFORE = 2;           // s: the battle rewinds this far before the shot (the user's word, 19.11)
-  // the row link's mark: an arrow leaving a box ("opens elsewhere"); not ↗, which a row's outcome uses for an outgoing shot
-  var OUT_ICON = '<svg class="sp-open-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M7 3H3v10h10V9" fill="none" stroke="currentColor" stroke-width="1.5"/>' +
-    '<path d="M9 2h5v5M14 2 7.5 8.5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>';
   var FULL_TEAM = 15;      // rows: the panel is as tall as a team list of a standard battle (the user's word, 20.11)
   var SHOT = { t: 0, shooter: 1, ricochet: 2, sx: 3, sy: 4, sz: 5, tEnd: 10, ex: 11, ey: 12, ez: 13, caliber: 15 };
 
@@ -208,12 +205,9 @@
       if (open) {
         // 20.11: an arrow out of a box and the mod's full name, not 'Hits' - the team row's 'shots' button and this link read
         // as the same thing
-        var h = R.node('button', undefined, 'sp-open'); h.type = 'button';
-        h.innerHTML = OUT_ICON; h.appendChild(R.node('span', 'Bullba Hits', 'sp-open-name'));
-        h.title = 'Open in Bullba Hits\nOpens this shot in the Bullba Hits window: the target’s armour from the shooter’s point of view.\n' +
-          '• Shown on a row with a hit whose shooter the replay names, in a battle Bullba Hits recorded';
-        h.onclick = function (e) { e.stopPropagation(); open(); };
-        wrap.appendChild(h);
+        // (21.11: the link's widget is hit-rows.js openLink, shared with Hits' link to this viewer)
+        wrap.appendChild(R.openLink('Bullba Hits', 'Open in Bullba Hits\nOpens this shot in the Bullba Hits window: the target’s armour from the shooter’s point of view.\n' +
+          '• Shown on a row with a hit whose shooter the replay names, in a battle Bullba Hits recorded\n• This window closes once Bullba Hits stands', open));
       }
       return wrap;
     }

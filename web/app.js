@@ -887,22 +887,12 @@
     // second-mode shell carries ◐ beside the ● of the shell that flew and the ◌ of an assumed one - no
     // new words on the tile; the client's own name for the state (straight / angled armour, no screen /
     // screen, the Gorilla's low charge) and what it means are in the tooltip. A picked gun's shell (24.09) wears ⇆.
-    $('shell-quick').replaceChildren();candidates.forEach(function(c,i){var actual=i===shotContext.index,assumed=i===shellAssumed,
-      second=c.vehicleMode===1,mode=ArmorShotContext.modeLabel?ArmorShotContext.modeLabel(hit,c):'',
-      b=node('button',(actual?'● ':assumed?'◌ ':'')+(second?'◐ ':'')+(shellNames[c.kind]||c.kind)+' '+Math.round(c.penetration100)+(c.gunInstallation>0?' ✦':'')+(c.emuGun?' ⇆':''),'shell-chip');
-      // Tooltip markup (tooltips.js): the shell is the heading, then whose it is, then its points.
-      b.dataset.shell='saved:'+i;b.title=c.name+', '+c.caliber+' mm\n'
-        +(c.emuGun?'A shell of the gun picked on the characteristics panel - the gun the emulation fires.\n• Gun: '+c.emuGunName
-          :actual?(second?'The shooter fired in his second mode; the client’s numbers for that mode are used.':'Type from the hit.')
-          :assumed?'Assumed: the record does not name this shot’s shell'+(shellAssumedWhy?', so '+shellAssumedWhy+' was taken':'')+'.'
-            +shellAssumedNotes.map(function(n){return '\n• '+n;}).join('')
-          :second?'The same gun in the vehicle’s second mode.':'Compare with this shell.')
-        +(c.gunInstallation>0?'\n• Ability gun'+(c.gun?': '+c.gun:''):'')
-        +(mode?'\n• Mode: '+mode:'')
-        // The live state of the shooter's gun at the shot, one short line per mechanic the record carries
-        // (22.09). It belongs to the shot, not to one shell, so every chip of this hit says the same.
-        +(!c.emuGun&&(shotContext.gunNotes||[]).length?'\n\nGun at the shot:\n• '+shotContext.gunNotes.join('\n• '):'');
-      b.onclick=function(){choice.value='saved:'+i;selectShell();};$('shell-quick').appendChild(b);});
+    // The chip itself (label, tooltip): web/shot-shell.js chip since 21.11 - the replay viewer's shot bar has the same one.
+    $('shell-quick').replaceChildren();candidates.forEach(function(c,i){
+      var b=BullbaShotShell.chip(c,{actual:i===shotContext.index,assumed:i===shellAssumed,second:c.vehicleMode===1,
+        mode:ArmorShotContext.modeLabel?ArmorShotContext.modeLabel(hit,c):'',assumedWhy:shellAssumedWhy,assumedNotes:shellAssumedNotes,gunNotes:shotContext.gunNotes},
+        function(){choice.value='saved:'+i;selectShell();});
+      b.dataset.shell='saved:'+i;$('shell-quick').appendChild(b);});
     paintGunShells();
   }
   // The spall-liner factor of the vehicle under fire: the hit's target, or the browsed vehicle's own record.
@@ -7159,7 +7149,8 @@
       o.appendChild(keepTile(b.id,kind));
       var line=[b.vehicle&&b.vehicle.name,battleWhen(b.startedAt)].filter(Boolean).join(' \u00b7 ');
       o.title=(b.map||'Unknown map')+(line?'\n'+line:'')+(b.damaged?'\nDamaged: '+b.damaged+' recorded definition'+(b.damaged===1?' is':'s are')+' missing':'');
-      o.onclick=function(e){if(e&&e.target&&e.target.closest&&e.target.closest('.battle-option-replay'))return openPlayback(b.id);pickBattle(b.id);};
+      // 21.11 (BACKLOG 118): the battle on screen with a hit selected - the viewer opens on that hit's shot
+      o.onclick=function(e){if(e&&e.target&&e.target.closest&&e.target.closest('.battle-option-replay'))return openPlayback(b.id,current&&current.id===b.id?selectedShot():null);pickBattle(b.id);};
       list.appendChild(o);
     });
   }
@@ -7215,14 +7206,16 @@
   $('replay-limit-on').onchange=sendReplayLimit;
   // The 3D replay player of a battle (BACKLOG 104): its own page beside this one, with the host kept in its fragment.
   // In the game the 3D replay viewer has a window of its own (19.11, 'one mod, two entries'): the mod opens it on this
-  // battle ('openReplays') and this window stays as it is; outside the game (no mod) the viewer opens here.
-  function openPlayback(id){
+  // battle ('openReplays'); once the viewer stands the mod closes this window (21.11, BACKLOG 118: never two pages
+  // together); outside the game (no mod) the viewer opens here. shot (replayShot, or null): the viewer opens on that shot.
+  function openPlayback(id,shot){
     openBattleList(false);
     if(host.game&&host.canSend()){
-      sendCommand('openReplays',{battleId:id});
+      sendCommand('openReplays',Object.assign({battleId:id},shot||{}));
       return;
     }
-    window.location.href='web/playback.html#'+(host.game?'host=game&':'')+'battle='+encodeURIComponent(id);
+    window.location.href='web/playback.html#'+(host.game?'host=game&':'')+'battle='+encodeURIComponent(id)+
+      (shot?'&shot='+[shot.at,shot.attacker,shot.target,shot.focus].join(','):'');
   }
   // The tile's title text and the selected row, from whatever #battles currently holds. In the Vehicles mode
   // the same slot carries the vehicle name (renderVehicleHeading), so it is left alone there.
@@ -8203,9 +8196,29 @@
       b.title=(view==='incoming'?'Incoming from '+((other||{}).name||'?'):'Outgoing at '+((other||{}).name||'?'))+'\n• Result: '+said+(critWords?'\n• Critical damage: '+critWords:'')+(only?'\n• Scene: '+only.row:'');
       b.onclick=function(){selectHit(h.id).catch(function(){});};container.appendChild(b);});
     flush(Infinity);
+    placeReplayLink();
   }
   // The pressed row of the list, without building the list again (audit APP1-08: opening a battle built it twice).
-  function markHits(){var rows=$('hits').children||[];for(var i=0;i<rows.length;i++){var id=rows[i].getAttribute&&(rows[i].getAttribute('data-hit')||rows[i].getAttribute('data-event'));if(id!==null&&id!==undefined)rows[i].setAttribute('aria-pressed',String(id===String(selected)&&!poseDetached));}}
+  function markHits(){var rows=$('hits').children||[];for(var i=0;i<rows.length;i++){var id=rows[i].getAttribute&&(rows[i].getAttribute('data-hit')||rows[i].getAttribute('data-event'));if(id!==null&&id!==undefined)rows[i].setAttribute('aria-pressed',String(id===String(selected)&&!poseDetached));}placeReplayLink();}
+  // THE SELECTED HIT IN THE 3D REPLAY VIEWER (21.11, BACKLOG 118): the pressed row carries the rows' link to the other page
+  // (hit-rows.js openLink - the widget the viewer's shot rows carry back here), opening the viewer on this hit's shot view;
+  // the battle list's '3D ▶' of this battle carries the same shot. replayShot: the command's fields of a hit - its gameTime
+  // (the viewer finds its shot by it, the attacker and the target: playback.js openShotParam), the vehicle in focus - or null.
+  function replayShot(h){
+    if(!current||!h||h.synthetic||h.damageEvent||!Number.isFinite(h.gameTime)||h.attackerId==null||h.targetId==null)return null;
+    var focus=focusVehicle!=null?focusVehicle:playerId();
+    return {at:Number(h.gameTime.toFixed(3)),attacker:h.attackerId,target:h.targetId,focus:focus!=null?focus:h.targetId};
+  }
+  function selectedShot(){return current&&selected!=null&&!poseDetached?replayShot((current.hits||[]).filter(function(h){return h.id===selected;})[0]):null;}
+  function placeReplayLink(){
+    var box=$('hits');[].forEach.call(box.querySelectorAll('.hit>.sp-open'),function(e){e.remove();});
+    var shot=selectedShot();if(!shot)return;
+    var row=box.querySelector('[data-hit="'+String(selected).replace(/"/g,'')+'"]');if(!row)return;
+    var id=current.id;
+    row.appendChild(Rows.openLink('Replays','Open in Bullba Replays\nOpens this hit’s shot in the 3D replay viewer: its shot view, from the shooter’s spot to the hit.\n'+
+      '• The viewer opens in the mode you left it in (window or full screen); this window closes once it stands\n• The first time, the game prepares the battle and its map: a few seconds',
+      function(){openPlayback(id,replayShot((current&&current.id===id?current.hits:[]).filter(function(h){return h.id===selected;})[0]));},'span'));
+  }
   // ===================== THE TWO SCENES OF A HIT (11.11) =====================
   // The user, 11.11 (docs/PRODUCT.md, the battle log from the replay): a hit of a battle made from its replay keeps the
   // in-game SNAPSHOT of its scene and gets a scene REBUILT from the replay; the page can switch - "which picture to take,

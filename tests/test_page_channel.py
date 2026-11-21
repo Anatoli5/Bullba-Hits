@@ -316,6 +316,27 @@ class TwoPagesOneChannelTests(unittest.TestCase):
             presentation.web_handlers()[0].handler(game, {})
         self.assertEqual(windows, [(presentation.HITS, None, fragment)])
 
+    def test_hits_link_of_one_hit_opens_the_viewer_on_that_shot(self):
+        # 21.11 (BACKLOG 118): Hits' link of one hit - 'openReplays' with the hit's gameTime, attacker, target and focus (the
+        # game hands them in custom_parameters, as openHits' shot) - reaches the window request as the viewer's 'shot'; a
+        # battle row's link (no 'at') stays a battle; a bad value - the battle alone. The viewer's back control with its
+        # battle and no shot opens Hits on that battle.
+        windows = []
+        presentation.set_window_request(lambda window, battle, shot=None, viewer=None: windows.append((window, battle, shot, viewer)))
+        self.addCleanup(presentation.set_window_request, None)
+        bid = '2315856430906286521-d36eff9b31bb'
+        handler = presentation.web_handlers()[0].handler
+        with patch.object(presentation, 'notify_page', lambda note: None):
+            handler(Command(action='openReplays', battleId=bid, at=None, attacker=None, target=None, focus=None,
+                            custom_parameters={'at': 1234.5, 'attacker': 7, 'target': 9, 'focus': 7}), {})
+            handler(Command(action='openReplays', battleId=bid), {})
+            handler(Command(action='openReplays', battleId=bid, at='x', attacker=7, target=9, focus=7), {})
+            handler(Command(action='openHits', battleId=bid), {})
+        self.assertEqual(windows, [(presentation.REPLAYS, bid, None, '1234.500,7,9,7'), (presentation.REPLAYS, bid, None, None),
+                                   (presentation.REPLAYS, bid, None, None), (presentation.HITS, None, 'host=game&battle=' + bid, None)])
+        self.assertEqual(presentation.full_fragment('battle=%s&shot=1234.500,7,9,7' % bid, True), 'host=game&view=full&battle=%s&shot=1234.500,7,9,7' % bid)
+        self.assertIsNotNone(presentation.VIEW_STATE.match('battle=%s&shot=1234.500,7,9,7' % bid))
+
 
 class FullScreenTests(unittest.TestCase):
     """R5 (BACKLOG 110, 20.11.2026): the replay viewer's full-screen button in the game. The client's frameless view, the GUI

@@ -14,3 +14,14 @@
    drawn; viewer.js writes the variable on the layer and every cross inherits it. Nothing else is dimmed. */
 .hit-reticle{opacity:var(--impact-opacity,.5)}
 .hit-reticle.contact .reticle-stroke{stroke:#ff5a4f}
+/* Two widgets of Bullba Hits the replay viewer's shot bar shows too (moved out of style.css unchanged 21.11, BACKLOG 122):
+   the shell chip (web/shot-shell.js chip) and the project's yellow warning triangle (the ⚠ of a shot ring one server tick
+   uncertain, 24.09: just before the hit line's circle figure it belongs to, inside it since 11.11; in the shot bar the
+   estimate of a shell not fired and the unknown shooter's place). Left click: its words. The colours' fallbacks are Hits'
+   own tokens (style.css :root), which the replay page does not define. */
+.shell-chip{font-size:13px;min-height:30px;padding:5px 10px}.shell-chip[aria-pressed=true]{border-color:var(--gold,#e0b44a);color:var(--gold,#e0b44a);background:#302b23}
+.disc-stale{align-self:center;width:18px;height:18px;pointer-events:auto;cursor:help;filter:drop-shadow(0 1px 1px rgba(0,0,0,.6))}
+.disc-stale[hidden]{display:none}
+.disc-stale svg{display:block;width:18px;height:18px}
+.disc-stale path{fill:var(--warn,#f2a33a);stroke:#2a1a05;stroke-width:.8;stroke-linejoin:round}
+.disc-stale path.mark{fill:none;stroke:#2a1a05;stroke-width:2;stroke-linecap:round}
