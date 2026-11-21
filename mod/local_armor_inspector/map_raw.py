@@ -408,6 +408,15 @@ def vec(d, p):
     return size, count, p + 8, p + 8 + size * count
 
 
+def space_text(raw):
+    """A string of space.bin's table. UTF-8 as a rule; 95_lost_city_ctf (20.11.2026) carries a name in a one-byte
+    Cyrillic code page (byte 0xd1 where UTF-8 wants a continuation) - one such string must not stop the whole map."""
+    try: return raw.decode('utf-8')
+    except UnicodeDecodeError:
+        try: return raw.decode('cp1251', 'replace')
+        except LookupError: return raw.decode('latin-1')
+
+
 def space_strings(d):
     size, n, at, p = vec(d, 0)
     total = struct.unpack_from('<I', d, p)[0]
@@ -415,7 +424,7 @@ def space_strings(d):
     out = {}
     for i in range(n):
         h, off, ln = struct.unpack_from('<III', d, at + i * size)
-        out[h] = d[base + off:base + off + ln].decode('utf-8')
+        out[h] = space_text(d[base + off:base + off + ln])
     return out
 
 

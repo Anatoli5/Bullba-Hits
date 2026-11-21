@@ -2,7 +2,11 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.1.1 from 1.05 on, 2.4.1.0 from 1.02 on, 2.4.0.2 from 0.9.3 on, 2.4.0.1 #950 from 0.7.6, 2.4.0.0 #945 before.
 
-## 1.22 (2026-11-21)
+## Unreleased
+
+- Replay viewer: a battle on Lost City opens - the map's files are copied although one of the game's own names in them is not UTF-8.
+
+## 1.22 (2026-11-20)
 
 - Replay viewer: tournaments, clan battles, Strongholds and Onslaught are no longer marked as special modes in the battle list.
 - Bullba Hits and the replay viewer never stay open together: opening one from the other (or from the mods list) closes the other once the new one is up. The replay viewer opens in the mode you left it in, window or full screen.
