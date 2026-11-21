@@ -2,7 +2,7 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.1.1 from 1.05 on, 2.4.1.0 from 1.02 on, 2.4.0.2 from 0.9.3 on, 2.4.0.1 #950 from 0.7.6, 2.4.0.0 #945 before.
 
-## Unreleased
+## 1.20 (2026-11-20)
 
 - Shot view: the eye reaches the shell's line exactly at the shot, so the tracer is seen end-on from its first frame; very short shots get the same view.
 - Shot view: from the shot until the episode plays on past the hit, the shooter is drawn as it was when it fired, so the tracer starts at its muzzle from any angle.
