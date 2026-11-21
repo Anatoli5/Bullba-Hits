@@ -200,10 +200,10 @@ def check():
         ok('modes', 'special' not in (battle.get('record') or {}) and not any(f.get('special') for f in value.get('files') or ()),
            'a random battle marked special: %r' % [f.get('special') for f in value.get('files') or ()])
         cases = [((1, 'ctf'), None), ((14, 'domination'), None), ((22, 'ctf'), None), ((2, 'assault'), None),
-                 ((None, None), None), ((None, 'ctf'), None), ((1, None), None), ((43, 'comp7'), 'Onslaught'),
-                 ((47, 'comp7'), 'Onslaught tournament'), ((27, 'epic'), 'Frontline'), ((24, 'ctf30x30'), 'Grand Battle'),
+                 ((None, None), None), ((None, 'ctf'), None), ((1, None), None), ((43, 'comp7'), None), ((5, 'ctf'), None), ((13, 'domination'), None), ((20, 'ctf'), None),
+                 ((47, 'comp7'), None), ((27, 'epic'), 'Frontline'), ((24, 'ctf30x30'), 'Grand Battle'),
                  ((111, 'ctf'), 'battle type 111'), ((None, 'epic'), 'Frontline'), ((1, 'ctf30x30'), 'Grand Battle'),
-                 (('43', u'comp7'), 'Onslaught')]
+                 (('27', u'epic'), 'Frontline')]
         got = [(a, (replay_files.special_mode(*a) or {}).get('name')) for a, _ in cases]
         ok('modes', all(g[1] == w for g, (a, w) in zip(got, cases)), got)
         special_dir = tempfile.mkdtemp(prefix='bullba-files-modes-')
@@ -211,13 +211,13 @@ def check():
             replays2 = os.path.join(special_dir, 'replays')
             os.makedirs(replays2)
             h = header(roster, 'Bullba', '15.11.2026 20:00:00', own_id)
-            h.update({'battleType': 43, 'gameplayID': 'comp7'})
-            write_final(os.path.join(replays2, 'onslaught.wotreplay'), stream, h, cipher=True)
+            h.update({'battleType': 27, 'gameplayID': 'epic'})
+            write_final(os.path.join(replays2, 'frontline.wotreplay'), stream, h, cipher=True)
             write_final(os.path.join(replays2, 'random.wotreplay'), stream, header(roster, 'Bullba', '16.11.2026 20:00:00', own_id), cipher=True)
             scan = replay_files.Scan(special_dir, replays2)
             for _ in scan.steps(): pass
             marks = dict((f['file'], f.get('special')) for f in scan.value['files'])
-            ok('modes', marks.get('onslaught.wotreplay') == {'name': 'Onslaught', 'bonusType': 43, 'gameplay': 'comp7'}
+            ok('modes', marks.get('frontline.wotreplay') == {'name': 'Frontline', 'bonusType': 27, 'gameplay': 'epic'}
                and marks.get('random.wotreplay') is None and len(marks) == 2, marks)
         finally:
             shutil.rmtree(special_dir, True)

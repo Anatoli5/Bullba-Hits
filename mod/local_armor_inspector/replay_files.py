@@ -55,16 +55,18 @@ WHEN = re.compile(r'(\d{1,2})\.(\d{1,2})\.(\d{4}) (\d{1,2}):(\d{2})(?::(\d{2}))?
 # measured: the fixture replays carry 1, 14 and 47 there), the gameplay a second test (Grand Battle is a random-range
 # type on 30x30 maps, an event map may carry plain 'ctf' under its own type). Standard: the random-like types below
 # AND a standard gameplay; a field that is absent decides nothing; both absent: not marked (unknown).
-STANDARD_BONUS = {1: 'Random battle', 2: 'Training room', 14: 'Tournament', 15: 'Clan tournament', 22: 'Ranked battle',
-                  37: 'Mapbox', 44: 'Winback', 46: 'Random battle'}
-STANDARD_GAMEPLAY = ('ctf', 'domination', 'assault')
+# The owner, 20.11.2026: tournaments and clan battles are played on the same standard maps - not special; Onslaught is
+# not treated as special either (its 'comp7' gameplay is a standard one here).
+STANDARD_BONUS = {1: 'Random battle', 2: 'Training room', 4: 'Tournament', 5: 'Clan battle', 7: 'Team battle',
+                  13: 'Global Map', 14: 'Tournament', 15: 'Clan tournament', 20: 'Stronghold', 21: 'Stronghold',
+                  22: 'Ranked battle', 31: 'Tournament', 37: 'Mapbox', 43: 'Onslaught', 44: 'Winback',
+                  46: 'Random battle', 47: 'Onslaught tournament', 48: 'Onslaught training', 49: 'Onslaught Light'}
+STANDARD_GAMEPLAY = ('ctf', 'domination', 'assault', 'comp7')
 # names of the special types this client knows (2.4.1.1 constants, the report above); another type is named by its id
 SPECIAL_NAMES = {24: 'Grand Battle', 25: 'Grand Battle training', 27: 'Frontline', 28: 'Frontline training',
                  29: 'Steel Hunter', 30: 'Steel Hunter', 34: 'Steel Hunter tournament', 35: 'Steel Hunter tournament',
-                 43: 'Onslaught', 47: 'Onslaught tournament', 48: 'Onslaught training', 49: 'Onslaught Light',
                  100: 'Story mode', 104: 'Story mode'}
-GAMEPLAY_NAMES = {'ctf30x30': 'Grand Battle', 'domination30x30': 'Grand Battle', 'epic': 'Frontline',
-                  'comp7': 'Onslaught', 'maps_training': 'Maps training', 'bootcamp': 'Boot camp'}
+GAMEPLAY_NAMES = {'ctf30x30': 'Grand Battle', 'domination30x30': 'Grand Battle', 'epic': 'Frontline', 'maps_training': 'Maps training', 'bootcamp': 'Boot camp'}
 
 
 def special_mode(bonus_type, gameplay):
