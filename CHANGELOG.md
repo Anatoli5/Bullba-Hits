@@ -2,7 +2,7 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.1.1 from 1.05 on, 2.4.1.0 from 1.02 on, 2.4.0.2 from 0.9.3 on, 2.4.0.1 #950 from 0.7.6, 2.4.0.0 #945 before.
 
-## Unreleased
+## 1.21 (2026-11-20)
 
 - Shot view: the shot's flight is one dashed line from your gun to the hit, the same line the camera stands on and moves along, shown from the shot while the shot view holds it. Bullba Hits' own flight line, which could start metres beside the gun, is no longer drawn there; its hit line through the target stays and meets the flight at a small angle.
 - Hits rebuilt from the replay show the target where the server had it when the shell struck: hull and position 0.2 s, turret and gun 0.1 s before the hit. On a turning turret the hit line and the shell's flight now meet within a degree or so instead of several. The shot view holds the target in that pose from the hit on.
