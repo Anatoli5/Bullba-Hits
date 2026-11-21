@@ -5,6 +5,11 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 ## Unreleased
 
 - Shot view: the shot's flight is one dashed line from your gun to the hit, the same line the camera stands on and moves along, shown from the shot while the shot view holds it. Bullba Hits' own flight line, which could start metres beside the gun, is no longer drawn there; its hit line through the target stays and meets the flight at a small angle.
+- Hits rebuilt from the replay show the target where the server had it when the shell struck: hull and position 0.2 s, turret and gun 0.1 s before the hit. On a turning turret the hit line and the shell's flight now meet within a degree or so instead of several. The shot view holds the target in that pose from the hit on.
+- The shell's flight in Bullba Hits is the tracer itself, from the gun: it is no longer turned onto the hit line. On the in-battle snapshot it is shifted onto the hit point and says by how much.
+- The hit point is the server's: where the game puts it elsewhere, the reading is taken at the server's point and the armour figures say so ("server contact"). Where the game's model has no armour at the server's point, the reading is on the plate the tracer meets, marked "contact estimated".
+- Steel Hunter and Onslaught: a hit on a vehicle upgraded during the battle is rebuilt on the vehicle as it was at that hit, not on its last upgrade.
+- Each kept battle made from its replay is rebuilt once, the first time you open it (its old picture shows until then).
 
 ## 1.20 (2026-11-20)
 

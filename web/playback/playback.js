@@ -1954,10 +1954,23 @@
     }
     return true;
   }
+  // A vehicle in a pose given whole (the shot view's target at the server's moment, 20.11): the world matrix in game axes
+  // (Ry(yaw) Rx(pitch) Rz(roll) as poseInto's Euler 'YXZ'), the turret's yaw and the gun's pitch (client sign, + down).
+  var heldM = new T.Matrix4();
+  function poseGiven(r, p) {
+    heldM.fromArray(p.world);
+    r.group.position.setFromMatrixPosition(heldM);
+    tmpEuler.setFromRotationMatrix(heldM, 'YXZ'); r.group.rotation.copy(tmpEuler);
+    if (r.turret) r.turret.rotation.y = p.yaw;
+    if (r.gun) r.gun.rotation.x = p.pitch;
+    return true;
+  }
   function poseVehicles(t) {
     vehicles.forEach(function (r) {
       var v = r.v, inSight = false, tt = t - delayOf(r);
-      // the shot view (1.20): its shooter held in its pose at the shot from the shot until play goes on past the hit
+      // the shot view (1.20): its shooter held in its pose at the shot from the shot until play goes on past the hit;
+      // its target (20.11) at the server's moment from the hit on
+      var given = shotView && shotView.targetPose ? shotView.targetPose(v.id, t) : null;
       if (shotView) { var held = shotView.heldPose(v.id, t); if (held != null) tt = held; }
       for (var s = 0; s < v.sight.length; s++) if (t >= v.sight[s][0] && t < v.sight[s][1]) { inSight = true; break; }
       // a wreck stays where it was destroyed: the client drops a destroyed vehicle's entity after a while (the replay's
@@ -1969,7 +1982,7 @@
         if (r.deathT != null) for (var s2 = 0; s2 < v.sight.length; s2++) if (r.deathT >= v.sight[s2][0] && r.deathT <= v.sight[s2][1]) r.wreckSeen = true;
       }
       if (!inSight && r.wreckSeen && t >= r.deathT) inSight = true;
-      if (!inSight || !poseInto(r, tt, r.group, r.turret, r.gun)) { r.group.visible = false; r.visible = false; return; }
+      if (!inSight || !(given ? poseGiven(r, given) : poseInto(r, tt, r.group, r.turret, r.gun))) { r.group.visible = false; r.visible = false; return; }
       r.group.visible = true; r.visible = true;
       var hi = search(r.hp, 2, v.nh, t), hp = hi < 0 ? v.maxHealth : r.hp[hi * 2 + 1];
       if (hp !== r.lastHp) {

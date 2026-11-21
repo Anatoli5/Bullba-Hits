@@ -804,7 +804,7 @@
     pts.forEach(function(p){self.addReticle(p.pos);});
     // shotPath: the shell's flight carried onto the first point (Viewer.shellPath), null without a tracer; focus()
     // stands the camera at its origin, the horizon and the page's marks read it.
-    this.shotPoints=pts;this.shotPath=pts.path||null;this.drawTracers(pts);if(pts.length){var at=pts[pts.anchor||0];this.point=at.pos.clone();this.travel=at.line.clone();}
+    this.shotPoints=pts;this.shotPath=pts.path||null;this.drawTracers(pts);this.shotContact=null;if(pts.length){var at=pts[pts.anchor||0];this.point=at.pos.clone();this.travel=at.line.clone();if(at.contact&&at.contact!=='segment')this.shotContact={kind:at.contact,gap:at.contactGap};}
     this.drawHorizon(hit.target&&hit.target.worldTransform);
     // The tracers and marks of this hit have just been added to the root: with the aim emulation running
     // they must not be on screen at all, so the recorded rule is applied to them here and not only when
@@ -1044,33 +1044,33 @@
   Viewer.points=function(hit,context){
     var T=THREE,transforms={},rest={};((hit&&hit.target||{}).parts||[]).forEach(function(part){if(part.transform){transforms[part.id]=new T.Matrix4().fromArray(part.transform);if(part.poseFrom)rest[part.id]=true;}});
     // pi: the point's index in hit.points (the log's point= counts resolved points only); hitType as recorded.
-    var pts=[];((hit&&hit.points)||[]).forEach(function(p,pi){if(p.status!=='resolved'||!transforms[p.part]||!p.position||!p.direction)return;var pos=new T.Vector3().fromArray(p.position).applyMatrix4(transforms[p.part]);pos.z*=-1;var direction=new T.Vector3().fromArray(p.direction).transformDirection(transforms[p.part]).normalize();direction.z*=-1;pts.push({pos:pos,dir:direction,effect:p.effect,part:p.part,pi:pi,hitType:p.hitType,source:'segment',chordDev:null,line:direction.clone(),stretch:null,rest:!!rest[p.part]});});
+    // contact (mod replay_scene.py server_contacts, 20.11): where the point stands - 'segment' (the client's point is the
+    // server's), 'server' (moved onto the server's contact), 'tracer' (estimated: the plate the tracer's line meets),
+    // 'client' (the server's contact is off the client model); none on a record without the replay's scene.
+    var pts=[];((hit&&hit.points)||[]).forEach(function(p,pi){if(p.status!=='resolved'||!transforms[p.part]||!p.position||!p.direction)return;var pos=new T.Vector3().fromArray(p.position).applyMatrix4(transforms[p.part]);pos.z*=-1;var direction=new T.Vector3().fromArray(p.direction).transformDirection(transforms[p.part]).normalize();direction.z*=-1;pts.push({pos:pos,dir:direction,effect:p.effect,part:p.part,pi:pi,hitType:p.hitType,source:'segment',chordDev:null,line:direction.clone(),stretch:null,rest:!!rest[p.part],contact:p.contact||null,contactGap:Number.isFinite(p.contactGap)?p.contactGap:null});});
     Viewer.chain(pts);
     var anchor=0;for(var i=0;i<pts.length;i++)if(!rest[pts[i].part]){anchor=i;break;}
     pts.anchor=anchor;
-    var path=pts.length?Viewer.shellPath(pts,context,hit&&hit.target&&hit.target.worldTransform):null;
-    if(path){pts[anchor].line=path.tangent.clone();pts[anchor].source='tracer';}
-    pts.path=path;
+    // The flight is drawn; the line judged stays the point's own (20.11): the segment's direction is the server's in the
+    // part's frame, the tracer's is only as good as the pose it is carried through (outputs/shot-reconstruction-2026-11-20.md).
+    pts.path=pts.length?Viewer.shellPath(pts,context,hit&&hit.target&&hit.target.worldTransform,!!(hit&&hit.target&&hit.target.poseAt==='server')):null;
     return pts;
   };
-  /* The shell's own flight to the first contact (shot-line-true, user 24.09; outputs/wg-mechanics-check-2026-09-24.md).
-     The server flies a shell on the tracer's parabola X(t) = origin + velocity·t + ½·(0, −gravity, 0)·t², no drag, and
-     stops it at S (stopTracer) 6 mm from that path. The recorded point I is the server's contact laid on the pose the game
-     DREW; on the move that pose stands up to metres from the server's (|I − S|), mostly along the hull - the game's
-     lag, not ours. So the path is carried onto I: every point is I + Rm·(X(t) − S) in the target's frame (I: the contact
-     the shell stopped at, the one nearest S; drawn up to the first contact). The mark stays
-     on the armour where the server hit the part, and the flight reaches it from where the shooter really was.
-     Rm: the drawn pose may also be TURNED against the server's (0.5° median, 4° p90, turning vehicles). The recorded
-     segment is the server's own direction in the part's frame, quantised (0.48° median). Where the tracer's tangent,
-     carried through the drawn pose, and the segment agree within TURN_TRUST (the segment's median quantisation), the
-     tracer is taken as is; beyond that the whole flight is turned about I until it is TURN_TRUST from the segment.
-     Replay of 24.09 (132 hits, server pose known), against the true origin in the target's server frame: camera
-     0.49 / 2.42 m (median / p90, the segment line at the tracer's range) -> 0.35 / 2.07; direction at I 0.52° / 1.54°
-     -> 0.44° / 1.26°; the tracer taken as is would be 0.42 / 6.75 m (a turned pose is carried whole).
-     Built once per hit: PATH_STEPS chords of the arc, no per-frame work. Null without a tracer, its stop or the target's
-     world pose - then the segment line stands, as before. */
-  var TURN_TRUST=.5*Math.PI/180,PATH_STEPS=24;
-  Viewer.shellPath=function(pts,context,worldTransform){
+  /* The shell's own flight to the first contact (shot-line-true, user 24.09; redone 20.11,
+     outputs/shot-reconstruction-2026-11-20.md). The server flies a shell on the tracer's parabola
+     X(t) = origin + velocity·t + ½·(0, −gravity, 0)·t², no drag, and stops it at S (stopTracer) 6 mm from that path.
+     - `exact` (the scene rebuilt from the replay, posed at the server's moments: hull 0.2 s, turret and gun 0.1 s before
+       the hit packet): the flight is the tracer itself in the target's frame - from the gun, nothing moved; S lands on the
+       server's contact (0.12 m median on 6 036 hits; cm on a still target).
+     - otherwise (the recorder's snapshot: the pose the game DREW, up to metres from the server's on the move, |I − S|):
+       the flight is moved onto I - every point I + (X(t) − S) in the target's frame (I: the contact the shell stopped at,
+       the one nearest S) -, shifted, never turned: its start is off the gun by the pose gap, which the hit-line panel names.
+     Until 20.11 the flight was also turned about I onto the segment (TURN_TRUST): the segment placed with a turret 0.1 s
+     late turned it by degrees (2.63° on the shot of 19.11, its start 4.5 m off the gun). The line JUDGED is the point's
+     own (Viewer.points), never this one. Built once per hit: PATH_STEPS chords of the arc, no per-frame work. Null without
+     a tracer, its stop or the target's world pose - then the segment line stands, as before. */
+  var PATH_STEPS=24;
+  Viewer.shellPath=function(pts,context,worldTransform,exact){
     var T=THREE,tracer=context&&context.tracer,stop=context&&context.stop,first=pts&&pts[pts.anchor||0];
     if(!first||!tracer||!stop||!Array.isArray(worldTransform)||!Array.isArray(tracer.origin)||!Array.isArray(tracer.velocity)||!Array.isArray(stop.position))return null;
     var g=Number(tracer.gravity)>0?Number(tracer.gravity):0,o=new T.Vector3().fromArray(tracer.origin),v=new T.Vector3().fromArray(tracer.velocity),S=new T.Vector3().fromArray(stop.position);
@@ -1083,20 +1083,18 @@
     var inverse=new T.Matrix4().fromArray(worldTransform).invert();
     function local(p){var q=p.clone().applyMatrix4(inverse);q.z*=-1;return q;}
     var Sl=local(S),tangent=local(S.clone().add(v.clone().add(new T.Vector3(0,-g*t,0)))).sub(Sl).normalize();
-    // The turn that brings the tracer's tangent to within TURN_TRUST of the recorded line (first.line: the segment, or
-    // the chord to the next point where the chain rule took it).
-    var ref=first.line.clone().normalize(),angle=tangent.angleTo(ref),turn=new T.Quaternion(),turned=0;
-    if(angle>TURN_TRUST){var axis=new T.Vector3().crossVectors(tangent,ref);if(axis.lengthSq()>1e-18){turned=angle-TURN_TRUST;turn.setFromAxisAngle(axis.normalize(),turned);}}
-    // S is carried onto the contact the shell stopped at - the point nearest to it (a screen-then-armour hit often stops
-    // at the last; review 24.09) - and the flight is drawn to the FIRST contact, where the arrow and the camera's axis are:
-    // up to the time it reached that one (the stretch between the two at the tangent's speed). The pose gap is measured
-    // at the stop's own contact.
-    var stopAt=pts.reduce(function(b,p){return p.pos.distanceTo(Sl)<b.pos.distanceTo(Sl)?p:b;},first);
-    function carry(p){return local(p).sub(Sl).applyQuaternion(turn).add(stopAt.pos);}
+    // angle: the tracer's tangent against the recorded line at the first contact (the segment, or the chord to the next
+    // point where the chain rule took it) - said, not corrected.
+    var angle=tangent.angleTo(first.line.clone().normalize());
+    // The contact the shell stopped at - the point nearest to S (a screen-then-armour hit often stops at the last; review
+    // 24.09); the flight is drawn to the FIRST contact, where the arrow and the camera's axis are: up to the time it reached
+    // that one (the stretch between the two at the tangent's speed). The pose gap is measured at the stop's own contact.
+    var stopAt=pts.reduce(function(b,p){return p.pos.distanceTo(Sl)<b.pos.distanceTo(Sl)?p:b;},first),shift=exact?new T.Vector3():stopAt.pos.clone().sub(Sl);
+    function carry(p){return local(p).add(shift);}
     var reach=Math.max(0,t-stopAt.pos.distanceTo(first.pos)/Math.max(1e-6,v.clone().add(new T.Vector3(0,-g*t,0)).length()));
-    var points=[];for(var i=0;i<=PATH_STEPS;i++)points.push(i===PATH_STEPS?first.pos.clone():carry(at(reach*i/PATH_STEPS)));
+    var points=[];for(var i=0;i<=PATH_STEPS;i++)points.push(i===PATH_STEPS&&!exact?first.pos.clone():carry(at(reach*i/PATH_STEPS)));
     var origin=points[0].clone();
-    return {points:points,origin:origin,tangent:tangent.applyQuaternion(turn).normalize(),angle:angle,turned:turned,gap:stopAt.pos.distanceTo(Sl),along:Math.abs(stopAt.pos.z-Sl.z),
+    return {points:points,origin:origin,tangent:tangent,angle:angle,exact:!!exact,gap:stopAt.pos.distanceTo(Sl),along:Math.abs(stopAt.pos.z-Sl.z),
       stopLocal:Sl,time:t,length:origin.distanceTo(first.pos),tracer:tracer};
   };
   // The chain rule, as data: every point gets `line` (the direction drawn through it), `source` (chord / segment /
@@ -1268,7 +1266,7 @@
   // Our verdict at every recorded contact point along the drawn line, for the verdict log (server fact vs our estimate):
   // ArmorBallistics.verdicts, the one law (moved there 28.09 so the worker runs the same code), over the points as arrays.
   function plainPoints(pts){
-    return (pts||[]).map(function(p){return {pos:p.pos.toArray(),line:p.line.toArray(),part:p.part,effect:p.effect,pi:p.pi,hitType:p.hitType,source:p.source,chordDev:p.chordDev};});
+    return (pts||[]).map(function(p){return {pos:p.pos.toArray(),line:p.line.toArray(),part:p.part,effect:p.effect,pi:p.pi,hitType:p.hitType,source:p.source,chordDev:p.chordDev,contact:p.contact||null};});
   }
   Viewer.verdicts=function(engine,pts,shell){
     if(!engine||!shell||!pts)return [];
@@ -1375,7 +1373,10 @@
     if(this.pinned&&this.engine&&shell)return this.engine.ray(this.pinned.origin.toArray(),this.pinned.direction.toArray(),shell);
     if(!this.engine||!this.point||!this.travel||!shell||!this.recordedPose())return null;
     var span=this.bounds?this.bounds.getSize(new THREE.Vector3()).length():20;
-    return this.engine.ray(this.point.clone().addScaledVector(this.travel,-span*2-2).toArray(),this.travel.toArray(),shell);
+    var r=this.engine.ray(this.point.clone().addScaledVector(this.travel,-span*2-2).toArray(),this.travel.toArray(),shell);
+    // Where the recorded line's contact came from when it is not the game's own point (20.11: web/armor-line.js contactGroup).
+    if(r&&this.shotContact)r.contact=this.shotContact;
+    return r;
   };
   Viewer.prototype.setShotContext=function(context){
     var T=THREE,self=this,target=this.loadedData&&this.loadedData.hit.target;

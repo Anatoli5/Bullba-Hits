@@ -375,6 +375,9 @@
     var who=base||borrowedTarget(hit,battle);
     Object.keys(who).forEach(function(k){if(k!=='parts'&&k!=='worldTransform')t[k]=who[k];});
     ['type','compactDescriptor','turretYaw','gunPitch','worldTransform'].forEach(function(k){if(has(st,k))t[k]=st[k];});
+    // Format 3 (20.11, mod replay_scene.py): the pose is the server's at the hit (hull 0.2 s, turret and gun 0.1 s before the
+    // hit packet), not the game's drawing - viewer.js shellPath then draws the tracer as it flew, nothing moved.
+    if(Number(s.format)>=3)t.poseAt='server';else delete t.poseAt;
     t.parts=st.parts.map(function(p){
       var q=Object.assign({},p);
       if(q.armorFrom==='snapshot'){
@@ -401,9 +404,25 @@
     out.sceneSource='replay';
     return out;
   }
+  // THE CONTACT IS ONE FOR BOTH SCENES (20.11): it lies in the hit part's own frame, no pose in it. Where the rebuilt scene
+  // moved a point off the game's re-collision (its 'contact' 'server' or 'tracer', mod replay_scene.py server_contacts), the
+  // snapshot shows the same point: its geometry and part from the rebuilt one, everything else its own. Otherwise the
+  // snapshot is the hit itself, untouched.
+  var CONTACT_FIELDS=['part','position','direction','normal','contact','contactGap','segmentPart'];
+  function snapshotHit(hit){
+    var r=object(hit[SECOND_SCENE]),rp=r&&Array.isArray(r.points)?r.points:[],live=hit.points||[],moved=false;
+    var points=live.map(function(lp,k){
+      var p=object(rp[k]);
+      if(!object(lp)||!p||(p.contact!=='server'&&p.contact!=='tracer')||(p.segmentPart!==undefined?p.segmentPart:p.part)!==lp.part)return lp;
+      var q=Object.assign({},lp);moved=true;
+      CONTACT_FIELDS.forEach(function(key){if(has(p,key))q[key]=p[key];});
+      return q;
+    });
+    return moved?Object.assign({},hit,{points:points}):hit;
+  }
   function sceneHit(hit,want,battle){
     var have=scenesOf(hit),shown=want==='replay'&&have.replay?'replay':have.snapshot?'snapshot':have.replay?'replay':null;
-    return {hit:shown==='replay'?replayHit(hit,battle):hit,shown:shown,have:have};
+    return {hit:shown==='replay'?replayHit(hit,battle):shown==='snapshot'?snapshotHit(hit):hit,shown:shown,have:have};
   }
   // A hit with neither scene (the death camera, where the replay could not rebuild one either): its row stands with its
   // damage and parties, and the scene area says why there is nothing to draw.

@@ -109,7 +109,8 @@
    recordedOk(id, t0, t1), recorded(id, t, pos, quat) -> fov | null, gunAt(id, t, matrix) -> matrix | null, delay(id) -> s,
    aimToggle (the option's checkbox, moved into the bar), ground(x, z) -> the ground's y | null (scene), foliage(k | null),
    plantStencil(on), sight() -> Promise<the sight file's value | null>}; heldPose(id, t) -> the clock to pose vehicle id at,
-   or null (the shooter held at the shot); drawsShot(index, t) -> whether the view draws that shot's flight itself. */
+   or null (the shooter held at the shot); targetPose(id, t) -> {world, yaw, pitch} or null (the target at the server's
+   moment from the hit on); drawsShot(index, t) -> whether the view draws that shot's flight itself. */
 (function (root) {
   'use strict';
   var T = root.THREE;
@@ -1158,6 +1159,17 @@
       if (!r || id !== r.shooter || !r.shot || S.stop == null || t < r.t - 1e-6 || t > S.stop + 1e-6) return null;
       return r.t - (o.delay ? o.delay(id) : 0);
     }
+    // THE TARGET AT THE HIT (20.11, outputs/shot-reconstruction-2026-11-20.md): from the hit's clock until the mode leaves,
+    // the target stands where the SERVER had it when the shell struck - the scene Bullba Hits rebuilt from this replay
+    // (mod replay_scene.py, format 3: hull 0.2 s, turret and gun 0.1 s before the hit packet), its world pose, turret yaw
+    // and gun pitch - not this page's drawing 0.15 s back: Hits' hit line, the shell's line and the model then meet.
+    // {world (16, game axes), yaw, pitch} for playback.js poseVehicles, or null: the replay's own pose.
+    function targetPose(id, t) {
+      var hit = S.data && S.data.hit, tg = hit && hit.target;
+      if (!S.row || id !== S.target || S.hitT == null || t < S.hitT - 1e-6 || !tg || tg.poseAt !== 'server') return null;
+      if (!Array.isArray(tg.worldTransform) || tg.worldTransform.length !== 16 || !Number.isFinite(tg.turretYaw) || !Number.isFinite(tg.gunPitch)) return null;
+      return { world: tg.worldTransform, yaw: tg.turretYaw, pitch: tg.gunPitch };
+    }
     function rowsText(c) { return [c.arm, c.dmg, c.ric].map(function (r) { return r.textContent; }).filter(Boolean).join(' '); }
     function state() {
       var v = S.viewer, sf = v && v.surface;
@@ -1179,7 +1191,7 @@
           ground: S.corridor.ground, destroyedAlready: S.corridor.destroyedAlready, vehiclesHidden: S.onLine || 0, list: S.corridor.list, t: S.corridor.t, a: S.corridor.a, b: S.corridor.b } : null };
     }
     return { open: open, close: function () { close(false); }, active: function () { return !!S.row; },
-      free: function () { return !!S.row; }, heldPose: heldPose, drawsShot: drawsShot, camera: camera, panned: panned, paint: paint, overlay: overlay, clamp: clamp, state: state, viewer: function () { return S.viewer; },
+      free: function () { return !!S.row; }, heldPose: heldPose, targetPose: targetPose, drawsShot: drawsShot, camera: camera, panned: panned, paint: paint, overlay: overlay, clamp: clamp, state: state, viewer: function () { return S.viewer; },
       paintMaterial: paintMat, bar: bar };
   }
   root.BullbaShotView = { create: create, BEFORE: BEFORE, SPEED: SPEED, AFTER: AFTER, INSIDE: INSIDE };

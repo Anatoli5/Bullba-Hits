@@ -42,7 +42,26 @@
   // One ballistic result as readable groups: chance, then "pen" and "effective ← nominal ∠ angle" side by side (12.11, BACKLOG
   // 91: the angle sign, not a dash, binds the plate to its angle; the penetration next to the armour it is read against),
   // then screens.
+  // WHERE THE RECORDED LINE'S CONTACT CAME FROM (20.11, mod replay_scene.py server_contacts): the server's segment ends 0.5 m
+  // past its own contact; the game re-intersects it with ITS model, which is not the server's. r.contact (viewer.js
+  // shotProbability, the recorded line only): {kind, gap} - 'server' (read at the server's contact), 'tracer' (the game's
+  // model has no armour there: read on the plate the tracer meets, an estimate), 'client' (the game's point kept). None
+  // where the game's point is the server's: nothing to say then.
+  var CONTACT={
+    server:{text:'server contact',title:'Server contact\nThe game drew this hit at another spot; this reads the plate where the server hit.'},
+    tracer:{text:'contact estimated',title:'Estimated contact\nThe game’s model has no armour where the server hit; this reads the plate the shell’s tracer meets.'},
+    client:{text:'contact uncertain',title:'Contact uncertain\nThe server hit a spot the game’s model does not have; this reads the point the game drew.'}};
+  function contactGroup(contact){
+    var w=contact&&CONTACT[contact.kind];if(!w)return null;
+    var gap=Number.isFinite(contact.gap)?'\n• The game’s point: '+Math.round(contact.gap*100)+' cm from the server’s':'';
+    return {kind:'contact',text:w.text,title:w.title+gap};
+  }
   function line(r,pen,range,c){
+    var out=reading(r,pen,range,c),where=contactGroup(r&&r.contact);
+    if(where)out.groups=out.groups.concat([where]);
+    return out;
+  }
+  function reading(r,pen,range,c){
     c=c||{};var rgb=c.rgb||function(){return '';};
     if(!r)return {label:'—',color:'',groups:[]};
     var prefix=[],hp=!!c.damage&&r.expected!==null&&r.expected!==undefined;
@@ -120,6 +139,6 @@
     return 'Model: '+label+', 256 rays, misses = 0; no map obstacles, target motion or '+
       (damage?'splash onto other parts':'blast damage')+'; server formula not confirmed'+(damage?', the non-penetration part a reconstruction':'');
   }
-  root.BullbaArmorLine={line:line,damageShare:damageShare,damageGroups:damageGroups,circleFigure:circleFigure,circleText:circleText,
+  root.BullbaArmorLine={line:line,contactGroup:contactGroup,damageShare:damageShare,damageGroups:damageGroups,circleFigure:circleFigure,circleText:circleText,
     circleModel:circleModel,SHARE:SHARE,NO_ALPHA:NO_ALPHA,CIRCLE_TITLES:CIRCLE_TITLES};
 })(window);

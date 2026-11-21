@@ -271,14 +271,23 @@ class SyntheticTests(unittest.TestCase):
         self.assertAlmostEqual(yaw, 0.0, 9)
         self.assertAlmostEqual(pitch, 0.1, 9)
 
-    def test_drawn_delay_follows_the_packet_interval(self):
-        """About two packet intervals behind (12.11): 0.21 s at 10 Hz, 0.39 s at 5 Hz; a vehicle with no track the 10 Hz one."""
-        def track(step):
-            times = [k * step for k in range(200)]
-            return times, [0.0] * (6 * len(times))
-        self.assertAlmostEqual(rs.drawn_delay(track(0.1), 19.95), rs.DELAY_BASE + rs.DELAY_FRAMES * 0.1, 3)
-        self.assertAlmostEqual(rs.drawn_delay(track(0.2), 39.95), rs.DELAY_BASE + rs.DELAY_FRAMES * 0.2, 2)
-        self.assertAlmostEqual(rs.drawn_delay(None, 5.0), rs.DELAY_BASE + rs.DELAY_FRAMES * rs.DEFAULT_INTERVAL, 9)
+    def test_the_pose_is_the_servers_at_two_moments(self):
+        """20.11 (outputs/shot-reconstruction-2026-11-20.md; was the client's drawn moment, drawn_delay): the position and
+        hull 0.2 s before the hit packet, the turret and gun 0.1 s before it - the two moments the server collided at,
+        measured on 6 036 hits of 276 replays."""
+        tracks = rs.Tracks()
+        for k in range(100):
+            tracks.position(7, k * 0.1, [k * 0.1, 0, 0], k * 0.01, 0, 0)   # 1 m/s along x, the hull turning 0.1 rad/s
+        for k in range(100):
+            tracks.gun(7, k * 0.1, ((512 + k) << 6) | 0)                    # the turret one packed step every 0.1 s
+        tracks.public(7, b'\x01\x02')
+        rec = tracks.record(1, 100.0)
+        scene = self.scene_of(rec, 7, 5.0)
+        self.assertEqual((scene['poseDelay'], scene['anglesDelay']), (0.2, 0.1))
+        world = scene['target']['worldTransform']
+        self.assertAlmostEqual(world[12], 4.8, 5)                          # x at 5.0 - 0.2 s
+        self.assertAlmostEqual(math.atan2(world[8], world[10]), 0.48, 5)   # hull yaw at 4.8 s
+        self.assertAlmostEqual(scene['target']['turretYaw'], 49 * 2 * math.pi / 1024, 5)   # angles at 4.9 s
 
     def scene_of(self, poses, target, when, limits=(-0.2, 0.1)):
         statics = {'type':'x:y', 'hullPosition':[0, 1, 0], 'turretPosition':[0, 1, 0], 'turretPitch':0.0,
@@ -294,9 +303,9 @@ class SyntheticTests(unittest.TestCase):
         self.assertIsNone(why)
         return scene
 
-    def test_packed_angles_are_interpolated_to_the_drawn_moment(self):
-        """Another vehicle's turret turns between its packed samples without steps (Vehicle.set_gunAnglesPacked -> the
-        filter's syncGunAngles): at the drawn moment halfway between two samples, halfway between their angles."""
+    def test_packed_angles_are_interpolated_to_the_servers_moment(self):
+        """Another vehicle's turret between its packed samples, linear (20.11: at the server's moment, SERVER_ANGLES_DELAY
+        before the hit; until then at the drawn moment): halfway between two samples, halfway between their angles."""
         tracks = rs.Tracks()
         for k in range(100):
             tracks.position(7, k * 0.1, [0, 0, 0], 0, 0, 0)
@@ -304,9 +313,8 @@ class SyntheticTests(unittest.TestCase):
         tracks.gun(7, 5.1, (522 << 6) | 63)       # yaw 10 steps on, pitch at the upper limit
         tracks.public(7, b'\x01\x02')
         rec = tracks.record(1, 100.0)
-        delay = rs.drawn_delay(rec['positions'][7], 5.05)
-        scene = self.scene_of(rec, 7, 5.05 + delay)
-        self.assertAlmostEqual(scene['poseDelay'], round(delay, 4), 6)
+        scene = self.scene_of(rec, 7, 5.05 + rs.SERVER_ANGLES_DELAY)
+        self.assertAlmostEqual(scene['poseDelay'], rs.SERVER_POSE_DELAY, 9)
         self.assertAlmostEqual(scene['target']['turretYaw'], 5 * 2 * math.pi / 1024, 5)
         self.assertAlmostEqual(scene['target']['gunPitch'], -0.05, 5)
         self.assertTrue(scene['angles']['interpolated'])
@@ -354,7 +362,9 @@ class SyntheticTests(unittest.TestCase):
         self.assertAlmostEqual(abs(wheel['position'][0]), 0.2, 6)       # the prism's side face, at the axle
         self.assertEqual((prefab['part'], prefab['status']), (4, 'resolved'))
 
-    def test_own_turret_floats_are_interpolated(self):
+    def test_own_turret_floats_where_it_has_no_packed_angles(self):
+        """20.11: the own vehicle takes its packed angles like any other (the server's); its turret_yaw / gun_pitch floats
+        only without them, at the same moment (was OWN_TURRET_DELAY 0.09 s, the own pose OWN_POSE_DELAY 0.22 s)."""
         tracks = rs.Tracks()
         for k in range(100):
             tracks.position(1, k * 0.1, [0, 0, 0], 0, 0, 0)
@@ -364,10 +374,86 @@ class SyntheticTests(unittest.TestCase):
         tracks.own_angle('pitch', 5.1, 0.1)
         tracks.public(1, b'\x01\x02')
         rec = tracks.record(1, 100.0)
-        scene = self.scene_of(rec, 1, 5.025 + rs.OWN_TURRET_DELAY)
+        scene = self.scene_of(rec, 1, 5.025 + rs.SERVER_ANGLES_DELAY)
         self.assertAlmostEqual(scene['target']['turretYaw'], 0.25, 5)
         self.assertAlmostEqual(scene['target']['gunPitch'], -0.05, 5)
-        self.assertAlmostEqual(scene['poseDelay'], rs.OWN_POSE_DELAY, 9)
+        self.assertAlmostEqual(scene['poseDelay'], rs.SERVER_POSE_DELAY, 9)
+        self.assertEqual(scene['angles']['from'], 'own turret_yaw / gun_pitch')
+
+    def test_a_descriptor_changed_within_a_life_is_kept_from_its_moment(self):
+        """20.11: Steel Hunter and Onslaught upgrade a vehicle within one life (the same nation and type, another
+        descriptor); until then the last one overwrote the life's and every earlier hit was rebuilt on the later hull
+        (2 153 contacts decoded on another box). The arena list's row is still replaced by the entity's first descriptor."""
+        tracks = rs.Tracks()
+        tracks.public(7, b'listed', 0.0, ('n', 1), listed=True)
+        tracks.public(7, b'hull-1', 1.0, ('n', 1))
+        tracks.public(7, b'hull-1', 2.0, ('n', 1))
+        tracks.public(7, b'hull-3', 50.0, ('n', 1))
+        rec = tracks.record(1, 100.0)
+        hull1, hull3 = rs.compact_text(b'hull-1'), rs.compact_text(b'hull-3')
+        self.assertEqual([c for _, c in rs.lives_of(rec, 7)], [hull1, hull3])
+        self.assertEqual((rs.compact_at(rec, 7, 20.0), rs.compact_at(rec, 7, 60.0)), (hull1, hull3))
+
+    def test_the_snapshots_descriptor_wins(self):
+        """20.11: a hit with a snapshot is rebuilt on the snapshot's own descriptor (the client's at the hit) - a store
+        written before the lives kept upgrades has only the last one."""
+        self.assertEqual(rs.snapshot_compact({'target':{'vehicleRef':'kRYjACQA#1:abcdef'}}), 'kRYjACQA')
+        self.assertEqual(rs.snapshot_compact({'target':{'compactDescriptor':'QQ=='}}), 'QQ==')
+        self.assertIsNone(rs.snapshot_compact({'target':None}))
+
+    def test_the_contact_is_the_servers(self):
+        """20.11: the segment ends CONTACT_PAST (+ the decoder's 1 % push) past the server's contact. Two plates: at
+        z = 0 (armor_1) and z = 0.6 (armor_2); the shell's line along +z. A segment ending 0.5 m past z = 0 -> the game's
+        point is the server's ('segment'); one ending 0.5 m past z = 0.6 - the game stops at z = 0, the server went on to
+        0.6 -> the point moves there ('server'); one ending past z = 0.1, where neither model has armour: the plate the tracer's
+        line meets in the server's pose when it lies within LINE_REACH of the server's contact ('tracer', an estimate), else
+        - no tracer, or its plate farther off - the game's point kept ('client')."""
+        def square(z, material):
+            v = [[-1, -1, z], [1, -1, z], [1, 1, z], [-1, 1, z]]
+            return {'material':material, 'vertices':v, 'indices':[0, 1, 2, 0, 2, 3]}
+        model = rs.Model({'resource':'two.model', 'groups':[square(0.0, 'armor_1'), square(0.6, 'armor_2')]}, 'k')
+        armor = {'armor_1':{'armor':40.0}, 'armor_2':{'armor':20.0}}
+        parts = {1:({'id':1, 'transform':rs.T(0, 0, 0)}, model, None, armor)}
+
+        def point(z_contact):
+            # the decoded segment: the 1 % push on both ends included (end = contact + 0.5 + 0.01 L0)
+            s0, e0 = [0.1, 0.1, -0.4], [0.1, 0.1, z_contact + 0.5]
+            span = e0[2] - s0[2]
+            s, e = [s0[0], s0[1], s0[2] - 0.01 * span], [e0[0], e0[1], e0[2] + 0.01 * span]
+            position, direction, tri, how = rs.collide_hit_point(model, None, s, e)
+            return {'status':'resolved', 'part':1, 'start':s, 'end':e, 'position':position, 'direction':direction,
+                    'material':tri[12], 'incidence':0.0, 'nominal':armor[tri[12]]['armor']}
+
+        scenes = rs.Scenes({'playerVehicleId':1, 'serverTimeAtStart':0.0, 'positions':{}, 'guns':{}}, None, None)
+        out = {'points':[point(0.0)], 'limits':[]}
+        scenes.server_contacts(out, parts, rs.T(0, 0, 0), None)
+        self.assertEqual(out['points'][0]['contact'], 'segment')
+        self.assertLess(out['points'][0]['contactGap'], 1e-6)
+        out = {'points':[point(0.6)], 'limits':[]}
+        scenes.server_contacts(out, parts, rs.T(0, 0, 0), None)
+        p = out['points'][0]
+        self.assertEqual((p['contact'], p['material'], p['nominal']), ('server', 'armor_2', 20.0))
+        self.assertAlmostEqual(p['position'][2], 0.6, 6)
+        self.assertAlmostEqual(p['contactGap'], 0.6, 6)
+        self.assertEqual(p['client']['material'], 'armor_1')
+        out = {'points':[point(0.1)], 'limits':[]}
+        scenes.server_contacts(out, parts, rs.T(0, 0, 0), None)
+        self.assertEqual(out['points'][0]['contact'], 'client')
+        # the tracer straight along +z, no gravity: at x = 0.15 its plate (z = 0) is 0.11 m from the server's contact
+        # (0.1, 0.1, 0.1) - taken; at x = 0.5 it is 0.42 m off - another plate, the game's point kept
+        def flight(x): return ({'origin':[x, 0.1, -50.0], 'velocity':[0.0, 0.0, 800.0], 'gravity':0.0}, {'position':[x, 0.1, 0.1]})
+        out = {'points':[point(0.1)], 'limits':[]}
+        scenes.server_contacts(out, parts, rs.T(0, 0, 0), flight(0.5))
+        self.assertEqual(out['points'][0]['contact'], 'client')
+        out = {'points':[point(0.1)], 'limits':[]}
+        scenes.server_contacts(out, parts, rs.T(0, 0, 0), flight(0.15))
+        p = out['points'][0]
+        self.assertEqual((p['contact'], p['material'], p['nominal'], p['segmentPart']), ('tracer', 'armor_1', 40.0, 1))
+        self.assertAlmostEqual(p['position'][0], 0.15, 6)
+        self.assertAlmostEqual(p['position'][2], 0.0, 6)
+        self.assertAlmostEqual(p['incidence'], 0.0, 4)
+        self.assertEqual(out['limits'], [rs.LIMIT_TRACER])
+        self.assertAlmostEqual(rs.flight_time([0, 0, 0], [100.0, 0, 0], 9.81, [50.0, -0.5 * 9.81 * 0.25, 0]), 0.5, 6)
 
 
 @unittest.skipUnless(ready(), 'the local replay fixtures, the statics table or the client are absent')
@@ -386,9 +472,12 @@ class FixtureTests(unittest.TestCase):
         prototype = read_json(PROTOTYPE)
         if prototype is None: self.skipTest('no prototype table')
         diffs = []
-        # The pose (12.11): the prototype took it 0.2 s before the hit packet and the last packed angles; the mod takes the
-        # moment the client draws, interpolated. Per side its turret, gun and world differences to the snapshot are no
-        # larger than the prototype's at p90; the points stay per hit.
+        # The pose: the prototype took it 0.2 s before the hit packet and the last packed angles. Since 20.11 the mod takes
+        # the SERVER's moments (outputs/shot-reconstruction-2026-11-20.md): the position 0.2 s back, as the prototype - its
+        # world difference to the snapshot no larger than the prototype's at p90 -, the turret and gun 0.1 s back, where the
+        # snapshot (the game's drawing, ~0.2 s back) is no measure: their difference to it is the game's lag now (turret
+        # p90 3.7 / 5.4 degrees other / own on these battles), checked against the tracer instead (the 276-battle measure).
+        # The points stay per hit.
         mine, theirs = {}, {}
         for name, arena, folder in four():
             b = published(name, arena, folder)
@@ -397,7 +486,7 @@ class FixtureTests(unittest.TestCase):
                 ref = prototype.get('%s|%s' % (arena, h['id']))
                 if not c or not ref: continue
                 side = 'own' if h.get('targetId') == b.get('playerVehicleId') else 'other'
-                for key in ('turretYawDiff', 'gunPitchDiff', 'worldShift'):
+                for key in ('worldShift',):
                     if ref.get(key) is not None and c.get(key) is not None:
                         mine.setdefault((side, key), []).append(abs(c[key]))
                         theirs.setdefault((side, key), []).append(abs(ref[key]))

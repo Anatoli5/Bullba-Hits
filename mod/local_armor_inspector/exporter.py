@@ -201,7 +201,12 @@ PUBLISHED_PAUSE = 30.0
 # 5 (14.11.2026, BACKLOG 102): `ownBuilds` - the equipment of the player's own vehicles in the battle, read off their own
 # compact descriptors (own_builds); the page's Config entry Current takes it. A battle where none is read is written byte for
 # byte as in format 4.
-DERIVED_FORMAT = 5
+# 6 (20.11.2026, outputs/shot-reconstruction-2026-11-20.md): a hit's scene rebuilt from the replay is format 3 (replay_scene):
+# the target at the server's moments (hull 0.2 s, turret and gun 0.1 s before the hit packet), each point at the server's
+# contact ('contact', 'contactGap', 'client'), the shell's tracer and stop ('flight'), the vehicle as it was at the hit. A
+# replay-made battle is stale until it is opened; its stored scenes (format 2) are then rebuilt from its stored records.
+# A battle without a replay is written byte for byte as in format 5.
+DERIVED_FORMAT = 6
 # One slice of a saved battle's background publication (run_battle_job): lines of its raw file, then hits prepared, then the
 # file written (~60 ms for the largest, 53 MB raw / 405 hits - the one part that does not split). Between two lines or hits
 # the slice ends early for a battle, a drag, a command of the page or the mod closing; after it the game gets its share

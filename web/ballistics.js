@@ -856,7 +856,7 @@
       var origin=[base[0]+l[0]*k,base[1]+l[1]*k,base[2]+l[2]*k];
       var r0=afterRicochet?out[i-1].result:null,before=r0?(r0.bounce?r0.bounce.remaining:r0.remaining):undefined;
       var result=null;try{result=afterRicochet?engine.bounced(origin,vec3(l),shell,before):engine.ray(origin,vec3(l),shell);}catch(e){result=null;}
-      out.push({index:i,part:p.part,effect:p.effect,pi:p.pi,hitType:p.hitType,prevEffect:prev?prev.effect:null,source:p.source,chordDev:p.chordDev,result:result});}
+      out.push({index:i,part:p.part,effect:p.effect,pi:p.pi,hitType:p.hitType,prevEffect:prev?prev.effect:null,source:p.source,chordDev:p.chordDev,contact:p.contact||null,result:result});}
     return out;
   }
   // ---- The engine and the models as flat arrays: what the worker gets, once per engine / model ---------------------------

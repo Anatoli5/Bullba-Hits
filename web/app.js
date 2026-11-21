@@ -6557,7 +6557,7 @@
     if(missing.length){var met=v.part!=null&&missing.indexOf(v.part)!==-1||((hit.points||[]).some(function(p,pi){return (v.pi==null||pi<=v.pi)&&missing.indexOf(p.part)!==-1;}));
       partial=' partial='+missing.map(function(id){return logPart(id,parts);}).join(',')+' partialRay='+(met?1:0);}
     partial+=prefabColumns(parts);
-    console.info('Bullba Hits verdict: battle='+battleId+' hit='+hit.id+' point='+v.index+' part='+logPart(v.part,parts)+partial+' server='+String(effects[v.effect]||v.effect).replace(/ /g,'_')+' ours='+ours+' angle='+(r.angle!=null?Math.round(r.angle):'-')+' eff='+(r.effective!=null?Math.round(r.effective):'-')+' pen='+Math.round(shell.penetration)+' shell='+shell.kind+' dir='+v.source+' chordDev='+(v.chordDev==null?'-':(v.chordDev*180/Math.PI).toFixed(1))+' mode='+mode+shellModeColumns(hit,shell)+damageColumns(hit,r,shell)+ArmorCrits.columns(hit,v)+sceneColumns(hit)+' v='+($('app-version').getAttribute('data-version')||'dev').replace(/\s+/g,'_')+' rec='+(recordsVersion||'-'));
+    console.info('Bullba Hits verdict: battle='+battleId+' hit='+hit.id+' point='+v.index+' part='+logPart(v.part,parts)+partial+' server='+String(effects[v.effect]||v.effect).replace(/ /g,'_')+' ours='+ours+' angle='+(r.angle!=null?Math.round(r.angle):'-')+' eff='+(r.effective!=null?Math.round(r.effective):'-')+' pen='+Math.round(shell.penetration)+' shell='+shell.kind+' dir='+v.source+' chordDev='+(v.chordDev==null?'-':(v.chordDev*180/Math.PI).toFixed(1))+(v.contact?' contact='+v.contact:'')+' mode='+mode+shellModeColumns(hit,shell)+damageColumns(hit,r,shell)+ArmorCrits.columns(hit,v)+sceneColumns(hit)+' v='+($('app-version').getAttribute('data-version')||'dev').replace(/\s+/g,'_')+' rec='+(recordsVersion||'-'));
     verdictLines++;verdictStatus();}
   // The scene a line was cast in (11.11): none written - the snapshot, as every line before; scene=replay - the scene
   // rebuilt from the replay (the automatic pass: only a hit with no snapshot, the death camera; a view: whenever it is the
@@ -6857,14 +6857,15 @@
   function paintHitMarks(){
     var gapEl=$('pose-gap'),hEl=$('shooter-height');if(!gapEl||!hEl)return;
     var path=viewer&&viewer.shotPath,shown=!!(path&&viewer.recordedShown()),height=path?viewer.shooterHeight():null;
-    var showGap=shown&&path.gap>POSE_GAP_MARK,showH=!!(shown&&height&&height.below);
+    // The scene rebuilt at the server's moment (path.exact, 20.11) is not the game's drawing: no pose gap to name.
+    var showGap=shown&&!path.exact&&path.gap>POSE_GAP_MARK,showH=!!(shown&&height&&height.below);
     if(path&&hitMarksFor!==path){hitMarksFor=path;
       var deg=path.angle*180/Math.PI;
       gapEl.title='Pose diverged: '+path.gap.toFixed(2)+' m\nThe server hit this vehicle '+path.gap.toFixed(2)+' m from where the game drew it at that moment.'+
         '\n• Why: the game draws vehicles about 0.2 s late, and the server checked the hit on a pose up to 0.2 s apart'+
         '\n• Along the hull: '+path.along.toFixed(2)+' m'+(path.along>.7*path.gap?' (it was moving)':'')+
-        (deg>=1.5?'\n• Turned: the drawn vehicle stood about '+deg.toFixed(1)+'° off the server’s':'')+
-        '\n\n• Here: the cross stays on the armour where the server hit; the flight is moved onto it'+
+        (deg>=1.5?'\n• Turned: the tracer meets the recorded line at '+deg.toFixed(1)+'°':'')+
+        '\n\n• Here: the cross stays on the armour where the server hit; the flight is shifted onto it, its start off the gun by as much'+
         '\n• In the game: the hit looked off by as much, and the tracer came from the shooter as drawn, late too';
       if(height){$('shooter-height-value').textContent=(-height.grid).toFixed(1)+' m';hEl.title=heightWords(height);}}
     if(showGap!==hitMarksShown[0]){hitMarksShown[0]=showGap;gapEl.hidden=!showGap;}

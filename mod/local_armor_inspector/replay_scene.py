@@ -17,14 +17,25 @@ only one. The method is the one measured on 11.11 (outputs/replay-scene-recomput
   ('client', statics 'bounds'), a box the recorder wrote for the part ('record', partBounds), the box recovered exactly
   from the live record's decoded start/end of the same model in this battle (decodeSegment is linear in the box:
   'recovered', residual <= BOX_RESIDUAL), else the vertex box - then the part is marked approximate.
-- The pose, at the moment the client draws (12.11): another vehicle drawn_delay() behind the hit packet (about two of
-  its packet intervals, as the client's vehicle filter plays it back), the own one OWN_POSE_DELAY. Position and hull
-  yaw/pitch/roll linear between the packets, world = T(pos) Ry(yaw) Rx(pitch) Rz(roll); turret yaw and gun pitch linear
-  between the gunAnglesPacked samples around the same moment (yaw 2pi k/1024 - pi in steps of 0.35 degrees, pitch on 63
-  steps of the gun's absolute limits), as the filter's syncGunAngles turns them without steps; the own vehicle's
-  turret_yaw/gun_pitch floats OWN_TURRET_DELAY back, interpolated. The hull sits at rest on the chassis: the replay has
-  no suspension tilt. Parts stacked as the client does: hull T(hullPosition), turret hull T(turretPosition)
+- The pose, at the moments the SERVER collided the shell (20.11, outputs/shot-reconstruction-2026-11-20.md; it was the
+  moment the client draws until then): position and hull angles SERVER_POSE_DELAY before the hit packet, turret yaw and
+  gun pitch SERVER_ANGLES_DELAY before it - measured on 6 036 hits of 276 replays: the server's stop lands on the contact
+  and the tracer runs along the segment at these two moments, not at one (the client draws both ~0.2 s back, so its
+  turret lags the server's by ~0.1 s). Position and hull yaw/pitch/roll linear between the packets, world = T(pos)
+  Ry(yaw) Rx(pitch) Rz(roll); turret yaw and gun pitch linear between the gunAnglesPacked samples (yaw 2pi k/1024 - pi
+  in steps of 0.35 degrees, pitch on 63 steps of the gun's absolute limits), for the own vehicle too; its turret_yaw /
+  gun_pitch floats only where it has no packed angles. The hull sits at rest on the chassis: the replay has no
+  suspension tilt. Parts stacked as the client does: hull T(hullPosition), turret hull T(turretPosition)
   Rx(turretPitch) Ry(yaw), gun turret T(gunPosition) Rx(pitch).
+- The contact (20.11): the server sends each segment ending CONTACT_PAST metres past its own contact (81 366 contacts:
+  end - contact 0.507 m median, 0.495-0.518 p10-p90, the 1 % push included). The client re-collides the segment with
+  ITS model, which is not the server's (collisionModelServer is another file): where its contact is more than
+  CONTACT_TOLERANCE from the server's, the point is re-read at the server's contact (contact 'server': the client model
+  has armour there) or, failing that, on the plate the tracer's line meets in the server's pose (contact 'tracer': an
+  estimate, said so); 'segment' where the two agree (90 % of contacts).
+- The vehicle at the hit (20.11): the descriptor of the target's life at that moment - Steel Hunter and Onslaught change
+  a vehicle's descriptor within one life (hull and turret upgrades); a hit with a snapshot takes the snapshot's own
+  descriptor (the client's at the hit: stores written before the lives kept such changes have only the last one).
 - Wheels and armoured prefabs (12.11), as the snapshot carries them: a wheel part -k at its rest place with its
   procedural body, a prefab at its default layer on its parent (statics 'wheels', 'prefabs': exporter.scene_extras).
 - The range: the two vehicles' packet positions at the target's drawn moment (none when the shooter is not in view, as
@@ -45,22 +56,30 @@ import base64
 import bisect
 import math
 
-FORMAT = 2
-# The pose of a hit: the moment the client DRAWS, not the hit packet's (12.11, measured on the 2 284 hits of the 33 battles
-# of 11.11, docs/KNOWLEDGE.md 18). The client's vehicle filter (WGVehicleFilter; the turret and gun through its
-# syncGunAngles, Vehicle.set_gunAnglesPacked) plays every other vehicle back by a latency that follows that vehicle's
-# packet interval - about two intervals, as a BigWorld avatar filter keeps two inputs ahead: 0.2 s at the usual 0.1 s,
-# 0.4 s at 0.2 s (a far vehicle is updated less often) - and draws position, hull angles, turret yaw and gun pitch
-# interpolated linearly between the samples around that moment. Fitted: DELAY_BASE + DELAY_FRAMES x the vehicle's mean
-# packet interval (EMA over DELAY_TAU seconds of its 0x0a packets). The own vehicle: its packets 0.22 s back, its turret
-# floats (0x1c/0x1d) 0.09 s back, both interpolated.
-DELAY_BASE = 0.03
-DELAY_FRAMES = 1.8
-DELAY_TAU = 2.0
-DELAY_WINDOW = 60
-DEFAULT_INTERVAL = 0.1
-OWN_POSE_DELAY = 0.22
-OWN_TURRET_DELAY = 0.09
+FORMAT = 3
+# The pose of a hit: the moments the SERVER collided the shell (20.11, outputs/shot-reconstruction-2026-11-20.md; WoT-Base
+# KNOWLEDGE-client). Scanned 0..0.5 s on 6 036 hits of 276 replays: |contact - server stop| is least with the position
+# packets 0.2 s before the hit packet (0.12 m median, 0.90 at 0 s) for every flight time - the moment belongs to the hit
+# packet, not to the shot -, and the tracer runs along the segment with the turret and gun angles 0.1 s before it (turret
+# and gun hits: 0.45 degrees median against 0.97 at 0.2 s; turning turrets 0.67 against 3.28). Until 20.11 the pose was
+# the client's DRAWN moment (12.11: two packet intervals back for all four): that matches the recorder's snapshot, and
+# the snapshot's turret lags the server's.
+SERVER_POSE_DELAY = 0.2
+SERVER_ANGLES_DELAY = 0.1
+# The segment's end lies CONTACT_PAST (+ the decoder's 1 % push) past the server's contact; a client contact further than
+# CONTACT_TOLERANCE from it is not the server's; the server's contact is looked for on the client model within
+# CONTACT_PROBE of it along the segment.
+CONTACT_PAST = 0.5
+CONTACT_TOLERANCE = 0.02
+CONTACT_PROBE = 0.03
+# The tracer's line is cast from this far before the server's stop to this far past it; the plate it meets stands for the
+# server's contact only within LINE_REACH of it (in the vehicle's frame). Measured on the 305 contacts of 276 replays the
+# client model has no armour at (outputs/shot-reconstruction-2026-11-20.md): within 0.15 m the reading agreed with the
+# server's outcome more often than the game's own point (contradictions 6 -> 4 of 106), farther less often (7 -> 15 of 199)
+# - the server pose stands 0.12 m (median) from the server's stop, so a plate farther off is another plate.
+LINE_BEFORE = 8.0
+LINE_AFTER = 3.0
+LINE_REACH = 0.15
 # Two angle samples further apart than this are not interpolated (the earlier one holds).
 ANGLE_GAP = 0.5
 # Two packets further apart than this are not interpolated; a pose further than this from any packet is not taken.
@@ -77,8 +96,10 @@ YAW_STEP = 360.0 / 1024.0
 # hydropneumatic vehicle); the game sets the chassis on the map's terrain and sways the hull on it after shots and hits
 # (a native SwingingAnimator) - neither the terrain nor the sway is in the replay.
 LIMIT_HULL = 'hull at rest on the chassis, both at the replay\'s orientation: the game\'s placing on the terrain and the hull\'s sway after shots are not in the replay'
-LIMIT_PACKED = ('turret yaw and gun pitch from the packed angles (steps of %.2f and %.2f degrees), interpolated to the '
-                'drawn moment %.2f s before the hit')
+LIMIT_PACKED = ('turret yaw and gun pitch from the packed angles (steps of %.2f and %.2f degrees), interpolated to '
+                '%.2f s before the hit, the server\'s moment')
+LIMIT_OWN = 'turret yaw and gun pitch from the own vehicle\'s recorded angles (no packed angles), %.2f s before the hit'
+LIMIT_TRACER = 'contact estimated: the client model has no armour where the server hit; the plate the tracer\'s line meets'
 LIMIT_BOX = 'part %s: the client box is unknown, the box of the model vertices is taken - its points are approximate'
 LIMIT_EXTRAS = 'wheels and armoured prefabs left out: the vehicle XML was not read (%s)'
 LIMIT_PREFAB = 'prefab %s at its default position: the replay has no state of it'
@@ -165,8 +186,14 @@ class Tracks(object):
         if not listed: self.compact[vid] = text
         lives = self.lives.setdefault(vid, [])
         same = lives and (lives[-1][2] == vehicle if vehicle is not None and lives[-1][2] is not None else lives[-1][1] == text)
-        if not same: lives.append([float(t or 0.0), text, vehicle])
-        elif not listed: lives[-1][1] = text
+        if not same: lives.append([float(t or 0.0), text, vehicle, not listed])
+        elif not listed:
+            # The same vehicle with another entity descriptor (20.11): Steel Hunter and Onslaught upgrade the hull, turret or
+            # gun within one life - kept from its moment, so a hit takes the vehicle as it was then (until 20.11 the last
+            # descriptor overwrote the life's: 2 153 contacts decoded on another hull's box). The arena list's row is still
+            # replaced by the entity's first descriptor (the publicInfo one wins).
+            if lives[-1][3] and lives[-1][1] != text: lives.append([float(t or 0.0), text, vehicle, True])
+            else: lives[-1][1], lives[-1][3] = text, True
 
     def record(self, player, server_start, info=None):
         """The one 'poses' record of a battle (in memory only: its arrays are not JSON). `info` the vehiclesInfo list:
@@ -182,7 +209,7 @@ class Tracks(object):
                 'positions':dict((k, (self.times[k], self.values[k])) for k in self.times),
                 'guns':dict((k, (self.gun_times[k], self.gun_codes[k])) for k in self.gun_times),
                 'ownYaw':self.own['yaw'], 'ownPitch':self.own['pitch'], 'compact':compact,
-                'lives':dict((k, [(when, text) for when, text, _ in v]) for k, v in self.lives.items())}
+                'lives':dict((k, [(when, text) for when, text, _, _ in v]) for k, v in self.lives.items())}
 
 
 def lives_of(poses, vid):
@@ -201,6 +228,36 @@ def compact_at(poses, vid, t):
     if not lives: return None
     i = bisect.bisect_right([float(when) for when, _ in lives], float(t) + 1e-6)
     return lives[max(i - 1, 0)][1]
+
+
+def snapshot_compact(hit):
+    """The target's compact descriptor in the hit's snapshot (the client's at the hit), or None: its compactDescriptor, or
+    the configuration in front of its vehicleRef (records.config_key: '<descriptor>[#mode]:<hash>')."""
+    target = hit.get('target')
+    if not isinstance(target, dict): return None
+    value = target.get('compactDescriptor')
+    if not value:
+        ref = target.get('vehicleRef')
+        value = ref.split(':')[0].split('#')[0] if isinstance(ref, (str, type(u''))) and ':' in ref else None
+    return str(value) if value else None
+
+
+def flight_time(origin, velocity, gravity, stop):
+    """The flight time at which the tracer's parabola X(t) = origin + velocity t - (0, gravity t^2 / 2, 0) comes closest to
+    the server's stop (Newton from the straight-line guess, as viewer.js shellPath), or None."""
+    vv = dot(velocity, velocity)
+    if not vv > 1e-9: return None
+    t = max(0.0, dot(sub(stop, origin), velocity) / vv)
+    for _ in range(30):
+        x = [origin[0] + velocity[0] * t, origin[1] + velocity[1] * t - 0.5 * gravity * t * t, origin[2] + velocity[2] * t]
+        w = [velocity[0], velocity[1] - gravity * t, velocity[2]]
+        r = sub(x, stop)
+        df = dot(w, w) - r[1] * gravity
+        if not abs(df) > 1e-12: break
+        dt = -dot(r, w) / df
+        t = max(0.0, t + dt)
+        if abs(dt) < 1e-10: break
+    return t
 
 
 def compact_text(value):
@@ -312,19 +369,6 @@ def last_at(track, t):
     times, values = track
     i = bisect.bisect_right(times, t + 1e-6)
     return (float(times[i - 1]), values[i - 1]) if i else None
-
-
-def drawn_delay(track, t):
-    """How far behind its packets the client draws a vehicle at t: DELAY_BASE + DELAY_FRAMES x its mean packet interval
-    (an EMA of the intervals of its last DELAY_WINDOW position packets before t, time constant DELAY_TAU)."""
-    mean = DEFAULT_INTERVAL
-    if track:
-        times = track[0]
-        i = bisect.bisect_right(times, t)
-        for j in range(max(1, i - DELAY_WINDOW), i):
-            gap = min(float(times[j]) - float(times[j - 1]), 1.0)
-            if gap > 0: mean += (gap - mean) * (1.0 - math.exp(-gap / DELAY_TAU))
-    return DELAY_BASE + DELAY_FRAMES * mean
 
 
 def sample_at(times, values, t, angle=False):
@@ -544,10 +588,13 @@ class Scenes(object):
         self.start = poses.get('serverTimeAtStart')
         self.recovered = recover_boxes((live or {}).get('hits'))
         self.statics, self.models = {}, {}
-        self.stops = {}
+        self.stops, self.tracers, self.stops_of = {}, {}, {}
         for s in shot_events or ():
             if s.get('event') == 'stop' and s.get('position') is not None and s.get('gameTime') is not None:
                 self.stops.setdefault(s.get('shooterId'), []).append((float(s['gameTime']), s['position']))
+                if s.get('tracerId') is not None: self.stops_of[s['tracerId']] = s
+            elif s.get('event') == 'tracer' and s.get('id') is not None:
+                self.tracers[s['id']] = s
 
     def static(self, compact):
         if compact not in self.statics:
@@ -570,48 +617,26 @@ class Scenes(object):
         if when is None: return None, 'hit without gameTime'
         t_hit = float(when) - float(self.start)
         tid, aid = hit.get('targetId'), hit.get('attackerId')
-        # The vehicle the target id was AT THE HIT (BACKLOG 97): a respawn mode changes it under the same id.
-        compact = compact_at(self.poses, tid, t_hit)
+        # The vehicle the target id was AT THE HIT (BACKLOG 97: a respawn mode changes it under the same id; 20.11: an
+        # upgrade within a life changes its descriptor) - the snapshot's own when the hit has one: the client's at the hit.
+        compact, statics, error = None, None, None
+        for candidate in (snapshot_compact(hit), compact_at(self.poses, tid, t_hit)):
+            if not candidate or statics is not None: continue
+            compact = candidate
+            statics, error = self.static(compact)
         if not compact: return None, 'no compact descriptor of the target in the replay'
-        statics, error = self.static(compact)
         if statics is None: return None, error
         track = self.poses['positions'].get(tid)
-        delay = OWN_POSE_DELAY if tid == self.player else drawn_delay(track, t_hit)
-        out = {'format':FORMAT, 'source':'replay', 'poseDelay':round(delay, 4), 'limits':[LIMIT_HULL], 'problems':[]}
-        t_pose = t_hit - delay
+        out = {'format':FORMAT, 'source':'replay', 'poseDelay':SERVER_POSE_DELAY, 'anglesDelay':SERVER_ANGLES_DELAY,
+               'limits':[LIMIT_HULL], 'problems':[]}
+        t_pose = t_hit - SERVER_POSE_DELAY
         out['poseTime'] = round(float(self.start) + t_pose, 4)
         row, gap = pose_at(track, t_pose)
         world = None
         if row is None: out['problems'].append('no position of the target in the replay')
         elif gap > PACKET_GAP: out['problems'].append('no position of the target within %.1f s of the hit (%.1f s)' % (PACKET_GAP, gap))
         else: world = world_of(row)
-        # turret yaw and gun pitch to the hull (client sign: pitch + down), interpolated to the drawn moment
-        yaw = pitch = None
-        if tid == self.player:
-            t_angles = t_hit - OWN_TURRET_DELAY
-            y = sample_at(self.poses['ownYaw'][0], self.poses['ownYaw'][1], t_angles, True) if self.poses['ownYaw'][0] else None
-            p = sample_at(self.poses['ownPitch'][0], self.poses['ownPitch'][1], t_angles) if self.poses['ownPitch'][0] else None
-            if y is not None and p is not None:
-                yaw, pitch = y[0], p[0]
-                out['angles'] = {'from':'own turret_yaw / gun_pitch', 'time':round(float(self.start) + t_angles, 4),
-                                 'interpolated':True}
-        limits = statics.get('pitchLimits')
-        guns = self.poses['guns'].get(tid)
-        if yaw is None and guns and len(guns[0]) and limits:
-            # only the two samples around the moment are decoded (a battle has thousands)
-            i = bisect.bisect_right(guns[0], t_pose + 1e-6)
-            lo = max(0, i - 1)
-            decoded = [packed_angles(int(code), limits) for code in guns[1][lo:i + 1]]
-            near = guns[0][lo:i + 1]
-            y = sample_at(near, [a[0] for a in decoded], t_pose, True) if i else None
-            p = sample_at(near, [a[1] for a in decoded], t_pose) if i else None
-            if y is not None:
-                yaw, pitch = y[0], p[0]
-                pitch_step = math.degrees(limits[1] - limits[0]) / 63.0
-                out['angles'] = {'from':'gunAnglesPacked', 'time':round(float(self.start) + t_pose, 4), 'interpolated':True,
-                                 'sampleTime':round(float(self.start) + y[1], 4),
-                                 'yawStep':round(YAW_STEP, 4), 'pitchStep':round(pitch_step, 4)}
-                out['limits'].append(LIMIT_PACKED % (YAW_STEP, pitch_step, delay))
+        yaw, pitch = self.angles_at(tid, statics, t_hit - SERVER_ANGLES_DELAY, out)
         if yaw is None:
             out['problems'].append('no turret and gun angles of the target in the replay: turret and gun at 0')
             yaw = pitch = 0.0
@@ -654,6 +679,9 @@ class Scenes(object):
         # A part without its client box matters where a point lies on it (its other parts only draw).
         for pid in sorted(set(p.get('part') for p in out['points'] if p.get('approximate'))):
             out['limits'].append(LIMIT_BOX % parts[pid][0]['name'])
+        flight = self.flight_of(hit, float(when))
+        if flight is not None: out['flight'] = {'tracer':flight[0].get('id'), 'stop':flight[1].get('id')}
+        self.server_contacts(out, parts, world, flight)
         # range and the shooter's place at the pose time, as live (none when the shooter is not in view)
         a_track = self.poses['positions'].get(aid)
         a_row, a_gap = pose_at(a_track, t_pose)
@@ -667,6 +695,126 @@ class Scenes(object):
             if gaps: out['stopDistance'] = round(min(gaps), 4)
         if not out['problems']: del out['problems']
         return out, None
+
+    def angles_at(self, tid, statics, t, out):
+        """(turret yaw, gun pitch) of vehicle tid at replay clock t to its hull (client sign: pitch + down), linear between
+        the gunAnglesPacked samples around t - the server's own angles, for the own vehicle too; the own vehicle's
+        turret_yaw / gun_pitch floats where it has no packed angles. (None, None) when neither is there."""
+        limits = statics.get('pitchLimits')
+        guns = self.poses['guns'].get(tid)
+        if guns and len(guns[0]) and limits:
+            # only the two samples around the moment are decoded (a battle has thousands)
+            i = bisect.bisect_right(guns[0], t + 1e-6)
+            if i:
+                lo = max(0, i - 1)
+                decoded = [packed_angles(int(code), limits) for code in guns[1][lo:i + 1]]
+                near = guns[0][lo:i + 1]
+                y = sample_at(near, [a[0] for a in decoded], t, True)
+                p = sample_at(near, [a[1] for a in decoded], t)
+                pitch_step = math.degrees(limits[1] - limits[0]) / 63.0
+                out['angles'] = {'from':'gunAnglesPacked', 'time':round(float(self.start) + t, 4), 'interpolated':True,
+                                 'sampleTime':round(float(self.start) + y[1], 4),
+                                 'yawStep':round(YAW_STEP, 4), 'pitchStep':round(pitch_step, 4)}
+                out['limits'].append(LIMIT_PACKED % (YAW_STEP, pitch_step, SERVER_ANGLES_DELAY))
+                return y[0], p[0]
+        if tid == self.player and self.poses['ownYaw'][0] and self.poses['ownPitch'][0]:
+            y = sample_at(self.poses['ownYaw'][0], self.poses['ownYaw'][1], t, True)
+            p = sample_at(self.poses['ownPitch'][0], self.poses['ownPitch'][1], t)
+            if y is not None and p is not None:
+                out['angles'] = {'from':'own turret_yaw / gun_pitch', 'time':round(float(self.start) + t, 4), 'interpolated':True}
+                out['limits'].append(LIMIT_OWN % SERVER_ANGLES_DELAY)
+                return y[0], p[0]
+        return None, None
+
+    def flight_of(self, hit, when):
+        """(tracer, stop) of the hit's shell: its one tracer candidate that has a server stop within STOP_WINDOW of the hit,
+        else None (several candidates, none, or no stop - a burst or an explosion)."""
+        found = []
+        for tid in hit.get('traceCandidates') or ():
+            tracer, stop = self.tracers.get(tid), self.stops_of.get(tid)
+            if tracer is None or stop is None or stop.get('gameTime') is None: continue
+            if abs(float(stop['gameTime']) - when) < STOP_WINDOW: found.append((tracer, stop))
+        return found[0] if len(found) == 1 else None
+
+    def server_contacts(self, out, parts, world, flight):
+        """Each resolved point read at the SERVER's contact (20.11): the segment ends CONTACT_PAST past it (+ the decoder's
+        1 % push). 'contact' says where the point now stands: 'segment' - the client's re-collision is the server's contact
+        (within CONTACT_TOLERANCE); 'server' - the client model has armour at the server's contact (within CONTACT_PROBE
+        along the segment): the point there, the segment's direction; 'tracer' - it has none there, and this is the hit's
+        first point: the plate the tracer's line meets in the server's pose, along the tracer, when it lies within LINE_REACH of
+        the server's contact (an estimate); 'client' - none
+        of these: the client's point kept. contactGap: the client's point from the server's contact (m)."""
+        first = True
+        for p in out['points']:
+            if p.get('status') != 'resolved' or not p.get('start') or p.get('part') not in parts: continue
+            anchor, first = first, False
+            s, e = p['start'], p['end']
+            span = length(sub(e, s))
+            if not span > 0: continue
+            d = unit(sub(e, s))
+            past = CONTACT_PAST + 0.01 * span / 1.02
+            c = [e[i] - d[i] * past for i in range(3)]
+            gap = length(sub(p['position'], c))
+            p['contactGap'] = round(gap, 4)
+            if gap <= CONTACT_TOLERANCE:
+                p['contact'] = 'segment'
+                continue
+            part, model, box, armor = parts[p['part']]
+            found = model.collide([c[i] - d[i] * CONTACT_PROBE for i in range(3)], [c[i] + d[i] * CONTACT_PROBE for i in range(3)])
+            if found is not None:
+                distance, tri = found
+                position = [c[i] - d[i] * CONTACT_PROBE + d[i] * distance for i in range(3)]
+                self.place(p, position, d, tri, armor, 'server')
+                continue
+            line = self.tracer_line(parts, world, flight) if anchor else None
+            if line is not None:
+                server = apply(part['transform'], c)
+                if length(sub(apply(parts[line[0]][0]['transform'], line[1]), server)) > LINE_REACH: line = None
+            if line is None:
+                p['contact'] = 'client'
+                continue
+            pid, position, direction, tri = line
+            p['segmentPart'] = p['part']
+            p['part'] = pid
+            self.place(p, position, direction, tri, parts[pid][3], 'tracer')
+            out['limits'].append(LIMIT_TRACER)
+
+    @staticmethod
+    def place(p, position, direction, tri, armor, contact):
+        normal = facing(tri, direction)
+        # the game's own re-collision, kept for the comparison with the snapshot (compare) and for what it was
+        p['client'] = dict((k, p[k]) for k in ('part', 'position', 'direction', 'normal', 'material', 'incidence', 'nominal') if k in p)
+        p.update({'position':rounded(position), 'direction':rounded(direction), 'normal':rounded(normal), 'material':tri[12],
+                  'incidence':round(math.degrees(math.acos(max(-1.0, min(1.0, -dot(direction, normal))))), 4),
+                  'contact':contact})
+        armor_mm = nominal(armor, tri[12])
+        if armor_mm is not None: p['nominal'] = armor_mm
+        else: p.pop('nominal', None)
+
+    @staticmethod
+    def tracer_line(parts, world, flight):
+        """(part id, position, direction, triangle) where the tracer's line - its tangent at the server's stop - first meets
+        a part of the target posed at the server's moment, or None."""
+        if world is None or flight is None: return None
+        tracer, stop = flight
+        try:
+            o, v, S = [float(x) for x in tracer['origin']], [float(x) for x in tracer['velocity']], [float(x) for x in stop['position']]
+            g = float(tracer.get('gravity') or 0.0)
+        except (KeyError, TypeError, ValueError):
+            return None
+        t = flight_time(o, v, g, S)
+        if t is None: return None
+        u = unit([v[0], v[1] - g * t, v[2]])
+        a, b = [S[i] - u[i] * LINE_BEFORE for i in range(3)], [S[i] + u[i] * LINE_AFTER for i in range(3)]
+        best = None
+        for pid, (part, model, box, armor) in parts.items():
+            inverse = rigid_inverse(mm(world, part['transform']))
+            s, e = apply(inverse, a), apply(inverse, b)
+            found = model.collide(s, e)
+            if found is not None and (best is None or found[0] < best[0]):
+                d = unit(sub(e, s))
+                best = (found[0], pid, [s[i] + d[i] * found[0] for i in range(3)], d, found[1])
+        return None if best is None else best[1:]
 
     def extra_parts(self, statics, poses, snapshot_parts, target, parts, out):
         """The wheels and armoured prefabs (12.11) as the snapshot carries them: a wheel (part -k, the wheel of XML index
@@ -800,6 +948,9 @@ class Scenes(object):
         rows = []
         live_points = hit.get('points') or ()
         for k, rp in enumerate(scene['points']):
+            # the game's re-collision against the snapshot's (the same decode); a point moved to the server's contact keeps
+            # it under 'client' (server_contacts), its move is said by 'contact' and 'contactGap'
+            if isinstance(rp.get('client'), dict): rp = dict(rp, **rp['client'])
             lp = live_points[k] if k < len(live_points) else None
             row = {}
             if not isinstance(lp, dict) or lp.get('part') != rp.get('part'):
