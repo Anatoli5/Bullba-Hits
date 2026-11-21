@@ -134,7 +134,7 @@
   var STUB = 100, STUB_EYE = 30;
   // T2: the foliage slider's value forced for the mode (0 solid .. 1 gone; a guess by eye: the bush still reads); the
   // silhouette's opacity over what stands in front (a guess by eye)
-  var FOLIAGE = 0.8, SILHOUETTE = 0.5;
+  var FOLIAGE = 0.5 /* 21.11, the user: 0.5 is already a strong see-through, no more */, SILHOUETTE = 0.5;
   // T3: Hits' colour of a recorded or estimated circle (viewer.js AIM_RING); a 0x1a sample is drawn between two ticks only
   // when they are at most AIM_GAP s apart (ticks are 0.1 s; the measured largest gap in the 2 s before 54 own shots 0.2 s);
   // the disc: the 0x39 strictly before the tracer whose gun stands at the shell's origin (replay_aim.py BEFORE, ORIGIN_GAP,

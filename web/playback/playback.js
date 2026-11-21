@@ -1247,7 +1247,10 @@
   // simple crowns: leaf rings 1, trunk rings 0). The shadow pass is not touched: crowns still cast their shadows.
   function setFoliage(k) {
     if (k != null) $('rng-foliage').value = k;
-    fadeU.uSee.value = +$('rng-foliage').value; $('foliage-v').textContent = fadeU.uSee.value.toFixed(2);
+    // 21.11: the shot view's see-through never touches the slider (the control's value is what the settings store saves:
+    // forced into it, 0.8 was written as the user's own setting and the foliage stayed see-through everywhere)
+    var own = +$('rng-foliage').value;
+    fadeU.uSee.value = foliageForced != null ? Math.max(own, foliageForced) : own; $('foliage-v').textContent = own.toFixed(2);
   }
   function withFade(material, depth, see) {
     material.onBeforeCompile = function (sh) {
@@ -2900,13 +2903,8 @@
   }
   // THE EPISODE'S FOLIAGE (20.11, NOTEBOOK T2): the foliage slider (setFoliage) forced to k while the shot view's episode
   // runs; null puts the user's value back - unless he moved the slider meanwhile (then it is his)
-  var foliageKept = null, foliageForced = null;
-  function shotFoliage(k) {
-    if (k != null) { if (foliageKept == null) foliageKept = +$('rng-foliage').value; foliageForced = k; setFoliage(k); return; }
-    if (foliageKept == null) return;
-    if (Math.abs(+$('rng-foliage').value - foliageForced) < 1e-6) setFoliage(foliageKept);
-    foliageKept = foliageForced = null;
-  }
+  var foliageForced = null;
+  function shotFoliage(k) { foliageForced = k; setFoliage(); }
   // the shot view's silhouette (T2): while on, the foliage's materials (leaves, far pictures, simple crowns; not bark) write
   // stencil 2 where they are drawn, so the shot view can show the target where a plant is in front of it
   function shotPlantStencil(on) {
@@ -4075,6 +4073,9 @@
     return Promise.all(plantTexLoads).then(function () {
       buildImpostors(mapData.trees.kinds);
       settingStore.restore();  // runs every control's handler, the crowns' setCrowns among them
+      // 21.11, once: a remembered foliage of exactly 0.8 is the shot view's forced value saved by the defect above, not a choice
+      try { if (!localStorage.getItem('bullba-foliage-fix') && Math.abs(+$('rng-foliage').value - 0.8) < 1e-6) { setFoliage(0); settingStore.remember($('rng-foliage'), 0); }
+        localStorage.setItem('bullba-foliage-fix', '1'); } catch (e) {}
       $('reset-settings').onclick = settingStore.reset;
       restoreView();  // R5: the state the full-screen switch carried (time, camera, speed, play, follow, panel)
       openShotParam();  // 21.11 (BACKLOG 118): a shot carried by Hits' link or by that state
