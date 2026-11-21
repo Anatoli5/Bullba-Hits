@@ -145,7 +145,9 @@
       var db = await idb(), builtKey = 'built|' + o.arena + '|' + o.gameplay;
       // 1. built before under this client: no raw file, no word to the mod
       var rec = o.client ? (await getAll(db, [builtKey]))[builtKey] : null;
-      if (rec && rec.client === o.client) {
+      // 21.11: the record also names the builder it was made by - a newer builder (new kinds of objects) never reuses an
+      // older builder's map (1.24: the scenario buildings were not drawn, the map of 1.23 came from here)
+      if (rec && rec.client === o.client && rec.builder === MapBuild.VERSION) {
         var g = await getAll(db, [rec.keys.arena, rec.keys.map]);
         if (g[rec.keys.arena] && g[rec.keys.map]) {
           var n = await hydrated(db, g[rec.keys.map]);
@@ -168,7 +170,7 @@
       var got = await getAll(db, [keys.arena, keys.map]);
       if (got[keys.arena] && got[keys.map]) {
         var kr = await hydrated(db, got[keys.map]);
-        await put(db, builtKey, { keys: keys, client: o.client || null, builtAt: Date.now() });
+        await put(db, builtKey, { keys: keys, client: o.client || null, builder: MapBuild.VERSION, builtAt: Date.now() });
         T.idbRead = performance.now() - t; T.total = performance.now() - t0;
         return { arena: got[keys.arena], map: got[keys.map], info: { source: 'IndexedDB', keys: keys, times: T, kindRecords: kr } };
       }
@@ -183,7 +185,7 @@
       }
       if (r.error) throw new Error('map build: ' + r.error);
       var builtAt = Date.now();
-      await put(db, builtKey, { keys: keys, client: o.client || null, builtAt: builtAt });
+      await put(db, builtKey, { keys: keys, client: o.client || null, builder: MapBuild.VERSION, builtAt: builtAt });
       T.worker = performance.now() - t; T.total = performance.now() - t0;
       return { arena: r.arena, map: r.map, info: { source: 'built', keys: keys, builtAt: builtAt, times: T, worker: r.times, build: r.buildTimes, built: r.built, counts: r.counts } };
     }

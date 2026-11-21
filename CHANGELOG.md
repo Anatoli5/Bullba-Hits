@@ -2,6 +2,10 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.1.1 from 1.05 on, 2.4.1.0 from 1.02 on, 2.4.0.2 from 0.9.3 on, 2.4.0.1 #950 from 0.7.6, 2.4.0.0 #945 before.
 
+## Unreleased
+
+- Replay viewer: a map built by an earlier version is built again, so the buildings of map events appear on maps opened before.
+
 ## 1.24 (2026-11-21)
 
 - Replay viewer: the map events that change a part of the map during a battle (Lost City's bombed building in the town centre, Himmelsdorf's train and airship crash, Malinovka's mill and the others) are drawn: the building stands, and the objects on its floors no longer hang in the air. When the replay records the event, the building turns into its ruin at the moment the game's standing part goes; without the event it stands to the end. The collapse itself is not played. Each map is copied and built again once, and each kept battle read again once, the first time it is opened.
