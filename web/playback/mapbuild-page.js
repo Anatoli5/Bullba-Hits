@@ -114,7 +114,7 @@
   }
   // the raw set's format the builder reads (map_raw.MANIFEST_VERSION): an older set on disk is the one the mod is copying
   // again - read meanwhile (the page's look while it waits), it would be built from the old files
-  var RAW_VERSION = 3;
+  var RAW_VERSION = 4;   // 4 (21.11): the map's scenarios (scenario.json)
   var manifests = {};
   window.MapRaw = { manifest: function (m) { manifests[m.arena] = m; }, put: function () {} };
   function manifest(arena, rawRoot) {

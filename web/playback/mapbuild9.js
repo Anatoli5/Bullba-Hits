@@ -13,7 +13,7 @@
 (function (G) {
   'use strict';
   var MB = G.MapBuild, f = Math.fround, C = MB.counts;
-  MB.VERSION = 'r9.2';   // r9.2 (19.11): the rock shader's data (atlas.rocks, rec.rock)
+  MB.VERSION = 'r9.3';   // r9.2 (19.11): the rock shader's data (atlas.rocks, rec.rock); r9.3 (21.11): the map's scenarios (lookup.scenario)
   var RESV = 'p2';   // version of the per-resource products (p2: a LOD's numeric material properties and uv2)
   MB.RESV = RESV;   // the page names it with its digest of the products it holds (mapbuild-page.js heldDigest)
   var now = (typeof performance !== 'undefined') ? function () { return performance.now(); } : Date.now;
@@ -152,6 +152,75 @@
     for (i = 0; i < b.count; i++) { ranges[i * 2] = dv.getUint32(b.at + i * b.size, true); ranges[i * 2 + 1] = dv.getUint32(b.at + i * b.size + 4, true); }
     for (i = 0; i < c.count; i++) inst[i] = dv.getUint32(c.at + i * c.size, true);
     return { chunks: chunks, ranges: ranges, inst: inst };
+  }
+  // 21.11: the map's scenarios (the game's random events; map_raw.space_scenarios -> scenario.json): their standing and
+  // ruin models become more BSMI rows - one input for every object -, each with its part, state and the replay's name
+  // of its state entity. A ruin model is kept apart from the same model placed as an ordinary object (its own records:
+  // drawn only once its whole-object bit is set, the code MOD_WHOLE_REMAINS on every vertex).
+  function scenarioRows(raw, S) {
+    if (!raw.has('scenario.json')) return;
+    once('raw file', 'scenario.json');
+    var sc = JSON.parse(td.decode(raw.get('scenario.json'))), list = sc.instances || [];
+    if (!list.length) return;
+    var I = S.bsmi, M = S.bsmo, n0 = I.n, m0 = M.prim.length, n = n0 + list.length;
+    var t = new Float32Array(n * 16), vis = new Uint32Array(n), model = new Uint32Array(n), prim = new Uint32Array(m0 + list.length), hav = new Uint32Array(m0 + list.length);
+    t.set(I.t); vis.set(I.vis); model.set(I.model); prim.set(M.prim); hav.set(M.havok);
+    var byPath = new Map(), next = 1;
+    function hashOf(path) {
+      if (byPath.has(path)) return byPath.get(path);
+      while (S.st.has(next)) next++;
+      S.st.set(next, path); byPath.set(path, next); return next++;
+    }
+    list.forEach(function (it, j) {
+      t.set(it.m, (n0 + j) * 16); vis[n0 + j] = it.mask >>> 0; model[n0 + j] = m0 + j;
+      prim[m0 + j] = hashOf(it.prim); hav[m0 + j] = it.havok ? hashOf(it.havok) : 0;
+    });
+    S.bsmi = { n: n, t: t, vis: vis, model: model }; S.bsmo = { prim: prim, havok: hav };
+    S.scen = { n0: n0, list: list };
+  }
+  function ruinRow(S, n) { return !!(S.scen && n >= S.scen.n0 && S.scen.list[n - S.scen.n0].state === 'ruin'); }
+  // the parts of the scenarios for MB.destruction: per part the replay's names of its standing / ruin state entities and
+  // the addresses to switch - [code, record, instance] with code 1 a collision record (its linked visual follows) and 2 a
+  // visual record -, and the floor objects: the ordinary '*_scenario' objects standing inside the part's standing box
+  // (they rest on its floors; the game breaks them with the destruction record when the part falls)
+  function scenarioLookup(S, objs, col, vis) {
+    if (!S.scen) return [];
+    var keyOf = new Map(), parts = new Map(), out = [];
+    objs.forEach(function (o, key) { o.bsmi.forEach(function (n) { keyOf.set(n, key); }); });
+    S.scen.list.forEach(function (it, j) {
+      var n = S.scen.n0 + j, key = keyOf.get(n); if (key === undefined) return;   // not in this gameplay or outside the box
+      var p = parts.get(it.part);
+      if (!p) { p = { part: it.part, normalNames: [], ruinNames: [], normal: [], ruin: [], floor: [], box: [Infinity, Infinity, -Infinity, -Infinity] }; parts.set(it.part, p); }
+      var names = it.state === 'ruin' ? p.ruinNames : p.normalNames; if (names.indexOf(it.name) < 0) names.push(it.name);
+      var c = col.bsmiObj.get(n), v = vis.index.get(key), to = it.state === 'ruin' ? p.ruin : p.normal;
+      if (c) to.push(1, c[0], c[1]);
+      if (v) {
+        to.push(2, v[0], v[1]);
+        if (it.state === 'normal') {   // the standing model's box in the map (its drawn LOD's local box through the placement)
+          var r = vis.recs[v[0]], m = r.m, o = v[1] * 12;
+          for (var q = 0; q < 8; q++) {
+            var lx = r.pmin[0] + (q & 1 ? r.prange[0] : 0), ly = r.pmin[1] + (q & 2 ? r.prange[1] : 0), lz = r.pmin[2] + (q & 4 ? r.prange[2] : 0);
+            var x = lx * m[o] + ly * m[o + 3] + lz * m[o + 6] + m[o + 9], z = lx * m[o + 2] + ly * m[o + 5] + lz * m[o + 8] + m[o + 11];
+            p.box[0] = Math.min(p.box[0], x); p.box[1] = Math.min(p.box[1], z); p.box[2] = Math.max(p.box[2], x); p.box[3] = Math.max(p.box[3], z);
+          }
+        }
+      }
+    });
+    parts.forEach(function (p) { out.push(p); });
+    if (!out.length) return out;
+    var I = S.bsmi;
+    for (var n = 0; n < S.scen.n0; n++) {
+      var c = col.bsmiObj.get(n); if (!c) continue;
+      var path = S.st.get(S.bsmo.prim[I.model[n]]) || ''; if (path.toLowerCase().indexOf('_scenario.') < 0) continue;
+      var x = I.t[n * 16 + 12], z = I.t[n * 16 + 14], best = null, bd = Infinity;
+      out.forEach(function (p) {
+        var b = p.box; if (!(b[0] - 0.5 <= x && x <= b[2] + 0.5 && b[1] - 0.5 <= z && z <= b[3] + 0.5)) return;
+        var d = Math.hypot(x - (b[0] + b[2]) / 2, z - (b[1] + b[3]) / 2); if (d < bd) { bd = d; best = p; }
+      });
+      if (best) best.floor.push(1, c[0], c[1]);
+    }
+    out.forEach(function (p) { p.box = p.box.map(function (v) { return pyRound(v, 2); }); });
+    return out;
   }
   MB.wgdeTable = function (W) {  // destr_probe.wgde: (chunk id, index) -> members
     var out = new Map();
@@ -681,11 +750,11 @@
   }
   function visualModels(P, objs, destr, arena, stats) {
     var byprim = new Map();
-    objs.forEach(function (o, key) { var p = o.k0; if (p && /\.primitives$/.test(p) && !skipPath(p)) { if (!byprim.has(p)) byprim.set(p, []); byprim.get(p).push([key, o]); } });
+    objs.forEach(function (o, key) { var p = o.k0; if (p && /\.primitives$/.test(p) && !skipPath(p)) { var pk = o.ruin ? p + '|ruin' : p; if (!byprim.has(pk)) byprim.set(pk, []); byprim.get(pk).push([key, o]); } });
     var tiles = new Map(), pending = [], rocks = new Rocks(P);
     function want(path, size) { var t = tiles.get(path); if (!t || t.want < size) tiles.set(path, { want: size }); }
-    byprim.forEach(function (items, prim) {
-      var stem = prim.slice(0, prim.lastIndexOf('.'));
+    byprim.forEach(function (items) {
+      var ruin = !!items[0][1].ruin, prim = items[0][1].k0, stem = prim.slice(0, prim.lastIndexOf('.'));
       if (!P.raw.resEntry(stem + '.visual_processed')) { stats['no visual'] = (stats['no visual'] || 0) + 1; return; }
       var c0 = chooseLod(P, stem, 0, 1); if (!c0) { stats['no geometry'] = (stats['no geometry'] || 0) + 1; return; }
       var geo = lodGeometry(P, c0.pick.vs), lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
@@ -702,10 +771,10 @@
         // 19.11 (round 11): a group drawn by the rock shader whose render set has a second texcoord stream
         var rm = null;
         if (gr.fx.toLowerCase().indexOf(ROCK_FX) >= 0 && lodGeometry(P, vs).sets[gr.rs].uv2) rm = rocks.material(gr);
-        parts.push([gi, tex, moduleOf(gr.material, mods), rm]);
+        parts.push([gi, tex, ruin ? MOD_WHOLE_REMAINS : moduleOf(gr.material, mods), rm]);
       });
       if (!parts.length) { stats['models without textured groups'] = (stats['models without textured groups'] || 0) + 1; return; }
-      pending.push({ prim: prim, items: items, vs: vs, tried: ch.tried, parts: parts, d: d });
+      pending.push({ prim: prim, items: items, vs: vs, tried: ch.tried, parts: parts, d: d, ruin: ruin });
     });
     if (tiles.size > 100) { tiles.forEach(function (t) { t.want = Math.min(t.want, 64); }); stats['all tiles 64 px (many textures)'] = 1; }
     var bad = 0;
@@ -772,6 +841,7 @@
         rects: rects.map(function (r) { return r.map(function (x) { return pyRound(x, 6); }); }), i: I, i32: nv >= 65536, m: mats,
         collision: pd.items.some(function (it) { return !!it[1].havok; }), destructible: pd.d.kind || null };
       if (Mi.some(function (x) { return x !== 0; })) rec.mod = Mi;
+      if (pd.ruin) { rec.ruin = 1; stats['scenario ruin models'] = (stats['scenario ruin models'] || 0) + 1; }
       var allRock = nv > 0, anyRock = false;
       for (v = 0; v < nv; v++) { if (RM[v] >= 0) anyRock = true; else allRock = false; }
       if (allRock) {  // a rock: every group drawn by the rock shader
@@ -826,9 +896,9 @@
       if (!((I.vis[n] >>> bit) & 1 && x0 <= tx && tx <= x1 && z0 <= tz && tz <= z1)) continue;
       var m = I.model[n], ph = S.bsmo.prim[m], hh = S.bsmo.havok[m];
       var prim = S.st.has(ph) ? S.st.get(ph) : null, hav = hh ? (S.st.has(hh) ? S.st.get(hh) : null) : null;
-      var k0 = prim || hav, key = String(k0) + '|' + key2(I.t, n);
+      var k0 = prim || hav, ruin = ruinRow(S, n), key = (ruin ? 'ruin|' : '') + String(k0) + '|' + key2(I.t, n);
       var o = objs.get(key);
-      if (!o) { o = { havok: null, t: Array.prototype.slice.call(I.t, n * 16, n * 16 + 16), bsmi: [], k0: k0 }; objs.set(key, o); }
+      if (!o) { o = { havok: null, t: Array.prototype.slice.call(I.t, n * 16, n * 16 + 16), bsmi: [], k0: k0, ruin: ruin }; objs.set(key, o); }
       o.bsmi.push(n);
       if (hav) o.havok = hav;
     }
@@ -836,8 +906,9 @@
   }
   function collisionRecords(P, objs, destr, arena, stats) {
     var placed = new Map(), out = [], bsmiObj = new Map();
-    objs.forEach(function (o, key) { if (o.havok) { if (!placed.has(o.havok)) placed.set(o.havok, []); placed.get(o.havok).push([key, o]); } });
-    placed.forEach(function (os, hav) {
+    objs.forEach(function (o, key) { if (o.havok) { var pk = o.ruin ? o.havok + '|ruin' : o.havok; if (!placed.has(pk)) placed.set(pk, []); placed.get(pk).push([key, o]); } });
+    placed.forEach(function (os) {
+      var hav = os[0][1].havok;
       var bodies = P.get('hav', hav, null, function (data) { return havokBodies(data, hav); });
       if (!bodies) { stats.missing_havok = (stats.missing_havok || 0) + 1; return; }
       var d = destr[hav.slice(0, hav.lastIndexOf('.')).toLowerCase()] || {}, mods = d.modules || {}, mainT = 0, helpT = 0;
@@ -850,6 +921,7 @@
       var mats = new Float32Array(os.length * 12), outF = new Uint8Array(os.length), anyOut = false;
       os.forEach(function (x, k) { var t = x[1].t; [0, 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14].forEach(function (j, m) { mats[k * 12 + m] = t[j]; }); if (!(arena[0] <= t[12] && t[12] <= arena[2] && arena[1] <= t[14] && t[14] <= arena[3])) { outF[k] = 1; anyOut = true; } });
       var rec = { name: hav.split('/').pop().split('.havok').join(''), cat: category(hav), n: os.length, m: mats, destructible: d.kind || null, modules: Object.keys(mods).length };
+      if (os[0][1].ruin) rec.ruin = 1;   // 21.11: a scenario's ruin (shown once its whole-object bit is set)
       if (anyOut) rec.out = outF;
       if (mainT) rec.nt = mainT;
       rec._keys = os.map(function (x) { return x[0]; });
@@ -1108,6 +1180,7 @@
   MB.buildObjects = function (raw, opts, box, arenaBox, bit, times) {
     var P = new Products(raw, opts.cache), t = now();
     var S = { st: strings(raw.get('space.bin/BWST')), bsmi: bsmi(raw.get('space.bin/BSMI')), bsmo: bsmo(raw.get('space.bin/BSMO')), sptr: sptr(raw.get('space.bin/SpTr')) };
+    scenarioRows(raw, S);
     var W = wgde(raw.get('space.bin/WGDE'));
     var destr = P.get('destr', 'scripts/destructibles.xml', null, function (d) { return destructibles(d); }) || {};
     var bush = P.get('bush', 'vegetation/bushes.xml', null, function (d) { return bushNames(d); }) || [];
@@ -1132,15 +1205,18 @@
     var bs = [], tr = [];
     Array.from(col.bsmiObj.keys()).sort(function (a, b) { return a - b; }).forEach(function (n) { var r = col.bsmiObj.get(n); bs.push(n, r[0], r[1]); });
     Array.from(pl.treeRef.keys()).sort(function (a, b) { return a - b; }).forEach(function (n) { var r = pl.treeRef.get(n); tr.push(n, r[0], r[1]); });
-    var lookup = { visibilityBit: bit, objects: col.recs.length, groups: pl.trees.groups.length, groupCls: pl.trees.groups.map(function (g) { return g.cls; }), bsmi: Int32Array.from(bs), tree: Int32Array.from(tr), wgde: W };
+    var lookup = { visibilityBit: bit, objects: col.recs.length, groups: pl.trees.groups.length, groupCls: pl.trees.groups.map(function (g) { return g.cls; }), bsmi: Int32Array.from(bs), tree: Int32Array.from(tr), wgde: W,
+      scenario: scenarioLookup(S, objs, col, vis) };
     // the placements the light map's footprints and the minimap white balance read (light5c.masks, ground5.fit_to_minimap)
     var placements = { kinds: pl.trees.kinds.map(function (k) { return k.crown; }), groups: pl.trees.groups.map(function (g) { return { kind: g.kind, m: g.m }; }),
       visual: vis.recs.map(function (r) { return { name: r.name, pmin: r.pmin, prange: r.prange, m: r.m }; }) };
     times.lookup = now() - t;
     return { objects: col.recs, visual: vis.recs, atlas: vis.atlas, visualStats: vstats, collisionStats: ostats, trees: pl.trees, kindKeys: pl.kindKeys, lookup: lookup, placements: placements };
   };
-  // build.build_destruction with the map's lookup: destroyed items [t, initial, chunk id, kind, tuple] -> page events
-  MB.destruction = function (destroyed, lookup) {
+  // build.build_destruction with the map's lookup: destroyed items [t, initial, chunk id, kind, tuple] -> page events;
+  // 21.11: and the scenarios' switches (`scenario`: battle.js's [t, initial, entity name, 'create' | 'leave' | 'start'])
+  // as the same whole-object events (type 1; ev[5] 1 = a scenario's collision record, 2 = its visual record)
+  MB.destruction = function (destroyed, lookup, scenario) {
     var table = MB.wgdeTable(lookup.wgde), bo = new Map(), tref = new Map(), ev = [], st = {}, i;
     for (i = 0; i < lookup.bsmi.length; i += 3) bo.set(lookup.bsmi[i], [lookup.bsmi[i + 1], lookup.bsmi[i + 2]]);
     for (i = 0; i < lookup.tree.length; i += 3) tref.set(lookup.tree[i], [lookup.tree[i + 1], lookup.tree[i + 2]]);
@@ -1162,9 +1238,30 @@
       else if (kind === 'destroyedFragiles') { ev.push([r3(t), initial, 1, r[0], r[1], 0]); inc('fragile'); }
       else { ev.push([r3(t), initial, 2, r[0], r[1], r3(yaw)]); inc('object falls'); }
     });
+    scenarioSwitches(scenario || [], lookup.scenario || []).forEach(function (sw) {
+      if (sw.t === null) { inc('scenario part standing'); return; }
+      inc('scenario part switched');
+      [sw.part.normal, sw.part.ruin, sw.part.floor].forEach(function (a) { for (var q = 0; q < a.length; q += 3) ev.push([r3(sw.t), sw.initial, 1, a[q + 1], a[q + 2], a[q]]); });
+    });
     ev.sort(function (a, b) { for (var k = 0; k < 6; k++) if (a[k] !== b[k]) return a[k] - b[k]; return 0; });
     return { events: ev, stats: st };
   };
+  // A part switches - standing hidden, ruin shown, its floor objects hidden - when its standing state entity leaves
+  // after a scenario started (SequenceNetworkSync.state >= 1), or, failing that, when its ruin state entity appears
+  // (the owner's choice 21.11: no gap while the game plays the collapse). A part with neither stays standing (t null).
+  function scenarioSwitches(records, parts) {
+    var start = Infinity;
+    records.forEach(function (r) { if (r[3] === 'start' && r[0] < start) start = r[0]; });
+    return parts.map(function (p) {
+      var t = null, initial = 0;
+      records.forEach(function (r) {
+        var hit = (r[3] === 'leave' && r[0] >= start && p.normalNames.indexOf(r[2]) >= 0) || (r[3] === 'create' && p.ruinNames.indexOf(r[2]) >= 0);
+        if (hit && (t === null || r[0] < t)) { t = r[0]; initial = r[1] ? 1 : 0; }
+      });
+      return { part: p, t: t, initial: initial };
+    });
+  }
+  MB.scenarioSwitches = scenarioSwitches;
   // the map record keeps its plant kinds as references to their own products (shared by every map): strip / hydrate
   MB.stripKinds = function (kinds, kindKeys) {
     return kinds.map(function (k, i) {

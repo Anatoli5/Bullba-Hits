@@ -10,7 +10,7 @@
    effects(collector, battle, defs, info, docs) -> adds hits, marks, muzzles to the battle. */
 (function () {
   'use strict';
-  var FORMAT = 4;                 // of the battle object kept in IndexedDB (battle-page.js): a change builds it again
+  var FORMAT = 5;                 // of the battle object kept in IndexedDB (battle-page.js): a change builds it again; 5 (21.11): scenario
                                   // (2, 19.11: hitEvents and the tracers' shell fields, for the shots panel - BACKLOG 109;
                                   // 3, 21.11: the player's camera (0x26), for the shot view's first person - NOTEBOOK S2;
                                   // 4, 20.11: the player's reticles a tick (0x1a, 0x39), for the shot view's aim circles - T3)
@@ -36,6 +36,7 @@
   function r3n(x) { return Math.round(x * 1000) / 1000; }
   function r3(a) { return a.map(r3n); }
   function num(x) { return typeof x === 'bigint' ? Number(x) : x; }
+  function latin(u) { var s = ''; for (var i = 0; i < u.length; i++) s += String.fromCharCode(u[i]); return s; }
   function isDict(v) { return v !== null && typeof v === 'object' && !Array.isArray(v) && !(v instanceof Uint8Array); }
   function b64(u) {
     var s = '', k;
@@ -115,6 +116,7 @@
     this.comp = new Map(); this.tracers = new Map(); this.ends = new Map(); this.periods = []; this.own = null; this.tmax = 0; this.serverStart = null;
     this.area = new Map(); this.destroyed = []; this.hits = []; this.shooting = []; this.stickers = []; this.camera = [];
     this.marker = []; this.server = [];
+    this.netName = new Map(); this.scenario = [];   // 21.11: the map scenarios' state entities (NetworkEntity) and starts
   }
   function list(m, k) { var v = m.get(k); if (!v) m.set(k, v = []); return v; }
   Collector.prototype.feed = function (ev) {
@@ -140,6 +142,16 @@
       ev.value.forEach(function (tup) {
         self.destroyed.push([r3n(t), 0, self.area.has(ev.id) ? self.area.get(ev.id) : null, ev.name, tup.map(function (x) { return Math.trunc(num(x)); })]);
       });
+    } else if (k === 'entity_create' && ent === 'NetworkEntity') {
+      // 21.11: a map scenario's state entity is named by its prefab ('..._normal.prefab', '..._destroyed.prefab'):
+      // its leave / appearance switches the part (mapbuild9.js scenarioSwitches)
+      name = (ev.props || {}).name; name = (name && typeof name !== 'string' ? latin(name) : String(name || '')).toLowerCase();   // the decoder gives a STRING as its bytes
+      if (/_(normal|destroyed)\.prefab$/.test(name)) { this.netName.set(ev.id, name); this.scenario.push([r3n(t), t <= 0 ? 1 : 0, name, 'create']); }
+    } else if (k === 'entity_leave' && this.netName.has(ev.id)) {
+      this.scenario.push([r3n(t), 0, this.netName.get(ev.id), 'leave']); this.netName.delete(ev.id);
+    } else if ((k === 'component_property' && ev.component === 'SequenceNetworkSync' && ev.name === 'state' && num(ev.value) >= 1) ||
+               (k === 'component' && ev.component === 'SequenceNetworkSync' && ev.state && num(ev.state.state) >= 1)) {
+      this.scenario.push([r3n(t), 0, '', 'start']);
     } else if (k === 'entity_leave' && this.created.has(ev.id)) {
       var s = this.sight.get(ev.id);
       if (s && s.length && s[s.length - 1][1] === null) s[s.length - 1][1] = t;
@@ -278,6 +290,7 @@
       shotFields: ['t', 'shooter', 'ricochet', 'sx', 'sy', 'sz', 'vx', 'vy', 'vz', 'gravity', 'tEnd', 'ex', 'ey', 'ez', 'shellTypeIdx', 'caliber'],
       hitEvents: hitEvents, hitEventFields: ['t', 'target', 'attacker', 'damage', 'points'], hitPointFields: ['effect', 'caliber', 'shellType'],
       destroyed: c.destroyed, destroyedFields: ['t', 'initial', 'chunk', 'kind', 'tuple'],
+      scenario: c.scenario, scenarioFields: ['t', 'initial', 'name', 'what'],
       nc: c.camera.length, camera: floats(c.camera, 9), cameraFields: ['t', 'qx', 'qy', 'qz', 'qw', 'ox', 'oy', 'oz', 'fov'],
       na: c.marker.length, aim: floats(markerRows(c), 13), aimFields: ['t', 'cx', 'cy', 'cz', 'diameter', 'mx', 'my', 'mz', 'dx', 'dy', 'dz', 'arcadeDiameter', 'server'],
       ns: c.server.length, server: floats(c.server, 8), serverFields: ['t', 'gx', 'gy', 'gz', 'vx', 'vy', 'vz', 'dispersion'] } };

@@ -19,11 +19,11 @@ member of each terrain chunk). Written under CFG/mapraw/:
 index were most of the 8-19 s the game spent; one table and few large parts replace them.
 """
 from __future__ import absolute_import
-import array, bisect, io, json, os, re, shutil, struct, sys, time, zlib, base64, binascii
+import array, bisect, io, json, math, os, re, shutil, struct, sys, time, zlib, base64, binascii
 
 PART_BYTES = 8 << 20       # raw bytes per part script (~11 MB of base64 text)
 INDEX_VERSION = 3
-MANIFEST_VERSION = 3       # of <arena>/manifest.js; an older one is copied again (exporter.request_map_raw)
+MANIFEST_VERSION = 4       # of <arena>/manifest.js; an older one is copied again (exporter.request_map_raw); 4 (21.11): scenario.json
 HASH_STEP = 20000          # index entries hashed a step (Packages.build_steps)
 SORT_BITS = 6              # the table sorted in 2**SORT_BITS runs, a run a step (Packages.build_steps)
 # Arenas whose minimap is a rendered top view: the page balances the global colour map on it (the trial's
@@ -451,6 +451,167 @@ def space_objects(bsmi, bsmo, st, box):
         prim = st.get(struct.unpack_from('<I', bsmo, ba + m * bs + 24)[0])
         hh = struct.unpack_from('<I', bsmo, ca + m * cs)[0]
         out.add((prim, st.get(hh) if hh else None))
+    return sorted(out, key=lambda x: (x[0] or '', x[1] or ''))
+
+
+# ---------------------------------------------------------------- 21.11: map scenarios (the game's random events)
+# A scenario (a building bombed, a plane crashing, ...) is not in BSMI: space.bin's GOBJ places a CGF prefab (JSON) whose
+# tree holds, per part (a '*_complete' prefab), a '*_normal.prefab' (standing) and a '*_destroyed.prefab' (ruin) state
+# besides the collapse itself; the replay switches a part by its state entities (outputs/map-random-events-2026-11-21.md).
+SCENARIO_PREFIX = 'content/cgfprefabs/map_scenarios/'
+
+
+def space_game_objects(gobj, st):
+    """space.bin GOBJ's first vector: [(prefab path, gameplay visibility mask, 4x4 transform in BSMI's layout)]; an
+    88-byte element = transform (64 B, translation at floats 12-14), the object's uuid (16 B), u32 mask, u32 BWST hash
+    of the prefab path (measured 21.11.2026 on the 15 maps with scenarios)."""
+    size, n, at, _ = vec(gobj, 0)
+    out = []
+    if size < 88:
+        return out
+    for i in range(n):
+        q = at + i * size
+        mask, h = struct.unpack_from('<II', gobj, q + 80)
+        out.append((st.get(h), mask, list(struct.unpack_from('<16f', gobj, q))))
+    return out
+
+
+def prefab_json(raw):
+    """A CGF prefab's JSON (UTF-8, a BOM allowed; a one-byte code page read as space_text does)."""
+    if raw[:3] == b'\xef\xbb\xbf':
+        raw = raw[3:]
+    return json.loads(space_text(raw))
+
+
+def euler_matrix(pos, rot, scale):
+    """4x4 (column vectors) of a cgf::TransformComponent: R = Ry(y) Rx(x) Rz(z), angles in degrees, then the scale.
+    The order and signs are measured: 9 of 9 server hit points of the 20.11 Lost City replay lie on the collision mesh
+    composed so (largest distance < 0.5 mm; the other 11 orders / signs miss by up to 0.33 m)."""
+    x, y, z = [math.radians(a) for a in rot]
+    cx, sx, cy, sy, cz, sz = math.cos(x), math.sin(x), math.cos(y), math.sin(y), math.cos(z), math.sin(z)
+    r = [[cy * cz + sy * sx * sz, -cy * sz + sy * sx * cz, sy * cx],
+         [cx * sz, cx * cz, -sx],
+         [-sy * cz + cy * sx * sz, sy * sz + cy * sx * cz, cy * cx]]
+    return [[r[0][0] * scale[0], r[0][1] * scale[1], r[0][2] * scale[2], pos[0]],
+            [r[1][0] * scale[0], r[1][1] * scale[1], r[1][2] * scale[2], pos[1]],
+            [r[2][0] * scale[0], r[2][1] * scale[1], r[2][2] * scale[2], pos[2]],
+            [0.0, 0.0, 0.0, 1.0]]
+
+
+def mat_mul(a, b):
+    return [[sum(a[i][k] * b[k][j] for k in range(4)) for j in range(4)] for i in range(4)]
+
+
+def local_transform(comps):
+    """The object's own matrix: its cgf::TransformComponent and the reference's overrides ('.../position/x')."""
+    t = comps.get('cgf::TransformComponent') if isinstance(comps, dict) else None
+    t = t if isinstance(t, dict) else {}
+    parts = {'position': dict(t.get('position') or {}), 'rotation': dict(t.get('rotation') or {}),
+             'scale': dict(t.get('scale') or {})}
+    if isinstance(comps, dict):
+        for k, v in comps.items():
+            if k.startswith('cgf::TransformComponent/'):
+                bits = k.split('/')
+                if len(bits) == 3 and bits[1] in parts:
+                    parts[bits[1]][bits[2]] = v
+    p, r, s = parts['position'], parts['rotation'], parts['scale']
+    return euler_matrix([float(p.get(a, 0.0)) for a in 'xyz'], [float(r.get(a, 0.0)) for a in 'xyz'],
+                        [float(s.get(a, 1.0)) for a in 'xyz'])
+
+
+def scenario_instances(read, path, mask, t, counts):
+    """The standing and ruin models of one scenario prefab: [dict(part, state 'normal' | 'ruin', name (the state
+    prefab's file name, as the replay names its entity), model, collider (the mesh collider's model or None), m (16
+    floats, BSMI's layout), mask)]. `read(path)` gives a client file's bytes or None. A standing model under an inactive
+    object (SelfInactive) is not drawn standing; a ruin's own reference is inactive by design. A part without both
+    states (a moving train) is left out and counted."""
+    world = [[t[4 * c + r] for c in range(4)] for r in range(4)]
+    out = []
+
+    def walk(o, m, part, state, name, off):
+        comps = o.get('components') or {}
+        m = mat_mul(m, local_transform(comps))
+        if 'SelfInactive' in (o.get('flags') or []):
+            off = True
+        ref = o.get('prefab')
+        if ref:
+            low = ref.rsplit('/', 1)[-1].lower()
+            if low.endswith('_normal.prefab'):
+                state, name = 'normal', low
+                if off: state = 'inactive'
+            elif low.endswith('_destroyed.prefab'):
+                state, name, off = 'ruin', low, False
+            elif '_complete' in low:
+                part = low[:-len('.prefab')] if low.endswith('.prefab') else low
+            raw = read(ref)
+            if raw is None:
+                counts['prefabs missing'] = counts.get('prefabs missing', 0) + 1
+            else:
+                walk(prefab_json(raw).get('objects') or {}, m, part, state, name, off)
+        dm = comps.get('BW::DynamicModel') if isinstance(comps, dict) else None
+        if isinstance(dm, dict) and dm.get('modelName') and state in ('normal', 'ruin'):
+            if state == 'normal' and off:
+                counts['standing models inactive'] = counts.get('standing models inactive', 0) + 1
+            else:
+                col = None
+                for cd in ((comps.get('BW::Colliders') or {}).get('colliders') or []):
+                    if isinstance(cd, dict) and cd.get('__ctype__') == 'BW::MeshColliderDesc':
+                        col = (cd.get('__cvalue__') or {}).get('modelName') or None
+                out.append(dict(part=part, state=state, name=name, model=dm['modelName'], collider=col,
+                                m=[round(m[r][c], 5) for c in range(4) for r in range(4)], mask=mask))
+        for ch in o.get('children') or []:
+            walk(ch, m, part, state, name, off)
+    raw = read(path)
+    if raw is None:
+        counts['prefabs missing'] = counts.get('prefabs missing', 0) + 1
+        return []
+    root = prefab_json(raw).get('objects') or {}
+    walk(root, world, root.get('name') or path.rsplit('/', 1)[-1], None, None, False)
+    have = {}
+    for it in out:
+        have.setdefault(it['part'], set()).add(it['state'])
+    keep = [it for it in out if have[it['part']] == set(('normal', 'ruin'))]
+    dropped = [p for p, s in have.items() if s != set(('normal', 'ruin'))]
+    if dropped:
+        counts['parts without both states (left out)'] = counts.get('parts without both states (left out)', 0) + len(dropped)
+    return keep
+
+
+def space_scenarios(pk, gobj, st):
+    """Every scenario of the space (GOBJ prefabs under content/CGFPrefabs/Map_scenarios/) with its instances; and the
+    counts for the copy's report."""
+    counts = {}
+    scen = []
+
+    def read(path):
+        pkg, e = pk.find(path)
+        return pk.read(pkg, e) if e is not None else None
+    for path, mask, t in space_game_objects(gobj, st) if gobj else []:
+        if not path or not path.lower().startswith(SCENARIO_PREFIX):
+            continue
+        items = scenario_instances(read, path, mask, t, counts)
+        if not items:
+            counts['scenarios without standing and ruin models (left out)'] = counts.get('scenarios without standing and ruin models (left out)', 0) + 1
+            continue
+        scen.append(dict(path=path, mask=mask, parts=len(set(it['part'] for it in items)),
+                         normal=sum(1 for it in items if it['state'] == 'normal'),
+                         ruin=sum(1 for it in items if it['state'] == 'ruin'), instances=items))
+    return scen, counts
+
+
+def scenario_objects(pk, scen):
+    """(primitives path, havok path) of the scenarios' models, as space_objects gives the BSMI ones (one copy of them)."""
+    out = set()
+    for s in scen:
+        for it in s['instances']:
+            stem = it['model'][:-len('.model')] if it['model'].lower().endswith('.model') else it['model']
+            hav = None
+            if it['collider']:
+                cs = it['collider'][:-len('.model')] if it['collider'].lower().endswith('.model') else it['collider']
+                if pk.find(cs + '.havok')[1] is not None:
+                    hav = cs + '.havok'
+            it['prim'], it['havok'] = stem + '.primitives', hav
+            out.add((it['prim'], hav))
     return sorted(out, key=lambda x: (x[0] or '', x[1] or ''))
 
 
@@ -1055,9 +1216,12 @@ def collect(pk, arena, minimap, out, found):
     n = struct.unpack_from('<I', head, 20)[0]
     toc = pk.read(pkg, e, 24, 24 * n)
     secs = {}
+    gobj = None
     for i in range(n):
         m, v, o, l = struct.unpack_from('<4sIQQ', toc, 24 * i)
         m = m.decode('ascii')
+        if m == 'GOBJ':     # 21.11: read here, its scenarios written as scenario.json (the builder needs no GOBJ)
+            gobj = pk.read(pkg, e, o, l)
         if m in SPACE_SECTIONS:
             secs[m] = pk.read(pkg, e, o, l)
             out('space.bin/' + m, secs[m], dict(path=e[0], pkg=pkg, crc=e[5], section=m, version=v, offset=o))
@@ -1072,6 +1236,22 @@ def collect(pk, arena, minimap, out, found):
     st = space_strings(secs['BWST'])
     yield
     found['objects'] = space_objects(secs['BSMI'], secs['BSMO'], st, box)
+    yield
+    # 21.11: the scenarios' standing and ruin models - their files through the same per-model copy, their placements
+    # in scenario.json (the builder adds them to the BSMI instances)
+    scen, counts = space_scenarios(pk, gobj, st)
+    extra = scenario_objects(pk, scen)
+    have = set(found['objects'])
+    found['objects'] = found['objects'] + [x for x in extra if x not in have]
+    js = json.dumps(dict(format=1, scenarios=[dict((k, v) for k, v in s.items() if k != 'instances') for s in scen],
+                         instances=[dict(part=it['part'], state=it['state'], name=it['name'], prim=it['prim'],
+                                         havok=it['havok'], m=it['m'], mask=it['mask'])
+                                    for s in scen for it in s['instances']]),
+                    separators=(',', ':'), sort_keys=True)
+    jb = js if isinstance(js, bytes) else js.encode('utf-8')
+    out('scenario.json', jb, dict(path='scenario.json', crc=zlib.crc32(jb) & 0xffffffff, scenarios=len(scen)))
+    found['scenarios'] = dict(counts, scenarios=len(scen), parts=sum(s['parts'] for s in scen),
+                              standing=sum(s['normal'] for s in scen), ruin=sum(s['ruin'] for s in scen))
     yield
     found['plants'] = space_plants(secs['SpTr'], st, box)
     yield
@@ -1198,4 +1378,4 @@ def copy_steps(client, root, arena, report, held=None, resv=None, whole=False):
     os.rename(temp, target)
     report.update(stage='ready', arena=arena, seconds=round(time.time() - started, 3), files=len(files),
                   parts=len(parts.names), written=parts.written + len(js), resources=dict(R.count),
-                  rawBytes=sum(f['size'] for f in files), counts=dict(COUNT))
+                  rawBytes=sum(f['size'] for f in files), counts=dict(COUNT), scenarios=found.get('scenarios') or {})

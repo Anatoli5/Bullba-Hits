@@ -1556,7 +1556,10 @@
     dTime = t;
     while (dApplied < dEvents.length && dEvents[dApplied][0] <= t) {
       var ev = dEvents[dApplied++], type = ev[2];
-      if (type === 0 || type === 1) {
+      if (type === 1 && ev[5] === 2) {   // 21.11: a map scenario's model addressed by its visual record
+        var vr = visRecs[ev[3]];
+        if (vr) { vr.dead[ev[4]] = (vr.dead[ev[4]] | (1 << 23)) >>> 0; if (vr.mesh) vr.mesh.geometry.attributes.iDead.needsUpdate = true; }
+      } else if (type === 0 || type === 1) {
         var e = objRecs[ev[3]];
         var bit = type === 1 ? 23 : ev[5];
         if (e) {
@@ -1586,11 +1589,13 @@
     if (tp === 4) return 'bush';
     if (tp === 2) return 'lamp post';
     if (tp === 0) return 'house part';
+    if (tp === 1 && ev[5] >= 1) return 'map event';
     var r = mapData.objects[ev[3]], n = r ? r.name.toLowerCase() : '';
     return /fence|gaf|wall|gate|hedge/.test(n) ? 'fence-like' : 'fragile';
   }
   function destrName(ev) {
     if (ev[2] >= 3) { var tr = treeRecs[ev[3]]; return tr ? tr.kind.name : 'plant'; }
+    if (ev[2] === 1 && ev[5] === 2) { var vr = visRecs[ev[3]]; return vr ? vr.rec.name.replace(/^hd_/, '') : '?'; }
     var r = mapData.objects[ev[3]]; if (!r) return '?';
     return r.name.replace(/^hd_/, '') + (ev[2] === 0 ? ' (module ' + (ev[5] + 1) + ')' : '');
   }
@@ -1600,6 +1605,8 @@
     if (ev[2] >= 3) {
       var tr = treeRecs[ev[3]]; if (!tr) return null; base = tr.base[ev[4]];
       var k = tr.kind; lo = k.lo || [-1.5, 0, -1.5]; hi = k.hi || [1.5, 6, 1.5];
+    } else if (ev[2] === 1 && ev[5] === 2) {
+      var vr = visRecs[ev[3]]; if (!vr) return null; base = vr.base[ev[4]]; lo = vr.rec.pmin; hi = vr.rec.pmin.map(function (v, i) { return v + vr.rec.prange[i]; });
     } else {
       var vo = visOf(ev[3], ev[4]), e = objRecs[ev[3]];
       if (vo) { base = vo.r.base[vo.k]; lo = vo.r.rec.pmin; hi = vo.r.rec.pmin.map(function (v, i) { return v + vo.r.rec.prange[i]; }); }
@@ -1613,7 +1620,7 @@
     var seen = {}, box = $('destr-rows'); if (!box) return;
     box.innerHTML = ''; dRows = [];
     dEvents.forEach(function (ev) {
-      var key = ev[2] + ':' + ev[3] + ':' + ev[4] + ':' + (ev[2] === 0 ? ev[5] : '');
+      var key = ev[2] === 1 && ev[5] >= 1 ? 'scenario:' + ev[0] : ev[2] + ':' + ev[3] + ':' + ev[4] + ':' + (ev[2] === 0 ? ev[5] : '');
       if (seen[key]) return; seen[key] = 1;
       var el = document.createElement('div'); el.className = 'drow' + (ev[1] ? ' init' : '');
       var kind = destrKind(ev), name = destrName(ev);
@@ -3006,7 +3013,8 @@
     var when = {};
     dEvents.forEach(function (ev) {
       var key = null;
-      if (ev[2] === 0 || ev[2] === 1) { var vo = visOf(ev[3], ev[4]); key = vo ? 'v' + visRecs.indexOf(vo.r) + ':' + vo.k : null; var ok = 'o' + ev[3] + ':' + ev[4]; (when[ok] = when[ok] || []).push([+ev[0].toFixed(2), ev[2]]); }
+      if (ev[2] === 1 && ev[5] === 2) key = 'v' + ev[3] + ':' + ev[4];
+      else if (ev[2] === 0 || ev[2] === 1) { var vo = visOf(ev[3], ev[4]); key = vo ? 'v' + visRecs.indexOf(vo.r) + ':' + vo.k : null; var ok = 'o' + ev[3] + ':' + ev[4]; (when[ok] = when[ok] || []).push([+ev[0].toFixed(2), ev[2]]); }
       else if (ev[2] === 2 || ev[2] === 3) key = 'p' + ev[3] + ':' + ev[4];
       if (key) (when[key] = when[key] || []).push([+ev[0].toFixed(2), ev[2]]);
     });
@@ -3453,7 +3461,7 @@
       store['ground5:' + MAP] = { key: MAP, glob: Object.assign({}, A.glob, { fit: M.globFit || null }), jsOnly: true };
       if (M.light) store['light5c:' + MAP] = Object.assign({ key: MAP }, M.light);
       // destruction: the mod keeps it raw (playback.py), the map's lookup resolves it (the trial's build_destruction)
-      var d = MapBuild.destruction(b.destroyed || [], M.lookup);
+      var d = MapBuild.destruction(b.destroyed || [], M.lookup, b.scenario || []);
       b.destruction = d.events; b.destructionStats = d.stats;
       jsBuild = r.info;
     });
@@ -4211,7 +4219,7 @@
     cam: cam, layers: layers, shadows: setShadows, events: function () { return dEvents; }, objects: function () { return mapData.objects; },
     // where a destruction event's object stands (game coordinates)
     eventAt: function (i) {
-      var ev = dEvents[i], tg = (ev[2] <= 2 ? objRecs : treeRecs)[ev[3]];
+      var ev = dEvents[i], tg = (ev[2] === 1 && ev[5] === 2 ? visRecs : ev[2] <= 2 ? objRecs : treeRecs)[ev[3]];
       if (!tg) return null; var p = new T.Vector3().setFromMatrixPosition(tg.base[ev[4]]); return [p.x, p.y, p.z];
     },
     // the 40 m square with the most trees and bushes together (both present): for the foliage close-up

@@ -5092,10 +5092,15 @@ class Exporter(object):
             return True
         self.map_work = None
         res = report.get('resources') or {}
+        sc = report.get('scenarios') or {}
         LOG.info('Map raw files of %s: %s in %.1f s (%.2f s of work in %d slices, the longest %.3f s); %d parts, %.1f MB '
-                 'written; resources: %d copied, %d of them in part (LODs only counted), %d held back (the page has them)%s',
+                 'written; resources: %d copied, %d of them in part (LODs only counted), %d held back (the page has them); '
+                 'map events: %d (%d parts, %d standing and %d ruin models; left out: %d events, %d parts)%s',
                  arena, work.outcome, TTX_TIMER() - work.began, work.work, work.slices, work.longest, report.get('parts') or 0,
                  (report.get('written') or 0) / 1e6, res.get('resources') or 0, res.get('sparse') or 0, res.get('held') or 0,
+                 sc.get('scenarios') or 0, sc.get('parts') or 0, sc.get('standing') or 0, sc.get('ruin') or 0,
+                 sc.get('scenarios without standing and ruin models (left out)') or 0,
+                 sc.get('parts without both states (left out)') or 0,
                  GameStall.text(self.stall.close(work.stall)))
         if work.error: self.notify_page({'kind': 'map', 'arena': arena, 'state': 'error', 'error': work.error})
         else: self.notify_page({'kind': 'map', 'arena': arena, 'state': 'ready'})
