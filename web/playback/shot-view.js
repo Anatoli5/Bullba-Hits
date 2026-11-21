@@ -32,13 +32,21 @@
      the tracer's start and first direction put into the gun's frame at the shot (playback.js shotGunAt) and carried with
      the gun each frame, the viewer's own field of view. A row with no tracer: the shooter's place, looking at the target.
    The bar says which. FROM THE SHOT (20.11, NOTEBOOK T1: the tracer's clock) the eye no longer rides with the shooter: it
-   glides in GLIDE s onto the shell's line at its start and stays there, looking at the hit (the tracer's end, Hits' hit
-   point when the record has it) until the hit and after it; there the wheel moves it along that line towards the target
-   and back (lineWheel: the page's own zoom steps, never past LINE_NEAR m short of the hit nor behind the start).
+   stands on the shell's line at its start, looking at the hit (the tracer's end, Hits' hit point when the record has it)
+   until the hit and after it - so the tracer is seen end-on from its first frame (1.20, the user on 1.19: the glide onto
+   the line, GLIDE s, now ends AT the shot, not after it, when most shells had already landed); there the wheel moves it
+   along that line towards the target and back (lineWheel: the page's own zoom steps, never past LINE_NEAR m short of the
+   hit - the line's length for a shorter shot - nor behind the start). A shot of any length has its line; one of no
+   length looks along the shell's own direction (the gun's at the shot).
+   THE SHOOTER AT THE SHOT (1.20): from the shot until play goes on past the hit the shooter is drawn as it was when it
+   fired (hull, turret, gun: heldPose, asked by playback.js poseVehicles), so the tracer starts at its muzzle seen from
+   anywhere; the target stays at the replay's clock.
    At the stop the picture stays as the shooter saw it; a drag, a move key or (before the shot) the wheel (release())
    ends the first person: the field of view the viewer had, the camera orbiting the target's FOCUS - Bullba Hits' orbit
    centre (viewer.js vehicleCentre / pivotCentre: over the hull's box, at the turret's height or the shooter's gun
-   height), ridden with the target as this page draws it -, the wheel closer / farther as everywhere. A pan or a move
+   height), ridden with the target as this page draws it -, the wheel closer / farther as everywhere. The target not
+   drawn at that moment: its last focus, else the hit point, else the line's end - never under the ground (o.ground;
+   1.20: before it, a point 20 m along the view, often under the ground). The eye's floor is the page's (placeCamera). A pan or a move
    key frees the centre from the target (panned()). No lens zoom, no Fit (the owner, 1.16).
    The shot's corridor (CORRIDOR): map objects and other vehicles the shell's line (Hits' eye on the shell's axis at its
    origin, to the hit) passes through are not drawn while the view is open (the shell reached the target: nothing solid
@@ -92,8 +100,9 @@
    o: {view (the element the canvas is in), camera, renderer, battle, hitsBattle, battleId, dataBase, vehicle(id), name(id),
    clock(t), seek(t), play(on), speed(v | null), orbit(eye, at) (scene coordinates), veil(r, on), look(r, material | null),
    recordedOk(id, t0, t1), recorded(id, t, pos, quat) -> fov | null, gunAt(id, t, matrix) -> matrix | null, delay(id) -> s,
-   aimToggle (the option's checkbox, moved into the bar), foliage(k | null), plantStencil(on),
-   sight() -> Promise<the sight file's value | null>}. */
+   aimToggle (the option's checkbox, moved into the bar), ground(x, z) -> the ground's y | null (scene), foliage(k | null),
+   plantStencil(on), sight() -> Promise<the sight file's value | null>}; heldPose(id, t) -> the clock to pose vehicle id at,
+   or null (the shooter held at the shot). */
 (function (root) {
   'use strict';
   var T = root.THREE;
@@ -103,6 +112,9 @@
   // T1: s the eye takes to reach the shell's line at the shot (a jump from a third-person camera reads as a cut); the
   // nearest the wheel brings it to the hit (m); the wheel's steps: the page's own zoom (playback.js ZOOM)
   var GLIDE = 0.25, LINE_NEAR = 3, WHEEL_IN = 0.23, WHEEL_OUT = 0.30, WHEEL_FLOOR = 0.8;
+  // 1.20: a line shorter than LINE_MIN m has no direction of its own (the shell's is taken); an orbit centre stays at least
+  // FOCUS_FLOOR m over the ground
+  var LINE_MIN = 0.05, FOCUS_FLOOR = 0.5;
   // T2: the foliage slider's value forced for the mode (0 solid .. 1 gone; a guess by eye: the bush still reads); the
   // silhouette's opacity over what stands in front (a guess by eye)
   var FOLIAGE = 0.8, SILHOUETTE = 0.5;
@@ -450,7 +462,15 @@
       if (!S.focusGroup) S.focusGroup = meshCentre(r);
       if (!S.focusGroup) return null;
       r.group.updateWorldMatrix(true, false);
-      return out.copy(S.focusGroup).applyMatrix4(r.group.matrixWorld);
+      grounded(out.copy(S.focusGroup).applyMatrix4(r.group.matrixWorld), FOCUS_FLOOR);
+      S.lastFocus = (S.lastFocus || new T.Vector3()).copy(out);
+      return out;
+    }
+    // a point kept at least k m over the ground under it (o.ground: the page's drawn ground)
+    function grounded(p, k) {
+      var g = o.ground ? o.ground(p.x, p.z) : null;
+      if (g != null && isFinite(g) && p.y < g + k) p.y = g + k;
+      return p;
     }
     // Hits' rule (viewer.js vehicleCentre) on this page's drawing of the collision model, where Hits' viewer has none:
     // over the hull's box, at the turret's box centre height (no turret: the hull's top)
@@ -469,28 +489,41 @@
     }
     // T1: the shell's line (scene): from the tracer's start to its end (Hits' hit point once its scene is read, showHits)
     var lineEye = new T.Vector3(), lineQ = new T.Quaternion(), lineM = new T.Matrix4(), UP = new T.Vector3(0, 1, 0);
+    // any length (1.20: a shot under 3.5 m had none, and the eye stayed off it): `dir` the way it looks - towards the end,
+    // or with no length the shell's own direction at the shot (its velocity: the gun's), never a zero vector
     function shotLine(row) {
       var s = row.shot;
       if (!s || !s.start || !s.end) return null;
       var a = new T.Vector3(s.start[0], s.start[1], -s.start[2]), b = new T.Vector3(s.end[0], s.end[1], -s.end[2]), len = a.distanceTo(b);
-      return len > LINE_NEAR + 0.5 ? { a: a, b: b, len: len, t: row.t } : null;
+      var sh = o.battle && o.battle.shots ? o.battle.shots[s.index] : null, dir = new T.Vector3();
+      if (sh) dir.set(sh[6], sh[7], -sh[8]);
+      if (len > LINE_MIN) dir.copy(b).sub(a);
+      if (!(dir.lengthSq() > 1e-12)) dir.set(0, 0, -1);
+      return { a: a, b: b, len: len, t: row.t, dir: dir.normalize() };
     }
+    // the point the eye on the line looks at: the hit, or one metre along the shell's direction for a line of no length
+    var lineAt = new T.Vector3();
+    function lineLook(L) { return L.len > LINE_MIN ? L.b : lineAt.copy(L.a).add(L.dir); }
+    // the distance the shot's circles are drawn at along the line (no length: Hits' 100 m)
+    function lineDepth() { return S.line && S.line.len > 1 ? S.line.len : 100; }
     // whether the eye is on the shell's line now (from the shot's clock on, in first person)
     function onLine() { return !!(S.line && S.fp && S.t >= S.line.t); }
     // the wheel on the line: n clicks (> 0 away from the target), the page's own zoom steps on the distance to the hit
     function lineWheel(clicks) {
-      var L = S.line, n = Math.min(3, Math.abs(clicks)), d = (1 - S.u) * L.len;
+      var L = S.line, n = Math.min(3, Math.abs(clicks)), d = (1 - S.u) * L.len, near = Math.min(LINE_NEAR, L.len);
+      if (!(L.len > LINE_MIN)) return;
       d = clicks > 0 ? d + Math.max(WHEEL_OUT * d, WHEEL_FLOOR) * n : d - Math.max(WHEEL_IN * d, WHEEL_FLOOR) * n;
-      d = Math.max(LINE_NEAR, Math.min(L.len, d));
+      d = Math.max(near, Math.min(L.len, d));
       S.u = 1 - d / L.len;
     }
-    // the eye on the line at the clock t: the glide from where the eye was at the shot, then still (moved by the wheel only)
+    // the eye on the line at the clock t: the glide in the GLIDE s before the shot from where the eye was, from the shot on
+    // the line's start, then still (moved by the wheel only)
     function linePose(t) {
       var L = S.line;
       lineEye.copy(L.a).lerp(L.b, S.u);
-      lineM.lookAt(lineEye, L.b, UP); lineQ.setFromRotationMatrix(lineM);
+      lineM.lookAt(lineEye, lineLook(L), UP); lineQ.setFromRotationMatrix(lineM);
       if (!S.glide) { o.camera.updateMatrixWorld(); S.glide = { p: o.camera.position.clone(), q: o.camera.quaternion.clone() }; }
-      var f = GLIDE > 0 ? Math.max(0, Math.min(1, (t - L.t) / GLIDE)) : 1;
+      var f = GLIDE > 0 ? Math.max(0, Math.min(1, (t - (L.t - GLIDE)) / GLIDE)) : 1;
       // stopped at the hit before the glide ended (a shell that flew under GLIDE s): it ends on the wall clock (U3: the eye
       // stands at the shell's start for the alternative)
       if (f < 1 && S.stopAt != null) f = Math.min(1, S.stopF + (wallNow() - S.stopAt) / 1000 / GLIDE);
@@ -506,7 +539,7 @@
       var V = S.view;
       pose.focus = null;
       S.t = t;
-      if (S.fp && S.line && t >= S.line.t) return linePose(t);
+      if (S.fp && S.line && t >= S.line.t - GLIDE) return linePose(t);
       if (S.fp && V && V.kind !== 'none') {
         var ok = false, fov = S.saved ? S.saved.fov : o.camera.fov;
         if (V.kind === 'camera') { var f = o.recorded(S.row.shooter, t, fpPos, fpQ); if (f != null) { ok = true; fov = f; } }
@@ -530,8 +563,11 @@
       var c = o.camera, k = S.saved;
       if (k) { c.fov = k.fov; c.zoom = k.zoom; c.updateProjectionMatrix(); }
       c.updateMatrixWorld();
-      var eye = c.position.clone(), at = focusScene(new T.Vector3()) || eye.clone().add(new T.Vector3(0, 0, -20).applyQuaternion(c.quaternion));
-      o.orbit(eye, at);
+      // the target's focus; not drawn now: its last one, else the hit point (the line's end: Hits' hit point once read,
+      // else the tracer's end), else 20 m along the view - never under the ground
+      var eye = c.position.clone(), at = focusScene(new T.Vector3()) || (S.lastFocus ? S.lastFocus.clone() : null) ||
+        (S.line ? S.line.b.clone() : null) || eye.clone().add(new T.Vector3(0, 0, -20).applyQuaternion(c.quaternion));
+      o.orbit(eye, grounded(at, FOCUS_FLOOR));
     }
     function panned() { if (!S.row) return; release(); S.lock = false; }
     // ---- opening a row ----------------------------------------------------------------------------------------------------
@@ -544,7 +580,7 @@
       S.start = Math.max(0, row.t - BEFORE);
       S.target = h ? h.target : row.target;
       S.mode = 'wait'; S.error = null; S.data = null; S.rec = null; S.aim = null; S.haveA = false;
-      S.focusGroup = null; S.view = firstPerson(row); S.fp = true; S.lock = true; S.lastPose = null;
+      S.focusGroup = null; S.lastFocus = null; S.view = firstPerson(row); S.fp = true; S.lock = true; S.lastPose = null;
       S.line = shotLine(row); S.u = 0; S.glide = null; S.t = S.start; S.estimate = null; S.disc = undefined;
       S.stopAt = null; S.glided = false; S.lineEngine = null; S.lineJob = null; S.lineFig = null;
       pose.fov = S.saved ? S.saved.fov : o.camera.fov;
@@ -712,7 +748,7 @@
       // T1: the line's end at Hits' hit point (the tracer's end stands for it until now)
       if (S.line && Ae && v.point) {
         var hp = v.point.clone().applyMatrix4(Ae), len = S.line.a.distanceTo(hp);
-        if (len > LINE_NEAR + 0.5) { S.line.b.copy(hp); S.line.len = len; }
+        if (len > LINE_MIN) { S.line.b.copy(hp); S.line.len = len; S.line.dir.copy(hp).sub(S.line.a).normalize(); }
       }
       // T3: another vehicle's circle while aiming - Hits' estimate of its shot (the tracer's replayAimEstimate)
       if (!own) S.estimate = estimateOf(rec.context);
@@ -747,7 +783,7 @@
       var tr = context && context.tracer, b = tr && !tr.own && tr.replayAimEstimate, c = b && b.circle;
       if (!c || !Array.isArray(c.vector) || !(c.dispersionAngle > 0) || !Array.isArray(tr.origin)) return { why: b && (b.reason || b.reasonKey) || 'Bullba Hits has no estimate of this shot' };
       var e = { o: new T.Vector3(tr.origin[0], tr.origin[1], -tr.origin[2]), n: new T.Vector3(c.vector[0], c.vector[1], -c.vector[2]).normalize(), angle: c.dispersionAngle,
-        D: S.line ? S.line.len : 100, nG: null, oG: null };
+        D: lineDepth(), nG: null, oG: null };
       var M2 = new T.Matrix4();
       if (S.view && S.view.kind === 'gun' && o.gunAt(S.row.shooter, S.row.t, M2)) { M2.invert(); e.nG = e.n.clone().transformDirection(M2); e.oG = e.o.clone().applyMatrix4(M2); }
       return e;
@@ -873,7 +909,7 @@
         // from the shot: the circle the shell left from
         var D = flying && !hitsRings ? discOf() : null;
         if (D) {
-          Q3.copy(D.n).multiplyScalar(S.line.len).add(D.g);
+          Q3.copy(D.n).multiplyScalar(lineDepth()).add(D.g);
           var v = S.viewer, look = v && v.ringLook;
           if (toScreen(Q3)) ring(scr.x, scr.y, Math.tan(D.angle) * focal, look ? discColour(look.color) : AIM_COLOUR, look && look.width > 0 ? look.width : 4,
             Math.max(0.4, v && v.discOpacity > 0 ? v.discOpacity : 0), DASH_DISC);
@@ -973,7 +1009,7 @@
       if (!S.row || S.stop == null) return t1;
       if (S.armed && t1 >= S.stop && t0 <= S.stop) {
         S.armed = false; o.play(false);
-        S.stopAt = wallNow(); S.stopF = S.line && GLIDE > 0 ? Math.max(0, Math.min(1, (S.stop - S.line.t) / GLIDE)) : 1;
+        S.stopAt = wallNow(); S.stopF = S.line && GLIDE > 0 ? Math.max(0, Math.min(1, (S.stop - (S.line.t - GLIDE)) / GLIDE)) : 1;
         return S.stop;
       }
       if (!S.armed && t1 >= S.stop + AFTER) close(false);
@@ -1081,6 +1117,14 @@
       shown(unpin, false); shown(cellA.tile, false); shown(cellB.tile, false);
       if (!reopen) { bar.hidden = true; if (was) o.speed(null); exit(); }
     }
+    // THE SHOOTER AT THE SHOT (1.20): the clock playback.js poses vehicle `id` at, at the replay's clock t - the shooter's
+    // own at the shot (the tracer's clock less its drawing delay, as the tracer's muzzle is taken: playback.js
+    // computeMuzzles) from the shot until the hit's stop; null: the replay's
+    function heldPose(id, t) {
+      var r = S.row;
+      if (!r || id !== r.shooter || !r.shot || S.stop == null || t < r.t - 1e-6 || t > S.stop + 1e-6) return null;
+      return r.t - (o.delay ? o.delay(id) : 0);
+    }
     function rowsText(c) { return [c.arm, c.dmg, c.ric].map(function (r) { return r.textContent; }).filter(Boolean).join(' '); }
     function state() {
       var v = S.viewer, sf = v && v.surface;
@@ -1102,7 +1146,7 @@
           ground: S.corridor.ground, destroyedAlready: S.corridor.destroyedAlready, vehiclesHidden: S.onLine || 0, list: S.corridor.list, t: S.corridor.t, a: S.corridor.a, b: S.corridor.b } : null };
     }
     return { open: open, close: function () { close(false); }, active: function () { return !!S.row; },
-      free: function () { return !!S.row; }, camera: camera, panned: panned, paint: paint, overlay: overlay, clamp: clamp, state: state, viewer: function () { return S.viewer; },
+      free: function () { return !!S.row; }, heldPose: heldPose, camera: camera, panned: panned, paint: paint, overlay: overlay, clamp: clamp, state: state, viewer: function () { return S.viewer; },
       paintMaterial: paintMat, bar: bar };
   }
   root.BullbaShotView = { create: create, BEFORE: BEFORE, SPEED: SPEED, AFTER: AFTER, INSIDE: INSIDE };

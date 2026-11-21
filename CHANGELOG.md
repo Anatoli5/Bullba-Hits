@@ -2,6 +2,13 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.1.1 from 1.05 on, 2.4.1.0 from 1.02 on, 2.4.0.2 from 0.9.3 on, 2.4.0.1 #950 from 0.7.6, 2.4.0.0 #945 before.
 
+## Unreleased
+
+- Shot view: the eye reaches the shell's line exactly at the shot, so the tracer is seen end-on from its first frame; very short shots get the same view.
+- Shot view: from the shot until the episode plays on past the hit, the shooter is drawn as it was when it fired, so the tracer starts at its muzzle from any angle.
+- Shot view: the orbit's centre is never put under the ground: when the target is not in view it is the target's last place, else the hit point.
+- Replay viewer: the camera never goes under the ground in any mode, the shot view included, and can come down close to the ground anywhere (it keeps 0.3 m), also below the point it orbits - low enough to follow a tracer passing just over a bump.
+
 ## 1.19 (2026-11-20)
 
 - Replay viewer: the floating damage numbers are coloured by the side that lost the hit points: green for an enemy, red for an ally or you.

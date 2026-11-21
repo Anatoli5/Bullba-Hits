@@ -973,10 +973,15 @@
         info.terrainTris += idx.length / 3;
       }
     }
+    // the ground's height at (x, z) (game axes) ON THE DRAWN MESH (1.20, the user on 1.19): the triangle of the cell as the
+    // tiles above split it (the diagonal alternates with the cell's parity), not the bilinear surface, which on a ridge
+    // stood off the drawn ground by up to a quarter of the corners' height difference
     heightAt = function (x, z) {
       var fi = (x - t.x0) / t.cell, fj = (z - t.z0) / t.cell, i = Math.max(0, Math.min(nx - 2, Math.floor(fi))), j = Math.max(0, Math.min(nz - 2, Math.floor(fj)));
       var u = Math.min(1, Math.max(0, fi - i)), v = Math.min(1, Math.max(0, fj - j));
-      return (H[j * nx + i] * (1 - u) + H[j * nx + i + 1] * u) * (1 - v) + (H[(j + 1) * nx + i] * (1 - u) + H[(j + 1) * nx + i + 1] * u) * v;
+      var ha = H[j * nx + i], hb = H[j * nx + i + 1], hc = H[(j + 1) * nx + i], he = H[(j + 1) * nx + i + 1];
+      if ((i ^ j) & 1) return u + v <= 1 ? ha + u * (hb - ha) + v * (hc - ha) : he + (1 - u) * (hc - he) + (1 - v) * (hb - he);   // diagonal b-c
+      return u >= v ? ha + u * (hb - ha) + v * (he - hb) : ha + v * (hc - ha) + u * (he - hc);   // diagonal a-e
     };
   }
 
@@ -1952,6 +1957,8 @@
   function poseVehicles(t) {
     vehicles.forEach(function (r) {
       var v = r.v, inSight = false, tt = t - delayOf(r);
+      // the shot view (1.20): its shooter held in its pose at the shot from the shot until play goes on past the hit
+      if (shotView) { var held = shotView.heldPose(v.id, t); if (held != null) tt = held; }
       for (var s = 0; s < v.sight.length; s++) if (t >= v.sight[s][0] && t < v.sight[s][1]) { inSight = true; break; }
       // a wreck stays where it was destroyed: the client drops a destroyed vehicle's entity after a while (the replay's
       // entity_leave), but the wreck does not move. Only when the destruction itself was in sight (the place is known).
@@ -2487,6 +2494,10 @@
   // round 5d: tyOff = the free camera's target height above the ground (R/F change it); tyGoal = the height the target
   // glides to after a pan (the ground under the new target + tyOff), so orbit and zoom pivot on the ground looked at
   var cam = { tx: 0, ty: 30, tz: 0, yaw: 0.6, pitch: 0.75, dist: 700, tyOff: 1, tyGoal: null }, follow = null, keys = {};
+  // 1.20 (the user on 1.19): one rule in every mode - the eye never under the ground -, with one small clearance EYE_FLOOR m
+  // (the least that keeps the camera's near plane, 0.25 m, out of it; was 0.9 m for the orbit, none in the shot view), so
+  // the eye can follow a tracer passing low over a bump; the orbit's lowest pitch (rad, below the centre)
+  var EYE_FLOOR = 0.3, PITCH_MIN = -1.2;
   function glideTarget(dt) {
     if (follow || cam.tyGoal == null) return;
     var d = cam.tyGoal - cam.ty;
@@ -2499,6 +2510,10 @@
     var sp = shotView ? shotView.camera(t) : null;
     if (sp && sp.position) {
       camera.position.copy(sp.position);
+      // never under the ground (1.20): a first-person eye (the replay's camera, the gun, the shell's line) kept EYE_FLOOR
+      // over it
+      var gf = heightAt ? heightAt(camera.position.x, -camera.position.z) + EYE_FLOOR : -Infinity;
+      if (camera.position.y < gf) camera.position.y = gf;
       if (sp.quaternion) camera.quaternion.copy(sp.quaternion); else camera.lookAt(sp.look);
       if (camera.fov !== sp.fov) { camera.fov = sp.fov; camera.updateProjectionMatrix(); }
       return;
@@ -2509,9 +2524,13 @@
     }
     var x = cam.tx + cam.dist * Math.cos(cam.pitch) * Math.sin(cam.yaw), y = cam.ty + cam.dist * Math.sin(cam.pitch),
       z = -cam.tz + cam.dist * Math.cos(cam.pitch) * Math.cos(cam.yaw);
-    // never below the ground (round 2 could put the ground camera into the terrain on slopes)
-    // (the shot view without Hits' viewer: no floor - the eye stands at the tracer's start, the owner's word 19.11)
-    if (heightAt && !(shotView && shotView.free())) y = Math.max(y, heightAt(x, -z) + 0.9);  // round 5d: 0.9 m (was 1.2): a driver's eye level
+    // never below the ground, in every mode (1.20, the user on 1.19: the shot view had no floor at all): the orbit's eye at
+    // least EYE_FLOOR over the drawn ground under it. The orbit may go below its centre (pitch down to PITCH_MIN): the
+    // floor is the limit; held by the floor, the pitch follows the eye, so dragging up again moves it at once
+    if (heightAt) {
+      var gy = heightAt(x, -z) + EYE_FLOOR;
+      if (y < gy) { y = gy; if (cam.pitch < 0) cam.pitch = Math.asin(Math.max(-1, Math.min(1, (y - cam.ty) / cam.dist))); }
+    }
     camera.position.set(x, y, z); camera.lookAt(cam.tx, cam.ty, -cam.tz);
   }
   var drag = null;
@@ -2527,7 +2546,7 @@
   renderer.domElement.addEventListener('pointermove', function (e) {
     if (!drag) return;
     var dx = e.clientX - drag.x, dy = e.clientY - drag.y; drag.x = e.clientX; drag.y = e.clientY;
-    if (drag.b === 0) { cam.yaw -= dx * 0.005; cam.pitch = Math.max(0.02, Math.min(1.55, cam.pitch + dy * 0.005)); }
+    if (drag.b === 0) { cam.yaw -= dx * 0.005; cam.pitch = Math.max(PITCH_MIN, Math.min(1.55, cam.pitch + dy * 0.005)); }
     else { setFollow(null); var s = Math.max(cam.dist, PAN.floor) * 0.0015; move(-dx * s, dy * s); }  // round 5e: the ground follows the cursor; below 12 m the 12 m rate
   });
   // round 5d: one wheel click (deltaY 100) moves 23 % of the distance to the point looked at in, 30 % out (the same
@@ -2724,6 +2743,7 @@
       play: function (on) { if (!!on !== playing) togglePlay(); },
       speed: setEpisodeSpeed, orbit: orbitFrom, veil: veil, look: shotLook,
       recordedOk: shotRecordedOk, recorded: shotRecordedCamera, gunAt: shotGunAt, aimToggle: $('sv-aim-circle'),
+      ground: function (x, z) { return heightAt ? heightAt(x, -z) : null; },   // scene x, z -> the ground's scene y
       delay: function (id) { var r = fxById[id]; return r ? delayOf(r) : 0; },
       foliage: shotFoliage, plantStencil: shotPlantStencil, sight: shotSight,
       corridor: { open: shotCorridorOpen, keep: shotCorridorKeep, vehicles: shotCorridorVehicles, close: shotCorridorClose } });
