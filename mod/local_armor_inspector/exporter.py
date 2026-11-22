@@ -45,7 +45,7 @@ STAND_CHANGED = tuple(getattr(_client_code, 'STAND_CHANGED', ()))
 STAND_CLIENT = getattr(_client_code, 'STAND_CLIENT', None)
 
 LOG = logging.getLogger('local.armor_inspector')
-VERSION = '1.26'
+VERSION = '1.27'
 RESOURCE = re.compile(r'^(?:[A-Za-z0-9_-]+/)?vehicles/[A-Za-z0-9_/-]+\.(?:model|havok)\Z')
 IDENTIFIER = re.compile(r'^[-a-zA-Z0-9_]{1,100}\Z')
 # The interface icons of the aim configuration (equipment, perks, shells) ship with the page in web/icons
@@ -4915,6 +4915,17 @@ class Exporter(object):
         payload = payload or {}
         name = str(payload.get('battleId') or '')
         made, failed, own = [], [], 0
+        # Compact formula inputs only; the browser already owns the replay's tracks.
+        # This sidecar is independent of the battle/vehicle caches and can be acquired
+        # by a viewer opened on a battle built by an earlier version.
+        aims = {}
+        for kind, descr in payload.get('vehicles') or ():
+            if not descr: continue
+            try: aims[descr] = self.scene_source(self.replay_client_version(name)).aim_inputs(descr)
+            except Exception as error: aims[descr] = {'reason': str(error)}
+        aim_path = os.path.join(self.folder, 'data', DATA_FOLDER, 'aim-' + name + '.js')
+        if not os.path.isdir(os.path.dirname(aim_path)): os.makedirs(os.path.dirname(aim_path))
+        write_data(aim_path, 'playback-aim:' + name, {'format': 1, 'inputs': aims})
         pk = None
         try:
             for kind, descr in payload.get('vehicles') or ():

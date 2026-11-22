@@ -2,6 +2,10 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.1.1 from 1.05 on, 2.4.1.0 from 1.02 on, 2.4.0.2 from 0.9.3 on, 2.4.0.1 #950 from 0.7.6, 2.4.0.0 #945 before.
 
+## 1.27 (2026-11-21)
+
+- Replay shot view: other shooters' estimated dispersion changes while aiming, with simulated optical framing and no invented mouse marker. The camera travels forward from release to a view of the target; wheel distance and alternative aiming remain available. Removed the extra lingering contact spark after the flash.
+
 ## 1.26 (2026-11-21)
 
 - Replay viewer: foliage is see-through only inside the shot view (0.5 there) and no longer stays so everywhere; a foliage setting stuck at 0.8 by this is put back to solid once.

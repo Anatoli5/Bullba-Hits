@@ -2242,11 +2242,6 @@
     if (w === undefined) { fxWall[key] = now; return tau; }
     return Math.max(tau, (now - w) / 1000);
   }
-  // THE CONTACT DOT (BACKLOG 121): while the shot view holds a shot (shotView.heldHits), each point of its hit stays marked
-  // by a small bright dot in the colour of its outcome, from the hit on - DOT_PX device pixels across whatever the distance
-  // (the owner's 5 px; the point's soft edge as the flashes have it), DOT_OFF m off the plate so the armour does not hide it.
-  // Outside the shot view no dot: the lasting mark there is the decal.
-  var DOT_PX = 5, DOT_OFF = 0.05, DOT_COL = [[1, 0.55, 0.15], [1, 0.95, 0.85], [1, 0.85, 0.3]];
   // the fx rows (placed points) of a hit event by its index (battle.js fx hits' 'hit' field = the hitEvents index)
   var fxHitRows = null, fxHitSrc = null;
   function fxRowsOf(hi) {
@@ -2325,23 +2320,6 @@
             var fade = 1 - tau / pLife;
             n = fxPut(n, fxV.x + dx / dl * v0 * tau, fxV.y + dy / dl * v0 * tau - 4.9 * tau * tau, fxV.z + dz / dl * v0 * tau, 1, 0.75, 0.35, fade, pS);
           }
-        }
-      }
-    }
-    // the contact dot of the shot the shot view holds (BACKLOG 121)
-    var held = !count && hitsOn && shotView && shotView.heldHits ? shotView.heldHits() : null;
-    if (held) {
-      camera.updateMatrixWorld();
-      for (var hh = 0; hh < held.length; hh++) {
-        var js = fxRowsOf(held[hh]);
-        for (var q2 = 0; q2 < js.length; q2++) {
-          var hd = fxHits[js[q2]], rd = fxById[hd[1]];
-          if (hd[0] > t || fxWhyNot(rd)) continue;
-          var pd = fxPart(rd, hd[7]); pd.updateWorldMatrix(true, false);
-          fxN.set(hd[11], hd[12], hd[13]).transformDirection(pd.matrixWorld);
-          fxV.set(hd[8], hd[9], hd[10]).applyMatrix4(pd.matrixWorld).addScaledVector(fxN, DOT_OFF);
-          var depth = Math.max(0.25, -fxR.copy(fxV).applyMatrix4(camera.matrixWorldInverse).z), col = DOT_COL[fxClass(hd[6])];
-          n = fxPut(n, fxV.x, fxV.y, fxV.z, col[0], col[1], col[2], 1, DOT_PX * renderer.getPixelRatio() * depth / fxU.uScale.value);
         }
       }
     }
@@ -2832,6 +2810,8 @@
     var known = INDEX && Array.isArray(INDEX.battles) && INDEX.battles.some(function (x) { return x && x.id === BID; });
     shotView = BullbaShotView.create({ view: $('view'), camera: camera, renderer: renderer, battle: battle, hitsBattle: known ? BID : null, battleId: BID, dataBase: BASE,
       vehicle: function (id) { return fxById[id] || null; },
+      aimInputs: shotAimInputs,
+      targetBounds: shotTargetBounds,
       name: function (id) { var r = id == null ? null : fxById[id]; return r ? tileOf(r).name : 'not named'; },
       clock: function (s) { return fmt(s - tBattle); },
       seek: function (x) { t = Math.min(tEnd, Math.max(0, x)); $('slider').value = t; },
@@ -2843,6 +2823,44 @@
       foliage: shotFoliage, plantStencil: shotPlantStencil, sight: shotSight, contact: shotContact, seen: shotSeen,
       corridor: { open: shotCorridorOpen, keep: shotCorridorKeep, vehicles: shotCorridorVehicles, close: shotCorridorClose } });
     return shotView;
+  }
+  // The battle's cached tracks already contain everything dynamic. Ask only for
+  // the mounted descriptor's compact formula inputs; never decode a second replay.
+  var shotAimPromise = null;
+  function shotAimInputs() {
+    if (shotAimPromise) return shotAimPromise;
+    var rows = battle.vehicles.filter(function (v) { return v.compDescr; });
+    function read() {
+      return loadData('data/playback/aim-' + BID + '.js', 'playback-aim:' + BID).then(function (v) {
+        if (!v || v.format !== 1 || !v.inputs || rows.some(function (r) { return !(r.compDescr in v.inputs); })) throw new Error('aim inputs not ready');
+        return v.inputs;
+      });
+    }
+    shotAimPromise = read().catch(function () {
+      if (!host.canSend()) return {};
+      var waiting = waitFor(function () { return null; }, read, 15000);
+      host.send('bullba_hits', { action: 'playbackVehicles', battleId: BID,
+        vehicles: rows.map(function (v) { return { type: v.type, descr: v.compDescr }; }) }).catch(function () {});
+      return waiting.catch(function () { shotAimPromise = null; return {}; });
+    });
+    return shotAimPromise;
+  }
+  function shotTargetBounds(id, at) {
+    var r = fxById[id];
+    if (!r || !r.group || !r.turret || !r.gun) return null;
+    var g = r.group, p = g.position.clone(), q = g.quaternion.clone(), ty = r.turret.rotation.y, gx = r.gun.rotation.x, points = [];
+    if (poseInto(r, at - delayOf(r), g, r.turret, r.gun)) {
+      g.updateWorldMatrix(true, true);
+      g.traverse(function (m) {
+        if (!m.isMesh || !m.geometry || !(m.material === r.mat || m.userData.shotExtra || (m.material.userData && m.material.userData.shotPaint))) return;
+        if (!m.geometry.boundingBox) m.geometry.computeBoundingBox();
+        var b = m.geometry.boundingBox;
+        if (!b || b.isEmpty()) return;
+        for (var k = 0; k < 8; k++) points.push(new THREE.Vector3(k & 1 ? b.max.x : b.min.x, k & 2 ? b.max.y : b.min.y, k & 4 ? b.max.z : b.min.z).applyMatrix4(m.matrixWorld));
+      });
+    }
+    g.position.copy(p); g.quaternion.copy(q); r.turret.rotation.y = ty; r.gun.rotation.x = gx; g.updateWorldMatrix(true, true);
+    return points.length ? points : null;
   }
   // THE REPLAY'S OWN CAMERA for the shot view's first person (21.11, NOTEBOOK S2): battle.camera, packet 0x26 a tick
   // (battle.js Collector: t, the quaternion x y z w in the game's axes - its +z the view -, the eye's offset from the

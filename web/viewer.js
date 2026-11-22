@@ -2168,6 +2168,7 @@
   Viewer.prototype.setAimOffset=function(offset){this.aimOffset=Array.isArray(offset)&&offset.length===3?offset:null;};
   Viewer.prototype.setRecordedOffset=function(offset){this.recordedOffset=Array.isArray(offset)&&offset.length===3?offset:null;};
   Viewer.prototype.aimMuzzle=function(at){
+    if(this.hosted&&this.hosted.aimOrigin){var hostedOrigin=this.hosted.aimOrigin();if(hostedOrigin)return hostedOrigin;}
     var eye=this.camera.position.clone(),o=this.aimOffset,to=at||this.aimPin()||this.liveAimPoint;
     var rec=this.recordedOffset,stand=rec&&this.viewEye(),r=stand&&stand.distanceToSquared(eye)<1e-6?rec:null;
     if(!(o||r)||!to)return eye;

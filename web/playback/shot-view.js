@@ -32,9 +32,10 @@
      the tracer's start and first direction put into the gun's frame at the shot (playback.js shotGunAt) and carried with
      the gun each frame, the viewer's own field of view. A row with no tracer: the shooter's place, looking at the target.
    The bar says which. FROM THE SHOT (20.11, NOTEBOOK T1: the tracer's clock) the eye no longer rides with the shooter: it
-   stands on the shell's line at its start, looking at the hit (the tracer's end, Hits' hit point when the record has it)
-   until the hit and after it - so the tracer is seen end-on from its first frame (1.20, the user on 1.19: the glide onto
-   the line, GLIDE s, now ends AT the shot, not after it, when most shells had already landed); there the wheel moves it
+   travels forward on the shell's line, ending far enough from the contact to frame the collision target. A short
+   flight's camera presentation may finish after the battle stops at impact. Before release, another shooter's lens is
+   a simulated framing chosen once from the client's zoom steps; own recorded pre-shot camera is preserved. The lens
+   returns smoothly to the viewer's normal field of view during the trip. There the wheel moves it
    along that line towards the target and back (lineWheel: the page's own zoom steps, never past LINE_NEAR m short of the
    hit - the line's length for a shorter shot - nor behind the start). A shot of any length has its line; one of no
    length looks along the shell's own direction (the gun's at the shot).
@@ -54,7 +55,7 @@
    height), ridden with the target as this page draws it -, the wheel closer / farther as everywhere. The target not
    drawn at that moment: its last focus, else the hit point, else the line's end - never under the ground (o.ground;
    1.20: before it, a point 20 m along the view, often under the ground). The eye's floor is the page's (placeCamera). A pan or a move
-   key frees the centre from the target (panned()). No lens zoom, no Fit (the owner, 1.16).
+   key frees the centre from the target (panned()). Manual camera input restores the viewer's lens immediately.
    The shot's corridor (CORRIDOR): map objects and other vehicles the shell's line (Hits' eye on the shell's axis at its
    origin, to the hit) passes through are not drawn while the view is open (the shell reached the target: nothing solid
    stood there), given back on Leave; the terrain never - where it crosses the line the bar says so. Objects off the
@@ -74,8 +75,10 @@
    circle (size recorded, centre at the cursor point: approximate), the server circle (recorded, dashed), and from the
    shot the circle the shell left from (the thick ring, the 0x39 update at the shell's origin: replay_aim.py's disc
    rule); another vehicle Hits' estimate (its tracer's replayAimEstimate: the size at the shot, centred on the gun as
-   drawn, dashed). From the shot they stand still; at the hit Hits' own circles take over. The game's sight (the centre
-   mark at the cursor point - the screen's centre for another vehicle -, the gun tag at the circle's centre) from the
+   drawn, dashed). Foreign size is reconstructed on the existing size-model grid from the browser's tracks and descriptor
+   inputs; where available the Hits release circle anchors its scale and axis. At the hit Hits' own circles take over.
+   No foreign mouse position is invented: only the gun tag identifies that estimated centre. The game's sight (own centre
+   mark at the recorded cursor point, the gun tag at the circle's centre) from the
    file the mod reads from the client (o.sight, game_sight.py); without it a thin cross of the page. Hits' own blue
    hit-location crosses are not drawn in the mode (the sight stands for them).
 
@@ -90,10 +93,11 @@
    AIM_EST_SLICE). Not here: Hits' track chip (it reads the characteristics file through app.js).
    WHERE ELSE COULD THE SHOT GO (U3; a plain screen tool since 1.19, the user on 1.18; alt()): the option "aim circle"
    in the bar (o.aimToggle, off by default, kept with the page's settings). On, once stopped at the hit with the eye at
-   the shell's start (on the line, the wheel not moved, the glide done), the right cell reads the point under the cursor
+   any position on the line (the glide done), the right cell reads the point under the cursor
    (Hits' viewer.inspect: one reading a frame, from the eye) and a cyan ring stands at the cursor on the HUD, over
    everything, as wide as the shot's own circle at the shot (the ring of the "Hit line": its angle, constant). It
-   pretends nothing - no turret turn, gun limits or motion. Its figure: Hits' live circle (viewer.liveAim, its own line not
+   pretends nothing - no turret turn, gun limits or motion. The rays keep the real shot origin when the camera moves;
+   the HUD projects the resulting world circle. Its figure: Hits' live circle (viewer.liveAim, its own line not
    drawn) over that ring, Hits' live rule (estimateLive): 256 rays at most every ALT_COARSE s while it moves, 1024 once at
    rest, in the worker. A click pins the point (Hits' pin; the ring stays on it); the HUD's sight follows, the system
    pointer hidden over the picture. Off: no ring; the right cell is the pinned point, or its place with how to pin one.
@@ -122,9 +126,8 @@
   // s before the shot; the episode's speed (x1, the owner on 1.16: 1/4 too slow); s past the stop after which a battle
   // played on leaves the mode
   var BEFORE = 2, SPEED = 1, AFTER = 1;
-  // T1: s the eye takes to reach the shell's line at the shot (a jump from a third-person camera reads as a cut); the
-  // nearest the wheel brings it to the hit (m); the wheel's steps: the page's own zoom (playback.js ZOOM)
-  var GLIDE = 0.25, LINE_NEAR = 3, WHEEL_IN = 0.23, WHEEL_OUT = 0.30, WHEEL_FLOOR = 0.8;
+  // The nearest the wheel brings it to the hit (m); the wheel's steps: the page's own zoom (playback.js ZOOM).
+  var LINE_NEAR = 3, WHEEL_IN = 0.23, WHEEL_OUT = 0.30, WHEEL_FLOOR = 0.8;
   // 1.20: a line shorter than LINE_MIN m has no direction of its own (the shell's is taken); an orbit centre stays at least
   // FOCUS_FLOOR m over the ground
   var LINE_MIN = 0.05, FOCUS_FLOOR = 0.5;
@@ -170,6 +173,58 @@
   }
   function num(s, d) { var n = Number(s); return isFinite(n) ? n : d; }
   function wallNow() { return root.performance && root.performance.now ? root.performance.now() : Date.now(); }
+  // Size only: replay_aim_other.Shooter's 0.1 s grid, lagged central differences,
+  // held rotation samples and typical unknown build. The direction estimator stays
+  // in Hits. Formula integration uses its existing JavaScript owner.
+  function sizeSeries(v, aim, shots, release) {
+    var B = root.ArmorBallistics, tags = aim && aim.gunTags || [];
+    if (!B || !aim || !(aim.dispersion > 0) || !aim.pitchLimits || v.np < 10 || v.ng < 2 ||
+        aim.reason || aim.autoShoot || aim.dualAccuracy || aim.hasSiegeMode || tags.indexOf('autoShoot') >= 0 || tags.indexOf('dualAccuracy') >= 0) return null;
+    var burst = aim.burst;
+    if (burst && burst[0] > 1 && shots.some(function (t) { return t < release - .001 && release - t <= (burst[0] - 1) * burst[1] + .3; })) return null;
+    function track(data, stride, col, angular, holds) {
+      var ts = [], vs = [], last = null, shift = 0;
+      for (var i = 0; i < data.length; i += stride) {
+        var t = data[i], x = data[i + col];
+        if (angular && last != null) { var d = x - last; if (d > Math.PI) shift -= 2 * Math.PI * Math.floor((d + Math.PI) / (2 * Math.PI)); else if (d < -Math.PI) shift += 2 * Math.PI * Math.floor((-d + Math.PI) / (2 * Math.PI)); }
+        last = x; x += shift;
+        if (ts.length && t <= ts[ts.length - 1] + 1e-6) { vs[vs.length - 1] = x; continue; }
+        if (holds && ts.length && t - ts[ts.length - 1] > .45) { ts.push(t - .1); vs.push(vs[vs.length - 1]); }
+        ts.push(t); vs.push(x);
+      }
+      return { t: ts, v: vs };
+    }
+    function index(a, t) { var lo = 0, hi = a.length; while (lo < hi) { var m = (lo + hi) >>> 1; if (a[m] <= t) lo = m + 1; else hi = m; } return lo - 1; }
+    function value(a, t) { var i = index(a.t, t); if (i < 0) return a.v[0]; if (i + 1 === a.t.length) return a.v[i]; return a.v[i] + (a.v[i + 1] - a.v[i]) * (t - a.t[i]) / (a.t[i + 1] - a.t[i]); }
+    var xyz = [1, 2, 3].map(function (c) { return track(v.pos, 7, c, false, false); });
+    var hull = track(v.pos, 7, 4, true, true), turret = track(v.gun, 3, 1, true, true), pt = xyz[0].t;
+    function fresh(t) { var i = index(pt, t); return i >= 0 && t - pt[i] <= 1 && (i + 1 >= pt.length || pt[i + 1] - pt[i] <= 1 || t <= pt[i] + .1); }
+    if (!fresh(release)) return null;
+    var mods = { mult: .92, aimingTime: .92 * .95, additive: .9, turret: .925 };
+    var a = {}; ['dispersion', 'aimingTime', 'movementFactor', 'rotationFactor', 'turretRotationFactor', 'afterShotFactor'].forEach(function (k) { a[k] = aim[k]; });
+    var aiming = B.aimFactor(a, {}, mods).aimingTime, base = pt[0], n = Math.max(1, Math.ceil((pt[pt.length - 1] - base) / .1 - 1e-9));
+    function tickBefore(t) { var k = Math.floor((t - .0001 - base) / .1); while (base + (k + 1) * .1 < t - .0001) k++; while (base + k * .1 >= t - .0001) k--; return Math.max(0, Math.min(n - 1, k)); }
+    var first = tickBefore(release - BEFORE), end = tickBefore(release), back = Math.ceil(Math.max(6 * aiming, 5) / .1), bloom = {};
+    shots.forEach(function (t) { var k = Math.max(0, Math.ceil((t - .0001 - base) / .1 - 1e-9)); while (k > 0 && base + (k - 1) * .1 >= t - .0001) k--; while (k < n && base + k * .1 < t - .0001) k++; bloom[k] = true; });
+    var state = null, values = {};
+    for (var k = Math.max(0, first - back); k <= end; k++) {
+      var t = base + k * .1, lo = t - .4, hi = t - .2;
+      var speed = Math.hypot.apply(Math, xyz.map(function (p) { return value(p, hi) - value(p, lo); })) / .2;
+      var s = { speed: speed, hullTurn: Math.abs(value(hull, hi) - value(hull, lo)) / .2, turretTurn: Math.abs(value(turret, hi) - value(turret, lo)) / .2 };
+      state = B.aimStep(state, s, a, mods, .1);
+      if (bloom[k]) state = B.aimShot(state, s, a, mods);
+      if (k >= first) values[k] = a.dispersion * state.factor;
+    }
+    return { release: values[end], at: function (t) {
+      if (!fresh(t)) return null;
+      var sample = (Math.min(t, release) - base) / .1, k = Math.max(first, Math.min(end, Math.floor(sample + 1e-8))), next = Math.min(end, k + 1);
+      // Settle continuously between valid ticks, but never smear a previous shot's
+      // instantaneous bloom backwards, bridge an unseen gap, or include own bloom.
+      if (k === next || bloom[next] || !fresh(base + k * .1) || !fresh(base + next * .1)) return values[k];
+      var blend = Math.max(0, Math.min(1, sample - k));
+      return values[k] + (values[next] - values[k]) * blend;
+    } };
+  }
   // The row's hit as the panel's row shows it (shots-panel.js shownHit: the one with damage, else the last); null: none
   function shownHit(row) { return row.hits && row.hits.length ? root.BullbaShotsPanel.shownHit(row) : null; }
   function node(tag, text, cls) { var e = document.createElement(tag); if (text != null) e.textContent = text; if (cls) e.className = cls; return e; }
@@ -303,7 +358,8 @@
       if (cam.view && cam.view.enabled) c.setViewOffset(cam.view.fullWidth, cam.view.fullHeight, cam.view.offsetX, cam.view.offsetY, cam.view.width, cam.view.height); else c.clearViewOffset();
       c.updateProjectionMatrix(); c.updateMatrixWorld(true);
     }
-    var host = { renderer: o.renderer, camera: hostCamera, paintTarget: paintTarget, want: function () {} };
+    var host = { renderer: o.renderer, camera: hostCamera, paintTarget: paintTarget, want: function () {},
+      aimOrigin: function () { return S.alt && S.line && S.haveA ? S.line.a.clone().applyMatrix4(AInv) : null; } };
     function viewer() {
       if (S.viewer) return S.viewer;
       S.viewer = new root.ArmorViewer(o.view, host);
@@ -470,7 +526,7 @@
     // which first person this row gets, decided once for the whole episode: 'camera' (the replay's own), 'gun', 'place'
     function firstPerson(row) {
       if (S.line && S.line.stub) return { kind: 'stub', words: 'the view: on the line the shot came in along, ' + STUB_EYE + ' m out (where the shooter stood is not in the replay)' };
-      var end = (S.stop == null ? row.t : S.stop) + AFTER;
+      var end = row.t; // only pre-shot coverage is required: later the camera travels along the shot
       if (o.recordedOk && o.recordedOk(row.shooter, S.start, end)) return { kind: 'camera', words: 'the view: the player’s own camera from the replay' };
       var s = row.shot, sh = s && o.battle.shots ? o.battle.shots[s.index] : null, me = o.vehicle(row.shooter);
       var why = me && me.v && me.v.own ? 'the replay’s camera does not cover this episode' : 'no camera is recorded for this vehicle';
@@ -542,7 +598,7 @@
     // the distance the shot's circles are drawn at along the line (no length: Hits' 100 m)
     function lineDepth() { return S.line && S.line.len > 1 ? S.line.len : 100; }
     // whether the eye is on the shell's line now (from the shot's clock on, in first person)
-    function onLine() { return !!(S.line && S.fp && (S.line.stub || S.t >= S.line.t)); }
+    function onLine() { return !!(S.line && S.fp && (S.line.stub || S.lookLine || S.t >= S.line.t)); }
     // T2 (BACKLOG 119): the stub of a shot whose shooter the replay does not place at the shot - no tracer, the shooter out
     // of sight then (o.seen) or not named: STUB m arriving at the hit's contact along its own direction (o.contact: the
     // page's placed hit point and the server segment's direction, at the hit's clock), the eye STUB_EYE m out. null: no stub.
@@ -576,6 +632,7 @@
       if (!S.row || !S.line) return;
       if (!S.fp) { S.fp = true; S.lastPose = null; S.glide = null; S.flip = true; altStop(); pose.fov = S.saved ? S.saved.fov : o.camera.fov; }
       else S.flip = !S.flip;
+      S.manualLine = true; S.lookLine = true; S.stopAt = null;
       syncTop();
     }
     // the wheel on the line: n clicks (> 0 away from the target), the page's own zoom steps on the distance to the hit
@@ -586,24 +643,68 @@
       d = clicks > 0 ? d + Math.max(WHEEL_OUT * d, WHEEL_FLOOR) * n : d - Math.max(WHEEL_IN * d, WHEEL_FLOOR) * n;
       d = Math.max(near, Math.min(L.len, d));
       S.u = 1 - d / L.len;
+      S.endU = S.u; S.manualLine = true; S.stopAt = null;
     }
-    // the eye on the line at the clock t: the glide in the GLIDE s before the shot from where the eye was, from the shot on
-    // the line's start, then still (moved by the wheel only)
+    // Fit uses the real perspective metric, tan(FOV/2), as the client's
+    // setFovByMultiplier does. A zoom step scales that metric, not FOV degrees.
+    function prepareLens() {
+      if (S.zoomFov != null || !S.line) return;
+      var L = S.line, normal = S.saved ? S.saved.fov : o.camera.fov, tangent = Math.tan(normal * Math.PI / 360);
+      S.zoomFov = normal;
+      var points = o.targetBounds && S.target != null ? o.targetBounds(S.target, S.stop == null ? S.row.t : S.stop) : null;
+      var mat = new T.Matrix4().lookAt(L.a, lineLook(L), UP), inv = new T.Quaternion().setFromRotationMatrix(mat).invert();
+      var need = LINE_NEAR, extent = 0, usable = .72, aspect = o.camera.aspect || 1;
+      (points || []).forEach(function (p) {
+        var local = p.clone().sub(L.b).applyQuaternion(inv), along = -local.z;
+        need = Math.max(need, Math.abs(local.y) / (tangent * usable) - along, Math.abs(local.x) / (tangent * aspect * usable) - along, .5 - along);
+        var from = p.clone().sub(L.a).applyQuaternion(inv), depth = -from.z;
+        extent = depth > .5 ? Math.max(extent, Math.abs(from.y) / (depth * tangent), Math.abs(from.x) / (depth * tangent * aspect)) : Infinity;
+      });
+      S.endU = L.stub ? lineStart() : L.len > LINE_MIN ? 1 - Math.min(L.len, need) / L.len : 0;
+      var me = o.vehicle(S.row.shooter), foreign = !(me && me.v && me.v.own);
+      if (foreign && S.view && S.view.kind === 'gun' && points && extent > 0 && isFinite(extent)) {
+        var steps = [2, 4, 8, 16, 25], zoom = 1;
+        steps.forEach(function (z) { if (extent * z <= usable) zoom = z; });
+        S.zoomFov = 2 * Math.atan(tangent / zoom) * 180 / Math.PI;
+        S.view.words += ' · simulated framing (' + zoom + '×; viewer choice, not recorded sniper mode)';
+        if (zoom > 1) say(note.textContent + ' · simulated ' + zoom + '× framing', note.title + '\nOptical framing is chosen by the viewer; the replay did not record this vehicle’s camera.');
+      }
+    }
+    // Travel starts at release. Only a too-short flight's camera presentation
+    // continues on the wall clock after the episode stops; the battle stays at hit.
     function linePose(t) {
       var L = S.line;
+      prepareLens();
+      if (S.travelLast != null && t < S.travelLast - 1e-6) { S.stopAt = null; S.glide = null; }
+      S.travelLast = t;
+      var flight = Math.max(0, (S.stop == null ? L.t : S.stop) - L.t), duration = Math.max(.6, flight);
+      if (!L.stub && S.stop != null && t >= S.stop - 1e-6 && S.stopAt == null && !S.manualLine) S.stopAt = wallNow();
+      var elapsed = Math.max(0, t - L.t);
+      if (S.stopAt != null && S.stop != null && t >= S.stop - 1e-6) elapsed += Math.max(0, wallNow() - S.stopAt) / 1000;
+      var f = L.stub || S.manualLine ? 1 : Math.max(0, Math.min(1, elapsed / duration)), smooth = f * f * (3 - 2 * f);
+      if (!S.manualLine) S.u = L.stub ? lineStart() : (S.endU == null ? 0 : S.endU) * smooth;
       lineEye.copy(L.a).lerp(L.b, S.u);
       // T3 (BACKLOG 120): looking back - exactly along the line, its reverse direction: the source in the centre
       lineM.lookAt(lineEye, S.flip ? lineBack.copy(lineEye).sub(L.dir) : lineLook(L), UP); lineQ.setFromRotationMatrix(lineM);
-      if (!S.glide) { o.camera.updateMatrixWorld(); S.glide = { p: o.camera.position.clone(), q: o.camera.quaternion.clone() }; }
+      if (!S.glide) {
+        var p0 = L.a.clone(), q0 = lineQ.clone(), lens0 = S.zoomFov, V = S.view;
+        if (V && V.kind === 'camera') {
+          var recordedFov = o.recorded(S.row.shooter, L.t, p0, q0);
+          if (recordedFov != null) lens0 = recordedFov;
+        } else if (V && V.kind === 'gun' && o.gunAt(S.row.shooter, L.t, G)) {
+          p0.copy(V.eye).applyMatrix4(G);
+          var look0 = V.dir.clone().transformDirection(G).add(p0);
+          q0.setFromRotationMatrix(new T.Matrix4().lookAt(p0, look0, UP));
+        }
+        S.glide = { p: p0, q: q0, fov: lens0 };
+      }
       // the stub (BACKLOG 119): the eye stands on it from the episode's start, no glide
-      var f = L.stub || !(GLIDE > 0) ? 1 : Math.max(0, Math.min(1, (t - (L.t - GLIDE)) / GLIDE));
-      // stopped at the hit before the glide ended (a shell that flew under GLIDE s): it ends on the wall clock (U3: the eye
-      // stands at the shell's start for the alternative)
-      if (f < 1 && S.stopAt != null) f = Math.min(1, S.stopF + (wallNow() - S.stopAt) / 1000 / GLIDE);
       S.glided = f >= 1;
-      if (f < 1) { fpPos.copy(S.glide.p).lerp(lineEye, f); fpQ.copy(S.glide.q).slerp(lineQ, f); }
+      if (f < 1) { fpPos.copy(lineEye).addScaledVector(lineAt.copy(S.glide.p).sub(L.a), 1 - smooth); fpQ.copy(S.glide.q).slerp(lineQ, smooth); }
       else { fpPos.copy(lineEye); fpQ.copy(lineQ); }
       pose.position = fpPos; pose.quaternion = fpQ; pose.look = null;
+      var fromFov = S.glide.fov, normal = S.saved ? S.saved.fov : o.camera.fov;
+      pose.fov = 2 * Math.atan(Math.tan(fromFov * Math.PI / 360) * (1 - smooth) + Math.tan(normal * Math.PI / 360) * smooth) * 180 / Math.PI;
       return pose;
     }
     // this page's placeCamera asks: a first-person pose {position, quaternion | look, fov}, or {focus}, or null
@@ -612,11 +713,12 @@
       var V = S.view;
       pose.focus = null;
       S.t = t;
-      if (S.fp && S.line && (S.line.stub || t >= S.line.t - GLIDE)) return linePose(t);
+      if (S.line && t < S.line.t && S.travelLast != null && !S.lookLine) { S.glide = null; S.travelLast = null; S.stopAt = null; S.manualLine = false; }
+      if (S.fp && S.line && (S.line.stub || S.lookLine || t >= S.line.t)) return linePose(t);
       if (S.fp && V && V.kind !== 'none') {
         var ok = false, fov = S.saved ? S.saved.fov : o.camera.fov;
         if (V.kind === 'camera') { var f = o.recorded(S.row.shooter, t, fpPos, fpQ); if (f != null) { ok = true; fov = f; } }
-        else if (V.kind === 'gun') { if (o.gunAt(S.row.shooter, t, G)) { ok = true; fpPos.copy(V.eye).applyMatrix4(G); fpLook.copy(V.dir).transformDirection(G).add(fpPos); } }
+        else if (V.kind === 'gun') { if (o.gunAt(S.row.shooter, t, G)) { ok = true; fpPos.copy(V.eye).applyMatrix4(G); fpLook.copy(V.dir).transformDirection(G).add(fpPos); prepareLens(); fov = S.zoomFov; } }
         else { ok = true; fpPos.copy(V.eye); fpLook.copy(V.look); }
         // no pose this frame (the shooter not posed then): the last one held (fpPos, fpQ, fpLook keep it)
         if (!ok && !S.lastPose) return null;
@@ -633,6 +735,7 @@
     function release() {
       if (!S.fp) return;
       S.fp = false; S.lastPose = null; S.flip = false; syncTop();
+      S.stopAt = null; S.manualLine = true;
       var c = o.camera, k = S.saved;
       if (k) { c.fov = k.fov; c.zoom = k.zoom; c.updateProjectionMatrix(); }
       c.updateMatrixWorld();
@@ -657,12 +760,24 @@
       S.line = shotLine(row) || stubOf(row); S.flip = false; S.shellI = null; S.heatLine = -1;
       S.focusGroup = null; S.lastFocus = null; S.view = firstPerson(row); S.fp = true; S.lock = true; S.lastPose = null;
       S.u = lineStart(); S.glide = null; S.t = S.start; S.estimate = null; S.disc = undefined;
+      S.series = null; S.zoomFov = null; S.endU = null; S.manualLine = false; S.travelAt = null; S.travelLast = null;
+      S.lookLine = false;
       S.stopAt = null; S.glided = false; S.lineEngine = null; S.lineJob = null; S.lineFig = null;
       pose.fov = S.saved ? S.saved.fov : o.camera.fov;
       title.textContent = 'Shot view · ' + o.name(row.shooter) + ' → ' + (S.target == null ? 'no hit in the replay' : o.name(S.target)) + ' · ' + o.clock(row.t);
       say('Preparing the shot view… · ' + S.view.words); bar.hidden = false; shown(unpin, false); syncTop(); paintShells();
       placeholder(cellA, 'Hit line', 'preparing…', HIT_TIP); fillCircle(cellA, null); placeholder(cellB, 'Pinned point', 'preparing…', PIN_TIP); fillCircle(cellB, null);
       o.play(false); o.seek(S.start);
+      var shooter = o.vehicle(row.shooter);
+      if (o.aimInputs && !(shooter && shooter.v && shooter.v.own)) o.aimInputs().then(function (inputs) {
+        if (tok !== S.token || !S.line || S.line.stub) return;
+        var v = (o.battle.vehicles || []).filter(function (x) { return x.id === row.shooter; })[0];
+        if (!v || v.own) return;
+        var shots = o.battle.shots.filter(function (x) { return x[1] === row.shooter && !x[2]; }).map(function (x) { return x[0]; });
+        S.series = sizeSeries(v, inputs[v.compDescr], shots, row.t);
+        if (!S.estimate || S.estimate.why) S.estimate = gunEstimate();
+        if (S.series) say(note.textContent + ' · estimated aiming size over time (typical unknown crew/equipment)', note.title + '\nDashed circle: size reconstructed over time; no mouse position is inferred.');
+      }).catch(function () {});
       var sight = o.sight ? o.sight().catch(function () { return null; }) : Promise.resolve(null);
       return Promise.all([hitsScene(row, h), sight]).then(function (both) {
         var got = both[0];
@@ -910,11 +1025,20 @@
     // shot; in the gun's view the axis is carried in the gun's frame of the shot, so it moves with the gun as drawn
     function estimateOf(context) {
       var tr = context && context.tracer, b = tr && !tr.own && tr.replayAimEstimate, c = b && b.circle;
-      if (!c || !Array.isArray(c.vector) || !(c.dispersionAngle > 0) || !Array.isArray(tr.origin)) return { why: b && (b.reason || b.reasonKey) || 'Bullba Hits has no estimate of this shot' };
+      if (!c || !Array.isArray(c.vector) || !(c.dispersionAngle > 0) || !Array.isArray(tr.origin)) return gunEstimate() || { why: b && (b.reason || b.reasonKey) || 'Bullba Hits has no estimate of this shot' };
       var e = { o: new T.Vector3(tr.origin[0], tr.origin[1], -tr.origin[2]), n: new T.Vector3(c.vector[0], c.vector[1], -c.vector[2]).normalize(), angle: c.dispersionAngle,
         D: lineDepth(), nG: null, oG: null };
       var M2 = new T.Matrix4();
       if (S.view && S.view.kind === 'gun' && o.gunAt(S.row.shooter, S.row.t, M2)) { M2.invert(); e.nG = e.n.clone().transformDirection(M2); e.oG = e.o.clone().applyMatrix4(M2); }
+      return e;
+    }
+    function gunEstimate() {
+      if (!S.series || !S.line || S.line.stub) return null;
+      var e = { o: S.line.a.clone(), n: S.line.dir.clone(), angle: S.series.release, D: lineDepth(), sizeOnly: true, nG: null, oG: null };
+      if (S.view && S.view.kind === 'gun' && o.gunAt(S.row.shooter, S.row.t, G)) {
+        e.n.set(0, 0, 1).transformDirection(G);
+        GI.copy(G).invert(); e.nG = e.n.clone().transformDirection(GI); e.oG = e.o.clone().applyMatrix4(GI);
+      }
       return e;
     }
     // the bar's words for the circles while aiming (what each circle is, plainly)
@@ -929,7 +1053,7 @@
           else out.push('While aiming - client circle: the reticle the replay holds (no server circle is recorded at this shot)');
           if (S.line) out.push('the circle of the shot’s moment (thick, dashed): appears at the shot - the server update the shell left from');
         }
-      } else if (S.estimate && !S.estimate.why) out.push('While aiming - aim circle: estimate rebuilt from the replay (dashed), not a recorded one; its size at the shot, centred on the gun as drawn');
+      } else if (S.estimate && !S.estimate.why) out.push('Dashed circle: estimated dispersion, not recorded aim or mouse position; ' + (S.series ? 'size reconstructed over time' : 'release size only: no time series available') + (S.estimate.sizeOnly ? '; centre follows the drawn gun (no Hits direction estimate)' : '; Hits release estimate carried with the gun'));
       else out.push('No aim circle while aiming: ' + (S.estimate && S.estimate.why ? S.estimate.why : 'Bullba Hits has no view of this shot'));
       out.push(sightImg.arcade ? 'Sight: the game’s own (centre mark and gun tag read from your client, the default types)' :
         'Sight: the page’s plain cross - the game’s sight could not be read (' + (sightWhy || 'not read yet') + ')');
@@ -990,11 +1114,25 @@
       g.globalAlpha = alpha; g.strokeStyle = colour; g.lineWidth = width * DPR; g.setLineDash(dash);
       g.beginPath(); g.arc(x, y, r, 0, 2 * Math.PI); g.stroke();
     }
+    var circlePoint = new T.Vector3(), circleRight = new T.Vector3(), circleUp = new T.Vector3(), circleAxis = new T.Vector3();
+    function worldRing(center, right, up, radius, colour, dash) {
+      if (!(radius > 0)) return;
+      var g = hud2d, connected = false;
+      g.globalAlpha = .9; g.strokeStyle = colour; g.lineWidth = 1.5 * DPR; g.setLineDash(dash); g.beginPath();
+      for (var i = 0; i <= 64; i++) {
+        var a = i * Math.PI / 32;
+        circlePoint.copy(center).addScaledVector(right, Math.cos(a) * radius).addScaledVector(up, Math.sin(a) * radius);
+        if (!toScreen(circlePoint)) { connected = false; continue; }
+        if (connected) g.lineTo(scr.x, scr.y); else g.moveTo(scr.x, scr.y);
+        connected = true;
+      }
+      g.stroke();
+    }
     function mark(x, y, im, which) {
       var g = hud2d;
       g.globalAlpha = 1; g.setLineDash(DASH_NONE);
       if (im && im[which]) { var m = im[which]; g.drawImage(m.c, x + m.x * DPR, y + m.y * DPR, m.w * DPR, m.h * DPR); return; }
-      if (which !== 'centre') return;
+      if (which !== 'centre') { g.strokeStyle = AIM_COLOUR; g.lineWidth = DPR; g.beginPath(); g.arc(x, y, 3 * DPR, 0, Math.PI * 2); g.stroke(); return; }
       // the page's plain thin cross (no sight file)
       var a = 9 * DPR, b = 3 * DPR;
       g.strokeStyle = '#ffffff'; g.lineWidth = DPR;
@@ -1048,26 +1186,41 @@
         var E = S.estimate;
         if (!flying && E.nG && S.view.kind === 'gun') { Q3.copy(E.nG).transformDirection(G); R3.copy(E.oG).applyMatrix4(G); Q3.multiplyScalar(E.D).add(R3); }
         else Q3.copy(E.n).multiplyScalar(E.D).add(E.o);
-        if (toScreen(Q3)) { tx = scr.x; ty = scr.y; tag = true; if (!hitsRings) ring(scr.x, scr.y, Math.tan(E.angle) * focal, AIM_COLOUR, 1.5, 0.8, DASH_ESTIMATE); }
+        if (toScreen(Q3)) {
+          tx = scr.x; ty = scr.y; tag = true;
+          var a = E.angle, dynamic = !flying && S.series ? S.series.at(S.t) : null;
+          if (dynamic != null && S.series.release > 0) a *= dynamic / S.series.release;
+          // A gap is not a frozen reconstruction; only a release estimate may remain.
+          if (!hitsRings && (flying || !S.series || dynamic != null)) {
+            circleAxis.copy(!flying && E.nG ? E.nG : E.n);
+            if (!flying && E.nG) circleAxis.transformDirection(G);
+            circleRight.crossVectors(circleAxis, UP); if (circleRight.lengthSq() < 1e-9) circleRight.set(1, 0, 0); else circleRight.normalize();
+            circleUp.crossVectors(circleRight, circleAxis).normalize();
+            worldRing(Q3, circleRight, circleUp, a * E.D, AIM_COLOUR, DASH_ESTIMATE);
+          }
+        }
       }
       // U3: the alternative's ring at its centre (the cursor's point, or the pinned one; the viewer's frame: A puts it into
       // the scene), its constant angle; the sight follows it - the centre mark and the gun tag both there
       var X = S.alt, vw = S.viewer;
       if (X && X.on && vw && S.haveA && vw.liveAim) {
         Q3.copy(vw.liveAim.center).applyMatrix4(A);
-        if (toScreen(Q3)) { cx = tx = scr.x; cy = ty = scr.y; tag = true; ring(scr.x, scr.y, X.r100 / 100 * focal, ALT_COLOUR, 1.5, 0.95, DASH_NONE); }
+        if (toScreen(Q3)) {
+          cx = tx = scr.x; cy = ty = scr.y; tag = true;
+          circleRight.copy(vw.liveAim.right).transformDirection(A); circleUp.copy(vw.liveAim.up).transformDirection(A);
+          worldRing(Q3, circleRight, circleUp, vw.liveAim.radius, ALT_COLOUR, DASH_NONE);
+        }
       }
-      mark(cx, cy, im, 'centre');
+      if (own || (X && X.on)) mark(cx, cy, im, 'centre');
       if (tag) mark(tx, ty, im, 'tag');
       hud2d.globalAlpha = 1;
     }
     // ---- WHERE ELSE COULD THE SHOT GO (U3; a plain screen tool since 1.19) ----------------------------------------------
     function aimOn() { return !!(o.aimToggle && o.aimToggle.checked); }
-    // whether it may run this frame: the option on, stopped at the hit, the eye standing at the shell's start (on the line,
-    // the wheel not moved, the glide done), Hits' scene and its shell there
+    // The option on, stopped at the hit and camera travel complete, Hits' scene and shell there.
     function altOk() {
       var v = S.viewer;
-      return !!(aimOn() && S.row && S.mode === 'hits' && v && v.engine && v.shell && S.haveA && S.fp && S.line && !S.line.stub && !S.flip && onLine() && S.u === 0 && S.glided &&
+      return !!(aimOn() && S.row && S.mode === 'hits' && v && v.engine && v.shell && S.haveA && S.fp && S.line && !S.line.stub && !S.flip && onLine() && S.glided &&
         !S.armed && S.stop != null && Math.abs(S.t - S.stop) < 1e-6);
     }
     // the ring's size: the shot's own circle at the shot (the recorded ring, else Hits' estimate), as an angle - radius100,
@@ -1081,7 +1234,7 @@
       var est = !!v.estimateAim && !v.savedAim;
       X.r100 = Math.min(50, ring.radius / range * 100); X.on = true; X.kind = est ? 'estimate' : 'live';
       X.tip = '\n• The cyan ring: as wide as this shot’s own circle at the shot (' + (est ? 'Bullba Hits’ estimate' : 'recorded') + '), kept so' +
-        '\n• A screen tool: no turret turn, gun limits or movement';
+        '\n• A screen tool: no turret turn, gun limits or movement; rays still leave the shot’s real origin, wherever the camera stands';
       canvas.style.cursor = 'none';   // the game's sight stands at the cursor (hud())
       v.setAimOffset(null);
       v.aimCursorPoint = ring.center.clone(); v.liveAimPoint = ring.center.clone(); v.aimYaw = 0;
@@ -1127,8 +1280,11 @@
     function episode(keep) {
       if (!S.row) return;
       altStop(); S.stopAt = null; S.glided = false;
+      if (keep && S.fp && S.line && S.t >= S.line.t && S.manualLine) S.endU = S.u;
+      S.manualLine = false; S.travelLast = null;
+      if (keep && S.lookLine) S.manualLine = true;
       o.seek(S.start); S.armed = true;
-      if (!keep) { S.fp = true; S.lock = true; S.lastPose = null; S.u = lineStart(); S.flip = false; syncTop(); }
+      if (!keep) { S.fp = true; S.lock = true; S.lastPose = null; S.u = lineStart(); S.flip = false; S.lookLine = false; syncTop(); }
       if (S.viewer && S.mode === 'hits') { S.viewer.holdShot(true); S.held = true; }
       S.glide = null;
       o.speed(SPEED); o.play(true);
@@ -1139,7 +1295,7 @@
       if (!S.row || S.stop == null) return t1;
       if (S.armed && t1 >= S.stop && t0 <= S.stop) {
         S.armed = false; o.play(false);
-        S.stopAt = wallNow(); S.stopF = S.line && GLIDE > 0 ? Math.max(0, Math.min(1, (S.stop - (S.line.t - GLIDE)) / GLIDE)) : 1;
+        S.stopAt = wallNow();
         return S.stop;
       }
       if (!S.armed && t1 >= S.stop + AFTER) close(false);
