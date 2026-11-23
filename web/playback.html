@@ -133,9 +133,14 @@
 <div id="meter" class="panel">
   <div id="topline">
     <span class="tl-group tl-battle">
-    <button id="back" title="Bullba Hits&#10;Opens the recorded hits; in the game in a window of their own, this one stays.">&#9664; Hits</button>
-    <label class="give" title="Battle&#10;Opens another battle in the 3D replay: date and start time, map, vehicle, player.&#10;- the replay files of the game's replays folder, any player's, newest first; ★ kept forever&#10;- then the battles of Bullba Hits that have no replay file&#10;- ⚠ a special battle mode (Onslaught, Frontline, Steel Hunter, events): the picture may be wrong for it&#10;- the first time, the game prepares the battle and its map: a few seconds&#10;- the star beside it keeps the open battle's replay forever; Settings > Replays: the replay limit">battle <select id="sel-battle" style="max-width:300px"></select></label>
+    <button id="back" aria-label="Open Bullba Hits" class="mod-nav" title="Bullba Hits&#10;Opens the recorded hits; in the game in a window of their own, this one stays."><img src="menu-icon.png" alt="" width="28" height="28"></button>
+    <div class="heading-pick" id="replay-picker">
+      <button id="replay-pick" class="heading-tile" type="button" aria-haspopup="listbox" aria-controls="replay-menu" aria-expanded="false" title="Battle list&#10;Opens replay files, newest first, followed by Hits battles.&#10;• Stars manage replay retention here in Replays&#10;• Event gameplay asks for confirmation before opening"><span class="heading-title" id="replay-title">Choose a replay</span><span class="heading-caret" aria-hidden="true">▾</span></button>
+      <div id="replay-menu" class="battle-list" role="listbox" aria-label="Battles" hidden></div>
+      <select id="sel-battle" hidden aria-hidden="true" tabindex="-1"></select>
+    </div>
     <button id="keep-replay" type="button" aria-pressed="false" disabled title="Keep forever">&#9734;</button>
+    <button type="button" class="help-dot" data-help-for="back replay-pick keep-replay" aria-label="Help with battle links and replay retention">?</button>
     </span>
     <span class="tl-sep" aria-hidden="true"></span>
     <span class="tl-group tl-view">
@@ -203,6 +208,8 @@
   <div style="margin-top:2px"><b>Replays</b> <label id="replay-limit-label" title="Replay limit"><input type="checkbox" id="replay-limit-on" data-mod-setting aria-label="Replay limit on"> replay limit, keep the last <input type="number" id="replay-limit" data-mod-setting min="1" max="100" step="1" value="100" style="width:48px" aria-label="Replays kept"></label></div>
   <div style="margin-top:2px"><label title="Cost readout&#10;Shows what drawing the current view costs, under the top line.&#10;- fps and frame interval: how often frames come (capped by the display or the game)&#10;- page CPU: the page's own time to step and draw one frame&#10;- GPU: the graphics card's time for one frame, where the browser has the timer; otherwise it says not available&#10;- triangles, draw calls, shadow maps, ground textures: what the view sends to the graphics card and the memory it holds"><input type="checkbox" id="sw-cost"> cost readout</label></div>
   <div id="help">drag: orbit; right or Shift + drag: pan; wheel: zoom; WASD or arrows: move; R/F: up/down; space: play</div>
+  <label title="Impact mark color&#10;Chooses the recorded hit cross color; shared with Hits where the browser shares storage.&#10;Pinned points and red semantic marks keep their own colors.">Impact mark color <select id="impact-color" data-shared-setting aria-label="Impact mark color"><option value="#258cff" selected>Bright blue</option><option value="#79cfff">Light blue</option><option value="#ff5ad6">Magenta</option></select></label>
+  <label title="Impact mark opacity&#10;Sets how strongly the thin open-centre cross marks a recorded impact; 100 % is fully opaque.&#10;Tracer, aim circles and pointer are not affected.">Impact mark opacity <input type="range" id="impact-opacity" data-shared-setting min="10" max="100" value="100" aria-label="Impact mark opacity" style="width:70px;vertical-align:middle"> <output id="impact-opacity-value">100 %</output></label>
   <div class="settings-actions"><button type="button" id="reset-settings" title="All settings here back to default">Reset to defaults</button></div>
   </div>
 </div>
@@ -213,7 +220,7 @@
 <div id="special-warn" class="panel" role="dialog" aria-labelledby="special-head" hidden>
   <div id="special-head">&#9888; Special battle mode: <b id="special-mode"></b></div>
   <p>The viewer draws the map's standard picture, its bases and the vehicles as in a standard battle. In this mode they may differ, so the picture may be wrong. The map of a special mode may also take longer to open and more disk space.</p>
-  <div class="special-actions"><label title="Don't show again&#10;No warning on opening a special mode from now on.&#10;- Settings > warn on special modes turns it back on"><input type="checkbox" id="special-again"> Don't show again</label> <button type="button" id="special-ok">OK</button></div>
+  <div class="special-actions"><label title="Don't show again&#10;No warning on opening a special mode from now on.&#10;- Settings > warn on special modes turns it back on"><input type="checkbox" id="special-again"> Don't show again</label> <button type="button" id="special-cancel">Cancel</button> <button type="button" id="special-ok">Open replay</button></div>
 </div>
 <div id="list-own" class="tlist own"></div>
 <div id="list-enemy" class="tlist enemy"></div>
@@ -235,6 +242,8 @@
 <script src="host.js"></script>
 <script src="settings-store.js"></script>
 <script src="replay-limit.js"></script>
+<script src="replay-mode.js"></script>
+<script src="shot-route.js"></script>
 <script src="playback/mapbuild.js"></script>
 <script src="playback/mapbuild9.js"></script>
 <script src="playback/mapbuild-page.js"></script>
@@ -252,5 +261,6 @@
 <script src="playback/shots-panel.js"></script>
 <script src="playback/shot-view.js"></script>
 <script src="playback/playback.js"></script>
+<script src="tooltips.js"></script>
 </body>
 </html>

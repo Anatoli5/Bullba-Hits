@@ -258,6 +258,7 @@ StubViewer.prototype.setShotRingLook = function (look) { this.ringLook = look; }
 // The real setShotDisc hands the figure to the circle on screen: the disc while it is on, the solid ring otherwise.
 StubViewer.prototype.setShotDisc = function (on, opacity) { this.discOn = !!on; this.discOpacity = opacity; if (this.discAim) this.savedAim = on ? this.discAim : this.ringAim; };
 StubViewer.prototype.setImpactOpacity = function (v) { this.impact = v; };
+StubViewer.prototype.setImpactColor = function (v) { this.impactColor = v; };
 // Soft lighting and how deep it shades (user, 22.09): the page keeps both and hands them to every new surface.
 StubViewer.prototype.setLighting = function (v) { this.lighting = !!v; };
 StubViewer.prototype.setLightStrength = function (v) { this.lightStrength = v; };
@@ -452,6 +453,7 @@ global.BullbaSettings = window.BullbaSettings;
 // replay viewer's shots panel), loaded before app.js as the page loads it.
 try { require(path + 'hit-rows.js'); } catch (e) { if (e.code !== 'MODULE_NOT_FOUND') throw e; }
 global.BullbaRows = window.BullbaRows;
+global.BullbaShotRoute = require(path + 'shot-route.js');
 // The shell of a shot at its range (19.11.2026: shellAt and its chooser moved out of app.js into web/shot-shell.js, shared
 // with the replay viewer's shot view), loaded before app.js as the page loads it.
 try { require(path + 'shot-shell.js'); } catch (e) { if (e.code !== 'MODULE_NOT_FOUND') throw e; }
@@ -649,10 +651,10 @@ ok('Settings sits in the header row, after the Statistics log status',
 ok('and the heading layout no longer measures it',
    fs.readFileSync(path + 'app.js', 'utf8').indexOf(".scene-heading .settings-menu") < 0);
 // The impact cross has an opacity of its own in Settings -> Scene (user, 20.09), 10..100 %; the default is
-// 90 since 22.09 - at 50 the cross was hard to see, and a store still holding that old default is migrated.
-ok('the impact-mark slider is in the settings menu, 10-100 %, default 90',
-   /id="impact-opacity" min="10" max="100" value="90"/.test(pageSrc)
-   && /<output id="impact-opacity-value">90 %<\/output>/.test(pageSrc)
+// 100 since 21.11; the shared preference imports an older inherited 90 once.
+ok('the impact-mark slider is in the settings menu, 10-100 %, default 100',
+   /id="impact-opacity" data-shared-setting min="10" max="100" value="100"/.test(pageSrc)
+   && /<output id="impact-opacity-value">100 %<\/output>/.test(pageSrc)
    && pageSrc.indexOf('Impact mark opacity') > 0);
 // S5 (22.09): the Circle figures are tiles of their own, and the word "Circle" is the tile's HEADING - the
 // value element under it holds nothing but the figure. Read off the markup: nothing here parses index.html.
@@ -667,10 +669,10 @@ ok('the circle figures stand on their panel\'s chance row at its right end (the 
    && /\.viewport-tiles\{[^}]*grid-template-columns:minmax\(0,320px\) 1fr;/.test(fs.readFileSync(path + 'style.css', 'utf8')));
 const impact = document.getElementById('impact-opacity');
 impact.type = 'range'; impact.min = '10'; impact.max = '100'; impact.step = '1';   // the page's own control is a range
-impact.value = '90';
+impact.value = '100';
 impact.oninput.call(impact);
 ok('and it reaches the viewer as a fraction and prints its own per cent',
-   viewerInstance.impact === 0.9 && document.getElementById('impact-opacity-value').textContent === '90 %',
+   viewerInstance.impact === 1 && document.getElementById('impact-opacity-value').textContent === '100 %',
    '(' + viewerInstance.impact + ')');
 impact.value = '20';
 impact.oninput.call(impact);
@@ -12101,14 +12103,7 @@ function soundChecks() {
   });
 }
 
-// ================= THE REPLAY LIMIT (BACKLOG 107, 18.11.2026) =================
-// A recording mode beside the game's "last battle" and "all": on, the mod keeps the replays of the last N battles in the
-// game's replays folder under its own names (bh_...) and says so in data/replays.js. A battle's row shows its replay - ☆
-// one of the last N, ★ kept forever (20.11: the bh_ mark removed), ∅ removed by the limit, nothing without one - and its 3D ▶ is
-// dimmed with the reason when the replay is gone. ☆ / ★ asks the mod (replayKeep) and shows the change at once, without
-// opening the battle. Settings -> Replay limit is the MOD's mode (a switch, ON by default since 20.11, and N): shown from its file,
-// sent when changed (N clamped to 1 … 100), never one of the page's remembered settings; outside the game it is shown
-// only and nothing is sent.
+// Hits reads availability only; retention controls belong exclusively to Replays (22.11).
 function replayFolder() {
   if (RELOAD) return Promise.resolve();
   const $ = function (id) { return document.getElementById(id); };
@@ -12133,80 +12128,17 @@ function replayFolder() {
     const r = row(id);
     return r ? r.children.filter(function (c) { return String(c.className).split(' ').indexOf(cls) >= 0; })[0] : null;
   };
-  const mark = function (id) { const t = part(id, 'battle-option-keep'); return t ? t.textContent + '/' + t.getAttribute('data-state') : 'no tile'; };
   const dim = function (id) { const t = part(id, 'battle-option-replay'); return !!t && String(t.className).indexOf('no-replay') >= 0; };
   const poll = function () { tick(5.1); return settle(30); };
-  const click = function (id) { let stopped = false; part(id, 'battle-option-keep').onclick({stopPropagation: function () { stopped = true; }}); return stopped; };
   sidebarModes[0].onclick();
   return settle(20).then(poll).then(poll).then(function () {
-    ok('replays: the rows show each battle\'s replay - ☆ one of the last N, ★ kept, ∅ removed, nothing for an older stream or none',
-       mark('k1') === '☆/rolling' && mark('k2') === '★/kept' && mark('k3') === '∅/removed' && mark('k5') === '/stream' && mark('k4') === '/none',
-       ['k1', 'k2', 'k3', 'k4', 'k5'].map(mark).join(' '));
-    ok('replays: 3D ▶ dimmed where the replay is gone (removed, none), with the reason in its words; an older kept stream plays',
+    ok('replays: Hits has only links, no retention stars or Settings editor',
+       !part('k1','battle-option-keep') && !$('replay-limit') && !$('replay-limit-on'));
+    ok('replays: the mod icon link is dimmed only when the replay is unavailable',
        dim('k3') && dim('k4') && !dim('k1') && !dim('k2') && !dim('k5')
-       && part('k3', 'battle-option-replay').title.indexOf('• Its replay was removed: the replay limit keeps the last 30') > 0
-       && part('k4', 'battle-option-replay').title.indexOf('• The replay limit holds no replay of this battle') > 0);
-    ok('replays: the ☆ says what it does in the page\'s tooltip form (heading, one sentence, points)',
-       part('k1', 'battle-option-keep').title.indexOf('Keep this replay forever\nRemoves the bh_ mark from this battle’s replay file') === 0
-       && part('k2', 'battle-option-keep').title.indexOf('Replay kept forever\n') === 0, part('k1', 'battle-option-keep').title);
-    ok('replays: Settings -> Replay limit shows the mod\'s mode (on, 30), live in the game', $('replay-limit').value === '30' && $('replay-limit').disabled === false
-       && $('replay-limit-on').checked === true && $('replay-limit-on').disabled === false
-       && $('replay-limit-label').title.indexOf('Replay limit\nKeeps the replays of your last battles') === 0 && $('replay-limit-label').title.indexOf('• Now: on - the mod keeps the replays of your last 30') > 0,
-       $('replay-limit').value + ' ' + $('replay-limit-label').title);
-    const picked = $('battles').value;
-    const stopped = click('k1');
-    ok('replays: ☆ asks the mod to keep the replay forever, shows ★ at once and does not open the battle',
-       sent.length === 1 && sent[0].action === 'replayKeep' && sent[0].battleId === 'k1' && sent[0].keep === true
-       && mark('k1') === '★/kept' && stopped && $('battles').value === picked, JSON.stringify(sent) + ' ' + mark('k1'));
-    view.battles.k1 = 'kept';
-    return poll();
-  }).then(function () {
-    ok('replays: the mod\'s file agrees - still ★', mark('k1') === '★/kept');
-    click('k2');
-    ok('replays: ★ puts the replay back under the limit (keep false), ☆ at once',
-       sent.length === 2 && sent[1].action === 'replayKeep' && sent[1].battleId === 'k2' && sent[1].keep === false && mark('k2') === '☆/rolling',
-       JSON.stringify(sent));
-    const ownBefore = typeof part('k3', 'battle-option-keep').onclick;
-    ok('replays: ∅ (removed) does nothing on a click', ownBefore !== 'function');
-    const el = $('replay-limit');
-    el.value = '120'; el.onchange();
-    ok('replays: N 120 is clamped to 100 and sent to the mod with the mode', sent.length === 3 && sent[2].action === 'replayLimit' && sent[2].limit === 100 && sent[2].on === true && el.value === '100',
-       JSON.stringify(sent[2]) + ' ' + el.value);
-    el.value = '0'; el.onchange();
-    ok('replays: 0 is clamped to 1', sent.length === 4 && sent[3].limit === 1 && el.value === '1', JSON.stringify(sent[3]));
-    el.value = 'x'; el.onchange();
-    ok('replays: a value that is not a number goes back to the number in force, nothing sent', sent.length === 4 && el.value === '1', el.value);
-    const sw = $('replay-limit-on');
-    sw.checked = false; sw.onchange();
-    ok('replays: the switch off - sent (on false, N kept), N greyed, the words say the game\'s own setting rules',
-       sent.length === 5 && sent[4].action === 'replayLimit' && sent[4].on === false && sent[4].limit === 1 && el.disabled === true
-       && $('replay-limit-label').title.indexOf('• Now: off - the mod saves and removes no replays') > 0, JSON.stringify(sent[4]));
-    sw.checked = true; sw.onchange();
-    ok('replays: and on again', sent.length === 6 && sent[5].on === true && el.disabled === false, JSON.stringify(sent[5]));
-    runNamed('saveNow');
-    const box = storage['bullba-settings'] ? JSON.parse(storage['bullba-settings']) : {values: {}};
-    ok('replays: the replay limit is not one of the page\'s remembered settings (the mod owns it)', !box.values || (box.values['replay-limit'] === undefined && box.values['replay-limit-on'] === undefined));
-    view.battles.k2 = 'rolling'; view.limit = 1;
-    H.canSend = function () { return false; }; H.game = false;
-    view.removed = ['k3', 'k4'];
-    return poll();
-  }).then(function () {
-    const was = sent.length;
-    click('k2');
-    const el = $('replay-limit');
-    el.value = '20'; el.onchange();
-    ok('replays: outside the game - shown only, nothing sent, the limit control disabled and saying so',
-       sent.length === was && mark('k2') === '☆/rolling' && el.disabled === true && el.value === '1' && $('replay-limit-on').disabled === true
-       && $('replay-limit-label').title.indexOf('• Here: shown only; set it in the game') > 0
-       && part('k2', 'battle-option-keep').title.indexOf('• Here: shown only; it works in the game') > 0,
-       sent.length + ' ' + el.value + ' ' + el.disabled);
-    ok('replays: the file is read with the poll', reads >= 3, String(reads));
-    // 20.11 (the one store): the game set to keep all replays - the limit inactive, a battle's replay the game's own file
-    const RL = global.BullbaReplayLimit;
-    ok('replays: under the game\'s "all" the limit says it is inactive; a battle tied to the game\'s file is "Kept by the game"',
-       RL.join(RL.limitTip({enabled: true, limit: 30, gameSetting: 2}, true), '• ').indexOf('• Now: on, but inactive - the game keeps all replays itself') > 0
-       && RL.kind({battles: {g1: 'game'}}, {}, 'g1') === 'game' && RL.keepTip('game', 30, true)[0] === 'Kept by the game'
-       && RL.offTip('game', 30, true)[0] === 'Kept by the game');
+       && part('k1','battle-option-replay').querySelector('img.mod-icon'));
+    ok('replays: Hits sends no retention commands and still polls availability',
+       !sent.some(function(p){return p.action==='replayKeep'||p.action==='replayLimit';}) && reads>=3);
   }).then(function () {
     D.index = keep.index; D.replays = keep.replays; D.battle = keep.battle;
     H.game = keepHost.game; H.canSend = keepHost.canSend; H.send = keepHost.send;

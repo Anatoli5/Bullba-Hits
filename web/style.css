@@ -64,32 +64,6 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 /* The heading tile IS the battle picker (19.09): the map name in the box the <select> used to fill, the
    player's vehicle tile beside it, a caret at the end. In the Vehicles mode the same tile carries the vehicle
    name with nothing to open, so it is disabled and loses its caret and its dashed underline. */
-.heading-pick{position:relative;display:flex;min-width:0;max-width:100%}
-/* Same frame as a clickable scene tile (.viewport-tile): the user's rule is one look for everything clickable (20.09). */
-.heading-tile{display:flex;align-items:center;gap:14px;min-width:0;max-width:100%;margin:0;padding:4px 12px 4px 14px;border:1px solid rgba(157,174,191,.55);border-radius:6px;background:rgba(23,35,48,.15);color:inherit;font:inherit;text-align:left;min-height:0;cursor:pointer}
-.heading-tile:hover{border-color:#c9d3dd;background:rgba(38,55,73,.45)}
-.heading-tile:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
-.heading-tile:disabled{opacity:1;cursor:default;border:0;padding-left:0;padding-right:0;background:transparent}
-.heading-tile:disabled .heading-caret{display:none}
-.heading-title{flex:0 1 auto;min-width:0;max-width:min(260px,100%);font-size:21px;font-weight:500;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.heading-caret{flex:0 0 auto;font-size:12px;line-height:1;color:var(--muted)}
-/* The list under the tile: map, the player's vehicle tile, and the start day and time kept secondary. */
-.battle-list{position:absolute;left:0;top:calc(100% + 8px);z-index:14;min-width:100%;width:max-content;max-width:min(430px,calc(100vw - 40px));max-height:min(60vh,420px);overflow:auto;display:flex;flex-direction:column;gap:3px;padding:12px;border-radius:8px;background:#15212e;box-shadow:0 15px 50px #0009}
-.battle-list[hidden]{display:none}
-.battle-option{display:grid;grid-template-columns:minmax(0,1fr) auto auto auto auto;align-items:center;gap:14px;width:100%;text-align:left;min-height:48px;padding:3px 10px;font-size:15px;border:1px solid #293849;border-radius:4px;background:#172330}
-.battle-option[aria-selected=true]{border-color:var(--gold);background:#302d25;box-shadow:inset 3px 0 var(--gold)}
-.battle-option-map{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.battle-option-vehicle{display:flex;align-items:center;min-width:0}
-.battle-option-vehicle .vehicle-tile{flex:0 0 auto;width:168px;padding-right:40px}
-.battle-option-when{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
-/* BACKLOG 104: the 3D replay player of the row's battle (web/playback.html) */
-.battle-option-replay{font-size:12px;padding:3px 8px;border:1px solid #3a4a5c;border-radius:3px;color:var(--gold);white-space:nowrap}
-.battle-option-replay:hover{background:#243446}
-/* BACKLOG 107: a battle whose replay is no longer kept; its keep mark (☆ / ★, ∅ when the limit removed it) */
-.battle-option-replay.no-replay{opacity:.45}
-.battle-option-keep{min-width:1.2em;font-size:17px;line-height:1;text-align:center;color:var(--gold)}
-.battle-option-keep[data-state=removed]{color:var(--muted);font-size:14px}
-
 /* Scene overlays: the vehicle whose collision model is drawn stays centred over the model, the shooter
    under it. The caption sits to the LEFT of the vehicle tile (a label, not a header). Backdrops are almost
    transparent - just enough not to float loose over the model. Informational blocks carry no border; the

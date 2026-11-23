@@ -13,7 +13,7 @@ try:
 except ImportError:
     import queue
 
-VERSION = '1.27'
+VERSION = '1.28'
 VIEWER_PATH = os.path.join('mods', 'configs', 'local.armor_inspector', 'Viewer.html')
 # The 3D replay viewer's own entry (19.11, the user's 'one mod, two entries'): its page, its mods-list button and icon.
 PLAYBACK_PATH = os.path.join('mods', 'configs', 'local.armor_inspector', 'web', 'playback.html')
@@ -1950,7 +1950,7 @@ def open_replays(battle_id=None, shot=None):
     window (presentation.open_viewer_view)."""
     try:
         from local_armor_inspector import presentation
-        if presentation.fullscreen_open():
+        if battle_id is None and presentation.fullscreen_open():
             LOG.info('%s full screen already open; left as it is', REPLAYS_NAME)
             return
         if battle_id is None and presentation.window_open(presentation.REPLAYS):

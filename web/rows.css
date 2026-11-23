@@ -97,4 +97,7 @@
   font-size:11px;line-height:16px;white-space:nowrap;text-align:center;background:#172330;border:1px solid #35475a;border-radius:3px;color:var(--gold);cursor:pointer}
 .sp-open:hover{background:#263749}
 .sp-open-icon{width:11px;height:11px;flex:none}
+.sp-open-icon.mod-icon{width:28px;height:28px;object-fit:contain}
+.sp-open.mod-link{flex-basis:36px;width:36px}
 .hit>.sp-open{margin:0 0 0 auto;align-self:stretch;box-sizing:border-box}
+.hit>.sp-open.mod-link{flex-basis:54px;width:54px}

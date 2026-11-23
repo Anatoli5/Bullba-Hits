@@ -2,6 +2,23 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.1.1 from 1.05 on, 2.4.1.0 from 1.02 on, 2.4.0.2 from 0.9.3 on, 2.4.0.1 #950 from 0.7.6, 2.4.0.0 #945 before.
 
+## 1.28 (2026-11-22)
+
+- Hits and Replays use their mod icons for cross-links. The selected Hits action opens the exact recorded shot episode; ambiguous links never select a neighbouring shot.
+- Replay retention controls live only in Replays, whose battle picker now shares the Hits menu and provides per-battle stars. Saved retention settings are unchanged.
+
+- Replay warnings no longer revive stale Onslaught, ordinary tournament or clan-battle labels from older index/prepared data. Current event-mode classification is shipped with the viewer, including when old files have not been regenerated.
+
+- Replay vehicles follow recorded module upgrades and respawned vehicle types through playback and rewind; hit geometry and historical shot labels use the configuration at that moment.
+- Shot episodes follow the recorded velocity/gravity trajectory, with explicit endpoint alignment and simulated elevated artillery framing when no camera is recorded. Buildings are no longer hidden along a straight shot chord.
+- Special-mode replays require confirmation before opening; Cancel leaves the current battle or replay list available. “Don't show again” is saved only on acceptance.
+
+- Impact marks: bright blue, light blue and magenta choices plus opacity are available in both settings panels. The cross defaults to fully opaque; inherited 90% settings move to 100% once, while later manual choices are kept.
+
+- Shot view: every gun marker uses the stock sniper chevron regardless of camera zoom; a thin gray outlined chevron is used when that sprite is unavailable. The separate mouse marker keeps its normal behavior.
+
+- Shot view: a confirmed hit has the same thin open-centre cross as Hits, placed at the drawn shot line's endpoint after impact. Recorded impact crosses use a deeper blue in both views.
+
 ## 1.27 (2026-11-21)
 
 - Replay shot view: other shooters' estimated dispersion changes while aiming, with simulated optical framing and no invented mouse marker. The camera travels forward from release to a view of the target; wheel distance and alternative aiming remain available. Removed the extra lingering contact spark after the flash.

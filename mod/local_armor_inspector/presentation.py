@@ -194,7 +194,10 @@ def shot_fragment(battle_id, command):
         _warn_once('open-shot', 'Bullba Hits page command: no shot in %r', getattr(command, '__dict__', command))
         return None
     if at != at or at in (float('inf'), float('-inf')): return None
-    return 'host=game&battle=%s&at=%.3f&attacker=%d&target=%d&focus=%d' % ((str(battle_id), at) + tuple(ids))
+    fragment = 'host=game&battle=%s&at=%.3f&attacker=%d&target=%d&focus=%d' % ((str(battle_id), at) + tuple(ids))
+    shot_id = command_value(command, 'shotId')
+    if shot_id is not None and re.match(r'^\d+$', str(shot_id)): fragment += '&shotId=' + str(shot_id)
+    return fragment
 
 
 def viewer_shot(command):
@@ -209,7 +212,13 @@ def viewer_shot(command):
         _warn_once('open-viewer-shot', 'Bullba Hits page command: no shot in %r', getattr(command, '__dict__', command))
         return None
     if at != at or at in (float('inf'), float('-inf')): return None
-    return '%.3f,%d,%d,%d' % ((at,) + tuple(ids))
+    route = '%.3f,%d,%d,%d' % ((at,) + tuple(ids))
+    shot_id, index = command_value(command, 'shotId'), command_value(command, 'shotIndex')
+    if shot_id is not None and not re.match(r'^\d+$', str(shot_id)): return None
+    if index is not None and not re.match(r'^\d+$', str(index)): return None
+    if shot_id is not None or index is not None: route += ',' + (str(shot_id) if shot_id is not None else '')
+    if index is not None: route += ',' + str(index)
+    return route
 
 
 def set_files_request(handler):
@@ -420,7 +429,7 @@ def _handle_web_command(command, ctx):
                 _warn_once('pb-vehicles', 'Bullba Hits page command: no battle or vehicles in %r', battle_id)
                 return
             wanted = []
-            for row in list(rows)[:60]:
+            for row in list(rows)[:1000]:
                 if not isinstance(row, dict): continue
                 kind, descr = row.get('type'), row.get('descr')
                 if kind and VEHICLE_TYPE.match(str(kind)) and (descr is None or DESCRIPTOR.match(str(descr))):
@@ -1167,12 +1176,7 @@ def open_in_game(path, fragment='host=game', window=HITS):
         if not os.path.isfile(path):
             raise IOError('Local viewer is not ready')
         # WebBrowser/CEF owns this window. Never silently minimize the game.
-        url = 'file:' + pathname2url(os.path.abspath(path))
-        if url.startswith('file:///') is False:
-            url = 'file:///' + pathname2url(os.path.abspath(path)).lstrip('/')
-        # The page limits heavy settings only when it knows it runs inside the
-        # game's offscreen CEF; the fragment is never sent or rewritten.
-        url += '#' + fragment
+        url = page_url(path, fragment)
         if window == REPLAYS: _viewer['path'] = path   # the full-screen view opens the same page (R5)
         browser = dependency.instance(IBrowserController)
         width, height = GUI.screenResolution()
@@ -1302,7 +1306,13 @@ def open_viewer_view(path, state=''):
     """The viewer's open (its mods-list button, Hits' 3D link): in the mode it was last left in - the frameless view
     straight away, the window if that fails; else the window."""
     _viewer['path'] = path
-    if view_mode() == 'full': enter_fullscreen(state, fallback=True)
+    if fullscreen_open() and state:
+        browser = _full['view'].getBrowser()
+        if browser is None: raise RuntimeError('the existing replay browser is not ready')
+        _full['state'] = state
+        browser.navigate(page_url(path, full_fragment(state, True)))
+        close_other(REPLAYS)
+    elif view_mode() == 'full': enter_fullscreen(state, fallback=True)
     else: open_in_game(path, full_fragment(state, False), window=REPLAYS)
 
 
@@ -1399,9 +1409,18 @@ def register_fullscreen():
     _full['registered'] = True
 
 
+_page_entry = 0
+
+
 def page_url(path, fragment):
     url = 'file:' + pathname2url(os.path.abspath(path))
     if not url.startswith('file:///'): url = 'file:///' + pathname2url(os.path.abspath(path)).lstrip('/')
+    # An explicit link must navigate even when the same destination/shot is open.
+    # A fresh query reloads the destination document rather than relying on CEF hash events.
+    global _page_entry
+    if 'battle=' in fragment:
+        _page_entry += 1
+        url += '?entry=%d' % _page_entry
     return url + '#' + fragment
 
 

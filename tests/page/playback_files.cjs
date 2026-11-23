@@ -85,7 +85,8 @@ const HOST = (files) => `(function () {
     listing.files.forEach((f) => { f.client = 'World of Tanks v.2.4.1.1 #992'; });
     // R4 (BACKLOG 112, 20.11): the other player's replay stands in for a battle of a special mode, as the mod marks one
     // (replay_files.special_mode - its rule and an Onslaught header are checked in tests/py27/replay_files.py)
-    other.special = {name: 'Onslaught', bonusType: 43, gameplay: 'comp7'};
+    other.battleType = 34; other.gameplay = 'ctf';
+    other.special = {name: 'Steel Hunter tournament', bonusType: 34, gameplay: 'ctf'};
     fs.writeFileSync(listPath, 'ArmorInspectorData.receive(' + JSON.stringify(['replayFiles', listing]) + ');\n');
     // 2. the page as it ships; the hits page's battle list holds the recorded battle (it has no replay file here)
     copyDir(path.join(ROOT, 'web'), path.join(stage, 'web'));
@@ -119,10 +120,19 @@ const HOST = (files) => `(function () {
       full.every((r) => /^(⚠ )?\d\d\.\d\d · \d\d:\d\d · Malinovka · \S.* · \S+/.test(r[1])) && files3.every((r) => !/older client/.test(r[1])), JSON.stringify(files3));
     // R4: the special mode's mark - on that entry alone
     const marked = rows.filter((r) => /^⚠ /.test(r[1]));
-    check('R4: a battle of a special mode is marked in the battle list: ' + marked.length + ' of ' + rows.length + ' entries (the Onslaught one)',
+    check('R4: a battle of a special mode is marked in the battle list: ' + marked.length + ' of ' + rows.length + ' entries (the event tournament one)',
       marked.length === 1 && marked[0][0] === other.id, JSON.stringify(rows));
     const chose = Date.now();
     await page.evaluate("(() => { const s = document.getElementById('sel-battle'); s.value = '" + other.id + "'; s.dispatchEvent(new Event('change')); })()");
+    await page.waitForFunction("!document.getElementById('special-warn').hidden");
+    // R4: confirmation BEFORE navigation/decode, with "Don't show again"; ticked and OK - remembered in the page's settings box
+    const warn = await page.evaluate("(() => { const w = document.getElementById('special-warn'); return {shown: !w.hidden, mode: document.getElementById('special-mode').textContent, text: w.textContent," +
+      " box: !!document.getElementById('special-again')}; })()");
+    check('R4: opening it shows the warning, the mode named, with a "Don\'t show again" box', warn.shown && warn.mode === 'Steel Hunter tournament' && warn.box && /picture may be wrong/.test(warn.text), JSON.stringify(warn));
+    const kept = await page.evaluate("(() => { document.getElementById('special-again').checked = true; document.getElementById('special-ok').click();" +
+      " let box = null; try { box = JSON.parse(localStorage.getItem('bullba-playback-settings')); } catch (e) {} return {hidden: document.getElementById('special-warn').hidden," +
+      " stored: box && box.values ? box.values['sw-special-warn'] : null, others: box && box.values ? Object.keys(box.values).length : 0, setting: document.getElementById('sw-special-warn').checked}; })()");
+    check('R4: "Don\'t show again" + OK: the warning goes, the settings switch off and remembered (' + kept.others + ' settings in the box)', kept.hidden && kept.stored === false && kept.setting === false, JSON.stringify(kept));
     let state = null;
     for (let i = 0; i < 360 && !state; i++) {
       await new Promise(function (r) { setTimeout(r, 500); });
@@ -130,14 +140,6 @@ const HOST = (files) => `(function () {
     }
     const wall = (Date.now() - chose) / 1000;
     check('the other player\'s replay (no record of Bullba Hits) opens', state && !state.error, state ? state.error : 'not ready after 180 s');
-    // R4: on opening it, the warning with "Don't show again"; ticked and OK - remembered in the page's settings box
-    const warn = await page.evaluate("(() => { const w = document.getElementById('special-warn'); return {shown: !w.hidden, mode: document.getElementById('special-mode').textContent, text: w.textContent," +
-      " box: !!document.getElementById('special-again')}; })()");
-    check('R4: opening it shows the warning, the mode named, with a "Don\'t show again" box', warn.shown && warn.mode === 'Onslaught' && warn.box && /picture may be wrong/.test(warn.text), JSON.stringify(warn));
-    const kept = await page.evaluate("(() => { document.getElementById('special-again').checked = true; document.getElementById('special-ok').click();" +
-      " let box = null; try { box = JSON.parse(localStorage.getItem('bullba-playback-settings')); } catch (e) {} return {hidden: document.getElementById('special-warn').hidden," +
-      " stored: box && box.values ? box.values['sw-special-warn'] : null, others: box && box.values ? Object.keys(box.values).length : 0, setting: document.getElementById('sw-special-warn').checked}; })()");
-    check('R4: "Don\'t show again" + OK: the warning goes, the settings switch off and remembered (' + kept.others + ' settings in the box)', kept.hidden && kept.stored === false && kept.setting === false, JSON.stringify(kept));
     if (state && !state.error) {
       check('built in the page from the .wotreplay', state.battleBuild && state.battleBuild.source === 'built', JSON.stringify(state.battleBuild));
       check('every vehicle drawn with its model', state.vehicles === 30 && state.boxes === 0, 'vehicles ' + state.vehicles + ', boxes ' + state.boxes);

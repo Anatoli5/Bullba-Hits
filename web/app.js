@@ -680,11 +680,11 @@
   // The search itself is local-data.js hitAt (19.11.2026: the replay viewer's shot view finds its hit the same way);
   // SHOT_AT is its HIT_AT.
   var lastShot=null,SHOT_WAIT=15000;
-  function shotHit(b,at,attacker,target){return ArmorInspectorData.hitAt(b,at,attacker,target);}
+  function shotHit(b,at,attacker,target,shotId){return ArmorInspectorData.hitAt(b,at,attacker,target,shotId);}
   function openShot(params){
     var id=String(params.battle||''),at=Number(params.at),attacker=Number(params.attacker),target=Number(params.target),focus=Number(params.focus);
     if(!VEHICLE_ID.test(id))return;
-    var key=[id,params.at,params.attacker,params.target,params.focus].join('|');if(key===lastShot)return;lastShot=key;
+    var key=[id,params.at,params.attacker,params.target,params.focus,params.shotId,params.entry].join('|');if(key===lastShot)return;lastShot=key;
     setMode('battles');
     var until=Date.now()+SHOT_WAIT;
     // the battle list may still be on its way (the page's first read): its row is waited for
@@ -694,7 +694,7 @@
       var picker=$('battles');picker.value=id;syncBattlePick();
       (current&&current.id===id?Promise.resolve():loadBattle(id,false,'pick')).then(function(){
         if(lastShot!==key||!current||current.id!==id)return;
-        var h=Number.isFinite(at)?shotHit(current,at,attacker,target):null;
+        var h=Number.isFinite(at)?shotHit(current,at,attacker,target,params.shotId):null;
         var seat=Number.isFinite(focus)?focus:h?h.attackerId:null;
         if(seat!=null&&!rosterRow(seat)&&!(current.hits||[]).some(function(x){return x.attackerId===seat||x.targetId===seat;}))seat=null;
         if(!h){if(seat!=null)chooseFocus(seat);return;}
@@ -7139,28 +7139,20 @@
       // BACKLOG 104: the battle played over its map in 3D (web/playback.html; the mod prepares it the first time).
       // BACKLOG 107: dimmed, and its words say why, when the battle's replay is no longer kept.
       var kind=replayKind(b.id),gone=kind==='removed'||kind==='none';
-      var replay=node('span','3D ▶','battle-option-replay'+(gone?' no-replay':''));replay.setAttribute('data-replay',b.id);
-      replay.setAttribute('data-state',kind||'unknown');
-      replay.title=tipJoin(['3D replay','Plays this battle over its map: vehicles, shots, hits and destruction, from its replay.',
-        '• The first time, the game prepares the battle and its map: a few seconds',
-        kind==='removed'?'• Its replay was removed: the replay limit keeps the last '+replayLimit()+' (Settings, Replay limit); it plays only if it was prepared before':null,
-        kind==='none'?'• The replay limit holds no replay of this battle: it plays if the game’s replays folder still has its replay, or if it was prepared before':null]);
-      o.appendChild(replay);
-      o.appendChild(keepTile(b.id,kind));
+      var replay=Rows.openLink('Open battle in Bullba Replays',tipJoin(['Bullba Replays','Plays this whole battle over its map.',
+        '• Replay retention is managed in Bullba Replays',
+        kind==='removed'?'• Its replay was removed by the replay limit; this opens only if the battle was prepared before':null,
+        kind==='none'?'• No replay is held for this battle; this opens if the replay file or a prepared battle is available':null]),function(){openPlayback(b.id,null);},'span','web/replays-icon.png');
+      replay.classList.add('battle-option-replay');replay.classList.toggle('no-replay',gone);
+      replay.setAttribute('data-state',kind||'unknown');o.appendChild(replay);
       var line=[b.vehicle&&b.vehicle.name,battleWhen(b.startedAt)].filter(Boolean).join(' \u00b7 ');
       o.title=(b.map||'Unknown map')+(line?'\n'+line:'')+(b.damaged?'\nDamaged: '+b.damaged+' recorded definition'+(b.damaged===1?' is':'s are')+' missing':'');
-      // 21.11 (BACKLOG 118): the battle on screen with a hit selected - the viewer opens on that hit's shot
-      o.onclick=function(e){if(e&&e.target&&e.target.closest&&e.target.closest('.battle-option-replay'))return openPlayback(b.id,current&&current.id===b.id?selectedShot():null);pickBattle(b.id);};
+      o.onclick=function(){pickBattle(b.id);};
       list.appendChild(o);
     });
   }
-  // THE REPLAY LIMIT (BACKLOG 107, user 18.11): a recording mode beside the game's "last battle" and "all" - on, the mod
-  // keeps the replays of the player's last N battles in the game's replays folder under its own names (bh_..., copies -
-  // the game's own file is left alone), older ones removed; ON by default since 20.11, inactive under the game's "all"
-  // (Settings -> Replay limit, the MOD's own setting: data/replays.js shows it, this page only sends a change). A
-  // battle's ☆ on its row keeps its replay forever (the bh_ mark removed from its name, ★) or puts it back under the limit. The row says whether the battle still has its replay. The file is read with the poll; outside
-  // the game it is not read again once it is missing (nothing would write it). A click is shown at once and waits up to
-  // BullbaReplayLimit.WAIT ms for the mod's file to agree.
+  // Read-only replay availability for the battle link. Retention belongs to Replays;
+  // this page sends no retention commands and does not change saved preferences.
   var replayView=null,replayMissing=false,replayAsked={},replayStamp='';
   function readReplays(){
     if(replayMissing||!ArmorInspectorData.replays)return;
@@ -7168,7 +7160,7 @@
       if(!v||typeof v!=='object')return;
       var stamp=JSON.stringify(v);if(stamp===replayStamp)return;replayStamp=stamp;replayView=v;
       Object.keys(replayAsked).forEach(function(id){if(replayKind(id,true)===(replayAsked[id].keep?'kept':'rolling'))delete replayAsked[id];});
-      paintReplayLimit();renderBattleList();syncBattlePick();
+      renderBattleList();syncBattlePick();
     },function(){if(!host.game)replayMissing=true;});
   }
   // A battle's replay: 'kept' (forever), 'rolling' (one of the last N), 'stream' (an older battle's stream the mod kept),
@@ -7176,34 +7168,6 @@
   // The rules and the words: web/replay-limit.js (20.11, shared with the replay viewer).
   function replayKind(id,fileOnly){return BullbaReplayLimit.kind(replayView,replayAsked,id,fileOnly);}
   function replayLimit(){return BullbaReplayLimit.limit(replayView);}
-  // The row's ☆ / ★ (a removed replay: ∅, no action; no mark without a replay under the mod's name).
-  function keepTile(id,kind){
-    var n=replayLimit(),live=host.canSend(),tip=BullbaReplayLimit.keepTip(kind,n,live);
-    var tile=node('span',kind==='kept'?'\u2605':kind==='rolling'?'\u2606':kind==='removed'?'\u2205':'','battle-option-keep');
-    tile.setAttribute('data-keep',id);tile.setAttribute('data-state',kind||'unknown');
-    if(tip)tile.title=BullbaReplayLimit.join(tip,'• ');
-    if(kind==='kept'||kind==='rolling')tile.onclick=function(e){if(e&&e.stopPropagation)e.stopPropagation();toggleKeep(id);};
-    return tile;
-  }
-  function toggleKeep(id){
-    var kind=replayKind(id);if((kind!=='kept'&&kind!=='rolling')||!host.canSend())return;
-    var keep=kind!=='kept';replayAsked[id]={keep:keep,at:Date.now()};
-    sendCommand('replayKeep',{battleId:id,keep:keep});
-    renderBattleList();syncBattlePick();
-  }
-  // Settings -> Replay limit: the mod's mode - the switch (off by default) and N - sent when changed here (N 1 … 100).
-  // Outside the game it is shown only.
-  function replayLimitEls(){return {on:$('replay-limit-on'),number:$('replay-limit'),label:$('replay-limit-label')};}
-  function paintReplayLimit(){BullbaReplayLimit.paint(replayLimitEls(),replayView,host.canSend(),'• ');}
-  function sendReplayLimit(){
-    if(!host.canSend()){paintReplayLimit();return;}
-    var want=BullbaReplayLimit.asked(replayLimitEls(),replayView);
-    if(!want)return paintReplayLimit();
-    replayView=BullbaReplayLimit.assume(replayView,want);   // shown at once; the mod's file says it again
-    sendCommand('replayLimit',want);paintReplayLimit();renderBattleList();syncBattlePick();
-  }
-  $('replay-limit').onchange=sendReplayLimit;
-  $('replay-limit-on').onchange=sendReplayLimit;
   // The 3D replay player of a battle (BACKLOG 104): its own page beside this one, with the host kept in its fragment.
   // In the game the 3D replay viewer has a window of its own (19.11, 'one mod, two entries'): the mod opens it on this
   // battle ('openReplays'); once the viewer stands the mod closes this window (21.11, BACKLOG 118: never two pages
@@ -7215,7 +7179,7 @@
       return;
     }
     window.location.href='web/playback.html#'+(host.game?'host=game&':'')+'battle='+encodeURIComponent(id)+
-      (shot?'&shot='+[shot.at,shot.attacker,shot.target,shot.focus].join(','):'');
+      (shot?'&shot='+encodeURIComponent(BullbaShotRoute.encode(shot)):'');
   }
   // The tile's title text and the selected row, from whatever #battles currently holds. In the Vehicles mode
   // the same slot carries the vehicle name (renderVehicleHeading), so it is left alone there.
@@ -8202,22 +8166,29 @@
   function markHits(){var rows=$('hits').children||[];for(var i=0;i<rows.length;i++){var id=rows[i].getAttribute&&(rows[i].getAttribute('data-hit')||rows[i].getAttribute('data-event'));if(id!==null&&id!==undefined)rows[i].setAttribute('aria-pressed',String(id===String(selected)&&!poseDetached));}placeReplayLink();}
   // THE SELECTED HIT IN THE 3D REPLAY VIEWER (21.11, BACKLOG 118): the pressed row carries the rows' link to the other page
   // (hit-rows.js openLink - the widget the viewer's shot rows carry back here), opening the viewer on this hit's shot view;
-  // the battle list's '3D ▶' of this battle carries the same shot. replayShot: the command's fields of a hit - its gameTime
+  // the whole-battle menu link stays independent. replayShot: the command's fields of a hit - its gameTime
   // (the viewer finds its shot by it, the attacker and the target: playback.js openShotParam), the vehicle in focus - or null.
   function replayShot(h){
     if(!current||!h||h.synthetic||h.damageEvent||!Number.isFinite(h.gameTime)||h.attackerId==null||h.targetId==null)return null;
     var focus=focusVehicle!=null?focusVehicle:playerId();
-    return {at:Number(h.gameTime.toFixed(3)),attacker:h.attackerId,target:h.targetId,focus:focus!=null?focus:h.targetId};
+    var route={at:Number(h.gameTime.toFixed(3)),attacker:h.attackerId,target:h.targetId,focus:focus!=null?focus:h.targetId};
+    var context=ArmorShotContext.resolve(h,current.shotEvents||[],current),tr=context&&context.tracer;
+    if(tr&&tr.shotId!=null)route.shotId=String(tr.shotId);
+    return route;
   }
-  function selectedShot(){return current&&selected!=null&&!poseDetached?replayShot((current.hits||[]).filter(function(h){return h.id===selected;})[0]):null;}
   function placeReplayLink(){
     var box=$('hits');[].forEach.call(box.querySelectorAll('.hit>.sp-open'),function(e){e.remove();});
-    var shot=selectedShot();if(!shot)return;
-    var row=box.querySelector('[data-hit="'+String(selected).replace(/"/g,'')+'"]');if(!row)return;
+    if(!current)return;
     var id=current.id;
-    row.appendChild(Rows.openLink('Replays','Open in Bullba Replays\nOpens this hit’s shot in the 3D replay viewer: its shot view, from the shooter’s spot to the hit.\n'+
-      '• The viewer opens in the mode you left it in (window or full screen); this window closes once it stands\n• The first time, the game prepares the battle and its map: a few seconds',
-      function(){openPlayback(id,replayShot((current&&current.id===id?current.hits:[]).filter(function(h){return h.id===selected;})[0]));},'span'));
+    (current.hits||[]).forEach(function(h){
+      if(h.id!==selected||poseDetached)return;
+      var route=replayShot(h);if(!route)return;
+      var row=[].find.call(box.querySelectorAll('[data-hit]'),function(n){return n.getAttribute('data-hit')===String(h.id);});
+      if(!row)return;
+      var link=Rows.openLink('Open shot in Bullba Replays','Bullba Replays\nPlays this recorded shot episode from release to contact.\n• An ambiguous or missing shot is not replaced by a neighbouring shot',
+        function(){openPlayback(id,route);},'span','web/replays-icon.png');
+      link.id='hits-replay-link';row.appendChild(link);
+    });
   }
   // ===================== THE TWO SCENES OF A HIT (11.11) =====================
   // The user, 11.11 (docs/PRODUCT.md, the battle log from the replay): a hit of a battle made from its replay keeps the
@@ -8595,9 +8566,8 @@
   $('auto-frame').onchange=function(){if(viewer)viewer.setAutoFrame(this.checked);};
   $('zoom-lock').onchange=function(){if(viewer)viewer.zoomLock=this.checked;};
   $('track-opacity').oninput=function(){if(viewer)viewer.setTrackOpacity(Number(this.value)/100);$('track-opacity-value').textContent=this.value+' %';};
-  // The cross at the impact point only (user, 20.09). Stored and restored with every other setting in the
-  // menu, so this one line is the whole wiring.
-  $('impact-opacity').oninput=function(){if(viewer)viewer.setImpactOpacity(Number(this.value)/100);$('impact-opacity-value').textContent=this.value+' %';};
+  BullbaSettings.impact.bind($('impact-color'),$('impact-opacity'),$('impact-opacity-value'),function(v){
+    if(viewer){viewer.setImpactOpacity(v.opacity/100);viewer.setImpactColor(v.color);}});
   $('camera-zoom-field').onchange=function(){if(viewer)viewer.setZoom(Number(this.value));};
   $('pivot-height').oninput=function(){if(viewer){var r=viewer.heightRange();viewer.setPivotHeight(r[0]+Number(this.value)/100);}};
   $('pivot-height-field').onchange=function(){if(viewer)viewer.setPivotHeight(Number(this.value));};
@@ -10082,7 +10052,7 @@
   var settingsBox=document.querySelector('.settings-menu .settings-content');
   // A control the MOD owns (data-mod-setting: Replays kept, BACKLOG 107) is shown from its file, not remembered here.
   var settingControls=settingsBox?[].slice.call(settingsBox.querySelectorAll('input[id],select[id]')):[];
-  settingControls=settingControls.filter(function(el){return !el.hasAttribute('data-mod-setting');});
+  settingControls=settingControls.filter(function(el){return !el.hasAttribute('data-mod-setting')&&!el.hasAttribute('data-shared-setting');});
   // A parsed box -> its values, after this page's migrations (settings-store.js reads and parses it).
   function settingsRead(box){
     if(box){
@@ -10090,9 +10060,8 @@
       // the whole page. A stored object that fails the checks in adoptAimStore is simply not adopted.
       if(box&&box.aim)adoptAimStore(box.aim);
       if(box&&box.values&&typeof box.values==='object'){
-        // v2 (user, 22.09): the impact cross was hard to see at the old default of 50 %, so the default is 90.
-        // A store written before that keeps the user's own choice and only lets the old default through.
-        if(!(box.v>=2)&&String(box.values['impact-opacity'])==='50')delete box.values['impact-opacity'];
+        // Impact look now has its own versioned shared preference; settings-store.js
+        // imports its legacy opacity once before these per-page controls restore.
         // v3 (user, 22.09): the lighting depth default moves from 100 to 250 %; a stored 100 from the old default follows.
         if(!(box.v>=3)&&String(box.values['light-strength'])==='100')delete box.values['light-strength'];
         // v4 (user, 22.09, same evening): 250 % was too deep after all - the default is 200, and a store
@@ -10279,7 +10248,7 @@
       step(el,dir);
     },true);
   }());
-  $('reset-settings').onclick=function(){settingStore.reset();};
+  $('reset-settings').onclick=function(){settingStore.reset();BullbaSettings.impact.reset();};
   // The Target group is built before the settings are restored: restoring the Display setting already runs
   // updateShell(), which asks the group whether it belongs on screen.
   buildTargetMods();
@@ -10529,7 +10498,7 @@
   // The catalogue is read once at start when the fragment names a vehicle, whatever the remembered mode is.
   restoreSidebar();
   refresh();applyFragment(true);
-  paintReplayLimit();readReplays();
+  readReplays();
   // One console line per fragment that reached this page without a reload (game.log in the game): whether the game's
   // window re-navigated to a new fragment keeps the page or loads it again (BACKLOG 94) is read from it.
   window.addEventListener('hashchange',function(){if(window.console)console.info('Bullba Hits page: new fragment without a reload ('+String(fragment().vehicle||'no vehicle')+')');applyFragment(false);});

@@ -105,10 +105,10 @@ function expected(b, id) {
       const got = await page.evaluate("(function () { P.open(" + id + ", document.getElementById('list-" + side + "'), '" + side + "'); var box = P.element, r = box.getBoundingClientRect(), a = document.getElementById('list-" + side + "').getBoundingClientRect();" +
         " var row = box.querySelector('.sp-row .hit'), open = box.querySelector('.sp-open'); return {count: P.count(), shown: P.shown(), top: r.top - a.top, height: r.height, list: a.height, beside: '" + side + "' === 'own' ? r.left - a.right : a.left - r.right," +
         " scroll: getComputedStyle(box.querySelector('.sp-list')).overflowY, markup: row ? [].map.call(row.children, function (c) { return c.className; }).join(' ') : null," +
-        " link: open ? {icon: !!open.querySelector('svg.sp-open-icon'), text: open.textContent, title: open.title.split('\\n')} : null}; })()");
+        " link: open ? {icon: !!open.querySelector('img.mod-icon[src=\"menu-icon.png\"]'), text: open.getAttribute('aria-label'), title: open.title.split('\\n')} : null}; })()");
       check(label + ': the panel shows one row per shot and per hit taken - ' + got.count + ' rows (' + want.shots + ' shots, ' + want.taken + ' hits taken, ' + want.untraced + ' hits with no tracer)',
         got.count === want.rows && got.shown === id, JSON.stringify({got: got, want: want}));
-      check(label + ': beside its team list from its top, its own scroll; Hits\' row markup; the Bullba Hits link (the arrow-out icon, the name, a title, what it does, when shown)',
+      check(label + ': beside its team list from its top, its own scroll; Hits\' row markup; the Bullba Hits link (the mod icon, its accessible name, a title, what it does, when shown)',
         Math.abs(got.top) < 1 && got.beside > 0 && got.beside < 20 && got.scroll === 'auto' && got.markup === 'vehicle-tile hit-crits hit-outcome' &&
         got.link && got.link.icon && got.link.text === 'Bullba Hits' && got.link.title.length === 3 && /^Opens this shot in the Bullba Hits window/.test(got.link.title[1]), JSON.stringify(got));
       // the one number (20.11): the panel is as tall as a full team list of 15 rows, whatever its own list holds
@@ -146,8 +146,8 @@ function expected(b, id) {
       " out.contrast = {fadedRedToFrame: ratio(dimRed, fr), fadedMintToFrame: ratio(dimMint, fr), fadedRedToRow: ratio(dimRed, rowBg), hitsFadedRedToFrame: ratio(oldRed, fr), hitsFadedMintToFrame: ratio(oldMint, fr), hitsFadedRedToRow: ratio(oldRed, rowBg)};" +
       " var lk = P.element.querySelector('.sp-open');" +
       " out.team = {name: ty(tile.querySelector('.vt-name')), player: ty(tile.querySelector('.pl')), tier: ty(tile.querySelector('.vt-tier')), button: px(team.querySelector('.sp-btn'), 'fontSize'), line: px(tile, 'lineHeight'), height: tile.getBoundingClientRect().height};" +
-      " out.shot = {name: ty(row.querySelector('.vt-name')), tier: ty(row.querySelector('.vt-tier')), figure: ty(row.querySelector('.hit-damage, .hit-result')), arrow: ty(row.querySelector('.outcome-dir')), time: ty(row.querySelector('.hit-time')), link: ty(lk.querySelector('.sp-open-name'))," +
-      "  height: row.getBoundingClientRect().height, flag: !!row.querySelector('.vehicle-tile[data-nation]'), role: !!row.querySelector('.vt-role'), linkName: lk.textContent, panelWidth: P.element.getBoundingClientRect().width};" +
+      " out.shot = {name: ty(row.querySelector('.vt-name')), tier: ty(row.querySelector('.vt-tier')), figure: ty(row.querySelector('.hit-damage, .hit-result')), arrow: ty(row.querySelector('.outcome-dir')), time: ty(row.querySelector('.hit-time')), link: ty(lk)," +
+      "  height: row.getBoundingClientRect().height, flag: !!row.querySelector('.vehicle-tile[data-nation]'), role: !!row.querySelector('.vt-role'), linkName: lk.getAttribute('aria-label'), panelWidth: P.element.getBoundingClientRect().width};" +
       " out.teams = [].map.call(document.querySelectorAll('.tlist .veh-tile'), function (x) { var cs = getComputedStyle(x), en = !!x.closest('.tlist.enemy'); return {enemy: en, w: parseFloat(cs.borderLeftWidth), c: cs.borderLeftColor, ok: parseFloat(cs.borderLeftWidth) === 3 && cs.borderLeftColor === (en ? C.red : C.mint)}; });" +
       " return out; })(" + own + ", " + enemy + ", " + ownTeam + ")");
     console.log('     type and box (px): team row ' + JSON.stringify(look.team) + '\n     shot row ' + JSON.stringify(look.shot) + '\n     edge contrast ' + JSON.stringify(look.contrast));
@@ -155,7 +155,7 @@ function expected(b, id) {
     const small = T.button + '/' + T.line;  // the 'shots' button's size on the team row's 14 px line
     check('R2: one text line of a shot row = one line of a team row (px size/line): name ' + Sh.name + ' = ' + T.name + ' (nickname ' + T.player + '), figures ' + Sh.figure + ', ' + Sh.arrow +
       ' = ' + T.name + ', tier ' + Sh.tier + ' = ' + T.tier + ', time ' + Sh.time + ' and link ' + Sh.link + ' = button ' + small + '; the row ' + Sh.height + ' px (two lines; 1.14: 50 px), the team row ' + T.height + ' px',
-      Sh.name === T.name && T.name === T.player && Sh.figure === T.name && Sh.arrow === T.name && Sh.tier === T.tier && Sh.time === small && Sh.link === small && Sh.height <= 2 * T.height + 2, JSON.stringify(look.team) + ' ' + JSON.stringify(look.shot));
+      Sh.name === T.name && T.name === T.player && Sh.figure === T.name && Sh.arrow === T.name && Sh.tier === T.tier && Sh.time === small && Sh.height <= 2 * T.height + 2, JSON.stringify(look.team) + ' ' + JSON.stringify(look.shot));
     check('R2: nothing of a row lost - the tile keeps its flag and role mark, the link its name, no figure or time cut (' + look.cut.length + ' cut in ' + look.rows.length + ' rows); names cut short: ' + look.namesCut + ' of ' + look.names + ' (panel ' + Sh.panelWidth + ' px)',
       Sh.flag && Sh.role && Sh.linkName === 'Bullba Hits' && !look.cut.length, JSON.stringify(look.cut.slice(0, 5)));
     const badRows = look.rows.filter((r) => !r.ok), badTeams = look.teams.filter((r) => !r.ok), by = (f) => look.rows.filter(f).length;

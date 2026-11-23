@@ -438,10 +438,19 @@
   // viewer's row link -, the replay viewer's shot view): the hit of `battle` by `attacker` on `target` whose gameTime is
   // nearest `at` (the server's clock), within HIT_AT seconds - a guess for live-recorded battles. Null: none.
   var HIT_AT=0.5;
-  function hitAt(battle,at,attacker,target){
-    var best=null,gap=Infinity;
-    ((battle&&battle.hits)||[]).forEach(function(h){if(h.attackerId!==attacker||h.targetId!==target||!Number.isFinite(h.gameTime))return;var d=Math.abs(h.gameTime-at);if(d<=HIT_AT&&d<gap){gap=d;best=h;}});
-    return best;
+  function hitAt(battle,at,attacker,target,shotId){
+    var candidates=[],exact=[];
+    ((battle&&battle.hits)||[]).forEach(function(h){
+      if(h.attackerId!==attacker||h.targetId!==target||!Number.isFinite(h.gameTime))return;
+      var d=Math.abs(h.gameTime-at);if(d>HIT_AT)return;
+      if(shotId!=null){
+        var ctx=ArmorShotContext.resolve(h,battle.shotEvents||[],battle);
+        if(!ctx.tracer||String(ctx.tracer.shotId)!==String(shotId))return;
+      }
+      candidates.push(h);if(d<=.002)exact.push(h);
+    });
+    var pool=exact.length?exact:candidates;
+    return pool.length===1?pool[0]:null;
   }
   // expandBattle is published so the offline tools that read a battle file straight from disk
   // (tools/check_shot_selection.cjs, tests/test_ballistics.cjs) use this one

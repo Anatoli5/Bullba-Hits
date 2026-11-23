@@ -78,7 +78,7 @@
     container.appendChild(this.renderer.domElement);
     }
     this.reticles=[];this.reticleLayer=document.createElement('div');this.reticleLayer.className='hit-reticle-layer';container.appendChild(this.reticleLayer);
-    this.impactOpacity=.5;this.setImpactOpacity(.5);this.discOn=true;this.ringAxes=false;this.viewFrom='fired';this.viewPoints=null;this.discOpacity=.25;this.ringLook=Object.assign({},SHOT_RING_LOOK);this.ringAim=this.discAim=this.shotDisc=null;   // the default of the Settings slider, applied before the first cross exists
+    this.impactOpacity=1;this.setImpactOpacity(1);this.setImpactColor('#258cff');this.discOn=true;this.ringAxes=false;this.viewFrom='fired';this.viewPoints=null;this.discOpacity=.25;this.ringLook=Object.assign({},SHOT_RING_LOOK);this.ringAim=this.discAim=this.shotDisc=null;   // the default of the Settings slider, applied before the first cross exists
     this.grid = new T.GridHelper(24, 24, 0x4a5d6f, 0x263746); this.scene.add(this.grid);
     this.root = new T.Group(); this.scene.add(this.root);
     this.target = new T.Vector3(0, 1, 0); this.yaw = 0.7; this.pitch = 0.27; this.distance = 50;
@@ -812,19 +812,25 @@
     this.syncRecorded();
     if(this.bounds)this.grid.position.y=this.bounds.min.y-.025;if(this.point)this.focus();else this.reset();this.notifyPose(posed||{angle:0,min:-180,max:180,known:this.gunRange().known});return !!this.bounds;
   };
-  Viewer.prototype.addReticle=function(position){
+  Viewer.reticleElement=function(){
     var element=document.createElement('span');element.className='hit-reticle';element.hidden=true;
     element.innerHTML='<svg viewBox="0 0 96 96" role="img" aria-label="Hit location"><title>Hit location</title><path class="reticle-stroke" d="M48 3V34M48 62V93M3 48H34M62 48H93"/></svg>';
+    return element;
+  };
+  Viewer.prototype.addReticle=function(position){
+    var element=Viewer.reticleElement();
     this.reticleLayer.appendChild(element);this.reticles.push({position:position.clone(),element:element});
   };
-  // How strongly the cross at an impact point is drawn (user, 20.09): from the shooter's seat the tracer is
-  // a dot and a full-strength cross around it covers the armour it stands on. One custom property on the
-  // layer, which every cross inherits - the ones already on screen and the ones added later - so nothing
-  // else changes: not the tracer, not the rings, not the crosshair cursor.
+  // Shared impact-mark controls set the layer's CSS properties. The open centre
+  // and thin strokes stay unchanged; tracer, aim circles and mouse are separate.
   Viewer.prototype.setImpactOpacity=function(value){
     var v=Number(value);
-    this.impactOpacity=isFinite(v)?Math.max(.1,Math.min(1,v)):.5;
+    this.impactOpacity=isFinite(v)?Math.max(.1,Math.min(1,v)):1;
     if(this.reticleLayer)this.reticleLayer.style.setProperty('--impact-opacity',String(this.impactOpacity));
+  };
+  Viewer.prototype.setImpactColor=function(value){
+    this.impactColor=['#258cff','#79cfff','#ff5ad6'].indexOf(value)>=0?value:'#258cff';
+    if(this.reticleLayer)this.reticleLayer.style.setProperty('--impact-color',this.impactColor);
   };
   // Reticle size follows the vehicle on screen (a fifth of its projected diameter), never below 80 px nor above 300 px.
   Viewer.prototype.reticleSize=function(){

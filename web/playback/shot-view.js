@@ -79,8 +79,8 @@
    inputs; where available the Hits release circle anchors its scale and axis. At the hit Hits' own circles take over.
    No foreign mouse position is invented: only the gun tag identifies that estimated centre. The game's sight (own centre
    mark at the recorded cursor point, the gun tag at the circle's centre) from the
-   file the mod reads from the client (o.sight, game_sight.py); without it a thin cross of the page. Hits' own blue
-   hit-location crosses are not drawn in the mode (the sight stands for them).
+   file the mod reads from the client (o.sight, game_sight.py); without it a thin cross of the page. One Hits hit-location
+   cross marks the visible shot line's endpoint after a confirmed hit, independently of the mouse/gun HUD tags.
 
    THE SHOT'S FIGURES (20.11, NOTEBOOK U2; cells()): two cells in the bar, as Bullba Hits' panels read a shot. A fixed
    size (1.19, the user on 1.18): each figure has its own one-line place - the heading with the figure, the alpha and the
@@ -158,10 +158,11 @@
   var ALT_COARSE = 0.12, COARSE = 256, FINE = 1024, SLICE = 3;
   // Hits' live ring's colour (viewer.js AIM_LIVE, cyan), the alternative's ring on the HUD
   var ALT_COLOUR = '#5ee0ff';
-  // Hits' look of the heat map: the user's own settings of Bullba Hits (its remembered box, 'bullba-settings', which both
-  // file:// pages share) where they are, else the defaults Hits' page carries (web/index.html, the controls of these ids).
+  // Adopt Hits' existing look where this origin can read it; file:// sharing is
+  // browser-dependent. Impact look has one canonical helper and local controls
+  // in both pages, so it also works when those file origins are isolated.
   var HITS_LOOK = { 'armor-mode': 'damage', palette: 'classic', 'soft-lighting': true, 'light-strength': '200',
-    'track-opacity': '20', 'impact-opacity': '90', 'bounce-mode': 'always',
+    'track-opacity': '20', 'impact-opacity': '100', 'impact-color': '#258cff', 'bounce-mode': 'always',
     'ricochet-tint-on': true, 'ricochet-tint': '50', 'ricochet-dots-on': true, 'ricochet-dots': '3', 'part-edges': 'on',
     'zone-outline': 'off', 'heatmap-quality': 'auto', wireframe: true, 'outline-brightness': '15', 'outline-opacity': '6' };
   function hitsLook() {
@@ -169,6 +170,8 @@
     try { box = JSON.parse(root.localStorage.getItem('bullba-settings') || 'null'); } catch (e) { box = null; }
     var v = box && box.values && typeof box.values === 'object' ? box.values : {};
     Object.keys(HITS_LOOK).forEach(function (k) { out[k] = typeof v[k] === typeof HITS_LOOK[k] ? v[k] : HITS_LOOK[k]; });
+    var impact = root.BullbaSettings.impact.get();
+    out['impact-opacity'] = String(impact.opacity); out['impact-color'] = impact.color;
     return out;
   }
   function num(s, d) { var n = Number(s); return isFinite(n) ? n : d; }
@@ -321,6 +324,15 @@
     // ---- the HUD: the aim circles and the game's sight over the picture (hud()) -------------------------------------------
     var hudCanvas = node('canvas', undefined, 'sv-hud'), hud2d = hudCanvas.getContext('2d');
     hudCanvas.hidden = true; o.view.appendChild(hudCanvas);
+    // One recorded-impact marker, made by Hits' own shape factory. This layer
+    // exists even when the shot has no loaded Hits scene/viewer.
+    var impactLayer = node('div', undefined, 'hit-reticle-layer'), impactMarker = root.ArmorViewer.reticleElement();
+    impactLayer.appendChild(impactMarker); o.view.appendChild(impactLayer);
+    root.BullbaSettings.impact.subscribe(function (v) {
+      impactLayer.style.setProperty('--impact-opacity', String(v.opacity / 100)); impactLayer.style.setProperty('--impact-color', v.color);
+      if (S.look) { S.look['impact-opacity'] = String(v.opacity); S.look['impact-color'] = v.color; }
+      if (S.viewer) { S.viewer.setImpactOpacity(v.opacity / 100); S.viewer.setImpactColor(v.color); }
+    });
     var sightImg = { arcade: null, sniper: null }, sightWhy = null;
     // the sight file's images (straight-alpha RGBA, base64) into canvases once
     function sightCanvas(im) {
@@ -337,7 +349,8 @@
       if (v.error) { sightWhy = String(v.error); return; }
       try {
         ['arcade', 'sniper'].forEach(function (m) { var x = v[m] || {}; sightImg[m] = { centre: sightCanvas(x.centre), tag: sightCanvas(x.tag) }; });
-        if (!sightImg.arcade.centre) { sightImg.arcade = sightImg.sniper = null; sightWhy = 'its images are not in the file'; }
+        // A missing cursor sprite must not discard an available sniper gun tag.
+        if (!sightImg.arcade.centre) sightWhy = 'its centre image is not in the file';
       } catch (e) { sightImg.arcade = sightImg.sniper = null; sightWhy = String(e && e.message || e); }
     }
     // the texture the map is composed into: this canvas's drawing buffer, texel for texel
@@ -359,7 +372,7 @@
       c.updateProjectionMatrix(); c.updateMatrixWorld(true);
     }
     var host = { renderer: o.renderer, camera: hostCamera, paintTarget: paintTarget, want: function () {},
-      aimOrigin: function () { return S.alt && S.line && S.haveA ? S.line.a.clone().applyMatrix4(AInv) : null; } };
+      aimOrigin: function () { return S.alt && S.line && S.haveA ? (S.line.server || S.line.a).clone().applyMatrix4(AInv) : null; } };
     function viewer() {
       if (S.viewer) return S.viewer;
       S.viewer = new root.ArmorViewer(o.view, host);
@@ -376,7 +389,7 @@
       v.setLighting(!!L['soft-lighting']); v.setLightStrength(num(L['light-strength'], 200) / 100);
       // Hits' Grid as the user set it there (its brightness and opacity), drawn by overlay() with its own depth test
       v.setOutline(num(L['outline-brightness'], 15) / 100, num(L['outline-opacity'], 6) / 100); v.wireframe(!!L.wireframe);
-      v.setTrackOpacity(num(L['track-opacity'], 20) / 100); v.setImpactOpacity(num(L['impact-opacity'], 90) / 100);
+      v.setTrackOpacity(num(L['track-opacity'], 20) / 100); v.setImpactOpacity(num(L['impact-opacity'], 100) / 100); v.setImpactColor(L['impact-color']);
       v.setBounceMode(L['bounce-mode']); v.setTint(L['ricochet-tint-on'] ? num(L['ricochet-tint'], 50) / 100 : 0);
       v.setDots(!!L['ricochet-dots-on'], L['ricochet-dots']); v.setPartEdges(L['part-edges'] === 'on'); v.setZoneOutline(L['zone-outline'] === 'on');
       v.setQuality(game && L['heatmap-quality'] === 'high' ? 'auto' : L['heatmap-quality']);   // Hits refuses 'high' in the game too
@@ -528,6 +541,21 @@
       if (S.line && S.line.stub) return { kind: 'stub', words: 'the view: on the line the shot came in along, ' + STUB_EYE + ' m out (where the shooter stood is not in the replay)' };
       var end = row.t; // only pre-shot coverage is required: later the camera travels along the shot
       if (o.recordedOk && o.recordedOk(row.shooter, S.start, end)) return { kind: 'camera', words: 'the view: the player’s own camera from the replay' };
+      var shooter = o.vehicle(row.shooter);
+      var config = shooter && shooter.variants ? shooter.variants.filter(function (x) {
+        return row.t >= x.v._from && row.t < x.v._until;
+      })[0] : shooter;
+      if (config && config.md && config.md.cls === 'SPG' && S.target != null && o.targetBounds) {
+        var bounds = o.targetBounds(S.target, S.stop || row.t);
+        if (bounds && bounds.length) {
+          var box = new T.Box3().setFromPoints(bounds), center = box.getCenter(new T.Vector3());
+          var height = Math.max(25, box.getSize(new T.Vector3()).length() * 4);
+          return {
+            kind: 'spectator', eye: center.clone().add(new T.Vector3(height * .6, height, height * .6)), look: center,
+            words: 'the view: simulated elevated spectator framing (no recorded camera; artillery class)'
+          };
+        }
+      }
       var s = row.shot, sh = s && o.battle.shots ? o.battle.shots[s.index] : null, me = o.vehicle(row.shooter);
       var why = me && me.v && me.v.own ? 'the replay’s camera does not cover this episode' : 'no camera is recorded for this vehicle';
       if (s && sh) {
@@ -590,13 +618,16 @@
       if (sh) dir.set(sh[6], sh[7], -sh[8]);
       if (len > LINE_MIN) dir.copy(b).sub(a);
       if (!(dir.lengthSq() > 1e-12)) dir.set(0, 0, -1);
-      return { a: a, b: b, len: len, t: row.t, dir: dir.normalize() };
+      var path=o.trajectory?o.trajectory(s.index):null;
+      var L={ a: a, server:a.clone(), b: b, len: len, t: row.t, dir: dir.normalize(), path:path,shotIndex:s.index };
+      if(path){var p=path.point(0);L.a.set(p[0],p[1],-p[2]);L.len=path.length;var q=path.point(.99);L.dir.copy(b).sub(new T.Vector3(q[0],q[1],-q[2])).normalize();}
+      return L;
     }
     // the point the eye on the line looks at: the hit, or one metre along the shell's direction for a line of no length
     var lineAt = new T.Vector3(), lineBack = new T.Vector3();
     function lineLook(L) { return L.len > LINE_MIN ? L.b : lineAt.copy(L.a).add(L.dir); }
     // the distance the shot's circles are drawn at along the line (no length: Hits' 100 m)
-    function lineDepth() { return S.line && S.line.len > 1 ? S.line.len : 100; }
+    function lineDepth() { var d=S.line?(S.line.server||S.line.a).distanceTo(S.line.b):0;return d>1?d:100; }
     // whether the eye is on the shell's line now (from the shot's clock on, in first person)
     function onLine() { return !!(S.line && S.fp && (S.line.stub || S.lookLine || S.t >= S.line.t)); }
     // T2 (BACKLOG 119): the stub of a shot whose shooter the replay does not place at the shot - no tracer, the shooter out
@@ -650,6 +681,7 @@
     function prepareLens() {
       if (S.zoomFov != null || !S.line) return;
       var L = S.line, normal = S.saved ? S.saved.fov : o.camera.fov, tangent = Math.tan(normal * Math.PI / 360);
+      if(L.path){var entry=L.path.point(.99);L.dir.copy(L.b).sub(new T.Vector3(entry[0],entry[1],-entry[2])).normalize();}
       S.zoomFov = normal;
       var points = o.targetBounds && S.target != null ? o.targetBounds(S.target, S.stop == null ? S.row.t : S.stop) : null;
       var mat = new T.Matrix4().lookAt(L.a, lineLook(L), UP), inv = new T.Quaternion().setFromRotationMatrix(mat).invert();
@@ -677,15 +709,16 @@
       prepareLens();
       if (S.travelLast != null && t < S.travelLast - 1e-6) { S.stopAt = null; S.glide = null; }
       S.travelLast = t;
-      var flight = Math.max(0, (S.stop == null ? L.t : S.stop) - L.t), duration = Math.max(.6, flight);
+      var flight = L.path?L.path.duration:Math.max(0, (S.stop == null ? L.t : S.stop) - L.t), duration = Math.max(.6, flight);
       if (!L.stub && S.stop != null && t >= S.stop - 1e-6 && S.stopAt == null && !S.manualLine) S.stopAt = wallNow();
       var elapsed = Math.max(0, t - L.t);
       if (S.stopAt != null && S.stop != null && t >= S.stop - 1e-6) elapsed += Math.max(0, wallNow() - S.stopAt) / 1000;
       var f = L.stub || S.manualLine ? 1 : Math.max(0, Math.min(1, elapsed / duration)), smooth = f * f * (3 - 2 * f);
       if (!S.manualLine) S.u = L.stub ? lineStart() : (S.endU == null ? 0 : S.endU) * smooth;
-      lineEye.copy(L.a).lerp(L.b, S.u);
+      if(L.path){var p=L.path.atDistance(S.u*L.len);lineEye.set(p[0],p[1],-p[2]);var q=L.path.atDistance(Math.min(L.len,S.u*L.len+Math.max(.5,L.len/200)));fpLook.set(q[0],q[1],-q[2]);lineBack.copy(fpLook).sub(lineEye);if(lineBack.lengthSq()>1e-9)L.dir.copy(lineBack).normalize();}
+      else lineEye.copy(L.a).lerp(L.b, S.u);
       // T3 (BACKLOG 120): looking back - exactly along the line, its reverse direction: the source in the centre
-      lineM.lookAt(lineEye, S.flip ? lineBack.copy(lineEye).sub(L.dir) : lineLook(L), UP); lineQ.setFromRotationMatrix(lineM);
+      lineM.lookAt(lineEye, S.flip ? lineBack.copy(lineEye).sub(L.dir) : L.path&&f<1?fpLook:lineLook(L), UP); lineQ.setFromRotationMatrix(lineM);
       if (!S.glide) {
         var p0 = L.a.clone(), q0 = lineQ.clone(), lens0 = S.zoomFov, V = S.view;
         if (V && V.kind === 'camera') {
@@ -695,12 +728,19 @@
           p0.copy(V.eye).applyMatrix4(G);
           var look0 = V.dir.clone().transformDirection(G).add(p0);
           q0.setFromRotationMatrix(new T.Matrix4().lookAt(p0, look0, UP));
+        } else if(V&&V.kind==='spectator'){p0.copy(V.eye);q0.setFromRotationMatrix(new T.Matrix4().lookAt(p0,V.look,UP));
         }
         S.glide = { p: p0, q: q0, fov: lens0 };
       }
       // the stub (BACKLOG 119): the eye stands on it from the episode's start, no glide
       S.glided = f >= 1;
-      if (f < 1) { fpPos.copy(lineEye).addScaledVector(lineAt.copy(S.glide.p).sub(L.a), 1 - smooth); fpQ.copy(S.glide.q).slerp(lineQ, smooth); }
+      if (f < 1) {
+        fpPos.copy(lineEye);
+        // Known flight: cut position onto the sampled path at release. A high
+        // strategic/spectator eye must never translate the physical trajectory.
+        if (!L.path) fpPos.addScaledVector(lineAt.copy(S.glide.p).sub(L.a), 1 - smooth);
+        fpQ.copy(S.glide.q).slerp(lineQ, smooth);
+      }
       else { fpPos.copy(lineEye); fpQ.copy(lineQ); }
       pose.position = fpPos; pose.quaternion = fpQ; pose.look = null;
       var fromFov = S.glide.fov, normal = S.saved ? S.saved.fov : o.camera.fov;
@@ -761,10 +801,11 @@
       S.focusGroup = null; S.lastFocus = null; S.view = firstPerson(row); S.fp = true; S.lock = true; S.lastPose = null;
       S.u = lineStart(); S.glide = null; S.t = S.start; S.estimate = null; S.disc = undefined;
       S.series = null; S.zoomFov = null; S.endU = null; S.manualLine = false; S.travelAt = null; S.travelLast = null;
+      S.targetVariant=null;
       S.lookLine = false;
       S.stopAt = null; S.glided = false; S.lineEngine = null; S.lineJob = null; S.lineFig = null;
       pose.fov = S.saved ? S.saved.fov : o.camera.fov;
-      title.textContent = 'Shot view · ' + o.name(row.shooter) + ' → ' + (S.target == null ? 'no hit in the replay' : o.name(S.target)) + ' · ' + o.clock(row.t);
+      title.textContent = 'Shot view · ' + o.name(row.shooter,row.t) + ' → ' + (S.target == null ? 'no hit in the replay' : o.name(S.target,S.hitT||row.t)) + ' · ' + o.clock(row.t);
       say('Preparing the shot view… · ' + S.view.words); bar.hidden = false; shown(unpin, false); syncTop(); paintShells();
       placeholder(cellA, 'Hit line', 'preparing…', HIT_TIP); fillCircle(cellA, null); placeholder(cellB, 'Pinned point', 'preparing…', PIN_TIP); fillCircle(cellB, null);
       o.play(false); o.seek(S.start);
@@ -773,7 +814,22 @@
         if (tok !== S.token || !S.line || S.line.stub) return;
         var v = (o.battle.vehicles || []).filter(function (x) { return x.id === row.shooter; })[0];
         if (!v || v.own) return;
-        var shots = o.battle.shots.filter(function (x) { return x[1] === row.shooter && !x[2]; }).map(function (x) { return x[0]; });
+        var config = root.PlaybackBattle.configurationAt(v, row.t);
+        if (!config) return;
+        var after = (v.configs || []).filter(function (c) { return c.t > config.t; })[0];
+        var from = config.t || 0, until = after ? after.t : Infinity;
+        function within(data, stride) {
+          var result = [];
+          for (var i = 0; i < data.length; i += stride) if (data[i] >= from && data[i] < until) {
+            for (var j = 0; j < stride; j++) result.push(data[i + j]);
+          }
+          return result;
+        }
+        v = Object.assign({}, v, config, { pos: within(v.pos, 7), gun: within(v.gun, 3) });
+        v.np = v.pos.length / 7; v.ng = v.gun.length / 3;
+        var shots = o.battle.shots.filter(function (x) {
+          return x[1] === row.shooter && !x[2] && x[0] >= from && x[0] < until;
+        }).map(function (x) { return x[0]; });
         S.series = sizeSeries(v, inputs[v.compDescr], shots, row.t);
         if (!S.estimate || S.estimate.why) S.estimate = gunEstimate();
         if (S.series) say(note.textContent + ' · estimated aiming size over time (typical unknown crew/equipment)', note.title + '\nDashed circle: size reconstructed over time; no mouse position is inferred.');
@@ -826,7 +882,7 @@
       if (!Number.isFinite(meta.serverStart)) return Promise.resolve({ why: 'the replay has no server start: its hits cannot be matched to the record' });
       var id = o.hitsBattle, read = hitsBattles[id] || (hitsBattles[id] = Data.battle(id).catch(function (e) { delete hitsBattles[id]; throw e; }));
       return read.then(function (battle) {
-        var at = meta.serverStart + h.t, hit = Data.hitAt(battle, at, h.attacker, h.target);
+        var at = meta.serverStart + h.t, hit = Data.hitAt(battle, at, h.attacker, h.target, row.shot&&row.shot.shotId);
         if (!hit) return { why: 'Bullba Hits’ record of this battle has no hit by this shooter on this target within ' + Data.HIT_AT + ' s of it' };
         return Data.scene(battle, hit.id, 'replay').then(function (data) {
           if (data.geometryIncomplete) return { why: data.geometryError || 'the scene of this hit is incomplete' };
@@ -923,7 +979,7 @@
       var ready = v.setShotContext(own ? rec.context : null), estimate = ready ? null : v.setAimEstimate(rec.context);
       v.root.traverse(function (x) { if (x.userData && x.userData.horizon) x.visible = false; });   // the map has its own horizon
       v.holdShot(true); S.held = true;
-      if (v.reticleLayer) v.reticleLayer.style.visibility = 'hidden';   // T4: the game's sight stands for Hits' crosses here
+      if (v.reticleLayer) v.reticleLayer.style.visibility = 'hidden';   // the host owns the single impact cross at its exact visible line endpoint
       S.mode = 'hits'; S.data = data; S.rec = rec; S.hits = got;
       S.posed = !!(r && sameModel(r, hit.target.parts || []));
       if (r && r.md && r.md.model) addExtras(r, data);
@@ -934,11 +990,12 @@
       // by the target's pose at the hit; the camera itself is the shooter's (camera())
       var eye = v.orbitEye(), Ae = Arec || (r && r.visible ? new T.Matrix4().multiplyMatrices(r.group.matrixWorld, Z) : null);
       S.corridor = null;
-      if (Ae && v.point && o.corridor) S.corridor = o.corridor.open(eye.applyMatrix4(Ae), v.point.clone().applyMatrix4(Ae), CORRIDOR);
+      // No whole-building removal along a chord: recorded arcs and ordinary
+      // scene depth decide occlusion. Foliage handling remains separate.
       // T1: the line's end at Hits' hit point (the tracer's end stands for it until now)
       if (S.line && Ae && v.point) {
         var hp = v.point.clone().applyMatrix4(Ae), len = S.line.a.distanceTo(hp);
-        if (len > LINE_MIN) { S.line.b.copy(hp); S.line.len = len; S.line.dir.copy(hp).sub(S.line.a).normalize(); }
+        if (len > LINE_MIN) { S.line.b.copy(hp);S.line.path=o.trajectory?o.trajectory(S.line.shotIndex,[hp.x,hp.y,-hp.z]):null; S.line.len = S.line.path?S.line.path.length:len; S.line.dir.copy(hp).sub(S.line.a).normalize(); }
       }
       // T2 (BACKLOG 119): no stub from the page's own hit point (not placed there) - Hits' hit point and its shell's axis
       // (Hits' eye on it) give the direction instead
@@ -952,6 +1009,7 @@
       S.aim = ready ? 'recorded' : estimate ? (estimate.rebuilt ? 'rebuilt' : 'nominal') : null;
       var c = rec.choice, lines = [];
       if (S.view) lines.push(S.view.words);
+      if(S.line&&!S.line.stub)lines.push(S.line.path?'Trajectory: recorded velocity/gravity, endpoint aligned; model muzzle offset is visual':'No usable recorded trajectory: straight endpoint fallback');
       aimWords(own).forEach(function (w) { lines.push(w); });
       S.heatLine = lines.length;
       lines.push(heatWords(rec.shell, c, rec.guess));
@@ -1014,7 +1072,7 @@
     }
     function showReplay(why) {
       S.mode = 'replay'; S.note = why;
-      var words = S.view ? S.view.words : '';
+      var words = (S.view ? S.view.words : '')+(S.line&&!S.line.stub?(S.line.path?' · trajectory from recorded velocity/gravity, endpoint aligned':' · no usable recorded trajectory: straight fallback'):'');
       var me = S.row ? o.vehicle(S.row.shooter) : null;
       words = [words].concat(aimWords(!!(me && me.v && me.v.own))).join(' · ');
       say('No Bullba Hits view: ' + why + '. · ' + words, 'Why there is no heat map here\n' + why + '.\n• ' + words + '\n• Drag turns the camera round the target, the wheel moves it closer or farther (this ends the shooter’s view)');
@@ -1034,7 +1092,7 @@
     }
     function gunEstimate() {
       if (!S.series || !S.line || S.line.stub) return null;
-      var e = { o: S.line.a.clone(), n: S.line.dir.clone(), angle: S.series.release, D: lineDepth(), sizeOnly: true, nG: null, oG: null };
+      var e = { o: (S.line.server||S.line.a).clone(), n: S.line.dir.clone(), angle: S.series.release, D: lineDepth(), sizeOnly: true, nG: null, oG: null };
       if (S.view && S.view.kind === 'gun' && o.gunAt(S.row.shooter, S.row.t, G)) {
         e.n.set(0, 0, 1).transformDirection(G);
         GI.copy(G).invert(); e.nG = e.n.clone().transformDirection(GI); e.oG = e.o.clone().applyMatrix4(GI);
@@ -1131,8 +1189,17 @@
     function mark(x, y, im, which) {
       var g = hud2d;
       g.globalAlpha = 1; g.setLineDash(DASH_NONE);
+      // Every gun tag uses the same stock sniper chevron; the independent
+      // cursor/centre below still follows its existing arcade/sniper selection.
+      if (which === 'tag') {
+        var tag = sightImg.sniper && sightImg.sniper.tag;
+        if (tag) { g.drawImage(tag.c, x + tag.x * DPR, y + tag.y * DPR, tag.w * DPR, tag.h * DPR); return; }
+        g.save(); g.lineCap = 'round'; g.lineJoin = 'round';
+        g.beginPath(); g.moveTo(x - 6 * DPR, y + 4 * DPR); g.lineTo(x, y - 4 * DPR); g.lineTo(x + 6 * DPR, y + 4 * DPR);
+        g.strokeStyle = '#202020'; g.lineWidth = 3 * DPR; g.stroke();
+        g.strokeStyle = '#a0a0a0'; g.lineWidth = DPR; g.stroke(); g.restore(); return;
+      }
       if (im && im[which]) { var m = im[which]; g.drawImage(m.c, x + m.x * DPR, y + m.y * DPR, m.w * DPR, m.h * DPR); return; }
-      if (which !== 'centre') { g.strokeStyle = AIM_COLOUR; g.lineWidth = DPR; g.beginPath(); g.arc(x, y, 3 * DPR, 0, Math.PI * 2); g.stroke(); return; }
       // the page's plain thin cross (no sight file)
       var a = 9 * DPR, b = 3 * DPR;
       g.strokeStyle = '#ffffff'; g.lineWidth = DPR;
@@ -1312,6 +1379,11 @@
       if (S.corridor && o.corridor) { o.corridor.keep(); S.onLine = o.corridor.vehicles([S.row.shooter, S.target]); }
       if (S.hitT != null) { var held = time < S.stop - 1e-6; if (held !== S.held) { S.held = held; v.holdShot(held); } }
       if (!r.visible) return;
+      if(S.targetVariant!==r.v._from){
+        dropExtras();S.focusGroup=null;S.targetVariant=r.v._from;S.posed=sameModel(r,S.data.hit.target.parts||[]);
+        if(r.md&&r.md.model)addExtras(r,S.data);
+      }
+      if(r.variants&&r.variants.length>1&&!S.posed){o.look(r,null);S.extras.forEach(function(x){x.visible=false;});return;}
       r.group.updateWorldMatrix(true, true);
       A.multiplyMatrices(r.group.matrixWorld, Z); AInv.copy(A).invert(); S.haveA = true;
       if (S.posed) v.hostPose(partTransforms(r, S.data.hit.target.parts || []));
@@ -1349,9 +1421,9 @@
     }
     // ---- THE SHOT'S FLIGHT (1.21): the line's start to its end, dashed as Hits' arc (viewer.js drawTracers: TRACER colour,
     // its dash scale, over everything); in this page's scene coordinates, drawn after its render ------------------------------
-    var FLIGHT_COLOUR = 0xa8dfff, flightScene = new T.Scene(), flightPos = new Float32Array(6);
+    var FLIGHT_COLOUR = 0xa8dfff, flightScene = new T.Scene(), flightPos = new Float32Array(97*3);
     var flightGeo = new T.BufferGeometry(); flightGeo.setAttribute('position', new T.BufferAttribute(flightPos, 3));
-    flightGeo.setAttribute('lineDistance', new T.BufferAttribute(new Float32Array(2), 1));
+    flightGeo.setAttribute('lineDistance', new T.BufferAttribute(new Float32Array(97), 1));
     var flightMat = new T.LineDashedMaterial({ color: FLIGHT_COLOUR, dashSize: 1, gapSize: 0.6, transparent: true, opacity: 0.9, depthTest: false, depthWrite: false });
     var flight = new T.Line(flightGeo, flightMat); flight.frustumCulled = false; flightScene.add(flight);
     // whether the view draws the shot's flight now: its line, from the shot's clock on
@@ -1360,11 +1432,29 @@
     function flightLine() {
       if (!flightOn(S.t)) return;
       var L = S.line, d = flightGeo.getAttribute('lineDistance'), dash = Math.max(0.15, Math.min(5, L.len / 60));
-      flightPos[0] = L.a.x; flightPos[1] = L.a.y; flightPos[2] = L.a.z; flightPos[3] = L.b.x; flightPos[4] = L.b.y; flightPos[5] = L.b.z;
-      d.array[0] = 0; d.array[1] = L.len; d.needsUpdate = true; flightGeo.getAttribute('position').needsUpdate = true;
+      if(L.path){L.path.samples.forEach(function(s,i){flightPos[i*3]=s.p[0];flightPos[i*3+1]=s.p[1];flightPos[i*3+2]=-s.p[2];d.array[i]=s.d;});flightGeo.setDrawRange(0,97);}
+      else {flightPos[0] = L.a.x; flightPos[1] = L.a.y; flightPos[2] = L.a.z; flightPos[3] = L.b.x; flightPos[4] = L.b.y; flightPos[5] = L.b.z;d.array[0]=0;d.array[1]=L.len;flightGeo.setDrawRange(0,2);}
+      d.needsUpdate = true; flightGeo.getAttribute('position').needsUpdate = true;
       flightMat.dashSize = dash; flightMat.gapSize = dash * 0.6;
       var R = o.renderer, auto = R.autoClear;
       try { R.autoClear = false; R.render(flightScene, o.camera); } finally { R.autoClear = auto; }
+    }
+    var impactScreen = new T.Vector3();
+    function impactCross() {
+      impactMarker.hidden = true;
+      // A tracer ending in empty space is not an impact. Require the row's
+      // recorded hit and exactly the same visible line lifecycle as flightLine.
+      if (!flightOn(S.t) || S.hitT == null || S.t < S.hitT - 1e-6 || !shownHit(S.row)) return;
+      impactScreen.copy(S.line.b).applyMatrix4(o.camera.matrixWorldInverse);
+      if (impactScreen.z > -.01) return;
+      impactScreen.copy(S.line.b).project(o.camera);
+      if (Math.abs(impactScreen.x) > 1 || Math.abs(impactScreen.y) > 1) return;
+      var el = o.renderer.domElement, v = S.viewer, impact = root.BullbaSettings.impact.get();
+      impactLayer.style.setProperty('--impact-opacity', String(impact.opacity / 100)); impactLayer.style.setProperty('--impact-color', impact.color);
+      var size = (v && S.mode === 'hits' ? v.reticleSize() : 120) + 'px', style = impactMarker.style;
+      style.left = (impactScreen.x + 1) * el.clientWidth / 2 + 'px';
+      style.top = (1 - impactScreen.y) * el.clientHeight / 2 + 'px';
+      style.width = style.height = size; impactMarker.hidden = false;
     }
     // Hits' flight arc and its start dot (viewer.js drawTracers: the root's children marked shotArc - the arc a line, the
     // dot a point; the arrowhead at the hit stays) are not drawn in this view
@@ -1374,6 +1464,7 @@
     function overlay() {
       hud();
       flightLine();
+      impactCross();
       var v = S.viewer, r = S.target == null ? null : o.vehicle(S.target);
       if (S.mode !== 'hits' || !v || !r || !r.visible || !S.haveA) return;
       hideHitsArc(v);
@@ -1425,6 +1516,7 @@
       if (S.viewer && was === 'hits') S.viewer.clear();
       if (S.viewer && S.viewer.reticleLayer) S.viewer.reticleLayer.style.visibility = '';
       hudCanvas.hidden = true; S.line = null; S.estimate = null; S.disc = undefined;
+      impactMarker.hidden = true;
       S.mode = null; S.row = null; S.armed = false; S.held = null; S.haveA = false; S.data = null; S.rec = null; S.veiled = false; S.posed = false;
       shown(unpin, false); shown(cellA.tile, false); shown(cellB.tile, false);
       if (!reopen) { bar.hidden = true; if (was) o.speed(null); exit(); }
@@ -1446,7 +1538,7 @@
       var hit = S.data && S.data.hit, tg = hit && hit.target;
       if (!S.row || id !== S.target || S.hitT == null || t < S.hitT - 1e-6 || !tg || tg.poseAt !== 'server') return null;
       if (!Array.isArray(tg.worldTransform) || tg.worldTransform.length !== 16 || !Number.isFinite(tg.turretYaw) || !Number.isFinite(tg.gunPitch)) return null;
-      return { world: tg.worldTransform, yaw: tg.turretYaw, pitch: tg.gunPitch };
+      return { world: tg.worldTransform, yaw: tg.turretYaw, pitch: tg.gunPitch, at:S.hitT };
     }
     function rowsText(c) { return [c.arm, c.dmg, c.ric].map(function (r) { return r.textContent; }).filter(Boolean).join(' '); }
     function state() {

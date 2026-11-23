@@ -61,7 +61,7 @@
   function shotOf(b, si) {
     var s = b.shots[si];
     return { index: si, t: s[SHOT.t], shooter: s[SHOT.shooter], start: [s[SHOT.sx], s[SHOT.sy], s[SHOT.sz]], tEnd: s[SHOT.tEnd],
-      end: [s[SHOT.ex], s[SHOT.ey], s[SHOT.ez]], caliber: s.length > SHOT.caliber ? s[SHOT.caliber] : null };
+      end: [s[SHOT.ex], s[SHOT.ey], s[SHOT.ez]], caliber: s.length > SHOT.caliber ? s[SHOT.caliber] : null, shotId:s.length>16?s[16]:null };
   }
   // The rows of vehicle `id`, in time order: {kind 'shot'|'hit', view 'outgoing'|'incoming', t (the shot's moment: its
   // tracer, else the hit), shooter, target (null: none named), shot (or null), hits [...], key}.
@@ -178,12 +178,12 @@
       shown.forEach(function (r) { list.appendChild(rowEl(r)); });
       if (state.picked) Array.prototype.forEach.call(list.querySelectorAll('.hit'), function (x) { if (x.getAttribute('data-key') === state.picked) x.setAttribute('aria-pressed', 'true'); });
     }
-    function name(id) { var v = id == null ? null : o.info(id); return (v && v.name) || (id == null ? 'not named' : 'Unknown vehicle'); }
+    function name(id,at) { var v = id == null ? null : o.info(id,at); return (v && v.name) || (id == null ? 'not named' : 'Unknown vehicle'); }
     function words(row, shown) {
-      var who = row.view === 'outgoing' ? (row.target == null ? 'Shot: no hit in the replay' : 'Shot at ' + name(row.target)) : 'Hit by ' + (row.shooter == null ? 'a vehicle the replay does not name' : name(row.shooter));
+      var who = row.view === 'outgoing' ? (row.target == null ? 'Shot: no hit in the replay' : 'Shot at ' + name(row.target,row.t)) : 'Hit by ' + (row.shooter == null ? 'a vehicle the replay does not name' : name(row.shooter,row.t));
       var lines = [who];
       if (row.hits.length) lines.push('• Result: ' + R.result(shown).replace(/^Result (\d)/, 'Effect $1').replace(/^Result not/, 'Not'));
-      if (row.hits.length > 1) lines.push('• Hits of this shell: ' + row.hits.map(function (h) { return name(h.target) + ' ' + (h.damage > 0 ? h.damage + ' HP' : (R.effects[(h.points[h.points.length - 1] || {}).effect] || 'no effect')); }).join(', '));
+      if (row.hits.length > 1) lines.push('• Hits of this shell: ' + row.hits.map(function (h) { return name(h.target,h.t) + ' ' + (h.damage > 0 ? h.damage + ' HP' : (R.effects[(h.points[h.points.length - 1] || {}).effect] || 'no effect')); }).join(', '));
       var cal = row.shot && row.shot.caliber ? row.shot.caliber : (row.hits[0] && row.hits[0].points[0] ? row.hits[0].points[0].caliber : 0);
       if (cal) lines.push('• Calibre: ' + Math.round(cal) + ' mm');
       if (!row.shot) lines.push('• Tracer: not in the replay');
@@ -193,7 +193,7 @@
     }
     function rowEl(row) {
       var shown = shownHit(row), other = row.view === 'outgoing' ? row.target : row.shooter;
-      var tile = other == null ? { name: row.view === 'outgoing' ? 'No hit in the replay' : 'Shooter not named' } : (o.info(other) || { name: 'Unknown vehicle' });
+      var tile = other == null ? { name: row.view === 'outgoing' ? 'No hit in the replay' : 'Shooter not named' } : (o.info(other,row.t) || { name: 'Unknown vehicle' });
       // 20.11 (the user on 1.14): the row coloured by its shooter's team (side)
       var shooter = row.view === 'outgoing' ? state.id : row.shooter, side = shooter == null || !o.side ? null : o.side(shooter);
       var b0 = R.hitRow(shown, row.view, tile, { time: o.clock(row.t), crits: [], side: side || 'unknown' });
@@ -207,7 +207,7 @@
         // as the same thing
         // (21.11: the link's widget is hit-rows.js openLink, shared with Hits' link to this viewer)
         wrap.appendChild(R.openLink('Bullba Hits', 'Open in Bullba Hits\nOpens this shot in the Bullba Hits window: the target’s armour from the shooter’s point of view.\n' +
-          '• Shown on a row with a hit whose shooter the replay names, in a battle Bullba Hits recorded\n• This window closes once Bullba Hits stands', open));
+          '• Shown on a row with a hit whose shooter the replay names, in a battle Bullba Hits recorded\n• This window closes once Bullba Hits stands', open, null,'menu-icon.png'));
       }
       return wrap;
     }

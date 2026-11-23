@@ -1687,11 +1687,11 @@
     ctx.font = (7 * k) + 'px system-ui,Segoe UI,Arial,sans-serif';
     if (r.v.player) line(fit(String(r.v.player), W - 4 * k), 4 * k, 'rgba(225,228,232,.72)');
     // the vehicle's short name and its HP, in the team's colour
-    var veh = r.md.name || r.v.type.split(':')[1] || '', txt = String(Math.max(0, Math.round(hp)));
+    var veh = r.md.name || r.v.type.split(':')[1] || '', txt = Number.isFinite(hp) ? String(Math.max(0, Math.round(hp))) : '?';
     ctx.font = '600 ' + (7.5 * k) + 'px system-ui,Segoe UI,Arial,sans-serif';
     line(fit(veh, W - 4 * k - ctx.measureText('  ' + txt).width) + '  ' + txt, 11.5 * k, col.name);
     // a thin HP bar under them
-    var bw = 52 * k, bh = 2.5 * k, bx = (W - bw) / 2, by = 16 * k, f = Math.max(0, Math.min(1, hp / (r.v.maxHealth || 1)));
+    var bw = 52 * k, bh = 2.5 * k, bx = (W - bw) / 2, by = 16 * k, f = r.v.maxHealth > 0 && Number.isFinite(hp) ? Math.max(0, Math.min(1, hp / r.v.maxHealth)) : 0;
     ctx.fillStyle = 'rgba(0,0,0,.4)'; ctx.fillRect(bx, by, bw, bh);
     ctx.fillStyle = col.bar; ctx.fillRect(bx, by, bw * f, bh);
   }
@@ -1786,10 +1786,10 @@
     var sel = $('sel-vcolor').value, key = VEHICLE_COLORS[sel] ? sel : 'steel', c = VEHICLE_COLORS[key], k = +$('rng-vbright').value;
     hitsBaseU.value.set(srgbToLinear(c[0]) * k, srgbToLinear(c[1]) * k, srgbToLinear(c[2]) * k);
     // each vehicle's own base: the preset, or with 'nation' its nation's paint (a nation not in the table: the grey)
-    vehicles.forEach(function (r) {
+    vehicles.forEach(function (entry) { (entry.variants||[entry]).forEach(function(r){
       var n = sel === 'nation' ? NATION_COLORS[String(r.v.type).split(':')[0]] : null, b = r.mat.userData.u.uBase.value;
       if (n) b.set(srgbToLinear(n[0]) * k, srgbToLinear(n[1]) * k, srgbToLinear(n[2]) * k); else b.copy(hitsBaseU.value);
-    });
+    }); });
     $('vbright-v').textContent = k.toFixed(2);
     if (typeof poseHalo === 'function' && vehicles.length) poseHalo();
   }
@@ -1892,14 +1892,30 @@
     var geos = {};
     var box0 = new T.BoxGeometry(3.4, 2.2, 7); box0.translate(0, 1.1, 0);
     var box = hitsGeometry(box0.attributes.position.array, box0.index.array, null, null, 1);
+    var entries = [];
     b.vehicles.forEach(function (v) {
-      var md = models[v.type] || { model: false };
+      var life = 0, rows = v.configs && v.configs.length ? v.configs : [{ t: 0, type: v.type, compDescr: v.compDescr }];
+      rows.forEach(function (c, i) {
+        if (!i || c.type !== rows[i - 1].type || c.newLife) life = c.t;
+        entries.push(Object.assign({}, v, c, {
+          _from: c.t, _until: i + 1 < rows.length ? rows[i + 1].t : Infinity,
+          _lifeFrom: life, _lifeUntil: Infinity, variantKey: c.key || c.type
+        }));
+      });
+    });
+    entries.forEach(function (v, i) {
+      for (var j = i + 1; j < entries.length; j++) {
+        if (entries[j].id === v.id && entries[j]._lifeFrom !== v._lifeFrom) { v._lifeUntil = entries[j]._lifeFrom; break; }
+      }
+    });
+    entries.forEach(function (v) {
+      var modelKey=v.variantKey, md = models[modelKey] || { model: false };
       var role = v.own ? 'own' : (v.team === ownTeam ? 'ally' : 'enemy');
       var mat = hitsMaterial(TEAM_COLOR[role]);
       var g = new T.Group(), turret = null, gun = null;
       function add(parent, geo) { var m = new T.Mesh(geo, mat); m.castShadow = true; m.receiveShadow = true; parent.add(m); }
       if (md.model) {
-        var gg = geos[v.type] || (geos[v.type] = { hull: vehicleGeometry(md.hull, 1), turret: vehicleGeometry(md.turret, 2), gun: vehicleGeometry(md.gun, 3) });
+        var gg = geos[modelKey] || (geos[modelKey] = { hull: vehicleGeometry(md.hull, 1), turret: vehicleGeometry(md.turret, 2), gun: vehicleGeometry(md.gun, 3) });
         add(g, gg.hull);
         turret = new T.Group(); turret.position.fromArray(md.turretAt); add(turret, gg.turret); g.add(turret);
         gun = new T.Group(); gun.position.fromArray(md.gunAt); add(gun, gg.gun); turret.add(gun);
@@ -1915,9 +1931,9 @@
       bar.scale.set(MARKER_W * MARKER_K, MARKER_H * MARKER_K, 1); bar.center.set(0.5, -MARKER_LIFT / MARKER_H); bar.renderOrder = 10; g.add(bar);
       layers.vehicles.add(g);
       // round 5d: the hull's footprint for the halo (its model's bounds in the vehicle's frame: x right, z forward)
-      var hg = md.model ? geos[v.type].hull : box; if (!hg.boundingBox) hg.computeBoundingBox();
+      var hg = md.model ? geos[modelKey].hull : box; if (!hg.boundingBox) hg.computeBoundingBox();
       var bb = hg.boundingBox, top = bb.max.y;
-      if (md.model) { var tg = geos[v.type].turret; if (!tg.boundingBox) tg.computeBoundingBox(); top = Math.max(top, md.turretAt[1] + tg.boundingBox.max.y); }
+      if (md.model) { var tg = geos[modelKey].turret; if (!tg.boundingBox) tg.computeBoundingBox(); top = Math.max(top, md.turretAt[1] + tg.boundingBox.max.y); }
       bar.position.set(0, top + MARKER_GAP, 0);
       var foot ={ cx: (bb.min.x + bb.max.x) / 2, cz: (bb.min.z + bb.max.z) / 2, hx: (bb.max.x - bb.min.x) / 2, hz: (bb.max.z - bb.min.z) / 2 };
       (function () { var P = hg.attributes.position, x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9, yl = bb.min.y + 0.15;
@@ -1932,7 +1948,33 @@
         pos: f32(v.pos), gunT: f32(v.gun), hp: f32(v.hp), lastHp: null, visible: false, dead: false, foot: foot };
       vehicles.push(rec);
     });
+    var byId = {};
+    vehicles.forEach(function (r) { (byId[r.v.id] || (byId[r.v.id] = [])).push(Object.assign({}, r)); r.group.visible = false; });
+    vehicles = Object.keys(byId).map(function (id) {
+      var variants = byId[id], r = Object.assign({}, variants[0]);
+      r.variants = variants; r.activeFrom = null; return r;
+    });
     return ownTeam;
+  }
+  function variantRecord(id, time) {
+    var r = fxById[id];
+    if (!r) return null;
+    if (!r.variants) return r;
+    return r.variants.filter(function (x) {
+      return time >= x.v._from - 1e-6 && time < x.v._until - 1e-6;
+    })[0] || null;
+  }
+  function activateVariant(r, time) {
+    var next = variantRecord(r.v.id, time);
+    if (!next) { r.group.visible = false; r.visible = false; return false; }
+    if (r.activeFrom !== next.v._from) {
+      var list = r.variants;
+      list.forEach(function (x) { x.group.visible = false; });
+      Object.assign(r, next);
+      r.variants = list; r.activeFrom = next.v._from;
+      r.lastHp = undefined; r.deathT = undefined; r.painted = false; r.veiled = false;
+    }
+    return true;
   }
 
   function search(arr, stride, n, t) { // last index with arr[i*stride] <= t, -1 if none
@@ -1948,6 +1990,7 @@
   function poseInto(r, t, group, turret, gun) {
     var v = r.v, i = search(r.pos, 7, v.np, t);
     if (i < 0) return false;
+    if(v._lifeFrom!=null&&r.pos[i*7]<v._lifeFrom-1e-6)return false;
     var p = r.pos, a = i * 7, f = 0, b = a;
     if (i + 1 < v.np && p[a + 7] - p[a] < 1.0) { b = a + 7; f = Math.max(0, Math.min(1, (t - p[a]) / (p[b] - p[a]))); }
     group.position.set(p[a + 1] + (p[b + 1] - p[a + 1]) * f, p[a + 2] + (p[b + 2] - p[a + 2]) * f, p[a + 3] + (p[b + 3] - p[a + 3]) * f);
@@ -1977,6 +2020,10 @@
   }
   function poseVehicles(t) {
     vehicles.forEach(function (r) {
+      var clock=t;if(shotView){var hold=shotView.heldPose(r.v.id,t);if(hold!=null)clock=hold+delayOf(r);}
+      var targetHold=shotView&&shotView.targetPose?shotView.targetPose(r.v.id,t):null;
+      if(targetHold&&targetHold.at!=null)clock=targetHold.at;
+      if(!activateVariant(r,clock))return;
       var v = r.v, inSight = false, tt = t - delayOf(r);
       // the shot view (1.20): its shooter held in its pose at the shot from the shot until play goes on past the hit;
       // its target (20.11) at the server's moment from the hit on
@@ -1987,16 +2034,16 @@
       // entity_leave), but the wreck does not move. Only when the destruction itself was in sight (the place is known).
       if (r.deathT === undefined) {
         r.deathT = null;
-        for (var hk2 = 0; hk2 < v.nh; hk2++) if (r.hp[hk2 * 2 + 1] <= 0) { r.deathT = r.hp[hk2 * 2]; break; }
+        for (var hk2 = 0; hk2 < v.nh; hk2++) if (r.hp[hk2 * 2]>=v._lifeFrom&&r.hp[hk2*2]<v._lifeUntil&&r.hp[hk2 * 2 + 1] <= 0) { r.deathT = r.hp[hk2 * 2]; break; }
         r.wreckSeen = false;
         if (r.deathT != null) for (var s2 = 0; s2 < v.sight.length; s2++) if (r.deathT >= v.sight[s2][0] && r.deathT <= v.sight[s2][1]) r.wreckSeen = true;
       }
       if (!inSight && r.wreckSeen && t >= r.deathT) inSight = true;
       if (!inSight || !(given ? poseGiven(r, given) : poseInto(r, tt, r.group, r.turret, r.gun))) { r.group.visible = false; r.visible = false; return; }
       r.group.visible = true; r.visible = true;
-      var hi = search(r.hp, 2, v.nh, t), hp = hi < 0 ? v.maxHealth : r.hp[hi * 2 + 1];
+      var hi = search(r.hp, 2, v.nh, t), hp = hi < 0 || r.hp[hi*2]<v._lifeFrom ? v.maxHealth : r.hp[hi * 2 + 1];
       if (hp !== r.lastHp) {
-        r.lastHp = hp; r.dead = hp <= 0;
+        r.lastHp = hp; r.dead = Number.isFinite(hp) && hp <= 0;
         r.mat.userData.u.uDead.value = r.dead ? 1 : 0;
         drawMarker(r, hp);
         r.tex.needsUpdate = true; r.bar.visible = !r.dead;
@@ -2044,13 +2091,13 @@
   // muzzle of the drawn model at each shot's time (the same pose the page draws then): tracers start there
   var scratch = { g: new T.Object3D(), t: new T.Object3D(), k: new T.Object3D() };
   scratch.g.add(scratch.t); scratch.t.add(scratch.k);
-  var muzzleOffsets = [];
+  var muzzleOffsets = [], shotPaths = [];
   function computeMuzzles() {
     var byId = {}; vehicles.forEach(function (r) { byId[r.v.id] = r; });
-    muzzleOffsets = [];
+    muzzleOffsets = []; shotPaths = [];
     var diag = [];
     shots.forEach(function (x, n) {
-      var r = byId[x[1]], m = null;
+      var r = variantRecord(x[1],x[0]) || byId[x[1]], m = null;
       if (r && r.md.model) {
         scratch.t.position.fromArray(r.md.turretAt); scratch.k.position.fromArray(r.md.gunAt);
         scratch.t.rotation.set(0, 0, 0); scratch.k.rotation.set(0, 0, 0);
@@ -2066,6 +2113,7 @@
         }
       }
       muzzleOffsets[n] = m;
+      shotPaths[n] = PlaybackBattle.trajectory(x,m);
     });
     var d = muzzleOffsets.filter(Boolean).map(function (m) { return Math.hypot(m[0], m[1], m[2]); }).sort(function (a, b) { return a - b; });
     window.__muzzle = { shots: shots.length, withMuzzle: d.length, medianOffset: d.length ? +d[d.length >> 1].toFixed(2) : null,
@@ -2092,7 +2140,7 @@
       if (x[0] > t) break;
       if (shotView && shotView.drawsShot(s, t)) continue;   // 1.21: the shot view draws this shot's flight itself (one line)
       var sx = x[3], sy = x[4], sz = x[5], vx = x[6], vy = x[7], vz = x[8], g = x[9], ex = x[11], ey = x[12], ez = x[13];
-      var hv = Math.hypot(vx, vz), flight = hv > 1 ? Math.hypot(ex - sx, ez - sz) / hv : 0.05;
+      var path=shotPaths[s],flight=path?path.duration:Math.max(.05,x[10]-x[0]);
       var tau = t - x[0];
       if (tau > flight + FADE) continue;
       var upto = Math.min(tau, flight), fade = tau > flight ? 1 - (tau - flight) / FADE : 1;
@@ -2102,8 +2150,8 @@
       var px = sx + mo[0], py = sy + mo[1], pz = sz + mo[2];
       for (var i = 1; i <= SEG && n < MAXSEG; i++) {
         var u = upto * i / SEG, w = flight > 0 ? 1 - Math.min(1, u / flight) : 0, qx, qy, qz;
-        if (tau >= flight && i === SEG) { qx = ex; qy = ey; qz = ez; }
-        else { qx = sx + vx * u + mo[0] * w; qy = sy + vy * u - 0.5 * g * u * u + mo[1] * w; qz = sz + vz * u + mo[2] * w; }
+        if(path){var p=path.point(u/flight);qx=p[0];qy=p[1];qz=p[2];}
+        else { qx=sx+(ex-sx)*u/flight;qy=sy+(ey-sy)*u/flight;qz=sz+(ez-sz)*u/flight; }
         var o = n * 6;
         trPos[o] = px; trPos[o + 1] = py; trPos[o + 2] = pz; trPos[o + 3] = qx; trPos[o + 4] = qy; trPos[o + 5] = qz;
         for (var j = 0; j < 2; j++) { trCol[o + j * 3] = k[0] * fade; trCol[o + j * 3 + 1] = k[1] * fade; trCol[o + j * 3 + 2] = k[2] * fade; }
@@ -2210,7 +2258,7 @@
     var used = 0, i, s, first = fxFirst(fxDmg, t - DMG_LIFE);
     if (hitsOn) for (var j = first; j < fxDmg.length && fxDmg[j][0] <= t; j++) {
       var row = fxDmg[j], r = fxById[row[1]];
-      if (!r || !r.visible || r.veiled || r.painted) continue;
+      if (!r || !r.visible || r.veiled || r.painted || row[0]<r.v._from || row[0]>=r.v._until) continue;
       s = null;
       for (i = 0; i < DMG_POOL; i++) if (dmgSlots[i].ev === j) { s = dmgSlots[i]; break; }
       // a free slot: not drawn this frame and its number not alive now (a slot whose number's vehicle is hidden may go)
@@ -2227,7 +2275,7 @@
     dmgShown = used;
   }
   // why an event draws nothing now: null = it draws
-  function fxWhyNot(r) { return !r ? 'vehicle not in the battle file' : (!r.md.model ? 'vehicle drawn as a box' : (!r.visible ? 'vehicle not in sight' : null)); }
+  function fxWhyNot(r,at) { return !r ? 'vehicle not in the battle file' : (at!=null&&(at<r.v._from||at>=r.v._until)?'another recorded configuration':(!r.md.model ? 'vehicle drawn as a box' : (!r.visible ? 'vehicle not in sight' : null))); }
   // the flashes and sparks alive at time t; `count` (optional) collects which events drew and why the others did not
   // THE FLASHES ON THE WALL CLOCK (21.11, BACKLOG 121: a flash frozen at its brightest on a stop hid the armour): a flash's
   // age is the larger of its age on the battle's clock and the time on the wall since it was first drawn, so on a pause or
@@ -2254,7 +2302,7 @@
   function shotContact(hi, t) {
     var js = fxRowsOf(hi);
     if (!js.length) return null;
-    var h = fxHits[js[0]], r = fxById[h[1]];
+    var h = fxHits[js[0]], r = variantRecord(h[1],t);
     if (!r || !r.md.model || !poseInto(r, t - delayOf(r), r.group, r.turret, r.gun)) return null;
     var part = fxPart(r, h[7]); part.updateWorldMatrix(true, false);
     var dir = new T.Vector3(h[14], h[15], h[16]).transformDirection(part.matrixWorld);
@@ -2274,7 +2322,7 @@
     if (!count) { if (t < fxWallT - 1e-6) fxWall = {}; fxWallT = t; }
     if (hitsOn || count) {
       for (var i = fxFirst(fxMuzzles, t - MUZ_LIFE); i < fxMuzzles.length && fxMuzzles[i][0] <= t; i++) {
-        var m = fxMuzzles[i], r = fxById[m[1]], why = fxWhyNot(r);
+        var m = fxMuzzles[i], r = fxById[m[1]], why = fxWhyNot(r,m[0]);
         if (count) { if (why) count.muzzleWhy[i] = count.muzzleWhy[i] || why; else count.muzzle[i] = 1; }
         if (why) continue;
         var ma = fxAge('m' + i, m[0], t, count);
@@ -2288,7 +2336,7 @@
         n = fxPut(n, fxV.x + fxF.x * u, fxV.y + fxF.y * u, fxV.z + fxF.z * u, 1, 0.5, 0.15, 0.8 * k, 1.6);
       }
       for (var j = fxFirst(fxHits, t - HIT_LIFE); j < fxHits.length && fxHits[j][0] <= t; j++) {
-        var h = fxHits[j], rv = fxById[h[1]], wn = fxWhyNot(rv), tau = t - h[0], c = fxClass(h[6]);
+        var h = fxHits[j], rv = fxById[h[1]], wn = fxWhyNot(rv,h[0]), tau = t - h[0], c = fxClass(h[6]);
         var life = c === 0 ? 0.3 : HIT_LIFE;
         if (tau > life) continue;
         if (count) { if (wn) count.hitWhy[j] = count.hitWhy[j] || wn; else count.hit[j] = 1; }
@@ -2446,7 +2494,7 @@
     // cal: the hit point's calibre in mm (0 or none: no calibre, `size` the game sticker's modelSizes); d: the shell's
     // direction in the part's frame (none: along the plate's normal)
     function add(r, grp, t, kind, p, nrm, d, size, seed, cal) {
-      var key = r.v.id + ':' + grp, L = per[key] || (per[key] = { r: r, grp: grp, pos: [], uv: [], inf: [], first: 1e9, geo: markPartGeo(r, grp) });
+      var key = r.v.id + ':' + r.v._from + ':' + grp, L = per[key] || (per[key] = { r: r, grp: grp, pos: [], uv: [], inf: [], first: 1e9, geo: markPartGeo(r, grp) });
       var N = new T.Vector3(nrm[0], nrm[1], nrm[2]).normalize(), W = new T.Vector3(-d[0], -d[1], -d[2]);
       if (W.lengthSq() < 1e-6) W.copy(N); else W.normalize();  // the projection axis: back along the shell, toward the shooter
       var cosI = Math.max(1e-3, Math.abs(N.dot(W))), stretch = 1 / cosI, kept = Math.min(stretch, MARK_CAP);
@@ -2472,12 +2520,12 @@
     }
     if (probe) probe.forEach(function (m) { add(m.r, m.grp, 0, m.kind, m.p, m.n, [-m.n[0], -m.n[1], -m.n[2]], 0, 0.5, 100); });
     else fxHits.forEach(function (h, i) {
-      var r = fxById[h[1]];
+      var r = variantRecord(h[1],h[0]);
       if (!r) return note('vehicle not in the battle file'); if (!r.md.model) return note('vehicle drawn as a box');
       add(r, h[7], h[0], fxClass(h[6]), [h[8], h[9], h[10]], [h[11], h[12], h[13]], [h[14], h[15], h[16]], h[17], fxRand(i * 3 + 1), h[23]) !== false && info.marksFromHits++;
     });
     (probe ? [] : battle.marks || []).forEach(function (m, i) {
-      var r = fxById[m[1]];
+      var r = variantRecord(m[1],m[0]);
       if (!r) return note('vehicle not in the battle file'); if (!r.md.model) return note('vehicle drawn as a box');
       add(r, m[2], m[0], m[3] ? 4 : 3, [m[4], m[5], m[6]], [m[7], m[8], m[9]], [0, 0, 0], m[10], fxRand(i * 3 + 2)) !== false && info.marksFromStickers++;
     });
@@ -2754,7 +2802,7 @@
   var panel = null;
   function shotsPanel() {
     if (!panel) panel = BullbaShotsPanel.create({ battle: battle,
-      info: function (id) { var r = fxById[id]; return r ? tileOf(r) : null; },
+      info: function (id,at) { var r = at==null?fxById[id]:variantRecord(id,at); return r ? tileOf(r) : null; },
       player: function (id) { var r = fxById[id]; return (r && r.v.player) || ''; },
       // R3 (20.11): a row's colour is its shooter's team as the replay's player sees it
       side: function (id) { var r = id == null ? null : fxById[id]; return r ? (r.role === 'enemy' ? 'enemy' : 'ally') : null; },
@@ -2776,7 +2824,9 @@
   function shotParam(row, id) {
     var h = row && row.hits[0], start = battle && battle.meta && battle.meta.serverStart;
     if (!h || h.attacker == null || h.target == null || !Number.isFinite(start)) return null;
-    return { at: +(start + h.t).toFixed(3), attacker: h.attacker, target: h.target, focus: id != null ? id : h.target };
+    var route={ at: +(start + h.t).toFixed(3), attacker: h.attacker, target: h.target, focus: id != null ? id : h.target };
+    if(row.shot){route.shotIndex=row.shot.index;if(row.shot.shotId!=null)route.shotId=String(row.shot.shotId);}
+    return route;
   }
   function hitsOpener(row, id) {
     var p = hitsKnown() ? shotParam(row, id) : null;
@@ -2784,7 +2834,7 @@
     var shot = Object.assign({ battleId: BID }, p);
     return function () {
       if (host.game && host.canSend()) { host.send('bullba_hits', Object.assign({ action: 'openHits' }, shot)).catch(function (e) { console.warn('Bullba Hits openHits failed: ' + e.message); }); return; }
-      location.href = BASE + 'Viewer.html#' + (host.game ? 'host=game&' : '') + 'battle=' + encodeURIComponent(BID) + '&at=' + shot.at + '&attacker=' + shot.attacker + '&target=' + shot.target + '&focus=' + shot.focus;
+      location.href = BASE + 'Viewer.html#' + (host.game ? 'host=game&' : '') + 'battle=' + encodeURIComponent(BID) + '&at=' + shot.at + '&attacker=' + shot.attacker + '&target=' + shot.target + '&focus=' + shot.focus + (shot.shotId!=null?'&shotId='+encodeURIComponent(shot.shotId):'');
     };
   }
   function jumpTo(j) {
@@ -2812,7 +2862,8 @@
       vehicle: function (id) { return fxById[id] || null; },
       aimInputs: shotAimInputs,
       targetBounds: shotTargetBounds,
-      name: function (id) { var r = id == null ? null : fxById[id]; return r ? tileOf(r).name : 'not named'; },
+      trajectory:function(index,endpoint){return endpoint?PlaybackBattle.trajectory(battle.shots[index],muzzleOffsets[index],endpoint):shotPaths[index]||null;},
+      name: function (id,at) { var r = id == null ? null : at==null?fxById[id]:variantRecord(id,at); return r ? tileOf(r).name : 'not known at this time'; },
       clock: function (s) { return fmt(s - tBattle); },
       seek: function (x) { t = Math.min(tEnd, Math.max(0, x)); $('slider').value = t; },
       play: function (on) { if (!!on !== playing) togglePlay(); },
@@ -2829,7 +2880,7 @@
   var shotAimPromise = null;
   function shotAimInputs() {
     if (shotAimPromise) return shotAimPromise;
-    var rows = battle.vehicles.filter(function (v) { return v.compDescr; });
+    var rows=[];battle.vehicles.forEach(function(v){(v.configs&&v.configs.length?v.configs:[v]).forEach(function(c){if(c.compDescr)rows.push(c);});});
     function read() {
       return loadData('data/playback/aim-' + BID + '.js', 'playback-aim:' + BID).then(function (v) {
         if (!v || v.format !== 1 || !v.inputs || rows.some(function (r) { return !(r.compDescr in v.inputs); })) throw new Error('aim inputs not ready');
@@ -2846,7 +2897,7 @@
     return shotAimPromise;
   }
   function shotTargetBounds(id, at) {
-    var r = fxById[id];
+    var r = variantRecord(id,at);
     if (!r || !r.group || !r.turret || !r.gun) return null;
     var g = r.group, p = g.position.clone(), q = g.quaternion.clone(), ty = r.turret.rotation.y, gx = r.gun.rotation.x, points = [];
     if (poseInto(r, at - delayOf(r), g, r.turret, r.gun)) {
@@ -2878,7 +2929,8 @@
       var tk = C[k * 9];
       if (tk > b) break;
       if (k + 1 >= n || C[(k + 1) * 9] - tk > SHOT_CAM_GAP) return false;
-      if (!poseInto(r, tk, shotTmp)) return false;
+      var at=variantRecord(id,tk+d);
+      if (!at || !poseInto(at, tk, shotTmp)) return false;
       var p = shotTmp.position;
       if (heightAt && p.y + C[k * 9 + 6] < heightAt(p.x + C[k * 9 + 5], p.z + C[k * 9 + 7])) return false;
     }
@@ -2886,7 +2938,7 @@
   }
   // the recorded eye at the clock t: pos (scene), quat (the camera's, scene); returns the fov in degrees, null: no sample
   function shotRecordedCamera(id, t, pos, quat) {
-    var r = fxById[id], C = battle && battle.camera, n = (battle && battle.nc) || 0;
+    var r = variantRecord(id,t), C = battle && battle.camera, n = (battle && battle.nc) || 0;
     if (!r || !C || n < 1) return null;
     var tt = t - delayOf(r), i = search(C, 9, n, tt);
     if (i < 0 || !poseInto(r, tt, shotTmp)) return null;
@@ -2901,7 +2953,7 @@
   // the gun's world matrix (its frame -> the scene) of vehicle `id` at the clock t, as this page would draw it then; the
   // vehicle's drawn pose is put back. null: no pose or no gun
   function shotGunAt(id, t, out) {
-    var r = fxById[id];
+    var r = variantRecord(id,t);
     if (!r || !r.turret || !r.gun) return null;
     var g = r.group, P = g.position.clone(), R = g.rotation.clone(), ty = r.turret.rotation.y, gx = r.gun.rotation.x;
     var ok = poseInto(r, t - delayOf(r), g, r.turret, r.gun);
@@ -3087,8 +3139,15 @@
     if (!force && listRows.length) {
       listRows.forEach(function (row) {
         var r = row.r, hp = r.lastHp == null ? r.v.maxHealth : r.lastHp;
-        row.el.className = row.base + (r.visible ? '' : ' out') + (r.dead ? ' dead' : '') + (follow === r ? ' follow' : '');
-        row.bar.style.width = Math.max(0, Math.min(100, 100 * hp / (r.v.maxHealth || 1))) + '%';
+        var known=variantRecord(r.v.id,t),configKey=known?r.v._from:'unknown';
+        if(!known)hp=null;
+        if(row.config!==configKey){
+          row.config=configKey;
+          var previous=row.el.querySelector('.nm'),next=BullbaRows.vehicleTile(known?tileOf(r):{name:'Configuration unknown'},true,{compact:true});
+          next.classList.add('nm');if(previous)previous.replaceWith(next);
+        }
+        row.el.className = row.base + (r.visible ? '' : ' out') + (known&&r.dead ? ' dead' : '') + (follow === r ? ' follow' : '');
+        row.bar.style.width = (r.v.maxHealth>0&&Number.isFinite(hp)?Math.max(0,Math.min(100,100*hp/r.v.maxHealth)):0)+'%';
         if (row.hb) { var lit = !!panel && panel.shown() === r.v.id; row.hb.classList.toggle('on', lit); row.hb.setAttribute('aria-pressed', String(lit)); }
       });
       return;
@@ -3552,16 +3611,23 @@
   // marked `missing`, for the mod to make (vehiclesFor). Without it (an older battle file) data/vehicles is tried.
   function loadVehicles(b, raw, files) {
     // raw (optional): each type's files as read, {veh, models} - the battle worker places the hit points with them
-    var out = {}, types = {};
+    var out = {}, types = {}, reads = {};
+    function readOnce(src,key) {
+      var token=src+'|'+key;
+      if(!reads[token])reads[token]=loadData(src,key);
+      return reads[token];
+    }
     var hits = files && files.hits ? new Set(files.hits) : null, viewer = new Set((files && files.viewer) || []);
-    b.vehicles.forEach(function (v) { types[v.type] = true; });
+    b.vehicles.forEach(function (v) { (v.configs&&v.configs.length?v.configs:[v]).forEach(function(c){types[c.key||c.type]=c;}); });
     return Promise.all(Object.keys(types).map(function (typ) {
-      var id = typ.replace(':', '-');
-      var src = !hits || hits.has(id) ? 'data/vehicles/' : viewer.has(id) ? 'data/playback/vehicles/' : null;
+      var config=types[typ], id=config.type.replace(':','-'), variant=config.key;
+      var src = variant&&viewer.has(variant) ? 'data/playback/vehicles/' : !hits || hits.has(id) ? 'data/vehicles/' : viewer.has(id) ? 'data/playback/vehicles/' : null;
+      if(variant&&viewer.has(variant))id=variant;
       if (!src) { out[typ] = { model: false, missing: true, reason: 'no vehicle file' }; return null; }
-      return loadData(src + id + '.js', 'vehicle:' + id).then(function (veh) {
+      return readOnce(src + id + '.js', 'vehicle:' + id).then(function (veh) {
+        if(config.compDescr&&veh.compactDescriptor!==config.compDescr){out[typ]={model:false,missing:true,reason:'recorded variant not prepared'};return;}
         var keys = {}; veh.parts.forEach(function (p) { if (p.modelKey) keys[p.modelKey] = true; });
-        return Promise.all(Object.keys(keys).map(function (k) { return loadData('data/models/' + k + '.js', 'model:' + k); })).then(function (docs) {
+        return Promise.all(Object.keys(keys).map(function (k) { return readOnce('data/models/' + k + '.js', 'model:' + k); })).then(function (docs) {
           var byKey = {}; Object.keys(keys).forEach(function (k, i) { byKey[k] = docs[i]; });
           if (raw) raw[typ] = { veh: veh, models: byKey };
           out[typ] = vehicleModel(veh, byKey);
@@ -3580,11 +3646,11 @@
       if (!missing.length || !host.canSend()) return m;
       $('msg').textContent = 'Preparing the models of ' + missing.length + ' vehicle' + (missing.length > 1 ? 's' : '') + '...';
       var rows = missing.map(function (t) {
-        var v = b.vehicles.filter(function (x) { return x.type === t && x.compDescr; })[0];
-        return { type: t, descr: v ? v.compDescr : null };
+        var config=null;b.vehicles.forEach(function(v){(v.configs&&v.configs.length?v.configs:[v]).forEach(function(c){if((c.key||c.type)===t)config=c;});});
+        return { type: config?config.type:t, descr: config?config.compDescr:null };
       });
       var w = waitFor(function (n) { return n.kind === 'vehicles' && n.id === BID ? { value: n.files || files } : null; },
-        function () { return Promise.reject(new Error('waiting')); }, VEHICLES_MS);
+        function () { return loadData('data/playback/variants-'+BID+'.js','playback-variants:'+BID).then(function(v){if(!v||!v.files||missing.some(function(k){return !(v.files.viewer||[]).includes(k);}))throw new Error('waiting for variants');return v.files;}); }, VEHICLES_MS);
       host.send('bullba_hits', { action: 'playbackVehicles', battleId: BID, vehicles: rows }).catch(function (e) { console.warn('Bullba Hits playbackVehicles failed: ' + e.message); });
       return w.then(function (f) { return loadVehicles(b, raw, f); }, function () { return m; });
     });
@@ -3648,11 +3714,18 @@
     ask(bid);
     return w.then(function (v) { return v || readFile(bid); });
   }
-  function battleFile(bid) {
+  function battleFile(bid, token) {
     return readFile(bid).catch(function () {
       if (!host.canSend()) throw new Error('This battle is not prepared for the 3D replay yet. Open it here from Bullba Hits in the game once.');
       return untilMade(bid);
-    }).then(function (b) { FILE = b; specialWarning(); return b; });
+    }).then(function (b) {
+      if (token != null && token !== choiceToken) throw { cancelled: true };
+      var mode = modeFor(bid, b);
+      return confirmMode(bid, mode.known ? mode.special : { name: 'Unidentified mode' }).then(function (ok) {
+        if (!ok || (token != null && token !== choiceToken)) throw { cancelled: true };
+        FILE = b; return b;
+      });
+    });
   }
   // the battle from its source (BattlePage.obtain); its source or definitions file gone (removed by hand): the mod writes
   // them again (playback.current checks they are there) and says so
@@ -3753,41 +3826,110 @@
       add(parent, b.id, (b.map ? [battleWhen(+b.startedAt), b.map, b.vehicle && b.vehicle.name].filter(Boolean).join(' · ') : 'This battle') + (keptForever(b.id, false) ? ' ★' : ''), specialOf(b.id));
     });
     sel.value = BID;
+    renderReplayMenu(files,BATTLES);
     noBattle();
-    specialWarning();
     keepPaint();
   }
-  // R4 (BACKLOG 112): the special mode of a battle id (a file's 'f-' id or a Hits battle's): the opened battle's own file
-  // first (data/playback/<id>.js record.special, made by the mod), then its file entry, then its Hits row; null: standard
-  // or unknown
+  function replayMenu(open){
+    var menu=$('replay-menu');menu.hidden=!open;$('replay-pick').setAttribute('aria-expanded',String(open));
+    if(open){var row=menu.querySelector('[aria-selected=true]')||menu.querySelector('[role=option]');if(row)row.focus();}
+  }
+  function renderReplayMenu(files,battles){
+    var menu=$('replay-menu');menu.replaceChildren();
+    var selected=$('sel-battle').selectedOptions[0];$('replay-title').textContent=selected?selected.textContent:'Choose a replay';
+    function group(text){menu.appendChild(BullbaRows.node('div',text,'battle-list-group'));}
+    function add(id,record,isFile){
+      var row=BullbaRows.node('div',undefined,'battle-option');row.tabIndex=0;row.setAttribute('role','option');row.setAttribute('data-id',id);row.setAttribute('aria-selected',String(id===BID));
+      var hb=isFile&&record.battle&&INDEX&&INDEX.battles&&INDEX.battles.find(function(b){return b.id===record.battle;});
+      var special=specialOf(id),map=record.mapTitle||(hb&&hb.map)||record.map||'Unknown map';
+      var label=BullbaRows.node('span',(special?'⚠ ':'')+map,'battle-option-map');
+      if(record.player)label.appendChild(BullbaRows.node('span',record.player,'battle-option-player'));
+      row.appendChild(label);
+      var vehicle=BullbaRows.node('span',undefined,'battle-option-vehicle');
+      if(record.vehicle||hb&&hb.vehicle){var tile=hb&&hb.vehicle|| (typeof record.vehicle==='object'?record.vehicle:{name:vehicleShort(record.vehicle)});vehicle.appendChild(BullbaRows.vehicleTile(tile,true,{compact:true}));}
+      row.appendChild(vehicle);row.appendChild(BullbaRows.node('span',isFile?fileWhen(record):battleWhen(Number(record.startedAt)),'battle-option-when'));
+      var kind=replayKind(id),can=kind==='kept'||kind==='rolling',kept=keptForever(id,record.kept);
+      var star=BullbaRows.node('button',kept?'★':'☆','battle-option-keep');star.type='button';star.disabled=!can||!host.canSend();star.setAttribute('aria-pressed',String(kept));
+      star.setAttribute('aria-label',kept?'Return replay to replay limit':'Keep replay forever');
+      star.title=RL.join(can?RL.keepTip(kind,RL.limit(replayView),host.canSend()):RL.offTip(isFile&&!record.battle?'file':kind||'unknown',RL.limit(replayView),host.canSend()),'• ');
+      star.onclick=function(e){e.preventDefault();e.stopPropagation();toggleKeep(id);};
+      star.onkeydown=function(e){if(e.key==='Enter'||e.key===' ')e.stopPropagation();};row.appendChild(star);
+      var cv=clientVersion(FILES&&FILES.client),fv=clientVersion(record.client);
+      row.title=map+(special?'\nSpecial battle mode: '+special.name:'')+(cv&&fv&&cv!==fv?'\nRecorded with an older client':'');
+      function select(){replayMenu(false);choose(id);}
+      row.onclick=select;row.onkeydown=function(e){if(e.target!==row)return;if(e.key==='Enter'||e.key===' '){e.preventDefault();select();}};
+      menu.appendChild(row);
+    }
+    if(files.length){group('Replay files');files.forEach(function(f){add(f.battle||f.id,f,true);});}
+    if(battles.length){group('Bullba Hits battles');battles.forEach(function(b){add(b.id,b,false);});}
+    if(BID&&!menu.querySelector('[aria-selected=true]'))add(BID,{map:thisBattle||'This battle'},false);
+  }
+  $('replay-pick').onclick=function(){replayMenu($('replay-menu').hidden);};
+  $('replay-picker').addEventListener('keydown',function(e){
+    var menu=$('replay-menu');
+    if(e.key==='Escape'||e.key==='Tab'){replayMenu(false);if(e.key==='Escape'){$('replay-pick').focus();e.preventDefault();}return;}
+    if(['ArrowDown','ArrowUp','Home','End'].indexOf(e.key)<0)return;
+    e.preventDefault();if(menu.hidden){replayMenu(true);return;}
+    var rows=[].slice.call(menu.querySelectorAll('[role=option]')),i=rows.indexOf(document.activeElement),next=e.key==='Home'?0:e.key==='End'?rows.length-1:(i+(e.key==='ArrowDown'?1:-1)+rows.length)%rows.length;
+    if(rows[next])rows[next].focus();
+  });
+  document.addEventListener('pointerdown',function(e){if(!$('replay-picker').contains(e.target))replayMenu(false);});
+  // A real header classification wins, including ordinary. Old prepared/index
+  // labels are interpreted using the current shipped policy, never truthy-only
+  // fallthrough. A row without evidence does not override a known lower source.
+  function modeFor(id, prepared) {
+    return BullbaReplayMode.resolve(id, fileRows(), INDEX && INDEX.battles || [], prepared || FILE);
+  }
   function specialOf(id) {
-    if (!id) return null;
-    if (id === BID && FILE && FILE.record && FILE.record.special) return FILE.record.special;
-    var f = fileRows().filter(function (x) { return x.id === id || x.battle === id; }).filter(function (x) { return x.special; })[0];
-    if (f) return f.special;
-    var b = INDEX && Array.isArray(INDEX.battles) ? INDEX.battles.filter(function (x) { return x && x.id === id && x.special; })[0] : null;
-    return b ? b.special : null;
+    return id ? modeFor(id).special : null;
   }
   // On opening a battle of a special mode: a warning in the middle of the window, once per opening, with "Don't show
   // again" - remembered as the Settings switch 'warn on special modes' (the page's remembered settings), read before the
   // settings are applied (BullbaSettings peek) since the warning comes while the battle loads
-  var specialShown = false;
-  function specialWarning() {
-    var s = BID && !specialShown ? specialOf(BID) : null, sw = $('sw-special-warn');
-    if (!s || !sw) return;
-    if (!settingStore.peek(sw)) return;
-    specialShown = true;
-    $('special-mode').textContent = s.name;
-    $('special-again').checked = false;
-    $('special-warn').hidden = false;
+  var modePending = null, modeAccepted = {}, choiceToken = 0, entryMetadata = null;
+  function finishMode(ok) {
+    var p = modePending;
+    if (!p) return;
+    modePending = null; $('special-warn').hidden = true;
+    if (ok) {
+      modeAccepted[p.key] = true;
+      if ($('special-again').checked) {
+        $('sw-special-warn').checked = false;
+        settingStore.remember($('sw-special-warn'), false);
+      }
+    }
+    p.resolve(ok);
   }
-  $('special-ok').onclick = function () {
-    $('special-warn').hidden = true;
-    if ($('special-again').checked) { $('sw-special-warn').checked = false; settingStore.remember($('sw-special-warn'), false); }
-  };
+  function confirmMode(id, s) {
+    var key = id + ':' + (s ? s.name || 'unknown' : 'standard');
+    if (!s || modeAccepted[key] || !settingStore.peek($('sw-special-warn'))) return Promise.resolve(true);
+    try {
+      var accepted = JSON.parse(sessionStorage.getItem('bullba-replay-accepted'));
+      if (accepted && accepted.key === key) {
+        sessionStorage.removeItem('bullba-replay-accepted'); modeAccepted[key] = true;
+        return Promise.resolve(true);
+      }
+    } catch (e) {}
+    finishMode(false);
+    $('special-mode').textContent = s.name || 'Unidentified mode';
+    $('special-again').checked = false; $('special-warn').hidden = false;
+    return new Promise(function (resolve) { modePending = { key: key, resolve: resolve }; });
+  }
+  function candidateMode(id){
+    var mode = modeFor(id);
+    if (mode.known) return Promise.resolve(mode.special);
+    return loadData('data/playback/' + id + '.js', 'playback:' + id).then(function (b) {
+      var resolved = modeFor(id, b);
+      return resolved.known ? resolved.special : { name: 'Unidentified mode' };
+    }, function () { return { name: 'Unidentified mode' }; });
+  }
+  $('special-ok').onclick=function(){finishMode(true);};
+  $('special-cancel').onclick=function(){finishMode(false);};
+  document.addEventListener('keydown',function(e){if(e.key==='Escape'&&modePending){e.preventDefault();e.stopImmediatePropagation();finishMode(false);}},true);
+  document.addEventListener('pointerdown',function(e){if(modePending&&!$('special-warn').contains(e.target))finishMode(false);},true);
 
   // ------------------------------------------------------------------ the replay limit (BACKLOG 107; 20.11, NOTEBOOK S3)
-  // The mod's mode, the same one Bullba Hits' Settings > Replay limit shows (one owner: the mod's replay_library; the page
+  // The mod's mode, edited only in Replays' Settings > Replay limit (one owner: the mod's replay_library; the page
   // reads data/replays.js and sends 'replayLimit' / 'replayKeep'; the rules and the words are web/replay-limit.js, shared
   // with Bullba Hits). Settings > Replays: on/off and how many; the star beside the battle choice keeps the open battle's
   // replay forever or puts it back under the limit - only a replay the limit holds under the mod's name, named by its
@@ -3841,12 +3983,13 @@
     }
     b.textContent = kept ? '★' : '☆';
     b.classList.toggle('on', !!kept); b.setAttribute('aria-pressed', String(!!kept));
-    b.disabled = !active; b.title = RL.join(tip, '- ');
+    b.disabled = !active; b.title = RL.join(tip, '- ');b.setAttribute('aria-label',kept?'Return replay to replay limit':'Keep replay forever');
   }
-  function toggleKeep() {
-    var k = BID ? replayKind(BID) : ''; if ((k !== 'kept' && k !== 'rolling') || !host.canSend()) return;
-    var keep = k !== 'kept'; replayAsked[BID] = { keep: keep, at: Date.now() };
-    host.send('bullba_hits', { action: 'replayKeep', battleId: BID, keep: keep }).catch(function (e) { console.warn('Bullba Hits replayKeep failed: ' + e.message); });
+  function toggleKeep(id) {
+    id=typeof id==='string'?id:BID;
+    var k = id ? replayKind(id) : ''; if ((k !== 'kept' && k !== 'rolling') || !host.canSend()) return;
+    var keep = k !== 'kept'; replayAsked[id] = { keep: keep, at: Date.now() };
+    host.send('bullba_hits', { action: 'replayKeep', battleId: id, keep: keep }).catch(function (e) { console.warn('Bullba Hits replayKeep failed: ' + e.message); });
     battleSelect(); replayPoll();
   }
   function sendLimit() {
@@ -3879,7 +4022,7 @@
       if (open != null && panel.filter() !== 'all') parts.push('dir=' + panel.filter());   // the panel's filter (U1, 20.11)
       // the shot view's shot (21.11, BACKLOG 118): the view opens on it again (openShotParam)
       var sp = openShot();
-      if (sp) parts.push('shot=' + [sp.at, sp.attacker, sp.target, sp.focus].join(','));
+      if (sp) parts.push('shot=' + BullbaShotRoute.encode(sp));
     }
     return parts.join('&');
   }
@@ -3888,24 +4031,22 @@
     var row = shotView && shotView.active() ? shotView.row() : null, open = panel && panel.shown();
     return row ? shotParam(row, open != null ? open : null) : null;
   }
-  // OPENED ON A SHOT (21.11, BACKLOG 118): '#...&shot=<at>,<attacker>,<target>,<focus>' - Bullba Hits' link of one hit (at its
-  // gameTime) or this page's own state (viewState). The row of the focus vehicle's panel whose hit has that attacker and
-  // target nearest to at - within Hits' HIT_AT (local-data.js, a guess of 19.11: a battle made from this replay stamps the
-  // same clock, one recorded live may differ) - opens in the shot view, its panel open; none: the battle 2 s before that
-  // moment, the panel open, nothing chosen in place of it. Once, after the carried state (restoreView).
+  // Cross-page shot links and carried full-screen state share one resolver.
+  // Recorded tracer ID wins; legacy timing must identify a single shot group.
+  // Missing or ambiguous links leave the current view alone and explain why.
   function openShotParam() {
-    var p = String(params.shot || '').split(',').map(Number), start = battle && battle.meta && battle.meta.serverStart;
-    if (p.length !== 4 || !p.every(isFinite) || !Number.isFinite(start)) return;
-    var at = p[0] - start, attacker = p[1], target = p[2], focus = fxById[p[3]] ? p[3] : fxById[target] ? target : attacker;
-    var limit = (window.ArmorInspectorData && ArmorInspectorData.HIT_AT) || 0.5, best = null, gap = Infinity;
-    BullbaShotsPanel.rows(battle, focus).forEach(function (r) {
-      r.hits.forEach(function (h) { var d = Math.abs(h.t - at); if (h.attacker === attacker && h.target === target && d <= limit && d < gap) { gap = d; best = r; } });
-    });
-    var f = fxById[focus];
-    if (f) { var side = f.role === 'enemy' ? 'enemy' : 'own'; shotsPanel().open(focus, $('list-' + side), side); }
-    var sv = best ? shotViewer() : null;
-    if (sv) { setFollow(null); sv.open(best); return; }
-    t = Math.min(tEnd, Math.max(0, at - 2)); $('slider').value = t;
+    if(!params.shot)return;
+    function unavailable(reason){$('msg').textContent=reason;$('msg').style.display='block';}
+    var route=BullbaShotRoute.parse(params.shot);
+    if(!route){unavailable('The shot link is invalid; no shot was selected.');return;}
+    var focus=fxById[route.focus]?route.focus:fxById[route.target]?route.target:route.attacker;
+    var result=BullbaShotRoute.match(BullbaShotsPanel.rows(battle,focus),route,battle.meta&&battle.meta.serverStart);
+    if(!result.row||!result.row.shot){unavailable(result.reason||'This hit has no recorded tracer; no shot episode was selected.');return;}
+    $('msg').style.display='none';
+    var f=fxById[focus];
+    if(f){var side=f.role==='enemy'?'enemy':'own';shotsPanel().open(focus,$('list-'+side),side);}
+    var sv=shotViewer();
+    if(sv){setFollow(null);sv.open(result.row);}
   }
   // the carried state back, once (the battle built and the remembered settings applied)
   function restoreView() {
@@ -3968,10 +4109,23 @@
     $('msg').textContent = n ? 'Choose a replay in the battle list at the top: newest first, ★ kept forever by the replay limit.'
       : (FILES ? 'No replays in the game\'s replays folder yet.' : 'Reading the replays folder...');
   }
-  function choose(id) {
-    if (!/^[-a-zA-Z0-9_]{1,100}$/.test(id) || id === BID) return;
+  function choose(id, shot) {
+    if (!/^[-a-zA-Z0-9_]{1,100}$/.test(id)) return;
+    var token = ++choiceToken;
+    finishMode(false); $('sel-battle').value = BID;
+    if (id === BID) { if(shot){params.shot=shot;openShotParam();} return; }
+    Promise.resolve(entryMetadata).then(function () { return candidateMode(id); }).then(function (s) {
+      if (token !== choiceToken) return false;
+      return confirmMode(id, s).then(function (ok) {
+        if (!ok || token !== choiceToken) return;
+        try { sessionStorage.setItem('bullba-replay-accepted', JSON.stringify({ key: id + ':' + (s ? s.name || 'unknown' : 'standard') })); } catch (e) {}
+        navigate(id, shot);
+      });
+    });
+  }
+  function navigate(id, shot){
     // R5: a battle chosen in the game's full-screen view stays in it (the mod's view=full kept)
-    location.hash = (host.game ? 'host=game&' : '') + (FULL_VIEW ? 'view=full&' : '') + 'battle=' + encodeURIComponent(id);
+    location.hash = (host.game ? 'host=game&' : '') + (FULL_VIEW ? 'view=full&' : '') + 'battle=' + encodeURIComponent(id) + (shot?'&shot='+encodeURIComponent(shot):'');
     location.reload();
   }
   // the replay files: in the game the mod reads their headers again first ('replayFiles', a cached scan) and says when
@@ -3979,7 +4133,7 @@
   var FILES_MS = 60000;
   function loadFiles() {
     if (!host.canSend()) return loadData('data/replay-files.js', 'replayFiles').catch(function () { return null; });
-    var w = waitFor(function (n) { return n.kind === 'files' ? { value: null } : null; }, function () { return Promise.reject(new Error('waiting')); }, FILES_MS);
+    var w = waitFor(function (n) { return n.kind === 'files' ? { value: null } : null; }, function () { return loadData('data/replay-files.js','replayFiles'); }, FILES_MS);
     host.send('bullba_hits', { action: 'replayFiles' }).catch(function (e) { console.warn('Bullba Hits replayFiles failed: ' + e.message); });
     return w.then(function () { return loadData('data/replay-files.js', 'replayFiles'); }).catch(function () { return null; });
   }
@@ -3993,6 +4147,10 @@
   // the sky as the old default left it (every control is written), so its sky value is dropped and the new default holds
   // version 3 (20.11, the user on 1.14): the sky's default turned to on - the same: a box of an older version holds the sky
   // off as that default wrote it (not told apart from a choice), so it is dropped once and the new default holds
+  BullbaSettings.impact.bind($('impact-color'), $('impact-opacity'), $('impact-opacity-value'));
+  // Before a battle loads the other controls still carry their HTML defaults;
+  // the shared preference is already live, including on the replay-list page.
+  $('reset-settings').onclick = function () { BullbaSettings.impact.reset(); };
   var settingStore = BullbaSettings.bind({ key: 'bullba-playback-settings', version: 3,
     read: function (box) {
       var v = box && box.values && typeof box.values === 'object' ? box.values : null;
@@ -4000,7 +4158,7 @@
       return v;
     },
     // a control the MOD owns (data-mod-setting: the replay limit) is shown from its file, never remembered or reset here
-    controls: [].slice.call(document.querySelectorAll('#settings input[id]:not([data-mod-setting]), #settings select[id], #sw-sky, #sw-flash, #speed-value, #sv-aim-circle')) });
+    controls: [].slice.call(document.querySelectorAll('#settings input[id]:not([data-mod-setting]):not([data-shared-setting]), #settings select[id]:not([data-shared-setting]), #sw-sky, #sw-flash, #speed-value, #sv-aim-circle')) });
 
   // ------------------------------------------------------------------ start
   var mapData, battleInfo = null;
@@ -4019,12 +4177,21 @@
     BID = params.battle || '';
     // the selector is filled beside the load, whatever becomes of it: another battle can be chosen from an error too
     battleSelect(null);
-    loadData('data/index.js', 'index').then(battleSelect, function () {});
-    loadFiles().then(function (f) { FILES = f; battleSelect(); });
+    entryMetadata=Promise.all([loadData('data/index.js', 'index').then(battleSelect, function () {}),loadFiles().then(function (f) { FILES = f; battleSelect(); })]);
     if (!BID) { window.__list = true; noBattle(); return new Promise(function () {}); }
     if (!/^[-a-zA-Z0-9_]{1,100}$/.test(BID)) throw new Error('No battle named.');
     MAP = BID;
-    return battleFile(BID);
+    var openingToken = choiceToken;
+    return entryMetadata.then(function () {
+      if (openingToken !== choiceToken) throw { cancelled: true };
+      return candidateMode(BID);
+    }).then(function (s) {
+      if (openingToken !== choiceToken) throw { cancelled: true };
+      return confirmMode(BID, s);
+    }).then(function (ok) {
+      if (!ok || openingToken !== choiceToken) throw { cancelled: true };
+      return battleFile(BID, openingToken);
+    });
   }).then(function (info) {
     if (info.error) throw new Error(info.error);
     $('msg').textContent = 'Reading the replay...';
@@ -4042,7 +4209,7 @@
     var models = store['vehicles:' + BID];
     // the battle's turret and gun against the exported file's (the list marks a vehicle drawn with others)
     battle.vehicles.forEach(function (v) {
-      var md = models[v.type], bt = turretGun(v.compDescr);
+      var c=PlaybackBattle.configurationAt(v,0),md = c&&models[c.key||c.type], bt = turretGun(c&&c.compDescr);
       v.modulesMatch = md && md.model && bt && md.turretGun ? bt[0] === md.turretGun[0] && bt[1] === md.turretGun[1] : null;
     });
     $('mapname').textContent = mapData.title + ' (' + battle.meta.gameplay + ')' + (battle.meta.dateTime ? ' ' + battle.meta.dateTime : '');
@@ -4069,9 +4236,9 @@
     dEvents = battle.destruction || [];
     var own = battle.vehicles.filter(function (v) { return v.own; })[0];
     vehicles.forEach(function (r) { shotColors[r.v.id] = r.role === 'enemy' ? [1, 0.45, 0.35] : (r.role === 'own' ? [1, 0.9, 0.4] : [0.7, 1, 0.6]); });
+    vehicles.forEach(function (r) { fxById[r.v.id] = r; });
     computeMuzzles();
     fxHits = battle.hits || []; fxMuzzles = battle.muzzles || [];
-    vehicles.forEach(function (r) { fxById[r.v.id] = r; });
     buildDamage(); buildMarks(); hitsOn = true; $('sw-hits').checked = hitsOn;
     tEnd = battle.meta.end;
     var p3 = battle.meta.periods.filter(function (p) { return p[1] === 3; })[0];
@@ -4094,7 +4261,7 @@
       // 21.11, once: a remembered foliage of exactly 0.8 is the shot view's forced value saved by the defect above, not a choice
       try { if (!localStorage.getItem('bullba-foliage-fix') && Math.abs(+$('rng-foliage').value - 0.8) < 1e-6) { setFoliage(0); settingStore.remember($('rng-foliage'), 0); }
         localStorage.setItem('bullba-foliage-fix', '1'); } catch (e) {}
-      $('reset-settings').onclick = settingStore.reset;
+      $('reset-settings').onclick = function () { settingStore.reset(); BullbaSettings.impact.reset(); };
       restoreView();  // R5: the state the full-screen switch carried (time, camera, speed, play, follow, panel)
       openShotParam();  // 21.11 (BACKLOG 118): a shot carried by Hits' link or by that state
       window.__ready = { jsBuild: jsBuild, battleBuild: battleInfo, load: +(tLoaded - loadStart).toFixed(0), build: +(tBuilt - tLoaded).toFixed(0), impostors: +(performance.now() - tBuilt).toFixed(0), total: +(performance.now() - loadStart).toFixed(0),
@@ -4103,7 +4270,7 @@
         hits: { points: fxHits.length, muzzles: fxMuzzles.length, stickerMarks: (battle.marks || []).length, marks: fxMarkInfo } };
       report(window.__ready);
     });
-  }).catch(function (e) { $('msg').textContent = e.message; window.__error = String(e && e.stack || e); });
+  }).catch(function (e) { if(e.cancelled){delete params.shot;history.replaceState(null,'','#'+(host.game?'host=game&':'')+(FULL_VIEW?'view=full':''));BID='';FILE=null;window.__list=true;battleSelect();noBattle();return;}$('msg').textContent = e.message; window.__error = String(e && e.stack || e); });
 
   // a sheet of every plant kind of the map: its LOD geometry and textures from the side, each scaled to its cell,
   // with name, size and how many of each class the map has (for the report's check by eye)

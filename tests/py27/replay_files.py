@@ -238,7 +238,8 @@ def check():
         stand.page_notes.clear()
         stand.request_playback_vehicles({'battleId': file_id, 'vehicles': rows_})
         run_jobs(stand, ('vehicle', 'pbvehicles', 'model'))
-        made = os.path.join(folder, 'data', 'playback', 'vehicles', MISSING.replace(':', '-') + '.js')
+        variant = MISSING.replace(':', '-') + '--' + format(zlib.crc32(want.get('compactDescriptor').encode('ascii')) & 0xffffffff, 'x')
+        made = os.path.join(folder, 'data', 'playback', 'vehicles', variant + '.js')
         veh = exporter.read_data_file(made) if os.path.isfile(made) else {}
         res = sorted(p.get('resource') for p in veh.get('parts') or () if p.get('resource'))
         want_res = sorted(p.get('resource') for p in want.get('parts') or () if p.get('resource'))
@@ -250,7 +251,7 @@ def check():
         ok('vehicles', models and all(os.path.isfile(os.path.join(folder, 'data', 'models', k + '.js')) for k in models), models)
         note = [n for n in stand.page_notes if n.get('kind') == 'vehicles']
         ok('vehicles', note and note[-1].get('id') == file_id
-           and MISSING.replace(':', '-') in (note[-1].get('files') or {}).get('viewer', ()), note)
+           and variant in (note[-1].get('files') or {}).get('viewer', ()), note)
         ok('vehicles', not os.path.isfile(missing), 'the XML route wrote into data/vehicles')
         return checks, 'other player\'s replay %s, %d models of %s from the client XML; %s' % (file_id, len(models), MISSING, mode_note)
     finally:

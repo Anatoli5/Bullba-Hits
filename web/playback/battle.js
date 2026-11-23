@@ -10,7 +10,7 @@
    effects(collector, battle, defs, info, docs) -> adds hits, marks, muzzles to the battle. */
 (function () {
   'use strict';
-  var FORMAT = 5;                 // of the battle object kept in IndexedDB (battle-page.js): a change builds it again; 5 (21.11): scenario
+  var FORMAT = 7;                 // stable recorded tracer ID for cross-window shot links
                                   // (2, 19.11: hitEvents and the tracers' shell fields, for the shots panel - BACKLOG 109;
                                   // 3, 21.11: the player's camera (0x26), for the shot view's first person - NOTEBOOK S2;
                                   // 4, 20.11: the player's reticles a tick (0x1a, 0x39), for the shot view's aim circles - T3)
@@ -212,32 +212,121 @@
 
   // ---- the battle's vehicles (replay_stream.Battle: the parts of summary() the player reads) ---------------------------
   function Vehicles(roster, names) {
-    this.names = names || {}; this.v = new Map();
+    this.names = names || {}; this.v = new Map(); this.listed = [];
     var self = this;
     roster.forEach(function (row) { if (row.id !== null && row.id !== undefined) self.v.set(+row.id, { type: row.type, team: row.team, maxHealthHeader: row.maxHealth }); });
   }
   Vehicles.prototype.veh = function (eid) {
     var v = this.v.get(eid); if (!v) this.v.set(eid, v = { type: null, team: null, maxHealthHeader: null }); return v;
   };
-  Vehicles.prototype.publicInfo = function (eid, info) {
+  function variantKey(type, compact) {
+    if (!compact) return type;
+    var crc = -1;
+    for (var i = 0; i < compact.length; i++) { crc ^= compact.charCodeAt(i); for (var j = 0; j < 8; j++) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0); }
+    return type.replace(':', '-') + '--' + ((crc ^ -1) >>> 0).toString(16);
+  }
+  function configurationAt(v, t) {
+    var rows = v && v.configs;
+    if (!rows || !rows.length) return v; // explicit legacy single configuration
+    var found = null;
+    rows.forEach(function (x) { if (x.t <= t + 1e-6) found = x; });
+    return found;
+  }
+  // Recorded launch/gravity; continuously reconcile the recorded endpoint.
+  // The model muzzle offset is visual, not a replacement server origin.
+  function trajectory(shot, muzzle, endpoint) {
+    if (!shot || !shot.slice(3, 14).every(Number.isFinite)) return null;
+    var start = shot.slice(3, 6), end = endpoint || shot.slice(11, 14);
+    var velocity = shot.slice(6, 9), gravity = shot[9], horizontalSpeed = Math.hypot(velocity[0], velocity[2]);
+    var duration = horizontalSpeed > 1 ? Math.hypot(end[0] - start[0], end[2] - start[2]) / horizontalSpeed : Math.max(0, shot[10] - shot[0]);
+    if (!(duration > 1e-5) || Math.hypot.apply(Math, velocity) < 1) return null;
+    var offset = muzzle || [0, 0, 0];
+    var delta = end.map(function (x, i) {
+      return x - start[i] - velocity[i] * duration + (i === 1 ? .5 * gravity * duration * duration : 0);
+    });
+    function point(u) {
+      u = Math.max(0, Math.min(1, u));
+      var t = u * duration;
+      return start.map(function (x, i) {
+        return x + velocity[i] * t - (i === 1 ? .5 * gravity * t * t : 0) + delta[i] * u * u + offset[i] * (1 - u) * (1 - u);
+      });
+    }
+    var samples = [], length = 0, last = point(0);
+    for (var i = 0; i <= 96; i++) {
+      var p = point(i / 96);
+      if (i) length += Math.hypot(p[0] - last[0], p[1] - last[1], p[2] - last[2]);
+      samples.push({ u: i / 96, d: length, p: p }); last = p;
+    }
+    function atDistance(distance) {
+      distance = Math.max(0, Math.min(length, distance));
+      var i = 1;
+      while (i < samples.length - 1 && samples[i].d < distance) i++;
+      var a = samples[i - 1], b = samples[i], f = b.d > a.d ? (distance - a.d) / (b.d - a.d) : 0;
+      return point(a.u + (b.u - a.u) * f);
+    }
+    return { duration: duration, length: length, samples: samples, point: point, atDistance: atDistance, serverStart: start, endpoint: end, alignment: delta };
+  }
+  Vehicles.prototype.publicInfo = function (eid, info, t, listed) {
     if (!isDict(info) || !info.compDescr) return;
     var v = this.veh(eid), cd = info.compDescr, header = cd[0], tid = cd[1];
     if (header & 2) tid += cd[2] << 8;
     var nation = (header >> 4) & 15, tcd = 1 + (nation << 4) + (tid << 8);
     v.typeStream = this.names[nation + ',' + tid] || ('typeCompDescr ' + tcd);
-    v.maxHealthStream = info.maxHealth;
+    if(Number.isFinite(info.maxHealth))v.maxHealthStream = info.maxHealth;
     v.team = v.team || info.team;
+    var text = b64(cd), rows = v.configs || (v.configs = []), last = rows[rows.length - 1];
+    var row = {
+      t: t || 0, type: v.typeStream, compDescr: text,
+      key: variantKey(v.typeStream, text), maxHealth: info.maxHealth, entity: !listed
+    };
+    if (!Number.isFinite(row.maxHealth)) row.maxHealth = last && last.type === row.type ? last.maxHealth : last ? null : v.maxHealthHeader;
+    if (!last || last.type !== row.type || (!listed && v.dead)) {
+      row.newLife = !!last; rows.push(row); v.dead = false;
+    } else if (!listed) {
+      if (last.entity && last.compDescr !== text) rows.push(row);
+      else {
+        // First entity descriptor wins over its arena-listed provisional one.
+        last.compDescr = text; last.key = row.key; last.entity = true; last.maxHealth = row.maxHealth;
+      }
+    }
   };
   Vehicles.prototype.feed = function (ev) {
+    if (ev.component === 'AvatarVehiclesInfo') {
+      function copy(value) {
+        if (Array.isArray(value)) return value.map(copy);
+        if (value instanceof Uint8Array) return value.slice();
+        if (value && typeof value === 'object') {
+          var result = {}; Object.keys(value).forEach(function (k) { result[k] = copy(value[k]); }); return result;
+        }
+        return value;
+      }
+      if (ev.ev === 'component') this.listed = copy((ev.state || {}).vehiclesInfo || []);
+      else if (ev.ev === 'component_property' && ev.name === 'vehiclesInfo') {
+        var path = (ev.path || []).slice(1), target = this.listed;
+        if (ev.slice) {
+          path.forEach(function (key) { if (target != null) target = target[key]; });
+          if (Array.isArray(target)) target.splice.apply(target, [ev.slice[0], ev.slice[1] - ev.slice[0]].concat(copy(ev.value || [])));
+        } else if (!path.length) this.listed = copy(ev.value || []);
+        else {
+          for (var i = 0; i < path.length - 1 && target != null; i++) target = target[path[i]];
+          if (target != null) target[path[path.length - 1]] = copy(ev.value);
+        }
+      }
+      var self = this;
+      (this.listed || []).forEach(function (row) {
+        if (row && row.vehicleID != null) self.publicInfo(row.vehicleID, row, ev.t, true);
+      });
+    }
     if (ev.entity !== 'Vehicle') return;
-    if (ev.ev === 'entity_create') this.publicInfo(ev.id, (ev.props || {}).publicInfo);
-    else if (ev.ev === 'property' && ev.name === 'publicInfo') this.publicInfo(ev.id, ev.value);  // Onslaught's switch
+    if(ev.ev==='property'&&ev.name==='health')this.veh(ev.id).dead=ev.value<=0;
+    if (ev.ev === 'entity_create') this.publicInfo(ev.id, (ev.props || {}).publicInfo, ev.t, false);
+    else if (ev.ev === 'property' && ev.name === 'publicInfo') this.publicInfo(ev.id, ev.value, ev.t, false);
   };
   Vehicles.prototype.summary = function () {
     var self = this;
     return Array.from(this.v.keys()).sort(function (a, b) { return a - b; }).map(function (eid) {
       var v = self.v.get(eid);
-      return { id: eid, type: v.typeStream || v.type, team: v.team, maxHealth: v.maxHealthHeader, maxHealthStream: v.maxHealthStream };
+      return { id: eid, type: v.typeStream || v.type, configs:v.configs||[], team: v.team, maxHealth: v.maxHealthHeader, maxHealthStream: v.maxHealthStream };
     });
   };
 
@@ -267,7 +356,7 @@
       sight.forEach(function (iv) { if (iv[1] === null) iv[1] = tmax; });
       var pos = c.pos.get(vid) || [], gun = c.gun.get(vid) || [], hp = c.hp.get(vid) || [], cd = c.comp.get(vid);
       vlist.push({ id: vid, team: v.team, type: v.type, own: vid === own, player: players[String(vid)],
-        maxHealth: v.maxHealth || v.maxHealthStream, compDescr: cd ? b64(cd) : null,
+        maxHealth: v.maxHealth || v.maxHealthStream, compDescr: v.configs.length ? v.configs[0].compDescr : cd ? b64(cd) : null, configs:v.configs,
         sight: sight.map(function (iv) { return [r3n(iv[0]), r3n(iv[1])]; }),
         np: pos.length, pos: floats(pos, 7), ng: gun.length, gun: floats(gun, 3), nh: hp.length, hp: floats(hp, 2) });
     });
@@ -275,7 +364,7 @@
     c.tracers.forEach(function (tr, sid) {
       var e = c.ends.get(sid);
       if (e === undefined) return;
-      shots.push([r3n(tr[0]), tr[1], tr[5]].concat(r3(tr[2]), r3(tr[3]), [Math.round(tr[4] * 1e4) / 1e4, r3n(e[0])], r3(e[1]), [tr[6], tr[7]]));
+      shots.push([r3n(tr[0]), tr[1], tr[5]].concat(r3(tr[2]), r3(tr[3]), [Math.round(tr[4] * 1e4) / 1e4, r3n(e[0])], r3(e[1]), [tr[6], tr[7],String(sid)]));
     });
     shots.sort(cmpArr);
     // every showDamageFromShot as the server sent it (19.11, the shots panel): the placed points of 'hits' (effects) leave
@@ -287,7 +376,7 @@
     var meta = { map: rec.map, gameplay: rec.gameplay, mapTitle: rec.mapTitle, dateTime: dateTime(rec.startedAt),
       periods: c.periods, end: tmax, own: own, serverStart: c.serverStart, delayOwn: DELAY_OWN, delayOther: DELAY_OTHER, id: info.id };
     return { collector: c, battle: { format: FORMAT, id: info.id, meta: meta, vehicles: vlist, shots: shots,
-      shotFields: ['t', 'shooter', 'ricochet', 'sx', 'sy', 'sz', 'vx', 'vy', 'vz', 'gravity', 'tEnd', 'ex', 'ey', 'ez', 'shellTypeIdx', 'caliber'],
+      shotFields: ['t', 'shooter', 'ricochet', 'sx', 'sy', 'sz', 'vx', 'vy', 'vz', 'gravity', 'tEnd', 'ex', 'ey', 'ez', 'shellTypeIdx', 'caliber','shotId'],
       hitEvents: hitEvents, hitEventFields: ['t', 'target', 'attacker', 'damage', 'points'], hitPointFields: ['effect', 'caliber', 'shellType'],
       destroyed: c.destroyed, destroyedFields: ['t', 'initial', 'chunk', 'kind', 'tuple'],
       scenario: c.scenario, scenarioFields: ['t', 'initial', 'name', 'what'],
@@ -410,23 +499,25 @@
     Object.keys(info.boxes || {}).forEach(function (k) { var b = info.boxes[k]; boxes[k] = [b.slice(0, 3), b.slice(3, 6)]; });
     var types = {}, vtype = new Map();
     battle.vehicles.forEach(function (v) { vtype.set(v.id, v); });
-    Array.from(new Set(battle.vehicles.map(function (v) { return v.type; }))).sort().forEach(function (typ) { types[typ] = partsOf(docs[typ], boxes); });
+    Object.keys(docs).forEach(function (key) { types[key] = partsOf(docs[key], boxes); });
     // the battle's turret and gun against the exported file's (another one: its points are not placed on them)
     battle.vehicles.forEach(function (v) {
       var P = types[v.type], bt = v.compDescr ? turretGun(v.compDescr) : null;
       v.modulesMatch = !P || bt === null || P._cd === null ? null : bt[0] === P._cd[0] && bt[1] === P._cd[1];
     });
-    function resolve(vid, seg, network) {
+    function resolve(vid, seg, network, time) {
       var v = vtype.get(vid);
       if (v === undefined) return [null, 'target not in the vehicle list'];
-      var P = types[v.type];
+      var config=configurationAt(v,time);
+      if(!config)return [null,'configuration not known at this time'];
+      var P = types[config.key || config.type];
       if (!P) return [null, 'no exported vehicle file'];
       var pid = Number((seg >> 8n) & 255n);
       if (network) return [null, 'armoured prefab (no model on the page)'];
       if (pid > P._max) return [null, 'wheel (no box for it)'];
       var part = P.parts[pid];
       if (!part) return [null, 'part ' + pid + ' not in the vehicle file'];
-      if (part.grp && v.modulesMatch === false) return [null, 'turret/gun differ from the exported file'];
+      if (config.compDescr && P._cd && turretGun(config.compDescr) && turretGun(config.compDescr).join(':')!==P._cd.join(':')) return [null,'recorded modules differ from model'];
       var se = decodeSegment(seg, part.box), s = se[0], e = se[1];
       if (s[0] === e[0] && s[1] === e[1] && s[2] === e[2]) return [null, 'empty segment'];
       var found = collideHitPoint(part.model, part.box, s, e);
@@ -434,9 +525,9 @@
       var n = facing(found[2], found[1]);
       return [[part.grp, xf(part.tr, found[0], part.off), xf(part.tr, n), xf(part.tr, found[1]), part.approx], null];
     }
-    var key = function (vid, seg) { return vid + ':' + (seg >> 8n).toString(); };
+    var key = function (vid, seg, time) {var v=vtype.get(vid),c=v&&configurationAt(v,time);return vid + ':' + (c?c.t:'unknown') + ':' + (seg >> 8n).toString(); };
     var stByKey = new Map();
-    c.stickers.forEach(function (s) { var k = key(s[1], s[2]); if (!stByKey.has(k)) stByKey.set(k, [s[0], Number(s[2] & 255n), s[3]]); });
+    c.stickers.forEach(function (s) { var k = key(s[1], s[2],s[0]); if (!stByKey.has(k)) stByKey.set(k, [s[0], Number(s[2] & 255n), s[3]]); });
     var ric = []; c.tracers.forEach(function (tr) { if (tr[5]) ric.push([tr[0], tr[1], tr[3]]); });
     ric.sort(function (a, b) { return a[0] - b[0]; });
     var hits = [], seen = new Map();
@@ -446,9 +537,9 @@
       pts.forEach(function (pt, pi) {
         var seg = pt[0], cal = pt[1], network = pt[2];
         count('hit points');
-        var eff = Number(seg & 255n), k = key(vid, seg);
+        var eff = Number(seg & 255n), k = key(vid, seg,t);
         if (!seen.has(k)) seen.set(k, t);
-        var r = resolve(vid, seg, network);
+        var r = resolve(vid, seg, network, t);
         if (r[0] === null) { count('point not placed: ' + r[1]); return; }
         var grp = r[0][0], pos = r[0][1], n = r[0][2], d = r[0][3], approx = r[0][4];
         var st = stByKey.get(k), size, fromSt;
@@ -471,11 +562,11 @@
     });
     var marks = [], done = new Set();
     c.stickers.slice().sort(function (a, b) { return a[0] - b[0]; }).forEach(function (s) {
-      var t = s[0], vid = s[1], seg = s[2], k = key(vid, seg);
+      var t = s[0], vid = s[1], seg = s[2], k = key(vid, seg,t);
       if (done.has(k)) return;
       done.add(k);
       if (seen.has(k) && seen.get(k) <= t + 0.01) { count('stickers of a hit seen'); return; }
-      var r = resolve(vid, (seg >> 8n) << 8n, 0);
+      var r = resolve(vid, (seg >> 8n) << 8n, 0, t);
       if (r[0] === null) { count('sticker not placed: ' + r[1]); return; }
       var idx = Number(seg & 255n), kind = idx < kinds.length ? kinds[idx] : ['unknown', 0.2];
       marks.push([r3n(t), vid, r[0][0], kind[0].indexOf('hole') >= 0 ? 0 : 1].concat(r3(r[0][1]), r3(r[0][2]), [r3n(kind[1]), r[0][4] ? 1 : 0]));
@@ -490,7 +581,7 @@
     return fx;
   }
 
-  var api = { FORMAT: FORMAT, source: source, build: build, effects: effects, Collector: Collector, unb64: unb64,
+  var api = { FORMAT: FORMAT, source: source, build: build, effects: effects, Collector: Collector, unb64: unb64, variantKey:variantKey, configurationAt:configurationAt, trajectory:trajectory,
     setInflate: function (fn) { inflate = fn; } };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else self.PlaybackBattle = api;
 })();

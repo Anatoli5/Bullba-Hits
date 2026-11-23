@@ -443,7 +443,15 @@ class FullScreenTests(unittest.TestCase):
         load, = rec['events']
         ctx = load['ctx']
         self.assertEqual(load['params'], ('params', presentation.FULLSCREEN_ALIAS))
-        self.assertTrue(ctx['url'].startswith('file:///') and ctx['url'].endswith('playback.html#host=game&view=full&' + state), ctx['url'])
+        # Explicit native destinations have a fresh-entry query so an already
+        # open identical battle/episode really navigates. State stays in the
+        # fragment; the query must not alter fullscreen or Escape restoration.
+        from urllib.parse import urlsplit
+        url = urlsplit(ctx['url'])
+        self.assertEqual(url.scheme, 'file')
+        self.assertTrue(url.path.endswith('/playback.html'), ctx['url'])
+        self.assertRegex(url.query, r'^entry=\d+$')
+        self.assertEqual(url.fragment, 'host=game&view=full&' + state)
         self.assertEqual(ctx['browserParams'], {'isCloseBtnVisible': False, 'bgAlpha': 1.0})
         self.assertEqual((ctx['allowRightClick'], ctx['ignoreCtrlClick'], ctx['ignoreShiftClick'], ctx['forcedSkipEscape']), (True, False, False, False))
         self.assertEqual(rec['destroyed'], [])                     # the window stays until the view stands

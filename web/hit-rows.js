@@ -107,10 +107,12 @@
   // beside the row) or 'span' (inside the row's own button: role button, the click kept from the row); rows.css .sp-open.
   var OUT_ICON='<svg class="sp-open-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M7 3H3v10h10V9" fill="none" stroke="currentColor" stroke-width="1.5"/>'+
     '<path d="M9 2h5v5M14 2 7.5 8.5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>';
-  function openLink(name,title,open,tag){
+  function openLink(name,title,open,tag,icon){
     var h=node(tag||'button',undefined,'sp-open');
     if(h.tagName==='BUTTON')h.type='button';else{h.setAttribute('role','button');h.tabIndex=0;}
-    h.innerHTML=OUT_ICON;h.appendChild(node('span',name,'sp-open-name'));h.title=title;
+    if(icon){h.classList.add('mod-link');var image=node('img',undefined,'sp-open-icon mod-icon');image.src=icon;image.alt='';h.appendChild(image);}
+    else {h.innerHTML=OUT_ICON;h.appendChild(node('span',name,'sp-open-name'));}
+    h.setAttribute('aria-label',name);h.title=title;
     h.onclick=function(e){e.stopPropagation();e.preventDefault();open();};
     h.onkeydown=function(e){if(e.key==='Enter'||e.key===' '){e.stopPropagation();e.preventDefault();open();}};
     return h;
