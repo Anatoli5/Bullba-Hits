@@ -465,10 +465,11 @@ class Job(object):
             kind = 'wotreplay'
         else:
             record, roster = self.head()
+        # 23.11 (the user's oldest battle, 13.09, recorder 0.6.31): no replay at all is the reason to give, before the map
+        if not is_file(self.name): kind, path = self.source()
         mode = record.get('mode') or {}
         arena, gameplay = mode.get('geometryName'), mode.get('gameplayName')
         if not arena or not gameplay: raise Unplayable(W_NO_MAP)
-        if not is_file(self.name): kind, path = self.source()
         self.lap('read', started)
         yield
         started = TIMER()

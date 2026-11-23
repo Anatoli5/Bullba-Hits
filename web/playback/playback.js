@@ -4045,7 +4045,9 @@
         timer = setTimeout(function () {
           if (done) return;
           if (performance.now() - began > (maxMs || WAIT_MS)) return finish(fail, new Error('The game did not prepare this battle in time.'));
-          look().then(function (v) { finish(ok, v); }, again);
+          // 23.11 (the user: his oldest battle hung on "Preparing the replay..."): a look that finds the mod's final word
+          // (e.final: its error file) ends the wait with that word instead of looking again for ten minutes
+          look().then(function (v) { finish(ok, v); }, function (e) { if (e && e.final) finish(fail, e); else again(); });
         }, FALLBACK_MS);
       }
       listeners.push(listen); again();
@@ -4059,6 +4061,8 @@
     return loadData('data/playback/' + bid + '.js', 'playback:' + bid).then(function (b) {
       // In the game a file of an earlier build (no client in its record) is asked for again (19.11, westfeld).
       if (b && b.format === FORMAT && (!host.canSend() || (b.record && b.record.client))) return b;
+      // the mod's answer that this battle cannot be played (playback.Job.steps writes {format, error, id})
+      if (b && b.error) { var e = new Error(b.error); e.final = true; throw e; }
       throw new Error('format');
     });
   }
@@ -4167,7 +4171,11 @@
     var sel = $('sel-battle'), list = (INDEX && Array.isArray(INDEX.battles) ? INDEX.battles : []).filter(function (b) { return b && b.id; });
     var files = fileRows(), tied = {};
     files.forEach(function (f) { if (f.battle) tied[f.battle] = true; });
-    BATTLES = list.filter(function (b) { return !tied[b.id]; }).sort(function (a, b) { return (+b.startedAt || 0) - (+a.startedAt || 0); });
+    // 23.11 (the user: his oldest battle, 13.09, was listed though it has no replay and cannot be played): a Bullba Hits
+    // battle with no replay file is listed only when the mod keeps its replay stream (data/replays.js: 'stream') or the
+    // library still ties a replay to it; until data/replays.js is read the list is the full one
+    var playable = function (b) { if (!replayView) return true; var k = replayKind(b.id); return k === 'stream' || k === 'kept' || k === 'rolling' || k === 'game'; };
+    BATTLES = list.filter(function (b) { return !tied[b.id] && playable(b); }).sort(function (a, b) { return (+b.startedAt || 0) - (+a.startedAt || 0); });
     var known = files.some(function (f) { return (f.battle || f.id) === BID; }) || BATTLES.some(function (b) { return b.id === BID; });
     sel.replaceChildren();
     // R4 (BACKLOG 112, 20.11): a battle of a special mode (the mod's replay_files.special_mode: its 'special' in the
