@@ -100,16 +100,15 @@ const dist = (p, q) => Math.hypot(p.x - q[0], p.y - q[1], p.z - q[2]);
         // (e) a vehicle dead in the record shows no HP after its death, on every frame
         const td = deathOf(r.v);
         if (td != null && t >= td + 0.2 && !hpBad[r.v.id]) { const hp = rowHp(box, r); if (hp > 0) hpBad[r.v.id] = name + ' ' + r.v.id + ' ' + r.v.type + ': dead at ' + td.toFixed(1) + ' s, its row shows ' + hp + ' HP at ' + t.toFixed(1) + ' s'; }
-        // (b) spotted beyond the area of interest (the arena list's place, at most 2.5 s old): the follow goes there
-        if (i % 10 || r.visible || PB.sightAt(r.v, t).seen) return;
-        const L = (k.list.get(r.v.id) || []).filter((x) => x[0] <= t).pop();
-        if (!L || !L[1] || t - L[0] > 2.5) return;
-        const p = box.followPoint(r), d = p ? Math.hypot(p.x - L[1][0], p.z - L[1][1]) : Infinity;
-        if (d > 30) { const f = farBad[r.v.id] || (farBad[r.v.id] = { n: 0, first: t, d }); f.n++; }
+        // (b) not drawn (beyond the draw range, not seen): the follow has no place - the camera stays, nothing drawn there
+        // (the user 23.11: never fly to a minimap or last-seen place)
+        if (i % 10 || r.visible) return;
+        const p = box.followPoint(r);
+        if (p) { const f = farBad[r.v.id] || (farBad[r.v.id] = { n: 0, first: t, d: 0 }); f.n++; }
       });
     }
     Object.values(hpBad).forEach((s) => fails.e.push(s));
-    Object.keys(farBad).forEach((vid) => fails.bFar.push(name + ' ' + vid + ': spotted beyond the draw range on ' + farBad[vid].n + ' s, the follow ' + (farBad[vid].d === Infinity ? 'has no place' : farBad[vid].d.toFixed(0) + ' m off') + ' (first at ' + farBad[vid].first.toFixed(0) + ' s)'));
+    Object.keys(farBad).forEach((vid) => fails.bFar.push(name + ' ' + vid + ': not drawn on ' + farBad[vid].n + ' s, yet the follow has a place (first at ' + farBad[vid].first.toFixed(0) + ' s)'));
     // (d) and (c) at the battle's end: every destroyed vehicle whose wreck's place the replay has is drawn there, and its
     // row's follow goes there
     box.t = end - 0.01; box.poseVehicles(box.t);
@@ -132,7 +131,7 @@ const dist = (p, q) => Math.hypot(p.x - q[0], p.y - q[1], p.z - q[2]);
     }
   }
   const lines = [];
-  for (const [what, list] of Object.entries({ 'd wrecks': fails.d, 'c follow a wreck': fails.c, 'e HP after death': fails.e, 'b spotted beyond draw range': fails.bFar, 'b no place known': fails.bNone }))
+  for (const [what, list] of Object.entries({ 'd wrecks': fails.d, 'c follow a wreck': fails.c, 'e HP after death': fails.e, 'b follow place for a vehicle not drawn': fails.bFar, 'b no place known': fails.bNone }))
     if (list.length) lines.push('(' + what + ') ' + list.length + ':\n  ' + list.join('\n  '));
   assert.ok(!lines.length, '\n' + lines.join('\n'));
   process.stdout.write('test_follow_wrecks: ok\n');

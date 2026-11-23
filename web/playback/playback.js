@@ -1384,7 +1384,7 @@
   // flat card, textured with pictures of the kind's own 3D LOD rendered here at load (side and top views). The game
   // ships no billboard textures for these kinds (the .srt names *_Billboards_AM.dds; no such file in the packages).
   var impostorRT = null;
-  var FAR = 160, impostorTex = null, impostorMat = null, impostorDepth = null, IMP_TILE = 128;
+  var FAR = 1e6 /* 23.11 the user: game LOD everywhere by default (sel-crowns), flat far on choice */, impostorTex = null, impostorMat = null, impostorDepth = null, IMP_TILE = 128;
   function buildImpostors(kinds) {
     var cols = 8, rows = Math.ceil(kinds.length * 2 / cols), W = cols * IMP_TILE, H = rows * IMP_TILE;
     var rt = new T.WebGLRenderTarget(W, H, { generateMipmaps: true, minFilter: T.LinearMipmapLinearFilter });
@@ -2866,6 +2866,7 @@
     }
     if (sp && sp.focus) { cam.tx = sp.focus.x; cam.ty = sp.focus.y; cam.tz = -sp.focus.z; cam.tyGoal = null; camSnap(['tx', 'ty', 'tz']); }
     var p = follow ? followPoint(follow) : null;
+    if (follow && !p && followSrcShown !== null) { followSrcShown = null; followWarn(null); }
     if (p) {
       // Z15 (23.11): a new place to follow (the row just clicked, the vehicle lost or back in sight) glides there when the
       // follow came from the team list and "smooth camera" is on; then the camera rides with it exactly
@@ -2992,7 +2993,7 @@
     // 23.11 (outputs/follow-wrecks-2026-11-23.md (b), the user: a row sent the camera to a place with no vehicle): with no
     // place known at all the camera stays (centre and distance) and a note says so; the follow stays armed and zooms in once
     // a place comes (placeCamera)
-    if (r) { if (followPoint(r)) { cam.dist = Math.min(camGoal.dist, 30); camSnap(['dist']); } else { followZoom = true; followWarn(null); } }
+    if (r) { if (followPoint(r)) { cam.dist = Math.min(camGoal.dist, 30); camSnap(['dist']); } else { followZoom = true; followSrcShown = null; followWarn(null); } }
     $('free').classList.toggle('on', !r);
     renderList(true);
   }
@@ -3006,27 +3007,17 @@
   // 23.11 (outputs/follow-wrecks-2026-11-23.md (b)): out of view the place is the latest of the last drawn one and the arena
   // list's minimap place (battle.js miniAt: game metres, about every 2 s while spotted beyond the draw range; its height the
   // ground's). followSrc says which: 'seen' (drawn now), 'minimap' (the list's current place), 'last' (last seen), null: none
-  var FOLLOW_GLIDE = 0.4, followSmooth = false, followKey, followGlide = null, lastKnown = null, lastObj = new T.Object3D();
-  var followSrc = null, followAt = null, followSrcShown, followZoom = false, miniPt = null;
+  var FOLLOW_GLIDE = 0.4, followSmooth = false, followKey, followGlide = null;
+  var followSrc = null, followAt = null, followSrcShown, followZoom = false;
+  // 23.11 (the user on the plan): the camera goes only to a vehicle that is DRAWN (its wreck included) - never to a minimap
+  // or last-seen place, where nothing is drawn; out of view the camera stays where it is and the note says so
   function followPoint(r) {
     followSrc = null; followAt = null;
     if (r.visible) { followSrc = 'seen'; return r.group.position; }
-    if (!PlaybackBattle.lifeAt(r.v, t)) return null;
-    var s = PlaybackBattle.sightAt(r.v, t), mm = PlaybackBattle.miniAt(r.v, t), last = null;
-    if (s.last != null && r.track) {
-      if (!lastKnown || lastKnown.r !== r || lastKnown.at !== s.last || lastKnown.track !== r.track)
-        lastKnown = { r: r, at: s.last, track: r.track, p: poseInto(r, s.last - 1e-3 - delayOf(r), lastObj) ? lastObj.position.clone() : null };
-      last = lastKnown.p;
-    }
-    if (mm && (!last || mm.until > s.last)) {
-      followSrc = mm.now ? 'minimap' : 'last'; followAt = 'm' + mm.t;
-      return (miniPt || (miniPt = new T.Vector3())).set(mm.x, typeof heightAt === 'function' ? heightAt(mm.x, mm.z) : 0, mm.z);
-    }
-    if (last) { followSrc = 'last'; followAt = 's' + s.last; }
-    return last;
+    return null;
   }
   // the follow's short note at the top of the view (23.11): no place known, the minimap's place, the last seen one
-  var FOLLOW_WORDS = { none: 'Position unknown - the camera follows once the vehicle is seen', minimap: 'Not in view - minimap position', last: 'Last seen here' }, followNoteTimer = null;
+  var FOLLOW_WORDS = { none: 'Out of range - no position of this vehicle now; the camera follows it once it is in view' }, followNoteTimer = null;
   function followWarn(src) {
     var el = $('follow-note'); if (!el) return;
     el.textContent = FOLLOW_WORDS[src || 'none']; el.hidden = false;
@@ -3406,11 +3397,11 @@
     var s = PlaybackBattle.sightAt(r.v, t), mm = PlaybackBattle.miniAt(r.v, t);
     // 23.11: spotted beyond the draw range - the arena list's minimap place is its place now
     if (!s.seen && mm && mm.now && (s.last == null || mm.until > s.last)) return 'Beyond the draw range\nThe vehicle is spotted, but too far away to be in the replay\'s 3D world - its minimap place of ' + when(mm.t) + ' is known.\n'
-      + '• Click the row: the camera goes to that minimap place and follows it.';
+      + '• Click the row: the camera stays where it is and follows it once it is in view.';
     if (s.seen) return 'No position\nThe vehicle is spotted, but the replay has no position of it at this moment.\n• Click the row: the camera follows it once a position comes.';
     if (s.last != null) return 'Not seen\nThe replay has no position of this vehicle now - last seen at ' + when(s.last) + '.\n'
       + (s.next != null ? '• Seen again: at ' + when(s.next) + '\n' : '• Not seen again in this replay\n')
-      + '• Click the row: the camera goes to where it was last seen and follows it again when it reappears.';
+      + '• Click the row: the camera stays where it is and follows it once it is in view.';
     return 'Not seen yet\n' + (s.next != null ? 'The replay has no position of this vehicle before ' + when(s.next) + '.' : 'The replay never has a position of this vehicle.')
       + '\n• Click the row: the camera stays where it is and follows it once it is seen.';
   }
