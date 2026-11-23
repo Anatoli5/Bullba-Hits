@@ -615,7 +615,8 @@
 
   // ---------------------------------------------------------------- the build
   // opts: { gameplay, minimapFit: bool, cache: {get(key), put(key, value)} (per-resource products),
-  //         have: {arena: record|null, relief: Float32Array|null, fit: cells|null}, keepLogL }
+  //         have: {arena: record|null, relief: Float32Array|null, fit: cells|null}, keepLogL,
+  //         maxTexture: the renderer's gl MAX_TEXTURE_SIZE (23.11; 4096 when absent) - the objects' atlas fits it }
   // Round 9: the objects, plants and lookup are built here too (mapbuild9.js); the light map's footprints and the
   // minimap white balance read their placements from them.
   MB.build = async function (raw, opts) {

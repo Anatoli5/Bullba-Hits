@@ -3,7 +3,7 @@
    windows look like one product. Moved out of web/app.js unchanged; the styles are web/rows.css (moved out of style.css).
    No page state here: every function builds markup from what it is handed.
    BullbaRows {node, effects, tierRomans, classNames, roleFamilies, roleNames, nationNames, vehicleNation, vehicleWords,
-   vehicleTile, iconColumn, result, resultIcon, hitRow, openLink, modeMark, modeOption, modeWords}. */
+   vehicleNamer, vehicleTile, iconColumn, result, resultIcon, hitRow, openLink, modeMark, modeOption, modeWords}. */
 (function (root) {
   'use strict';
   function node(tag,text,cls){var e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e;}
@@ -32,7 +32,29 @@
     var cls=classNames[info['class']]?info['class']:null,family=roleFamilies[info.role]||null;
     var line=[tierRomans[info.level]?'Tier '+tierRomans[info.level]:'',nationNames[vehicleNation(info)]||'',classNames[cls]||'',
       family&&family!=='spg'?roleNames[family]+' role':''].filter(Boolean).join(' · ');
+    // a name the vehicle list could not give (vehicleNamer): the game's code name, and why
+    if(info.unnamed)line=(line?line+' · ':'')+'Game code name: '+info.unnamed;
     return (info.name||'Unknown vehicle')+(line?'\n'+line:'');
+  }
+  // THE NAME OF A VEHICLE TYPE (23.11, the user's Redshire battle of 22.11 on the VK 30.01 P: one row named 'VK 30.01 P',
+  // tier VI, the three others of the same type 'G27_VK3001P' with no tier - the replay viewer took the name from the 3D
+  // model file of the row's module configuration, and only one configuration had its file). The one resolver of the
+  // replay viewer: rows - the client's vehicle list (data/vehicles.js, the catalogue Hits' Vehicles list shows; null when
+  // it could not be read) -> name(type 'nation:Code', also) -> the tile's {name, level, class, role, nation, type}. A type
+  // the list lacks takes `also` (a record of the same type that names it: a vehicle file's tile) and else its code name,
+  // marked `unnamed` (the tile's words say why). Every configuration of a type gets the same answer.
+  function vehicleNamer(rows){
+    var byType={},read=Array.isArray(rows);
+    (rows||[]).forEach(function(r){if(r&&r.type&&r.name&&!byType[r.type])byType[String(r.type)]=r;});
+    return function(type,also){
+      type=String(type||'');
+      var r=byType[type];
+      if(!r&&also&&also.name&&(!also.type||String(also.type)===type))r=also;
+      if(r)return {name:String(r.name),level:r.level,'class':r['class'],role:r.role,nation:r.nation||type.split(':')[0],type:type};
+      var code=type.split(':').pop();
+      return {name:code||'Unknown vehicle',nation:type.indexOf(':')>0?type.split(':')[0]:undefined,type:type,
+        unnamed:read?'not in the client\'s vehicle list':'the vehicle list was not read'};
+    };
   }
   // opts.compact (the replay viewer's team lists, 19.11: they lie over the 3D view, so a row stays light - the game's own
   // team lists show the vehicle and the player, no flag): the tier, the class mark, the name on one line (the tier first
@@ -140,6 +162,6 @@
     return option;
   }
   root.BullbaRows={modeMark:modeMark,modeOption:modeOption,modeWords:modeWords,node:node,effects:effects,tierRomans:tierRomans,classNames:classNames,roleFamilies:roleFamilies,roleNames:roleNames,
-    nationNames:nationNames,vehicleNation:vehicleNation,vehicleWords:vehicleWords,vehicleTile:vehicleTile,iconColumn:iconColumn,
+    nationNames:nationNames,vehicleNation:vehicleNation,vehicleWords:vehicleWords,vehicleNamer:vehicleNamer,vehicleTile:vehicleTile,iconColumn:iconColumn,
     result:result,resultIcon:resultIcon,hitRow:hitRow,openLink:openLink};
 })(typeof window!=='undefined'?window:this);

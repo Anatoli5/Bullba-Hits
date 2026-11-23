@@ -86,7 +86,7 @@
         var newProducts = [];
         var cache = { get: function (k) { return have[k]; }, put: function (k, v) { have[k] = v; newProducts.push(k); } };
         MapBuild.resetCounts();
-        var res = await MapBuild.build(raw, { gameplay: d.gameplay, minimapFit: d.minimapFit, cache: cache,
+        var res = await MapBuild.build(raw, { gameplay: d.gameplay, minimapFit: d.minimapFit, cache: cache, maxTexture: d.maxTexture,
           have: { arena: have[d.keys.arena] || null, relief: have[d.keys.relief] || null, fit: have[d.keys.fit] || null } });
         T.build = performance.now() - t - resMs; T.resScriptsLoad = resMs; t = performance.now();
         var rawDecodedTwice = Object.keys(MapBuild.counts.rawDecoded).filter(function (k) { return MapBuild.counts.rawDecoded[k] > 1; });
@@ -124,6 +124,11 @@
       return manifests[arena];
     });
   }
+  // 23.11: a stored map whose objects' atlas is larger than this renderer's largest texture is built again (it fits then)
+  function fitsRenderer(M, maxTexture) {
+    var a = M && M.atlas;
+    return !(maxTexture > 0 && a && (a.w > maxTexture || a.h > maxTexture));
+  }
   function hydrated(db, M) {
     return getAll(db, MapBuild.kindRecordKeys(M.trees.kinds)).then(function (rec) { M.trees.kinds = MapBuild.hydrateKinds(M.trees.kinds, rec); return Object.keys(rec).length; });
   }
@@ -134,7 +139,7 @@
     window.__mapWorker = { started: performance.now() };
     return new Promise(function (ok, fail) {
       w.onmessage = function (e) { ok(e.data); }; w.onerror = function (e) { fail(new Error('map build worker: ' + (e.message || e))); };
-      w.postMessage({ base: builder, rawBase: rawBase, manifest: man, keys: keys, gameplay: o.gameplay, minimapFit: !!o.minimapFit });
+      w.postMessage({ base: builder, rawBase: rawBase, manifest: man, keys: keys, gameplay: o.gameplay, minimapFit: !!o.minimapFit, maxTexture: o.maxTexture || 0 });
     }).then(function (r) { w.terminate(); URL.revokeObjectURL(url); window.__mapWorker.done = performance.now(); return r; });
   }
   window.MapBuildPage = {
@@ -149,7 +154,7 @@
       // older builder's map (1.24: the scenario buildings were not drawn, the map of 1.23 came from here)
       if (rec && rec.client === o.client && rec.builder === MapBuild.VERSION) {
         var g = await getAll(db, [rec.keys.arena, rec.keys.map]);
-        if (g[rec.keys.arena] && g[rec.keys.map]) {
+        if (g[rec.keys.arena] && g[rec.keys.map] && fitsRenderer(g[rec.keys.map], o.maxTexture)) {
           var n = await hydrated(db, g[rec.keys.map]);
           T.idbRead = performance.now() - t; T.total = performance.now() - t0;
           return { arena: g[rec.keys.arena], map: g[rec.keys.map], info: { source: 'IndexedDB', keys: rec.keys, builtAt: rec.builtAt, times: T, kindRecords: n } };
@@ -168,7 +173,7 @@
       T.manifestAndKeys = performance.now() - t; t = performance.now();
       // 2. stored under the raw set's keys (built before this record existed, or under another client's record)
       var got = await getAll(db, [keys.arena, keys.map]);
-      if (got[keys.arena] && got[keys.map]) {
+      if (got[keys.arena] && got[keys.map] && fitsRenderer(got[keys.map], o.maxTexture)) {
         var kr = await hydrated(db, got[keys.map]);
         await put(db, builtKey, { keys: keys, client: o.client || null, builder: MapBuild.VERSION, builtAt: Date.now() });
         T.idbRead = performance.now() - t; T.total = performance.now() - t0;

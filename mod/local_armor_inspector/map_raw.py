@@ -628,7 +628,8 @@ def space_plants(sptr, st, box):
 
 # objects_visual.texture_of / skip_path, the same rules (the copy step must copy what the builder will read)
 SKIP_PREFIX = ('particles/', 'objects/misc/', 'system/')
-TEX_MAX = 128          # the builder reads texture mips no larger than this (atlas tiles 128 / 64, leaves 128, bark 64)
+TEX_MAX = 128          # the builder reads texture mips no larger than this (leaves 128, bark 64)
+VIS_TEX_MAX = 512      # the visual models' textures (23.11, NOTEBOOK A6): atlas tiles sized to one texel density, up to 512 px (mapbuild9.js TILE_MAX)
 
 
 class Resources(object):
@@ -1033,16 +1034,6 @@ def visual_groups(b):
     return out
 
 
-def textured(R, kind, tex):
-    """mapbuild9.js textureOf: whether a group has the texture the builder draws it with."""
-    if kind == 'atlasAlbedoHeight':
-        ap = tex.rsplit('.', 1)[0] + '.atlas_processed'
-        if R.exists(ap):
-            return bool(R.refs(ap, lambda b: atlas_tile(R, b), cover=[R.key('atl', ap)]))
-        return tex.lower().endswith('.dds') and R.exists(tex)
-    return bool(tex)
-
-
 def lod_info(R, vs):
     """(textured triangles, ranges of the primitives file lodInfo reads) of one visual LOD, or None when it has no visual
     or no primitives (lodInfo: null). Kept in deps.json by both files' CRCs."""
@@ -1091,19 +1082,51 @@ def lod_info(R, vs):
         got = R.deps[key] = dict(ntri=ntri, ranges=sorted(set(tuple(r) for r in ranges)))
         R.deps_changed = True
     groups = R.refs(vs + '.visual_processed', visual_groups, 'groups', cover=[R.key('lod', vs + '.visual_processed', pe[5])])
-    total = 0
+    total, used = 0, set()
     for (vname, pname, gl), counts in zip(groups, got['ntri']):
         if counts is None:
             continue
         for (gi, kind, tex), (_, nt) in zip(gl, counts):
-            if nt is not None and textured(R, kind, tex):
+            if nt is None:
+                continue
+            t = texture_of(R, kind, tex)
+            if t:
                 total += nt
-    return total, [list(r) for r in got['ranges']]
+                used.add(t.lower())
+    return total, [list(r) for r in got['ranges']], frozenset(used)
+
+
+def texture_of(R, kind, tex):
+    """mapbuild9.js textureOf: the texture a group is drawn with (an atlas's first tile), or None."""
+    if not tex:
+        return None
+    if kind == 'atlasAlbedoHeight':
+        ap = tex.rsplit('.', 1)[0] + '.atlas_processed'
+        if R.exists(ap):
+            tiles = R.refs(ap, lambda b: atlas_tile(R, b), cover=[R.key('atl', ap)])
+            return tiles[0] if tiles else None
+        return tex if tex.lower().endswith('.dds') and R.exists(tex) else None
+    return tex
+
+
+def lod_chain_walked(chain):
+    """mapbuild9.js chooseLod (23.11, NOTEBOOK A6): the walk along [(visual, textured triangles, its textures)] stops
+    before a LOD drawn with a texture the first LOD does not use (the game's far impostor, one texture baked over the
+    model) -> the LODs the walk can reach."""
+    if not chain:
+        return []
+    ref = chain[0][2] if len(chain[0]) > 2 else None
+    for i in range(1, len(chain)):
+        if ref is not None and len(chain[i]) > 2 and not chain[i][2] <= ref:
+            return chain[:i]
+    return chain
 
 
 def lod_drawn(chain):
-    """Of [(visual, textured triangles)] along a chain, the LODs chooseLod can pick for some budget in [BUDGET_LO,
-    BUDGET_HI]: each first to fit a budget there, and the last one when none fits the smallest."""
+    """Of [(visual, textured triangles[, its textures])] along a chain, the LODs chooseLod can pick for some budget in
+    [BUDGET_LO, BUDGET_HI]: each first to fit a budget there, and the last one when none fits the smallest - along the
+    part of the chain its walk reaches (lod_chain_walked)."""
+    chain = [(c[0], c[1]) for c in lod_chain_walked(chain)]
     out, best = set(), None
     for vs, n in chain:
         if n <= BUDGET_HI and (best is None or (n < best and best > BUDGET_LO)):
@@ -1127,7 +1150,7 @@ def collect_resources(R, objects, plants):
             continue
         stem = prim.rsplit('.', 1)[0]
         R.add(stem + '.visual_processed', cover=(R.lod_cover(stem) or [])[:1] or None)
-        seen, chain = set(), []
+        seen, chain, textures = set(), [], {}
         while stem and stem.lower() not in seen:
             seen.add(stem.lower())
             r = R.refs(stem + '.model', model_refs, cover=[R.key('mdl', stem + '.model')])
@@ -1138,23 +1161,26 @@ def collect_resources(R, objects, plants):
             info = lod_info(R, vs)
             if info is not None:
                 chain.append((vs, info))
+            own = textures[vs] = []
             for kind, tex in R.refs(vs + '.visual_processed', visual_textures, cover=lod[:1] if lod else None):
                 if kind == 'atlasAlbedoHeight':
                     ap = tex.rsplit('.', 1)[0] + '.atlas_processed'
-                    for t in R.refs(ap, lambda b, tex=tex: atlas_tile(R, b), cover=[R.key('atl', ap)]) if R.exists(ap) else ([tex] if tex.lower().endswith('.dds') and R.exists(tex) else []):
-                        R.add(t, texture=True, cover=[R.key('tex', t)])
+                    own += R.refs(ap, lambda b, tex=tex: atlas_tile(R, b), cover=[R.key('atl', ap)]) if R.exists(ap) else ([tex] if tex.lower().endswith('.dds') and R.exists(tex) else [])
                 else:
-                    R.add(tex, texture=True, cover=[R.key('tex', tex)])
+                    own.append(tex)
             for item in R.refs(vs + '.visual_processed', visual_rocks, 'rock1', cover=lod[:1] if lod else None):   # 19.11: the rock shader's inputs
                 rock_textures(R, item)
             stem = r[1]
-        # the LODs that can be drawn whole (and their visual for the geometry product), the others' counts only
-        drawn = lod_drawn([(vs, info[0]) for vs, info in chain])
+        # the LODs that can be drawn whole (and their visual for the geometry product) with their colour textures (23.11:
+        # from VIS_TEX_MAX px down, only a drawn LOD's), the others' counts only
+        drawn = lod_drawn([(vs, info[0], info[2]) for vs, info in chain])
         for vs, info in chain:
             if vs in drawn:
                 lod = R.lod_cover(vs)
                 R.add(vs + '.visual_processed', cover=lod)
                 R.add(vs + '.primitives_processed', cover=lod)
+                for t in textures.get(vs, ()):
+                    R.add(t, texture=VIS_TEX_MAX, cover=[R.key('tex', t)])
             else:
                 R.add_sparse(vs + '.primitives_processed', info[1], cover=R.lod_cover(vs)[:1])
     for path in plants:

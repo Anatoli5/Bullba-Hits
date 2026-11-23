@@ -1708,7 +1708,7 @@
     ctx.font = (7 * k) + 'px system-ui,Segoe UI,Arial,sans-serif';
     if (r.v.player) line(fit(String(r.v.player), W - 4 * k), 4 * k, 'rgba(225,228,232,.72)');
     // the vehicle's short name and its HP, in the team's colour
-    var veh = r.md.name || typeOf(r).split(':')[1] || '', txt = Number.isFinite(hp) ? String(Math.max(0, Math.round(hp))) : '?';
+    var veh = tileOf(r).name || '', txt = Number.isFinite(hp) ? String(Math.max(0, Math.round(hp))) : '?';
     ctx.font = '600 ' + (7.5 * k) + 'px system-ui,Segoe UI,Arial,sans-serif';
     line(fit(veh, W - 4 * k - ctx.measureText('  ' + txt).width) + '  ' + txt, 11.5 * k, col.name);
     // a thin HP bar under them
@@ -1899,9 +1899,14 @@
           'hc = mix(hc, vec3(' + WRECK.join(', ') + ') * diffuseColor.r * (diffuseColor.g > 0.5 ? 0.78 : 1.0), uDead);',  // destroyed: the wreck's colour (WRECK), whatever the base
           'vec3 hd = vSeam / max(fwidth(vSeam), vec3(1e-6));',
           'float hk = 1.0 - smoothstep(0.35, 1.0, min(min(hd.x, hd.y), hd.z));',
-          'diffuseColor.rgb = mix(hc, vec3(' + HITS_SEAM.slice(0, 3).join(', ') + '), ' + HITS_SEAM[3] + ' * hk);'].join('\n '));
+          'diffuseColor.rgb = mix(hc, vec3(' + HITS_SEAM.slice(0, 3).join(', ') + '), ' + HITS_SEAM[3] + ' * hk);'].join('\n ')).replace(
+        // A3 (23.11, the user in 1.30 on Fisherman's Bay: every wreck maroon-brown): the map's sun colour (environment.xml
+        // sunLightColor, 1 / 0.73 / 0.56 there) tints a near-black albedo brown once lit. A wreck keeps the light's
+        // brightness (its shading, shadows, seams) but none of its hue: the lit colour made grey by its luminance
+        '#include <opaque_fragment>', '#include <opaque_fragment>\n gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(dot(gl_FragColor.rgb, vec3(0.2126, 0.7152, 0.0722))), uDead);');
+      if (sh.fragmentShader.indexOf('0.0722))), uDead);') < 0) console.warn('wreck: three.js lambert chunk not patched');
     };
-    mat.customProgramCacheKey = function () { return 'hits-vehicle15'; };
+    mat.customProgramCacheKey = function () { return 'hits-vehicle16'; };
     return mat;
   }
 
@@ -2918,7 +2923,9 @@
   // ------------------------------------------------------------------ the shots panel (BACKLOG 109, stage 1, 19.11)
   // web/playback/shots-panel.js: a vehicle's shots and the hits it took, as Bullba Hits' rows, beside its team list; a row
   // rewinds the battle to 2 s before the shot, the camera on the shooter and the target, and plays on
-  function tileOf(r) { return r.md.tile || { name: r.md.name || typeOf(r).split(':')[1], type: typeOf(r) }; }
+  // a vehicle's name, tier, class, role and nation: the client's vehicle list by its type (NAMES, BullbaRows.vehicleNamer) -
+  // the same for every configuration of the type; the configuration's model file only for a type the list lacks
+  function tileOf(r) { return NAMES(typeOf(r), r.md && r.md.tile); }
   var panel = null;
   function shotsPanel() {
     if (!panel) panel = BullbaShotsPanel.create({ battle: battle,
@@ -3567,6 +3574,7 @@
     var arena = b.meta.map, gameplay = b.meta.gameplay;
     return MapBuildPage.obtain({ arena: arena, gameplay: gameplay, minimapFit: !!MapBuild.MINIMAP_RENDERED[arena], rawRoot: BASE + 'mapraw/', builderBase: PAGE_BASE + 'playback/',
       client: FILE && FILE.record && FILE.record.client || null, ask: host.canSend() ? askMap : null,
+      maxTexture: renderer.capabilities.maxTextureSize,   // 23.11: the objects' atlas fits this renderer (mapbuild9.js fitAtlas)
       progress: function (text) { $('msg').textContent = text; } }).then(function (r) {
       var A = r.arena, M = r.map;
       var t = Object.assign({}, A.terrain, { groundGlobal: { x0: A.glob.x0, z0: A.glob.z0, px: A.glob.px, w: A.glob.w, h: A.glob.h, bc1: A.glob.bc1 }, groundDefault: 'groundGlobal' });
@@ -3815,10 +3823,9 @@
   // the replay limit's keep folder, any player's, newest first; a file tied to a Hits battle opens under that battle's id),
   // then the Hits battles that have no file listed. Choosing either opens it the same way.
   var INDEX = null, FILES = null;
-  function vehicleShort(type) {
-    var n = String(type || '').split(':').pop();
-    return n.replace(/^[A-Za-z]{1,4}\d+[a-zA-Z]?_/, '').replace(/_/g, ' ');
-  }
+  // 23.11: the one namer of vehicle types on this page (BullbaRows.vehicleNamer over the client's vehicle list,
+  // data/vehicles.js, read beside the index at the start); until it is read, or when it cannot be, the code names
+  var NAMES = BullbaRows.vehicleNamer(null);
   function fileWhen(f) {
     var m = /^(\d{4})-(\d\d)-(\d\d) (\d\d):(\d\d)/.exec(f.when || '');
     return m ? m[3] + '.' + m[2] + ' · ' + m[4] + ':' + m[5] : '';
@@ -3831,7 +3838,7 @@
   function fileText(f, client) {
     var hb = f.battle && INDEX && Array.isArray(INDEX.battles) ? INDEX.battles.filter(function (b) { return b && b.id === f.battle; })[0] : null;
     var cv = clientVersion(client), fv = clientVersion(f.client);
-    return [fileWhen(f), f.mapTitle || (hb && hb.map) || f.map, f.vehicle ? vehicleShort(f.vehicle) : hb && hb.vehicle && hb.vehicle.name, f.player].filter(Boolean).join(' · ') +
+    return [fileWhen(f), f.mapTitle || (hb && hb.map) || f.map, f.vehicle ? NAMES(f.vehicle).name : hb && hb.vehicle && hb.vehicle.name, f.player].filter(Boolean).join(' · ') +
       (keptForever(f.battle, f.kept) ? ' ★' : '') + (cv && fv && cv !== fv ? ' (older client)' : '');
   }
   function fileRows() { return FILES && Array.isArray(FILES.files) ? FILES.files.filter(function (f) { return f && f.id; }) : []; }
@@ -3877,7 +3884,7 @@
   // tile (a file tied to a Hits battle takes the battle's full tile), the start day and time, the player (any player's replay)
   function battleView(id,record,isFile){
     var hb=isFile&&record.battle&&INDEX&&INDEX.battles&&INDEX.battles.find(function(b){return b.id===record.battle;});
-    var tile=hb&&hb.vehicle||(record.vehicle?(typeof record.vehicle==='object'?record.vehicle:{name:vehicleShort(record.vehicle)}):null);
+    var tile=hb&&hb.vehicle||(record.vehicle?(typeof record.vehicle==='object'?record.vehicle:NAMES(record.vehicle)):null);
     return {special:specialOf(id),map:record.mapTitle||(hb&&hb.map)||record.map||'Unknown map',vehicle:tile,
       when:isFile?fileWhen(record):battleWhen(Number(record.startedAt)),player:record.player||''};
   }
@@ -4209,10 +4216,12 @@
   // the shared preference is already live, including on the replay-list page.
   $('reset-settings').onclick = function () { BullbaSettings.impact.reset(); };
   // version 4 (22.11, the user): the sky's default back to off - a remembered sky is dropped once, as for version 3
-  var settingStore = BullbaSettings.bind({ key: 'bullba-playback-settings', version: 4,
+  // version 5 (23.11, the user): light 0.29 and panel opacity 0.55 by default - their remembered values dropped once
+  var settingStore = BullbaSettings.bind({ key: 'bullba-playback-settings', version: 5,
     read: function (box) {
       var v = box && box.values && typeof box.values === 'object' ? box.values : null;
       if (v && !(box.v >= 4)) { v = Object.assign({}, v); delete v['sw-sky']; }
+      if (v && !(box.v >= 5)) { v = Object.assign({}, v); delete v['rng-light']; delete v['rng-panel-a']; }
       return v;
     },
     // a control the MOD owns (data-mod-setting: the replay limit) is shown from its file, never remembered or reset here
@@ -4227,7 +4236,8 @@
     BID = params.battle || '';
     // the selector is filled beside the load, whatever becomes of it: another battle can be chosen from an error too
     battleSelect(null);
-    entryMetadata=Promise.all([loadData('data/index.js', 'index').then(battleSelect, function () {}),loadFiles().then(function (f) { FILES = f; battleSelect(); })]);
+    entryMetadata=Promise.all([loadData('data/index.js', 'index').then(battleSelect, function () {}),loadFiles().then(function (f) { FILES = f; battleSelect(); }),
+      loadData('data/vehicles.js', 'vehicles').then(function (c) { NAMES = BullbaRows.vehicleNamer(c && c.vehicles); battleSelect(); }, function () {})]);
     if (!BID) { window.__list = true; noBattle(); return new Promise(function () {}); }
     if (!/^[-a-zA-Z0-9_]{1,100}$/.test(BID)) throw new Error('No battle named.');
     MAP = BID;

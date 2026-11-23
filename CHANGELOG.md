@@ -2,6 +2,14 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.1.1 from 1.05 on, 2.4.1.0 from 1.02 on, 2.4.0.2 from 0.9.3 on, 2.4.0.1 #950 from 0.7.6, 2.4.0.0 #945 before.
 
+## 1.31 (2026-11-23)
+
+- Replays shot view: the dashed tracer and its glowing shell dot now always fly the whole way into the armour, even after the episode has stopped at the hit and whatever the camera does; before, they could stop short of the target (often with artillery) or not appear at all for close shots.
+- Replays: every vehicle is named with its tier and class from the game's vehicle list - in the team lists, the shots panel, the shot view's title, the markers and the battle menu; before, vehicles whose modules differed from the exported model showed a code name such as "G27_VK3001P" with no tier, while a teammate on the same vehicle read "VK 30.01 P".
+- Replays: every building on the map now has the same texture sharpness. Before, a house could be drawn with the game's blurred far-distance texture (about 1 pixel per metre) right next to a sharp one (about 30); now all are at the sharp level. The map is rebuilt once on its next opening.
+- Replays: destroyed vehicles are neutral near-black again on every map; on maps with a warm sun (e.g. Fisherman's Bay) the sunlight had tinted them brown.
+- Replays: light 0.29 and panel opacity 55 % by default (a remembered value of either is reset once).
+
 ## 1.30 (2026-11-23)
 
 - Replays: a "?" help button at the right of the top line. Click it, then click anything - a button, a star, a switch, a row, a panel - to read what it does; Esc or the "?" again leaves. Resting the mouse on a control for about 2 seconds shows a short hint beside it, never over it or the middle of the view. Greyed-out keep-forever stars now say why they cannot be used.

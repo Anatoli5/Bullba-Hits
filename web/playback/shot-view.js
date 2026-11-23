@@ -402,8 +402,20 @@
     }
     return out;
   }
+  // THE SHELL'S OWN CLOCK IN THE EPISODE (23.11, NOTEBOOK A1): the seconds since the shot at the battle's clock t. The
+  // episode stops the battle at the recorded hit (`stop`), but the replay's times come in 0.1 s server ticks and the hit is
+  // recorded before the shell's computed flight ends (his SPG shot of 2.88 s stopped at 2.7 s; a close shot's tracer and
+  // hit in one tick stopped at 0 - no line): from the stop on the shell flies on, on the wall clock since the episode
+  // stopped there (`stoppedAt`, ms; `now` the wall clock), to the contact - whatever the camera does. At or past the stop
+  // with no episode stop noted (a scrub to the hit): the shell has arrived (Infinity).
+  function shellTau(t, shotT, stop, stoppedAt, now) {
+    var tau = t - shotT;
+    if (stop != null && t >= stop - 1e-6) tau = stoppedAt != null ? tau + Math.max(0, now - stoppedAt) / 1000 : Infinity;
+    return tau;
+  }
   var ARTY = { DIST: ARTY_DIST, MIN_PITCH: ARTY_MIN_PITCH, USABLE: ARTY_USABLE, MARK_N: MARK_N, tangentAt: tangentAt, arcD: arcD, arcU: arcU,
-    lineFrame: lineFrame, easedFrame: easedFrame, artyFrame: artyFrame, flyToGround: flyToGround, fallAt: fallAt, rayHit: rayHit, fallMark: fallMark, segBox: segBox };
+    lineFrame: lineFrame, easedFrame: easedFrame, artyFrame: artyFrame, flyToGround: flyToGround, fallAt: fallAt, rayHit: rayHit, fallMark: fallMark, segBox: segBox,
+    shellTau: shellTau };
 
   // THE SERVER CIRCLE FROM THE SERVER'S GUN UPDATE (23.11, NOTEBOOK Z5). The dashed ring was taken only from packet 0x1a's
   // fields 3-10, and those hold the server reticle only while the game keeps it updated (battle.js markerRows' flag); at
@@ -980,8 +992,8 @@
       if (S.shellPace == null) S.shellPace = !!(L.path && shellClock());
       var flight = L.path?L.path.duration:Math.max(0, (S.stop == null ? L.t : S.stop) - L.t), duration = S.shellPace && flight > 1e-6 ? flight : Math.max(.6, flight);
       if (!L.stub && S.stop != null && t >= S.stop - 1e-6 && S.stopAt == null && !S.manualLine) S.stopAt = wallNow();
-      var elapsed = Math.max(0, t - L.t);
-      if (S.stopAt != null && S.stop != null && t >= S.stop - 1e-6) elapsed += Math.max(0, wallNow() - S.stopAt) / 1000;
+      // the eye's clock: the shell's (shellTau) from the eye's own stop moment (S.stopAt: reset when the user takes the line)
+      var elapsed = Math.max(0, shellTau(t, L.t, S.stop, S.stopAt, wallNow()));
       var f = L.stub || S.manualLine ? 1 : Math.max(0, Math.min(1, elapsed / duration)), smooth = f * f * (3 - 2 * f);
       var endU = S.endU == null ? 0 : S.endU;
       // 22.11 (outputs/arty-shot-view-2026-11-22.md §3): on a recorded arc the eye travels at the pace above (until endU,
@@ -1084,7 +1096,7 @@
       S.series = null; S.reconFraming = null; S.serverFromGun = false; S.backMax = null; S.zoomFov = null; S.endU = null; S.manualLine = false; S.travelAt = null; S.travelLast = null;
       S.targetVariant=null;
       S.lookLine = false;
-      S.stopAt = null; S.glided = false; S.lineEngine = null; S.lineJob = null; S.lineFig = null;
+      S.stopAt = S.arrivedAt = null; S.glided = false; S.lineEngine = null; S.lineJob = null; S.lineFig = null;
       pose.fov = S.saved ? S.saved.fov : o.camera.fov;
       title.textContent = 'Shot view · ' + o.name(row.shooter,row.t) + ' → ' + (S.target == null ? 'no hit in the replay' : o.name(S.target,S.hitT||row.t)) + ' · ' + o.clock(row.t);
       say(S.view.words.charAt(0).toUpperCase() + S.view.words.slice(1)); bar.hidden = false; shown(unpin, false); syncTop(); paintShells();
@@ -1695,7 +1707,7 @@
     // it stands, a first-person one keeps its place along the shell's line; only opening a row puts the default view back
     function episode(keep) {
       if (!S.row) return;
-      altStop(); S.stopAt = null; S.glided = false;
+      altStop(); S.stopAt = S.arrivedAt = null; S.glided = false;
       if (keep && S.fp && S.line && S.t >= S.line.t && S.manualLine) S.endU = Math.max(0, S.u);   // the flight ends on the line, not behind the gun
       S.manualLine = false; S.travelLast = null;
       if (keep && S.lookLine) S.manualLine = true;
@@ -1709,9 +1721,9 @@
     // by itself AFTER s later (its exit: the heat map off, the user's speed and lens back)
     function clamp(t0, t1) {
       if (!S.row || S.stop == null) return t1;
-      if (S.armed && t1 >= S.stop && t0 <= S.stop) {
+      if (S.armed && t1 >= S.stop - 1e-6 && t0 <= S.stop) {   // the same moment shellTau counts as the stop
         S.armed = false; o.play(false);
-        S.stopAt = wallNow();
+        S.stopAt = S.arrivedAt = wallNow();
         return S.stop;
       }
       if (!S.armed && t1 >= S.stop + AFTER) close(false);
@@ -1804,8 +1816,9 @@
     function flightOn(t) { return !!(S.row && S.line && S.line.len > LINE_MIN && (S.line.stub || t >= S.line.t - 1e-6)); }
     function drawsShot(index, t) { return !!(S.row && S.row.shot && S.row.shot.index === index && flightOn(t)); }
     // 23.11 (NOTEBOOK Z18): the line grows from the muzzle to the shell's place now, as the replay's tracers do - the same
-    // procedure (battle.js growTracer), its end the shell on the shell's own clock (the arc's duration; the straight
-    // fallback the recorded tracer's flight), back on a rewind or Replay episode. The user's rule (23.11): the line's end
+    // procedure (battle.js growTracer), its end the shell on the shell's own clock (shellTau: on past the episode's stop at
+    // the recorded hit until the arc's duration - NOTEBOOK A1; the straight fallback the recorded tracer's flight), back on
+    // a rewind or Replay episode. The user's rule (23.11): the line's end
     // and the shell's dot always follow the shell's real clock, never the camera's pace - with "camera at the shell's
     // speed" the eye rides the end; with the eased glide (default) the eye lags it early in the flight, never passes it
     // (easedFrame's cap), and stops at the framing stop. The stub (no shot of the replay) is drawn whole.
@@ -1813,7 +1826,8 @@
       if (!flightOn(S.t)) return;
       var L = S.line, d = flightGeo.getAttribute('lineDistance'), dash = Math.max(0.15, Math.min(5, L.len / 60));
       var PB = root.PlaybackBattle, sh = L.shotIndex != null && o.battle && o.battle.shots ? o.battle.shots[L.shotIndex] : null;
-      var flight = L.path ? L.path.duration : sh ? Math.max(.05, sh[10] - sh[0]) : 0, tau = L.stub ? Infinity : S.t - L.t;
+      var flight = L.path ? L.path.duration : sh ? Math.max(.05, sh[10] - sh[0]) : 0;
+      var tau = L.stub ? Infinity : shellTau(S.t, L.t, S.stop, S.arrivedAt, wallNow());
       var at = L.path ? function (f) { var p = L.path.point(f); return [p[0], p[1], -p[2]]; }
         : function (f) { return [L.a.x + (L.b.x - L.a.x) * f, L.a.y + (L.b.y - L.a.y) * f, L.a.z + (L.b.z - L.a.z) * f]; };
       var gr = PB.growTracer(at, flight, tau, L.path ? 96 : 1, flightPos);

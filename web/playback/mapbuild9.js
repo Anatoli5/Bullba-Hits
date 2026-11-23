@@ -13,8 +13,8 @@
 (function (G) {
   'use strict';
   var MB = G.MapBuild, f = Math.fround, C = MB.counts;
-  MB.VERSION = 'r9.3';   // r9.2 (19.11): the rock shader's data (atlas.rocks, rec.rock); r9.3 (21.11): the map's scenarios (lookup.scenario)
-  var RESV = 'p2';   // version of the per-resource products (p2: a LOD's numeric material properties and uv2)
+  MB.VERSION = 'r9.4';   // r9.2 (19.11): the rock shader's data (atlas.rocks, rec.rock); r9.3 (21.11): the map's scenarios (lookup.scenario); r9.4 (23.11): no impostor LODs, atlas tiles at one texel density
+  var RESV = 'p3';   // version of the per-resource products (p2: a LOD's numeric material properties and uv2; p3 (23.11): textures from 512 px down)
   MB.RESV = RESV;   // the page names it with its digest of the products it holds (mapbuild-page.js heldDigest)
   var now = (typeof performance !== 'undefined') ? function () { return performance.now(); } : Date.now;
   var reset0 = MB.resetCounts;
@@ -729,7 +729,79 @@
   };
   MB.dxt5Region = dxt5Region;
 
-  var ATLAS_W = 1024, LEVELS = 5;
+  var LEVELS = 5;
+  // 23.11 (NOTEBOOK A6, outputs/building-textures-2026-11-23.md): one texel density for every model's texture - the
+  // level the tiled walls had at 64 px (about 30 px per metre); a tile is at most TILE_MAX px (the mod copies the
+  // visual models' textures from 512 px down: map_raw.VIS_TEX_MAX), its atlas slot at least SLOT_MIN px and on a
+  // SLOT_MIN grid, so that every one of the LEVELS mip levels keeps it in whole 4 x 4 blocks of its own
+  var TEXEL_DENSITY = 32, TILE_MAX = 512, SLOT_MIN = 4 << (LEVELS - 1), ATLAS_WIDTHS = [1024, 2048, 4096];
+  MB.TEXEL_DENSITY = TEXEL_DENSITY;
+  // the world area (over every placement: |det|^(2/3) of its matrix) and the texture-space area (in repeats, once per
+  // placement) of each drawn texture's triangles in one model
+  function textureAreas(P, pd, tiles) {
+    var geo = lodGeometry(P, pd.vs), info = lodInfo(P, pd.vs), sc = 0, np = pd.items.length;
+    pd.items.forEach(function (it) {
+      var t = it[1].t, det = t[0] * (t[5] * t[10] - t[6] * t[9]) - t[1] * (t[4] * t[10] - t[6] * t[8]) + t[2] * (t[4] * t[9] - t[5] * t[8]);
+      sc += Math.pow(Math.abs(det), 2 / 3);
+    });
+    pd.parts.forEach(function (pt) {
+      var tl = tiles.get(pt[1]); if (!tl) return;
+      var gr = info.groups[pt[0]], tri = geo.tris[pt[0]].tri, S = geo.sets[gr.rs], p = S.pos, u = S.uv, aw = 0, au = 0;
+      for (var q = 0; q + 2 < tri.length; q += 3) {
+        var a = tri[q], b = tri[q + 1], c = tri[q + 2];
+        var x1 = p[b * 3] - p[a * 3], y1 = p[b * 3 + 1] - p[a * 3 + 1], z1 = p[b * 3 + 2] - p[a * 3 + 2];
+        var x2 = p[c * 3] - p[a * 3], y2 = p[c * 3 + 1] - p[a * 3 + 1], z2 = p[c * 3 + 2] - p[a * 3 + 2];
+        aw += 0.5 * Math.sqrt(Math.pow(y1 * z2 - z1 * y2, 2) + Math.pow(z1 * x2 - x1 * z2, 2) + Math.pow(x1 * y2 - y1 * x2, 2));
+        if (u) au += 0.5 * Math.abs((u[b * 2] - u[a * 2]) * (u[c * 2 + 1] - u[a * 2 + 1]) - (u[c * 2] - u[a * 2]) * (u[b * 2 + 1] - u[a * 2 + 1]));
+      }
+      tl.aw += aw * sc; tl.au += au * np;
+    });
+  }
+  // the size (larger side, px) of the stored level whose density is nearest to `density` (TEXEL_DENSITY by default);
+  // without areas: 64 px at TEXEL_DENSITY, scaled with the density
+  function tileSize(L, aw, au, density) {
+    var D = density || TEXEL_DENSITY, plain = 64 * D / TEXEL_DENSITY, best = null, err = Infinity;
+    for (var l = 0; l < L.length; l++) {
+      if (L[l].size > TILE_MAX) continue;
+      if (!(aw > 0 && au > 0)) { if (L[l].size <= plain) return L[l].size; best = L[l].size; continue; }
+      var e = Math.abs(Math.log2(Math.sqrt(au * L[l].w * L[l].h / aw) / D));
+      if (e < err - 1e-9) { err = e; best = L[l].size; }
+    }
+    return best == null ? L[L.length - 1].size : best;
+  }
+  MB.tileSize = tileSize;
+  // shelf packing on the SLOT_MIN grid: slots by height, then width, then path; the narrowest width of ATLAS_WIDTHS
+  // (those within maxTexture) whose height does not exceed it, else the widest -> {w, h}, each tile's xy set
+  function packTiles(tiles, maxTexture) {
+    var list = Array.from(tiles.keys()).map(function (p) { var t = tiles.get(p); return { p: p, t: t, sw: Math.max(SLOT_MIN, t.levels[0].w), sh: Math.max(SLOT_MIN, t.levels[0].h) }; });
+    list.sort(function (a, b) { return b.sh - a.sh || b.sw - a.sw || (a.p < b.p ? -1 : a.p > b.p ? 1 : 0); });
+    var widths = ATLAS_WIDTHS.filter(function (w) { return w <= maxTexture; });
+    if (!widths.length) widths = [Math.max(SLOT_MIN, Math.floor(maxTexture / SLOT_MIN) * SLOT_MIN)];
+    for (var k = 0; k < widths.length; k++) {
+      var W = widths[k], x = 0, y = 0, rowH = 0;
+      list.forEach(function (s) {
+        if (x + s.sw > W) { x = 0; y += rowH; rowH = 0; }
+        s.xy = [x, y]; x += s.sw; rowH = Math.max(rowH, s.sh);
+      });
+      var H = Math.max(SLOT_MIN, Math.ceil((y + rowH) / SLOT_MIN) * SLOT_MIN);
+      if (H <= W || k === widths.length - 1) { list.forEach(function (s) { s.t.xy = s.xy; }); return { w: W, h: H }; }
+    }
+  }
+  // 23.11: the atlas within the renderer's largest texture (gl MAX_TEXTURE_SIZE, the page hands it; 4096 by default):
+  // tiles chosen at TEXEL_DENSITY and packed; while the atlas would be larger, the density lowered by a factor of
+  // sqrt(2) for the whole map, so that a map never fails to build for its atlas. tiles: Map(path -> {L: stored levels,
+  // aw, au}) -> {w, h, density, max}; each tile's want, levels, xy set
+  function fitAtlas(tiles, maxTexture) {
+    var max = maxTexture > 0 ? maxTexture : 4096, D = TEXEL_DENSITY, packed;
+    for (;;) {
+      tiles.forEach(function (t) { t.want = tileSize(t.L, t.aw, t.au, D); t.levels = bc1Levels(t.L, t.want, LEVELS); });
+      packed = packTiles(tiles, max);
+      if ((packed.w <= max && packed.h <= max) || D < 0.01) break;
+      D /= Math.SQRT2;
+    }
+    return { w: packed.w, h: packed.h, density: D, max: max };
+  }
+  MB.fitAtlas = fitAtlas;
   function budget(diag, n) { return Math.min(diag > 12 ? 800 : (diag > 4 ? 360 : 160), Math.max(100, Math.floor(50000 / Math.max(1, n)))); }
   function skipPath(p) { var pl = p.toLowerCase(); return pl.indexOf('particles/') === 0 || pl.indexOf('objects/misc/') === 0 || pl.indexOf('system/') === 0 || pl.indexOf('null_model') >= 0; }
   function moduleOf(mid, mods) {
@@ -737,22 +809,31 @@
     if (mid.indexOf('d_') === 0) { var key = 'n_' + mid.slice(2); if (key in mods) { k = mods[key] - FIRST_MODULE_KIND; return k < MAX_MODULES ? -(k + 1) : 0; } return MOD_WHOLE_REMAINS; }
     return 0;
   }
+  // 23.11 (NOTEBOOK A6): the textures a LOD is drawn with (textureOf per group, lower case)
+  function lodTextures(P, g) { var s = new Set(); g.groups.forEach(function (x) { var t = textureOf(P, x); if (t) s.add(t.toLowerCase()); }); return s; }
+  // The first LOD whose textured triangles fit the budget, or the last. 23.11 (NOTEBOOK A6): the walk stops before a LOD
+  // drawn with a texture the chain's first LOD does not use - the game's far impostor (one texture baked over the whole
+  // model, 128 px in the client for a house: 1 px per metre) - so that every model keeps the shared tiled materials and
+  // one texel density (map_raw.lod_drawn mirrors this).
   function chooseLod(P, stem, diag, count) {
     var chain = lodChain(P, stem); if (!chain.length) return null;
-    var tried = [], pick = null;
+    var tried = [], pick = null, ref = null;
     for (var c = 0; c < chain.length; c++) {
       var vs = chain[c][0], g = lodInfo(P, vs); if (!g) continue;
+      var own = lodTextures(P, g);
+      if (!ref) ref = own;
+      else if (Array.from(own).some(function (t) { return !ref.has(t); })) break;
       var n = 0; g.groups.forEach(function (x) { if (textureOf(P, x)) n += x.ntri; });
       var parts = vs.split('/'); tried.push([parts[parts.length - 2], n, chain[c][1]]); pick = { vs: vs, info: g };
       if (n <= budget(diag, count)) break;
     }
     return pick ? { pick: pick, tried: tried } : null;
   }
-  function visualModels(P, objs, destr, arena, stats) {
+  function visualModels(P, objs, destr, arena, stats, maxTexture) {
     var byprim = new Map();
     objs.forEach(function (o, key) { var p = o.k0; if (p && /\.primitives$/.test(p) && !skipPath(p)) { var pk = o.ruin ? p + '|ruin' : p; if (!byprim.has(pk)) byprim.set(pk, []); byprim.get(pk).push([key, o]); } });
     var tiles = new Map(), pending = [], rocks = new Rocks(P);
-    function want(path, size) { var t = tiles.get(path); if (!t || t.want < size) tiles.set(path, { want: size }); }
+    function want(path) { if (!tiles.has(path)) tiles.set(path, { want: 0, aw: 0, au: 0 }); }
     byprim.forEach(function (items) {
       var ruin = !!items[0][1].ruin, prim = items[0][1].k0, stem = prim.slice(0, prim.lastIndexOf('.'));
       if (!P.raw.resEntry(stem + '.visual_processed')) { stats['no visual'] = (stats['no visual'] || 0) + 1; return; }
@@ -762,12 +843,11 @@
       var dx = f(hi[0] - lo[0]), dy = f(hi[1] - lo[1]), dz = f(hi[2] - lo[2]), diag = f(Math.sqrt(f(f(f(dx * dx) + f(dy * dy)) + f(dz * dz))));
       if (diag > 400) { stats['outland giant skipped'] = (stats['outland giant skipped'] || 0) + 1; return; }
       var ch = chooseLod(P, stem, diag, items.length), vs = ch.pick.vs;
-      var size = diag > 20 && (prim.toLowerCase().indexOf('/buildings/') >= 0 || prim.toLowerCase().indexOf('/railway/') >= 0) ? 128 : 64;
       var d = destr[stem.toLowerCase()] || {}, mods = d.modules || {}, parts = [];
       ch.pick.info.groups.forEach(function (gr, gi) {
         var tex = textureOf(P, gr);
         if (!tex || gr.fx.toLowerCase().indexOf('distortion') >= 0) { stats['groups without texture'] = (stats['groups without texture'] || 0) + 1; return; }
-        want(tex, size);
+        want(tex);
         // 19.11 (round 11): a group drawn by the rock shader whose render set has a second texcoord stream
         var rm = null;
         if (gr.fx.toLowerCase().indexOf(ROCK_FX) >= 0 && lodGeometry(P, vs).sets[gr.rs].uv2) rm = rocks.material(gr);
@@ -776,20 +856,25 @@
       if (!parts.length) { stats['models without textured groups'] = (stats['models without textured groups'] || 0) + 1; return; }
       pending.push({ prim: prim, items: items, vs: vs, tried: ch.tried, parts: parts, d: d, ruin: ruin });
     });
-    if (tiles.size > 100) { tiles.forEach(function (t) { t.want = Math.min(t.want, 64); }); stats['all tiles 64 px (many textures)'] = 1; }
-    var bad = 0;
+    // 23.11 (NOTEBOOK A6): each texture's tile at one texel density on the ground it covers (TEXEL_DENSITY px per metre):
+    // the world and texture-space areas of its triangles over every placement, then the stored mip level nearest to the
+    // density (no larger than TILE_MAX). Before, every tile was 64 or 128 px whatever it covered: a house's baked texture
+    // got 1 px per metre beside the 30 of its neighbour's tiled walls.
+    pending.forEach(function (pd) { textureAreas(P, pd, tiles); });
+    var bad = 0, sizes = {};
     tiles.forEach(function (t, path) {
       var L = P.get('tex', path, null, function (data) { return texLevels(data, path); });
       if (!L) { tiles.delete(path); bad++; return; }
-      t.levels = bc1Levels(L, t.want, LEVELS);
+      t.L = L;
     });
     stats['textures unreadable'] = bad;
-    // Atlas.pack
-    var big = [], small = [];
-    tiles.forEach(function (t, p) { (t.levels[0].w > 64 || t.levels[0].h > 64 ? big : small).push(p); });
-    var cells = big.length + Math.ceil(small.length / 4), per = ATLAS_W / 128, rows = Math.max(1, Math.ceil(cells / per)), H = rows * 128, W = ATLAS_W, c = 0;
-    big.forEach(function (p) { tiles.get(p).xy = [(c % per) * 128, Math.floor(c / per) * 128]; c++; });
-    small.forEach(function (p, i) { var cell = c + Math.floor(i / 4), q = i % 4; tiles.get(p).xy = [(cell % per) * 128 + (q % 2) * 64, Math.floor(cell / per) * 128 + Math.floor(q / 2) * 64]; });
+    var packed = fitAtlas(tiles, maxTexture), W = packed.w, H = packed.h;
+    tiles.forEach(function (t) { delete t.L; var k = t.levels[0].w + 'x' + t.levels[0].h; sizes[k] = (sizes[k] || 0) + 1; });
+    stats['texel density (px per metre)'] = +packed.density.toFixed(2); stats['atlas tile sizes'] = sizes;
+    if (packed.density < TEXEL_DENSITY) {
+      stats['texel density lowered to fit the largest texture (px)'] = packed.max;
+      if (typeof console !== 'undefined') console.log('map atlas: texel density lowered to ' + packed.density.toFixed(2) + ' px/m to fit ' + packed.max + ' px (' + W + 'x' + H + ')');
+    }
     var levels = [];
     for (var l = 0; l < LEVELS; l++) {
       var w = W >> l, h = H >> l, bw = w >> 2, bh = h >> 2, blk = new Uint8Array(bw * bh * 8);
@@ -1189,7 +1274,7 @@
     times.physicalObjects = now() - t; t = now();
     var col = collisionRecords(P, objs, destr, arenaBox, ostats);
     times.havok = now() - t; t = now();
-    var vis = visualModels(P, objs, destr, arenaBox, vstats);
+    var vis = visualModels(P, objs, destr, arenaBox, vstats, opts.maxTexture);
     times.visual = now() - t; t = now();
     var link = { linked: 0, 'not linked': 0 };
     col.recs.forEach(function (rec) {
