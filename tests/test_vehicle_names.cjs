@@ -25,7 +25,7 @@ function cut(src, name) {
 }
 const SRC = fs.readFileSync(path.join(WEB, 'playback', 'playback.js'), 'utf8');
 function page(catalogue, index) {
-  const box = { BullbaRows: R, NAMES: R.vehicleNamer(catalogue), INDEX: index || null, specialOf: () => null };
+  const box = { BullbaRows: R, BullbaReplayMode: require('../web/replay-mode.js'), FILES: null, NAMES: R.vehicleNamer(catalogue), INDEX: index || null, specialOf: () => null };
   const code = ['typeOf', 'tileOf', 'vehicleShort', 'fileWhen', 'battleWhen', 'battleView'].map((n) => cut(SRC, n)).filter(Boolean).join('\n');
   vm.runInNewContext(code, box);
   return box;

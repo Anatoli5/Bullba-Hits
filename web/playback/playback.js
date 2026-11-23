@@ -4195,7 +4195,47 @@
     var hb=isFile&&record.battle&&INDEX&&INDEX.battles&&INDEX.battles.find(function(b){return b.id===record.battle;});
     var tile=hb&&hb.vehicle||(record.vehicle?(typeof record.vehicle==='object'?record.vehicle:NAMES(record.vehicle)):null);
     return {special:specialOf(id),map:record.mapTitle||(hb&&hb.map)||record.map||'Unknown map',vehicle:tile,
-      when:isFile?fileWhen(record):battleWhen(Number(record.startedAt)),player:record.player||''};
+      when:isFile?fileWhen(record):battleWhen(Number(record.startedAt)),player:record.player||'',
+      // 23.11: mode name, players per team or the mode's tag, result (BullbaReplayMode.summary over the entry and the
+      // table of the client's battle modes, web/battle-modes.js); a Hits battle's row has no results - its mode name only
+      summary:BullbaReplayMode.summary(record)};
+  }
+  // the players-per-team figure of a two-team battle or the mode's tag, with its tooltip (title, one sentence)
+  function formatMark(s){
+    if(s.tag){var t=BullbaRows.node('span',s.tag,'battle-option-format tag');t.title=s.tagName+'\n'+s.tagWords;return t;}
+    if(!s.format)return null;
+    var f=BullbaRows.node('span',s.format,'battle-option-format');f.title=s.format+'\nPlayers per team, as the battle\'s results record them.';return f;
+  }
+  // The row of one battle: the compact menu's (Bullba Hits' battle row: map, vehicle tile, time, the keep star) and, with
+  // `rich`, the no-battle screen's tile - a second line of mode, result or place, damage dealt and kills. The stripe on
+  // the left is the result (data-result): green victory, red defeat, grey draw, none when unknown.
+  function battleRow(id,record,isFile,rich,onChoose){
+    var row=BullbaRows.node('div',undefined,'battle-option'+(rich?' rich':''));row.tabIndex=0;row.setAttribute('role','option');row.setAttribute('data-id',id);row.setAttribute('aria-selected',String(id===BID));
+    var v=battleView(id,record,isFile),special=v.special,map=v.map,s=v.summary,result=BullbaReplayMode.resultWords(s);
+    if(s.result)row.setAttribute('data-result',s.result);
+    var label=BullbaRows.node('span',undefined,'battle-option-map');if(special)label.appendChild(BullbaRows.modeMark(special));label.appendChild(document.createTextNode(map));
+    if(v.player)label.appendChild(BullbaRows.node('span',v.player,'battle-option-player'));
+    if(rich){
+      var line=[s.name,s.place?'#'+s.place+(s.places?' / '+s.places:''):result,
+        s.damage!=null?'Damage '+s.damage:'',s.kills!=null?'Kills '+s.kills:''].filter(Boolean).join(' · ');
+      if(line)label.appendChild(BullbaRows.node('span',line,'battle-option-detail'));
+    }
+    row.appendChild(label);
+    var mark=formatMark(s),fmt=BullbaRows.node('span',undefined,'battle-option-formats');if(mark)fmt.appendChild(mark);row.appendChild(fmt);
+    var vehicle=BullbaRows.node('span',undefined,'battle-option-vehicle');
+    if(v.vehicle)vehicle.appendChild(BullbaRows.vehicleTile(v.vehicle,true));
+    row.appendChild(vehicle);row.appendChild(BullbaRows.node('span',v.when,'battle-option-when'));
+    var kind=replayKind(id),can=kind==='kept'||kind==='rolling',kept=keptForever(id,record.kept);
+    var star=BullbaRows.node('button',kept?'★':'☆','battle-option-keep');star.type='button';star.setAttribute('aria-disabled',String(!can||!host.canSend()));star.setAttribute('aria-pressed',String(kept));
+    star.setAttribute('aria-label',kept?'Return replay to replay limit':'Keep replay forever');
+    star.title=RL.join(can?RL.keepTip(kind,RL.limit(replayView),host.canSend()):RL.offTip(isFile&&!record.battle?'file':kind||'unknown',RL.limit(replayView),host.canSend()),'• ');
+    star.onclick=function(e){e.preventDefault();e.stopPropagation();toggleKeep(id);};
+    star.onkeydown=function(e){if(e.key==='Enter'||e.key===' ')e.stopPropagation();};row.appendChild(star);
+    var cv=clientVersion(FILES&&FILES.client),fv=clientVersion(record.client);
+    row.title=map+(s.name?'\n'+(s.tagName||s.name):special?'\n'+BullbaRows.modeWords(special):'')+(result?'\n'+result:'')+(cv&&fv&&cv!==fv?'\nRecorded with an older client':'');
+    function select(){if(onChoose)onChoose();choose(id);}
+    row.onclick=select;row.onkeydown=function(e){if(e.target!==row)return;if(e.key==='Enter'||e.key===' '){e.preventDefault();select();}};
+    return row;
   }
   // The heading tile (Bullba Hits' .heading-tile): the open battle's map, under it its start and player, its vehicle's tile.
   // A battle no list names: its date and map once loaded (thisBattle), 'This battle' until then.
@@ -4210,29 +4250,8 @@
     var menu=$('replay-menu');menu.replaceChildren();
     replayHeading(files);
     function group(text){menu.appendChild(BullbaRows.node('div',text,'battle-list-group'));}
-    // a row as Bullba Hits' battle row (app.js renderBattleList): map, vehicle tile, time; in the place of Hits' link to this
-    // viewer, the battle's keep-forever star
-    function add(id,record,isFile){
-      var row=BullbaRows.node('div',undefined,'battle-option');row.tabIndex=0;row.setAttribute('role','option');row.setAttribute('data-id',id);row.setAttribute('aria-selected',String(id===BID));
-      var v=battleView(id,record,isFile),special=v.special,map=v.map;
-      var label=BullbaRows.node('span',undefined,'battle-option-map');if(special)label.appendChild(BullbaRows.modeMark(special));label.appendChild(document.createTextNode(map));
-      if(v.player)label.appendChild(BullbaRows.node('span',v.player,'battle-option-player'));
-      row.appendChild(label);
-      var vehicle=BullbaRows.node('span',undefined,'battle-option-vehicle');
-      if(v.vehicle)vehicle.appendChild(BullbaRows.vehicleTile(v.vehicle,true));
-      row.appendChild(vehicle);row.appendChild(BullbaRows.node('span',v.when,'battle-option-when'));
-      var kind=replayKind(id),can=kind==='kept'||kind==='rolling',kept=keptForever(id,record.kept);
-      var star=BullbaRows.node('button',kept?'★':'☆','battle-option-keep');star.type='button';star.setAttribute('aria-disabled',String(!can||!host.canSend()));star.setAttribute('aria-pressed',String(kept));
-      star.setAttribute('aria-label',kept?'Return replay to replay limit':'Keep replay forever');
-      star.title=RL.join(can?RL.keepTip(kind,RL.limit(replayView),host.canSend()):RL.offTip(isFile&&!record.battle?'file':kind||'unknown',RL.limit(replayView),host.canSend()),'• ');
-      star.onclick=function(e){e.preventDefault();e.stopPropagation();toggleKeep(id);};
-      star.onkeydown=function(e){if(e.key==='Enter'||e.key===' ')e.stopPropagation();};row.appendChild(star);
-      var cv=clientVersion(FILES&&FILES.client),fv=clientVersion(record.client);
-      row.title=map+(special?'\n'+BullbaRows.modeWords(special):'')+(cv&&fv&&cv!==fv?'\nRecorded with an older client':'');
-      function select(){replayMenu(false);choose(id);}
-      row.onclick=select;row.onkeydown=function(e){if(e.target!==row)return;if(e.key==='Enter'||e.key===' '){e.preventDefault();select();}};
-      menu.appendChild(row);
-    }
+    // a row as Bullba Hits' battle row (app.js renderBattleList), battleRow
+    function add(id,record,isFile){menu.appendChild(battleRow(id,record,isFile,false,function(){replayMenu(false);}));}
     if(files.length){group('Replay files');files.forEach(function(f){add(f.battle||f.id,f,true);});}
     if(battles.length){group('Bullba Hits battles');battles.forEach(function(b){add(b.id,b,false);});}
     if(BID&&!menu.querySelector('[aria-selected=true]'))add(BID,{map:thisBattle||'This battle'},false);
@@ -4481,10 +4500,15 @@
   // the separate panel of replays is gone (its rows, buttons with overflow:hidden in a flex column of 1200+ entries,
   // shrank to empty strips). The message in the middle points at the selector.
   function noBattle() {
-    if (BID) return;
-    var n = fileRows().length + BATTLES.length;
-    $('msg').textContent = n ? 'Choose a replay in the battle list at the top: newest first, ★ kept forever by the replay limit.'
-      : (FILES ? 'No replays in the game\'s replays folder yet.' : 'Reading the replays folder...');
+    var home = $('replay-home');
+    if (BID) { home.hidden = true; return; }
+    var files = fileRows(), n = files.length + BATTLES.length;
+    $('msg').textContent = n ? '' : (FILES ? 'No replays in the game\'s replays folder yet.' : 'Reading the replays folder...');
+    // 23.11: with no battle open, the battles as rich tiles (battleRow), the menu's lists in its order
+    home.replaceChildren(); home.hidden = !n;
+    function group(text) { home.appendChild(BullbaRows.node('div', text, 'battle-list-group')); }
+    if (files.length) { group('Replay files'); files.forEach(function (f) { home.appendChild(battleRow(f.battle || f.id, f, true, true)); }); }
+    if (BATTLES.length) { group('Bullba Hits battles'); BATTLES.forEach(function (b) { home.appendChild(battleRow(b.id, b, false, true)); }); }
   }
   function choose(id, shot) {
     if (!/^[-a-zA-Z0-9_]{1,100}$/.test(id)) return;

@@ -24,7 +24,8 @@ data/replay-files.js: ArmorInspectorData.receive(["replayFiles", {format, client
 broken: [name...]}]); entry {id, file (relative to replays/), kept, size, mtime, when ('YYYY-MM-DD HH:MM:SS' from the
 header's 'dd.mm.yyyy hh:mm:ss'), map, mapTitle, gameplay, battleType, player, vehicle (type 'nation:name'), client,
 vehicles (the header's count), battle (Hits id or absent), special ({name, bonusType, gameplay} of a special battle
-mode - special_mode, BACKLOG 112 - or absent)}. The header's per-vehicle rows (roster) are kept in the cache
+mode - special_mode, BACKLOG 112 - or absent), results (results_of: the results block's raw outcome, absent for a
+one-block file)}. The header's per-vehicle rows (roster) are kept in the cache
 only; the playback job reads them for the battle file (roster_of). Python 2.7 and 3.
 """
 from __future__ import absolute_import
@@ -42,7 +43,7 @@ FORMAT = 1
 DATA_KEY = 'replayFiles'
 DATA_FILE = 'replay-files'       # CFG/data/replay-files.js
 CACHE = 'files.json'             # CFG/replay/files.json
-CACHE_FORMAT = 2                 # 2 (20.11): each entry's 'arena' from its results block
+CACHE_FORMAT = 3                 # 2 (20.11): each entry's 'arena' from its results block; 3 (23.11): 'results'
 PREFIX = 'f-'
 SKIP = ('temp.wotreplay',)       # the game's growing in-battle file
 WHEN = re.compile(r'(\d{1,2})\.(\d{1,2})\.(\d{4}) (\d{1,2}):(\d{2})(?::(\d{2}))?')
@@ -139,9 +140,9 @@ def own_vehicle(block):
     return None, None
 
 
-def results_arena(path):
-    """The arena id from a .wotreplay's second JSON block (the battle's results the game appends at the end; a file
-    written without them, e.g. replay_last_battle of a battle left early, has one block): a string, or None."""
+def results_block(path):
+    """The .wotreplay's second JSON block (the battle's results the game appends at the end; a file written without
+    them, e.g. replay_last_battle of a battle left early, has one block): its first part (a dict), or None."""
     try:
         with open(path, 'rb') as handle:
             magic, count = struct.unpack('<II', handle.read(8))
@@ -151,10 +152,45 @@ def results_arena(path):
             size, = struct.unpack('<I', handle.read(4))
             if size > (16 << 20): return None
             value = json.loads(handle.read(size).decode('utf-8'))
-        arena = value[0].get('arenaUniqueID') if isinstance(value, list) and value and isinstance(value[0], dict) else None
-        return str(int(arena)) if arena is not None else None
+        return value[0] if isinstance(value, list) and value and isinstance(value[0], dict) else None
     except (IOError, OSError, ValueError, TypeError, struct.error):
         return None
+
+
+def results_arena(path, block=None):
+    """The arena id of the results block (results_block): a string, or None."""
+    block = results_block(path) if block is None else block
+    try:
+        arena = block.get('arenaUniqueID') if isinstance(block, dict) else None
+        return str(int(arena)) if arena is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def results_of(block):
+    """The battle's outcome as the results block records it, raw (23.11; the page's BullbaReplayMode.summary derives the
+    result, format and place): {winnerTeam, team (the recording player's), place (brPosInBattle of a place-based mode),
+    damageDealt, kills, guiType, teams {team: players}} - players counted from its 'players' (the header lists only the
+    own team in Onslaught, the results' vehicles hold Steel Hunter's bots). A field the block lacks is absent; None for
+    no block."""
+    if not isinstance(block, dict): return None
+    common = block.get('common') if isinstance(block.get('common'), dict) else {}
+    out = {}
+    for key in ('winnerTeam', 'guiType'):
+        if isinstance(common.get(key), int): out[key] = common[key]
+    personal = block.get('personal') if isinstance(block.get('personal'), dict) else {}
+    for row in personal.values():
+        if isinstance(row, dict) and 'damageDealt' in row:
+            for key, name in (('team', 'team'), ('brPosInBattle', 'place'), ('damageDealt', 'damageDealt'), ('kills', 'kills')):
+                if isinstance(row.get(key), int) and not isinstance(row.get(key), bool): out[name] = row[key]
+            break
+    teams = {}
+    players = block.get('players') if isinstance(block.get('players'), dict) else {}
+    for row in players.values():
+        team = row.get('team') if isinstance(row, dict) else None
+        if isinstance(team, int): teams[str(team)] = teams.get(str(team), 0) + 1
+    if teams: out['teams'] = teams
+    return out
 
 
 def entry_of(path, rel, size, mtime):
@@ -163,13 +199,15 @@ def entry_of(path, rel, size, mtime):
     if not block: return None, 'no readable first JSON block'
     if not block.get('mapName'): return None, 'the header names no map'
     vid, vtype = own_vehicle(block)
+    results = results_block(path)
     entry = {'id': file_id(block, size), 'file': rel, 'kept': rel.split('/')[0] == KEPT, 'size': size, 'mtime': mtime,
-             'arena': results_arena(path),
+             'arena': results_arena(path, results) if results is not None else None,
              'when': when_of(block), 'map': block.get('mapName'), 'mapTitle': block.get('mapDisplayName'),
              'gameplay': block.get('gameplayID'), 'battleType': block.get('battleType'), 'player': block.get('playerName'),
              'vehicle': vtype or (str(block.get('playerVehicle') or '').replace('-', ':', 1) or None),
              'playerVehicleId': vid, 'client': block.get('clientVersionFromXml') or block.get('clientVersionFromExe'),
              'vehicles': len(roster_of(block)), 'dateTime': block.get('dateTime')}
+    if results is not None: entry['results'] = results_of(results)
     return entry, roster_of(block)
 
 

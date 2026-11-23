@@ -39,6 +39,36 @@ class ReplayModes(unittest.TestCase):
         self.assertEqual(modes.summary_mode({}), {})
         self.assertEqual(modes.summary_mode(None), {})
 
+    def test_entry_of_keeps_the_results_raw(self):
+        # 23.11: a two-block file of his Onslaught shape (the header lists the own team only), and a one-block file
+        import struct, tempfile
+        from local_armor_inspector.replay_library import REPLAY_MAGIC
+        header = {'mapName': '06_ensk', 'battleType': 47, 'gameplayID': 'comp7', 'playerName': 'P', 'dateTime': '20.11.2026 21:00:00',
+                  'vehicles': {'1': {'vehicleType': 'ussr:R148', 'team': 1, 'name': 'P'}, '2': {'team': 1, 'name': 'A'}, '3': {'team': 1, 'name': 'B'}}}
+        results = [{'arenaUniqueID': 123, 'common': {'winnerTeam': 1, 'guiType': 33, 'finishReason': 1},
+                    'personal': {'60417': {'team': 1, 'damageDealt': 3118, 'kills': 1}, 'avatar': {'accountDBID': 5}},
+                    'players': dict((str(i), {'team': 1 + i % 2}) for i in range(6)), 'vehicles': {}}, {}, {}]
+        def write(path, blocks):
+            with open(path, 'wb') as handle:
+                handle.write(struct.pack('<II', REPLAY_MAGIC, len(blocks)))
+                for block in blocks:
+                    data = json.dumps(block).encode('utf-8')
+                    handle.write(struct.pack('<I', len(data)) + data)
+                handle.write(b'stream')
+        folder = tempfile.mkdtemp()
+        try:
+            two, one = os.path.join(folder, 'a.wotreplay'), os.path.join(folder, 'b.wotreplay')
+            write(two, [header, results]); write(one, [header])
+            entry, _ = modes.entry_of(two, 'a.wotreplay', 1, 1)
+            self.assertEqual(entry['arena'], '123')
+            self.assertEqual(entry['results'], {'winnerTeam': 1, 'guiType': 33, 'team': 1, 'damageDealt': 3118, 'kills': 1,
+                                                'teams': {'1': 3, '2': 3}})
+            entry, _ = modes.entry_of(one, 'b.wotreplay', 1, 1)
+            self.assertNotIn('results', entry)
+            self.assertIsNone(entry['arena'])
+        finally:
+            shutil.rmtree(folder)
+
     def test_stale_metadata_regression(self):
         fallback = os.path.expanduser('~/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node.exe')
         node = next((p for p in (os.environ.get('BULLBA_NODE'), shutil.which('node'), fallback)

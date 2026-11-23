@@ -68,3 +68,15 @@
 /* Replays: another player's name under the map; the list's two groups (replay files, Hits battles) */
 .battle-option-player{display:block;font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis}
 .battle-list-group{font-size:12px;color:var(--muted);padding:5px 10px}
+/* Replays (23.11): the battle's result as the row's left stripe, as the team rows' (rows.css): green victory, red defeat,
+   grey draw, none when the replay records no result; the players per team ('15x15') or a special mode's tag */
+.battle-option[data-result]{border-left-width:3px}
+.battle-option[data-result=victory]{border-left-color:var(--mint)}
+.battle-option[data-result=defeat]{border-left-color:var(--red)}
+.battle-option[data-result=draw]{border-left-color:#9daebf}
+.battle-option-formats{min-width:3.4em;text-align:right}
+.battle-option-format{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+.battle-option-format.tag{font-weight:600;color:#e5edf5}
+/* the no-battle screen's rich tile: under the map, the mode, result or place, damage dealt and kills */
+.battle-option.rich{min-height:56px}
+.battle-option-detail{display:block;font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis}

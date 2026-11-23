@@ -110,6 +110,11 @@
   #cost td { padding:0 6px 0 0; }
   #cost td.v { text-align:right; color:#fff; }
   #msg { position:absolute; left:50%; top:45%; transform:translate(-50%,-50%); font-size:13px; }
+  /* 23.11: Replays' rows carry the format column (viewer.css .battle-option-formats) - five columns, Hits keeps four;
+     with no battle open, the battles as rich tiles in the middle of the window (playback.js noBattle, battleRow) */
+  #replay-menu .battle-option, #replay-home .battle-option { grid-template-columns:minmax(0,1fr) auto auto auto auto; }
+  #replay-home { position:absolute; left:50%; top:96px; transform:translateX(-50%); z-index:5; width:min(820px, calc(100% - 32px)); max-height:calc(100% - 128px); overflow:auto; display:flex; flex-direction:column; gap:3px; padding:12px; box-sizing:border-box; border-radius:8px; background:#15212e; }
+  #replay-home[hidden] { display:none; }
   #follow-note { position:absolute; left:50%; top:46px; transform:translateX(-50%); padding:3px 10px; border-radius:4px; background:rgba(20,24,28,.82); color:#f0d890; font-size:12px; pointer-events:none; z-index:5; }
   #follow-note[hidden] { display:none; }
   #help { color:var(--dim); }
@@ -151,6 +156,7 @@
 <body>
 <div id="view"></div>
 <div id="msg">Loading...</div>
+<div id="replay-home" role="listbox" aria-label="Battles" hidden></div>
 <div id="follow-note" hidden></div>
 <div id="meter" class="panel">
   <div id="topline">
@@ -269,7 +275,7 @@
 <script src="host.js"></script>
 <script src="settings-store.js"></script>
 <script src="replay-limit.js"></script>
-<script src="replay-mode.js"></script>
+<script src="battle-modes.js"></script><script src="replay-mode.js"></script>
 <script src="shot-route.js"></script>
 <script src="playback/mapbuild.js"></script>
 <script src="playback/mapbuild9.js"></script>

@@ -5,6 +5,8 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 ## Unreleased
 
 - Replays: following a vehicle (a click on it or on its row) moves only the view's centre onto it; the camera's distance stays as it was.
+- Replays: each battle in the battle list shows its result as the row's left stripe (green victory, red defeat, grey draw, none when the replay recorded no result) and, for a battle of two teams, its players per team as recorded (e.g. 15×15, 14×15); any other battle (every player on their own, squads, places) shows a short tag of its mode's name (e.g. SH for Steel Hunter) with the full name in the tooltip. A battle decided by places counts 1st place as a victory, as the game does.
+- Replays: with no battle open, the window lists the battles as larger tiles - map, mode by the game's own name, result or place, damage dealt and kills, vehicle and date; a click opens the battle.
 
 ## 1.32 (2026-11-23)
 
