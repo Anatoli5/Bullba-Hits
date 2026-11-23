@@ -4101,7 +4101,15 @@
       var st = STAGES[n.stage] || (n.state === 'queued' ? 'waiting for its turn' : 'starting');
       $('msg').textContent = 'Copying the map files from the game: ' + st + (n.stage === 'objects' && n.total ? ' (' + (n.done || 0) + ' / ' + n.total + ')' : '') + '...';
       return null;
-    }, function () { return MapBuildPage.manifest(arena, BASE + 'mapraw/'); });
+    }, function () {
+      // 1.33 (the user: "map build: ... held back as built before"): the look used to take the PREVIOUS copy's manifest, still
+      // on disk while the mod copies again, so a whole copy asked for after a held-back miss was read as the old one with its
+      // held entries and the build failed once more. A whole request takes only a manifest with nothing held back.
+      return MapBuildPage.manifest(arena, BASE + 'mapraw/').then(function (m) {
+        if (params.whole && (m.res || []).some(function (e) { return e.held; })) throw new Error('the previous copy');
+        return m;
+      });
+    });
     host.send('bullba_hits', Object.assign({ action: 'mapRaw' }, params)).catch(function (e) { console.warn('Bullba Hits mapRaw command failed: ' + e.message); });
     return w;
   }

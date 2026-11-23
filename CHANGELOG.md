@@ -2,6 +2,10 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.1.1 from 1.05 on, 2.4.1.0 from 1.02 on, 2.4.0.2 from 0.9.3 on, 2.4.0.1 #950 from 0.7.6, 2.4.0.0 #945 before.
 
+## Unreleased
+
+- Replays: a map that has to be copied again from the game in full is no longer read from the previous copy while the new one is written; before, its build could fail with "held back as built before".
+
 ## 1.33 (2026-11-23)
 
 - Replays: following a vehicle (a click on it or on its row) moves only the view's centre onto it; the camera's distance stays as it was.
