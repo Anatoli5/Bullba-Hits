@@ -82,6 +82,22 @@ def special_mode(bonus_type, gameplay):
     return {'name': name, 'bonusType': bonus, 'gameplay': gameplay}
 
 
+def summary_mode(mode):
+    """The mode fields of a Hits battle's index row (22.11, NOTEBOOK Y15): its battleType and gameplay whenever the record
+    names them - an ordinary battle too, so the replay viewer classifies it from the index alone (web/replay-mode.js
+    evidence: a battleType decides) - and 'special' for a special one. {} when the record names neither."""
+    mode = mode if isinstance(mode, dict) else {}
+    out = {}
+    try: bonus = None if mode.get('bonusType') is None or mode.get('bonusType') == '' else int(mode.get('bonusType'))
+    except (TypeError, ValueError): bonus = None
+    gameplay = mode.get('gameplayName')
+    if bonus is not None: out['battleType'] = bonus
+    if gameplay: out['gameplay'] = text(gameplay)
+    special = special_mode(bonus, gameplay)
+    if special: out['special'] = special
+    return out
+
+
 def text(value):
     try: return value if isinstance(value, type(u'')) else str(value).decode('utf-8', 'replace')
     except AttributeError: return str(value)

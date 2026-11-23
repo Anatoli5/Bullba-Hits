@@ -134,30 +134,15 @@ async function until(page, expr, ms) {
       '  if (k && Math.max(P[i], P[i + 1]) > P[i + 2] + 50) o.coloured++; if (!k && tex[i + 3] > 8) o.mapOutside++; } return o; })()');
     check('Hits’ heat map lies on the replay’s own target: ' + reg.painted + ' pixels painted (' + reg.coloured + ' in heat colours) inside its silhouette of ' + reg.silhouette + ', ' + reg.outside + ' outside it' +
       ' (a layer over the picture would have shown ' + reg.mapOutside + ' map pixels outside)', reg.silhouette > 0 && reg.painted > 0 && reg.coloured > 0 && reg.outside === 0 && reg.noise === 0, JSON.stringify(reg));
-    // THE SHOT'S CORRIDOR: what of the map is drawn on the shot's line, from the eye to the hit (a ray along it, the drawn
-    // objects only - every ancestor visible; the terrain, the water, the tracers, the shooter and the target not counted)
-    const ON_LINE = '(function () { var T = THREE, O = MapBench.shotObjects(' + TARGET + '), c = MapBench.shotView().corridor || window.__line; if (!c) return null; window.__line = c;' +
-      ' var a = new T.Vector3().fromArray(c.a), b = new T.Vector3().fromArray(c.b), L = O.layers, ray = new T.Raycaster(a, b.clone().sub(a).normalize(), 0, a.distanceTo(b) - 0.3); ray.camera = O.camera;' +
-      ' var skip = [L.terrain, L.water, L.tracers, L.helpers, O.group, MapBench.shotObjects(' + SHOOTER + ').group];' +
-      ' function drawn(x) { for (var p = x; p; p = p.parent) { if (!p.visible || skip.indexOf(p) >= 0) return false; } return true; }' +
-      ' var hits = ray.intersectObject(O.scene, true).filter(function (h) { return !h.object.isSprite && !h.object.isLine && drawn(h.object); });' +
-      ' return {count: hits.length, names: hits.slice(0, 6).map(function (h) { return (h.object.name || h.object.type) + (h.instanceId != null ? "#" + h.instanceId : "") + " @" + h.distance.toFixed(1); })}; })()';
-    const cor = await page.evaluate('MapBench.shotView().corridor'), lineNow = await page.evaluate(ON_LINE);
-    check('the shot’s corridor (' + (cor && cor.radius) + ' m round the line from the eye to the hit): ' + (cor && cor.hidden) + ' objects not drawn (' + JSON.stringify(cor && {models: cor.models, plants: cor.plants, mode: cor.modeObjects, vehicles: cor.vehiclesHidden}) +
-      '), ' + (lineNow && lineNow.count) + ' drawn objects left on the line', cor && cor.hidden > 0 && lineNow && lineNow.count === 0, JSON.stringify({cor: cor, line: lineNow}));
-    console.log('note the corridor hid: ' + JSON.stringify(cor && cor.list) + '; the ground across the line: ' + (cor && cor.ground) + '; broken before this moment by the replay: ' + (cor && cor.destroyedAlready) + ' (time ' + (cor && cor.t) + ' s)');
-    // the painted target at Fit against the target alone on the terrain (no map objects, no other vehicle). Round the hit, inside
-    // the corridor's own width as it is seen at the target (R at the hit's distance, in screen pixels), every pixel the
-    // target covers whole there is painted in the shot view: nothing on the shot's line hides it. Beyond that width the
-    // map's objects off the line still stand in front, as anywhere (the figure printed).
-    const bare = await page.evaluate(SETUP + ' var O = MapBench.shotObjects(id), c = O.camera, cr = MapBench.shotView().corridor, gl = O.renderer.getContext(), W = gl.drawingBufferWidth, H = gl.drawingBufferHeight;' +
-      ' var b = new T.Vector3().fromArray(cr.b), d = b.distanceTo(c.position), q = b.clone().project(c), cx = (q.x + 1) / 2 * W, cy = (q.y + 1) / 2 * H;' +
-      ' var rpx = cr.radius / (d * Math.tan(c.fov * Math.PI / 360) / c.zoom) * H / 2;' +
-      ' var Q = MapBench.shotFrame(id, {mask: mask, bare: true}), P = MapBench.shotFrame(id, {overlay: false}), R = MapBench.shotFrame(id, {paint: false, overlay: false}), o = {core: 0, painted: 0, discCore: 0, discPainted: 0, discRadius: +rpx.toFixed(1)};' +
-      ' for (var i = 0; i < Q.length; i += 4) { var whole = Q[i] > 250 && Q[i + 1] < 5 && Q[i + 2] > 250, p = diff(P, R, i), x = (i / 4) % W, y = Math.floor(i / 4 / W), inDisc = Math.hypot(x + 0.5 - cx, y + 0.5 - cy) <= rpx;' +
-      '  if (whole) o.core++; if (p) o.painted++; if (whole && inDisc) { o.discCore++; if (p) o.discPainted++; } } return o; })()');
-    check('the painted target at Fit: round the hit (the corridor seen at the target, ' + bare.discRadius + ' px) ' + bare.discPainted + ' of ' + bare.discCore + ' pixels the target covers painted; in all ' + bare.painted +
-      ' painted of ' + bare.core + ' the target alone on the terrain covers', bare.discCore > 0 && bare.discPainted === bare.discCore, JSON.stringify(bare));
+    // NO CORRIDOR (22.11): the shot view hides no map object on the shot's line any more (the corridor of 20.11 was taken
+    // out: recorded arcs and ordinary scene depth decide occlusion) - its state names none
+    const cor = await page.evaluate('MapBench.shotView().corridor');
+    check('no corridor: the shot view reports no map objects hidden on the shot’s line', cor === undefined || cor === null, JSON.stringify(cor));
+    // the painted target at Fit against the target alone on the terrain (no map objects, no other vehicle): a note only -
+    // map objects in front of it hide it as anywhere
+    const bare = await page.evaluate(SETUP + ' var Q = MapBench.shotFrame(id, {mask: mask, bare: true}), P = MapBench.shotFrame(id, {overlay: false}), R = MapBench.shotFrame(id, {paint: false, overlay: false}), o = {core: 0, painted: 0};' +
+      ' for (var i = 0; i < Q.length; i += 4) { var whole = Q[i] > 250 && Q[i + 1] < 5 && Q[i + 2] > 250; if (whole) o.core++; if (diff(P, R, i)) o.painted++; } return o; })()');
+    console.log('note the painted target at Fit: ' + bare.painted + ' pixels painted of ' + bare.core + ' the target alone on the terrain covers');
     // A WALL between the eye and the target hides it: an opaque board half-way, square to the view, 60 m wide
     const wall = await page.evaluate(SETUP + ' var O = MapBench.shotObjects(id), c = O.camera, g = O.group.getWorldPosition(new T.Vector3()), d = g.clone().sub(c.position);' +
       ' var board = new T.Mesh(new T.PlaneGeometry(60, 60), new T.MeshBasicMaterial({color: 0x404040, side: T.DoubleSide})); board.position.copy(c.position).addScaledVector(d, 0.5); board.lookAt(c.position); board.updateMatrixWorld(true);' +
@@ -220,8 +205,6 @@ async function until(page, expr, ms) {
     await sleep(300);
     const left = await page.evaluate('(function () { var s = MapBench.shotView(); return {open: s.open, inMode: s.inMode, speed: s.speed, bar: document.querySelector(".sv-bar").hidden, cam: MapBench.camera(), free: document.getElementById("free").classList.contains("on"), crosses: document.querySelectorAll(".hit-reticle").length}; })()');
     const after = await page.evaluate(LOOKS);
-    const lineAfter = await page.evaluate(ON_LINE);
-    check('Leave: the objects on the shot’s line drawn again: ' + (lineAfter && lineAfter.count) + ' on the line ' + JSON.stringify(lineAfter && lineAfter.names), !(cor && cor.hidden > 0) || (lineAfter && lineAfter.count > 0), JSON.stringify(lineAfter));
     await sleep(600);
     const stillFree = await page.evaluate('document.getElementById("free").classList.contains("on")');
     check('Leave: the shot view closed, the bar hidden, the speed back to x1, the camera free, no crosses', !left.open && !left.inMode && left.bar && left.speed === 1 && left.free && stillFree && left.crosses === 0, JSON.stringify(left));

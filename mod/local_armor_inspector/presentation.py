@@ -26,8 +26,14 @@ _viewer = {'browser_id': None, 'trace': None}
 # checks that every action a page sends is here once and that _handle_web_command answers each.
 ACTIONS = ('busy', 'sweepStart', 'sweepStop', 'open', 'windowSize', 'follow', 'prepareBattle', 'playback', 'mapRaw',
            'playbackReport', 'replayKeep', 'replayLimit', 'prioritise', 'exportTtx', 'exportVehicle',
-           'openReplays', 'openHits', 'replayFiles', 'playbackVehicles', 'fullscreen', 'viewState')
+           'openReplays', 'openHits', 'replayFiles', 'playbackVehicles', 'fullscreen', 'viewState',
+           'upload', 'uploadStatus', 'uploadReport', 'uploadListen')
 _window_request = None
+# Page -> mod uploads (BACKLOG 131, stage 0; page_upload.py): put(kind, payload) and status(upload id) of the upload thread.
+_upload_put = None
+_upload_status = None
+# A fine clock for the game thread's cost of one command (time.clock on the client's Python 2.7 on Windows).
+_CLOCK = getattr(time, 'perf_counter', None) or time.clock
 _files_request = None
 _vehicles_request = None
 _export_request = None
@@ -245,6 +251,71 @@ def set_replays_request(handler):
     _replays_request = handler
 
 
+def set_upload_request(put, status):
+    """The upload thread's put(kind, payload) -> bool and status(upload id) -> dict or None (page_upload.UploadWorker);
+    None, None when the mod stops."""
+    global _upload_put, _upload_status
+    _upload_put, _upload_status = put, status
+
+
+def _reply(ctx, data):
+    """An answer to the page through the client's own path (read in 2.4.1.1 bytecode, 22.11): ctx['callback'](data) ->
+    WebCommandHandler json.dumps({command, data, web_id}) -> BrowserViewWebHandlers -> WebBrowser.sendMessage -> the
+    native view's sendMessage. Where that message lands in the page is not known yet (the upload probe looks for it on
+    the query's own answer, on a persistent query and as a window 'message'). False when there was no way to answer."""
+    callback = ctx.get('callback') if isinstance(ctx, dict) else None
+    if not callable(callback): return False
+    try:
+        callback(data)
+        return True
+    except Exception:
+        if 'reply' not in _warned:
+            _warned.add('reply')
+            LOG.warning('Bullba Hits page command: the answer to the page failed', exc_info=True)
+        return False
+
+
+def _upload_command(action, command, ctx, received, started):
+    """'upload' (one chunk), 'uploadStatus', 'uploadReport', 'uploadListen' (page_upload.py). Game thread: the fields
+    are checked, nothing is decoded; the chunk goes to the upload thread's queue."""
+    upload = command_value(command, 'upload')
+    if action == 'uploadListen':
+        _reply(ctx, {'listen': True})
+        return
+    if _upload_put is None:
+        _warn_once('upload-off', 'Bullba Hits page command: the recorder is not running')
+        return
+    from . import page_upload
+    if not upload or not page_upload.UPLOAD_ID.match(str(upload)):
+        _warn_once('upload-id', 'Bullba Hits page command: no upload id')
+        return
+    upload = str(upload)
+    if action == 'uploadStatus':
+        state = _upload_status(upload) if _upload_status is not None else None
+        _reply(ctx, state or {'upload': upload, 'state': 'unknown'})
+        return
+    if action == 'uploadReport':
+        report = command_value(command, 'report')
+        if not isinstance(report, dict): report = {}
+        _upload_put('report', (upload, dict((str(k), v) for k, v in list(report.items())[:40])))
+        return
+    chunk = dict((name, command_value(command, name)) for name in
+                 ('upload', 'purpose', 'index', 'count', 'size', 'digest', 'data'))
+    chunk['upload'] = upload
+    sent = command_value(command, 'sent')
+    chunk['sent'] = float(sent) if isinstance(sent, numbers.Real) and not isinstance(sent, bool) else None
+    error = page_upload.valid_chunk(chunk)
+    if error is not None:
+        _warn_once('upload-chunk', 'Bullba Hits page command: upload chunk refused: %s', error)
+        _reply(ctx, {'upload': upload, 'index': chunk['index'], 'state': 'refused', 'error': error})
+        return
+    chunk['received'] = received
+    chunk['game_ms'] = (_CLOCK() - started) * 1000.0
+    accepted = _upload_put('chunk', chunk)
+    if not accepted: _warn_once('upload-full', 'Bullba Hits page command: upload chunk refused, the upload queue is full')
+    _reply(ctx, {'upload': upload, 'index': chunk['index'], 'state': 'received' if accepted else 'refused'})
+
+
 def set_ttx_request(handler):
     """The page asks for the characteristics file of one vehicle type (data/ttx/<id>.js)."""
     global _ttx_request
@@ -310,8 +381,12 @@ def _handle_web_command(command, ctx):
     report of an opening ('report') - both the 3D replay player's (19.11), answered through notify_page.
     None of them may cost the game thread more than a flag (a resize goes out on the next tick).
     """
+    received, started = time.time(), _CLOCK()
     try:
         action = getattr(command, 'action', None)
+        if action in ('upload', 'uploadStatus', 'uploadReport', 'uploadListen'):
+            _upload_command(action, command, ctx, received, started)
+            return
         if action == 'busy':
             if _busy_request is None:
                 _warn_once('busy', 'Bullba Hits page command: the recorder is not running')
@@ -560,6 +635,18 @@ def web_handlers():
             # 'fullscreen' / 'viewState' (20.11, BACKLOG 110): the replay viewer's state as its fragment, and 'close'
             state = Field(type=basestring)
             close = Field(type=bool)
+            # 'upload' (BACKLOG 131, stage 0; page_upload.py): one base64 chunk of a payload - the upload's id, purpose,
+            # the chunk's index of count, the whole payload's size in bytes and 'crc32:<8 hex>', the page's Date.now() at
+            # the send (a Real: a JSON integer of ~1.7e12 is no float); 'uploadStatus'/'uploadReport' use `upload` and
+            # `report`.
+            upload = Field(type=basestring)
+            purpose = Field(type=basestring)
+            index = Field(type=int)
+            count = Field(type=int)
+            size = Field(type=int)
+            digest = Field(type=basestring)
+            data = Field(type=basestring)
+            sent = Field(type=numbers.Real)
         return [createCommandHandler(WEB_COMMAND, BullbaHitsSchema, _handle_web_command, None)]
     except Exception:
         LOG.exception('Bullba Hits page command could not be registered')

@@ -31,8 +31,12 @@
    - anyone else, or a record that does not cover the episode: the gun's view for the whole episode, never the two mixed -
      the tracer's start and first direction put into the gun's frame at the shot (playback.js shotGunAt) and carried with
      the gun each frame, the viewer's own field of view. A row with no tracer: the shooter's place, looking at the target.
+   - an SPG (22.11) with no recorded camera over the episode: the game's artillery trajectory view rebuilt (artyView: the
+     eye behind the aim point along the shell's fall, 25-95 m out - a reconstruction), still until the shot.
    The bar says which. FROM THE SHOT (20.11, NOTEBOOK T1: the tracer's clock) the eye no longer rides with the shooter: it
-   travels forward on the shell's line, ending far enough from the contact to frame the collision target. A short
+   travels forward on the shell's line, ending far enough from the contact to frame the collision target; on a recorded
+   arc (22.11) looking along the arc's tangent from the first frame (a cut at release), at the eased pace or - Settings'
+   experimental "camera at the shell's speed" (#sv-shell-clock) - at the shell's own clock. A short
    flight's camera presentation may finish after the battle stops at impact. Before release, another shooter's lens is
    a simulated framing chosen once from the client's zoom steps; own recorded pre-shot camera is preserved. The lens
    returns smoothly to the viewer's normal field of view during the trip. There the wheel moves it
@@ -56,10 +60,8 @@
    drawn at that moment: its last focus, else the hit point, else the line's end - never under the ground (o.ground;
    1.20: before it, a point 20 m along the view, often under the ground). The eye's floor is the page's (placeCamera). A pan or a move
    key frees the centre from the target (panned()). Manual camera input restores the viewer's lens immediately.
-   The shot's corridor (CORRIDOR): map objects and other vehicles the shell's line (Hits' eye on the shell's axis at its
-   origin, to the hit) passes through are not drawn while the view is open (the shell reached the target: nothing solid
-   stood there), given back on Leave; the terrain never - where it crosses the line the bar says so. Objects off the
-   line occlude as anywhere.
+   Map objects on the shell's line occlude as anywhere (the corridor that hid them, 20.11, was taken out 22.11: recorded
+   arcs and ordinary scene depth decide).
    The shooter: while the eye is inside it (INSIDE: its hull, turret or gun box grown by INSIDE metres) it is veiled - not
    drawn, its shadow kept; flown out of it, it is drawn again.
    The episode: the battle from 2 s before the shot, at x1, stopped at the hit (the row's hit event; a shot with no hit:
@@ -81,6 +83,8 @@
    mark at the recorded cursor point, the gun tag at the circle's centre) from the
    file the mod reads from the client (o.sight, game_sight.py); without it a thin cross of the page. One Hits hit-location
    cross marks the visible shot line's endpoint after a confirmed hit, independently of the mouse/gun HUD tags.
+   An SPG shooter (22.11): instead of these, the SPG mark (spgMarkDraw) - the dispersion circle square to the shell's
+   fall at the aim point, carried along the fall onto the target's boxes or the ground: a circle seen along the fall.
 
    THE SHOT'S FIGURES (20.11, NOTEBOOK U2; cells()): two cells in the bar, as Bullba Hits' panels read a shot. A fixed
    size (1.19, the user on 1.18): each figure has its own one-line place - the heading with the figure, the alpha and the
@@ -147,11 +151,6 @@
   // Hits' eye stands 0.30 m past the muzzle on the shell's axis (the test's figure), so it starts inside; a step away
   // from the vehicle shows it again.
   var INSIDE = 0.5;
-  // CORRIDOR: the radius (m) of the tube round the shot's line from the eye to the hit inside which map objects and other
-  // vehicles are not drawn while the view is open (playback.js shotCorridorOpen) - the shell passed there, so nothing solid
-  // stood on it. 0.6 m: a shell is under 0.2 m wide, and a little more leaves no plank or post at the gun cutting the view;
-  // the target's own half-size (1.5-2 m) would clear whole house walls beside the line.
-  var CORRIDOR = 0.6;
   // U2, U3: Hits' cadence of a circle's figure (app.js estimateLive, AIM_EST_SLICE): the coarse figure at most every
   // ALT_COARSE s while the circle moves, of COARSE rays; the fine one of FINE rays once at rest; one SLICE ms a frame on
   // the main thread when there is no worker
@@ -246,6 +245,162 @@
   var SILHOUETTE_FRAGMENT = 'precision highp float;\nuniform highp sampler2D uPaint;\nuniform float uAlpha;\nout vec4 outColor;\n' +
     'void main(){outColor=texelFetch(uPaint,ivec2(gl_FragCoord.xy),0)*uAlpha;}';
 
+  // ---- THE ARTILLERY VIEW AND THE SHELL'S TANGENT (22.11, outputs/arty-shot-view-2026-11-22.md): pure maths on [x, y, z]
+  // arrays in the scene's axes (no THREE), exposed as BullbaShotView.arty for tests/test_shot_view_arty.cjs.
+  // The game's trajectory view (ArtyCamera, gui/avatar_input_handler.xml <artyMode><camera>, read): the eye behind and above
+  // the aim point on the line the shell arrives along - yaw = the fall's heading, pitch = max(the fall's pitch, 10 deg) -,
+  // at the player's scroll distance clamped to 25-95 m (the scroll is not recorded: the nearest that frames the target -
+  // a reconstruction). The SPG mark (gun_marker_ctrl _makeSPGProvider, read): 37 launch directions on the dispersion cone
+  // flown with the shot's gravity to where they meet the world; here (22.11, the user) the dispersion circle square to the fall at the
+  // aim point carried along the fall onto the target's boxes or the ground - as the trajectory view sees it, a circle.
+  var ARTY_DIST = [25, 95], ARTY_STEP = 0.5, ARTY_MIN_PITCH = 10 * Math.PI / 180, ARTY_USABLE = 0.72, MARK_N = 37;
+  function vsub(a, b) { return [a[0] - b[0], a[1] - b[1], a[2] - b[2]]; }
+  function vdot(a, b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+  function vcross(a, b) { return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]; }
+  function vnorm(a) { var l = Math.hypot(a[0], a[1], a[2]); return l > 0 ? [a[0] / l, a[1] / l, a[2] / l] : [0, 0, -1]; }
+  // the unit direction of the drawn path at u (pt(u) -> scene point): a central difference, one-sided at the ends
+  function tangentAt(pt, u) {
+    var h = 1e-3, a = Math.max(0, u - h), b = Math.min(1, u + h);
+    if (b - a < h) { a = Math.max(0, b - h); b = Math.min(1, a + h); }
+    return vnorm(vsub(pt(b), pt(a)));
+  }
+  // arc length <-> u over the path's samples ({u, d}, battle.js trajectory: lengths do not change with the z mirror)
+  function arcD(path, u) {
+    var s = path.samples, i = 1; u = Math.max(0, Math.min(1, u));
+    while (i < s.length - 1 && s[i].u < u) i++;
+    var a = s[i - 1], b = s[i], f = b.u > a.u ? (u - a.u) / (b.u - a.u) : 0;
+    return a.d + (b.d - a.d) * Math.max(0, Math.min(1, f));
+  }
+  function arcU(path, d) {
+    var s = path.samples, i = 1; d = Math.max(0, Math.min(path.length, d));
+    while (i < s.length - 1 && s[i].d < d) i++;
+    var a = s[i - 1], b = s[i], f = b.d > a.d ? (d - a.d) / (b.d - a.d) : 0;
+    return a.u + (b.u - a.u) * f;
+  }
+  // the eye on the recorded arc at the shell's own clock (f = elapsed / duration), stopping at the arc fraction endU, and
+  // its forward along the arc's tangent there: {u (arc fraction), eye, fwd}
+  function lineFrame(path, pt, f, endU) {
+    var uArc = Math.min(endU, arcD(path, f) / path.length), uc = arcU(path, uArc * path.length);
+    return { u: uArc, eye: pt(uc), fwd: tangentAt(pt, uc), uc: uc };
+  }
+  // the same with 1.28's pace: the eye at the arc fraction endU x smooth (smooth = smoothstep of the eased clock)
+  function easedFrame(path, pt, smooth, endU) {
+    var uArc = endU * smooth, uc = arcU(path, uArc * path.length);
+    return { u: uArc, eye: pt(uc), fwd: tangentAt(pt, uc), uc: uc };
+  }
+  // the game's trajectory view at aim point `aim` with the shell falling along `fall`: the nearest distance in 25-95 m
+  // that frames `points` (vertical fov in degrees, aspect, ARTY_USABLE of the frame), pulled nearer while the eye stands
+  // under the ground (ground(x, z) -> y | null; never under 25 m: the game's collision floor)
+  function artyFrame(aim, fall, points, fovDeg, aspect, ground) {
+    var h = Math.hypot(fall[0], fall[2]), yaw = Math.atan2(fall[0], fall[2]);
+    var hx = h > 1e-9 ? fall[0] / h : 0, hz = h > 1e-9 ? fall[2] / h : 1;
+    var pitch = Math.max(Math.asin(Math.max(-1, Math.min(1, -fall[1]))), ARTY_MIN_PITCH);
+    var dir = [Math.cos(pitch) * hx, -Math.sin(pitch), Math.cos(pitch) * hz];
+    var right = vnorm(vcross(dir, [0, 1, 0])), up = vcross(right, dir), tan = Math.tan(fovDeg * Math.PI / 360), k = aspect || 1;
+    function eyeAt(d) { return [aim[0] - dir[0] * d, aim[1] - dir[1] * d, aim[2] - dir[2] * d]; }
+    function fits(e) {
+      return (points || []).every(function (p) {
+        var r = vsub(p, e), z = vdot(r, dir);
+        return z > 0.5 && Math.abs(vdot(r, up)) <= tan * ARTY_USABLE * z && Math.abs(vdot(r, right)) <= tan * k * ARTY_USABLE * z;
+      });
+    }
+    var dist = ARTY_DIST[1], ok = false;
+    for (var d = ARTY_DIST[0]; d <= ARTY_DIST[1] + 1e-9; d += ARTY_STEP) if (fits(eyeAt(d))) { dist = d; ok = true; break; }
+    if (ground) for (; dist > ARTY_DIST[0]; dist -= ARTY_STEP) { var e = eyeAt(dist), g = ground(e[0], e[2]); if (g == null || !isFinite(g) || e[1] >= g + 1) break; }
+    dist = Math.max(ARTY_DIST[0], dist);
+    return { eye: eyeAt(dist), look: aim.slice(), dir: dir, pitch: pitch, yaw: yaw, dist: dist, fits: ok };
+  }
+  // a segment a->b (scene) against a box {inv (16, column-major: scene -> box frame), min, max}: the first fraction in
+  // [0, 1] where it enters, or -1 (the slab test)
+  function segBox(a, b, bx) {
+    var m = bx.inv, la = [0, 0, 0], lb = [0, 0, 0], i;
+    for (i = 0; i < 3; i++) {
+      la[i] = m[i] * a[0] + m[4 + i] * a[1] + m[8 + i] * a[2] + m[12 + i];
+      lb[i] = m[i] * b[0] + m[4 + i] * b[1] + m[8 + i] * b[2] + m[12 + i];
+    }
+    var t0 = 0, t1 = 1;
+    for (i = 0; i < 3; i++) {
+      var d = lb[i] - la[i];
+      if (Math.abs(d) < 1e-12) { if (la[i] < bx.min[i] || la[i] > bx.max[i]) return -1; continue; }
+      var u = (bx.min[i] - la[i]) / d, v = (bx.max[i] - la[i]) / d;
+      if (u > v) { var w = u; u = v; v = w; }
+      t0 = Math.max(t0, u); t1 = Math.min(t1, v);
+      if (t0 > t1) return -1;
+    }
+    return t0;
+  }
+  // where a shell from `origin` with velocity `vel` and gravity g (down) first meets the world while it descends: the
+  // target's boxes (each {inv, min, max, top: its highest scene y}) or the ground (ground(x, z) -> y); null: never
+  function flyToGround(origin, vel, g, ground, boxes) {
+    if (!(g > 0)) return null;
+    function at(t) { return [origin[0] + vel[0] * t, origin[1] + vel[1] * t - 0.5 * g * t * t, origin[2] + vel[2] * t]; }
+    function down(h) { var c = vel[1] * vel[1] + 2 * g * (origin[1] - h); return c < 0 ? null : (vel[1] + Math.sqrt(c)) / g; }
+    var h = ground ? ground(origin[0], origin[2]) : 0, t = null;
+    if (h == null || !isFinite(h)) h = 0;
+    for (var k = 0; k < 5; k++) {
+      t = down(h); if (t == null) return null;
+      var p = at(t), gh = ground ? ground(p[0], p[2]) : 0;
+      if (gh == null || !isFinite(gh)) break;
+      if (Math.abs(gh - h) < 1e-4) { h = gh; break; }
+      h = gh;
+    }
+    t = down(h); if (t == null || !(t > 0)) return null;
+    var hit = at(t);
+    if (boxes && boxes.length) {
+      var top = -Infinity; boxes.forEach(function (b) { top = Math.max(top, b.top); });
+      var t0 = top > h ? down(top) : null;
+      if (t0 != null && t0 < t) {
+        var n = 24, a = at(t0);
+        for (var i = 1; i <= n; i++) {
+          var tb = t0 + (t - t0) * i / n, b = at(tb), best = -1;
+          for (var j = 0; j < boxes.length; j++) { var f = segBox(a, b, boxes[j]); if (f >= 0 && (best < 0 || f < best)) best = f; }
+          if (best >= 0) return [a[0] + (b[0] - a[0]) * best, a[1] + (b[1] - a[1]) * best, a[2] + (b[2] - a[2]) * best];
+          a = b;
+        }
+      }
+    }
+    return hit;
+  }
+  // the velocity's direction where a shell from `origin` with velocity `vel` and gravity g reaches `point` (its fall there)
+  function fallAt(origin, vel, g, point) {
+    var hs = Math.hypot(vel[0], vel[2]), t = hs > 1e-6 ? Math.hypot(point[0] - origin[0], point[2] - origin[2]) / hs : 0;
+    return vnorm([vel[0], vel[1] - g * t, vel[2]]);
+  }
+  // a straight ray from p0 along the unit `dir` (descending): the first entry into a box, else where it crosses the
+  // ground (2 m steps, then halving); null: no crossing within `reach` m
+  var MARK_BACK = 40, MARK_STEP = 2;
+  function rayHit(p0, dir, ground, boxes, reach) {
+    function at(s) { return [p0[0] + dir[0] * s, p0[1] + dir[1] * s, p0[2] + dir[2] * s]; }
+    function under(s) { var p = at(s), g = ground ? ground(p[0], p[2]) : 0; if (g == null || !isFinite(g)) g = 0; return p[1] <= g; }
+    var lo = 0, hi = null, s;
+    // the start already under the ground (it rises against the fall): back up the ray to where it is above
+    if (under(0)) { for (s = -MARK_STEP; s >= -reach; s -= MARK_STEP) if (!under(s)) { lo = s; hi = s + MARK_STEP; break; } if (hi == null) return null; }
+    else for (s = MARK_STEP; s <= reach; s += MARK_STEP) { if (under(s)) { hi = s; break; } lo = s; }
+    if (hi == null) return null;
+    var from = Math.min(0, lo);
+    for (var k = 0; k < 30; k++) { var m = (lo + hi) / 2; if (under(m)) hi = m; else lo = m; }
+    var a = at(from), hit = at(hi), best = -1;
+    (boxes || []).forEach(function (b) { var f = segBox(a, hit, b); if (f >= 0 && (best < 0 || f < best)) best = f; });
+    return best >= 0 ? at(from + (hi - from) * best) : hit;
+  }
+  // the SPG mark (22.11, the user: the aim circle itself, as the trajectory view looking along the fall sees it): the
+  // dispersion circle of `radius` round the aim point `centre` in the plane square to the shell's `fall`, each of its
+  // MARK_N points carried along the fall onto the target's boxes or the ground (rayHit) - on the ground its oblique
+  // projection; an array of points (null where one meets nothing)
+  function fallMark(centre, fall, radius, ground, boxes) {
+    var n = vnorm(fall), r = vcross(n, [0, 1, 0]);
+    r = Math.hypot(r[0], r[1], r[2]) < 1e-9 ? [1, 0, 0] : vnorm(r);
+    var u = vcross(r, n), out = [], back = MARK_BACK + radius;
+    for (var i = 0; i < MARK_N; i++) {
+      var a = i * 2 * Math.PI / MARK_N, ca = Math.cos(a) * radius, sa = Math.sin(a) * radius;
+      out.push(rayHit([centre[0] + r[0] * ca + u[0] * sa - n[0] * back, centre[1] + r[1] * ca + u[1] * sa - n[1] * back, centre[2] + r[2] * ca + u[2] * sa - n[2] * back],
+        n, ground, boxes, 3 * back + 200));
+    }
+    return out;
+  }
+  var ARTY = { DIST: ARTY_DIST, MIN_PITCH: ARTY_MIN_PITCH, USABLE: ARTY_USABLE, MARK_N: MARK_N, tangentAt: tangentAt, arcD: arcD, arcU: arcU,
+    lineFrame: lineFrame, easedFrame: easedFrame, artyFrame: artyFrame, flyToGround: flyToGround, fallAt: fallAt, rayHit: rayHit, fallMark: fallMark, segBox: segBox };
+
   function create(o) {
     var Data = root.ArmorInspectorData;
     if (Data && Data.setBase) Data.setBase(o.dataBase || '');
@@ -290,7 +445,27 @@
     leave.onclick = function () { close(); };
     unpin.onclick = function () { if (S.viewer) S.viewer.unpin(); };
     // the note: one line, its whole text in its tooltip (a longer one does not grow the bar)
-    function say(text, tip) { note.textContent = text; note.title = tip || text; }
+    function say(text, tip) { note.textContent = text; note.title = tip || text; reconShow(); }
+    // 22.11 (NOTEBOOK Y17: no text clutter): what this view rebuilds rather than takes from the replay - the simulated
+    // framing, the aiming size over time, the shell's arc, the artillery view's details - stands behind one ⚠ before the
+    // note, its words in its tooltip; the note keeps the words it had before 1.27
+    var reconWarn = warnMark('Reconstructed, not recorded'), noteRow = node('div', undefined, 'sv-noterow');
+    reconWarn.hidden = true;
+    function reconItems() {
+      var out = [];
+      if (S.view && S.view.detail) out.push(S.view.detail);
+      if (S.line && !S.line.stub) out.push(S.line.path ? 'Trajectory: the recorded launch velocity and gravity, its end put on the hit point; it starts at the drawn gun’s muzzle (visual only)'
+          + (S.line.path.note ? '; ' + S.line.path.note : '')
+        : 'Trajectory: ' + (S.line.why && S.line.why.text ? S.line.why.text + ', ' : 'no usable recorded arc, ') + 'a straight line to the end point');
+      if (S.reconFraming) out.push(S.reconFraming);
+      if (S.series) out.push('Aim circle size: reconstructed over time from movement and turret turns (typical crew and equipment assumed); no mouse position is inferred');
+      return out;
+    }
+    function reconShow() {
+      var items = S.row ? reconItems() : [];
+      reconWarn.hidden = !items.length;
+      reconWarn.title = 'Reconstructed, not recorded\nParts of this view are rebuilt by Bullba Replays; the replay does not record them.\n• ' + items.join('\n• ');
+    }
     cellB.head.appendChild(unpin); shown(unpin, false);
     figs.appendChild(cellA.el); figs.appendChild(cellB.el);
     // 21.11 (BACKLOG 119, 120, 122): the top line is one line whatever it holds (.sv-top: no wrap, the title cut first) -
@@ -308,7 +483,8 @@
     var aimLabel = o.aimToggle ? o.aimToggle.closest('label') || o.aimToggle : null;
     if (aimLabel) { top.appendChild(aimLabel); aimLabel.hidden = false; }
     top.appendChild(back); top.appendChild(again); top.appendChild(leave);
-    bar.appendChild(top); bar.appendChild(figs); bar.appendChild(note); bar.hidden = true;
+    noteRow.appendChild(reconWarn); noteRow.appendChild(note);
+    bar.appendChild(top); bar.appendChild(figs); bar.appendChild(noteRow); bar.hidden = true;
     document.body.appendChild(bar);
     window.addEventListener('keydown', function (e) { if (e.key === 'Escape' && S.row) { close(); e.preventDefault(); } });
     // ---- Hits' viewer, hosted on this page's renderer and camera -------------------------------------------------------
@@ -528,6 +704,7 @@
       var c = o.camera, k = S.saved; c.fov = k.fov; c.zoom = k.zoom; c.near = k.near; c.far = k.far; c.updateProjectionMatrix();
       S.saved = null;
       if (o.foliage) o.foliage(null);
+      if (o.cutaway) o.cutaway(null);
       if (o.plantStencil) o.plantStencil(false);
       hudCanvas.hidden = true;
       // nothing of the mode stays allocated: the paint target goes (Hits' composition went with viewer.clear)
@@ -541,21 +718,9 @@
       if (S.line && S.line.stub) return { kind: 'stub', words: 'the view: on the line the shot came in along, ' + STUB_EYE + ' m out (where the shooter stood is not in the replay)' };
       var end = row.t; // only pre-shot coverage is required: later the camera travels along the shot
       if (o.recordedOk && o.recordedOk(row.shooter, S.start, end)) return { kind: 'camera', words: 'the view: the player’s own camera from the replay' };
-      var shooter = o.vehicle(row.shooter);
-      var config = shooter && shooter.variants ? shooter.variants.filter(function (x) {
-        return row.t >= x.v._from && row.t < x.v._until;
-      })[0] : shooter;
-      if (config && config.md && config.md.cls === 'SPG' && S.target != null && o.targetBounds) {
-        var bounds = o.targetBounds(S.target, S.stop || row.t);
-        if (bounds && bounds.length) {
-          var box = new T.Box3().setFromPoints(bounds), center = box.getCenter(new T.Vector3());
-          var height = Math.max(25, box.getSize(new T.Vector3()).length() * 4);
-          return {
-            kind: 'spectator', eye: center.clone().add(new T.Vector3(height * .6, height, height * .6)), look: center,
-            words: 'the view: simulated elevated spectator framing (no recorded camera; artillery class)'
-          };
-        }
-      }
+      // an SPG with no recorded camera: the game's artillery trajectory view rebuilt (artyView)
+      var arty = spgShooter(row) ? artyView(row) : null;
+      if (arty) return arty;
       var s = row.shot, sh = s && o.battle.shots ? o.battle.shots[s.index] : null, me = o.vehicle(row.shooter);
       var why = me && me.v && me.v.own ? 'the replay’s camera does not cover this episode' : 'no camera is recorded for this vehicle';
       if (s && sh) {
@@ -573,6 +738,63 @@
       if (a && b) return { kind: 'place', eye: new T.Vector3(a.group.position.x, a.group.position.y + 2, -a.group.position.z),
         look: new T.Vector3(b.group.position.x, b.group.position.y + 1.5, -b.group.position.z), words: 'the view: from the shooter’s place, still (no tracer of this shot)' };
       return { kind: 'none', words: 'the view: the camera as it was (no tracer of this shot, the shooter or the target not drawn)' };
+    }
+    // whether the shooter is an SPG at the shot (its configuration then)
+    function spgShooter(row) {
+      var config = o.vehicleAt ? o.vehicleAt(row.shooter, row.t) : o.vehicle(row.shooter);
+      return !!(config && config.md && config.md.cls === 'SPG');
+    }
+    // Settings' "camera at the shell's speed" (playback.html #sv-shell-clock, experimental; remembered with the page's
+    // settings): the eye's pace along a recorded arc after the shot
+    function shellClock() { var el = root.document && root.document.getElementById('sv-shell-clock'); return !!(el && el.checked); }
+    function groundAt(x, z) { return o.ground ? o.ground(x, z) : null; }
+    function arr(v) { return [v.x, v.y, v.z]; }
+    // the recorded path's drawn point at u in the scene's axes
+    function scenePt(path) { return function (u) { var p = path.point(u); return [p[0], p[1], -p[2]]; }; }
+    // the target's hull, turret and gun boxes as drawn now (the SPG mark lands on them): {inv, min, max, top}; null: none
+    function targetBoxes() {
+      var r = S.target == null ? null : o.vehicle(S.target);
+      if (!r || !r.visible) return null;
+      var out = [];
+      [r.group, r.turret, r.gun].forEach(function (g) {
+        var m = g && bodyOf(g, r); if (!m) return;
+        if (!m.geometry.boundingBox) m.geometry.computeBoundingBox();
+        m.updateWorldMatrix(true, false);
+        var bb = m.geometry.boundingBox;
+        out.push({ inv: N.copy(m.matrixWorld).invert().elements.slice(), min: [bb.min.x, bb.min.y, bb.min.z], max: [bb.max.x, bb.max.y, bb.max.z],
+          top: box.copy(bb).applyMatrix4(m.matrixWorld).max.y });
+      });
+      return out.length ? out : null;
+    }
+    // THE ARTILLERY TRAJECTORY VIEW (22.11): the game's ArtyCamera rebuilt for an SPG shot with no recorded camera - the
+    // eye behind and above the aim point along the shell's fall (the arc's tangent at its end), pitch at least 10 deg,
+    // the nearest distance in 25-95 m that frames the target (the player's scroll is not recorded), the normal field of
+    // view (ArtyCamera keeps the arcade one). The aim point: the player's own 0x1a marker place at the shot; another
+    // shooter's Bullba Hits estimate (its centre direction flown with the shot's speed and gravity to the target or the
+    // ground; showHits makes the view again once it is there); else the arc's end. null: no tracer of the shot.
+    function artyView(row) {
+      var L = S.line, sh = row.shot && o.battle.shots ? o.battle.shots[row.shot.index] : null;
+      if (!L || L.stub) return null;
+      var pt = L.path ? scenePt(L.path) : null, fall = pt ? ARTY.tangentAt(pt, 1) : arr(L.dir), end = pt ? pt(1) : arr(L.b);
+      var aim = end, from = 'the shell’s landing', me = o.vehicle(row.shooter);
+      if (me && me.v && me.v.own) {
+        if (sampleAt(row.t - (o.delay ? o.delay(row.shooter) : 0), AS)) { aim = [AS[5], AS[6], -AS[7]]; from = 'your recorded marker at the shot'; }
+      } else {
+        var E = S.estimate;
+        if (E && !E.why && !E.sizeOnly && sh) {
+          var speed = Math.hypot(sh[6], sh[7], sh[8]), n = arr(E.n);
+          var p = ARTY.flyToGround(arr(E.o), [n[0] * speed, n[1] * speed, n[2] * speed], sh[9], groundAt, targetBoxes());
+          if (p) { aim = p; from = 'Bullba Hits’ estimate of the aim'; }
+        }
+      }
+      var points = o.targetBounds && S.target != null ? o.targetBounds(S.target, S.stop == null ? row.t : S.stop) : null;
+      points = points && points.length ? points.map(arr) : [end];
+      var F = ARTY.artyFrame(aim, fall, points, S.saved ? S.saved.fov : o.camera.fov, o.camera.aspect || 1, o.ground ? groundAt : null);
+      return { kind: 'arty', eye: new T.Vector3().fromArray(F.eye), look: new T.Vector3().fromArray(F.look), frame: F,
+        words: 'the view: the artillery view, rebuilt',
+        detail: 'Artillery view: no recorded camera - behind the aim point along the shell’s fall, pitch ' +
+          Math.round(F.pitch * 180 / Math.PI) + '°, ' + Math.round(F.dist) + ' m out (the player’s scroll distance is not recorded); aim: ' + from +
+          (pt ? '' : '; no recorded arc: the straight line’s direction') };
     }
     // the target's focus in the scene now: Bullba Hits' orbit centre (S.focusGroup, in the target group's frame)
     function focusScene(out) {
@@ -698,8 +920,8 @@
         var steps = [2, 4, 8, 16, 25], zoom = 1;
         steps.forEach(function (z) { if (extent * z <= usable) zoom = z; });
         S.zoomFov = 2 * Math.atan(tangent / zoom) * 180 / Math.PI;
-        S.view.words += ' · simulated framing (' + zoom + '×; viewer choice, not recorded sniper mode)';
-        if (zoom > 1) say(note.textContent + ' · simulated ' + zoom + '× framing', note.title + '\nOptical framing is chosen by the viewer; the replay did not record this vehicle’s camera.');
+        S.reconFraming = zoom > 1 ? 'Framing: a simulated ' + zoom + '× sight zoom chosen by the viewer; the replay does not record this vehicle’s camera' : null;
+        reconShow();
       }
     }
     // Travel starts at release. Only a too-short flight's camera presentation
@@ -707,18 +929,32 @@
     function linePose(t) {
       var L = S.line;
       prepareLens();
-      if (S.travelLast != null && t < S.travelLast - 1e-6) { S.stopAt = null; S.glide = null; }
+      if (S.travelLast != null && t < S.travelLast - 1e-6) { S.stopAt = null; S.glide = null; S.shellPace = null; }
       S.travelLast = t;
-      var flight = L.path?L.path.duration:Math.max(0, (S.stop == null ? L.t : S.stop) - L.t), duration = Math.max(.6, flight);
+      // 22.11: the eye's pace on a recorded arc - Settings' "camera at the shell's speed" (experimental, taken once a
+      // release): on - the shell's own clock (its duration); off (default) - 1.28's eased glide, smoothstep over
+      // max(0.6 s, the flight) along the arc's length; the straight fallback always the latter
+      if (S.shellPace == null) S.shellPace = !!(L.path && shellClock());
+      var flight = L.path?L.path.duration:Math.max(0, (S.stop == null ? L.t : S.stop) - L.t), duration = S.shellPace && flight > 1e-6 ? flight : Math.max(.6, flight);
       if (!L.stub && S.stop != null && t >= S.stop - 1e-6 && S.stopAt == null && !S.manualLine) S.stopAt = wallNow();
       var elapsed = Math.max(0, t - L.t);
       if (S.stopAt != null && S.stop != null && t >= S.stop - 1e-6) elapsed += Math.max(0, wallNow() - S.stopAt) / 1000;
       var f = L.stub || S.manualLine ? 1 : Math.max(0, Math.min(1, elapsed / duration)), smooth = f * f * (3 - 2 * f);
-      if (!S.manualLine) S.u = L.stub ? lineStart() : (S.endU == null ? 0 : S.endU) * smooth;
-      if(L.path){var p=L.path.atDistance(S.u*L.len);lineEye.set(p[0],p[1],-p[2]);var q=L.path.atDistance(Math.min(L.len,S.u*L.len+Math.max(.5,L.len/200)));fpLook.set(q[0],q[1],-q[2]);lineBack.copy(fpLook).sub(lineEye);if(lineBack.lengthSq()>1e-9)L.dir.copy(lineBack).normalize();}
-      else lineEye.copy(L.a).lerp(L.b, S.u);
+      var endU = S.endU == null ? 0 : S.endU;
+      // 22.11 (outputs/arty-shot-view-2026-11-22.md §3): on a recorded arc the eye travels at the pace above (until endU,
+      // the framing stop) and looks along the arc's tangent where it is, from the first frame to the end - no turn
+      // mid-flight, no switch to the hit point at the end
+      if (L.path) {
+        var pt = scenePt(L.path), lf = S.manualLine ? null : S.shellPace ? ARTY.lineFrame(L.path, pt, f, endU) : ARTY.easedFrame(L.path, pt, smooth, endU);
+        if (lf) S.u = lf.u;
+        var uc = lf ? lf.uc : ARTY.arcU(L.path, S.u * L.len), e = lf ? lf.eye : pt(uc), fw = lf ? lf.fwd : ARTY.tangentAt(pt, uc);
+        lineEye.set(e[0], e[1], e[2]); L.dir.set(fw[0], fw[1], fw[2]); fpLook.copy(lineEye).add(L.dir);
+      } else {
+        if (!S.manualLine) S.u = L.stub ? lineStart() : endU * smooth;
+        lineEye.copy(L.a).lerp(L.b, S.u);
+      }
       // T3 (BACKLOG 120): looking back - exactly along the line, its reverse direction: the source in the centre
-      lineM.lookAt(lineEye, S.flip ? lineBack.copy(lineEye).sub(L.dir) : L.path&&f<1?fpLook:lineLook(L), UP); lineQ.setFromRotationMatrix(lineM);
+      lineM.lookAt(lineEye, S.flip ? lineBack.copy(lineEye).sub(L.dir) : L.path ? fpLook : lineLook(L), UP); lineQ.setFromRotationMatrix(lineM);
       if (!S.glide) {
         var p0 = L.a.clone(), q0 = lineQ.clone(), lens0 = S.zoomFov, V = S.view;
         if (V && V.kind === 'camera') {
@@ -728,17 +964,16 @@
           p0.copy(V.eye).applyMatrix4(G);
           var look0 = V.dir.clone().transformDirection(G).add(p0);
           q0.setFromRotationMatrix(new T.Matrix4().lookAt(p0, look0, UP));
-        } else if(V&&V.kind==='spectator'){p0.copy(V.eye);q0.setFromRotationMatrix(new T.Matrix4().lookAt(p0,V.look,UP));
-        }
+        } else if (V && V.kind === 'arty') { p0.copy(V.eye); q0.setFromRotationMatrix(new T.Matrix4().lookAt(p0, V.look, UP)); }
         S.glide = { p: p0, q: q0, fov: lens0 };
       }
       // the stub (BACKLOG 119): the eye stands on it from the episode's start, no glide
       S.glided = f >= 1;
-      if (f < 1) {
+      // 22.11: a recorded arc cuts at release - the position onto the arc, the look along its tangent (a blend of the look
+      // would turn the camera mid-flight: the user's fault on 1.28); only the straight fallback still glides
+      if (f < 1 && !L.path) {
         fpPos.copy(lineEye);
-        // Known flight: cut position onto the sampled path at release. A high
-        // strategic/spectator eye must never translate the physical trajectory.
-        if (!L.path) fpPos.addScaledVector(lineAt.copy(S.glide.p).sub(L.a), 1 - smooth);
+        fpPos.addScaledVector(lineAt.copy(S.glide.p).sub(L.a), 1 - smooth);
         fpQ.copy(S.glide.q).slerp(lineQ, smooth);
       }
       else { fpPos.copy(lineEye); fpQ.copy(lineQ); }
@@ -753,7 +988,7 @@
       var V = S.view;
       pose.focus = null;
       S.t = t;
-      if (S.line && t < S.line.t && S.travelLast != null && !S.lookLine) { S.glide = null; S.travelLast = null; S.stopAt = null; S.manualLine = false; }
+      if (S.line && t < S.line.t && S.travelLast != null && !S.lookLine) { S.glide = null; S.shellPace = null; S.travelLast = null; S.stopAt = null; S.manualLine = false; }
       if (S.fp && S.line && (S.line.stub || S.lookLine || t >= S.line.t)) return linePose(t);
       if (S.fp && V && V.kind !== 'none') {
         var ok = false, fov = S.saved ? S.saved.fov : o.camera.fov;
@@ -798,9 +1033,10 @@
       S.mode = 'wait'; S.error = null; S.data = null; S.rec = null; S.aim = null; S.haveA = false;
       // the line first (a stub for a shot whose shooter the replay does not place: BACKLOG 119), the eye by it
       S.line = shotLine(row) || stubOf(row); S.flip = false; S.shellI = null; S.heatLine = -1;
+      S.spg = spgShooter(row); S.markGun = null; S.shellPace = null;
       S.focusGroup = null; S.lastFocus = null; S.view = firstPerson(row); S.fp = true; S.lock = true; S.lastPose = null;
       S.u = lineStart(); S.glide = null; S.t = S.start; S.estimate = null; S.disc = undefined;
-      S.series = null; S.zoomFov = null; S.endU = null; S.manualLine = false; S.travelAt = null; S.travelLast = null;
+      S.series = null; S.reconFraming = null; S.zoomFov = null; S.endU = null; S.manualLine = false; S.travelAt = null; S.travelLast = null;
       S.targetVariant=null;
       S.lookLine = false;
       S.stopAt = null; S.glided = false; S.lineEngine = null; S.lineJob = null; S.lineFig = null;
@@ -814,26 +1050,31 @@
         if (tok !== S.token || !S.line || S.line.stub) return;
         var v = (o.battle.vehicles || []).filter(function (x) { return x.id === row.shooter; })[0];
         if (!v || v.own) return;
-        var config = root.PlaybackBattle.configurationAt(v, row.t);
+        // the shooter's configuration at the shot and its track then (battle.js: the one owner of a vehicle's lives)
+        var config = root.PlaybackBattle.lifeAt(v, row.t);
         if (!config) return;
-        var after = (v.configs || []).filter(function (c) { return c.t > config.t; })[0];
-        var from = config.t || 0, until = after ? after.t : Infinity;
-        function within(data, stride) {
-          var result = [];
-          for (var i = 0; i < data.length; i += stride) if (data[i] >= from && data[i] < until) {
-            for (var j = 0; j < stride; j++) result.push(data[i + j]);
-          }
-          return result;
-        }
-        v = Object.assign({}, v, config, { pos: within(v.pos, 7), gun: within(v.gun, 3) });
-        v.np = v.pos.length / 7; v.ng = v.gun.length / 3;
+        var track = root.PlaybackBattle.trackOf(v, config, true), from = track.from, until = track.until;
         var shots = o.battle.shots.filter(function (x) {
-          return x[1] === row.shooter && !x[2] && x[0] >= from && x[0] < until;
+          return x[1] === row.shooter && !x[2] && x[0] >= from - 1e-6 && x[0] < until - 1e-6;
         }).map(function (x) { return x[0]; });
-        S.series = sizeSeries(v, inputs[v.compDescr], shots, row.t);
+        S.series = sizeSeries(track, inputs[config.compDescr], shots, row.t);
         if (!S.estimate || S.estimate.why) S.estimate = gunEstimate();
-        if (S.series) say(note.textContent + ' · estimated aiming size over time (typical unknown crew/equipment)', note.title + '\nDashed circle: size reconstructed over time; no mouse position is inferred.');
+        reconShow();
       }).catch(function () {});
+      // 22.11: another SPG shooter's aim - Bullba Hits' estimate (the mod's replay_aim_other.py, kept on the tracer in Hits'
+      // battle file) read from the battle file at once, not after the hit's scene (its models): the artillery view and the
+      // mark take it before the episode plays
+      var meta0 = o.battle.meta || {};
+      if (S.view && S.view.kind === 'arty' && !(shooter && shooter.v && shooter.v.own) && h && h.attacker != null && o.hitsBattle && Number.isFinite(meta0.serverStart)) {
+        var idE = o.hitsBattle, readE = hitsBattles[idE] || (hitsBattles[idE] = Data.battle(idE).catch(function (e) { delete hitsBattles[idE]; throw e; }));
+        readE.then(function (battle) {
+          if (tok !== S.token || S.mode === 'hits') return;
+          var hit = Data.hitAt(battle, meta0.serverStart + h.t, h.attacker, h.target, row.shot && row.shot.shotId);
+          if (!hit) return;
+          var e = estimateOf(root.BullbaShotShell.recorded(hit, battle).context);
+          if (e && !e.why && !e.sizeOnly) { S.estimate = e; var av = artyView(row); if (av) { S.view = av; S.glide = null; } }
+        }).catch(function () {});
+      }
       var sight = o.sight ? o.sight().catch(function () { return null; }) : Promise.resolve(null);
       return Promise.all([hitsScene(row, h), sight]).then(function (both) {
         var got = both[0];
@@ -986,16 +1227,12 @@
       // the orbit's centre: Hits' own (viewer.js pivotCentre), in the target group's frame (the viewer's frame is it with z
       // mirrored: A = the group's world x Z)
       var pc = v.pivotCentre(); S.focusGroup = new T.Vector3(pc.x, pc.y, -pc.z);
-      // the shot's corridor: the shell's line - Hits' eye (its focus: the shell's axis at its origin) to the hit point -,
-      // by the target's pose at the hit; the camera itself is the shooter's (camera())
-      var eye = v.orbitEye(), Ae = Arec || (r && r.visible ? new T.Matrix4().multiplyMatrices(r.group.matrixWorld, Z) : null);
-      S.corridor = null;
-      // No whole-building removal along a chord: recorded arcs and ordinary
-      // scene depth decide occlusion. Foliage handling remains separate.
+      // the target's pose at the hit (Hits' frame in the scene); the camera itself is the shooter's (camera())
+      var Ae = Arec || (r && r.visible ? new T.Matrix4().multiplyMatrices(r.group.matrixWorld, Z) : null);
       // T1: the line's end at Hits' hit point (the tracer's end stands for it until now)
       if (S.line && Ae && v.point) {
         var hp = v.point.clone().applyMatrix4(Ae), len = S.line.a.distanceTo(hp);
-        if (len > LINE_MIN) { S.line.b.copy(hp);S.line.path=o.trajectory?o.trajectory(S.line.shotIndex,[hp.x,hp.y,-hp.z]):null; S.line.len = S.line.path?S.line.path.length:len; S.line.dir.copy(hp).sub(S.line.a).normalize(); }
+        if (len > LINE_MIN) { S.line.b.copy(hp);S.line.why={};S.line.path=o.trajectory?o.trajectory(S.line.shotIndex,[hp.x,hp.y,-hp.z],S.line.why):null; S.line.len = S.line.path?S.line.path.length:len; S.line.dir.copy(hp).sub(S.line.a).normalize(); }
       }
       // T2 (BACKLOG 119): no stub from the page's own hit point (not placed there) - Hits' hit point and its shell's axis
       // (Hits' eye on it) give the direction instead
@@ -1006,10 +1243,12 @@
       }
       // T3: another vehicle's circle while aiming - Hits' estimate of its shot (the tracer's replayAimEstimate)
       if (!own) S.estimate = estimateOf(rec.context);
+      // 22.11: the artillery view again on Hits' hit point and, for another shooter, Hits' estimate of the aim (before
+      // the episode plays; the still pre-shot picture may shift a little)
+      if (S.view && S.view.kind === 'arty') { var av = artyView(S.row); if (av) { S.view = av; S.glide = null; } }
       S.aim = ready ? 'recorded' : estimate ? (estimate.rebuilt ? 'rebuilt' : 'nominal') : null;
       var c = rec.choice, lines = [];
       if (S.view) lines.push(S.view.words);
-      if(S.line&&!S.line.stub)lines.push(S.line.path?'Trajectory: recorded velocity/gravity, endpoint aligned; model muzzle offset is visual':'No usable recorded trajectory: straight endpoint fallback');
       aimWords(own).forEach(function (w) { lines.push(w); });
       S.heatLine = lines.length;
       lines.push(heatWords(rec.shell, c, rec.guess));
@@ -1017,8 +1256,6 @@
         S.aim === 'nominal' ? 'Aim circle: nominal estimate (dashed) - the gun’s dispersion x range, no crew or equipment; the replay has no reticle of this shooter' :
           'No aim circle: ' + (!(hit.attacker && hit.attacker.gunDispersion > 0) ? 'no gun dispersion in the record' : 'no range for this hit'));
       if (!S.posed) lines.push('the target’s turret and gun as the record has them: this viewer’s model of it differs');
-      if (S.corridor && S.corridor.hidden) lines.push(S.corridor.hidden + ' object' + (S.corridor.hidden > 1 ? 's' : '') + ' on the shot’s line not drawn');
-      if (S.corridor && S.corridor.ground != null) lines.push('the ground crosses the shot’s line ' + S.corridor.ground + ' m from the eye: the replay’s positions and the shot disagree there');
       S.lines = lines; sayHits();
       S.shellI = rec.context.index >= 0 ? rec.context.index : rec.choice ? rec.context.choices.indexOf(rec.choice) : -1;
       paintShells();
@@ -1072,7 +1309,7 @@
     }
     function showReplay(why) {
       S.mode = 'replay'; S.note = why;
-      var words = (S.view ? S.view.words : '')+(S.line&&!S.line.stub?(S.line.path?' · trajectory from recorded velocity/gravity, endpoint aligned':' · no usable recorded trajectory: straight fallback'):'');
+      var words = S.view ? S.view.words : '';
       var me = S.row ? o.vehicle(S.row.shooter) : null;
       words = [words].concat(aimWords(!!(me && me.v && me.v.own))).join(' · ');
       say('No Bullba Hits view: ' + why + '. · ' + words, 'Why there is no heat map here\n' + why + '.\n• ' + words + '\n• Drag turns the camera round the target, the wheel moves it closer or farther (this ends the shooter’s view)');
@@ -1102,6 +1339,11 @@
     // the bar's words for the circles while aiming (what each circle is, plainly)
     function aimWords(own) {
       var out = [], B = o.battle;
+      if (S.spg && S.line && !S.line.stub && S.row && S.row.shot) {
+        out.push('Artillery mark: the aim circle square to the shell’s fall (' + (own ? 'the recorded dispersion' : S.estimate && !S.estimate.why ? 'Bullba Hits’ estimated dispersion, dashed' : 'no dispersion known: not drawn') +
+          ') laid along the fall onto the target or the ground - other vehicles and buildings are not tested');
+        return out;
+      }
       if (own) {
         if (!(B && B.na > 0)) out.push('No aim circles while aiming: this battle file holds no reticle of the player');
         else {
@@ -1211,6 +1453,60 @@
       if (key !== discKey) { discKey = key; discRgb = 'rgb(' + Math.round(c[0] * 255) + ',' + Math.round(c[1] * 255) + ',' + Math.round(c[2] * 255) + ')'; }
       return discRgb;
     }
+    // THE SPG MARK (22.11; the user: the aim circle itself, as the trajectory view - looking along the fall - shows it): the
+    // dispersion circle (radius = the angle x the distance from the gun to the aim point, the circles' size rule) square to
+    // the shell's fall at the aim point, each point carried along the fall onto the target's boxes as drawn now or the
+    // ground (o.ground; other vehicles and buildings are not tested), one closed line. The aim point: own - the 0x1a
+    // marker place at the clock, else the axis flown; another - its axis flown with the shot's speed and gravity. The fall:
+    // the axis's flight at the aim point. Before the shot: own - the 0x39 update at the clock (gun, shot vector,
+    // dispersion), another - the gun as drawn with Hits' estimated angle (its size series); from the shot: own - the
+    // recorded launch velocity with the release disc, another - Hits' estimate (its centre direction) or the velocity.
+    var MG = new T.Matrix4(), MGI = new T.Matrix4();
+    function serverAt(tt) {
+      var B = o.battle, Sv = B && B.server, n = (B && B.ns) || 0, lo = 0, hi = n - 1, k = -1;
+      if (!Sv || n < 1) return -1;
+      while (lo <= hi) { var mid = (lo + hi) >> 1; if (Sv[mid * 8] <= tt) { k = mid; lo = mid + 1; } else hi = mid - 1; }
+      return k >= 0 && tt - Sv[k * 8] <= AIM_GAP ? k : -1;
+    }
+    function spgMarkDraw(own, flying) {
+      var s = S.row.shot, sh = o.battle.shots ? o.battle.shots[s.index] : null;
+      if (!sh || !o.ground) return;
+      var speed = Math.hypot(sh[6], sh[7], sh[8]), start = [s.start[0], s.start[1], -s.start[2]], origin = null, axis = null, angle = null, dash = DASH_NONE;
+      var E = S.estimate && !S.estimate.why ? S.estimate : null;
+      if (flying) {
+        origin = start; axis = [sh[6], sh[7], -sh[8]];
+        if (own) { var D = discOf(); angle = D ? D.angle : null; }
+        else if (E) { angle = E.angle; dash = DASH_ESTIMATE; if (!E.sizeOnly) { origin = arr(E.o); axis = arr(E.n); } }
+      } else if (own) {
+        var k = serverAt(Math.min(S.t, S.row.t)), Sv = o.battle.server, q = k * 8;
+        if (k >= 0) { origin = [Sv[q + 1], Sv[q + 2], -Sv[q + 3]]; axis = [Sv[q + 4], Sv[q + 5], -Sv[q + 6]]; angle = Sv[q + 7]; }
+      } else if (E && o.gunAt && o.gunAt(S.row.shooter, S.t, MG)) {
+        if (!S.markGun && o.gunAt(S.row.shooter, S.row.t, MGI)) S.markGun = new T.Vector3().fromArray(start).applyMatrix4(MGI.invert());
+        var o3 = S.markGun ? S.markGun.clone().applyMatrix4(MG) : new T.Vector3().fromArray(start), ax = new T.Vector3(0, 0, 1).transformDirection(MG);
+        var dynamic = S.series ? S.series.at(S.t) : null;
+        if (!S.series || dynamic != null) {
+          origin = arr(o3); axis = arr(ax); angle = E.angle;
+          if (dynamic != null && S.series.release > 0) angle *= dynamic / S.series.release;
+        }
+        dash = DASH_ESTIMATE;
+      }
+      if (!origin || !(angle > 0) || !(speed > 0)) return;
+      var boxes = targetBoxes(), n = vnorm(axis), vel = [n[0] * speed, n[1] * speed, n[2] * speed], centre = null;
+      if (own && sampleAt(shotClock(), AS)) centre = [AS[5], AS[6], -AS[7]];
+      if (!centre) centre = ARTY.flyToGround(origin, vel, sh[9], groundAt, boxes);
+      if (!centre) return;
+      var radius = angle * Math.hypot(centre[0] - origin[0], centre[1] - origin[1], centre[2] - origin[2]);
+      var pts = ARTY.fallMark(centre, ARTY.fallAt(origin, vel, sh[9], centre), radius, groundAt, boxes), g = hud2d, prev = false;
+      g.globalAlpha = .9; g.strokeStyle = AIM_COLOUR; g.lineWidth = 1.5 * DPR; g.setLineDash(dash); g.beginPath();
+      for (var i = 0; i <= pts.length; i++) {
+        var p = pts[i % pts.length];
+        if (!p || !toScreen(Q3.set(p[0], p[1], p[2]))) { prev = false; continue; }
+        if (prev) g.lineTo(scr.x, scr.y); else g.moveTo(scr.x, scr.y);
+        prev = true;
+      }
+      g.stroke();
+      S.markPts = pts;
+    }
     // every frame after this page's render (overlay): the circles and the sight while the eye is the shooter's
     function hud() {
       // not on the stub (no shooter's eye) nor looking back (T3: the circles would stand behind the eye)
@@ -1228,7 +1524,9 @@
       var sniper = o.camera.fov * Math.PI / 180 < SNIPER, im = sightImg.arcade ? (sniper ? sightImg.sniper : sightImg.arcade) : null;
       var me = o.vehicle(S.row.shooter), own = !!(me && me.v && me.v.own), cx = w / 2, cy = h / 2, tx = 0, ty = 0, tag = false;
       var flying = !!(S.line && S.t >= S.line.t);
-      if (own && sampleAt(shotClock(), AS)) {
+      // 22.11: an SPG's mark as the game builds it (spgMarkDraw), not the direct-fire circles and sight
+      if (S.spg && S.line && !S.line.stub && S.row.shot) { if (!hitsRings) spgMarkDraw(own, flying); }
+      else if (own && sampleAt(shotClock(), AS)) {
         var server = AS[12] === 1;
         // the client circle: the cursor point (0-2) with the arcade diameter (11) - or, with no server reticle recorded, the
         // reticle the replay holds (fields 3-10)
@@ -1278,7 +1576,7 @@
           worldRing(Q3, circleRight, circleUp, vw.liveAim.radius, ALT_COLOUR, DASH_NONE);
         }
       }
-      if (own || (X && X.on)) mark(cx, cy, im, 'centre');
+      if ((own && !S.spg) || (X && X.on)) mark(cx, cy, im, 'centre');
       if (tag) mark(tx, ty, im, 'tag');
       hud2d.globalAlpha = 1;
     }
@@ -1369,21 +1667,28 @@
       return t1;
     }
     // ---- this page's frame: paint before its render, overlay after it --------------------------------------------------
+    var cutBox = new T.Box3(), cutSphere = new T.Sphere();
     function paint(time, now) {
       if (!S.row) return;
       var sh = o.vehicle(S.row.shooter), inside = !!(sh && sh.visible && eyeInside(sh));
       if (sh && (inside || S.veiled)) o.veil(sh, inside);
       S.veiled = inside;
       var v = S.viewer, r = S.target == null ? null : o.vehicle(S.target);
+      // Y14 (22.11): map objects between the eye and the target drawn see-through (playback.js shotCutaway), each frame
+      // on the target's bounding sphere as drawn now; none without a drawn target
+      if (o.cutaway) {
+        if (r && r.visible) { r.group.updateWorldMatrix(true, true); cutBox.setFromObject(r.group); }
+        if (r && r.visible && !cutBox.isEmpty()) { cutBox.getBoundingSphere(cutSphere); o.cutaway(cutSphere.center, cutSphere.radius); }
+        else o.cutaway(null);
+      }
       if (S.mode !== 'hits' || !v || !r) return;
-      if (S.corridor && o.corridor) { o.corridor.keep(); S.onLine = o.corridor.vehicles([S.row.shooter, S.target]); }
       if (S.hitT != null) { var held = time < S.stop - 1e-6; if (held !== S.held) { S.held = held; v.holdShot(held); } }
       if (!r.visible) return;
-      if(S.targetVariant!==r.v._from){
-        dropExtras();S.focusGroup=null;S.targetVariant=r.v._from;S.posed=sameModel(r,S.data.hit.target.parts||[]);
+      if(S.targetVariant!==r.life){
+        dropExtras();S.focusGroup=null;S.targetVariant=r.life;S.posed=sameModel(r,S.data.hit.target.parts||[]);
         if(r.md&&r.md.model)addExtras(r,S.data);
       }
-      if(r.variants&&r.variants.length>1&&!S.posed){o.look(r,null);S.extras.forEach(function(x){x.visible=false;});return;}
+      if(r.parts&&r.parts.length>1&&!S.posed){o.look(r,null);S.extras.forEach(function(x){x.visible=false;});return;}
       r.group.updateWorldMatrix(true, true);
       A.multiplyMatrices(r.group.matrixWorld, Z); AInv.copy(A).invert(); S.haveA = true;
       if (S.posed) v.hostPose(partTransforms(r, S.data.hit.target.parts || []));
@@ -1510,7 +1815,6 @@
       S.lineJob = null; S.lineEngine = null; S.lineFig = null; S.stopAt = null; S.glided = false;
       release(); S.lock = false; S.view = null;   // the camera handed to the battle view's orbit where the shooter's eye was
       dropExtras();
-      if (o.corridor && S.corridor) o.corridor.close(); S.corridor = null;
       if (r) o.look(r, null);
       if (sh && S.veiled) o.veil(sh, false);
       if (S.viewer && was === 'hits') S.viewer.clear();
@@ -1557,9 +1861,7 @@
         view: S.view ? S.view.kind : null, firstPerson: !!S.fp, focusLocked: !!S.lock,
         line: S.line ? { t: S.line.t, length: S.line.len, along: S.u, on: onLine(), stub: !!S.line.stub } : null, hud: !hudCanvas.hidden, lookBack: !!S.flip,
         shellChosen: S.shellI, shellEstimate: shellWarn.style.visibility !== 'hidden',
-        sight: sightImg.arcade ? 'game' : (sightWhy || 'not read'), estimate: S.estimate ? (S.estimate.why || 'drawn') : null, disc: S.disc ? S.disc.angle : null,
-        corridor: S.corridor ? { radius: CORRIDOR, hidden: S.corridor.hidden, models: S.corridor.models, collision: S.corridor.collision, plants: S.corridor.plants, modeObjects: S.corridor.modeObjects,
-          ground: S.corridor.ground, destroyedAlready: S.corridor.destroyedAlready, vehiclesHidden: S.onLine || 0, list: S.corridor.list, t: S.corridor.t, a: S.corridor.a, b: S.corridor.b } : null };
+        sight: sightImg.arcade ? 'game' : (sightWhy || 'not read'), estimate: S.estimate ? (S.estimate.why || 'drawn') : null, disc: S.disc ? S.disc.angle : null };
     }
     // 21.11: the row on screen (playback.js viewState and the back control carry its shot, BACKLOG 118); the hit events whose
     // contact dot the page keeps while the view holds the shot (BACKLOG 121: playback.js fxStep)
@@ -1568,5 +1870,5 @@
       free: function () { return !!S.row; }, heldPose: heldPose, targetPose: targetPose, drawsShot: drawsShot, camera: camera, panned: panned, paint: paint, overlay: overlay, clamp: clamp, state: state, viewer: function () { return S.viewer; },
       paintMaterial: paintMat, bar: bar };
   }
-  root.BullbaShotView = { create: create, BEFORE: BEFORE, SPEED: SPEED, AFTER: AFTER, INSIDE: INSIDE };
+  root.BullbaShotView = { create: create, BEFORE: BEFORE, SPEED: SPEED, AFTER: AFTER, INSIDE: INSIDE, arty: ARTY };
 })(window);

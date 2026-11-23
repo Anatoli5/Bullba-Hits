@@ -45,7 +45,7 @@ STAND_CHANGED = tuple(getattr(_client_code, 'STAND_CHANGED', ()))
 STAND_CLIENT = getattr(_client_code, 'STAND_CLIENT', None)
 
 LOG = logging.getLogger('local.armor_inspector')
-VERSION = '1.28'
+VERSION = '1.29'
 RESOURCE = re.compile(r'^(?:[A-Za-z0-9_-]+/)?vehicles/[A-Za-z0-9_/-]+\.(?:model|havok)\Z')
 IDENTIFIER = re.compile(r'^[-a-zA-Z0-9_]{1,100}\Z')
 # The interface icons of the aim configuration (equipment, perks, shells) ship with the page in web/icons
@@ -6691,12 +6691,12 @@ class Exporter(object):
         previous_rev = (self.summaries.get(battle['id']) or {}).get('rev')
         summary = self.summaries[battle['id']] = dict((k, battle.get(k)) for k in ('id', 'startedAt', 'map'))
         summary['hits'] = len(battle['hits'])
-        # BACKLOG 112 (20.11): a battle of a special mode is marked in the replay viewer's list (replay_files.special_mode)
+        # BACKLOG 112 (20.11): a battle of a special mode is marked in the replay viewer's list; since 22.11 (NOTEBOOK Y15)
+        # every battle's row carries its battleType and gameplay, so an ordinary one is known without preparing it
+        # (replay_files.summary_mode)
         try:
-            from .replay_files import special_mode
-            mode = battle.get('mode') if isinstance(battle.get('mode'), dict) else {}
-            special = special_mode(mode.get('bonusType'), mode.get('gameplayName'))
-            if special: summary['special'] = special
+            from .replay_files import summary_mode
+            summary.update(summary_mode(battle.get('mode')))
         except Exception:
             LOG.warning('Battle %s: its mode not read for the list', battle.get('id'), exc_info=True)
         try:

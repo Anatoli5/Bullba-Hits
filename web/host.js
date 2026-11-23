@@ -1,4 +1,4 @@
-/* Host detection, crash breadcrumbs and popup-free choice lists. Local page state only; no server, service or file writes. */
+/* Host detection, crash breadcrumbs, popup-free choice lists and the page -> mod channel (commands and chunked uploads to the mod; no server or service). */
 (function(){
   'use strict';
   var game=/(^|[#&?])host=game(&|$)/.test(window.location.hash+window.location.search);
@@ -53,6 +53,135 @@
       catch(e){reject(e);}
     });
   };
+  // ---- page -> mod uploads (BACKLOG 131, stage 0; the mod's side: mod/local_armor_inspector/page_upload.py) ----------
+  // A payload goes as base64 chunks of the 'upload' action (id, purpose, index, count, size, digest 'crc32:<hex>', data,
+  // sent = Date.now()); the mod's own thread appends them, checks size and CRC32 and hands the file to the purpose. Each
+  // chunk waits for its query's answer (the game's browser process answers a query it hands on - 'Success', a string of
+  // cef_browser_process.exe) at most ackWait ms; after one such wait ran out the rest go without waiting. The mod answers
+  // through the client's own reply path (ctx callback -> WebBrowser.sendMessage, read in 2.4.1.1 bytecode); WHERE that
+  // reaches the page is not known, so every way is listened to: the query's own answer, one persistent query
+  // ('uploadListen') and a window 'message'. After the last chunk the page asks 'uploadStatus' every STATUS_EVERY ms until
+  // an answer says done/failed or statusWait ran out. Nothing here rejects or throws into the page: the result says.
+  var crcTable=null;
+  function crc32(bytes,crc){
+    if(!crcTable){crcTable=new Int32Array(256);for(var n=0;n<256;n++){var c=n;for(var k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;crcTable[n]=c;}}
+    crc=~(crc||0);for(var i=0;i<bytes.length;i++)crc=crcTable[(crc^bytes[i])&255]^(crc>>>8);return (~crc)>>>0;
+  }
+  host.crc32=function(bytes){return crc32(bytes,0);};
+  function hex8(v){return ('0000000'+v.toString(16)).slice(-8);}
+  function base64(bytes,start,end){var s='';for(var i=start;i<end;i+=0x8000)s+=String.fromCharCode.apply(null,bytes.subarray(i,Math.min(end,i+0x8000)));return window.btoa(s);}
+  host.base64=base64;
+  // How a payload is cut: whole 3-byte groups per chunk, so every chunk is base64 on its own.
+  host.chunkBytes=function(chunkChars){return Math.max(3,Math.floor(chunkChars/4)*3);};
+  function clock(){return window.performance&&performance.now?performance.now():Date.now();}
+  function median(a){if(!a.length)return null;var s=a.slice().sort(function(x,y){return x-y;});return Math.round(s[s.length>>1]*10)/10;}
+  var waiters={},listening=null,uploadSerial=0,STATUS_EVERY=250;
+  // Any answer of the mod, from any path: '{"command":..,"data":{..},"web_id":..}' (WebCommandHandler's callback) or the
+  // data alone; routed to the upload it names.
+  function answer(text,via){
+    var obj=text;if(typeof text==='string'){if(text==='Success'||text.charAt(0)!=='{')return;try{obj=JSON.parse(text);}catch(e){return;}}
+    if(!obj||typeof obj!=='object')return;var data=obj.data&&typeof obj.data==='object'?obj.data:obj;
+    if(data.listen&&listening)listening.answered++;
+    var w=data.upload&&waiters[data.upload];if(w)w(data,via);
+  }
+  function listen(){
+    if(listening)return listening;listening={messages:0,answered:0,error:null};
+    try{window.addEventListener('message',function(e){if(listening)listening.messages++;answer(e.data,'message');});}catch(e){}
+    try{window.jsHostQuery({request:JSON.stringify({command:'bullba_hits',params:{action:'uploadListen'},web_id:'bullba-listen'}),persistent:true,
+      onSuccess:function(r){answer(r,'listen');},onFailure:function(code,text){listening.error=code+': '+text;}});}
+    catch(e){listening.error=e.message;}
+    return listening;
+  }
+  function wait(ms){return new Promise(function(r){window.setTimeout(r,ms);});}
+  // The send's answer or null after ms (0: not waited for at all; its answer still goes to answer()).
+  function sendTimed(params,ms){
+    var p=host.send('bullba_hits',params).then(function(r){answer(r,'query');return {ok:true};},function(e){return {error:e.message};});
+    if(!ms)return Promise.resolve({skipped:true});
+    var timer;return Promise.race([p,new Promise(function(r){timer=window.setTimeout(function(){r({timeout:true});},ms);})]).then(function(v){window.clearTimeout(timer);return v;});
+  }
+  host.upload=function(purpose,bytes,opts){
+    opts=opts||{};
+    var chars=opts.chunkChars||262144,ackWait=opts.ackWait===undefined?5000:opts.ackWait,statusWait=opts.statusWait===undefined?15000:opts.statusWait;
+    var per=host.chunkBytes(chars),count=Math.max(1,Math.ceil(bytes.length/per));
+    var id=opts.id||('u'+Date.now().toString(36)+'-'+(++uploadSerial)),digest='crc32:'+hex8(crc32(bytes,0));
+    var res={upload:id,purpose:purpose,size:bytes.length,count:count,chunkChars:chars,sentChunks:0,acks:[],ackTimeouts:0,
+      replies:0,replyMs:[],replyVia:{},state:'sending',error:null,sendMs:null,statusMs:null};
+    if(!host.canSend()){res.state='failed';res.error='The game browser offers no jsHostQuery channel';return Promise.resolve(res);}
+    var t0=clock(),sentAt={},final=null,waitAcks=ackWait>0;listen();
+    waiters[id]=function(data,via){
+      res.replyVia[via]=(res.replyVia[via]||0)+1;
+      if(data.state==='received'&&sentAt[data.index]!==undefined){res.replies++;res.replyMs.push(clock()-sentAt[data.index]);}
+      if(data.state==='done'||data.state==='failed'||data.state==='refused')final=data;
+    };
+    function one(i){
+      var data=base64(bytes,i*per,Math.min(bytes.length,(i+1)*per)),t=clock();sentAt[i]=t;
+      return sendTimed({action:'upload',upload:id,purpose:purpose,index:i,count:count,size:bytes.length,digest:digest,data:data,sent:Date.now()},waitAcks?ackWait:0)
+        .then(function(r){
+          if(r.error)throw new Error(r.error);
+          if(r.timeout){res.ackTimeouts++;waitAcks=false;}else if(r.ok)res.acks.push(clock()-t);
+          res.sentChunks++;return r.ok?null:wait(0);
+        });
+    }
+    var chain=Promise.resolve();
+    for(var i=0;i<count;i++)(function(i){chain=chain.then(function(){if(final&&final.state==='refused')throw new Error('chunk '+final.index+' refused: '+(final.error||'queue full'));return one(i);});})(i);
+    return chain.then(function(){
+      res.sendMs=Math.round(clock()-t0);res.state='sent';var last=clock();
+      function poll(){
+        if(final&&final.state!=='refused'){res.state=final.state;if(final.error)res.error=final.error;res.statusMs=Math.round(clock()-last);return null;}
+        if(clock()-last>=statusWait){res.state='sent, no status answer';return null;}
+        sendTimed({action:'uploadStatus',upload:id},0);return wait(STATUS_EVERY).then(poll);
+      }
+      return statusWait>0?poll():null;
+    }).catch(function(e){res.state='failed';res.error=e.message;}).then(function(){
+      delete waiters[id];
+      res.ackMedian=median(res.acks);res.ackMax=res.acks.length?Math.round(Math.max.apply(null,res.acks)*10)/10:null;
+      res.replyMedian=median(res.replyMs);return res;
+    });
+  };
+  // ---- the bridge probe of stage 0 (BACKLOG 131) ---------------------------------------------------------------------
+  // Once per browser profile, when the mod asks for it ('&probe=upload' in the first Hits window of a game session): the
+  // CompressionStream test, then the same 3 MB of pseudo-random bytes (incompressible, like a compressed store) uploaded
+  // twice - in 256K-character chunks, then in 1M-character chunks; each run's report (the mod's ONE log line) goes before
+  // the next run starts. The flag is set before anything is sent, so a failure never repeats it.
+  var PROBE_KEY='bullba-upload-probe-1',PROBE_BYTES=3*1024*1024,PROBE_RUNS=[262144,1048576];
+  function probeData(n){var out=new Uint8Array(n),x=0x9E3779B9;for(var i=0;i<n;i++){x^=x<<13;x^=x>>>17;x^=x<<5;out[i]=x&255;}return out;}
+  host.probeData=probeData;
+  function streamBytes(input,transform){return new Response(new Blob([input]).stream().pipeThrough(transform)).arrayBuffer().then(function(b){return new Uint8Array(b);});}
+  // Which CompressionStream formats exist, and a 1 MB JSON-like text deflated and inflated back (time, ratio, equal).
+  host.compressionProbe=function(){
+    if(typeof window.CompressionStream!=='function')return Promise.resolve('CompressionStream absent');
+    var forms=['deflate','deflate-raw','gzip'].map(function(f){try{new window.CompressionStream(f);return f+' yes';}catch(e){return f+' no';}});
+    var rows=[];for(var i=0;rows.length<1048576;i++)rows.push('{"t":'+(i*0.1).toFixed(1)+',"id":'+(i%30)+',"pos":['+(i%997)+','+(i%31)+','+(i%613)+']}');
+    var text=rows.join('\n').slice(0,1048576),input=new TextEncoder().encode(text),t=clock(),packed;
+    var run=streamBytes(input,new window.CompressionStream('deflate')).then(function(out){packed=out;var ms=Math.round(clock()-t);
+      return (typeof window.DecompressionStream==='function'?streamBytes(out,new window.DecompressionStream('deflate')):Promise.resolve(null)).then(function(back){
+        return forms.join(', ')+'; '+input.length+' -> '+packed.length+' bytes in '+ms+' ms, round trip '+(back?(back.length===input.length&&crc32(back,0)===crc32(input,0)?'ok':'DIFFERENT'):'no DecompressionStream');});});
+    return Promise.race([run,wait(10000).then(function(){return forms.join(', ')+'; deflate test timed out';})]).catch(function(e){return forms.join(', ')+'; deflate test failed: '+e.message;});
+  };
+  function probeReport(res,extra){
+    var report={purpose:res.purpose,chunkChars:res.chunkChars,sentChunks:res.sentChunks+'/'+res.count,sendMs:res.sendMs,ackMedian:res.ackMedian,ackMax:res.ackMax,
+      ackTimeouts:res.ackTimeouts,replies:res.replies,replyVia:JSON.stringify(res.replyVia),replyMedian:res.replyMedian,state:res.state,
+      statusMs:res.statusMs,listen:listening?('answered '+listening.answered+', messages '+listening.messages+(listening.error?', error '+listening.error:'')):null,error:res.error};
+    for(var k in extra)report[k]=extra[k];
+    return sendTimed({action:'uploadReport',upload:res.upload,report:report},5000);
+  }
+  host.runUploadProbe=function(opts){
+    opts=opts||{};var data=probeData(opts.bytes||PROBE_BYTES),runs=opts.runs||PROBE_RUNS,results=[];
+    return host.compressionProbe().then(function(compression){
+      var chain=Promise.resolve();
+      runs.forEach(function(chars,i){chain=chain.then(function(){
+        return host.upload('probe',data,{chunkChars:chars,ackWait:opts.ackWait,statusWait:opts.statusWait}).then(function(res){results.push(res);
+          var extra={next:i+1<runs.length?runs[i+1]+'-char chunks':'none'};if(i===0)extra.compression=compression;
+          return probeReport(res,extra);});});});
+      return chain.then(function(){if(window.console)console.info('Bullba Hits upload probe: '+results.map(function(r){return r.chunkChars+' chars '+r.state+' '+r.sendMs+' ms';}).join('; '));return results;});
+    }).catch(function(e){if(window.console)console.warn('Bullba Hits upload probe failed: '+e.message);return results;});
+  };
+  function startProbe(){
+    if(!game||host.params().probe!=='upload')return;
+    try{if(window.localStorage.getItem(PROBE_KEY))return;window.localStorage.setItem(PROBE_KEY,String(Date.now()));}catch(e){return;}
+    window.addEventListener('load',function(){window.setTimeout(function(){if(host.canSend())host.runUploadProbe();},10000);});
+  }
+  startProbe();
   window.BullbaHost=host;
   // The game's CEF renders offscreen; a native <select> popup is a separate
   // window it may not support. An ordinary DOM list replaces the popup while the
@@ -64,11 +193,11 @@
     var list=document.createElement('div');list.className='choice-list';list.setAttribute('role','listbox');
     options.forEach(function(option){
       var item=document.createElement('button');item.type='button';item.className='choice-item';item.setAttribute('role','option');item.setAttribute('aria-selected',String(option.selected));item.disabled=option.disabled;
-      // A warning sign leading the option's text (the replay viewer's special-mode battles) gets a span of its own, so the
-      // page can colour the sign alone: a native option can only colour its whole text.
-      var text=option.textContent,warn=/^⚠︎?/.exec(text);
-      if(warn){var sign=document.createElement('span');sign.className='choice-warn';sign.textContent=warn[0];item.appendChild(sign);item.appendChild(document.createTextNode(text.slice(warn[0].length)));}
-      else item.textContent=text;
+      // A special-mode option (the replay viewer's battles, BullbaRows.modeOption) carries its mode in data-special: the
+      // list draws the one mode mark (BullbaRows.modeMark) and the option's own label; the meaning never travels as text.
+      var sp=option.getAttribute('data-special');
+      if(sp!==null&&window.BullbaRows&&BullbaRows.modeMark){item.appendChild(BullbaRows.modeMark({name:sp}));item.appendChild(document.createTextNode(option.getAttribute('data-label')||option.textContent));}
+      else item.textContent=option.textContent;
       item.onclick=function(){var value=option.value;close();if(select.value!==value){select.value=value;select.dispatchEvent(new Event('change'));}select.focus();};
       list.appendChild(item);
     });

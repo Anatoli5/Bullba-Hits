@@ -10,7 +10,8 @@
    effects(collector, battle, defs, info, docs) -> adds hits, marks, muzzles to the battle. */
 (function () {
   'use strict';
-  var FORMAT = 7;                 // stable recorded tracer ID for cross-window shot links
+  var FORMAT = 8;                 // 8, 22.11 (NOTEBOOK Y19): a ricochet's tracer apart from its shot's (the same shotID)
+                                  // 7: stable recorded tracer ID for cross-window shot links
                                   // (2, 19.11: hitEvents and the tracers' shell fields, for the shots panel - BACKLOG 109;
                                   // 3, 21.11: the player's camera (0x26), for the shot view's first person - NOTEBOOK S2;
                                   // 4, 20.11: the player's reticles a tick (0x1a, 0x39), for the shot view's aim circles - T3)
@@ -113,7 +114,7 @@
   // ---- what the player draws, from the decoder's events (playback.py Collector) ----------------------------------------
   function Collector() {
     this.created = new Set(); this.pos = new Map(); this.gun = new Map(); this.hp = new Map(); this.sight = new Map();
-    this.comp = new Map(); this.tracers = new Map(); this.ends = new Map(); this.periods = []; this.own = null; this.tmax = 0; this.serverStart = null;
+    this.comp = new Map(); this.tracers = new Map(); this.ends = new Map(); this.live = new Map(); this.periods = []; this.own = null; this.tmax = 0; this.serverStart = null;
     this.area = new Map(); this.destroyed = []; this.hits = []; this.shooting = []; this.stickers = []; this.camera = [];
     this.marker = []; this.server = [];
     this.netName = new Map(); this.scenario = [];   // 21.11: the map scenarios' state entities (NetworkEntity) and starts
@@ -167,11 +168,20 @@
       this.stickerValue(t, ev, 'nested_property');
     } else if (k === 'method' && ev.name === 'showTracer') {
       a = ev.args;
-      this.tracers.set(a.shotID, [t, a.shooterID, a.refStartPoint.slice(), a.velocity.slice(), a.gravity, a.isRicochet || 0,
+      // 22.11 (NOTEBOOK Y19, measured on the fixture of 18.11: both ricochets): the server's ricochet goes on under its
+      // shot's own shotID - the shot's tracer ends at the armour (stopTracer / explodeProjectile at that tick) and the
+      // ricochet's tracer starts there 0.1 s later. Kept apart: the ricochet under 'shotID r n', so the shot keeps its
+      // flight from the gun to the contact (it used to be overwritten: the shot lost, its hit given to an older shot)
+      var key = a.shotID, n = 0;
+      if (a.isRicochet && this.tracers.has(key)) { do { key = a.shotID + 'r' + (++n); } while (this.tracers.has(key)); }
+      var chain = this.live.get(a.shotID); if (!chain || !a.isRicochet) this.live.set(a.shotID, chain = []); chain.push(key);
+      this.tracers.set(key, [t, a.shooterID, a.refStartPoint.slice(), a.velocity.slice(), a.gravity, a.isRicochet || 0,
         a.shellTypeIdx === undefined ? -1 : a.shellTypeIdx, +(a.shellCaliber || 0)]);
     } else if (k === 'method' && (ev.name === 'explodeProjectile' || ev.name === 'stopTracer')) {
       a = ev.args;
-      if (!this.ends.has(a.shotID)) this.ends.set(a.shotID, [t, a.endPoint.slice()]);
+      // the first tracer of this shotID's chain (the shot, then its ricochets) still without an end takes it
+      var ends = this.ends, endKey = (this.live.get(a.shotID) || [a.shotID]).filter(function (k) { return !ends.has(k); })[0];
+      if (endKey !== undefined) ends.set(endKey, [t, a.endPoint.slice()]);
     } else if (k === 'method' && ent === 'Vehicle' && ev.name === 'showDamageFromShot') {
       a = ev.args;
       var points = (a.hitPoints || []).map(function (q) { return [BigInt(q.segment), +(q.caliber || 0), Math.trunc(num(q.networkID || 0)), q.shellType === undefined ? -1 : q.shellType]; });
@@ -225,31 +235,104 @@
     for (var i = 0; i < compact.length; i++) { crc ^= compact.charCodeAt(i); for (var j = 0; j < 8; j++) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0); }
     return type.replace(':', '-') + '--' + ((crc ^ -1) >>> 0).toString(16);
   }
-  function configurationAt(v, t) {
-    var rows = v && v.configs;
-    if (!rows || !rows.length) return v; // explicit legacy single configuration
-    var found = null;
-    rows.forEach(function (x) { if (x.t <= t + 1e-6) found = x; });
+  // A VEHICLE'S LIVES (22.11, BACKLOG 128): the one place that says which vehicle an id was at a moment. A battle vehicle
+  // (one per id) keeps the rows its descriptors were recorded in (`configs`: t, type, compDescr, key, maxHealth, newLife);
+  // lives(v) reads them once into spans - one per recorded configuration, in time order - each with its own bounds and its
+  // life's (a respawn - another type, or a descriptor after death - starts a new life; an upgrade within a life, as Steel
+  // Hunter's, is a new span of the same life). The spans are kept per vehicle object, so a caller compares them by identity.
+  // A vehicle with no rows (an older battle) is one span over the whole battle. Nothing else derives a vehicle's lives.
+  var livesKept = typeof WeakMap === 'function' ? new WeakMap() : null;
+  function lives(v) {
+    if (!v) return [];
+    var kept = livesKept && livesKept.get(v);
+    if (kept) return kept;
+    var rows = v.configs && v.configs.length ? v.configs : null, out = [];
+    if (!rows) out.push({ index: 0, life: 0, from: -Infinity, until: Infinity, lifeFrom: -Infinity, lifeUntil: Infinity,
+      type: v.type, key: v.key, compDescr: v.compDescr, maxHealth: v.maxHealth, newLife: false });
+    else {
+      var life = -1, lifeFrom = 0;
+      rows.forEach(function (c, i) {
+        if (!i || c.type !== rows[i - 1].type || c.newLife) { life++; lifeFrom = c.t; }
+        out.push({ index: i, life: life, from: c.t, until: i + 1 < rows.length ? rows[i + 1].t : Infinity, lifeFrom: lifeFrom,
+          lifeUntil: Infinity, type: c.type, key: c.key, compDescr: c.compDescr, maxHealth: c.maxHealth, newLife: !!c.newLife });
+      });
+      out.forEach(function (s) { for (var j = s.index + 1; j < out.length; j++) if (out[j].life !== s.life) { s.lifeUntil = out[j].lifeFrom; break; } });
+    }
+    if (livesKept) livesKept.set(v, out);
+    return out;
+  }
+  // the span standing at t (from - 1e-6 <= t < until - 1e-6), null before the first
+  function lifeAt(v, t) {
+    var all = lives(v), found = null;
+    for (var i = 0; i < all.length; i++) if (all[i].from <= t + 1e-6) found = all[i];
     return found;
   }
-  // Recorded launch/gravity; continuously reconcile the recorded endpoint.
-  // The model muzzle offset is visual, not a replacement server origin.
-  function trajectory(shot, muzzle, endpoint) {
+  // the track of a span's life (`own`: of the span alone) as views into the vehicle's own arrays, never copies:
+  // {from, until, pos (7 a row), np, gun (3), ng, hp (2), nh}
+  function cut(data, stride, n, from, until) {
+    if (!data) return { a: data, n: 0 };
+    function first(x) { var a = 0, b = n; while (a < b) { var m = (a + b) >> 1; if (data[m * stride] < x) a = m + 1; else b = m; } return a; }
+    var lo = from === -Infinity ? 0 : first(from - 1e-6), hi = until === Infinity ? n : Math.max(lo, first(until - 1e-6));
+    return { a: data.subarray ? data.subarray(lo * stride, hi * stride) : data.slice(lo * stride, hi * stride), n: hi - lo };
+  }
+  function trackOf(v, span, own) {
+    var from = span ? (own ? span.from : span.lifeFrom) : -Infinity, until = span ? (own ? span.until : span.lifeUntil) : Infinity;
+    var p = cut(v.pos, 7, v.np || 0, from, until), g = cut(v.gun, 3, v.ng || 0, from, until), h = cut(v.hp, 2, v.nh || 0, from, until);
+    return { from: from, until: until, pos: p.a, np: p.n, gun: g.a, ng: g.n, hp: h.a, nh: h.n };
+  }
+  // THE DRAWN ARC OF A SHOT (game axes): the recorded launch (refStartPoint = the gun's pivot, velocity, gravity), its end
+  // put on `endpoint` (the hit point; else the tracer's own end) and its start on `muzzle` (the drawn gun's muzzle less the
+  // recorded start; visual only). 22.11 (NOTEBOOK Y22, the user's screenshot of 1.28: the tracer curled back like a hook):
+  // no correction may turn the flight back. The muzzle lies ON the flight, a gun's length ahead of the pivot: 1.28 faded
+  // that whole offset out along the flight (offset * (1 - u)^2), so at a range under two gun lengths the line ran from the
+  // muzzle back toward the pivot first (every hit of the user's close-range battle of 22.11 nearer than two gun lengths).
+  // Now the part of the server's flight inside the barrel is skipped (the arc starts where the shell leaves the muzzle)
+  // and only the muzzle's sideways offset fades out; an end correction (delta * u^2) or a sideways offset that would turn
+  // the flight by more than TURN_MAX is not drawn: null, and `why.text` says why (a straight line stands for it).
+  var TURN_MAX = 45;   // degrees
+  function trajectory(shot, muzzle, endpoint, why) {
+    why = why || {};
     if (!shot || !shot.slice(3, 14).every(Number.isFinite)) return null;
     var start = shot.slice(3, 6), end = endpoint || shot.slice(11, 14);
-    var velocity = shot.slice(6, 9), gravity = shot[9], horizontalSpeed = Math.hypot(velocity[0], velocity[2]);
-    var duration = horizontalSpeed > 1 ? Math.hypot(end[0] - start[0], end[2] - start[2]) / horizontalSpeed : Math.max(0, shot[10] - shot[0]);
-    if (!(duration > 1e-5) || Math.hypot.apply(Math, velocity) < 1) return null;
-    var offset = muzzle || [0, 0, 0];
+    var velocity = shot.slice(6, 9), gravity = shot[9], horizontalSpeed = Math.hypot(velocity[0], velocity[2]), speed = Math.hypot.apply(Math, velocity);
+    var flight = horizontalSpeed > 1 ? Math.hypot(end[0] - start[0], end[2] - start[2]) / horizontalSpeed : Math.max(0, shot[10] - shot[0]);
+    if (!(flight > 1e-5) || speed < 1) return null;
     var delta = end.map(function (x, i) {
-      return x - start[i] - velocity[i] * duration + (i === 1 ? .5 * gravity * duration * duration : 0);
+      return x - start[i] - velocity[i] * flight + (i === 1 ? .5 * gravity * flight * flight : 0);
     });
+    // the server's flight with its end put on `end`, w in [0, 1] of its time; its tangent (d/dw) with and without the
+    // end's correction
+    function flown(w) {
+      var t = w * flight;
+      return start.map(function (x, i) { return x + velocity[i] * t - (i === 1 ? .5 * gravity * t * t : 0) + delta[i] * w * w; });
+    }
+    function turn(a, b) {
+      var la = Math.hypot(a[0], a[1], a[2]), lb = Math.hypot(b[0], b[1], b[2]);
+      return la > 0 && lb > 0 ? Math.acos(Math.max(-1, Math.min(1, (a[0] * b[0] + a[1] * b[1] + a[2] * b[2]) / (la * lb)))) * 180 / Math.PI : 0;
+    }
+    var bend = 0;
+    for (var k = 1; k <= 4; k++) {
+      var w = k / 4, plain = velocity.map(function (x, i) { return (x - (i === 1 ? gravity * w * flight : 0)) * flight; });
+      bend = Math.max(bend, turn(plain, plain.map(function (x, i) { return x + 2 * delta[i] * w; })));
+    }
+    if (bend > TURN_MAX) {
+      why.text = 'the end point lies ' + Math.hypot(delta[0], delta[1], delta[2]).toFixed(1) + ' m off the recorded flight (it would turn the arc by ' + bend.toFixed(0) + '°)';
+      return null;
+    }
+    // the muzzle: along the launch direction it skips the flight inside the barrel (w0), sideways it fades out
+    var m = muzzle || [0, 0, 0], dir = velocity.map(function (x) { return x / speed; });
+    var along = m[0] * dir[0] + m[1] * dir[1] + m[2] * dir[2], w0 = 0, side = m;
+    if (along > 0) { w0 = Math.min(.95, along / (speed * flight)); side = m.map(function (x, i) { return x - along * dir[i]; }); }
+    var rest = (1 - w0) * speed * flight, sideLength = Math.hypot(side[0], side[1], side[2]);
+    if (Math.atan2(2 * sideLength, rest) * 180 / Math.PI > TURN_MAX) {
+      why.note = 'the drawn muzzle stands ' + sideLength.toFixed(1) + ' m beside the recorded flight: the arc starts on the flight';
+      side = [0, 0, 0];
+    }
+    var duration = (1 - w0) * flight;
     function point(u) {
       u = Math.max(0, Math.min(1, u));
-      var t = u * duration;
-      return start.map(function (x, i) {
-        return x + velocity[i] * t - (i === 1 ? .5 * gravity * t * t : 0) + delta[i] * u * u + offset[i] * (1 - u) * (1 - u);
-      });
+      var p = flown(w0 + (1 - w0) * u), f = (1 - u) * (1 - u);
+      return [p[0] + side[0] * f, p[1] + side[1] * f, p[2] + side[2] * f];
     }
     var samples = [], length = 0, last = point(0);
     for (var i = 0; i <= 96; i++) {
@@ -264,7 +347,8 @@
       var a = samples[i - 1], b = samples[i], f = b.d > a.d ? (distance - a.d) / (b.d - a.d) : 0;
       return point(a.u + (b.u - a.u) * f);
     }
-    return { duration: duration, length: length, samples: samples, point: point, atDistance: atDistance, serverStart: start, endpoint: end, alignment: delta };
+    return { duration: duration, length: length, samples: samples, point: point, atDistance: atDistance, serverStart: start, endpoint: end, alignment: delta,
+      barrel: w0 * flight, note: why.note || null };
   }
   Vehicles.prototype.publicInfo = function (eid, info, t, listed) {
     if (!isDict(info) || !info.compDescr) return;
@@ -508,7 +592,7 @@
     function resolve(vid, seg, network, time) {
       var v = vtype.get(vid);
       if (v === undefined) return [null, 'target not in the vehicle list'];
-      var config=configurationAt(v,time);
+      var config=lifeAt(v,time);
       if(!config)return [null,'configuration not known at this time'];
       var P = types[config.key || config.type];
       if (!P) return [null, 'no exported vehicle file'];
@@ -525,7 +609,7 @@
       var n = facing(found[2], found[1]);
       return [[part.grp, xf(part.tr, found[0], part.off), xf(part.tr, n), xf(part.tr, found[1]), part.approx], null];
     }
-    var key = function (vid, seg, time) {var v=vtype.get(vid),c=v&&configurationAt(v,time);return vid + ':' + (c?c.t:'unknown') + ':' + (seg >> 8n).toString(); };
+    var key = function (vid, seg, time) {var v=vtype.get(vid),c=v&&lifeAt(v,time);return vid + ':' + (c?c.from:'unknown') + ':' + (seg >> 8n).toString(); };
     var stByKey = new Map();
     c.stickers.forEach(function (s) { var k = key(s[1], s[2],s[0]); if (!stByKey.has(k)) stByKey.set(k, [s[0], Number(s[2] & 255n), s[3]]); });
     var ric = []; c.tracers.forEach(function (tr) { if (tr[5]) ric.push([tr[0], tr[1], tr[3]]); });
@@ -581,7 +665,7 @@
     return fx;
   }
 
-  var api = { FORMAT: FORMAT, source: source, build: build, effects: effects, Collector: Collector, unb64: unb64, variantKey:variantKey, configurationAt:configurationAt, trajectory:trajectory,
+  var api = { FORMAT: FORMAT, source: source, build: build, effects: effects, Collector: Collector, unb64: unb64, variantKey:variantKey, lives:lives, lifeAt:lifeAt, trackOf:trackOf, Vehicles:Vehicles, trajectory:trajectory, TURN_MAX:TURN_MAX,
     setInflate: function (fn) { inflate = fn; } };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else self.PlaybackBattle = api;
 })();

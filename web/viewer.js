@@ -1561,7 +1561,7 @@
   // its tracer, `replayAimEstimate`): the same estimate ring - dashed magenta, never drawn as a recorded one - but centred
   // where the rebuilt gun pointed and sized by the dispersion formula on the shooter's track, carried to the impact plane
   // the way the own shot's thick ring is (the shell's offset from the axis, dx = v·e1 / v·n, dy = v·e2 / v·n, R =
-  // angle × depth). A dashed cross marks the estimated aim point. Kept as estimateAim, so the figure over it is the
+  // angle × depth). No aim-point mark (22.11, Y20). Kept as estimateAim, so the figure over it is the
   // estimate's (app.js says so) and never the recorded shot's.
   Viewer.prototype.setRebuiltEstimate=function(context){
     var T=THREE,tracer=context&&context.tracer,block=tracer&&!tracer.own&&tracer.replayAimEstimate,circle=block&&block.circle,
@@ -1583,9 +1583,8 @@
     var options={color:AIM_RING,depthTest:false,depthWrite:false,transparent:true,opacity:.75};
     var line=new T.Line(new T.BufferGeometry().setFromPoints(points),new T.LineDashedMaterial(Object.assign({dashSize:radius*.12,gapSize:radius*.08},options)));
     line.computeLineDistances();line.renderOrder=12;line.frustumCulled=false;this.aimGroup.add(line);
-    var size=Math.max(.025,Math.min(.12,radius*.12)),cross=[center.clone().addScaledVector(right,-size),center.clone().addScaledVector(right,size),center.clone().addScaledVector(up,-size),center.clone().addScaledVector(up,size)];
-    var mark=new T.LineSegments(new T.BufferGeometry().setFromPoints(cross),new T.LineDashedMaterial(Object.assign({dashSize:size*.3,gapSize:size*.25},options)));
-    mark.computeLineDistances();mark.renderOrder=12;mark.frustumCulled=false;this.aimGroup.add(mark);
+    // 22.11 (NOTEBOOK Y20): no mark of the estimated aim point - another player's mouse is not in the replay; the ring
+    // alone (its centre is the rebuilt gun's axis, which the shot view's gun tag marks)
     // The cone's apex is the shell's origin as the flight has it (the own thick ring's rule).
     var apex=this.shotPath&&this.shotPath.tracer===tracer?this.shotPath.origin.clone():origin;
     this.estimateAim={rebuilt:true,block:block,radius:radius,range:depth,dispersion:circle.dispersionAngle,gun:this.loadedData.hit.attacker&&this.loadedData.hit.attacker.gun||null,

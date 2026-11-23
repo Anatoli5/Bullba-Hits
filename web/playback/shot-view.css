@@ -18,7 +18,10 @@
 .sv-title { font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; flex:1 1 auto; }
 .sv-aim { display:flex; align-items:center; gap:4px; white-space:nowrap; flex:none; }
 .sv-aim[hidden] { display:none; }
-.sv-note { flex:1 0 100%; min-width:0; color:var(--dim, #8b949c); font-size:12px; line-height:16px; height:16px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+/* 22.11 (NOTEBOOK Y17): the note's line - the reconstruction ⚠ (its words in its tooltip) and the note */
+.sv-noterow { flex:1 0 100%; min-width:0; display:flex; align-items:center; gap:4px; height:16px; }
+.sv-noterow .disc-stale, .sv-noterow .disc-stale svg { width:14px; height:14px; flex:none; }
+.sv-note { flex:1 1 auto; min-width:0; color:var(--dim, #8b949c); font-size:12px; line-height:16px; height:16px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 /* the shot's figures (20.11, NOTEBOOK U2, U3): two cells side by side - "Hit line" and the other point ("Under the
    cursor" / "Pinned point") - as Bullba Hits' panels read a line: 12 px heading and figure, the alpha and the chips 11 px;
    each cell a heading and three places of one line (armour, damage parts, ricochet) */

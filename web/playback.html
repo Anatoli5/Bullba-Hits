@@ -23,15 +23,15 @@
   select option, select optgroup { color:var(--text); background:#172330; }
   #time { font-variant-numeric:tabular-nums; min-width:150px; }
   /* top centre: the battle line and the settings button always; the settings body drops down under them */
-  #meter { top:8px; left:50%; transform:translateX(-50%); max-width:min(480px, calc(100% - 460px)); min-width:0; padding:4px 6px; font-variant-numeric:tabular-nums; background:rgba(20,24,28,.72); }
+  #meter { top:8px; left:50%; transform:translateX(-50%); max-width:min(640px, calc(100% - 460px)); min-width:0; padding:4px 6px; font-variant-numeric:tabular-nums; background:rgba(20,24,28,.72); }
   /* 20.11 (the game's window, 1.13: the sky box drawn over Settings): when the line is short of room only the title and the
      battle choice give way, each clipping its own content; the buttons and the sky switch keep their size */
   #topline { display:flex; align-items:center; gap:6px; white-space:nowrap; justify-content:center; }
   #topline > * { flex:none; }
   #topline label { display:flex; align-items:center; gap:4px; }
   #topline button[hidden] { display:none; }
-  /* R9 (20.11, the user on 1.14): the line in three groups by meaning, a thin divider between them - the battle (Hits, the
-     battle choice: the battle named once, by the choice), the view (Settings, the sky switch a little apart to its right),
+  /* R9 (20.11, the user on 1.14): the line in three groups by meaning, a thin divider between them - the battle (the battle
+     choice: the battle named once, by the choice; 22.11: no Hits button - the shot rows link to Hits), the view (Settings, the sky switch a little apart to its right),
      the window (full screen, close) */
   .tl-group { display:flex; align-items:center; gap:6px; }
   #topline > .tl-battle { flex:0 1 auto; min-width:0; }
@@ -41,11 +41,14 @@
   #fullscreen { padding:3px 6px; line-height:0; }
   /* the open battle's keep-forever star (BACKLOG 107): gold while kept; dimmed while it cannot act (its tooltip says why) */
   #keep-replay { padding:2px 6px; }
+  /* 22.11: the battle heading is Bullba Hits' tile (viewer.css .heading-tile): the map, under it one small muted line with the
+     start date and time and the player, the vehicle tile, the caret - a little taller than Hits' tile for that line */
+  .replay-head { display:flex; flex-direction:column; min-width:0; flex:0 1 auto; }
+  .replay-sub { font-size:11px; line-height:14px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .replay-sub:empty { display:none; }
   #keep-replay.on { color:var(--gold); }
   #keep-replay:disabled { opacity:.55; cursor:default; }
   #fullscreen svg { vertical-align:middle; }
-  #topline label.give { flex:0 1 auto; min-width:0; overflow:hidden; }
-  #topline select { flex:0 1 auto; min-width:60px; }
   #settings { margin-top:4px; max-height:calc(100vh - 110px); overflow:auto; }
   #settings[hidden] { display:none; }
   #meter label { white-space:nowrap; }
@@ -111,10 +114,6 @@
   .choice-item { flex:none; text-align:left; font:inherit; color:var(--text); background:transparent; border:0; border-radius:4px; padding:6px 10px; cursor:pointer; white-space:nowrap; }
   .choice-item:hover, .choice-item:focus-visible { background:#233446; outline:none; }
   .choice-item[aria-selected=true] { color:var(--gold); }
-  /* the special-mode sign of a battle (playback.js battleSelect; host.js wraps it in the game's list): yellow, to be seen;
-     a native list outside the game can colour only the whole row */
-  .choice-warn { color:#f2c94c; }
-  #sel-battle option[data-special] { color:#f2c94c; }
   select[aria-expanded=true] { border-color:var(--gold); }
   /* R4 (BACKLOG 112): the special-mode warning, in the middle over the view, above the lists and the panel */
   #special-warn { left:50%; top:40%; transform:translate(-50%,-50%); width:360px; max-width:calc(100% - 32px); box-sizing:border-box; z-index:20; padding:10px 12px; background:rgba(20,24,28,.96); border-color:var(--accent); }
@@ -133,19 +132,17 @@
 <div id="meter" class="panel">
   <div id="topline">
     <span class="tl-group tl-battle">
-    <button id="back" aria-label="Open Bullba Hits" class="mod-nav" title="Bullba Hits&#10;Opens the recorded hits; in the game in a window of their own, this one stays."><img src="menu-icon.png" alt="" width="28" height="28"></button>
     <div class="heading-pick" id="replay-picker">
-      <button id="replay-pick" class="heading-tile" type="button" aria-haspopup="listbox" aria-controls="replay-menu" aria-expanded="false" title="Battle list&#10;Opens replay files, newest first, followed by Hits battles.&#10;• Stars manage replay retention here in Replays&#10;• Event gameplay asks for confirmation before opening"><span class="heading-title" id="replay-title">Choose a replay</span><span class="heading-caret" aria-hidden="true">▾</span></button>
+      <button id="replay-pick" class="heading-tile" type="button" aria-haspopup="listbox" aria-controls="replay-menu" aria-expanded="false" title="Battle list&#10;Opens replay files, newest first, followed by Hits battles.&#10;• Stars manage replay retention here in Replays&#10;• Event gameplay asks for confirmation before opening"><span class="replay-head"><span class="heading-title" id="replay-title">Choose a replay</span><span class="replay-sub" id="replay-sub"></span></span><span class="heading-vehicle" id="replay-vehicle"></span><span class="heading-caret" aria-hidden="true">▾</span></button>
       <div id="replay-menu" class="battle-list" role="listbox" aria-label="Battles" hidden></div>
       <select id="sel-battle" hidden aria-hidden="true" tabindex="-1"></select>
     </div>
     <button id="keep-replay" type="button" aria-pressed="false" disabled title="Keep forever">&#9734;</button>
-    <button type="button" class="help-dot" data-help-for="back replay-pick keep-replay" aria-label="Help with battle links and replay retention">?</button>
     </span>
     <span class="tl-sep" aria-hidden="true"></span>
     <span class="tl-group tl-view">
     <button id="settings-btn" title="Settings&#10;Opens or closes the settings: layers, shadows, grain, light, vehicle colour, halo, haze, crowns, replays, cost readout.">Settings &#9662;</button>
-    <label title="Sky&#10;Draws the sky: light overhead, a dull grey haze at the horizon, grey below it.&#10;- on (default): the scenery beyond the playable border fades into that haze instead of ending in a cut&#10;- off: black all round - the map hangs in the dark and fades into black"><input type="checkbox" id="sw-sky" checked> sky</label>
+    <label title="Sky&#10;Draws the sky: light overhead, a dull grey haze at the horizon, grey below it.&#10;- on: the scenery beyond the playable border fades into that haze instead of ending in a cut&#10;- off (default): black all round - the map hangs in the dark and fades into black"><input type="checkbox" id="sw-sky"> sky</label>
     </span>
     <span class="tl-sep" aria-hidden="true"></span>
     <span class="tl-group tl-window">
@@ -207,9 +204,10 @@
        web/replay-limit.js -->
   <div style="margin-top:2px"><b>Replays</b> <label id="replay-limit-label" title="Replay limit"><input type="checkbox" id="replay-limit-on" data-mod-setting aria-label="Replay limit on"> replay limit, keep the last <input type="number" id="replay-limit" data-mod-setting min="1" max="100" step="1" value="100" style="width:48px" aria-label="Replays kept"></label></div>
   <div style="margin-top:2px"><label title="Cost readout&#10;Shows what drawing the current view costs, under the top line.&#10;- fps and frame interval: how often frames come (capped by the display or the game)&#10;- page CPU: the page's own time to step and draw one frame&#10;- GPU: the graphics card's time for one frame, where the browser has the timer; otherwise it says not available&#10;- triangles, draw calls, shadow maps, ground textures: what the view sends to the graphics card and the memory it holds"><input type="checkbox" id="sw-cost"> cost readout</label></div>
+  <div style="margin-top:2px"><label title="Smooth camera&#10;Glides your own camera moves over a few frames instead of jumping to each new position.&#10;- drag turns and pans settle in about 0.1 s, a wheel click in about 0.35 s&#10;- each move goes as far as without it; only how it gets there changes&#10;- jumps the viewer makes itself (start, follow, shot view, list clicks) stay instant&#10;- off: the camera jumps with each mouse or key step"><input type="checkbox" id="sw-smooth-cam" checked> smooth camera</label></div>
   <div id="help">drag: orbit; right or Shift + drag: pan; wheel: zoom; WASD or arrows: move; R/F: up/down; space: play</div>
   <label title="Impact mark color&#10;Chooses the recorded hit cross color; shared with Hits where the browser shares storage.&#10;Pinned points and red semantic marks keep their own colors.">Impact mark color <select id="impact-color" data-shared-setting aria-label="Impact mark color"><option value="#258cff" selected>Bright blue</option><option value="#79cfff">Light blue</option><option value="#ff5ad6">Magenta</option></select></label>
-  <label title="Impact mark opacity&#10;Sets how strongly the thin open-centre cross marks a recorded impact; 100 % is fully opaque.&#10;Tracer, aim circles and pointer are not affected.">Impact mark opacity <input type="range" id="impact-opacity" data-shared-setting min="10" max="100" value="100" aria-label="Impact mark opacity" style="width:70px;vertical-align:middle"> <output id="impact-opacity-value">100 %</output></label>
+  <label title="Camera at the shell's speed (experimental)&#10;Sets how the shot view's camera travels along the shell's arc after the shot.&#10;- off (default): an eased glide over the flight, at least 0.6 s&#10;- on: at the shell's own speed, where the shell is at each moment&#10;- either way the camera looks along the flight"><input type="checkbox" id="sv-shell-clock"> camera at the shell's speed</label>
   <div class="settings-actions"><button type="button" id="reset-settings" title="All settings here back to default">Reset to defaults</button></div>
   </div>
 </div>

@@ -97,7 +97,15 @@
     }
     return partial ? { known: true, special: partial.special } : { known: false, special: null };
   }
-  var api = { policy: POLICY, classify: classify, evidence: evidence, resolve: resolve };
+  // What the opening warns about (22.11, NOTEBOOK Y15): `prepared` is false before the battle's playback file exists. A
+  // battle with no evidence yet (an index row written before rows carried the mode) is not warned about then - its
+  // prepared file (the mod's own classification from the arena's bonus type) decides before anything is decoded; only
+  // a prepared battle still without evidence is 'Unidentified mode'. Returns the special mode to warn about, or null.
+  function opening(resolved, prepared) {
+    if (resolved && resolved.known) return resolved.special || null;
+    return prepared ? { name: 'Unidentified mode' } : null;
+  }
+  var api = { policy: POLICY, classify: classify, evidence: evidence, resolve: resolve, opening: opening };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else window.BullbaReplayMode = api;
 }());

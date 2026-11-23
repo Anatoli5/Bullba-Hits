@@ -25,7 +25,10 @@
 .disc-stale path{fill:var(--warn,#f2a33a);stroke:#2a1a05;stroke-width:.8;stroke-linejoin:round}
 .disc-stale path.mark{fill:none;stroke:#2a1a05;stroke-width:2;stroke-linecap:round}
 
-/* Shared battle picker: Hits and Replays use the same menu. */
+/* The battle menu, one for both pages (22.11, the user after 1.28: Hits is the main mod and its menu's look moves to Replays):
+   Bullba Hits' heading tile and battle list as they stood before 1.28, read by Hits (index.html) and Replays (playback.html).
+   The heading tile IS the battle picker (19.09): the map name, the vehicle tile beside it, a caret at the end. In Hits'
+   Vehicles mode the same tile carries the vehicle name with nothing to open, so it is disabled and loses its caret. */
 .heading-pick{position:relative;display:flex;min-width:0;max-width:100%}
 /* Same frame as a clickable scene tile (.viewport-tile): the user's rule is one look for everything clickable (20.09). */
 .heading-tile{display:flex;align-items:center;gap:14px;min-width:0;max-width:100%;margin:0;padding:4px 12px 4px 14px;border:1px solid rgba(157,174,191,.55);border-radius:6px;background:rgba(23,35,48,.15);color:inherit;font:inherit;text-align:left;min-height:0;cursor:pointer}
@@ -35,36 +38,33 @@
 .heading-tile:disabled .heading-caret{display:none}
 .heading-title{flex:0 1 auto;min-width:0;max-width:min(260px,100%);font-size:21px;font-weight:500;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .heading-caret{flex:0 0 auto;font-size:12px;line-height:1;color:var(--muted)}
+/* the vehicle tile in the heading (moved from style.css 22.11, so Replays' heading carries it as Hits' does) */
+.heading-vehicle{display:flex;align-items:center;flex:0 1 auto;min-width:0;max-width:280px}
+.heading-vehicle .vehicle-tile{flex:0 0 auto;min-width:0;padding-right:44px}
+.heading-vehicle:empty{display:none}
 /* The list under the tile: map, the player's vehicle tile, and the start day and time kept secondary. */
 .battle-list{position:absolute;left:0;top:calc(100% + 8px);z-index:14;min-width:100%;width:max-content;max-width:min(430px,calc(100vw - 40px));max-height:min(60vh,420px);overflow:auto;display:flex;flex-direction:column;gap:3px;padding:12px;border-radius:8px;background:#15212e;box-shadow:0 15px 50px #0009}
 .battle-list[hidden]{display:none}
-.battle-option{display:grid;grid-template-columns:minmax(0,1fr) auto auto auto;align-items:center;gap:14px;width:100%;text-align:left;min-height:48px;padding:3px 10px;font-size:15px;border:1px solid #293849;border-radius:4px;background:#172330}
+/* A row: map, vehicle tile, time, and the link to the other mod (Hits) or the keep-forever star (Replays). The button base
+   Hits' rows take from its style.css 'button' rules (colour, font, cursor, hover, focus ring) is written here, so Replays'
+   rows (a div: a row holding the star button cannot be a button) have it too; the hover comes before the selected look. */
+.battle-option{display:grid;grid-template-columns:minmax(0,1fr) auto auto auto;align-items:center;gap:14px;width:100%;text-align:left;min-height:48px;padding:3px 10px;font-size:15px;border:1px solid #293849;border-radius:4px;background:#172330;color:inherit;font-family:inherit;cursor:pointer}
+.battle-option:hover{background:#263749;border-color:#9daebf}
+.battle-option:focus-visible{outline:2px solid var(--gold);outline-offset:3px}
 .battle-option[aria-selected=true]{border-color:var(--gold);background:#302d25;box-shadow:inset 3px 0 var(--gold)}
 .battle-option-map{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .battle-option-vehicle{display:flex;align-items:center;min-width:0}
 .battle-option-vehicle .vehicle-tile{flex:0 0 auto;width:168px;padding-right:40px}
 .battle-option-when{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
-/* BACKLOG 104: the 3D replay player of the row's battle (web/playback.html) */
-.battle-option-replay{font-size:12px;padding:3px 8px;border:1px solid #3a4a5c;border-radius:3px;color:var(--gold);white-space:nowrap}
-.battle-option-replay:hover{background:#243446}
-/* BACKLOG 107: a battle whose replay is no longer kept; its keep mark (☆ / ★, ∅ when the limit removed it) */
-.battle-option-replay.no-replay{opacity:.45}
-.battle-option-keep{min-width:1.2em;font-size:17px;line-height:1;text-align:center;color:var(--gold)}
-.battle-option-keep[data-state=removed]{color:var(--muted);font-size:14px}
-
-
-.battle-option{color:inherit;cursor:pointer;font-family:inherit}
-.battle-option:focus-visible{outline:2px solid var(--gold);outline-offset:1px}
-.battle-option .sp-open{padding:2px;border:0;background:transparent}
-.battle-option-replay .mod-icon{width:28px;height:28px}
-.battle-option-keep{cursor:pointer;background:transparent;border:0;padding:8px;color:var(--gold)}
-.battle-option-keep:focus-visible{outline:2px solid var(--gold)}
+/* Hits: the row's link to Bullba Replays - the mod's icon alone (rows.css .sp-open.mod-link); dimmed when the battle's replay
+   is no longer kept. The icon dims itself: opacity on the link would isolate the icon's blend (rows.css .mod-icon). */
+.battle-option-replay{display:flex;align-items:center}
+.battle-option-replay.no-replay .mod-icon{opacity:.45}
+/* Replays: the battle's keep-forever star (BACKLOG 107), as Hits drew it before 1.28: unframed, gold; a button here, so
+   playback.html's own button look is taken off; muted while it cannot act (its tooltip says why) */
+.battle-option-keep{min-width:1.2em;font-size:17px;line-height:1;text-align:center;color:var(--gold);padding:0;border:0;border-radius:0;background:transparent;min-height:0;font-family:inherit;cursor:pointer}
+.battle-option-keep:disabled{color:var(--muted);cursor:default}
+.battle-option-keep:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+/* Replays: another player's name under the map; the list's two groups (replay files, Hits battles) */
 .battle-option-player{display:block;font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis}
 .battle-list-group{font-size:12px;color:var(--muted);padding:5px 10px}
-#replay-picker{--gold:var(--accent,#d8bb83);--muted:var(--dim,#9aabb9)}
-#replay-picker .heading-title{font-size:16px}
-#replay-picker .battle-option-vehicle .vehicle-tile{width:168px}
-#replay-picker .battle-list{max-width:min(620px,calc(100vw - 40px))}
-
-.mod-nav{display:inline-flex;align-items:center;justify-content:center;padding:2px;cursor:pointer}
-.mod-nav img{display:block;object-fit:contain}

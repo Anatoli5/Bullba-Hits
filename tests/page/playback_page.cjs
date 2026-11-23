@@ -160,12 +160,14 @@ const reported = (host) => (host || []).filter((c) => c.action === 'playbackRepo
       const back = await page.evaluate("MapBench.startView()");
       check('R7: the map\'s centre from 700 m, free camera, only with no own vehicle; the own view back after it', centre.kind === 'centre' && centre.cam.dist === 700 && centre.follows === 0 && centre.free && back === 'own',
         JSON.stringify({centre: centre, back: back}));
+      // The battle picker (#replay-picker: heading tile and battle menu) is left out: since 22.11 it is Bullba Hits' own menu at
+      // Hits' sizes (the user after 1.28: Hits' style moves to Replays).
       // R6 (20.11.2026): one type scale - every text shown (the settings, the destruction list and a shots panel open) is
       // 12 px (text), 11 px (a small mark in a row: tier, time, 'shots', the Hits link) or 13 px (a heading), every line 16 px;
       // a team row's text line = the top line's = a shot row's. The sizes and the kinds are printed.
       const types = await page.evaluate("(() => { document.getElementById('settings-btn').click(); document.getElementById('destr').open = true;" +
         " const b = document.querySelector('#list-own .veh .sp-btn'); if (b) b.click(); const kinds = {};" +
-        " for (const el of document.body.querySelectorAll('*')) { if (/^(SCRIPT|STYLE|CANVAS|OPTION)$/i.test(el.tagName) || el.closest('svg')) continue;" +
+        " for (const el of document.body.querySelectorAll('*')) { if (/^(SCRIPT|STYLE|CANVAS|OPTION)$/i.test(el.tagName) || el.closest('svg') || el.closest('#replay-picker')) continue;" +
         "  const own = [...el.childNodes].some((x) => x.nodeType === 3 && x.textContent.trim()); if (!own && !/^(BUTTON|SELECT)$/.test(el.tagName)) continue;" +
         "  const cs = getComputedStyle(el), r = el.getBoundingClientRect(); if (!(r.width > 0 && r.height > 0) || !own && el.tagName !== 'SELECT') continue;" +
         "  const k = (el.id ? '#' + el.id : el.tagName.toLowerCase() + (el.classList[0] ? '.' + el.classList[0] : '')); (kinds[cs.fontSize + '/' + cs.lineHeight] = kinds[cs.fontSize + '/' + cs.lineHeight] || {})[k] = 1; }" +
@@ -176,17 +178,18 @@ const reported = (host) => (host || []).filter((c) => c.action === 'playbackRepo
       check('R6: one type scale - sizes ' + sizes.join(', ') + ' (before: 10, 11, 12, 13, 15 px), every line 16 px but a select\'s own',
         sizes.every((s) => ['11px', '12px', '13px'].includes(s)) && Object.keys(types).every((s) => /\/(16px|normal)$/.test(s)) &&
         Object.keys(types).every((s) => !/normal$/.test(s) || types[s].every((k) => k.indexOf('select') === 0 || k[0] === '#' && /^#sel-/.test(k))), JSON.stringify(types));
+      // (22.11: no Hits button; the battle is named once, by the picker's heading tile - its text left out of 'elsewhere')
       // R9 (20.11.2026, the user on 1.14): the top line in three groups - the battle (Hits, the choice; the battle named once,
       // the former title gone), the view (Settings, the sky to its right a little apart), the window (full screen, close) -
       // and, at 900-1920 px, the open settings never over the sky switch, nothing in the line over another or cut
       const R9 = "(() => { const q = (s) => document.querySelector(s), R = (el) => el.getBoundingClientRect(), sel = q('#sel-battle'), line = q('#topline');" +
-        " const text = [...line.querySelectorAll('button, label, span')].filter((e) => !e.closest('select') && !e.contains(sel)).map((e) => e.textContent).join(' ');" +
+        " const text = [...line.querySelectorAll('button, label, span')].filter((e) => !e.closest('select') && !e.contains(sel) && !e.closest('#replay-picker')).map((e) => e.textContent).join(' ');" +
         " const st = q('#settings'), wasOpen = !st.hidden; if (!wasOpen) q('#settings-btn').click();" +
         " const sky = q('#sw-sky').closest('label'), set = R(q('#settings-btn')), sk = R(sky), pane = R(st), meter = R(q('#meter'));" +
         " const parts = [...line.querySelectorAll('.tl-group > *')].filter((e) => !e.hidden).map(R); let cross = 0;" +
         " for (let i = 0; i < parts.length; i++) for (let j = i + 1; j < parts.length; j++) if (parts[i].right > parts[j].left + 0.5 && parts[j].right > parts[i].left + 0.5) cross++;" +
         " const out = {title: !!q('#title'), named: sel.selectedOptions[0] && sel.selectedOptions[0].textContent, nameElsewhere: /Malinovka/.test(text)," +
-        "  battle: !!q('.tl-battle #back') && !!q('.tl-battle #sel-battle'), view: q('.tl-view').firstElementChild === q('#settings-btn') && q('.tl-view').contains(sky)," +
+        "  battle: !!q('.tl-battle #sel-battle'), view: q('.tl-view').firstElementChild === q('#settings-btn') && q('.tl-view').contains(sky)," +
         "  window: !!q('.tl-window #fullscreen') && !!q('.tl-window #close-view'), seps: line.querySelectorAll('.tl-sep').length, skyGap: sk.left - set.right," +
         "  over: !(sk.bottom <= pane.top || sk.top >= pane.bottom || sk.right <= pane.left || sk.left >= pane.right), inside: sk.left >= meter.left && sk.right <= meter.right," +
         "  skyCut: sky.scrollWidth > sky.clientWidth + 0.5, cross: cross, width: innerWidth};" +

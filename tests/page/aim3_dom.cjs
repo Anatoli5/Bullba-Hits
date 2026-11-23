@@ -650,12 +650,9 @@ ok('Settings sits in the header row, after the Statistics log status',
    && pageSrc.slice(pageSrc.indexOf('<div class="scene-heading">')).indexOf('settings-menu') < 0);
 ok('and the heading layout no longer measures it',
    fs.readFileSync(path + 'app.js', 'utf8').indexOf(".scene-heading .settings-menu") < 0);
-// The impact cross has an opacity of its own in Settings -> Scene (user, 20.09), 10..100 %; the default is
-// 100 since 21.11; the shared preference imports an older inherited 90 once.
-ok('the impact-mark slider is in the settings menu, 10-100 %, default 100',
-   /id="impact-opacity" data-shared-setting min="10" max="100" value="100"/.test(pageSrc)
-   && /<output id="impact-opacity-value">100 %<\/output>/.test(pageSrc)
-   && pageSrc.indexOf('Impact mark opacity') > 0);
+// The impact cross is fully opaque (22.11, NOTEBOOK Y18 / BACKLOG 126): its opacity slider is gone; the colour stays.
+ok('no impact-mark opacity slider in the settings menu; the colour choice stays',
+   pageSrc.indexOf('impact-opacity') < 0 && pageSrc.indexOf('id="impact-color"') > 0);
 // S5 (22.09): the Circle figures are tiles of their own, and the word "Circle" is the tile's HEADING - the
 // value element under it holds nothing but the figure. Read off the markup: nothing here parses index.html.
 // 11.11 (user): the figures moved from the top-right corner into the panels they go with - each right after its panel's
@@ -667,16 +664,12 @@ ok('each Circle figure is a tile with a "Circle" heading inside its own panel, r
 ok('the circle figures stand on their panel\'s chance row at its right end (the stylesheet), the corner column is gone',
    /\.aim-circle-tile\{grid-row:2;grid-column:2;justify-self:end;/.test(fs.readFileSync(path + 'style.css', 'utf8'))
    && /\.viewport-tiles\{[^}]*grid-template-columns:minmax\(0,320px\) 1fr;/.test(fs.readFileSync(path + 'style.css', 'utf8')));
-const impact = document.getElementById('impact-opacity');
-impact.type = 'range'; impact.min = '10'; impact.max = '100'; impact.step = '1';   // the page's own control is a range
-impact.value = '100';
-impact.oninput.call(impact);
-ok('and it reaches the viewer as a fraction and prints its own per cent',
-   viewerInstance.impact === 1 && document.getElementById('impact-opacity-value').textContent === '100 %',
-   '(' + viewerInstance.impact + ')');
-impact.value = '20';
-impact.oninput.call(impact);
-ok('moving it applies live', viewerInstance.impact === 0.2, '(' + viewerInstance.impact + ')');
+// a stand-in slider of the settings menu's kind (10..100, step 1) for the wheel and arrow checks below
+const impact = new Element('input');
+impact.type = 'range'; impact.min = '10'; impact.max = '100'; impact.step = '1';
+let impactLive = null;
+impact.oninput = function () { impactLive = Number(this.value) / 100; };
+impact.addEventListener('input', function () { impactLive = Number(impact.value) / 100; });
 impact.value = '90';
 impact.oninput.call(impact);
 
@@ -702,7 +695,7 @@ function keyAt(key) {
 const notch = wheelAt(impact, -100);
 // 24.09 evening (user): one notch is one step of the control - the wheel is for the fine value, dragging for the coarse.
 ok('a wheel notch over a slider moves it by one step of its own and is kept from the scene',
-   impact.value === '91' && viewerInstance.impact === 0.91 && notch.prevented && notch.stopped,
+   impact.value === '91' && impactLive === 0.91 && notch.prevented && notch.stopped,
    '(' + impact.value + ')');
 wheelAt(impact, 100);
 ok('and the other way back', impact.value === '90', '(' + impact.value + ')');

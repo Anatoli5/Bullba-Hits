@@ -7140,9 +7140,10 @@
       // BACKLOG 107: dimmed, and its words say why, when the battle's replay is no longer kept.
       var kind=replayKind(b.id),gone=kind==='removed'||kind==='none';
       var replay=Rows.openLink('Open battle in Bullba Replays',tipJoin(['Bullba Replays','Plays this whole battle over its map.',
+        '• With this battle on screen and a hit selected, opens that hit’s shot',
         '• Replay retention is managed in Bullba Replays',
         kind==='removed'?'• Its replay was removed by the replay limit; this opens only if the battle was prepared before':null,
-        kind==='none'?'• No replay is held for this battle; this opens if the replay file or a prepared battle is available':null]),function(){openPlayback(b.id,null);},'span','web/replays-icon.png');
+        kind==='none'?'• No replay is held for this battle; this opens if the replay file or a prepared battle is available':null]),function(){openPlayback(b.id,selectedRoute(b.id));},'span','web/replays-icon.png');
       replay.classList.add('battle-option-replay');replay.classList.toggle('no-replay',gone);
       replay.setAttribute('data-state',kind||'unknown');o.appendChild(replay);
       var line=[b.vehicle&&b.vehicle.name,battleWhen(b.startedAt)].filter(Boolean).join(' \u00b7 ');
@@ -8176,6 +8177,12 @@
     if(tr&&tr.shotId!=null)route.shotId=String(tr.shotId);
     return route;
   }
+  // The battle list's link (22.11, NOTEBOOK Y16: as before 1.28, with 1.28's exact route): the battle on screen with a hit
+  // selected - that hit's shot; otherwise null (the battle).
+  function selectedRoute(battleId){
+    if(!current||current.id!==battleId||selected==null||poseDetached)return null;
+    return replayShot((current.hits||[]).filter(function(h){return h.id===selected;})[0]);
+  }
   function placeReplayLink(){
     var box=$('hits');[].forEach.call(box.querySelectorAll('.hit>.sp-open'),function(e){e.remove();});
     if(!current)return;
@@ -8566,7 +8573,7 @@
   $('auto-frame').onchange=function(){if(viewer)viewer.setAutoFrame(this.checked);};
   $('zoom-lock').onchange=function(){if(viewer)viewer.zoomLock=this.checked;};
   $('track-opacity').oninput=function(){if(viewer)viewer.setTrackOpacity(Number(this.value)/100);$('track-opacity-value').textContent=this.value+' %';};
-  BullbaSettings.impact.bind($('impact-color'),$('impact-opacity'),$('impact-opacity-value'),function(v){
+  BullbaSettings.impact.bind($('impact-color'),function(v){
     if(viewer){viewer.setImpactOpacity(v.opacity/100);viewer.setImpactColor(v.color);}});
   $('camera-zoom-field').onchange=function(){if(viewer)viewer.setZoom(Number(this.value));};
   $('pivot-height').oninput=function(){if(viewer){var r=viewer.heightRange();viewer.setPivotHeight(r[0]+Number(this.value)/100);}};

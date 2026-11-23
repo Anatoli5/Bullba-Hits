@@ -3,7 +3,7 @@
    windows look like one product. Moved out of web/app.js unchanged; the styles are web/rows.css (moved out of style.css).
    No page state here: every function builds markup from what it is handed.
    BullbaRows {node, effects, tierRomans, classNames, roleFamilies, roleNames, nationNames, vehicleNation, vehicleWords,
-   vehicleTile, iconColumn, result, resultIcon, hitRow}. */
+   vehicleTile, iconColumn, result, resultIcon, hitRow, openLink, modeMark, modeOption, modeWords}. */
 (function (root) {
   'use strict';
   function node(tag,text,cls){var e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e;}
@@ -117,7 +117,24 @@
     h.onkeydown=function(e){if(e.key==='Enter'||e.key===' '){e.stopPropagation();e.preventDefault();open();}};
     return h;
   }
-  root.BullbaRows={node:node,effects:effects,tierRomans:tierRomans,classNames:classNames,roleFamilies:roleFamilies,roleNames:roleNames,
+  // THE SPECIAL-MODE MARK (22.11, BACKLOG 129: the 1.28 sign turned white where a place wrote the text without its span):
+  // the one place that writes the warning of a battle of a special mode (replay_files.special_mode / web/replay-mode.js:
+  // {name}). modeMark: the yellow sign as an element (rows.css .mode-mark), its words in its title; null for no special mode.
+  // modeOption: a native <option> (which holds text only) gets the sign as its text's first character, data-special (the
+  // mode's name), data-label (its text without the sign: what a page's own list draws beside modeMark) and the title.
+  var MODE_SIGN='⚠';
+  function modeWords(special){return 'Special battle mode: '+(special.name||'unknown')+'\nThe picture may be wrong for this mode.';}
+  function modeMark(special){
+    if(!special)return null;
+    var e=node('span',MODE_SIGN,'mode-mark');e.setAttribute('data-special',special.name||'');e.title=modeWords(special);e.setAttribute('aria-label','Special battle mode');
+    return e;
+  }
+  function modeOption(option,label,special){
+    option.textContent=(special?MODE_SIGN+' ':'')+label;
+    if(special){option.setAttribute('data-special',special.name||'');option.setAttribute('data-label',label);option.title=modeWords(special);}
+    return option;
+  }
+  root.BullbaRows={modeMark:modeMark,modeOption:modeOption,modeWords:modeWords,node:node,effects:effects,tierRomans:tierRomans,classNames:classNames,roleFamilies:roleFamilies,roleNames:roleNames,
     nationNames:nationNames,vehicleNation:vehicleNation,vehicleWords:vehicleWords,vehicleTile:vehicleTile,iconColumn:iconColumn,
     result:result,resultIcon:resultIcon,hitRow:hitRow,openLink:openLink};
 })(typeof window!=='undefined'?window:this);

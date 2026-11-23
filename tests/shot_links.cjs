@@ -55,7 +55,8 @@ const flush=()=>new Promise(resolve=>setImmediate(resolve));
   state.choose('current',route.encode(link));assert.equal(state.opened,1);assert.equal(state.params.shot,route.encode(link));
   const app=fs.readFileSync(path.join(root,'web/app.js'),'utf8');
   assert.ok(app.includes('if(h.id!==selected||poseDetached)return;'));
-  assert.ok(app.includes('openPlayback(b.id,null)'));
+  // NOTEBOOK Y16 (22.11): the battle list's link opens the selected hit's shot when that battle is on screen (1.28's route)
+  assert.ok(app.includes('openPlayback(b.id,selectedRoute(b.id))')&&app.includes('if(!current||current.id!==battleId||selected==null||poseDetached)return null;'));
   assert.ok(!app.includes("sendCommand('replayKeep'"));assert.ok(!app.includes("sendCommand('replayLimit'"));
   for(const asset of ['menu-icon.png','replays-icon.png','shot-route.js']){
     assert.ok(fs.existsSync(path.join(root,'web',asset)));

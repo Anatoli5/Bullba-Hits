@@ -26,6 +26,19 @@ class ReplayModes(unittest.TestCase):
         self.assertIn('<script src="replay-mode.js"></script>', html)
         self.assertLess(html.index('src="replay-mode.js"'), html.index('src="playback/playback.js"'))
 
+    def test_summary_carries_mode_of_every_battle(self):
+        # NOTEBOOK Y15 (22.11): his installed index had 1243 of 1327 battles with no mode evidence - an ordinary battle's
+        # row carried nothing, and the viewer warned "Unidentified mode". The mode fields of his Redshire battle's record:
+        ordinary = {'gameplayName': 'domination', 'bonusTypeName': 'TOURNAMENT_REGULAR', 'bonusType': 14, 'geometryName': '34_redshire'}
+        self.assertEqual(modes.summary_mode(ordinary), {'battleType': 14, 'gameplay': 'domination'})
+        self.assertEqual(modes.summary_mode({'bonusType': 1, 'gameplayName': 'ctf'}), {'battleType': 1, 'gameplay': 'ctf'})
+        frontline = modes.summary_mode({'bonusType': 27, 'gameplayName': 'epic'})
+        self.assertEqual(frontline['special']['name'], 'Frontline')
+        self.assertEqual(frontline['battleType'], 27)
+        # an old record with no mode: nothing claimed (the viewer decides after preparing it)
+        self.assertEqual(modes.summary_mode({}), {})
+        self.assertEqual(modes.summary_mode(None), {})
+
     def test_stale_metadata_regression(self):
         fallback = os.path.expanduser('~/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node.exe')
         node = next((p for p in (os.environ.get('BULLBA_NODE'), shutil.which('node'), fallback)

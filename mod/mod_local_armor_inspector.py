@@ -13,7 +13,7 @@ try:
 except ImportError:
     import queue
 
-VERSION = '1.28'
+VERSION = '1.29'
 VIEWER_PATH = os.path.join('mods', 'configs', 'local.armor_inspector', 'Viewer.html')
 # The 3D replay viewer's own entry (19.11, the user's 'one mod, two entries'): its page, its mods-list button and icon.
 PLAYBACK_PATH = os.path.join('mods', 'configs', 'local.armor_inspector', 'web', 'playback.html')
@@ -49,6 +49,13 @@ _hit_hook = None
 _mods_api = None
 _events = None
 _context_menu = None
+# Page -> mod uploads (BACKLOG 131; page_upload.UploadWorker): their own thread and folder, never the record writer's.
+UPLOAD_FOLDER = os.path.join('mods', 'configs', 'local.armor_inspector', 'uploads')
+_uploads = None
+# Stage 0's bridge probe: the first Hits window of a game session asks the page for it ('&probe=upload'); the page runs
+# it once per browser profile. False (or this block gone) once stage 0 has its numbers.
+UPLOAD_PROBE = True
+_probe_asked = False
 
 
 def vector(v):
@@ -1936,7 +1943,7 @@ def open_viewer():
             try: _recorder.request_vehicle(picker_descriptor(type_name), 'preview')
             except Exception: LOG.exception('Previewed vehicle %s could not be asked for; the page asks itself', type_name)
         page_waits(type_name)
-        open_in_game(VIEWER_PATH, hangar_fragment(type_name))
+        open_in_game(VIEWER_PATH, probe_fragment(hangar_fragment(type_name)))
     except Exception:
         LOG.exception('Could not open local HTML viewer')
 
@@ -2016,6 +2023,15 @@ def shown_vehicle():
 def hangar_type():
     """The client type name of the vehicle the lobby shows (the previewed one first, shown_vehicle), or None."""
     return shown_vehicle()[0]
+
+
+def probe_fragment(fragment):
+    """The fragment with '&probe=upload' the first time in a game session (UPLOAD_PROBE): the page's one-time bridge
+    measurement (web/host.js). Later opens leave it as it is."""
+    global _probe_asked
+    if not UPLOAD_PROBE or _probe_asked or _uploads is None: return fragment
+    _probe_asked = True
+    return fragment + '&probe=upload'
 
 
 def hangar_fragment(type_name=None):
@@ -2177,7 +2193,7 @@ def show_vehicle(handler):
     if _recorder is not None:
         _recorder.request_vehicle(descr, 'hangar')
         page_waits(descr.type.name)
-    open_in_game(VIEWER_PATH, 'host=game&vehicle=' + vehicle_id(descr.type.name))
+    open_in_game(VIEWER_PATH, probe_fragment('host=game&vehicle=' + vehicle_id(descr.type.name)))
 
 
 def show_compared_vehicle(handler):
@@ -2210,7 +2226,7 @@ def show_compared_vehicle(handler):
     if _recorder is not None:
         _recorder.request_vehicle(descr, 'compare')
         page_waits(type_name)
-    open_in_game(VIEWER_PATH, 'host=game&vehicle=' + vehicle_id(type_name))
+    open_in_game(VIEWER_PATH, probe_fragment('host=game&vehicle=' + vehicle_id(type_name)))
 
 
 # The vehicle context menus that carry the Bullba Hits entry: (module, class, what the entry does). The comparison
@@ -2292,7 +2308,7 @@ def remove_context_menu(installed):
 
 
 def init():
-    global _recorder, _hit_hook, _mods_api, _events, _context_menu
+    global _recorder, _hit_hook, _mods_api, _events, _context_menu, _uploads
     if _recorder is not None: return
     try:
         from Vehicle import Vehicle
@@ -2352,6 +2368,11 @@ def init():
             presentation.set_files_request(page_files)
             presentation.set_vehicles_request(page_playback_vehicles)
             presentation.set_load_listener(_recorder.note_page_loading)
+            try:
+                from local_armor_inspector.page_upload import UploadWorker
+                _uploads = UploadWorker(UPLOAD_FOLDER)
+                presentation.set_upload_request(_uploads.put, _uploads.status)
+            except Exception: LOG.exception('Page uploads unavailable; hit recording continues')
         except Exception: LOG.exception('Page export command unavailable; hit recording continues')
         try:
             from gui.modsListApi import g_modsListApi
@@ -2373,7 +2394,7 @@ def init():
 
 
 def fini():
-    global _recorder, _hit_hook, _events, _context_menu
+    global _recorder, _hit_hook, _events, _context_menu, _uploads
     try:
         from local_armor_inspector import presentation
         presentation.set_export_request(None)
@@ -2390,9 +2411,14 @@ def fini():
         presentation.set_files_request(None)
         presentation.set_vehicles_request(None)
         presentation.set_load_listener(None)
+        presentation.set_upload_request(None, None)
         # The open window's trace (blue window, 03.10): its listeners and wrappers leave the client's objects.
         presentation.close_window_trace()
     except Exception: LOG.exception('Page export command cleanup failed')
+    if _uploads is not None:
+        try: _uploads.stop()
+        except Exception: LOG.exception('Page upload thread stop failed')
+        _uploads = None
     remove_context_menu(_context_menu)
     _context_menu = None
     if _events is not None:

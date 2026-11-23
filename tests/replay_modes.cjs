@@ -23,6 +23,17 @@ assert.ok(R.resolve('battle', [{id: 'battle'}], [event], null).special); // empt
 assert.strictEqual(R.resolve('battle', [{id: 'battle', special: null}], [event], null).special, null);
 assert.strictEqual(R.resolve('battle', [{id: 'battle', battleType: 1, gameplay: 'ctf'}], [event], null).special, null);
 assert.strictEqual(R.resolve('unknown', [], [], null).known, false);
+// NOTEBOOK Y15 (22.11): his ordinary Westfield battle, an index row of the old shape (no mode fields), no replay-file row,
+// not prepared yet - the viewer warned "Unidentified mode". Not prepared: no warning yet; prepared: its record decides.
+const hisRow = {id: '1701423024682059-c02263efff0e', map: 'Westfield', startedAt: 1795142733.571, hits: 12};
+const before = R.resolve(hisRow.id, [], [hisRow], null);
+assert.strictEqual(R.opening(before, false), null);
+assert.strictEqual(R.opening(R.resolve(hisRow.id, [], [hisRow], {id: hisRow.id, record: {gameplay: 'ctf', map: '05_prohorovka'}}), true), null);
+assert.strictEqual(R.opening(R.resolve(hisRow.id, [], [hisRow], {id: hisRow.id, record: {gameplay: 'epic'}}), true).name, 'Frontline');
+assert.strictEqual(R.opening(before, true).name, 'Unidentified mode'); // prepared and still no evidence: a real unknown
+// the new index rows (exporter summary_mode): an ordinary battle known from the index alone, a special one marked
+assert.deepStrictEqual(R.resolve('b', [], [{id: 'b', battleType: 14, gameplay: 'domination'}], null), {known: true, special: null});
+assert.strictEqual(R.resolve('b', [], [{id: 'b', battleType: 29, gameplay: 'ctf'}], null).special.name, 'Steel Hunter');
 let installedOnslaught = 0, installedEvents = 0;
 const eventModes = new Set();
 if (process.argv[2]) {

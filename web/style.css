@@ -58,12 +58,7 @@ header{height:68px;padding:0 22px}main{height:calc(100vh - 68px);height:calc(100
 .scene-heading{min-height:80px;padding-top:12px;padding-bottom:10px}
 .heading-battle{min-width:0}
 .heading-line{display:flex;align-items:center;gap:18px;min-height:42px}
-.heading-vehicle{display:flex;align-items:center;flex:0 1 auto;min-width:0;max-width:280px}
-.heading-vehicle .vehicle-tile{flex:0 0 auto;min-width:0;padding-right:44px}
-.heading-vehicle:empty{display:none}
-/* The heading tile IS the battle picker (19.09): the map name in the box the <select> used to fill, the
-   player's vehicle tile beside it, a caret at the end. In the Vehicles mode the same tile carries the vehicle
-   name with nothing to open, so it is disabled and loses its caret and its dashed underline. */
+/* .heading-vehicle and the battle picker itself: web/viewer.css (shared with the replay viewer, 22.11). */
 /* Scene overlays: the vehicle whose collision model is drawn stays centred over the model, the shooter
    under it. The caption sits to the LEFT of the vehicle tile (a label, not a header). Backdrops are almost
    transparent - just enough not to float loose over the model. Informational blocks carry no border; the

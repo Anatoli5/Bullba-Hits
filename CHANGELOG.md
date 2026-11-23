@@ -2,6 +2,23 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.1.1 from 1.05 on, 2.4.1.0 from 1.02 on, 2.4.0.2 from 0.9.3 on, 2.4.0.1 #950 from 0.7.6, 2.4.0.0 #945 before.
 
+## 1.29 (2026-11-23)
+
+- Replays: your own camera moves (drag to turn or pan, wheel zoom, WASD and arrow keys) now glide smoothly instead of jumping each step; each move still goes exactly as far as before. New setting "smooth camera" (on by default) turns it off.
+- Battle menus: Replays' battle list and heading now look like the Hits battle menu (map, vehicle tile, time), with the keep-forever star where Hits shows its Replays link; the heading adds the start time and the player under the map. Hits' battle menu is back to its earlier look. Links between the mods are small mod icons without a frame; Replays no longer has a separate Hits button in its top line.
+- Shot replays: an artillery shot with no recorded camera now opens in a rebuilt artillery trajectory view (behind the aim point along the shell's fall; the distance is an estimate) and shows the artillery aiming mark on the ground or the target instead of a direct-fire circle. For every shot the camera following the shell looks along its flight from the moment it is fired, with no turn mid-flight. New experimental setting "camera at the shell's speed": the camera travels where the shell is at each moment instead of the eased glide.
+- Replays: an ordinary battle is no longer warned about as "Unidentified mode"; new Hits battles carry their mode in the battle list, and an older one is judged from its prepared replay before anything is decoded. A really unknown mode still asks first.
+- Shot replays: map objects standing between the camera and the target are drawn see-through while the shot view is open (as bushes already are), so both the obstacle and the hit show; nothing is hidden.
+- Shot replays: a ricochet's shot now ends at the armour - the camera stops in front of the tank and no longer follows the bounced shell, and the hit belongs to its own shot again (replays are read again once on first opening).
+- Shot replays: the note under the shot's figures is back to its short form; what the view rebuilds rather than records (simulated zoom, aiming size over time, the shell's arc, artillery view details) is behind a ⚠ with a tooltip.
+- Other shooters' estimated aim circle has no aim-point cross any more, in Hits and in the shot view; the circle and the gun marker stay.
+- The impact-mark opacity slider is gone from both settings panels: the cross is always fully opaque. The colour choice stays.
+- Hits battle list: the Replays icon of the battle on screen opens the selected hit's shot, as before 1.28; otherwise the battle.
+- The shot view's tracer no longer curls back at close range; a ricochet tracer with an impossible end is no longer drawn.
+- Replays: the special-mode ⚠ is yellow again in the battle list and the heading.
+- Replays: a battle opens with the camera on the replay owner's vehicle again, a little farther out for a view of the map around it.
+- Replays: the sky is off by default again (a remembered choice is reset once).
+
 ## 1.28 (2026-11-22)
 
 - Hits and Replays use their mod icons for cross-links. The selected Hits action opens the exact recorded shot episode; ambiguous links never select a neighbouring shot.

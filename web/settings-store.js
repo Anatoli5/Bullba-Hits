@@ -91,29 +91,25 @@
   // the same control locally, without claiming that their stores always share.
   var IMPACT_KEY='bullba-impact-mark',IMPACT_COLORS=['#258cff','#79cfff','#ff5ad6'],impactValue=null,impactListeners=[];
   function impactDefault(){return {v:1,color:IMPACT_COLORS[0],opacity:100};}
-  function impactValid(v){var out=impactDefault();if(v&&IMPACT_COLORS.indexOf(v.color)>=0)out.color=v.color;
-    if(v&&typeof v.opacity==='number'&&Number.isFinite(v.opacity))out.opacity=Math.max(10,Math.min(100,v.opacity));return out;}
+  // 22.11 (NOTEBOOK Y18, BACKLOG 126): the cross is fully opaque - no opacity control; a stored opacity is not read
+  function impactValid(v){var out=impactDefault();if(v&&IMPACT_COLORS.indexOf(v.color)>=0)out.color=v.color;return out;}
   function impactWrite(v){impactValue=impactValid(v);try{window.localStorage.setItem(IMPACT_KEY,JSON.stringify(impactValue));}catch(e){}}
   function impactGet(){
     if(impactValue)return impactValue;
     var saved=null;try{saved=JSON.parse(window.localStorage.getItem(IMPACT_KEY));}catch(e){}
     if(saved&&saved.v===1){impactValue=impactValid(saved);return impactValue;}
     var legacy=null;try{legacy=JSON.parse(window.localStorage.getItem('bullba-settings'));}catch(e){}
-    var old=legacy&&legacy.values||{},opacity=Number(old['impact-opacity']),v=impactDefault();
-    if(Number.isFinite(opacity)&&opacity>=10&&opacity<=100&&opacity!==90&&!(legacy.v<2&&opacity===50))v.opacity=opacity;
+    var old=legacy&&legacy.values||{},v=impactDefault();
     if(IMPACT_COLORS.indexOf(old['impact-color'])>=0)v.color=old['impact-color'];
-    // The versioned write makes the inherited-90 migration one-shot. A later
-    // deliberate 90 is a v1 value and is never migrated again.
     impactWrite(v);return impactValue;
   }
   function impactNotify(){var v=impactGet();impactListeners.forEach(function(fn){fn(v);});}
   function impactSet(patch){var v=impactGet();impactWrite(Object.assign({},v,patch));impactNotify();}
   function impactSubscribe(fn){impactListeners.push(fn);fn(impactGet());}
-  function impactBind(color,opacity,output,apply){
-    function sync(v){if(color)color.value=v.color;if(opacity)opacity.value=String(v.opacity);if(output)output.textContent=v.opacity+' %';if(apply)apply(v);}
+  function impactBind(color,apply){
+    function sync(v){if(color)color.value=v.color;if(apply)apply(v);}
     impactSubscribe(sync);
     if(color)color.onchange=function(){impactSet({color:this.value});};
-    if(opacity)opacity.oninput=function(){impactSet({opacity:Number(this.value)});};
   }
   window.addEventListener('storage',function(e){if(e.key===IMPACT_KEY){impactValue=null;impactNotify();}});
   window.BullbaSettings={bind:bind,value:value,byDefault:byDefault,valid:valid,set:set,run:run,

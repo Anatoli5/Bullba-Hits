@@ -89,7 +89,10 @@
   }
 
   // ---- where a vehicle stood (battle.js 'pos': t, x, y, z, yaw, pitch, roll per row) -------------------------------------
+  // (the track of the vehicle's life at t, battle.js trackOf: another life's samples are not used)
   function positionAt(v, t) {
+    var PB = root.PlaybackBattle, life = v && PB && PB.lifeAt ? PB.lifeAt(v, t) : null;
+    if (v && life) v = PB.trackOf(v, life);
     var p = v && v.pos, n = v ? v.np : 0;
     if (!p || !n) return null;
     var lo = 0, hi = n - 1;
