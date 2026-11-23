@@ -110,6 +110,8 @@
   #cost td { padding:0 6px 0 0; }
   #cost td.v { text-align:right; color:#fff; }
   #msg { position:absolute; left:50%; top:45%; transform:translate(-50%,-50%); font-size:13px; }
+  #follow-note { position:absolute; left:50%; top:46px; transform:translateX(-50%); padding:3px 10px; border-radius:4px; background:rgba(20,24,28,.82); color:#f0d890; font-size:12px; pointer-events:none; z-index:5; }
+  #follow-note[hidden] { display:none; }
   #help { color:var(--dim); }
   #destr summary { cursor:pointer; }
   #destr-rows { max-height:32vh; overflow:auto; margin-top:4px; font-variant-numeric:tabular-nums; }
@@ -149,6 +151,7 @@
 <body>
 <div id="view"></div>
 <div id="msg">Loading...</div>
+<div id="follow-note" hidden></div>
 <div id="meter" class="panel">
   <div id="topline">
     <span class="tl-group tl-battle">
@@ -186,7 +189,7 @@
   </div>
   <div style="margin-top:2px">
     <label title="Shadows&#10;The sun's shadows of the ground, objects, trees and vehicles."><input type="checkbox" id="sw-shadows" checked> shadows</label>
-    <select id="sel-shadowq" title="Shadow look&#10;How detailed the shadows are; soft and sharp cover all the ground in view.&#10;- soft (default): blurred edges, the same near the camera at any view; plants cast a rough outline, the ground casts none; three maps, fine near and coarse far&#10;- sharp: the same three maps at twice the detail, plants cast their 3D shape near the camera; crisp close up at any tilt&#10;- all redraw the shadows only when the view, the time or something casting changed"><option value="soft">soft</option><option value="sharp" selected>sharp</option></select>
+    <select id="sel-shadowq" title="Shadow look&#10;How detailed the shadows are; soft and sharp cover all the ground in view.&#10;- soft: blurred edges, the same near the camera at any view; plants cast a rough outline, the ground casts none; three maps, fine near and coarse far&#10;- sharp (default): the same three maps at twice the detail, plants cast their 3D shape near the camera; crisp close up at any tilt&#10;- all redraw the shadows only when the view, the time or something casting changed"><option value="soft">soft</option><option value="sharp" selected>sharp</option></select>
     <select id="sel-shadowd" title="Sharp shadow detail&#10;The size of sharp's near shadow map; the cost readout shows the memory it takes.&#10;- 4096: as fine close up as the old one-map sharp&#10;- 2048 (default), 1024: coarser, less memory&#10;- soft is not affected"><option value="4096">4096</option><option value="2048" selected>2048</option><option value="1024">1024</option></select>
     <label title="Grain&#10;Adds a fine neutral grain to the ground, the same in every ground mode.&#10;- the slider sets how strong it is; 0.72 is the «texture kinds» grain&#10;- off: the ground as its mode colours it"><input type="checkbox" id="sw-grain" checked> grain</label>
     <input type="range" id="rng-grain" min="0" max="1.5" step="0.01" value="1.5" style="width:70px;vertical-align:middle" title="Grain strength&#10;How strong the ground grain is (0 to 1.5)."> <span id="grain-v" class="dim">0.72</span>
@@ -216,7 +219,7 @@
     <label title="Outline on break&#10;Marks an object with a blinking yellow box for 2.5 s after it breaks, drawn over vehicles and walls.&#10;- works with the destruction list shown or not&#10;- off: no marks"><input type="checkbox" id="sw-flash" checked> outline when it breaks</label></div>
   <div style="margin-top:2px"><label title="Panel opacity&#10;How solid the backgrounds of all panels are: top line, settings, team lists, shots panel, shot bar, time bar, cost readout, destruction list.&#10;- 55% (default)&#10;- 100%: solid, as before 1.30&#10;- lower: more of the view shows through; the text stays as it is">panel opacity <input type="range" id="rng-panel-a" min="0.2" max="1" step="0.05" value="0.55" style="width:70px;vertical-align:middle"></label> <span id="panel-a-v" class="dim">100%</span></div>
   <div style="margin-top:2px"><label title="Smooth camera&#10;Glides your own camera moves over a few frames instead of jumping to each new position.&#10;- drag turns and pans settle in about 0.1 s, a wheel click in about 0.35 s&#10;- each move goes as far as without it; only how it gets there changes&#10;- jumps the viewer makes itself (start, follow, shot view, list clicks) stay instant&#10;- off: the camera jumps with each mouse or key step"><input type="checkbox" id="sw-smooth-cam" checked> smooth camera</label></div>
-  <div id="help">drag: orbit; right or Shift + drag: pan; wheel: zoom; WASD or arrows: move; R/F: up/down; space: play</div>
+  <div id="help">click a vehicle: follow it; drag: orbit; right or Shift + drag: pan; wheel: zoom; WASD or arrows: move; R/F: up/down; space: play</div>
   <label title="Impact mark color&#10;Chooses the recorded hit cross color; shared with Hits where the browser shares storage.&#10;Pinned points and red semantic marks keep their own colors.">Impact mark color <select id="impact-color" data-shared-setting aria-label="Impact mark color"><option value="#258cff" selected>Bright blue</option><option value="#79cfff">Light blue</option><option value="#ff5ad6">Magenta</option></select></label>
   <label title="Camera at the shell's speed (experimental)&#10;Sets how the shot view's camera travels along the shell's arc after the shot.&#10;- off (default): an eased glide over the flight, at least 0.6 s&#10;- on: at the shell's own speed, where the shell is at each moment&#10;- either way the camera looks along the flight"><input type="checkbox" id="sv-shell-clock"> camera at the shell's speed</label>
   <div class="settings-actions"><button type="button" id="reset-settings" title="All settings here back to default">Reset to defaults</button></div>
@@ -240,6 +243,7 @@
       <tr><td>frame interval median / 95th (1 s)</td><td class="v" id="c-int">-</td></tr>
       <tr><td>page CPU per frame median / 95th (1 s)</td><td class="v" id="c-cpu">-</td></tr>
       <tr><td>GPU per frame median / 95th (1 s)</td><td class="v" id="c-gpu">-</td></tr>
+      <tr title="Input delay&#10;From a mouse or key event to the end of the frame that drew it, median / 95th of the last inputs.&#10;- small here while the picture lags: the delay is the game's display, not the page"><td>input delay median / 95th</td><td class="v" id="c-input">-</td></tr>
       <tr><td>triangles / draw calls</td><td class="v" id="c-tris">-</td></tr>
       <tr><td>shadow maps</td><td class="v" id="c-shadow">-</td></tr>
       <tr><td>ground textures</td><td class="v" id="c-ground">-</td></tr>

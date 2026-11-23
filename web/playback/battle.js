@@ -10,7 +10,9 @@
    effects(collector, battle, defs, info, docs) -> adds hits, marks, muzzles to the battle. */
 (function () {
   'use strict';
-  var FORMAT = 8;                 // 8, 22.11 (NOTEBOOK Y19): a ricochet's tracer apart from its shot's (the same shotID)
+  var FORMAT = 9;                 // 9, 23.11 (outputs/follow-wrecks-2026-11-23.md): a create packet's place as a position
+                                  // sample, a wreck's re-creation no new life, the arena list's minimap places and isAlive
+                                  // 8, 22.11 (NOTEBOOK Y19): a ricochet's tracer apart from its shot's (the same shotID)
                                   // 7: stable recorded tracer ID for cross-window shot links
                                   // (2, 19.11: hitEvents and the tracers' shell fields, for the shots panel - BACKLOG 109;
                                   // 3, 21.11: the player's camera (0x26), for the shot view's first person - NOTEBOOK S2;
@@ -128,6 +130,11 @@
       this.created.add(vid);
       list(this.sight, vid).push([t, null]);
       if ('health' in p) list(this.hp, vid).push([t, p.health]);
+      // 23.11 (outputs/follow-wrecks-2026-11-23.md, cause 2): the create packet's place is a position sample - a vehicle killed
+      // out of sight comes back as a wreck entity that never moves (no position packet). Measured: x = pos[1], y = pos[2],
+      // z = dir[0], yaw = dir[1], pitch = dir[2] (43 of 43 creates on Highway 21.11 equal the next position sample); roll 0
+      if (ev.pos && ev.dir && ev.pos.length > 2 && ev.dir.length > 2 && Number.isFinite(ev.pos[1]) && Number.isFinite(ev.dir[0]))
+        list(this.pos, vid).push([t, ev.pos[1], ev.pos[2], ev.dir[0], ev.dir[1], ev.dir[2], 0]);
       var pi = p.publicInfo || {};
       if (pi.compDescr && !this.comp.has(vid)) this.comp.set(vid, pi.compDescr);
       if ('gunAnglesPacked' in p) { var g = D.decodeGunAngles(p.gunAnglesPacked); list(this.gun, vid).push([t, g[0], g[1]]); }
@@ -279,6 +286,23 @@
     }
     return out;
   }
+  // THE HP OF A VEHICLE AT t (23.11, outputs/follow-wrecks-2026-11-23.md (e)): its last recorded health at or before t over
+  // all its lives; 0 once the arena list says it is not alive and no health came after that; null: not known (no sample yet)
+  function lastAt(a, stride, n, t) { var lo = 0, hi = n - 1, r = -1; while (lo <= hi) { var m = (lo + hi) >> 1; if (a[m * stride] <= t) { r = m; lo = m + 1; } else hi = m - 1; } return r; }
+  function hpAt(v, t) {
+    if (!v) return null;
+    var i = v.hp ? lastAt(v.hp, 2, v.nh || 0, t) : -1, j = v.alive ? lastAt(v.alive, 2, v.na || 0, t) : -1;
+    var hp = i >= 0 ? v.hp[i * 2 + 1] : null, ht = i >= 0 ? v.hp[i * 2] : -Infinity;
+    if (j >= 0 && !v.alive[j * 2 + 1] && v.alive[j * 2] >= ht) return 0;
+    return hp;
+  }
+  // THE MINIMAP PLACE OF A VEHICLE AT t: the arena list's last place given by t {t: since when it stood there, until: when
+  // it changed (t itself while it is the current one), x, z (game metres), now: it is the list's current word}; null: none
+  function miniAt(v, t) {
+    var m = v && v.mini, n = (v && v.nm) || 0, i = m ? lastAt(m, 3, n, t) : -1;
+    for (var k = i; k >= 0; k--) if (m[k * 3 + 1] === m[k * 3 + 1]) return { t: m[k * 3], until: k === i ? t : m[(k + 1) * 3], x: m[k * 3 + 1], z: m[k * 3 + 2], now: k === i };
+    return null;
+  }
   // the track of a span's life (`own`: of the span alone) as views into the vehicle's own arrays, never copies:
   // {from, until, pos (7 a row), np, gun (3), ng, hp (2), nh}
   function cut(data, stride, n, from, until) {
@@ -375,7 +399,7 @@
     for (var i = 0; i <= segs; i++) { var p = at(reach * i / segs); out[i * 3] = p[0]; out[i * 3 + 1] = p[1]; out[i * 3 + 2] = p[2]; }
     return { n: segs + 1, reach: reach };
   }
-  Vehicles.prototype.publicInfo = function (eid, info, t, listed) {
+  Vehicles.prototype.publicInfo = function (eid, info, t, listed, createHealth) {
     if (!isDict(info) || !info.compDescr) return;
     var v = this.veh(eid), cd = info.compDescr, header = cd[0], tid = cd[1];
     if (header & 2) tid += cd[2] << 8;
@@ -389,8 +413,12 @@
       key: variantKey(v.typeStream, text), maxHealth: info.maxHealth, entity: !listed
     };
     if (!Number.isFinite(row.maxHealth)) row.maxHealth = last && last.type === row.type ? last.maxHealth : last ? null : v.maxHealthHeader;
-    if (!last || last.type !== row.type || (!listed && v.dead)) {
-      row.newLife = !!last; rows.push(row); v.dead = false;
+    // 23.11 (cause 1 of outputs/follow-wrecks-2026-11-23.md): the game re-creates a WRECK's entity each time it re-enters the
+    // area of interest (and every entity at the battle's end) - that create's descriptor is no new life. A descriptor after
+    // death starts one only when the vehicle comes back alive (its create health above 0) or as another type
+    var wreck = createHealth != null && num(createHealth) <= 0;
+    if (!last || last.type !== row.type || (!listed && v.dead && !wreck)) {
+      row.newLife = !!last; rows.push(row); v.dead = wreck;
     } else if (!listed) {
       if (last.entity && last.compDescr !== text) rows.push(row);
       else {
@@ -423,19 +451,37 @@
       }
       var self = this;
       (this.listed || []).forEach(function (row) {
-        if (row && row.vehicleID != null) self.publicInfo(row.vehicleID, row, ev.t, true);
+        if (row && row.vehicleID != null) { self.publicInfo(row.vehicleID, row, ev.t, true); self.minimap(row, ev.t || 0); }
       });
     }
     if (ev.entity !== 'Vehicle') return;
     if(ev.ev==='property'&&ev.name==='health')this.veh(ev.id).dead=ev.value<=0;
-    if (ev.ev === 'entity_create') this.publicInfo(ev.id, (ev.props || {}).publicInfo, ev.t, false);
+    if (ev.ev === 'entity_create') {
+      var ch = (ev.props || {}).health;
+      if (ch != null && num(ch) <= 0) this.veh(ev.id).dead = true;   // a wreck's entity: created dead
+      this.publicInfo(ev.id, (ev.props || {}).publicInfo, ev.t, false, ch);
+    }
     else if (ev.ev === 'property' && ev.name === 'publicInfo') this.publicInfo(ev.id, ev.value, ev.t, false);
+  };
+  // THE ARENA LIST'S MINIMAP PLACE AND LIFE (23.11, outputs/follow-wrecks-2026-11-23.md (b)): AvatarVehiclesInfo's row of a
+  // vehicle carries its 2D place (game metres x, z; -32768 = not spotted) about every 2 s while it is spotted beyond the area
+  // of interest, and isAlive. Kept as their changes: mini [t, x, z] (x, z null: no place), alive [t, 1 / 0]
+  Vehicles.prototype.minimap = function (row, t) {
+    var v = this.veh(row.vehicleID), p = row.position, x = null, z = null;
+    if (p && p.length > 1 && Number(p[0]) !== -32768 && Number.isFinite(Number(p[0])) && Number.isFinite(Number(p[1]))) { x = Number(p[0]); z = Number(p[1]); }
+    var m = v.mini || (v.mini = []), lm = m[m.length - 1];
+    if (!lm || lm[1] !== x || lm[2] !== z) m.push([t, x, z]);
+    if ('isAlive' in row) {
+      var al = v.alive || (v.alive = []), la = al[al.length - 1], a = row.isAlive ? 1 : 0;
+      if (!la || la[1] !== a) al.push([t, a]);
+    }
   };
   Vehicles.prototype.summary = function () {
     var self = this;
     return Array.from(this.v.keys()).sort(function (a, b) { return a - b; }).map(function (eid) {
       var v = self.v.get(eid);
-      return { id: eid, type: v.typeStream || v.type, configs:v.configs||[], team: v.team, maxHealth: v.maxHealthHeader, maxHealthStream: v.maxHealthStream };
+      return { id: eid, type: v.typeStream || v.type, configs:v.configs||[], team: v.team, maxHealth: v.maxHealthHeader, maxHealthStream: v.maxHealthStream,
+        mini: v.mini || [], alive: v.alive || [] };
     });
   };
 
@@ -467,7 +513,9 @@
       vlist.push({ id: vid, team: v.team, type: v.type, own: vid === own, player: players[String(vid)],
         maxHealth: v.maxHealth || v.maxHealthStream, compDescr: v.configs.length ? v.configs[0].compDescr : cd ? b64(cd) : null, configs:v.configs,
         sight: sight.map(function (iv) { return [r3n(iv[0]), r3n(iv[1])]; }),
-        np: pos.length, pos: floats(pos, 7), ng: gun.length, gun: floats(gun, 3), nh: hp.length, hp: floats(hp, 2) });
+        np: pos.length, pos: floats(pos, 7), ng: gun.length, gun: floats(gun, 3), nh: hp.length, hp: floats(hp, 2),
+        nm: v.mini.length, mini: floats(v.mini.map(function (m) { return [m[0], m[1] == null ? NaN : m[1], m[2] == null ? NaN : m[2]]; }), 3),
+        na: v.alive.length, alive: floats(v.alive, 2) });
     });
     var shots = [];
     c.tracers.forEach(function (tr, sid) {
@@ -690,7 +738,7 @@
     return fx;
   }
 
-  var api = { FORMAT: FORMAT, source: source, build: build, effects: effects, Collector: Collector, unb64: unb64, variantKey:variantKey, lives:lives, lifeAt:lifeAt, sightAt:sightAt, trackOf:trackOf, Vehicles:Vehicles, trajectory:trajectory, TURN_MAX:TURN_MAX, tracerReach:tracerReach, growTracer:growTracer,
+  var api = { FORMAT: FORMAT, source: source, build: build, effects: effects, Collector: Collector, unb64: unb64, variantKey:variantKey, lives:lives, lifeAt:lifeAt, sightAt:sightAt, hpAt:hpAt, miniAt:miniAt, trackOf:trackOf, Vehicles:Vehicles, trajectory:trajectory, TURN_MAX:TURN_MAX, tracerReach:tracerReach, growTracer:growTracer,
     setInflate: function (fn) { inflate = fn; } };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else self.PlaybackBattle = api;
 })();

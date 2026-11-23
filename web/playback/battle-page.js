@@ -55,9 +55,13 @@
           var fx = PlaybackBattle.effects(state.built.collector, state.built.battle, state.defs, state.info, d.docs);
           state.times.effects = performance.now() - t; t = performance.now();
           var db = await idb();
+          // 23.11 (outputs/reopen-audit-2026-11-23.md D5): the configurations whose vehicle file the hit placement lacked are
+          // kept with the battle; a later open that has one of them builds the battle again (playback.js)
+          var lacked = {};
+          state.built.battle.vehicles.forEach(function (v) { PlaybackBattle.lives(v).forEach(function (c) { var k = c.key || c.type; if (k && !(d.docs && d.docs[k])) lacked[k] = 1; }); });
           await new Promise(function (ok, fail) {
             var tx = db.transaction(STORE, 'readwrite');
-            tx.objectStore(STORE).put({ sig: state.sig, battle: state.built.battle }, state.info.id);
+            tx.objectStore(STORE).put({ sig: state.sig, battle: state.built.battle, lacked: Object.keys(lacked) }, state.info.id);
             tx.oncomplete = ok; tx.onerror = function () { fail(tx.error); };
           });
           state.times.idbWrite = performance.now() - t;
@@ -79,8 +83,9 @@
   window.BattlePage = {
     obtain: async function (o) {
       var info = o.info, t0 = performance.now(), sig = [info.source.size, info.source.crc, PlaybackBattle.FORMAT].join(':');
-      var db = await idb(), rec = await get(db, info.id);
-      if (rec && rec.sig === sig) return { battle: rec.battle, effects: null, info: { source: 'IndexedDB', ms: +(performance.now() - t0).toFixed(0) } };
+      var db = await idb(), rec = o.force ? null : await get(db, info.id);
+      if (rec && rec.sig === sig) return { battle: rec.battle, effects: null, lacked: rec.lacked || [], info: { source: 'IndexedDB', ms: +(performance.now() - t0).toFixed(0) } };
+      if (o.progress) o.progress('Reading the replay...');   // 23.11 (D1): said only when the replay is really decoded
       var url = URL.createObjectURL(new Blob(['(' + workerMain.toString() + ')();'], { type: 'text/javascript' }));
       var w = new Worker(url), done = function () { w.terminate(); URL.revokeObjectURL(url); };
       var r;

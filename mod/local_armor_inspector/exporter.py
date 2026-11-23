@@ -4923,15 +4923,28 @@ class Exporter(object):
         # Compact formula inputs only; the browser already owns the replay's tracks.
         # This sidecar is independent of the battle/vehicle caches and can be acquired
         # by a viewer opened on a battle built by an earlier version.
+        # 23.11 (outputs/reopen-audit-2026-11-23.md D4): a descriptor already in the file (its inputs or its reason) is not
+        # computed again while the client is the same, and the file is written only when something was added
+        client = self.replay_client_version(name)
         aim_path = os.path.join(self.folder, 'data', DATA_FOLDER, 'aim-' + name + '.js')
         previous = read_data_file(aim_path) if os.path.isfile(aim_path) else None
-        aims = dict((previous or {}).get('inputs') or {})
+        same = bool(previous) and previous.get('client') == client
+        aims = dict((previous or {}).get('inputs') or {}) if same else {}
+        added = not same
         for kind, descr in payload.get('vehicles') or ():
-            if not descr: continue
-            try: aims[descr] = self.scene_source(self.replay_client_version(name)).aim_inputs(descr)
+            if not descr or descr in aims: continue
+            try: aims[descr] = self.scene_source(client).aim_inputs(descr)
             except Exception as error: aims[descr] = {'reason': str(error)}
-        if not os.path.isdir(os.path.dirname(aim_path)): os.makedirs(os.path.dirname(aim_path))
-        write_data(aim_path, 'playback-aim:' + name, {'format': 1, 'inputs': aims})
+            added = True
+        if added:
+            if not os.path.isdir(os.path.dirname(aim_path)): os.makedirs(os.path.dirname(aim_path))
+            write_data(aim_path, 'playback-aim:' + name, {'format': 1, 'client': client, 'inputs': aims})
+        # 23.11 (outputs/vehicle-prepare-2026-11-23.md fix 2): a variant that could not be made is recorded with its reason in
+        # the battle's variants file, so the page draws it as a box at once instead of asking again on every load; kept while
+        # the client is the same
+        variants_path = os.path.join(self.folder, 'data', DATA_FOLDER, 'variants-' + name + '.js')
+        known = read_data_file(variants_path) if os.path.isfile(variants_path) else None
+        not_made = dict((known or {}).get('failed') or {}) if known and known.get('client') == self.version else {}
         pk = None
         try:
             for kind, descr in payload.get('vehicles') or ():
@@ -4954,8 +4967,10 @@ class Exporter(object):
                     if not os.path.isdir(os.path.dirname(path)): os.makedirs(os.path.dirname(path))
                     write_data(path, 'vehicle:' + variant, value)
                     made.append(kind)
+                    not_made.pop(variant, None)
                 except Exception as error:
                     failed.append('%s (%s: %s)' % (kind, type(error).__name__, error))
+                    not_made[variant] = '%s: %s' % (type(error).__name__, error)
         finally:
             if pk is not None:
                 try: pk.close()
@@ -4964,8 +4979,8 @@ class Exporter(object):
                  len(made), (' (' + ', '.join(made) + ')') if made else '', ('; not made: ' + '; '.join(failed)) if failed else '')
         from .playback import vehicle_files
         files = vehicle_files(self.folder)
-        write_data(os.path.join(self.folder, 'data', DATA_FOLDER, 'variants-' + name + '.js'), 'playback-variants:' + name, {'files':files})
-        self.notify_page({'kind': 'vehicles', 'id': name, 'state': 'ready', 'files': files})
+        write_data(variants_path, 'playback-variants:' + name, {'files': files, 'failed': not_made, 'client': self.version})
+        self.notify_page({'kind': 'vehicles', 'id': name, 'state': 'ready', 'files': files, 'failed': not_made})
 
     def playback_vehicle_xml(self, pk, vehicle_xml, kind, descr):
         """One vehicle file for the viewer from the client's XML (the shape web/playback/playback.js vehicleModel reads:
@@ -5143,6 +5158,14 @@ class Exporter(object):
         def seconds(key):
             value = payload.get(key)
             return float(value) if isinstance(value, numbers.Number) and not isinstance(value, bool) else float('nan')
+        if payload.get('kind') == 'input':
+            # 23.11 (BACKLOG B7): the viewer's input delay - from an input event's time stamp to the frame that applied it -
+            # so a page-side delay can be told from the game's own display delay
+            LOG.info('Playback page input delay on %s: p50 %.1f ms, p95 %.1f ms over %d inputs; frame interval p50 %.1f ms, '
+                     'p95 %.1f ms; %s', str(payload.get('battleId') or '?')[:100], seconds('inputP50'), seconds('inputP95'),
+                     int(seconds('inputs')) if seconds('inputs') == seconds('inputs') else 0, seconds('frameP50'),
+                     seconds('frameP95'), 'full screen' if payload.get('full') is True else 'window')
+            return 'none'
         arena = str(payload.get('map') or '')
         raw = 'none'
         if re.match(r'^[0-9a-z_]{1,80}\Z', arena) and os.path.isdir(os.path.join(raw_root(self.folder), arena)):
@@ -5157,10 +5180,12 @@ class Exporter(object):
             else:
                 raw = 'kept'
         LOG.info('Playback page opened battle %s on %s: map from %s, battle from %s; waiting for the mod %.2f s, raw files '
-                 'loaded %.2f s, map built %.2f s, battle built %.2f s, ready %.2f s after opening; WebGL %s; map raw files %s',
+                 'loaded %.2f s, map built %.2f s, battle built %.2f s, ready %.2f s after opening (map read from IndexedDB '
+                 '%.2f s, scene built %.2f s, plant pictures %.2f s); WebGL %s; map raw files %s',
                  str(payload.get('battleId') or '?')[:100], arena or '?', str(payload.get('mapFrom') or '?')[:20],
                  str(payload.get('battleFrom') or '?')[:20], seconds('waitMod'), seconds('loadRaw'), seconds('buildMap'),
-                 seconds('buildBattle'), seconds('total'), 'created' if payload.get('webgl') is True else 'NOT created', raw)
+                 seconds('buildBattle'), seconds('total'), seconds('idbRead'), seconds('sceneBuild'), seconds('impostors'),
+                 'created' if payload.get('webgl') is True else 'NOT created', raw)
         return raw
 
     def run_battle_job(self, payload):

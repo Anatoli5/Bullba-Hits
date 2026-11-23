@@ -240,10 +240,11 @@
     sharp: { size: 2048, mid: 2048, radius: 1, proxy: false, csm: true, minK: 0.5, crisp: true, detail: true, nearD: 45 },
     sharp1: { size: 4096, radius: 1, proxy: false },
     old: { size: 4096, radius: 1, proxy: false, every: true, oldBox: true } };
-  // sharp's near map size, picked on the page (shDetail): 4096 = the old one-map sharp's detail close up. Its maps larger
-  // than 1024 keep no static copy (memory): they are drawn whole, vehicles included, when the time moved with a vehicle in the box
+  // sharp's near map size, picked on the page (shDetail): 4096 = the old one-map sharp's detail close up. 23.11 (the plan of
+  // outputs/stutter-audit-2026-11-23.md, candidate 6): a near map up to 2048 keeps its static copy too (16 MB) and only the
+  // vehicles are drawn over it while playing; a 4096 one keeps none (memory): drawn whole when the time moved with a vehicle in the box
   var shDetail = 2048;
-  function csmCached(c) { return c < 2 && (!SH_Q[SHQ].detail || csmSuns[c].shadow.mapSize.x <= 1024); }
+  function csmCached(c) { return c < 2 && csmSuns[c].shadow.mapSize.x <= 2048; }
   var SHQ = 'sharp', SHADOW_CAP = 1100, shKey = '', shT = null;
   var shCam = new T.OrthographicCamera(), shO = new T.Vector3(), shC = new T.Vector3(), shD = new T.Vector3(), shP = new T.Vector3(), shPts = [];
   // cascades: view depth reaches CSM.far m beyond the nearest visible ground (faded over its last CSM.fadeK), split
@@ -343,6 +344,13 @@
   // round 5c: per cascade a cached copy of the static casters' map (colour = packed depth, and its depth buffer);
   // the vehicles are drawn over a copy of it (depth-tested), so playing redraws only the vehicles
   var csmCache = [], csmVehCam = new T.OrthographicCamera(), csmVehMat = new T.MeshDepthMaterial({ depthPacking: T.RGBADepthPacking, side: T.BackSide }), VEH_LAYER = 5;
+  // sharp's near cascade drew its vehicles in three.js's own pass (their materials double-sided) before it was cached: its
+  // overlay keeps that side, so its look does not change (23.11)
+  var csmVehMatD = new T.MeshDepthMaterial({ depthPacking: T.RGBADepthPacking, side: T.DoubleSide });
+  // a falling plant (23.11): drawn over the cached copies as the vehicles are, by its own depth material (FALL_LAYER)
+  var FALL_LAYER = 6, fallDepthD = new T.MeshDepthMaterial({ depthPacking: T.RGBADepthPacking, side: T.DoubleSide }),
+    fallDepthB = new T.MeshDepthMaterial({ depthPacking: T.RGBADepthPacking, side: T.BackSide }), SHADOW_SIDE = {};
+  SHADOW_SIDE[T.FrontSide] = T.BackSide; SHADOW_SIDE[T.BackSide] = T.FrontSide; SHADOW_SIDE[T.DoubleSide] = T.DoubleSide;
   function csmBlit(src, dst) {
     var ps = renderer.properties.get(src), pd = renderer.properties.get(dst), w = src.width;
     gl.bindFramebuffer(gl.READ_FRAMEBUFFER, ps.__webglFramebuffer); gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, pd.__webglFramebuffer);
@@ -360,10 +368,12 @@
     var L = csmSuns[c], vis = layers.vehicles.visible, rt0 = renderer.getRenderTarget();
     scene.updateMatrixWorld();
     if (!whole) layers.vehicles.visible = false; L.shadow.needsUpdate = true;
+    // a falling plant is in a map with no overlay (the far one, a whole one) as it stands at the redraw
+    var fallIn = whole || !csmCached(c); if (fallIn) fallCast(true);
     // three.js's own shadow pass for this light only (it creates the map). Called from inside a render of a helper
     // scene: the pass needs the renderer's per-render state, which exists only during render()
     csmPending = [L]; renderer.setRenderTarget(csmDummyRT); renderer.render(csmHelper, camera);
-    layers.vehicles.visible = vis;
+    layers.vehicles.visible = vis; if (fallIn) fallCast(false);
     var m = L.shadow.map;
     if (c === 2 || whole) { renderer.setRenderTarget(rt0); return; }
     if (!csmCache[c] || csmCache[c].width !== m.width) {
@@ -376,15 +386,27 @@
   function csmVehicles(c) {
     var L = csmSuns[c], m = L.shadow.map; if (!m || !csmCache[c]) return;
     csmBlit(csmCache[c], m);
-    if (!layers.vehicles.visible || !shadowsOn) return;
-    var n = 0;
-    layers.vehicles.traverse(function (o) { if (o.isMesh && o.castShadow && o.visible) { o.layers.enable(VEH_LAYER); n++; } else o.layers.disable(VEH_LAYER); });
-    if (!n) return;
+    if (!shadowsOn) return;
+    var n = 0, casters = fallShadowMeshes();
+    if (layers.vehicles.visible) layers.vehicles.traverse(function (o) { if (o.isMesh && o.castShadow && o.visible) { o.layers.enable(VEH_LAYER); n++; } else o.layers.disable(VEH_LAYER); });
+    if (!n && !casters.length) return;
     var rt0 = renderer.getRenderTarget(), ac = renderer.autoClear, bg = scene.background, ov = scene.overrideMaterial, sa = renderer.shadowMap.autoUpdate;
-    csmVehCam.copy(L.shadow.camera); csmVehCam.layers.set(VEH_LAYER);
+    csmVehCam.copy(L.shadow.camera);
     var sn = renderer.shadowMap.needsUpdate;
-    renderer.autoClear = false; scene.background = null; scene.overrideMaterial = csmVehMat; renderer.shadowMap.autoUpdate = false; renderer.shadowMap.needsUpdate = false;
-    renderer.setRenderTarget(m); renderer.render(scene, csmVehCam);
+    renderer.autoClear = false; scene.background = null; renderer.shadowMap.autoUpdate = false; renderer.shadowMap.needsUpdate = false;
+    renderer.setRenderTarget(m);
+    if (n) { csmVehCam.layers.set(VEH_LAYER); scene.overrideMaterial = c === 0 && SH_Q[SHQ].detail ? csmVehMatD : csmVehMat; renderer.render(scene, csmVehCam); }
+    if (casters.length) {
+      // each falling plant by the depth material three.js's shadow pass would give it (its own, the side mirrored)
+      scene.overrideMaterial = null; csmVehCam.layers.set(FALL_LAYER);
+      var mats = casters.map(function (o) {
+        var was = o.material, d = o.customDepthMaterial || (SHADOW_SIDE[was.side] === T.DoubleSide ? fallDepthD : fallDepthB);
+        if (o.customDepthMaterial) d.side = SHADOW_SIDE[was.side];
+        o.material = d; return was;
+      });
+      renderer.render(scene, csmVehCam);
+      casters.forEach(function (o, i) { o.material = mats[i]; });
+    }
     renderer.autoClear = ac; scene.background = bg; scene.overrideMaterial = ov; renderer.shadowMap.autoUpdate = sa; renderer.shadowMap.needsUpdate = sn; renderer.setRenderTarget(rt0);
   }
   function placeSunFit(csm) {
@@ -424,15 +446,20 @@
         CSM.info[c] = { d0: +ds[c].toFixed(1), d1: +ds[c + 1].toFixed(1), empty: true }; continue;
       }
       var minS = csm ? CSM.minSide[c] * (SH_Q[SHQ].minK || 1) : 60, need = Math.max((x1 - x0) * 1.2, (y1 - y0) * 1.2), mx = (x0 + x1) / 2, my = (y0 + y1) / 2;
-      if (radial) { var tp = fT2.set(cam.tx, cam.ty, -cam.tz).applyMatrix4(shCam.matrixWorldInverse); mx = tp.x; my = tp.y; need = Math.min([2, 8, 32][c] * cam.dist, 2100); minS = [60, 240, 2400][c]; }  // no box larger than the map needs
+      if (radial) { var tp = fT2.set(cam.tx, cam.ty, -cam.tz).applyMatrix4(shCam.matrixWorldInverse); mx = tp.x; my = tp.y; need = Math.min([2, 8, 32][c] * cam.dist, 2100); minS = [60, 240, 2400][c];  // no box larger than the map needs
+        // 23.11 (outputs/stutter-audit-2026-11-23.md, candidate 3): the middle and far boxes' need in the box side's own 2^(1/4)
+        // steps, so a wheel glide does not refit them on every frame of it
+        if (c > 0) need = Math.min(2100, 60 * Math.pow(2, Math.ceil(Math.log2(need / 60) * 4) / 4)); }
+      // the middle box's slack 30 % (was 15 %: a refit and a full redraw every ~22 m of the orbit centre's travel)
+      var slackK = radial && c === 1 ? 1.3 : 1.15;
       var sunKey = SUN_DIR.x + ',' + SUN_DIR.y + ',' + SUN_DIR.z + ',' + size, S = cam2.right - cam2.left, tex = S / size;
       // stable boxes (hysteresis): the box stays while the ground it must cover (+20 %) fits inside it and it is not more
       // than twice too large; a new one has 25 % slack, its side in 2^(1/4) steps, its centre on whole texels
       var fits = CSM.keys[c] && CSM.keys[c] !== 'empty' && CSM.sunKeys[c] === sunKey && mx - need / 2 >= cam2.left && mx + need / 2 <= cam2.right &&
-        my - need / 2 >= cam2.bottom && my + need / 2 <= cam2.top && S <= 2.2 * Math.max(minS, need * 1.15);
+        my - need / 2 >= cam2.bottom && my + need / 2 <= cam2.top && S <= 2.2 * Math.max(minS, need * slackK);
       var redraw = false;
       if (!fits) {
-        var ext = Math.max(minS, need * 1.15); S = 60 * Math.pow(2, Math.ceil(Math.log2(ext / 60) * 4) / 4); tex = S / size;
+        var ext = Math.max(minS, need * slackK); S = 60 * Math.pow(2, Math.ceil(Math.log2(ext / 60) * 4) / 4); tex = S / size;
         var cx = Math.round(mx / tex) * tex, cy = Math.round(my / tex) * tex;
         CSM.keys[c] = S.toFixed(2) + ',' + cx.toFixed(2) + ',' + cy.toFixed(2); CSM.sunKeys[c] = sunKey; redraw = true;
         cam2.left = cx - S / 2; cam2.right = cx + S / 2; cam2.bottom = cy - S / 2; cam2.top = cy + S / 2; cam2.near = 1; cam2.far = 3000; cam2.updateProjectionMatrix();
@@ -441,6 +468,8 @@
         // the gap between the ground and a low caster's far faces as the near cascade sees them (its map holds the vehicles:
         // measured): vehicles, bushes, fences cast nothing near the camera. Offsets 0 brought them back (seen); now 0.3 m + 0.6 texel
       }
+      // 23.11: plants whose casters changed (a split, a fall) redraw only the cascades whose own part of the ground holds them
+      if (csm && plantRegion && regionIn(plantRegion, cam2, c ? csmSuns[c - 1].shadow.camera : null, c > 0 && CSM.keys[c - 1] !== 'empty')) CSM.dirty[c] = true;
       if (all || CSM.dirty[c]) redraw = true;
       if (!csm) { if (timeMoved || redraw) { renderer.shadowMap.needsUpdate = true; CSM.dirty[c] = false; if (redraw) CSM.redraws[c]++; } }
       else {
@@ -452,6 +481,10 @@
           var q = r.group.getWorldPosition(csmVehPt).applyMatrix4(shCam.matrixWorldInverse);  // world: the root mirrors z (round 5e)
           if (q.x > cam2.left - 12 && q.x < cam2.right + 12 && q.y > cam2.bottom - 12 && q.y < cam2.top + 12) { veh = true; break; }
         }
+        if (!veh && (timeMoved || redraw)) for (var fi2 = 0; fi2 < fallCasters.length; fi2++) {
+          var fq = fT2.copy(fallCasters[fi2].at).applyMatrix4(shCam.matrixWorldInverse);
+          if (fq.x > cam2.left - 40 && fq.x < cam2.right + 40 && fq.y > cam2.bottom - 40 && fq.y < cam2.top + 40) { veh = true; break; }
+        }
         var cached = csmCached(c), whole = c < 2 && !cached && (redraw || (timeMoved && (veh || CSM.hadVeh[c])));
         if (whole) { csmStatic(c, true); CSM.dirty[c] = false; CSM.redraws[c]++; }
         else if (redraw) { csmStatic(c); CSM.dirty[c] = false; CSM.redraws[c]++; }
@@ -462,7 +495,8 @@
       }
       CSM.info[c] = { d0: +ds[c].toFixed(1), d1: +ds[c + 1].toFixed(1), side: +S.toFixed(1), texel: +tex.toFixed(3) };
     }
-    if (csm) { sun.shadow.radius = fadeA; csmSuns[1].shadow.radius = fadeB; }
+    if (csm) { sun.shadow.radius = fadeA; csmSuns[1].shadow.radius = fadeB; renderer.shadowMap.needsUpdate = false; }  // consumed here: three.js's pass draws no cascade
+    plantRegion = null;
     CSM.fade = [fadeA, fadeB]; CSM.depth = [dmin, dmax];
   }
   function placeSunR5b() {
@@ -1194,7 +1228,8 @@
       g.setAttribute('aRect', new T.BufferAttribute(rect, 4));
       g.setAttribute('aMod', new T.BufferAttribute(new Float32Array(rec.mod ? i8(rec.mod) : new Int8Array(rec.nv)), 1));
       g.setIndex(new T.BufferAttribute(rec.i32 ? u32(rec.i) : u16(rec.i), 1));
-      g.computeVertexNormals();
+      // 23.11 (D3): the normals the map builder stored (mapbuild9.js r9.5, int16 normalised), not recomputed on every open
+      if (rec.nrm) g.setAttribute('normal', new T.BufferAttribute(new Int16Array(bytes(rec.nrm)), 3, true)); else g.computeVertexNormals();
       var a = f32(rec.m), base = [];
       for (var k = 0; k < rec.n; k++) base.push(placementMatrix(a, k * 12));
       var rock = rockMat && rec.rock;
@@ -1397,10 +1432,12 @@
     var proxy = SH_Q[SHQ].proxy;
     treeRecs.forEach(function (r) {
       if (!r) return; var p = !!(proxy && r.proxy);
+      if (p) syncProxy(r);   // 23.11: kept in step only while soft uses it
       r.meshes.forEach(function (m) { m.castShadow = !p; });
       // the copy costs its vertices in the view pass too: present only while it casts
       if (r.proxy) { r.proxy.castShadow = p; r.proxy.visible = p && shadowsOn && !(r.group.outside && outsideMode === 2); }
     });
+    if (typeof fallCasters !== 'undefined') fallCast(false);
     // soft: the ground receives but does not cast (627 k triangles of the shadow pass on Prokhorovka; with the sun at
     // 46 deg only slopes steeper than that would shade themselves, and the relief light already darkens them)
     terrainMeshes.forEach(function (m) { m.castShadow = !proxy; });
@@ -1478,30 +1515,83 @@
       (g.cls === 'tree' ? layers.trees : layers.bushes).add(pm);
       syncProxy(r);
     }
-    r.dirty = true;
+    r.dirty = true; r.dirtyAll = true; r.bucket = null; r.side = undefined;
+    fallCasters.slice().forEach(function (fc) { if (fc.r === r) fallDrop(fc); });   // its falling plants' copies were of the old meshes
   }
   // near / far split of every group by the distance from the camera (game coordinates), redone when the camera moves
-  // more than 4 m or a plant moved (falls, bushes switched off)
-  var lastSplit = new T.Vector3(1e9, 0, 0), camGame = new T.Vector3(), tmpV = new T.Vector3();
+  // more than 4 m or a plant moved (falls, bushes switched off). 23.11 (outputs/stutter-audit-2026-11-23.md, candidate 1:
+  // every 4 m all plants re-uploaded and all three cascades redrawn): a plant is near or far by its foot (its placement's
+  // place - a fall turns it about its foot); a group wholly on one side of FAR before and now is skipped, a group whose
+  // plants all stay on their side is not written again, and only the plants whose caster changed mark the shadow maps
+  // (plantRegion: placeSunFit redraws the cascades whose part of the ground holds them; the other modes: all, as before)
+  var lastSplit = new T.Vector3(1e9, 0, 0), camGame = new T.Vector3(), tmpV = new T.Vector3(), plantV = new T.Vector3();
+  var plantRegion = null, PLANT_PAD = 40;   // light-space [x0, x1, y0, y1] of changed casters, or 'all'; pad: a plant's height and crown
+  function plantChanged(x, y, z) {
+    if (plantRegion === 'all') return;
+    var q = plantV.set(x, y, -z).applyMatrix4(shCam.matrixWorldInverse), R = plantRegion || (plantRegion = [1e9, -1e9, 1e9, -1e9]);
+    if (q.x < R[0]) R[0] = q.x; if (q.x > R[1]) R[1] = q.x; if (q.y < R[2]) R[2] = q.y; if (q.y > R[3]) R[3] = q.y;
+  }
+  // whether a light-space region touches a cascade's box and, for a cascade past the first, lies beyond the inner box's own part
+  // (the shader takes the finer map wherever it is more than 7 % of its side from its edge: csmEdge)
+  function regionIn(R, box, inner, innerOk) {
+    if (R === 'all') return true;
+    var P = PLANT_PAD;
+    if (R[0] - P > box.right || R[1] + P < box.left || R[2] - P > box.top || R[3] + P < box.bottom) return false;
+    if (inner && innerOk) {
+      var e = 0.07 * (inner.right - inner.left);
+      if (R[0] - P >= inner.left + e && R[1] + P <= inner.right - e && R[2] - P >= inner.bottom + e && R[3] + P <= inner.top - e) return false;
+    }
+    return true;
+  }
+  function plantFeet(r) {   // the feet of a group's plants (game coordinates) and their bounds, once
+    var n = r.base.length, px = r.px = new Float32Array(n * 3), b = r.bb = [1e9, 1e9, 1e9, -1e9, -1e9, -1e9];
+    for (var k = 0; k < n; k++) {
+      tmpV.setFromMatrixPosition(r.base[k]); px[k * 3] = tmpV.x; px[k * 3 + 1] = tmpV.y; px[k * 3 + 2] = tmpV.z;
+      b[0] = Math.min(b[0], tmpV.x); b[1] = Math.min(b[1], tmpV.y); b[2] = Math.min(b[2], tmpV.z); b[3] = Math.max(b[3], tmpV.x); b[4] = Math.max(b[4], tmpV.y); b[5] = Math.max(b[5], tmpV.z);
+    }
+  }
+  // 1: every plant of the group near the camera, 2: every one far, 0: some of each
+  function groupSide(b, c, far2) {
+    var dx = Math.max(b[0] - c.x, 0, c.x - b[3]), dy = Math.max(b[1] - c.y, 0, c.y - b[4]), dz = Math.max(b[2] - c.z, 0, c.z - b[5]);
+    if (dx * dx + dy * dy + dz * dz >= far2) return 2;
+    var ex = Math.max(Math.abs(c.x - b[0]), Math.abs(c.x - b[3])), ey = Math.max(Math.abs(c.y - b[1]), Math.abs(c.y - b[4])), ez = Math.max(Math.abs(c.z - b[2]), Math.abs(c.z - b[5]));
+    return ex * ex + ey * ey + ez * ez < far2 ? 1 : 0;
+  }
   function splitPlants(force) {
     camGame.set(camera.position.x, camera.position.y, -camera.position.z);
-    var moved = force || camGame.distanceTo(lastSplit) > 4;
-    if (moved) { lastSplit.copy(camGame); if (!SH_Q[SHQ].proxy) renderer.shadowMap.needsUpdate = true; }  // sharp: LOD / card casters swap
-    var far2 = FAR * FAR;
+    var moved = force || camGame.distanceTo(lastSplit) > 4, o = SH_Q[SHQ], swap = !o.proxy;  // sharp: LOD / card casters swap
+    if (moved) lastSplit.copy(camGame);
+    var far2 = FAR * FAR, swapped = false;
     treeRecs.forEach(function (r) {
       if (!r || !(moved || r.dirty)) return;
-      if (r.dirty) { syncProxy(r); renderer.shadowMap.needsUpdate = true; }  // a plant fell / was hidden: casters changed
-      r.dirty = false;
+      if (!r.px) plantFeet(r);
       var near = r.meshes.filter(function (m) { return !m.userData.far; }), farM = r.meshes.filter(function (m) { return m.userData.far; })[0];
+      var side = farM ? groupSide(r.bb, camGame, far2) : 1;
+      if (!r.dirty && side && side === r.side) return;   // wholly near or wholly far, as at its last split
+      var px = r.px, n = r.cur.length, b = r.bucket && r.bucket.length === n ? r.bucket : (r.bucket = new Uint8Array(n)), any = r.dirty;
+      for (var k = 0; k < n; k++) {
+        var x = px[k * 3] - camGame.x, y = px[k * 3 + 1] - camGame.y, z = px[k * 3 + 2] - camGame.z, nb = !farM || x * x + y * y + z * z < far2 ? 1 : 2;
+        if (b[k] !== nb) { if (b[k] && swap) { swapped = true; if (o.csm) plantChanged(px[k * 3], px[k * 3 + 1], px[k * 3 + 2]); } b[k] = nb; any = true; }
+      }
+      if (r.dirty) {   // a plant fell / was hidden: its casters changed
+        if (o.proxy) syncProxy(r);
+        if (!o.csm) swapped = true;
+        else if (r.dirtyAll || !r.dirtyK || r.dirtyK.length > 256) { plantChanged(r.bb[0], r.bb[1], r.bb[2]); plantChanged(r.bb[3], r.bb[4], r.bb[5]); plantChanged(r.bb[0], r.bb[4], r.bb[5]); plantChanged(r.bb[3], r.bb[1], r.bb[2]);
+          plantChanged(r.bb[0], r.bb[1], r.bb[5]); plantChanged(r.bb[3], r.bb[4], r.bb[2]); plantChanged(r.bb[0], r.bb[4], r.bb[2]); plantChanged(r.bb[3], r.bb[1], r.bb[5]); }
+        else r.dirtyK.forEach(function (j) { plantChanged(px[j * 3], px[j * 3 + 1], px[j * 3 + 2]); });
+      }
+      r.dirty = false; r.dirtyK = null; r.dirtyAll = false; r.side = side;
+      if (!any) return;
       var nn = 0, nf = 0;
-      for (var k = 0; k < r.cur.length; k++) {
-        var m = r.cur[k]; tmpV.setFromMatrixPosition(m);
-        if (!farM || tmpV.distanceToSquared(camGame) < far2) { for (var q = 0; q < near.length; q++) near[q].setMatrixAt(nn, m); nn++; }
+      for (k = 0; k < n; k++) {
+        var m = r.cur[k];
+        if (b[k] === 1) { for (var q = 0; q < near.length; q++) near[q].setMatrixAt(nn, m); nn++; }
         else { farM.setMatrixAt(nf, m); nf++; }
       }
       near.forEach(function (im) { im.count = nn; im.instanceMatrix.needsUpdate = true; });
       if (farM) { farM.count = nf; farM.instanceMatrix.needsUpdate = true; }
     });
+    if (swapped && !o.csm) renderer.shadowMap.needsUpdate = true;
   }
   function setCrowns(mode) {
     FAR = mode === 'lodall' ? 1e6 : 160;
@@ -1525,7 +1615,57 @@
     });
     applyShadowCasters();
   }
-  function setTreeMatrix(r, k, m) { r.cur[k] = m === r.base[k] ? m : m.clone(); r.dirty = true; }
+  function setTreeMatrix(r, k, m) {
+    r.cur[k] = m === r.base[k] ? m : m.clone(); r.dirty = true;
+    if (!r.dirtyAll) { if (!r.dirtyK) r.dirtyK = []; if (r.dirtyK.length <= 256) r.dirtyK.push(k); }
+  }
+  // A FALLING PLANT (23.11, outputs/stutter-audit-2026-11-23.md, candidate 2: every frame of a 1.6 s fall redrew all three
+  // cascades in full): while it falls it is hidden in its group and drawn by copies of the group's meshes (one instance,
+  // the same materials), so the static shadow copies are redrawn at its start and at its end only; between them the
+  // cascade overlays draw it as they draw the vehicles (csmVehicles, FALL_LAYER), the far map holds it as it stood
+  var fallCasters = [];
+  function fallCaster(r, k) {
+    var fc = { r: r, k: k, near: [], far: null, proxy: null, all: [], at: new T.Vector3() };
+    tmpV.setFromMatrixPosition(r.base[k]); fc.at.set(tmpV.x, tmpV.y, -tmpV.z); fc.foot = tmpV.clone();
+    function copy(m) {
+      var im = new T.InstancedMesh(m.geometry, m.material, 1);
+      if (m.customDepthMaterial) im.customDepthMaterial = m.customDepthMaterial;
+      im.frustumCulled = false; im.receiveShadow = m.receiveShadow; im.userData.fallOf = m; im.layers.enable(FALL_LAYER); im.name = m.name + ' falling';
+      m.parent.add(im); fc.all.push(im); return im;
+    }
+    r.meshes.forEach(function (m) { var im = copy(m); if (m.userData.far) fc.far = im; else fc.near.push(im); });
+    if (r.proxy && r.proxy.parent) fc.proxy = copy(r.proxy);
+    fallCasters.push(fc); setTreeMatrix(r, k, HIDDEN); fallCast(false);
+    return fc;
+  }
+  function fallPose(fc, m) {
+    var near = !fc.far || fc.foot.distanceToSquared(camGame) < FAR * FAR;
+    fc.all.forEach(function (im) { im.setMatrixAt(0, m); im.instanceMatrix.needsUpdate = true; });
+    fc.near.forEach(function (im) { im.visible = near && im.userData.fallOf.visible; });
+    if (fc.far) fc.far.visible = !near && fc.far.userData.fallOf.visible;
+    if (fc.proxy) fc.proxy.visible = fc.proxy.userData.fallOf.visible;
+  }
+  function fallDrop(fc) {
+    fc.all.forEach(function (im) { if (im.parent) im.parent.remove(im); im.dispose(); });
+    var i = fallCasters.indexOf(fc); if (i >= 0) fallCasters.splice(i, 1);
+    if (fc.ev) fc.ev.fc = null;
+  }
+  // the copies that cast now: the shadow copy in soft, else the drawn ones
+  function fallShadowMeshes() {
+    var out = [], proxy = SH_Q[SHQ].proxy;
+    fallCasters.forEach(function (fc) {
+      if (proxy) { if (fc.proxy && fc.proxy.visible) out.push(fc.proxy); }
+      else fc.near.concat(fc.far ? [fc.far] : []).forEach(function (im) { if (im.visible) out.push(im); });
+    });
+    return out;
+  }
+  // three.js's own shadow passes see the copies only where no overlay draws them (`on`: a far or whole map's redraw;
+  // the modes without cascades: always)
+  function fallCast(on) {
+    var csm = !!SH_Q[SHQ].csm, cast = fallShadowMeshes();
+    fallCasters.forEach(function (fc) { fc.all.forEach(function (im) { im.castShadow = false; }); });
+    cast.forEach(function (im) { im.castShadow = on || !csm; });
+  }
 
   function buildWater(water) {
     var mat = new T.MeshLambertMaterial({ color: 0x3a6f9a, transparent: true, opacity: 0.78, side: T.DoubleSide });
@@ -1555,9 +1695,11 @@
       for (var k = 0; k < e.base.length; k++) e.mesh.setMatrixAt(k, e.base[k]);
       e.mesh.instanceMatrix.needsUpdate = true;
     });
+    fallCasters.slice().forEach(fallDrop);
     treeRecs.forEach(function (r) {
       if (!r) return;
       for (var k = 0; k < r.base.length; k++) setTreeMatrix(r, k, r.base[k]);
+      r.dirtyAll = true;
     });
     dApplied = 0; falling = [];
   }
@@ -1572,7 +1714,8 @@
       if (vo) { vo.r.mesh.setMatrixAt(vo.k, fallMatrix(vo.r.base[vo.k], ev[5], ang, new T.Matrix4())); vo.r.mesh.instanceMatrix.needsUpdate = true; }
       if (!target.mesh) return; target.mesh.setMatrixAt(ev[4], fm); target.mesh.instanceMatrix.needsUpdate = true;
     }
-    else setTreeMatrix(target, ev[4], fm);
+    else if (f >= 1) { if (ev.fc) fallDrop(ev.fc); setTreeMatrix(target, ev[4], fm); }   // at rest: back in its group, fallen
+    else { if (!ev.fc) { ev.fc = fallCaster(target, ev[4]); ev.fc.ev = ev; } fallPose(ev.fc, fm); }
     return f >= 1;
   }
   function stepDestruction(t) {
@@ -1671,17 +1814,36 @@
       if (r.el.className !== c) r.el.className = c;
     });
   }
-  function stepFlash(time) {
+  function flashBox(n) {
     if (!flashGeo) {
       flashGeo = new T.EdgesGeometry(new T.BoxGeometry(1, 1, 1));
       flashMat = new T.LineBasicMaterial({ color: 0xffe14a, depthTest: false, transparent: true });
     }
+    var L = flashBoxes[n];
+    if (!L) { L = new T.LineSegments(flashGeo, flashMat.clone()); L.renderOrder = 999; L.matrixAutoUpdate = false; L.visible = false; root.add(L); flashBoxes[n] = L; }  // root: game coordinates (z mirrored)
+    return L;
+  }
+  // FIRST SIGHT WITHOUT A STALL (23.11, outputs/stutter-audit-2026-11-23.md, candidate 7): three.js compiles a program at an
+  // object's first draw - a hit mark, a destruction's flash box, a later configuration's vehicle stalled the frame they first
+  // appeared in. Once the scene is built they are made visible for one compile of the scene (compileAsync: the GPU's own
+  // parallel compile where it has one) and hidden again at once
+  function warmPrograms() {
+    var shown = [];
+    function show(o) { if (o && !o.visible) { o.visible = true; shown.push(o); } }
+    try {
+      vehicles.forEach(function (r) { r.parts.forEach(function (p) { show(p.group); }); });
+      fxMarkMeshes.forEach(show); show(flashBox(0));
+      if (renderer.compileAsync) renderer.compileAsync(scene, camera).catch(function () {}); else renderer.compile(scene, camera);
+    } catch (e) { console.warn('Bullba Replays: shader warm-up failed: ' + (e && e.message || e)); }
+    shown.forEach(function (o) { o.visible = false; });
+    requestRender();
+  }
+  function stepFlash(time) {
     var n = 0;
     if (flashOn) for (var i = 0; i < dRows.length; i++) {
       var ev = dRows[i].ev; if (ev[0] > time || time >= ev[0] + FLASH_S || (ev[1] && ev[0] <= 0.01)) continue;
       var b = dRows[i].box || (dRows[i].box = destrBox(ev) || 0); if (!b) continue;
-      var L = flashBoxes[n];
-      if (!L) { L = new T.LineSegments(flashGeo, flashMat.clone()); L.renderOrder = 999; L.matrixAutoUpdate = false; root.add(L); flashBoxes[n] = L; }  // root: game coordinates (z mirrored)
+      var L = flashBox(n);
       var pad = 0.3, s = [b.hi[0] - b.lo[0] + pad, b.hi[1] - b.lo[1] + pad, b.hi[2] - b.lo[2] + pad];
       L.matrix.copy(b.base).multiply(tmpM.makeTranslation((b.lo[0] + b.hi[0]) / 2, (b.lo[1] + b.hi[1]) / 2, (b.lo[2] + b.hi[2]) / 2))
         .multiply(tmpR.makeScale(s[0], s[1], s[2]));
@@ -1996,6 +2158,10 @@
   // the vehicle's type and full HP in its span shown (the battle object's header values when the span has none)
   function typeOf(r) { return (r.life && r.life.type) || r.v.type || ''; }
   function maxHp(r) { var m = r.life && r.life.maxHealth; return m > 0 ? m : r.v.maxHealth; }
+  // THE HP A ROW AND A MARKER SHOW (23.11, outputs/follow-wrecks-2026-11-23.md (e): a dead vehicle's bar filled up again):
+  // the record's HP at t (battle.js hpAt - the last health over all lives, 0 once the arena list says dead), never the last
+  // drawn frame's and never the full HP by default; null: before its first life or not known (an empty bar)
+  function rowHp(r) { return PlaybackBattle.lifeAt(r.v, t) ? PlaybackBattle.hpAt(r.v, t) : null; }
   // the span of vehicle id at time t shown: its part made current (the last one hidden, the runtime state reset)
   function showLife(r, time) {
     var life = PlaybackBattle.lifeAt(r.v, time);
@@ -2074,7 +2240,7 @@
       if (!inSight && r.wreckSeen && t >= r.deathT) inSight = true;
       if (!inSight || !(given ? poseGiven(r, given) : poseInto(r, tt, r.group, r.turret, r.gun))) { r.group.visible = false; r.visible = false; return; }
       r.group.visible = true; r.visible = true;
-      var hi = search(r.track.hp, 2, r.track.nh, t), hp = hi < 0 ? maxHp(r) : r.track.hp[hi * 2 + 1];
+      var hp = rowHp(r);   // 23.11: the record's HP at t over all lives (battle.js hpAt); null: not known ('?')
       if (hp !== r.lastHp) {
         r.lastHp = hp; r.dead = Number.isFinite(hp) && hp <= 0;
         r.mat.userData.u.uDead.value = r.dead ? 1 : 0;
@@ -2666,9 +2832,9 @@
   // state, the bench and test API) sets both at once through camSnap: a jump stays a jump. Settings' "smooth camera"
   // off: k = 1, the camera at the goal every frame as before.
   var camGoal = { tx: cam.tx, ty: cam.ty, tz: cam.tz, yaw: cam.yaw, pitch: cam.pitch, dist: cam.dist };
-  // the time constants (s), guesses the user judges: turn and pan 40 ms (about 2 frames at 60 fps - the lag not felt, a
-  // drag's uneven pointer events evened out), the wheel 120 ms (a click's 23-30 % jump of the distance spread over a glide)
-  var CAM_EASE = { yaw: 0.04, pitch: 0.04, tx: 0.04, ty: 0.04, tz: 0.04, dist: 0.12 };
+  // the time constants (s), guesses the user judges: turn and pan 25 ms, the wheel 60 ms (23.11, the plan of
+  // outputs/stutter-audit-2026-11-23.md: 40 / 120 ms felt as lag; the wheel also takes WHEEL_FIRST of its step at once, zoomBy)
+  var CAM_EASE = { yaw: 0.025, pitch: 0.025, tx: 0.025, ty: 0.025, tz: 0.025, dist: 0.06 };
   function easeCam(cur, goal, dt, smooth) {
     for (var k in CAM_EASE) {
       var f = smooth && dt >= 0 ? 1 - Math.exp(-dt / CAM_EASE[k]) : 1, d = goal[k] - cur[k];
@@ -2703,7 +2869,11 @@
     if (p) {
       // Z15 (23.11): a new place to follow (the row just clicked, the vehicle lost or back in sight) glides there when the
       // follow came from the team list and "smooth camera" is on; then the camera rides with it exactly
-      var key = follow.visible ? 'seen' : 'last:' + lastKnown.at, fgx = p.x, fgy = p.y + 2.5, fgz = p.z;
+      // 23.11: the follow's zoom waits for a known place (setFollow: no dive at an empty place); a new kind of place (in view,
+      // last seen, the minimap's) says so once (followWarn)
+      if (followZoom) { followZoom = false; camGoal.dist = Math.min(camGoal.dist, 30); if (!(followSmooth && smoothCam())) cam.dist = camGoal.dist; }
+      if (followSrc !== followSrcShown) { followSrcShown = followSrc; if (followSrc !== 'seen') followWarn(followSrc); }
+      var key = followSrc === 'seen' ? 'seen' : followSrc + ':' + followAt, fgx = p.x, fgy = p.y + 2.5, fgz = p.z;
       if (key !== followKey) { followKey = key; followGlide = followSmooth && smoothCam() ? { x: cam.tx, y: cam.ty, z: cam.tz, t0: performance.now() } : null; }
       if (followGlide) {
         var u = Math.min(1, (performance.now() - followGlide.t0) / 1000 / FOLLOW_GLIDE), s = u * u * (3 - 2 * u);
@@ -2731,15 +2901,47 @@
   // "just in case"): the middle button (let through by the mod in both windows) and any other one do nothing here
   renderer.domElement.addEventListener('pointerdown', function (e) {
     if (e.button !== 0 && e.button !== 2) { if (e.button === 1) e.preventDefault(); return; }  // the middle one: not even the browser's autoscroll
-    drag = { x: e.clientX, y: e.clientY, b: e.button === 0 && e.shiftKey ? 2 : e.button }; renderer.domElement.setPointerCapture(e.pointerId);
+    drag = { x: e.clientX, y: e.clientY, b: e.button === 0 && e.shiftKey ? 2 : e.button, moved: 0, t0: performance.now() }; renderer.domElement.setPointerCapture(e.pointerId);
   });
-  renderer.domElement.addEventListener('pointerup', function () { drag = null; });
+  // 23.11 (the user): a single short left click (no drag) on a drawn vehicle follows it - the team row's path (followFromList)
+  renderer.domElement.addEventListener('pointerup', function (e) {
+    var d = drag; drag = null;
+    if (!d || d.b !== 0 || d.moved > 4 || performance.now() - d.t0 > 400 || shotView) return;
+    var r = pickVehicle(e.clientX, e.clientY); if (r && follow !== r) followFromList(r);
+  });
   renderer.domElement.addEventListener('pointermove', function (e) {
     if (!drag) return;
-    var dx = e.clientX - drag.x, dy = e.clientY - drag.y; drag.x = e.clientX; drag.y = e.clientY;
+    var dx = e.clientX - drag.x, dy = e.clientY - drag.y; drag.x = e.clientX; drag.y = e.clientY; drag.moved += Math.abs(dx) + Math.abs(dy);
     if (drag.b === 0) { camGoal.yaw -= dx * 0.005; camGoal.pitch = Math.max(PITCH_MIN, Math.min(1.55, camGoal.pitch + dy * 0.005)); }
     else { setFollow(null); var s = Math.max(camGoal.dist, PAN.floor) * 0.0015; move(-dx * s, dy * s); }  // round 5e: the ground follows the cursor; below 12 m the 12 m rate
   });
+  // the drawn vehicle under a screen point: the nearest one a ray hits (its model or its marker), else the one whose centre or
+  // marker lies within PICK_PX px of it; null: none. Only vehicles drawn now.
+  var pickRay = null, pickNdc = null, pickV = new T.Vector3(), PICK_PX = 20;
+  function pickVehicle(cx, cy) {
+    var rc = renderer.domElement.getBoundingClientRect(); if (!rc.width || !rc.height) return null;
+    pickRay = pickRay || new T.Raycaster(); pickNdc = pickNdc || new T.Vector2();
+    pickNdc.set((cx - rc.left) / rc.width * 2 - 1, -(cy - rc.top) / rc.height * 2 + 1);
+    camera.updateMatrixWorld(); pickRay.setFromCamera(pickNdc, camera); pickRay.camera = camera;
+    var best = null, bd = Infinity;
+    vehicles.forEach(function (r) {
+      if (!r.visible || !r.group || !r.group.visible) return;
+      var hit = pickRay.intersectObject(r.group, true)[0];
+      if (hit && hit.distance < bd) { bd = hit.distance; best = r; }
+    });
+    if (best) return best;
+    bd = PICK_PX * PICK_PX;
+    vehicles.forEach(function (r) {
+      if (!r.visible || !r.group || !r.group.visible) return;
+      [r.group, r.bar].forEach(function (o) {
+        if (!o) return;
+        o.getWorldPosition(pickV).project(camera); if (pickV.z > 1 || pickV.z < -1) return;
+        var px = (pickV.x + 1) / 2 * rc.width + rc.left - cx, py = (1 - pickV.y) / 2 * rc.height + rc.top - cy, d2 = px * px + py * py;
+        if (d2 < bd) { bd = d2; best = r; }
+      });
+    });
+    return best;
+  }
   // round 5d: one wheel click (deltaY 100) moves 23 % of the distance to the point looked at in, 30 % out (the same
   // ratio back), at least 0.8 m: 300 m -> 2 m in about 19 clicks; down to 1 m from the target (an eye ~1 m over the ground)
   var ZOOM = { inFrac: 0.23, outFrac: 0.30, floor: 0.8, min: 1.0, max: 2500 };
@@ -2747,7 +2949,9 @@
     var n = Math.min(3, Math.abs(clicks)), d = camGoal.dist;
     d = clicks > 0 ? d + Math.max(ZOOM.outFrac * d, ZOOM.floor) * n : d - Math.max(ZOOM.inFrac * d, ZOOM.floor) * n;
     camGoal.dist = Math.max(ZOOM.min, Math.min(ZOOM.max, d));
+    if (smoothCam()) cam.dist += (camGoal.dist - cam.dist) * WHEEL_FIRST;  // half the step on this frame, the rest eased
   }
+  var WHEEL_FIRST = 0.5;
   renderer.domElement.addEventListener('wheel', function (e) { e.preventDefault(); zoomBy(e.deltaY / (e.deltaMode === 1 ? 3 : 100)); }, { passive: false });
   // round 5e (the user's word): WASD speed grows with the camera distance much less steeply than zoom and never dies
   // near the ground: 150 m/s x (max(dist, 12 m) / 150 m)^0.6 - 150 m/s at 150 m as before, 33 m/s at 12 m and below
@@ -2784,8 +2988,11 @@
   function smoothCam() { var el = $('sw-smooth-cam'); return !el || el.checked; }
   function setFollow(r) {
     if (follow === r) return; follow = r;
-    followSmooth = false; followKey = undefined; followGlide = null;
-    if (r) { cam.dist = Math.min(camGoal.dist, 30); camSnap(['dist']); }
+    followSmooth = false; followKey = undefined; followGlide = null; followZoom = false; followSrcShown = undefined;
+    // 23.11 (outputs/follow-wrecks-2026-11-23.md (b), the user: a row sent the camera to a place with no vehicle): with no
+    // place known at all the camera stays (centre and distance) and a note says so; the follow stays armed and zooms in once
+    // a place comes (placeCamera)
+    if (r) { if (followPoint(r)) { cam.dist = Math.min(camGoal.dist, 30); camSnap(['dist']); } else { followZoom = true; followWarn(null); } }
     $('free').classList.toggle('on', !r);
     renderList(true);
   }
@@ -2796,14 +3003,34 @@
   // pose at the end of its last sight interval; none yet - the camera stays where it is); a follow from the team list glides
   // to each new place (FOLLOW_GLIDE s, eased in and out; FOLLOW_GLIDE is a guess the user judges), at once with
   // Settings' "smooth camera" off. Other callers (links, the bench, the opening view) place the camera at once, as before.
+  // 23.11 (outputs/follow-wrecks-2026-11-23.md (b)): out of view the place is the latest of the last drawn one and the arena
+  // list's minimap place (battle.js miniAt: game metres, about every 2 s while spotted beyond the draw range; its height the
+  // ground's). followSrc says which: 'seen' (drawn now), 'minimap' (the list's current place), 'last' (last seen), null: none
   var FOLLOW_GLIDE = 0.4, followSmooth = false, followKey, followGlide = null, lastKnown = null, lastObj = new T.Object3D();
+  var followSrc = null, followAt = null, followSrcShown, followZoom = false, miniPt = null;
   function followPoint(r) {
-    if (r.visible) return r.group.position;
-    var s = PlaybackBattle.sightAt(r.v, t);
-    if (!PlaybackBattle.lifeAt(r.v, t) || s.last == null || !r.track) return null;
-    if (!lastKnown || lastKnown.r !== r || lastKnown.at !== s.last || lastKnown.track !== r.track)
-      lastKnown = { r: r, at: s.last, track: r.track, p: poseInto(r, s.last - 1e-3 - delayOf(r), lastObj) ? lastObj.position.clone() : null };
-    return lastKnown.p;
+    followSrc = null; followAt = null;
+    if (r.visible) { followSrc = 'seen'; return r.group.position; }
+    if (!PlaybackBattle.lifeAt(r.v, t)) return null;
+    var s = PlaybackBattle.sightAt(r.v, t), mm = PlaybackBattle.miniAt(r.v, t), last = null;
+    if (s.last != null && r.track) {
+      if (!lastKnown || lastKnown.r !== r || lastKnown.at !== s.last || lastKnown.track !== r.track)
+        lastKnown = { r: r, at: s.last, track: r.track, p: poseInto(r, s.last - 1e-3 - delayOf(r), lastObj) ? lastObj.position.clone() : null };
+      last = lastKnown.p;
+    }
+    if (mm && (!last || mm.until > s.last)) {
+      followSrc = mm.now ? 'minimap' : 'last'; followAt = 'm' + mm.t;
+      return (miniPt || (miniPt = new T.Vector3())).set(mm.x, typeof heightAt === 'function' ? heightAt(mm.x, mm.z) : 0, mm.z);
+    }
+    if (last) { followSrc = 'last'; followAt = 's' + s.last; }
+    return last;
+  }
+  // the follow's short note at the top of the view (23.11): no place known, the minimap's place, the last seen one
+  var FOLLOW_WORDS = { none: 'Position unknown - the camera follows once the vehicle is seen', minimap: 'Not in view - minimap position', last: 'Last seen here' }, followNoteTimer = null;
+  function followWarn(src) {
+    var el = $('follow-note'); if (!el) return;
+    el.textContent = FOLLOW_WORDS[src || 'none']; el.hidden = false;
+    clearTimeout(followNoteTimer); followNoteTimer = setTimeout(function () { el.hidden = true; }, 2500);
   }
   function followFromList(r) {
     if (!r || follow === r) { setFollow(r); return; }
@@ -3176,7 +3403,10 @@
   function outWhy(r) {
     function when(x) { return fmt(x) + ' (battle ' + fmt(x - tBattle) + ')'; }
     if (!PlaybackBattle.lifeAt(r.v, t)) return 'Not in the battle yet\nThe replay has no vehicle of this player at this moment.\n• Click the row: the camera follows it once it is seen.';
-    var s = PlaybackBattle.sightAt(r.v, t);
+    var s = PlaybackBattle.sightAt(r.v, t), mm = PlaybackBattle.miniAt(r.v, t);
+    // 23.11: spotted beyond the draw range - the arena list's minimap place is its place now
+    if (!s.seen && mm && mm.now && (s.last == null || mm.until > s.last)) return 'Beyond the draw range\nThe vehicle is spotted, but too far away to be in the replay\'s 3D world - its minimap place of ' + when(mm.t) + ' is known.\n'
+      + '• Click the row: the camera goes to that minimap place and follows it.';
     if (s.seen) return 'No position\nThe vehicle is spotted, but the replay has no position of it at this moment.\n• Click the row: the camera follows it once a position comes.';
     if (s.last != null) return 'Not seen\nThe replay has no position of this vehicle now - last seen at ' + when(s.last) + '.\n'
       + (s.next != null ? '• Seen again: at ' + when(s.next) + '\n' : '• Not seen again in this replay\n')
@@ -3187,15 +3417,14 @@
   function renderList(force) {
     if (!force && listRows.length) {
       listRows.forEach(function (row) {
-        var r = row.r, hp = r.lastHp == null ? maxHp(r) : r.lastHp;
+        var r = row.r, hp = rowHp(r), dead = hp != null && hp <= 0;
         var known=PlaybackBattle.lifeAt(r.v,t),configKey=known?known.index:'unknown';
-        if(!known)hp=null;
         if(row.config!==configKey){
           row.config=configKey;
           var previous=row.el.querySelector('.nm'),next=rowTile(r,known);
           if(previous)previous.replaceWith(next.nm);row.tile.title=next.tip;
         }
-        row.el.className = row.base + (r.visible ? '' : ' out') + (known&&r.dead ? ' dead' : '') + (follow === r ? ' follow' : '');
+        row.el.className = row.base + (r.visible ? '' : ' out') + (dead ? ' dead' : '') + (follow === r ? ' follow' : '');
         if (!r.visible) { var why = outWhy(r); if (row.why !== why) { row.why = why; row.mark.title = why; } }
         row.bar.style.width = (maxHp(r)>0&&Number.isFinite(hp)?Math.max(0,Math.min(100,100*hp/maxHp(r))):0)+'%';
         if (row.hb) { var lit = !!panel && panel.shown() === r.v.id; row.hb.classList.toggle('on', lit); row.hb.setAttribute('aria-pressed', String(lit)); }
@@ -3232,17 +3461,81 @@
     requestAnimationFrame(frame);
     frameBody(now);
   }
+  // RENDER ON DEMAND (23.11, outputs/stutter-audit-2026-11-23.md, candidate 6: the scene was drawn every frame, paused and
+  // still too): the frame loop and its DOM updates run on; the scene is drawn only when something in it changed - the
+  // battle's clock, the camera (its drawn matrix, field of view, aspect), a shadow map redrawn, an input or a setting
+  // (requestRender: the canvas's pointer and wheel, keys, resize, any control of the page), or while something lives on
+  // the wall clock (the shot view, the plant sheet, a flash fading, a plant falling, the cost readout). Anything else - a
+  // texture or a model arriving - is shown by the redraw at most 1 s after the last one (needsRender).
+  var renderAsked = true, lastRenderAt = -Infinity, lastRenderT = NaN, camSeen = new Float64Array(18);
+  function requestRender() { renderAsked = true; }
+  // whether this frame draws the scene (pure: tests/test_render_on_demand.cjs)
+  function needsRender(s) {
+    return !!(s.asked || s.playing || s.live || s.camMoved || s.timeMoved || s.shadows || !(s.idleMs < 1000));
+  }
+  function camChanged() {
+    camera.updateMatrixWorld();
+    var e = camera.matrixWorld.elements, ch = false;
+    for (var i = 0; i < 16; i++) if (camSeen[i] !== e[i]) { camSeen[i] = e[i]; ch = true; }
+    if (camSeen[16] !== camera.fov || camSeen[17] !== camera.aspect) { camSeen[16] = camera.fov; camSeen[17] = camera.aspect; ch = true; }
+    return ch;
+  }
+  renderer.domElement.addEventListener('pointerdown', requestRender);
+  renderer.domElement.addEventListener('pointermove', function (e) { if (e.buttons) requestRender(); });
+  renderer.domElement.addEventListener('pointerup', requestRender);
+  renderer.domElement.addEventListener('wheel', requestRender, { passive: true });
+  ['keydown', 'keyup', 'resize'].forEach(function (n) { window.addEventListener(n, requestRender); });
+  ['input', 'change', 'click'].forEach(function (n) { document.addEventListener(n, requestRender, true); });
+  // THE MOD TOLD THE VIEWER IS IN USE (23.11, candidate 5): Hits' own 'busy' (app.js sendBusy) - at most once a second while
+  // the battle plays or the scene is dragged, zoomed or moved - holds the mod's background jobs back (the page's own
+  // jobs still run: they are the page's turn, JOB_PAGE)
+  // INPUT DELAY (23.11, BACKLOG B7): an input event's time stamp to the end of the frame that applied it (the page's own share
+  // of the lag), the last INPUT_KEEP of them - the cost readout's line and, once a minute with new inputs, a game.log line
+  // (the mod's playback_report, kind 'input'), so the page's delay can be told from the game's display delay
+  var inputPending = [], inputDelays = [], inputNew = 0, inputToldAt = 0, INPUT_KEEP = 200;
+  function noteInput(e) { if (e && isFinite(e.timeStamp) && e.timeStamp > 0 && inputPending.length < 64) inputPending.push(e.timeStamp); }
+  ['pointerdown', 'pointermove', 'wheel'].forEach(function (n) { renderer.domElement.addEventListener(n, function (e) { if (n !== 'pointermove' || e.buttons) noteInput(e); }, { passive: true }); });
+  window.addEventListener('keydown', noteInput);
+  function inputApplied(end) {
+    inputPending.forEach(function (ts) { var d = end - ts; if (d >= 0 && d < 10000) { inputDelays.push(d); inputNew++; } });
+    inputPending.length = 0;
+    if (inputDelays.length > INPUT_KEEP) inputDelays.splice(0, inputDelays.length - INPUT_KEEP);
+    if (inputNew >= 10 && end - inputToldAt > 60000 && host.canSend()) {
+      inputToldAt = end; inputNew = 0;
+      var iv = window3s(intervals, end);
+      host.send('bullba_hits', { action: 'playbackReport', report: { kind: 'input', battleId: BID, inputP50: +quant(inputDelays, 0.5).toFixed(1),
+        inputP95: +quant(inputDelays, 0.95).toFixed(1), inputs: inputDelays.length, frameP50: +quant(iv, 0.5).toFixed(1), frameP95: +quant(iv, 0.95).toFixed(1), full: fullOn() } })
+        .catch(function () {});
+    }
+  }
+  var busySentAt = 0;
+  function sendBusy() {
+    if (!host.game || !host.canSend()) return;
+    var now = Date.now(); if (now - busySentAt < 1000) return; busySentAt = now;
+    host.send('bullba_hits', { action: 'busy' }).catch(function () {});
+  }
+  renderer.domElement.addEventListener('pointermove', function (e) { if (e.buttons) sendBusy(); });
+  renderer.domElement.addEventListener('wheel', sendBusy, { passive: true });
+  window.addEventListener('keydown', sendBusy);
   function frameBody(now) {
     var gap = lastFrame ? now - lastFrame : 0, dt = Math.min(0.25, gap / 1000);
     if (lastFrame) intervals.push([now, gap]);
     lastFrame = now;
     if (playing) { var t0 = t; t += dt * speed; if (shotView) t = shotView.clamp(t0, t); if (t >= tEnd) { t = tEnd; togglePlay(); } }
     keyMove(dt);
+    if (playing) sendBusy();
     var c0 = performance.now(), cq = null;
     if (costOn && timerExt && !benchBusy && costQ.length < 6) { cq = gl.createQuery(); gl.beginQuery(timerExt.TIME_ELAPSED_EXT, cq); }
-    step(t);  // inside the timers: the cascades' shadow maps are drawn here
-    // the shot view (shot-view.js): the target painted with Hits' map for this camera before the render, Hits' marks after it
-    if (sheetOn) renderer.render(sheetOn.scene, sheetOn.cam); else { if (shotView) shotView.paint(t, now); cutUpdate(); renderer.render(scene, camera); if (shotView) shotView.overlay(); }
+    var sh0 = CSM.redraws[0] + CSM.redraws[1] + CSM.redraws[2] + CSM.overlays[0] + CSM.overlays[1] + CSM.overlays[2];
+    var fxLive = step(t);  // inside the timers: the cascades' shadow maps are drawn here
+    var sh1 = CSM.redraws[0] + CSM.redraws[1] + CSM.redraws[2] + CSM.overlays[0] + CSM.overlays[1] + CSM.overlays[2];
+    if (needsRender({ asked: renderAsked, playing: playing, camMoved: camChanged(), timeMoved: t !== lastRenderT, shadows: sh1 !== sh0,
+      live: !!(shotView || sheetOn || fxLive || falling.length || costOn || benchBusy), idleMs: now - lastRenderAt })) {
+      renderAsked = false; lastRenderAt = now; lastRenderT = t;
+      // the shot view (shot-view.js): the target painted with Hits' map for this camera before the render, Hits' marks after it
+      if (sheetOn) renderer.render(sheetOn.scene, sheetOn.cam); else { if (shotView) shotView.paint(t, now); cutUpdate(); renderer.render(scene, camera); if (shotView) shotView.overlay(); }
+    }
+    if (inputPending.length) inputApplied(performance.now());
     if (cq) { gl.endQuery(timerExt.TIME_ELAPSED_EXT); costQ.push(cq); }
     var cms = performance.now() - c0;
     cpuTimes.push([now, cms]);
@@ -3264,9 +3557,10 @@
     var d0 = dApplied, rs = dTime > time;
     stepDestruction(time); if (dApplied !== d0 || rs) shadowDirty();  // objects broke / the battle went back: casters changed
     stepFlash(time);
-    poseVehicles(time); poseTracers(time); fxStep(time);
+    poseVehicles(time); poseTracers(time); var fx = fxStep(time);
     placeCamera();
     splitPlants(false); placeSun();  // placeSun last: it reads the casters' redraw flag
+    return fx;   // the flashes alive now (they fade on the wall clock)
   }
 
   // ------------------------------------------------------------------ bench: synchronised frame cost per layer set
@@ -3409,6 +3703,7 @@
     var gp = gpuHist.map(function (x) { return x[1]; }), gc = groundCost(), mb = function (b) { return (b / 1048576).toFixed(2) + ' MB'; };
     $('c-int').textContent = quant(iv, 0.5).toFixed(1) + ' / ' + quant(iv, 0.95).toFixed(1) + ' ms';
     $('c-cpu').textContent = quant(cp, 0.5).toFixed(2) + ' / ' + quant(cp, 0.95).toFixed(2) + ' ms';
+    $('c-input').textContent = inputDelays.length ? quant(inputDelays, 0.5).toFixed(1) + ' / ' + quant(inputDelays, 0.95).toFixed(1) + ' ms (' + inputDelays.length + ')' : 'no input yet';
     $('c-gpu').textContent = !timerExt ? 'not available here' : (gp.length ? quant(gp, 0.5).toFixed(2) + ' / ' + quant(gp, 0.95).toFixed(2) + ' ms' : 'waiting');
     $('c-tris').textContent = renderer.info.render.triangles.toLocaleString('en') + ' / ' + renderer.info.render.calls;
     $('c-ground').textContent = mb(gc.gpu) + ' on GPU, ' + mb(gc.data) + ' data' + (gc.load != null ? ', load ' + gc.load + ' ms' : '');
@@ -3687,21 +3982,42 @@
   // The battle's vehicles with no file (a replay of another player, 19.11): the mod makes them ('playbackVehicles', with
   // the compact descriptor the battle's stream carries - the exporter's own route, else the client's XML) and says so
   // with the files there now; meanwhile the message line says it. Outside the game, or no word in VEHICLES_MS: boxes.
+  // 23.11 (outputs/vehicle-prepare-2026-11-23.md: every full-screen switch asked the mod again for variants it had made): the
+  // current listing is the battle's variants file data/playback/variants-<battle>.js (the mod rewrites it after each of its
+  // vehicle jobs), joined with the battle file's own listing (made once with the battle file; the only one of an older
+  // battle). A variant the mod could not make is listed there with its reason (`failed`): a box at once, not asked again. A
+  // configuration with no recorded descriptor is never asked for: the mod cannot make it, so the wait would never end.
   var VEHICLES_MS = 120000;
   function vehiclesFor(b, raw) {
-    var files = FILE && FILE.vehicleFiles;
+    var base = FILE && FILE.vehicleFiles;
+    function join(v) {
+      var f = v && v.files; if (!f) return base;
+      function both(a, c) { return a || c ? Array.from(new Set((a || []).concat(c || []))) : null; }
+      return { hits: base && base.hits || f.hits ? both(base && base.hits, f.hits) : null, viewer: both(base && base.viewer, f.viewer) || [], failed: v.failed || {} };
+    }
+    return loadData('data/playback/variants-' + BID + '.js', 'playback-variants:' + BID).then(join, function () { return base; }).then(function (files) {
+    var failed = (files && files.failed) || {};
     return loadVehicles(b, raw, files).then(function (m) {
-      var missing = Object.keys(m).filter(function (t) { return m[t].missing; });
+      var configOf = {};
+      b.vehicles.forEach(function (v) { PlaybackBattle.lives(v).forEach(function (c) { configOf[c.key || c.type] = c; }); });
+      var missing = Object.keys(m).filter(function (t) {
+        if (!m[t].missing) return false;
+        if (failed[t]) { m[t].reason = 'the game could not make it: ' + failed[t]; return false; }
+        if (!configOf[t] || !configOf[t].compDescr) { m[t].reason = 'no recorded descriptor'; return false; }
+        return true;
+      });
       if (!missing.length || !host.canSend()) return m;
       $('msg').textContent = 'Preparing the models of ' + missing.length + ' vehicle' + (missing.length > 1 ? 's' : '') + '...';
-      var rows = missing.map(function (t) {
-        var config=null;b.vehicles.forEach(function(v){PlaybackBattle.lives(v).forEach(function(c){if((c.key||c.type)===t)config=c;});});
-        return { type: config?config.type:t, descr: config?config.compDescr:null };
-      });
-      var w = waitFor(function (n) { return n.kind === 'vehicles' && n.id === BID ? { value: n.files || files } : null; },
-        function () { return loadData('data/playback/variants-'+BID+'.js','playback-variants:'+BID).then(function(v){if(!v||!v.files||missing.some(function(k){return !(v.files.viewer||[]).includes(k);}))throw new Error('waiting for variants');return v.files;}); }, VEHICLES_MS);
+      var rows = missing.map(function (t) { return { type: configOf[t].type, descr: configOf[t].compDescr }; });
+      // the wait ends when every asked variant is listed as made or as not made (the mod's word, or its variants file)
+      function settled(v) { return v && v.files && !missing.some(function (k) { return !(v.files.viewer || []).includes(k) && !(v.failed || {})[k]; }); }
+      var w = waitFor(function (n) { return n.kind === 'vehicles' && n.id === BID ? { value: join({ files: n.files || files, failed: n.failed }) } : null; },
+        function () { return loadData('data/playback/variants-'+BID+'.js','playback-variants:'+BID).then(function(v){if(!settled(v))throw new Error('waiting for variants');return join(v);}); }, VEHICLES_MS);
       host.send('bullba_hits', { action: 'playbackVehicles', battleId: BID, vehicles: rows }).catch(function (e) { console.warn('Bullba Hits playbackVehicles failed: ' + e.message); });
-      return w.then(function (f) { return loadVehicles(b, raw, f); }, function () { return m; });
+      return w.then(function (f) { return loadVehicles(b, raw, f).then(function (m2) {
+        Object.keys(m2).forEach(function (t) { if (m2[t].missing && (f.failed || {})[t]) m2[t].reason = 'the game could not make it: ' + f.failed[t]; });
+        return m2; }); }, function () { return m; });
+    });
     });
   }
 
@@ -3777,11 +4093,12 @@
   }
   // the battle from its source (BattlePage.obtain); its source or definitions file gone (removed by hand): the mod writes
   // them again (playback.current checks they are there) and says so
-  function battleBuilt(info) {
-    return BattlePage.obtain({ info: info, dataBase: BASE + 'data/', builderBase: PAGE_BASE + 'playback/' }).catch(function (e) {
+  function battleBuilt(info, force) {
+    var o = { info: info, dataBase: BASE + 'data/', builderBase: PAGE_BASE + 'playback/', force: !!force, progress: function (m) { $('msg').textContent = m; } };
+    return BattlePage.obtain(o).catch(function (e) {
       if (!e.missing) throw e;
       if (!host.canSend()) throw new Error('The replay files of this battle are missing. Open it here from Bullba Hits in the game once.');
-      return untilMade(info.id).then(function () { $('msg').textContent = 'Reading the replay...'; return BattlePage.obtain({ info: info, dataBase: BASE + 'data/', builderBase: PAGE_BASE + 'playback/' }); });
+      return untilMade(info.id).then(function () { $('msg').textContent = 'Opening the replay...'; return BattlePage.obtain(o); });
     });
   }
   // the map's raw files (MapBuildPage.obtain's ask): the mod copies them ('mapRaw'), its words are the progress line
@@ -3806,7 +4123,10 @@
     var s = function (ms) { return ms == null || !isFinite(ms) ? null : +(ms / 1000).toFixed(3); };
     var rep = { battleId: BID, map: FILE && FILE.record && FILE.record.map, mapFrom: J.source || null, mapBuiltAt: J.builtAt || null, battleFrom: B.source || null,
       waitMod: s(waited.mod), loadRaw: J.source === 'built' ? s((W.loadRawScripts || 0) + (W.resScriptsLoad || 0)) : 0, buildMap: J.source === 'built' ? s(W.build) : 0,
-      buildBattle: s(B.ms), total: s(r.total), webgl: !!(renderer && renderer.getContext && renderer.getContext()) };
+      buildBattle: s(B.ms), total: s(r.total), webgl: !!(renderer && renderer.getContext && renderer.getContext()),
+      // 23.11 (outputs/reopen-audit-2026-11-23.md D3): the parts of a reopen's long frame - the stored map's read, the scene's
+      // build from it, the plant pictures
+      idbRead: s(JT.idbRead), sceneBuild: s(r.build), impostors: s(r.impostors) };
     host.send('bullba_hits', { action: 'playbackReport', report: rep }).catch(function (e) { console.warn('Bullba Hits report failed: ' + e.message); });
     window.__report = rep;
   }
@@ -3967,6 +4287,9 @@
   function confirmMode(id, s) {
     var key = id + ':' + (s ? s.name || 'unknown' : 'standard');
     if (!s || modeAccepted[key] || !settingStore.peek($('sw-special-warn'))) return Promise.resolve(true);
+    // 23.11 (outputs/reopen-audit-2026-11-23.md D6): the full-screen switch opens a new browser (no sessionStorage): the
+    // acceptance comes in the state it carries (viewState 'accepted')
+    if (params.accepted && params.accepted === key.replace(/[^-A-Za-z0-9_.,]/g, '_')) { modeAccepted[key] = true; return Promise.resolve(true); }
     try {
       var accepted = JSON.parse(sessionStorage.getItem('bullba-replay-accepted'));
       if (accepted && accepted.key === key) {
@@ -4082,6 +4405,7 @@
       parts.push('at=' + n(t, 2), 'cam=' + [n(cam.tx, 2), n(cam.ty, 2), n(cam.tz, 2), n(cam.yaw, 4), n(cam.pitch, 4), n(cam.dist, 2)].join(','),
         'speed=' + speed, 'play=' + (playing ? 1 : 0));
       if (follow) parts.push('follow=' + follow.v.id);
+      Object.keys(modeAccepted).forEach(function (k) { if (k.indexOf(BID + ':') === 0) parts.push('accepted=' + k.replace(/[^-A-Za-z0-9_.,]/g, '_')); });   // in the mod's state words (presentation.VIEW_STATE)
       var open = panel && panel.shown(); if (open != null) parts.push('panel=' + open);
       if (open != null && panel.filter() !== 'all') parts.push('dir=' + panel.filter());   // the panel's filter (U1, 20.11)
       // the shot view's shot (21.11, BACKLOG 118): the view opens on it again (openShotParam)
@@ -4192,14 +4516,24 @@
     location.hash = (host.game ? 'host=game&' : '') + (FULL_VIEW ? 'view=full&' : '') + 'battle=' + encodeURIComponent(id) + (shot?'&shot='+encodeURIComponent(shot):'');
     location.reload();
   }
-  // the replay files: in the game the mod reads their headers again first ('replayFiles', a cached scan) and says when
-  // data/replay-files.js is written; outside it the file is read as it is (a missing one is left unread)
-  var FILES_MS = 60000;
-  function loadFiles() {
-    if (!host.canSend()) return loadData('data/replay-files.js', 'replayFiles').catch(function () { return null; });
-    var w = waitFor(function (n) { return n.kind === 'files' ? { value: null } : null; }, function () { return loadData('data/replay-files.js','replayFiles'); }, FILES_MS);
+  // the replay files: data/replay-files.js as it is now, at once (a missing one is left unread). 23.11
+  // (outputs/reopen-audit-2026-11-23.md D2: every open waited for the mod's scan first, and the battle with it): in the game the
+  // mod reads their headers again meanwhile ('replayFiles', a cached scan) and the file is read again a little later -
+  // `later(files)` gets it when it differs (the selector repainted)
+  var FILES_AGAIN = [1500, 5000, 15000];
+  function loadFiles(later) {
+    var now = loadData('data/replay-files.js', 'replayFiles').catch(function () { return null; });
+    if (!host.canSend()) return now;
     host.send('bullba_hits', { action: 'replayFiles' }).catch(function (e) { console.warn('Bullba Hits replayFiles failed: ' + e.message); });
-    return w.then(function () { return loadData('data/replay-files.js', 'replayFiles'); }).catch(function () { return null; });
+    now.then(function (first) {
+      var seen = JSON.stringify(first);
+      FILES_AGAIN.forEach(function (ms) {
+        setTimeout(function () {
+          loadData('data/replay-files.js', 'replayFiles').then(function (f) { var j = JSON.stringify(f); if (j !== seen) { seen = j; if (later) later(f); } }, function () {});
+        }, ms);
+      });
+    });
+    return now;
   }
   $('sel-battle').onchange = function () { choose(this.value); };
 
@@ -4230,13 +4564,14 @@
   (function () { var pa = $('rng-panel-a'); pa.value = settingStore.peek(pa); pa.oninput(); })();
 
   // ------------------------------------------------------------------ start
-  var mapData, battleInfo = null;
+  var mapData, battleInfo = null, openedInfo = null;
+  function paintGap() { return new Promise(function (ok) { requestAnimationFrame(function () { setTimeout(ok, 0); }); }); }
   var loadStart = performance.now();
   Promise.resolve().then(function () {
     BID = params.battle || '';
     // the selector is filled beside the load, whatever becomes of it: another battle can be chosen from an error too
     battleSelect(null);
-    entryMetadata=Promise.all([loadData('data/index.js', 'index').then(battleSelect, function () {}),loadFiles().then(function (f) { FILES = f; battleSelect(); }),
+    entryMetadata=Promise.all([loadData('data/index.js', 'index').then(battleSelect, function () {}),loadFiles(function (f) { FILES = f; battleSelect(); noBattle(); }).then(function (f) { FILES = f; battleSelect(); }),
       loadData('data/vehicles.js', 'vehicles').then(function (c) { NAMES = BullbaRows.vehicleNamer(c && c.vehicles); battleSelect(); }, function () {})]);
     if (!BID) { window.__list = true; noBattle(); return new Promise(function () {}); }
     if (!/^[-a-zA-Z0-9_]{1,100}$/.test(BID)) throw new Error('No battle named.');
@@ -4254,15 +4589,24 @@
     });
   }).then(function (info) {
     if (info.error) throw new Error(info.error);
-    $('msg').textContent = 'Reading the replay...';
+    openedInfo = info;
+    $('msg').textContent = 'Opening the replay...';   // 23.11 (D1): battle-page.js says "Reading the replay..." only when it decodes it
     return battleBuilt(info);
   }).then(function (r) {
     var b = r.battle;
     battleInfo = r.info;
     store['battle:' + BID] = b;
-    $('msg').textContent = 'Building the map...';
-    var raw = r.effects ? {} : null;
-    return Promise.all([jsMap(b), vehiclesFor(b, raw).then(function (m) { store['vehicles:' + BID] = m; return raw && r.effects(raw); })]);
+    // 23.11 (outputs/reopen-audit-2026-11-23.md D1): every open said "Building the map..." though a reopen only reads the stored
+    // map; mapbuild-page.js says "Building the map..." on its build path alone
+    $('msg').textContent = 'Loading the map...';
+    var raw = {};
+    return Promise.all([jsMap(b), vehiclesFor(b, raw).then(function (m) {
+      store['vehicles:' + BID] = m;
+      if (r.effects) return r.effects(raw);
+      // 23.11 (D5): the stored battle's hits were placed without a vehicle file that is there now: the battle is built again
+      if (!(r.lacked || []).some(function (k) { return m[k] && m[k].model; })) return;
+      return battleBuilt(openedInfo, true).then(function (r2) { store['battle:' + BID] = r2.battle; battleInfo = r2.info; return r2.effects && r2.effects(raw); });
+    })]);
   }).then(function () {
     var tLoaded = performance.now();
     mapData = store['map:' + MAP]; battle = store['battle:' + BID];
@@ -4270,12 +4614,18 @@
     $('mapname').textContent = mapData.title + ' (' + battle.meta.gameplay + ')' + (battle.meta.dateTime ? ' ' + battle.meta.dateTime : '');
     thisBattle = [battle.meta.dateTime, mapData.title].filter(Boolean).join(' · ');
     var thisOpt = $('sel-battle').querySelector('option[data-this]'); if (thisOpt) thisOpt.textContent = thisBattle; replayHeading(fileRows());
-    setupHaze();  // before any material compiles (it patches three.js's fog chunks)
-    buildTerrain(mapData.terrain);
-    buildVisual(mapData.visual, mapData.atlas);
-    buildObjects(mapData.objects);
-    setObjectsMode(mapData.visual ? 'visual' : 'collision');
-    buildTrees(mapData.trees);
+    // 23.11 (outputs/reopen-audit-2026-11-23.md D3: one frame of 1.2-1.8 s on every reopen): the scene's build steps with a
+    // painted frame between them (paintGap), so the page shows what it does instead of freezing in one long frame
+    $('msg').textContent = 'Building the scene...';
+    return paintGap().then(function () {
+      setupHaze();  // before any material compiles (it patches three.js's fog chunks)
+      buildTerrain(mapData.terrain); return paintGap();
+    }).then(function () { buildVisual(mapData.visual, mapData.atlas); return paintGap();
+    }).then(function () {
+      buildObjects(mapData.objects);
+      setObjectsMode(mapData.visual ? 'visual' : 'collision');
+      buildTrees(mapData.trees); return paintGap();
+    }).then(function () {
     setGround(mapData.terrain.groundDefault);
     setSun(1);
     setRelief('game');
@@ -4318,12 +4668,14 @@
         localStorage.setItem('bullba-foliage-fix', '1'); } catch (e) {}
       $('reset-settings').onclick = function () { settingStore.reset(); BullbaSettings.impact.reset(); };
       restoreView();  // R5: the state the full-screen switch carried (time, camera, speed, play, follow, panel)
+      warmPrograms();  // 23.11: the shaders of what appears later compiled now, not at its first sight
       openShotParam();  // 21.11 (BACKLOG 118): a shot carried by Hits' link or by that state
       window.__ready = { jsBuild: jsBuild, battleBuild: battleInfo, load: +(tLoaded - loadStart).toFixed(0), build: +(tBuilt - tLoaded).toFixed(0), impostors: +(performance.now() - tBuilt).toFixed(0), total: +(performance.now() - loadStart).toFixed(0),
         view: startKind, vehicles: vehicles.length, boxes: vehicles.filter(function (r) { return !r.md.model; }).length, shots: shots.length, own: own && own.type, ownId: own && own.id, owned: battle.vehicles.filter(function (v) { return v.own; }).length,
         destructionEvents: dEvents.length, s3tc: s3tc,
         hits: { points: fxHits.length, muzzles: fxMuzzles.length, stickerMarks: (battle.marks || []).length, marks: fxMarkInfo } };
       report(window.__ready);
+    });
     });
   }).catch(function (e) { if(e.cancelled){delete params.shot;history.replaceState(null,'','#'+(host.game?'host=game&':'')+(FULL_VIEW?'view=full':''));BID='';FILE=null;window.__list=true;battleSelect();noBattle();return;}$('msg').textContent = e.message; window.__error = String(e && e.stack || e); });
 
@@ -4478,4 +4830,9 @@
       Object.keys(cells).forEach(function (k) { var c = cells[k], s = Math.min(c.tree, c.bush) * Object.keys(c.kinds).length; if (c.tree && c.bush && (!best || s > best.s)) best = { s: s, x: c.x, z: c.z, tree: c.tree, bush: c.bush, kinds: Object.keys(c.kinds) }; });
       return best;
     } };
+  // render on demand (23.11): whatever the bench and test API changes is drawn on the next frame
+  Object.keys(window.MapBench).forEach(function (k) {
+    var f = window.MapBench[k]; if (typeof f !== 'function') return;
+    window.MapBench[k] = function () { requestRender(); var out = f.apply(this, arguments); if (out && typeof out.then === 'function') out.then(requestRender, requestRender); return out; };
+  });
 })();

@@ -2,6 +2,22 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.1.1 from 1.05 on, 2.4.1.0 from 1.02 on, 2.4.0.2 from 0.9.3 on, 2.4.0.1 #950 from 0.7.6, 2.4.0.0 #945 before.
 
+## Unreleased
+
+- Replays: destroyed vehicles stay destroyed - every wreck stays drawn where the vehicle died, also when it died out of sight or its wreck came back into view; before, up to half of the wrecks vanished near the battle's end and some stood where the vehicle was last seen alive.
+- Replays: a destroyed vehicle's HP in the team list stays empty; before, it could fill up again. A vehicle whose HP the replay does not know yet shows an empty bar, not a full one.
+- Replays: a team-list click takes the camera to where the vehicle really is - its wreck, its minimap position while it is spotted beyond the draw range, or where it was last seen - with a short note at the top saying which; with no position known the camera stays where it is ("Position unknown").
+- Replays: a click on a vehicle in the 3D view follows it, as a click on its row does.
+- Replays: smoother and lighter - the scene is drawn only when something changes (paused and still, it costs almost nothing); trees falling, the camera moving and zooming redraw much less of the shadows; the mod's background work waits while a replay plays or the view is dragged; shaders of hit marks, flashes and later vehicle configurations are prepared when the battle opens.
+- Replays: the camera follows the mouse and the wheel faster (the wheel moves half of its step at once).
+- Replays: the shadow setting's tooltip names sharp as the default, as it is.
+- Replays: switching between full screen and the window no longer prepares vehicle models again; models the game made earlier are drawn at once, also outside the game. A vehicle the game could not make is shown as a box with the reason, without asking again on every opening.
+- Replays: the opening messages say what really happens - "Loading the map..." when the stored map is read, "Building the map..." only when it is built - and the page no longer freezes for one long moment while the scene is built.
+- Replays: a battle opens without waiting for the game to re-read the replays folder; the list refreshes on its own a moment later.
+- Replays: a special-mode warning accepted once is not shown again after switching to full screen or back.
+- Replays: hits are placed again on vehicles whose model became available after the battle was first opened.
+- Replays: Settings > cost shows the input delay (from a mouse or key event to the frame that drew it); the game's log records it once a minute.
+
 ## 1.31 (2026-11-23)
 
 - Replays shot view: the dashed tracer and its glowing shell dot now always fly the whole way into the armour, even after the episode has stopped at the hit and whatever the camera does; before, they could stop short of the target (often with artillery) or not appear at all for close shots.

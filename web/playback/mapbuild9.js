@@ -13,7 +13,7 @@
 (function (G) {
   'use strict';
   var MB = G.MapBuild, f = Math.fround, C = MB.counts;
-  MB.VERSION = 'r9.4';   // r9.2 (19.11): the rock shader's data (atlas.rocks, rec.rock); r9.3 (21.11): the map's scenarios (lookup.scenario); r9.4 (23.11): no impostor LODs, atlas tiles at one texel density
+  MB.VERSION = 'r9.5';   // r9.5 (23.11, outputs/reopen-audit-2026-11-23.md D3): each visual record's vertex normals stored (rec.nrm)   // r9.2 (19.11): the rock shader's data (atlas.rocks, rec.rock); r9.3 (21.11): the map's scenarios (lookup.scenario); r9.4 (23.11): no impostor LODs, atlas tiles at one texel density
   var RESV = 'p3';   // version of the per-resource products (p2: a LOD's numeric material properties and uv2; p3 (23.11): textures from 512 px down)
   MB.RESV = RESV;   // the page names it with its digest of the products it holds (mapbuild-page.js heldDigest)
   var now = (typeof performance !== 'undefined') ? function () { return performance.now(); } : Date.now;
@@ -925,6 +925,7 @@
         pmin: q.min, prange: q.range, umin: qu.min, urange: qu.range, p: q.q, uv: qu.q, tile: tile, tile16: rects.length >= 256,
         rects: rects.map(function (r) { return r.map(function (x) { return pyRound(x, 6); }); }), i: I, i32: nv >= 65536, m: mats,
         collision: pd.items.some(function (it) { return !!it[1].havok; }), destructible: pd.d.kind || null };
+      rec.nrm = storedNormals(q, I);
       if (Mi.some(function (x) { return x !== 0; })) rec.mod = Mi;
       if (pd.ruin) { rec.ruin = 1; stats['scenario ruin models'] = (stats['scenario ruin models'] || 0) + 1; }
       var allRock = nv > 0, anyRock = false;
@@ -946,6 +947,24 @@
     return { recs: recs, atlas: atl, index: index };
   }
   // u16 over the float32 range (objects_visual: (P - lo) / rng * 65535 in float32, np.round)
+  // A RECORD'S VERTEX NORMALS AS THE PAGE DREW THEM (23.11): the page's positions (playback.js deq: min + q / 65535 * range, in
+  // float32) and three.js's computeVertexNormals (each triangle's cb x ab added to its corners, then normalised), stored as
+  // int16 normalised (the page reads them as a normalised attribute: within 3e-5 of the float)
+  function storedNormals(q, I) {
+    var Q = q.q, nv = Q.length / 3, P = new Float32Array(Q.length), N = new Float32Array(Q.length), out = new Int16Array(Q.length);
+    for (var i = 0; i < Q.length; i++) { var c = i % 3; P[i] = q.min[c] + Q[i] / 65535 * q.range[c]; }
+    for (var t = 0; t < I.length; t += 3) {
+      var a = I[t] * 3, b = I[t + 1] * 3, d = I[t + 2] * 3;
+      var cbx = P[d] - P[b], cby = P[d + 1] - P[b + 1], cbz = P[d + 2] - P[b + 2], abx = P[a] - P[b], aby = P[a + 1] - P[b + 1], abz = P[a + 2] - P[b + 2];
+      var nx = cby * abz - cbz * aby, ny = cbz * abx - cbx * abz, nz = cbx * aby - cby * abx;
+      N[a] += nx; N[a + 1] += ny; N[a + 2] += nz; N[b] += nx; N[b + 1] += ny; N[b + 2] += nz; N[d] += nx; N[d + 1] += ny; N[d + 2] += nz;
+    }
+    for (var v = 0; v < nv; v++) {
+      var x = N[v * 3], y = N[v * 3 + 1], z = N[v * 3 + 2], l = Math.sqrt(x * x + y * y + z * z) || 1;
+      out[v * 3] = Math.round(x / l * 32767); out[v * 3 + 1] = Math.round(y / l * 32767); out[v * 3 + 2] = Math.round(z / l * 32767);
+    }
+    return out;
+  }
   function quant32(a, k, eps) {
     var n = a.length / k, lo = [], hi = [], rng = [], q = new Uint16Array(a.length), c, i;
     for (c = 0; c < k; c++) { lo[c] = Infinity; hi[c] = -Infinity; }
