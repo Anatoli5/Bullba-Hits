@@ -4,7 +4,7 @@ All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2
 
 ## Unreleased
 
-- Replays: the battle list shows only battles that have a replay to play; Bullba Hits battles whose replay is gone are no longer listed (on this computer 279 of 1261 such battles remain).
+- Replays: the battle list is the game's replays folder - the replay files there; Bullba Hits battles without a replay file there are no longer listed.
 - Replays: a battle the game cannot prepare stops at once with the reason (e.g. "No replay file of this battle is in the game's replays folder") instead of waiting on "Preparing the replay of this battle..."; a battle with no replay names that first, not its map.
 
 ## 1.34 (2026-11-23)

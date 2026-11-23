@@ -4171,10 +4171,11 @@
     var sel = $('sel-battle'), list = (INDEX && Array.isArray(INDEX.battles) ? INDEX.battles : []).filter(function (b) { return b && b.id; });
     var files = fileRows(), tied = {};
     files.forEach(function (f) { if (f.battle) tied[f.battle] = true; });
-    // 23.11 (the user: his oldest battle, 13.09, was listed though it has no replay and cannot be played): a Bullba Hits
-    // battle with no replay file is listed only when the mod keeps its replay stream (data/replays.js: 'stream') or the
-    // library still ties a replay to it; until data/replays.js is read the list is the full one
-    var playable = function (b) { if (!replayView) return true; var k = replayKind(b.id); return k === 'stream' || k === 'kept' || k === 'rolling' || k === 'game'; };
+    // 23.11 (the user: the list is the game's replays folder - his oldest battle, 13.09, was listed with no replay, and 279
+    // old stream copies of the mod beside it, moved to recycle the same day): a Bullba Hits battle with no listed file is
+    // shown only while the replay library ties a file of that folder to it (its file not listed yet); until
+    // data/replays.js is read the list is the files alone
+    var playable = function (b) { if (!replayView) return false; var k = replayKind(b.id); return k === 'kept' || k === 'rolling' || k === 'game'; };
     BATTLES = list.filter(function (b) { return !tied[b.id] && playable(b); }).sort(function (a, b) { return (+b.startedAt || 0) - (+a.startedAt || 0); });
     var known = files.some(function (f) { return (f.battle || f.id) === BID; }) || BATTLES.some(function (b) { return b.id === BID; });
     sel.replaceChildren();
