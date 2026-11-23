@@ -1373,7 +1373,8 @@
   Viewer.prototype.recordedShown=function(){return aimShown()&&this.recordedPose()&&!this.pinned&&!this.shotHeld;};
   // The recorded shot held back (19.11.2026, the replay viewer's shot view: its episode plays the 2 s before the hit, and the
   // hit line and its crosses come with the hit). Bullba Hits never holds it.
-  Viewer.prototype.holdShot=function(on){this.shotHeld=!!on;this.syncRecorded();this.draw();};
+  // 23.11 (NOTEBOOK Z8): the recorded rings (aimGroup: the shot ring the server returns at the hit) wait for the hit too.
+  Viewer.prototype.holdShot=function(on){this.shotHeld=!!on;if(this.aimGroup)this.aimGroup.visible=!this.shotHeld&&aimShown();this.syncRecorded();this.draw();};
   Viewer.prototype.syncRecorded=function(){var show=this.recordedShown();this.root.children.forEach(function(o){if(o!==this.paintMesh&&o!==this.trackGroup&&o!==this.outline&&o!==this.outlineDepth&&o!==this.aimGroup&&!o.userData.horizon)o.visible=show;},this);};
   Viewer.prototype.shotProbability=function(shell){
     if(this.pinned&&this.engine&&shell)return this.engine.ray(this.pinned.origin.toArray(),this.pinned.direction.toArray(),shell);
@@ -1594,7 +1595,7 @@
   // The rings depend only on the shot line (muzzle, impact point, dispersion) and live in the root frame,
   // so turning the turret or the gun does not move them and must not hide them: only the checkbox does.
   // The hit marks and arrows keep their pose rule in syncRecorded.
-  Viewer.prototype.showSavedAim=function(value){if(this.aimGroup)this.aimGroup.visible=!!value;this.draw();};
+  Viewer.prototype.showSavedAim=function(value){if(this.aimGroup)this.aimGroup.visible=!!value&&!this.shotHeld;this.draw();};   // 23.11 (Z13): a held shot keeps them back
   // Whether the recorded rings are on screen at this moment. A pinned point and the user's first emulated
   // shot both take them away, and the page prints a figure only for a ring the user can actually see.
   Viewer.prototype.savedAimShown=function(){return !!(this.aimGroup&&this.aimGroup.visible);};
@@ -1971,7 +1972,7 @@
     if(had){dropLine(this.scene,this.aimShotCircle);this.aimShotCircle=null;}
     var released=false;
     if(this.aimPinned){this.aimPinned=false;if(this.pinned){this.unpin();released=true;}}
-    if(fired&&!released){if(this.aimGroup)this.aimGroup.visible=aimShown();this.syncRecorded();}
+    if(fired&&!released){if(this.aimGroup)this.aimGroup.visible=aimShown()&&!this.shotHeld;this.syncRecorded();}
     if(reloading&&this.liveRadius100)this.drawLiveAim();   // the ring is whole again
     else if(had||fired)this.draw();
   };
@@ -2005,7 +2006,7 @@
     this.aimChase=!!on;
     if(!on)this.aimHold=false;
     this.clearAimShot();
-    if(this.aimGroup)this.aimGroup.visible=aimShown();
+    if(this.aimGroup)this.aimGroup.visible=aimShown()&&!this.shotHeld;
     this.syncRecorded();
     this.draw();
   };

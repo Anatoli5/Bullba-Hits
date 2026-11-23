@@ -2164,7 +2164,7 @@
   trGeo.setAttribute('color', new T.BufferAttribute(trCol, 3).setUsage(T.DynamicDrawUsage));
   var trLines = new T.LineSegments(trGeo, new T.LineBasicMaterial({ vertexColors: true, depthTest: true }));
   trLines.frustumCulled = false; layers.tracers.add(trLines);
-  var shotColors = {};
+  var shotColors = {}, trPts = new Float32Array((SEG + 1) * 3);
   function poseTracers(t) {
     var n = 0;
     for (var s = 0; s < shots.length; s++) {
@@ -2176,20 +2176,21 @@
       var path=shotPaths[s],flight=path?path.duration:Math.max(.05,x[10]-x[0]);
       var tau = t - x[0];
       if (tau > flight + FADE) continue;
-      var upto = Math.min(tau, flight), fade = tau > flight ? 1 - (tau - flight) / FADE : 1;
+      var fade = tau > flight ? 1 - (tau - flight) / FADE : 1;
       var c = shotColors[x[1]] || [1, 1, 0.6], k = x[2] ? [1, 0.6, 0.2] : c;
       var mo = muzzleOffsets[s] || [0, 0, 0];
-      // the server's arc, its start moved to the drawn muzzle and the move fading out along the flight
-      var px = sx + mo[0], py = sy + mo[1], pz = sz + mo[2];
-      if (path) { var p0 = path.point(0); px = p0[0]; py = p0[1]; pz = p0[2]; }   // the arc's own start (Y22: on the flight)
-      for (var i = 1; i <= SEG && n < MAXSEG; i++) {
-        var u = upto * i / SEG, w = flight > 0 ? 1 - Math.min(1, u / flight) : 0, qx, qy, qz;
-        if(path){var p=path.point(u/flight);qx=p[0];qy=p[1];qz=p[2];}
-        else { qx=sx+(ex-sx)*u/flight;qy=sy+(ey-sy)*u/flight;qz=sz+(ez-sz)*u/flight; }
-        var o = n * 6;
-        trPos[o] = px; trPos[o + 1] = py; trPos[o + 2] = pz; trPos[o + 3] = qx; trPos[o + 4] = qy; trPos[o + 5] = qz;
+      // the server's arc (its own start on the flight, Y22); no arc: the straight line from the drawn muzzle, then the
+      // server's start to its end - grown to the shell's place now by the shared procedure (battle.js growTracer, Z18)
+      var at = path ? path.point : function (f) {
+        return f <= 0 ? [sx + mo[0], sy + mo[1], sz + mo[2]] : [sx + (ex - sx) * f, sy + (ey - sy) * f, sz + (ez - sz) * f];
+      };
+      var gr = PlaybackBattle.growTracer(at, flight, tau, SEG, trPts);
+      for (var i = 1; i < gr.n && n < MAXSEG; i++) {
+        var o = n * 6, a = (i - 1) * 3, b = i * 3;
+        trPos[o] = trPts[a]; trPos[o + 1] = trPts[a + 1]; trPos[o + 2] = trPts[a + 2];
+        trPos[o + 3] = trPts[b]; trPos[o + 4] = trPts[b + 1]; trPos[o + 5] = trPts[b + 2];
         for (var j = 0; j < 2; j++) { trCol[o + j * 3] = k[0] * fade; trCol[o + j * 3 + 1] = k[1] * fade; trCol[o + j * 3 + 2] = k[2] * fade; }
-        px = qx; py = qy; pz = qz; n++;
+        n++;
       }
     }
     trGeo.setDrawRange(0, n * 2);
@@ -2221,14 +2222,21 @@
   fxGeo.setAttribute('fxc', new T.BufferAttribute(fxCol, 4).setUsage(T.DynamicDrawUsage));
   fxGeo.setAttribute('fxs', new T.BufferAttribute(fxSz, 1).setUsage(T.DynamicDrawUsage));
   fxGeo.setDrawRange(0, 0);
-  var fxU = { uScale: { value: 500 } };
-  var fxPoints = new T.Points(fxGeo, new T.ShaderMaterial({ uniforms: fxU, transparent: true, depthWrite: false, blending: T.AdditiveBlending,
-    vertexShader: 'attribute vec4 fxc; attribute float fxs; uniform float uScale; varying vec4 vC;\n' +
-      'void main() { vC = fxc; vec4 mv = modelViewMatrix * vec4(position, 1.0); gl_Position = projectionMatrix * mv;\n' +
-      ' gl_PointSize = clamp(fxs * uScale / max(0.25, -mv.z), 1.5, 256.0); }',  // size in metres; at least 1.5 px so far sparks still show
-    fragmentShader: 'varying vec4 vC;\n' +
-      'void main() { vec2 d = gl_PointCoord * 2.0 - 1.0; float r = dot(d, d); if (r > 1.0) discard;\n' +
-      ' float a = vC.a * (1.0 - r) * (1.0 - r); gl_FragColor = vec4(mix(vC.rgb, vec3(1.0), smoothstep(0.25, 0.0, r) * 0.7), a); }' }));
+  // the glow of the flashes and sparks: additive round points, a size in metres (attribute fxs) on screen through uScale
+  // (px per metre at 1 m), held within uMin..uMax px; also the shot view's glowing shell at its tracer's end (Z18: o.glow)
+  function glowMaterial(minPx, maxPx, depthTest) {
+    var u = { uScale: { value: 500 }, uMin: { value: minPx }, uMax: { value: maxPx } };
+    return new T.ShaderMaterial({ uniforms: u, transparent: true, depthWrite: false, depthTest: depthTest !== false, blending: T.AdditiveBlending,
+      vertexShader: 'attribute vec4 fxc; attribute float fxs; uniform float uScale, uMin, uMax; varying vec4 vC;\n' +
+        'void main() { vC = fxc; vec4 mv = modelViewMatrix * vec4(position, 1.0); gl_Position = projectionMatrix * mv;\n' +
+        ' gl_PointSize = clamp(fxs * uScale / max(0.25, -mv.z), uMin, uMax); }',
+      fragmentShader: 'varying vec4 vC;\n' +
+        'void main() { vec2 d = gl_PointCoord * 2.0 - 1.0; float r = dot(d, d); if (r > 1.0) discard;\n' +
+        ' float a = vC.a * (1.0 - r) * (1.0 - r); gl_FragColor = vec4(mix(vC.rgb, vec3(1.0), smoothstep(0.25, 0.0, r) * 0.7), a); }' });
+  }
+  function glowScale(cam) { return renderer.domElement.height / (2 * Math.tan(cam.fov * Math.PI / 360)); }
+  var fxMat = glowMaterial(1.5, 256), fxU = fxMat.uniforms;   // at least 1.5 px so far sparks still show
+  var fxPoints = new T.Points(fxGeo, fxMat);
   fxPoints.frustumCulled = false; fxPoints.renderOrder = 20; scene.add(fxPoints);  // world coordinates (the root's mirror applied here)
   var fxV = new T.Vector3(), fxN = new T.Vector3(), fxF = new T.Vector3(), fxR = new T.Vector3();
   function fxRand(i) { var x = Math.sin(i * 12.9898 + 78.233) * 43758.5453; return x - Math.floor(x); }  // stable per index: a seek repeats it
@@ -2352,7 +2360,7 @@
   }
   function fxStep(t, count) {
     var n = 0;
-    fxU.uScale.value = renderer.domElement.height / (2 * Math.tan(camera.fov * Math.PI / 360));
+    fxU.uScale.value = glowScale(camera);
     if (!count) { if (t < fxWallT - 1e-6) fxWall = {}; fxWallT = t; }
     if (hitsOn || count) {
       for (var i = fxFirst(fxMuzzles, t - MUZ_LIFE); i < fxMuzzles.length && fxMuzzles[i][0] <= t; i++) {
@@ -2686,8 +2694,18 @@
       return;
     }
     if (sp && sp.focus) { cam.tx = sp.focus.x; cam.ty = sp.focus.y; cam.tz = -sp.focus.z; cam.tyGoal = null; camSnap(['tx', 'ty', 'tz']); }
-    if (follow && follow.visible) {
-      var p = follow.group.position; cam.tx = p.x; cam.ty = p.y + 2.5; cam.tz = p.z; camSnap(['tx', 'ty', 'tz']);
+    var p = follow ? followPoint(follow) : null;
+    if (p) {
+      // Z15 (23.11): a new place to follow (the row just clicked, the vehicle lost or back in sight) glides there when the
+      // follow came from the team list and "smooth camera" is on; then the camera rides with it exactly
+      var key = follow.visible ? 'seen' : 'last:' + lastKnown.at, fgx = p.x, fgy = p.y + 2.5, fgz = p.z;
+      if (key !== followKey) { followKey = key; followGlide = followSmooth && smoothCam() ? { x: cam.tx, y: cam.ty, z: cam.tz, t0: performance.now() } : null; }
+      if (followGlide) {
+        var u = Math.min(1, (performance.now() - followGlide.t0) / 1000 / FOLLOW_GLIDE), s = u * u * (3 - 2 * u);
+        cam.tx = followGlide.x + (fgx - followGlide.x) * s; cam.ty = followGlide.y + (fgy - followGlide.y) * s; cam.tz = followGlide.z + (fgz - followGlide.z) * s;
+        if (u >= 1) followGlide = null;
+      } else { cam.tx = fgx; cam.ty = fgy; cam.tz = fgz; }
+      camSnap(['tx', 'ty', 'tz']);
     }
     var x = cam.tx + cam.dist * Math.cos(cam.pitch) * Math.sin(cam.yaw), y = cam.ty + cam.dist * Math.sin(cam.pitch),
       z = -cam.tz + cam.dist * Math.cos(cam.pitch) * Math.cos(cam.yaw);
@@ -2761,9 +2779,32 @@
   function smoothCam() { var el = $('sw-smooth-cam'); return !el || el.checked; }
   function setFollow(r) {
     if (follow === r) return; follow = r;
+    followSmooth = false; followKey = undefined; followGlide = null;
     if (r) { cam.dist = Math.min(camGoal.dist, 30); camSnap(['dist']); }
     $('free').classList.toggle('on', !r);
     renderList(true);
+  }
+  // Z15 (23.11, the user: a greyed row sent the camera "to a place where nobody was", sometimes flying, sometimes not). The
+  // cause: setFollow zoomed in at once at the camera's CURRENT centre, and placeCamera moved the centre onto the vehicle only
+  // while it had a position - a greyed row (no position now) left the camera zoomed in on an empty place, and it jumped to the
+  // vehicle whenever it came into sight. Now: followed and out of sight, the camera holds the place it was LAST SEEN (its
+  // pose at the end of its last sight interval; none yet - the camera stays where it is); a follow from the team list glides
+  // to each new place (FOLLOW_GLIDE s, eased in and out; FOLLOW_GLIDE is a guess the user judges), at once with
+  // Settings' "smooth camera" off. Other callers (links, the bench, the opening view) place the camera at once, as before.
+  var FOLLOW_GLIDE = 0.4, followSmooth = false, followKey, followGlide = null, lastKnown = null, lastObj = new T.Object3D();
+  function followPoint(r) {
+    if (r.visible) return r.group.position;
+    var s = PlaybackBattle.sightAt(r.v, t);
+    if (!PlaybackBattle.lifeAt(r.v, t) || s.last == null || !r.track) return null;
+    if (!lastKnown || lastKnown.r !== r || lastKnown.at !== s.last || lastKnown.track !== r.track)
+      lastKnown = { r: r, at: s.last, track: r.track, p: poseInto(r, s.last - 1e-3 - delayOf(r), lastObj) ? lastObj.position.clone() : null };
+    return lastKnown.p;
+  }
+  function followFromList(r) {
+    if (!r || follow === r) { setFollow(r); return; }
+    var before = cam.dist;
+    setFollow(r); followSmooth = true;
+    if (smoothCam()) cam.dist = before;  // the goal (at most 30 m) stays; easeCam glides the distance to it
   }
   // R7 (20.11, the user on 1.14: the opening view looked at a point he could not make sense of - the map's centre from 700 m):
   // a battle opens behind the replay's own vehicle at the battle's start, looking along its hull, the camera following it
@@ -2789,8 +2830,10 @@
       return 'centre';
     }
     // the hull's forward in game coordinates is (sin h, cos h); placeCamera's eye lies at (sin yaw, -cos yaw) from the target
+    // follow first: setFollow caps the distance at 30 m for a list click; the opening view's own distance comes after it
+    setFollow(r);
     cam.tx = at.x; cam.ty = at.y + 2.5; cam.tz = at.z; cam.yaw = -h; cam.pitch = START_VIEW.pitch; cam.dist = START_VIEW.dist;
-    setFollow(r); camSnap();
+    camSnap();
     return 'own';
   }
 
@@ -2848,10 +2891,24 @@
   $('sw-sky').onchange = function () { setSky(this.checked); };
   $('sw-light').onchange = function () { setLight(this.checked); };
   $('rng-light').oninput = function () { setLight($('sw-light').checked); };
-  $('sw-cost').onchange = function () { costOn = this.checked; $('cost').style.display = costOn ? 'block' : 'none'; document.body.classList.toggle('cost-on', costOn); gpuHist.length = 0; };
+  // Z11 (23.11): the cost readout and the destruction list are panels of the bottom-right column (playback.html #br-stack),
+  // each shown by its Settings switch; the enemy side gives up the column's height (--br-h, kept by brStack)
+  $('sw-cost').onchange = function () { costOn = this.checked; $('cost').hidden = !costOn; gpuHist.length = 0; brStack(); };
+  $('sw-destr').onchange = function () { $('destr').hidden = !this.checked; brStack(); };
+  function brStack() {
+    var h = $('br-stack').offsetHeight;
+    document.documentElement.style.setProperty('--br-h', (h ? h + 6 : 0) + 'px');
+  }
+  if (typeof ResizeObserver === 'function') new ResizeObserver(brStack).observe($('br-stack'));
+  $('destr').addEventListener('toggle', brStack);
+  // Z12 (23.11): one opacity for every panel background (playback.html --panel-a)
+  $('rng-panel-a').oninput = function () {
+    var a = Math.max(0.2, Math.min(1, +this.value || 1));
+    document.documentElement.style.setProperty('--panel-a', String(a));
+    $('panel-a-v').textContent = Math.round(a * 100) + '%';
+  };
   $('sel-objects').onchange = function () { setObjectsMode(this.value); };
   $('sw-flash').onchange = function () { flashOn = this.checked; };
-  $('destr').addEventListener('toggle', function () { document.body.classList.toggle('dopen', this.open); });
   $('settings-btn').onclick = function () { var s = $('settings'); s.hidden = !s.hidden; this.classList.toggle('on', !s.hidden); };
 
   function fmt(s) { var neg = s < 0; s = Math.abs(s); var m = Math.floor(s / 60), r = Math.floor(s % 60); return (neg ? '-' : '') + m + ':' + (r < 10 ? '0' : '') + r; }
@@ -2936,6 +2993,7 @@
       recordedOk: shotRecordedOk, recorded: shotRecordedCamera, gunAt: shotGunAt, aimToggle: $('sv-aim-circle'),
       ground: function (x, z) { return heightAt ? heightAt(x, -z) : null; },   // scene x, z -> the ground's scene y
       delay: function (id) { var r = fxById[id]; return r ? delayOf(r) : 0; },
+      glow: glowMaterial, glowScale: glowScale,   // the flashes' glow material for the shell's dot (Z18)
       foliage: shotFoliage, cutaway: shotCutaway, plantStencil: shotPlantStencil, sight: shotSight, contact: shotContact, seen: shotSeen });
     return shotView;
   }
@@ -3092,6 +3150,33 @@
   }
 
   var listRows = [];
+  // Z16 (23.11): a team row's vehicle - Bullba Hits' tile in its compact two-line form (tier, class, vehicle; the player under
+  // it) - and its words: the vehicle's whole name, what a click does, the player, tier/nation/class/role, the turret/gun note.
+  // `known`: the configuration standing now (null: none - the tile says so). Built again when the configuration changes.
+  function rowTile(r, known) {
+    var part = known ? r.parts[known.index] : null, view = part ? viewOf(part) : null;
+    var info = view ? tileOf(view) : { name: 'Configuration unknown' };
+    var nm = BullbaRows.vehicleTile(info, true, { compact: true, player: r.v.player || '' }); nm.classList.add('nm');
+    if (part) nm.querySelector('.vt-name').textContent += (view.md.model ? '' : ' [box]') + (part.modulesMatch === false ? ' [other turret/gun]' : '');
+    var words = BullbaRows.vehicleWords(info).split('\n');
+    var tip = words[0] + '\nClick: the camera follows this vehicle; a second click stops following.\n• Player: ' + (r.v.player || 'not named in the replay');
+    if (words[1]) tip += '\n• ' + words[1];
+    if (part) tip += '\n• ' + (part.modulesMatch == null ? 'Turret/gun of the battle not compared' : (part.modulesMatch ? 'Turret/gun as in the battle' : 'The battle had another turret/gun'))
+      + (view.md.model ? '' : '\n• [box]: no model of this vehicle, a box stands for it');
+    return { nm: nm, tip: tip };
+  }
+  // Z15 (23.11): why a team row is greyed (r.visible false: nothing of it is drawn at this moment), in the tooltip markup
+  function outWhy(r) {
+    function when(x) { return fmt(x) + ' (battle ' + fmt(x - tBattle) + ')'; }
+    if (!PlaybackBattle.lifeAt(r.v, t)) return 'Not in the battle yet\nThe replay has no vehicle of this player at this moment.\n• Click the row: the camera follows it once it is seen.';
+    var s = PlaybackBattle.sightAt(r.v, t);
+    if (s.seen) return 'No position\nThe vehicle is spotted, but the replay has no position of it at this moment.\n• Click the row: the camera follows it once a position comes.';
+    if (s.last != null) return 'Not seen\nThe replay has no position of this vehicle now - last seen at ' + when(s.last) + '.\n'
+      + (s.next != null ? '• Seen again: at ' + when(s.next) + '\n' : '• Not seen again in this replay\n')
+      + '• Click the row: the camera goes to where it was last seen and follows it again when it reappears.';
+    return 'Not seen yet\n' + (s.next != null ? 'The replay has no position of this vehicle before ' + when(s.next) + '.' : 'The replay never has a position of this vehicle.')
+      + '\n• Click the row: the camera stays where it is and follows it once it is seen.';
+  }
   function renderList(force) {
     if (!force && listRows.length) {
       listRows.forEach(function (row) {
@@ -3100,10 +3185,11 @@
         if(!known)hp=null;
         if(row.config!==configKey){
           row.config=configKey;
-          var previous=row.el.querySelector('.nm'),next=BullbaRows.vehicleTile(known?tileOf(r):{name:'Configuration unknown'},true,{compact:true});
-          next.classList.add('nm');if(previous)previous.replaceWith(next);
+          var previous=row.el.querySelector('.nm'),next=rowTile(r,known);
+          if(previous)previous.replaceWith(next.nm);row.tile.title=next.tip;
         }
         row.el.className = row.base + (r.visible ? '' : ' out') + (known&&r.dead ? ' dead' : '') + (follow === r ? ' follow' : '');
+        if (!r.visible) { var why = outWhy(r); if (row.why !== why) { row.why = why; row.mark.title = why; } }
         row.bar.style.width = (maxHp(r)>0&&Number.isFinite(hp)?Math.max(0,Math.min(100,100*hp/maxHp(r))):0)+'%';
         if (row.hb) { var lit = !!panel && panel.shown() === r.v.id; row.hb.classList.toggle('on', lit); row.hb.setAttribute('aria-pressed', String(lit)); }
       });
@@ -3113,25 +3199,23 @@
     var sorted = vehicles.slice().sort(function (a, b) { return (a.role === 'enemy') - (b.role === 'enemy') || (b.role === 'own') - (a.role === 'own') || typeOf(a).localeCompare(typeOf(b)); });
     sorted.forEach(function (r) {
       var el = document.createElement('div'), base = 'veh' + (r.role === 'own' ? ' own' : '');
-      // round 10: the player's nickname and the vehicle at the row's two edges; the HP is the row's own background - a
-      // fill in the team's colour as wide as the HP left (from the outer edge: the enemy list is mirrored)
+      // round 10: the HP is the row's own background - a fill in the team's colour as wide as the HP left (from the outer
+      // edge: the enemy list is mirrored)
       var bar = document.createElement('i'); bar.className = 'fill';
-      var pl = document.createElement('span'); pl.className = 'pl'; pl.textContent = r.v.player || '';
-      // 19.11 (BACKLOG 109): the vehicle as Bullba Hits' tile in its compact one-line mode (class mark, tier, name - no flag:
-      // the list lies over the 3D view), and the 'hits' button that opens the shots panel beside this list
-      var nm = BullbaRows.vehicleTile(tileOf(r), true, { compact: true }); nm.classList.add('nm');
-      nm.querySelector('.vt-name').textContent += (r.md.model ? '' : ' [box]') + (r.part.modulesMatch === false ? ' [other turret/gun]' : '');
-      nm.title = typeOf(r) + (r.part.modulesMatch == null ? ' - turret/gun of the battle not compared' : (r.part.modulesMatch ? ' - turret/gun as in the battle' : ' - the battle had another turret/gun'));
+      // 19.11 (BACKLOG 109), 23.11 (Z16): the vehicle and its player as Bullba Hits' tile in two lines (rowTile)
+      var known = PlaybackBattle.lifeAt(r.v, t), made = rowTile(r, known);
       var side = r.role === 'enemy' ? 'enemy' : 'own', box = side === 'enemy' ? boxEnemy : boxOwn;
       // N9, N10 (19.11, the user): the row = the vehicle's tile (Hits' pressable tile: framed, the frame gold and filled while
-      // the camera follows it - one at a time) and beside it the 'shots' button, a control of its own (lit while its panel
-      // is open); 'shots' also follows the vehicle, a click on the tile only follows (or stops following)
-      var tile = document.createElement('div'); tile.className = 'veh-tile';
+      // the camera follows it - one at a time) and beside it the shots button (Z16: a small crosshair), a control of its own
+      // (lit while its panel is open); it also follows the vehicle, a click on the tile only follows (or stops following)
+      var tile = document.createElement('div'); tile.className = 'veh-tile'; tile.title = made.tip;
       tile.setAttribute('data-side', side === 'enemy' ? 'enemy' : 'ally');  // R3 (20.11): Hits' team stripe (rows.css)
-      var hb =BullbaShotsPanel.button(function () { shotsPanel().toggle(r.v.id, box, side); setFollow(r); });
-      tile.appendChild(bar); tile.appendChild(pl); tile.appendChild(nm); el.appendChild(tile); el.appendChild(hb);
-      tile.onclick = function () { setFollow(follow === r ? null : r); };
-      box.appendChild(el); listRows.push({ r: r, el: el, bar: bar, base: base, hb: hb });
+      // Z15 (23.11): the greyed row's mark - its words say why (outWhy); a click on it shows them, not the row's follow
+      var mark = document.createElement('span'); mark.className = 'veh-out'; mark.setAttribute('data-tip-own', '');
+      var hb =BullbaShotsPanel.button(function () { shotsPanel().toggle(r.v.id, box, side); followFromList(r); });
+      tile.appendChild(bar); tile.appendChild(made.nm); tile.appendChild(mark); el.appendChild(tile); el.appendChild(hb);
+      tile.onclick = function () { followFromList(follow === r ? null : r); };
+      box.appendChild(el); listRows.push({ r: r, el: el, tile: tile, mark: mark, bar: bar, base: base, hb: hb, config: known ? known.index : 'unknown' });
     });
     if (listRows.length) renderList(false);  // round 9: a map alone has no vehicles
   }
@@ -3822,7 +3906,7 @@
       if(v.vehicle)vehicle.appendChild(BullbaRows.vehicleTile(v.vehicle,true));
       row.appendChild(vehicle);row.appendChild(BullbaRows.node('span',v.when,'battle-option-when'));
       var kind=replayKind(id),can=kind==='kept'||kind==='rolling',kept=keptForever(id,record.kept);
-      var star=BullbaRows.node('button',kept?'★':'☆','battle-option-keep');star.type='button';star.disabled=!can||!host.canSend();star.setAttribute('aria-pressed',String(kept));
+      var star=BullbaRows.node('button',kept?'★':'☆','battle-option-keep');star.type='button';star.setAttribute('aria-disabled',String(!can||!host.canSend()));star.setAttribute('aria-pressed',String(kept));
       star.setAttribute('aria-label',kept?'Return replay to replay limit':'Keep replay forever');
       star.title=RL.join(can?RL.keepTip(kind,RL.limit(replayView),host.canSend()):RL.offTip(isFile&&!record.battle?'file':kind||'unknown',RL.limit(replayView),host.canSend()),'• ');
       star.onclick=function(e){e.preventDefault();e.stopPropagation();toggleKeep(id);};
@@ -3956,7 +4040,7 @@
     }
     b.textContent = kept ? '★' : '☆';
     b.classList.toggle('on', !!kept); b.setAttribute('aria-pressed', String(!!kept));
-    b.disabled = !active; b.title = RL.join(tip, '- ');b.setAttribute('aria-label',kept?'Return replay to replay limit':'Keep replay forever');
+    b.setAttribute('aria-disabled', String(!active)); b.title = RL.join(tip, '- ');b.setAttribute('aria-label',kept?'Return replay to replay limit':'Keep replay forever');
   }
   function toggleKeep(id) {
     id=typeof id==='string'?id:BID;
@@ -4133,6 +4217,8 @@
     },
     // a control the MOD owns (data-mod-setting: the replay limit) is shown from its file, never remembered or reset here
     controls: [].slice.call(document.querySelectorAll('#settings input[id]:not([data-mod-setting]):not([data-shared-setting]), #settings select[id]:not([data-shared-setting]), #sw-sky, #sw-flash, #speed-value, #sv-aim-circle')) });
+  // Z12: the panel opacity holds from the first paint, the battle list page with no battle too (restore comes after the map)
+  (function () { var pa = $('rng-panel-a'); pa.value = settingStore.peek(pa); pa.oninput(); })();
 
   // ------------------------------------------------------------------ start
   var mapData, battleInfo = null;

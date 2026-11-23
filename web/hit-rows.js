@@ -35,8 +35,10 @@
     return (info.name||'Unknown vehicle')+(line?'\n'+line:'');
   }
   // opts.compact (the replay viewer's team lists, 19.11: they lie over the 3D view, so a row stays light - the game's own
-  // team lists show the vehicle and the player, no flag): one line - the class mark, the tier, the name; no nation flag and
-  // no role mark. The words of the tile stay whole (vehicleWords).
+  // team lists show the vehicle and the player, no flag): the tier, the class mark, the name on one line (the tier first
+  // and at one width, as in the full tile's second line, so the tiers of a list stand in one column - 23.11, NOTEBOOK Z16);
+  // no nation flag and no role mark. opts.player (Z16): a second line, the player's name, under the vehicle's name.
+  // The words of the tile stay whole (vehicleWords).
   function vehicleTile(info,bare,opts){
     info=info||{};
     var compact=!!(opts&&opts.compact);
@@ -46,7 +48,10 @@
     var mark=node('span',undefined,'vt-class');
     if(cls){mark.setAttribute('data-class',cls);mark.title=classNames[cls];}
     if(compact){
-      tile.appendChild(mark);tile.appendChild(node('span',tier,'vt-tier'));tile.appendChild(node('span',info.name||'Unknown vehicle','vt-name'));
+      var line=node('span',undefined,'vt-line');
+      line.appendChild(node('span',tier,'vt-tier'));line.appendChild(mark);line.appendChild(node('span',info.name||'Unknown vehicle','vt-name'));
+      tile.appendChild(line);
+      if(opts.player!=null){tile.classList.add('two-line');tile.appendChild(node('span',opts.player,'vt-player'));}
       if(!bare)tile.title=vehicleWords(info);
       return tile;
     }

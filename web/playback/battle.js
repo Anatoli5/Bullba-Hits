@@ -267,6 +267,18 @@
     for (var i = 0; i < all.length; i++) if (all[i].from <= t + 1e-6) found = all[i];
     return found;
   }
+  // THE SPOTTING OF A VEHICLE AT t (23.11, NOTEBOOK Z15: why a team row is greyed): v.sight is its [from, until) intervals of
+  // replay time in which the replay has its position. {seen: t inside one, last: the end of the last interval that ended by t
+  // (null: none), next: the start of the first one after t (null: none)}
+  function sightAt(v, t) {
+    var s = (v && v.sight) || [], out = { seen: false, last: null, next: null };
+    for (var i = 0; i < s.length; i++) {
+      if (t >= s[i][0] && t < s[i][1]) out.seen = true;
+      else if (s[i][1] <= t) { if (out.last == null || s[i][1] > out.last) out.last = s[i][1]; }
+      else if (out.next == null || s[i][0] < out.next) out.next = s[i][0];
+    }
+    return out;
+  }
   // the track of a span's life (`own`: of the span alone) as views into the vehicle's own arrays, never copies:
   // {from, until, pos (7 a row), np, gun (3), ng, hp (2), nh}
   function cut(data, stride, n, from, until) {
@@ -349,6 +361,19 @@
     }
     return { duration: duration, length: length, samples: samples, point: point, atDistance: atDistance, serverStart: start, endpoint: end, alignment: delta,
       barrel: w0 * flight, note: why.note || null };
+  }
+  // THE GROWING TRACER (23.11, NOTEBOOK Z18): the one procedure both the replay's tracers (playback.js poseTracers) and
+  // the shot episode's dashed line (shot-view.js flightLine) draw a shot's flight by. The line runs from the muzzle to
+  // where the shell is `tau` s after the shot on the shell's own clock: the flight fraction reach = tau / flight (0
+  // before the shot, 1 from the arrival on), so it grows with the flight and shrinks back on a rewind. `at(f)` gives the
+  // flight's point at fraction f (the caller's axes); `segs` + 1 points are written to `out` (flat x, y, z) from at(0)
+  // to at(reach). Returns {n: points written (0 before the shot), reach}.
+  function tracerReach(flight, tau) { return !(tau >= 0) ? 0 : flight > 0 ? Math.min(1, tau / flight) : 1; }
+  function growTracer(at, flight, tau, segs, out) {
+    var reach = tracerReach(flight, tau);
+    if (!(tau >= 0)) return { n: 0, reach: 0 };
+    for (var i = 0; i <= segs; i++) { var p = at(reach * i / segs); out[i * 3] = p[0]; out[i * 3 + 1] = p[1]; out[i * 3 + 2] = p[2]; }
+    return { n: segs + 1, reach: reach };
   }
   Vehicles.prototype.publicInfo = function (eid, info, t, listed) {
     if (!isDict(info) || !info.compDescr) return;
@@ -665,7 +690,7 @@
     return fx;
   }
 
-  var api = { FORMAT: FORMAT, source: source, build: build, effects: effects, Collector: Collector, unb64: unb64, variantKey:variantKey, lives:lives, lifeAt:lifeAt, trackOf:trackOf, Vehicles:Vehicles, trajectory:trajectory, TURN_MAX:TURN_MAX,
+  var api = { FORMAT: FORMAT, source: source, build: build, effects: effects, Collector: Collector, unb64: unb64, variantKey:variantKey, lives:lives, lifeAt:lifeAt, sightAt:sightAt, trackOf:trackOf, Vehicles:Vehicles, trajectory:trajectory, TURN_MAX:TURN_MAX, tracerReach:tracerReach, growTracer:growTracer,
     setInflate: function (fn) { inflate = fn; } };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else self.PlaybackBattle = api;
 })();

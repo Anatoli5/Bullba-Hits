@@ -2,7 +2,7 @@
    Hits' (web/rows.css, web/hit-rows.js); here only what this page needs around them: the panel beside a team list, the
    button base Hits' page gives every button (its style.css 'button' rule), the 'shots' button of a team-list row.
    Height: set by shots-panel.js (a full team list), limited by playback.html's max-height for its side. */
-.shots-panel{position:fixed;z-index:5;width:300px;display:flex;flex-direction:column;background:#101a25;border:1px solid #293544;border-radius:6px;
+.shots-panel{position:fixed;z-index:5;width:300px;display:flex;flex-direction:column;background:rgba(16,26,37,var(--panel-a,1));border:1px solid #293544;border-radius:6px;
   color:#e5edf5;font-size:12px;line-height:16px;box-shadow:0 4px 18px rgba(0,0,0,.45);box-sizing:border-box}
 .shots-panel[hidden]{display:none}
 .shots-panel *{box-sizing:border-box}
@@ -42,10 +42,15 @@
 .sp-row .hit:hover{background:#263749}
 .sp-row .hit[aria-pressed=true]:hover{background:#302d25}
 /* the team lists in Hits' dark tone: the compact tile for the vehicle, the nickname beside it, the small 'shots' button */
-.tlist .veh-tile{background-color:rgba(16,26,37,.72)}
-.tlist .veh .vehicle-tile.compact{position:relative;flex:0 1 auto;max-width:60%;min-width:0;text-shadow:0 1px 1px #000}
-.sp-btn{position:relative;flex:0 0 auto;min-height:0;padding:0 4px;font-size:11px;line-height:16px;background:rgba(23,35,48,.85);border:1px solid #35475a;border-radius:3px;color:var(--muted);cursor:pointer}
+/* Z12 (23.11): panel backgrounds scale with Settings > panel opacity (playback.html --panel-a, 1 = this look) */
+/* Z17 (23.11): Hits' tile colour (style.css .vehicle-row, rows.css .hit: #172330) at the panel opacity */
+.tlist .veh-tile{background-color:rgba(23,35,48,calc(.72*var(--panel-a,1)))}
+/* Z16 (23.11): the button is a small crosshair (the client's sight, drawn here), no word; its words are its tooltip */
+.sp-btn{position:relative;flex:0 0 18px;width:18px;min-height:0;padding:0;font-size:0;line-height:0;background:rgba(23,35,48,.85);border:1px solid #35475a;border-radius:3px;color:var(--muted);cursor:pointer}
+.sp-btn::before{content:"";position:absolute;left:50%;top:50%;width:12px;height:12px;margin:-6px 0 0 -6px;background:currentColor;
+  -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Ccircle cx='6' cy='6' r='4' fill='none' stroke='%23000' stroke-width='1.4'/%3E%3Cpath d='M6 0v3.2M6 8.8V12M0 6h3.2M8.8 6H12' stroke='%23000' stroke-width='1.4'/%3E%3C/svg%3E") center/contain no-repeat;
+  mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Ccircle cx='6' cy='6' r='4' fill='none' stroke='%23000' stroke-width='1.4'/%3E%3Cpath d='M6 0v3.2M6 8.8V12M0 6h3.2M8.8 6H12' stroke='%23000' stroke-width='1.4'/%3E%3C/svg%3E") center/contain no-repeat}
 /* Hits' pressable tile (style.css .swap-roles, .filter-pill): a frame always, gold and filled while pressed - here while
    this vehicle's panel is open; its own control beside the vehicle's tile (N10, 19.11) */
 .sp-btn:hover{background:#263749}
-.sp-btn.on,.sp-btn[aria-pressed=true]{border-color:var(--gold);color:var(--gold);background:#302b23}
+.sp-btn.on,.sp-btn[aria-pressed=true]{border-color:var(--gold);color:var(--gold);background:#302d25}

@@ -27,6 +27,13 @@
 //     lines split by '\n'; the first line is the heading, drawn bold (unless it is a sentence: ends in . ! ?);
 //     '• Key: text' is an item, its key up to the first ': ' bold; '• text' an item without a key;
 //     an empty line starts a new group (a gap); any other line is a paragraph.
+// THE DELAYED HOVER (23.11, NOTEBOOK Z10) - a page's opt-in, <html data-tip-hover="ms"> (Replays: 1800; Hits does not set
+// it and is unchanged): the mouse resting on an element with words for that long, no button down, shows a SMALL bubble -
+// the heading and the one line under it (gist), at most 280 px - placed by the element, never over it (below it in the
+// upper half of the window, above it in the lower half; beside it when that would cover the middle of the view). Moving
+// off the element, a press, the wheel, a key, a scroll or the pointer leaving the window closes it; nothing while the help
+// mode is on or a click's bubble is up. On such a page an element marked aria-disabled="true" (a control that cannot act
+// now) is also a picture: a plain click shows why it is off.
 // Listeners on the document and the window only, none per element, nothing per frame; layout is read only when a
 // bubble opens or its words change. The bubble takes no pointer events. ES5, like the rest of the page.
 (function () {
@@ -34,7 +41,8 @@
   var win = window, doc = document;
   if (win.BullbaTips || !doc || !doc.addEventListener) return;
 
-  var GAP_X = 12, GAP_Y = 18, ABOVE = 8, EDGE = 6;
+  var GAP_X = 12, GAP_Y = 18, ABOVE = 8, EDGE = 6, NEAR = 6, STILL = 4;
+  var HOVER_MS = Math.max(0, parseInt(doc.documentElement.getAttribute('data-tip-hover'), 10) || 0);
   var HELP = 'data-help-for', TIP = 'data-tip', MODE = 'data-help-mode', OWN = 'data-tip-own';
   // The bubble wears the page's own panel - the choice lists' background and border, 13 px text - and nothing more:
   // no accent edge, no shade (user 23.09: they drew the eye). The markup: a bold heading, items hanging off a grey
@@ -53,6 +61,7 @@
     + 'overflow-wrap:break-word;word-wrap:break-word;box-shadow:none;pointer-events:none;-webkit-user-select:none;user-select:none}'
     + '#page-tip[hidden]{display:none}'
     + '#page-tip[data-help]{max-width:520px;max-width:min(520px,calc(100vw - 12px))}'
+    + '#page-tip[data-hover]{max-width:280px;max-width:min(280px,calc(100vw - 12px));padding:4px 8px 5px;font-size:12px;line-height:16px}'
     + '#page-tip .tip-h,#page-tip .tip-li>b,#page-tip .tip-glyph{font-weight:600}'
     + '#page-tip .tip-li{position:relative;padding-left:13px}'
     + '#page-tip .tip-li::before{content:"\\2022";position:absolute;left:2px;top:0;color:#96a9bd}'
@@ -93,6 +102,7 @@
   var bubble = null, style = null;
   var shownEl = null, shownKey = '', anchorX = 0, anchorY = 0, placeQueued = false;
   var helpDot = null, pressed = false, eatDouble = false;
+  var hovered = false, hoverEl = null, hoverTimer = 0, hoverX = 0, hoverY = 0;   // the delayed hover (HOVER_MS)
   var observer = typeof win.MutationObserver === 'function' ? new win.MutationObserver(changed) : null;
   var direct = false;     // el.title writes data-tip itself (takeTitle)
   var dots = [], boxes = [];
@@ -148,6 +158,7 @@
     if (holder && holder.hasAttribute(OWN)) return false;   // an icon with words of its own inside a control
     var inside = true;
     for (var el = target; el && el.nodeType === 1; el = el.parentNode) {
+      if (HOVER_MS && el.getAttribute('aria-disabled') === 'true') return false;   // off for now: its words say why
       if (ACTIVE_TAGS[String(el.tagName).toUpperCase()] === 1) return true;
       var role = el.getAttribute('role');
       if (role && ACTIVE_ROLES.test(role)) return true;
@@ -366,15 +377,18 @@
   }
   // The bubble's words: the element's own, or the groups a help dot gathers. 0 - nothing to show, 1 - the bubble
   // already shows exactly this, 2 - written.
+  // A hover bubble shows the element's own words in short (a help dot: its own words, not its cluster's).
   function paint(el) {
-    var rows = isHelp(el) ? helpRows(el) : null, tint = rows ? '' : tintOf(el), key = rows ? rowsKey(rows) : tint + '\u0001' + tipOf(el);
-    if (!/\S/.test(rows ? key : tipOf(el))) return 0;
+    var words = hovered ? gist(tipOf(el)) : tipOf(el);
+    var rows = !hovered && isHelp(el) ? helpRows(el) : null, tint = rows ? '' : tintOf(el), key = rows ? rowsKey(rows) : (hovered ? 'h' : '') + tint + '\u0001' + words;
+    if (!/\S/.test(rows ? key : words)) return 0;
     if (key === shownKey) return 1;
     shownKey = key;
     bubble.textContent = '';
+    if (hovered !== bubble.hasAttribute('data-hover')) { if (hovered) bubble.setAttribute('data-hover', ''); else bubble.removeAttribute('data-hover'); }
     if (!rows) {
       if (bubble.hasAttribute('data-help')) bubble.removeAttribute('data-help');
-      draw(bubble, tipOf(el), '', tint);
+      draw(bubble, words, '', tint);
       return 2;
     }
     bubble.setAttribute('data-help', '');
@@ -387,6 +401,7 @@
     return 2;
   }
   function show(el, x, y) {
+    if (!hovered) hoverStop();
     shownKey = '';
     if (!paint(el)) { hide(); return false; }
     shownEl = el; anchorX = x; anchorY = y;
@@ -417,6 +432,7 @@
     bubble.style.left = '0px'; bubble.style.top = '0px';
     bubble.hidden = false;
     var w = bubble.offsetWidth, h = bubble.offsetHeight;
+    if (hovered) { placeHover(vw, vh, w, h); return; }
     var left = anchorX + GAP_X, top = anchorY + GAP_Y;
     if (left + w > vw - EDGE) left = anchorX - GAP_X - w;
     var up = anchorY > vh / 2 ? ceiling(shownEl, vh) - h : -1;
@@ -424,6 +440,26 @@
     else if (top + h > vh - EDGE) top = anchorY - ABOVE - h;
     left = Math.max(EDGE, Math.min(left, vw - EDGE - w));
     top = Math.max(EDGE, Math.min(top, vh - EDGE - h));
+    bubble.style.left = Math.round(left) + 'px';
+    bubble.style.top = Math.round(top) + 'px';
+  }
+  // A hover bubble by its element: under it in the upper half of the window, over it in the lower half, from its near
+  // edge; when that box would reach into the middle of the view (the centre 40 % each way) - beside the element instead.
+  function placeHover(vw, vh, w, h) {
+    var r = shownEl.getBoundingClientRect();
+    var left = r.left + r.width / 2 < vw / 2 ? r.left : r.right - w;
+    var top = r.top + r.height / 2 < vh / 2 ? r.bottom + NEAR : r.top - NEAR - h;
+    function fit() {
+      left = Math.max(EDGE, Math.min(left, vw - EDGE - w));
+      top = Math.max(EDGE, Math.min(top, vh - EDGE - h));
+    }
+    function central() { return left < vw * 0.7 && left + w > vw * 0.3 && top < vh * 0.7 && top + h > vh * 0.3; }
+    fit();
+    if (central()) {
+      left = r.left + r.width / 2 < vw / 2 ? r.right + NEAR : r.left - NEAR - w;
+      top = r.top + r.height / 2 < vh / 2 ? r.top : r.bottom - h;
+      fit();
+    }
     bubble.style.left = Math.round(left) + 'px';
     bubble.style.top = Math.round(top) + 'px';
   }
@@ -441,7 +477,7 @@
   }
   function hide() {
     if (!shownEl) return false;
-    shownEl = null; shownKey = '';
+    shownEl = null; shownKey = ''; hovered = false;
     bubble.hidden = true;
     watch();
     return true;
@@ -494,6 +530,8 @@
   // Outside the mode: a press anywhere but on the words shown closes them (a control inside them too); the scene's
   // own drag goes on untouched - nothing here is ever stopped or prevented.
   function down(e) {
+    hoverStop();
+    if (hovered) { hide(); return; }
     if (shownEl && !(within(shownEl, e.target) && !interactive(e.target, shownEl))) hide();
   }
   // A click on an element with words that does nothing else shows them, a second one closes them; a click on a
@@ -512,11 +550,40 @@
   }
   // Escape ends the mode, or closes the bubble - and is then the bubble's alone: a popover under it stays open.
   function key(e) {
+    hoverStop();
+    if (hovered) { hide(); if (e.key === 'Escape' || e.key === 'Esc') e.stopPropagation(); return; }
     if (e.key !== 'Escape' && e.key !== 'Esc') return;
     if (helpDot) helpOff(); else if (!hide()) return;
     e.stopPropagation();
   }
-  function away() { hide(); }
+  function away() { hoverStop(); hide(); }
+
+  // --- The delayed hover (HOVER_MS, a page's opt-in) -------------------------------------------------------
+  function hoverStop() {
+    if (hoverTimer) win.clearTimeout(hoverTimer);
+    hoverTimer = 0; hoverEl = null;
+  }
+  function hoverShow() {
+    var el = hoverEl;
+    hoverTimer = 0; hoverEl = null;
+    if (!el || helpDot || shownEl || !within(doc.documentElement, el) || !onScreen(el)) return;
+    hovered = true;
+    if (!show(el, hoverX, hoverY)) hovered = false;
+  }
+  // The pointer resting: the same element, moved less than STILL px since the wait began.
+  function moved(e) {
+    if (e.pointerType && e.pointerType !== 'mouse') return;
+    if (e.buttons || helpDot || (shownEl && !hovered)) { hoverStop(); return; }
+    var el = holderOf(e.target);
+    if (hovered) { if (el === shownEl) return; hide(); }
+    if (el && el === hoverEl && Math.abs(e.clientX - hoverX) < STILL && Math.abs(e.clientY - hoverY) < STILL) return;
+    hoverStop();
+    if (!el || !/\S/.test(tipOf(el))) return;
+    hoverEl = el; hoverX = e.clientX; hoverY = e.clientY;
+    hoverTimer = win.setTimeout(hoverShow, HOVER_MS);
+  }
+  function outOf(e) { if (!e.relatedTarget) { hoverStop(); if (hovered) hide(); } }
+  function wheel() { hoverStop(); if (hovered) hide(); }
 
   build();
   direct = takeTitle();
@@ -528,6 +595,11 @@
   doc.addEventListener('click', clicked, PASSIVE);
   doc.addEventListener('keydown', key, PASSIVE);
   doc.addEventListener('scroll', away, PASSIVE);
+  if (HOVER_MS) {
+    doc.addEventListener('pointermove', moved, PASSIVE);
+    doc.addEventListener('mouseout', outOf, PASSIVE);
+    doc.addEventListener('wheel', wheel, PASSIVE);
+  }
   // The window's own resize and blur only: in the capture phase every control losing focus would close the bubble.
   win.addEventListener('resize', away);
   win.addEventListener('blur', away);

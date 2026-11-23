@@ -2,6 +2,23 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.1.1 from 1.05 on, 2.4.1.0 from 1.02 on, 2.4.0.2 from 0.9.3 on, 2.4.0.1 #950 from 0.7.6, 2.4.0.0 #945 before.
 
+## 1.30 (2026-11-23)
+
+- Replays: a "?" help button at the right of the top line. Click it, then click anything - a button, a star, a switch, a row, a panel - to read what it does; Esc or the "?" again leaves. Resting the mouse on a control for about 2 seconds shows a short hint beside it, never over it or the middle of the view. Greyed-out keep-forever stars now say why they cannot be used.
+- Replays: the cost readout moved out of the Settings menu into its own panel at the bottom right. The Destruction list is now off by default (Settings > destruction list) and sits under the cost readout when both are on; "outline when it breaks" moved into Settings.
+- Replays: new setting "panel opacity" makes the backgrounds of all panels (top line, settings, team lists, shots panel, shot bar, time bar, cost readout, destruction list) more see-through; 100% is the previous look.
+- Replays shot view: the shot bar is shorter - no note line under the figures, and each figure block takes two lines instead of three, so no empty line sits between two of text. What the view shows (the camera, the heat map, the circles) is in the title's tooltip; the yellow ⚠ beside the title appears only when this shot has something rebuilt rather than recorded, its list in its tooltip.
+- Replays shot view: your server aim circle (dashed) is drawn while aiming at every shot. It was missing, with "no server circle is recorded at this shot", where the game had stopped updating the server marker; it now comes from the server's own gun update.
+- Replays shot view: the white shot ring of Hits appears when the shell reaches the armour, no longer from the start of the episode.
+- Replays shot view: with "aim circle" on, the mouse cursor is the circle's centre (no extra centre mark or gun tag there) and a click no longer pins a second line; the circle just follows the cursor with its figures.
+- Replays shot view: the wheel backs the camera out past the gun's muzzle along the shot, far enough to see the whole tank at point-blank range.
+- Hits and Replays: a ricochet no longer shows the shell's "pen" figure beside it, and after a ricochet the bounced shell's penetration is named once, in the ricochet chip.
+- Replays shot view: one circle per meaning. Nothing stuck to the target moves with it before the hit - another player's shot (artillery too) shows only its reconstructed circle until the shell arrives, then Bullba Hits' circle at the impact. On your own shot the thick ring of the shot takes the dashed server circle's place once the shell is fired; your client circle keeps blooming as in the game.
+- Replays team lists: each row is now Bullba Hits' vehicle tile in two lines - tier, class and vehicle on top, the player under it - so the tiers stand in one column and the lists are narrower. The "shots" word is a small crosshair button (same function). Rows use Hits' tile colour. Resting on a row shows the full vehicle and player names.
+- Replays team lists: a destroyed vehicle is no longer crossed out; its side stripe is dimmed instead.
+- Replays team lists: a greyed row (no position of that vehicle at this moment) has a small grey triangle that says why and when it was last seen. Clicking such a row takes the camera to where the vehicle was last seen and follows it again when it reappears; following from the list now glides smoothly (at once with "smooth camera" off).
+- Replays shot view: the shot's dashed tracer now grows from the muzzle with the shell's flight, like the other tracers, instead of appearing all at once, with a small glowing dot at its end for the shell (gone when it lands); it shrinks back when you rewind or replay the episode.
+
 ## 1.29 (2026-11-23)
 
 - Replays: your own camera moves (drag to turn or pan, wheel zoom, WASD and arrow keys) now glide smoothly instead of jumping each step; each move still goes exactly as far as before. New setting "smooth camera" (on by default) turns it off.

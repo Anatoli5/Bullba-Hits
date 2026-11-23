@@ -79,7 +79,11 @@
     var layers=r.layers||[],screens=layers.filter(function(l){return !l.main;}),extra=screens.length?[{kind:'screen',text:'+ '+screens.map(function(s){return Math.round(s.nominal)+' mm';}).join(' + ')+' screen'}]:[];
     // The penetration stands on the armour's line, next to the effective armour it is read against (12.11, BACKLOG 91: the
     // block one line shorter); the range it is taken at is no longer written on the line - its tooltip says it.
-    var shell=pen?[{kind:'pen',text:'pen '+Math.round(pen)+' mm',title:'Penetration\nThe shell’s nominal penetration at the range the line is judged at.'+(range?'\n• Range: '+Math.round(range)+' m':'')}]:[];
+    // 23.11 (NOTEBOOK Z3): "pen" next to "Ricochet" read as two outcomes. The shell's penetration is no figure of a ricochet
+    // (the angle decides it), so a ricochet has no pen chip; after a ricochet whose chip already names the pen the bounced leg
+    // carries ("pen 180 → 150 mm"), no second pen chip either. One owner: Bullba Hits' panels and the replay viewer's alike.
+    var penShown=!!pen&&!(r.bounce&&carried)&&r.reason!=='ricochet';
+    var shell=penShown?[{kind:'pen',text:'pen '+Math.round(pen)+' mm',title:'Penetration\nThe shell’s nominal penetration at the range the line is judged at.'+(range?'\n• Range: '+Math.round(range)+' m':'')}]:[];
     var zero=rgb({chance:0,expectedShare:0}),bounced=rgb({chance:0,expectedShare:0,reason:'ricochet'});
     if(r.reason==='ricochet')return {label:'Ricochet',color:bounced,groups:prefix.concat(shell,[{kind:'armor',text:(r.final?(r.bounce?'again, shell lost: ':'shell lost: '):'')+Math.round(r.nominal)+' mm ∠ '+Math.round(r.angle)+'°'}],extra)};
     if(r.reason==='screen')return {label:hp?'0 %':'0%',color:zero,groups:prefix.concat(shell,[{kind:'armor',text:'explodes on the screen (this HE cannot pass screens)'}],extra)};

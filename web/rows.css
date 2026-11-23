@@ -63,11 +63,15 @@
 .hit-crits[data-n="0"],.hit-crits[data-n="1"]{grid-template-columns:auto;grid-auto-rows:auto}
 .crit-icon{width:16px;height:16px;display:block}
 /* The compact tile (vehicleTile opts.compact, 19.11.2026 BACKLOG 109): the replay viewer's team lists lie over the 3D view, so
-   a row stays light - one line of the class mark, the tier and the name, no flag and no role mark. */
-.vehicle-tile.compact{flex-direction:row;align-items:center;justify-content:flex-start;gap:4px;height:auto;overflow:hidden}
+   a row stays light - one line of the tier, the class mark and the name, no flag and no role mark. 23.11 (NOTEBOOK Z16): the
+   tier first at one width (the tiers of a list in one column), and with opts.player a second line - the player's name,
+   under the vehicle's name. */
+.vehicle-tile.compact{flex-direction:column;align-items:stretch;justify-content:center;gap:0;height:auto;overflow:hidden}
+.vehicle-tile.compact .vt-line{display:flex;align-items:center;gap:3px;min-width:0}
 .vehicle-tile.compact .vt-class{flex:0 0 auto;width:13px;height:13px}
-.vehicle-tile.compact .vt-tier{flex:0 0 auto;min-width:0;font-size:10px;line-height:14px}
+.vehicle-tile.compact .vt-tier{flex:0 0 auto;min-width:20px;font-size:10px;line-height:14px}
 .vehicle-tile.compact .vt-name{flex:0 1 auto;font-size:inherit;line-height:inherit}
+.vehicle-tile.compact .vt-player{min-width:0;padding-left:39px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#c9ced3;font-size:11px;line-height:14px}
 /* The replay viewer's shot row (hitRow o.side - 20.11.2026, the user on 1.14). Bullba Hits never sets it, so its rows above
    stay as they are.
    Side: the edge, the arrow and the figure in the colour of the SHOOTER'S team as the player whose battle it is sees it -
@@ -90,7 +94,10 @@
 .tlist .veh-tile[data-side]{border-left-width:3px}
 .tlist .veh-tile[data-side=ally]{border-left-color:var(--mint)}
 .tlist .veh-tile[data-side=enemy]{border-left-color:var(--red)}
-/* A row's link to the other page (hit-rows.js openLink; moved from playback/shots-panel.css 21.11, BACKLOG 118): an arrow out
+/* 23.11 (NOTEBOOK Z14): a destroyed vehicle is told by its stripe dimmed (the alpha of Hits' no-damage rows above), no
+   strike-through; the words are muted by playback.html */
+.tlist .veh.dead .veh-tile[data-side=ally]{border-left-color:rgba(104,215,190,.35)}
+.tlist .veh.dead .veh-tile[data-side=enemy]{border-left-color:rgba(251,133,128,.35)}/* A row's link to the other page (hit-rows.js openLink; moved from playback/shots-panel.css 21.11, BACKLOG 118): an arrow out
    of a box over the page's name on one 16 px line at 11 px - beside the viewer's shot rows (20.11: the row is two team lines
    high; the panel is 300 px wide for it and for the vehicle names), inside Hits' selected hit row at its right end */
 .sp-open{flex:0 0 54px;width:54px;margin-bottom:2px;min-height:0;padding:1px 2px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;
