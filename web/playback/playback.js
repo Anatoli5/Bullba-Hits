@@ -2872,7 +2872,6 @@
       // follow came from the team list and "smooth camera" is on; then the camera rides with it exactly
       // 23.11: the follow's zoom waits for a known place (setFollow: no dive at an empty place); a new kind of place (in view,
       // last seen, the minimap's) says so once (followWarn)
-      if (followZoom) { followZoom = false; camGoal.dist = Math.min(camGoal.dist, 30); if (!(followSmooth && smoothCam())) cam.dist = camGoal.dist; }
       if (followSrc !== followSrcShown) { followSrcShown = followSrc; if (followSrc !== 'seen') followWarn(followSrc); }
       var key = followSrc === 'seen' ? 'seen' : followSrc + ':' + followAt, fgx = p.x, fgy = p.y + 2.5, fgz = p.z;
       if (key !== followKey) { followKey = key; followGlide = followSmooth && smoothCam() ? { x: cam.tx, y: cam.ty, z: cam.tz, t0: performance.now() } : null; }
@@ -2989,11 +2988,12 @@
   function smoothCam() { var el = $('sw-smooth-cam'); return !el || el.checked; }
   function setFollow(r) {
     if (follow === r) return; follow = r;
-    followSmooth = false; followKey = undefined; followGlide = null; followZoom = false; followSrcShown = undefined;
+    followSmooth = false; followKey = undefined; followGlide = null; followSrcShown = undefined;
     // 23.11 (outputs/follow-wrecks-2026-11-23.md (b), the user: a row sent the camera to a place with no vehicle): with no
     // place known at all the camera stays (centre and distance) and a note says so; the follow stays armed and zooms in once
     // a place comes (placeCamera)
-    if (r) { if (followPoint(r)) { cam.dist = Math.min(camGoal.dist, 30); camSnap(['dist']); } else { followZoom = true; followSrcShown = null; followWarn(null); } }
+    // 23.11 (the user on 1.32): following moves only the centre onto the vehicle; the camera's distance stays as it was
+    if (r && !followPoint(r)) { followSrcShown = null; followWarn(null); }
     $('free').classList.toggle('on', !r);
     renderList(true);
   }
@@ -3008,7 +3008,7 @@
   // list's minimap place (battle.js miniAt: game metres, about every 2 s while spotted beyond the draw range; its height the
   // ground's). followSrc says which: 'seen' (drawn now), 'minimap' (the list's current place), 'last' (last seen), null: none
   var FOLLOW_GLIDE = 0.4, followSmooth = false, followKey, followGlide = null;
-  var followSrc = null, followAt = null, followSrcShown, followZoom = false;
+  var followSrc = null, followAt = null, followSrcShown;
   // 23.11 (the user on the plan): the camera goes only to a vehicle that is DRAWN (its wreck included) - never to a minimap
   // or last-seen place, where nothing is drawn; out of view the camera stays where it is and the note says so
   function followPoint(r) {
@@ -3025,9 +3025,7 @@
   }
   function followFromList(r) {
     if (!r || follow === r) { setFollow(r); return; }
-    var before = cam.dist;
     setFollow(r); followSmooth = true;
-    if (smoothCam()) cam.dist = before;  // the goal (at most 30 m) stays; easeCam glides the distance to it
   }
   // R7 (20.11, the user on 1.14: the opening view looked at a point he could not make sense of - the map's centre from 700 m):
   // a battle opens behind the replay's own vehicle at the battle's start, looking along its hull, the camera following it

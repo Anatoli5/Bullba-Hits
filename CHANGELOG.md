@@ -2,6 +2,10 @@
 
 All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.1.1 from 1.05 on, 2.4.1.0 from 1.02 on, 2.4.0.2 from 0.9.3 on, 2.4.0.1 #950 from 0.7.6, 2.4.0.0 #945 before.
 
+## Unreleased
+
+- Replays: following a vehicle (a click on it or on its row) moves only the view's centre onto it; the camera's distance stays as it was.
+
 ## 1.32 (2026-11-23)
 
 - Replays: destroyed vehicles stay destroyed - every wreck stays drawn where the vehicle died, also when it died out of sight or its wreck came back into view; before, up to half of the wrecks vanished near the battle's end and some stood where the vehicle was last seen alive.
