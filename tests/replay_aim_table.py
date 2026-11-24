@@ -19,12 +19,19 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, 'mod'))
 GAME = os.environ.get('BULLBA_GAME', 'C:/Games/World_of_Tanks_NA')
 CFG = os.path.join(GAME, 'mods', 'configs', 'local.armor_inspector')
+# 23.11.2026: the mod's old stream copies left CFG/replay (moved to recycle by the user's word); the 11.11 ones the measured
+# tables need are kept as a local fixture
+FIXTURE_STREAMS = os.path.join(ROOT, 'tests', 'fixtures-local', 'replay-streams-2026-11-11')
+
+
+def streams_dir(cfg=CFG):
+    return FIXTURE_STREAMS if os.path.isdir(FIXTURE_STREAMS) else os.path.join(cfg, 'replay')
 
 
 def battles(cfg=CFG, day=None):
     """Battle ids with a kept stream and a live record; `day` ('YYYY-MM-DD' of the stream's local mtime) narrows them."""
     import time
-    folder = os.path.join(cfg, 'replay')
+    folder = streams_dir(cfg)
     if not os.path.isdir(folder): return []
     out = []
     for name in sorted(os.listdir(folder)):
@@ -61,7 +68,7 @@ def battle(bid, decoding, cfg=CFG):
     """The published shots of one battle as replay_battle.build makes them."""
     from local_armor_inspector import replay_battle as rb
     from local_armor_inspector.exporter import read_battle
-    with open(os.path.join(cfg, 'replay', bid + '.stream.z'), 'rb') as f: stream = bytearray(zlib.decompress(f.read()))
+    with open(os.path.join(streams_dir(cfg), bid + '.stream.z'), 'rb') as f: stream = bytearray(zlib.decompress(f.read()))
     records = decoding.records(stream)
     live = read_battle(os.path.join(cfg, 'battles', bid + '.jsonl'))
     value, report = rb.build(records, live, bid)

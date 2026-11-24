@@ -51,7 +51,7 @@ class Decoding(T.Decoding):
 
 
 def records_of(bid, decoding, cfg=T.CFG):
-    with open(os.path.join(cfg, 'replay', bid + '.stream.z'), 'rb') as f: stream = bytearray(zlib.decompress(f.read()))
+    with open(os.path.join(T.streams_dir(cfg), bid + '.stream.z'), 'rb') as f: stream = bytearray(zlib.decompress(f.read()))
     return decoding.records(stream)
 
 
