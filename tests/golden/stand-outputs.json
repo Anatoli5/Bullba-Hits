@@ -1,7 +1,7 @@
 {
  "clients": {
-  "v.2.4.1.0 #970": {
-   "order": 2,
+  "v.2.4.1.1 #987": {
+   "order": 3,
    "types": {
     "china:Ch00_ClingeBot_SH": [
      "838472d37113b93b",
@@ -5085,8 +5085,8 @@
     ]
    }
   },
-  "v.2.4.1.1 #987": {
-   "order": 3,
+  "v.2.4.2.0 #999": {
+   "order": 4,
    "types": {
     "china:Ch00_ClingeBot_SH": [
      "838472d37113b93b",
@@ -5313,8 +5313,8 @@
      "3194f929d221786a"
     ],
     "china:Ch41_WZ_111_TEST": [
-     "f698662f59c1e9aa",
-     "0d4ad6e5fe3c0d55"
+     "1b36eda473e8f111",
+     "e2f9de4253788f9e"
     ],
     "china:Ch42_WalkerBulldog_M41D": [
      "e16f2d49502ac816",
@@ -5437,7 +5437,7 @@
      "0dd1a11c9fca7a20"
     ],
     "china:Ch70_PTZ_78": [
-     "5eddc050dcdbcfee",
+     "65eca4f36ace3c97",
      "e76e7da47726ccf4"
     ],
     "china:Ch71_WZ_219": [
@@ -5490,7 +5490,7 @@
     ],
     "czech:Cz10_LT_vz38": [
      "162dd78ae453c6ab",
-     "e17c1ecfbeca8340"
+     "1ec4bc8e7dbbe3f1"
     ],
     "czech:Cz11_V_8_H": [
      "f4c7c59dcaa674d4",
@@ -5541,8 +5541,8 @@
      "2a751c1a45d02423"
     ],
     "czech:Cz21_Vz_60S": [
-     "4a0c0ebac976096b",
-     "4649dcf196766bc8"
+     "57871663679640e7",
+     "c36d17a637547c01"
     ],
     "czech:Cz21_Vz_60S_Dravec": [
      "6ba3e489c9832345",
@@ -5582,15 +5582,15 @@
     ],
     "czech:Cz34_Vz_71_Tesak": [
      "76d6ddb49cf09ead",
-     "587b3d64062214ac"
+     "ceac56b6795ef2c3"
     ],
     "czech:Cz35_T56_G": [
      "9c60cdae629430c3",
      "87eb00ca4cca4aa5"
     ],
     "czech:Cz36_Jezevec": [
-     "f3aefa83c6d1a9db",
-     "c95da7fa59cae680"
+     "90173deba3f3c2d5",
+     "197301baa6cc5e16"
     ],
     "czech:Cz37_SDT_58_Vlkodav": [
      "789d763c62b0bf70",
@@ -5609,8 +5609,8 @@
      "9e00a89dfd9e1047"
     ],
     "czech:Cz41_Petra": [
-     "0493eb1c4b29670e",
-     "0772818fc024955f"
+     "6c96d1045a7593ca",
+     "873fda80f40d76fd"
     ],
     "czech:Cz43_Ogar": [
      "9e1fffe5af471742",
@@ -5752,6 +5752,10 @@
      "e5f04acd0afbe72e",
      "df3b67f365e49e0a"
     ],
+    "france:F125_Panhard_M6_Proto": [
+     "066edb94f1313f54",
+     "3067845247a5154c"
+    ],
     "france:F127_AMX_ELC_901": [
      "138c84f3093457cb",
      "6ffe67b42991af47"
@@ -5789,8 +5793,8 @@
      "c184f51d2c08da44"
     ],
     "france:F136_AMX_67_Imbattable": [
-     "22e248fd3831e289",
-     "6cdda9d52239cc69"
+     "91fd41fc9a7f7044",
+     "d2add41c446e69a7"
     ],
     "france:F137_LEOX": [
      "ebe1ca3d2d8fb45f",
@@ -5825,12 +5829,12 @@
      "415e659087b6f457"
     ],
     "france:F145_Scarabee": [
-     "277d7f753f71ff30",
-     "e11f66a62d8077f5"
+     "97b15417473aa8fe",
+     "7c6583cd196fd65e"
     ],
     "france:F147_AMX29_Belier": [
-     "ab7876cdabdf305a",
-     "14c900d0940fa519"
+     "2597d3da0c26d92f",
+     "6c1cfe7599bf2637"
     ],
     "france:F14_AMX40": [
      "5e51e43024fc44bf",
@@ -6408,10 +6412,6 @@
      "dd67c69d6ecd5543",
      "00aa4822deedfee2"
     ],
-    "germany:G121_Grille_15_L63_FR": [
-     "cc0b6b9a0fe37643",
-     "221e755cca9ec1f4"
-    ],
     "germany:G122_VK6501H": [
      "1a2c2d55e3f7122c",
      "9d9420cd77e7df5b"
@@ -6557,8 +6557,8 @@
      "acff35101a91cd77"
     ],
     "germany:G16_PzVIB_Tiger_II_FL": [
-     "397bb863f7569d9d",
-     "c131c65c1dbe914a"
+     "6acd6c29688dfc46",
+     "25b83349e6c70363"
     ],
     "germany:G16_PzVIB_Tiger_II_IGR": [
      "5d5612a1bab3ff79",
@@ -6644,17 +6644,25 @@
      "e8f2ae54477e3eca",
      "0c6fc9e5bf684ce1"
     ],
+    "germany:G190_TH_72": [
+     "e62bb3cc2fbee4d5",
+     "358ab621f7317a6a"
+    ],
     "germany:G191_StuG_IIIF_CFE_A": [
      "c60ea2af058fd6d5",
      "2848a330d8c47a47"
+    ],
+    "germany:G192_E_10": [
+     "54a35fe9ace37447",
+     "dddae6d6ec0f1078"
     ],
     "germany:G193_Pz_Kpfw_55": [
      "21e688bd2a04138b",
      "7150eb6430dd0297"
     ],
     "germany:G195_HWK_40": [
-     "711d775d63f2171c",
-     "871da16277f4fc8e"
+     "de15d90999c21f06",
+     "1a6b9bf1c6d8ada5"
     ],
     "germany:G196_Versuchspanzer_57": [
      "692276fd47af5491",
@@ -6676,9 +6684,21 @@
      "46d176fdf2632188",
      "f33874fe15146654"
     ],
+    "germany:G201_Panzerjager_I_mit_7_5_cm": [
+     "5f8748b29d07b131",
+     "5d4adbd317631065"
+    ],
+    "germany:G202_PzKpfw_T_34_747_r": [
+     "2300f2302b03ff37",
+     "db1565c3aba1cb29"
+    ],
     "germany:G204_PzVI_Tiger_P_CFE_A": [
      "0ec979d45ae7b006",
      "f4076a1fbba91815"
+    ],
+    "germany:G205_Jagdpanzer_7_Pfanne": [
+     "5bb0e7e49ae3409f",
+     "bb12cf093ff01369"
     ],
     "germany:G20_Marder_II": [
      "677e7fb9d3863a38",
@@ -6842,11 +6862,11 @@
     ],
     "germany:G51_Lowe": [
      "5c4905a9acac928a",
-     "00f4943726f33be9"
+     "b831f4afd38bc93c"
     ],
     "germany:G51_Lowe_FL": [
      "962ca838d358b88b",
-     "e55236e2cc57ee70"
+     "38a2e63fe5c8218f"
     ],
     "germany:G52_Pz38_NA": [
      "04cf6d54c553f42a",
@@ -6989,8 +7009,8 @@
      "b530e5a89bc30838"
     ],
     "germany:G85_Aufklarungspanzer_V": [
-     "c05fe36053f811ca",
-     "b98b3611ae4df4ad"
+     "e1fae5c669b5a830",
+     "8e7c3a395a73a527"
     ],
     "germany:G86_VK2001DB": [
      "fd020fe685c0cbe0",
@@ -7217,8 +7237,8 @@
      "ad71ca0a00ccd511"
     ],
     "italy:It38_Donnola": [
-     "df53dff8a15fca4b",
-     "31e918dc70eab7e2"
+     "863eeff7eaddf230",
+     "36d37298c00efd2e"
     ],
     "italy:It39_Coccodrillo": [
      "5a4ada5c38c68d54",
@@ -7229,8 +7249,8 @@
      "35a31108edf2d6a6"
     ],
     "italy:It41_Cerbero": [
-     "126e2b266211760c",
-     "907a309208e245c9"
+     "dfbe07b37ec36f04",
+     "26b0637cda6f9303"
     ],
     "italy:It43_CAV_mod_71": [
      "41da5f9e698ae792",
@@ -7633,8 +7653,8 @@
      "47874029076c6321"
     ],
     "poland:Pl38_63TP_Rycerski": [
-     "8ea37bd9fa147edd",
-     "68047e3654fc0dbd"
+     "6c10c35d03b6c246",
+     "966e0a803cd43dd9"
     ],
     "poland:Pl39_Husarz": [
      "1e195da602b3d624",
@@ -7645,12 +7665,12 @@
      "b22b8d076266c283"
     ],
     "poland:Pl43_Kruk": [
-     "16384c05fbaee39b",
-     "a51f50b1d1088a3c"
+     "26547a91692962fb",
+     "b77851e9727e93fe"
     ],
     "poland:Pl44_Kolczatka": [
-     "a3982321531df024",
-     "35ff46d27bf550bd"
+     "4315e21c6edfe3c3",
+     "f14ca76ea6e34e4d"
     ],
     "sweden:S01_Strv_74_A2": [
      "f1920993c7c5f542",
@@ -7821,8 +7841,8 @@
      "8560bea72b3c6677"
     ],
     "sweden:S38_Huggorm": [
-     "26f1c418607bbc79",
-     "5008c7689f703380"
+     "01292bb0358be373",
+     "52515cf3f6a879a9"
     ],
     "sweden:S39_Strv_m31": [
      "61e0378ee8469964",
@@ -7833,8 +7853,8 @@
      "4a9ce225c5adcd16"
     ],
     "sweden:S42_Strv_T_fm_53": [
-     "f36cddd6b76509da",
-     "f45b3103d8b0d623"
+     "c46b792f848585e0",
+     "3e6b734156556ee3"
     ],
     "uk:GB01_Medium_Mark_I": [
      "fc520af63d0169d3",
@@ -7881,8 +7901,8 @@
      "c689dc66f2bce7db"
     ],
     "uk:GB101_FV1066_Senlac": [
-     "5a5603a883512c82",
-     "33324b11cd170cfd"
+     "2fb7437d18a671d8",
+     "0647a5d1d15dd9b3"
     ],
     "uk:GB1020_Crusader_NewOnBoarding": [
      "d1bb962cf380b43f",
@@ -8025,8 +8045,8 @@
      "5db244cb9ba26e59"
     ],
     "uk:GB132_Taurus_CAT": [
-     "cdebfdad183c77db",
-     "795df96fcdaa6972"
+     "fcff52292692a7e0",
+     "81c6a77989a1e1a0"
     ],
     "uk:GB133_Charioteer_MkVII": [
      "382a094ccffe204b",
@@ -8116,6 +8136,10 @@
      "f63e803c2ff2bb47",
      "16540378072cc64d"
     ],
+    "uk:GB154_FV112_Puncher": [
+     "808a48de7c95b6a6",
+     "2c726c730f604661"
+    ],
     "uk:GB155_Pike": [
      "9c852a41b416c270",
      "064df06b898cd276"
@@ -8125,20 +8149,24 @@
      "e93af1c689b2657a"
     ],
     "uk:GB157_FV214t": [
-     "d6537f386c469130",
-     "8c2abd23755d5431"
+     "3469c5486568df8a",
+     "593ad8d069894527"
     ],
     "uk:GB158_Executor": [
      "810ebd5cc267ebdf",
      "62ab780f1241d8f7"
     ],
     "uk:GB159_FV4602_Victorious": [
-     "2b73ccabc0a28028",
-     "307222451be337f6"
+     "9abd2274b91baffe",
+     "4b37a42465cb5a6d"
     ],
     "uk:GB15_Stuart_I": [
      "c9ee67910213a0d6",
      "0be8104c8b0c3819"
+    ],
+    "uk:GB160_A20": [
+     "9e30f4823ea035e1",
+     "1373aeb91c6dbe57"
     ],
     "uk:GB17_Grant_I": [
      "3574cf40112c7fbc",
@@ -8379,10 +8407,6 @@
     "uk:GB86_Centurion_Action_X_CFE_A": [
      "54bad05f4d12cc59",
      "6f7f37d5cbc2673f"
-    ],
-    "uk:GB86_Centurion_Action_X_FR": [
-     "9646430f29facd2f",
-     "f7e559d9fc89d186"
     ],
     "uk:GB87_Chieftain_T95_turret": [
      "e0887078452e39f7",
@@ -8665,8 +8689,8 @@
      "0d5ed11ede14953d"
     ],
     "usa:A12_T32_M": [
-     "1a753fe53ae296b9",
-     "916fc5804c60d90e"
+     "c767fc9529d563d1",
+     "4d0b2921889541ff"
     ],
     "usa:A130_Super_Hellcat": [
      "067b4f2b608fc5f5",
@@ -8897,8 +8921,8 @@
      "3e62f14a406a5af1"
     ],
     "usa:A186_XM94_Shadow": [
-     "aba329420587ae72",
-     "3b18edd8fa93d5f1"
+     "733d0261791a6f43",
+     "3b2a7dc7ed847657"
     ],
     "usa:A187_Ares_75": [
      "a502dca047626613",
@@ -8943,6 +8967,10 @@
     "usa:A197_Jezevec": [
      "541ce05404854f8f",
      "862536d20e1164cf"
+    ],
+    "usa:A198_Christie_M1921": [
+     "d078aa636f7d53a1",
+     "f6fda419e1314d43"
     ],
     "usa:A19_T2_lt": [
      "8c07d78e9a73ed4d",
@@ -9116,10 +9144,6 @@
      "be551ebbdc6f4b7a",
      "e5d1c80c9093f123"
     ],
-    "usa:A69_T110E5_FR": [
-     "468da450a966163a",
-     "fb9e3497618d759e"
-    ],
     "usa:A69_T110E5_cl": [
      "d21b83bcfd46d1f6",
      "7a49bd84ccf9966e"
@@ -9225,8 +9249,8 @@
      "72f0ff77f62ef11e"
     ],
     "usa:A97_M41_Bulldog_FL": [
-     "678d30f06222eea1",
-     "e464fd5ad033d157"
+     "9cb71da8ab27a15b",
+     "d876ac6de88335bd"
     ],
     "usa:A99_T92_LT": [
      "80d14654e85aba74",
@@ -9448,10 +9472,6 @@
      "d45deb55a6c22706",
      "d03aeb50f32ecea2"
     ],
-    "ussr:R132_VNII_100LT_FR": [
-     "5bbb6e1d247bd213",
-     "2ff74544d7ca2a52"
-    ],
     "ussr:R133_KV_122": [
      "5857b06e7fba363d",
      "ed0a458c5396c17c"
@@ -9597,8 +9617,8 @@
      "16e4489eb4309c37"
     ],
     "ussr:R165_Object_703_II_2": [
-     "a101d17531efa68d",
-     "048d5b04235df176"
+     "08a07db7a04006d1",
+     "07956d8a6a2e1b3d"
     ],
     "ussr:R169_ST_II": [
      "e4b71cd039a841a4",
@@ -9705,8 +9725,8 @@
      "2b92a2115cb9fd51"
     ],
     "ussr:R195_T34M_54": [
-     "a9451abb2b467659",
-     "2224dabc93819d90"
+     "c91f5f463bfbb3c3",
+     "6b0fd998a4ac9da9"
     ],
     "ussr:R196_Object_452K": [
      "98ac8f44a033192e",
@@ -9784,6 +9804,10 @@
      "6fa8425fd9cee601",
      "a5b0979bc583cba4"
     ],
+    "ussr:R222_KV_90": [
+     "314b224a6cf0a146",
+     "d09fc66197228961"
+    ],
     "ussr:R225_SU_100i": [
      "c0a3391a870d76f9",
      "a0bad57b05ea6a8a"
@@ -9813,8 +9837,8 @@
      "1ecc79be6a4aab4e"
     ],
     "ussr:R233_NK_1": [
-     "f33485e77a2b0c8d",
-     "9ce341f04f2c7021"
+     "e93b430002fe19f1",
+     "141a189dce628e16"
     ],
     "ussr:R234_T_13": [
      "9d4d3bc574bc47c0",
@@ -9843,6 +9867,10 @@
     "ussr:R23_T-43_MapsTraining_Player_MT_2": [
      "2cb70f15fb27d790",
      "c35e0b529417cce1"
+    ],
+    "ussr:R241_T_26_76": [
+     "2ce35d5b560d746d",
+     "d43a043fa0f72015"
     ],
     "ussr:R24_SU-76": [
      "636b9f01d829e3e4",

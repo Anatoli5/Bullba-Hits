@@ -1,9 +1,11 @@
 # Changelog
 
-All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.1.1 from 1.05 on, 2.4.1.0 from 1.02 on, 2.4.0.2 from 0.9.3 on, 2.4.0.1 #950 from 0.7.6, 2.4.0.0 #945 before.
+All notable changes to Bullba Hits, newest first. Client: World of Tanks PC NA 2.4.2.0 from 1.35 on, 2.4.1.1 from 1.05 on, 2.4.1.0 from 1.02 on, 2.4.0.2 from 0.9.3 on, 2.4.0.1 #950 from 0.7.6, 2.4.0.0 #945 before.
 
-## Unreleased
+## 1.35 (2026-11-24)
 
+- **Client 2.4.2.0:** the mod is built for World of Tanks PC NA 2.4.2.0 and installs into `mods\2.4.2.0`; your recorded battles are kept. On this client the recorder writes every battle in full until its replays are checked against the live records.
+- Replays: the Halo has new defaults - overall 1.5, shade 1.5, reach 1.5, gradient 0, colour 1.
 - Replays: the battle list is the game's replays folder - the replay files there; Bullba Hits battles without a replay file there are no longer listed.
 - Replays: a battle the game cannot prepare stops at once with the reason (e.g. "No replay file of this battle is in the game's replays folder") instead of waiting on "Preparing the replay of this battle..."; a battle with no replay names that first, not its map.
 

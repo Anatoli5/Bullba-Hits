@@ -27,17 +27,19 @@ destructibles, AccountVersion.def and one vehicle (G204_PzVI_Tiger_P_CFE_A.xml).
 (11.11.2026): every hooked name is in the new bytecode (tools/inspect_hook_names.py, 0 missing, now with the names
 of the replay source: BattleReplay, the account events, Avatar.onBecomeNonPlayer); the aim, browser and gun pitch
 contracts are the same but for memory addresses; scripts/common/constants lost one name, RANDOM_FLAGS, which the
-mod does not use.
+mod does not use. 2.4.2.0 #999 since 1.35 (24.11.2026): every hooked name is in the new bytecode
+(tools/inspect_hook_names.py, 0 missing); the four tools/inspect_*_contract.py ran with exit 0, but their 2.4.1.1 #992
+printouts had been overwritten, so they were not compared with it.
 """
 import re
 from pathlib import Path
 
-VERSION = '2.4.1.1'             # the folder: <game>/mods/<VERSION>
-BUILD = '992'                   # the build of that version the hooked names were last checked on
+VERSION = '2.4.2.0'             # the folder: <game>/mods/<VERSION>
+BUILD = '999'                   # the build of that version the hooked names were last checked on
 REALM = 'NA'
 VERSION_XML = 'v.%s #%s' % (VERSION, BUILD)                        # <version> of <game>/version.xml
 LABEL = 'World of Tanks PC %s %s #%s' % (REALM, VERSION, BUILD)    # as README, CHANGELOG and the catalogue say it
-PREVIOUS = ('2.4.1.0', '2.4.0.2', '2.4.0.1')   # folders of earlier clients a recorder of ours may still lie in
+PREVIOUS = ('2.4.1.1', '2.4.1.0', '2.4.0.2')   # folders of earlier clients a recorder of ours may still lie in
 GAME = Path('C:/Games/World_of_Tanks_NA')
 
 

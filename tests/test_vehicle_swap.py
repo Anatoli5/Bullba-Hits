@@ -45,6 +45,12 @@ def fixture_ready():
     return os.path.isfile(STREAM) and os.path.isfile(LIVE) and t.client_ready()
 
 
+def fort_rush_client():
+    """The fixture is a Fort Rush battle: its components are defined only by a client that ships the mode's package."""
+    import test_replay_records as t
+    return os.path.isfile(os.path.join(t.rd.DEFAULT_CLIENT, 'res', 'packages', 'fort_rush.pkg'))
+
+
 def replay():
     """The replay records of the user's battle with poses, as the replay job converts them; the vehicle names table."""
     if 'records' not in _CACHE:
@@ -179,6 +185,9 @@ class RosterHistoryCase(unittest.TestCase):
     @unittest.skipUnless(os.path.isfile(STREAM), 'local fixture absent: %s' % FIXTURE)
     def setUp(self):
         if not fixture_ready(): self.skipTest('the installed client is needed to decode the stream')
+        if not fort_rush_client():
+            self.skipTest('the installed client has no fort_rush.pkg: this 2.4.1.1 Fort Rush stream cannot be decoded '
+                          'whole (2.4.2.0 dropped the mode)')
         import logging
         from local_armor_inspector import replay_battle as rb, exporter as ex
         self.records, self.names = replay()

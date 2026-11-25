@@ -13,7 +13,7 @@ try:
 except ImportError:
     import queue
 
-VERSION = '1.34'
+VERSION = '1.35'
 VIEWER_PATH = os.path.join('mods', 'configs', 'local.armor_inspector', 'Viewer.html')
 # The 3D replay viewer's own entry (19.11, the user's 'one mod, two entries'): its page, its mods-list button and icon.
 PLAYBACK_PATH = os.path.join('mods', 'configs', 'local.armor_inspector', 'web', 'playback.html')
@@ -211,8 +211,9 @@ def battle_mode(arena):
 # tracer or shell stop that the replay lacked (docs/KNOWLEDGE.md section 18). A mode not listed here has not gone through
 # the replay path: recorded in full.
 REPLAY_CONFIRMED_MODES = {1:'REGULAR', 2:'TRAINING', 14:'TOURNAMENT_REGULAR'}
-# The client those 33 battles were played on: <version> of version.xml. Must equal tools/client_version.VERSION_XML
-# (tests/test_recorder_scope.py); another client is recorded in full until the replay path is checked on it.
+# The client those 33 battles were played on: <version> of version.xml. Another client - also the one a build is made
+# for (tools/client_version.VERSION_XML, 2.4.2.0 #999 since 1.35) - is recorded in full until the replay path is checked
+# on it: full live records compared with their replays, as on 11.11 (tests/test_recorder_scope.py).
 REPLAY_CONFIRMED_CLIENT = 'v.2.4.1.1 #992'
 # Value of the battle header's 'recording' for such a battle (replay_battle.SNAPSHOTS reads it); a full battle has no key.
 RECORDING_SNAPSHOTS = 'snapshots'

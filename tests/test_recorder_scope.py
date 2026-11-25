@@ -3,8 +3,9 @@
 
     python -m pytest tests/test_recorder_scope.py -q
 
-  rule        mod_local_armor_inspector.recording_scope: each condition (mode id and name, the client, the recording)
-              and the client it names is tools/client_version.py's
+  rule        mod_local_armor_inspector.recording_scope: each condition (mode id and name, the client, the recording);
+              the client it names is the one the evidence was gathered on, and the build's own client, when it is
+              another (tools/client_version.py), is recorded in full
   build       replay_battle.build with a live record cut to the snapshots: the matched hits and own shots keep the live
               snapshot; the other records get their receipt time from the battle's wall clock; a full battle is as before
   four        the four local battles with both sources (fixtures of test_replay_battle): the replay-made battle published
@@ -74,10 +75,17 @@ class RuleTests(unittest.TestCase):
             self.assertFalse(reduced, (mode, version, recording))
             self.assertTrue(text.startswith(why), (text, why))
 
-    def test_the_client_is_the_one_the_build_tools_name(self):
+    def test_the_client_is_the_one_the_evidence_was_gathered_on(self):
+        # The confirmed client moves only with new evidence (full live records against their replays), not with the
+        # build's client: until then the build's own client, when it is another one, is recorded in full.
         import client_version
-        self.assertEqual(m.REPLAY_CONFIRMED_CLIENT, client_version.VERSION_XML)
-        self.assertEqual(m.client_build(CHECKED), 'v.2.4.1.1 #992')
+        self.assertEqual(m.REPLAY_CONFIRMED_CLIENT, 'v.2.4.1.1 #992')
+        self.assertEqual(m.client_build(CHECKED), m.REPLAY_CONFIRMED_CLIENT)
+        if client_version.VERSION_XML != m.REPLAY_CONFIRMED_CLIENT:
+            built = CHECKED.replace(m.REPLAY_CONFIRMED_CLIENT, client_version.VERSION_XML)
+            reduced, why = m.recording_scope(RANDOM, built, True)
+            self.assertFalse(reduced)
+            self.assertTrue(why.startswith('client %s' % client_version.VERSION_XML), why)
 
     def test_the_header_mark_is_the_one_build_reads(self):
         self.assertEqual(m.RECORDING_SNAPSHOTS, rb.SNAPSHOTS)

@@ -275,6 +275,8 @@ class ReplayFixtureTests(unittest.TestCase):
 
 
 FORT_RUSH = ROOT / 'tests' / 'fixtures-local' / 'replays' / '2026-11-12-1838-fort-rush-2307567835514555300.stream.z'
+# The mode's package: the stream is decoded with the installed client's definitions, and 2.4.2.0 no longer ships it.
+FORT_RUSH_PACKAGE = CLIENT / 'fort_rush.pkg'
 
 
 @unittest.skipUnless(CLIENT.is_dir(), 'the installed client (entity_defs) is absent')
@@ -285,6 +287,8 @@ class FortRushTests(unittest.TestCase):
     state were not read), each one resynchronised with deep copies - decode 4-5x a REGULAR battle's."""
 
     @unittest.skipUnless(FORT_RUSH.is_file(), 'local fixture absent: %s' % FORT_RUSH.name)
+    @unittest.skipUnless(FORT_RUSH_PACKAGE.is_file(), 'the installed client has no %s: the components of this 2.4.1.1 '
+                         'Fort Rush stream are not defined (2.4.2.0 dropped the mode)' % FORT_RUSH_PACKAGE.name)
     def test_the_fort_rush_stream_decodes_whole(self):
         import zlib
         stream = bytearray(zlib.decompress(FORT_RUSH.read_bytes()))
@@ -312,8 +316,10 @@ class FortRushTests(unittest.TestCase):
             packages.append((path.name, str(path), members))
         scan = rc.Registry(defs.client, defs).dynamic
         self.assertEqual(replay_run.snapshot_components(packages), scan)
-        self.assertIn('CapturePointComponent', scan)
-        self.assertGreater(len(scan), 109)          # the main list alone had 109 names with a client class (2.4.1.1)
+        # An extension's component is numbered: Fort Rush's where the client has the mode (2.4.1.1), Last Stand's in any case.
+        if FORT_RUSH_PACKAGE.is_file(): self.assertIn('CapturePointComponent', scan)
+        self.assertIn('LSTeamInfoStatsComponent', scan)
+        self.assertGreater(len(scan), 109)         # the main list alone had 109 names with a client class (2.4.1.1)
 
 
 if __name__ == '__main__':
